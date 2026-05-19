@@ -57,7 +57,7 @@ def explore_dfs(phone, app_log_dir: Path, max_depth: int = 0,
     # Parse root page identity
     png_bytes = phone.screenshot()
     knowledge = PageParser().analyze_screen(png_bytes)
-    page_name = _page_name_from_desc(knowledge.page.description)
+    page_name, _fingerprint = _page_name_from_fingerprint(png_bytes)
 
     # update mode: use target_dir as page_name and out_dir
     inherited_parent: str = ""
@@ -303,7 +303,7 @@ def _dfs_recursive(
     # ── New page: now do expensive LLM parse ──
     from policy_expr.recon.page_parser import PageParser
     knowledge = PageParser().analyze_screen(png_bytes)
-    page_name = _page_name_from_desc(knowledge.page.description)
+    page_name, fingerprint = _page_name_from_fingerprint(png_bytes)
 
     # Add to dedup library (reuse pre-computed embedding)
     dedup.add(png_bytes, name=page_name, emb=candidate_emb)
@@ -321,7 +321,7 @@ def _dfs_recursive(
         "text_sim": round(dedup_result.best_text_sim, 4) if dedup_result.best_text_sim else None,
         "library_size": n,
         "page_name": page_name,
-        "description": knowledge.page.description,
+        "fingerprint": fingerprint,
     }
 
     out_dir = app_log_dir / page_name
@@ -405,6 +405,7 @@ def _dfs_recursive(
                 sample=sample, nav_stack=nav_stack,
                 on_element_tapped=_on_element_tapped,
                 parent_page=node.parent or "",
+                fingerprint=fingerprint,
             )
             _update_recon_log(app_log_dir, page_name, "initial")
         except ProbeAbortedError as e:
@@ -427,7 +428,7 @@ def _parse_identity(phone) -> tuple:
 
     png_bytes = phone.screenshot()
     knowledge = PageParser().analyze_screen(png_bytes)
-    page_name = _page_name_from_desc(knowledge.page.description)
+    page_name, _fingerprint = _page_name_from_fingerprint(png_bytes)
     return png_bytes, knowledge, page_name
 
 
@@ -478,7 +479,8 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
                     sample: int = 0,
                     nav_stack: list | None = None,
                     on_element_tapped: callable | None = None,
-                    parent_page: str = "") -> tuple:
+                    parent_page: str = "",
+                    fingerprint: str = "") -> tuple:
     """DFS-style incremental probing: tap each element one by one, with callback after each tap.
 
     Args:
@@ -510,7 +512,6 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     print(f"{'=' * 60}")
 
     result = ReconResult(
-        description=page.description,
         elements_count=len(page.interactive_elements),
         initial_screenshot_path=str(out_dir / "initial.png"),
         parent_page=parent_page,
@@ -522,17 +523,23 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     img_path.write_bytes(png_bytes)
     viz_result(knowledge, png_bytes, "initial", out_dir)
 
+    # Append fingerprint to initial_result.json
+    if fingerprint:
+        init_json = out_dir / "initial_result.json"
+        if init_json.exists():
+            data = json.loads(init_json.read_text("utf-8"))
+            data["fingerprint"] = fingerprint
+            init_json.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
     tap_dir = out_dir / "tap"
     tap_dir.mkdir(parents=True, exist_ok=True)
     result_path = out_dir / "recon_result.json"
 
-    has_nav = page.bottom_nav.has_nav
     top_level = len(nav_stack) - 1 if nav_stack else 0
 
     for i, area in enumerate(areas, 1):
         ax, ay = area.center_xy
         lx, ly = logical_xy(ax, ay)
-        is_tab = has_nav and ay > 900
         print(f"\n  [{i}/{len(areas)}] 「{area.label}」 @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
 
         tap_response = phone.client.tap(lx, ly)
@@ -540,7 +547,7 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
             print(f"    Mac 弹窗阻断，关闭后跳过")
             try_resume_mac(phone.client)
             result.taps.append(TapResult(
-                index=i, element_type="tab" if is_tab else "area",
+                index=i, element_type="area",
                 label=area.label, x=ax, y=ay,
                 tap_ok=True, screenshot_path="", navigated=False,
             ))
@@ -570,7 +577,7 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
 
         tap_result = TapResult(
             index=i,
-            element_type="tab" if is_tab else "area",
+            element_type="area",
             label=area.label,
             x=ax,
             y=ay,
@@ -599,12 +606,24 @@ def _count_nodes(nodes: list[DfsPageNode]) -> int:
     return sum(1 + _count_nodes(n.children) for n in nodes)
 
 
-def _page_name_from_desc(description: str) -> str:
-    """Sanitize description into a filesystem-safe page name."""
+def _page_name_from_fingerprint(png_bytes: bytes) -> tuple[str, str]:
+    """Generate a stable page name from the fingerprint '用途' line.
+
+    Returns (page_name, fingerprint_text).
+    """
     import re
-    name = description[:20].strip()
+    from policy_expr.recon.cascade_matcher import get_matcher
+    matcher = get_matcher()
+    fingerprint = matcher._generate_fingerprint(png_bytes)
+    # Extract the 用途 line
+    for line in fingerprint.splitlines():
+        if line.startswith("用途：") or line.startswith("用途:"):
+            name = line.split("：", 1)[-1].split(":", 1)[-1].strip()
+            break
+    else:
+        name = fingerprint[:20].strip()
     name = re.sub(r'[\\/:*?"<>|\s]+', '_', name)
-    return name or "page"
+    return name or "page", fingerprint
 
 
 def _sanitize_filename(label: str) -> str:

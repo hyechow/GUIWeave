@@ -224,9 +224,12 @@ def main() -> None:
             print(f"  L{i}: {'→ ' + str(coords) if coords else '(无 forward 坐标)'}{target_mark}")
 
         # Prepare debug output dir
-        import json, tempfile, datetime
-        out_dir = Path(tempfile.gettempdir()) / f"back_nav_{datetime.datetime.now():%H%M%S}"
-        out_dir.mkdir()
+        import json, datetime
+        import shutil
+        out_dir = ROOT / "logs" / "test_back_nav"
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        out_dir.mkdir(parents=True)
         print(f"  调试目录: {out_dir}")
 
         # Save nav_stack reference screenshots so we can see what each level looks like
@@ -270,9 +273,11 @@ def main() -> None:
             score = entry.get("score", "")
             score_str = f" ({score:.3f})" if isinstance(score, float) else ""
             llm_method = entry.get("llm_method", "")
-            llm_str = f"  [LLM: {llm_method}]" if llm_method else ""
+            llm_str = f"  [{llm_method}]" if llm_method else ""
+            coords = entry.get("coords", [])
+            coord_str = f"({coords[0]},{coords[1]})" if coords else ""
             mark = "✓" if entry.get("success") else "·"
-            print(f"  {mark} [{i+1:02d}] {s:12s} → {r}{score_str}{llm_str}")
+            print(f"  {mark} [{i+1:02d}] {s:16s} {coord_str:12s} → {r}{score_str}{llm_str}")
 
 
 if __name__ == "__main__":

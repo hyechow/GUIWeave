@@ -170,7 +170,7 @@ def build_export(page_dir: Path) -> ExportResult:
     init_data = json.loads(init_path.read_text("utf-8"))
     recon_data = json.loads(recon_path.read_text("utf-8"))
 
-    raw_description = init_data.get("page", {}).get("description", "")
+    raw_description = init_data.get("fingerprint") or init_data.get("page", {}).get("description", "")
     taps: list[dict] = recon_data.get("taps", [])
     parent_page: str = recon_data.get("parent_page", "")
 

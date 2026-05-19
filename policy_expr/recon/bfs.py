@@ -58,7 +58,6 @@ def probe_elements(
 
     page = knowledge.page
     areas = knowledge.areas
-    has_nav = page.bottom_nav.has_nav
 
     # Back-button taps always navigate to parent — skip, their behavior is known.
     areas = [a for a in areas if a.element_type != "back_button"]
@@ -72,7 +71,6 @@ def probe_elements(
     print(f"{'=' * 60}")
 
     result = ReconResult(
-        description=page.description,
         elements_count=len(page.interactive_elements),
         initial_screenshot_path=str(initial_screenshot_path or ""),
     )
@@ -95,7 +93,6 @@ def probe_elements(
     for i, area in enumerate(areas, 1):
         ax, ay = area.center_xy
         lx, ly = logical_xy(ax, ay)
-        is_tab = has_nav and ay > 900
         print(f"\n  [{i}/{len(areas)}] 「{area.label}」 @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
 
         tap_response = client.tap(lx, ly)
@@ -103,7 +100,7 @@ def probe_elements(
             print(f"    Mac 弹窗阻断，关闭后跳过")
             try_resume_mac()
             result.taps.append(TapResult(
-                index=i, element_type="tab" if is_tab else "area",
+                index=i, element_type="area",
                 label=area.label, x=ax, y=ay,
                 tap_ok=True, screenshot_path="", navigated=False,
             ))
@@ -130,7 +127,7 @@ def probe_elements(
 
         result.taps.append(TapResult(
             index=i,
-            element_type="tab" if is_tab else "area",
+            element_type="area",
             label=area.label,
             x=ax,
             y=ay,

@@ -29,13 +29,11 @@ OFFLINE_EXPECTED_SIZE = (636, 1402)
 
 def _parse_identity(phone) -> tuple:
     """Screenshot → parse page identity. Returns (png_bytes, knowledge, page_name)."""
-    import re
+    from policy_expr.recon.dfs import _page_name_from_fingerprint
     png_bytes = phone.screenshot()
 
-    # print("\n解析页面身份...")
     knowledge = PageParser().analyze_screen(png_bytes)
-    desc = knowledge.page.description[:20].strip()
-    page_name = re.sub(r'[\\/:*?"<>|\s]+', '_', desc) or "page"
+    page_name, _ = _page_name_from_fingerprint(png_bytes)
     return png_bytes, knowledge, page_name
 
 
