@@ -373,6 +373,22 @@ def _try_tap(
         base_entry["tap_xy"] = [round(tap_xy[0]), round(tap_xy[1])]
 
     tap_response = coords[2] if len(coords) > 2 else ""
+
+    # Handle Mac system popup blocking tap (e.g. microphone access dialog)
+    if "paused" in tap_response.lower():
+        from policy_expr.perception import try_resume_mac
+        print(f"    ↩ [{strategy}] Mac 弹窗阻断，尝试恢复...")
+        if try_resume_mac():
+            time.sleep(0.5)
+            coords = tap_fn()
+            if coords is None:
+                return None
+            lx, ly = coords[0], coords[1]
+            tap_response = coords[2] if len(coords) > 2 else ""
+            if tap_xy is not None:
+                base_entry["tap_xy"] = [round(tap_xy[0]), round(tap_xy[1])]
+            base_entry["coords"] = [round(lx), round(ly)]
+
     tap_failed = tap_response and ("failed" in tap_response.lower() or "interrupted" in tap_response.lower())
     if tap_failed:
         print(f"    ↩ [{strategy}] ({lx:.0f},{ly:.0f}) → tap 失败: {tap_response}")

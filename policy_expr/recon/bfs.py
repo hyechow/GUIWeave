@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from policy_expr.perception import try_resume_mac
+from policy_expr.recon.dfs import _safe_tap
 from policy_expr.recon.page_compare import PageComparator, make_comparator
 from policy_expr.recon.page_parser import PageKnowledge
 from policy_expr.recon.back_nav import (
@@ -95,18 +95,9 @@ def probe_elements(
         lx, ly = logical_xy(ax, ay)
         print(f"\n  [{i}/{len(areas)}] 「{area.label}」 @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
 
-        tap_response = client.tap(lx, ly)
-        if "paused" in tap_response.lower():
-            print(f"    Mac 弹窗阻断，关闭后跳过")
-            try_resume_mac()
-            result.taps.append(TapResult(
-                index=i, element_type="area",
-                label=area.label, x=ax, y=ay,
-                tap_ok=True, screenshot_path="", navigated=False,
-            ))
-            result.save(result_path)
-            continue
-        tap_ok = "failed" not in tap_response.lower() and "interrupted" not in tap_response.lower()
+        tap_response = _safe_tap(client, lx, ly)
+
+        tap_ok = "failed" not in tap_response.lower() and "interrupted" not in tap_response.lower() and "paused" not in tap_response.lower()
         print(f"    结果: {tap_response}")
         time.sleep(2.0)
 

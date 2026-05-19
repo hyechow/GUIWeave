@@ -17,6 +17,17 @@ from policy_expr.recon.utils import ProbeAbortedError
 from policy_expr.trace import Tracer
 
 
+def _safe_tap(client, lx: float, ly: float) -> str:
+    """Tap with automatic Mac popup recovery. Returns tap response string."""
+    resp = client.tap(lx, ly)
+    if "paused" in resp.lower():
+        print(f"    Mac 弹窗阻断，尝试恢复...")
+        if try_resume_mac(client):
+            time.sleep(0.5)
+            resp = client.tap(lx, ly)
+    return resp
+
+
 @dataclass
 class DfsPageNode:
     """One page in the DFS tree. Carries all state needed for deferred knowledge gen."""
@@ -193,7 +204,7 @@ def _dfs_explore_children(
 
         # 1. Tap into child page
         print(f"\n  → 进入子页面「{tap.label}」")
-        phone.client.tap(lx, ly)
+        _safe_tap(phone.client, lx, ly)
         time.sleep(2.0)
         child_bytes = phone.screenshot()
 
@@ -450,31 +461,9 @@ def _tap_close_xy(phone, close_xy: list[float]) -> None:
     ax, ay = close_xy[0], close_xy[1]
     lx, ly = logical_xy(ax, ay)
     print(f"  [小程序] 胶囊× @ ({ax:.0f}, {ay:.0f})  →  逻辑({lx:.0f}, {ly:.0f})")
-    phone.client.tap(lx, ly)
+    _safe_tap(phone.client, lx, ly)
     time.sleep(1.5)
 
-
-def _close_miniprogram(phone, knowledge) -> None:
-    """Close a mini-program by tapping its × capsule button.
-
-    Strategy: find the rightmost icon in the top-right area (x>800, y<200).
-    The capsule button's × is always the rightmost icon in that region.
-    """
-    top_right_icons = [
-        e for e in knowledge.page.interactive_elements
-        if e.x > 800 and e.y < 200
-    ]
-    if top_right_icons:
-        close_el = max(top_right_icons, key=lambda e: e.x)
-        ax, ay = close_el.x, close_el.y
-        ax = min(ax + 25, 970)
-        print(f"  [小程序] 胶囊× @ ({ax:.0f}, {ay:.0f})")
-    else:
-        ax, ay = 950.0, 130.0
-        print(f"  [小程序] 胶囊× 未识别，使用默认坐标 ({ax:.0f}, {ay:.0f})")
-    lx, ly = logical_xy(ax, ay)
-    phone.client.tap(lx, ly)
-    time.sleep(1.5)
 
 
 def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
@@ -544,19 +533,9 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
         lx, ly = logical_xy(ax, ay)
         print(f"\n  [{i}/{len(areas)}] 「{area.label}」 @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
 
-        tap_response = phone.client.tap(lx, ly)
-        if "paused" in tap_response.lower():
-            print(f"    Mac 弹窗阻断，关闭后跳过")
-            try_resume_mac(phone.client)
-            result.taps.append(TapResult(
-                index=i, element_type="area",
-                label=area.label, x=ax, y=ay,
-                tap_ok=True, screenshot_path="", navigated=False,
-            ))
-            result.save(result_path)
-            continue
+        tap_response = _safe_tap(phone.client, lx, ly)
 
-        tap_ok = "failed" not in tap_response.lower() and "interrupted" not in tap_response.lower()
+        tap_ok = "failed" not in tap_response.lower() and "interrupted" not in tap_response.lower() and "paused" not in tap_response.lower()
         print(f"    结果: {tap_response}")
         time.sleep(2.0)
 

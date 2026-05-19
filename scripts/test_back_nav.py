@@ -28,7 +28,7 @@ load_dotenv(ROOT / ".env")
 
 from PIL import Image, ImageDraw, ImageFont
 
-from policy_expr.perception import LivePhoneSession
+from policy_expr.perception import LivePhoneSession, try_resume_mac
 from policy_expr.executor import logical_xy
 from policy_expr.recon.page_compare import make_comparator
 from policy_expr.recon.page_parser import PageParser, classify_elements
@@ -130,6 +130,16 @@ def main() -> None:
     parser = PageParser()
     change_comp = make_comparator("edge_iou")
 
+    def safe_tap(client, lx, ly):
+        """Tap with Mac popup recovery."""
+        resp = client.tap(lx, ly)
+        if "paused" in resp.lower():
+            print("  Mac 弹窗阻断，尝试恢复...")
+            if try_resume_mac():
+                time.sleep(0.5)
+                resp = client.tap(lx, ly)
+        return resp
+
     with LivePhoneSession() as phone:
         screenshot = phone.screenshot
         assert phone.client is not None
@@ -169,7 +179,7 @@ def main() -> None:
             lx, ly = logical_xy(ax, ay)
 
             print(f"\n  → tap [{label}] at ({ax:.0f}, {ay:.0f})")
-            phone.client.tap(lx, ly)
+            safe_tap(phone.client, lx, ly)
             time.sleep(SETTLE)
             after_png = screenshot()
 
