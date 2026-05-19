@@ -126,6 +126,7 @@ def explore_dfs(phone, app_log_dir: Path, max_depth: int = 0,
         ok, back_log = return_to_initial(
             phone.client, phone.screenshot, nav_stack,
             before_back_bytes=phone.screenshot(),
+            target_label=page_name,
         )
         if not ok:
             recovered = _manual_recover(
@@ -216,6 +217,7 @@ def _dfs_explore_children(
         ok, back_log = return_to_initial(
             phone.client, phone.screenshot, nav_stack,
             before_back_bytes=phone.screenshot(),
+            target_label=node.page_name,
         )
         if not ok:
             recovered = _manual_recover(

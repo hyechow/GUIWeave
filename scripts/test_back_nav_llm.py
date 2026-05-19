@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from PIL import Image, ImageDraw, ImageFont
 
-from policy_expr.recon.back_nav import infer_back_action
+from policy_expr.recon.back_nav import infer_back_action, _parse_page_elements, _format_elements_context
 
 
 def annotate_tap(png: bytes, x: float, y: float, label: str, color: tuple) -> bytes:
@@ -100,6 +100,8 @@ def main():
     if len(sys.argv) >= 3:
         before_path, after_path = Path(sys.argv[1]), Path(sys.argv[2])
         nav_context = sys.argv[3] if len(sys.argv) > 3 else ""
+        target_label = sys.argv[4] if len(sys.argv) > 4 else ""
+        data_dir = None
     else:
         data_dir = ROOT / "logs" / "test_back_nav"
         if not data_dir.exists():
@@ -114,21 +116,32 @@ def main():
             if refs:
                 before_path = refs[0]
 
-        after_path = data_dir / "llm_after.png"
-        if not after_path.exists():
-            after_path = data_dir / "before_back.png"
+        # Pick the last R*_before_*.png as the "current page" for LLM testing
+        r_shots = sorted(data_dir.glob("R*_before_*.png"))
+        after_path = r_shots[-1] if r_shots else data_dir / "before_back.png"
 
-        context_path = data_dir / "llm_context.json"
-        if context_path.exists():
+        # Read nav_context and target_label from log.json if available
+        nav_context, target_label = "", ""
+        log_path = data_dir / "log.json"
+        if log_path.exists():
             import json
-            ctx = json.loads(context_path.read_text())
-            nav_context = ctx.get("nav_context", "")
-        else:
-            nav_context = ""
+            log_data = json.loads(log_path.read_text())
+            if isinstance(log_data, dict):
+                nav_context = log_data.get("nav_context", "")
+                target_label = log_data.get("target_label", "")
+                if not nav_context:
+                    steps = log_data.get("steps", [])
+                    nav_context = next(
+                        (e.get("llm_context", "") for e in steps if e.get("llm_context")), ""
+                    )
+            else:
+                nav_context = next(
+                    (e.get("llm_context", "") for e in log_data if e.get("llm_context")), ""
+                )
 
         if before_path is None or not after_path.exists():
             print(f"logs/test_back_nav/ 中未找到所需截图")
-            print(f"  需要: ref_L*_target.png + llm_after.png")
+            print(f"  需要: ref_L*_target.png + R*_before_*.png")
             sys.exit(1)
 
     before_png = before_path.read_bytes()
@@ -137,9 +150,21 @@ def main():
     print(f"BEFORE: {before_path.name}")
     print(f"AFTER:  {after_path.name}")
     print(f"nav_context: 「{nav_context}」")
+    if target_label:
+        print(f"target_label: 「{target_label}」")
     print()
 
-    action = infer_back_action(before_png, after_png, nav_context=nav_context, debug_dir=debug_dir)
+    print("解析 AFTER 页面可交互元素...")
+    after_elements = _parse_page_elements(after_png)
+    if after_elements:
+        print(_format_elements_context(after_elements))
+    else:
+        print("  (未检测到元素)")
+    print()
+
+    action = infer_back_action(before_png, after_png, nav_context=nav_context,
+                               target_label=target_label,
+                               after_elements=after_elements)
 
     print()
     if action is None:

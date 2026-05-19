@@ -90,6 +90,7 @@ AFTER 上有弹窗、对话框、底部弹出面板、广告浮层覆盖在页�
 ### 类型 B：底部 tab 切换
 AFTER 和 BEFORE 结构相似，只是底部导航栏选中了不同的 tab
 → 点击 BEFORE 中被选中的那个底部 tab
+注意：不要点击 AFTER 中已经处于选中状态的 tab，那不会有任何效果
 
 ### 类型 C：普通页面跳转
 AFTER 是全新的页面，左上角有返回箭头（‹）或关闭按钮（×）
@@ -131,14 +132,53 @@ def tap_llm_back(client, action: BackAction) -> tuple[float, float, str] | None:
 # LLM back action inference
 # ---------------------------------------------------------------------------
 
+def _parse_page_elements(png_bytes: bytes) -> list[dict]:
+    """Run PageParser on a screenshot; returns serializable element list."""
+    try:
+        from policy_expr.recon.page_parser import PageParser
+        parsed = PageParser().parse_screen(png_bytes)
+        return [
+            {
+                "label": el.label,
+                "element_type": el.element_type,
+                "x": round(el.x),
+                "y": round(el.y),
+                "leads_to": el.leads_to,
+            }
+            for el in parsed.interactive_elements
+        ]
+    except Exception as exc:
+        print(f"    [page_parser] 解析失败: {exc}")
+        return []
+
+
+def _format_elements_context(elements: list[dict]) -> str:
+    """Format element list for inclusion in the LLM back-nav prompt."""
+    if not elements:
+        return ""
+    lines = ["以下是AFTER页面检测到的可交互元素（请仅从这些元素中选择点击目标）："]
+    for el in elements:
+        label = el.get("label") or ""
+        etype = el.get("element_type", "")
+        x, y = el.get("x", 0), el.get("y", 0)
+        leads_to = el.get("leads_to", "")
+        label_part = f" {label}" if label else ""
+        desc = f" → {leads_to}" if leads_to else ""
+        lines.append(f"- [{etype}]{label_part} @ ({x}, {y}){desc}")
+    return "\n".join(lines)
+
+
 def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: str = "",
-                      debug_dir: Path | None = None,
-                      failed_attempts: list[dict] | None = None) -> BackAction | None:
+                      target_label: str = "",
+                      failed_attempts: list[dict] | None = None,
+                      after_elements: list[dict] | None = None) -> BackAction | None:
     """Ask the vision model how to navigate from AFTER back to BEFORE.
 
     Args:
         nav_context: How the user navigated from BEFORE to AFTER
                      (e.g. "点击了底部「发现」tab", "点击了「珠珠」聊天项").
+        after_elements: Pre-parsed interactive elements on the AFTER page.
+                        When provided, appended to prompt to ground LLM output.
     """
     if not after_png:
         return None
@@ -153,34 +193,23 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
     before_b64 = base64.b64encode(resize_to_logical_png(before_png)).decode()
     after_b64 = base64.b64encode(resize_to_logical_png(after_png)).decode()
 
-    # Save debug images for inspection
-    if debug_dir:
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        (debug_dir / "llm_before.png").write_bytes(before_png)
-        (debug_dir / "llm_after.png").write_bytes(after_png)
-
     context_text = (
         "第一张(BEFORE)是点击前的页面，第二张(AFTER)是点击后跳转的页面。"
         "请找出从 AFTER 返回 BEFORE 的方法。"
     )
+    if target_label:
+        context_text += f"\n\n目标页面：BEFORE 是「{target_label}」，我们需要回到这个页面。"
     if nav_context:
         context_text += f"\n\n导航上下文：用户通过「{nav_context}」从 BEFORE 到达了 AFTER。"
+    if after_elements is not None:
+        elem_ctx = _format_elements_context(after_elements)
+        if elem_ctx:
+            context_text += f"\n\n{elem_ctx}"
 
-    # Append failed attempt history as correction feedback
     if failed_attempts:
         context_text += "\n\n之前的尝试均失败，请重新分析并给出不同的方案："
         for i, attempt in enumerate(failed_attempts, 1):
             context_text += f"\n- 第{i}次：坐标({attempt.get('x', '?')}, {attempt.get('y', '?')})，{attempt.get('reason', '未知原因')}"
-
-    # Save debug context
-    if debug_dir:
-        import json as _json
-        _json.dump({
-            "prompt": context_text,
-            "nav_context": nav_context,
-            "failed_attempts": failed_attempts or [],
-        }, (debug_dir / "llm_context.json").open("w"), ensure_ascii=False, indent=2)
-        print(f"    [LLM] 调试: {debug_dir}/llm_before.png, llm_after.png, llm_context.json")
 
     messages = [
         SystemMessage(content=BACK_PROMPT),
@@ -326,10 +355,12 @@ def _try_tap(
     tap_fn: Callable[[], tuple | None],
     log: list[dict],
     save_path: Path | None = None,
+    tap_xy: tuple[float, float] | None = None,
 ) -> tuple[float, float, bytes] | None:
     """Execute one tap, check if page changed.
 
     tap_fn: performs the tap, returns (lx, ly, response, ...) or None if can't tap.
+    tap_xy: normalized (0-1000) coordinates for visualization.
     Returns (lx, ly, after_bytes) if page changed, None otherwise.
     """
     coords = tap_fn()
@@ -337,12 +368,15 @@ def _try_tap(
         return None
 
     lx, ly = coords[0], coords[1]
+    base_entry = {"strategy": strategy, "coords": [round(lx), round(ly)]}
+    if tap_xy is not None:
+        base_entry["tap_xy"] = [round(tap_xy[0]), round(tap_xy[1])]
+
     tap_response = coords[2] if len(coords) > 2 else ""
     tap_failed = tap_response and ("failed" in tap_response.lower() or "interrupted" in tap_response.lower())
     if tap_failed:
         print(f"    ↩ [{strategy}] ({lx:.0f},{ly:.0f}) → tap 失败: {tap_response}")
-        log.append({"strategy": strategy, "coords": [round(lx), round(ly)],
-                    "result": f"tap 失败: {tap_response}",
+        log.append({**base_entry, "result": f"tap 失败: {tap_response}",
                     "success": False, "screenshot": ""})
         return None
 
@@ -353,21 +387,17 @@ def _try_tap(
     if before_bytes and after_bytes:
         unchanged, score = comp.no_change_score(before_bytes, after_bytes)
         if unchanged:
-            # edge_iou 不够敏感（如关闭弹窗），用 pixel diff 再验
             diff_ratio = _pixel_diff_ratio(before_bytes, after_bytes)
             if diff_ratio < _PIXEL_DIFF_THRESHOLD:
                 print(f"    ↩ [{strategy}] ({lx:.0f},{ly:.0f}) → 未变化 (pixel_diff={diff_ratio:.4f})")
-                log.append({"strategy": strategy, "coords": [round(lx), round(ly)],
-                            "result": "未变化", "score": round(score, 3),
+                log.append({**base_entry, "result": "未变化", "score": round(score, 3),
                             "success": False, "screenshot": ""})
                 return None
-            # pixel diff 检测到变化，edge_iou 漏判，交给上层 _match_stack 判断
             print(f"    ↩ [{strategy}] ({lx:.0f},{ly:.0f}) → 已变化 (pixel={diff_ratio:.4f}, edge={score:.3f})")
 
     shot_str = save_if_changed(after_bytes, save_path)
     print(f"    ↩ [{strategy}] ({lx:.0f},{ly:.0f}) → 已变化")
-    log.append({"strategy": strategy, "coords": [round(lx), round(ly)],
-                "result": "已变化", "screenshot": shot_str})
+    log.append({**base_entry, "result": "已变化", "screenshot": shot_str})
     return lx, ly, after_bytes
 
 
@@ -385,6 +415,7 @@ def _execute_strategy(
     *,
     page_hash: str = "",
     round_num: int = 0,
+    target_label: str = "",
 ) -> tuple[float, float, bytes] | None:
     """Execute one strategy with optional YOLO fallback.
 
@@ -404,7 +435,8 @@ def _execute_strategy(
         # Primary: fixed back tap
         save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
         result = _try_tap(client, screenshot, before_bytes, "fixed",
-                          lambda: tap_back(client), log, save_path)
+                          lambda: tap_back(client), log, save_path,
+                          tap_xy=BACK_TAP_CENTER)
         if result is not None:
             return result
 
@@ -415,7 +447,8 @@ def _execute_strategy(
                        page_hash=page_hash, round_num=round_num, strategy="fixed+YOLO")
             save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
             result = _try_tap(client, screenshot, before_bytes, "fixed+YOLO",
-                              lambda: _tap_yolo_point(yolo_point), log, save_path)
+                              lambda: _tap_yolo_point(yolo_point), log, save_path,
+                              tap_xy=yolo_point)
             if result is not None:
                 return result
         else:
@@ -425,27 +458,34 @@ def _execute_strategy(
 
     # LLM strategies: "LLM_1", "LLM_2", "LLM_3"
     llm_action = infer_back_action(initial_bytes, current_bytes, nav_context=nav_context,
-                                    debug_dir=out_dir,
+                                    target_label=target_label,
                                     failed_attempts=llm_failed_attempts)
     if llm_action is None:
         log.append({"strategy": strategy, "result": "未能识别返回动作",
                     "success": False, "screenshot": "",
+                    "llm_context": nav_context,
+                    "llm_failed_attempts": list(llm_failed_attempts or []),
                     **_llm_log_entry(None, "can_go_back=False 或坐标越界")})
         return None
 
     # Primary: tap LLM coords
+    llm_xy = (llm_action.back_x, llm_action.back_y)
     llm_result = tap_llm_back(client, llm_action)
     if llm_result is not None:
         save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
         result = _try_tap(client, screenshot, before_bytes, strategy,
-                          lambda: llm_result, log, save_path)
+                          lambda: llm_result, log, save_path,
+                          tap_xy=llm_xy)
+        log[-1].update(_llm_log_entry(llm_action))
         if result is not None:
-            log[-1].update(_llm_log_entry(llm_action))
             return result
     else:
         bx, by = llm_action.back_x, llm_action.back_y
         log.append({"strategy": strategy, "coords": [round(bx), round(by)],
+                    "tap_xy": [round(bx), round(by)],
                     "result": "无效坐标", "success": False, "screenshot": "",
+                    "llm_context": nav_context,
+                    "llm_failed_attempts": list(llm_failed_attempts or []),
                     **_llm_log_entry(llm_action)})
 
     # Fallback: YOLO near LLM coords
@@ -455,14 +495,17 @@ def _execute_strategy(
                    page_hash=page_hash, round_num=round_num, strategy=f"{strategy}+YOLO")
         save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
         result = _try_tap(client, screenshot, before_bytes, f"{strategy}+YOLO",
-                          lambda: _tap_yolo_point(yolo_point), log, save_path)
+                          lambda: _tap_yolo_point(yolo_point), log, save_path,
+                          tap_xy=yolo_point)
         if result is not None:
             log[-1].update(_llm_log_entry(llm_action))
             return result
     else:
         log.append({"strategy": f"{strategy}+YOLO", "result": "LLM坐标附近无YOLO检测结果",
                     "success": False, "screenshot": "",
-                    **_llm_log_entry(llm_action)})
+                    **_llm_log_entry(llm_action),
+                    "llm_context": nav_context,
+                    "llm_failed_attempts": list(llm_failed_attempts or [])})
 
     return None
 
@@ -475,6 +518,7 @@ def return_to_initial(
     out_dir: Path | None = None,
     tap_index: int = 0,
     nav_context: str = "",
+    target_label: str = "",
 ) -> tuple[bool, list[dict]]:
     """Navigate back to the initial page (top of nav_stack).
 
@@ -505,6 +549,7 @@ def return_to_initial(
     consecutive_unknown = 0
     llm_failed_attempts: list[dict] = []
 
+    round_num = 0
     for round_num in range(1, max_rounds + 1):
         tried = _get_tried(current_bytes)
         ph = _page_hash(current_bytes)
@@ -517,18 +562,43 @@ def return_to_initial(
 
         _nav_print(f"尝试 {strategy}", page_hash=ph, round_num=round_num)
 
+        # Save before screenshot for trace visualization
+        if out_dir:
+            before_path = out_dir / f"R{round_num}_before_{ph}.png"
+            before_path.write_bytes(current_bytes)
+
+        log_len_before = len(log)
         tap_result = _execute_strategy(
             client, screenshot, current_bytes, initial_bytes,
             strategy, nav_context, out_dir, tap_index, log,
             llm_failed_attempts=llm_failed_attempts,
             page_hash=ph, round_num=round_num,
+            target_label=target_label,
         )
         tried.add(strategy)
 
+        # Tag all new log entries from this round
+        for e in log[log_len_before:]:
+            e["page_from"] = ph
+            e["round_num"] = round_num
+
         if tap_result is None:
+            # Track failed LLM actions even when page didn't change
+            if strategy.startswith("LLM"):
+                last_log = next(
+                    (e for e in reversed(log[log_len_before:])
+                     if e.get("llm_x", -1) >= 0), {}
+                )
+                llm_failed_attempts.append({
+                    "x": last_log.get("llm_x", -1),
+                    "y": last_log.get("llm_y", -1),
+                    "reason": "点击后页面未发生变化",
+                    "method": last_log.get("llm_method", ""),
+                })
             continue  # strategy failed, try next
 
         _, _, back_bytes = tap_result
+        back_ph = _page_hash(back_bytes)
 
         # Assess where we ended up
         matched_level = _match_stack(id_comp, nav_stack, back_bytes)
@@ -543,6 +613,7 @@ def return_to_initial(
                 log[-1]["result"] = level_desc
                 log[-1]["score"] = round(sim, 3)
                 log[-1]["success"] = is_initial
+                log[-1]["page_to"] = back_ph
             if not is_initial:
                 _navigate_forward(client, nav_stack, matched_level, screenshot,
                                   log=log, tap_index=tap_index, out_dir=out_dir)
@@ -572,6 +643,7 @@ def return_to_initial(
         if log:
             log[-1]["result"] = f"{page_label} (initial: {sim_to_initial:.3f}, stack_max: {max_sim:.3f})"
             log[-1]["score"] = round(sim_to_initial, 3)
+            log[-1]["page_to"] = back_ph
 
         if not is_known and consecutive_unknown >= 5:
             _nav_print("连续5次落入全新未知页面，放弃",
@@ -582,10 +654,9 @@ def return_to_initial(
         last_log = log[-1] if log else {}
         last_strategy = last_log.get("strategy", "")
         if last_strategy.startswith("LLM"):
-            coords = last_log.get("coords") or [last_log.get("llm_x", -1), last_log.get("llm_y", -1)]
             llm_failed_attempts.append({
-                "x": coords[0] if isinstance(coords, list) else -1,
-                "y": coords[1] if isinstance(coords, list) else -1,
+                "x": last_log.get("llm_x", -1),  # normalized 0-1000, matches LLM coord space
+                "y": last_log.get("llm_y", -1),
                 "reason": f"跳转到了{page_label}，未回到目标页面",
                 "method": last_log.get("llm_method", ""),
             })
@@ -593,7 +664,7 @@ def return_to_initial(
         current_bytes = back_bytes
 
     _nav_print("所有回退策略均未成功返回初始页面",
-               page_hash=_page_hash(current_bytes), round_num=max_rounds)
+               page_hash=_page_hash(current_bytes), round_num=round_num)
     return False, log
 
 
