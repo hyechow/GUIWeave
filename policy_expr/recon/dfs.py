@@ -283,6 +283,11 @@ def _dfs_recursive(
         _tap_close_xy(phone, close_xy)
         return None, {"is_new": False, "phase": "miniprogram"}
 
+    # ── Overlay detection (前置于去重，命中则强制新页面) ──
+    _overlay = _check_overlay(nav_stack, png_bytes)
+    if _overlay:
+        print(f"  [overlay] 检测到 {_overlay.type}  bbox={_overlay.bbox}  → 跳过去重，强制新页面")
+
     # ── Dedup BEFORE LLM parse (saves LLM call for duplicate pages) ──
     from policy_expr.recon.cascade_matcher import get_matcher
     candidate_emb = get_matcher().embed_visual(png_bytes)
@@ -298,6 +303,8 @@ def _dfs_recursive(
     # ── Dedup result + terminal output ──
     n = dedup_result.library_size
     is_dup = dedup_result.is_duplicate
+    if _overlay:
+        is_dup = False  # 强制新页面，覆盖去重结论
     _print_dedup(n, dedup_result)
 
     if is_dup:
@@ -336,6 +343,10 @@ def _dfs_recursive(
         "page_name": page_name,
         "fingerprint": fingerprint,
     }
+    if _overlay:
+        dedup_info["overlay_type"] = _overlay.type
+        if _overlay.bbox:
+            dedup_info["overlay_bbox"] = list(_overlay.bbox)
 
     out_dir = app_log_dir / page_name
     node = DfsPageNode(
@@ -345,7 +356,14 @@ def _dfs_recursive(
         out_dir=out_dir,
     )
 
-    # Probe (skip if max_depth reached)
+    # Probe (skip if max_depth reached or overlay detected)
+    if _overlay:
+        print(f"  [overlay] {_overlay.type} 页面，跳过子元素探测")
+        tracer.record_transition(_src, _tap, page_name, f"overlay_{_overlay.type}")
+        tracer.save(trace_path)
+        _update_recon_log(app_log_dir, page_name, "initial")
+        return node, dedup_info
+
     if max_depth == 0:
         print(f"  [max_depth=0] 跳过探测，仅记录页面")
         tracer.record_transition(_src, _tap, page_name, "depth_limit")
@@ -674,6 +692,27 @@ def compute_pairwise_similarity(
 # ---------------------------------------------------------------------------
 # Dedup terminal output
 # ---------------------------------------------------------------------------
+
+def _check_overlay(nav_stack, png_bytes: bytes):
+    """Detect popup/keyboard overlay against the previous nav_stack frame.
+
+    Returns OverlayResult if an overlay is found, None otherwise.
+    """
+    import io
+    import numpy as np
+    from PIL import Image as _PIL
+    from policy_expr.overlay_detect import detect_overlay
+
+    if not nav_stack:
+        return None
+    before_bytes = nav_stack[-1][0]
+
+    def _to_rgb(b: bytes) -> np.ndarray:
+        return np.array(_PIL.open(io.BytesIO(b)).convert("RGB"))
+
+    result = detect_overlay(_to_rgb(before_bytes), _to_rgb(png_bytes))
+    return result if result.type != "none" else None
+
 
 def _print_dedup(n: int, result) -> None:
     """Print dedup verdict to terminal."""
