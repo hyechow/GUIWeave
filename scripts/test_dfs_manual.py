@@ -100,10 +100,22 @@ def annotate(png: bytes, items: list[tuple[float, float, str, str]],
 
 
 def show_image(png: bytes, items: list[tuple[float, float, str, str]],
-               depth: int, visited: set[int] | None = None) -> Path:
-    annotated = annotate(png, items, visited)
+               depth: int, visited: set[int] | None = None,
+               zoom_bbox: tuple[int, int, int, int] | None = None) -> Path:
+    annotated_bytes = annotate(png, items, visited)
+    if zoom_bbox:
+        # When an overlay is active, crop+pad around the overlay so circles are visible
+        full = Image.open(io.BytesIO(annotated_bytes))
+        x1, y1, x2, y2 = zoom_bbox
+        pad = 60
+        W, H = full.size
+        region = (max(0, x1 - pad), max(0, y1 - pad),
+                  min(W, x2 + pad), min(H, y2 + pad))
+        annotated_bytes = io.BytesIO()
+        full.crop(region).save(annotated_bytes, format="PNG")
+        annotated_bytes = annotated_bytes.getvalue()
     out = Path(tempfile.gettempdir()) / f"dfs_d{depth}_{datetime.now():%H%M%S}.png"
-    out.write_bytes(annotated)
+    out.write_bytes(annotated_bytes)
     subprocess.Popen(["open", str(out)])
     return out
 
@@ -209,7 +221,27 @@ def main() -> None:
             (page_dir / "initial.png").write_bytes(png_bytes)
 
             # Parse tappable elements
-            items = parse_items(png_bytes, parser)
+            if _overlay and _overlay.bbox:
+                # 裁剪到弹窗区域后再解析，避免 LLM 把背景元素误识别为弹窗内容
+                from PIL import Image as _PIL
+                ox1, oy1, ox2, oy2 = _overlay.bbox
+                _full_img = _PIL.open(io.BytesIO(png_bytes))
+                _W, _H = _full_img.size
+                _crop = _full_img.crop((ox1, oy1, ox2, oy2))
+                _buf = io.BytesIO(); _crop.save(_buf, format="PNG")
+                items = parse_items(_buf.getvalue(), parser)
+                # crop-relative 0-1000 → full-image 0-1000
+                items = [
+                    (
+                        (ox1 + ax / 1000 * (ox2 - ox1)) / _W * 1000,
+                        (oy1 + ay / 1000 * (oy2 - oy1)) / _H * 1000,
+                        label, etype,
+                    )
+                    for ax, ay, label, etype in items
+                ]
+                print(f"{prefix}  [overlay] 裁剪解析，共 {len(items)} 个元素")
+            else:
+                items = parse_items(png_bytes, parser)
             if not items:
                 print(f"{prefix}  无可交互元素")
                 return
@@ -217,7 +249,8 @@ def main() -> None:
             visited: set[int] = set()
 
             while True:
-                img_path = show_image(png_bytes, items, depth, visited)
+                img_path = show_image(png_bytes, items, depth, visited,
+                                      zoom_bbox=_overlay.bbox if _overlay else None)
                 print(f"{prefix}  标注图: {img_path}")
                 print_items(items, visited)
 

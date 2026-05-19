@@ -79,6 +79,10 @@ def _find_popup_bbox(
     similar_ratio = float(np.sum(diff_gray < 20) / total_pixels)
     changed_ratio = float(np.sum(diff_gray > 30) / total_pixels)
 
+    # Large-scale change → page navigation, not an overlay appearing
+    if changed_ratio > 0.15:
+        return None
+
     gray1 = np.mean(img1, axis=2)
     gray2 = np.mean(img2, axis=2)
     darker_ratio = float(np.sum((gray2 - gray1) < -5) / total_pixels)
