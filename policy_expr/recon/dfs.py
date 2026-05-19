@@ -703,9 +703,9 @@ def _check_overlay(nav_stack, png_bytes: bytes):
     from PIL import Image as _PIL
     from policy_expr.overlay_detect import detect_overlay
 
-    if not nav_stack:
+    if not nav_stack or len(nav_stack) < 2:
         return None
-    before_bytes = nav_stack[-1][0]
+    before_bytes = nav_stack[-2][0]  # parent page before tap
 
     def _to_rgb(b: bytes) -> np.ndarray:
         return np.array(_PIL.open(io.BytesIO(b)).convert("RGB"))
