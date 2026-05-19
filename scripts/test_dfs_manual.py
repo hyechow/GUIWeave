@@ -166,11 +166,25 @@ def main() -> None:
             prefix = "  " * depth
             png_bytes = screenshot()
 
+            # ── Overlay detection (前置于去重，命中则强制新页面) ──
+            _overlay = None
+            if len(nav_stack) >= 2:
+                import numpy as np
+                from PIL import Image as _PIL
+                from policy_expr.overlay_detect import detect_overlay
+                _before = nav_stack[-2][0]
+                def _b2rgb(b: bytes):
+                    return np.array(_PIL.open(io.BytesIO(b)).convert("RGB"))
+                _r = detect_overlay(_b2rgb(_before), _b2rgb(png_bytes))
+                if _r.type != "none":
+                    _overlay = _r
+                    print(f"\n{prefix}[L{depth}] 🔲 overlay={_overlay.type}  bbox={_overlay.bbox}  → 强制新页面")
+
             # Dedup check
             candidate_emb = get_matcher().embed_visual(png_bytes)
             dedup_result = dedup.check(png_bytes, precomputed=candidate_emb)
 
-            if dedup_result.is_duplicate:
+            if dedup_result.is_duplicate and not _overlay:
                 matched = dedup_result.matched_name or "?"
                 print(f"\n{prefix}[L{depth}] ⊘ 已访问过的页面「{matched}」"
                       f" (phase={dedup_result.phase}, vis={dedup_result.best_visual_sim:.3f})")
