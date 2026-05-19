@@ -165,8 +165,11 @@ def run_export(app: str, page: str | None = None) -> None:
 
     Reads initial_result.json + recon_result.json per page, runs one LLM call,
     writes page_meta.json + knowledge.md locally and syncs to knowledge/{app}/.
+    Also generates knowledge for leaf pages discovered but not probed.
     """
-    from policy_expr.self_learning.knowledge import build_export, save_export
+    from policy_expr.self_learning.knowledge import (
+        build_export, build_leaf_export, collect_leaf_pages, save_export,
+    )
 
     app_log_dir = LOG_ROOT / app
     if page:
@@ -177,7 +180,7 @@ def run_export(app: str, page: str | None = None) -> None:
             if p.is_dir() and (p / "recon_result.json").exists()
         )
 
-    print(f"\n--- 导出页面知识: {app} ({len(page_dirs)} 个页面) ---")
+    print(f"\n--- 导出页面知识: {app} ({len(page_dirs)} 个已探测页面) ---")
     for page_dir in page_dirs:
         print(f"\n  [{page_dir.name}]")
         try:
@@ -186,6 +189,50 @@ def run_export(app: str, page: str | None = None) -> None:
             print(f"  ✓ {exported.meta.page_title} ({exported.meta.page_type})")
         except Exception as e:
             print(f"  ✗ {e}")
+
+    # Leaf pages: discovered but not probed (depth_limit)
+    if not page:
+        knowledge_dir = KNOWLEDGE_ROOT / app
+        knowledge_dir.mkdir(parents=True, exist_ok=True)
+
+        # Clean up stale knowledge files (by raw name or matching description)
+        leaf_descriptions: list[str] = []
+        leaf_raw_names: set[str] = set()
+        for _pn, _tap in collect_leaf_pages(app_log_dir):
+            _ident = (_tap.get("identity") or {})
+            _rn = _ident.get("page_name", "")
+            _desc = _ident.get("description", "")
+            if _rn:
+                leaf_raw_names.add(_rn.replace("/", "_").replace(" ", "_"))
+            if _desc:
+                leaf_descriptions.append(_desc[:40])
+        for stale in knowledge_dir.glob("*.md"):
+            stem = stale.stem
+            if stem in leaf_raw_names:
+                stale.unlink()
+                continue
+            content = stale.read_text(encoding="utf-8")
+            for desc_snippet in leaf_descriptions:
+                if desc_snippet in content:
+                    stale.unlink()
+                    break
+
+        app = knowledge_dir.name
+        leaves = collect_leaf_pages(app_log_dir)
+        if leaves:
+            print(f"\n--- 叶子页 ({len(leaves)} 个未探测页面) ---")
+            for parent_name, tap in leaves:
+                try:
+                    result = build_leaf_export(parent_name, tap)
+                    # Leaf pages don't have their own directory; save directly to knowledge_dir
+                    skill_text = result.knowledge.to_skill(app, result.meta.parent_page)
+                    safe_title = result.meta.page_title.replace("/", "_").replace(" ", "_")
+                    (knowledge_dir / f"{safe_title}.md").write_text(skill_text, encoding="utf-8")
+                    print(f"  ✓ {result.meta.page_title} ({result.meta.page_type}) ← {parent_name}")
+                except Exception as e:
+                    print(f"  ✗ {e}")
+
+    print(f"\n  输出目录: {KNOWLEDGE_ROOT / app}")
 
 
 # ── CLI ──────────────────────────────────────────────────

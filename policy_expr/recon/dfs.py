@@ -356,13 +356,31 @@ def _dfs_recursive(
         out_dir=out_dir,
     )
 
-    # Probe (skip if max_depth reached or overlay detected)
-    if _overlay:
-        print(f"  [overlay] {_overlay.type} 页面，跳过子元素探测")
-        tracer.record_transition(_src, _tap, page_name, f"overlay_{_overlay.type}")
-        tracer.save(trace_path)
-        _update_recon_log(app_log_dir, page_name, "initial")
-        return node, dedup_info
+    # Probe (skip if max_depth reached)
+    if _overlay and _overlay.bbox:
+        # Overlay detected: re-parse with cropped region so LLM only sees overlay elements
+        import io
+        import numpy as np
+        from PIL import Image as _PIL
+        from policy_expr.recon.page_parser import classify_elements
+        ox1, oy1, ox2, oy2 = _overlay.bbox
+        _full_img = _PIL.open(io.BytesIO(png_bytes))
+        _W, _H = _full_img.size
+        _crop = _full_img.crop((ox1, oy1, ox2, oy2))
+        _buf = io.BytesIO(); _crop.save(_buf, format="PNG")
+        _crop_areas = classify_elements(PageParser().parse_screen(_buf.getvalue()))
+        _crop_areas = [a for a in _crop_areas if a.element_type != "back_button"]
+        # Convert crop-relative 0-1000 coords to full-image 0-1000
+        for a in _crop_areas:
+            ax, ay = a.center_xy
+            a.center_xy = [
+                round((ox1 + ax / 1000 * (ox2 - ox1)) / _W * 1000, 1),
+                round((oy1 + ay / 1000 * (oy2 - oy1)) / _H * 1000, 1),
+            ]
+        # Replace knowledge areas with overlay-parsed areas
+        knowledge.areas = _crop_areas
+        knowledge.page.interactive_elements = _crop_areas
+        print(f"  [overlay] {_overlay.type} 裁剪解析，共 {len(_crop_areas)} 个元素")
 
     if max_depth == 0:
         print(f"  [max_depth=0] 跳过探测，仅记录页面")

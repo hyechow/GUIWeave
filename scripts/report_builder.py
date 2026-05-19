@@ -640,6 +640,74 @@ class ReconReportBuilder:
                 error_annotated_url=error_annotated_url,
             ))
 
+        # Leaf pages: discovered via parent taps but not probed (depth_limit)
+        existing_names = {p.name for p in pages}
+        for pd in page_dirs:
+            result_path = pd / "recon_result.json"
+            if not result_path.exists():
+                continue
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            for tap in result.get("taps", []):
+                if tap.get("child_status") != "new_depth_limit":
+                    continue
+                identity = tap.get("identity") or {}
+                leaf_name = identity.get("page_name", "")
+                if not leaf_name or leaf_name in existing_names:
+                    continue
+                existing_names.add(leaf_name)
+
+                tap_shot = Path(tap.get("screenshot", ""))
+                ann_url = ""
+                if tap_shot.is_file():
+                    try:
+                        ann_url = str(tap_shot.relative_to(log_dir))
+                    except ValueError:
+                        pass
+
+                leaf_description = identity.get("description", "")
+                leaf_title = leaf_name
+                leaf_page_type = ""
+
+                # Load title/type from exported knowledge
+                knowledge_dir = log_dir.parent.parent.parent / "knowledge" / app_name
+                leaf_knowledge = ""
+                if knowledge_dir.exists():
+                    for kfile in knowledge_dir.glob("*.md"):
+                        content = kfile.read_text(encoding="utf-8")
+                        if leaf_name in content or (leaf_description and leaf_description[:30] in content):
+                            leaf_knowledge = content
+                            if content.startswith("---"):
+                                fm_end = content.find("---", 3)
+                                if fm_end > 0:
+                                    for fm_line in content[3:fm_end].splitlines():
+                                        if fm_line.startswith("page_title:"):
+                                            leaf_title = fm_line.split(":", 1)[1].strip()
+                                        elif fm_line.startswith("page_type:"):
+                                            leaf_page_type = fm_line.split(":", 1)[1].strip()
+                            break
+
+                if not leaf_knowledge:
+                    parent_name = result.get("parent_page", "")
+                    leaf_knowledge = (
+                        f"---\napp: {app_name}\npage_title: {leaf_title}\n"
+                        f"page_type: {leaf_page_type}\nparent_page: {parent_name}\n---\n\n"
+                        f"# {leaf_title}\n\n{leaf_description}"
+                    )
+
+                pages.append(ReconPageInfo(
+                    name=leaf_name,
+                    title=leaf_title,
+                    page_type="leaf",
+                    description=leaf_description,
+                    elements_count=0,
+                    signature="",
+                    annotated_url=ann_url,
+                    taps=[],
+                    flows=[],
+                    knowledge=leaf_knowledge,
+                    error=None,
+                ))
+
         data = AppReconData(
             app_name=app_name,
             pages=pages,
@@ -732,7 +800,9 @@ PAGE_TYPE_LABELS: dict[str, str] = {
     "detail": "详情",
     "form": "表单",
     "modal": "弹窗",
+    "home": "首页",
     "other": "其他",
+    "leaf": "叶子",
 }
 
 RECON_HTML_TEMPLATE = """\
@@ -854,6 +924,9 @@ RECON_HTML_TEMPLATE = """\
   .type-badge {{
     font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500;
     background: #dbeafe; color: #1d4ed8;
+  }}
+  .type-badge-leaf {{
+    background: #fef3c7 !important; color: #92400e !important;
   }}
   .page-sig {{ font-size: 11px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .via-tap {{ font-size: 11px; color: #7c3aed; background: #ede9fe; padding: 2px 7px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; }}
@@ -1263,7 +1336,7 @@ def _render_page_card_html(node: NavNode, path: list[str]) -> str:
           {breadcrumb_html}
           <div class="page-card-header">
             <h2>{page.title}</h2>
-            {f'<span class="type-badge">{type_label}</span>' if type_label else ''}
+            {f'<span class="type-badge{" type-badge-leaf" if page.page_type == "leaf" else ""}">{type_label}</span>' if type_label else ''}
             {via_html}
           </div>
           {'<div class="page-card-desc">' + page.description + '</div>' if page.description else ''}
