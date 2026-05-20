@@ -32,6 +32,7 @@ from policy_expr.schemas import (
     Observation,
     PolicyContext,
     PolicyTurn,
+    action_label,
 )
 from policy_expr.visualize import print_decision
 from policy_expr.hud import AgentHUD
@@ -214,7 +215,7 @@ def run_once(
         observation = perception.observe()
         calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
-        if hud: hud.update("Turn 1 — 监督决策中…")
+        if hud: hud.update(f"Turn 1 — 使用 {supervisor.name} supervisor 决策中…")
         print("监督决策中...")
         sv_step = supervisor.step(observation, context.goal, context.turns)
         print(f"监督者: {sv_step.summary}")
@@ -231,7 +232,7 @@ def run_once(
             print_decision(action_decision, observation.png_bytes, log_dir / "structured_output_result.png")
             if hud:
                 a = action_decision.action
-                hud.update(f"Turn 1 — [{a.action_type}] {a.description}")
+                hud.update(f"Turn 1 — [{action_label(a.action_type)}] {a.description}")
             executed = ActionExecutor(phone, calibrator).execute(action_decision, app_name=sv_step.app_name or "")
 
         turn = PolicyTurn(
@@ -324,7 +325,7 @@ def run_agent_loop(
             observation = perception.observe()
             executor.calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
-            if hud: hud.update(f"Turn {turn_no} — 监督决策中…")
+            if hud: hud.update(f"Turn {turn_no} — 使用 {supervisor.name} supervisor 决策中…")
             print("监督决策中...")
             sv_step = supervisor.step(observation, context.goal, context.turns)
             print(f"监督者: {sv_step.summary}")
@@ -395,7 +396,7 @@ def run_agent_loop(
                 else:
                     if hud:
                         a = action_decision.action
-                        hud.update(f"Turn {turn_no} — [{a.action_type}] {a.description}")
+                        hud.update(f"Turn {turn_no} — [{action_label(a.action_type)}] {a.description}")
                     executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
 
             turn = PolicyTurn(

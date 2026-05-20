@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 import time
 
-from policy_expr.utils import paste_text
+from policy_expr.utils import clear_text_field, paste_text, press_enter
 from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from Quartz import (
     CGEventCreateMouseEvent,
@@ -78,6 +78,14 @@ class ActionExecutor:
             print(f"输入文字: {action.text!r}")
             paste_text(action.text)
             print("结果: 已通过剪贴板粘贴输入")
+
+        elif action.action_type == "clear_text":
+            print("清空当前输入框")
+            clear_text_field()
+
+        elif action.action_type == "press_enter":
+            print("按回车确认输入")
+            press_enter()
 
         elif action.action_type == "scroll" and action.direction:
             self._scroll(action)

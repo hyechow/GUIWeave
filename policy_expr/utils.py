@@ -3,6 +3,7 @@ import base64
 import io
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -75,7 +76,43 @@ def paste_text(text: str) -> None:
     subprocess.run(["pbcopy"], input=text.encode(), check=True)
     subprocess.run([
         "osascript", "-e",
+        'tell application "iPhone Mirroring" to activate',
+    ], capture_output=True)
+    time.sleep(0.3)
+    subprocess.run([
+        "osascript", "-e",
         'tell application "System Events" to keystroke "v" using command down'
+    ], check=True)
+
+
+def clear_text_field() -> None:
+    """Select all (Cmd+A) then delete to clear the focused text field."""
+    subprocess.run([
+        "osascript", "-e",
+        'tell application "iPhone Mirroring" to activate',
+    ], capture_output=True)
+    time.sleep(0.3)
+    subprocess.run([
+        "osascript", "-e",
+        'tell application "System Events" to keystroke "a" using command down'
+    ], check=True)
+    time.sleep(0.1)
+    subprocess.run([
+        "osascript", "-e",
+        'tell application "System Events" to key code 51'
+    ], check=True)
+
+
+def press_enter() -> None:
+    """Send Return key to the focused field (e.g. submit search)."""
+    subprocess.run([
+        "osascript", "-e",
+        'tell application "iPhone Mirroring" to activate',
+    ], capture_output=True)
+    time.sleep(0.3)
+    subprocess.run([
+        "osascript", "-e",
+        'tell application "System Events" to key code 36'
     ], check=True)
 
 

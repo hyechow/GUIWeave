@@ -6,7 +6,21 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
-ActionType = Literal["tap", "click", "type", "scroll", "home", "stop"]
+ActionType = Literal["tap", "type", "clear_text", "press_enter", "scroll", "home", "stop"]
+
+_ACTION_TYPE_LABELS: dict[str, str] = {
+    "tap": "点击",
+    "type": "输入",
+    "clear_text": "清空",
+    "press_enter": "回车",
+    "scroll": "滚动",
+    "home": "主屏",
+    "stop": "停止",
+}
+
+
+def action_label(action_type: str) -> str:
+    return _ACTION_TYPE_LABELS.get(action_type, action_type)
 TaskType = Literal["action", "analysis"]
 MilestoneKind = Literal["navigation", "filter", "collection", "action", "verification"]
 CompletionStrategy = Literal[
@@ -61,7 +75,7 @@ class Action(BaseModel):
         return data
 
     action_type: ActionType = Field(
-        description="操作类型：tap（纯点击）、type（点击输入框并输入文字）、scroll（滚动）、home（返回主屏幕）之一"
+        description="操作类型：tap（纯点击）、type（点击输入框并输入文字）、press_enter（按回车提交/发送）、clear_text（清空输入框）、scroll（滚动）、home（返回主屏幕）、stop（停止）之一"
     )
     x: Optional[float] = Field(
         default=None,
