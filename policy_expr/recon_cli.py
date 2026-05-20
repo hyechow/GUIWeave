@@ -161,7 +161,7 @@ def _parse_offline(paths: list[Path]) -> None:
         viz_result(knowledge, png_bytes, img_path.stem, out_dir)
 
 
-def run_export(app: str, page: str | None = None) -> None:
+def run_export(app: str, page: str | None = None, enhanced: bool = False) -> None:
     """Export page knowledge for all (or one specific) pages of an app.
 
     Reads initial_result.json + recon_result.json per page, runs one LLM call,
@@ -185,7 +185,7 @@ def run_export(app: str, page: str | None = None) -> None:
     for page_dir in page_dirs:
         print(f"\n  [{page_dir.name}]")
         try:
-            exported = build_export(page_dir)
+            exported = build_export(page_dir, mode="enhanced" if enhanced else "strict")
             save_export(exported, page_dir, KNOWLEDGE_ROOT / app)
             print(f"  ✓ {exported.meta.page_title} ({exported.meta.page_type})")
         except Exception as e:
@@ -265,6 +265,7 @@ def main() -> None:
     ap.add_argument("--target", type=str, metavar="DIR", help="add=父页面目录名, update=要更新的页面目录名")
     ap.add_argument("--export", type=str, metavar="APP", help="导出指定应用的页面知识（page_meta.json + knowledge.md）")
     ap.add_argument("--page", type=str, metavar="DIR", help="--export 时只导出指定页面目录")
+    ap.add_argument("--enhanced", action="store_true", help="--export 时启用增强模式：补充视觉检测到的未探测元素")
     ap.add_argument("--debug-parse", nargs="*", type=Path, metavar="PATH", help="[调试] 解析图片，无参数则在线截图")
     args = ap.parse_args()
 
@@ -272,7 +273,7 @@ def main() -> None:
         run_app(args.app, depth=args.depth, sample=args.sample,
                 mode=args.mode, target=args.target)
     elif args.export:
-        run_export(args.export, page=args.page)
+        run_export(args.export, page=args.page, enhanced=args.enhanced)
     elif args.debug_parse is not None:
         run_parse(args.debug_parse)
     else:

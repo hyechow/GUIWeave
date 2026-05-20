@@ -266,6 +266,7 @@ class AppReconData:
     pages: list[ReconPageInfo] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     trace: list[dict] | None = None  # from trace.json if available
+    dup_warnings: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -643,6 +644,8 @@ class ReconReportBuilder:
 
         # Leaf pages: discovered via parent taps but not probed (depth_limit)
         existing_names = {p.name for p in pages}
+        probed_titles = {p.title for p in pages}  # for dedup by title
+        dup_warnings: list[dict] = []  # leaf pages skipped due to title match
 
         # Load leaf title mapping (raw_name → {title, type}) if exported
         leaf_meta_path = log_dir / "leaf_meta.json"
@@ -686,6 +689,17 @@ class ReconReportBuilder:
                 leaf_title = meta_entry.get("title", leaf_name)
                 leaf_type = meta_entry.get("type", "")
 
+                # Skip if same title as a probed page — record as warning
+                if leaf_title in probed_titles:
+                    dup_warnings.append({
+                        "title": leaf_title,
+                        "parent": pd.name,
+                        "label": tap.get("label", ""),
+                        "text_sim": identity.get("text_sim"),
+                        "visual_sim": identity.get("visual_sim"),
+                    })
+                    continue
+
                 # Load knowledge content by matching title to knowledge file
                 safe_title = leaf_title.replace("/", "_").replace(" ", "_")
                 leaf_knowledge = knowledge_files.get(safe_title, "")
@@ -721,6 +735,7 @@ class ReconReportBuilder:
                 "no_change": total_taps - total_navigated,
             },
             trace=trace_data,
+            dup_warnings=dup_warnings,
         )
         return data
 
@@ -841,6 +856,13 @@ RECON_HTML_TEMPLATE = """\
   .sidebar-title {{ font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 0 16px 10px; }}
   .sidebar-stats {{ padding: 14px 16px; margin-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); line-height: 2; }}
   .sidebar-stats strong {{ color: var(--text); }}
+  .sidebar-warnings {{ margin-top: 8px; border-top: 1px solid var(--border); }}
+  .sidebar-warnings-title {{ padding: 10px 16px; font-size: 11px; font-weight: 600; color: #b45309; cursor: pointer; user-select: none; list-style: none; display: flex; align-items: center; gap: 6px; }}
+  .sidebar-warnings-title::before {{ content: "▶"; font-size: 8px; transition: transform 0.15s; }}
+  details.sidebar-warnings[open] .sidebar-warnings-title::before {{ transform: rotate(90deg); }}
+  .warn-item {{ padding: 6px 16px; border-top: 1px solid var(--border); }}
+  .warn-title {{ font-size: 11px; color: var(--text); font-weight: 500; }}
+  .warn-detail {{ font-size: 10px; color: var(--muted); margin-top: 2px; }}
 
   /* ── Nav tree ── */
   .nav-tree, .nav-tree ul {{ list-style: none; margin: 0; padding: 0; }}
@@ -1091,6 +1113,7 @@ RECON_HTML_TEMPLATE = """\
       <span style="color:var(--green)">●</span> <strong>{navigated}</strong> 导航成功<br>
       <span style="color:var(--gray)">●</span> <strong>{no_change}</strong> 无变化
     </div>
+    {warnings_html}
   </nav>
 
   <main class="main">
@@ -1376,9 +1399,36 @@ def generate_recon_html(data: AppReconData) -> str:
 
     pages_html = "".join(_render_page_card_html(root, []) for root in roots)
 
+    # Build warnings HTML
+    warnings_html = ""
+    if data.dup_warnings:
+        items = ""
+        for w in data.dup_warnings:
+            sims = ""
+            if w.get("text_sim") is not None:
+                sims += f' text_sim={w["text_sim"]:.3f}'
+            if w.get("visual_sim") is not None:
+                sims += f' visual_sim={w["visual_sim"]:.3f}'
+            safe_title = w["title"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            safe_parent = w["parent"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            safe_label = w["label"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            items += (
+                f'<div class="warn-item">'
+                f'<div class="warn-title">⊘ {safe_title}</div>'
+                f'<div class="warn-detail">← {safe_parent} · [{safe_label}]{sims}</div>'
+                f'</div>'
+            )
+        warnings_html = (
+            f'<details class="sidebar-warnings">'
+            f'<summary class="sidebar-warnings-title">⚠ {len(data.dup_warnings)} 个重复页</summary>'
+            f'{items}'
+            f'</details>'
+        )
+
     return RECON_HTML_TEMPLATE.format(
         app_name=data.app_name,
         sidebar_items=sidebar_items,
+        warnings_html=warnings_html,
         pages_html=pages_html,
         **data.stats,
     )

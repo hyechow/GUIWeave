@@ -78,7 +78,7 @@ class ExportResult:
 
 # ── LLM prompt ───────────────────────────────────────────
 
-EXPORT_PROMPT = """\
+_EXPORT_COMMON = """\
 你是一个 iPhone 应用页面分析专家。给定一个页面的探测数据，完成以下任务：
 
 ## 输出要求
@@ -101,19 +101,60 @@ EXPORT_PROMPT = """\
 - 通用化，不含具体联系人、消息内容等私有信息
 - 说明页面用途和关键功能区
 
-**operations**：抽象操作列表。核心原则：**label 必须是通用名称，绝对不能出现具体内容**。
+**operations**：抽象操作列表。核心原则：**label 和 function 都必须是通用描述，绝对不能出现具体内容**。
 
-抽象规则：
+通用抽象规则：
 1. **列表行合并**：同类型的多行（聊天、文章、联系人、商品等）合并为一条，label 用通用名如「聊天行」「文章行」「联系人行」
-2. **去除所有具体内容**：联系人名、文章标题、消息正文、账号名、金额等一律替换为通用描述
+2. **去除所有具体内容**：人名、店铺名、商品名、文章标题、消息正文、地名、账号名、金额等一律替换为通用描述
 3. **保留功能性标签**：搜索栏、+号按钮、设置按钮等本身就是通用名称，保持原样
-4. **function 描述实测结果**：有导航实测的标注「进入…」，无导航的描述其交互用途
+"""
+
+EXPORT_PROMPT = _EXPORT_COMMON + """\
+所有元素均经过实测探测。function 规则：
+4. 有导航结果的标注「进入…」，将「实测→」中的具体页面名抽象为通用类型（如实测→「个人中心概览」写为「进入个人中心」）
+5. 无导航的描述其交互用途（如「收藏」「分享」）
 
 示例（错误 → 正确）：
-- ✗ [Mythos 限] → ✓ [文章行]，function：进入文章详情页
-- ✗ [张三] → ✓ [聊天行]，function：进入该联系人的聊天详情
-- ✗ [2024年终总结] → ✓ [文章行]，function：查看文章内容
+- ✗ [Mythos 限] 实测→「…」 → ✓ [文章行]，function：进入文章详情页
+- ✗ [张三] 实测→「…」 → ✓ [聊天行]，function：进入该联系人的聊天详情
+- ✗ [长安网咖] 实测→「…」 → ✓ [店铺行]，function：进入店铺详情页
 """
+
+EXPORT_PROMPT_ENHANCED = _EXPORT_COMMON + """\
+元素数据分为两类：
+- **已探测**（带「实测→」标记）：经过真实点击，有导航结果，可信度高
+- **未探测**（带「未探测（视觉检测）」标记）：仅通过截图识别，无实测导航数据
+
+4. **function 按数据来源区分**：
+  - 已探测元素：标注「进入…」，将具体页面名抽象为通用类型（如实测→「个人中心概览」写为「进入个人中心」）
+  - 未探测元素：根据元素类型推测交互用途（如「进入搜索页面」「查看活动详情」）
+
+示例（错误 → 正确）：
+- ✗ [Mythos 限] 实测→「…」 → ✓ [文章行]，function：进入文章详情页
+- ✗ [长安网咖] 实测→「…」 → ✓ [店铺行]，function：进入店铺详情页
+- ✗ [搜索图标] 未探测 → ✓ [搜索栏]，function：进入搜索页面
+"""
+
+_EXPORT_LEAF = _EXPORT_COMMON + """\
+你将收到一张页面截图和该页面的文字描述。请直接分析截图中所有可交互元素，生成页面知识。
+
+4. **function 按元素类型推断**：根据元素的视觉特征推测交互用途（如「进入搜索页面」「查看活动详情」）
+5. 底部导航栏/Tab栏统一写「切换应用功能模块」
+"""
+
+
+def _resize_for_api(png_bytes: bytes, max_dim: int = 768) -> bytes:
+    """Resize image to fit within max_dim for API call."""
+    import io
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    w, h = img.size
+    if max(w, h) > max_dim:
+        scale = max_dim / max(w, h)
+        img = img.resize((round(w * scale), round(h * scale)), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _semantic_position(x: float, y: float, element_type: str) -> str:
@@ -151,11 +192,12 @@ def _build_element_lines(taps: list[dict]) -> list[str]:
 
 # ── Public API ────────────────────────────────────────────
 
-def build_export(page_dir: Path) -> ExportResult:
+def build_export(page_dir: Path, mode: str = "strict") -> ExportResult:
     """Build export for one page directory.
 
-    Reads initial_result.json + recon_result.json, calls LLM once,
-    returns ExportResult containing PageMeta + PageKnowledge.
+    mode:
+      - "strict": only use probe tap results
+      - "enhanced": probe results + PageParser-detected elements (unprobed marked as visual-only)
     """
     page_dir = page_dir.resolve()
 
@@ -176,6 +218,25 @@ def build_export(page_dir: Path) -> ExportResult:
 
     element_lines = _build_element_lines(taps)
 
+    # Enhanced mode: supplement with elements from initial parse
+    if mode == "enhanced":
+        init_areas = init_data.get("areas", [])
+        if init_areas:
+            # Build set of probed element positions for dedup
+            probed_positions = set()
+            for tap in taps:
+                probed_positions.add((round(tap.get("x", 0)), round(tap.get("y", 0))))
+            for area in init_areas:
+                xy = area.get("center_xy", [])
+                if len(xy) < 2:
+                    continue
+                ax, ay = xy
+                # Skip if close to an already-probed element
+                if any(abs(round(ax) - px) < 50 and abs(round(ay) - py) < 50 for px, py in probed_positions):
+                    continue
+                pos = _semantic_position(ax, ay, area.get("element_type", "area"))
+                element_lines.append(f"[{area.get('label', '')}]  {pos}  未探测（视觉检测）")
+
     cfg = resolve_llm_config("action_policy")
     llm = ChatOpenAI(
         model=cfg.model,
@@ -185,8 +246,9 @@ def build_export(page_dir: Path) -> ExportResult:
     )
 
     element_text = "\n".join(f"  {l}" for l in element_lines)
+    prompt = EXPORT_PROMPT_ENHANCED if mode == "enhanced" else EXPORT_PROMPT
     messages = [
-        SystemMessage(content=EXPORT_PROMPT),
+        SystemMessage(content=prompt),
         HumanMessage(content=(
             f"父页面：{parent_page or '无（根页面）'}\n"
             f"页面描述：{raw_description}\n\n"
@@ -246,9 +308,10 @@ def collect_leaf_pages(app_log_dir: Path) -> list[tuple[str, dict]]:
 def build_leaf_export(parent_name: str, tap: dict) -> ExportResult:
     """Build export for a leaf page from parent tap entry data.
 
-    Parses the leaf page screenshot for interactive elements, then uses LLM
-    to generate full PageKnowledge including operations.
+    Single LLM call: sends screenshot image + prompt to generate full PageKnowledge.
     """
+    import base64
+
     identity = tap.get("identity") or {}
     raw_name = identity.get("page_name", "未知页面")
     description = identity.get("description", "")
@@ -258,18 +321,6 @@ def build_leaf_export(parent_name: str, tap: dict) -> ExportResult:
     if not description:
         description = fingerprint[:80].strip() if fingerprint else raw_name
 
-    # Parse interactive elements from screenshot
-    element_lines: list[str] = []
-    if screenshot_path and Path(screenshot_path).exists():
-        from policy_expr.recon.page_parser import PageParser
-        png_bytes = Path(screenshot_path).read_bytes()
-        page = PageParser().analyze_screen(png_bytes)
-        for area in page.areas:
-            x, y = area.center_xy
-            pos = _semantic_position(x, y, area.element_type)
-            element_lines.append(f"[{area.label}]  {pos}")
-
-    # LLM to generate full page knowledge
     cfg = resolve_llm_config("action_policy")
     llm = ChatOpenAI(
         model=cfg.model,
@@ -278,14 +329,21 @@ def build_leaf_export(parent_name: str, tap: dict) -> ExportResult:
         temperature=0,
     )
 
-    element_text = "\n".join(f"  {l}" for l in element_lines) if element_lines else "  (无探测数据)"
+    # Build message: screenshot image + context text
+    human_parts: list[dict] = [
+        {"type": "text", "text": f"父页面：{parent_name}\n页面描述：{description}"},
+    ]
+    if screenshot_path and Path(screenshot_path).exists():
+        png_bytes = _resize_for_api(Path(screenshot_path).read_bytes())
+        b64 = base64.b64encode(png_bytes).decode()
+        human_parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
+        })
+
     messages = [
-        SystemMessage(content=EXPORT_PROMPT),
-        HumanMessage(content=(
-            f"父页面：{parent_name}\n"
-            f"页面描述：{description}\n\n"
-            f"可交互元素（{len(element_lines)} 个，仅视觉检测，未经点击探测）：\n{element_text}"
-        )),
+        SystemMessage(content=_EXPORT_LEAF),
+        HumanMessage(content=human_parts),
     ]
 
     knowledge = invoke_structured(llm, messages, PageKnowledge)
