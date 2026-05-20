@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 if __package__ is None or __package__ == "":
@@ -219,18 +220,36 @@ def run_export(app: str, page: str | None = None) -> None:
 
         app = knowledge_dir.name
         leaves = collect_leaf_pages(app_log_dir)
+        # Collect titles already exported by probed pages to avoid overwriting
+        existing_titles = {f.stem for f in knowledge_dir.glob("*.md")}
+        # Build mapping: raw page_name → short title for report builder
+        leaf_meta: dict[str, dict] = {}
         if leaves:
             print(f"\n--- 叶子页 ({len(leaves)} 个未探测页面) ---")
             for parent_name, tap in leaves:
                 try:
                     result = build_leaf_export(parent_name, tap)
+                    raw_name = (tap.get("identity") or {}).get("page_name", "")
+                    leaf_meta[raw_name] = {
+                        "title": result.meta.page_title,
+                        "type": result.meta.page_type,
+                    }
+                    safe_title = result.meta.page_title.replace("/", "_").replace(" ", "_")
+                    if safe_title in existing_titles:
+                        print(f"  ⊘ {result.meta.page_title} — 已有已探测版本，跳过")
+                        continue
                     # Leaf pages don't have their own directory; save directly to knowledge_dir
                     skill_text = result.knowledge.to_skill(app, result.meta.parent_page)
-                    safe_title = result.meta.page_title.replace("/", "_").replace(" ", "_")
                     (knowledge_dir / f"{safe_title}.md").write_text(skill_text, encoding="utf-8")
+                    existing_titles.add(safe_title)
                     print(f"  ✓ {result.meta.page_title} ({result.meta.page_type}) ← {parent_name}")
                 except Exception as e:
                     print(f"  ✗ {e}")
+        # Save leaf title mapping for report builder
+        if leaf_meta:
+            (app_log_dir / "leaf_meta.json").write_text(
+                json.dumps(leaf_meta, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
 
     print(f"\n  输出目录: {KNOWLEDGE_ROOT / app}")
 

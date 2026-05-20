@@ -243,31 +243,33 @@ def collect_leaf_pages(app_log_dir: Path) -> list[tuple[str, dict]]:
     return leaves
 
 
-class LeafTitle(BaseModel):
-    page_title: str = Field(description="2-4个字的页面标题，如「聊天列表」「店铺详情」")
-    page_type: PageType = Field(description="页面类型")
-
-
-_LEAF_TITLE_PROMPT = """\
-给定一个 App 页面的描述和父页面信息，生成简洁的页面标题和类型。
-标题要求：2-4个字，包含功能域+页面形态，如「店铺详情」「领券首页」「订单详情」。
-"""
-
-
 def build_leaf_export(parent_name: str, tap: dict) -> ExportResult:
     """Build export for a leaf page from parent tap entry data.
 
-    Uses one LLM call to generate page_title and page_type.
+    Parses the leaf page screenshot for interactive elements, then uses LLM
+    to generate full PageKnowledge including operations.
     """
     identity = tap.get("identity") or {}
     raw_name = identity.get("page_name", "未知页面")
     description = identity.get("description", "")
     fingerprint = identity.get("fingerprint", "")
+    screenshot_path = tap.get("screenshot", "")
 
     if not description:
         description = fingerprint[:80].strip() if fingerprint else raw_name
 
-    # LLM to generate title + type
+    # Parse interactive elements from screenshot
+    element_lines: list[str] = []
+    if screenshot_path and Path(screenshot_path).exists():
+        from policy_expr.recon.page_parser import PageParser
+        png_bytes = Path(screenshot_path).read_bytes()
+        page = PageParser().analyze_screen(png_bytes)
+        for area in page.areas:
+            x, y = area.center_xy
+            pos = _semantic_position(x, y, area.element_type)
+            element_lines.append(f"[{area.label}]  {pos}")
+
+    # LLM to generate full page knowledge
     cfg = resolve_llm_config("action_policy")
     llm = ChatOpenAI(
         model=cfg.model,
@@ -275,27 +277,23 @@ def build_leaf_export(parent_name: str, tap: dict) -> ExportResult:
         base_url=cfg.base_url,
         temperature=0,
     )
+
+    element_text = "\n".join(f"  {l}" for l in element_lines) if element_lines else "  (无探测数据)"
     messages = [
-        SystemMessage(content=_LEAF_TITLE_PROMPT),
+        SystemMessage(content=EXPORT_PROMPT),
         HumanMessage(content=(
             f"父页面：{parent_name}\n"
-            f"页面描述：{description}"
+            f"页面描述：{description}\n\n"
+            f"可交互元素（{len(element_lines)} 个，仅视觉检测，未经点击探测）：\n{element_text}"
         )),
     ]
-    leaf_info = invoke_structured(llm, messages, LeafTitle)
-    title = leaf_info.page_title
-    page_type = leaf_info.page_type
 
-    knowledge = PageKnowledge(
-        page_title=title,
-        page_type=page_type,
-        description=description,
-        operations=[],
-    )
+    knowledge = invoke_structured(llm, messages, PageKnowledge)
+
     meta = PageMeta(
-        page_title=title,
-        page_type=page_type,
+        page_title=knowledge.page_title,
+        page_type=knowledge.page_type,
         parent_page=parent_name,
-        description=description,
+        description=knowledge.description,
     )
     return ExportResult(meta=meta, knowledge=knowledge)

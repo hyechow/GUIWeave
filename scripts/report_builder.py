@@ -317,12 +317,13 @@ def _render_tree_html(nodes: list[NavNode], _visited: frozenset[str] = frozenset
         if node.page is not None:
             if node.page.name in _visited:
                 continue  # cycle guard
+            is_leaf = node.page.page_type == "leaf"
             type_label = PAGE_TYPE_LABELS.get(node.page.page_type, node.page.page_type)
             slug = _slug(node.page.name)
-            badge = f'<span class="tree-chip">{type_label}</span>' if type_label else ''
+            badge = f'<span class="tree-chip">{type_label}</span>' if type_label and not is_leaf else ''
             child_visited = _visited | {node.page.name}
             sub = f'<ul>{_render_tree_html(node.children, child_visited)}</ul>' if node.children else ''
-            link_cls = "tree-link tree-link-error" if node.page.error else "tree-link"
+            link_cls = "tree-link tree-link-error" if node.page.error else "tree-link tree-link-leaf" if is_leaf else "tree-link"
             error_dot = '<span class="tree-error-dot">⚠</span>' if node.page.error else ''
             items += (
                 f'<li class="tree-node">'
@@ -642,6 +643,20 @@ class ReconReportBuilder:
 
         # Leaf pages: discovered via parent taps but not probed (depth_limit)
         existing_names = {p.name for p in pages}
+
+        # Load leaf title mapping (raw_name → {title, type}) if exported
+        leaf_meta_path = log_dir / "leaf_meta.json"
+        leaf_meta: dict[str, dict] = {}
+        if leaf_meta_path.exists():
+            leaf_meta = json.loads(leaf_meta_path.read_text(encoding="utf-8"))
+
+        # Load knowledge files for content lookup
+        knowledge_dir = log_dir.parent.parent.parent / "knowledge" / app_name
+        knowledge_files: dict[str, str] = {}  # safe_title → content
+        if knowledge_dir.exists():
+            for kfile in knowledge_dir.glob("*.md"):
+                knowledge_files[kfile.stem] = kfile.read_text(encoding="utf-8")
+
         for pd in page_dirs:
             result_path = pd / "recon_result.json"
             if not result_path.exists():
@@ -665,32 +680,20 @@ class ReconReportBuilder:
                         pass
 
                 leaf_description = identity.get("description", "")
-                leaf_title = leaf_name
-                leaf_page_type = ""
 
-                # Load title/type from exported knowledge
-                knowledge_dir = log_dir.parent.parent.parent / "knowledge" / app_name
-                leaf_knowledge = ""
-                if knowledge_dir.exists():
-                    for kfile in knowledge_dir.glob("*.md"):
-                        content = kfile.read_text(encoding="utf-8")
-                        if leaf_name in content or (leaf_description and leaf_description[:30] in content):
-                            leaf_knowledge = content
-                            if content.startswith("---"):
-                                fm_end = content.find("---", 3)
-                                if fm_end > 0:
-                                    for fm_line in content[3:fm_end].splitlines():
-                                        if fm_line.startswith("page_title:"):
-                                            leaf_title = fm_line.split(":", 1)[1].strip()
-                                        elif fm_line.startswith("page_type:"):
-                                            leaf_page_type = fm_line.split(":", 1)[1].strip()
-                            break
+                # Look up short title from leaf_meta.json (exported)
+                meta_entry = leaf_meta.get(leaf_name, {})
+                leaf_title = meta_entry.get("title", leaf_name)
+                leaf_type = meta_entry.get("type", "")
 
-                if not leaf_knowledge:
+                # Load knowledge content by matching title to knowledge file
+                safe_title = leaf_title.replace("/", "_").replace(" ", "_")
+                leaf_knowledge = knowledge_files.get(safe_title, "")
+                if not leaf_knowledge and leaf_description:
                     parent_name = result.get("parent_page", "")
                     leaf_knowledge = (
                         f"---\napp: {app_name}\npage_title: {leaf_title}\n"
-                        f"page_type: {leaf_page_type}\nparent_page: {parent_name}\n---\n\n"
+                        f"page_type: {leaf_type}\nparent_page: {parent_name}\n---\n\n"
                         f"# {leaf_title}\n\n{leaf_description}"
                     )
 
@@ -802,7 +805,6 @@ PAGE_TYPE_LABELS: dict[str, str] = {
     "modal": "弹窗",
     "home": "首页",
     "other": "其他",
-    "leaf": "叶子",
 }
 
 RECON_HTML_TEMPLATE = """\
@@ -868,6 +870,8 @@ RECON_HTML_TEMPLATE = """\
   .tree-link:hover {{ background: var(--bg); }}
   .tree-link-error {{ color: #dc2626; }}
   .tree-link-error:hover {{ background: #fef2f2; }}
+  .tree-link-leaf {{ color: var(--gray); }}
+  .tree-link-leaf:hover {{ background: #f9fafb; }}
   .tree-error-dot {{ font-size: 10px; flex-shrink: 0; }}
   .tree-leaf {{
     display: block; padding: 4px 8px;
@@ -924,9 +928,6 @@ RECON_HTML_TEMPLATE = """\
   .type-badge {{
     font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500;
     background: #dbeafe; color: #1d4ed8;
-  }}
-  .type-badge-leaf {{
-    background: #fef3c7 !important; color: #92400e !important;
   }}
   .page-sig {{ font-size: 11px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .via-tap {{ font-size: 11px; color: #7c3aed; background: #ede9fe; padding: 2px 7px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; }}
@@ -1336,7 +1337,7 @@ def _render_page_card_html(node: NavNode, path: list[str]) -> str:
           {breadcrumb_html}
           <div class="page-card-header">
             <h2>{page.title}</h2>
-            {f'<span class="type-badge{" type-badge-leaf" if page.page_type == "leaf" else ""}">{type_label}</span>' if type_label else ''}
+            {f'<span class="type-badge">{type_label}</span>' if type_label and page.page_type != "leaf" else ''}
             {via_html}
           </div>
           {'<div class="page-card-desc">' + page.description + '</div>' if page.description else ''}
