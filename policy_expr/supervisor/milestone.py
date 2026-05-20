@@ -801,8 +801,6 @@ class MilestoneSupervisorPolicy:
         )
         if extra:
             prompt += f"\n\n## 输出修正要求\n{extra}"
-        if self._app_knowledge:
-            prompt += f"\n\n## 应用导航知识\n{self._app_knowledge}"
         result = invoke_structured(self._llm(), self._msgs(prompt, observation), _SingleCheckResult)
 
         # Guard: done without evidence

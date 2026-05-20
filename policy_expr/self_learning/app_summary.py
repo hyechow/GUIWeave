@@ -116,6 +116,41 @@ def generate_summary(app: str) -> str:
     return summary
 
 
+# Aliases: English/common names → knowledge directory names
+_APP_ALIASES: dict[str, str] = {
+    "wechat": "微信",
+    "alipay": "支付宝",
+}
+
+
+def auto_discover_knowledge(goal: str) -> str | None:
+    """Match goal against knowledge/{app}/ dir names and load _app.md.
+
+    Returns the knowledge text if matched, None otherwise.
+    """
+    if not KNOWLEDGE_DIR.is_dir():
+        return None
+
+    candidates: dict[str, Path] = {}
+    for d in KNOWLEDGE_DIR.iterdir():
+        if d.is_dir():
+            candidates[d.name.lower()] = d
+    for alias, target in _APP_ALIASES.items():
+        target_dir = KNOWLEDGE_DIR / target
+        if target_dir.is_dir():
+            candidates[alias] = target_dir
+
+    goal_lower = goal.lower()
+    for name, d in candidates.items():
+        if name in goal_lower:
+            app_md = d / "_app.md"
+            if app_md.exists():
+                return app_md.read_text(encoding="utf-8").strip()
+            break
+
+    return None
+
+
 if __name__ == "__main__":
     load_dotenv()
     if len(sys.argv) < 2:

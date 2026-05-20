@@ -35,6 +35,7 @@ from policy_expr.schemas import (
 )
 from policy_expr.visualize import print_decision
 from policy_expr.hud import AgentHUD
+from policy_expr.self_learning.app_summary import auto_discover_knowledge
 
 POLICIES: dict[str, type[ActionPolicy]] = {
     StructuredOutputPolicy.name: StructuredOutputPolicy,
@@ -501,6 +502,7 @@ def run_agent_loop(
                 return
 
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="测试手机策略运行模式")
     parser.add_argument(
@@ -544,11 +546,6 @@ def main() -> None:
         help="agent-loop 动作执行后自动进入下一轮；默认手动确认",
     )
     parser.add_argument(
-        "--knowledge",
-        type=Path,
-        help="应用知识文档路径（markdown），注入到任务分解 prompt 中",
-    )
-    parser.add_argument(
         "--hud",
         action="store_true",
         help="在 iPhone 镜像窗口下方显示实时动作状态面板",
@@ -558,12 +555,11 @@ def main() -> None:
     action_policy = build_policy(args.policy)
     supervisor = build_supervisor(args.supervisor)
 
-    # Load app knowledge if provided
-    if args.knowledge and args.knowledge.exists():
-        knowledge_text = args.knowledge.read_text(encoding="utf-8").strip()
-        if hasattr(supervisor, "set_app_knowledge"):
-            supervisor.set_app_knowledge(knowledge_text)
-            print(f"Knowledge: {args.knowledge} ({len(knowledge_text)} chars)")
+    # Auto-discover app knowledge from goal
+    knowledge_text = auto_discover_knowledge(args.prompt)
+    if knowledge_text and hasattr(supervisor, "set_app_knowledge"):
+        supervisor.set_app_knowledge(knowledge_text)
+        print(f"Knowledge: auto-loaded ({len(knowledge_text)} chars)")
 
     mode = args.mode
     input_context_path = args.context
