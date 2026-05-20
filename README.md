@@ -30,7 +30,7 @@ MODELSCOPE_MODEL=Qwen/Qwen3.5-35B-A3B
 uv run python policy_expr/runner.py "打开微信"
 
 # 单目标多步 ReAct
-uv run python policy_expr/runner.py "打开微信并进入通讯录" --mode agent-loop
+uv run python policy_expr/runner.py "打开微信并进入通讯录" --mode agent-loop --supervisor milestone
 
 # 自动继续并限制轮数
 uv run python policy_expr/runner.py "打开微信并进入通讯录" \

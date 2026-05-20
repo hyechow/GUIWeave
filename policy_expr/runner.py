@@ -24,6 +24,7 @@ from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPo
 from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.output import generate_reply
 from policy_expr.perception import LivePerception, LivePhoneSession
+from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
@@ -31,9 +32,11 @@ from policy_expr.schemas import (
     Observation,
     PolicyContext,
     PolicyTurn,
+    action_label,
 )
 from policy_expr.visualize import print_decision
 from policy_expr.hud import AgentHUD
+from policy_expr.self_learning.app_summary import auto_discover_knowledge
 
 POLICIES: dict[str, type[ActionPolicy]] = {
     StructuredOutputPolicy.name: StructuredOutputPolicy,
@@ -220,8 +223,9 @@ def run_once(
         if hud: hud.update("Turn 1 — 截图分析中…")
         perception = LivePerception(phone, log_dir / "screenshot.png")
         observation = perception.observe()
+        calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
-        if hud: hud.update("Turn 1 — 监督决策中…")
+        if hud: hud.update(f"Turn 1 — 使用 {supervisor.name} supervisor 决策中…")
         print("监督决策中...")
         sv_step = supervisor.step(observation, context.goal, context.turns)
         print(f"监督者: {sv_step.summary}")
@@ -238,8 +242,8 @@ def run_once(
             print_decision(action_decision, observation.png_bytes, log_dir / "structured_output_result.png")
             if hud:
                 a = action_decision.action
-                hud.update(f"Turn 1 — [{a.action_type}] {a.description}")
-            executed = ActionExecutor(phone).execute(action_decision, app_name=sv_step.app_name or "")
+                hud.update(f"Turn 1 — [{action_label(a.action_type)}] {a.description}")
+            executed = ActionExecutor(phone, calibrator).execute(action_decision, app_name=sv_step.app_name or "")
 
         turn = PolicyTurn(
             index=1,
@@ -322,8 +326,9 @@ def run_agent_loop(
             if hud: hud.update(f"Turn {turn_no} — 截图分析中…")
             perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
+            executor.calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
-            if hud: hud.update(f"Turn {turn_no} — 监督决策中…")
+            if hud: hud.update(f"Turn {turn_no} — 使用 {supervisor.name} supervisor 决策中…")
             print("监督决策中...")
             sv_step = supervisor.step(observation, context.goal, context.turns)
             print(f"监督者: {sv_step.summary}")
@@ -394,7 +399,7 @@ def run_agent_loop(
                 else:
                     if hud:
                         a = action_decision.action
-                        hud.update(f"Turn {turn_no} — [{a.action_type}] {a.description}")
+                        hud.update(f"Turn {turn_no} — [{action_label(a.action_type)}] {a.description}")
                     executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
 
             turn = PolicyTurn(
@@ -462,6 +467,7 @@ def run_agent_loop(
                 return _make_result(context, "用户退出 agent-loop")
 
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="测试手机策略运行模式")
     parser.add_argument(
@@ -505,11 +511,6 @@ def main() -> None:
         help="agent-loop 动作执行后自动进入下一轮；默认手动确认",
     )
     parser.add_argument(
-        "--knowledge",
-        type=Path,
-        help="应用知识文档路径（markdown），注入到任务分解 prompt 中",
-    )
-    parser.add_argument(
         "--hud",
         action="store_true",
         help="在 iPhone 镜像窗口下方显示实时动作状态面板",
@@ -519,12 +520,11 @@ def main() -> None:
     action_policy = build_policy(args.policy)
     supervisor = build_supervisor(args.supervisor)
 
-    # Load app knowledge if provided
-    if args.knowledge and args.knowledge.exists():
-        knowledge_text = args.knowledge.read_text(encoding="utf-8").strip()
-        if hasattr(supervisor, "set_app_knowledge"):
-            supervisor.set_app_knowledge(knowledge_text)
-            print(f"Knowledge: {args.knowledge} ({len(knowledge_text)} chars)")
+    # Auto-discover app knowledge from goal
+    knowledge_text = auto_discover_knowledge(args.prompt)
+    if knowledge_text and hasattr(supervisor, "set_app_knowledge"):
+        supervisor.set_app_knowledge(knowledge_text)
+        print(f"Knowledge: auto-loaded ({len(knowledge_text)} chars)")
 
     mode = args.mode
     input_context_path = args.context
