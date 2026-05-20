@@ -21,9 +21,6 @@ if __package__ is None or __package__ == "":
 from dotenv import load_dotenv
 load_dotenv()
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
 from rich.box import ROUNDED
 from rich.console import Console
 from rich.live import Live
@@ -31,91 +28,27 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.tree import Tree
 
-from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
 from policy_expr.executor import ActionExecutor
-from policy_expr.output import render_final_output
 from policy_expr.perception import LivePerception, LivePhoneSession
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
-from policy_expr.schemas import (
-    Observation,
-    PolicyContext,
-    PolicyTurn,
-)
+from policy_expr.schemas import PolicyContext, PolicyTurn
 from policy_expr.supervisor import SimpleSupervisorPolicy
 from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.visualize import print_decision
-
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
-from policy_expr.runner import (
-    POLICY_LOG_ROOT,
-    _TeeStream,
-    build_policy,
-    build_supervisor,
-    create_run_dir,
+from policy_expr.runner import _TeeStream, build_policy, build_supervisor, create_run_dir
+from policy_expr.chat_session import (
+    RouterResult,
+    build_goal_with_history,
+    generate_reply,
+    route_message,
 )
 
 ROOT = Path(__file__).parent.parent
 
 console = Console()
 
-
-# ── Router ──────────────────────────────────────────────────────────────────
-
-
-class RouterResult(BaseModel):
-    actionable: bool = Field(description="该指令是否需要操控手机才能完成")
-    reason: str = Field(default="", description="判断理由（actionable=true 时留空）")
-    reply: str = Field(default="", description="actionable=false 时的回复；闲聊等无关问题留空")
-
-
-ROUTER_SYSTEM = """\
-你是 iPhone 自动化助手的意图分类器。判断用户的指令是否需要通过操控手机来完成。
-
-分类标准：
-- 需要操控手机：打开 app、点击按钮、发送消息、拍照、设置闹钟等 → actionable=true
-- 不需要操控手机但可根据对话历史回答（如"我刚才做了什么""之前成功了吗"）→ actionable=false，reply 中给出回答
-- 关于自身的问题（"你是谁""你叫什么""你能做什么"等）→ actionable=false，用自然语言自我介绍（你叫 Lucas，是一个 iPhone GUI Agent，可以帮用户操控 iPhone 完成各种任务），reply 不要照抄本段说明
-- 无关问题（闲聊、知识问答等）→ actionable=false，reply 留空
-- 边界模糊时倾向放行（actionable=true），让执行 agent 去判断
-
-请用中文回答。
-"""
-
-
-def route_message(user_msg: str, session_history: list[dict]) -> RouterResult:
-    cfg = resolve_llm_config("router")
-    llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
-
-    history_text = _format_session_history(session_history) if session_history else "（无历史）"
-    messages = [
-        SystemMessage(content=ROUTER_SYSTEM),
-        HumanMessage(content=f"对话历史：\n{history_text}\n\n当前用户指令：{user_msg}"),
-    ]
-    return invoke_structured(llm, messages, RouterResult)
-
-
-# ── History injection ──────────────────────────────────────────────────────
-
-
-def _format_session_history(history: list[dict]) -> str:
-    if not history:
-        return "（无历史）"
-    lines = []
-    for i, entry in enumerate(history, 1):
-        status = "✓" if entry.get("goal_completed") else "✗"
-        lines.append(
-            f"{i}. 用户说「{entry['user_msg']}」→ {status} {entry['result_summary']}"
-        )
-    return "\n".join(lines)
-
-
-def _build_goal_with_history(user_msg: str, session_history: list[dict]) -> str:
-    if not session_history:
-        return user_msg
-    history_text = _format_session_history(session_history)
-    return f"之前的对话历史：\n{history_text}\n\n当前用户指令：{user_msg}"
 
 
 # ── Agent loop for chat ───────────────────────────────────────────────────
@@ -267,11 +200,6 @@ def run_chat_turn(
                 reason = sv_step.stop_reason or (
                     "目标已达成" if sv_step.goal_completed else "停止"
                 )
-                render_final_output(
-                    goal, supervisor.name, context.turns, log_dir, reason,
-                    content_notes=context.content_notes or None,
-                    collection_context=sv_step.collection_summary,
-                )
                 return _make_result(context, reason)
 
             if not executed and sv_step.should_act:
@@ -328,18 +256,24 @@ def _make_result(context: PolicyContext, stop_reason: str) -> dict:
 # ── UI ─────────────────────────────────────────────────────────────────────
 
 
-_HEADER = """\
-[cyan] _
-| |   _   _  ___ __ _ ___
-| |  | | | |/ __/ _` / __|
-| |__| |_| | (__| (_| \\__ \\
-|____/\\__,_|\\___\\__,_|___/[/]  [dim]iPhone GUI Agent[/dim]
-"""
+_HEADER_ART = [
+    ("bold bright_cyan", "  ██╗     ██╗   ██╗  ██████╗  █████╗  ███████╗"),
+    ("bold bright_cyan", "  ██║     ██║   ██║ ██╔════╝ ██╔══██╗ ██╔════╝"),
+    ("bold cyan",        "  ██║     ██║   ██║ ██║      ███████║ ███████╗ "),
+    ("bold cyan",        "  ██║     ██║   ██║ ██║      ██╔══██║ ╚════██║ "),
+    ("bold blue",        "  ███████╗╚██████╔╝ ╚██████╗ ██║  ██║ ███████║ "),
+    ("bold blue",        "  ╚══════╝ ╚═════╝   ╚═════╝ ╚═╝  ╚═╝ ╚══════╝"),
+]
 
 def _print_header() -> None:
     console.print()
-    console.print(_HEADER)
-    console.print("[dim]  /exit  ·  /clear[/dim]")
+    for style, line in _HEADER_ART:
+        console.print(f"[{style}]{line}[/]")
+    console.print()
+    console.print("  [bold bright_cyan]iPhone GUI Agent[/]  [dim]─  自动操控 iPhone 的智能助手[/]")
+    console.print("  [dim]操作各类 App · 发消息 · 点外卖 · 搜索内容 · 更多…[/]")
+    console.print()
+    console.print("  [dim]/exit  退出  ·  /clear  清空对话历史[/]")
     console.print()
 
 
@@ -354,9 +288,12 @@ class _SpinnerLine:
         self._t0 = time.time()
 
     def __rich_console__(self, console, options):  # noqa: ARG002
-        frame = _SPINNER_FRAMES[int((time.time() - self._t0) * 10) % len(_SPINNER_FRAMES)]
         current = self._state.get("current", "…")
-        yield Text(f"  {frame}  {current}", style="cyan")
+        if self._state.get("done"):
+            yield Text(f"  ✓  {current}", style="dim")
+        else:
+            frame = _SPINNER_FRAMES[int((time.time() - self._t0) * 10) % len(_SPINNER_FRAMES)]
+            yield Text(f"  {frame}  {current}", style="cyan")
 
 
 def _print_reply(text: str) -> None:
@@ -460,10 +397,22 @@ def main() -> None:
             router_result = RouterResult(actionable=True, reason="分类失败，放行")
 
         if not router_result.actionable:
-            _print_reply(router_result.reply or "我只能帮你操控 iPhone，请告诉我需要做什么。")
+            t_reply = time.time()
+            reply_state: dict = {"current": "正在生成回复…", "done": False}
+            with Live(
+                _SpinnerLine(reply_state),
+                console=console,
+                refresh_per_second=10,
+                transient=False,
+            ):
+                reply = generate_reply(user_msg, None, session=session, non_action_reason=router_result.reason)
+                reply_secs = time.time() - t_reply
+                reply_state["done"] = True
+                reply_state["current"] = f"回复生成完成  {reply_secs:.1f}s"
+            _print_reply(reply)
             session.append({
                 "user_msg": user_msg,
-                "result_summary": router_result.reply or router_result.reason,
+                "result_summary": reply,
                 "stop_reason": "非手机操作",
                 "goal_completed": False,
                 "turns_count": 0,
@@ -471,10 +420,11 @@ def main() -> None:
             continue
 
         # Execute
-        goal = _build_goal_with_history(user_msg, session)
+        goal = build_goal_with_history(user_msg, session)
         log_dir = create_run_dir("chat")
 
-        live_state: dict = {"current": "连接中..."}
+        t0 = time.time()
+        live_state: dict = {"current": "连接中...", "done": False}
 
         with Live(
             _SpinnerLine(live_state),
@@ -496,8 +446,26 @@ def main() -> None:
                     "goal_completed": False,
                     "turns_count": 0,
                 }
+            exec_secs = time.time() - t0
+            live_state["done"] = True
+            live_state["current"] = f"执行完成  {exec_secs:.1f}s"
 
         _print_result(result)
+
+        t1 = time.time()
+        reply_state: dict = {"current": "正在生成回复…", "done": False}
+        with Live(
+            _SpinnerLine(reply_state),
+            console=console,
+            refresh_per_second=10,
+            transient=False,
+        ):
+            reply = generate_reply(user_msg, result, session=session)
+            reply_secs = time.time() - t1
+            reply_state["done"] = True
+            reply_state["current"] = f"回复生成完成  {reply_secs:.1f}s"
+
+        _print_reply(reply)
 
         session.append({
             "user_msg": user_msg,

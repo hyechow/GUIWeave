@@ -22,7 +22,7 @@ from llm.structured import get_llm_call_count
 from policy_expr.executor import ActionExecutor
 from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
 from policy_expr.supervisor.base import SupervisorPolicy
-from policy_expr.output import render_final_output
+from policy_expr.output import generate_reply
 from policy_expr.perception import LivePerception, LivePhoneSession
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.policies import StructuredOutputPolicy
@@ -162,22 +162,32 @@ def _note_hash(note: str) -> str:
 
 
 
-def emit_final_output(
-    goal: str,
-    policy_name: str,
-    turns: list[PolicyTurn],
-    log_dir: Path,
+def _make_result(
+    context: PolicyContext,
     stop_reason: str,
-    content_notes: list[str] | None = None,
     collection_context: str | None = None,
-) -> str:
-    output = render_final_output(goal, policy_name, turns, log_dir, stop_reason, content_notes, collection_context)
-    print("\n" + "=" * 50)
-    print("最终输出")
-    print("=" * 50)
-    print(output.rstrip())
-    print("=" * 50)
-    return output
+) -> dict:
+    last_summary = context.turns[-1].supervisor.summary if context.turns else stop_reason
+    turns_detail = []
+    for t in context.turns:
+        entry: dict = {"no": t.index, "summary": t.supervisor.summary, "executed": t.executed}
+        if t.action_decision:
+            a = t.action_decision.action
+            entry["action_type"] = a.action_type
+            entry["action_desc"] = a.description
+            if t.action_decision.not_found_reason:
+                entry["not_found"] = t.action_decision.not_found_reason
+        turns_detail.append(entry)
+    return {
+        "goal": context.goal,
+        "result_summary": last_summary,
+        "stop_reason": stop_reason,
+        "goal_completed": any(t.supervisor.goal_completed for t in context.turns),
+        "turns_count": len(context.turns),
+        "turns_detail": turns_detail,
+        "content_notes": context.content_notes or None,
+        "collection_context": collection_context,
+    }
 
 
 def _print_turn_stats(turn_no: int, started_at: float, llm_calls_before: int) -> None:
@@ -193,7 +203,7 @@ def run_once(
     log_dir: Path,
     context_path: Path,
     hud: AgentHUD | None = None,
-) -> None:
+) -> dict:
     context = PolicyContext(
         goal=prompt,
         supervisor_policy_name=supervisor.name,
@@ -262,16 +272,9 @@ def run_once(
         else:
             stop_reason = "动作未执行，single-step 停止"
 
-        context.output = emit_final_output(
-            context.goal,
-            supervisor.name,
-            context.turns,
-            log_dir,
-            stop_reason,
-            content_notes=context.content_notes or None,
-        )
         _save_context(context_path, context)
         _print_turn_stats(1, turn_started_at, llm_calls_before)
+        return _make_result(context, stop_reason)
 
 
 def run_agent_loop(
@@ -284,7 +287,7 @@ def run_agent_loop(
     max_turns: int = 20,
     auto_continue: bool = False,
     hud: AgentHUD | None = None,
-) -> None:
+) -> dict:
     context = _load_context(
         input_context_path or context_path,
         prompt,
@@ -309,7 +312,7 @@ def run_agent_loop(
             if turn_no > max_turns:
                 print(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
                 _save_context(context_path, context)
-                return
+                return _make_result(context, f"达到最大轮数 {max_turns}")
 
             turn_started_at = time.perf_counter()
             llm_calls_before = get_llm_call_count()
@@ -414,17 +417,10 @@ def run_agent_loop(
                     print(f"\n目标已达成：{reason}")
                 else:
                     print(f"\n任务未完成：{reason}")
-                context.output = emit_final_output(
-                    original_goal,
-                    supervisor.name,
-                    context.turns,
-                    log_dir,
-                    reason,
-                    content_notes=context.content_notes or None,
-                    collection_context=sv_step.collection_summary,
-                )
                 _save_context(context_path, context)
-                return
+                if sv_step.goal_completed:
+                    return _make_result(context, reason, sv_step.collection_summary)
+                return _make_result(context, reason)
 
             if not executed and sv_step.should_act:
                 if action_decision and action_decision.not_found_reason:
@@ -432,28 +428,12 @@ def run_agent_loop(
                     noop_count += 1
                     if noop_count >= 3:
                         print(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                        context.output = emit_final_output(
-                            original_goal,
-                            supervisor.name,
-                            context.turns,
-                            log_dir,
-                            f"连续 {noop_count} 轮无动作",
-                            content_notes=context.content_notes or None,
-                        )
                         _save_context(context_path, context)
-                        return
+                        return _make_result(context, f"连续 {noop_count} 轮无动作")
                     continue
                 # Genuine execution failure — stop
-                context.output = emit_final_output(
-                    context.goal,
-                    supervisor.name,
-                    context.turns,
-                    log_dir,
-                    "动作未执行，agent-loop 停止",
-                    content_notes=context.content_notes or None,
-                )
                 _save_context(context_path, context)
-                return
+                return _make_result(context, "动作未执行，agent-loop 停止")
 
             if sv_step.milestone_id != prev_milestone_id:
                 noop_count = 0
@@ -463,16 +443,8 @@ def run_agent_loop(
                 noop_count += 1
                 if noop_count >= 3:
                     print(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                    context.output = emit_final_output(
-                        original_goal,
-                        supervisor.name,
-                        context.turns,
-                        log_dir,
-                        f"连续 {noop_count} 轮无动作",
-                        content_notes=context.content_notes or None,
-                    )
                     _save_context(context_path, context)
-                    return
+                    return _make_result(context, f"连续 {noop_count} 轮无动作")
                 continue
 
             noop_count = 0  # 有动作则重置计数
@@ -486,16 +458,8 @@ def run_agent_loop(
             except EOFError:
                 answer = ""
             if answer in {"q", "quit", "exit"}:
-                context.output = emit_final_output(
-                    context.goal,
-                    supervisor.name,
-                    context.turns,
-                    log_dir,
-                    "用户退出 agent-loop",
-                    content_notes=context.content_notes or None,
-                )
                 _save_context(context_path, context)
-                return
+                return _make_result(context, "用户退出 agent-loop")
 
 
 def main() -> None:
@@ -572,12 +536,13 @@ def main() -> None:
         print(f"Context : {input_context_path if input_context_path else None}")
 
         try:
+            result: dict | None = None
             if mode == "single-step":
                 if input_context_path is not None:
                     raise ValueError("--context 目前只支持 agent-loop 模式")
-                run_once(args.prompt, action_policy, supervisor, log_dir, context_path, hud=hud)
+                result = run_once(args.prompt, action_policy, supervisor, log_dir, context_path, hud=hud)
             elif mode == "agent-loop":
-                run_agent_loop(
+                result = run_agent_loop(
                     args.prompt,
                     action_policy,
                     supervisor,
@@ -588,6 +553,18 @@ def main() -> None:
                     auto_continue=args.auto_continue,
                     hud=hud,
                 )
+            if result:
+                output = generate_reply(
+                    result["goal"],
+                    result,
+                    content_notes=result.get("content_notes"),
+                    collection_context=result.get("collection_context"),
+                )
+                print("\n" + "=" * 50)
+                print("最终输出")
+                print("=" * 50)
+                print(output.rstrip())
+                print("=" * 50)
         finally:
             if hud:
                 hud.close()
