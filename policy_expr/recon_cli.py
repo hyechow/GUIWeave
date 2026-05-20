@@ -60,7 +60,8 @@ def _probe_page(phone, knowledge, png_bytes, out_dir: Path, sample: int = 0,
 # ── Commands ─────────────────────────────────────────────
 
 def run_app(app: str, depth: int = 0, sample: int = 0,
-            mode: str | None = None, target: str | None = None) -> None:
+            mode: str | None = None, target: str | None = None,
+            hud=None) -> None:
     """Online recon with DFS depth control.
 
     depth=0: explore current page only.
@@ -83,6 +84,9 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
 
     from policy_expr.runner import _tee_stdio
     with _tee_stdio(app_log_dir):
+        if hud:
+            hud.update(f"侦察 {app}: 预加载模型…")
+
         # Preload GUIClip model to avoid loading it during exploration
         print("预加载 GUIClip 模型...")
         from policy_expr.recon.back_nav import _get_identity_comp
@@ -98,10 +102,14 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
         comp = _get_identity_comp()
         comp.raw_similarity(dummy_bytes, dummy_bytes)
 
+        if hud:
+            hud.update(f"侦察 {app}: DFS 探索 (depth={depth})…")
+
         with LivePhoneSession() as phone:
             # Phase 1: DFS exploration (probe only, no knowledge gen)
             tree = explore_dfs(phone, app_log_dir, max_depth=depth, sample=sample,
-                               mode=mode, target_dir=target)
+                               mode=mode, target_dir=target,
+                               status_cb=hud.update if hud else None)
 
         # Phase 2: Post-order knowledge generation (leaves first) — DISABLED
         # total = sum(1 + _count_tree_nodes(n.children) for n in tree)
@@ -161,7 +169,7 @@ def _parse_offline(paths: list[Path]) -> None:
         viz_result(knowledge, png_bytes, img_path.stem, out_dir)
 
 
-def run_export(app: str, page: str | None = None, enhanced: bool = False) -> None:
+def run_export(app: str, page: str | None = None, enhanced: bool = False, hud=None) -> None:
     """Export page knowledge for all (or one specific) pages of an app.
 
     Reads initial_result.json + recon_result.json per page, runs one LLM call,
@@ -182,8 +190,10 @@ def run_export(app: str, page: str | None = None, enhanced: bool = False) -> Non
         )
 
     print(f"\n--- 导出页面知识: {app} ({len(page_dirs)} 个已探测页面) ---")
-    for page_dir in page_dirs:
+    for idx, page_dir in enumerate(page_dirs, 1):
         print(f"\n  [{page_dir.name}]")
+        if hud:
+            hud.update(f"导出 {app}  {idx}/{len(page_dirs)}  {page_dir.name}")
         try:
             exported = build_export(page_dir, mode="enhanced" if enhanced else "strict")
             save_export(exported, page_dir, KNOWLEDGE_ROOT / app)
@@ -226,8 +236,11 @@ def run_export(app: str, page: str | None = None, enhanced: bool = False) -> Non
         leaf_meta: dict[str, dict] = {}
         if leaves:
             print(f"\n--- 叶子页 ({len(leaves)} 个未探测页面) ---")
-            for parent_name, tap in leaves:
+            for leaf_idx, (parent_name, tap) in enumerate(leaves, 1):
                 try:
+                    if hud:
+                        raw = (tap.get("identity") or {}).get("page_name", "") or parent_name
+                        hud.update(f"叶子页 {leaf_idx}/{len(leaves)}  {raw}")
                     result = build_leaf_export(parent_name, tap)
                     raw_name = (tap.get("identity") or {}).get("page_name", "")
                     leaf_meta[raw_name] = {
@@ -267,17 +280,27 @@ def main() -> None:
     ap.add_argument("--page", type=str, metavar="DIR", help="--export 时只导出指定页面目录")
     ap.add_argument("--enhanced", action="store_true", help="--export 时启用增强模式：补充视觉检测到的未探测元素")
     ap.add_argument("--debug-parse", nargs="*", type=Path, metavar="PATH", help="[调试] 解析图片，无参数则在线截图")
+    ap.add_argument("--hud", action="store_true", help="在 iPhone 镜像窗口下方显示实时探测状态面板")
     args = ap.parse_args()
 
-    if args.app:
-        run_app(args.app, depth=args.depth, sample=args.sample,
-                mode=args.mode, target=args.target)
-    elif args.export:
-        run_export(args.export, page=args.page, enhanced=args.enhanced)
-    elif args.debug_parse is not None:
-        run_parse(args.debug_parse)
-    else:
-        ap.print_help()
+    hud = None
+    if args.hud:
+        from policy_expr.hud import AgentHUD
+        hud = AgentHUD()
+
+    try:
+        if args.app:
+            run_app(args.app, depth=args.depth, sample=args.sample,
+                    mode=args.mode, target=args.target, hud=hud)
+        elif args.export:
+            run_export(args.export, page=args.page, enhanced=args.enhanced, hud=hud)
+        elif args.debug_parse is not None:
+            run_parse(args.debug_parse)
+        else:
+            ap.print_help()
+    finally:
+        if hud:
+            hud.close()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from policy_expr.executor import logical_xy
 from policy_expr.perception import try_resume_mac
@@ -15,6 +16,9 @@ from policy_expr.recon.back_nav import return_to_initial
 from policy_expr.recon.page_identity import PageIdentity
 from policy_expr.recon.utils import ProbeAbortedError
 from policy_expr.trace import Tracer
+
+# Module-level HUD status callback; set by explore_dfs, read by _probe_page_dfs.
+_status_cb: Callable[[str], None] | None = None
 
 
 def _safe_tap(client, lx: float, ly: float) -> str:
@@ -45,14 +49,28 @@ class DfsPageNode:
 
 def explore_dfs(phone, app_log_dir: Path, max_depth: int = 0,
                 sample: int = 0, mode: str | None = None,
-                target_dir: str | None = None) -> list[DfsPageNode]:
+                target_dir: str | None = None,
+                status_cb: Callable[[str], None] | None = None) -> list[DfsPageNode]:
     """Top-level DFS exploration.
 
     Phone must be on the root page.
     mode: None=initial, "add"=add to existing app, "update"=re-probe target page.
     target_dir: add=parent page dir name; update=page dir to overwrite.
+    status_cb: optional callable(text) for live status updates (e.g. HUD).
     Returns tree of explored pages (children attached).
     """
+    global _status_cb
+    _prev_cb = _status_cb
+    _status_cb = status_cb
+    try:
+        return _explore_dfs_impl(phone, app_log_dir, max_depth, sample, mode, target_dir)
+    finally:
+        _status_cb = _prev_cb
+
+
+def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
+                      sample: int = 0, mode: str | None = None,
+                      target_dir: str | None = None) -> list[DfsPageNode]:
     from policy_expr.recon.page_parser import PageParser
     from policy_expr.recon.cascade_matcher import get_matcher
 
@@ -564,10 +582,16 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
 
     top_level = len(nav_stack) - 1 if nav_stack else 0
 
+    if _status_cb:
+        _status_cb(f"探测 {out_dir.name}  0/{len(areas)}")
+
     for i, area in enumerate(areas, 1):
         ax, ay = area.center_xy
         lx, ly = logical_xy(ax, ay)
         print(f"\n  [{i}/{len(areas)}] 「{area.label}」 @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
+
+        if _status_cb:
+            _status_cb(f"探测 {out_dir.name}  {i}/{len(areas)}  {area.label}")
 
         tap_response = _safe_tap(phone.client, lx, ly)
 
