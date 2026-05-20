@@ -33,6 +33,7 @@ from policy_expr.schemas import (
     PolicyTurn,
 )
 from policy_expr.visualize import print_decision
+from policy_expr.hud import AgentHUD
 
 POLICIES: dict[str, type[ActionPolicy]] = {
     StructuredOutputPolicy.name: StructuredOutputPolicy,
@@ -191,6 +192,7 @@ def run_once(
     supervisor: SupervisorPolicy,
     log_dir: Path,
     context_path: Path,
+    hud: AgentHUD | None = None,
 ) -> None:
     context = PolicyContext(
         goal=prompt,
@@ -205,21 +207,28 @@ def run_once(
         turn_started_at = time.perf_counter()
         llm_calls_before = get_llm_call_count()
 
+        if hud: hud.update("Turn 1 — 截图分析中…")
         perception = LivePerception(phone, log_dir / "screenshot.png")
         observation = perception.observe()
 
+        if hud: hud.update("Turn 1 — 监督决策中…")
         print("监督决策中...")
         sv_step = supervisor.step(observation, context.goal, context.turns)
         print(f"监督者: {sv_step.summary}")
+        if hud: hud.update(f"Turn 1 — {sv_step.summary}")
 
         action_decision = None
         executed = False
 
         if sv_step.should_act:
             print(f"动作指令: {sv_step.instruction}")
+            if hud: hud.update("Turn 1 — 动作决策中…")
             print("动作决策中...")
             action_decision = action_policy.decide(observation, sv_step.instruction)
             print_decision(action_decision, observation.png_bytes, log_dir / "structured_output_result.png")
+            if hud:
+                a = action_decision.action
+                hud.update(f"Turn 1 — [{a.action_type}] {a.description}")
             executed = ActionExecutor(phone).execute(action_decision, app_name=sv_step.app_name or "")
 
         turn = PolicyTurn(
@@ -274,6 +283,7 @@ def run_agent_loop(
     context_path: Path,
     max_turns: int = 20,
     auto_continue: bool = False,
+    hud: AgentHUD | None = None,
 ) -> None:
     context = _load_context(
         input_context_path or context_path,
@@ -306,12 +316,15 @@ def run_agent_loop(
 
             print("\n" + TURN_HEADER.format(turn_no=turn_no))
 
+            if hud: hud.update(f"Turn {turn_no} — 截图分析中…")
             perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
 
+            if hud: hud.update(f"Turn {turn_no} — 监督决策中…")
             print("监督决策中...")
             sv_step = supervisor.step(observation, context.goal, context.turns)
             print(f"监督者: {sv_step.summary}")
+            if hud: hud.update(f"Turn {turn_no} — {sv_step.summary}")
 
             # Sync task_type from supervisor after first decomposition
             if hasattr(supervisor, "task_type") and context.task_type is None:
@@ -362,6 +375,7 @@ def run_agent_loop(
                     print("使用预生成动作，跳过 Action Policy")
                     action_decision = sv_step.preformed_action
                 else:
+                    if hud: hud.update(f"Turn {turn_no} — 动作决策中…")
                     print("动作决策中...")
                     action_decision = action_policy.decide(observation, sv_step.instruction)
                     print_decision(
@@ -372,8 +386,12 @@ def run_agent_loop(
                 # Action policy refused: target element not found on screen
                 if action_decision.not_found_reason:
                     print(f"  [NotFound] {action_decision.not_found_reason}")
+                    if hud: hud.update(f"Turn {turn_no} — 未找到目标元素")
                     executed = False
                 else:
+                    if hud:
+                        a = action_decision.action
+                        hud.update(f"Turn {turn_no} — [{a.action_type}] {a.description}")
                     executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
 
             turn = PolicyTurn(
@@ -527,6 +545,11 @@ def main() -> None:
         type=Path,
         help="应用知识文档路径（markdown），注入到任务分解 prompt 中",
     )
+    parser.add_argument(
+        "--hud",
+        action="store_true",
+        help="在 iPhone 镜像窗口下方显示实时动作状态面板",
+    )
     args = parser.parse_args()
 
     action_policy = build_policy(args.policy)
@@ -543,25 +566,31 @@ def main() -> None:
     input_context_path = args.context
     log_dir = create_run_dir(mode)
     context_path = log_dir / "context.json"
+    hud = AgentHUD() if args.hud else None
     with _tee_stdio(log_dir):
         print(f"Log Dir : {log_dir}")
         print(f"Context : {input_context_path if input_context_path else None}")
 
-        if mode == "single-step":
-            if input_context_path is not None:
-                raise ValueError("--context 目前只支持 agent-loop 模式")
-            run_once(args.prompt, action_policy, supervisor, log_dir, context_path)
-        elif mode == "agent-loop":
-            run_agent_loop(
-                args.prompt,
-                action_policy,
-                supervisor,
-                input_context_path,
-                log_dir,
-                context_path,
-                max_turns=args.max_turns,
-                auto_continue=args.auto_continue,
-            )
+        try:
+            if mode == "single-step":
+                if input_context_path is not None:
+                    raise ValueError("--context 目前只支持 agent-loop 模式")
+                run_once(args.prompt, action_policy, supervisor, log_dir, context_path, hud=hud)
+            elif mode == "agent-loop":
+                run_agent_loop(
+                    args.prompt,
+                    action_policy,
+                    supervisor,
+                    input_context_path,
+                    log_dir,
+                    context_path,
+                    max_turns=args.max_turns,
+                    auto_continue=args.auto_continue,
+                    hud=hud,
+                )
+        finally:
+            if hud:
+                hud.close()
 
 
 if __name__ == "__main__":
