@@ -21,5 +21,6 @@ llm:
     provider: dashscope
     model: qwen3.5-flash
   fingerprint:
+  router:
     provider: dashscope
     model: qwen3.5-flash
