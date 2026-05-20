@@ -1,9 +1,12 @@
 """Fixed action execution layer for policy experiments."""
 
+from __future__ import annotations
+
 import subprocess
 import time
 
 from policy_expr.utils import paste_text
+from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from Quartz import (
     CGEventCreateMouseEvent,
     CGEventCreateScrollWheelEvent,
@@ -40,21 +43,33 @@ _BTN_RIGHT    = 22   # App Switcher 按钮距窗口右边缘
 class ActionExecutor:
     """Execute normalized policy actions via mirroir-mcp."""
 
-    def __init__(self, phone: LivePhoneSession):
+    def __init__(self, phone: LivePhoneSession, calibrator: YoloCalibrator | None = None):
         self.phone = phone
+        self.calibrator = calibrator
+
+    def _snap(self, ax: float, ay: float) -> tuple[float, float]:
+        """Snap normalized (0-1000) coordinates to nearest YOLO-detected icon center."""
+        if self.calibrator:
+            snapped = self.calibrator.nearest(ax, ay)
+            if snapped:
+                print(f"YOLO 吸附: ({ax:.0f}, {ay:.0f}) → ({snapped[0]:.0f}, {snapped[1]:.0f})")
+                return snapped
+        return ax, ay
 
     def execute(self, decision: ActionDecision, app_name: str = "") -> bool:
         action = decision.action
         print(f"\n动作: [{action.action_type}] {action.description}")
 
         if action.action_type in ("tap", "click") and action.x is not None and action.y is not None:
-            lx, ly = logical_xy(action.x, action.y)
+            ax, ay = self._snap(action.x, action.y)
+            lx, ly = logical_xy(ax, ay)
             if not self._tap(lx, ly, decision, app_name):
                 return False
 
         elif action.action_type == "type" and action.text:
             if action.x is not None and action.y is not None:
-                lx, ly = logical_xy(action.x, action.y)
+                ax, ay = self._snap(action.x, action.y)
+                lx, ly = logical_xy(ax, ay)
                 if not self._tap(lx, ly, decision, app_name):
                     return False
                 time.sleep(0.5)

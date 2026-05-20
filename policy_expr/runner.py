@@ -24,6 +24,7 @@ from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPo
 from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.output import render_final_output
 from policy_expr.perception import LivePerception, LivePhoneSession
+from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
@@ -210,6 +211,7 @@ def run_once(
         if hud: hud.update("Turn 1 — 截图分析中…")
         perception = LivePerception(phone, log_dir / "screenshot.png")
         observation = perception.observe()
+        calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
         if hud: hud.update("Turn 1 — 监督决策中…")
         print("监督决策中...")
@@ -229,7 +231,7 @@ def run_once(
             if hud:
                 a = action_decision.action
                 hud.update(f"Turn 1 — [{a.action_type}] {a.description}")
-            executed = ActionExecutor(phone).execute(action_decision, app_name=sv_step.app_name or "")
+            executed = ActionExecutor(phone, calibrator).execute(action_decision, app_name=sv_step.app_name or "")
 
         turn = PolicyTurn(
             index=1,
@@ -319,6 +321,7 @@ def run_agent_loop(
             if hud: hud.update(f"Turn {turn_no} — 截图分析中…")
             perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
+            executor.calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
             if hud: hud.update(f"Turn {turn_no} — 监督决策中…")
             print("监督决策中...")
