@@ -181,7 +181,8 @@ def _build_element_lines(taps: list[dict]) -> list[str]:
         pos = _semantic_position(x, y, el_type)
 
         if tap.get("navigated"):
-            dest = (tap.get("identity") or {}).get("description", "")
+            ident = tap.get("identity") or {}
+            dest = ident.get("description", "") or ident.get("page_name", "")
             nav_note = f"实测→「{dest[:30]}」" if dest else "实测→已导航"
             lines.append(f"[{label}]  {pos}  {nav_note}")
         else:
@@ -245,15 +246,27 @@ def build_export(page_dir: Path, mode: str = "strict") -> ExportResult:
         temperature=0,
     )
 
+    import base64
+
     element_text = "\n".join(f"  {l}" for l in element_lines)
     prompt = EXPORT_PROMPT_ENHANCED if mode == "enhanced" else EXPORT_PROMPT
+    text_content = (
+        f"父页面：{parent_page or '无（根页面）'}\n"
+        f"页面描述：{raw_description}\n\n"
+        f"可交互元素（{len(element_lines)} 个）：\n{element_text}"
+    )
+    human_parts: list[dict] = [{"type": "text", "text": text_content}]
+    screenshot_path = page_dir / "initial.png"
+    if screenshot_path.exists():
+        png_bytes = _resize_for_api(screenshot_path.read_bytes())
+        b64 = base64.b64encode(png_bytes).decode()
+        human_parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
+        })
     messages = [
         SystemMessage(content=prompt),
-        HumanMessage(content=(
-            f"父页面：{parent_page or '无（根页面）'}\n"
-            f"页面描述：{raw_description}\n\n"
-            f"可交互元素（{len(element_lines)} 个）：\n{element_text}"
-        )),
+        HumanMessage(content=human_parts),
     ]
 
     knowledge = invoke_structured(llm, messages, PageKnowledge)
