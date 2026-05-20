@@ -14,22 +14,6 @@ from policy_expr.schemas import ActionDecision, Observation
 load_dotenv()
 
 
-def _yolo_snap(decision: "ActionDecision", png_bytes: bytes) -> None:
-    """Snap LLM tap coordinates to nearest YOLO-detected icon center."""
-    from policy_expr.recon.yolo_calibrator import YoloCalibrator
-    action = decision.action
-    if action.action_type not in ("tap", "click") or action.x is None or action.y is None:
-        return
-    cal = YoloCalibrator.from_png(png_bytes)
-    if cal is None:
-        return
-    snapped = cal.nearest(action.x, action.y)
-    if snapped is None:
-        return
-    print(f"  YOLO 吸附: ({action.x:.0f},{action.y:.0f}) → ({snapped[0]:.0f},{snapped[1]:.0f})")
-    action.x, action.y = snapped
-
-
 SYSTEM_PROMPT = """\
 你是一个 iPhone 操作执行器。
 用户会提供 iPhone 截图和一个具体的操作指令。你只需要找到目标元素并输出对应动作。
@@ -91,6 +75,4 @@ class StructuredOutputPolicy(BaseActionPolicy):
                 ]
             ),
         ]
-        result = invoke_structured(llm, messages, ActionDecision)
-        _yolo_snap(result, observation.png_bytes)
-        return result
+        return invoke_structured(llm, messages, ActionDecision)
