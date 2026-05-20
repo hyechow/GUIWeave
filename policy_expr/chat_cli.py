@@ -32,7 +32,7 @@ from policy_expr.executor import ActionExecutor
 from policy_expr.perception import LivePerception, LivePhoneSession
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.schemas import PolicyContext, PolicyTurn
-from policy_expr.supervisor import SimpleSupervisorPolicy
+from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
 from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.visualize import print_decision
 from policy_expr.policies import StructuredOutputPolicy
@@ -273,7 +273,7 @@ def _print_header() -> None:
     console.print("  [bold bright_cyan]iPhone GUI Agent[/]  [dim]─  自动操控 iPhone 的智能助手[/]")
     console.print("  [dim]操作各类 App · 发消息 · 点外卖 · 搜索内容 · 更多…[/]")
     console.print()
-    console.print("  [dim]/exit  退出  ·  /clear  清空对话历史[/]")
+    console.print("  [dim]/exit  退出  ·  /clear  清空对话历史  ·  /supervisor  切换策略引擎[/]")
     console.print()
 
 
@@ -354,8 +354,15 @@ def _print_result(result: dict) -> None:
 # ── Main loop ──────────────────────────────────────────────────────────────
 
 
-_COMMANDS = ["/exit", "/clear"]
-_completer = WordCompleter(_COMMANDS, meta_dict={"/exit": "退出", "/clear": "清空历史"})
+_COMMANDS = ["/exit", "/clear", "/supervisor"]
+_completer = WordCompleter(
+    _COMMANDS,
+    meta_dict={
+        "/exit": "退出",
+        "/clear": "清空历史",
+        "/supervisor": "切换 supervisor (simple/milestone)",
+    },
+)
 _pt_prompt = ANSI("\033[1;36m❯ \033[0m")
 
 
@@ -388,6 +395,17 @@ def main() -> None:
             console.clear()
             session.clear()
             _print_header()
+            continue
+
+        if user_msg == "/supervisor":
+            current = supervisor.name
+            if current == SimpleSupervisorPolicy.name:
+                supervisor = build_supervisor(MilestoneSupervisorPolicy.name)
+            else:
+                supervisor = build_supervisor(SimpleSupervisorPolicy.name)
+            console.print()
+            console.print(f"  [dim]supervisor: {current} → {supervisor.name}[/dim]")
+            console.print()
             continue
 
         # Route
