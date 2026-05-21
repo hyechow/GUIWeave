@@ -152,9 +152,11 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
 
         # Return to root page
         print(f"\n  ← 返回「{page_name}」")
+        _nav_ctx = f"点击了底部tab「{area.label}」" if area.element_type == "tab" else f"点击了{area.element_type}「{area.label}」"
         ok, back_log = return_to_initial(
             phone.client, phone.screenshot, nav_stack,
             before_back_bytes=phone.screenshot(),
+            nav_context=_nav_ctx,
             target_label=page_name,
         )
         if not ok:
@@ -442,9 +444,12 @@ def _dfs_recursive(
 
                 # Return to current page
                 print(f"\n  ← 返回「{page_name}」")
+                _nav_ctx = f"点击了底部tab「{area.label}」" if area.element_type == "tab" else f"点击了{area.element_type}「{area.label}」"
                 ok, back_log = return_to_initial(
                     phone.client, phone.screenshot, nav_stack,
                     before_back_bytes=phone.screenshot(),
+                    nav_context=_nav_ctx,
+                    target_label=page_name,
                 )
                 if not ok:
                     recovered = _manual_recover(
@@ -588,7 +593,8 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     for i, area in enumerate(areas, 1):
         ax, ay = area.center_xy
         lx, ly = logical_xy(ax, ay)
-        print(f"\n  [{i}/{len(areas)}] 「{area.label}」 @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
+        etype = area.element_type or ""
+        print(f"\n  [{i}/{len(areas)}] 「{area.label}」 ({etype}) @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
 
         if _status_cb:
             _status_cb(f"探测 {out_dir.name}  {i}/{len(areas)}  {area.label}")
