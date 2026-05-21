@@ -32,10 +32,14 @@ STUCK_REPEAT_WORD_OVERLAP = 0.85
 
 
 class _SingleCheckResult(BaseModel):
-    """Checker output for single-step milestones (navigation/filter/action/verification/read_once)."""
+    """Checker output for single-step milestones (navigation/filter/action/verification/read_once).
+
+    LLM checker should only return done or in_progress.
+    stuck is reserved for programmatic checks (screen similarity, instruction repetition).
+    """
     status: Literal["done", "in_progress", "stuck"]
     reason: str = Field(description="判断理由")
-    stuck_reason: str = Field(default="", description="卡住原因（仅 stuck 时填写）")
+    stuck_reason: str = Field(default="", description="卡住原因（仅程序化 stuck 时填写）")
     issues: list[str] = Field(default_factory=list)
     visible_evidence: list[str] = Field(default_factory=list, description="截图中支持 done 的可见证据")
     missing_evidence: list[str] = Field(default_factory=list, description="缺失的验收证据")
@@ -97,9 +101,8 @@ DECOMPOSE_PROMPT = """\
 你是 iPhone 自动化任务的规划 Supervisor。将用户任务分解为子目标（milestone）。
 你会收到当前屏幕截图，请根据截图判断设备当前状态。
 
-可用操作：tap（点击）、type（输入）、scroll（滚动）、home（返回主屏幕）
-
-输出要求：
+可用操作：tap（点击）、type（输入文字，通过剪贴板粘贴支持中文）、press_enter（按回车提交）、clear_text（清空输入框）、scroll（滚动）、home（返回主屏幕）
+⚠️ 设备通过 iPhone Mirroring 控制，使用 Mac 键盘输入，iOS 虚拟键盘不会在屏幕上弹出。因此验收条件中禁止使用「键盘弹出」「键盘可见」等无法观察的条件，应改为「输入框获得焦点（显示光标）」「输入框显示指定文字」等可观测条件。
 - goal：任务一句话描述
 - global_constraints：全局约束列表
 - milestones：子目标列表，每个包含 id/name/description/depends_on/success_condition/kind/completion_strategy/scroll_stop_condition/failure_hints
@@ -108,31 +111,46 @@ DECOMPOSE_PROMPT = """\
   - analysis：用户要求查看/比较/总结信息（统计数据、总结列表、查询结果）；有疑问时选 analysis
 
 原则：
+## 子目标粒度
+每个子目标对应一个**截图可确认的稳定页面状态**（如：应用主页、搜索结果页、详情页、设置页）。
+子目标之间是页面级别的跨越，子目标内部的具体操作（点击、输入、滑动、切换 tab、搜索导航）不需要拆成子目标。
+**关键：多步页面导航应合并为一个子目标**。例如"搜索并进入某人的聊天"是一个子目标（最终到达聊天页），不应该拆成"进入搜索页→输入关键词→点击搜索结果→进入聊天"四个子目标。
+
+示例：
+- ❌ 「打开XX应用」→「点击底部Tab」（太细，单步动作不应成为子目标）
+- ❌ 「进入搜索页」→「输入搜索词」→「点击搜索结果」（太细，搜索导航应合并为一个子目标）
+- ❌ 「找到联系人并发送消息」（太粗，两个不同的目标页面状态）
+- ✅ 「进入XX应用主页」→「导航到某人的详情页」→「发送消息」（合适，每个子目标到达一个稳定页面）
+
+## 验收条件
+每个 success_condition 必须指向**唯一可截图确认的状态**，只用一个核心判定，不要用「且」「及」连接多个条件。
+好：「看到XX页面标题」「消息气泡出现在聊天记录中」
+差：「看到底部导航栏及聊天列表」（"及"连接两个条件）
+禁止使用模糊修饰（如「任意页面均可」「如XX页面」「或其他页面」等）。
+
+## 其他规则
 1. 如果当前不在主屏幕，第一个子目标应为「回到主屏幕」，验收条件为「看到主屏幕（桌面图标界面）」
 2. 如果当前已在主屏幕或已在目标应用内，不需要「回到主屏幕」步骤
-3. success_condition 要具体可判断，如「看到XX页面标题」「XX输入框有内容」
-4. depends_on 填依赖的前置子目标 id，无依赖留空
-5. kind 必须表达子目标语义：
+3. depends_on 填依赖的前置子目标 id，无依赖留空
+4. kind 必须表达子目标语义：
    - navigation：打开应用、进入页面、切换 tab
    - filter：设置范围、搜索词、筛选条件、排序条件
    - collection：读取并收集页面内容（记录列表、消息流、搜索结果）
    - action：执行一次具体操作
    - verification：确认结果是否满足目标
-6. completion_strategy 必须表达完成方式：
+5. completion_strategy 必须表达完成方式：
    - visible_once：看到指定页面/状态即可完成
    - read_once：读取当前屏幕一次即可完成
    - scroll_until_boundary：需要反复滚动，直到列表到底或无更多内容
    - repeat_until_satisfied：重复操作直到条件满足
    - human_escalation：需要人工处理
-7. 信息获取类任务的内容收集子目标必须使用 kind=collection；来自可滚动列表、记录流或消息流的内容必须使用 completion_strategy=scroll_until_boundary
+6. 信息获取类任务的内容收集子目标必须使用 kind=collection；来自可滚动列表、记录流或消息流的内容必须使用 completion_strategy=scroll_until_boundary
    - scroll_until_boundary 的子目标必须填写 scroll_stop_condition（一句话说明何时停止滚动）：
      * 有时间范围：「当可见记录日期早于 {目标开始日期} 时停止」
      * 有关键词条件：「当可见内容不再包含 {关键词} 时停止」
      * 全量采集：「滚动至列表物理底部时停止」
-8. failure_hints 列出该子目标可能失败的原因
-9. 「打开应用」类子目标验收条件应为「成功进入该应用（任意页面均可）」
-10. 进入应用内某个 tab/page 的验收条件必须包含可见页面标题、选中状态或该页面独有的稳定内容证据
-11. task_type=analysis 时，不生成 kind=verification 的子目标。数据完整性由采集阶段保证，不需要单独验证子目标
+7. failure_hints 列出该子目标可能失败的原因
+8. task_type=analysis 时，不生成 kind=verification 的子目标。数据完整性由采集阶段保证，不需要单独验证子目标
 """
 
 SINGLE_CHECKER_PROMPT = """\
@@ -141,11 +159,13 @@ SINGLE_CHECKER_PROMPT = """\
 请按以下步骤分析（按顺序推理）：
 
 **第一步：页面识别**
-先识别当前页面是什么。观察截图中的标题、tab标签、页面布局，确定页面身份（如：订单列表、发票管理、个人中心、账单页面、聊天列表等）。
+先识别当前页面是什么。当前应该在「{app_name}」应用内。观察截图中的标题、tab标签、页面布局，确定页面身份（如：订单列表、发票管理、个人中心、账单页面、聊天列表等）。
+⚠️ 识别页面时必须考虑当前应用上下文：当前应该在「{app_name}」内，不要将当前应用的页面误判为其他应用。
 将结果填入 page_identity 字段。
 
 **第二步：验收判断**
-基于第一步的页面识别结果，判断验收条件是否满足。如果页面身份与验收条件不匹配（如验收要求"订单列表"但实际在"发票管理"），必须判定 stuck。
+⚠️ 只看验收条件（success_condition）的字面要求，忽略子目标名称和描述。子目标名称不能替代验收条件作为判定依据，必须验收条件中明确描述的内容全部可见才能判 done。
+基于第一步的页面识别结果，判断验收条件是否满足。
 ## 当前子目标
 - 名称：{milestone_name}
 - 描述：{milestone_desc}
@@ -161,7 +181,6 @@ SINGLE_CHECKER_PROMPT = """\
 ## 筛选类子目标（kind=filter）
 - 截图必须显示精确的筛选条件或等价范围，才能判 done
 - 更宽的范围不能当作筛选完成；即使可见项都在目标范围内，筛选摘要显示更宽范围也不能 done
-- 如果当前 UI 无法精确筛选，返回 stuck，在 stuck_reason 中说明原因
 
 ## 搜索类子目标（kind=filter，含搜索操作）
 判 done 必须同时满足：
@@ -174,9 +193,8 @@ SINGLE_CHECKER_PROMPT = """\
 - navigation/filter/action 阶段 read_instruction 必须留空
 
 ## 通用规则
-- done：截图上必须能直接观察到验收条件中描述的具体内容
-- in_progress：正在向目标推进
-- stuck：错误弹窗、连续无进展、页面回退、操作陷入循环
+- done：验收条件中描述的每个具体内容都必须在截图上可直接观察到
+- in_progress：验收条件尚未完全满足，包括页面不匹配、还在导航中、操作未完成等所有非 done 的情况
 - 验收条件要求某页面标题：必须看到顶部标题与验收条件精确匹配
 - 验收条件要求某底部 tab：必须看到该 tab 高亮/选中
 - 只看可观测事实，不要凭感觉判断
@@ -243,8 +261,8 @@ PLAN_PROMPT = """\
 {history_text}
 
 规划规则：
-- 只输出一个当前屏幕马上可执行的单步操作指令
-- 描述要操作的具体 UI 元素，如「点击底部导航栏左起第二个通讯录图标」
+- ⚠️ 每条指令只包含一个动作。禁止组合多个动作（如「输入文字并按回车」）。输入和提交必须拆成两条指令
+- 描述要操作的具体 UI 元素，如「点击底部导航栏左起第二个Tab」
 - 不要给出目标级指令，如「进入通讯录页面」「完成搜索」
 - 如果当前子目标要求「回到主屏幕」，下一步必须指令「按 Home 键返回主屏幕」
 - 如果当前已在目标应用内但不在正确页面，给出应用内导航指令，不要重新打开已打开的应用
@@ -270,7 +288,7 @@ LOOP_SCROLL_PROMPT = """\
 
 规则：
 - 输出一个滚动指令，描述要查看什么内容（如「滚动查看更多记录」「滚动查看更早的消息」）
-- 不要指定手指滑动方向，由 action policy 根据截图判断
+- 不要指定手指滑动方向
 - 如果当前屏幕已显示列表内容，滚动以获取更多同类内容
 """
 
@@ -307,6 +325,7 @@ REPLAN_PROMPT = """\
 {tried_instructions}
 - instruction 只包含一个原子操作，禁止包含「并」「然后」「再」等连接词
 - 如果子目标要求「回到主屏幕」，必须指令「按 Home 键返回主屏幕」
+- ⚠️ 打开应用后发现不是目标应用或进入错误页面时，应先在应用内导航到该应用的主界面（点击返回按钮、关闭弹窗等），确认当前所在的应用身份后，再决定是继续在应用内操作还是按 Home 键回主屏。禁止未确认应用身份就直接按 Home 键。
 - 滚动指令描述要查看什么内容，不要指定手指方向
 """
 
@@ -388,9 +407,12 @@ class MilestoneSupervisorPolicy:
         self._scroll_counts: dict[str, int] = {}
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
+        self._app_name: str = ""
 
-    def set_app_knowledge(self, text: str) -> None:
+    def set_app_knowledge(self, text: str, app_name: str = "") -> None:
         self._app_knowledge = text
+        if app_name:
+            self._app_name = app_name
 
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
         if not self._initialized:
@@ -415,16 +437,19 @@ class MilestoneSupervisorPolicy:
     ) -> SupervisorStep:
         sim_stuck = self._check_screen_similarity(observation)
         rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
-        check = sim_stuck or rep_stuck or self._single_check(milestone, observation, history)
+        # Stuck is only triggered by programmatic checks (screen similarity / instruction repetition).
+        # Checker only returns done or in_progress.
+        if sim_stuck or rep_stuck:
+            check = sim_stuck or rep_stuck
+            print(f"  [Stuck] {check.status}: {check.reason}")
+            page_changed = sim_stuck is None
+            return self._handle_stuck(milestone, check, check.read_instruction, observation, history, page_changed=page_changed)
+
+        check = self._single_check(milestone, observation, history)
         print(f"  [SingleCheck] {check.status}: {check.reason}")
 
         if check.status == "done":
             return self._advance(milestone, observation, history)
-        if check.status == "stuck":
-            # Page changed (sim_stuck=None) means navigation is progressing —
-            # not a true retry, just not at the target yet.
-            page_changed = sim_stuck is None
-            return self._handle_stuck(milestone, check, check.read_instruction, observation, history, page_changed=page_changed)
         return self._plan_single(milestone, check, observation, history)
 
     def _plan_single(
@@ -791,6 +816,13 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _SingleCheckResult:
+        # Infer current app: prefer explicit _app_name, fallback to history
+        app_name = self._app_name or "未知应用"
+        if not self._app_name:
+            for t in reversed(history):
+                if t.supervisor and t.supervisor.app_name:
+                    app_name = t.supervisor.app_name
+                    break
         prompt = SINGLE_CHECKER_PROMPT.format(
             milestone_name=milestone.name,
             milestone_desc=milestone.description,
@@ -800,6 +832,7 @@ class MilestoneSupervisorPolicy:
             task_type=self.task_type,
             constraints=json.dumps(self._global_constraints, ensure_ascii=False),
             history_text=_format_history(history),
+            app_name=app_name,
         )
         if extra:
             prompt += f"\n\n## 输出修正要求\n{extra}"

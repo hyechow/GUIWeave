@@ -521,10 +521,10 @@ def main() -> None:
     supervisor = build_supervisor(args.supervisor)
 
     # Auto-discover app knowledge from goal
-    knowledge_text = auto_discover_knowledge(args.prompt)
+    knowledge_text, discovered_app = auto_discover_knowledge(args.prompt)
     if knowledge_text and hasattr(supervisor, "set_app_knowledge"):
-        supervisor.set_app_knowledge(knowledge_text)
-        print(f"Knowledge: auto-loaded ({len(knowledge_text)} chars)")
+        supervisor.set_app_knowledge(knowledge_text, app_name=discovered_app)
+        print(f"Knowledge: auto-loaded ({len(knowledge_text)} chars), app={discovered_app}")
 
     mode = args.mode
     input_context_path = args.context
@@ -554,17 +554,18 @@ def main() -> None:
                     hud=hud,
                 )
             if result:
-                output = generate_reply(
-                    result["goal"],
-                    result,
-                    content_notes=result.get("content_notes"),
-                    collection_context=result.get("collection_context"),
-                )
-                print("\n" + "=" * 50)
-                print("最终输出")
-                print("=" * 50)
-                print(output.rstrip())
-                print("=" * 50)
+                pass
+                # output = generate_reply(
+                #     result["goal"],
+                #     result,
+                #     content_notes=result.get("content_notes"),
+                #     collection_context=result.get("collection_context"),
+                # )
+                # print("\n" + "=" * 50)
+                # print("最终输出")
+                # print("=" * 50)
+                # print(output.rstrip())
+                # print("=" * 50)
         finally:
             if hud:
                 hud.close()

@@ -119,7 +119,7 @@ def find_screenshot() -> bytes:
 def main():
     png_bytes = find_screenshot()
     observation = Observation(png_bytes=png_bytes, source="test")
-    knowledge = auto_discover_knowledge("微信")
+    knowledge, _ = auto_discover_knowledge("微信")
 
     print(f"Knowledge: {'loaded' if knowledge else 'none'} ({len(knowledge or '')} chars)")
     print("=" * 80)

@@ -123,13 +123,14 @@ _APP_ALIASES: dict[str, str] = {
 }
 
 
-def auto_discover_knowledge(goal: str) -> str | None:
+def auto_discover_knowledge(goal: str) -> tuple[str | None, str]:
     """Match goal against knowledge/{app}/ dir names and load _app.md.
 
-    Returns the knowledge text if matched, None otherwise.
+    Returns (knowledge_text, app_name). app_name is the matched directory
+    name (empty string if no match).
     """
     if not KNOWLEDGE_DIR.is_dir():
-        return None
+        return None, ""
 
     candidates: dict[str, Path] = {}
     for d in KNOWLEDGE_DIR.iterdir():
@@ -145,10 +146,10 @@ def auto_discover_knowledge(goal: str) -> str | None:
         if name in goal_lower:
             app_md = d / "_app.md"
             if app_md.exists():
-                return app_md.read_text(encoding="utf-8").strip()
+                return app_md.read_text(encoding="utf-8").strip(), d.name
             break
 
-    return None
+    return None, ""
 
 
 if __name__ == "__main__":
