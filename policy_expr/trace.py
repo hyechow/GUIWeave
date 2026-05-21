@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +17,11 @@ class BackAttempt:
     success: bool = False
     screenshot: str = ""    # path to screenshot after this attempt, or ""
     tap_xy: list[int] = field(default_factory=list)   # [x, y] normalized 0-1000 coords
+
+
+def _make_back_attempt(d: dict) -> BackAttempt:
+    known = {f.name for f in fields(BackAttempt)}
+    return BackAttempt(**{k: v for k, v in d.items() if k in known})
 
 
 @dataclass
@@ -72,7 +77,7 @@ class Tracer:
                 message=str(exc),
                 failed_tap=exc.failed_tap,
                 failed_element=exc.failed_element,
-                back_attempts=[BackAttempt(**a) for a in exc.back_attempts],
+                back_attempts=[_make_back_attempt(a) for a in exc.back_attempts],
             )
         else:
             self._entries[idx].error = ProbeError(message=str(exc))
@@ -139,7 +144,7 @@ class Tracer:
                         message=raw_err.get("message", ""),
                         failed_tap=raw_err.get("failed_tap", -1),
                         failed_element=raw_err.get("failed_element", ""),
-                        back_attempts=[BackAttempt(**a) for a in raw_err.get("back_attempts", [])],
+                        back_attempts=[_make_back_attempt(a) for a in raw_err.get("back_attempts", [])],
                     )
             tracer._entries.append(Entry(
                 page=page,

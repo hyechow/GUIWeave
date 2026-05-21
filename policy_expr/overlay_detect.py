@@ -122,6 +122,22 @@ def _find_popup_bbox(
 # Public API
 # ---------------------------------------------------------------------------
 
+def detect_fullscreen_popup(img: np.ndarray, threshold: float = 0.25) -> bool:
+    """Single-image heuristic: darkened edge strip vs bright center → fullscreen popup.
+
+    Works where detect_overlay fails (>80% pixels changed looks like navigation).
+    """
+    h, w = img.shape[:2]
+    W = 40
+    edge_mean = float(np.mean([
+        img[:W].mean(), img[-W:].mean(),
+        img[:, :W].mean(), img[:, -W:].mean(),
+    ]))
+    center_mean = float(img[h // 4:3 * h // 4, w // 4:3 * w // 4].mean())
+    ratio = edge_mean / max(center_mean, 1.0)
+    return ratio < threshold
+
+
 def detect_overlay(img1: np.ndarray, img2: np.ndarray) -> OverlayResult:
     """
     img1: before frame (H x W x 3, RGB uint8)

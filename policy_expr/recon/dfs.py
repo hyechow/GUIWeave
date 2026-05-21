@@ -231,6 +231,11 @@ def _dfs_recursive(
         _tap_close_xy(phone, close_xy)
         return None, {"is_new": False, "phase": "miniprogram"}
 
+    # Full-screen popup: pixel pre-check → LLM locate → YOLO snap → tap
+    from policy_expr.recon.popup_nav import close_popup
+    if close_popup(phone.client, phone.screenshot, png_bytes):
+        png_bytes = phone.screenshot()
+
     # ── Overlay detection (前置于去重，命中则强制新页面) ──
     _overlay = _check_overlay(nav_stack, png_bytes)
     if _overlay:
