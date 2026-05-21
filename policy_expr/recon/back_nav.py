@@ -16,7 +16,6 @@ from policy_expr.config import resolve_llm_config
 from policy_expr.executor import is_valid_tap
 from policy_expr.policies.base import resize_to_logical_png
 from policy_expr.recon.page_compare import PageComparator, make_comparator
-from policy_expr.recon.utils import save_llm_prompt_debug
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +159,116 @@ def _format_elements_context(elements: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _save_back_nav_debug(
+    debug_path: Path,
+    context_text: str,
+    before_b64: str,
+    after_b64: str,
+    response: dict | None,
+) -> None:
+    """Save an HTML visualization of one back-nav LLM call for debugging."""
+    import html as _html
+
+    def _esc(s: str) -> str:
+        return _html.escape(str(s))
+
+    if response is not None:
+        tap_x = round(response.get("back_x", -1))
+        tap_y = round(response.get("back_y", -1))
+        left, top = tap_x / 10, tap_y / 10
+        crosshair = (
+            f'<div class="crosshair" style="left:{left:.1f}%;top:{top:.1f}%">'
+            '<div class="ch-h"></div><div class="ch-v"></div>'
+            '<div class="ch-ring"></div></div>'
+        )
+        response_html = f"""
+        <div class="section response-section">
+          <div class="section-title">LLM 输出</div>
+          <div class="response-grid">
+            <div class="resp-item"><span class="resp-key">page_type</span><span class="resp-val type-badge">{_esc(response.get("page_type", ""))}</span></div>
+            <div class="resp-item"><span class="resp-key">can_go_back</span><span class="resp-val">{_esc(response.get("can_go_back", ""))}</span></div>
+            <div class="resp-item"><span class="resp-key">method</span><span class="resp-val">{_esc(response.get("method", ""))}</span></div>
+            <div class="resp-item"><span class="resp-key">坐标</span><span class="resp-val">({tap_x}, {tap_y})</span></div>
+          </div>
+          <div class="tap-preview">
+            <div class="ss-wrap">
+              <div class="ss-label after-label">AFTER + tap point</div>
+              <img src="data:image/png;base64,{after_b64}">
+              {crosshair}
+            </div>
+          </div>
+        </div>"""
+    else:
+        response_html = (
+            '<div class="section response-section">'
+            '<div class="section-title">LLM 输出</div>'
+            '<span class="resp-val" style="color:#ff5555">can_go_back=False 或坐标越界</span>'
+            '</div>'
+        )
+
+    page = f"""<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>back-nav debug</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; margin: 0; padding: 20px; font-size: 13px; }}
+  h1 {{ font-size: 15px; color: #888; margin: 0 0 16px; }}
+  .section {{ background: #252540; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }}
+  .section-title {{ font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }}
+  pre {{ background: #1a1a2e; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; color: #ccc; white-space: pre-wrap; word-break: break-word; margin: 0; }}
+  .images {{ display: flex; gap: 16px; align-items: flex-start; }}
+  .ss-wrap {{ position: relative; flex-shrink: 0; }}
+  .ss-wrap img {{ height: 300px; border-radius: 6px; display: block; }}
+  .ss-label {{ font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; margin-bottom: 4px; display: inline-block; }}
+  .before-label {{ background: #0a84ff; color: #fff; }}
+  .after-label {{ background: #ff9500; color: #fff; }}
+  .response-section {{ border-left: 3px solid #34C759; }}
+  .response-grid {{ display: flex; flex-wrap: wrap; gap: 10px 24px; margin-bottom: 12px; }}
+  .resp-item {{ display: flex; align-items: center; gap: 8px; }}
+  .resp-key {{ color: #888; font-size: 12px; }}
+  .resp-val {{ font-family: monospace; font-weight: 600; color: #eee; }}
+  .type-badge {{ background: #ff9500; color: #000; padding: 1px 10px; border-radius: 10px; }}
+  .tap-preview {{ display: flex; gap: 16px; }}
+  .crosshair {{ position: absolute; pointer-events: none; z-index: 1; }}
+  .ch-h, .ch-v {{ position: absolute; background: rgba(255,255,0,0.85); }}
+  .ch-h {{ width: 40px; height: 2px; top: -1px; left: -20px; }}
+  .ch-v {{ width: 2px; height: 40px; left: -1px; top: -20px; }}
+  .ch-ring {{ position: absolute; width: 14px; height: 14px; border: 2px solid rgba(255,255,0,0.9); border-radius: 50%; top: -7px; left: -7px; }}
+</style>
+</head>
+<body>
+  <h1>back-nav LLM · {_esc(debug_path.stem)}</h1>
+
+  <div class="section">
+    <div class="section-title">System Prompt</div>
+    <pre>{_esc(BACK_PROMPT)}</pre>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Human Message · 上下文</div>
+    <pre>{_esc(context_text)}</pre>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Human Message · 截图</div>
+    <div class="images">
+      <div>
+        <div class="ss-label before-label">BEFORE</div>
+        <div class="ss-wrap"><img src="data:image/png;base64,{before_b64}"></div>
+      </div>
+      <div>
+        <div class="ss-label after-label">AFTER</div>
+        <div class="ss-wrap"><img src="data:image/png;base64,{after_b64}"></div>
+      </div>
+    </div>
+  </div>
+
+  {response_html}
+</body>
+</html>"""
+    debug_path.write_text(page, encoding="utf-8")
+
 
 def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: str = "",
                       target_label: str = "",
@@ -233,7 +342,7 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
                  "method": result.method, "back_x": result.back_x, "back_y": result.back_y}
                 if result is not None else None
             )
-            save_llm_prompt_debug(debug_path, BACK_PROMPT, context_text, before_b64, after_b64, response_dict)
+            _save_back_nav_debug(debug_path, context_text, before_b64, after_b64, response_dict)
             print(f"    [LLM debug] {debug_path}")
         except Exception as exc:
             print(f"    [LLM debug] 保存失败: {exc}")
