@@ -198,72 +198,6 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
     return [root_node]
 
 
-def _dfs_explore_children(
-    phone,
-    node: DfsPageNode,
-    nav_stack: list[tuple[bytes, tuple[float, float] | None]],
-    root_ctx: tuple,
-    chain_to_page: dict[tuple, str],
-    dedup: PageIdentity,
-    tracer: Tracer,
-    trace_path: Path,
-    app_log_dir: Path,
-    remaining_depth: int,
-    sample: int,
-) -> None:
-    """DFS into navigated children of node. Phone is on node's page."""
-    navigated_taps = [t for t in node.recon_result.taps if t.tap_ok and t.navigated]
-    if not navigated_taps:
-        return
-
-    print(f"\n  发现 {len(navigated_taps)} 个可导航子页面")
-
-    for tap in navigated_taps:
-        lx, ly = logical_xy(tap.x, tap.y)
-        child_chain = node.nav_chain + [(lx, ly, tap.label)]
-
-        # 1. Tap into child page
-        print(f"\n  → 进入子页面「{tap.label}」")
-        _safe_tap(phone.client, lx, ly)
-        time.sleep(2.0)
-        child_bytes = phone.screenshot()
-
-        # 2. Build child nav_stack with parent forward_coords
-        # Parent entry's forward_coords points to the tap that re-enters this child
-        parent_bytes, _ = nav_stack[-1]
-        child_nav_stack = nav_stack[:-1] + [(parent_bytes, (lx, ly)), (child_bytes, None)]
-
-        # 3. Recursive DFS into child
-        child_node, _ = _dfs_recursive(
-            phone, child_chain, child_nav_stack, root_ctx,
-            chain_to_page, dedup, [], tracer, trace_path,
-            app_log_dir, remaining_depth - 1, sample,
-        )
-
-        if child_node is not None:
-            node.children.append(child_node)
-
-        # 4. Back to this page (one level up)
-        print(f"\n  ← 返回「{node.page_name}」")
-        ok, back_log = return_to_initial(
-            phone.client, phone.screenshot, nav_stack,
-            before_back_bytes=phone.screenshot(),
-            target_label=node.page_name,
-        )
-        if not ok:
-            recovered = _manual_recover(
-                phone.client, phone.screenshot, nav_stack,
-                len(nav_stack) - 1,
-                prompt=f"子页面探索后无法返回 {node.page_name}",
-            )
-            if not recovered:
-                raise ProbeAbortedError(
-                    f"DFS: 无法从子页面返回 {node.page_name}",
-                    failed_tap=-1, failed_element="",
-                    back_attempts=back_log,
-                )
-
-
 def _dfs_recursive(
     phone,
     nav_chain: list[tuple[float, float, str]],
@@ -284,11 +218,6 @@ def _dfs_recursive(
     POST: phone is back on this page (after all children explored)
 
     Returns (node, dedup_info) where dedup_info describes identity of this page.
-    """
-    """Recursive DFS step. Phone is on the target page.
-
-    PRE:  phone is on this page (nav_stack top)
-    POST: phone is back on this page (after all children explored)
     """
     app = app_log_dir.name
 
@@ -493,16 +422,6 @@ def _dfs_recursive(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _parse_identity(phone) -> tuple:
-    """Screenshot + parse page identity. Returns (png_bytes, knowledge, page_name)."""
-    from policy_expr.recon.page_parser import PageParser
-
-    png_bytes = phone.screenshot()
-    knowledge = PageParser().analyze_screen(png_bytes)
-    page_name, _fingerprint = _page_name_from_fingerprint(png_bytes)
-    return png_bytes, knowledge, page_name
-
 
 def _child_status(child_node, depth: int) -> str:
     """Derive child exploration status from _dfs_recursive return value."""

@@ -16,6 +16,7 @@ class BackAttempt:
     coords: list[int] = field(default_factory=list)  # [x, y] logical coords
     success: bool = False
     screenshot: str = ""    # path to screenshot after this attempt, or ""
+    tap_xy: list[int] = field(default_factory=list)   # [x, y] normalized 0-1000 coords
 
 
 @dataclass

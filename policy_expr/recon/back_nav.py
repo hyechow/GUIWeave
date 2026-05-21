@@ -137,26 +137,6 @@ def tap_llm_back(client, action: BackAction) -> tuple[float, float, str] | None:
 # LLM back action inference
 # ---------------------------------------------------------------------------
 
-def _parse_page_elements(png_bytes: bytes) -> list[dict]:
-    """Run PageParser on a screenshot; returns serializable element list."""
-    try:
-        from policy_expr.recon.page_parser import PageParser
-        parsed = PageParser().parse_screen(png_bytes)
-        return [
-            {
-                "label": el.label,
-                "element_type": el.element_type,
-                "x": round(el.x),
-                "y": round(el.y),
-                "leads_to": el.leads_to,
-            }
-            for el in parsed.interactive_elements
-        ]
-    except Exception as exc:
-        print(f"    [page_parser] 解析失败: {exc}")
-        return []
-
-
 def _format_elements_context(elements: list[dict]) -> str:
     """Format element list for inclusion in the LLM back-nav prompt."""
     if not elements:

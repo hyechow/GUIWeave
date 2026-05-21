@@ -203,7 +203,7 @@ def main() -> None:
                 return
 
             # New page
-            knowledge = parser.analyze_screen(png_bytes)
+            # knowledge = parser.analyze_screen(png_bytes)  # unused, parse_items does its own call
             fingerprint = get_matcher()._generate_fingerprint(png_bytes)
             for line in fingerprint.splitlines():
                 if line.startswith("用途：") or line.startswith("用途:"):
@@ -269,6 +269,7 @@ def main() -> None:
                 visited.add(idx)
                 ax, ay, label, etype = items[idx]
                 lx, ly = logical_xy(ax, ay)
+                _nav_ctx = f"点击了底部tab「{label}」" if etype == "tab" else f"点击了{etype}「{label}」"
                 print(f"{prefix}  → tap [{label}] ({etype}) at ({ax:.0f},{ay:.0f})")
                 client.tap(lx, ly)
                 time.sleep(SETTLE)
@@ -292,6 +293,7 @@ def main() -> None:
                     ok, back_log = return_to_initial(
                         client, screenshot, nav_stack,
                         before_back_bytes=after_bytes,
+                        nav_context=_nav_ctx,
                     )
                     if ok:
                         print(f"{prefix}    ✓ 已返回当前页")
@@ -317,6 +319,7 @@ def main() -> None:
                 ok, back_log = return_to_initial(
                     client, screenshot, nav_stack,
                     before_back_bytes=screenshot(),
+                    nav_context=_nav_ctx,
                 )
                 if ok:
                     print(f"{prefix}  ✓ 已返回")

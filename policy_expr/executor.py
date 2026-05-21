@@ -197,7 +197,7 @@ def logical_xy(ax: float, ay: float) -> tuple[float, float]:
 # Valid tap region on the phone screen (logical 0-1000 space).
 # Derived from mcp_frame_mask.png: corners, notch (top ~50px), and edges are frame/desktop.
 _TAP_X_MIN, _TAP_X_MAX = 30, 970
-_TAP_Y_MIN, _TAP_Y_MAX = 80, 980
+_TAP_Y_MIN, _TAP_Y_MAX = 80, 970
 
 
 def is_valid_tap(ax: float, ay: float) -> bool:
