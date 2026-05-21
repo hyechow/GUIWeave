@@ -76,6 +76,10 @@ class InteractiveElement(BaseModel):
                 data["y"] = float(parts[1])
             except ValueError:
                 pass
+        # Fallback invalid icon_semantic to "other"
+        sem = data.get("icon_semantic")
+        if isinstance(sem, str) and sem not in {"search", "settings", "close", "share", "more", "notification", "profile", "camera", "scan", "add", "edit", "delete", "favorite", "filter", "download", "message", "map", "other"}:
+            data["icon_semantic"] = "other"
         return data
 
     leads_to: str = Field(
