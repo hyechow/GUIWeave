@@ -89,7 +89,7 @@ def annotate(png: bytes, items: list[tuple[float, float, str]]) -> bytes:
     return buf.getvalue()
 
 
-def show_and_open(png: bytes, items: list[tuple[float, float, str]],
+def show_and_open(png: bytes, items: list[tuple],
                   depth: int) -> Path:
     """Save annotated image to /tmp and open it in Preview."""
     annotated = annotate(png, items)
@@ -101,17 +101,17 @@ def show_and_open(png: bytes, items: list[tuple[float, float, str]],
 
 # ── Element listing ───────────────────────────────────────────────────────────
 
-def parse_items(png: bytes, parser: PageParser) -> list[tuple[float, float, str]]:
+def parse_items(png: bytes, parser: PageParser) -> list[tuple[float, float, str, str]]:
     areas = classify_elements(parser.parse_screen(png))
-    return [(a.center_xy[0], a.center_xy[1], a.label[:30] or "(无标签)")
+    return [(a.center_xy[0], a.center_xy[1], a.label[:30] or "(无标签)", a.element_type)
             for a in areas]
 
 
-def print_items(items: list[tuple[float, float, str]]) -> None:
-    print(f"\n  {'#':>3}  {'坐标':^12}  标签")
-    print(f"  {'-'*3}  {'-'*12}  {'-'*24}")
-    for i, (ax, ay, label) in enumerate(items):
-        print(f"  {i:>3}  ({ax:>5.0f},{ay:>4.0f})  {label}")
+def print_items(items: list[tuple[float, float, str, str]]) -> None:
+    print(f"\n  {'#':>3}  {'坐标':^12}  {'类型':^12}  标签")
+    print(f"  {'-'*3}  {'-'*12}  {'-'*12}  {'-'*24}")
+    for i, (ax, ay, label, etype) in enumerate(items):
+        print(f"  {i:>3}  ({ax:>5.0f},{ay:>4.0f})  {etype:^12}  {label}")
 
 
 def prompt_choice(n: int) -> int | None:
@@ -176,9 +176,10 @@ def main() -> None:
 
             ax, ay = items[choice][0], items[choice][1]
             label = items[choice][2]
+            etype = items[choice][3]
             lx, ly = logical_xy(ax, ay)
 
-            print(f"\n  → tap [{label}] at ({ax:.0f}, {ay:.0f})")
+            print(f"\n  → tap [{etype}]「{label}」at ({ax:.0f}, {ay:.0f})")
             safe_tap(phone.client, lx, ly)
             time.sleep(SETTLE)
             after_png = screenshot()
@@ -192,7 +193,9 @@ def main() -> None:
             prev_png, _ = nav_stack[-1]
             nav_stack[-1] = (prev_png, (lx, ly))
             nav_stack.append((after_png, None))
-            tap_labels.append(label)
+            # Include element type so back_nav LLM can correctly classify (e.g. tab → type B)
+            nav_context_str = f"点击了底部tab「{label}」" if etype == "tab" else f"点击了{etype}「{label}」"
+            tap_labels.append(nav_context_str)
             current_png = after_png
 
             if depth == MAX_DEPTH:

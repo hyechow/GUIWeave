@@ -16,6 +16,7 @@ from policy_expr.config import resolve_llm_config
 from policy_expr.executor import is_valid_tap
 from policy_expr.policies.base import resize_to_logical_png
 from policy_expr.recon.page_compare import PageComparator, make_comparator
+from policy_expr.recon.utils import save_llm_prompt_debug
 
 
 # ---------------------------------------------------------------------------
@@ -61,45 +62,49 @@ def _pixel_diff_ratio(png_a: bytes, png_b: bytes, threshold: int = 30) -> float:
 
 class BackAction(BaseModel):
     can_go_back: bool = Field(description="能否找到返回到前一页的方法")
+    page_type: str = Field(description="导航类型：A=弹窗/浮层, B=底部tab切换, C=普通页面跳转")
     method: str = Field(description="返回方法描述")
     back_x: float = Field(default=-1, description="返回目标归一化 x 坐标（0-1000）")
     back_y: float = Field(default=-1, description="返回目标归一化 y 坐标（0-1000）")
 
 
 BACK_PROMPT = """\
-你是一个 iPhone 页面导航专家。用户给出了两张截图和导航上下文，请分析如何从 AFTER 页面返回 BEFORE 页面。
+你是一个 iPhone 页面导航专家。用户给出了两张截图和触发操作描述，请分析如何从 AFTER 页面返回 BEFORE 页面。
 
 ## 坐标系
 左上角 (0, 0)，右下角 (1000, 1000)。坐标是点击目标的视觉中心。
 重要：返回按钮通常在 x=50-120, y=80-160 的范围内。不要输出 x<30 或 y<50 的坐标。
 
-## 上下文
-用户通过「{nav_context}」从 BEFORE 到达了 AFTER。
+## 输出字段说明
+请按以下顺序填写输出字段：
+1. **page_type**（先填）：根据下方规则判断页面类型，填 "A"、"B" 或 "C"。这一步决定后续的返回策略。
+2. **can_go_back**：是否能找到返回方法。
+3. **method**：用一句话描述具体的返回操作。
+4. **back_x / back_y**：目标元素中心的归一化坐标（0-1000）。
 
 ## 分析步骤
-1. 观察 BEFORE 和 AFTER 的区别，理解发生了什么导航
-2. 在 AFTER 截图上找到能返回 BEFORE 的可点击元素
-3. 输出该元素中心的坐标
+1. **先读「触发操作」**：它描述了用户点击了什么元素（含类型）才从 BEFORE 跳到 AFTER。
+   - 触发操作含「底部tab」→ 直接判断类型 B，无需继续比对截图
+   - 触发操作含「button / link / icon / back_button」→ 跳过 B，进入 A/C 的视觉判断
+2. 若触发操作信息不足，再观察截图：按 A → B → C 顺序检查，命中即停止
+3. 根据判定的类型，在 AFTER 截图上找到对应的返回元素
+4. 输出该元素中心的坐标
 
-## 判断 AFTER 页面类型（按顺序检查，命中即停止）
+## AFTER 页面类型定义
 
 ### 类型 A：弹窗/浮层
-AFTER 上有弹窗、对话框、底部弹出面板、广告浮层覆盖在页面上方（底层页面仍可见）
+**判断依据**：AFTER 上有弹窗、对话框、底部弹出面板、广告浮层，覆盖在底层页面上方（底层页面仍可见）
 → 点击关闭/取消/跳过按钮（通常是 × 或「关闭」）
 
 ### 类型 B：底部 tab 切换
-AFTER 和 BEFORE 结构相似，只是底部导航栏选中了不同的 tab
-→ 点击 BEFORE 中被选中的那个底部 tab
+**判断依据**：触发操作中含「底部tab」；或 BEFORE 与 AFTER 有相同的底部导航栏且选中项不同
+→ 点击 AFTER 中与 BEFORE 选中 tab 对应的那个底部 tab（即回到 BEFORE 时高亮的那个）
 注意：不要点击 AFTER 中已经处于选中状态的 tab，那不会有任何效果
 
 ### 类型 C：普通页面跳转
-AFTER 是全新的页面，左上角有返回箭头（‹）或关闭按钮（×）
+**判断依据**：AFTER 是全新页面，左上角有返回箭头（‹）或关闭按钮（×），且触发操作不含「底部tab」
 → 点击左上角返回按钮
 
-## 输出
-- can_go_back: 是否找到可点击的目标
-- method: 简述点击了什么（如「左上角返回按钮」「关闭弹窗×」）
-- back_x, back_y: 目标中心坐标（0-1000），必须指向实际可见的 UI 元素
 """
 
 
@@ -168,10 +173,12 @@ def _format_elements_context(elements: list[dict]) -> str:
     return "\n".join(lines)
 
 
+
 def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: str = "",
                       target_label: str = "",
                       failed_attempts: list[dict] | None = None,
-                      after_elements: list[dict] | None = None) -> BackAction | None:
+                      after_elements: list[dict] | None = None,
+                      debug_path: Path | None = None) -> BackAction | None:
     """Ask the vision model how to navigate from AFTER back to BEFORE.
 
     Args:
@@ -179,6 +186,7 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
                      (e.g. "点击了底部「发现」tab", "点击了「珠珠」聊天项").
         after_elements: Pre-parsed interactive elements on the AFTER page.
                         When provided, appended to prompt to ground LLM output.
+        debug_path: When set, save an HTML visualization of the prompt + response here.
     """
     if not after_png:
         return None
@@ -200,7 +208,7 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
     if target_label:
         context_text += f"\n\n目标页面：BEFORE 是「{target_label}」，我们需要回到这个页面。"
     if nav_context:
-        context_text += f"\n\n导航上下文：用户通过「{nav_context}」从 BEFORE 到达了 AFTER。"
+        context_text += f"\n\n触发操作：{nav_context}"
     if after_elements is not None:
         elem_ctx = _format_elements_context(after_elements)
         if elem_ctx:
@@ -222,22 +230,37 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
         ]),
     ]
     action = invoke_structured(llm, messages, BackAction)
-    print(f"    [LLM raw] can_go_back={action.can_go_back}  "
+    print(f"    [LLM raw] can_go_back={action.can_go_back}  type={action.page_type}  "
           f"({action.back_x:.0f},{action.back_y:.0f})  {action.method}")
+
+    result = action if (action.can_go_back and is_valid_tap(action.back_x, action.back_y)) else None
     if not action.can_go_back:
-        return None
-    if not is_valid_tap(action.back_x, action.back_y):
+        pass
+    elif not is_valid_tap(action.back_x, action.back_y):
         print(f"    [LLM] 坐标 ({action.back_x:.0f},{action.back_y:.0f}) 越界，无效")
-        return None
-    return action
+
+    if debug_path is not None:
+        try:
+            response_dict = (
+                {"page_type": result.page_type, "can_go_back": result.can_go_back,
+                 "method": result.method, "back_x": result.back_x, "back_y": result.back_y}
+                if result is not None else None
+            )
+            save_llm_prompt_debug(debug_path, BACK_PROMPT, context_text, before_b64, after_b64, response_dict)
+            print(f"    [LLM debug] {debug_path}")
+        except Exception as exc:
+            print(f"    [LLM debug] 保存失败: {exc}")
+
+    return result
 
 
 def _llm_log_entry(action: BackAction | None, reason: str = "") -> dict:
     """Build a log fragment capturing the raw LLM response."""
     if action is None:
-        return {"llm_can_go_back": False, "llm_method": reason,
+        return {"llm_can_go_back": False, "llm_page_type": "", "llm_method": reason,
                 "llm_x": -1, "llm_y": -1}
-    return {"llm_can_go_back": action.can_go_back, "llm_method": action.method,
+    return {"llm_can_go_back": action.can_go_back, "llm_page_type": action.page_type,
+            "llm_method": action.method,
             "llm_x": round(action.back_x), "llm_y": round(action.back_y)}
 
 
@@ -473,9 +496,11 @@ def _execute_strategy(
         return None
 
     # LLM strategies: "LLM_1", "LLM_2", "LLM_3"
+    debug_path = (out_dir / f"R{round_num}_{strategy}_prompt.html") if out_dir else None
     llm_action = infer_back_action(initial_bytes, current_bytes, nav_context=nav_context,
                                     target_label=target_label,
-                                    failed_attempts=llm_failed_attempts)
+                                    failed_attempts=llm_failed_attempts,
+                                    debug_path=debug_path)
     if llm_action is None:
         log.append({"strategy": strategy, "result": "未能识别返回动作",
                     "success": False, "screenshot": "",
