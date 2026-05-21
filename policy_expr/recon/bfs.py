@@ -12,11 +12,11 @@ from policy_expr.recon.page_parser import PageKnowledge
 from policy_expr.recon.back_nav import (
     return_to_initial, back_shot_path, save_if_changed, _match_stack, manual_recover,
 )
+from policy_expr.recon.back_nav import make_nav_context
 from policy_expr.recon.utils import (
     ProbeAbortedError,
     ReconResult,
     TapResult,
-    make_nav_context,
 )
 
 # Module-level comparator (lazy, edge IoU by default)

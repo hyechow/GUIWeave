@@ -32,9 +32,8 @@ from policy_expr.perception import LivePhoneSession, try_resume_mac
 from policy_expr.executor import logical_xy
 from policy_expr.recon.page_compare import make_comparator
 from policy_expr.recon.page_parser import PageParser, classify_elements
-from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS
+from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context
 from policy_expr.recon.dfs import _page_name_from_fingerprint
-from policy_expr.recon.utils import make_nav_context
 
 MAX_DEPTH = 5
 SETTLE = BACK_SETTLE_SECONDS

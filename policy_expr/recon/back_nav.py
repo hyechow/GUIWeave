@@ -112,6 +112,13 @@ BACK_PROMPT = """\
 # Tap operations
 # ---------------------------------------------------------------------------
 
+def make_nav_context(label: str, element_type: str) -> str:
+    """Build the nav_context string passed to infer_back_action."""
+    if element_type == "tab":
+        return f"点击了底部tab「{label}」"
+    return f"点击了{element_type}「{label}」"
+
+
 def tap_back(client) -> tuple[float, float, str]:
     """Tap the iOS back button area."""
     from policy_expr.executor import logical_xy

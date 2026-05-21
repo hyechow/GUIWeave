@@ -11,10 +11,10 @@ from typing import Callable
 
 from policy_expr.executor import logical_xy
 from policy_expr.perception import try_resume_mac
-from policy_expr.recon.back_nav import manual_recover as _manual_recover
+from policy_expr.recon.back_nav import make_nav_context, manual_recover as _manual_recover
 from policy_expr.recon.back_nav import return_to_initial
 from policy_expr.recon.page_identity import PageIdentity
-from policy_expr.recon.utils import ProbeAbortedError, make_nav_context
+from policy_expr.recon.utils import ProbeAbortedError
 from policy_expr.trace import Tracer
 
 # Module-level HUD status callback; set by explore_dfs, read by _probe_page_dfs.
