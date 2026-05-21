@@ -13,105 +13,29 @@ Flow:
 
 from __future__ import annotations
 
-import io
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-from PIL import Image, ImageDraw, ImageFont
+from _vis import open_annotated, parse_items, print_items
 
 from policy_expr.perception import LivePhoneSession, try_resume_mac
 from policy_expr.executor import logical_xy
 from policy_expr.recon.page_compare import make_comparator
-from policy_expr.recon.page_parser import PageParser, classify_elements
+from policy_expr.recon.page_parser import PageParser
 from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context
 from policy_expr.recon.dfs import _page_name_from_fingerprint
 
 MAX_DEPTH = 5
 SETTLE = BACK_SETTLE_SECONDS
-
-# Colour palette for numbered badges (R, G, B)
-_PALETTE = [
-    (255, 59, 48),   (255, 149, 0),  (255, 204, 0),  (52, 199, 89),
-    (0, 199, 190),   (50, 173, 230), (0, 122, 255),  (88, 86, 214),
-    (175, 82, 222),  (255, 45, 85),
-]
-
-
-# ── Visualization ─────────────────────────────────────────────────────────────
-
-def annotate(png: bytes, items: list[tuple[float, float, str]]) -> bytes:
-    """Draw numbered circles + label chips on screenshot; return annotated PNG."""
-    img = Image.open(io.BytesIO(png)).convert("RGB")
-    w, h = img.size
-    draw = ImageDraw.Draw(img, "RGBA")
-
-    # Try to load a readable font; fall back to default
-    try:
-        font_num = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size=22)
-    except Exception:
-        font_num = ImageFont.load_default()
-
-    R = 18  # badge radius
-
-    for i, item in enumerate(items):
-        ax, ay = item[0], item[1]
-        cx = int(ax / 1000 * w)
-        cy = int(ay / 1000 * h)
-        color = _PALETTE[i % len(_PALETTE)]
-
-        # Filled circle badge
-        draw.ellipse(
-            [cx - R, cy - R, cx + R, cy + R],
-            fill=(*color, 230),
-            outline=(255, 255, 255, 255),
-            width=2,
-        )
-
-        # Number centred in badge
-        num_str = str(i)
-        bb = draw.textbbox((0, 0), num_str, font=font_num)
-        tw, th = bb[2] - bb[0], bb[3] - bb[1]
-        draw.text((cx - tw / 2, cy - th / 2 - 1), num_str,
-                  fill=(255, 255, 255), font=font_num)
-
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def show_and_open(png: bytes, items: list[tuple],
-                  depth: int) -> Path:
-    """Save annotated image to /tmp and open it in Preview."""
-    annotated = annotate(png, items)
-    out = Path(tempfile.gettempdir()) / f"back_nav_depth{depth}.png"
-    out.write_bytes(annotated)
-    subprocess.Popen(["open", str(out)])
-    return out
-
-
-# ── Element listing ───────────────────────────────────────────────────────────
-
-def parse_items(png: bytes, parser: PageParser) -> list[tuple[float, float, str, str]]:
-    areas = classify_elements(parser.parse_screen(png))
-    return [(a.center_xy[0], a.center_xy[1], a.label[:30] or "(无标签)", a.element_type)
-            for a in areas]
-
-
-def print_items(items: list[tuple[float, float, str, str]]) -> None:
-    print(f"\n  {'#':>3}  {'坐标':^12}  {'类型':^12}  标签")
-    print(f"  {'-'*3}  {'-'*12}  {'-'*12}  {'-'*24}")
-    for i, (ax, ay, label, etype) in enumerate(items):
-        print(f"  {i:>3}  ({ax:>5.0f},{ay:>4.0f})  {etype:^12}  {label}")
 
 
 def prompt_choice(n: int) -> int | None:
@@ -165,7 +89,7 @@ def main() -> None:
                 print("  未解析到可交互元素，停止")
                 break
 
-            img_path = show_and_open(current_png, items, depth)
+            img_path = open_annotated(current_png, items, f"back_nav_d{depth}")
             print(f"  已标注截图: {img_path}")
             print_items(items)
 
