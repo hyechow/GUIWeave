@@ -554,18 +554,17 @@ def main() -> None:
                     hud=hud,
                 )
             if result:
-                pass
-                # output = generate_reply(
-                #     result["goal"],
-                #     result,
-                #     content_notes=result.get("content_notes"),
-                #     collection_context=result.get("collection_context"),
-                # )
-                # print("\n" + "=" * 50)
-                # print("最终输出")
-                # print("=" * 50)
-                # print(output.rstrip())
-                # print("=" * 50)
+                output = generate_reply(
+                    result["goal"],
+                    result,
+                    content_notes=result.get("content_notes"),
+                    collection_context=result.get("collection_context"),
+                )
+                print("\n" + "=" * 50)
+                print("最终输出")
+                print("=" * 50)
+                print(output.rstrip())
+                print("=" * 50)
         finally:
             if hud:
                 hud.close()

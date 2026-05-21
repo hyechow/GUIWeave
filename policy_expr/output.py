@@ -26,17 +26,17 @@ _ACTION_SYSTEM = """\
 
 _ANALYSIS_SYSTEM = """\
 你是 iPhone 信息收集任务的最终结果整理助手。
-用户让 agent 在手机上浏览并收集信息，agent 已逐页提取了相关内容片段。
-你的任务是将这些片段整合成一份直接回答用户目标的简洁报告。
+用户让 agent 在手机上浏览并收集信息，agent 已逐页提取了屏幕上的原始文字内容。
+你的任务是从这些原始内容中筛选、整理出直接回答用户目标的信息。
 
 要求：
-- 直接呈现收集到的信息内容，不要描述 agent 的操作过程。
-- 合并重复内容，保留关键细节。
-- 如果信息不完整，如实说明，不要补充截图中没有的内容。
-- **数据校验**：如果用户目标包含特定条件，必须检查收集到的数据是否满足这些条件。
-- 如果运行结论说明"未完成"或"数据校验不充分"，必须先明确说明当前数据不足。
-- 不要提及"agent"、"截图"、"收集"等操作性词汇，直接给出答案。
-- 不要在结尾追加运行说明。
+- 原始内容是逐帧提取的屏幕文字，可能包含无关内容（导航栏、按钮文字、广告等），你需要根据用户目标筛选出相关部分
+- 直接呈现筛选后的信息，不要描述 agent 的操作过程
+- 合并重复内容，保留关键细节
+- 如果用户目标包含数量/条件限制（如「最近3条」「金额大于100」），按条件过滤
+- 如果信息不完整，如实说明，不要补充截图中没有的内容
+- 不要提及"agent"、"截图"、"收集"等操作性词汇，直接给出答案
+- 不要在结尾追加运行说明
 """
 
 _CHAT_SYSTEM = """\
@@ -64,7 +64,7 @@ def generate_reply(
     session=list  → chat mode (CHAT prompt with session context)
     """
     cfg = resolve_llm_config("output")
-    llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+    llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url, extra_body={"enable_thinking": False})
 
     if content_notes:
         messages = _analysis_messages(goal, result, content_notes, collection_context)
