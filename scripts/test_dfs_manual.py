@@ -34,6 +34,7 @@ from PIL import Image, ImageDraw, ImageFont
 from policy_expr.perception import LivePhoneSession
 from policy_expr.executor import logical_xy
 from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS
+from policy_expr.recon.utils import make_nav_context
 from policy_expr.recon.page_parser import PageParser, classify_elements
 from policy_expr.recon.page_identity import PageIdentity
 from policy_expr.recon.cascade_matcher import get_matcher
@@ -269,7 +270,7 @@ def main() -> None:
                 visited.add(idx)
                 ax, ay, label, etype = items[idx]
                 lx, ly = logical_xy(ax, ay)
-                _nav_ctx = f"点击了底部tab「{label}」" if etype == "tab" else f"点击了{etype}「{label}」"
+                _nav_ctx = make_nav_context(label, etype)
                 print(f"{prefix}  → tap [{label}] ({etype}) at ({ax:.0f},{ay:.0f})")
                 client.tap(lx, ly)
                 time.sleep(SETTLE)

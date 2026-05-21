@@ -14,7 +14,7 @@ from policy_expr.perception import try_resume_mac
 from policy_expr.recon.back_nav import manual_recover as _manual_recover
 from policy_expr.recon.back_nav import return_to_initial
 from policy_expr.recon.page_identity import PageIdentity
-from policy_expr.recon.utils import ProbeAbortedError
+from policy_expr.recon.utils import ProbeAbortedError, make_nav_context
 from policy_expr.trace import Tracer
 
 # Module-level HUD status callback; set by explore_dfs, read by _probe_page_dfs.
@@ -152,11 +152,10 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
 
         # Return to root page
         print(f"\n  ← 返回「{page_name}」")
-        _nav_ctx = f"点击了底部tab「{area.label}」" if area.element_type == "tab" else f"点击了{area.element_type}「{area.label}」"
         ok, back_log = return_to_initial(
             phone.client, phone.screenshot, nav_stack,
             before_back_bytes=phone.screenshot(),
-            nav_context=_nav_ctx,
+            nav_context=make_nav_context(area.label, area.element_type),
             target_label=page_name,
         )
         if not ok:
@@ -373,11 +372,10 @@ def _dfs_recursive(
 
                 # Return to current page
                 print(f"\n  ← 返回「{page_name}」")
-                _nav_ctx = f"点击了底部tab「{area.label}」" if area.element_type == "tab" else f"点击了{area.element_type}「{area.label}」"
                 ok, back_log = return_to_initial(
                     phone.client, phone.screenshot, nav_stack,
                     before_back_bytes=phone.screenshot(),
-                    nav_context=_nav_ctx,
+                    nav_context=make_nav_context(area.label, area.element_type),
                     target_label=page_name,
                 )
                 if not ok:

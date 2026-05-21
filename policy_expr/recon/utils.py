@@ -385,6 +385,13 @@ def save_llm_prompt_debug(
     debug_path.write_text(page, encoding="utf-8")
 
 
+def make_nav_context(label: str, element_type: str) -> str:
+    """Build a nav_context string describing what triggered navigation."""
+    if element_type == "tab":
+        return f"点击了底部tab「{label}」"
+    return f"点击了{element_type}「{label}」"
+
+
 def print_areas(knowledge: "PageKnowledge") -> None:  # noqa: F821
     """Print areas to stdout."""
     # print(f"  应用 : {knowledge.page.app_name}")

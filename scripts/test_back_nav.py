@@ -34,6 +34,7 @@ from policy_expr.recon.page_compare import make_comparator
 from policy_expr.recon.page_parser import PageParser, classify_elements
 from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS
 from policy_expr.recon.dfs import _page_name_from_fingerprint
+from policy_expr.recon.utils import make_nav_context
 
 MAX_DEPTH = 5
 SETTLE = BACK_SETTLE_SECONDS
@@ -194,7 +195,7 @@ def main() -> None:
             nav_stack[-1] = (prev_png, (lx, ly))
             nav_stack.append((after_png, None))
             # Include element type so back_nav LLM can correctly classify (e.g. tab → type B)
-            nav_context_str = f"点击了底部tab「{label}」" if etype == "tab" else f"点击了{etype}「{label}」"
+            nav_context_str = make_nav_context(label, etype)
             tap_labels.append(nav_context_str)
             current_png = after_png
 

@@ -16,6 +16,7 @@ from policy_expr.recon.utils import (
     ProbeAbortedError,
     ReconResult,
     TapResult,
+    make_nav_context,
 )
 
 # Module-level comparator (lazy, edge IoU by default)
@@ -133,7 +134,7 @@ def probe_elements(
                 before_back_bytes=after_bytes,
                 out_dir=tap_dir,
                 tap_index=i,
-                nav_context=f"点击了底部tab「{area.label}」" if area.element_type == "tab" else f"点击了{area.element_type}「{area.label}」",
+                nav_context=make_nav_context(area.label, area.element_type),
             )
             result.taps[-1].back_attempts = back_log
             result.save(result_path)
