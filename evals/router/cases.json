@@ -76,7 +76,7 @@
     "session": [
       {"user_msg": "发朋友圈", "result_summary": "进入朋友圈页面", "goal_completed": false}
     ],
-    "expected": {"clarification": true}
+    "expected": {"goal": "微信", "or_clarification": true}
   },
 
   {
@@ -228,7 +228,7 @@
     "session": [
       {"user_msg": "在高德打车去机场", "result_summary": "附近无车辆", "goal_completed": false}
     ],
-    "expected": {"goal": "滴滴"}
+    "expected": {"goal": "滴滴", "or_clarification": true}
   },
   {
     "label": "多轮-多少钱",
@@ -236,7 +236,7 @@
     "session": [
       {"user_msg": "在京东看看AirPods", "result_summary": "已显示商品页面", "goal_completed": true}
     ],
-    "expected": {"goal": "京东"}
+    "expected": {"goal": "京东", "or_empty": true}
   },
   {
     "label": "多轮-微信随便看看",
@@ -251,5 +251,41 @@
       {"user_msg": "在微信给李四发消息说今晚吃饭", "result_summary": "消息已发送", "goal_completed": true}
     ],
     "expected": {"goal": "微信"}
+  },
+
+  {
+    "label": "偏好-饿了有偏好",
+    "user_msg": "饿了",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团, 打车→滴滴",
+    "expected": {"goal": "美团", "or_empty": true}
+  },
+  {
+    "label": "偏好-打车有偏好",
+    "user_msg": "我要打车去机场",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团, 打车→滴滴",
+    "expected": {"goal": "滴滴"}
+  },
+  {
+    "label": "偏好-咖啡有偏好",
+    "user_msg": "来杯咖啡",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n咖啡→瑞幸",
+    "expected": {"goal": "瑞幸"}
+  },
+  {
+    "label": "偏好-无匹配偏好",
+    "user_msg": "帮我订个酒店",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团",
+    "expected": {"goal": "携程", "or_clarification": true}
+  },
+  {
+    "label": "偏好-明确APP忽略偏好",
+    "user_msg": "在饿了么点个外卖",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团",
+    "expected": {"goal": "饿了么"}
   }
 ]

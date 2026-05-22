@@ -77,11 +77,22 @@ def format_session_history(history: list[dict]) -> str:
 # ── Router & reply ─────────────────────────────────────────────────────────
 
 
-def route_message(user_msg: str, session: list[dict]) -> RouterResult:
+def route_message(
+    user_msg: str,
+    session: list[dict],
+    prefs_context: str = "",
+) -> RouterResult:
     llm = _get_llm()
+    system = _ROUTER_SYSTEM
+    if prefs_context:
+        system += (
+            "\n重要规则：以下偏好由用户设定，当用户未指定 APP 时优先使用偏好中的 APP，不要反问。"
+            "但如果用户在指令中明确指定了某个 APP，以用户指令为准，忽略偏好。\n"
+            + prefs_context + "\n"
+        )
     history_text = format_session_history(session) if session else "（无历史）"
     messages = [
-        SystemMessage(content=_ROUTER_SYSTEM),
+        SystemMessage(content=system),
         HumanMessage(content=f"对话历史：\n{history_text}\n\n当前用户指令：{user_msg}"),
     ]
     return invoke_structured(llm, messages, RouterResult)

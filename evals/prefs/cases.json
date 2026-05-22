@@ -1,0 +1,53 @@
+[
+  {
+    "label": "外卖-美团",
+    "user_msg": "点个外卖",
+    "goal": "在美团中点外卖",
+    "session": [],
+    "expected": {"intent": "外卖", "app": "美团"}
+  },
+  {
+    "label": "打车-滴滴",
+    "user_msg": "打车去机场",
+    "goal": "在滴滴中打车去机场",
+    "session": [],
+    "expected": {"intent": "打车", "app": "滴滴"}
+  },
+  {
+    "label": "消息-微信-联系人",
+    "user_msg": "给李四发消息说你好",
+    "goal": "在微信中给李四发送消息说你好",
+    "session": [
+      {"user_msg": "打开微信", "result_summary": "已打开", "goal_completed": true}
+    ],
+    "expected": {"intent": "消息", "app": "微信", "contacts": ["李四"]}
+  },
+  {
+    "label": "咖啡-瑞幸",
+    "user_msg": "来杯拿铁",
+    "goal": "在瑞幸中点一杯拿铁",
+    "session": [],
+    "expected": {"intent": "咖啡", "app": "瑞幸"}
+  },
+  {
+    "label": "网购-淘宝",
+    "user_msg": "买双跑鞋",
+    "goal": "在淘宝中买一双跑鞋",
+    "session": [],
+    "expected": {"intent": "网购", "app": "淘宝"}
+  },
+  {
+    "label": "泛-打开微信",
+    "user_msg": "打开微信",
+    "goal": "打开微信",
+    "session": [],
+    "expected": {"intent": "消息", "app": "微信"}
+  },
+  {
+    "label": "酒店-携程",
+    "user_msg": "订个北京的酒店",
+    "goal": "在携程中预订北京的酒店",
+    "session": [],
+    "expected": {"intent": "酒店", "app": "携程"}
+  }
+]

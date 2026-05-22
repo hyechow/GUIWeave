@@ -43,6 +43,7 @@ from policy_expr.chat_session import (
     generate_reply,
     route_message,
 )
+from policy_expr.prefs import PreferenceManager
 
 ROOT = Path(__file__).parent.parent
 
@@ -353,16 +354,45 @@ def _print_result(result: dict) -> None:
 # ── Main loop ──────────────────────────────────────────────────────────────
 
 
-_COMMANDS = ["/exit", "/clear", "/supervisor"]
+_COMMANDS = ["/exit", "/clear", "/supervisor", "/pref"]
 _completer = WordCompleter(
     _COMMANDS,
     meta_dict={
         "/exit": "退出",
         "/clear": "清空历史",
         "/supervisor": "切换 supervisor (simple/milestone)",
+        "/pref": "查看/设置偏好 (set 外卖 美团 / del 外卖)",
     },
 )
 _pt_prompt = ANSI("\033[1;36m❯ \033[0m")
+
+
+def _handle_pref(cmd: str, prefs: PreferenceManager) -> None:
+    parts = cmd.split()
+    if len(parts) == 1:
+        all_prefs = prefs.list_app_prefs()
+        if not all_prefs:
+            console.print("  [dim]暂无偏好设置[/dim]")
+        else:
+            for p in all_prefs:
+                src = "手动" if p.source == "manual" else "自动"
+                console.print(f"  {p.intent} → {p.app}  [dim][{src}][/dim]")
+        console.print()
+        return
+    if parts[1] == "set" and len(parts) == 4:
+        prefs.set_app_pref(parts[2], parts[3], source="manual")
+        console.print(f"  [green]已设置: {parts[2]} → {parts[3]}[/green]")
+        console.print()
+        return
+    if parts[1] == "del" and len(parts) == 3:
+        if prefs.remove_app_pref(parts[2]):
+            console.print(f"  [green]已删除: {parts[2]}[/green]")
+        else:
+            console.print(f"  [yellow]未找到: {parts[2]}[/yellow]")
+        console.print()
+        return
+    console.print("  [dim]用法: /pref | /pref set 外卖 美团 | /pref del 外卖[/dim]")
+    console.print()
 
 
 def main() -> None:
@@ -372,6 +402,7 @@ def main() -> None:
 
     action_policy = build_policy(StructuredOutputPolicy.name)
     supervisor = build_supervisor(SimpleSupervisorPolicy.name)
+    prefs = PreferenceManager()
 
     _print_header()
     session: list[dict] = []
@@ -407,9 +438,14 @@ def main() -> None:
             console.print()
             continue
 
+        if user_msg.startswith("/pref"):
+            _handle_pref(user_msg, prefs)
+            continue
+
         # Route
         try:
-            router_result = route_message(user_msg, session)
+            prefs_context = prefs.format_prefs_for_prompt()
+            router_result = route_message(user_msg, session, prefs_context=prefs_context)
         except Exception:
             router_result = RouterResult(goal=user_msg)
 
@@ -504,6 +540,9 @@ def main() -> None:
             "turns_count": result["turns_count"],
             "log_dir": str(log_dir),
         })
+
+        if result["goal_completed"] and goal:
+            prefs.auto_extract(user_msg, goal, session)
 
 
 if __name__ == "__main__":

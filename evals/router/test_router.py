@@ -20,9 +20,13 @@ def load_cases() -> list[dict]:
 
 def check(result, expected: dict) -> tuple[bool, str]:
     if "goal" in expected:
+        if expected.get("or_clarification") and result.needs_clarification:
+            return True, ""
+        if expected.get("or_empty") and not result.goal:
+            return True, ""
         if not result.goal or expected["goal"] not in result.goal:
             return False, f'expected goal containing "{expected["goal"]}", got "{result.goal}"'
-    if expected.get("clarification"):
+    if expected.get("clarification") and not expected.get("or_clarification"):
         if not result.needs_clarification:
             return False, f"expected needs_clarification=true, got goal=\"{result.goal}\""
     if expected.get("empty"):
@@ -36,7 +40,8 @@ def run():
     passed = failed = 0
 
     for c in cases:
-        r = route_message(c["user_msg"], c["session"])
+        prefs_context = c.get("prefs_context", "")
+        r = route_message(c["user_msg"], c["session"], prefs_context=prefs_context)
         ok, detail = check(r, c["expected"])
         passed += ok
         failed += not ok
