@@ -9,7 +9,8 @@ evals/
 ├── router/      # 意图路由测评
 ├── prefs/       # 用户偏好提取测评
 ├── reply/       # 回复生成测评
-└── checker/     # SingleCheck 验收员测评（status/loading 准确性）
+├── checker/     # SingleCheck 验收员测评（status/loading 准确性）
+└── planner/     # 步骤规划器测评（指令类型正确性）
 ```
 
 ## router/cases.json 用例分组
@@ -43,6 +44,13 @@ evals/
 | 骨架屏 | 内容区域全部为灰色占位块 | loading=true |
 | 白屏 | 页面完全空白 | loading=true |
 | 正常进行中 | 有实质内容但未达到验收条件 | status=in_progress, loading=false |
+
+## planner/cases.json 用例分组
+
+| 分组 | 说明 | 关键验证点 |
+|------|------|-----------|
+| 规格面板-选项截断 | bottomsheet 中目标属性 chips 未显示 | 指令含「滚动/上滑」，不含直接点击目标选项 |
+| 商品列表-目标可见 | 目标商品在列表中可见 | 指令含「点击」+商品名 |
 
 ## reply/cases.json 用例分组
 

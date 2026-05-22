@@ -1,0 +1,48 @@
+[
+  {
+    "label": "规格面板-糖度chips截断-应滚动",
+    "screenshot": "evals/planner/screenshots/screenshot_turn_10.png",
+    "milestone": {
+      "name": "设置饮品规格为'标准甜'",
+      "description": "在商品规格选择面板中，将甜度设置为标准甜",
+      "success_condition": "确认生椰拿铁的甜度选项已显示为'标准甜'",
+      "kind": "single",
+      "app_name": "美团",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为生椰拿铁规格定制面板，可见杯型、温度、咖啡豆、咖啡浓度选项，糖度分类标题可见但选项chips未显示，底部已选摘要显示'不另外加糖'，尚未设置为标准甜",
+      "issues": [],
+      "missing_evidence": ["甜度选项已显示为'标准甜'"],
+      "summary": "规格面板已打开，糖度选项行在屏幕外，需要滚动才能看到"
+    },
+    "expected": {
+      "must_contain": ["滚动", "上滑", "向上"],
+      "must_not_contain": ["点击.*标准甜", "点击甜度.*标准甜", "点击.*不另外加糖"]
+    }
+  },
+  {
+    "label": "商品列表-找到目标商品-应点击",
+    "screenshot": "evals/planner/screenshots/screenshot_turn_8.png",
+    "milestone": {
+      "name": "查找并选择生椰拿铁",
+      "description": "在瑞幸咖啡店铺内找到生椰拿铁并点击",
+      "success_condition": "看到生椰拿铁的详情页面或已添加到购物车的提示",
+      "kind": "single",
+      "app_name": "美团",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为生椰家族分类列表，可见生椰拿铁商品列表项，但尚未点击进入详情页",
+      "issues": [],
+      "missing_evidence": ["生椰拿铁详情页或添加到购物车提示"],
+      "summary": "生椰拿铁在列表中可见，需点击进入详情页"
+    },
+    "expected": {
+      "must_contain": ["点击", "生椰拿铁"],
+      "must_not_contain": ["滚动", "搜索"]
+    }
+  }
+]
