@@ -341,5 +341,18 @@
       {"user_msg": "在美团点一杯生椰拿铁", "result_summary": "已完成点单", "goal_completed": true}
     ],
     "expected": {"goal": "美团"}
+  },
+
+  {
+    "label": "跨APP-拼多多分享微信",
+    "user_msg": "把拼多多里我收藏的一个商品分享到微信好友",
+    "session": [],
+    "expected": {"goal_contains_all": ["拼多多", "微信"]}
+  },
+  {
+    "label": "跨APP-支付宝截图发微信",
+    "user_msg": "打开支付宝查一下这个月的账单，截图发给微信里的张三",
+    "session": [],
+    "expected": {"goal_contains_all": ["支付宝", "微信"]}
   }
 ]

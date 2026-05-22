@@ -26,6 +26,10 @@ def check(result, expected: dict) -> tuple[bool, str]:
             return True, ""
         if not result.goal or expected["goal"] not in result.goal:
             return False, f'expected goal containing "{expected["goal"]}", got "{result.goal}"'
+    if "goal_contains_all" in expected:
+        missing = [kw for kw in expected["goal_contains_all"] if kw not in (result.goal or "")]
+        if missing:
+            return False, f'goal missing {missing}, got "{result.goal}"'
     if expected.get("clarification") and not expected.get("or_clarification"):
         if not result.needs_clarification:
             return False, f"expected needs_clarification=true, got goal=\"{result.goal}\""

@@ -156,6 +156,10 @@ DECOMPOSE_PROMPT = """\
      * 全量采集：「滚动至列表物理底部时停止」
 7. failure_hints 列出该子目标可能失败的原因
 8. 禁止生成 kind=verification 的子目标。action 任务的验证内化到 action 子目标的验收条件中；analysis 任务的数据完整性由采集阶段保证。
+9. 跨 APP 任务：当任务涉及多个 APP（如从拼多多分享商品到微信、从支付宝截图发微信），每次 APP 切换都必须单独建模：
+   - 触发切换的动作（点击分享按钮、选择目标 APP）归入当前 APP 的 action 子目标，验收条件为「看到目标 APP 的界面」
+   - 切换后在新 APP 内的操作另立子目标（kind=action 或 kind=navigation），不要将两个 APP 的操作合并为一个子目标
+   - 示例：拼多多分享到微信 → ①「在拼多多找到商品并点击分享到微信，看到微信界面」→ ②「在微信中选择联系人并发送，看到发送成功提示」
 """
 
 SINGLE_CHECKER_PROMPT = """\
