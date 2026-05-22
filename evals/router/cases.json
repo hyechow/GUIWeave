@@ -354,5 +354,11 @@
     "user_msg": "打开支付宝查一下这个月的账单，截图发给微信里的张三",
     "session": [],
     "expected": {"goal_contains_all": ["支付宝", "微信"]}
+  },
+  {
+    "label": "跨APP-拼多多分享附言",
+    "user_msg": "把我最近在拼多多上下单的奶粉分享给老Be，这个性价比高",
+    "session": [],
+    "expected": {"goal_contains_all": ["拼多多", "老Be", "性价比"]}
   }
 ]
