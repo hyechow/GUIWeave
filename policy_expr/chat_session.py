@@ -10,24 +10,50 @@ from llm.structured import invoke_structured
 from policy_expr.config import resolve_llm_config
 from policy_expr.output import generate_reply  # re-exported for callers
 
-__all__ = ["RouterResult", "generate_reply", "route_message", "format_session_history", "build_goal_with_history"]
+__all__ = ["RouterResult", "generate_reply", "route_message", "format_session_history"]
 
 
 # ── Router ─────────────────────────────────────────────────────────────────
 
 
 class RouterResult(BaseModel):
-    actionable: bool = Field(description="该指令是否需要操控手机才能完成")
-    reason: str = Field(default="", description="分类理由，供回复生成参考")
+    goal: str = Field(
+        default="",
+        description=(
+            "生成一个自包含、可直接执行的任务目标。"
+            "需要操控手机时填写，格式：「在[APP]中[操作]」。"
+            "不需要操控手机或信息不足无法确定 APP 时留空。"
+        ),
+    )
+    needs_clarification: bool = Field(
+        default=False,
+        description=(
+            "用户意图需要操控手机，但缺少关键信息（未指定 APP、操作不明确），需要反问用户。"
+            "仅当 goal 留空且用户确实想操作手机时为 true。"
+        ),
+    )
+    clarification: str = Field(
+        default="",
+        description="needs_clarification=true 时，简要说明需要用户补充什么信息。",
+    )
 
 
 _ROUTER_SYSTEM = """\
-你是 iPhone 自动化助手的意图分类器。只判断用户的指令是否需要通过操控手机来完成，不生成回复。
+你是 iPhone 自动化助手的意图路由器。根据用户指令和对话历史，判断意图并生成任务目标。
 
-分类标准：
-- 只要是关于手机上 app 的操作或信息获取 → actionable=true（包括但不限于打开 app、点击、输入、发送、截图查看内容等）
-- 不涉及手机操作：询问历史记录、询问自身身份/能力、闲聊等 → actionable=false，reason 简述原因
-- 边界模糊时倾向放行（actionable=true）
+三种情况：
+1. 需要操控手机，且信息充分 → 填写 goal，格式：「在[APP]中[操作]」
+2. 需要操控手机，但缺少关键信息（未指定 APP、操作不明确）→ goal 留空，needs_clarification=true，clarification 说明需要补充什么
+3. 不需要操控手机（闲聊、问答）→ goal 留空，needs_clarification=false
+
+goal 生成规则：
+- 格式：「在[APP]中[操作]」，必须包含明确的目标 APP 名称和具体操作
+  例外：如果指令只要求打开 APP（如"打开微信"），直接复述即可
+- 不要猜测用户没提到的 APP（如用户说"点个外卖"但没说哪个 app → needs_clarification=true）
+- 承接上文时，从历史中推断 APP 和操作上下文
+  例：上文"打开微信"，用户说"发消息给李四"→ goal="在微信中给李四发送消息"
+  例：上文"在美团点一杯咖啡"，用户说"换成奶茶"→ goal="在美团中点一杯奶茶"
+- 不添加用户未提到的多余信息
 """
 
 def _get_llm() -> ChatOpenAI:
@@ -46,12 +72,6 @@ def format_session_history(history: list[dict]) -> str:
         status = "✓" if entry.get("goal_completed") else "✗"
         lines.append(f"{i}. 用户说「{entry['user_msg']}」→ {status} {entry['result_summary']}")
     return "\n".join(lines)
-
-
-def build_goal_with_history(user_msg: str, session: list[dict]) -> str:
-    if not session:
-        return user_msg
-    return f"之前的对话历史：\n{format_session_history(session)}\n\n当前用户指令：{user_msg}"
 
 
 # ── Router & reply ─────────────────────────────────────────────────────────

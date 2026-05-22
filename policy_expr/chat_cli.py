@@ -40,7 +40,6 @@ from policy_expr.policies.base import ActionPolicy
 from policy_expr.runner import _TeeStream, build_policy, build_supervisor, create_run_dir
 from policy_expr.chat_session import (
     RouterResult,
-    build_goal_with_history,
     generate_reply,
     route_message,
 )
@@ -412,33 +411,45 @@ def main() -> None:
         try:
             router_result = route_message(user_msg, session)
         except Exception:
-            router_result = RouterResult(actionable=True, reason="分类失败，放行")
+            router_result = RouterResult(goal=user_msg)
 
-        if not router_result.actionable:
-            t_reply = time.time()
-            reply_state: dict = {"current": "正在生成回复…", "done": False}
-            with Live(
-                _SpinnerLine(reply_state),
-                console=console,
-                refresh_per_second=10,
-                transient=False,
-            ):
-                reply = generate_reply(user_msg, None, session=session, non_action_reason=router_result.reason)
+        if not router_result.goal:
+            if router_result.needs_clarification:
+                console.print()
+                console.print(
+                    Panel(
+                        Text(router_result.clarification, style="yellow"),
+                        border_style="yellow",
+                        box=ROUNDED,
+                        padding=(0, 2),
+                    )
+                )
+                console.print()
+            else:
+                t_reply = time.time()
+                reply_state: dict = {"current": "正在生成回复…", "done": False}
+                with Live(
+                    _SpinnerLine(reply_state),
+                    console=console,
+                    refresh_per_second=10,
+                    transient=False,
+                ):
+                    reply = generate_reply(user_msg, None, session=session)
                 reply_secs = time.time() - t_reply
                 reply_state["done"] = True
                 reply_state["current"] = f"回复生成完成  {reply_secs:.1f}s"
-            _print_reply(reply)
-            session.append({
-                "user_msg": user_msg,
-                "result_summary": reply,
-                "stop_reason": "非手机操作",
-                "goal_completed": False,
-                "turns_count": 0,
-            })
+                _print_reply(reply)
+                session.append({
+                    "user_msg": user_msg,
+                    "result_summary": reply,
+                    "stop_reason": "非手机操作",
+                    "goal_completed": False,
+                    "turns_count": 0,
+                })
             continue
 
         # Execute
-        goal = build_goal_with_history(user_msg, session)
+        goal = router_result.goal or user_msg
         log_dir = create_run_dir("chat")
 
         t0 = time.time()
