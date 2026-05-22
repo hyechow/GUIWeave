@@ -251,6 +251,7 @@ def _make_result(context: PolicyContext, stop_reason: str) -> dict:
         "goal_completed": any(t.supervisor.goal_completed for t in context.turns),
         "turns_count": len(context.turns),
         "turns_detail": turns_detail,
+        "content_notes": context.content_notes or None,
     }
 
 
@@ -402,13 +403,17 @@ def main() -> None:
     args = parser.parse_args()
 
     action_policy = build_policy(StructuredOutputPolicy.name)
-    supervisor = build_supervisor(SimpleSupervisorPolicy.name)
+    supervisor = build_supervisor(MilestoneSupervisorPolicy.name)
     prefs = PreferenceManager()
 
     SESSIONS_ROOT = ROOT / "data" / "sessions"
     _print_header()
     session: list[dict] = []
-    recorder = SessionRecorder(SESSIONS_ROOT)
+    recorder = SessionRecorder(
+        SESSIONS_ROOT,
+        supervisor=supervisor.name,
+        action_policy=action_policy.name,
+    )
 
     while True:
         try:
@@ -428,7 +433,11 @@ def main() -> None:
 
         if user_msg == "/clear":
             recorder.save()
-            recorder = SessionRecorder(SESSIONS_ROOT)
+            recorder = SessionRecorder(
+                SESSIONS_ROOT,
+                supervisor=supervisor.name,
+                action_policy=action_policy.name,
+            )
             session.clear()
             console.clear()
             _print_header()
@@ -508,7 +517,7 @@ def main() -> None:
         ):
             try:
                 result = run_chat_turn(
-                    goal, action_policy, supervisor, log_dir,
+                    goal, action_policy, build_supervisor(supervisor.name), log_dir,
                     max_turns=args.max_turns, live_state=live_state,
                 )
             except SystemExit:
@@ -534,7 +543,10 @@ def main() -> None:
             refresh_per_second=10,
             transient=False,
         ):
-            reply = generate_reply(user_msg, result, session=session)
+            reply = generate_reply(
+                user_msg, result, session=session,
+                content_notes=result.get("content_notes"),
+            )
             reply_secs = time.time() - t1
             reply_state["done"] = True
             reply_state["current"] = f"回复生成完成  {reply_secs:.1f}s"

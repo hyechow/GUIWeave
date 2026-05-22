@@ -35,12 +35,14 @@ def _atomic_write(path: Path, data: str) -> None:
 class SessionRecorder:
     """Record one CLI session's conversation history; write to disk on exit."""
 
-    def __init__(self, sessions_root: Path) -> None:
+    def __init__(self, sessions_root: Path, supervisor: str = "", action_policy: str = "") -> None:
         self._started_at = _now_local()
         self._id = self._started_at.strftime("%Y%m%d_%H%M%S")
         self._session_dir = sessions_root / self._id
         self._entries: list[dict] = []
         self._turn_counter = 0
+        self._supervisor = supervisor
+        self._action_policy = action_policy
 
     @property
     def session_dir(self) -> Path:
@@ -67,6 +69,8 @@ class SessionRecorder:
             "session_id": self._id,
             "started_at": self._started_at.astimezone().isoformat(),
             "ended_at": _now_iso(),
+            "supervisor": self._supervisor,
+            "action_policy": self._action_policy,
             "entries": self._entries,
         }
         path = self._session_dir / "session.json"

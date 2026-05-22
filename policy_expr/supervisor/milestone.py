@@ -69,7 +69,7 @@ class _PlanResult(BaseModel):
 
 class _ReplanResult(BaseModel):
     diagnosis: str = Field(description="失败根本原因（一句话）")
-    strategy: Literal["local_replan", "escalate_human"]
+    strategy: Literal["local_replan", "escalate_human", "force_complete"]
     instruction: str = Field(default="")
     escalation_message: str = Field(default="")
     can_degrade_to_collection: bool = Field(default=False)
@@ -319,6 +319,7 @@ REPLAN_PROMPT = """\
 4. 找到一条不同的路径
 
 ## 决策规则
+- 验收条件已满足（截图中可见目标状态）→ force_complete（不再生成操作指令，直接标记完成）
 - 工具限制/数据问题 → local_replan
 - 如果筛选无法精确设置，但后续 collection 子目标可通过逐条过滤补偿，can_degrade_to_collection=true
 - 以下指令已尝试过且失败，禁止再次使用：
@@ -402,7 +403,6 @@ class MilestoneSupervisorPolicy:
         self._milestones: dict[str, Milestone] = {}
         self._order: list[str] = []
         self._current_id: Optional[str] = None
-        self._initialized = False
         self._recent_screenshots: list[bytes] = []
         self._scroll_counts: dict[str, int] = {}
         self.task_type: Literal["action", "analysis"] = "action"
@@ -415,9 +415,8 @@ class MilestoneSupervisorPolicy:
             self._app_name = app_name
 
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
-        if not self._initialized:
+        if not self._order:
             self._decompose(goal, observation)
-            self._initialized = True
 
         if self._current_id is None:
             return self._terminal_step()
@@ -441,6 +440,7 @@ class MilestoneSupervisorPolicy:
         # Checker only returns done or in_progress.
         if sim_stuck or rep_stuck:
             check = sim_stuck or rep_stuck
+            assert check is not None
             print(f"  [Stuck] {check.status}: {check.reason}")
             page_changed = sim_stuck is None
             return self._handle_stuck(milestone, check, check.read_instruction, observation, history, page_changed=page_changed)
@@ -682,6 +682,10 @@ class MilestoneSupervisorPolicy:
         print(f"  [Replan] 第 {milestone.retry_count} 次重试...")
         replan = self._invoke_replanner(milestone, check, observation, history)
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")
+
+        if replan.strategy == "force_complete":
+            print(f"  [Replan] replanner 判定验收条件已满足，强制完成")
+            return self._advance(milestone, observation, history)
 
         if replan.strategy == "escalate_human":
             fallback = self._try_filter_fallback(
