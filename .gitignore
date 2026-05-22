@@ -12,3 +12,5 @@ knowledge/
 models/
 test.sh
 data/
+evals/**/*.png
+evals/**/*.jpg

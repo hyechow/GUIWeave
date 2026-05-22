@@ -25,6 +25,7 @@ STUCK_SCREEN_SIMILARITY = 0.95
 STUCK_SCREEN_FROZEN = 0.99
 MAX_SCROLL_PER_MILESTONE = 3
 STUCK_REPEAT_WINDOW = 3
+BLANK_SCREEN_RATIO = 0.84  # Near-white pixel ratio above this = blank/loading screen
 STUCK_REPEAT_WORD_OVERLAP = 0.85
 
 
@@ -37,7 +38,9 @@ class _SingleCheckResult(BaseModel):
     LLM checker should only return done or in_progress.
     stuck is reserved for programmatic checks (screen similarity, instruction repetition).
     """
-    status: Literal["done", "in_progress", "stuck"]
+    status: Literal["done", "in_progress", "stuck"] = Field(
+        description="判断状态：done（验收通过）或 in_progress（未完成）。禁止填 'loading'——页面加载状态用独立的 loading 布尔字段表示"
+    )
     reason: str = Field(description="判断理由")
     stuck_reason: str = Field(default="", description="卡住原因（仅程序化 stuck 时填写）")
     issues: list[str] = Field(default_factory=list)
@@ -50,6 +53,7 @@ class _SingleCheckResult(BaseModel):
         description="kind=collection(read_once) 或 kind=verification 时填写：当前屏幕需要提取的内容说明；其他类型留空",
     )
     frozen: bool = Field(default=False, description="屏幕是否冻结（相似度≥99%，即使 reader 返回新内容也应停止）")
+    loading: bool = Field(default=False, description="页面正在加载（骨架屏/启动屏/转场动画），应等待下一帧而非立即规划动作")
 
 
 class _LoopFrameResult(BaseModel):
@@ -202,6 +206,17 @@ SINGLE_CHECKER_PROMPT = """\
 - 只看可观测事实，不要凭感觉判断
 - done 时：visible_evidence 必须列出截图中直接支持验收条件的文字；missing_evidence 必须为空
 - 存在任何 missing_evidence 不能返回 done
+
+## loading 字段
+loading 是独立布尔字段，与 status 无关。status 只能填 done 或 in_progress，不要填 loading。
+以下情况必须设置 loading=true（页面尚无可操作的实质内容）：
+- 应用启动屏（仅显示 Logo + 品牌名）
+- 骨架屏：内容区域全部被灰色占位块替代，没有真实文字或图片可读
+- 全屏加载动画或旋转菊花，内容区域为空
+- 页面完全空白（仅有状态栏/导航栏，正文一片空白）
+以下情况设置 loading=false（已有实质内容可供规划器决策）：
+- 页面已加载部分真实内容（如前几个列表项已渲染，底部仍在加载）
+- 有错误提示、空状态提示等可交互元素
 """
 
 LOOP_FRAME_PROMPT = """\
@@ -267,6 +282,7 @@ PLAN_PROMPT = """\
 - 描述要操作的具体 UI 元素，如「点击底部导航栏左起第二个Tab」
 - 不要给出目标级指令，如「进入通讯录页面」「完成搜索」
 - 如果当前子目标要求「回到主屏幕」，下一步必须指令「按 Home 键返回主屏幕」
+- ⚠️ Home 键只在子目标明确要求「回到主屏幕」时使用；当前已在目标应用内，禁止用 Home 键退出应用——不管当前页面是否符合预期，都应在应用内使用返回按钮、Tab 切换或应用内搜索找到正确路径
 - 如果当前已在目标应用内但不在正确页面，给出应用内导航指令，不要重新打开已打开的应用
 - 如果当前在 iOS 主屏幕且目标应用图标不可见：优先点击底部「搜索」胶囊按钮；看不到时才向下滑动打开系统搜索；搜索框出现后输入应用名称
 - 如果当前是 iOS 系统搜索页，直接输入或点击搜索结果中的目标应用，不要返回主屏
@@ -277,6 +293,7 @@ PLAN_PROMPT = """\
 - ⚠️ 只有当输入框里是用户之前明确输入过的真实内容需要替换时，才使用「清空当前输入框」；若执行后下一轮截图文字仍在，改为点击输入框右侧可见的 X/清除图标
 - 滚动指令描述要查看什么内容（如「滚动查看更早的消息」），不要指定手指方向
 - ⚠️ 生成 type 指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
+- ⚠️ type 动作已包含自动点击输入框的步骤，不需要先单独生成「点击/激活输入框」指令，看到输入框时直接生成 type 指令
 """
 
 LOOP_SCROLL_PROMPT = """\
@@ -412,6 +429,7 @@ class MilestoneSupervisorPolicy:
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
         self._app_name: str = ""
+        self._last_page_identity: dict[str, str] = {}
 
     def set_app_knowledge(self, text: str, app_name: str = "") -> None:
         self._app_knowledge = text
@@ -438,8 +456,42 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
+        # Blank screen: page is still loading (transition / app render). Skip all LLM calls
+        # and do not add this frame to screenshot history (avoids corrupting AB-loop detection).
+        # The runner's noop_count handles termination after too many consecutive blank waits.
+        if _is_blank_screen(observation.png_bytes):
+            print("  [BlankScreen] 检测到白屏，页面加载中，等待下一帧...")
+            return SupervisorStep(
+                should_act=False,
+                instruction=None,
+                stop=False,
+                goal_completed=False,
+                summary="页面加载中（白屏），等待...",
+                **_ctx(milestone, None),
+            )
+
+        # After a 'type' action the screen changes only minimally (input text).
+        # Reset screenshot history so SimStuck doesn't fire as a false positive.
+        if history and history[-1].action_decision:
+            if history[-1].action_decision.action.action_type == "type":
+                self._recent_screenshots.clear()
+
+        # Snapshot previous page identity before running checker.
+        prev_page_id = self._last_page_identity.get(milestone.id, "")
+
         check = self._single_check(milestone, observation, history)
         print(f"  [SingleCheck] {check.status}: {check.reason}")
+
+        if check.loading:
+            print("  [Loading] 检测到加载状态，等待下一帧...")
+            return SupervisorStep(
+                should_act=False, instruction=None, stop=False,
+                goal_completed=False, summary="页面加载中，等待...",
+                **_ctx(milestone, None),
+            )
+
+        current_page_id = check.page_identity or ""
+        self._last_page_identity[milestone.id] = current_page_id
 
         if check.status == "done":
             return self._advance(milestone, observation, history)
@@ -452,7 +504,12 @@ class MilestoneSupervisorPolicy:
             assert stuck is not None
             print(f"  [Stuck] {stuck.status}: {stuck.reason}")
             page_changed = sim_stuck is None
-            return self._handle_stuck(milestone, stuck, check.read_instruction, observation, history, page_changed=page_changed)
+            return self._handle_stuck(
+                milestone, stuck, check.read_instruction, observation, history,
+                page_changed=page_changed,
+                prev_page_id=prev_page_id,
+                current_page_id=current_page_id,
+            )
         return self._plan_single(milestone, check, observation, history)
 
     def _plan_single(
@@ -666,20 +723,26 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
         page_changed: bool = True,
+        prev_page_id: str = "",
+        current_page_id: str = "",
     ) -> SupervisorStep:
         self._recent_screenshots.clear()
         # Decide whether to count this as a retry:
         # - Not executed (action policy refused): skip
-        # - Page changed: navigation progress, not a retry — skip
-        # - Same page: genuine stuck, count as retry
+        # - Truly new page (page_identity changed): navigation progress, not a retry — skip
+        # - Same page with pixel changes (e.g. different search term in same search box): count
         skip_retry = False
         if history and history[-1].supervisor and history[-1].supervisor.milestone_id == milestone.id:
             if history[-1].supervisor.instruction and not history[-1].executed:
                 print(f"  [Replan] 上一轮指令未执行，不计入重试次数")
                 skip_retry = True
             elif page_changed:
-                print(f"  [Replan] 页面已变化（导航推进中），不计入重试次数")
-                skip_retry = True
+                truly_new_page = bool(prev_page_id and current_page_id and prev_page_id != current_page_id)
+                if truly_new_page:
+                    print(f"  [Replan] 页面已跳转（{prev_page_id} → {current_page_id}），不计入重试次数")
+                    skip_retry = True
+                else:
+                    print(f"  [Replan] 屏幕变化但页面未变（{current_page_id or '未知'}），计入重试次数")
         if not skip_retry:
             milestone.retry_count += 1
 
@@ -1361,6 +1424,20 @@ def _has_collected(history: list[PolicyTurn], milestone_id: str) -> bool:
         t.supervisor.milestone_id == milestone_id and t.read_added_content
         for t in history
     )
+
+
+def _is_blank_screen(png_bytes: bytes) -> bool:
+    """Return True if screenshot is a blank/loading white screen.
+
+    Checks the ratio of near-white pixels (> 250) rather than mean brightness,
+    because the iPhone Mirroring frame and status bar icons drag the mean down
+    even when the app content area is fully white.
+    Blank/loading screens have >80% near-white pixels; normal pages have <75%.
+    """
+    img = Image.open(io.BytesIO(png_bytes)).convert("L")
+    pixels = img.tobytes()
+    near_white = sum(1 for p in pixels if p > 250)
+    return near_white / len(pixels) > BLANK_SCREEN_RATIO
 
 
 def _default_read_instruction(milestone: Milestone) -> str:

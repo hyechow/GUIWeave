@@ -8,7 +8,8 @@
 evals/
 ├── router/      # 意图路由测评
 ├── prefs/       # 用户偏好提取测评
-└── reply/       # 回复生成测评
+├── reply/       # 回复生成测评
+└── checker/     # SingleCheck 验收员测评（status/loading 准确性）
 ```
 
 ## router/cases.json 用例分组
@@ -32,6 +33,16 @@ evals/
 |------|------|
 | 基础 | 单次成功任务触发偏好提取 |
 | 澄清合并 | 经过澄清流程后合并消息触发偏好提取 |
+
+## checker/cases.json 用例分组
+
+| 分组 | 说明 | 关键验证点 |
+|------|------|-----------|
+| milestone已满足 | 进入页面时验收条件已成立 | status=done |
+| 搜索建议页 | 输入了关键词但未提交搜索 | status=in_progress, loading=false |
+| 骨架屏 | 内容区域全部为灰色占位块 | loading=true |
+| 白屏 | 页面完全空白 | loading=true |
+| 正常进行中 | 有实质内容但未达到验收条件 | status=in_progress, loading=false |
 
 ## reply/cases.json 用例分组
 
