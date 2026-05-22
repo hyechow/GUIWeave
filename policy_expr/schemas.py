@@ -95,6 +95,12 @@ class Action(BaseModel):
     )
     description: str = Field(description="该操作的中文说明，如「点击目标应用图标」")
 
+    @model_validator(mode="after")
+    def _require_text_for_type(self) -> "Action":
+        if self.action_type == "type" and not self.text:
+            raise ValueError("type 动作必须填写 text 字段，不能为空")
+        return self
+
 
 class Observation(BaseModel):
     """Raw environment observation used by policies."""

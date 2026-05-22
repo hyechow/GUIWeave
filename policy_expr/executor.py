@@ -75,6 +75,9 @@ class ActionExecutor:
                 time.sleep(0.5)
             else:
                 print("未提供输入坐标，默认当前输入框已聚焦，直接输入文字")
+            # Clear first so existing text is replaced, not appended.
+            clear_text_field()
+            time.sleep(0.2)
             print(f"输入文字: {action.text!r}")
             paste_text(action.text)
             print("结果: 已通过剪贴板粘贴输入")

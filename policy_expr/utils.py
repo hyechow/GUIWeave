@@ -72,22 +72,24 @@ def home_indicator_coords(win_w: int, win_h: int) -> tuple[float, float]:
 
 
 def paste_text(text: str) -> None:
-    """Select all existing content then paste text from clipboard (replaces, not appends)."""
-    subprocess.run(["pbcopy"], input=text.encode(), check=True)
+    """Select all existing content then paste text from clipboard (replaces, not appends).
+
+    Ordering: activate first so Universal Clipboard sync completes, THEN set
+    the Mac clipboard. This prevents iOS's Universal Clipboard from overwriting
+    our clipboard content between pbcopy and Cmd+V.
+    """
     subprocess.run([
         "osascript", "-e",
         'tell application "iPhone Mirroring" to activate',
     ], capture_output=True)
-    time.sleep(0.3)
-    # Select all first so paste replaces existing content instead of appending.
-    # In most iOS fields via iPhone Mirroring, Cmd+A selects all; if it only
-    # moves the cursor to the start, paste still inserts at position 0 which is
-    # better than appending at the end.
+    time.sleep(0.4)
     subprocess.run([
         "osascript", "-e",
         'tell application "System Events" to keystroke "a" using command down'
     ], check=True)
-    time.sleep(0.15)
+    time.sleep(0.2)
+    subprocess.run(["pbcopy"], input=text.encode(), check=True)
+    time.sleep(0.05)
     subprocess.run([
         "osascript", "-e",
         'tell application "System Events" to keystroke "v" using command down'
