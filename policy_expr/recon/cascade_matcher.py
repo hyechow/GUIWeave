@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
+from pydantic import BaseModel, Field
 
 FINGERPRINT_PROMPT = """为这个 App 截图生成"页面模板描述"，目标是：同一类型页面（内容不同、结构相同）的描述尽量接近；不同类型页面的描述尽量有区别。
 
@@ -23,6 +24,34 @@ FINGERPRINT_PROMPT = """为这个 App 截图生成"页面模板描述"，目标�
 - 假设页面换了不同用户的数据，你的描述仍然成立——不能描述任何具体内容（特定商品、消息正文、金额、用户名）
 - 不提状态栏、顶部标题/返回按钮、底部固定导航栏——这些每页都有，不具备区分价值
 - 全部中文，每行不超过 25 字"""
+
+# ── Structured semantic fingerprint ───────────────────────────────────────
+
+SEMANTIC_PROMPT = """\
+分析这个 iPhone App 截图，输出页面结构描述。
+
+严格按以下格式输出三行：
+用途：<这类页面让用户做什么，10字以内的动宾短语>
+内容区：<6字以内描述主内容区布局，只能从以下选择：双列网格/三列网格/单列列表/图标网格/气泡对话/表单输入/混合布局/纯文本/图片瀑布>
+页面形态：<从以下选项中选择一个，只写字母代号>
+  A — 全屏页面（无底部Tab栏）
+  B — Tab页（底部有固定Tab栏，2-5个Tab）
+  C — 弹窗（覆盖层，底层页面仍可见）
+  D — 底部面板（从底部滑出的半屏面板）
+  E — 侧边抽屉（从侧边滑出）
+  F — 菜单（下拉或弹出选项列表）
+  G — 键盘页（软键盘覆盖底部）
+
+规则：
+- 如果有弹窗/面板/抽屉等覆盖层，三行全部描述覆盖层本身
+- 不提状态栏、顶部返回按钮、底部固定导航栏
+- 全部中文"""
+
+
+class PageFingerprint(BaseModel):
+    purpose: str = Field(description="用途字段的值")
+    content: str = Field(description="内容区字段的值")
+    form: str = Field(description="页面形态字母代号，A-G")
 
 
 @dataclass
@@ -118,6 +147,27 @@ class CascadeMatcher:
         )
         return resp.choices[0].message.content.strip()
 
+    def generate_fingerprint(self, png: bytes) -> PageFingerprint:
+        """Generate structured semantic fingerprint (form + content + purpose)."""
+        from llm.structured import invoke_structured
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from langchain_openai import ChatOpenAI
+        from policy_expr.policies.base import resize_to_logical_png
+        from policy_expr.config import resolve_llm_config
+
+        cfg = resolve_llm_config(self._llm_config_key)
+        llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key,
+                         base_url=cfg.base_url, temperature=0)
+        b64 = base64.b64encode(resize_to_logical_png(png)).decode()
+        messages = [
+            SystemMessage(content=SEMANTIC_PROMPT),
+            HumanMessage(content=[
+                {"type": "text", "text": "请分析这个页面："},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+            ]),
+        ]
+        return invoke_structured(llm, messages, PageFingerprint)
+
     # ── public embedding API ──────────────────────────────────────────────────
 
     def embed_visual(self, png: bytes) -> PageEmbedding:
@@ -146,6 +196,28 @@ class CascadeMatcher:
         if a.text is None or b.text is None:
             raise ValueError("text embeddings not populated; call fill_text first")
         return float(np.dot(a.text, b.text))
+
+    def semantic_sim(self, fp1: PageFingerprint, fp2: PageFingerprint) -> tuple[bool, str]:
+        """Compare two structured fingerprints.
+
+        Returns (is_same, reason).
+        Same = form matches AND content matches AND purpose embed >= 0.90.
+        """
+        form_match = fp1.form == fp2.form
+        content_match = fp1.content == fp2.content
+
+        self._load_embed()
+        e1 = self._compute_text(fp1.purpose)
+        e2 = self._compute_text(fp2.purpose)
+        purpose_sim = float(np.dot(e1, e2))
+
+        if not form_match:
+            return False, f"form_diff({fp1.form}!={fp2.form})"
+        if not content_match:
+            return False, f"content_diff({fp1.content}!={fp2.content})"
+        if purpose_sim < 0.90:
+            return False, f"purpose_low({purpose_sim:.3f})"
+        return True, f"semantic_match(purpose={purpose_sim:.3f})"
 
 
 # ---------------------------------------------------------------------------

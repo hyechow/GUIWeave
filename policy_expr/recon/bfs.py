@@ -12,6 +12,7 @@ from policy_expr.recon.page_parser import PageKnowledge
 from policy_expr.recon.back_nav import (
     return_to_initial, back_shot_path, save_if_changed, _match_stack, manual_recover,
 )
+from policy_expr.recon.back_nav import make_nav_context
 from policy_expr.recon.utils import (
     ProbeAbortedError,
     ReconResult,
@@ -93,7 +94,7 @@ def probe_elements(
     for i, area in enumerate(areas, 1):
         ax, ay = area.center_xy
         lx, ly = logical_xy(ax, ay)
-        print(f"\n  [{i}/{len(areas)}] 「{area.label}」 @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
+        print(f"\n  [{i}/{len(areas)}] 「{area.label}」 ({area.element_type or ''}) @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
 
         tap_response = _safe_tap(client, lx, ly)
 
@@ -133,7 +134,7 @@ def probe_elements(
                 before_back_bytes=after_bytes,
                 out_dir=tap_dir,
                 tap_index=i,
-                nav_context=f"点击了「{area.label}」",
+                nav_context=make_nav_context(area.label, area.element_type),
             )
             result.taps[-1].back_attempts = back_log
             result.save(result_path)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -76,6 +77,10 @@ class InteractiveElement(BaseModel):
                 data["y"] = float(parts[1])
             except ValueError:
                 pass
+        # Fallback invalid icon_semantic to "other"
+        sem = data.get("icon_semantic")
+        if isinstance(sem, str) and sem not in {"search", "settings", "close", "share", "more", "notification", "profile", "camera", "scan", "add", "edit", "delete", "favorite", "filter", "download", "message", "map", "other"}:
+            data["icon_semantic"] = "other"
         return data
 
     leads_to: str = Field(
@@ -418,12 +423,15 @@ class PageParser:
         boxes = det.detect_filtered(png_bytes, w, h)
 
         merged = enrich_with_icons(page, boxes, w, h)
-        # print(f"  LLM: {len(page.interactive_elements)} 个 | "
-        #       f"YOLO: {len(boxes)} 个 | "
-        #       f"融合: {len(merged.interactive_elements)} 个")
 
         areas = classify_elements(merged)
-        # print(f"  区域数: {len(areas)}")
+
+        if areas:
+            print(f"  {'#':>3}  {'坐标':^12}  {'类型':^8}  标签")
+            print(f"  {'-'*3}  {'-'*12}  {'-'*8}  {'-'*24}")
+            for i, a in enumerate(areas):
+                ax, ay = a.center_xy
+                print(f"  {i:>3}  ({ax:>5.0f},{ay:>4.0f})  {a.element_type:^8}  {a.label}")
 
         return PageKnowledge(
             page=merged,
@@ -456,7 +464,10 @@ class PageParser:
         last_error: Exception | None = None
         for attempt in range(self._N_ATTEMPTS):
             try:
+                t0 = time.time()
                 result = invoke_structured(llm, messages, ParsedPage)
+                elapsed = time.time() - t0
+                print(f"  [page_parser] ({elapsed:.1f}s) {len(result.interactive_elements)} elements")
                 if best is None or len(result.interactive_elements) > len(best.interactive_elements):
                     best = result
             except Exception as exc:

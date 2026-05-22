@@ -61,51 +61,62 @@ def _pixel_diff_ratio(png_a: bytes, png_b: bytes, threshold: int = 30) -> float:
 
 class BackAction(BaseModel):
     can_go_back: bool = Field(description="能否找到返回到前一页的方法")
+    page_type: str = Field(description="导航类型：A=弹窗/浮层, B=底部tab切换, C=普通页面跳转")
     method: str = Field(description="返回方法描述")
     back_x: float = Field(default=-1, description="返回目标归一化 x 坐标（0-1000）")
     back_y: float = Field(default=-1, description="返回目标归一化 y 坐标（0-1000）")
 
 
 BACK_PROMPT = """\
-你是一个 iPhone 页面导航专家。用户给出了两张截图和导航上下文，请分析如何从 AFTER 页面返回 BEFORE 页面。
+你是一个 iPhone 页面导航专家。用户给出了两张截图和触发操作描述，请分析如何从 AFTER 页面返回 BEFORE 页面。
 
 ## 坐标系
 左上角 (0, 0)，右下角 (1000, 1000)。坐标是点击目标的视觉中心。
 重要：返回按钮通常在 x=50-120, y=80-160 的范围内。不要输出 x<30 或 y<50 的坐标。
 
-## 上下文
-用户通过「{nav_context}」从 BEFORE 到达了 AFTER。
+## 输出字段说明
+请按以下顺序填写输出字段：
+1. **page_type**（先填）：根据下方规则判断页面类型，填 "A"、"B" 或 "C"。这一步决定后续的返回策略。
+2. **can_go_back**：是否能找到返回方法。
+3. **method**：用一句话描述具体的返回操作。
+4. **back_x / back_y**：目标元素中心的归一化坐标（0-1000）。
 
 ## 分析步骤
-1. 观察 BEFORE 和 AFTER 的区别，理解发生了什么导航
-2. 在 AFTER 截图上找到能返回 BEFORE 的可点击元素
-3. 输出该元素中心的坐标
+1. **先读「触发操作」**：它描述了用户点击了什么元素（含类型）才从 BEFORE 跳到 AFTER。
+   - 触发操作含「底部tab」→ 直接判断类型 B，无需继续比对截图
+   - 触发操作含「button / link / icon / back_button」→ 跳过 B，进入 A/C 的视觉判断
+2. 若触发操作信息不足，再观察截图：按 A → B → C 顺序检查，命中即停止
+3. 根据判定的类型，在 AFTER 截图上找到对应的返回元素
+4. 输出该元素中心的坐标
 
-## 判断 AFTER 页面类型（按顺序检查，命中即停止）
+## AFTER 页面类型定义
 
 ### 类型 A：弹窗/浮层
-AFTER 上有弹窗、对话框、底部弹出面板、广告浮层覆盖在页面上方（底层页面仍可见）
+**判断依据**：AFTER 上有弹窗、对话框、底部弹出面板、广告浮层，覆盖在底层页面上方（底层页面仍可见）
 → 点击关闭/取消/跳过按钮（通常是 × 或「关闭」）
 
 ### 类型 B：底部 tab 切换
-AFTER 和 BEFORE 结构相似，只是底部导航栏选中了不同的 tab
-→ 点击 BEFORE 中被选中的那个底部 tab
+**判断依据**：触发操作中含「底部tab」；或 BEFORE 与 AFTER 有相同的底部导航栏且选中项不同
+→ 点击 AFTER 中与 BEFORE 选中 tab 对应的那个底部 tab（即回到 BEFORE 时高亮的那个）
 注意：不要点击 AFTER 中已经处于选中状态的 tab，那不会有任何效果
 
 ### 类型 C：普通页面跳转
-AFTER 是全新的页面，左上角有返回箭头（‹）或关闭按钮（×）
+**判断依据**：AFTER 是全新页面，左上角有返回箭头（‹）或关闭按钮（×），且触发操作不含「底部tab」
 → 点击左上角返回按钮
 
-## 输出
-- can_go_back: 是否找到可点击的目标
-- method: 简述点击了什么（如「左上角返回按钮」「关闭弹窗×」）
-- back_x, back_y: 目标中心坐标（0-1000），必须指向实际可见的 UI 元素
 """
 
 
 # ---------------------------------------------------------------------------
 # Tap operations
 # ---------------------------------------------------------------------------
+
+def make_nav_context(label: str, element_type: str) -> str:
+    """Build the nav_context string passed to infer_back_action."""
+    if element_type == "tab":
+        return f"点击了底部tab「{label}」"
+    return f"点击了{element_type}「{label}」"
+
 
 def tap_back(client) -> tuple[float, float, str]:
     """Tap the iOS back button area."""
@@ -132,26 +143,6 @@ def tap_llm_back(client, action: BackAction) -> tuple[float, float, str] | None:
 # LLM back action inference
 # ---------------------------------------------------------------------------
 
-def _parse_page_elements(png_bytes: bytes) -> list[dict]:
-    """Run PageParser on a screenshot; returns serializable element list."""
-    try:
-        from policy_expr.recon.page_parser import PageParser
-        parsed = PageParser().parse_screen(png_bytes)
-        return [
-            {
-                "label": el.label,
-                "element_type": el.element_type,
-                "x": round(el.x),
-                "y": round(el.y),
-                "leads_to": el.leads_to,
-            }
-            for el in parsed.interactive_elements
-        ]
-    except Exception as exc:
-        print(f"    [page_parser] 解析失败: {exc}")
-        return []
-
-
 def _format_elements_context(elements: list[dict]) -> str:
     """Format element list for inclusion in the LLM back-nav prompt."""
     if not elements:
@@ -168,10 +159,122 @@ def _format_elements_context(elements: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _save_back_nav_debug(
+    debug_path: Path,
+    context_text: str,
+    before_b64: str,
+    after_b64: str,
+    response: dict | None,
+) -> None:
+    """Save an HTML visualization of one back-nav LLM call for debugging."""
+    import html as _html
+
+    def _esc(s: str) -> str:
+        return _html.escape(str(s))
+
+    if response is not None:
+        tap_x = round(response.get("back_x", -1))
+        tap_y = round(response.get("back_y", -1))
+        left, top = tap_x / 10, tap_y / 10
+        crosshair = (
+            f'<div class="crosshair" style="left:{left:.1f}%;top:{top:.1f}%">'
+            '<div class="ch-h"></div><div class="ch-v"></div>'
+            '<div class="ch-ring"></div></div>'
+        )
+        response_html = f"""
+        <div class="section response-section">
+          <div class="section-title">LLM 输出</div>
+          <div class="response-grid">
+            <div class="resp-item"><span class="resp-key">page_type</span><span class="resp-val type-badge">{_esc(response.get("page_type", ""))}</span></div>
+            <div class="resp-item"><span class="resp-key">can_go_back</span><span class="resp-val">{_esc(response.get("can_go_back", ""))}</span></div>
+            <div class="resp-item"><span class="resp-key">method</span><span class="resp-val">{_esc(response.get("method", ""))}</span></div>
+            <div class="resp-item"><span class="resp-key">坐标</span><span class="resp-val">({tap_x}, {tap_y})</span></div>
+          </div>
+          <div class="tap-preview">
+            <div class="ss-wrap">
+              <div class="ss-label after-label">AFTER + tap point</div>
+              <img src="data:image/png;base64,{after_b64}">
+              {crosshair}
+            </div>
+          </div>
+        </div>"""
+    else:
+        response_html = (
+            '<div class="section response-section">'
+            '<div class="section-title">LLM 输出</div>'
+            '<span class="resp-val" style="color:#ff5555">can_go_back=False 或坐标越界</span>'
+            '</div>'
+        )
+
+    page = f"""<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>back-nav debug</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; margin: 0; padding: 20px; font-size: 13px; }}
+  h1 {{ font-size: 15px; color: #888; margin: 0 0 16px; }}
+  .section {{ background: #252540; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }}
+  .section-title {{ font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }}
+  pre {{ background: #1a1a2e; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; color: #ccc; white-space: pre-wrap; word-break: break-word; margin: 0; }}
+  .images {{ display: flex; gap: 16px; align-items: flex-start; }}
+  .ss-wrap {{ position: relative; flex-shrink: 0; }}
+  .ss-wrap img {{ height: 300px; border-radius: 6px; display: block; }}
+  .ss-label {{ font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; margin-bottom: 4px; display: inline-block; }}
+  .before-label {{ background: #0a84ff; color: #fff; }}
+  .after-label {{ background: #ff9500; color: #fff; }}
+  .response-section {{ border-left: 3px solid #34C759; }}
+  .response-grid {{ display: flex; flex-wrap: wrap; gap: 10px 24px; margin-bottom: 12px; }}
+  .resp-item {{ display: flex; align-items: center; gap: 8px; }}
+  .resp-key {{ color: #888; font-size: 12px; }}
+  .resp-val {{ font-family: monospace; font-weight: 600; color: #eee; }}
+  .type-badge {{ background: #ff9500; color: #000; padding: 1px 10px; border-radius: 10px; }}
+  .tap-preview {{ display: flex; gap: 16px; }}
+  .crosshair {{ position: absolute; pointer-events: none; z-index: 1; }}
+  .ch-h, .ch-v {{ position: absolute; background: rgba(255,255,0,0.85); }}
+  .ch-h {{ width: 40px; height: 2px; top: -1px; left: -20px; }}
+  .ch-v {{ width: 2px; height: 40px; left: -1px; top: -20px; }}
+  .ch-ring {{ position: absolute; width: 14px; height: 14px; border: 2px solid rgba(255,255,0,0.9); border-radius: 50%; top: -7px; left: -7px; }}
+</style>
+</head>
+<body>
+  <h1>back-nav LLM · {_esc(debug_path.stem)}</h1>
+
+  <div class="section">
+    <div class="section-title">System Prompt</div>
+    <pre>{_esc(BACK_PROMPT)}</pre>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Human Message · 上下文</div>
+    <pre>{_esc(context_text)}</pre>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Human Message · 截图</div>
+    <div class="images">
+      <div>
+        <div class="ss-label before-label">BEFORE</div>
+        <div class="ss-wrap"><img src="data:image/png;base64,{before_b64}"></div>
+      </div>
+      <div>
+        <div class="ss-label after-label">AFTER</div>
+        <div class="ss-wrap"><img src="data:image/png;base64,{after_b64}"></div>
+      </div>
+    </div>
+  </div>
+
+  {response_html}
+</body>
+</html>"""
+    debug_path.write_text(page, encoding="utf-8")
+
+
 def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: str = "",
                       target_label: str = "",
                       failed_attempts: list[dict] | None = None,
-                      after_elements: list[dict] | None = None) -> BackAction | None:
+                      after_elements: list[dict] | None = None,
+                      debug_path: Path | None = None) -> BackAction | None:
     """Ask the vision model how to navigate from AFTER back to BEFORE.
 
     Args:
@@ -179,6 +282,7 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
                      (e.g. "点击了底部「发现」tab", "点击了「珠珠」聊天项").
         after_elements: Pre-parsed interactive elements on the AFTER page.
                         When provided, appended to prompt to ground LLM output.
+        debug_path: When set, save an HTML visualization of the prompt + response here.
     """
     if not after_png:
         return None
@@ -200,7 +304,7 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
     if target_label:
         context_text += f"\n\n目标页面：BEFORE 是「{target_label}」，我们需要回到这个页面。"
     if nav_context:
-        context_text += f"\n\n导航上下文：用户通过「{nav_context}」从 BEFORE 到达了 AFTER。"
+        context_text += f"\n\n触发操作：{nav_context}"
     if after_elements is not None:
         elem_ctx = _format_elements_context(after_elements)
         if elem_ctx:
@@ -222,22 +326,37 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
         ]),
     ]
     action = invoke_structured(llm, messages, BackAction)
-    print(f"    [LLM raw] can_go_back={action.can_go_back}  "
+    print(f"    [LLM raw] can_go_back={action.can_go_back}  type={action.page_type}  "
           f"({action.back_x:.0f},{action.back_y:.0f})  {action.method}")
+
+    result = action if (action.can_go_back and is_valid_tap(action.back_x, action.back_y)) else None
     if not action.can_go_back:
-        return None
-    if not is_valid_tap(action.back_x, action.back_y):
+        pass
+    elif not is_valid_tap(action.back_x, action.back_y):
         print(f"    [LLM] 坐标 ({action.back_x:.0f},{action.back_y:.0f}) 越界，无效")
-        return None
-    return action
+
+    if debug_path is not None:
+        try:
+            response_dict = (
+                {"page_type": result.page_type, "can_go_back": result.can_go_back,
+                 "method": result.method, "back_x": result.back_x, "back_y": result.back_y}
+                if result is not None else None
+            )
+            _save_back_nav_debug(debug_path, context_text, before_b64, after_b64, response_dict)
+            print(f"    [LLM debug] {debug_path}")
+        except Exception as exc:
+            print(f"    [LLM debug] 保存失败: {exc}")
+
+    return result
 
 
 def _llm_log_entry(action: BackAction | None, reason: str = "") -> dict:
     """Build a log fragment capturing the raw LLM response."""
     if action is None:
-        return {"llm_can_go_back": False, "llm_method": reason,
+        return {"llm_can_go_back": False, "llm_page_type": "", "llm_method": reason,
                 "llm_x": -1, "llm_y": -1}
-    return {"llm_can_go_back": action.can_go_back, "llm_method": action.method,
+    return {"llm_can_go_back": action.can_go_back, "llm_page_type": action.page_type,
+            "llm_method": action.method,
             "llm_x": round(action.back_x), "llm_y": round(action.back_y)}
 
 
@@ -473,9 +592,11 @@ def _execute_strategy(
         return None
 
     # LLM strategies: "LLM_1", "LLM_2", "LLM_3"
+    debug_path = (out_dir / f"R{round_num}_{strategy}_prompt.html") if out_dir else None
     llm_action = infer_back_action(initial_bytes, current_bytes, nav_context=nav_context,
                                     target_label=target_label,
-                                    failed_attempts=llm_failed_attempts)
+                                    failed_attempts=llm_failed_attempts,
+                                    debug_path=debug_path)
     if llm_action is None:
         log.append({"strategy": strategy, "result": "未能识别返回动作",
                     "success": False, "screenshot": "",

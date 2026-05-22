@@ -15,26 +15,25 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
-import subprocess
 import sys
-import tempfile
 import time
-from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
+
+from _vis import open_annotated, parse_items, print_items
 
 from policy_expr.perception import LivePhoneSession
 from policy_expr.executor import logical_xy
-from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS
-from policy_expr.recon.page_parser import PageParser, classify_elements
+from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context
+from policy_expr.recon.page_parser import PageParser
 from policy_expr.recon.page_identity import PageIdentity
 from policy_expr.recon.cascade_matcher import get_matcher
 
@@ -54,87 +53,6 @@ def pixel_diff_ratio(png_a: bytes, png_b: bytes, threshold: int = 30) -> float:
 
 # Pixel diff > 1% means page changed
 _NAV_THRESHOLD = 0.01
-
-_PALETTE = [
-    (255, 59, 48),   (255, 149, 0),  (255, 204, 0),  (52, 199, 89),
-    (0, 199, 190),   (50, 173, 230), (0, 122, 255),  (88, 86, 214),
-    (175, 82, 222),  (255, 45, 85),
-]
-
-
-# ── Visualization ─────────────────────────────────────────────────────────────
-
-def annotate(png: bytes, items: list[tuple[float, float, str, str]],
-             visited: set[int] | None = None) -> bytes:
-    img = Image.open(io.BytesIO(png)).convert("RGB")
-    w, h = img.size
-    draw = ImageDraw.Draw(img, "RGBA")
-
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size=22)
-    except Exception:
-        font = ImageFont.load_default()
-
-    R = 18
-    for i, (ax, ay, label, etype) in enumerate(items):
-        cx = int(ax / 1000 * w)
-        cy = int(ay / 1000 * h)
-        color = _PALETTE[i % len(_PALETTE)]
-
-        if visited and i in visited:
-            fill = (*color, 100)
-        else:
-            fill = (*color, 230)
-
-        draw.ellipse([cx - R, cy - R, cx + R, cy + R],
-                     fill=fill, outline=(255, 255, 255, 255), width=2)
-        num_str = str(i)
-        bb = draw.textbbox((0, 0), num_str, font=font)
-        tw, th = bb[2] - bb[0], bb[3] - bb[1]
-        draw.text((cx - tw / 2, cy - th / 2 - 1), num_str,
-                  fill=(255, 255, 255), font=font)
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def show_image(png: bytes, items: list[tuple[float, float, str, str]],
-               depth: int, visited: set[int] | None = None,
-               zoom_bbox: tuple[int, int, int, int] | None = None) -> Path:
-    annotated_bytes = annotate(png, items, visited)
-    if zoom_bbox:
-        # When an overlay is active, crop+pad around the overlay so circles are visible
-        full = Image.open(io.BytesIO(annotated_bytes))
-        x1, y1, x2, y2 = zoom_bbox
-        pad = 60
-        W, H = full.size
-        region = (max(0, x1 - pad), max(0, y1 - pad),
-                  min(W, x2 + pad), min(H, y2 + pad))
-        annotated_bytes = io.BytesIO()
-        full.crop(region).save(annotated_bytes, format="PNG")
-        annotated_bytes = annotated_bytes.getvalue()
-    out = Path(tempfile.gettempdir()) / f"dfs_d{depth}_{datetime.now():%H%M%S}.png"
-    out.write_bytes(annotated_bytes)
-    subprocess.Popen(["open", str(out)])
-    return out
-
-
-# ── Element listing ───────────────────────────────────────────────────────────
-
-def parse_items(png: bytes, parser: PageParser) -> list[tuple[float, float, str, str]]:
-    areas = classify_elements(parser.parse_screen(png))
-    # Filter out back buttons like DFS does
-    areas = [a for a in areas if a.element_type != "back_button"]
-    return [(a.center_xy[0], a.center_xy[1], a.label[:30] or "(无标签)", a.element_type) for a in areas]
-
-
-def print_items(items: list[tuple[float, float, str, str]], visited: set[int]) -> None:
-    print(f"\n  {'#':>3}  {'类型':<10}  {'坐标':^12}  标签")
-    print(f"  {'-'*3}  {'-'*10}  {'-'*12}  {'-'*24}")
-    for i, (ax, ay, label, etype) in enumerate(items):
-        mark = "✓" if i in visited else " "
-        print(f" {mark}{i:>2}  {etype:<10}  ({ax:>5.0f},{ay:>4.0f})  {label}")
 
 
 # ── User interaction ──────────────────────────────────────────────────────────
@@ -203,7 +121,7 @@ def main() -> None:
                 return
 
             # New page
-            knowledge = parser.analyze_screen(png_bytes)
+            # knowledge = parser.analyze_screen(png_bytes)  # unused, parse_items does its own call
             fingerprint = get_matcher()._generate_fingerprint(png_bytes)
             for line in fingerprint.splitlines():
                 if line.startswith("用途：") or line.startswith("用途:"):
@@ -229,7 +147,7 @@ def main() -> None:
                 _W, _H = _full_img.size
                 _crop = _full_img.crop((ox1, oy1, ox2, oy2))
                 _buf = io.BytesIO(); _crop.save(_buf, format="PNG")
-                items = parse_items(_buf.getvalue(), parser)
+                items = parse_items(_buf.getvalue(), parser, filter_back=True)
                 # crop-relative 0-1000 → full-image 0-1000
                 items = [
                     (
@@ -241,7 +159,7 @@ def main() -> None:
                 ]
                 print(f"{prefix}  [overlay] 裁剪解析，共 {len(items)} 个元素")
             else:
-                items = parse_items(png_bytes, parser)
+                items = parse_items(png_bytes, parser, filter_back=True)
             if not items:
                 print(f"{prefix}  无可交互元素")
                 return
@@ -249,8 +167,8 @@ def main() -> None:
             visited: set[int] = set()
 
             while True:
-                img_path = show_image(png_bytes, items, depth, visited,
-                                      zoom_bbox=_overlay.bbox if _overlay else None)
+                img_path = open_annotated(png_bytes, items, f"dfs_d{depth}",
+                                          visited, zoom_bbox=_overlay.bbox if _overlay else None)
                 print(f"{prefix}  标注图: {img_path}")
                 print_items(items, visited)
 
@@ -269,6 +187,7 @@ def main() -> None:
                 visited.add(idx)
                 ax, ay, label, etype = items[idx]
                 lx, ly = logical_xy(ax, ay)
+                _nav_ctx = make_nav_context(label, etype)
                 print(f"{prefix}  → tap [{label}] ({etype}) at ({ax:.0f},{ay:.0f})")
                 client.tap(lx, ly)
                 time.sleep(SETTLE)
@@ -292,6 +211,7 @@ def main() -> None:
                     ok, back_log = return_to_initial(
                         client, screenshot, nav_stack,
                         before_back_bytes=after_bytes,
+                        nav_context=_nav_ctx,
                     )
                     if ok:
                         print(f"{prefix}    ✓ 已返回当前页")
@@ -317,6 +237,7 @@ def main() -> None:
                 ok, back_log = return_to_initial(
                     client, screenshot, nav_stack,
                     before_back_bytes=screenshot(),
+                    nav_context=_nav_ctx,
                 )
                 if ok:
                     print(f"{prefix}  ✓ 已返回")

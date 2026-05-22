@@ -7,14 +7,18 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from policy_expr.executor import logical_xy
 from policy_expr.perception import try_resume_mac
-from policy_expr.recon.back_nav import manual_recover as _manual_recover
+from policy_expr.recon.back_nav import make_nav_context, manual_recover as _manual_recover
 from policy_expr.recon.back_nav import return_to_initial
 from policy_expr.recon.page_identity import PageIdentity
 from policy_expr.recon.utils import ProbeAbortedError
 from policy_expr.trace import Tracer
+
+# Module-level HUD status callback; set by explore_dfs, read by _probe_page_dfs.
+_status_cb: Callable[[str], None] | None = None
 
 
 def _safe_tap(client, lx: float, ly: float) -> str:
@@ -45,14 +49,28 @@ class DfsPageNode:
 
 def explore_dfs(phone, app_log_dir: Path, max_depth: int = 0,
                 sample: int = 0, mode: str | None = None,
-                target_dir: str | None = None) -> list[DfsPageNode]:
+                target_dir: str | None = None,
+                status_cb: Callable[[str], None] | None = None) -> list[DfsPageNode]:
     """Top-level DFS exploration.
 
     Phone must be on the root page.
     mode: None=initial, "add"=add to existing app, "update"=re-probe target page.
     target_dir: add=parent page dir name; update=page dir to overwrite.
+    status_cb: optional callable(text) for live status updates (e.g. HUD).
     Returns tree of explored pages (children attached).
     """
+    global _status_cb
+    _prev_cb = _status_cb
+    _status_cb = status_cb
+    try:
+        return _explore_dfs_impl(phone, app_log_dir, max_depth, sample, mode, target_dir)
+    finally:
+        _status_cb = _prev_cb
+
+
+def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
+                      sample: int = 0, mode: str | None = None,
+                      target_dir: str | None = None) -> list[DfsPageNode]:
     from policy_expr.recon.page_parser import PageParser
     from policy_expr.recon.cascade_matcher import get_matcher
 
@@ -137,6 +155,7 @@ def explore_dfs(phone, app_log_dir: Path, max_depth: int = 0,
         ok, back_log = return_to_initial(
             phone.client, phone.screenshot, nav_stack,
             before_back_bytes=phone.screenshot(),
+            nav_context=make_nav_context(area.label, area.element_type),
             target_label=page_name,
         )
         if not ok:
@@ -178,72 +197,6 @@ def explore_dfs(phone, app_log_dir: Path, max_depth: int = 0,
     return [root_node]
 
 
-def _dfs_explore_children(
-    phone,
-    node: DfsPageNode,
-    nav_stack: list[tuple[bytes, tuple[float, float] | None]],
-    root_ctx: tuple,
-    chain_to_page: dict[tuple, str],
-    dedup: PageIdentity,
-    tracer: Tracer,
-    trace_path: Path,
-    app_log_dir: Path,
-    remaining_depth: int,
-    sample: int,
-) -> None:
-    """DFS into navigated children of node. Phone is on node's page."""
-    navigated_taps = [t for t in node.recon_result.taps if t.tap_ok and t.navigated]
-    if not navigated_taps:
-        return
-
-    print(f"\n  发现 {len(navigated_taps)} 个可导航子页面")
-
-    for tap in navigated_taps:
-        lx, ly = logical_xy(tap.x, tap.y)
-        child_chain = node.nav_chain + [(lx, ly, tap.label)]
-
-        # 1. Tap into child page
-        print(f"\n  → 进入子页面「{tap.label}」")
-        _safe_tap(phone.client, lx, ly)
-        time.sleep(2.0)
-        child_bytes = phone.screenshot()
-
-        # 2. Build child nav_stack with parent forward_coords
-        # Parent entry's forward_coords points to the tap that re-enters this child
-        parent_bytes, _ = nav_stack[-1]
-        child_nav_stack = nav_stack[:-1] + [(parent_bytes, (lx, ly)), (child_bytes, None)]
-
-        # 3. Recursive DFS into child
-        child_node, _ = _dfs_recursive(
-            phone, child_chain, child_nav_stack, root_ctx,
-            chain_to_page, dedup, [], tracer, trace_path,
-            app_log_dir, remaining_depth - 1, sample,
-        )
-
-        if child_node is not None:
-            node.children.append(child_node)
-
-        # 4. Back to this page (one level up)
-        print(f"\n  ← 返回「{node.page_name}」")
-        ok, back_log = return_to_initial(
-            phone.client, phone.screenshot, nav_stack,
-            before_back_bytes=phone.screenshot(),
-            target_label=node.page_name,
-        )
-        if not ok:
-            recovered = _manual_recover(
-                phone.client, phone.screenshot, nav_stack,
-                len(nav_stack) - 1,
-                prompt=f"子页面探索后无法返回 {node.page_name}",
-            )
-            if not recovered:
-                raise ProbeAbortedError(
-                    f"DFS: 无法从子页面返回 {node.page_name}",
-                    failed_tap=-1, failed_element="",
-                    back_attempts=back_log,
-                )
-
-
 def _dfs_recursive(
     phone,
     nav_chain: list[tuple[float, float, str]],
@@ -265,11 +218,6 @@ def _dfs_recursive(
 
     Returns (node, dedup_info) where dedup_info describes identity of this page.
     """
-    """Recursive DFS step. Phone is on the target page.
-
-    PRE:  phone is on this page (nav_stack top)
-    POST: phone is back on this page (after all children explored)
-    """
     app = app_log_dir.name
 
     # Take screenshot first for mini-program check (before expensive LLM parse)
@@ -282,6 +230,11 @@ def _dfs_recursive(
         print(f"  [小程序] 检测到小程序，跳过探测，直接关闭")
         _tap_close_xy(phone, close_xy)
         return None, {"is_new": False, "phase": "miniprogram"}
+
+    # Full-screen popup: pixel pre-check → LLM locate → YOLO snap → tap
+    from policy_expr.recon.popup_nav import close_popup
+    if close_popup(phone.client, phone.screenshot, png_bytes):
+        png_bytes = phone.screenshot()
 
     # ── Overlay detection (前置于去重，命中则强制新页面) ──
     _overlay = _check_overlay(nav_stack, png_bytes)
@@ -427,6 +380,8 @@ def _dfs_recursive(
                 ok, back_log = return_to_initial(
                     phone.client, phone.screenshot, nav_stack,
                     before_back_bytes=phone.screenshot(),
+                    nav_context=make_nav_context(area.label, area.element_type),
+                    target_label=page_name,
                 )
                 if not ok:
                     recovered = _manual_recover(
@@ -470,16 +425,6 @@ def _dfs_recursive(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _parse_identity(phone) -> tuple:
-    """Screenshot + parse page identity. Returns (png_bytes, knowledge, page_name)."""
-    from policy_expr.recon.page_parser import PageParser
-
-    png_bytes = phone.screenshot()
-    knowledge = PageParser().analyze_screen(png_bytes)
-    page_name, _fingerprint = _page_name_from_fingerprint(png_bytes)
-    return png_bytes, knowledge, page_name
-
 
 def _child_status(child_node, depth: int) -> str:
     """Derive child exploration status from _dfs_recursive return value."""
@@ -564,10 +509,17 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
 
     top_level = len(nav_stack) - 1 if nav_stack else 0
 
+    if _status_cb:
+        _status_cb(f"探测 {out_dir.name}  0/{len(areas)}")
+
     for i, area in enumerate(areas, 1):
         ax, ay = area.center_xy
         lx, ly = logical_xy(ax, ay)
-        print(f"\n  [{i}/{len(areas)}] 「{area.label}」 @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
+        etype = area.element_type or ""
+        print(f"\n  [{i}/{len(areas)}] 「{area.label}」 ({etype}) @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
+
+        if _status_cb:
+            _status_cb(f"探测 {out_dir.name}  {i}/{len(areas)}  {area.label}")
 
         tap_response = _safe_tap(phone.client, lx, ly)
 
