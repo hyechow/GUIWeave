@@ -295,10 +295,10 @@ PLAN_PROMPT = """\
 - 如果当前在应用的子页面需要回到上级，优先使用可见返回控件
 - 如果当前在应用内搜索页：搜索框已聚焦则直接输入；未聚焦则先点击搜索框
 - ⚠️ 需要提交/发送/确认输入时（如发送消息、确认搜索），必须指令「按回车键提交」，禁止指令「点击发送按钮」
-- ⚠️ 输入框无论有无旧内容，直接生成 type 指令即可——系统会自动清空后输入，无需先清空
+- ⚠️ 输入框无论有无旧内容，直接生成输入文字指令即可——系统会自动清空后输入，无需先清空
 - 滚动指令描述要查看什么内容（如「滚动查看更早的消息」），不要指定手指方向
-- ⚠️ 生成 type 指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
-- ⚠️ type 动作已包含自动点击输入框的步骤，不需要先单独生成「点击/激活输入框」指令，看到输入框时直接生成 type 指令
+- ⚠️ 生成输入文字指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
+- ⚠️ 输入文字动作已包含自动点击输入框的步骤，不需要先单独生成「点击/激活输入框」指令，看到输入框时直接生成输入指令即可
 - 商品规格选择面板（bottomsheet）中，若目标属性（如糖度/甜度）的分类标题可见但选项 chips 未出现或被截断，应先在面板内向上滑动使该属性的选项行完整显示，再点击目标选项
 """
 
@@ -495,6 +495,21 @@ def run_planner(
     """Run the step planner. Used by both production and evals."""
     if constraints is None:
         constraints = []
+    # When replanning (retry_count > 0), inject all previously tried instructions
+    # so the planner avoids paths that led into dead ends before stuck was detected.
+    if milestone.retry_count > 0 and not extra:
+        tried = sorted({
+            t.supervisor.instruction
+            for t in history
+            if t.supervisor and t.supervisor.instruction
+            and t.supervisor.milestone_id == milestone.id
+        })
+        if tried:
+            tried_lines = "\n".join(f"  - 「{i}」" for i in tried)
+            extra = (
+                f"⚠️ 该子目标已重试 {milestone.retry_count} 次。以下操作在本子目标中已全部尝试过"
+                f"（含导致失败或死路的路径），请务必选择完全不同的路径：\n{tried_lines}"
+            )
     prompt = PLAN_PROMPT.format(
         milestone_name=milestone.name,
         milestone_desc=milestone.description,

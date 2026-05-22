@@ -46,6 +46,37 @@
     }
   },
   {
+    "label": "搜索结果页-重试后应避免重复死路",
+    "screenshot": "evals/planner/screenshots/screenshot_replan_search_results.png",
+    "milestone": {
+      "name": "选择生椰拿铁规格",
+      "description": "在搜索结果中点击目标商品进入详情页，选择规格并加入购物车",
+      "success_condition": "购物车中包含已选规格的'生椰拿铁'，且底部显示结算金额",
+      "kind": "action",
+      "retry_count": 1,
+      "app_name": "美团",
+      "task_type": "action"
+    },
+    "history": [
+      "点击第一个商家「瑞幸咖啡」下方的商品「[YYDS]生椰拿铁|甜蜜享受」",
+      "点击屏幕右上角的关闭按钮（X）",
+      "点击屏幕右上角的关闭按钮（X）",
+      "点击屏幕右上角的关闭按钮（X）",
+      "点击屏幕右上角的关闭按钮退出直播界面"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面是美团搜索结果页，显示了包含「生椰拿铁」的商家列表，尚未进入任何商品详情页进行规格选择",
+      "issues": [],
+      "missing_evidence": ["购物车包含已选规格的生椰拿铁", "底部显示结算金额"],
+      "summary": "搜索结果页，上一轮点击瑞幸咖啡商品进入了直播间，需改变策略"
+    },
+    "expected": {
+      "must_contain": ["点击"],
+      "must_not_contain": ["YYDS", "甜蜜享受"]
+    }
+  },
+  {
     "label": "商品列表-找到目标商品-应点击",
     "screenshot": "evals/planner/screenshots/screenshot_turn_8.png",
     "milestone": {

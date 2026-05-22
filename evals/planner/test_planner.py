@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from policy_expr.schemas import Milestone, Observation
+from policy_expr.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from policy_expr.supervisor.milestone import _SingleCheckResult, run_planner
 
 CASES_FILE = Path(__file__).parent / "cases.json"
@@ -42,19 +42,41 @@ def _check_instruction(instruction: str, expected: dict) -> list[str]:
     return details
 
 
+def _build_history(milestone_id: str, instructions: list[str]) -> list[PolicyTurn]:
+    """Build minimal PolicyTurn history from a list of instruction strings."""
+    turns = []
+    for i, inst in enumerate(instructions):
+        turns.append(PolicyTurn(
+            index=i + 1,
+            observation_source="eval",
+            supervisor=SupervisorStep(
+                should_act=True,
+                instruction=inst,
+                stop=False,
+                goal_completed=False,
+                summary=inst,
+                milestone_id=milestone_id,
+            ),
+            executed=True,
+        ))
+    return turns
+
+
 def test_planner() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     for c in cases:
         png_bytes = (PROJECT_ROOT / c["screenshot"]).read_bytes()
         observation = Observation(png_bytes=png_bytes, source="eval")
-        milestone = Milestone.model_validate({**c["milestone"], "id": c["label"]})
+        milestone_data = {**c["milestone"], "id": c["label"]}
+        milestone = Milestone.model_validate(milestone_data)
         check = _SingleCheckResult.model_validate({
             **c["checker"],
             "visible_evidence": c["checker"].get("visible_evidence", []),
         })
+        history = _build_history(c["label"], c.get("history", []))
 
         try:
-            result = run_planner(milestone, check, observation, [])
+            result = run_planner(milestone, check, observation, history)
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")
             continue
