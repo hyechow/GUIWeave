@@ -89,7 +89,7 @@ def paste_text(text: str) -> None:
     ], check=True)
     time.sleep(0.2)
     subprocess.run(["pbcopy"], input=text.encode(), check=True)
-    time.sleep(0.05)
+    time.sleep(1.5)  # Universal Clipboard sync Mac→iOS typically takes ~0.5-1s
     subprocess.run([
         "osascript", "-e",
         'tell application "System Events" to keystroke "v" using command down'
