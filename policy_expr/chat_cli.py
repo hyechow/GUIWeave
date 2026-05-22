@@ -37,13 +37,14 @@ from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.visualize import print_decision
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
-from policy_expr.runner import _TeeStream, build_policy, build_supervisor, create_run_dir
+from policy_expr.runner import _TeeStream, build_policy, build_supervisor
 from policy_expr.chat_session import (
     RouterResult,
     generate_reply,
     route_message,
 )
 from policy_expr.prefs import PreferenceManager
+from policy_expr.session_recorder import SessionRecorder
 
 ROOT = Path(__file__).parent.parent
 
@@ -404,13 +405,16 @@ def main() -> None:
     supervisor = build_supervisor(SimpleSupervisorPolicy.name)
     prefs = PreferenceManager()
 
+    SESSIONS_ROOT = ROOT / "data" / "sessions"
     _print_header()
     session: list[dict] = []
+    recorder = SessionRecorder(SESSIONS_ROOT)
 
     while True:
         try:
             user_msg = pt_prompt(_pt_prompt, completer=_completer).strip()
         except (EOFError, KeyboardInterrupt):
+            recorder.save()
             console.print()
             break
 
@@ -418,12 +422,15 @@ def main() -> None:
             continue
 
         if user_msg == "/exit":
+            recorder.save()
             console.print("[dim]再见[/dim]")
             break
 
         if user_msg == "/clear":
-            console.clear()
+            recorder.save()
+            recorder = SessionRecorder(SESSIONS_ROOT)
             session.clear()
+            console.clear()
             _print_header()
             continue
 
@@ -475,18 +482,20 @@ def main() -> None:
                 reply_state["done"] = True
                 reply_state["current"] = f"回复生成完成  {reply_secs:.1f}s"
                 _print_reply(reply)
-                session.append({
+                entry = {
                     "user_msg": user_msg,
                     "result_summary": reply,
                     "stop_reason": "非手机操作",
                     "goal_completed": False,
                     "turns_count": 0,
-                })
+                }
+                session.append(entry)
+                recorder.add(entry)
             continue
 
         # Execute
         goal = router_result.goal or user_msg
-        log_dir = create_run_dir("chat")
+        log_dir = recorder.next_turn_dir()
 
         t0 = time.time()
         live_state: dict = {"current": "连接中...", "done": False}
@@ -532,14 +541,17 @@ def main() -> None:
 
         _print_reply(reply)
 
-        session.append({
+        entry = {
             "user_msg": user_msg,
+            "goal": goal,
             "result_summary": result["result_summary"],
             "stop_reason": result["stop_reason"],
             "goal_completed": result["goal_completed"],
             "turns_count": result["turns_count"],
-            "log_dir": str(log_dir),
-        })
+            "log_dir": str(log_dir.relative_to(ROOT)),
+        }
+        session.append(entry)
+        recorder.add(entry)
 
         if result["goal_completed"] and goal:
             prefs.auto_extract(user_msg, goal, session)
