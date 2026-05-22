@@ -85,6 +85,23 @@
     }
   },
   {
+    "label": "搜索建议页-旧关键词残留-in_progress",
+    "screenshot": "evals/checker/screenshots/screenshot_search_old_keyword.png",
+    "milestone": {
+      "name": "搜索瑞幸咖啡店铺",
+      "description": "在搜索框输入瑞幸并提交",
+      "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
+      "kind": "filter",
+      "app_name": "美团",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
     "label": "店铺列表页-正常in_progress",
     "screenshot": "evals/checker/screenshots/screenshot_turn_4.png",
     "milestone": {

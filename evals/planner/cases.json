@@ -23,6 +23,29 @@
     }
   },
   {
+    "label": "搜索建议页-旧关键词残留-应输入新词",
+    "screenshot": "evals/planner/screenshots/screenshot_search_old_keyword.png",
+    "milestone": {
+      "name": "搜索瑞幸咖啡店铺",
+      "description": "在搜索框输入瑞幸并提交",
+      "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
+      "kind": "filter",
+      "app_name": "美团",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为搜索建议页，搜索框内显示旧关键词'生椰拿铁'，非目标词'瑞幸咖啡'，未提交搜索",
+      "issues": [],
+      "missing_evidence": ["搜索框显示'瑞幸咖啡'", "搜索结果页出现瑞幸咖啡店铺卡片"],
+      "summary": "搜索框有旧词，需先替换为目标关键词再提交搜索"
+    },
+    "expected": {
+      "must_contain": ["输入", "瑞幸"],
+      "must_not_contain": ["滚动", "返回", "清空"]
+    }
+  },
+  {
     "label": "商品列表-找到目标商品-应点击",
     "screenshot": "evals/planner/screenshots/screenshot_turn_8.png",
     "milestone": {
