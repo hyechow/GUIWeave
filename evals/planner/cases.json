@@ -6,7 +6,7 @@
       "name": "设置饮品规格为'标准甜'",
       "description": "在商品规格选择面板中，将甜度设置为标准甜",
       "success_condition": "确认生椰拿铁的甜度选项已显示为'标准甜'",
-      "kind": "single",
+      "kind": "action",
       "app_name": "美团",
       "task_type": "action"
     },
@@ -29,7 +29,7 @@
       "name": "查找并选择生椰拿铁",
       "description": "在瑞幸咖啡店铺内找到生椰拿铁并点击",
       "success_condition": "看到生椰拿铁的详情页面或已添加到购物车的提示",
-      "kind": "single",
+      "kind": "action",
       "app_name": "美团",
       "task_type": "action"
     },

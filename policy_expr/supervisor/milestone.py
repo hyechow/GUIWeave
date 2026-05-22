@@ -193,6 +193,11 @@ SINGLE_CHECKER_PROMPT = """\
 2. 搜索框或标题显示完整目标查询/条件
 3. 页面显示与查询对应的结果列表或详情
 
+⚠️ 搜索建议页 vs 搜索结果页 区分：
+- 若搜索框右侧仍显示「搜索」按钮（尚未提交），或搜索框处于激活输入状态，则当前是自动补全/建议页——即使下方列表出现了目标商家名称，也必须判 in_progress
+- 搜索建议项通常左侧有放大镜图标或时钟图标，且没有评分、标签等商家详情元素
+- 只有用户已提交搜索（按下搜索按钮或回车），进入独立的搜索结果页，才能判 done
+
 ## 内容读取（kind=collection read_once 或 kind=verification）
 - 如果当前屏幕有与用户目标相关的可提取内容，填写 read_instruction
 - navigation/filter/action 阶段 read_instruction 必须留空
@@ -411,6 +416,102 @@ def _format_history(history: list[PolicyTurn]) -> str:
         else:
             lines.append(f"{turn.index}. [跳过动作] {sv.summary} → 结果: {result}")
     return "\n".join(lines)
+
+
+# ── Public invoke functions (shared by production and evals) ─────────
+
+
+def _make_llm() -> ChatOpenAI:
+    cfg = resolve_llm_config("supervisor")
+    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+
+
+def _build_msgs(system_prompt: str, png_bytes: bytes) -> list:
+    from datetime import datetime
+    today = datetime.now().strftime("%Y年%m月%d日 %A")
+    b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
+    return [
+        SystemMessage(content=f"{system_prompt}\n\n当前日期：{today}"),
+        HumanMessage(content=[
+            {"type": "text", "text": "请根据当前屏幕做出决策。"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+        ]),
+    ]
+
+
+def run_checker(
+    milestone: Milestone,
+    observation: Observation,
+    history: list[PolicyTurn],
+    *,
+    app_name: str = "未知应用",
+    task_type: str = "action",
+    constraints: Optional[list[str]] = None,
+    extra: str = "",
+) -> _SingleCheckResult:
+    """Run the single-step milestone checker. Used by both production and evals."""
+    if constraints is None:
+        constraints = []
+    prompt = SINGLE_CHECKER_PROMPT.format(
+        milestone_name=milestone.name,
+        milestone_desc=milestone.description,
+        success_condition=milestone.success_condition,
+        milestone_kind=milestone.kind,
+        completion_strategy=milestone.completion_strategy,
+        task_type=task_type,
+        constraints=json.dumps(constraints, ensure_ascii=False),
+        history_text=_format_history(history),
+        app_name=app_name,
+    )
+    if extra:
+        prompt += f"\n\n## 输出修正要求\n{extra}"
+    result = invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _SingleCheckResult)
+
+    if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
+        print("  [SingleCheck] done 缺少证据，重试...")
+        result = run_checker(
+            milestone, observation, history,
+            app_name=app_name, task_type=task_type, constraints=constraints,
+            extra="你刚才返回 done 但 visible_evidence 为空或 missing_evidence 非空。请重新核对截图，确有证据才能 done，否则返回 in_progress 或 stuck。",
+        )
+    if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
+        return _SingleCheckResult(
+            status="stuck",
+            reason="checker 返回 done 但缺少可见验收证据",
+            stuck_reason="done 缺少可见证据",
+            summary=result.summary,
+        )
+    return result
+
+
+def run_planner(
+    milestone: Milestone,
+    check: _SingleCheckResult,
+    observation: Observation,
+    history: list[PolicyTurn],
+    *,
+    constraints: Optional[list[str]] = None,
+    extra: str = "",
+) -> _PlanResult:
+    """Run the step planner. Used by both production and evals."""
+    if constraints is None:
+        constraints = []
+    prompt = PLAN_PROMPT.format(
+        milestone_name=milestone.name,
+        milestone_desc=milestone.description,
+        success_condition=milestone.success_condition,
+        milestone_kind=milestone.kind,
+        constraints=json.dumps(constraints, ensure_ascii=False),
+        check_status=check.status,
+        check_reason=check.reason,
+        issues=json.dumps(check.issues, ensure_ascii=False),
+        missing_evidence=json.dumps(check.missing_evidence, ensure_ascii=False),
+        check_summary=check.summary,
+        history_text=_format_history(history),
+    )
+    if extra:
+        prompt += f"\n\n## 输出修正要求\n{extra}"
+    return invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _PlanResult)
 
 
 # ── Main class ────────────────────────────────────────────────────────
@@ -898,43 +999,19 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _SingleCheckResult:
-        # Infer current app: prefer explicit _app_name, fallback to history
         app_name = self._app_name or "未知应用"
         if not self._app_name:
             for t in reversed(history):
                 if t.supervisor and t.supervisor.app_name:
                     app_name = t.supervisor.app_name
                     break
-        prompt = SINGLE_CHECKER_PROMPT.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            success_condition=milestone.success_condition,
-            milestone_kind=milestone.kind,
-            completion_strategy=milestone.completion_strategy,
-            task_type=self.task_type,
-            constraints=json.dumps(self._global_constraints, ensure_ascii=False),
-            history_text=_format_history(history),
+        return run_checker(
+            milestone, observation, history,
             app_name=app_name,
+            task_type=self.task_type,
+            constraints=self._global_constraints,
+            extra=extra,
         )
-        if extra:
-            prompt += f"\n\n## 输出修正要求\n{extra}"
-        result = invoke_structured(self._llm(), self._msgs(prompt, observation), _SingleCheckResult)
-
-        # Guard: done without evidence
-        if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
-            print("  [SingleCheck] done 缺少证据，重试...")
-            result = self._single_check(
-                milestone, observation, history,
-                extra="你刚才返回 done 但 visible_evidence 为空或 missing_evidence 非空。请重新核对截图，确有证据才能 done，否则返回 in_progress 或 stuck。",
-            )
-        if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
-            return _SingleCheckResult(
-                status="stuck",
-                reason="checker 返回 done 但缺少可见验收证据",
-                stuck_reason="done 缺少可见证据",
-                summary=result.summary,
-            )
-        return result
 
     def _loop_check(
         self,
@@ -959,22 +1036,11 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _PlanResult:
-        prompt = PLAN_PROMPT.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            success_condition=milestone.success_condition,
-            milestone_kind=milestone.kind,
-            constraints=json.dumps(self._global_constraints, ensure_ascii=False),
-            check_status=check.status,
-            check_reason=check.reason,
-            issues=json.dumps(check.issues, ensure_ascii=False),
-            missing_evidence=json.dumps(check.missing_evidence, ensure_ascii=False),
-            check_summary=check.summary,
-            history_text=_format_history(history),
+        return run_planner(
+            milestone, check, observation, history,
+            constraints=self._global_constraints,
+            extra=extra,
         )
-        if extra:
-            prompt += f"\n\n## 输出修正要求\n{extra}"
-        return invoke_structured(self._llm(), self._msgs(prompt, observation), _PlanResult)
 
     def _invoke_loop_scroll(
         self,
@@ -1348,20 +1414,10 @@ class MilestoneSupervisorPolicy:
         return None
 
     def _llm(self) -> ChatOpenAI:
-        cfg = resolve_llm_config("supervisor")
-        return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+        return _make_llm()
 
     def _msgs(self, system_prompt: str, observation: Observation) -> list:
-        from datetime import datetime
-        today = datetime.now().strftime("%Y年%m月%d日 %A")
-        b64 = base64.b64encode(resize_to_logical_png(observation.png_bytes)).decode()
-        return [
-            SystemMessage(content=f"{system_prompt}\n\n当前日期：{today}"),
-            HumanMessage(content=[
-                {"type": "text", "text": "请根据当前屏幕做出决策。"},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-            ]),
-        ]
+        return _build_msgs(system_prompt, observation.png_bytes)
 
     @staticmethod
     def _is_sequence(instruction: str) -> bool:

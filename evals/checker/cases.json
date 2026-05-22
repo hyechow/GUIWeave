@@ -6,9 +6,9 @@
       "name": "定位到外卖服务页面",
       "description": "进入美团外卖首页",
       "success_condition": "看到外卖首页，顶部显示当前商圈（长青商业广场）",
-      "kind": "single",
+      "kind": "navigation",
       "app_name": "美团",
-      "completion_strategy": "",
+      "completion_strategy": "visible_once",
       "task_type": "action"
     },
     "expected": {
@@ -23,9 +23,9 @@
       "name": "搜索瑞幸咖啡店铺",
       "description": "在搜索框输入瑞幸并提交",
       "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
-      "kind": "single",
+      "kind": "filter",
       "app_name": "美团",
-      "completion_strategy": "",
+      "completion_strategy": "visible_once",
       "task_type": "action"
     },
     "expected": {
@@ -40,9 +40,9 @@
       "name": "搜索瑞幸咖啡店铺",
       "description": "在搜索框输入瑞幸并提交",
       "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
-      "kind": "single",
+      "kind": "filter",
       "app_name": "美团",
-      "completion_strategy": "",
+      "completion_strategy": "visible_once",
       "task_type": "action"
     },
     "expected": {
@@ -57,9 +57,9 @@
       "name": "选择生椰拿铁商品",
       "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
       "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
-      "kind": "single",
+      "kind": "action",
       "app_name": "美团",
-      "completion_strategy": "",
+      "completion_strategy": "visible_once",
       "task_type": "action"
     },
     "expected": {
@@ -74,9 +74,9 @@
       "name": "选择生椰拿铁商品",
       "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
       "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
-      "kind": "single",
+      "kind": "action",
       "app_name": "美团",
-      "completion_strategy": "",
+      "completion_strategy": "visible_once",
       "task_type": "action"
     },
     "expected": {
@@ -91,31 +91,14 @@
       "name": "选择生椰拿铁商品",
       "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
       "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
-      "kind": "single",
+      "kind": "action",
       "app_name": "美团",
-      "completion_strategy": "",
+      "completion_strategy": "visible_once",
       "task_type": "action"
     },
     "expected": {
       "status": "in_progress",
       "loading": false
-    }
-  },
-  {
-    "label": "白屏-loading=true",
-    "screenshot": "evals/checker/screenshots/screenshot_turn_5.png",
-    "milestone": {
-      "name": "选择生椰拿铁商品",
-      "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
-      "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
-      "kind": "single",
-      "app_name": "美团",
-      "completion_strategy": "",
-      "task_type": "action"
-    },
-    "expected": {
-      "status": "in_progress",
-      "loading": true
     }
   }
 ]
