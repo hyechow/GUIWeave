@@ -49,5 +49,27 @@
     "goal": "在携程中预订北京的酒店",
     "session": [],
     "expected": {"intent": "酒店", "app": "携程"}
+  },
+
+  {
+    "label": "澄清合并-咖啡-美团",
+    "user_msg": "给我点一杯生椰拿铁（补充说明：美团）",
+    "goal": "在美团中点一杯生椰拿铁",
+    "session": [],
+    "expected": {"intent": "咖啡", "app": "美团"}
+  },
+  {
+    "label": "澄清合并-打车-滴滴",
+    "user_msg": "给我叫个车（补充说明：滴滴）",
+    "goal": "在滴滴中叫一辆车",
+    "session": [],
+    "expected": {"intent": "打车", "app": "滴滴"}
+  },
+  {
+    "label": "澄清合并-网购-淘宝",
+    "user_msg": "帮我买件衣服（补充说明：淘宝）",
+    "goal": "在淘宝中购买衣服",
+    "session": [],
+    "expected": {"intent": "网购", "app": "淘宝"}
   }
 ]

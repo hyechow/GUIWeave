@@ -1,0 +1,191 @@
+[
+  {
+    "label": "pre_existing-仅tap-消息已存在",
+    "goal": "在微信文件传输助手中记录：明天提醒我提交日报",
+    "session": [
+      {"user_msg": "打开微信", "result_summary": "已打开微信", "goal_completed": true}
+    ],
+    "result": {
+      "goal_completed": true,
+      "pre_existing": true,
+      "turns_count": 3,
+      "result_summary": "文件传输助手中已有这条记录",
+      "stop_reason": "所有子目标已完成",
+      "turns_detail": [
+        {"action_type": "tap", "action_desc": "点击文件传输助手", "executed": true},
+        {"action_type": "scroll", "action_desc": "向上滚动查看消息", "executed": true},
+        {"action_type": "tap", "action_desc": "确认内容", "executed": true}
+      ]
+    },
+    "expected": {
+      "must_not_contain": ["已帮你", "已经帮你", "帮你记", "帮你发"],
+      "must_contain_any": ["已存在", "已有", "之前就有"]
+    }
+  },
+  {
+    "label": "pre_existing-零动作-消息已存在",
+    "goal": "在微信文件传输助手中记录：明天提醒我提交日报",
+    "session": [],
+    "result": {
+      "goal_completed": true,
+      "pre_existing": true,
+      "turns_count": 0,
+      "result_summary": "消息已存在",
+      "stop_reason": "目标已完成",
+      "turns_detail": []
+    },
+    "expected": {
+      "must_not_contain": ["已帮你", "已成功", "帮你记", "帮你发"],
+      "must_contain_any": ["已存在", "已有", "之前就有"]
+    }
+  },
+  {
+    "label": "normal-success-type动作-发消息",
+    "goal": "在微信文件传输助手中发送：明天提交日报",
+    "session": [],
+    "result": {
+      "goal_completed": true,
+      "turns_count": 4,
+      "result_summary": "消息已发送",
+      "stop_reason": "所有子目标已完成",
+      "turns_detail": [
+        {"action_type": "tap", "action_desc": "点击文件传输助手", "executed": true},
+        {"action_type": "tap", "action_desc": "点击输入框", "executed": true},
+        {"action_type": "type", "action_desc": "输入：明天提交日报", "executed": true},
+        {"action_type": "press_enter", "action_desc": "发送消息", "executed": true}
+      ]
+    },
+    "expected": {
+      "must_not_contain": ["未完成", "失败", "已存在", "未确认"],
+      "tone": "success"
+    }
+  },
+  {
+    "label": "normal-success-下单咖啡",
+    "goal": "在瑞幸中点一杯拿铁",
+    "session": [],
+    "result": {
+      "goal_completed": true,
+      "turns_count": 5,
+      "result_summary": "拿铁已下单成功",
+      "stop_reason": "所有子目标已完成",
+      "turns_detail": [
+        {"action_type": "tap", "action_desc": "点击拿铁", "executed": true},
+        {"action_type": "tap", "action_desc": "加入购物车", "executed": true},
+        {"action_type": "tap", "action_desc": "去结算", "executed": true},
+        {"action_type": "tap", "action_desc": "提交订单", "executed": true},
+        {"action_type": "tap", "action_desc": "确认支付", "executed": true}
+      ]
+    },
+    "expected": {
+      "must_not_contain": ["未完成", "失败", "已存在"],
+      "tone": "success"
+    }
+  },
+  {
+    "label": "normal-failure-支付失败",
+    "goal": "在淘宝中购买Nike跑鞋",
+    "session": [],
+    "result": {
+      "goal_completed": false,
+      "turns_count": 6,
+      "result_summary": "支付页面加载失败，未完成购买",
+      "stop_reason": "达到最大轮数",
+      "turns_detail": [
+        {"action_type": "tap", "action_desc": "点击商品", "executed": true},
+        {"action_type": "tap", "action_desc": "立即购买", "executed": true},
+        {"action_type": "tap", "action_desc": "支付", "executed": true}
+      ]
+    },
+    "expected": {
+      "must_not_contain": ["已帮你完成", "成功购买", "下单成功"],
+      "must_contain_any": ["未完成", "失败", "没有完成", "未能", "没成功"]
+    }
+  },
+  {
+    "label": "normal-failure-找不到车",
+    "goal": "在高德打车去机场",
+    "session": [],
+    "result": {
+      "goal_completed": false,
+      "turns_count": 4,
+      "result_summary": "附近无可用车辆，叫车失败",
+      "stop_reason": "任务无法完成",
+      "turns_detail": [
+        {"action_type": "tap", "action_desc": "设置目的地", "executed": true},
+        {"action_type": "type", "action_desc": "输入机场", "executed": true},
+        {"action_type": "tap", "action_desc": "呼叫出租车", "executed": true}
+      ]
+    },
+    "expected": {
+      "must_not_contain": ["已帮你叫到", "叫车成功"],
+      "must_contain_any": ["失败", "没有", "无法", "未能", "没车"]
+    }
+  },
+  {
+    "label": "non-action-闲聊问身份",
+    "goal": "你好，你能做什么？",
+    "session": [],
+    "result": null,
+    "non_action_reason": "用户在闲聊，无需操作手机",
+    "expected": {
+      "must_not_contain": ["已帮你完成", "goal_completed"],
+      "tone": "greeting"
+    }
+  },
+  {
+    "label": "non-action-追问天气",
+    "goal": "明天要带伞吗",
+    "session": [
+      {"user_msg": "帮我看看明天天气", "result_summary": "明天多云，25度", "goal_completed": true}
+    ],
+    "result": null,
+    "non_action_reason": "用户在追问历史结果，无需操作手机",
+    "expected": {
+      "must_not_contain": ["已帮你", "未执行", "goal_completed"],
+      "tone": "answer"
+    }
+  },
+  {
+    "label": "pre_existing-home动作-消息已存在",
+    "goal": "在微信文件传输助手中记录：买牛奶",
+    "session": [],
+    "result": {
+      "goal_completed": true,
+      "pre_existing": true,
+      "turns_count": 2,
+      "result_summary": "文件传输助手中已有这条记录",
+      "stop_reason": "所有子目标已完成",
+      "turns_detail": [
+        {"action_type": "home", "action_desc": "回到主屏幕", "executed": true},
+        {"action_type": "tap", "action_desc": "点击微信", "executed": true}
+      ]
+    },
+    "expected": {
+      "must_not_contain": ["已帮你", "帮你记", "已经记"],
+      "must_contain_any": ["已存在", "已有", "之前就有"]
+    }
+  },
+  {
+    "label": "承接-成功后继续操作",
+    "goal": "在微信给李四发消息说今晚吃饭",
+    "session": [
+      {"user_msg": "打开微信", "result_summary": "已打开微信", "goal_completed": true}
+    ],
+    "result": {
+      "goal_completed": true,
+      "turns_count": 3,
+      "result_summary": "消息已发送给李四",
+      "stop_reason": "所有子目标已完成",
+      "turns_detail": [
+        {"action_type": "tap", "action_desc": "点击李四聊天", "executed": true},
+        {"action_type": "type", "action_desc": "输入：今晚吃饭", "executed": true},
+        {"action_type": "press_enter", "action_desc": "发送", "executed": true}
+      ]
+    },
+    "expected": {
+      "must_not_contain": ["已存在", "之前就有", "失败"],
+      "tone": "success"
+    }
+  }
+]

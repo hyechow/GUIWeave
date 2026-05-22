@@ -46,6 +46,8 @@ _CHAT_SYSTEM = """\
 - 执行了手机操作：说明结果（成功/失败）和关键信息，简洁即可
 - 未执行操作（询问身份、历史回顾、闲聊等）：直接回答，不要解释内部细节
 - 语气自然友好，不要啰嗦，不要重复用户的问题
+
+重要：当执行上下文显示「仅执行了导航，目标内容已存在」时，说明用户要求的写入/发送操作结果（消息、记录、设置）在本次会话启动前就已存在，智能体本次没有新写入任何内容。此时必须如实告知用户目标内容已存在（例如"发现文件传输助手里已有这条记录"），不能说"已经帮你完成了"或"已经发送了"。
 """
 
 
@@ -106,12 +108,30 @@ def _chat_messages(
         exec_text = f"本次未执行手机操作。原因：{non_action_reason or '未说明'}"
     else:
         status = "成功" if result.get("goal_completed") else "失败"
-        exec_text = (
-            f"执行状态：{status}\n"
-            f"轮数：{result.get('turns_count', 0)}\n"
-            f"摘要：{result.get('result_summary', '')}\n"
-            f"停止原因：{result.get('stop_reason', '')}"
-        )
+        turns_detail = result.get("turns_detail", [])
+        last_action = ""
+        for t in reversed(turns_detail):
+            if t.get("action_type") and t.get("executed"):
+                last_action = f"[{t['action_type']}] {t['action_desc']}"
+                break
+        # pre_existing is set by the supervisor when a milestone was found done
+        # without the agent executing any actions for it (target state already existed).
+        pre_existing = result.get("pre_existing", False)
+        if pre_existing:
+            exec_text = (
+                f"⚠️ 智能体本次未执行用户要求的核心操作\n"
+                f"实际执行：仅导航（{last_action}），无 type/send 动作\n"
+                f"发现：目标内容在本次会话启动前就已存在\n"
+                f"回复要求：直接说「发现XX已存在/已有这条记录」，禁止以「已帮你…」开头"
+            )
+        else:
+            exec_text = (
+                f"执行状态：{status}\n"
+                f"轮数：{result.get('turns_count', 0)}\n"
+                f"摘要：{result.get('result_summary', '')}\n"
+                f"停止原因：{result.get('stop_reason', '')}\n"
+                f"最后执行动作：{last_action or '无'}"
+            )
     return [
         SystemMessage(content=_CHAT_SYSTEM),
         HumanMessage(content=f"对话历史：\n{history}\n\n执行上下文：\n{exec_text}\n\n用户说：{goal}"),

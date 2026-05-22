@@ -127,6 +127,7 @@ DECOMPOSE_PROMPT = """\
 好：「看到XX页面标题」「消息气泡出现在聊天记录中」
 差：「看到底部导航栏及聊天列表」（"及"连接两个条件）
 禁止使用模糊修饰（如「任意页面均可」「如XX页面」「或其他页面」等）。
+**action 类子目标的验收条件必须描述操作的最终可见结果**，不能只验证中间步骤。例如发送消息的验收条件必须是「看到包含"XX"的消息气泡出现在聊天记录中」，不能是「输入框获得焦点」「输入框显示指定文字」。
 
 ## 其他规则
 1. 如果当前不在主屏幕，第一个子目标应为「回到主屏幕」，验收条件为「看到主屏幕（桌面图标界面）」
@@ -150,7 +151,7 @@ DECOMPOSE_PROMPT = """\
      * 有关键词条件：「当可见内容不再包含 {关键词} 时停止」
      * 全量采集：「滚动至列表物理底部时停止」
 7. failure_hints 列出该子目标可能失败的原因
-8. task_type=analysis 时，不生成 kind=verification 的子目标。数据完整性由采集阶段保证，不需要单独验证子目标
+8. 禁止生成 kind=verification 的子目标。action 任务的验证内化到 action 子目标的验收条件中；analysis 任务的数据完整性由采集阶段保证。
 """
 
 SINGLE_CHECKER_PROMPT = """\
@@ -197,6 +198,7 @@ SINGLE_CHECKER_PROMPT = """\
 - in_progress：验收条件尚未完全满足，包括页面不匹配、还在导航中、操作未完成等所有非 done 的情况
 - 验收条件要求某页面标题：必须看到顶部标题与验收条件精确匹配
 - 验收条件要求某底部 tab：必须看到该 tab 高亮/选中
+- 验收条件要求某段文字内容（如消息文本）：截图中对应元素的文字必须与验收条件中的文字精确匹配，包含多余前缀、后缀或拼写错误都不能判 done
 - 只看可观测事实，不要凭感觉判断
 - done 时：visible_evidence 必须列出截图中直接支持验收条件的文字；missing_evidence 必须为空
 - 存在任何 missing_evidence 不能返回 done
@@ -271,8 +273,10 @@ PLAN_PROMPT = """\
 - 如果当前在应用的子页面需要回到上级，优先使用可见返回控件
 - 如果当前在应用内搜索页：搜索框已聚焦则直接输入；未聚焦则先点击搜索框
 - ⚠️ 需要提交/发送/确认输入时（如发送消息、确认搜索），必须指令「按回车键提交」，禁止指令「点击发送按钮」
-- ⚠️ 需要清空输入框内容时，必须指令「清空当前输入框」，禁止手动选择删除
+- ⚠️ 输入框中的占位文字（placeholder）或历史搜索词是 iOS 默认填充，直接执行 type 即可自动替换，不需要先清空
+- ⚠️ 只有当输入框里是用户之前明确输入过的真实内容需要替换时，才使用「清空当前输入框」；若执行后下一轮截图文字仍在，改为点击输入框右侧可见的 X/清除图标
 - 滚动指令描述要查看什么内容（如「滚动查看更早的消息」），不要指定手指方向
+- ⚠️ 生成 type 指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
 """
 
 LOOP_SCROLL_PROMPT = """\
@@ -434,22 +438,21 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        sim_stuck = self._check_screen_similarity(observation)
-        rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
-        # Stuck is only triggered by programmatic checks (screen similarity / instruction repetition).
-        # Checker only returns done or in_progress.
-        if sim_stuck or rep_stuck:
-            check = sim_stuck or rep_stuck
-            assert check is not None
-            print(f"  [Stuck] {check.status}: {check.reason}")
-            page_changed = sim_stuck is None
-            return self._handle_stuck(milestone, check, check.read_instruction, observation, history, page_changed=page_changed)
-
         check = self._single_check(milestone, observation, history)
         print(f"  [SingleCheck] {check.status}: {check.reason}")
 
         if check.status == "done":
             return self._advance(milestone, observation, history)
+
+        # Checker says in_progress — check for stuck signals before planning
+        sim_stuck = self._check_screen_similarity(observation)
+        rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
+        if sim_stuck or rep_stuck:
+            stuck = sim_stuck or rep_stuck
+            assert stuck is not None
+            print(f"  [Stuck] {stuck.status}: {stuck.reason}")
+            page_changed = sim_stuck is None
+            return self._handle_stuck(milestone, stuck, check.read_instruction, observation, history, page_changed=page_changed)
         return self._plan_single(milestone, check, observation, history)
 
     def _plan_single(
@@ -622,10 +625,20 @@ class MilestoneSupervisorPolicy:
         self._recent_screenshots.clear()
         print(f"  子目标「{done_name}」已完成")
 
+        # Detect pre_existing: milestone found done without any executed actions for it.
+        # This means the target state existed before the agent did anything for this milestone.
+        pre_existing = not any(
+            t.executed for t in history
+            if t.supervisor.milestone_id == milestone.id
+        )
+        if pre_existing:
+            print(f"  [PreExisting] 子目标「{done_name}」未执行任何动作即判完成，目标状态在会话前已存在")
+
         if self._current_id is None:
             return SupervisorStep(
                 should_act=False, stop=True, stop_reason="所有子目标已完成",
-                goal_completed=True, summary=f"子目标「{done_name}」已完成，任务全部完成。",
+                goal_completed=True, pre_existing=pre_existing,
+                summary=f"子目标「{done_name}」已完成，任务全部完成。",
                 **(final_read or {}),
             )
 
@@ -1150,21 +1163,21 @@ class MilestoneSupervisorPolicy:
         """Apply structural fixes for issues that survive retry. Last resort."""
         fixes = []
 
-        # 0. Remove verification milestones for analysis tasks
-        if self.task_type == "analysis":
-            verification_ids = [
-                mid for mid, m in self._milestones.items()
-                if m.kind == "verification"
-            ]
-            for vid in verification_ids:
-                removed = self._milestones.pop(vid)
-                self._order.remove(vid)
-                # Rewire: milestones that depended on verification now depend on its predecessor
-                for m in self._milestones.values():
-                    if vid in m.depends_on:
-                        m.depends_on.remove(vid)
-                        m.depends_on.extend(removed.depends_on)
-                fixes.append(f"子目标「{removed.name}」（verification）已移除")
+        # 0. Remove verification milestones (verification is never valid —
+        # action tasks bake verification into action's success_condition,
+        # analysis tasks rely on collection completeness)
+        verification_ids = [
+            mid for mid, m in self._milestones.items()
+            if m.kind == "verification"
+        ]
+        for vid in verification_ids:
+            removed = self._milestones.pop(vid)
+            self._order.remove(vid)
+            for m in self._milestones.values():
+                if vid in m.depends_on:
+                    m.depends_on.remove(vid)
+                    m.depends_on.extend(removed.depends_on)
+            fixes.append(f"子目标「{removed.name}」（verification）已移除")
 
         # 1. Remove invalid depends_on
         all_ids = set(self._milestones.keys())

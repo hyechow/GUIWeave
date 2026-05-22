@@ -147,6 +147,10 @@ class SupervisorStep(BaseModel):
     milestone_kind: Optional[MilestoneKind] = Field(default=None, description="当前子目标类型")
     completion_strategy: Optional[CompletionStrategy] = Field(default=None, description="当前子目标完成策略")
     collection_scope: Optional[CollectionScope] = Field(default=None, description="当前内容采集范围")
+    pre_existing: bool = Field(
+        default=False,
+        description="目标完成时，完成该里程碑的 action 由智能体执行（False）还是该状态在本次会话前就已存在（True）",
+    )
     collection_summary: Optional[str] = Field(
         default=None,
         description="collection milestone 完成时的采集摘要（含停止条件及触发原因）",

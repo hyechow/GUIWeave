@@ -32,6 +32,7 @@ from policy_expr.executor import ActionExecutor
 from policy_expr.perception import LivePerception, LivePhoneSession
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.schemas import PolicyContext, PolicyTurn
+from policy_expr.self_learning.app_summary import auto_discover_knowledge
 from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
 from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.visualize import print_decision
@@ -245,6 +246,11 @@ def _make_result(context: PolicyContext, stop_reason: str) -> dict:
                 entry["not_found"] = t.action_decision.not_found_reason
         turns_detail.append(entry)
 
+    pre_existing = any(
+        t.supervisor.goal_completed and t.supervisor.pre_existing
+        for t in context.turns
+    )
+
     return {
         "result_summary": last_summary or stop_reason,
         "stop_reason": stop_reason,
@@ -252,6 +258,7 @@ def _make_result(context: PolicyContext, stop_reason: str) -> dict:
         "turns_count": len(context.turns),
         "turns_detail": turns_detail,
         "content_notes": context.content_notes or None,
+        "pre_existing": pre_existing,
     }
 
 
@@ -414,6 +421,7 @@ def main() -> None:
         supervisor=supervisor.name,
         action_policy=action_policy.name,
     )
+    _pending_clarification_msg: str | None = None  # original msg that triggered clarification
 
     while True:
         try:
@@ -439,6 +447,7 @@ def main() -> None:
                 action_policy=action_policy.name,
             )
             session.clear()
+            _pending_clarification_msg = None
             console.clear()
             _print_header()
             continue
@@ -458,15 +467,30 @@ def main() -> None:
             _handle_pref(user_msg, prefs)
             continue
 
-        # Route
+        # Route — if answering a clarification, merge original msg with this answer
+        route_msg = user_msg
+        display_msg = user_msg  # what gets stored in session as user_msg
+        from_clarification = False
+        if _pending_clarification_msg and user_msg not in _COMMANDS:
+            route_msg = f"{_pending_clarification_msg}（补充说明：{user_msg}）"
+            display_msg = route_msg
+            _pending_clarification_msg = None
+            from_clarification = True
+
         try:
             prefs_context = prefs.format_prefs_for_prompt()
-            router_result = route_message(user_msg, session, prefs_context=prefs_context)
+            router_result = route_message(route_msg, session, prefs_context=prefs_context)
         except Exception:
-            router_result = RouterResult(goal=user_msg)
+            router_result = RouterResult(goal=route_msg)
+
+        # Clarification answer is an explicit preference signal — extract immediately
+        # regardless of whether the task will succeed later.
+        if from_clarification and router_result.goal:
+            prefs.auto_extract(display_msg, router_result.goal, session)
 
         if not router_result.goal:
             if router_result.needs_clarification:
+                _pending_clarification_msg = route_msg
                 console.print()
                 console.print(
                     Panel(
@@ -477,6 +501,13 @@ def main() -> None:
                     )
                 )
                 console.print()
+                recorder.add({
+                    "user_msg": display_msg,
+                    "clarification": router_result.clarification,
+                    "stop_reason": "需要补充信息",
+                    "goal_completed": False,
+                    "turns_count": 0,
+                })
             else:
                 t_reply = time.time()
                 reply_state: dict = {"current": "正在生成回复…", "done": False}
@@ -504,6 +535,12 @@ def main() -> None:
 
         # Execute
         goal = router_result.goal or user_msg
+        turn_supervisor = build_supervisor(supervisor.name)
+
+        knowledge_text, discovered_app = auto_discover_knowledge(goal)
+        if knowledge_text and hasattr(turn_supervisor, "set_app_knowledge"):
+            turn_supervisor.set_app_knowledge(knowledge_text, app_name=discovered_app)
+
         log_dir = recorder.next_turn_dir()
 
         t0 = time.time()
@@ -517,7 +554,7 @@ def main() -> None:
         ):
             try:
                 result = run_chat_turn(
-                    goal, action_policy, build_supervisor(supervisor.name), log_dir,
+                    goal, action_policy, turn_supervisor, log_dir,
                     max_turns=args.max_turns, live_state=live_state,
                 )
             except SystemExit:
@@ -554,7 +591,7 @@ def main() -> None:
         _print_reply(reply)
 
         entry = {
-            "user_msg": user_msg,
+            "user_msg": display_msg,
             "goal": goal,
             "result_summary": result["result_summary"],
             "stop_reason": result["stop_reason"],
@@ -566,7 +603,7 @@ def main() -> None:
         recorder.add(entry)
 
         if result["goal_completed"] and goal:
-            prefs.auto_extract(user_msg, goal, session)
+            prefs.auto_extract(display_msg, goal, session)
 
 
 if __name__ == "__main__":

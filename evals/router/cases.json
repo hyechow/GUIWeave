@@ -287,5 +287,59 @@
     "session": [],
     "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团",
     "expected": {"goal": "饿了么"}
+  },
+
+  {
+    "label": "裸APP名-美团",
+    "user_msg": "美团",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "裸APP名-微信",
+    "user_msg": "微信",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "裸APP名-饿了么",
+    "user_msg": "饿了么",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+
+  {
+    "label": "澄清合并-美团点生椰拿铁",
+    "user_msg": "给我点一杯生椰拿铁（补充说明：美团）",
+    "session": [],
+    "expected": {"goal": "美团"}
+  },
+  {
+    "label": "澄清合并-叫车滴滴",
+    "user_msg": "给我叫个车（补充说明：滴滴）",
+    "session": [],
+    "expected": {"goal": "滴滴"}
+  },
+
+  {
+    "label": "APP保护-文件传输助手不被替换",
+    "user_msg": "明天提醒我提交日报，记到文件传输助手",
+    "session": [],
+    "expected": {"goal": "文件传输助手"}
+  },
+  {
+    "label": "APP保护-用美团点单",
+    "user_msg": "给我点一杯生椰拿铁，用美团",
+    "session": [],
+    "expected": {"goal": "美团"}
+  },
+
+  {
+    "label": "承接-历史换口味",
+    "user_msg": "换成奶茶",
+    "session": [
+      {"user_msg": "在美团点一杯生椰拿铁", "result_summary": "已完成点单", "goal_completed": true}
+    ],
+    "expected": {"goal": "美团"}
   }
 ]

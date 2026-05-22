@@ -72,13 +72,22 @@ def home_indicator_coords(win_w: int, win_h: int) -> tuple[float, float]:
 
 
 def paste_text(text: str) -> None:
-    """Write text to macOS clipboard and send Cmd+V (supports Chinese and all Unicode)."""
+    """Select all existing content then paste text from clipboard (replaces, not appends)."""
     subprocess.run(["pbcopy"], input=text.encode(), check=True)
     subprocess.run([
         "osascript", "-e",
         'tell application "iPhone Mirroring" to activate',
     ], capture_output=True)
     time.sleep(0.3)
+    # Select all first so paste replaces existing content instead of appending.
+    # In most iOS fields via iPhone Mirroring, Cmd+A selects all; if it only
+    # moves the cursor to the start, paste still inserts at position 0 which is
+    # better than appending at the end.
+    subprocess.run([
+        "osascript", "-e",
+        'tell application "System Events" to keystroke "a" using command down'
+    ], check=True)
+    time.sleep(0.15)
     subprocess.run([
         "osascript", "-e",
         'tell application "System Events" to keystroke "v" using command down'
@@ -86,7 +95,12 @@ def paste_text(text: str) -> None:
 
 
 def clear_text_field() -> None:
-    """Select all (Cmd+A) then delete to clear the focused text field."""
+    """Select all then replace with empty string to clear the focused text field.
+
+    Uses Cmd+A + Cmd+V(empty) instead of Cmd+A + Delete because pasting an
+    empty string is more reliable: it replaces the selection atomically rather
+    than relying on the Delete key to fire after the selection is established.
+    """
     subprocess.run([
         "osascript", "-e",
         'tell application "iPhone Mirroring" to activate',
@@ -96,10 +110,11 @@ def clear_text_field() -> None:
         "osascript", "-e",
         'tell application "System Events" to keystroke "a" using command down'
     ], check=True)
-    time.sleep(0.1)
+    time.sleep(0.2)
+    subprocess.run(["pbcopy"], input=b"", check=True)
     subprocess.run([
         "osascript", "-e",
-        'tell application "System Events" to key code 51'
+        'tell application "System Events" to keystroke "v" using command down'
     ], check=True)
 
 
