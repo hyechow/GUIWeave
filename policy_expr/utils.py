@@ -97,11 +97,12 @@ def paste_text(text: str) -> None:
 
 
 def clear_text_field() -> None:
-    """Select all then replace with empty string to clear the focused text field.
+    """Clear the focused text field.
 
-    Uses Cmd+A + Cmd+V(empty) instead of Cmd+A + Delete because pasting an
-    empty string is more reliable: it replaces the selection atomically rather
-    than relying on the Delete key to fire after the selection is established.
+    Strategy: Cmd+A + paste-empty first (atomic replace if selection works),
+    then a fallback loop of 100 backspaces to handle apps where Cmd+A does not
+    select all (e.g. 美团 search box). The backspace loop is a no-op when the
+    field is already empty, so it's safe to always run.
     """
     subprocess.run([
         "osascript", "-e",
@@ -117,6 +118,13 @@ def clear_text_field() -> None:
     subprocess.run([
         "osascript", "-e",
         'tell application "System Events" to keystroke "v" using command down'
+    ], check=True)
+    time.sleep(0.15)
+    # Fallback: 100 backspaces in one AppleScript call to handle search fields
+    # where Cmd+A doesn't select all — safe no-op when field is already empty.
+    subprocess.run([
+        "osascript", "-e",
+        'tell application "System Events"\nrepeat 100 times\nkey code 51\nend repeat\nend tell'
     ], check=True)
 
 
