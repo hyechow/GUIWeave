@@ -120,11 +120,17 @@ def clear_text_field() -> None:
         'tell application "System Events" to keystroke "v" using command down'
     ], check=True)
     time.sleep(0.15)
-    # Fallback: 100 backspaces in one AppleScript call to handle search fields
-    # where Cmd+A doesn't select all — safe no-op when field is already empty.
+    # Fallback for search fields where Cmd+A doesn't select all:
+    # move cursor to end of line, then 30 backspaces.
+    # 30 chars covers typical search queries; safe no-op on an empty field.
     subprocess.run([
         "osascript", "-e",
-        'tell application "System Events"\nrepeat 100 times\nkey code 51\nend repeat\nend tell'
+        'tell application "System Events" to key code 124 using command down'
+    ], check=True)
+    time.sleep(0.05)
+    subprocess.run([
+        "osascript", "-e",
+        'tell application "System Events"\nrepeat 30 times\nkey code 51\nend repeat\nend tell'
     ], check=True)
 
 
