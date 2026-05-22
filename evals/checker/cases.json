@@ -102,6 +102,23 @@
     }
   },
   {
+    "label": "微信发送界面-发送按钮可见但未发送-in_progress",
+    "screenshot": "evals/checker/screenshots/screenshot_wechat_send_button.png",
+    "milestone": {
+      "name": "在微信中选择联系人老Be并发送",
+      "description": "在微信分享界面选择联系人老Be并点击发送按钮",
+      "success_condition": "看到消息已发送成功的提示或聊天界面显示发送状态",
+      "kind": "action",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
     "label": "店铺列表页-正常in_progress",
     "screenshot": "evals/checker/screenshots/screenshot_turn_4.png",
     "milestone": {
