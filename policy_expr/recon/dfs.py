@@ -159,6 +159,7 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
             nav_context=make_nav_context(area.label, area.element_type),
             target_label=page_name,
             after_elements=child_elements,
+            status_cb=_status_cb,
         )
         if not ok:
             recovered = _manual_recover(
@@ -376,6 +377,7 @@ def _dfs_recursive(
                     nav_context=make_nav_context(area.label, area.element_type),
                     target_label=page_name,
                     after_elements=child_elements,
+                    status_cb=_status_cb,
                 )
                 if not ok:
                     recovered = _manual_recover(
@@ -469,9 +471,7 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     # Skip back buttons (their behavior is known)
     areas = [a for a in areas if a.element_type != "back_button"]
 
-    if sample > 0 and sample < len(areas):
-        areas = random.sample(areas, sample)
-        print(f"  [采样模式] 随机选取 {sample} 个元素")
+    effective_limit = sample if sample > 0 else 0  # max navigated taps, 0 = unlimited
 
     print(f"\n{'=' * 60}")
     print(f"点击探测: {len(areas)} 个可交互区域")
@@ -503,6 +503,7 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
 
     top_level = len(nav_stack) - 1 if nav_stack else 0
 
+    effective_count = 0
     if _status_cb:
         _status_cb(f"探测 {out_dir.name}  0/{len(areas)}")
 
@@ -513,7 +514,8 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
         print(f"\n  [{i}/{len(areas)}] 「{area.label}」 ({etype}) @ ({ax:.0f},{ay:.0f}) → ({lx:.0f},{ly:.0f})")
 
         if _status_cb:
-            _status_cb(f"探测 {out_dir.name}  {i}/{len(areas)}  {area.label}")
+            eff_tag = f" ({effective_count}/{effective_limit} 有效)" if effective_limit else ""
+            _status_cb(f"探测 {out_dir.name}  {i}/{len(areas)}{eff_tag}  {area.label}")
 
         tap_response = _safe_tap(phone.client, lx, ly)
 
@@ -538,6 +540,9 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
             else:
                 navigated = True
 
+        if navigated:
+            effective_count += 1
+
         tap_result = TapResult(
             index=i,
             element_type="area",
@@ -556,6 +561,11 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
             if not should_continue:
                 print(f"    [DFS] 探测中断（callback 返回 False）")
                 break
+
+        # Stop when effective limit reached
+        if effective_limit and effective_count >= effective_limit:
+            print(f"  [采样] 已达 {effective_limit} 个有效点击，停止探测")
+            break
 
     # Final save after all taps and callbacks complete
     result.save(result_path)

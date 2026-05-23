@@ -677,6 +677,7 @@ def return_to_initial(
     target_label: str = "",
     after_elements: list[dict] | None = None,
     debug_fn: Callable | None = None,
+    status_cb: Callable[[str], None] | None = None,
 ) -> tuple[bool, list[dict]]:
     """Navigate back to the initial page (top of nav_stack).
 
@@ -726,6 +727,10 @@ def return_to_initial(
             break
 
         _nav_print(f"尝试 {strategy}", page_hash=ph, round_num=round_num)
+        _STRATEGY_LABELS = {"fixed": "固定返回", "LLM_1": "视觉回退①",
+                            "LLM_2": "视觉回退②", "LLM_3": "视觉回退③"}
+        if status_cb:
+            status_cb(f"← 回退 R{round_num} {_STRATEGY_LABELS.get(strategy, strategy)}")
 
         # Save before screenshot for trace visualization
         if out_dir:
@@ -776,6 +781,8 @@ def return_to_initial(
             level_desc = "initial" if is_initial else f"L{matched_level}"
             _nav_print(f"→ matched {level_desc} ({sim:.3f}) {'✓' if is_initial else ''}",
                        page_hash=ph, round_num=round_num)
+            if status_cb:
+                status_cb(f"← 回退 R{round_num} ✓ {'回到初始页' if is_initial else f'→ {level_desc}'}")
             if log:
                 log[-1]["result"] = level_desc
                 log[-1]["score"] = round(sim, 3)
@@ -807,6 +814,8 @@ def return_to_initial(
 
         _nav_print(f"→ {page_label} (initial: {sim_to_initial:.3f}, stack_max: {max_sim:.3f})",
                    page_hash=ph, round_num=round_num)
+        if status_cb:
+            status_cb(f"← 回退 R{round_num} → {page_label}")
         if log:
             log[-1]["result"] = f"{page_label} (initial: {sim_to_initial:.3f}, stack_max: {max_sim:.3f})"
             log[-1]["score"] = round(sim_to_initial, 3)
@@ -832,6 +841,8 @@ def return_to_initial(
 
     _nav_print("所有回退策略均未成功返回初始页面",
                page_hash=_page_hash(current_bytes), round_num=round_num)
+    if status_cb:
+        status_cb(f"← 回退失败 (R{round_num})")
     return False, log
 
 

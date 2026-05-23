@@ -95,7 +95,7 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
         _yolo_warm_up()
 
         if hud:
-            hud.update(f"侦察 {app}: DFS 探索 (depth={depth})…")
+            hud.update(f"侦察 {app}: DFS 探索 (depth={depth}, sample={sample})…")
 
         with LivePhoneSession() as phone:
             # Phase 1: DFS exploration (probe only, no knowledge gen)

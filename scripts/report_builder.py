@@ -1391,7 +1391,7 @@ def _render_page_card_html(node: NavNode, path: list[str]) -> str:
             .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
         knowledge_section = f"""
-            <details>
+            <details open>
               <summary>页面知识摘要</summary>
               <div class="knowledge-body">{safe_knowledge}</div>
             </details>"""
