@@ -118,5 +118,17 @@
       "y_zone": "top_tab"
     },
     "note": "闲鱼顶部内容tab切换：BEFORE中「推荐」高亮，AFTER中「省钱神券」高亮，同一排顶部tab栏。应type B点击AFTER顶部tab栏中的「推荐」。之前误判为type C是因为YOLO把搜索框误标为返回箭头"
+  },
+  {
+    "id": "xianyu_recon_tab_省钱神券",
+    "before": "data/xianyu_recon_省钱神券_before.png",
+    "after": "data/xianyu_recon_省钱神券_after.png",
+    "nav_context": "点击了tab「省钱神券」",
+    "expected": {
+      "page_type": "B",
+      "can_go_back": true,
+      "y_zone": "top_tab"
+    },
+    "note": "闲鱼recon实录：浏览二手商品（找服务子页）→省钱神券tab切换。LLM曾误选AFTER中已选中的「省钱神券」tab(458,192)，应选BEFORE中选中的tab。对应Fix2校验拦截场景。"
   }
 ]

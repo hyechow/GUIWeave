@@ -193,38 +193,31 @@ def run_export(app: str, page: str | None = None, enhanced: bool = False, hud=No
         except Exception as e:
             print(f"  ✗ {e}")
 
-    # Leaf pages: discovered but not probed (depth_limit)
+    # Leaf pages: discovered but not probed (depth_limit or overlay_skip)
     if not page:
         knowledge_dir = KNOWLEDGE_ROOT / app
         knowledge_dir.mkdir(parents=True, exist_ok=True)
 
-        # Clean up stale knowledge files (by raw name or matching description)
-        leaf_descriptions: list[str] = []
-        leaf_raw_names: set[str] = set()
-        for _pn, _tap in collect_leaf_pages(app_log_dir):
-            _ident = (_tap.get("identity") or {})
-            _rn = _ident.get("page_name", "")
-            _desc = _ident.get("description", "")
-            if _rn:
-                leaf_raw_names.add(_rn.replace("/", "_").replace(" ", "_"))
-            if _desc:
-                leaf_descriptions.append(_desc[:40])
+        # Stale cleanup: remove old leaf knowledge files using previous leaf_meta titles
+        prev_meta_path = app_log_dir / "leaf_meta.json"
+        prev_leaf_titles: set[str] = set()
+        if prev_meta_path.exists():
+            prev_meta = json.loads(prev_meta_path.read_text("utf-8"))
+            for entry in prev_meta.values():
+                t = entry.get("title", "")
+                if t:
+                    prev_leaf_titles.add(t.replace("/", "_").replace(" ", "_"))
         for stale in knowledge_dir.glob("*.md"):
-            stem = stale.stem
-            if stem in leaf_raw_names:
+            if stale.stem in prev_leaf_titles:
                 stale.unlink()
-                continue
-            content = stale.read_text(encoding="utf-8")
-            for desc_snippet in leaf_descriptions:
-                if desc_snippet in content:
-                    stale.unlink()
-                    break
 
         app = knowledge_dir.name
         leaves = collect_leaf_pages(app_log_dir)
-        # Collect titles already exported by probed pages to avoid overwriting
-        existing_titles = {f.stem for f in knowledge_dir.glob("*.md")}
-        # Build mapping: raw page_name → short title for report builder
+        # Only block overwriting knowledge files from probed pages (not old leaf files)
+        probed_titles = {f.stem for f in knowledge_dir.glob("*.md")}
+        # Build mapping: leaf_key → {title, type, parent} for report builder
+        # For depth_limit pages: key = page_name
+        # For overlay pages: key = "overlay::{parent_name}::{label}" (page_name is empty)
         leaf_meta: dict[str, dict] = {}
         if leaves:
             print(f"\n--- 叶子页 ({len(leaves)} 个未探测页面) ---")
@@ -234,19 +227,26 @@ def run_export(app: str, page: str | None = None, enhanced: bool = False, hud=No
                         raw = (tap.get("identity") or {}).get("page_name", "") or parent_name
                         hud.update(f"叶子页 {leaf_idx}/{len(leaves)}  {raw}")
                     result = build_leaf_export(parent_name, tap)
-                    raw_name = (tap.get("identity") or {}).get("page_name", "")
-                    leaf_meta[raw_name] = {
+                    ident = tap.get("identity") or {}
+                    raw_name = ident.get("page_name", "")
+                    is_overlay = ident.get("phase") == "overlay_skip"
+                    meta_key = (
+                        f"overlay::{parent_name}::{tap.get('label', '')}"
+                        if is_overlay else raw_name
+                    )
+                    leaf_meta[meta_key] = {
                         "title": result.meta.page_title,
                         "type": result.meta.page_type,
+                        "parent": parent_name,
+                        "is_overlay": is_overlay,
                     }
                     safe_title = result.meta.page_title.replace("/", "_").replace(" ", "_")
-                    if safe_title in existing_titles:
+                    if safe_title in probed_titles:
                         print(f"  ⊘ {result.meta.page_title} — 已有已探测版本，跳过")
                         continue
-                    # Leaf pages don't have their own directory; save directly to knowledge_dir
                     skill_text = result.knowledge.to_skill(app, result.meta.parent_page)
                     (knowledge_dir / f"{safe_title}.md").write_text(skill_text, encoding="utf-8")
-                    existing_titles.add(safe_title)
+                    probed_titles.add(safe_title)
                     print(f"  ✓ {result.meta.page_title} ({result.meta.page_type}) ← {parent_name}")
                 except Exception as e:
                     print(f"  ✗ {e}")

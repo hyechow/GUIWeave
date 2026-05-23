@@ -264,6 +264,7 @@ class ReconPageInfo:
     elements_count: int
     signature: str
     annotated_url: str   # initial.png with all taps annotated
+    parent: str = ""          # parent page name (for leaf/overlay pages)
     taps: list[ReconTap] = field(default_factory=list)
     flows: list[ReconFlow] = field(default_factory=list)
     knowledge: str = ""
@@ -318,6 +319,14 @@ def _build_nav_tree(pages: list[ReconPageInfo], trace: list[dict] | None = None)
                 child.via_tap = via_tap
                 parent.children.append(child)
                 has_parent.add(page_name)
+    # Fallback: leaf/overlay pages not in trace — attach via page.parent
+    for p in pages:
+        if p.name in has_parent or not p.parent:
+            continue
+        if p.parent in node_map and p.name in node_map:
+            node_map[p.parent].children.append(node_map[p.name])
+            has_parent.add(p.name)
+
     return [node_map[p.name] for p in pages if p.name not in has_parent]
 
 
@@ -677,11 +686,25 @@ class ReconReportBuilder:
                 continue
             result = json.loads(result_path.read_text(encoding="utf-8"))
             for tap in result.get("taps", []):
-                if tap.get("child_status") != "new_depth_limit":
-                    continue
                 identity = tap.get("identity") or {}
-                leaf_name = identity.get("page_name", "")
-                if not leaf_name or leaf_name in existing_names:
+                is_overlay = identity.get("phase") == "overlay_skip"
+                is_depth_limit = tap.get("child_status") == "new_depth_limit"
+                if not is_depth_limit and not is_overlay:
+                    continue
+
+                if is_overlay:
+                    # Overlay taps have no page_name; use composite key
+                    meta_key = f"overlay::{pd.name}::{tap.get('label', '')}"
+                    leaf_name = meta_key
+                    leaf_description = ""
+                else:
+                    leaf_name = identity.get("page_name", "")
+                    if not leaf_name:
+                        continue
+                    meta_key = leaf_name
+                    leaf_description = identity.get("description", "")
+
+                if leaf_name in existing_names:
                     continue
                 existing_names.add(leaf_name)
 
@@ -693,12 +716,10 @@ class ReconReportBuilder:
                     except ValueError:
                         pass
 
-                leaf_description = identity.get("description", "")
-
                 # Look up short title from leaf_meta.json (exported)
-                meta_entry = leaf_meta.get(leaf_name, {})
-                leaf_title = meta_entry.get("title", leaf_name)
-                leaf_type = meta_entry.get("type", "")
+                meta_entry = leaf_meta.get(meta_key, {})
+                leaf_title = meta_entry.get("title", leaf_name if not is_overlay else tap.get("label", "弹窗"))
+                leaf_type = meta_entry.get("type", "modal" if is_overlay else "")
 
                 # Skip if same title as a probed page — record as warning
                 if leaf_title in probed_titles:
@@ -730,6 +751,7 @@ class ReconReportBuilder:
                     elements_count=0,
                     signature="",
                     annotated_url=ann_url,
+                    parent=pd.name,
                     taps=[],
                     flows=[],
                     knowledge=leaf_knowledge,
