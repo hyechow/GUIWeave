@@ -182,8 +182,11 @@ def _build_element_lines(taps: list[dict]) -> list[str]:
 
         if tap.get("navigated"):
             ident = tap.get("identity") or {}
-            dest = ident.get("description", "") or ident.get("page_name", "")
-            nav_note = f"实测→「{dest[:30]}」" if dest else "实测→已导航"
+            if ident.get("phase") == "overlay_skip":
+                nav_note = "实测→弹窗/浮层"
+            else:
+                dest = ident.get("description", "") or ident.get("page_name", "")
+                nav_note = f"实测→「{dest[:30]}」" if dest else "实测→已导航"
             lines.append(f"[{label}]  {pos}  {nav_note}")
         else:
             lines.append(f"[{label}]  {pos}  无导航")
