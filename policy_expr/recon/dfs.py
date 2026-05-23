@@ -472,6 +472,7 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     areas = [a for a in areas if a.element_type != "back_button"]
 
     effective_limit = sample if sample > 0 else 0  # max navigated taps, 0 = unlimited
+    random.shuffle(areas)
 
     print(f"\n{'=' * 60}")
     print(f"点击探测: {len(areas)} 个可交互区域")
