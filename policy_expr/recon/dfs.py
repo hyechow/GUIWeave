@@ -288,7 +288,12 @@ def _dfs_recursive(
     fingerprint = f"用途：{_fp.purpose}\n内容区：{_fp.content}\n页面形态：{_fp.form}"
     print(f"  [fingerprint] form={_fp.form} content={_fp.content} purpose={_fp.purpose}")
 
-    # Add to dedup library (reuse pre-computed embedding)
+    # Overlay page (form C/D/E/F/G): dismiss without registering in dedup
+    if _fp.form not in ("A", "B"):
+        print(f"  [overlay_skip] form={_fp.form}，弹窗页跳过入库和探测")
+        return None, {"is_new": False, "phase": "overlay_skip"}
+
+    # Normal page: register in dedup and explore
     dedup.add(png_bytes, name=page_name, emb=candidate_emb, form=_fp.form)
 
     chain_to_page[chain_key] = page_name
@@ -314,14 +319,6 @@ def _dfs_recursive(
         depth=len(nav_chain), nav_chain=list(nav_chain),
         out_dir=out_dir,
     )
-
-    # Overlay page (form C/D/E/F/G): treat as leaf — register only, no element probing
-    if _fp.form not in ("A", "B"):
-        print(f"  [overlay_leaf] form={_fp.form}，弹窗页仅入库不探测")
-        tracer.record_transition(_src, _tap, page_name, "overlay_leaf")
-        tracer.save(trace_path)
-        _update_recon_log(app_log_dir, page_name, "initial")
-        return node, dedup_info
 
     if max_depth == 0:
         print(f"  [max_depth=0] 跳过探测，仅记录页面")

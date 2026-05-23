@@ -151,7 +151,7 @@ def main() -> None:
         target_level = depth_reached - back_n
         nav_context = tap_labels[target_level] if target_level < len(tap_labels) else ""
 
-        target_label, _ = _page_name_from_fingerprint(target_stack[-1][0])
+        target_label, _, _ = _page_name_from_fingerprint(target_stack[-1][0])
 
         print(f"\n{'='*60}")
         print(f"  [回退测试] 当前深度 L{depth_reached}，回退 {back_n} 层 → L{target_level}")

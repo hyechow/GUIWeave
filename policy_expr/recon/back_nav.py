@@ -61,48 +61,46 @@ def _pixel_diff_ratio(png_a: bytes, png_b: bytes, threshold: int = 30) -> float:
 
 class BackAction(BaseModel):
     can_go_back: bool = Field(description="能否找到返回到前一页的方法")
-    page_type: str = Field(description="导航类型：A=弹窗/浮层, B=底部tab切换, C=普通页面跳转")
+    page_type: str = Field(description="导航类型：A=弹窗/浮层, B=tab切换, C=普通页面跳转。⚠️若触发操作含tab但该tab名不在页面tab栏选项中，必须填C")
     method: str = Field(description="返回方法描述")
     back_x: float = Field(default=-1, description="返回目标归一化 x 坐标（0-1000）")
     back_y: float = Field(default=-1, description="返回目标归一化 y 坐标（0-1000）")
 
 
 BACK_PROMPT = """\
-你是一个 iPhone 页面导航专家。用户给出了两张截图和触发操作描述，请分析如何从 AFTER 页面返回 BEFORE 页面。
+你是一个 iPhone 应用导航专家。根据两张截图（BEFORE、AFTER）和触发操作描述，判断如何从 AFTER 返回 BEFORE。
 
 ## 坐标系
-左上角 (0, 0)，右下角 (1000, 1000)。坐标是点击目标的视觉中心。
-重要：返回按钮通常在 x=50-120, y=80-160 的范围内。不要输出 x<30 或 y<50 的坐标。
+左上角 (0,0)，右下角 (1000,1000)，坐标为目标元素视觉中心。
+iPhone 导航栏返回按钮通常位于左上角（x<200，y<250）。
 
-## 输出字段说明
-请按以下顺序填写输出字段：
-1. **page_type**（先填）：根据下方规则判断页面类型，填 "A"、"B" 或 "C"。这一步决定后续的返回策略。
-2. **can_go_back**：是否能找到返回方法。
-3. **method**：用一句话描述具体的返回操作。
-4. **back_x / back_y**：目标元素中心的归一化坐标（0-1000）。
+## 判断流程（按顺序执行，满足即停）
 
-## 分析步骤
-1. **先读「触发操作」**：它描述了用户点击了什么元素（含类型）才从 BEFORE 跳到 AFTER。
-   - 触发操作含「底部tab」→ 直接判断类型 B，无需继续比对截图
-   - 触发操作含「button / link / icon / back_button」→ 跳过 B，进入 A/C 的视觉判断
-2. 若触发操作信息不足，再观察截图：按 A → B → C 顺序检查，命中即停止
-3. 根据判定的类型，在 AFTER 截图上找到对应的返回元素
-4. 输出该元素中心的坐标
+### Q1：AFTER 有浮层覆盖吗？
+检查 AFTER 全屏：是否有弹窗、对话框、底部弹出面板或广告浮层叠在底层页面上方？
 
-## AFTER 页面类型定义
+浮层的识别依据：底层页面内容仍部分可见；浮层有独立边框/阴影/遮罩；有 ×/关闭/跳过/取消 控件。
 
-### 类型 A：弹窗/浮层
-**判断依据**：AFTER 上有弹窗、对话框、底部弹出面板、广告浮层，覆盖在底层页面上方（底层页面仍可见）
-→ 点击关闭/取消/跳过按钮（通常是 × 或「关闭」）
+**→ 是：page_type = "A"，点击浮层的关闭控件，不需要参考触发操作。**
+→ 否：进入 Q2。
 
-### 类型 B：底部 tab 切换
-**判断依据**：触发操作中含「底部tab」；或 BEFORE 与 AFTER 有相同的底部导航栏且选中项不同
-→ 点击 AFTER 中与 BEFORE 选中 tab 对应的那个底部 tab（即回到 BEFORE 时高亮的那个）
-注意：不要点击 AFTER 中已经处于选中状态的 tab，那不会有任何效果
+### Q2：某一排 tab 栏的选中项发生了变化吗？
+iPhone 应用通常同时存在两类 tab 栏，须分开判断：
+- **底部导航 tab**：3-5 个固定入口（首页/消息/我/购物车等），在不同页面间通常保持不变
+- **顶部分类 tab**：内容分类标签（推荐/热门/关注等），随内容区切换而变化，坐标在屏幕上方（y < 400）
 
-### 类型 C：普通页面跳转
-**判断依据**：AFTER 是全新页面，左上角有返回箭头（‹）或关闭按钮（×），且触发操作不含「底部tab」
-→ 点击左上角返回按钮
+逐排对比，对每一排检查以下三点是否**同时**成立：
+1. 该排在 BEFORE 和 AFTER 中均存在
+2. 该排的高亮/选中项在两图中**确实不同**（两图相同则跳过该排）
+3. 触发操作的名称能在该排选项里找到
+
+**→ 某一排同时满足三点：page_type = "B"，在 AFTER 中点击该排里 BEFORE 所选中的 tab，坐标须落在该排内。**
+→ 所有排均不满足：进入 Q3。
+
+注意：不要点击 AFTER 中已处于选中状态的 tab；触发操作含「tab」关键词不代表条件 3 自动满足，须逐字核实。
+
+### Q3：点左上角返回按钮
+**→ page_type = "C"，点击 AFTER 左上角的 iPhone 系统返回箭头（‹）或应用内关闭按钮（×）。**
 
 """
 
@@ -114,8 +112,51 @@ BACK_PROMPT = """\
 def make_nav_context(label: str, element_type: str) -> str:
     """Build the nav_context string passed to infer_back_action."""
     if element_type == "tab":
-        return f"点击了底部tab「{label}」"
+        return f"点击了tab「{label}」"
     return f"点击了{element_type}「{label}」"
+
+
+def _sanitize_nav_context(nav_context: str, after_png: bytes) -> str:
+    """Rewrite nav_context when the 'tab' label is misleading.
+
+    When nav_context says "点击了tab「X」" but X is NOT a label found in any
+    tab bar of the AFTER screenshot, rewrite to neutral wording so the LLM
+    doesn't blindly default to type B.
+
+    Checks both the bottom strip (bottom nav tabs) and the top strip (top
+    category tabs, below the status bar) via OCR.  If the tab name appears in
+    either region it is a real tab bar label and we keep the original context.
+    """
+    import re
+
+    m = re.search(r"点击了tab「(.+?)」", nav_context)
+    if not m:
+        return nav_context
+    tab_name = m.group(1)
+
+    try:
+        import io
+        import pytesseract
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(after_png))
+        w, h = img.size
+        # Bottom strip: bottom nav tab bar (bottom 12%)
+        bottom_strip = img.crop((0, int(h * 0.88), w, h))
+        # Top strip: top category tab bar, below status bar (5%–20%)
+        top_strip = img.crop((0, int(h * 0.05), w, int(h * 0.20)))
+
+        combined_text = (
+            pytesseract.image_to_string(bottom_strip, lang="chi_sim+eng")
+            + pytesseract.image_to_string(top_strip, lang="chi_sim+eng")
+        )
+        if tab_name in combined_text:
+            return nav_context
+    except Exception:
+        pass  # OCR unavailable or failed → fall through to rewrite
+
+    # Tab name NOT found in any tab bar region → rewrite to remove type B bias
+    return f"点击了「{tab_name}」"
 
 
 def tap_back(client) -> tuple[float, float, str]:
@@ -295,12 +336,17 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
         temperature=0,
     )
     before_b64 = base64.b64encode(resize_to_logical_png(before_png)).decode()
-    after_b64 = base64.b64encode(resize_to_logical_png(after_png)).decode()
+    after_annotated, back_icon_coord = _annotate_back_icons(after_png)
+    after_b64 = base64.b64encode(resize_to_logical_png(after_annotated)).decode()
 
     context_text = (
         "第一张(BEFORE)是点击前的页面，第二张(AFTER)是点击后跳转的页面。"
         "请找出从 AFTER 返回 BEFORE 的方法。"
     )
+    if back_icon_coord is not None:
+        context_text += (
+            "\n\n[图像标注] AFTER 截图左上角已用红框标出 YOLO 检测到的图标，请结合截图判断其实际类型。"
+        )
     if target_label:
         context_text += f"\n\n目标页面：BEFORE 是「{target_label}」，我们需要回到这个页面。"
     if nav_context:
@@ -440,6 +486,51 @@ def _yolo_detect_near(png_bytes: bytes, ax: float, ay: float,
     if cal is None:
         return None
     return cal.nearest(ax, ay, max_dist=max_dist)
+
+
+def _annotate_back_icons(png_bytes: bytes) -> tuple[bytes, tuple[float, float] | None]:
+    """Draw red bounding boxes on YOLO-detected icons in the top-left back-arrow zone.
+
+    Returns (annotated_png, primary_coord) where primary_coord is the normalized
+    (x, y) of the highest-confidence icon, or None if no icons found.
+    Original bytes are returned unchanged when nothing is found.
+    """
+    try:
+        import io as _io
+        from PIL import Image, ImageDraw
+        from policy_expr.recon.yolo_calibrator import YoloCalibrator
+
+        cal = YoloCalibrator.from_png(png_bytes)
+        if cal is None:
+            return png_bytes, None
+
+        # Restrict to the strict top-left zone where iOS back arrows live:
+        # normalized x < 150, y < 200 (avoids top-right nav icons on main pages).
+        nearby = [
+            b for b in cal.boxes
+            if (b.cx / cal.img_w * 1000) < 150 and (b.cy / cal.img_h * 1000) < 200
+        ]
+        if not nearby:
+            return png_bytes, None
+
+        # Pick the highest-confidence icon as the primary candidate.
+        primary = max(nearby, key=lambda b: b.conf)
+        primary_coord = (primary.cx / cal.img_w * 1000, primary.cy / cal.img_h * 1000)
+
+        img = Image.open(_io.BytesIO(png_bytes)).convert("RGB")
+        draw = ImageDraw.Draw(img)
+        for b in nearby:
+            pad = 5
+            draw.rectangle(
+                [b.x1 - pad, b.y1 - pad, b.x2 + pad, b.y2 + pad],
+                outline=(220, 30, 30), width=4,
+            )
+
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue(), primary_coord
+    except Exception:
+        return png_bytes, None
 
 
 # ---------------------------------------------------------------------------
@@ -665,11 +756,18 @@ def return_to_initial(
 
     page_records[(bytes, tried_set)] tracks per-page strategy history.
     """
+    import re as _re
+
     log: list[dict] = []
     id_comp = _get_identity_comp()
     top_level = len(nav_stack) - 1
     initial_bytes = nav_stack[top_level][0]
     max_rounds = 12
+
+    # For tab-switch navigation, skip the fixed back-button strategy: tapping
+    # the left-corner button on a tab page corrupts AFTER before LLM can see
+    # the original tab change, causing type C misclassification and loops.
+    pre_tried: set[str] = {"fixed"} if _re.search(r"点击了tab「", nav_context) else set()
 
     # Per-page strategy history: list of (page_screenshot, tried_strategies).
     page_records: list[tuple[bytes, set[str]]] = []
@@ -678,7 +776,7 @@ def return_to_initial(
         for page_bytes, tried in page_records:
             if id_comp.is_same_page(page_bytes, current_bytes).matched:
                 return tried
-        tried: set[str] = set()
+        tried: set[str] = set(pre_tried)
         page_records.append((current_bytes, tried))
         return tried
 
