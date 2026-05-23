@@ -512,6 +512,14 @@ def _try_tap(
                             "success": False, "screenshot": ""})
                 return None
             print(f"    ↩ [{strategy}] ({lx:.0f},{ly:.0f}) → 已变化 (pixel={diff_ratio:.4f}, edge={score:.3f})")
+        else:
+            # edge_iou reports changed — cascade confirms whether navigation actually occurred
+            id_comp = _get_identity_comp()
+            if id_comp.is_same_page(before_bytes, after_bytes).matched:
+                print(f"    ↩ [{strategy}] ({lx:.0f},{ly:.0f}) → 动态内容误报（cascade同一页，视为未变化）")
+                log.append({**base_entry, "result": "动态内容（未导航）", "score": round(score, 3),
+                            "success": False, "screenshot": ""})
+                return None
 
     shot_str = save_if_changed(after_bytes, save_path)
     print(f"    ↩ [{strategy}] ({lx:.0f},{ly:.0f}) → 已变化")
@@ -591,6 +599,30 @@ def _execute_strategy(
                     "llm_failed_attempts": list(llm_failed_attempts or []),
                     **_llm_log_entry(None, "can_go_back=False 或坐标越界")})
         return None
+
+    # Validate: reject if LLM points at the nav_context tab (it's already selected in AFTER)
+    if after_elements and nav_context:
+        import re as _re3
+        _tab_m2 = _re3.search(r"点击了tab「(.+?)」", nav_context)
+        if _tab_m2:
+            _forbidden = _tab_m2.group(1)
+            _ax, _ay = llm_action.back_x, llm_action.back_y
+            for _el in after_elements:
+                if (_el.get("label") == _forbidden
+                        and _el.get("element_type") == "tab"
+                        and abs(_ax - _el.get("x", -999)) < 80
+                        and abs(_ay - _el.get("y", -999)) < 80):
+                    _reason = f"指向了触发跳转的 tab「{_forbidden}」（AFTER 中已选中），应点 BEFORE 中选中的 tab"
+                    print(f"    [LLM] 坐标校验拒绝：{_reason}")
+                    log.append({"strategy": strategy, "result": f"校验拒绝：{_reason}",
+                                "success": False, "screenshot": "",
+                                **_llm_log_entry(llm_action)})
+                    llm_failed_attempts = list(llm_failed_attempts or [])
+                    llm_failed_attempts.append({
+                        "x": round(_ax), "y": round(_ay),
+                        "reason": _reason, "method": llm_action.method,
+                    })
+                    return None
 
     # Primary: tap LLM coords
     llm_xy = (llm_action.back_x, llm_action.back_y)
