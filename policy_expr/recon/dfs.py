@@ -86,7 +86,7 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
     # Parse root page identity
     png_bytes = phone.screenshot()
     knowledge = PageParser().analyze_screen(png_bytes)
-    page_name, _fingerprint = _page_name_from_fingerprint(png_bytes)
+    page_name, _fingerprint, _root_form = _page_name_from_fingerprint(png_bytes)
 
     # update mode: use target_dir as page_name and out_dir
     inherited_parent: str = ""
@@ -102,7 +102,7 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
 
     # Record root
     print(f"  [已探测 0 页] ✓ 根页面 — {page_name}")
-    dedup.add(png_bytes, name=page_name)
+    dedup.add(png_bytes, name=page_name, form=_root_form)
     visited_page_entries.append((page_name, png_bytes))
     tracer.record_page(page_name, None, None, 0)
     tracer.save(trace_path)
@@ -290,7 +290,7 @@ def _dfs_recursive(
     print(f"  [fingerprint] form={_fp.form} content={_fp.content} purpose={_fp.purpose}")
 
     # Add to dedup library (reuse pre-computed embedding)
-    dedup.add(png_bytes, name=page_name, emb=candidate_emb)
+    dedup.add(png_bytes, name=page_name, emb=candidate_emb, form=_fp.form)
 
     chain_to_page[chain_key] = page_name
     visited_page_entries.append((page_name, png_bytes))
@@ -586,10 +586,10 @@ def _count_nodes(nodes: list[DfsPageNode]) -> int:
     return sum(1 + _count_nodes(n.children) for n in nodes)
 
 
-def _page_name_from_fingerprint(png_bytes: bytes) -> tuple[str, str]:
+def _page_name_from_fingerprint(png_bytes: bytes) -> tuple[str, str, str]:
     """Generate a stable page name from the fingerprint purpose field.
 
-    Returns (page_name, fingerprint_text).
+    Returns (page_name, fingerprint_text, form).
     """
     import re
     from policy_expr.recon.cascade_matcher import get_matcher
@@ -597,7 +597,7 @@ def _page_name_from_fingerprint(png_bytes: bytes) -> tuple[str, str]:
     fp = matcher.generate_fingerprint(png_bytes)
     name = re.sub(r'[\\/:*?"<>|\s]+', '_', fp.purpose)
     fingerprint_text = f"用途：{fp.purpose}\n内容区：{fp.content}\n页面形态：{fp.form}"
-    return name or "page", fingerprint_text
+    return name or "page", fingerprint_text, fp.form
 
 
 def _sanitize_filename(label: str) -> str:
@@ -695,7 +695,7 @@ def _register_popup_page(png_bytes: bytes, dedup: "PageIdentity", app_log_dir: P
     popup_dir.mkdir(parents=True, exist_ok=True)
     (popup_dir / "initial.png").write_bytes(png_bytes)
     print(f"  [popup] 新弹窗页 → 入库「{page_name}」，保存至 {popup_dir.name}/")
-    dedup.add(png_bytes, name=page_name, emb=emb)
+    dedup.add(png_bytes, name=page_name, emb=emb, form=fp.form)
 
 
 def _check_overlay(nav_stack, png_bytes: bytes):

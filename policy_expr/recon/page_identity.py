@@ -10,9 +10,39 @@ Cascade logic:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from policy_expr.recon.cascade_matcher import CascadeMatcher, PageEmbedding, PageFingerprint
+
+# Form groups: pages (A/B) are full standalone screens; overlays (C/D/E/F/G) sit on top.
+# Visual shortcut is filtered by group so an overlay never short-circuits against a page.
+_OVERLAY_FORMS = frozenset("CDEFG")
+
+
+def _form_to_group(form: str | None) -> str | None:
+    """Map form letter to "page" / "overlay", or None if unknown."""
+    if form is None:
+        return None
+    return "overlay" if form in _OVERLAY_FORMS else "page"
+
+
+def _infer_form_group(png: bytes) -> str | None:
+    """Pixel-only form group guess (no LLM). Returns "overlay", "page", or None."""
+    import io
+    import numpy as np
+    from PIL import Image as _PIL
+    from policy_expr.overlay_detect import detect_fullscreen_popup
+
+    img = np.array(_PIL.open(io.BytesIO(png)).convert("RGB"), dtype=np.float32)
+    if detect_fullscreen_popup(img):
+        return "overlay"
+    # Bottom-panel heuristic: bottom 35% significantly brighter than top 35%
+    h = img.shape[0]
+    top_mean = float(img[:int(h * 0.35)].mean())
+    bot_mean = float(img[int(h * 0.65):].mean())
+    if bot_mean > top_mean * 1.25 and bot_mean > 160:
+        return "overlay"
+    return None  # unknown — don't filter
 
 
 @dataclass
@@ -27,6 +57,10 @@ class IdentityResult:
     phase: str = ""  # "visual_shortcut" / "semantic_match" / "new_page"
 
 
+# Library entry: (embedding, png_bytes, name, fingerprint | None, form_group | None)
+_LibEntry = tuple[PageEmbedding, bytes, str, PageFingerprint | None, str | None]
+
+
 class PageIdentity:
     """Semantic-primary page identity for BFS/DFS exploration."""
 
@@ -37,7 +71,7 @@ class PageIdentity:
     ):
         self._matcher = matcher
         self._vs = visual_shortcut
-        self._library: list[tuple[PageEmbedding, bytes, str, PageFingerprint | None]] = []
+        self._library: list[_LibEntry] = []
 
     def __len__(self) -> int:
         return len(self._library)
@@ -48,11 +82,23 @@ class PageIdentity:
         if n == 0:
             return IdentityResult(False, "empty_library", library_size=0, phase="new_page")
 
-        # Phase 1: visual (fast, no LLM)
+        candidate_group = _infer_form_group(png)
+
+        # Phase 1: visual shortcut (fast, no LLM) — filtered by form group
         candidate = precomputed or self._matcher.embed_visual(png)
-        vis_sims = [self._matcher.visual_sim(candidate, e) for e, _, _, _ in self._library]
-        best_idx = max(range(n), key=lambda i: vis_sims[i])
-        max_vis = vis_sims[best_idx]
+        # Only compare against same-group entries; unknown group entries always included
+        vis_candidates = [
+            i for i, (_, _, _, _, g) in enumerate(self._library)
+            if candidate_group is None or g is None or g == candidate_group
+        ]
+        if vis_candidates:
+            vis_sims = {i: self._matcher.visual_sim(candidate, self._library[i][0])
+                        for i in vis_candidates}
+            best_idx = max(vis_candidates, key=lambda i: vis_sims[i])
+            max_vis = vis_sims[best_idx]
+        else:
+            max_vis = 0.0
+            best_idx = 0
 
         if max_vis >= self._vs:
             return IdentityResult(
@@ -68,10 +114,10 @@ class PageIdentity:
         best_sem_idx = -1
         best_sem_reason = ""
         for i in range(n):
-            emb, epng, name, fp = self._library[i]
+            emb, epng, name, fp, grp = self._library[i]
             if fp is None:
                 fp = self._matcher.generate_fingerprint(epng)
-                self._library[i] = (emb, epng, name, fp)
+                self._library[i] = (emb, epng, name, fp, grp)
             same, reason = self._matcher.semantic_sim(fp_candidate, fp)
             if same:
                 best_sem_idx = i
@@ -91,12 +137,13 @@ class PageIdentity:
             max_vis, library_size=n, phase="new_page",
         )
 
-    def add(self, png: bytes, name: str = "", emb: PageEmbedding | None = None) -> PageEmbedding:
-        """Add page to library and return its embedding."""
+    def add(self, png: bytes, name: str = "", emb: PageEmbedding | None = None,
+            form: str | None = None) -> PageEmbedding:
+        """Add page to library. form letter (A-G) is stored as form_group for match filtering."""
         if emb is None:
             emb = self._matcher.embed_visual(png)
-        # Generate fingerprint lazily on first check, store None for now
-        self._library.append((emb, png, name, None))
+        group = _form_to_group(form) if form else _infer_form_group(png)
+        self._library.append((emb, png, name, None, group))
         return emb
 
     def check_and_add(self, png: bytes, name: str = "") -> IdentityResult:
@@ -109,6 +156,6 @@ class PageIdentity:
     def to_json(self) -> list[dict]:
         """Export library entries as JSON-serializable list."""
         return [
-            {"index": i, "name": name}
-            for i, (_, _, name, _) in enumerate(self._library)
+            {"index": i, "name": name, "form_group": grp}
+            for i, (_, _, name, _, grp) in enumerate(self._library)
         ]

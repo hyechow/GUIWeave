@@ -34,7 +34,7 @@ def _parse_identity(phone) -> tuple:
     png_bytes = phone.screenshot()
 
     knowledge = PageParser().analyze_screen(png_bytes)
-    page_name, _ = _page_name_from_fingerprint(png_bytes)
+    page_name, _, _ = _page_name_from_fingerprint(png_bytes)
     return png_bytes, knowledge, page_name
 
 
