@@ -238,10 +238,10 @@ def _dfs_recursive(
     if close_popup(phone.client, phone.screenshot, png_bytes):
         png_bytes = phone.screenshot()
 
-    # ── Overlay detection (前置于去重，命中则强制新页面) ──
+    # ── Overlay detection (前置于去重) ──
     _overlay = _check_overlay(nav_stack, png_bytes)
     if _overlay:
-        print(f"  [overlay] 检测到 {_overlay.type}  bbox={_overlay.bbox}  → 跳过去重，强制新页面")
+        print(f"  [overlay] 检测到 {_overlay.type}  bbox={_overlay.bbox}")
 
     # ── Dedup BEFORE LLM parse (saves LLM call for duplicate pages) ──
     from policy_expr.recon.cascade_matcher import get_matcher
@@ -258,8 +258,6 @@ def _dfs_recursive(
     # ── Dedup result + terminal output ──
     n = dedup_result.library_size
     is_dup = dedup_result.is_duplicate
-    if _overlay:
-        is_dup = False  # 强制新页面，覆盖去重结论
     _print_dedup(n, dedup_result)
 
     if is_dup:
@@ -290,9 +288,10 @@ def _dfs_recursive(
     fingerprint = f"用途：{_fp.purpose}\n内容区：{_fp.content}\n页面形态：{_fp.form}"
     print(f"  [fingerprint] form={_fp.form} content={_fp.content} purpose={_fp.purpose}")
 
-    # Overlay page (form C/D/E/F/G): dismiss without registering in dedup
+    # Overlay page (form C/D/E/F/G): register for dedup but skip probing
     if _fp.form not in ("A", "B"):
-        print(f"  [overlay_skip] form={_fp.form}，弹窗页跳过入库和探测")
+        print(f"  [overlay_skip] form={_fp.form}，弹窗页入库去重、跳过探测")
+        dedup.add(png_bytes, name=page_name, emb=candidate_emb, form=_fp.form)
         return None, {"is_new": False, "phase": "overlay_skip"}
 
     # Normal page: register in dedup and explore

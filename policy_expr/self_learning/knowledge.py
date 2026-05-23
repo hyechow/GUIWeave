@@ -306,10 +306,11 @@ def save_export(result: ExportResult, page_dir: Path, knowledge_dir: Path) -> No
 
 
 def collect_leaf_pages(app_log_dir: Path) -> list[tuple[str, dict]]:
-    """Scan parent recon_result.json files for depth-limited leaf pages.
+    """Scan parent recon_result.json files for leaf pages without knowledge.
 
-    Returns list of (parent_page_name, tap_entry) for each leaf page
-    that was discovered but not probed (child_status=new_depth_limit).
+    Collects:
+    - child_status=new_depth_limit  : explored but depth-limited
+    - identity.phase=overlay_skip   : overlay/popup pages (detected but not probed)
     """
     leaves: list[tuple[str, dict]] = []
     for recon_path in sorted(app_log_dir.rglob("recon_result.json")):
@@ -317,6 +318,8 @@ def collect_leaf_pages(app_log_dir: Path) -> list[tuple[str, dict]]:
         parent_name = recon_path.parent.name
         for tap in data.get("taps", []):
             if tap.get("child_status") == "new_depth_limit":
+                leaves.append((parent_name, tap))
+            elif tap.get("identity", {}).get("phase") == "overlay_skip":
                 leaves.append((parent_name, tap))
     return leaves
 
@@ -329,13 +332,18 @@ def build_leaf_export(parent_name: str, tap: dict) -> ExportResult:
     import base64
 
     identity = tap.get("identity") or {}
-    raw_name = identity.get("page_name", "未知页面")
-    description = identity.get("description", "")
-    fingerprint = identity.get("fingerprint", "")
     screenshot_path = tap.get("screenshot", "")
 
-    if not description:
-        description = fingerprint[:80].strip() if fingerprint else raw_name
+    if identity.get("phase") == "overlay_skip":
+        # Overlay page: no fingerprint/description in identity; derive from triggering element
+        label = tap.get("label", "")
+        description = f"由「{label}」触发的弹窗/浮层" if label else "弹窗/浮层页面"
+    else:
+        raw_name = identity.get("page_name", "未知页面")
+        description = identity.get("description", "")
+        fingerprint = identity.get("fingerprint", "")
+        if not description:
+            description = fingerprint[:80].strip() if fingerprint else raw_name
 
     cfg = resolve_llm_config("action_policy")
     llm = ChatOpenAI(
