@@ -11,20 +11,6 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field
 
-FINGERPRINT_PROMPT = """为这个 App 截图生成"页面模板描述"，目标是：同一类型页面（内容不同、结构相同）的描述尽量接近；不同类型页面的描述尽量有区别。
-
-严格按以下格式输出四行，不要添加任何其他内容：
-用途：<这类页面让用户做什么，动宾短语，对该类型所有实例都成立>
-内容区：<主内容区的数据组织形式，描述结构而非具体数据，如"可滚动的会话条目列表"/"按时间排列的气泡对话流"/"单一对象的字段详情卡">
-交互方式：<用户与页面的主要交互，如"滚动浏览并点击进入详情"/"输入文字并发送消息"/"切换开关配置选项"/"全屏查看并左右翻页">
-页面形态：<当前页面的视觉形态，如"全屏页面"/"底部弹出面板覆盖在原页面上方"/"居中弹窗对话框"/"下拉菜单"/"侧边抽屉"/"底部Tab切换后的内容页"
-
-规则（违反则描述无效）：
-- 如果页面上有弹窗、底部面板、侧边抽屉等覆盖层，四行全部描述覆盖层本身，忽略被遮挡的底层页面
-- 假设页面换了不同用户的数据，你的描述仍然成立——不能描述任何具体内容（特定商品、消息正文、金额、用户名）
-- 不提状态栏、顶部标题/返回按钮、底部固定导航栏——这些每页都有，不具备区分价值
-- 全部中文，每行不超过 25 字"""
-
 # ── Structured semantic fingerprint ───────────────────────────────────────
 
 SEMANTIC_PROMPT = """\
@@ -34,17 +20,18 @@ SEMANTIC_PROMPT = """\
 用途：<这类页面让用户做什么，10字以内的动宾短语>
 内容区：<6字以内描述主内容区布局，只能从以下选择：双列网格/三列网格/单列列表/图标网格/气泡对话/表单输入/混合布局/纯文本/图片瀑布>
 页面形态：<从以下选项中选择一个，只写字母代号>
-  A — 全屏页面（无底部Tab栏）
-  B — Tab页（底部有固定Tab栏，2-5个Tab）
-  C — 弹窗（覆盖层，底层页面仍可见）
+  A — 全屏页面（屏幕底部无Tab栏）
+  B — Tab页（屏幕最底部有固定Tab栏：2-5个图标+文字标签均匀排列，横贯整个屏幕宽度）
+  C — 弹窗（浮层覆盖在底层页面上，底层内容仍可见）
   D — 底部面板（从底部滑出的半屏面板）
   E — 侧边抽屉（从侧边滑出）
   F — 菜单（下拉或弹出选项列表）
   G — 键盘页（软键盘覆盖底部）
 
 规则：
-- 如果有弹窗/面板/抽屉等覆盖层，三行全部描述覆盖层本身
-- 不提状态栏、顶部返回按钮、底部固定导航栏
+- 判断A还是B：先看屏幕最底部——有横贯屏幕宽度的"图标+文字"Tab栏就选B，否则选A
+- 有弹窗/面板/抽屉等覆盖层时，三行全部描述覆盖层本身，不描述底层页面
+- "用途"和"内容区"只描述主体内容区，不提Tab栏、状态栏、顶部导航栏
 - 全部中文"""
 
 
@@ -65,7 +52,7 @@ class PageEmbedding:
 class CascadeMatcher:
     """Holds GUIClip and bge-small-zh models; generates and compares page embeddings.
 
-    All three sub-models (GUIClip, bge, LLM client) are loaded lazily on first use.
+    GUIClip and bge are loaded lazily on first use.
     Intended to be created once and shared across PageIdentity and PageComparator.
     """
 
@@ -81,8 +68,18 @@ class CascadeMatcher:
         self._clip_model: Any = None
         self._clip_proc: Any = None
         self._embed: Any = None
-        self._llm: Any = None
-        self._llm_model: str = ""
+        self._purpose_cache: dict[str, np.ndarray] = {}
+
+    # ── warm-up ───────────────────────────────────────────────────────────────
+
+    def warm_up(self) -> None:
+        """Eagerly load all local models. Call at program startup."""
+        import time
+        for label, loader in [("GUIClip", self._load_guiclip), ("bge-small-zh", self._load_embed)]:
+            t0 = time.time()
+            print(f"  [warm_up] 加载 {label}...", end=" ", flush=True)
+            loader()
+            print(f"({time.time() - t0:.1f}s)")
 
     # ── lazy loading ──────────────────────────────────────────────────────────
 
@@ -104,15 +101,6 @@ class CascadeMatcher:
         from sentence_transformers import SentenceTransformer
         self._embed = SentenceTransformer(self._embed_name, local_files_only=True)
 
-    def _load_llm(self) -> None:
-        if self._llm is not None:
-            return
-        from openai import OpenAI
-        from policy_expr.config import resolve_llm_config
-        cfg = resolve_llm_config(self._llm_config_key)
-        self._llm = OpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
-        self._llm_model = cfg.model
-
     # ── internal ops ──────────────────────────────────────────────────────────
 
     def _compute_visual(self, png: bytes) -> np.ndarray:
@@ -132,20 +120,6 @@ class CascadeMatcher:
     def _compute_text(self, fingerprint: str) -> np.ndarray:
         self._load_embed()
         return self._embed.encode(fingerprint, normalize_embeddings=True)
-
-    def _generate_fingerprint(self, png: bytes) -> str:
-        self._load_llm()
-        b64 = base64.b64encode(png).decode()
-        resp = self._llm.chat.completions.create(
-            model=self._llm_model,
-            max_tokens=200,
-            extra_body={"enable_thinking": False},
-            messages=[{"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-                {"type": "text", "text": FINGERPRINT_PROMPT},
-            ]}],
-        )
-        return resp.choices[0].message.content.strip()
 
     def generate_fingerprint(self, png: bytes) -> PageFingerprint:
         """Generate structured semantic fingerprint (form + content + purpose)."""
@@ -168,6 +142,12 @@ class CascadeMatcher:
         ]
         return invoke_structured(llm, messages, PageFingerprint)
 
+    def _embed_purpose(self, purpose: str) -> np.ndarray:
+        """Embed a purpose string; cached by text to avoid redundant bge calls."""
+        if purpose not in self._purpose_cache:
+            self._purpose_cache[purpose] = self._compute_text(purpose)
+        return self._purpose_cache[purpose]
+
     # ── public embedding API ──────────────────────────────────────────────────
 
     def embed_visual(self, png: bytes) -> PageEmbedding:
@@ -177,15 +157,15 @@ class CascadeMatcher:
     def embed_full(self, png: bytes) -> PageEmbedding:
         """Compute visual + text embeddings (calls LLM for fingerprint)."""
         visual = self._compute_visual(png)
-        fingerprint = self._generate_fingerprint(png)
-        text = self._compute_text(fingerprint)
+        fp = self.generate_fingerprint(png)
+        text = self._embed_purpose(fp.purpose)
         return PageEmbedding(visual=visual, text=text)
 
     def fill_text(self, emb: PageEmbedding, png: bytes) -> None:
         """Lazily generate and attach text embedding if not already present."""
         if emb.text is None:
-            fingerprint = self._generate_fingerprint(png)
-            emb.text = self._compute_text(fingerprint)
+            fp = self.generate_fingerprint(png)
+            emb.text = self._embed_purpose(fp.purpose)
 
     # ── similarity ────────────────────────────────────────────────────────────
 
@@ -207,9 +187,7 @@ class CascadeMatcher:
         content_match = fp1.content == fp2.content
 
         self._load_embed()
-        e1 = self._compute_text(fp1.purpose)
-        e2 = self._compute_text(fp2.purpose)
-        purpose_sim = float(np.dot(e1, e2))
+        purpose_sim = float(np.dot(self._embed_purpose(fp1.purpose), self._embed_purpose(fp2.purpose)))
 
         if not form_match:
             return False, f"form_diff({fp1.form}!={fp2.form})"

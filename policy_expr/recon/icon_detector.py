@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 
@@ -29,6 +30,26 @@ class IconBbox:
         return (self.y1 + self.y2) / 2
 
 
+_model_cache: dict[Path, Any] = {}
+
+
+def warm_up(model_path: Path = MODEL_PATH) -> None:
+    """Eagerly load the YOLO model at program startup."""
+    import time
+    print(f"  [warm_up] 加载 YOLO...", end=" ", flush=True)
+    t0 = time.time()
+    _load_yolo(model_path)
+    print(f"({time.time() - t0:.1f}s)")
+
+
+def _load_yolo(model_path: Path):
+    """Load YOLO model once per process; subsequent calls return cached instance."""
+    if model_path not in _model_cache:
+        from ultralytics import YOLO
+        _model_cache[model_path] = YOLO(str(model_path))
+    return _model_cache[model_path]
+
+
 class IconDetector:
     """Wraps the OmniParser YOLO icon detection model."""
 
@@ -37,8 +58,7 @@ class IconDetector:
         model_path: Path = MODEL_PATH,
         conf: float = DEFAULT_CONF,
     ) -> None:
-        from ultralytics import YOLO  # deferred import: YOLO cold-start is slow
-        self._model = YOLO(str(model_path))
+        self._model = _load_yolo(model_path)
         self._conf = conf
 
     def detect(self, png_bytes: bytes) -> list[IconBbox]:

@@ -419,8 +419,10 @@ class PageParser:
 
         img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
         w, h = img.size
+        t0 = time.time()
         det = IconDetector(conf=0.1)
         boxes = det.detect_filtered(png_bytes, w, h)
+        print(f"  [yolo] ({time.time()-t0:.1f}s) {len(boxes)} icons")
 
         merged = enrich_with_icons(page, boxes, w, h)
 

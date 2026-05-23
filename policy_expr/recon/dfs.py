@@ -234,6 +234,7 @@ def _dfs_recursive(
     # Full-screen popup: pixel pre-check → LLM locate → YOLO snap → tap
     from policy_expr.recon.popup_nav import close_popup
     if close_popup(phone.client, phone.screenshot, png_bytes):
+        _register_popup_page(png_bytes, dedup, app_log_dir)
         png_bytes = phone.screenshot()
 
     # ── Overlay detection (前置于去重，命中则强制新页面) ──
@@ -273,10 +274,20 @@ def _dfs_recursive(
         }
         return None, dedup_info
 
-    # ── New page: now do expensive LLM parse ──
+    # ── New page: parse elements + fingerprint concurrently ──
+    import re as _re
+    import concurrent.futures as _cf
     from policy_expr.recon.page_parser import PageParser
-    knowledge = PageParser().analyze_screen(png_bytes)
-    page_name, fingerprint = _page_name_from_fingerprint(png_bytes)
+
+    with _cf.ThreadPoolExecutor(max_workers=2) as _ex:
+        _fut_know = _ex.submit(PageParser().analyze_screen, png_bytes)
+        _fut_fp   = _ex.submit(get_matcher().generate_fingerprint, png_bytes)
+        knowledge = _fut_know.result()
+        _fp       = _fut_fp.result()
+
+    page_name   = _re.sub(r'[\\/:*?"<>|\s]+', '_', _fp.purpose) or "page"
+    fingerprint = f"用途：{_fp.purpose}\n内容区：{_fp.content}\n页面形态：{_fp.form}"
+    print(f"  [fingerprint] form={_fp.form} content={_fp.content} purpose={_fp.purpose}")
 
     # Add to dedup library (reuse pre-computed embedding)
     dedup.add(png_bytes, name=page_name, emb=candidate_emb)
@@ -576,23 +587,17 @@ def _count_nodes(nodes: list[DfsPageNode]) -> int:
 
 
 def _page_name_from_fingerprint(png_bytes: bytes) -> tuple[str, str]:
-    """Generate a stable page name from the fingerprint '用途' line.
+    """Generate a stable page name from the fingerprint purpose field.
 
     Returns (page_name, fingerprint_text).
     """
     import re
     from policy_expr.recon.cascade_matcher import get_matcher
     matcher = get_matcher()
-    fingerprint = matcher._generate_fingerprint(png_bytes)
-    # Extract the 用途 line
-    for line in fingerprint.splitlines():
-        if line.startswith("用途：") or line.startswith("用途:"):
-            name = line.split("：", 1)[-1].split(":", 1)[-1].strip()
-            break
-    else:
-        name = fingerprint[:20].strip()
-    name = re.sub(r'[\\/:*?"<>|\s]+', '_', name)
-    return name or "page", fingerprint
+    fp = matcher.generate_fingerprint(png_bytes)
+    name = re.sub(r'[\\/:*?"<>|\s]+', '_', fp.purpose)
+    fingerprint_text = f"用途：{fp.purpose}\n内容区：{fp.content}\n页面形态：{fp.form}"
+    return name or "page", fingerprint_text
 
 
 def _sanitize_filename(label: str) -> str:
@@ -662,6 +667,36 @@ def compute_pairwise_similarity(
 # ---------------------------------------------------------------------------
 # Dedup terminal output
 # ---------------------------------------------------------------------------
+
+def _register_popup_page(png_bytes: bytes, dedup: "PageIdentity", app_log_dir: Path) -> None:
+    """Record a full-screen popup screenshot into the dedup library (as a leaf page).
+
+    Called before close_popup dismisses the popup, so it's never silently dropped.
+    Skipped if the popup is already known (dedup returns is_duplicate=True).
+    """
+    import re as _re
+    from policy_expr.recon.cascade_matcher import get_matcher
+
+    matcher = get_matcher()
+    emb = matcher.embed_visual(png_bytes)
+    result = dedup.check(png_bytes, precomputed=emb)
+    if result.is_duplicate:
+        print(f"  [popup] 已知弹窗 → 匹配「{result.matched_name}」，跳过入库")
+        return
+
+    fp = matcher.generate_fingerprint(png_bytes)
+    page_name = _re.sub(r'[\\/:*?"<>|\s]+', '_', fp.purpose) or "popup_page"
+    # Avoid collisions with already-probed page dirs
+    popup_dir = app_log_dir / page_name
+    suffix = 1
+    while popup_dir.exists():
+        popup_dir = app_log_dir / f"{page_name}_{suffix}"
+        suffix += 1
+    popup_dir.mkdir(parents=True, exist_ok=True)
+    (popup_dir / "initial.png").write_bytes(png_bytes)
+    print(f"  [popup] 新弹窗页 → 入库「{page_name}」，保存至 {popup_dir.name}/")
+    dedup.add(png_bytes, name=page_name, emb=emb)
+
 
 def _check_overlay(nav_stack, png_bytes: bytes):
     """Detect popup/keyboard overlay against the previous nav_stack frame.

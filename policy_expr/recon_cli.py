@@ -87,20 +87,12 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
         if hud:
             hud.update(f"侦察 {app}: 预加载模型…")
 
-        # Preload GUIClip model to avoid loading it during exploration
-        print("预加载 GUIClip 模型...")
-        from policy_expr.recon.back_nav import _get_identity_comp
-        import io
-        from PIL import Image
-
-        # Create a dummy 1x1 white image to trigger model loading
-        dummy_img = io.BytesIO()
-        Image.new('RGB', (1, 1), color='white').save(dummy_img, format='PNG')
-        dummy_bytes = dummy_img.getvalue()
-
-        # Call similarity once to trigger model loading
-        comp = _get_identity_comp()
-        comp.raw_similarity(dummy_bytes, dummy_bytes)
+        # Preload all local models before exploration starts
+        print("预加载模型...")
+        from policy_expr.recon.cascade_matcher import get_matcher
+        from policy_expr.recon.icon_detector import warm_up as _yolo_warm_up
+        get_matcher().warm_up()
+        _yolo_warm_up()
 
         if hud:
             hud.update(f"侦察 {app}: DFS 探索 (depth={depth})…")
