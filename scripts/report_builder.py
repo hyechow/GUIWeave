@@ -179,6 +179,17 @@ def _json_val_html(v) -> str:
     return str(v)
 
 
+_OVERLAY_FORMS = frozenset("CDEFG")
+_FORM_LABELS = {"C": "弹窗", "D": "底部面板", "E": "侧边抽屉", "F": "菜单", "G": "键盘页"}
+
+
+def _form_from_fingerprint(fingerprint: str) -> str | None:
+    """Extract form letter from fingerprint text '...页面形态：X'."""
+    import re as _re
+    m = _re.search(r'页面形态[：:]\s*([A-G])', fingerprint or "")
+    return m.group(1) if m else None
+
+
 def _render_identity_json(identity: dict) -> str:
     items = list(identity.items())
     rows = ""
@@ -990,6 +1001,7 @@ RECON_HTML_TEMPLATE = """\
   }}
   .tap-identity-new {{ background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }}
   .tap-identity-dup {{ background: #fefce8; color: #a16207; border: 1px solid #fde68a; }}
+  .tap-identity-overlay {{ background: #fdf4ff; color: #7e22ce; border: 1px solid #e9d5ff; }}
   .tap-identity-desc {{ font-size: 11px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }}
   .tap-identity-scores {{ font-size: 11px; color: #94a3b8; font-family: monospace; flex-shrink: 0; }}
   .tap-preview-btn {{
@@ -1279,13 +1291,22 @@ def _render_page_card_html(node: NavNode, path: list[str]) -> str:
             identity_json_panel = f'<div class="tap-json-panel" id="{json_id}">{json_html}</div>'
 
             if is_new:
-                phase_label = {"new_page": "新页面", "visual_shortcut": "新页面", "text_match": "新页面"}.get(phase, phase)
-                identity_html = (
-                    f'<span class="tap-identity tap-identity-new"'
-                    f' onclick="toggleIdentity(\'{json_id}\', this)">✦ {phase_label}</span>'
-                )
+                form = _form_from_fingerprint(ident.get("fingerprint", ""))
+                is_overlay = form in _OVERLAY_FORMS if form else False
+                if is_overlay:
+                    form_label = _FORM_LABELS.get(form or "", "弹窗页")
+                    identity_html = (
+                        f'<span class="tap-identity tap-identity-overlay"'
+                        f' onclick="toggleIdentity(\'{json_id}\', this)">◈ {form_label}</span>'
+                    )
+                else:
+                    phase_label = {"new_page": "新页面", "visual_shortcut": "新页面", "text_match": "新页面"}.get(phase, phase)
+                    identity_html = (
+                        f'<span class="tap-identity tap-identity-new"'
+                        f' onclick="toggleIdentity(\'{json_id}\', this)">✦ {phase_label}</span>'
+                    )
             else:
-                phase_label = {"visual_shortcut": "视觉命中", "text_match": "语义命中"}.get(phase, phase)
+                phase_label = {"visual_shortcut": "视觉命中", "semantic_match": "语义命中", "text_match": "语义命中"}.get(phase, phase)
                 identity_html = (
                     f'<span class="tap-identity tap-identity-dup"'
                     f' onclick="toggleIdentity(\'{json_id}\', this)">⟳ {phase_label}</span>'
