@@ -152,11 +152,13 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
 
         # Return to root page
         print(f"\n  ← 返回「{page_name}」")
+        child_elements = (child_dedup or {}).get("initial_elements")
         ok, back_log = return_to_initial(
             phone.client, phone.screenshot, nav_stack,
             before_back_bytes=phone.screenshot(),
             nav_context=make_nav_context(area.label, area.element_type),
             target_label=page_name,
+            after_elements=child_elements,
         )
         if not ok:
             recovered = _manual_recover(
@@ -310,6 +312,12 @@ def _dfs_recursive(
         "library_size": n,
         "page_name": page_name,
         "fingerprint": fingerprint,
+        # Parsed elements for this page (0-1000 coords) — used by back_nav LLM
+        "initial_elements": [
+            {"label": a.label, "element_type": a.element_type,
+             "x": a.center_xy[0], "y": a.center_xy[1]}
+            for a in knowledge.areas
+        ],
     }
 
     out_dir = app_log_dir / page_name
@@ -362,11 +370,13 @@ def _dfs_recursive(
 
                 # Return to current page
                 print(f"\n  ← 返回「{page_name}」")
+                child_elements = (child_dedup or {}).get("initial_elements")
                 ok, back_log = return_to_initial(
                     phone.client, phone.screenshot, nav_stack,
                     before_back_bytes=phone.screenshot(),
                     nav_context=make_nav_context(area.label, area.element_type),
                     target_label=page_name,
+                    after_elements=child_elements,
                 )
                 if not ok:
                     recovered = _manual_recover(

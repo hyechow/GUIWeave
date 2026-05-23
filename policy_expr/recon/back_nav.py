@@ -188,7 +188,7 @@ def _format_elements_context(elements: list[dict]) -> str:
     """Format element list for inclusion in the LLM back-nav prompt."""
     if not elements:
         return ""
-    lines = ["以下是AFTER页面检测到的可交互元素（请仅从这些元素中选择点击目标）："]
+    lines = ["以下是AFTER页面预检测到的可交互元素坐标（供参考，最终以视觉判断为准）："]
     for el in elements:
         label = el.get("label") or ""
         etype = el.get("element_type", "")
@@ -642,6 +642,7 @@ def _execute_strategy(
     page_hash: str = "",
     round_num: int = 0,
     target_label: str = "",
+    after_elements: list[dict] | None = None,
 ) -> tuple[float, float, bytes] | None:
     """Execute one strategy with optional YOLO fallback.
 
@@ -687,6 +688,7 @@ def _execute_strategy(
     llm_action = infer_back_action(initial_bytes, current_bytes, nav_context=nav_context,
                                     target_label=target_label,
                                     failed_attempts=llm_failed_attempts,
+                                    after_elements=after_elements,
                                     debug_path=debug_path)
     if llm_action is None:
         log.append({"strategy": strategy, "result": "未能识别返回动作",
@@ -747,6 +749,7 @@ def return_to_initial(
     tap_index: int = 0,
     nav_context: str = "",
     target_label: str = "",
+    after_elements: list[dict] | None = None,
 ) -> tuple[bool, list[dict]]:
     """Navigate back to the initial page (top of nav_stack).
 
@@ -809,6 +812,7 @@ def return_to_initial(
             llm_failed_attempts=llm_failed_attempts,
             page_hash=ph, round_num=round_num,
             target_label=target_label,
+            after_elements=after_elements if round_num == 1 else None,
         )
         tried.add(strategy)
 
