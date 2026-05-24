@@ -1,4 +1,4 @@
-"""YOLO-based icon detector for UI screenshots."""
+"""YOLO-based icon detector for UI screenshots (ONNX Runtime backend)."""
 
 from __future__ import annotations
 
@@ -7,10 +7,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image
 
-MODEL_PATH = Path("models/omniparser_v2/icon_detect/model.pt")
+MODEL_PATH_PT = Path("models/omniparser_v2/icon_detect/model.pt")
+MODEL_PATH_ONNX = MODEL_PATH_PT.with_suffix(".onnx")
 DEFAULT_CONF = 0.3
+
+# YOLO input size
+_IMG_SIZE = 640
+# NMS IoU threshold
+_NMS_IOU = 0.45
 
 
 @dataclass
@@ -33,20 +40,33 @@ class IconBbox:
 _model_cache: dict[Path, Any] = {}
 
 
-def warm_up(model_path: Path = MODEL_PATH) -> None:
+def warm_up(model_path: Path = MODEL_PATH_PT) -> None:
     """Eagerly load the YOLO model at program startup."""
     import time
     print(f"  [warm_up] 加载 YOLO...", end=" ", flush=True)
     t0 = time.time()
-    _load_yolo(model_path)
+    path = _resolve_model_path(model_path)
+    _load_model(path)
     print(f"({time.time() - t0:.1f}s)")
 
 
-def _load_yolo(model_path: Path):
-    """Load YOLO model once per process; subsequent calls return cached instance."""
+def _resolve_model_path(model_path: Path) -> Path:
+    """Return .onnx if available, else .pt."""
+    onnx_path = model_path.with_suffix(".onnx")
+    return onnx_path if onnx_path.exists() else model_path
+
+
+def _load_model(model_path: Path):
+    """Load model once per process; subsequent calls return cached instance."""
     if model_path not in _model_cache:
-        from ultralytics import YOLO
-        _model_cache[model_path] = YOLO(str(model_path))
+        if model_path.suffix == ".onnx":
+            import onnxruntime as ort
+            _model_cache[model_path] = ort.InferenceSession(
+                str(model_path), providers=["CPUExecutionProvider"],
+            )
+        else:
+            from ultralytics import YOLO
+            _model_cache[model_path] = YOLO(str(model_path))
     return _model_cache[model_path]
 
 
@@ -55,15 +75,20 @@ class IconDetector:
 
     def __init__(
         self,
-        model_path: Path = MODEL_PATH,
+        model_path: Path = MODEL_PATH_PT,
         conf: float = DEFAULT_CONF,
     ) -> None:
-        self._model = _load_yolo(model_path)
+        self._path = _resolve_model_path(model_path)
+        self._model = _load_model(self._path)
         self._conf = conf
 
     def detect(self, png_bytes: bytes) -> list[IconBbox]:
         """Return icon bounding boxes in pixel coordinates of the input image."""
         img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+
+        if self._path.suffix == ".onnx":
+            return self._detect_onnx(img)
+        # Fallback: ultralytics
         results = self._model(img, conf=self._conf, verbose=False)
         bboxes: list[IconBbox] = []
         for r in results:
@@ -72,6 +97,68 @@ class IconDetector:
             for box in r.boxes:
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 bboxes.append(IconBbox(x1, y1, x2, y2, float(box.conf[0])))
+        return bboxes
+
+    # ── ONNX inference path ──────────────────────────────────────────────
+
+    def _detect_onnx(self, img: Image.Image) -> list[IconBbox]:
+        import onnxruntime as ort
+
+        session: ort.InferenceSession = self._model
+        iw, ih = img.size
+
+        # Letterbox resize
+        resized, ratio, (pad_w, pad_h) = _letterbox(img, _IMG_SIZE)
+
+        # HWC RGB → CHW BGR, normalize to [0,1]
+        arr = np.array(resized, dtype=np.float32)
+        arr = arr[:, :, ::-1]  # RGB → BGR
+        arr = arr.transpose(2, 0, 1)  # HWC → CHW
+        arr /= 255.0
+        blob = arr[np.newaxis, ...]  # (1, 3, 640, 640)
+
+        # Inference
+        input_name = session.get_inputs()[0].name
+        outputs = session.run(None, {input_name: blob})
+        pred = outputs[0]  # (1, 5, 8400) for single-class: [cx, cy, w, h, conf]
+
+        # Parse: shape is (1, 5, 8400) → transpose to (8400, 5)
+        pred = pred[0].T  # (8400, 5)
+
+        # Filter by confidence
+        mask = pred[:, 4] >= self._conf
+        pred = pred[mask]
+
+        if len(pred) == 0:
+            return []
+
+        # cx, cy, w, h → x1, y1, x2, y2 (in 640×640 space)
+        boxes_640 = np.zeros((len(pred), 4), dtype=np.float32)
+        boxes_640[:, 0] = pred[:, 0] - pred[:, 2] / 2  # x1
+        boxes_640[:, 1] = pred[:, 1] - pred[:, 3] / 2  # y1
+        boxes_640[:, 2] = pred[:, 0] + pred[:, 2] / 2  # x2
+        boxes_640[:, 3] = pred[:, 1] + pred[:, 3] / 2  # y2
+        scores = pred[:, 4]
+
+        # NMS
+        keep = _nms(boxes_640, scores, _NMS_IOU)
+        boxes_640 = boxes_640[keep]
+        scores = scores[keep]
+
+        # Scale back to original image coordinates
+        bboxes: list[IconBbox] = []
+        for i in range(len(boxes_640)):
+            x1 = (boxes_640[i, 0] - pad_w) / ratio
+            y1 = (boxes_640[i, 1] - pad_h) / ratio
+            x2 = (boxes_640[i, 2] - pad_w) / ratio
+            y2 = (boxes_640[i, 3] - pad_h) / ratio
+            # Clamp to image bounds
+            x1 = max(0, min(x1, iw))
+            y1 = max(0, min(y1, ih))
+            x2 = max(0, min(x2, iw))
+            y2 = max(0, min(y2, ih))
+            bboxes.append(IconBbox(x1, y1, x2, y2, float(scores[i])))
+
         return bboxes
 
     def detect_filtered(
@@ -130,12 +217,62 @@ class IconDetector:
         return [b for i, b in enumerate(sorted_boxes) if i not in covered]
 
 
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+
+def _letterbox(img: Image.Image, target: int) -> tuple[Image.Image, float, tuple[float, float]]:
+    """Resize with letterbox padding. Returns (resized, ratio, (pad_w, pad_h))."""
+    iw, ih = img.size
+    ratio = min(target / iw, target / ih)
+    new_w = int(iw * ratio)
+    new_h = int(ih * ratio)
+    pad_w = (target - new_w) / 2
+    pad_h = (target - new_h) / 2
+
+    resized = img.resize((new_w, new_h), Image.LANCZOS)
+    canvas = Image.new("RGB", (target, target), (114, 114, 114))
+    canvas.paste(resized, (int(pad_w), int(pad_h)))
+    return canvas, ratio, (pad_w, pad_h)
+
+
+def _nms(boxes: np.ndarray, scores: np.ndarray, iou_thresh: float) -> list[int]:
+    """Non-Maximum Suppression. Returns list of kept indices."""
+    order = scores.argsort()[::-1]
+    keep: list[int] = []
+
+    while len(order) > 0:
+        i = order[0]
+        keep.append(int(i))
+        if len(order) == 1:
+            break
+        rest = order[1:]
+        ious = _box_iou(boxes[i:i+1], boxes[rest])[0]
+        mask = ious < iou_thresh
+        order = rest[mask]
+
+    return keep
+
+
+def _box_iou(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Compute IoU between two sets of boxes. a: (N,4), b: (M,4) → (N,M)."""
+    area_a = (a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1])
+    area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
+
+    inter_x1 = np.maximum(a[:, None, 0], b[None, :, 0])
+    inter_y1 = np.maximum(a[:, None, 1], b[None, :, 1])
+    inter_x2 = np.minimum(a[:, None, 2], b[None, :, 2])
+    inter_y2 = np.minimum(a[:, None, 3], b[None, :, 3])
+
+    inter = np.maximum(0, inter_x2 - inter_x1) * np.maximum(0, inter_y2 - inter_y1)
+    return inter / (area_a[:, None] + area_b[None, :] - inter + 1e-6)
+
+
 def _gray_std(img: Image.Image, box: IconBbox) -> float:
     crop = img.crop((
         max(0, int(box.x1)),
         max(0, int(box.y1)),
         min(img.width, int(box.x2)),
-        min(img.height, int(box.y2)),
+        min(img.height, int(box.x2)),
     ))
     if crop.width <= 0 or crop.height <= 0:
         return 0.0

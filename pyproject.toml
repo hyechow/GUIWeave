@@ -29,4 +29,7 @@ dependencies = [
     "scikit-image>=0.26.0",
     "transformers>=5.8.1",
     "sentence-transformers>=5.5.0",
+    "onnxruntime",
+    "onnx",
+    "onnxslim",
 ]

@@ -32,6 +32,7 @@ from policy_expr.executor import logical_xy
 from policy_expr.recon.page_compare import make_comparator
 from policy_expr.recon.page_parser import PageParser
 from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context, BACK_PROMPT
+from policy_expr.recon.planned_back_nav import planned_return_to_initial
 from policy_expr.recon.dfs import _page_name_from_fingerprint
 
 MAX_DEPTH = 5
@@ -296,7 +297,14 @@ def main() -> None:
 
         print()
         before_back = screenshot()
-        success, log = return_to_initial(
+
+        # Choose back-nav engine
+        raw_mode = input("  回退模式？(1=旧规则 2=planner，默认 2): ").strip()
+        use_planned = raw_mode != "1"
+        print(f"  使用 {'planned_back_nav' if use_planned else 'back_nav (规则)'}")
+
+        back_fn = planned_return_to_initial if use_planned else return_to_initial
+        success, log = back_fn(
             client=phone.client,
             screenshot=screenshot,
             nav_stack=target_stack,
