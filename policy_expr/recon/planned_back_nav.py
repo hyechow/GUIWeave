@@ -72,6 +72,7 @@ BACK_PLANNER_PROMPT = """\
 
 ### Q1：CURRENT 有浮层/弹窗覆盖吗？
 检查 CURRENT 全屏：是否有弹窗、对话框、底部弹出面板或广告浮层叠在底层页面上方？
+**即使目标页面或触发操作涉及 tab，只要 CURRENT 有弹窗就必须先处理弹窗，不要跳到 Q2。**
 
 浮层必须满足：**大面积遮盖主要页面内容**（通常占屏幕 40% 以上），底层页面被遮住大部分，浮层有独立边框/阴影/半透明遮罩。
 
@@ -113,6 +114,7 @@ iPhone 应用通常同时存在两类 tab 栏，须分开判断：
 
 ### Q3：审视 CURRENT 页面的导航元素
 仔细观察 CURRENT 页面，按以下优先级寻找可回退的 UI 元素：
+**如果 CURRENT 有独立的返回箭头或关闭按钮，说明它是导航进入的新页面，即使触发操作涉及 tab 也应走 Q3。**
 
 1. **左上角返回按钮**：是否存在 < ← 箭头或"返回"文字？→ 指令 = "点击左上角返回箭头"
 2. **页面级关闭/取消按钮**：编辑页、发布页、详情页等通常有「取消」「关闭」「×」按钮 → 注意检查**左上角和右上角**两个位置 → 指令 = "点击「取消/关闭」按钮"
@@ -144,6 +146,7 @@ def _invoke_planner(
     nav_context: str = "",
     history: list[dict] | None = None,
     target_label: str = "",
+    target_description: str = "",
 ) -> _BackPlanResult:
     """Ask the planner for the next navigation instruction."""
     llm = _make_llm()

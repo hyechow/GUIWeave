@@ -50,10 +50,11 @@ class StructuredOutputPolicy(BaseActionPolicy):
 
     name = "structured_output"
 
-    def decide(self, observation: Observation, instruction: str) -> ActionDecision:
+    def decide(self, observation: Observation, instruction: str, *, verbose: bool = True) -> ActionDecision:
         cfg = resolve_llm_config("action_policy")
-        print(f"Provider : {cfg.provider}")
-        print(f"Model    : {cfg.model}")
+        if verbose:
+            print(f"Provider : {cfg.provider}")
+            print(f"Model    : {cfg.model}")
 
         b64 = base64.b64encode(resize_to_logical_png(observation.png_bytes)).decode()
         llm = ChatOpenAI(

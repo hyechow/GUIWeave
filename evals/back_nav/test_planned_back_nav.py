@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from policy_expr.recon.planned_back_nav import _invoke_planner
+from policy_expr.config import resolve_llm_config
 from policy_expr.policies.structured_output import StructuredOutputPolicy
 from policy_expr.schemas import Observation
 
@@ -78,7 +79,11 @@ def main() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     action_policy = StructuredOutputPolicy()
 
-    print(f"\n=== Back Nav2 Eval ({len(cases)} cases) ===\n")
+    print(f"\n=== Back Nav2 Eval ({len(cases)} cases) ===")
+    planner_cfg = resolve_llm_config("back_nav")
+    action_cfg = resolve_llm_config("action_policy")
+    print(f"Planner: {planner_cfg.provider}/{planner_cfg.model}  "
+          f"Action: {action_cfg.provider}/{action_cfg.model}\n")
 
     # ── Part 1: Planner instruction quality ──────────────────────────────
     print("── Planner instructions ──")
@@ -93,6 +98,8 @@ def main() -> None:
         before_png = before_path.read_bytes()
         after_png = after_path.read_bytes()
         nav_context = c.get("nav_context", "")
+        target_label = c.get("target_label", "")
+        target_description = c.get("target_description", "")
         exp = c["expected"]
 
         # Planner: sees TARGET (before) + CURRENT (after)
@@ -100,6 +107,8 @@ def main() -> None:
             target_png=before_png,
             current_png=after_png,
             nav_context=nav_context,
+            target_label=target_label,
+            target_description=target_description,
         )
 
         got_type = _classify_page_type(plan.instruction)
@@ -109,7 +118,7 @@ def main() -> None:
 
         # Action policy: convert instruction to coordinates
         obs = Observation(png_bytes=after_png, source="planned_back_nav_eval")
-        decision = action_policy.decide(obs, plan.instruction)
+        decision = action_policy.decide(obs, plan.instruction, verbose=False)
 
         if decision.not_found_reason:
             _report(f"{c['id']}: y_zone={exp.get('y_zone', '')}", False,
