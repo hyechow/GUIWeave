@@ -83,8 +83,9 @@ BACK_PLANNER_PROMPT = """\
 → 满足浮层条件时，根据弹窗内容选择操作：
 
 **A. 确认/放弃类弹窗**（询问"是否保存""是否放弃修改""离开此页"等）
-→ 选择能**离开当前页面**的选项（如"不保存""放弃""离开""不保留"）
-→ ⚠️ 绝对不要点击 × 关闭确认弹窗 — × 只会关闭弹窗让你留在当前页面，无法回退
+→ 优先选择能**离开当前页面**的选项（如"不保存"/"Discard""放弃"/"Abandon""离开"/"Leave""不保留"）
+→ 如果弹窗的 × 按钮明确是"取消操作并返回"（而非"关闭弹窗留在当前页"），则点 × 也是合理的
+→ 判断依据：观察弹窗整体语境，× 旁边是否有"取消"文字提示
 
 **B. 其他弹窗**（广告、提示、授权请求等与回退无关的内容）
 → 指令 = "点击弹窗的关闭按钮"
@@ -108,15 +109,17 @@ iPhone 应用通常同时存在两类 tab 栏，须分开判断：
 - 不要点击 CURRENT 中已处于选中状态的 tab，要点击 TARGET 中选中的那个
 - 触发操作含「tab」不代表条件 3 自动满足，须逐字核实 tab 名称确实出现在该排选项里
 - 如果 CURRENT 的页面结构与 TARGET 完全不同（有独立的导航栏、返回按钮），说明不是同页面的 tab 切换而是导航到了新页面，应走 Q3
+- **同栏原则**：触发操作是顶部tab → 回退也点顶部tab栏；触发操作是底部tab → 回退也点底部tab栏。不要跨栏操作
 
 ### Q3：审视 CURRENT 页面的导航元素
 仔细观察 CURRENT 页面，按以下优先级寻找可回退的 UI 元素：
 
 1. **左上角返回按钮**：是否存在 < ← 箭头或"返回"文字？→ 指令 = "点击左上角返回箭头"
-2. **页面级关闭/取消按钮**：编辑页、发布页、详情页等通常有「取消」「关闭」「×」按钮（可能在左上角或右上角）→ 指令 = "点击「取消/关闭」按钮"
-3. **底部操作栏**：某些页面底部有「返回」「完成」等操作按钮 → 指令 = "点击底部的「返回/完成」按钮"
+2. **页面级关闭/取消按钮**：编辑页、发布页、详情页等通常有「取消」「关闭」「×」按钮 → 注意检查**左上角和右上角**两个位置 → 指令 = "点击「取消/关闭」按钮"
+3. **右上角完成按钮**：iOS 常见模式，全屏详情页、编辑页右上角有「完成」「Done」→ 指令 = "点击右上角「完成」按钮"
+4. **底部操作栏**：某些页面底部有「返回」「完成」等操作按钮 → 指令 = "点击底部的「返回/完成」按钮"
 
-⚠️ 关键：必须根据 CURRENT 截图中**实际可见的 UI 元素**做判断，不要盲目假设有返回箭头。编辑类页面（表单填写、内容发布、设置编辑）通常没有 < 箭头，而是提供「取消」或「关闭」按钮。
+⚠️ 关键：必须根据 CURRENT 截图中**实际可见的 UI 元素**做判断，不要盲目假设有返回箭头。编辑类页面（表单填写、内容发布、设置编辑）通常没有 < 箭头，而是提供「取消」「关闭」或「完成」按钮。
 
 ## 规则
 - 每步只输出一个原子操作
@@ -255,6 +258,17 @@ def planned_return_to_initial(
     history: list[dict] = []
     consecutive_no_change = 0
 
+    # Annotate nav_context with tab position from tap coordinates
+    annotated_context = nav_context
+    if nav_context and "tab" in nav_context:
+        tap_coords = nav_stack[top_level][1]
+        if tap_coords:
+            _, tap_y = tap_coords
+            if tap_y > 800:
+                annotated_context = nav_context.replace("tab", "底部tab", 1)
+            elif tap_y < 350:
+                annotated_context = nav_context.replace("tab", "顶部tab", 1)
+
     for round_num in range(1, _MAX_ROUNDS + 1):
         ph = _page_hash(current_bytes)
         _nav_print(f"开始规划", page_hash=ph, round_num=round_num)
@@ -281,7 +295,7 @@ def planned_return_to_initial(
         # ── Step 2: Planner (1 LLM call) ──
         plan = _invoke_planner(
             initial_bytes, current_bytes,
-            nav_context=nav_context,
+            nav_context=annotated_context,
             history=history,
             target_label=target_label,
         )
@@ -293,7 +307,7 @@ def planned_return_to_initial(
             _nav_print("指令重复已失败操作，重试...", page_hash=ph, round_num=round_num)
             plan = _invoke_planner(
                 initial_bytes, current_bytes,
-                nav_context=nav_context,
+                nav_context=annotated_context,
                 history=history,
                 target_label=target_label,
             )

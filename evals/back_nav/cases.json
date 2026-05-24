@@ -3,7 +3,8 @@
     "id": "wechat_bottom_tab_通讯录",
     "before": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
     "after": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/tap/tap_04_通讯录.png",
-    "nav_context": "点击了tab「通讯录」",
+    "nav_context": "点击了底部tab「通讯录」",
+    "tap_xy": [500, 932],
     "expected": {
       "page_type": "B",
       "can_go_back": true,
@@ -15,7 +16,8 @@
     "id": "wechat_bottom_tab_我",
     "before": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
     "after": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/tap/tap_05_我.png",
-    "nav_context": "点击了tab「我」",
+    "nav_context": "点击了底部tab「我」",
+    "tap_xy": [500, 945],
     "expected": {
       "page_type": "B",
       "can_go_back": true,
@@ -27,31 +29,34 @@
     "id": "pdd_top_tab_多人团",
     "before": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/initial.png",
     "after": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/tap/tap_02_多人团.png",
-    "nav_context": "点击了tab「多人团」",
+    "nav_context": "点击了顶部tab「多人团」",
+    "tap_xy": [300, 180],
     "expected": {
       "page_type": "C",
       "can_go_back": true,
       "y_zone": "back_btn"
     },
-    "note": "AFTER右下角有小支付浮层但视觉不显著，LLM合理判type C（左上角返回）。原expected type A有误——小支付按钮不符合弹窗视觉特征，不应强制要求type A"
+    "note": "拼多多顶部tab点击后进入子页面（有返回箭头），虽然是tab但实际是页面导航。LLM应识别type C点击返回"
   },
   {
     "id": "pdd_top_tab_食品",
     "before": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/initial.png",
     "after": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/tap/tap_04_食品.png",
-    "nav_context": "点击了tab「食品」",
+    "nav_context": "点击了顶部tab「食品」",
+    "tap_xy": [400, 180],
     "expected": {
       "page_type": "B",
       "can_go_back": true,
       "y_zone": "top_tab"
     },
-    "note": "拼多多顶部tab切换：精选→食品，tab在页面顶部"
+    "note": "拼多多顶部tab切换：精选→食品，tab在页面顶部，同一页面内容切换"
   },
   {
     "id": "huxiu_bottom_tab_我的",
     "before": "../cascade_matcher/data/虎嗅/浏览资讯推荐与专题内容/initial.png",
     "after": "../cascade_matcher/data/虎嗅/浏览资讯推荐与专题内容/tap/tap_03_我的.png",
-    "nav_context": "点击了tab「我的」",
+    "nav_context": "点击了底部tab「我的」",
+    "tap_xy": [800, 940],
     "expected": {
       "page_type": "A",
       "can_go_back": true,
@@ -64,6 +69,7 @@
     "before": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
     "after": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/tap/tap_03_珍珠.png",
     "nav_context": "点击了icon「珍珠」",
+    "tap_xy": [500, 400],
     "expected": {
       "page_type": "C",
       "can_go_back": true,
@@ -76,6 +82,7 @@
     "before": "../cascade_matcher/data/虎嗅/浏览推荐资讯并点击查看详情/initial.png",
     "after": "../cascade_matcher/data/虎嗅/浏览推荐资讯并点击查看详情/tap/tap_01_红餐网.png",
     "nav_context": "点击了link「红餐网」",
+    "tap_xy": [500, 500],
     "expected": {
       "page_type": "C",
       "can_go_back": true,
@@ -87,7 +94,8 @@
     "id": "pdd_bottom_tab_个人中心",
     "before": "data/pdd_bottom_tab_ref_L0_target.png",
     "after": "data/pdd_bottom_tab_after.png",
-    "nav_context": "点击了tab「个人中心」",
+    "nav_context": "点击了底部tab「个人中心」",
+    "tap_xy": [800, 940],
     "expected": {
       "page_type": "B",
       "can_go_back": true,
@@ -99,62 +107,67 @@
     "id": "xianyu_top_tab_新发",
     "before": "data/xianyu_新发_before.png",
     "after": "data/xianyu_新发_after.png",
-    "nav_context": "点击了tab「新发」",
+    "nav_context": "点击了顶部tab「新发」",
+    "tap_xy": [300, 180],
     "expected": {
       "page_type": "B",
       "can_go_back": true,
       "y_zone": "top_tab"
     },
-    "note": "闲鱼顶部tab切换：推荐→新发。失败案例：LLM正确识别type B和目标tab「推荐」，但y坐标偏高~20单位，打到搜索栏内相机图标，触发相机权限弹窗。坐标需落在tab文字行内而非搜索栏"
+    "note": "闲鱼顶部tab切换：推荐→新发，同一页面内容切换"
   },
   {
     "id": "xianyu_content_entry_省钱神券",
     "before": "data/xianyu_ref_L0_target.png",
     "after": "data/xianyu_R1_before.png",
-    "nav_context": "点击了tab「省钱神券」",
+    "nav_context": "点击了顶部tab「省钱神券」",
+    "tap_xy": [450, 180],
     "expected": {
       "page_type": "B",
       "can_go_back": true,
       "y_zone": "top_tab"
     },
-    "note": "闲鱼顶部内容tab切换：BEFORE中「推荐」高亮，AFTER中「省钱神券」高亮，同一排顶部tab栏。应type B点击AFTER顶部tab栏中的「推荐」。之前误判为type C是因为YOLO把搜索框误标为返回箭头"
+    "note": "闲鱼顶部内容tab切换：BEFORE中「推荐」高亮，AFTER中「省钱神券」高亮，同一排顶部tab栏"
   },
   {
     "id": "xianyu_recon_tab_省钱神券",
     "before": "data/xianyu_recon_省钱神券_before.png",
     "after": "data/xianyu_recon_省钱神券_after.png",
-    "nav_context": "点击了tab「省钱神券」",
+    "nav_context": "点击了顶部tab「省钱神券」",
+    "tap_xy": [450, 180],
     "expected": {
       "page_type": "B",
       "can_go_back": true,
       "y_zone": "top_tab"
     },
-    "note": "闲鱼recon实录：浏览二手商品（找服务子页）→省钱神券tab切换。LLM曾误选AFTER中已选中的「省钱神券」tab(458,192)，应选BEFORE中选中的tab。对应Fix2校验拦截场景。"
+    "note": "闲鱼recon实录：浏览二手商品（找服务子页）→省钱神券tab切换"
   },
   {
     "id": "multi_step_edit_close",
     "before": "data/multi_edit_target.png",
     "after": "data/multi_edit_page.png",
     "nav_context": "点击了icon「消息」",
+    "tap_xy": [260, 96],
     "target_label": "查看AI服务详情",
     "expected": {
       "page_type": "C",
       "can_go_back": true,
       "y_zone": "back_btn"
     },
-    "note": "多步回退-步骤1：从服务发布编辑页回退到AI服务详情页。编辑页左上角有×关闭按钮（无返回箭头），planner应识别为Q3页面级关闭按钮，点击×触发确认弹窗"
+    "note": "多步回退-步骤1：从服务发布编辑页回退到AI服务详情页。编辑页左上角有×关闭按钮（无返回箭头），planner应识别为Q3页面级关闭按钮"
   },
   {
     "id": "multi_step_confirm_popup",
     "before": "data/multi_edit_target.png",
     "after": "data/multi_edit_popup.png",
     "nav_context": "点击了icon「消息」",
+    "tap_xy": [260, 96],
     "target_label": "查看AI服务详情",
     "expected": {
       "page_type": "A",
       "can_go_back": true,
       "y_zone": "popup_confirm"
     },
-    "note": "多步回退-步骤2：点击×后弹出「要不要先存个草稿」确认弹窗，有「不保存」「存草稿」两个选项。planner应识别为Q1-A确认类弹窗，点击「不保存」离开编辑页。绝对不能点×关闭弹窗（会留在编辑页形成循环）"
+    "note": "多步回退-步骤2：点击×后弹出确认弹窗，planner应点击「不保存」离开编辑页"
   }
 ]
