@@ -30,7 +30,6 @@ from policy_expr.policies.structured_output import StructuredOutputPolicy
 from policy_expr.recon.back_nav import (
     BACK_SETTLE_SECONDS,
     _PIXEL_DIFF_THRESHOLD,
-    _get_change_comp,
     _get_identity_comp,
     _match_stack,
     _navigate_forward,
@@ -67,18 +66,30 @@ class _BackPlanResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 BACK_PLANNER_PROMPT = """\
-你是 iPhone 应用返回导航规划器。根据两张截图（TARGET 和 CURRENT）以及触发操作描述，判断如何从 CURRENT 回回 TARGET。
+你是 iPhone 应用返回导航规划器。根据两张截图（TARGET 和 CURRENT）以及触发操作描述，判断如何从 CURRENT 回到 TARGET。
 
 ## 判断流程（按顺序执行，满足即停）
 
-### Q1：CURRENT 有浮层覆盖吗？
+### Q1：CURRENT 有浮层/弹窗覆盖吗？
 检查 CURRENT 全屏：是否有弹窗、对话框、底部弹出面板或广告浮层叠在底层页面上方？
 
-浮层的识别依据：底层页面内容仍部分可见；浮层有独立边框/阴影/遮罩；有 ×/关闭/跳过/取消 控件。
-⚠️ 小面积悬浮按钮（如浮动购物车图标、小浮窗广告）不算浮层，只有大面积遮盖主要页面内容的才算。
+浮层必须满足：**大面积遮盖主要页面内容**（通常占屏幕 40% 以上），底层页面被遮住大部分，浮层有独立边框/阴影/半透明遮罩。
 
-**→ 是：指令 = "点击弹窗的关闭按钮"**
-→ 否：进入 Q2。
+⚠️ 以下**不算**浮层：
+- 小面积悬浮按钮（浮动购物车、小圆形广告、支付快捷入口等）
+- 页面内嵌的小组件或卡片
+- 底部固定的操作栏（即使看起来像独立面板）
+
+→ 满足浮层条件时，根据弹窗内容选择操作：
+
+**A. 确认/放弃类弹窗**（询问"是否保存""是否放弃修改""离开此页"等）
+→ 选择能**离开当前页面**的选项（如"不保存""放弃""离开""不保留"）
+→ ⚠️ 绝对不要点击 × 关闭确认弹窗 — × 只会关闭弹窗让你留在当前页面，无法回退
+
+**B. 其他弹窗**（广告、提示、授权请求等与回退无关的内容）
+→ 指令 = "点击弹窗的关闭按钮"
+
+→ 不满足浮层条件：进入 Q2。
 
 ### Q2：某一排 tab 栏的选中项发生了变化吗？
 iPhone 应用通常同时存在两类 tab 栏，须分开判断：
@@ -96,14 +107,22 @@ iPhone 应用通常同时存在两类 tab 栏，须分开判断：
 注意：
 - 不要点击 CURRENT 中已处于选中状态的 tab，要点击 TARGET 中选中的那个
 - 触发操作含「tab」不代表条件 3 自动满足，须逐字核实 tab 名称确实出现在该排选项里
+- 如果 CURRENT 的页面结构与 TARGET 完全不同（有独立的导航栏、返回按钮），说明不是同页面的 tab 切换而是导航到了新页面，应走 Q3
 
-### Q3：点左上角返回按钮
-**→ 指令 = "点击左上角返回箭头"**
+### Q3：审视 CURRENT 页面的导航元素
+仔细观察 CURRENT 页面，按以下优先级寻找可回退的 UI 元素：
+
+1. **左上角返回按钮**：是否存在 < ← 箭头或"返回"文字？→ 指令 = "点击左上角返回箭头"
+2. **页面级关闭/取消按钮**：编辑页、发布页、详情页等通常有「取消」「关闭」「×」按钮（可能在左上角或右上角）→ 指令 = "点击「取消/关闭」按钮"
+3. **底部操作栏**：某些页面底部有「返回」「完成」等操作按钮 → 指令 = "点击底部的「返回/完成」按钮"
+
+⚠️ 关键：必须根据 CURRENT 截图中**实际可见的 UI 元素**做判断，不要盲目假设有返回箭头。编辑类页面（表单填写、内容发布、设置编辑）通常没有 < 箭头，而是提供「取消」或「关闭」按钮。
 
 ## 规则
 - 每步只输出一个原子操作
 - 只描述要操作的 UI 元素，不要输出坐标
 - 不重复之前失败的操作
+- rationale 中简要说明你在 CURRENT 页面上看到了什么 UI 元素，以及为什么选择这个操作
 """
 
 
@@ -143,6 +162,15 @@ def _invoke_planner(
             inst = h.get("instruction", "?")
             result = h.get("result", "?")
             context_text += f"\n- 第{i}次：指令「{inst}」→ {result}"
+        # Detect loop: multiple actions changed the page but didn't reach target
+        changed_count = sum(1 for h in history if h.get("result") == "页面变化")
+        if changed_count >= 4:
+            context_text += (
+                "\n\n⚠️ 你已经执行了多次操作且每次页面都有变化，但仍未到达目标页面。"
+                "你可能陷入了交替循环（在两个页面之间来回切换）。"
+                "请仔细审视 CURRENT 截图，选择一个**不同的**操作来打破循环。"
+                "特别检查：如果当前有确认弹窗，不要点击 ×，而要点击弹窗中的具体选项（如「不保存」「放弃」）。"
+            )
 
     messages = [
         SystemMessage(content=BACK_PLANNER_PROMPT),
@@ -161,20 +189,28 @@ def _invoke_planner(
 # Stuck detection helpers
 # ---------------------------------------------------------------------------
 
-def _is_repeated_instruction(instruction: str, history: list[dict]) -> bool:
-    """Check if instruction repeats a previously failed one."""
-    failed = [h for h in history if "失败" in h.get("result", "") or "未变化" in h.get("result", "")]
+def _is_repeated_instruction(instruction: str, history: list[dict], allow_once: bool = True) -> bool:
+    """Check if instruction repeats a previously failed one.
+    allow_once permits one retry of the same instruction.
+    """
+    failed = [h for h in history
+              if "失败" in h.get("result", "") or "未变化" in h.get("result", "")]
     if not failed:
         return False
     clean_new = re.sub(r"[，。、；：""''《》\s（）\(\)]", "", instruction.strip())
+    match_count = 0
     for h in failed:
         old = h.get("instruction", "")
         clean_old = re.sub(r"[，。、；：""''《》\s（）\(\)]", "", old.strip())
         if clean_new and clean_old:
             ratio = SequenceMatcher(None, clean_new, clean_old).ratio()
             if ratio >= _REPEAT_SIMILARITY_THRESHOLD:
-                return True
-    return False
+                match_count += 1
+    if match_count == 0:
+        return False
+    if allow_once and match_count <= 1:
+        return False  # Allow one retry
+    return True
 
 
 def _page_hash(png_bytes: bytes) -> str:
@@ -332,74 +368,12 @@ def planned_return_to_initial(
                         "result": f"执行失败: {result}", "success": False})
             continue
 
-        # ── Step 5: Verify page change ──
+        # ── Step 5: Verify ──
         time.sleep(BACK_SETTLE_SECONDS)
         after_bytes = screenshot()
         after_ph = _page_hash(after_bytes)
 
-        # Check if page changed
-        changed = False
-        comp = _get_change_comp()
-        unchanged, score = comp.no_change_score(current_bytes, after_bytes)
-        if unchanged:
-            diff_ratio = _pixel_diff_ratio(current_bytes, after_bytes)
-            if diff_ratio < _PIXEL_DIFF_THRESHOLD:
-                _nav_print(f"未变化 (pixel={diff_ratio:.4f})", page_hash=ph, round_num=round_num)
-                consecutive_no_change += 1
-                history.append({"instruction": plan.instruction, "result": "未变化"})
-                log.append({
-                    "round": round_num, "strategy": "planner",
-                    "instruction": plan.instruction, "rationale": plan.rationale,
-                    "result": "未变化", "success": False,
-                    "page_from": ph, "page_to": after_ph,
-                    **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
-                })
-                if consecutive_no_change >= _MAX_CONSECUTIVE_NO_CHANGE:
-                    _nav_print("连续无变化，放弃", page_hash=ph, round_num=round_num)
-                    break
-                continue
-            changed = True
-        else:
-            # Edge IoU reports changed — verify it's not dynamic content noise
-            if id_comp.is_same_page(current_bytes, after_bytes).matched:
-                _nav_print("动态内容误报", page_hash=ph, round_num=round_num)
-                consecutive_no_change += 1
-                history.append({"instruction": plan.instruction, "result": "动态内容未变化"})
-                log.append({
-                    "round": round_num, "strategy": "planner",
-                    "instruction": plan.instruction,
-                    "result": "动态内容未变化", "success": False,
-                    "page_from": ph,
-                })
-                if consecutive_no_change >= _MAX_CONSECUTIVE_NO_CHANGE:
-                    _nav_print("连续无变化，放弃", page_hash=ph, round_num=round_num)
-                    break
-                continue
-            changed = True
-
-        # Page changed
-        consecutive_no_change = 0
-
-        # Save after screenshot
-        save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
-        shot_str = save_if_changed(after_bytes, save_path)
-
-        # Track page visits for loop detection
-        visit_key = after_ph
-        page_visit_counts[visit_key] = page_visit_counts.get(visit_key, 0) + 1
-        if page_visit_counts[visit_key] >= _MAX_PAGE_VISITS:
-            _nav_print(f"页面循环 ({visit_key} 访问{page_visit_counts[visit_key]}次)，放弃",
-                       page_hash=ph, round_num=round_num)
-            log.append({
-                "round": round_num, "strategy": "planner",
-                "instruction": plan.instruction, "rationale": plan.rationale,
-                "result": f"页面循环 ({visit_key})", "success": False,
-                "page_from": ph, "page_to": after_ph, "screenshot": shot_str,
-                **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
-            })
-            break
-
-        # Check if we reached target or ancestor page
+        # Fast check: reached target or ancestor page?
         matched_level = _match_stack(id_comp, nav_stack, after_bytes)
         if matched_level >= 0:
             is_initial = matched_level == top_level
@@ -408,6 +382,8 @@ def planned_return_to_initial(
             _nav_print(f"→ 匹配 {level_desc} ({sim:.3f})", page_hash=ph, round_num=round_num)
             if status_cb:
                 status_cb(f"← 回退 R{round_num} ✓ {'回到初始页' if is_initial else f'→ {level_desc}'}")
+            save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
+            shot_str = save_if_changed(after_bytes, save_path)
             log.append({
                 "round": round_num, "strategy": "planner",
                 "instruction": plan.instruction, "rationale": plan.rationale,
@@ -420,12 +396,49 @@ def planned_return_to_initial(
                                   log=log, tap_index=tap_index, out_dir=out_dir)
             return True, log
 
-        # New unknown page — continue looping
-        history.append({"instruction": plan.instruction, "result": "跳转到未知页"})
+        # Did anything change? Simple pixel diff — planner decides what happened
+        diff_ratio = _pixel_diff_ratio(current_bytes, after_bytes)
+        if diff_ratio < _PIXEL_DIFF_THRESHOLD:
+            consecutive_no_change += 1
+            _nav_print(f"未变化 (pixel={diff_ratio:.4f})", page_hash=ph, round_num=round_num)
+            history.append({"instruction": plan.instruction, "result": "未变化"})
+            log.append({
+                "round": round_num, "strategy": "planner",
+                "instruction": plan.instruction, "rationale": plan.rationale,
+                "result": "未变化", "success": False,
+                "page_from": ph, "page_to": after_ph,
+                **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
+            })
+            if consecutive_no_change >= _MAX_CONSECUTIVE_NO_CHANGE:
+                _nav_print("连续无变化，放弃", page_hash=ph, round_num=round_num)
+                break
+            continue
+
+        # Something changed — update state, let planner decide next step
+        consecutive_no_change = 0
+        _nav_print(f"页面变化 (pixel={diff_ratio:.4f})", page_hash=ph, round_num=round_num)
+
+        save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
+        shot_str = save_if_changed(after_bytes, save_path)
+
+        page_visit_counts[after_ph] = page_visit_counts.get(after_ph, 0) + 1
+        if page_visit_counts[after_ph] >= _MAX_PAGE_VISITS:
+            _nav_print(f"页面循环 ({after_ph} 访问{page_visit_counts[after_ph]}次)，放弃",
+                       page_hash=ph, round_num=round_num)
+            log.append({
+                "round": round_num, "strategy": "planner",
+                "instruction": plan.instruction, "rationale": plan.rationale,
+                "result": f"页面循环 ({after_ph})", "success": False,
+                "page_from": ph, "page_to": after_ph, "screenshot": shot_str,
+                **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
+            })
+            break
+
+        history.append({"instruction": plan.instruction, "result": "页面变化"})
         log.append({
             "round": round_num, "strategy": "planner",
             "instruction": plan.instruction, "rationale": plan.rationale,
-            "result": "未知页", "success": False,
+            "result": "变化", "success": False,
             "page_from": ph, "page_to": after_ph, "screenshot": shot_str,
             **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
         })

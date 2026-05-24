@@ -41,16 +41,19 @@ def _report(label: str, ok: bool, got, expected, detail: str = "") -> None:
 def _classify_page_type(instruction: str) -> str:
     """Infer page_type from planner instruction text."""
     inst = instruction.lower()
-    # Type A: popup/modal close
-    if any(kw in inst for kw in ("关闭", "弹窗", "浮层", "取消", "跳过", "×")):
+    # Type A: popup/modal action — must have explicit popup context or popup-specific option
+    if any(kw in inst for kw in ("弹窗", "浮层")):
+        return "A"
+    # Confirmation popup options (不保存/放弃/离开) → popup action
+    if any(kw in inst for kw in ("不保存", "放弃修改", "离开", "不保留", "确认离开")):
         return "A"
     # Type B: tab/导航栏 switch (planner uses "tab", "标签", or "导航栏")
     if any(kw in inst for kw in ("tab", "标签", "导航栏")) and not any(
         kw in inst for kw in ("返回", "箭头", "back")
     ):
         return "B"
-    # Type C: back button
-    if any(kw in inst for kw in ("返回", "箭头", "back", "左上角")):
+    # Type C: back/close navigation (back button, page-level close/cancel)
+    if any(kw in inst for kw in ("返回", "箭头", "back", "关闭", "取消", "×", "左上角")):
         return "C"
     return "C"  # default to C (most common)
 
@@ -65,6 +68,9 @@ def _check_y_zone(back_x: float, back_y: float, zone: str) -> bool:
         return back_x < 250 and back_y < 300
     if zone == "popup_close":
         return back_x > 0 and back_y > 0
+    if zone == "popup_confirm":
+        # Confirmation popup buttons are in the lower half of the popup area
+        return back_y > 400 and back_x > 100
     return True
 
 

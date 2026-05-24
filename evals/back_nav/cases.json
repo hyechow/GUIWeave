@@ -130,5 +130,31 @@
       "y_zone": "top_tab"
     },
     "note": "闲鱼recon实录：浏览二手商品（找服务子页）→省钱神券tab切换。LLM曾误选AFTER中已选中的「省钱神券」tab(458,192)，应选BEFORE中选中的tab。对应Fix2校验拦截场景。"
+  },
+  {
+    "id": "multi_step_edit_close",
+    "before": "data/multi_edit_target.png",
+    "after": "data/multi_edit_page.png",
+    "nav_context": "点击了icon「消息」",
+    "target_label": "查看AI服务详情",
+    "expected": {
+      "page_type": "C",
+      "can_go_back": true,
+      "y_zone": "back_btn"
+    },
+    "note": "多步回退-步骤1：从服务发布编辑页回退到AI服务详情页。编辑页左上角有×关闭按钮（无返回箭头），planner应识别为Q3页面级关闭按钮，点击×触发确认弹窗"
+  },
+  {
+    "id": "multi_step_confirm_popup",
+    "before": "data/multi_edit_target.png",
+    "after": "data/multi_edit_popup.png",
+    "nav_context": "点击了icon「消息」",
+    "target_label": "查看AI服务详情",
+    "expected": {
+      "page_type": "A",
+      "can_go_back": true,
+      "y_zone": "popup_confirm"
+    },
+    "note": "多步回退-步骤2：点击×后弹出「要不要先存个草稿」确认弹窗，有「不保存」「存草稿」两个选项。planner应识别为Q1-A确认类弹窗，点击「不保存」离开编辑页。绝对不能点×关闭弹窗（会留在编辑页形成循环）"
   }
 ]

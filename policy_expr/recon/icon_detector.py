@@ -272,7 +272,7 @@ def _gray_std(img: Image.Image, box: IconBbox) -> float:
         max(0, int(box.x1)),
         max(0, int(box.y1)),
         min(img.width, int(box.x2)),
-        min(img.height, int(box.x2)),
+        min(img.height, int(box.y2)),
     ))
     if crop.width <= 0 or crop.height <= 0:
         return 0.0
