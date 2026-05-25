@@ -148,15 +148,15 @@ class IconDetector:
         # Scale back to original image coordinates
         bboxes: list[IconBbox] = []
         for i in range(len(boxes_640)):
-            x1 = (boxes_640[i, 0] - pad_w) / ratio
-            y1 = (boxes_640[i, 1] - pad_h) / ratio
-            x2 = (boxes_640[i, 2] - pad_w) / ratio
-            y2 = (boxes_640[i, 3] - pad_h) / ratio
+            x1 = float((boxes_640[i, 0] - pad_w) / ratio)
+            y1 = float((boxes_640[i, 1] - pad_h) / ratio)
+            x2 = float((boxes_640[i, 2] - pad_w) / ratio)
+            y2 = float((boxes_640[i, 3] - pad_h) / ratio)
             # Clamp to image bounds
-            x1 = max(0, min(x1, iw))
-            y1 = max(0, min(y1, ih))
-            x2 = max(0, min(x2, iw))
-            y2 = max(0, min(y2, ih))
+            x1 = max(0.0, min(x1, iw))
+            y1 = max(0.0, min(y1, ih))
+            x2 = max(0.0, min(x2, iw))
+            y2 = max(0.0, min(y2, ih))
             bboxes.append(IconBbox(x1, y1, x2, y2, float(scores[i])))
 
         return bboxes

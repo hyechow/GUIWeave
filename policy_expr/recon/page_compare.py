@@ -79,10 +79,19 @@ class PageComparator:
     ) -> ScreenMatchDecision:
         if not candidate_png:
             return ScreenMatchDecision(False, 0.0, self.backend_name, "missing screenshot")
-        sim = self.raw_similarity(reference_png, candidate_png)
+        # Use cascade GUIClip similarity when available — more robust than EdgeIoU
+        if self._cascade is not None:
+            sim = self._cascade.visual_sim(
+                self._cascade.embed_visual(reference_png),
+                self._cascade.embed_visual(candidate_png),
+            )
+            name = "cascade"
+        else:
+            sim = self.raw_similarity(reference_png, candidate_png)
+            name = self.backend_name
         matched = sim >= self._same_page_threshold
         return ScreenMatchDecision(
-            matched, sim, self.backend_name,
+            matched, sim, name,
             f"similarity {sim:.3f} {'above' if matched else 'below'} "
             f"same-page threshold {self._same_page_threshold}",
         )
@@ -177,14 +186,15 @@ def _cascade_nav_check(
 # Factory
 # ---------------------------------------------------------------------------
 
-def make_comparator(method: str = "edge_iou") -> PageComparator:
+def make_comparator(method: str = "edge_iou", **kwargs) -> PageComparator:
     """Construct a PageComparator by method name.
 
     Args:
         method: "edge_iou" (default), "cascade" (CascadeMatcher singleton).
+        **kwargs: forwarded to PageComparator (e.g. same_page_threshold).
     """
     if method == "cascade":
         from policy_expr.recon.cascade_matcher import get_matcher
         cascade = get_matcher()
-        return PageComparator(cascade=cascade)
-    return PageComparator()
+        return PageComparator(cascade=cascade, **kwargs)
+    return PageComparator(**kwargs)

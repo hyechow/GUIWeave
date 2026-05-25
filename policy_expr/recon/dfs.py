@@ -12,7 +12,7 @@ from typing import Callable
 from policy_expr.executor import logical_xy
 from policy_expr.perception import try_resume_mac
 from policy_expr.recon.back_nav import make_nav_context, manual_recover as _manual_recover
-from policy_expr.recon.back_nav import return_to_initial
+from policy_expr.recon.planned_back_nav import planned_return_to_initial as return_to_initial
 from policy_expr.recon.page_identity import PageIdentity
 from policy_expr.recon.utils import ProbeAbortedError
 from policy_expr.trace import Tracer
@@ -121,7 +121,7 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
     root_ctx = (knowledge.page, png_bytes, app_log_dir / page_name)
 
     # Probe root page with DFS callback
-    def _on_root_element_tapped(area, after_bytes, navigated, tap_index, tap_result):
+    def _on_root_element_tapped(area, after_bytes, navigated, tap_index, tap_result, selected_tab=""):
         """Callback for root page exploration. Enter child pages if depth allows."""
         print(f"    [DEBUG ROOT] _on_root_element_tapped called: area={area.label}, navigated={navigated}, max_depth={max_depth}")
         if not navigated or max_depth <= 0:
@@ -160,6 +160,7 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
             target_label=page_name,
             after_elements=child_elements,
             status_cb=_status_cb,
+            selected_tab=selected_tab,
         )
         if not ok:
             recovered = _manual_recover(
@@ -339,7 +340,7 @@ def _dfs_recursive(
         tracer.save(trace_path)
         try:
             # DFS-style incremental probing with callback
-            def _on_element_tapped(area, after_bytes, navigated, tap_index, tap_result):
+            def _on_element_tapped(area, after_bytes, navigated, tap_index, tap_result, selected_tab=""):
                 """Called after each element tap. Enter child page if navigated."""
                 print(f"    [DEBUG] _on_element_tapped called: area={area.label}, navigated={navigated}, max_depth={max_depth}")
                 if not navigated or max_depth <= 0:
@@ -377,6 +378,7 @@ def _dfs_recursive(
                     nav_context=make_nav_context(area.label, area.element_type),
                     target_label=page_name,
                     after_elements=child_elements,
+                    selected_tab=selected_tab,
                     status_cb=_status_cb,
                 )
                 if not ok:
@@ -490,6 +492,10 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     img_path.write_bytes(png_bytes)
     viz_result(knowledge, png_bytes, "initial", out_dir)
 
+    # Detect selected tab for planner context (1 LLM call per page)
+    from policy_expr.recon.planned_back_nav import detect_selected_tab
+    result.selected_tab = detect_selected_tab(png_bytes) or ""
+
     # Append fingerprint to initial_result.json
     if fingerprint:
         init_json = out_dir / "initial_result.json"
@@ -558,7 +564,7 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
 
         # Callback for DFS to enter child pages
         if on_element_tapped:
-            should_continue = on_element_tapped(area, after_bytes, navigated, i, tap_result)
+            should_continue = on_element_tapped(area, after_bytes, navigated, i, tap_result, selected_tab=result.selected_tab)
             if not should_continue:
                 print(f"    [DFS] 探测中断（callback 返回 False）")
                 break

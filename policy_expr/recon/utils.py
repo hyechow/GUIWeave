@@ -54,6 +54,7 @@ class ReconResult:
     elements_count: int
     initial_screenshot_path: str = ""
     parent_page: str = ""
+    selected_tab: str = ""  # detected selected tab name for this page
     taps: list[TapResult] = field(default_factory=list)
 
     def save(self, path: Path) -> None:

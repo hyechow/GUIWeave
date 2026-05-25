@@ -193,9 +193,10 @@ def main() -> None:
         current_png = root_png
 
         # Navigate down
-        for depth in range(1, MAX_DEPTH + 1):
+        depth = 0
+        while depth < MAX_DEPTH:
             print(f"\n{'='*60}")
-            print(f"  [depth {depth}] 解析页面元素")
+            print(f"  [depth {depth + 1}] 解析页面元素")
             print("="*60)
 
             items = parse_items(current_png, parser)
@@ -203,7 +204,7 @@ def main() -> None:
                 print("  未解析到可交互元素，停止")
                 break
 
-            img_path = open_annotated(current_png, items, f"back_nav_d{depth}")
+            img_path = open_annotated(current_png, items, f"back_nav_d{depth + 1}")
             print(f"  已标注截图: {img_path}")
             print_items(items)
 
@@ -227,11 +228,11 @@ def main() -> None:
                 print(f"  页面未变化 (edge_iou={sim:.3f})，请重选")
                 continue
 
+            depth += 1
             print(f"  ✓ 导航成功 (edge_iou={sim:.3f})")
             prev_png, _ = nav_stack[-1]
             nav_stack[-1] = (prev_png, (lx, ly))
             nav_stack.append((after_png, None))
-            # Include element type so back_nav LLM can correctly classify (e.g. tab → type B)
             nav_context_str = make_nav_context(label, etype)
             tap_labels.append(nav_context_str)
             current_png = after_png
@@ -295,13 +296,13 @@ def main() -> None:
             ref_path.write_bytes(ref_png)
         print(f"  参考截图: ref_L0.png … ref_L{len(target_stack)-1}_target.png")
 
-        print()
-        before_back = screenshot()
-
         # Choose back-nav engine
-        raw_mode = input("  回退模式？(1=旧规则 2=planner，默认 2): ").strip()
+        raw_mode = input("\n  回退模式？(1=旧规则 2=planner，默认 2): ").strip()
         use_planned = raw_mode != "1"
         print(f"  使用 {'planned_back_nav' if use_planned else 'back_nav (规则)'}")
+
+        print()
+        before_back = screenshot()
 
         back_fn = planned_return_to_initial if use_planned else return_to_initial
         success, log = back_fn(

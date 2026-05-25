@@ -98,15 +98,20 @@ iPhone 应用通常同时存在两类 tab 栏，须分开判断：
 - **底部导航 tab**：3-5 个固定入口（首页/消息/我/购物车等），在不同页面间通常保持不变，位于页面最底部
 - **顶部分类 tab**：内容分类标签（推荐/热门/关注等），随内容区切换而变化，位于页面上方
 
-逐排对比 TARGET 和 CURRENT，对每一排检查以下三点是否**同时**成立：
+**判断步骤（必须严格按顺序执行）：**
+
+**步骤 A**：先看 TARGET 截图，找出每一排 tab 栏中哪个 tab 处于选中/高亮状态。记住 TARGET 选中项的名称。
+**步骤 B**：再看 CURRENT 截图，找出每一排 tab 栏中哪个 tab 处于选中/高亮状态。
+**步骤 C**：对比两图，对每一排检查以下三点是否**同时**成立：
 1. 该排在两图中均存在
-2. 该排的高亮/选中项在两图中**确实不同**（两图相同则跳过该排）
+2. TARGET 的选中项 ≠ CURRENT 的选中项（两图相同则跳过该排）
 3. 触发操作的名称能在该排选项里找到
 
-**→ 某一排同时满足三点：指令 = "点击[顶部/底部] tab 栏中的「TARGET 中选中的 tab 名称」"**
+**→ 某一排同时满足三点：指令 = "点击[顶部/底部] tab 栏中的「步骤 A 中识别的 TARGET 选中项名称」"**
 → 所有排均不满足：进入 Q3。
 
-注意：
+⚠️ 关键防错：
+- **必须先识别 TARGET 选中项（步骤 A），再输出指令**。不要凭触发操作名称猜目标 tab
 - 不要点击 CURRENT 中已处于选中状态的 tab，要点击 TARGET 中选中的那个
 - 触发操作含「tab」不代表条件 3 自动满足，须逐字核实 tab 名称确实出现在该排选项里
 - 如果 CURRENT 的页面结构与 TARGET 完全不同（有独立的导航栏、返回按钮），说明不是同页面的 tab 切换而是导航到了新页面，应走 Q3
@@ -135,9 +140,96 @@ iPhone 应用通常同时存在两类 tab 栏，须分开判断：
 # LLM helpers
 # ---------------------------------------------------------------------------
 
+class _SelectedTab(BaseModel):
+    selected_tab: str = Field(description="当前页面中处于选中/高亮状态的 tab 名称")
+
+
+def detect_selected_tab(png_bytes: bytes) -> str | None:
+    """Lightweight LLM call: identify which tab is selected on the current page."""
+    from policy_expr.policies.base import resize_to_logical_png as _resize
+    llm = _make_llm()
+    b64 = base64.b64encode(_resize(png_bytes)).decode()
+    prompt = (
+        "观察截图中的 tab 栏（顶部和底部），找出处于选中/高亮/激活状态的 tab。"
+        "选中 tab 通常有下划线、加粗文字或不同颜色。"
+        "只返回选中 tab 的名称，不要解释。"
+    )
+    messages = [
+        SystemMessage(content="你是一个 UI 分析专家，只识别 tab 选中状态。"),
+        HumanMessage(content=[
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+        ]),
+    ]
+    try:
+        result = invoke_structured(llm, messages, _SelectedTab)
+        name = result.selected_tab.strip()
+        print(f"  [selected_tab] → {name}")
+        return name
+    except Exception as e:
+        print(f"  [selected_tab] 失败: {e}")
+        return None
+
+
 def _make_llm() -> ChatOpenAI:
     cfg = resolve_llm_config("back_nav")
     return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url, temperature=0)
+
+
+def _build_tab_context(nav_context: str, target_elements: list[dict] | None) -> str:
+    """Build tab context hint from target page elements.
+
+    When nav_context indicates a tab switch, find the selected tab from
+    target page elements (marked by PageParser) and tell the planner
+    exactly which tab to click.
+    """
+    import re
+    if not target_elements or "tab" not in nav_context:
+        return ""
+    m = re.search(r"(?:顶部|底部)?tab「(.+?)」", nav_context)
+    if not m:
+        return ""
+    trigger_name = m.group(1)
+
+    # Find selected tab in target elements
+    selected_tabs = [
+        el for el in target_elements
+        if el.get("element_type") == "tab" and el.get("selected")
+    ]
+
+    if len(selected_tabs) == 1:
+        target_tab = selected_tabs[0]["label"]
+        return (
+            f"\n\n【tab 上下文】TARGET 页面中当前选中的 tab 是「{target_tab}」"
+            f"（触发操作点击了「{trigger_name}」导致离开）。"
+            f" 请点击 CURRENT 页面中对应的「{target_tab}」tab 以回退。"
+        )
+
+    # Fallback: no selected info, use exclusion hint
+    trigger_tab = None
+    for el in target_elements:
+        if el.get("element_type") == "tab" and el.get("label") == trigger_name:
+            trigger_tab = el
+            break
+    if not trigger_tab:
+        return ""
+
+    ty = trigger_tab.get("y", 0)
+    same_row = [
+        el["label"] for el in target_elements
+        if el.get("element_type") == "tab"
+        and abs(el.get("y", 0) - ty) < 30
+        and el.get("label") != trigger_name
+    ]
+    if not same_row:
+        return ""
+
+    candidates = "、".join(f"「{n}」" for n in same_row)
+    return (
+        f"\n\n【tab 上下文】触发操作是点击了 tab「{trigger_name}」，因此 TARGET 页面中选中的"
+        f" tab 一定不是「{trigger_name}」，而是同排的 {candidates} 之一。"
+        f" 请根据 TARGET 截图判断其中哪个 tab 处于选中/高亮状态。"
+    )
 
 
 def _invoke_planner(
@@ -147,6 +239,7 @@ def _invoke_planner(
     history: list[dict] | None = None,
     target_label: str = "",
     target_description: str = "",
+    target_elements: list[dict] | None = None,
 ) -> _BackPlanResult:
     """Ask the planner for the next navigation instruction."""
     llm = _make_llm()
@@ -162,6 +255,9 @@ def _invoke_planner(
         context_text += f"\n\n目标页面名称：「{target_label}」"
     if nav_context:
         context_text += f"\n\n触发操作：{nav_context}"
+    tab_ctx = _build_tab_context(nav_context, target_elements)
+    if tab_ctx:
+        context_text += tab_ctx
     if history:
         context_text += "\n\n之前的尝试："
         for i, h in enumerate(history[-6:], 1):
@@ -243,6 +339,7 @@ def planned_return_to_initial(
     after_elements: list[dict] | None = None,
     debug_fn: Callable | None = None,
     status_cb: Callable[[str], None] | None = None,
+    selected_tab: str = "",
 ) -> tuple[bool, list[dict]]:
     """Navigate back to the initial page using a planner-based loop.
 
@@ -254,7 +351,14 @@ def planned_return_to_initial(
     initial_bytes = nav_stack[top_level][0]
 
     action_policy = StructuredOutputPolicy()
-    current_bytes = before_back_bytes or initial_bytes
+    current_bytes = before_back_bytes or screenshot()
+
+    # Build target_elements from detected selected_tab
+    _tab_target_elements: list[dict] | None = None
+    if selected_tab:
+        _tab_target_elements = [
+            {"element_type": "tab", "label": selected_tab, "selected": True, "x": 0, "y": 0}
+        ]
 
     # Page visit counts for loop detection
     page_visit_counts: dict[str, int] = {}
@@ -301,6 +405,7 @@ def planned_return_to_initial(
             nav_context=annotated_context,
             history=history,
             target_label=target_label,
+            target_elements=_tab_target_elements,
         )
         _nav_print(f"指令: {plan.instruction} ({plan.rationale})",
                    page_hash=ph, round_num=round_num)
@@ -313,6 +418,7 @@ def planned_return_to_initial(
                 nav_context=annotated_context,
                 history=history,
                 target_label=target_label,
+                target_elements=_tab_target_elements,
             )
             if _is_repeated_instruction(plan.instruction, history):
                 _nav_print("重试仍重复，放弃", page_hash=ph, round_num=round_num)
