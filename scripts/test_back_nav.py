@@ -190,7 +190,8 @@ def main() -> None:
         nav_stack: list[tuple[bytes, tuple[float, float] | None]] = [(root_png, None)]
         # tap_labels[i] = label of element tapped to go from L_i → L_{i+1}
         tap_labels: list[str] = []
-        selected_tab_by_depth: dict[int, str] = {}
+        selected_tab_by_depth: dict[int, str] = {}        # top sub-tab
+        selected_bottom_tab_by_depth: dict[int, str] = {}  # bottom nav tab
         current_png = root_png
 
         # Navigate down
@@ -205,6 +206,7 @@ def main() -> None:
             items = [(a.center_xy[0], a.center_xy[1], a.label[:30] or "(无标签)", a.element_type)
                      for a in areas]
             selected_tab_by_depth[depth] = parsed_page.selected_tab or ""
+            selected_bottom_tab_by_depth[depth] = parsed_page.selected_bottom_tab or ""
             if not items:
                 print("  未解析到可交互元素，停止")
                 break
@@ -270,7 +272,16 @@ def main() -> None:
         # = tap_labels[target_level], where target_level = depth_reached - back_n
         target_level = depth_reached - back_n
         nav_context = tap_labels[target_level] if target_level < len(tap_labels) else ""
-        target_selected_tab = selected_tab_by_depth.get(target_level, "")
+        # Pick selected tab from the bar matching the tap that left this level.
+        # tap_coords (logical pixels) are in target_stack[-1][1].
+        _tap_coords = target_stack[-1][1]
+        if _tap_coords and _tap_coords[1] > 800:
+            target_selected_tab = selected_bottom_tab_by_depth.get(target_level, "")
+        elif _tap_coords and _tap_coords[1] < 350:
+            target_selected_tab = selected_tab_by_depth.get(target_level, "")
+        else:
+            target_selected_tab = (selected_tab_by_depth.get(target_level, "")
+                                   or selected_bottom_tab_by_depth.get(target_level, ""))
 
         target_label, _, _ = _page_name_from_fingerprint(target_stack[-1][0])
 

@@ -94,7 +94,11 @@ class ParsedPage(BaseModel):
     )
     selected_tab: str | None = Field(
         default=None,
-        description="当前处于选中/高亮状态的 tab 名称（顶部或底部任意一排均可）；页面无 tab 栏时为 null"
+        description="顶部内容分类/筛选 tab 栏（频道、商品分类、话题分类等横向 tab）中选中的 tab 名称；无顶部 tab 栏时为 null"
+    )
+    selected_bottom_tab: str | None = Field(
+        default=None,
+        description="底部主导航 tab 栏（首页/消息/我的 等）中选中的 tab 名称；无底部导航 tab 栏时为 null"
     )
 
     @model_validator(mode="before")
@@ -250,9 +254,9 @@ camera / scan / add / edit / delete / favorite / filter / download / message / m
 有文字标签的元素 icon_semantic 留 null。
 
 ## 选中 Tab
-如果页面存在 tab 栏（顶部分类 tab 或底部导航 tab），在 selected_tab 字段输出当前处于选中/高亮状态的那个 tab 名称。
+- selected_tab：顶部内容分类/筛选 tab 栏（频道、商品分类、话题分类等横向 tab）中当前高亮的 tab 名称；无顶部 tab 栏留 null
+- selected_bottom_tab：底部主导航 tab 栏（首页/消息/我的 等）中当前选中的 tab 名称；无底部 tab 栏留 null
 判断方法：选中 tab 通常有下划线、加粗文字、图标变色或高亮背景。
-无 tab 栏时 selected_tab 留 null。
 """
 
 

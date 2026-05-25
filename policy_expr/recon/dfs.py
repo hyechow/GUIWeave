@@ -291,6 +291,18 @@ def _dfs_recursive(
     if _fp.form not in ("A", "B"):
         print(f"  [overlay_skip] form={_fp.form}，弹窗页入库去重、跳过探测")
         dedup.add(png_bytes, name=page_name, emb=candidate_emb, form=_fp.form)
+        # Explicitly close the overlay now so the phone returns to the parent page.
+        # Without this, the caller's return_to_initial receives nav_stack whose top IS
+        # the overlay, so _match_stack immediately "succeeds" without ever closing it.
+        parent_nav_stack = nav_stack[:-1]
+        if parent_nav_stack:
+            ok, _ = return_to_initial(
+                phone.client, phone.screenshot, parent_nav_stack,
+                before_back_bytes=png_bytes,
+                status_cb=_status_cb,
+            )
+            if not ok:
+                print(f"  [overlay_skip] 关闭弹窗失败，由调用方继续处理")
         return None, {"is_new": False, "phase": "overlay_skip"}
 
     # Normal page: register in dedup and explore
@@ -555,9 +567,18 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
         )
         result.taps.append(tap_result)
 
-        # Callback for DFS to enter child pages
+        # Callback for DFS to enter child pages.
+        # Pass the selected tab from the bar whose Y range contains this tap,
+        # so back-nav knows which tab to click to return to this view.
         if on_element_tapped:
-            should_continue = on_element_tapped(area, after_bytes, navigated, i, tap_result, selected_tab=result.selected_tab)
+            _tap_y = area.center_xy[1]  # 0-1000 normalised
+            if _tap_y > 850:  # bottom nav bar
+                _sel_tab = knowledge.page.selected_bottom_tab or ""
+            elif _tap_y < 300:  # top sub-tab bar
+                _sel_tab = knowledge.page.selected_tab or ""
+            else:
+                _sel_tab = knowledge.page.selected_tab or knowledge.page.selected_bottom_tab or ""
+            should_continue = on_element_tapped(area, after_bytes, navigated, i, tap_result, selected_tab=_sel_tab)
             if not should_continue:
                 print(f"    [DFS] 探测中断（callback 返回 False）")
                 break
