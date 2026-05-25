@@ -152,13 +152,10 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
 
         # Return to root page
         print(f"\n  ← 返回「{page_name}」")
-        child_elements = (child_dedup or {}).get("initial_elements")
         ok, back_log = return_to_initial(
             phone.client, phone.screenshot, nav_stack,
             before_back_bytes=phone.screenshot(),
             nav_context=make_nav_context(area.label, area.element_type),
-            target_label=page_name,
-            after_elements=child_elements,
             status_cb=_status_cb,
             selected_tab=selected_tab,
         )
@@ -371,13 +368,10 @@ def _dfs_recursive(
 
                 # Return to current page
                 print(f"\n  ← 返回「{page_name}」")
-                child_elements = (child_dedup or {}).get("initial_elements")
                 ok, back_log = return_to_initial(
                     phone.client, phone.screenshot, nav_stack,
                     before_back_bytes=phone.screenshot(),
                     nav_context=make_nav_context(area.label, area.element_type),
-                    target_label=page_name,
-                    after_elements=child_elements,
                     selected_tab=selected_tab,
                     status_cb=_status_cb,
                 )
@@ -448,7 +442,7 @@ def _tap_close_xy(phone, close_xy: list[float]) -> None:
 def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
                     sample: int = 0,
                     nav_stack: list | None = None,
-                    on_element_tapped: callable | None = None,
+                    on_element_tapped: Callable | None = None,
                     parent_page: str = "",
                     fingerprint: str = "") -> tuple:
     """DFS-style incremental probing: tap each element one by one, with callback after each tap.
@@ -492,9 +486,8 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     img_path.write_bytes(png_bytes)
     viz_result(knowledge, png_bytes, "initial", out_dir)
 
-    # Detect selected tab for planner context (1 LLM call per page)
-    from policy_expr.recon.planned_back_nav import detect_selected_tab
-    result.selected_tab = detect_selected_tab(png_bytes) or ""
+    # Read selected tab from parsed page (no extra LLM call)
+    result.selected_tab = knowledge.page.selected_tab or ""
 
     # Append fingerprint to initial_result.json
     if fingerprint:

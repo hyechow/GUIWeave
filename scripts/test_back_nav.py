@@ -25,12 +25,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-from _vis import open_annotated, parse_items, print_items
+from _vis import open_annotated, print_items
 
 from policy_expr.perception import LivePhoneSession, try_resume_mac
 from policy_expr.executor import logical_xy
 from policy_expr.recon.page_compare import make_comparator
-from policy_expr.recon.page_parser import PageParser
+from policy_expr.recon.page_parser import PageParser, classify_elements
 from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context, BACK_PROMPT
 from policy_expr.recon.planned_back_nav import planned_return_to_initial
 from policy_expr.recon.dfs import _page_name_from_fingerprint
@@ -190,6 +190,7 @@ def main() -> None:
         nav_stack: list[tuple[bytes, tuple[float, float] | None]] = [(root_png, None)]
         # tap_labels[i] = label of element tapped to go from L_i → L_{i+1}
         tap_labels: list[str] = []
+        selected_tab_by_depth: dict[int, str] = {}
         current_png = root_png
 
         # Navigate down
@@ -199,7 +200,11 @@ def main() -> None:
             print(f"  [depth {depth + 1}] 解析页面元素")
             print("="*60)
 
-            items = parse_items(current_png, parser)
+            parsed_page = parser.parse_screen(current_png)
+            areas = classify_elements(parsed_page)
+            items = [(a.center_xy[0], a.center_xy[1], a.label[:30] or "(无标签)", a.element_type)
+                     for a in areas]
+            selected_tab_by_depth[depth] = parsed_page.selected_tab or ""
             if not items:
                 print("  未解析到可交互元素，停止")
                 break
@@ -265,6 +270,7 @@ def main() -> None:
         # = tap_labels[target_level], where target_level = depth_reached - back_n
         target_level = depth_reached - back_n
         nav_context = tap_labels[target_level] if target_level < len(tap_labels) else ""
+        target_selected_tab = selected_tab_by_depth.get(target_level, "")
 
         target_label, _, _ = _page_name_from_fingerprint(target_stack[-1][0])
 
@@ -304,17 +310,27 @@ def main() -> None:
         print()
         before_back = screenshot()
 
-        back_fn = planned_return_to_initial if use_planned else return_to_initial
-        success, log = back_fn(
-            client=phone.client,
-            screenshot=screenshot,
-            nav_stack=target_stack,
-            before_back_bytes=before_back,
-            out_dir=out_dir,
-            nav_context=nav_context,
-            target_label=target_label,
-            debug_fn=save_back_nav_debug,
-        )
+        if use_planned:
+            success, log = planned_return_to_initial(
+                client=phone.client,
+                screenshot=screenshot,
+                nav_stack=target_stack,
+                before_back_bytes=before_back,
+                out_dir=out_dir,
+                nav_context=nav_context,
+                selected_tab=target_selected_tab,
+            )
+        else:
+            success, log = return_to_initial(
+                client=phone.client,
+                screenshot=screenshot,
+                nav_stack=target_stack,
+                before_back_bytes=before_back,
+                out_dir=out_dir,
+                nav_context=nav_context,
+                target_label=target_label,
+                debug_fn=save_back_nav_debug,
+            )
 
         # Save structured log
         log_data = {

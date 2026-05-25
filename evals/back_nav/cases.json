@@ -1,6 +1,7 @@
 [
   {
     "id": "wechat_bottom_tab_通讯录",
+    "selected_tab": "微信",
     "before": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
     "after": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/tap/tap_04_通讯录.png",
     "nav_context": "点击了底部tab「通讯录」",
@@ -18,6 +19,7 @@
   },
   {
     "id": "wechat_bottom_tab_我",
+    "selected_tab": "微信",
     "before": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
     "after": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/tap/tap_05_我.png",
     "nav_context": "点击了底部tab「我」",
@@ -52,6 +54,7 @@
   },
   {
     "id": "pdd_top_tab_食品",
+    "selected_tab": "精选",
     "before": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/initial.png",
     "after": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/tap/tap_04_食品.png",
     "nav_context": "点击了顶部tab「食品」",
@@ -120,6 +123,7 @@
   },
   {
     "id": "pdd_bottom_tab_个人中心",
+    "selected_tab": "首页",
     "before": "data/pdd_bottom_tab_ref_L0_target.png",
     "after": "data/pdd_bottom_tab_after.png",
     "nav_context": "点击了底部tab「个人中心」",
@@ -137,6 +141,7 @@
   },
   {
     "id": "xianyu_top_tab_新发",
+    "selected_tab": "推荐",
     "before": "data/xianyu_新发_before.png",
     "after": "data/xianyu_新发_after.png",
     "nav_context": "点击了顶部tab「新发」",
@@ -154,6 +159,7 @@
   },
   {
     "id": "xianyu_content_entry_省钱神券",
+    "selected_tab": "推荐",
     "before": "data/xianyu_ref_L0_target.png",
     "after": "data/xianyu_R1_before.png",
     "nav_context": "点击了顶部tab「省钱神券」",
@@ -171,6 +177,7 @@
   },
   {
     "id": "xianyu_recon_tab_省钱神券",
+    "selected_tab": "找服务",
     "before": "data/xianyu_recon_省钱神券_before.png",
     "after": "data/xianyu_recon_省钱神券_after.png",
     "nav_context": "点击了顶部tab「省钱神券」",
@@ -188,6 +195,7 @@
   },
   {
     "id": "multi_step_edit_close",
+    "group": "multi_step_edit",
     "before": "data/multi_edit_target.png",
     "after": "data/multi_edit_page.png",
     "nav_context": "点击了icon「消息」",
@@ -206,6 +214,7 @@
   },
   {
     "id": "multi_step_confirm_popup",
+    "group": "multi_step_edit",
     "before": "data/multi_edit_target.png",
     "after": "data/multi_edit_popup.png",
     "nav_context": "点击了icon「消息」",

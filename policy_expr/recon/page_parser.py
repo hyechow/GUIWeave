@@ -92,6 +92,22 @@ class ParsedPage(BaseModel):
     interactive_elements: list[InteractiveElement] = Field(
         description="页面上所有可点击/可交互的元素，按从上到下、从左到右排列"
     )
+    selected_tab: str | None = Field(
+        default=None,
+        description="当前处于选中/高亮状态的 tab 名称（顶部或底部任意一排均可）；页面无 tab 栏时为 null"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_non_dict_elements(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        elements = data.get("interactive_elements")
+        if isinstance(elements, list):
+            data["interactive_elements"] = [
+                e for e in elements if isinstance(e, (dict, InteractiveElement))
+            ]
+        return data
 
 
 class InteractiveArea(BaseModel):
@@ -232,6 +248,11 @@ SYSTEM_PROMPT = """\
 search / settings / close / share / more / notification / profile /
 camera / scan / add / edit / delete / favorite / filter / download / message / map / other
 有文字标签的元素 icon_semantic 留 null。
+
+## 选中 Tab
+如果页面存在 tab 栏（顶部分类 tab 或底部导航 tab），在 selected_tab 字段输出当前处于选中/高亮状态的那个 tab 名称。
+判断方法：选中 tab 通常有下划线、加粗文字、图标变色或高亮背景。
+无 tab 栏时 selected_tab 留 null。
 """
 
 
@@ -309,6 +330,7 @@ def enrich_with_icons(
 
     return ParsedPage(
         interactive_elements=merged,
+        selected_tab=page.selected_tab,
     )
 
 

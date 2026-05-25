@@ -1,8 +1,8 @@
-"""Planner-based back navigation: two-stage decision pipeline.
+"""Direct Action Policy back navigation (no Planner).
 
 Architecture per round:
   1. Fast identity check (no LLM) — return if already at target or ancestor page
-  2. Planner (1 LLM call) — sees current + target screenshots + history → instruction string
+  2. Construct instruction (tab switch or exit prompt, no LLM)
   3. Action Policy (1 LLM call) — sees current screenshot + instruction → ActionDecision with coords
   4. Execute (tap/scroll/home) + YOLO calibration
   5. Verify page change → update state → loop
@@ -10,22 +10,12 @@ Architecture per round:
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import re
 import time
 from collections.abc import Callable
-from difflib import SequenceMatcher
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
-
-from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
 from policy_expr.executor import is_valid_tap, logical_xy
-from policy_expr.policies.base import resize_to_logical_png
 from policy_expr.policies.structured_output import StructuredOutputPolicy
 from policy_expr.recon.back_nav import (
     BACK_SETTLE_SECONDS,
@@ -36,10 +26,9 @@ from policy_expr.recon.back_nav import (
     _pixel_diff_ratio,
     _yolo_detect_near,
     back_shot_path,
-    make_nav_context,
     save_if_changed,
 )
-from policy_expr.schemas import ActionDecision, Observation
+from policy_expr.schemas import Observation
 
 
 # ---------------------------------------------------------------------------
@@ -48,272 +37,12 @@ from policy_expr.schemas import ActionDecision, Observation
 
 _MAX_ROUNDS = 10
 _MAX_CONSECUTIVE_NO_CHANGE = 3
-_REPEAT_SIMILARITY_THRESHOLD = 0.6
 _MAX_PAGE_VISITS = 3
 
 
 # ---------------------------------------------------------------------------
-# Schema
+# Helpers
 # ---------------------------------------------------------------------------
-
-class _BackPlanResult(BaseModel):
-    instruction: str = Field(description="下一步操作指令，描述要操作的 UI 元素，不包含坐标")
-    rationale: str = Field(description="选择该操作的判断依据")
-
-
-# ---------------------------------------------------------------------------
-# Prompt
-# ---------------------------------------------------------------------------
-
-BACK_PLANNER_PROMPT = """\
-你是 iPhone 应用返回导航规划器。根据两张截图（TARGET 和 CURRENT）以及触发操作描述，判断如何从 CURRENT 回到 TARGET。
-
-## 判断流程（按顺序执行，满足即停）
-
-### Q1：CURRENT 有浮层/弹窗覆盖吗？
-检查 CURRENT 全屏：是否有弹窗、对话框、底部弹出面板或广告浮层叠在底层页面上方？
-**即使目标页面或触发操作涉及 tab，只要 CURRENT 有弹窗就必须先处理弹窗，不要跳到 Q2。**
-
-浮层必须满足：**大面积遮盖主要页面内容**（通常占屏幕 40% 以上），底层页面被遮住大部分，浮层有独立边框/阴影/半透明遮罩。
-
-⚠️ 以下**不算**浮层：
-- 小面积悬浮按钮（浮动购物车、小圆形广告、支付快捷入口等）
-- 页面内嵌的小组件或卡片
-- 底部固定的操作栏（即使看起来像独立面板）
-
-→ 满足浮层条件时，根据弹窗内容选择操作：
-
-**A. 确认/放弃类弹窗**（询问"是否保存""是否放弃修改""离开此页"等）
-→ 优先选择能**离开当前页面**的选项（如"不保存"/"Discard""放弃"/"Abandon""离开"/"Leave""不保留"）
-→ 如果弹窗的 × 按钮明确是"取消操作并返回"（而非"关闭弹窗留在当前页"），则点 × 也是合理的
-→ 判断依据：观察弹窗整体语境，× 旁边是否有"取消"文字提示
-
-**B. 其他弹窗**（广告、提示、授权请求等与回退无关的内容）
-→ 指令 = "点击弹窗的关闭按钮"
-
-→ 不满足浮层条件：进入 Q2。
-
-### Q2：某一排 tab 栏的选中项发生了变化吗？
-iPhone 应用通常同时存在两类 tab 栏，须分开判断：
-- **底部导航 tab**：3-5 个固定入口（首页/消息/我/购物车等），在不同页面间通常保持不变，位于页面最底部
-- **顶部分类 tab**：内容分类标签（推荐/热门/关注等），随内容区切换而变化，位于页面上方
-
-**判断步骤（必须严格按顺序执行）：**
-
-**步骤 A**：先看 TARGET 截图，找出每一排 tab 栏中哪个 tab 处于选中/高亮状态。记住 TARGET 选中项的名称。
-**步骤 B**：再看 CURRENT 截图，找出每一排 tab 栏中哪个 tab 处于选中/高亮状态。
-**步骤 C**：对比两图，对每一排检查以下三点是否**同时**成立：
-1. 该排在两图中均存在
-2. TARGET 的选中项 ≠ CURRENT 的选中项（两图相同则跳过该排）
-3. 触发操作的名称能在该排选项里找到
-
-**→ 某一排同时满足三点：指令 = "点击[顶部/底部] tab 栏中的「步骤 A 中识别的 TARGET 选中项名称」"**
-→ 所有排均不满足：进入 Q3。
-
-⚠️ 关键防错：
-- **必须先识别 TARGET 选中项（步骤 A），再输出指令**。不要凭触发操作名称猜目标 tab
-- 不要点击 CURRENT 中已处于选中状态的 tab，要点击 TARGET 中选中的那个
-- 触发操作含「tab」不代表条件 3 自动满足，须逐字核实 tab 名称确实出现在该排选项里
-- 如果 CURRENT 的页面结构与 TARGET 完全不同（有独立的导航栏、返回按钮），说明不是同页面的 tab 切换而是导航到了新页面，应走 Q3
-- **同栏原则**：触发操作是顶部tab → 回退也点顶部tab栏；触发操作是底部tab → 回退也点底部tab栏。不要跨栏操作
-
-### Q3：审视 CURRENT 页面的导航元素
-仔细观察 CURRENT 页面，按以下优先级寻找可回退的 UI 元素：
-**如果 CURRENT 有独立的返回箭头或关闭按钮，说明它是导航进入的新页面，即使触发操作涉及 tab 也应走 Q3。**
-
-1. **左上角返回按钮**：是否存在 < ← 箭头或"返回"文字？→ 指令 = "点击左上角返回箭头"
-2. **页面级关闭/取消按钮**：编辑页、发布页、详情页等通常有「取消」「关闭」「×」按钮 → 注意检查**左上角和右上角**两个位置 → 指令 = "点击「取消/关闭」按钮"
-3. **右上角完成按钮**：iOS 常见模式，全屏详情页、编辑页右上角有「完成」「Done」→ 指令 = "点击右上角「完成」按钮"
-4. **底部操作栏**：某些页面底部有「返回」「完成」等操作按钮 → 指令 = "点击底部的「返回/完成」按钮"
-
-⚠️ 关键：必须根据 CURRENT 截图中**实际可见的 UI 元素**做判断，不要盲目假设有返回箭头。编辑类页面（表单填写、内容发布、设置编辑）通常没有 < 箭头，而是提供「取消」「关闭」或「完成」按钮。
-
-## 规则
-- 每步只输出一个原子操作
-- 只描述要操作的 UI 元素，不要输出坐标
-- 不重复之前失败的操作
-- rationale 中简要说明你在 CURRENT 页面上看到了什么 UI 元素，以及为什么选择这个操作
-"""
-
-
-# ---------------------------------------------------------------------------
-# LLM helpers
-# ---------------------------------------------------------------------------
-
-class _SelectedTab(BaseModel):
-    selected_tab: str = Field(description="当前页面中处于选中/高亮状态的 tab 名称")
-
-
-def detect_selected_tab(png_bytes: bytes) -> str | None:
-    """Lightweight LLM call: identify which tab is selected on the current page."""
-    from policy_expr.policies.base import resize_to_logical_png as _resize
-    llm = _make_llm()
-    b64 = base64.b64encode(_resize(png_bytes)).decode()
-    prompt = (
-        "观察截图中的 tab 栏（顶部和底部），找出处于选中/高亮/激活状态的 tab。"
-        "选中 tab 通常有下划线、加粗文字或不同颜色。"
-        "只返回选中 tab 的名称，不要解释。"
-    )
-    messages = [
-        SystemMessage(content="你是一个 UI 分析专家，只识别 tab 选中状态。"),
-        HumanMessage(content=[
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-        ]),
-    ]
-    try:
-        result = invoke_structured(llm, messages, _SelectedTab)
-        name = result.selected_tab.strip()
-        print(f"  [selected_tab] → {name}")
-        return name
-    except Exception as e:
-        print(f"  [selected_tab] 失败: {e}")
-        return None
-
-
-def _make_llm() -> ChatOpenAI:
-    cfg = resolve_llm_config("back_nav")
-    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url, temperature=0)
-
-
-def _build_tab_context(nav_context: str, target_elements: list[dict] | None) -> str:
-    """Build tab context hint from target page elements.
-
-    When nav_context indicates a tab switch, find the selected tab from
-    target page elements (marked by PageParser) and tell the planner
-    exactly which tab to click.
-    """
-    import re
-    if not target_elements or "tab" not in nav_context:
-        return ""
-    m = re.search(r"(?:顶部|底部)?tab「(.+?)」", nav_context)
-    if not m:
-        return ""
-    trigger_name = m.group(1)
-
-    # Find selected tab in target elements
-    selected_tabs = [
-        el for el in target_elements
-        if el.get("element_type") == "tab" and el.get("selected")
-    ]
-
-    if len(selected_tabs) == 1:
-        target_tab = selected_tabs[0]["label"]
-        return (
-            f"\n\n【tab 上下文】TARGET 页面中当前选中的 tab 是「{target_tab}」"
-            f"（触发操作点击了「{trigger_name}」导致离开）。"
-            f" 请点击 CURRENT 页面中对应的「{target_tab}」tab 以回退。"
-        )
-
-    # Fallback: no selected info, use exclusion hint
-    trigger_tab = None
-    for el in target_elements:
-        if el.get("element_type") == "tab" and el.get("label") == trigger_name:
-            trigger_tab = el
-            break
-    if not trigger_tab:
-        return ""
-
-    ty = trigger_tab.get("y", 0)
-    same_row = [
-        el["label"] for el in target_elements
-        if el.get("element_type") == "tab"
-        and abs(el.get("y", 0) - ty) < 30
-        and el.get("label") != trigger_name
-    ]
-    if not same_row:
-        return ""
-
-    candidates = "、".join(f"「{n}」" for n in same_row)
-    return (
-        f"\n\n【tab 上下文】触发操作是点击了 tab「{trigger_name}」，因此 TARGET 页面中选中的"
-        f" tab 一定不是「{trigger_name}」，而是同排的 {candidates} 之一。"
-        f" 请根据 TARGET 截图判断其中哪个 tab 处于选中/高亮状态。"
-    )
-
-
-def _invoke_planner(
-    target_png: bytes,
-    current_png: bytes,
-    nav_context: str = "",
-    history: list[dict] | None = None,
-    target_label: str = "",
-    target_description: str = "",
-    target_elements: list[dict] | None = None,
-) -> _BackPlanResult:
-    """Ask the planner for the next navigation instruction."""
-    llm = _make_llm()
-
-    target_b64 = base64.b64encode(resize_to_logical_png(target_png)).decode()
-    current_b64 = base64.b64encode(resize_to_logical_png(current_png)).decode()
-
-    context_text = (
-        "第一张(TARGET)是要回到的目标页面，第二张(CURRENT)是当前所在页面。"
-        "请给出从 CURRENT 回到 TARGET 的下一步操作指令。"
-    )
-    if target_label:
-        context_text += f"\n\n目标页面名称：「{target_label}」"
-    if nav_context:
-        context_text += f"\n\n触发操作：{nav_context}"
-    tab_ctx = _build_tab_context(nav_context, target_elements)
-    if tab_ctx:
-        context_text += tab_ctx
-    if history:
-        context_text += "\n\n之前的尝试："
-        for i, h in enumerate(history[-6:], 1):
-            inst = h.get("instruction", "?")
-            result = h.get("result", "?")
-            context_text += f"\n- 第{i}次：指令「{inst}」→ {result}"
-        # Detect loop: multiple actions changed the page but didn't reach target
-        changed_count = sum(1 for h in history if h.get("result") == "页面变化")
-        if changed_count >= 4:
-            context_text += (
-                "\n\n⚠️ 你已经执行了多次操作且每次页面都有变化，但仍未到达目标页面。"
-                "你可能陷入了交替循环（在两个页面之间来回切换）。"
-                "请仔细审视 CURRENT 截图，选择一个**不同的**操作来打破循环。"
-                "特别检查：如果当前有确认弹窗，不要点击 ×，而要点击弹窗中的具体选项（如「不保存」「放弃」）。"
-            )
-
-    messages = [
-        SystemMessage(content=BACK_PLANNER_PROMPT),
-        HumanMessage(content=[
-            {"type": "text", "text": context_text},
-            {"type": "text", "text": "TARGET（目标页面）:"},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{target_b64}"}},
-            {"type": "text", "text": "CURRENT（当前页面）:"},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{current_b64}"}},
-        ]),
-    ]
-    return invoke_structured(llm, messages, _BackPlanResult)
-
-
-# ---------------------------------------------------------------------------
-# Stuck detection helpers
-# ---------------------------------------------------------------------------
-
-def _is_repeated_instruction(instruction: str, history: list[dict], allow_once: bool = True) -> bool:
-    """Check if instruction repeats a previously failed one.
-    allow_once permits one retry of the same instruction.
-    """
-    failed = [h for h in history
-              if "失败" in h.get("result", "") or "未变化" in h.get("result", "")]
-    if not failed:
-        return False
-    clean_new = re.sub(r"[，。、；：""''《》\s（）\(\)]", "", instruction.strip())
-    match_count = 0
-    for h in failed:
-        old = h.get("instruction", "")
-        clean_old = re.sub(r"[，。、；：""''《》\s（）\(\)]", "", old.strip())
-        if clean_new and clean_old:
-            ratio = SequenceMatcher(None, clean_new, clean_old).ratio()
-            if ratio >= _REPEAT_SIMILARITY_THRESHOLD:
-                match_count += 1
-    if match_count == 0:
-        return False
-    if allow_once and match_count <= 1:
-        return False  # Allow one retry
-    return True
-
 
 def _page_hash(png_bytes: bytes) -> str:
     return hashlib.md5(png_bytes).hexdigest()[:6]
@@ -321,6 +50,34 @@ def _page_hash(png_bytes: bytes) -> str:
 
 def _nav_print(msg: str, *, page_hash: str, round_num: int):
     print(f"    [nav2:{page_hash}] R{round_num} {msg}")
+
+
+# ---------------------------------------------------------------------------
+# Instruction builder (exported for eval reuse)
+# ---------------------------------------------------------------------------
+
+_EXIT_INSTRUCTION = (
+    "当前页面需要退出到上一层。找到页面中的退出元素并点击："
+    "左上角返回箭头（< 或 ←）、右上角或左上角的关闭/取消按钮（×/取消/关闭/Cancel）、"
+    "确认弹窗中的离开选项（不保存/放弃/离开/Discard/Leave）、"
+    "或底部操作栏的返回/完成按钮。"
+)
+
+
+def build_back_instruction(nav_context: str, selected_tab: str) -> str:
+    """Construct the Action Policy instruction for back navigation.
+
+    Tab cases use a targeted tap instruction; all other cases use the
+    generic exit prompt.
+    """
+    if "tab" in nav_context and selected_tab:
+        position = ""
+        if "底部tab" in nav_context:
+            position = "底部"
+        elif "顶部tab" in nav_context:
+            position = "顶部"
+        return f"点击{position}tab栏中的「{selected_tab}」"
+    return _EXIT_INSTRUCTION
 
 
 # ---------------------------------------------------------------------------
@@ -335,37 +92,20 @@ def planned_return_to_initial(
     out_dir: Path | None = None,
     tap_index: int = 0,
     nav_context: str = "",
-    target_label: str = "",
-    after_elements: list[dict] | None = None,
-    debug_fn: Callable | None = None,
     status_cb: Callable[[str], None] | None = None,
     selected_tab: str = "",
 ) -> tuple[bool, list[dict]]:
-    """Navigate back to the initial page using a planner-based loop.
+    """Navigate back to the initial page using direct Action Policy (no Planner).
 
     Drop-in replacement for back_nav.return_to_initial().
     """
     log: list[dict] = []
     id_comp = _get_identity_comp()
     top_level = len(nav_stack) - 1
-    initial_bytes = nav_stack[top_level][0]
-
     action_policy = StructuredOutputPolicy()
     current_bytes = before_back_bytes or screenshot()
 
-    # Build target_elements from detected selected_tab
-    _tab_target_elements: list[dict] | None = None
-    if selected_tab:
-        _tab_target_elements = [
-            {"element_type": "tab", "label": selected_tab, "selected": True, "x": 0, "y": 0}
-        ]
-
-    # Page visit counts for loop detection
-    page_visit_counts: dict[str, int] = {}
-    history: list[dict] = []
-    consecutive_no_change = 0
-
-    # Annotate nav_context with tab position from tap coordinates
+    # 给 nav_context 补充 top/bottom 位置信息
     annotated_context = nav_context
     if nav_context and "tab" in nav_context:
         tap_coords = nav_stack[top_level][1]
@@ -376,66 +116,44 @@ def planned_return_to_initial(
             elif tap_y < 350:
                 annotated_context = nav_context.replace("tab", "顶部tab", 1)
 
+    consecutive_no_change = 0
+    page_visit_counts: dict[str, int] = {}
+
+    round_num = 0
     for round_num in range(1, _MAX_ROUNDS + 1):
         ph = _page_hash(current_bytes)
-        _nav_print(f"开始规划", page_hash=ph, round_num=round_num)
+        _nav_print("开始", page_hash=ph, round_num=round_num)
         if status_cb:
-            status_cb(f"← 回退 R{round_num} 规划中")
+            status_cb(f"← 回退 R{round_num}")
 
-        # Save before screenshot for trace
         if out_dir:
-            before_path = out_dir / f"R{round_num}_before_{ph}.png"
-            before_path.write_bytes(current_bytes)
+            (out_dir / f"R{round_num}_before_{ph}.png").write_bytes(current_bytes)
 
         # ── Step 1: Fast identity check (no LLM) ──
         matched_level = _match_stack(id_comp, nav_stack, current_bytes)
         if matched_level >= 0:
             is_initial = matched_level == top_level
-            level_desc = "initial" if is_initial else f"L{matched_level}"
             sim = id_comp.raw_similarity(nav_stack[matched_level][0], current_bytes)
+            level_desc = "initial" if is_initial else f"L{matched_level}"
             _nav_print(f"已匹配 {level_desc} ({sim:.3f})", page_hash=ph, round_num=round_num)
             if not is_initial:
                 _navigate_forward(client, nav_stack, matched_level, screenshot,
                                   log=log, tap_index=tap_index, out_dir=out_dir)
             return True, log
 
-        # ── Step 2: Planner (1 LLM call) ──
-        plan = _invoke_planner(
-            initial_bytes, current_bytes,
-            nav_context=annotated_context,
-            history=history,
-            target_label=target_label,
-            target_elements=_tab_target_elements,
-        )
-        _nav_print(f"指令: {plan.instruction} ({plan.rationale})",
-                   page_hash=ph, round_num=round_num)
+        # ── Step 2: Construct instruction ──
+        instruction = build_back_instruction(annotated_context, selected_tab)
 
-        # Reject repeated instructions
-        if _is_repeated_instruction(plan.instruction, history):
-            _nav_print("指令重复已失败操作，重试...", page_hash=ph, round_num=round_num)
-            plan = _invoke_planner(
-                initial_bytes, current_bytes,
-                nav_context=annotated_context,
-                history=history,
-                target_label=target_label,
-                target_elements=_tab_target_elements,
-            )
-            if _is_repeated_instruction(plan.instruction, history):
-                _nav_print("重试仍重复，放弃", page_hash=ph, round_num=round_num)
-                log.append({"round": round_num, "instruction": plan.instruction,
-                            "result": "重复指令放弃", "success": False})
-                break
+        _nav_print(f"指令: {instruction}", page_hash=ph, round_num=round_num)
 
         # ── Step 3: Action Policy (1 LLM call) ──
         obs = Observation(png_bytes=current_bytes, source="planned_back_nav")
-        decision = action_policy.decide(obs, plan.instruction)
+        decision = action_policy.decide(obs, instruction)
 
         if decision.not_found_reason:
-            _nav_print(f"目标不可见: {decision.not_found_reason}",
-                       page_hash=ph, round_num=round_num)
-            history.append({"instruction": plan.instruction, "result": f"元素不可见: {decision.not_found_reason}"})
-            log.append({"round": round_num, "strategy": "planner",
-                        "instruction": plan.instruction,
+            _nav_print(f"目标不可见: {decision.not_found_reason}", page_hash=ph, round_num=round_num)
+            log.append({"round": round_num, "strategy": "direct",
+                        "instruction": instruction,
                         "result": f"元素不可见: {decision.not_found_reason}",
                         "success": False})
             continue
@@ -444,7 +162,6 @@ def planned_return_to_initial(
 
         # ── Step 4: Execute ──
         if action.action_type == "home":
-            _nav_print("执行返回主屏", page_hash=ph, round_num=round_num)
             result = client.press_home()
             if "Failed" in result:
                 from policy_expr.executor import WIN_W, WIN_H
@@ -452,18 +169,14 @@ def planned_return_to_initial(
             tap_xy = None
         elif action.action_type in ("tap", "click") and action.x is not None and action.y is not None:
             ax, ay = action.x, action.y
-            # YOLO calibration
             yolo_point = _yolo_detect_near(current_bytes, ax, ay)
             if yolo_point:
-                _nav_print(f"YOLO校准: ({ax:.0f},{ay:.0f}) → ({yolo_point[0]:.0f},{yolo_point[1]:.0f})",
+                _nav_print(f"YOLO校准: ({ax:.0f},{ay:.0f})→({yolo_point[0]:.0f},{yolo_point[1]:.0f})",
                            page_hash=ph, round_num=round_num)
                 ax, ay = yolo_point
             if not is_valid_tap(ax, ay):
-                _nav_print(f"坐标越界 ({ax:.0f},{ay:.0f})", page_hash=ph, round_num=round_num)
-                history.append({"instruction": plan.instruction, "result": "坐标越界"})
-                log.append({"round": round_num, "strategy": "planner",
-                            "instruction": plan.instruction,
-                            "result": "坐标越界", "success": False})
+                log.append({"round": round_num, "strategy": "direct",
+                            "instruction": instruction, "result": "坐标越界", "success": False})
                 continue
             lx, ly = logical_xy(ax, ay)
             tap_xy = (ax, ay)
@@ -474,20 +187,15 @@ def planned_return_to_initial(
             tap_xy = (action.x or 500, action.y or 500)
             result = "scroll"
         else:
-            _nav_print(f"不支持的动作: {action.action_type}", page_hash=ph, round_num=round_num)
-            history.append({"instruction": plan.instruction, "result": f"不支持: {action.action_type}"})
-            log.append({"round": round_num, "strategy": "planner",
-                        "instruction": plan.instruction,
+            log.append({"round": round_num, "strategy": "direct",
+                        "instruction": instruction,
                         "result": f"不支持的动作: {action.action_type}",
                         "success": False})
             continue
 
-        # Check tap failure
         if isinstance(result, str) and ("failed" in result.lower() or "interrupted" in result.lower()):
-            _nav_print(f"执行失败: {result}", page_hash=ph, round_num=round_num)
-            history.append({"instruction": plan.instruction, "result": f"执行失败: {result}"})
-            log.append({"round": round_num, "strategy": "planner",
-                        "instruction": plan.instruction,
+            log.append({"round": round_num, "strategy": "direct",
+                        "instruction": instruction,
                         "result": f"执行失败: {result}", "success": False})
             continue
 
@@ -496,20 +204,19 @@ def planned_return_to_initial(
         after_bytes = screenshot()
         after_ph = _page_hash(after_bytes)
 
-        # Fast check: reached target or ancestor page?
         matched_level = _match_stack(id_comp, nav_stack, after_bytes)
         if matched_level >= 0:
             is_initial = matched_level == top_level
-            level_desc = "initial" if is_initial else f"L{matched_level}"
             sim = id_comp.raw_similarity(nav_stack[matched_level][0], after_bytes)
+            level_desc = "initial" if is_initial else f"L{matched_level}"
             _nav_print(f"→ 匹配 {level_desc} ({sim:.3f})", page_hash=ph, round_num=round_num)
             if status_cb:
-                status_cb(f"← 回退 R{round_num} ✓ {'回到初始页' if is_initial else f'→ {level_desc}'}")
+                status_cb(f"← 回退 R{round_num} ✓ {'回到初始页' if is_initial else level_desc}")
             save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
             shot_str = save_if_changed(after_bytes, save_path)
             log.append({
-                "round": round_num, "strategy": "planner",
-                "instruction": plan.instruction, "rationale": plan.rationale,
+                "round": round_num, "strategy": "direct",
+                "instruction": instruction,
                 "result": level_desc, "score": round(sim, 3), "success": is_initial,
                 "page_from": ph, "page_to": after_ph, "screenshot": shot_str,
                 **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
@@ -519,15 +226,13 @@ def planned_return_to_initial(
                                   log=log, tap_index=tap_index, out_dir=out_dir)
             return True, log
 
-        # Did anything change? Simple pixel diff — planner decides what happened
         diff_ratio = _pixel_diff_ratio(current_bytes, after_bytes)
         if diff_ratio < _PIXEL_DIFF_THRESHOLD:
             consecutive_no_change += 1
             _nav_print(f"未变化 (pixel={diff_ratio:.4f})", page_hash=ph, round_num=round_num)
-            history.append({"instruction": plan.instruction, "result": "未变化"})
             log.append({
-                "round": round_num, "strategy": "planner",
-                "instruction": plan.instruction, "rationale": plan.rationale,
+                "round": round_num, "strategy": "direct",
+                "instruction": instruction,
                 "result": "未变化", "success": False,
                 "page_from": ph, "page_to": after_ph,
                 **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
@@ -537,32 +242,24 @@ def planned_return_to_initial(
                 break
             continue
 
-        # Something changed — update state, let planner decide next step
         consecutive_no_change = 0
-        _nav_print(f"页面变化 (pixel={diff_ratio:.4f})", page_hash=ph, round_num=round_num)
-
-        save_path = back_shot_path(out_dir, tap_index, len(log) + 1)
-        shot_str = save_if_changed(after_bytes, save_path)
-
         page_visit_counts[after_ph] = page_visit_counts.get(after_ph, 0) + 1
         if page_visit_counts[after_ph] >= _MAX_PAGE_VISITS:
-            _nav_print(f"页面循环 ({after_ph} 访问{page_visit_counts[after_ph]}次)，放弃",
-                       page_hash=ph, round_num=round_num)
+            _nav_print(f"页面循环 ({after_ph})，放弃", page_hash=ph, round_num=round_num)
             log.append({
-                "round": round_num, "strategy": "planner",
-                "instruction": plan.instruction, "rationale": plan.rationale,
+                "round": round_num, "strategy": "direct",
+                "instruction": instruction,
                 "result": f"页面循环 ({after_ph})", "success": False,
-                "page_from": ph, "page_to": after_ph, "screenshot": shot_str,
+                "page_from": ph, "page_to": after_ph,
                 **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
             })
             break
 
-        history.append({"instruction": plan.instruction, "result": "页面变化"})
         log.append({
-            "round": round_num, "strategy": "planner",
-            "instruction": plan.instruction, "rationale": plan.rationale,
+            "round": round_num, "strategy": "direct",
+            "instruction": instruction,
             "result": "变化", "success": False,
-            "page_from": ph, "page_to": after_ph, "screenshot": shot_str,
+            "page_from": ph, "page_to": after_ph,
             **({"tap_xy": [round(tap_xy[0]), round(tap_xy[1])]} if tap_xy else {}),
         })
         current_bytes = after_bytes
