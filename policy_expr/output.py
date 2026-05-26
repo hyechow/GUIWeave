@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import date, datetime, timedelta
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -37,6 +39,11 @@ _ANALYSIS_SYSTEM = """\
 - 如果信息不完整，如实说明，不要补充截图中没有的内容
 - 不要提及"agent"、"截图"、"收集"等操作性词汇，直接给出答案
 - 不要在结尾追加运行说明
+- 不要加免责声明或多余的解释（如"无法确认""缺乏定义"），直接给结论
+- 如果用户目标包含「上周」「本周」「今天」「昨天」等相对日期，优先使用补充上下文中给出的解析日期范围；禁止说原始数据未明确该相对日期的定义
+- 如果页面筛选范围比用户目标更宽，只从原始内容中筛选符合用户目标日期范围的记录，不要把宽筛选范围说成答案范围
+- 如果是金额/交易/订单类数据，用 Markdown 表格呈现，列包含：日期、描述、金额
+- 表格后附一行总计
 """
 
 _CHAT_SYSTEM = """\
@@ -88,8 +95,9 @@ def _analysis_messages(
     collection_context: str | None,
 ) -> list:
     notes_text = "\n\n".join(f"[片段 {i+1}]\n{n}" for i, n in enumerate(content_notes))
-    if collection_context:
-        notes_text = f"[采集上下文] {collection_context}\n\n以下为逐帧提取的内容片段：\n\n{notes_text}"
+    reply_context = _build_reply_context(goal, result, content_notes, collection_context)
+    if reply_context:
+        notes_text = f"[补充上下文]\n{reply_context}\n\n以下为逐帧提取的内容片段：\n\n{notes_text}"
     stop_reason = (result or {}).get("stop_reason", "")
     return [
         SystemMessage(content=_ANALYSIS_SYSTEM),
@@ -154,6 +162,66 @@ def _action_messages(goal: str, result: dict) -> list:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _build_reply_context(
+    goal: str,
+    result: dict | None,
+    content_notes: list[str],
+    collection_context: str | None,
+) -> str:
+    lines = [f"当前日期：{_today().strftime('%Y-%m-%d')}"]
+    goal_period = _infer_goal_period(goal, content_notes, (result or {}).get("collection_scope"))
+    if goal_period:
+        start, end, source = goal_period
+        lines.append(f"用户目标日期范围：{start} 至 {end}（{source}）")
+        lines.append("输出时只保留该日期范围内的记录；不要声称“上周”定义不明确。")
+    if collection_context:
+        lines.append(f"采集状态：{collection_context}")
+    collection_scope = (result or {}).get("collection_scope")
+    if collection_scope:
+        lines.append("采集范围元数据：" + json.dumps(collection_scope, ensure_ascii=False))
+    return "\n".join(lines)
+
+
+def _infer_goal_period(
+    goal: str,
+    content_notes: list[str],
+    collection_scope: dict | None = None,
+) -> tuple[str, str, str] | None:
+    if "上周" not in goal:
+        return None
+
+    if (
+        collection_scope
+        and "上周" in str(collection_scope.get("label", ""))
+        and collection_scope.get("start")
+        and collection_scope.get("end")
+    ):
+        return str(collection_scope["start"]), str(collection_scope["end"]), "采集范围元数据"
+
+    joined = "\n".join(content_notes)
+    metadata_match = re.search(
+        r"范围:\{[^}\n]*?\"label\"\s*:\s*\"[^\"]*上周[^\"]*\"[^}\n]*?\"start\"\s*:\s*\"(\d{4}-\d{2}-\d{2})\"[^}\n]*?\"end\"\s*:\s*\"(\d{4}-\d{2}-\d{2})\"",
+        joined,
+    )
+    if metadata_match:
+        return metadata_match.group(1), metadata_match.group(2), "采集元数据"
+
+    text_match = re.search(r"上周[^\d]*(\d{4}-\d{2}-\d{2})\s*(?:至|到|-)\s*(\d{4}-\d{2}-\d{2})", joined)
+    if text_match:
+        return text_match.group(1), text_match.group(2), "采集上下文"
+
+    # Fallback for common colloquial usage in this assistant: the seven days
+    # before today. Explicit context from the supervisor/reader always wins.
+    today = _today()
+    start = today - timedelta(days=7)
+    end = today - timedelta(days=1)
+    return start.isoformat(), end.isoformat(), "按当前日期推导（最近7天，不含今天）"
+
+
+def _today() -> date:
+    return datetime.now().astimezone().date()
 
 
 def _fmt_session(session: list[dict]) -> str:

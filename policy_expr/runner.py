@@ -190,6 +190,8 @@ def _make_result(
         "turns_detail": turns_detail,
         "content_notes": context.content_notes or None,
         "collection_context": collection_context,
+        "collection_scope": context.collection_scope.model_dump(exclude_none=True)
+        if context.collection_scope else None,
     }
 
 

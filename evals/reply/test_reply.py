@@ -43,6 +43,8 @@ def run():
                 result=c.get("result"),
                 session=c.get("session"),
                 non_action_reason=c.get("non_action_reason", ""),
+                content_notes=c.get("content_notes"),
+                collection_context=c.get("collection_context"),
             )
         except Exception as e:
             failed += 1

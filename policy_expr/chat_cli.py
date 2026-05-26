@@ -149,6 +149,8 @@ def run_chat_turn(
 
             if hasattr(supervisor, "task_type") and context.task_type is None:
                 context.task_type = supervisor.task_type
+            if sv_step.collection_scope and sv_step.collection_scope != context.collection_scope:
+                context.collection_scope = sv_step.collection_scope
 
             read_note_hash = None
 
@@ -258,6 +260,8 @@ def _make_result(context: PolicyContext, stop_reason: str) -> dict:
         "turns_count": len(context.turns),
         "turns_detail": turns_detail,
         "content_notes": context.content_notes or None,
+        "collection_scope": context.collection_scope.model_dump(exclude_none=True)
+        if context.collection_scope else None,
         "pre_existing": pre_existing,
     }
 
@@ -524,6 +528,7 @@ def main() -> None:
                 _print_reply(reply)
                 entry = {
                     "user_msg": user_msg,
+                    "reply": reply,
                     "result_summary": reply,
                     "stop_reason": "非手机操作",
                     "goal_completed": False,
@@ -583,6 +588,7 @@ def main() -> None:
             reply = generate_reply(
                 user_msg, result, session=session,
                 content_notes=result.get("content_notes"),
+                collection_context=result.get("collection_context"),
             )
             reply_secs = time.time() - t1
             reply_state["done"] = True
@@ -593,6 +599,7 @@ def main() -> None:
         entry = {
             "user_msg": display_msg,
             "goal": goal,
+            "reply": reply,
             "result_summary": result["result_summary"],
             "stop_reason": result["stop_reason"],
             "goal_completed": result["goal_completed"],
