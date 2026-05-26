@@ -1,0 +1,29 @@
+[
+  {
+    "label": "微信日期选择器-scroll失败-replan应改tap",
+    "screenshot": "evals/replan/screenshots/wechat_date_picker.png",
+    "milestone": {
+      "name": "筛选上周日期范围",
+      "description": "在账单筛选弹窗中设置日期范围为2026年5月19日至5月25日",
+      "success_condition": "看到筛选后的账单列表，日期在2026年5月19日至5月25日之间",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "action",
+      "retry_count": 1
+    },
+    "history": [
+      "在当前筛选弹窗中向上滑动以查找日期范围筛选选项",
+      "点击「确定」按钮关闭筛选弹窗",
+      "点击「全部账单」筛选按钮",
+      "点击「2026年5月」月份筛选区域查看是否有更详细的日期选择选项",
+      "点击筛选弹窗顶部的「选择时间段」标签页",
+      "在日期选择区域向上滑动，查找并点击2026年5月19日作为开始日期"
+    ],
+    "stuck_reason": "连续 3 帧截图相似度 [100.00%, 100.00%]，屏幕无实质变化",
+    "issues": ["屏幕像素变化低于阈值"],
+    "expected": {
+      "must_contain": ["点击"],
+      "must_not_contain": ["滚动", "滑动", "scroll", "向上", "向下"]
+    }
+  }
+]

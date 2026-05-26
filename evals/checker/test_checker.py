@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from policy_expr.schemas import Milestone, Observation
+from policy_expr.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from policy_expr.supervisor.milestone import run_checker
 
 CASES_FILE = Path(__file__).parent / "cases.json"
@@ -33,6 +33,38 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
     print(line)
 
 
+def _build_history(milestone_id: str, instructions: list[dict | str]) -> list[PolicyTurn]:
+    """Build minimal PolicyTurn history from a list of instruction dicts or strings.
+
+    Each entry can be a plain string (instruction text) or a dict with keys:
+      instruction, summary (default: instruction text), executed (default: True)
+    """
+    turns = []
+    for i, entry in enumerate(instructions):
+        if isinstance(entry, str):
+            inst = entry
+            summary = entry
+            executed = True
+        else:
+            inst = entry["instruction"]
+            summary = entry.get("summary", inst)
+            executed = entry.get("executed", True)
+        turns.append(PolicyTurn(
+            index=i + 1,
+            observation_source="eval",
+            supervisor=SupervisorStep(
+                should_act=True,
+                instruction=inst,
+                stop=False,
+                goal_completed=False,
+                summary=summary,
+                milestone_id=milestone_id,
+            ),
+            executed=executed,
+        ))
+    return turns
+
+
 def test_checker() -> None:
     global fallback_count
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
@@ -41,12 +73,13 @@ def test_checker() -> None:
         observation = Observation(png_bytes=png_bytes, source="eval")
         m = c["milestone"]
         milestone = Milestone.model_validate({**m, "id": c["label"]})
+        history = _build_history(c["label"], c.get("history", []))
 
         buf = io.StringIO()
         try:
             with redirect_stdout(buf):
                 result = run_checker(
-                    milestone, observation, [],
+                    milestone, observation, history,
                     app_name=m["app_name"],
                     task_type=m.get("task_type", "action"),
                 )
@@ -65,11 +98,14 @@ def test_checker() -> None:
             details.append(f'status: expected {expected["status"]!r}, got {result.status!r}')
         if "loading" in expected and result.loading != expected["loading"]:
             details.append(f'loading: expected {expected["loading"]}, got {result.loading}')
+        if "reason_contains" in expected:
+            if not any(kw in result.reason for kw in expected["reason_contains"]):
+                details.append(f'reason should contain one of {expected["reason_contains"]}, got: {result.reason[:100]}')
 
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
         if not ok:
-            print(f"       reason: {result.reason[:100]}")
+            print(f"       reason: {result.reason[:200]}")
 
 
 def main():

@@ -134,5 +134,22 @@
       "status": "in_progress",
       "loading": false
     }
+  },
+  {
+    "label": "微信账单页-加载中部分内容可见-loading=true",
+    "screenshot": "evals/checker/screenshots/wechat_bill_loading.png",
+    "milestone": {
+      "name": "查看消费记录",
+      "description": "进入微信账单页面，查看交易记录列表",
+      "success_condition": "看到账单页面，显示交易记录列表",
+      "kind": "collection",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": true
+    }
   }
 ]

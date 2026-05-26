@@ -76,7 +76,10 @@ def test_planner() -> None:
         history = _build_history(c["label"], c.get("history", []))
 
         try:
-            result = run_planner(milestone, check, observation, history)
+            result = run_planner(
+                milestone, check, observation, history,
+                constraints=c.get("constraints"),
+            )
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")
             continue

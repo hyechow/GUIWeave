@@ -360,5 +360,11 @@
     "user_msg": "把我最近在拼多多上下单的奶粉分享给老Be，这个性价比高",
     "session": [],
     "expected": {"goal_contains_all": ["拼多多", "老Be", "性价比"]}
+  },
+  {
+    "label": "信息查询-微信查账单",
+    "user_msg": "我上周用微信支付花多少钱了？",
+    "session": [],
+    "expected": {"goal": "微信"}
   }
 ]

@@ -10,7 +10,12 @@ evals/
 ├── prefs/       # 用户偏好提取测评
 ├── reply/       # 回复生成测评
 ├── checker/     # SingleCheck 验收员测评（status/loading 准确性）
-└── planner/     # 步骤规划器测评（指令类型正确性）
+├── planner/     # 步骤规划器测评（指令类型正确性）
+├── replan/      # 修复规划器测评（stuck 后策略切换）
+├── back_nav/    # 回退导航测评
+├── cascade_matcher/  # 级联匹配器测评
+├── popup_detect/      # 弹窗检测测评
+├── decomposer/        # 任务分解测评
 ```
 
 ## router/cases.json 用例分组
@@ -44,6 +49,13 @@ evals/
 | 骨架屏 | 内容区域全部为灰色占位块 | loading=true |
 | 白屏 | 页面完全空白 | loading=true |
 | 正常进行中 | 有实质内容但未达到验收条件 | status=in_progress, loading=false |
+| 加载中部分可见 | 页面有可见加载指示器但已有部分内容 | loading=true |
+
+## replan/cases.json 用例分组
+
+| 分组 | 说明 | 关键验证点 |
+|------|------|-----------|
+| scroll失败 | scroll 导致屏幕冻结，stuck 触发 replan | 指令含「点击」，不含「滚动/滑动」 |
 
 ## planner/cases.json 用例分组
 
@@ -61,3 +73,18 @@ evals/
 | normal-failure | 任务未完成 | 禁止说"成功/已帮你完成" |
 | non-action | 无需操作手机的闲聊/追问 | 自然回答，无操作痕迹 |
 | 承接 | 多轮对话中的后续操作 | 正常成功回复 |
+
+## 最近测试结果（2026-05-26）
+
+| 模块 | 通过/总数 | 备注 |
+|------|----------|------|
+| router | 51/51 | 新增「信息查询-微信查账单」case，修复 APP 内数据查询被误判为非手机操作 |
+| checker | 9/9 | 新增「加载中部分可见」case，收紧 loading 判定：有加载指示器即使有部分内容也判 loading=true |
+| planner | 4/4 | 无新增 |
+| replan | 9/10 | 新增「scroll失败」case，验证 stuck 后 replan 改用 tap 而非继续 scroll |
+
+### 关键改动
+
+- **router**: 提示词增加规则——信息来源是某个 APP 内的数据（账单、订单、余额）即属于手机操作，不因为「查询」「多少钱」等词误判为通用问答
+- **checker**: loading 判定从「有部分内容就 false」改为「有加载指示器就 true，内容完整渲染且无指示器才 false」
+- **replan/planner**: 增加 scroll 无效后必须改用 tap 的规则，模拟生产 SimStuck 检测 → tried_instructions 注入 → replan 路径

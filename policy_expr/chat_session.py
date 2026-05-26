@@ -44,7 +44,9 @@ _ROUTER_SYSTEM = """\
 三种情况：
 1. 需要操控手机，且信息充分 → 填写 goal，格式：「在[APP]中[操作]」
 2. 需要操控手机，但缺少关键信息（未指定 APP、操作不明确）→ goal 留空，needs_clarification=true，clarification 说明需要补充什么
-3. 不需要操控手机（闲聊、问答）→ goal 留空，needs_clarification=false
+3. 不需要操控手机（闲聊、通用知识问答）→ goal 留空，needs_clarification=false
+⚠️ 只要用户要查看/操作某个 APP 内的数据（如账单、聊天记录、订单、余额），就必须操控手机，属于情况1。
+不要因为「查询」「看看」「多少钱」等词就误判为通用问答——如果信息来源是某个 APP，就是手机操作。
 
 goal 生成规则：
 - 单 APP 任务格式：「在[APP]中[操作]」，必须包含明确的目标 APP 名称和具体操作
