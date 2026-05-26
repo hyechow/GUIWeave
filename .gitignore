@@ -6,7 +6,7 @@ __pycache__/
 images/
 logs/
 debug.log
-bin/
+bin/sck_server
 tmp_scripts/
 knowledge/
 models/
