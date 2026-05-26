@@ -24,7 +24,9 @@ https://github.com/user-attachments/assets/2deb4026-97e9-4689-bfa7-30472544d3df
 
 ### 探测模式
 
-https://github.com/user-attachments/assets/PLACEHOLDER_RECON_1
+> 自动探索闲鱼 APP 页面结构，生成页面知识库（2x 加速）
+
+https://github.com/user-attachments/assets/183b80fd-ba0f-4f14-b599-b7ef3efc4a79
 
 ## 架构
 
