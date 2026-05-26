@@ -8,7 +8,11 @@
 
 **操作类**：执行具体动作（发消息、下单、修改设置）
 
-https://github.com/user-attachments/assets/PLACEHOLDER_CHAT_1
+> "把我最近在拼多多上下单的奶粉分享给老 Be，这个性价比高"
+>
+> 拼多多找订单 → 微信分享给联系人，跨 APP 操作（2x 加速）
+
+https://github.com/user-attachments/assets/3b10c74a-99ae-4bbb-a983-767857b62136
 
 **查询类**：从 APP 内读取并汇总信息（账单统计、订单记录、消息摘要）
 
