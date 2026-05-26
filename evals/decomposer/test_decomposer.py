@@ -30,9 +30,10 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
     print(line)
 
 
-def _check_milestones(milestones: list, expected: dict) -> list[str]:
+def _check_milestones(milestones: list, constraints: list[str], expected: dict) -> list[str]:
     details = []
     all_text = " ".join(f"{m.name} {m.description}" for m in milestones)
+    constraints_text = " ".join(constraints)
 
     if "min_milestones" in expected and len(milestones) < expected["min_milestones"]:
         details.append(f"expected >={expected['min_milestones']} milestones, got {len(milestones)}")
@@ -58,6 +59,10 @@ def _check_milestones(milestones: list, expected: dict) -> list[str]:
         if violators:
             details.append(f"milestone(s) {violators} use forbidden strategy '{forbidden_strategy}'")
 
+    for kw in expected.get("constraints_contain", []):
+        if kw not in constraints_text:
+            details.append(f"global_constraints missing '{kw}' (got: {constraints_text!r})")
+
     return details
 
 
@@ -76,14 +81,16 @@ def test_decomposer() -> None:
             policy = MilestoneSupervisorPolicy()
             policy._decompose(c["goal"], observation)
             milestones = [policy._milestones[mid] for mid in policy._order]
+            constraints = policy._global_constraints
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")
             continue
 
-        details = _check_milestones(milestones, c["expected"])
+        details = _check_milestones(milestones, constraints, c["expected"])
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
         if not ok:
+            print(f"       constraints: {constraints}")
             for m in milestones:
                 print(f"       [{m.kind}] {m.name}: {m.success_condition}")
 

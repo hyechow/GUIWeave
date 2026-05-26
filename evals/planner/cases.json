@@ -124,6 +124,29 @@
     }
   },
   {
+    "label": "picker-目标在可见行-应tap而非drag",
+    "screenshot": "evals/planner/screenshots/wechat_picker_target_visible.png",
+    "milestone": {
+      "name": "设置开始日期为2026年5月18日",
+      "description": "在选择时间段弹窗中，将开始日期调整为2026年5月18日",
+      "success_condition": "开始日期字段显示2026年5月18日",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前开始日期为2026年5月17日，目标为18日，差1格",
+      "issues": [],
+      "missing_evidence": ["开始日期显示2026年5月18日"],
+      "summary": "选择时间段弹窗，当前滚轮显示17日选中，18日在17日下方可见行内"
+    },
+    "expected": {
+      "must_contain": ["点击", "18"],
+      "must_not_contain": ["拖动", "向上", "向下", "drag"]
+    }
+  },
+  {
     "label": "picker-月份5月→1月-应decrease-large",
     "screenshot": "evals/planner/screenshots/wechat_date_picker.png",
     "milestone": {

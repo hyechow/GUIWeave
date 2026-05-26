@@ -37,5 +37,15 @@
       "min_milestones": 2,
       "any_milestone_kind": ["filter"]
     }
+  },
+  {
+    "label": "微信账单-上周-应换算为绝对日期写入constraints",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "我上周用微信支付花多少钱了？",
+    "expected": {
+      "min_milestones": 2,
+      "any_milestone_kind": ["filter"],
+      "constraints_contain": ["2026-05"]
+    }
   }
 ]
