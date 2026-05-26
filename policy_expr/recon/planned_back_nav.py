@@ -161,7 +161,7 @@ def planned_return_to_initial(
         matched_level = _match_stack(id_comp, nav_stack, current_bytes)
         if matched_level >= 0:
             is_initial = matched_level == top_level
-            sim = id_comp.raw_similarity(nav_stack[matched_level][0], current_bytes)
+            sim = id_comp.identity_similarity(nav_stack[matched_level][0], current_bytes)
             level_desc = "initial" if is_initial else f"L{matched_level}"
             _nav_print(f"已匹配 {level_desc} ({sim:.3f})", page_hash=ph, round_num=round_num)
             if not is_initial:
@@ -259,7 +259,7 @@ def planned_return_to_initial(
         matched_level = _match_stack(id_comp, nav_stack, after_bytes)
         if matched_level >= 0:
             is_initial = matched_level == top_level
-            sim = id_comp.raw_similarity(nav_stack[matched_level][0], after_bytes)
+            sim = id_comp.identity_similarity(nav_stack[matched_level][0], after_bytes)
             level_desc = "initial" if is_initial else f"L{matched_level}"
             _nav_print(f"→ 匹配 {level_desc} ({sim:.3f})", page_hash=ph, round_num=round_num)
             if status_cb:

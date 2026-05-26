@@ -21,6 +21,28 @@ from policy_expr.trace import Tracer
 _status_cb: Callable[[str], None] | None = None
 
 
+def _tab_bar_gone(before_bytes: bytes, after_bytes: bytes, region: str = "top") -> tuple[bool, float]:
+    """Check if a tab bar region disappeared after a tap.
+
+    region: "top" (15-28% band, ~y 150-280) or "bottom" (85-100% band, ~y 850-1000).
+    Returns (gone, pixel_diff_ratio) for diagnostic logging.
+    """
+    import io
+    import numpy as np
+    from PIL import Image
+
+    b = np.array(Image.open(io.BytesIO(before_bytes)).convert("L"), dtype=np.float32)
+    a = np.array(Image.open(io.BytesIO(after_bytes)).convert("L"), dtype=np.float32)
+    h = b.shape[0]
+    if region == "bottom":
+        y1, y2 = int(h * 0.85), h
+    else:
+        y1, y2 = int(h * 0.15), int(h * 0.28)
+    diff = np.abs(b[y1:y2] - a[y1:y2])
+    ratio = float((diff > 30).mean())
+    return ratio > 0.30, ratio
+
+
 def _safe_tap(client, lx: float, ly: float) -> str:
     """Tap with automatic Mac popup recovery. Returns tap response string."""
     resp = client.tap(lx, ly)
@@ -71,7 +93,7 @@ def explore_dfs(phone, app_log_dir: Path, max_depth: int = 0,
 def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
                       sample: int = 0, mode: str | None = None,
                       target_dir: str | None = None) -> list[DfsPageNode]:
-    from policy_expr.recon.page_parser import PageParser
+    from policy_expr.recon.page_parser import PageParser, resolve_selected_tabs
     from policy_expr.recon.cascade_matcher import get_matcher
 
     app = app_log_dir.name
@@ -87,6 +109,27 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
     png_bytes = phone.screenshot()
     knowledge = PageParser().analyze_screen(png_bytes)
     page_name, _fingerprint, _root_form = _page_name_from_fingerprint(png_bytes)
+
+    # Resolve initial tabs: tap the leftmost to establish known state
+    _root_top_tab, _root_bottom_tab = resolve_selected_tabs(knowledge.page)
+
+    _top_tab_areas = sorted(
+        [a for a in knowledge.areas if a.element_type == "tab" and a.center_xy[1] < 400],
+        key=lambda a: a.center_xy[0],
+    )
+    if _top_tab_areas:
+        _init_tab = _top_tab_areas[0]
+        _ax, _ay = _init_tab.center_xy
+        _lx, _ly = logical_xy(_ax, _ay)
+        print(f"\n{'='*60}")
+        print(f"  ★ 探索起点：「{_init_tab.label}」")
+        print(f"{'='*60}\n")
+        _safe_tap(phone.client, _lx, _ly)
+        time.sleep(1.5)
+        png_bytes = phone.screenshot()
+        knowledge = PageParser().analyze_screen(png_bytes)
+        page_name, _fingerprint, _root_form = _page_name_from_fingerprint(png_bytes)
+        _root_top_tab = _init_tab.label
 
     # update mode: use target_dir as page_name and out_dir
     inherited_parent: str = ""
@@ -140,11 +183,21 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
         parent_bytes, _ = nav_stack[-1]
         child_nav_stack = nav_stack[:-1] + [(parent_bytes, (lx, ly)), (after_bytes, None)]
 
+        # Derive child's active tabs from tap position and element type
+        _c_top = _root_top_tab
+        _c_bot = _root_bottom_tab
+        if area.element_type == "tab":
+            if ay > 850:
+                _c_bot = area.label
+            elif ay < 300:
+                _c_top = area.label
+
         # Recursive DFS into child
         child_node, child_dedup = _dfs_recursive(
             phone, child_chain, child_nav_stack, root_ctx,
             chain_to_page, dedup, visited_page_entries, tracer, trace_path,
             app_log_dir, max_depth - 1, sample,
+            active_top_tab=_c_top, active_bottom_tab=_c_bot,
         )
 
         if child_node is not None:
@@ -186,6 +239,8 @@ def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
             sample=sample, nav_stack=nav_stack,
             on_element_tapped=_on_root_element_tapped,
             parent_page=root_node.parent or "",
+            active_top_tab=_root_top_tab,
+            active_bottom_tab=_root_bottom_tab,
         )
         _update_recon_log(app_log_dir, page_name, mode or "initial")
     except ProbeAbortedError as e:
@@ -211,6 +266,8 @@ def _dfs_recursive(
     app_log_dir: Path,
     max_depth: int,
     sample: int,
+    active_top_tab: str = "",
+    active_bottom_tab: str = "",
 ) -> tuple[DfsPageNode | None, dict]:
     """Recursive DFS step. Phone is on the target page.
 
@@ -272,16 +329,20 @@ def _dfs_recursive(
         }
         return None, dedup_info
 
-    # ── New page: parse elements + fingerprint concurrently ──
+    # ── New page: fingerprint always, LLM parse only for non-leaf ──
     import re as _re
     import concurrent.futures as _cf
     from policy_expr.recon.page_parser import PageParser
 
-    with _cf.ThreadPoolExecutor(max_workers=2) as _ex:
-        _fut_know = _ex.submit(PageParser().analyze_screen, png_bytes)
-        _fut_fp   = _ex.submit(get_matcher().generate_fingerprint, png_bytes)
-        knowledge = _fut_know.result()
-        _fp       = _fut_fp.result()
+    if max_depth > 0:
+        with _cf.ThreadPoolExecutor(max_workers=2) as _ex:
+            _fut_know = _ex.submit(PageParser().analyze_screen, png_bytes)
+            _fut_fp   = _ex.submit(get_matcher().generate_fingerprint, png_bytes)
+            knowledge = _fut_know.result()
+            _fp       = _fut_fp.result()
+    else:
+        _fp = get_matcher().generate_fingerprint(png_bytes)
+        knowledge = None
 
     page_name   = _re.sub(r'[\\/:*?"<>|\s]+', '_', _fp.purpose) or "page"
     fingerprint = f"用途：{_fp.purpose}\n内容区：{_fp.content}\n页面形态：{_fp.form}"
@@ -322,13 +383,13 @@ def _dfs_recursive(
         "library_size": n,
         "page_name": page_name,
         "fingerprint": fingerprint,
-        # Parsed elements for this page (0-1000 coords) — used by back_nav LLM
-        "initial_elements": [
+    }
+    if knowledge is not None:
+        dedup_info["initial_elements"] = [
             {"label": a.label, "element_type": a.element_type,
              "x": a.center_xy[0], "y": a.center_xy[1]}
             for a in knowledge.areas
-        ],
-    }
+        ]
 
     out_dir = app_log_dir / page_name
     node = DfsPageNode(
@@ -368,11 +429,21 @@ def _dfs_recursive(
                 parent_bytes, _ = nav_stack[-1]
                 child_nav_stack = nav_stack[:-1] + [(parent_bytes, (lx, ly)), (after_bytes, None)]
 
+                # Derive child's active tabs from tap position and element type
+                _c_top = active_top_tab
+                _c_bot = active_bottom_tab
+                if area.element_type == "tab":
+                    if ay > 850:
+                        _c_bot = area.label
+                    elif ay < 300:
+                        _c_top = area.label
+
                 # Recursive DFS into child
                 child_node, child_dedup = _dfs_recursive(
                     phone, child_chain, child_nav_stack, root_ctx,
                     chain_to_page, dedup, visited_page_entries, tracer, trace_path,
                     app_log_dir, max_depth - 1, sample,
+                    active_top_tab=_c_top, active_bottom_tab=_c_bot,
                 )
 
                 if child_node is not None:
@@ -414,6 +485,8 @@ def _dfs_recursive(
                 on_element_tapped=_on_element_tapped,
                 parent_page=node.parent or "",
                 fingerprint=fingerprint,
+                active_top_tab=active_top_tab,
+                active_bottom_tab=active_bottom_tab,
             )
             _update_recon_log(app_log_dir, page_name, "initial")
         except ProbeAbortedError as e:
@@ -456,7 +529,9 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
                     nav_stack: list | None = None,
                     on_element_tapped: Callable | None = None,
                     parent_page: str = "",
-                    fingerprint: str = "") -> tuple:
+                    fingerprint: str = "",
+                    active_top_tab: str = "",
+                    active_bottom_tab: str = "") -> tuple:
     """DFS-style incremental probing: tap each element one by one, with callback after each tap.
 
     Args:
@@ -480,7 +555,25 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     areas = [a for a in areas if a.element_type != "back_button"]
 
     effective_limit = sample if sample > 0 else 0  # max navigated taps, 0 = unlimited
-    random.shuffle(areas)
+    # Separate tabs and non-tabs; sort tabs by x so consecutive tab taps are adjacent
+    _tabs = [a for a in areas if a.element_type == "tab"]
+    _others = [a for a in areas if a.element_type != "tab"]
+    _tabs.sort(key=lambda a: (a.center_xy[1] // 100, a.center_xy[0]))
+    random.shuffle(_others)
+    if not _tabs:
+        areas = _others
+    else:
+        _n = len(_others)
+        _positions = sorted(random.sample(range(_n + 1), min(len(_tabs), _n + 1)))
+        areas = []
+        _prev = 0
+        for _ti, _pos in enumerate(_positions):
+            areas.extend(_others[_prev:_pos])
+            areas.append(_tabs[_ti])
+            _prev = _pos
+        areas.extend(_others[_prev:])
+        for _ti in range(len(_positions), len(_tabs)):
+            areas.append(_tabs[_ti])
 
     print(f"\n{'=' * 60}")
     print(f"点击探测: {len(areas)} 个可交互区域")
@@ -498,8 +591,8 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     img_path.write_bytes(png_bytes)
     viz_result(knowledge, png_bytes, "initial", out_dir)
 
-    # Read selected tab from parsed page (no extra LLM call)
-    result.selected_tab = knowledge.page.selected_tab or ""
+    # Use tracked active tabs (detected once at root, propagated deterministically)
+    result.selected_tab = active_top_tab
 
     # Append fingerprint to initial_result.json
     if fingerprint:
@@ -544,16 +637,18 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
 
         navigated = False
         if after_bytes and nav_stack:
-            from policy_expr.recon.back_nav import _get_change_comp
+            from policy_expr.recon.back_nav import _get_change_comp, _get_identity_comp
             comp = _get_change_comp()
             nav_result, nav_reason = comp.detect_navigation(nav_stack[top_level][0], after_bytes)
             if not nav_result:
                 print(f"    {nav_reason}，跳过")
             else:
-                navigated = True
-
-        if navigated:
-            effective_count += 1
+                # Secondary identity check: if same page by GUIClip, it's a state change not navigation
+                id_comp = _get_identity_comp()
+                if id_comp.is_same_page(nav_stack[top_level][0], after_bytes).matched:
+                    navigated = False
+                else:
+                    navigated = True
 
         tap_result = TapResult(
             index=i,
@@ -573,15 +668,33 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
         if on_element_tapped:
             _tap_y = area.center_xy[1]  # 0-1000 normalised
             if _tap_y > 850:  # bottom nav bar
-                _sel_tab = knowledge.page.selected_bottom_tab or ""
+                _sel_tab = active_bottom_tab
+                _tab_region = "bottom"
             elif _tap_y < 300:  # top sub-tab bar
-                _sel_tab = knowledge.page.selected_tab or ""
+                _sel_tab = active_top_tab
+                _tab_region = "top"
             else:
-                _sel_tab = knowledge.page.selected_tab or knowledge.page.selected_bottom_tab or ""
+                _sel_tab = active_top_tab or active_bottom_tab
+                _tab_region = "top" if active_top_tab else "bottom"
+
+            # Tab bar visibility check with diagnostic logging
+            if navigated and area.element_type == "tab" and _sel_tab and after_bytes:
+                _gone, _diff_ratio = _tab_bar_gone(png_bytes, after_bytes, region=_tab_region)
+                print(f"    [tab校验] region={_tab_region} pixel_diff={_diff_ratio:.3f} gone={_gone} sel_tab=「{_sel_tab}」")
+                if _gone:
+                    print(f"    [tab校验] ⚠ tab 栏已消失，回退改用退出模式（清空 _sel_tab）")
+                    _sel_tab = ""
+                else:
+                    print(f"    [tab校验] ✓ tab 栏仍存在，保持 tab 切换回退策略")
+
             should_continue = on_element_tapped(area, after_bytes, navigated, i, tap_result, selected_tab=_sel_tab)
             if not should_continue:
                 print(f"    [DFS] 探测中断（callback 返回 False）")
                 break
+
+            # Count effective: any tap that caused navigation
+            if navigated:
+                effective_count += 1
 
         # Stop when effective limit reached
         if effective_limit and effective_count >= effective_limit:

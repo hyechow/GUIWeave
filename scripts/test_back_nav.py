@@ -30,7 +30,7 @@ from _vis import open_annotated, print_items
 from policy_expr.perception import LivePhoneSession, try_resume_mac
 from policy_expr.executor import logical_xy
 from policy_expr.recon.page_compare import make_comparator
-from policy_expr.recon.page_parser import PageParser, classify_elements
+from policy_expr.recon.page_parser import PageParser, classify_elements, resolve_selected_tabs
 from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context, BACK_PROMPT
 from policy_expr.recon.planned_back_nav import planned_return_to_initial
 from policy_expr.recon.dfs import _page_name_from_fingerprint
@@ -205,8 +205,12 @@ def main() -> None:
             areas = classify_elements(parsed_page)
             items = [(a.center_xy[0], a.center_xy[1], a.label[:30] or "(无标签)", a.element_type)
                      for a in areas]
-            selected_tab_by_depth[depth] = parsed_page.selected_tab or ""
-            selected_bottom_tab_by_depth[depth] = parsed_page.selected_bottom_tab or ""
+            # Track tab state: resolve from parsed elements at depth 0,
+            # then derive deterministically from tap sequence
+            if depth == 0:
+                _top, _bot = resolve_selected_tabs(parsed_page)
+                selected_tab_by_depth[depth] = _top
+                selected_bottom_tab_by_depth[depth] = _bot
             if not items:
                 print("  未解析到可交互元素，停止")
                 break
@@ -243,6 +247,21 @@ def main() -> None:
             nav_context_str = make_nav_context(label, etype)
             tap_labels.append(nav_context_str)
             current_png = after_png
+
+            # Derive new depth's tab state from the tap that got us here
+            if etype == "tab":
+                if ay > 850:
+                    selected_tab_by_depth[depth] = selected_tab_by_depth[depth - 1]
+                    selected_bottom_tab_by_depth[depth] = label
+                elif ay < 300:
+                    selected_tab_by_depth[depth] = label
+                    selected_bottom_tab_by_depth[depth] = selected_bottom_tab_by_depth[depth - 1]
+                else:
+                    selected_tab_by_depth[depth] = selected_tab_by_depth[depth - 1]
+                    selected_bottom_tab_by_depth[depth] = selected_bottom_tab_by_depth[depth - 1]
+            else:
+                selected_tab_by_depth[depth] = selected_tab_by_depth[depth - 1]
+                selected_bottom_tab_by_depth[depth] = selected_bottom_tab_by_depth[depth - 1]
 
             if depth == MAX_DEPTH:
                 print(f"\n  已达最大深度 {MAX_DEPTH}")

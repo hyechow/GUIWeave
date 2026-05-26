@@ -33,7 +33,7 @@ _PIXEL_DIFF_THRESHOLD = 0.05  # pixel diff >= 5% 视为有变化
 #   Higher same_page_threshold: identity matching requires strong visual match (0.70+),
 #   unlike navigation detection where 0.20 suffices to separate "navigated" from "maybe same".
 _change_comp: PageComparator = make_comparator("edge_iou")
-_identity_comp: PageComparator = make_comparator("cascade", same_page_threshold=0.75)
+_identity_comp: PageComparator = make_comparator("cascade", same_page_threshold=0.90)
 
 
 def _get_change_comp() -> PageComparator:

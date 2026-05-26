@@ -70,6 +70,15 @@ class PageComparator:
     def raw_similarity(self, png_a: bytes, png_b: bytes) -> float:
         return self._backend.similarity(png_a, png_b)
 
+    def identity_similarity(self, reference_png: bytes, candidate_png: bytes) -> float:
+        """Return the similarity score used for identity matching (cascade or backend)."""
+        if self._cascade is not None:
+            return self._cascade.visual_sim(
+                self._cascade.embed_visual(reference_png),
+                self._cascade.embed_visual(candidate_png),
+            )
+        return self.raw_similarity(reference_png, candidate_png)
+
     # --- Scenario A: same page ----------------------------------------------
 
     def is_same_page(
@@ -79,8 +88,19 @@ class PageComparator:
     ) -> ScreenMatchDecision:
         if not candidate_png:
             return ScreenMatchDecision(False, 0.0, self.backend_name, "missing screenshot")
-        # Use cascade GUIClip similarity when available — more robust than EdgeIoU
+        # Pixel diff sanity check: if > 30% pixels changed, can't be the same page
+        # regardless of what GUIClip says (prevents false positives on white/blank pages)
         if self._cascade is not None:
+            import io, numpy as np
+            from PIL import Image as _Image
+            b = np.array(_Image.open(io.BytesIO(reference_png)).convert("L"), dtype=np.float32)
+            a = np.array(_Image.open(io.BytesIO(candidate_png)).convert("L"), dtype=np.float32)
+            pixel_diff = float((np.abs(b - a) > 30).mean())
+            if pixel_diff > 0.30:
+                return ScreenMatchDecision(
+                    False, 0.0, "pixel_guard",
+                    f"pixel_diff={pixel_diff:.3f} > 0.30, rejecting cascade match",
+                )
             sim = self._cascade.visual_sim(
                 self._cascade.embed_visual(reference_png),
                 self._cascade.embed_visual(candidate_png),

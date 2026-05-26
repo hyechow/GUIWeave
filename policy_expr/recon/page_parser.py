@@ -92,14 +92,6 @@ class ParsedPage(BaseModel):
     interactive_elements: list[InteractiveElement] = Field(
         description="页面上所有可点击/可交互的元素，按从上到下、从左到右排列"
     )
-    selected_tab: str | None = Field(
-        default=None,
-        description="顶部内容分类/筛选 tab 栏（频道、商品分类、话题分类等横向 tab）中选中的 tab 名称；无顶部 tab 栏时为 null"
-    )
-    selected_bottom_tab: str | None = Field(
-        default=None,
-        description="底部主导航 tab 栏（首页/消息/我的 等）中选中的 tab 名称；无底部导航 tab 栏时为 null"
-    )
 
     @model_validator(mode="before")
     @classmethod
@@ -252,11 +244,6 @@ SYSTEM_PROMPT = """\
 search / settings / close / share / more / notification / profile /
 camera / scan / add / edit / delete / favorite / filter / download / message / map / other
 有文字标签的元素 icon_semantic 留 null。
-
-## 选中 Tab
-- selected_tab：顶部内容分类/筛选 tab 栏（频道、商品分类、话题分类等横向 tab）中当前高亮的 tab 名称；无顶部 tab 栏留 null
-- selected_bottom_tab：底部主导航 tab 栏（首页/消息/我的 等）中当前选中的 tab 名称；无底部 tab 栏留 null
-判断方法：选中 tab 通常有下划线、加粗文字、图标变色或高亮背景。
 """
 
 
@@ -334,7 +321,6 @@ def enrich_with_icons(
 
     return ParsedPage(
         interactive_elements=merged,
-        selected_tab=page.selected_tab,
     )
 
 
@@ -505,3 +491,24 @@ class PageParser:
         if best is not None:
             return best
         raise last_error or RuntimeError("no results")
+
+
+def resolve_selected_tabs(page: ParsedPage) -> tuple[str, str]:
+    """Resolve initial selected tabs: just pick the leftmost tab in each bar.
+
+    The initial page always starts on the first (leftmost) tab. No LLM
+    detection needed — element_type from PageParser is sufficient.
+    Returns (top_tab, bottom_tab) — empty string if no tab bar found.
+    """
+    top_tabs = sorted(
+        [el for el in page.interactive_elements if el.element_type == "tab" and el.y < 400],
+        key=lambda el: el.x,
+    )
+    bottom_tabs = sorted(
+        [el for el in page.interactive_elements if el.element_type == "tab" and el.y >= 400],
+        key=lambda el: el.x,
+    )
+
+    top = top_tabs[0].label if top_tabs else ""
+    bottom = bottom_tabs[0].label if bottom_tabs else ""
+    return top, bottom
