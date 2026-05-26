@@ -546,6 +546,7 @@ def run_planner(
     *,
     constraints: Optional[list[str]] = None,
     extra: str = "",
+    app_knowledge: Optional[str] = None,
 ) -> _PlanResult:
     """Run the step planner. Used by both production and evals."""
     if constraints is None:
@@ -580,7 +581,10 @@ def run_planner(
     )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
-    return invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _PlanResult)
+    msgs = _build_msgs(prompt, observation.png_bytes)
+    if app_knowledge:
+        msgs[1].content = [{"type": "text", "text": f"## 应用导航知识\n{app_knowledge}\n\n"}] + msgs[1].content
+    return invoke_structured(_make_llm(), msgs, _PlanResult)
 
 
 # ── Main class ────────────────────────────────────────────────────────
@@ -1143,6 +1147,7 @@ class MilestoneSupervisorPolicy:
             milestone, check, observation, history,
             constraints=self._global_constraints,
             extra=extra,
+            app_knowledge=self._app_knowledge,
         )
 
     def _invoke_loop_scroll(
@@ -1197,7 +1202,10 @@ class MilestoneSupervisorPolicy:
         )
         if extra:
             prompt += f"\n\n## 输出修正要求\n{extra}"
-        result = invoke_structured(self._llm(), self._msgs(prompt, observation), _ReplanResult)
+        msgs = self._msgs(prompt, observation)
+        if self._app_knowledge:
+            msgs[1].content = [{"type": "text", "text": f"## 应用导航知识\n{self._app_knowledge}\n\n"}] + msgs[1].content
+        result = invoke_structured(self._llm(), msgs, _ReplanResult)
         if self._is_sequence(result.instruction):
             print("  [Replan] 多步序列，重试...")
             result = self._invoke_replanner(

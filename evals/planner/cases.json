@@ -100,6 +100,30 @@
     }
   },
   {
+    "label": "微信账单页-日期筛选-应点击月份按钮而非全部账单",
+    "screenshot": "evals/planner/screenshots/wechat_bill_two_buttons.png",
+    "app_knowledge": "账单页顶部有两个外观相似但功能完全不同的按钮：\n- 「全部账单 ▼」（左上角）：点击后弹出收支类型/交易类型筛选弹窗，与日期无关\n- 「当前月份按钮」（如「2026年5月 ∨」，位于账单列表上方左侧）：点击后弹出日期筛选弹窗\n\n要按日期筛选账单，必须点击显示当前月份的那个按钮（如「2026年5月」），不是「全部账单」。",
+    "milestone": {
+      "name": "设置账单日期范围为1月20日至1月27日",
+      "description": "在微信支付账单页，打开日期筛选弹窗，将筛选范围设置为2026年1月20日至1月27日",
+      "success_condition": "看到账单筛选弹窗已打开，显示选择时间段的日期选择器",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前在微信支付账单列表页，尚未打开日期筛选弹窗",
+      "issues": [],
+      "missing_evidence": ["日期筛选弹窗已打开"],
+      "summary": "微信支付账单列表页，顶部可见「全部账单 ▼」和「2026年5月 ∨」两个按钮，需点击日期按钮打开筛选弹窗"
+    },
+    "expected": {
+      "must_contain": ["2026年5月"],
+      "must_not_contain": ["全部账单"]
+    }
+  },
+  {
     "label": "picker-月份5月→1月-应decrease-large",
     "screenshot": "evals/planner/screenshots/wechat_date_picker.png",
     "milestone": {

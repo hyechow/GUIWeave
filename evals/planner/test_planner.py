@@ -75,8 +75,14 @@ def _build_history(milestone_id: str, instructions: list[str]) -> list[PolicyTur
 
 def test_planner() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
+    skipped = 0
     for c in cases:
-        png_bytes = (PROJECT_ROOT / c["screenshot"]).read_bytes()
+        screenshot_path = PROJECT_ROOT / c["screenshot"]
+        if not screenshot_path.exists():
+            print(f"  [SKIP] {c['label']:45s}  screenshot not found: {c['screenshot']}")
+            skipped += 1
+            continue
+        png_bytes = screenshot_path.read_bytes()
         observation = Observation(png_bytes=png_bytes, source="eval")
         milestone_data = {**c["milestone"], "id": c["label"]}
         milestone = Milestone.model_validate(milestone_data)
@@ -90,6 +96,7 @@ def test_planner() -> None:
             result = run_planner(
                 milestone, check, observation, history,
                 constraints=c.get("constraints"),
+                app_knowledge=c.get("app_knowledge"),
             )
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")
@@ -102,6 +109,8 @@ def test_planner() -> None:
         if not ok:
             print(f"       instruction: {result.instruction}")
             print(f"       direction={result.direction}, column={result.drag_column}, magnitude={result.drag_magnitude}")
+    if skipped:
+        print(f"  ({skipped} skipped — screenshots not committed to git)")
 
 
 def main():
