@@ -136,6 +136,23 @@
     }
   },
   {
+    "label": "iMessage聊天列表-验收条件要微信-in_progress",
+    "screenshot": "evals/checker/screenshots/imessage_chat_list.png",
+    "milestone": {
+      "name": "打开微信应用",
+      "description": "点击微信图标打开应用",
+      "success_condition": "看到微信聊天列表界面（包含多个会话条目）",
+      "kind": "navigation",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "analysis"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
     "label": "微信账单页-加载中部分内容可见-loading=true",
     "screenshot": "evals/checker/screenshots/wechat_bill_loading.png",
     "milestone": {
