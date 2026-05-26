@@ -677,8 +677,12 @@ class MilestoneSupervisorPolicy:
         # checker reliably tracks the actual selected value.  If the value changed,
         # the action worked; reset the screenshot window and let planning continue.
         prev_check_summary = self._last_check_summary.get(milestone.id, "")
-        if sim_stuck is not None and prev_check_summary and prev_check_summary != check.summary:
-            print(f"  [SimStuck] 已抑制：checker 摘要已变化，检测到操作进展")
+        # Only suppress frozen-type SimStuck (picker wheels: 99%+ on all frames).
+        # AB-loop SimStuck (frozen=False: 2-back high, adjacent low) must NOT be
+        # suppressed even if the checker summary changed — the summary alternates
+        # between two states, which is the symptom of the AB loop, not progress.
+        if sim_stuck is not None and sim_stuck.frozen and prev_check_summary and prev_check_summary != check.summary:
+            print(f"  [SimStuck] 已抑制：picker 进展（frozen+摘要变化）")
             sim_stuck = None
             self._recent_screenshots.clear()
         self._last_check_summary[milestone.id] = check.summary
