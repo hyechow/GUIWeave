@@ -48,8 +48,6 @@ def _check_hints(result: _PlanResult, expected: dict) -> list[str]:
         details.append(f"direction: expected '{expected['direction']}', got '{result.direction}'")
     if "drag_column" in expected and result.drag_column != expected["drag_column"]:
         details.append(f"drag_column: expected '{expected['drag_column']}', got '{result.drag_column}'")
-    if "drag_magnitude" in expected and result.drag_magnitude != expected["drag_magnitude"]:
-        details.append(f"drag_magnitude: expected '{expected['drag_magnitude']}', got '{result.drag_magnitude}'")
     return details
 
 
@@ -108,7 +106,7 @@ def test_planner() -> None:
         _report(c["label"], ok, "; ".join(details) if details else "")
         if not ok:
             print(f"       instruction: {result.instruction}")
-            print(f"       direction={result.direction}, column={result.drag_column}, magnitude={result.drag_magnitude}")
+            print(f"       direction={result.direction}, column={result.drag_column}")
     if skipped:
         print(f"  ({skipped} skipped — screenshots not committed to git)")
 

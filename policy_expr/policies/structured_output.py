@@ -1,6 +1,7 @@
 """Structured-output multimodal LLM action policy."""
 
 import base64
+import re
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -65,7 +66,6 @@ class StructuredOutputPolicy(BaseActionPolicy):
         *,
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
-        drag_magnitude: Optional[str] = None,
         verbose: bool = True,
     ) -> ActionDecision:
         cfg = resolve_llm_config("action_policy")
@@ -89,7 +89,7 @@ class StructuredOutputPolicy(BaseActionPolicy):
             and not any(w in instruction for w in _drag_scroll_words)
         )
         if _tap_only:
-            direction = drag_column = drag_magnitude = None
+            direction = drag_column = None
 
         # Translate picker value-direction (increase/decrease) to gesture direction.
         # increase = value grows = gesture up (to_y < y)
@@ -104,9 +104,6 @@ class StructuredOutputPolicy(BaseActionPolicy):
             hint_parts.append(f"⚠️ 方向约束：手指必须向{dir_zh}移动（{direction}）。")
         if drag_column:
             hint_parts.append(f"⚠️ 目标列：{drag_column}。")
-        if drag_magnitude:
-            mag_zh = {"small": "小幅（约1格）", "medium": "中幅（约3格）", "large": "大幅（6格以上）"}.get(drag_magnitude, drag_magnitude)
-            hint_parts.append(f"⚠️ 拖动幅度：{mag_zh}。")
         hint_prefix = "\n".join(hint_parts)
         user_text = f"{hint_prefix}\n操作指令：{instruction}\n\n请根据截图执行该指令。" if hint_prefix else f"操作指令：{instruction}\n\n请根据截图执行该指令。"
 
@@ -123,21 +120,41 @@ class StructuredOutputPolicy(BaseActionPolicy):
             ),
         ]
         decision = invoke_structured(llm, messages, ActionDecision)
-        _normalize_drag_direction(decision, instruction, direction, drag_magnitude)
+        _normalize_drag_direction(decision, instruction, direction)
         _normalize_scroll_direction(decision, direction)
         return decision
 
 
-_MAGNITUDE_DELTA: dict[str, int] = {"small": 40, "medium": 110, "large": 250}
+# One picker row in normalized (0-1000) units: row_height_pt / device_height_pt × 1000
+# iPhone 16 Pro Max: 44pt row / 932pt screen × 1000 ≈ 47
+_PICKER_ROW_NORM: int = 47
+
+
+def _picker_step_distance(instruction: str) -> Optional[int]:
+    """Compute drag distance for picker adjustments by counting steps in instruction.
+
+    Parses patterns like '从18日调整至24日' or '从5月到1月', returns |cur - tgt| * row_height.
+    Returns None for non-picker instructions so callers fall through to magnitude hints.
+    """
+    for suffix in ("日", "月", "年"):
+        m = re.search(
+            rf"从\s*(?:\d+[月年])?(\d+){suffix}.*?[至到调].*?(?:\d+[月年])?(\d+){suffix}",
+            instruction,
+        )
+        if m:
+            steps = abs(int(m.group(2)) - int(m.group(1)))
+            if steps > 0:
+                return steps * _PICKER_ROW_NORM
+    return None
 
 
 def _normalize_drag_direction(
     decision: ActionDecision,
     instruction: str,
     direction_hint: Optional[str] = None,
-    magnitude_hint: Optional[str] = None,
 ) -> None:
-    """Enforce drag direction and magnitude from structured hints, falling back to keyword parsing."""
+    """Enforce drag direction and distance. Distance is computed from step count in the
+    instruction (picker adjustments like '从26日至24日'); falls back to the LLM's chosen delta."""
     action = decision.action
     if action.action_type != "drag":
         return
@@ -151,11 +168,11 @@ def _normalize_drag_direction(
         wants_down = any(word in instruction for word in ("向下", "下拉", "往下"))
         wants_up = any(word in instruction for word in ("向上", "上滑", "上拉", "往上"))
 
-    distance = _MAGNITUDE_DELTA.get(magnitude_hint or "", abs(action.to_y - action.y) or 200)
+    # Deterministic step-count distance for picker drags; LLM delta for everything else.
+    distance = _picker_step_distance(instruction) or abs(action.to_y - action.y) or 200
 
     if wants_down and wants_up:
-        # No direction determined — only apply magnitude if hint exists
-        if magnitude_hint in _MAGNITUDE_DELTA:
+        if _picker_step_distance(instruction):
             if action.to_y > action.y:
                 action.to_y = min(850, action.y + distance)
             else:

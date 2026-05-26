@@ -20,7 +20,6 @@ class ActionPolicy(Protocol):
         *,
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
-        drag_magnitude: Optional[str] = None,
     ) -> ActionDecision:
         """Return the best action for the current observation and instruction."""
 
@@ -37,7 +36,6 @@ class BaseActionPolicy:
         *,
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
-        drag_magnitude: Optional[str] = None,
     ) -> ActionDecision:
         raise NotImplementedError
 

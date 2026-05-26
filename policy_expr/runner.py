@@ -244,7 +244,6 @@ def run_once(
                 observation, sv_step.instruction,
                 direction=sv_step.direction,
                 drag_column=sv_step.drag_column,
-                drag_magnitude=sv_step.drag_magnitude,
             )
             print_decision(action_decision, observation.png_bytes, log_dir / "structured_output_result.png")
             if hud:
@@ -396,7 +395,6 @@ def run_agent_loop(
                         observation, sv_step.instruction,
                         direction=sv_step.direction,
                         drag_column=sv_step.drag_column,
-                        drag_magnitude=sv_step.drag_magnitude,
                     )
                     print_decision(
                         action_decision,

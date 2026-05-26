@@ -166,8 +166,7 @@
     },
     "expected": {
       "direction": "decrease",
-      "drag_column": "month",
-      "drag_magnitude": "large"
+      "drag_column": "month"
     }
   },
   {
@@ -190,8 +189,42 @@
     },
     "expected": {
       "direction": "increase",
-      "drag_column": "day",
-      "drag_magnitude": "large"
+      "drag_column": "day"
+    }
+  },
+  {
+    "label": "picker-结束日期26日→24日-应decrease-medium（回归：planner曾误判increase）",
+    "screenshot": "evals/planner/screenshots/wechat_bill_picker_end_26to24.png",
+    "milestone": {
+      "name": "筛选上周日期范围",
+      "description": "在微信账单选择时间段弹窗中，将开始日期设置为2026-05-18，结束日期设置为2026-05-24",
+      "success_condition": "账单列表仅显示2026-05-18至2026-05-24期间的交易记录",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "history": [
+      "点击顶部显示「2026年5月」的月份按钮",
+      "点击弹窗顶部的「选择时间段」标签",
+      "点击「结束日期」区域的「轻触选择日期」按钮，激活日期选择器以选择结束日期",
+      "点击「开始日期」按钮激活日期选择器以设置开始日期为2026-05-18",
+      "在日期选择器中向上拖动日期列，将日期从1日调整至18日",
+      "在日期选择器中向上拖动日期列，将日期从7日调整至18日",
+      "在日期选择器中向上拖动日期列，将日期从15日调整至18日",
+      "点击「结束日期」按钮激活日期选择器，以便将结束日期从默认的2026年5月26日修改为2026年5月24日"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于日期选择器界面，开始日期已设置为2026-05-18（符合要求），但结束日期仍为默认的2026-05-26，需要将其修改为目标值2026-05-24。日期选择器已激活，滚轮显示的月份是5月、日期列显示24/25/26日，当前选中26日，可以立即拖动调整",
+      "issues": [],
+      "missing_evidence": ["结束日期显示2026年5月24日"],
+      "summary": "选择时间段弹窗，开始日期已为18日，结束日期仍为26日需调整为24日（减小2格）"
+    },
+    "expected": {
+      "must_contain": ["拖动", "24"],
+      "must_not_contain": ["点击"],
+      "direction": "decrease",
+      "drag_column": "day"
     }
   }
 ]

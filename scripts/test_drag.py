@@ -133,6 +133,56 @@ def test_action_policy_drag(phone: LivePhoneSession, executor: ActionExecutor) -
     return True
 
 
+def test_magnitude_calibration(phone: LivePhoneSession, executor: ActionExecutor) -> bool:
+    """Calibrate _PICKER_ROW_NORM: drag 1, 2, 3 steps and confirm actual rows moved.
+
+    Expects the phone to be on a picker (e.g. WeChat date picker with the day column visible).
+    Drags the day column upward for each step count, then drags back to reset.
+
+    Run with: uv run python scripts/test_drag.py --start 2
+    """
+    from policy_expr.policies.structured_output import _PICKER_ROW_NORM
+
+    print("\n=== Level 2b: picker row calibration ===")
+    print(f"  _PICKER_ROW_NORM = {_PICKER_ROW_NORM}")
+    input("  请确保手机在日期选择器页面（日期列可见），按回车开始...")
+
+    y_center = 635
+    for steps in (1, 2, 3):
+        delta_px = steps * _PICKER_ROW_NORM
+        executor.execute(ActionDecision(
+            action=Action(
+                action_type="drag",
+                x=254,
+                y=y_center,
+                to_x=254,
+                to_y=y_center - delta_px,
+                duration_ms=1000,
+                description=f"steps={steps} delta={delta_px}px UP",
+            )
+        ))
+        time.sleep(1.5)
+        print(f"  [steps={steps}] delta={delta_px:3d}px UP done")
+        input(f"  → 移动了几格？（预期 {steps} 格）按回车继续...")
+
+        executor.execute(ActionDecision(
+            action=Action(
+                action_type="drag",
+                x=254,
+                y=y_center,
+                to_x=254,
+                to_y=y_center + delta_px,
+                duration_ms=1000,
+                description=f"steps={steps} delta={delta_px}px DOWN (reset)",
+            )
+        ))
+        time.sleep(1.5)
+        input("  → 已复位，按回车继续下一个...")
+
+    print("Level 2b DONE")
+    return True
+
+
 def test_planner_checker_target_date(phone: LivePhoneSession, executor: ActionExecutor) -> bool:
     """Run checker -> planner -> action policy -> checker for a target picker value."""
     return _run_planner_checker_loop(
@@ -200,7 +250,6 @@ def _run_planner_checker_loop(
         print(f"[{label} step {step_no}] planner_summary:     {plan.summary}")
         print(f"[{label} step {step_no}] hint_direction:      {plan.direction}")
         print(f"[{label} step {step_no}] hint_drag_column:    {plan.drag_column}")
-        print(f"[{label} step {step_no}] hint_magnitude:      {plan.drag_magnitude}")
         if not plan.instruction:
             print(f"{label} FAIL: planner returned empty instruction")
             return False
@@ -209,7 +258,6 @@ def _run_planner_checker_loop(
             observation, plan.instruction,
             direction=plan.direction,
             drag_column=plan.drag_column,
-            drag_magnitude=plan.drag_magnitude,
         )
         action = decision.action
         print(f"[{label} step {step_no}] action_type: {action.action_type}")
@@ -277,6 +325,11 @@ def main() -> int:
                 print("\nResult: FAIL at Level 2")
                 return 1
             passed.append("Level 2")
+            if not test_magnitude_calibration(phone, executor):
+                print("\nResult: FAIL at Level 2b")
+                return 1
+            passed.append("Level 2b")
+            exit(0)
         if args.start <= 3:
             if not test_planner_checker_target_date(phone, executor):
                 print("\nResult: FAIL at Level 3")

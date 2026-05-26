@@ -81,10 +81,6 @@ class _PlanResult(BaseModel):
         default=None,
         description="picker drag 时的目标列，如 'year'/'month'/'day'；非 picker drag 留空",
     )
-    drag_magnitude: Optional[Literal["small", "medium", "large"]] = Field(
-        default=None,
-        description="picker drag 时的拖动幅度：small=差1格，medium=差2-3格，large=差4格以上；非 picker drag 留空",
-    )
 
 
 class _ReplanResult(BaseModel):
@@ -333,7 +329,6 @@ PLAN_PROMPT = """\
 - 滚轮选择器/日期选择器/时间选择器/城市选择器等多列 picker：
   * picker 物理规律（实测）：手指向上拖（to_y < y）→ 列表内容向上 → 数值增大；手指向下拖（to_y > y）→ 列表内容向下 → 数值减小
   * 因此：目标值 < 当前值（如5月→1月）必须手指向下；目标值 > 当前值（如1月→5月）必须手指向上
-  * 拖动幅度要一次到位：目标值与当前值相差多少格，就选对应幅度（4格以上选 large），不要每次只拖1格再重试
   * ⚠️ picker 只能通过拖动操作选值，禁止生成点击指令——即使目标值可见也要拖动
 - ⚠️ 「未生效」「屏幕无变化」对 picker 的处理：先检查拖动方向是否正确，方向反了才会无变化；普通列表/网格无响应时才改用 tap
 - ⚠️ 生成输入文字指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
@@ -350,11 +345,6 @@ PLAN_PROMPT = """\
   * 其他动作（tap/type/home/stop）→ 留空
 - drag_column：
   * 下一步是 picker drag → 填目标列（year=年份列，month=月份列，day=日期列）
-  * 其他动作 → 留空
-- drag_magnitude（仅 picker drag 时填写）：根据当前值与目标值的差距选择：
-  * small：相差 1 格（如当前2026年目标2025年）
-  * medium：相差 2-3 格
-  * large：相差 4 格以上
   * 其他动作 → 留空
 """
 
@@ -745,8 +735,11 @@ class MilestoneSupervisorPolicy:
                 )
                 return self._handle_stuck(milestone, stuck_check, check.read_instruction, observation, history)
         print(f"  [Planner] {plan.instruction}")
-        if plan.direction or plan.drag_column or plan.drag_magnitude:
-            print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column} magnitude={plan.drag_magnitude}")
+        if plan.direction or plan.drag_column:
+            print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column}")
+        # Programmatic direction fix: extract current/target from instruction, verify direction
+        if plan.direction in ("increase", "decrease") and plan.drag_column:
+            self._fix_picker_direction(plan)
         milestone.status = "running"
         return SupervisorStep(
             should_act=bool(plan.instruction),
@@ -756,7 +749,6 @@ class MilestoneSupervisorPolicy:
             summary=plan.summary,
             direction=plan.direction,
             drag_column=plan.drag_column,
-            drag_magnitude=plan.drag_magnitude,
             **_ctx(milestone, check.read_instruction),
         )
 
@@ -1534,6 +1526,34 @@ class MilestoneSupervisorPolicy:
 
     def _msgs(self, system_prompt: str, observation: Observation) -> list:
         return _build_msgs(system_prompt, observation.png_bytes)
+
+    @staticmethod
+    def _fix_picker_direction(plan: _PlanResult) -> None:
+        """Verify picker direction by extracting current/target values from instruction.
+
+        Also corrects direction keywords in the instruction text so the action policy
+        LLM and _normalize_drag_direction keyword-fallback both agree with the hint.
+        """
+        col_suffix = {"year": "年", "month": "月", "day": "日"}.get(plan.drag_column or "", "")
+        if not col_suffix:
+            return
+        m = re.search(rf"从\s*(?:\d+[月年])?(\d+){col_suffix}.*?[至到为]\s*(?:\d+[月年])?(\d+){col_suffix}", plan.instruction)
+        if not m:
+            return
+        cur, tgt = int(m.group(1)), int(m.group(2))
+        if tgt == cur:
+            return
+        correct = "increase" if tgt > cur else "decrease"
+        if plan.direction != correct:
+            print(f"  [Planner] direction fix: {plan.direction} → {correct} ({cur}→{tgt})")
+            plan.direction = correct
+            # Sync direction words in instruction so LLM and keyword-fallback agree.
+            if correct == "increase":
+                for old, new in [("向下拖动", "向上拖动"), ("下拉", "上拉"), ("往下", "往上")]:
+                    plan.instruction = plan.instruction.replace(old, new)
+            else:
+                for old, new in [("向上拖动", "向下拖动"), ("上拉", "下拉"), ("往上", "往下")]:
+                    plan.instruction = plan.instruction.replace(old, new)
 
     @staticmethod
     def _is_sequence(instruction: str) -> bool:
