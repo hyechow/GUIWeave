@@ -747,6 +747,16 @@ class MilestoneSupervisorPolicy:
         print(f"  [Planner] {plan.instruction}")
         if plan.direction or plan.drag_column or plan.drag_magnitude:
             print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column} magnitude={plan.drag_magnitude}")
+        # Programmatic override: small picker drag → tap (LLM unreliable at deciding this)
+        if plan.drag_magnitude == "small" and plan.direction in ("increase", "decrease"):
+            _m = re.search(r"[至到为]\s*(?:\d+月)?(\d+)[日号]", plan.instruction)
+            if _m:
+                target_val = _m.group(1)
+                plan.instruction = f"点击日期列中的{target_val}"
+                plan.direction = None
+                plan.drag_column = None
+                plan.drag_magnitude = None
+                print(f"  [Planner] override: small drag → tap ({target_val})")
         milestone.status = "running"
         return SupervisorStep(
             should_act=bool(plan.instruction),

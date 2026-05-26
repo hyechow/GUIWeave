@@ -38,7 +38,7 @@ y 坐标范围严格限制在 200-850 之间，禁止使用 y<200 或 y>850
 - x/to_x 必须落在目标列中心：年份列偏左、月份列偏右，日期列按截图位置选择
 - y 放在当前选中行或目标列可拖动区域中间；to_y 表示拖动后的终点
 - 如果用户消息中有「⚠️ 方向约束」，to_y 方向必须遵守该约束，不以指令文字为准：down → to_y > y，up → to_y < y
-- 如果用户消息中有「⚠️ 拖动幅度」，按幅度控制 |to_y - y|：小幅约70，中幅约130，大幅约200
+- 如果用户消息中有「⚠️ 拖动幅度」，按幅度控制 |to_y - y|：小幅、中幅、大幅对应的拖动距离由系统自动计算，你只需确保 to_y 和 y 的方向正确即可
 - duration_ms 参考：小幅=800ms，中幅=1200ms，大幅=1600ms
 - 例如要把年份列往下拉（大幅）：action_type=drag, x=270, y=635, to_x=270, to_y=835, duration_ms=1600
 需要返回主屏幕时，使用 home，无需填写坐标。
@@ -105,7 +105,7 @@ class StructuredOutputPolicy(BaseActionPolicy):
         if drag_column:
             hint_parts.append(f"⚠️ 目标列：{drag_column}。")
         if drag_magnitude:
-            mag_zh = {"small": "小幅（约1格）", "medium": "中幅（约2-3格）", "large": "大幅（4格以上）"}.get(drag_magnitude, drag_magnitude)
+            mag_zh = {"small": "小幅（约1格）", "medium": "中幅（约3格）", "large": "大幅（6格以上）"}.get(drag_magnitude, drag_magnitude)
             hint_parts.append(f"⚠️ 拖动幅度：{mag_zh}。")
         hint_prefix = "\n".join(hint_parts)
         user_text = f"{hint_prefix}\n操作指令：{instruction}\n\n请根据截图执行该指令。" if hint_prefix else f"操作指令：{instruction}\n\n请根据截图执行该指令。"
@@ -128,7 +128,7 @@ class StructuredOutputPolicy(BaseActionPolicy):
         return decision
 
 
-_MAGNITUDE_DELTA: dict[str, int] = {"small": 70, "medium": 140, "large": 300}
+_MAGNITUDE_DELTA: dict[str, int] = {"small": 40, "medium": 110, "large": 220}
 
 
 def _normalize_drag_direction(
