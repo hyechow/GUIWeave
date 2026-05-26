@@ -240,7 +240,12 @@ def run_once(
             print(f"动作指令: {sv_step.instruction}")
             if hud: hud.update("Turn 1 — 动作决策中…")
             print("动作决策中...")
-            action_decision = action_policy.decide(observation, sv_step.instruction)
+            action_decision = action_policy.decide(
+                observation, sv_step.instruction,
+                direction=sv_step.direction,
+                drag_column=sv_step.drag_column,
+                drag_magnitude=sv_step.drag_magnitude,
+            )
             print_decision(action_decision, observation.png_bytes, log_dir / "structured_output_result.png")
             if hud:
                 a = action_decision.action
@@ -387,7 +392,12 @@ def run_agent_loop(
                 else:
                     if hud: hud.update(f"Turn {turn_no} — 动作决策中…")
                     print("动作决策中...")
-                    action_decision = action_policy.decide(observation, sv_step.instruction)
+                    action_decision = action_policy.decide(
+                        observation, sv_step.instruction,
+                        direction=sv_step.direction,
+                        drag_column=sv_step.drag_column,
+                        drag_magnitude=sv_step.drag_magnitude,
+                    )
                     print_decision(
                         action_decision,
                         observation.png_bytes,

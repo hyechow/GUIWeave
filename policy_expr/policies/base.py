@@ -1,7 +1,7 @@
 """Action policy interface."""
 
 import io
-from typing import Protocol
+from typing import Optional, Protocol
 
 from PIL import Image
 
@@ -13,7 +13,15 @@ class ActionPolicy(Protocol):
 
     name: str
 
-    def decide(self, observation: Observation, instruction: str) -> ActionDecision:
+    def decide(
+        self,
+        observation: Observation,
+        instruction: str,
+        *,
+        direction: Optional[str] = None,
+        drag_column: Optional[str] = None,
+        drag_magnitude: Optional[str] = None,
+    ) -> ActionDecision:
         """Return the best action for the current observation and instruction."""
 
 
@@ -22,7 +30,15 @@ class BaseActionPolicy:
 
     name = "base"
 
-    def decide(self, observation: Observation, instruction: str) -> ActionDecision:
+    def decide(
+        self,
+        observation: Observation,
+        instruction: str,
+        *,
+        direction: Optional[str] = None,
+        drag_column: Optional[str] = None,
+        drag_magnitude: Optional[str] = None,
+    ) -> ActionDecision:
         raise NotImplementedError
 
 

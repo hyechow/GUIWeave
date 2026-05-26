@@ -93,6 +93,9 @@ class ActionExecutor:
         elif action.action_type == "scroll" and action.direction:
             self._scroll(action)
 
+        elif action.action_type == "drag":
+            self._drag(action)
+
         elif action.action_type == "home":
             print("执行返回主屏")
             result = self._client().press_home()
@@ -207,6 +210,25 @@ class ActionExecutor:
             if i < SCROLL_TICKS - 1:
                 time.sleep(SCROLL_INTERVAL)
 
+    def _drag(self, action: Action) -> None:
+        if action.x is None or action.y is None or action.to_x is None or action.to_y is None:
+            print("拖动失败：缺少 x/y/to_x/to_y")
+            return
+
+        from_x, from_y = logical_xy(action.x, action.y)
+        to_x, to_y = logical_xy(action.to_x, action.to_y)
+        duration_ms = action.duration_ms or 1200
+
+        print(
+            "执行拖动: "
+            f"({from_x:.0f},{from_y:.0f}) → ({to_x:.0f},{to_y:.0f}), "
+            f"{duration_ms}ms"
+        )
+        _activate_iphone_mirroring()
+        _hover_logical(from_x, from_y)
+        result = self._client().drag(from_x, from_y, to_x, to_y, duration_ms)
+        print(f"结果: {result}")
+
     def _client(self):
         if not self.phone.client:
             raise RuntimeError("MCP 尚未连接")
@@ -256,6 +278,26 @@ def _quartz_click(x: float, y: float) -> None:
         ev = CGEventCreateMouseEvent(None, ev_type, pt, kCGMouseButtonLeft)
         CGEventPost(kCGHIDEventTap, ev)
         time.sleep(0.05)
+
+
+def _activate_iphone_mirroring() -> None:
+    subprocess.run(
+        ["osascript", "-e", 'tell application "iPhone Mirroring" to activate'],
+        capture_output=True,
+    )
+    time.sleep(0.4)
+
+
+def _hover_logical(lx: float, ly: float) -> None:
+    origin = _find_iphone_window()
+    if origin is None:
+        print("  iPhone Mirroring 窗口未找到，跳过拖动前 hover")
+        return
+    wx, wy = origin
+    sx = wx + lx
+    sy = wy + ly
+    _quartz_hover(sx, sy)
+    time.sleep(0.2)
 
 
 def _quartz_swipe(from_x: float, from_y: float, to_x: float, to_y: float,

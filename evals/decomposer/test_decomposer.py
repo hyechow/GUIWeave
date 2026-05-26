@@ -49,6 +49,15 @@ def _check_milestones(milestones: list, expected: dict) -> list[str]:
         if app not in all_text:
             details.append(f"app '{app}' not modeled in any milestone")
 
+    for required_kind in expected.get("any_milestone_kind", []):
+        if not any(m.kind == required_kind for m in milestones):
+            details.append(f"no milestone with kind='{required_kind}'")
+
+    for forbidden_strategy in expected.get("no_milestone_strategy", []):
+        violators = [m.name for m in milestones if m.completion_strategy == forbidden_strategy]
+        if violators:
+            details.append(f"milestone(s) {violators} use forbidden strategy '{forbidden_strategy}'")
+
     return details
 
 

@@ -28,5 +28,14 @@
       "any_milestone_contains": ["性价比"],
       "all_apps_modeled": ["拼多多", "微信"]
     }
+  },
+  {
+    "label": "微信账单-日期区间-应使用filter-not-scroll",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "查看微信支付今年1月20日到1月27日的账单",
+    "expected": {
+      "min_milestones": 2,
+      "any_milestone_kind": ["filter"]
+    }
   }
 ]

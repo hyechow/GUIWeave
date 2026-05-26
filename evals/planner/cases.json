@@ -98,5 +98,53 @@
       "must_contain": ["点击", "生椰拿铁"],
       "must_not_contain": ["滚动", "搜索"]
     }
+  },
+  {
+    "label": "picker-月份5月→1月-应decrease-large",
+    "screenshot": "evals/planner/screenshots/wechat_date_picker.png",
+    "milestone": {
+      "name": "设置开始日期为2026年1月20日",
+      "description": "在选择时间段弹窗中，将开始日期从2026年5月1日调整为2026年1月20日",
+      "success_condition": "开始日期字段显示2026年1月20日",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前选择时间段弹窗中开始日期显示2026年5月1日，目标为2026年1月20日，月份需从5月调整为1月",
+      "issues": [],
+      "missing_evidence": ["开始日期显示2026年1月20日"],
+      "summary": "选择时间段弹窗已打开，开始日期当前为2026年5月1日，月份列需向减小方向拖动"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "month",
+      "drag_magnitude": "large"
+    }
+  },
+  {
+    "label": "picker-日期1日→20日-应increase-large",
+    "screenshot": "evals/planner/screenshots/wechat_date_picker.png",
+    "milestone": {
+      "name": "设置开始日期为2026年1月20日",
+      "description": "在选择时间段弹窗中，月份已调整为1月，将日期从1日调整为20日",
+      "success_condition": "开始日期字段显示2026年1月20日",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "月份已调整为2026年1月，但日期仍为1日，目标为20日，差19格，需large幅度向增大方向拖动日期列",
+      "issues": [],
+      "missing_evidence": ["开始日期显示2026年1月20日"],
+      "summary": "选择时间段弹窗，月份已为1月，日期列当前为1日需调整到20日"
+    },
+    "expected": {
+      "direction": "increase",
+      "drag_column": "day",
+      "drag_magnitude": "large"
+    }
   }
 ]

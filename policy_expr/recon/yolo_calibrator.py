@@ -49,7 +49,7 @@ class YoloCalibrator:
             return None
         return cls(boxes, img.width, img.height)
 
-    def nearest(self, target_x: float, target_y: float, max_dist: float = 80.0) -> tuple[float, float] | None:
+    def nearest(self, target_x: float, target_y: float, max_dist: float = 30.0) -> tuple[float, float] | None:
         """Find the detected icon nearest to (target_x, target_y) within max_dist.
 
         When two boxes are within 30px of each other (distance-wise), prefer

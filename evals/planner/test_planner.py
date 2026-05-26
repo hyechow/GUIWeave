@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from policy_expr.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from policy_expr.supervisor.milestone import _SingleCheckResult, run_planner
+from policy_expr.supervisor.milestone import _PlanResult, _SingleCheckResult, run_planner
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -39,6 +39,17 @@ def _check_instruction(instruction: str, expected: dict) -> list[str]:
     for pattern in expected.get("must_not_contain", []):
         if re.search(pattern, instruction):
             details.append(f"must not match '{pattern}'")
+    return details
+
+
+def _check_hints(result: _PlanResult, expected: dict) -> list[str]:
+    details = []
+    if "direction" in expected and result.direction != expected["direction"]:
+        details.append(f"direction: expected '{expected['direction']}', got '{result.direction}'")
+    if "drag_column" in expected and result.drag_column != expected["drag_column"]:
+        details.append(f"drag_column: expected '{expected['drag_column']}', got '{result.drag_column}'")
+    if "drag_magnitude" in expected and result.drag_magnitude != expected["drag_magnitude"]:
+        details.append(f"drag_magnitude: expected '{expected['drag_magnitude']}', got '{result.drag_magnitude}'")
     return details
 
 
@@ -85,10 +96,12 @@ def test_planner() -> None:
             continue
 
         details = _check_instruction(result.instruction, c["expected"])
+        details += _check_hints(result, c["expected"])
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
         if not ok:
             print(f"       instruction: {result.instruction}")
+            print(f"       direction={result.direction}, column={result.drag_column}, magnitude={result.drag_magnitude}")
 
 
 def main():

@@ -69,6 +69,22 @@ class _LoopFrameResult(BaseModel):
 class _PlanResult(BaseModel):
     instruction: str = Field(description="下一步精确操作指令")
     summary: str = Field(description="规划依据一句话摘要")
+    direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
+        default=None,
+        description=(
+            "scroll 时填手指移动方向（up/down/left/right）；"
+            "picker drag 时填值的变化方向（increase=值变大，decrease=值变小）；"
+            "tap/type/home/stop 留空"
+        ),
+    )
+    drag_column: Optional[str] = Field(
+        default=None,
+        description="picker drag 时的目标列，如 'year'/'month'/'day'；非 picker drag 留空",
+    )
+    drag_magnitude: Optional[Literal["small", "medium", "large"]] = Field(
+        default=None,
+        description="picker drag 时的拖动幅度：small=差1格，medium=差2-3格，large=差4格以上；非 picker drag 留空",
+    )
 
 
 class _ReplanResult(BaseModel):
@@ -308,11 +324,33 @@ PLAN_PROMPT = """\
 - 如果当前在应用内搜索页：搜索框已聚焦则直接输入；未聚焦则先点击搜索框
 - ⚠️ 需要提交/发送/确认输入时（如发送消息、确认搜索），必须指令「按回车键提交」，禁止指令「点击发送按钮」
 - ⚠️ 输入框无论有无旧内容，直接生成输入文字指令即可——系统会自动清空后输入，无需先清空
-- 滚动指令描述要查看什么内容（如「滚动查看更早的消息」），不要指定手指方向
-- ⚠️ 如果历史操作中出现过滚动/滑动指令且随后系统报告「未生效」「屏幕无变化」「未响应」，说明当前 UI 不支持滚动交互（如日历选择器、滚轮选择器、静态网格）。此时必须用 tap 点击目标位置（如具体日期、列表项），绝对禁止再生成任何包含「滑动」「滚动」「向上」「向下」的指令
+- 普通列表滚动指令描述要查看什么内容（如「滚动查看更早的消息」），不要指定手指方向
+- 滚轮选择器/日期选择器/时间选择器/城市选择器等多列 picker：
+  * picker 物理规律（实测）：手指向上拖（to_y < y）→ 列表内容向上 → 数值增大；手指向下拖（to_y > y）→ 列表内容向下 → 数值减小
+  * 因此：目标值 < 当前值（如5月→1月）必须手指向下；目标值 > 当前值（如1月→5月）必须手指向上
+  * 如果目标项已经可见，优先点击目标项（比拖动更精准）
+  * 拖动幅度要一次到位：目标值与当前值相差多少格，就选对应幅度（4格以上选 large），不要每次只拖1格再重试
+- ⚠️ 「未生效」「屏幕无变化」对 picker 的处理：先检查拖动方向是否正确（不是改用 tap），picker 不支持 tap 选值，方向错了才会无变化；普通列表/网格无响应时才改用 tap
 - ⚠️ 生成输入文字指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
 - ⚠️ 输入文字动作已包含自动点击输入框的步骤，不需要先单独生成「点击/激活输入框」指令，看到输入框时直接生成输入指令即可
 - 商品规格选择面板（bottomsheet）中，若目标属性（如糖度/甜度）的分类标题可见但选项 chips 未出现或被截断，应先在面板内向上滑动使该属性的选项行完整显示，再点击目标选项
+
+## 结构化方向提示（direction / drag_column）
+每次输出时必须决定以下字段：
+- direction：
+  * 下一步是 scroll → 填手指移动方向（down/up/left/right）
+  * 下一步是 picker drag → 填「值的变化方向」（不是手指方向！）：
+    - 目标值比当前值小（如5月→1月，2026年→2024年，20日→5日）：direction=decrease
+    - 目标值比当前值大（如1月→5月，2024年→2026年，5日→20日）：direction=increase
+  * 其他动作（tap/type/home/stop）→ 留空
+- drag_column：
+  * 下一步是 picker drag → 填目标列（year=年份列，month=月份列，day=日期列）
+  * 其他动作 → 留空
+- drag_magnitude（仅 picker drag 时填写）：根据当前值与目标值的差距选择：
+  * small：相差 1 格（如当前2026年目标2025年）
+  * medium：相差 2-3 格
+  * large：相差 4 格以上
+  * 其他动作 → 留空
 """
 
 LOOP_SCROLL_PROMPT = """\
@@ -355,8 +393,11 @@ REPLAN_PROMPT = """\
 1. 观察截图，理解当前所有可见 UI 元素
 2. 检查历史操作是否存在 A→B→A→B 交替循环，如果存在必须跳出
 3. 禁止退回到已完成子目标的状态（如已完成「回到主屏幕」就不要再按 Home 键）
-3. 分析之前失败的根本原因
-4. 找到一条不同的路径
+4. 分析之前失败的根本原因
+5. 找到一条不同的路径——如果同一 UI 组件已尝试 2+ 次均失败，必须跳出该组件：
+   - 截图中是否有尚未尝试的标签（Tab）、按钮、面板或入口？优先尝试
+   - 当前弹窗/面板是否可以关闭，回到上级页面寻找替代路径？
+   - 不要继续在同一个已失效的组件上重试不同操作
 
 ## 决策规则
 - 验收条件已满足（截图中可见目标状态）→ force_complete（不再生成操作指令，直接标记完成）
@@ -561,6 +602,7 @@ class MilestoneSupervisorPolicy:
         self._app_knowledge: Optional[str] = None
         self._app_name: str = ""
         self._last_page_identity: dict[str, str] = {}
+        self._last_check_summary: dict[str, str] = {}
 
     def set_app_knowledge(self, text: str, app_name: str = "") -> None:
         self._app_knowledge = text
@@ -629,6 +671,18 @@ class MilestoneSupervisorPolicy:
 
         # Checker says in_progress — check for stuck signals before planning
         sim_stuck = self._check_screen_similarity(observation)
+
+        # Suppress SimStuck when checker's summary changed from the previous turn —
+        # picker wheels produce tiny pixel diffs per step (99%+ similarity) but the
+        # checker reliably tracks the actual selected value.  If the value changed,
+        # the action worked; reset the screenshot window and let planning continue.
+        prev_check_summary = self._last_check_summary.get(milestone.id, "")
+        if sim_stuck is not None and prev_check_summary and prev_check_summary != check.summary:
+            print(f"  [SimStuck] 已抑制：checker 摘要已变化，检测到操作进展")
+            sim_stuck = None
+            self._recent_screenshots.clear()
+        self._last_check_summary[milestone.id] = check.summary
+
         rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
         if sim_stuck or rep_stuck:
             stuck = sim_stuck or rep_stuck
@@ -678,6 +732,8 @@ class MilestoneSupervisorPolicy:
                 )
                 return self._handle_stuck(milestone, stuck_check, check.read_instruction, observation, history)
         print(f"  [Planner] {plan.instruction}")
+        if plan.direction or plan.drag_column or plan.drag_magnitude:
+            print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column} magnitude={plan.drag_magnitude}")
         milestone.status = "running"
         return SupervisorStep(
             should_act=bool(plan.instruction),
@@ -685,6 +741,9 @@ class MilestoneSupervisorPolicy:
             stop=False,
             goal_completed=False,
             summary=plan.summary,
+            direction=plan.direction,
+            drag_column=plan.drag_column,
+            drag_magnitude=plan.drag_magnitude,
             **_ctx(milestone, check.read_instruction),
         )
 
@@ -872,6 +931,18 @@ class MilestoneSupervisorPolicy:
                 if truly_new_page:
                     print(f"  [Replan] 页面已跳转（{prev_page_id} → {current_page_id}），不计入重试次数")
                     skip_retry = True
+                    # Failure constraints are page-scoped: an action that failed on the old UI
+                    # may work fine on the new UI. Clear action-specific failure constraints
+                    # (pattern: "指令「...」导致错误：...禁止重复此指令") so the planner
+                    # starts fresh on the new page without stale prohibitions.
+                    before = len(self._global_constraints)
+                    self._global_constraints = [
+                        c for c in self._global_constraints
+                        if not (c.startswith("指令「") and "禁止重复此指令" in c)
+                    ]
+                    cleared = before - len(self._global_constraints)
+                    if cleared:
+                        print(f"  [Replan] 清除 {cleared} 条旧页面操作约束")
                 else:
                     print(f"  [Replan] 屏幕变化但页面未变（{current_page_id or '未知'}），计入重试次数")
         if not skip_retry:
