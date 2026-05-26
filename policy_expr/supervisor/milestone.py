@@ -1542,33 +1542,49 @@ class MilestoneSupervisorPolicy:
     def _is_repeated_instruction(
         self, instruction: str, milestone_id: str, history: list[PolicyTurn],
     ) -> bool:
-        """Check if the instruction repeats a previously tried one for the same milestone."""
+        """Check if the instruction repeats a previously tried one for the same milestone.
+
+        Two detection modes:
+        1. Stuck-causing: if a similar instruction led to stuck, block immediately.
+        2. Persistent failure: if a similar instruction was tried >= 2 times without
+           advancing the milestone, it's a dead end — block it.
+           (Only applies to tap/type/home — scroll/drag are inherently repetitive.)
+        """
         from difflib import SequenceMatcher
-        # Only check against instructions that LED TO STUCK, not all executed ones.
-        # A normally executed instruction can be retried (e.g. same tap on same screen).
-        tried = set()
+        _strip = lambda s: re.sub(r"[，。、；：""''《》\s（）\(\)]", "", s.strip())
+        _scroll_words = ("滚动", "滑动", "拖动", "拖拽", "scroll", "drag")
+        n_new = _strip(instruction)
+
+        stuck_tried: set[str] = set()
+        all_tried: list[str] = []
         for idx, t in enumerate(history):
             sv = t.supervisor
             if not sv or not sv.instruction or sv.milestone_id != milestone_id:
                 continue
-            # Check if the NEXT turn detected stuck for the same milestone
+            all_tried.append(sv.instruction)
             next_sv = history[idx + 1].supervisor if idx + 1 < len(history) else None
             if (
                 next_sv
                 and next_sv.milestone_id == milestone_id
                 and ("卡住" in (next_sv.summary or "") or "重试" in (next_sv.summary or ""))
             ):
-                tried.add(sv.instruction)
-        if not tried:
+                stuck_tried.add(sv.instruction)
+
+        def _similar(new: str, old: str) -> bool:
+            n_old = _strip(old)
+            return bool(n_new and n_old) and SequenceMatcher(None, new, n_old).ratio() >= 0.6
+
+        # Mode 1: stuck-causing → block immediately
+        for old in stuck_tried:
+            if _similar(n_new, old):
+                return True
+
+        # Mode 2: persistent failure (>= 2 similar attempts) → block
+        # Skip for scroll/drag — these are intentionally repetitive
+        if any(w in instruction for w in _scroll_words):
             return False
-        n_new = re.sub(r"[，。、；：""''《》\s（）\(\)]", "", instruction.strip())
-        for old in tried:
-            n_old = re.sub(r"[，。、；：""''《》\s（）\(\)]", "", old.strip())
-            if n_new and n_old:
-                ratio = SequenceMatcher(None, n_new, n_old).ratio()
-                if ratio >= 0.6:
-                    return True
-        return False
+        similar_count = sum(1 for old in all_tried if _similar(n_new, old))
+        return similar_count >= 2
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
