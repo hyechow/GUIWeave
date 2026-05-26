@@ -16,7 +16,11 @@ https://github.com/user-attachments/assets/3b10c74a-99ae-4bbb-a983-767857b62136
 
 **查询类**：从 APP 内读取并汇总信息（账单统计、订单记录、消息摘要）
 
-https://github.com/user-attachments/assets/PLACEHOLDER_CHAT_2
+> "我上周用微信支付花多少钱了？"
+>
+> 打开微信支付 → 汇总上周账单支出（2x 加速）
+
+https://github.com/user-attachments/assets/2deb4026-97e9-4689-bfa7-30472544d3df
 
 ### 探测模式
 
