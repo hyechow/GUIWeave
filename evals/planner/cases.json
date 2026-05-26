@@ -124,7 +124,7 @@
     }
   },
   {
-    "label": "picker-目标在可见行-应tap而非drag",
+    "label": "picker-差1格-应drag-small",
     "screenshot": "evals/planner/screenshots/wechat_picker_target_visible.png",
     "milestone": {
       "name": "设置开始日期为2026年5月18日",
@@ -142,8 +142,8 @@
       "summary": "选择时间段弹窗，当前滚轮显示17日选中，18日在17日下方可见行内"
     },
     "expected": {
-      "must_contain": ["点击", "18"],
-      "must_not_contain": ["拖动", "向上", "向下", "drag"]
+      "must_contain": ["拖动", "18"],
+      "must_not_contain": ["点击"]
     }
   },
   {

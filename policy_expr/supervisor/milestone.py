@@ -333,9 +333,9 @@ PLAN_PROMPT = """\
 - 滚轮选择器/日期选择器/时间选择器/城市选择器等多列 picker：
   * picker 物理规律（实测）：手指向上拖（to_y < y）→ 列表内容向上 → 数值增大；手指向下拖（to_y > y）→ 列表内容向下 → 数值减小
   * 因此：目标值 < 当前值（如5月→1月）必须手指向下；目标值 > 当前值（如1月→5月）必须手指向上
-  * ⚠️ 如果目标项已经在 picker 滚轮的可见行内（上下邻近行均可见），必须直接点击目标项，禁止再拖动——拖动 1 格精度不足，容易超调
   * 拖动幅度要一次到位：目标值与当前值相差多少格，就选对应幅度（4格以上选 large），不要每次只拖1格再重试
-- ⚠️ 「未生效」「屏幕无变化」对 picker 的处理：先检查拖动方向是否正确；若连续 2 次方向正确但仍超调，改用点击可见目标行；普通列表/网格无响应时才改用 tap
+  * ⚠️ picker 只能通过拖动操作选值，禁止生成点击指令——即使目标值可见也要拖动
+- ⚠️ 「未生效」「屏幕无变化」对 picker 的处理：先检查拖动方向是否正确，方向反了才会无变化；普通列表/网格无响应时才改用 tap
 - ⚠️ 生成输入文字指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
 - ⚠️ 输入文字动作已包含自动点击输入框的步骤，不需要先单独生成「点击/激活输入框」指令，看到输入框时直接生成输入指令即可
 - 商品规格选择面板（bottomsheet）中，若目标属性（如糖度/甜度）的分类标题可见但选项 chips 未出现或被截断，应先在面板内向上滑动使该属性的选项行完整显示，再点击目标选项
@@ -747,16 +747,6 @@ class MilestoneSupervisorPolicy:
         print(f"  [Planner] {plan.instruction}")
         if plan.direction or plan.drag_column or plan.drag_magnitude:
             print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column} magnitude={plan.drag_magnitude}")
-        # Programmatic override: small picker drag → tap (LLM unreliable at deciding this)
-        if plan.drag_magnitude == "small" and plan.direction in ("increase", "decrease"):
-            _m = re.search(r"[至到为]\s*(?:\d+月)?(\d+)[日号]", plan.instruction)
-            if _m:
-                target_val = _m.group(1)
-                plan.instruction = f"点击日期列中的{target_val}"
-                plan.direction = None
-                plan.drag_column = None
-                plan.drag_magnitude = None
-                print(f"  [Planner] override: small drag → tap ({target_val})")
         milestone.status = "running"
         return SupervisorStep(
             should_act=bool(plan.instruction),

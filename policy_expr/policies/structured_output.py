@@ -128,7 +128,7 @@ class StructuredOutputPolicy(BaseActionPolicy):
         return decision
 
 
-_MAGNITUDE_DELTA: dict[str, int] = {"small": 40, "medium": 110, "large": 220}
+_MAGNITUDE_DELTA: dict[str, int] = {"small": 40, "medium": 110, "large": 250}
 
 
 def _normalize_drag_direction(
