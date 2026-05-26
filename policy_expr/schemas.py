@@ -6,7 +6,22 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
-ActionType = Literal["tap", "click", "type", "scroll", "home", "stop"]
+ActionType = Literal["tap", "type", "clear_text", "press_enter", "scroll", "drag", "home", "stop"]
+
+_ACTION_TYPE_LABELS: dict[str, str] = {
+    "tap": "点击",
+    "type": "输入",
+    "clear_text": "清空",
+    "press_enter": "回车",
+    "scroll": "滚动",
+    "drag": "拖动",
+    "home": "主屏",
+    "stop": "停止",
+}
+
+
+def action_label(action_type: str) -> str:
+    return _ACTION_TYPE_LABELS.get(action_type, action_type)
 TaskType = Literal["action", "analysis"]
 MilestoneKind = Literal["navigation", "filter", "collection", "action", "verification"]
 CompletionStrategy = Literal[
@@ -55,13 +70,15 @@ class Action(BaseModel):
                     data["description"] = f"执行{action_type}并输入{text}"
                 else:
                     data["description"] = f"执行{action_type}操作"
-            # Clamp scroll y to avoid edge dead zones
-            if data.get("action_type") == "scroll" and "y" in data and data["y"] is not None:
+            # Clamp scroll/drag y to avoid edge dead zones
+            if data.get("action_type") in {"scroll", "drag"} and "y" in data and data["y"] is not None:
                 data["y"] = max(200, min(float(data["y"]), 850))
+            if data.get("action_type") == "drag" and data.get("to_y") is not None:
+                data["to_y"] = max(200, min(float(data["to_y"]), 850))
         return data
 
     action_type: ActionType = Field(
-        description="操作类型：tap（纯点击）、type（点击输入框并输入文字）、scroll（滚动）、home（返回主屏幕）之一"
+        description="操作类型：tap（纯点击）、type（点击输入框并输入文字）、press_enter（按回车提交/发送）、clear_text（清空输入框）、scroll（滚轮滚动）、drag（按住拖动/滑动）、home（返回主屏幕）、stop（停止）之一"
     )
     x: Optional[float] = Field(
         default=None,
@@ -75,11 +92,32 @@ class Action(BaseModel):
         default=None,
         description="滚动方向：up（向上滚动，查看更多内容）、down（向下滚动，回到顶部）、left（向左滑动，如主屏翻到下一页）、right（向右滑动，如主屏翻到上一页），scroll 时必填",
     )
+    to_x: Optional[float] = Field(
+        default=None,
+        description="drag 结束点归一化 x 坐标（0-1000，drag 时必填）",
+    )
+    to_y: Optional[float] = Field(
+        default=None,
+        description="drag 结束点归一化 y 坐标（0-1000，drag 时必填）",
+    )
+    duration_ms: Optional[int] = Field(
+        default=None,
+        description="drag 手势持续时间毫秒，默认 1200",
+    )
     text: Optional[str] = Field(
         default=None,
         description="要输入的文字内容（action_type 为 type 时必填）",
     )
     description: str = Field(description="该操作的中文说明，如「点击目标应用图标」")
+
+    @model_validator(mode="after")
+    def _require_text_for_type(self) -> "Action":
+        if self.action_type == "type" and not self.text:
+            raise ValueError("type 动作必须填写 text 字段，不能为空")
+        if self.action_type == "drag":
+            if self.x is None or self.y is None or self.to_x is None or self.to_y is None:
+                raise ValueError("drag 动作必须填写 x/y/to_x/to_y")
+        return self
 
 
 class Observation(BaseModel):
@@ -133,10 +171,16 @@ class SupervisorStep(BaseModel):
     milestone_kind: Optional[MilestoneKind] = Field(default=None, description="当前子目标类型")
     completion_strategy: Optional[CompletionStrategy] = Field(default=None, description="当前子目标完成策略")
     collection_scope: Optional[CollectionScope] = Field(default=None, description="当前内容采集范围")
+    pre_existing: bool = Field(
+        default=False,
+        description="目标完成时，完成该里程碑的 action 由智能体执行（False）还是该状态在本次会话前就已存在（True）",
+    )
     collection_summary: Optional[str] = Field(
         default=None,
         description="collection milestone 完成时的采集摘要（含停止条件及触发原因）",
     )
+    direction: Optional[str] = Field(default=None, description="scroll/drag 手指方向 hint（up/down/left/right）")
+    drag_column: Optional[str] = Field(default=None, description="picker drag 目标列 hint（year/month/day）")
 
 
 class GoalValidationResult(BaseModel):

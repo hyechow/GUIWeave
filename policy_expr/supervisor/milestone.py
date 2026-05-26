@@ -25,6 +25,7 @@ STUCK_SCREEN_SIMILARITY = 0.95
 STUCK_SCREEN_FROZEN = 0.99
 MAX_SCROLL_PER_MILESTONE = 3
 STUCK_REPEAT_WINDOW = 3
+BLANK_SCREEN_RATIO = 0.84  # Near-white pixel ratio above this = blank/loading screen
 STUCK_REPEAT_WORD_OVERLAP = 0.85
 
 
@@ -32,10 +33,16 @@ STUCK_REPEAT_WORD_OVERLAP = 0.85
 
 
 class _SingleCheckResult(BaseModel):
-    """Checker output for single-step milestones (navigation/filter/action/verification/read_once)."""
-    status: Literal["done", "in_progress", "stuck"]
+    """Checker output for single-step milestones (navigation/filter/action/verification/read_once).
+
+    LLM checker should only return done or in_progress.
+    stuck is reserved for programmatic checks (screen similarity, instruction repetition).
+    """
+    status: Literal["done", "in_progress", "stuck"] = Field(
+        description="判断状态：done（验收通过）或 in_progress（未完成）。禁止填 'loading'——页面加载状态用独立的 loading 布尔字段表示"
+    )
     reason: str = Field(description="判断理由")
-    stuck_reason: str = Field(default="", description="卡住原因（仅 stuck 时填写）")
+    stuck_reason: str = Field(default="", description="卡住原因（仅程序化 stuck 时填写）")
     issues: list[str] = Field(default_factory=list)
     visible_evidence: list[str] = Field(default_factory=list, description="截图中支持 done 的可见证据")
     missing_evidence: list[str] = Field(default_factory=list, description="缺失的验收证据")
@@ -46,6 +53,7 @@ class _SingleCheckResult(BaseModel):
         description="kind=collection(read_once) 或 kind=verification 时填写：当前屏幕需要提取的内容说明；其他类型留空",
     )
     frozen: bool = Field(default=False, description="屏幕是否冻结（相似度≥99%，即使 reader 返回新内容也应停止）")
+    loading: bool = Field(default=False, description="页面正在加载（骨架屏/启动屏/转场动画），应等待下一帧而非立即规划动作")
 
 
 class _LoopFrameResult(BaseModel):
@@ -61,11 +69,23 @@ class _LoopFrameResult(BaseModel):
 class _PlanResult(BaseModel):
     instruction: str = Field(description="下一步精确操作指令")
     summary: str = Field(description="规划依据一句话摘要")
+    direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
+        default=None,
+        description=(
+            "scroll 时填手指移动方向（up/down/left/right）；"
+            "picker drag 时填值的变化方向（increase=值变大，decrease=值变小）；"
+            "tap/type/home/stop 留空"
+        ),
+    )
+    drag_column: Optional[str] = Field(
+        default=None,
+        description="picker drag 时的目标列，如 'year'/'month'/'day'；非 picker drag 留空",
+    )
 
 
 class _ReplanResult(BaseModel):
     diagnosis: str = Field(description="失败根本原因（一句话）")
-    strategy: Literal["local_replan", "escalate_human"]
+    strategy: Literal["local_replan", "escalate_human", "force_complete"]
     instruction: str = Field(default="")
     escalation_message: str = Field(default="")
     can_degrade_to_collection: bool = Field(default=False)
@@ -97,9 +117,8 @@ DECOMPOSE_PROMPT = """\
 你是 iPhone 自动化任务的规划 Supervisor。将用户任务分解为子目标（milestone）。
 你会收到当前屏幕截图，请根据截图判断设备当前状态。
 
-可用操作：tap（点击）、type（输入）、scroll（滚动）、home（返回主屏幕）
-
-输出要求：
+可用操作：tap（点击）、type（输入文字，通过剪贴板粘贴支持中文，自动清空旧内容）、press_enter（按回车提交）、scroll（滚动）、home（返回主屏幕）
+⚠️ 设备通过 iPhone Mirroring 控制，使用 Mac 键盘输入，iOS 虚拟键盘不会在屏幕上弹出。因此验收条件中禁止使用「键盘弹出」「键盘可见」等无法观察的条件，应改为「输入框获得焦点（显示光标）」「输入框显示指定文字」等可观测条件。
 - goal：任务一句话描述
 - global_constraints：全局约束列表
 - milestones：子目标列表，每个包含 id/name/description/depends_on/success_condition/kind/completion_strategy/scroll_stop_condition/failure_hints
@@ -108,31 +127,55 @@ DECOMPOSE_PROMPT = """\
   - analysis：用户要求查看/比较/总结信息（统计数据、总结列表、查询结果）；有疑问时选 analysis
 
 原则：
+## 子目标粒度
+每个子目标对应一个**截图可确认的稳定页面状态**（如：应用主页、搜索结果页、详情页、设置页）。
+子目标之间是页面级别的跨越，子目标内部的具体操作（点击、输入、滑动、切换 tab、搜索导航）不需要拆成子目标。
+**关键：多步页面导航应合并为一个子目标**。例如"搜索并进入某人的聊天"是一个子目标（最终到达聊天页），不应该拆成"进入搜索页→输入关键词→点击搜索结果→进入聊天"四个子目标。
+
+示例：
+- ❌ 「打开XX应用」→「点击底部Tab」（太细，单步动作不应成为子目标）
+- ❌ 「进入搜索页」→「输入搜索词」→「点击搜索结果」（太细，搜索导航应合并为一个子目标）
+- ❌ 「找到联系人并发送消息」（太粗，两个不同的目标页面状态）
+- ✅ 「进入XX应用主页」→「导航到某人的详情页」→「发送消息」（合适，每个子目标到达一个稳定页面）
+
+## 验收条件
+每个 success_condition 必须指向**唯一可截图确认的状态**，只用一个核心判定，不要用「且」「及」连接多个条件。
+好：「看到XX页面标题」「消息气泡出现在聊天记录中」
+差：「看到底部导航栏及聊天列表」（"及"连接两个条件）
+禁止使用模糊修饰（如「任意页面均可」「如XX页面」「或其他页面」等）。
+**action 类子目标的验收条件必须描述操作的最终可见结果**，不能只验证中间步骤。例如发送消息的验收条件必须是「看到包含"XX"的消息气泡出现在聊天记录中」，不能是「输入框获得焦点」「输入框显示指定文字」。
+⚠️ 发送/分享类 action 的验收条件必须是发送完成的证据，例如「消息气泡出现在聊天记录中」「看到发送成功 Toast 提示」。禁止使用「发送按钮可见」「联系人已选中」「分享界面显示」等发送前的中间状态作为验收条件——这些只是发送前的准备状态，并非操作完成。
+
+## 相对时间换算
+任务中出现「本周/上周/本月/上月/今天/昨天/最近X天」等相对时间表达时，必须根据当前日期换算为明确的日期区间（格式：YYYY-MM-DD ~ YYYY-MM-DD），并以「时间范围：XXXX-XX-XX ~ XXXX-XX-XX」的形式加入 global_constraints。注意：中国以周一为一周的第一天。不要把相对时间留在 goal 或 success_condition 里，必须用具体日期。
+
+## 其他规则
 1. 如果当前不在主屏幕，第一个子目标应为「回到主屏幕」，验收条件为「看到主屏幕（桌面图标界面）」
 2. 如果当前已在主屏幕或已在目标应用内，不需要「回到主屏幕」步骤
-3. success_condition 要具体可判断，如「看到XX页面标题」「XX输入框有内容」
-4. depends_on 填依赖的前置子目标 id，无依赖留空
-5. kind 必须表达子目标语义：
+3. depends_on 填依赖的前置子目标 id，无依赖留空
+4. kind 必须表达子目标语义：
    - navigation：打开应用、进入页面、切换 tab
    - filter：设置范围、搜索词、筛选条件、排序条件
    - collection：读取并收集页面内容（记录列表、消息流、搜索结果）
    - action：执行一次具体操作
    - verification：确认结果是否满足目标
-6. completion_strategy 必须表达完成方式：
+5. completion_strategy 必须表达完成方式：
    - visible_once：看到指定页面/状态即可完成
    - read_once：读取当前屏幕一次即可完成
    - scroll_until_boundary：需要反复滚动，直到列表到底或无更多内容
    - repeat_until_satisfied：重复操作直到条件满足
    - human_escalation：需要人工处理
-7. 信息获取类任务的内容收集子目标必须使用 kind=collection；来自可滚动列表、记录流或消息流的内容必须使用 completion_strategy=scroll_until_boundary
+6. 信息获取类任务的内容收集子目标必须使用 kind=collection；来自可滚动列表、记录流或消息流的内容必须使用 completion_strategy=scroll_until_boundary
    - scroll_until_boundary 的子目标必须填写 scroll_stop_condition（一句话说明何时停止滚动）：
      * 有时间范围：「当可见记录日期早于 {目标开始日期} 时停止」
      * 有关键词条件：「当可见内容不再包含 {关键词} 时停止」
      * 全量采集：「滚动至列表物理底部时停止」
-8. failure_hints 列出该子目标可能失败的原因
-9. 「打开应用」类子目标验收条件应为「成功进入该应用（任意页面均可）」
-10. 进入应用内某个 tab/page 的验收条件必须包含可见页面标题、选中状态或该页面独有的稳定内容证据
-11. task_type=analysis 时，不生成 kind=verification 的子目标。数据完整性由采集阶段保证，不需要单独验证子目标
+7. failure_hints 列出该子目标可能失败的原因
+8. 禁止生成 kind=verification 的子目标。action 任务的验证内化到 action 子目标的验收条件中；analysis 任务的数据完整性由采集阶段保证。
+9. 跨 APP 任务：当任务涉及多个 APP（如从拼多多分享商品到微信、从支付宝截图发微信），每次 APP 切换都必须单独建模：
+   - 触发切换的动作（点击分享按钮、选择目标 APP）归入当前 APP 的 action 子目标，验收条件为「看到目标 APP 的界面」
+   - 切换后在新 APP 内的操作另立子目标（kind=action 或 kind=navigation），不要将两个 APP 的操作合并为一个子目标
+   - 示例：拼多多分享到微信 → ①「在拼多多找到商品并点击分享到微信，看到微信界面」→ ②「在微信中选择联系人并发送，看到发送成功提示」
 """
 
 SINGLE_CHECKER_PROMPT = """\
@@ -141,11 +184,14 @@ SINGLE_CHECKER_PROMPT = """\
 请按以下步骤分析（按顺序推理）：
 
 **第一步：页面识别**
-先识别当前页面是什么。观察截图中的标题、tab标签、页面布局，确定页面身份（如：订单列表、发票管理、个人中心、账单页面、聊天列表等）。
+先识别当前页面是什么。任务目标涉及「{app_name}」应用，但你必须独立判断当前实际所在的应用——不要预设当前就在目标应用内。
+观察截图中的**标题文字**（最重要的应用标识）、底部 Tab 标识、页面布局，确定页面身份（如：订单列表、发票管理、个人中心、账单页面、聊天列表等）。
+⚠️ 常见混淆：iOS「信息」app（标题"信息"，底部无 Tab 栏）vs 微信（标题"微信"或含未读数如"微信 (97)"，底部有「微信/通讯录/发现/我」四个 Tab）。如果标题文字与目标应用不匹配，说明打开了错误的应用。
 将结果填入 page_identity 字段。
 
 **第二步：验收判断**
-基于第一步的页面识别结果，判断验收条件是否满足。如果页面身份与验收条件不匹配（如验收要求"订单列表"但实际在"发票管理"），必须判定 stuck。
+⚠️ 只看验收条件（success_condition）的字面要求，忽略子目标名称和描述。子目标名称不能替代验收条件作为判定依据，必须验收条件中明确描述的内容全部可见才能判 done。
+基于第一步的页面识别结果，判断验收条件是否满足。
 ## 当前子目标
 - 名称：{milestone_name}
 - 描述：{milestone_desc}
@@ -161,7 +207,6 @@ SINGLE_CHECKER_PROMPT = """\
 ## 筛选类子目标（kind=filter）
 - 截图必须显示精确的筛选条件或等价范围，才能判 done
 - 更宽的范围不能当作筛选完成；即使可见项都在目标范围内，筛选摘要显示更宽范围也不能 done
-- 如果当前 UI 无法精确筛选，返回 stuck，在 stuck_reason 中说明原因
 
 ## 搜索类子目标（kind=filter，含搜索操作）
 判 done 必须同时满足：
@@ -169,19 +214,44 @@ SINGLE_CHECKER_PROMPT = """\
 2. 搜索框或标题显示完整目标查询/条件
 3. 页面显示与查询对应的结果列表或详情
 
+⚠️ 搜索建议页 vs 搜索结果页 区分：
+- 若搜索框右侧仍显示「搜索」按钮（尚未提交），或搜索框处于激活输入状态，则当前是自动补全/建议页——即使下方列表出现了目标商家名称，也必须判 in_progress
+- 搜索建议项通常左侧有放大镜图标或时钟图标，且没有评分、标签等商家详情元素
+- 只有用户已提交搜索（按下搜索按钮或回车），进入独立的搜索结果页，才能判 done
+
 ## 内容读取（kind=collection read_once 或 kind=verification）
 - 如果当前屏幕有与用户目标相关的可提取内容，填写 read_instruction
 - navigation/filter/action 阶段 read_instruction 必须留空
 
+## 发送/分享类子目标（验收条件含「发送」「分享」「消息」）
+⚠️ 严格区分「可以发送」与「已发送」：
+- 发送按钮可见、联系人已选中、分享界面显示 → 仍是准备状态，必须判 in_progress
+- 只有看到以下证据才能判 done：消息气泡出现在聊天记录中、发送成功 Toast 提示、"已发送"文字标识
+- 不能将「发送按钮就绪」「界面已就绪」「视为发送状态」等推断作为 done 依据
+
 ## 通用规则
-- done：截图上必须能直接观察到验收条件中描述的具体内容
-- in_progress：正在向目标推进
-- stuck：错误弹窗、连续无进展、页面回退、操作陷入循环
+- done：验收条件中描述的每个具体内容都必须在截图上可直接观察到
+- in_progress：验收条件尚未完全满足，包括页面不匹配、还在导航中、操作未完成等所有非 done 的情况
+- ⚠️ 验收条件提及特定应用（如「微信聊天列表」「美团搜索结果」）时，必须先确认当前确实在该应用内——通过标题文字、底部 Tab 标识、应用特有 UI 元素（如微信底部有「微信/通讯录/发现/我」四个 Tab）等判断。如果当前不在目标应用内，无论页面布局多相似，都必须判 in_progress
 - 验收条件要求某页面标题：必须看到顶部标题与验收条件精确匹配
 - 验收条件要求某底部 tab：必须看到该 tab 高亮/选中
+- 验收条件要求某段文字内容（如消息文本）：截图中对应元素的文字必须与验收条件中的文字精确匹配，包含多余前缀、后缀或拼写错误都不能判 done
 - 只看可观测事实，不要凭感觉判断
+- ⚠️ 页面底部「已选：...」或「当前选择：...」摘要文字只反映当前值，不代表对应的选项 chip/按钮可点击——判断某选项可见，必须在截图中看到实际的选项 chip 元素，不能从摘要文字推断
 - done 时：visible_evidence 必须列出截图中直接支持验收条件的文字；missing_evidence 必须为空
 - 存在任何 missing_evidence 不能返回 done
+
+## loading 字段
+loading 是独立布尔字段，与 status 无关。status 只能填 done 或 in_progress，不要填 loading。
+以下情况必须设置 loading=true（页面内容尚未稳定，不应执行操作）：
+- 应用启动屏（仅显示 Logo + 品牌名）
+- 骨架屏：内容区域全部被灰色占位块替代，没有真实文字或图片可读
+- 全屏加载动画或旋转菊花，内容区域为空
+- 页面完全空白（仅有状态栏/导航栏，正文一片空白）
+- 页面有可见的加载指示器（转圈动画、进度条、"加载中"文字），即使已有部分内容渲染
+以下情况设置 loading=false（内容已稳定，可供规划器决策）：
+- 页面内容已完整渲染，无任何加载指示器
+- 有错误提示、空状态提示等可交互元素
 """
 
 LOOP_FRAME_PROMPT = """\
@@ -243,16 +313,39 @@ PLAN_PROMPT = """\
 {history_text}
 
 规划规则：
-- 只输出一个当前屏幕马上可执行的单步操作指令
-- 描述要操作的具体 UI 元素，如「点击底部导航栏左起第二个通讯录图标」
+- ⚠️ 每条指令只包含一个动作。禁止组合多个动作（如「输入文字并按回车」）。输入和提交必须拆成两条指令
+- 描述要操作的具体 UI 元素，如「点击底部导航栏左起第二个Tab」
 - 不要给出目标级指令，如「进入通讯录页面」「完成搜索」
 - 如果当前子目标要求「回到主屏幕」，下一步必须指令「按 Home 键返回主屏幕」
+- ⚠️ Home 键只在子目标明确要求「回到主屏幕」时使用；当前已在目标应用内，禁止用 Home 键退出应用——不管当前页面是否符合预期，都应在应用内使用返回按钮、Tab 切换或应用内搜索找到正确路径
 - 如果当前已在目标应用内但不在正确页面，给出应用内导航指令，不要重新打开已打开的应用
 - 如果当前在 iOS 主屏幕且目标应用图标不可见：优先点击底部「搜索」胶囊按钮；看不到时才向下滑动打开系统搜索；搜索框出现后输入应用名称
 - 如果当前是 iOS 系统搜索页，直接输入或点击搜索结果中的目标应用，不要返回主屏
 - 如果当前在应用的子页面需要回到上级，优先使用可见返回控件
 - 如果当前在应用内搜索页：搜索框已聚焦则直接输入；未聚焦则先点击搜索框
-- 滚动指令描述要查看什么内容（如「滚动查看更早的消息」），不要指定手指方向
+- ⚠️ 需要提交/发送/确认输入时（如发送消息、确认搜索），必须指令「按回车键提交」，禁止指令「点击发送按钮」
+- ⚠️ 输入框无论有无旧内容，直接生成输入文字指令即可——系统会自动清空后输入，无需先清空
+- 普通列表滚动指令描述要查看什么内容（如「滚动查看更早的消息」），不要指定手指方向
+- 滚轮选择器/日期选择器/时间选择器/城市选择器等多列 picker：
+  * picker 物理规律（实测）：手指向上拖（to_y < y）→ 列表内容向上 → 数值增大；手指向下拖（to_y > y）→ 列表内容向下 → 数值减小
+  * 因此：目标值 < 当前值（如5月→1月）必须手指向下；目标值 > 当前值（如1月→5月）必须手指向上
+  * ⚠️ picker 只能通过拖动操作选值，禁止生成点击指令——即使目标值可见也要拖动
+- ⚠️ 「未生效」「屏幕无变化」对 picker 的处理：先检查拖动方向是否正确，方向反了才会无变化；普通列表/网格无响应时才改用 tap
+- ⚠️ 生成输入文字指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
+- ⚠️ 输入文字动作已包含自动点击输入框的步骤，不需要先单独生成「点击/激活输入框」指令，看到输入框时直接生成输入指令即可
+- 商品规格选择面板（bottomsheet）中，若目标属性（如糖度/甜度）的分类标题可见但选项 chips 未出现或被截断，应先在面板内向上滑动使该属性的选项行完整显示，再点击目标选项
+
+## 结构化方向提示（direction / drag_column）
+每次输出时必须决定以下字段：
+- direction：
+  * 下一步是 scroll → 填手指移动方向（down/up/left/right）
+  * 下一步是 picker drag → 填「值的变化方向」（不是手指方向！）：
+    - 目标值比当前值小（如5月→1月，2026年→2024年，20日→5日）：direction=decrease
+    - 目标值比当前值大（如1月→5月，2024年→2026年，5日→20日）：direction=increase
+  * 其他动作（tap/type/home/stop）→ 留空
+- drag_column：
+  * 下一步是 picker drag → 填目标列（year=年份列，month=月份列，day=日期列）
+  * 其他动作 → 留空
 """
 
 LOOP_SCROLL_PROMPT = """\
@@ -268,7 +361,7 @@ LOOP_SCROLL_PROMPT = """\
 
 规则：
 - 输出一个滚动指令，描述要查看什么内容（如「滚动查看更多记录」「滚动查看更早的消息」）
-- 不要指定手指滑动方向，由 action policy 根据截图判断
+- 不要指定手指滑动方向
 - 如果当前屏幕已显示列表内容，滚动以获取更多同类内容
 """
 
@@ -295,17 +388,23 @@ REPLAN_PROMPT = """\
 1. 观察截图，理解当前所有可见 UI 元素
 2. 检查历史操作是否存在 A→B→A→B 交替循环，如果存在必须跳出
 3. 禁止退回到已完成子目标的状态（如已完成「回到主屏幕」就不要再按 Home 键）
-3. 分析之前失败的根本原因
-4. 找到一条不同的路径
+4. 分析之前失败的根本原因
+5. 找到一条不同的路径——如果同一 UI 组件已尝试 2+ 次均失败，必须跳出该组件：
+   - 截图中是否有尚未尝试的标签（Tab）、按钮、面板或入口？优先尝试
+   - 当前弹窗/面板是否可以关闭，回到上级页面寻找替代路径？
+   - 不要继续在同一个已失效的组件上重试不同操作
 
 ## 决策规则
+- 验收条件已满足（截图中可见目标状态）→ force_complete（不再生成操作指令，直接标记完成）
 - 工具限制/数据问题 → local_replan
 - 如果筛选无法精确设置，但后续 collection 子目标可通过逐条过滤补偿，can_degrade_to_collection=true
 - 以下指令已尝试过且失败，禁止再次使用：
 {tried_instructions}
 - instruction 只包含一个原子操作，禁止包含「并」「然后」「再」等连接词
 - 如果子目标要求「回到主屏幕」，必须指令「按 Home 键返回主屏幕」
+- ⚠️ 打开应用后发现不是目标应用或进入错误页面时，应先在应用内导航到该应用的主界面（点击返回按钮、关闭弹窗等），确认当前所在的应用身份后，再决定是继续在应用内操作还是按 Home 键回主屏。禁止未确认应用身份就直接按 Home 键。
 - 滚动指令描述要查看什么内容，不要指定手指方向
+- ⚠️ 如果失败原因包含「屏幕无变化」「屏幕冻结」「未生效」，说明当前 UI 不支持滚动（日历选择器、滚轮、静态网格等）。此时必须改用 tap 点击目标位置，绝对禁止生成包含「滚动」「滑动」「向上」「向下」的指令
 """
 
 STOP_CONDITION_PATCH_PROMPT = """\
@@ -368,6 +467,121 @@ def _format_history(history: list[PolicyTurn]) -> str:
     return "\n".join(lines)
 
 
+# ── Public invoke functions (shared by production and evals) ─────────
+
+
+def _make_llm() -> ChatOpenAI:
+    cfg = resolve_llm_config("supervisor")
+    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+
+
+def _build_msgs(system_prompt: str, png_bytes: bytes) -> list:
+    from datetime import datetime
+    today = datetime.now().strftime("%Y年%m月%d日 %A")
+    b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
+    return [
+        SystemMessage(content=f"{system_prompt}\n\n当前日期：{today}"),
+        HumanMessage(content=[
+            {"type": "text", "text": "请根据当前屏幕做出决策。"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+        ]),
+    ]
+
+
+def run_checker(
+    milestone: Milestone,
+    observation: Observation,
+    history: list[PolicyTurn],
+    *,
+    app_name: str = "未知应用",
+    task_type: str = "action",
+    constraints: Optional[list[str]] = None,
+    extra: str = "",
+) -> _SingleCheckResult:
+    """Run the single-step milestone checker. Used by both production and evals."""
+    if constraints is None:
+        constraints = []
+    prompt = SINGLE_CHECKER_PROMPT.format(
+        milestone_name=milestone.name,
+        milestone_desc=milestone.description,
+        success_condition=milestone.success_condition,
+        milestone_kind=milestone.kind,
+        completion_strategy=milestone.completion_strategy,
+        task_type=task_type,
+        constraints=json.dumps(constraints, ensure_ascii=False),
+        history_text=_format_history(history),
+        app_name=app_name,
+    )
+    if extra:
+        prompt += f"\n\n## 输出修正要求\n{extra}"
+    result = invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _SingleCheckResult)
+
+    if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
+        print("  [SingleCheck] done 缺少证据，重试...")
+        result = run_checker(
+            milestone, observation, history,
+            app_name=app_name, task_type=task_type, constraints=constraints,
+            extra="你刚才返回 done 但 visible_evidence 为空或 missing_evidence 非空。请重新核对截图，确有证据才能 done，否则返回 in_progress 或 stuck。",
+        )
+    if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
+        return _SingleCheckResult(
+            status="stuck",
+            reason="checker 返回 done 但缺少可见验收证据",
+            stuck_reason="done 缺少可见证据",
+            summary=result.summary,
+        )
+    return result
+
+
+def run_planner(
+    milestone: Milestone,
+    check: _SingleCheckResult,
+    observation: Observation,
+    history: list[PolicyTurn],
+    *,
+    constraints: Optional[list[str]] = None,
+    extra: str = "",
+    app_knowledge: Optional[str] = None,
+) -> _PlanResult:
+    """Run the step planner. Used by both production and evals."""
+    if constraints is None:
+        constraints = []
+    # When replanning (retry_count > 0), inject all previously tried instructions
+    # so the planner avoids paths that led into dead ends before stuck was detected.
+    if milestone.retry_count > 0 and not extra:
+        tried = sorted({
+            t.supervisor.instruction
+            for t in history
+            if t.supervisor and t.supervisor.instruction
+            and t.supervisor.milestone_id == milestone.id
+        })
+        if tried:
+            tried_lines = "\n".join(f"  - 「{i}」" for i in tried)
+            extra = (
+                f"⚠️ 该子目标已重试 {milestone.retry_count} 次。以下操作在本子目标中已全部尝试过"
+                f"（含导致失败或死路的路径），请务必选择完全不同的路径：\n{tried_lines}"
+            )
+    prompt = PLAN_PROMPT.format(
+        milestone_name=milestone.name,
+        milestone_desc=milestone.description,
+        success_condition=milestone.success_condition,
+        milestone_kind=milestone.kind,
+        constraints=json.dumps(constraints, ensure_ascii=False),
+        check_status=check.status,
+        check_reason=check.reason,
+        issues=json.dumps(check.issues, ensure_ascii=False),
+        missing_evidence=json.dumps(check.missing_evidence, ensure_ascii=False),
+        check_summary=check.summary,
+        history_text=_format_history(history),
+    )
+    if extra:
+        prompt += f"\n\n## 输出修正要求\n{extra}"
+    msgs = _build_msgs(prompt, observation.png_bytes)
+    if app_knowledge:
+        msgs[1].content = [{"type": "text", "text": f"## 应用导航知识\n{app_knowledge}\n\n"}] + msgs[1].content
+    return invoke_structured(_make_llm(), msgs, _PlanResult)
+
+
 # ── Main class ────────────────────────────────────────────────────────
 
 
@@ -381,19 +595,22 @@ class MilestoneSupervisorPolicy:
         self._milestones: dict[str, Milestone] = {}
         self._order: list[str] = []
         self._current_id: Optional[str] = None
-        self._initialized = False
         self._recent_screenshots: list[bytes] = []
         self._scroll_counts: dict[str, int] = {}
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
+        self._app_name: str = ""
+        self._last_page_identity: dict[str, str] = {}
+        self._last_check_summary: dict[str, str] = {}
 
-    def set_app_knowledge(self, text: str) -> None:
+    def set_app_knowledge(self, text: str, app_name: str = "") -> None:
         self._app_knowledge = text
+        if app_name:
+            self._app_name = app_name
 
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
-        if not self._initialized:
+        if not self._order:
             self._decompose(goal, observation)
-            self._initialized = True
 
         if self._current_id is None:
             return self._terminal_step()
@@ -411,18 +628,76 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        sim_stuck = self._check_screen_similarity(observation)
-        rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
-        check = sim_stuck or rep_stuck or self._single_check(milestone, observation, history)
+        # Blank screen: page is still loading (transition / app render). Skip all LLM calls
+        # and do not add this frame to screenshot history (avoids corrupting AB-loop detection).
+        # The runner's noop_count handles termination after too many consecutive blank waits.
+        if _is_blank_screen(observation.png_bytes):
+            print("  [BlankScreen] 检测到白屏，页面加载中，等待下一帧...")
+            return SupervisorStep(
+                should_act=False,
+                instruction=None,
+                stop=False,
+                goal_completed=False,
+                summary="页面加载中（白屏），等待...",
+                **_ctx(milestone, None),
+            )
+
+        # After a 'type' action the screen changes only minimally (input text).
+        # Reset screenshot history so SimStuck doesn't fire as a false positive.
+        if history and history[-1].action_decision:
+            if history[-1].action_decision.action.action_type == "type":
+                self._recent_screenshots.clear()
+
+        # Snapshot previous page identity before running checker.
+        prev_page_id = self._last_page_identity.get(milestone.id, "")
+
+        check = self._single_check(milestone, observation, history)
         print(f"  [SingleCheck] {check.status}: {check.reason}")
+
+        if check.loading:
+            print("  [Loading] 检测到加载状态，等待下一帧...")
+            return SupervisorStep(
+                should_act=False, instruction=None, stop=False,
+                goal_completed=False, summary="页面加载中，等待...",
+                **_ctx(milestone, None),
+            )
+
+        current_page_id = check.page_identity or ""
+        self._last_page_identity[milestone.id] = current_page_id
 
         if check.status == "done":
             return self._advance(milestone, observation, history)
-        if check.status == "stuck":
-            # Page changed (sim_stuck=None) means navigation is progressing —
-            # not a true retry, just not at the target yet.
+
+        # Checker says in_progress — check for stuck signals before planning
+        sim_stuck = self._check_screen_similarity(observation)
+
+        # Suppress SimStuck when checker's summary changed from the previous turn —
+        # picker wheels produce tiny pixel diffs per step (99%+ similarity) but the
+        # checker reliably tracks the actual selected value.  If the value changed,
+        # the action worked; reset the screenshot window and let planning continue.
+        prev_check_summary = self._last_check_summary.get(milestone.id, "")
+        # Only suppress frozen-type SimStuck (picker wheels: 99%+ on all frames).
+        # AB-loop SimStuck (frozen=False: 2-back high, adjacent low) must NOT be
+        # suppressed even if the checker summary changed — the summary alternates
+        # between two states, which is the symptom of the AB loop, not progress.
+        if sim_stuck is not None and sim_stuck.frozen and prev_check_summary and prev_check_summary != check.summary:
+            print(f"  [SimStuck] 已抑制：picker 进展（frozen+摘要变化）")
+            sim_stuck = None
+            self._recent_screenshots.clear()
+        self._last_check_summary[milestone.id] = check.summary
+
+        rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
+        if sim_stuck or rep_stuck:
+            stuck = sim_stuck or rep_stuck
+            assert stuck is not None
+            print(f"  [Stuck] {stuck.status}: {stuck.reason}")
             page_changed = sim_stuck is None
-            return self._handle_stuck(milestone, check, check.read_instruction, observation, history, page_changed=page_changed)
+            return self._handle_stuck(
+                milestone, stuck, check.read_instruction, observation, history,
+                page_changed=page_changed,
+                prev_page_id=prev_page_id,
+                current_page_id=current_page_id,
+            )
         return self._plan_single(milestone, check, observation, history)
 
     def _plan_single(
@@ -460,6 +735,11 @@ class MilestoneSupervisorPolicy:
                 )
                 return self._handle_stuck(milestone, stuck_check, check.read_instruction, observation, history)
         print(f"  [Planner] {plan.instruction}")
+        if plan.direction or plan.drag_column:
+            print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column}")
+        # Programmatic direction fix: extract current/target from instruction, verify direction
+        if plan.direction in ("increase", "decrease") and plan.drag_column:
+            self._fix_picker_direction(plan)
         milestone.status = "running"
         return SupervisorStep(
             should_act=bool(plan.instruction),
@@ -467,6 +747,8 @@ class MilestoneSupervisorPolicy:
             stop=False,
             goal_completed=False,
             summary=plan.summary,
+            direction=plan.direction,
+            drag_column=plan.drag_column,
             **_ctx(milestone, check.read_instruction),
         )
 
@@ -595,10 +877,20 @@ class MilestoneSupervisorPolicy:
         self._recent_screenshots.clear()
         print(f"  子目标「{done_name}」已完成")
 
+        # Detect pre_existing: milestone found done without any executed actions for it.
+        # This means the target state existed before the agent did anything for this milestone.
+        pre_existing = not any(
+            t.executed for t in history
+            if t.supervisor.milestone_id == milestone.id
+        )
+        if pre_existing:
+            print(f"  [PreExisting] 子目标「{done_name}」未执行任何动作即判完成，目标状态在会话前已存在")
+
         if self._current_id is None:
             return SupervisorStep(
                 should_act=False, stop=True, stop_reason="所有子目标已完成",
-                goal_completed=True, summary=f"子目标「{done_name}」已完成，任务全部完成。",
+                goal_completed=True, pre_existing=pre_existing,
+                summary=f"子目标「{done_name}」已完成，任务全部完成。",
                 **(final_read or {}),
             )
 
@@ -626,20 +918,38 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
         page_changed: bool = True,
+        prev_page_id: str = "",
+        current_page_id: str = "",
     ) -> SupervisorStep:
         self._recent_screenshots.clear()
         # Decide whether to count this as a retry:
         # - Not executed (action policy refused): skip
-        # - Page changed: navigation progress, not a retry — skip
-        # - Same page: genuine stuck, count as retry
+        # - Truly new page (page_identity changed): navigation progress, not a retry — skip
+        # - Same page with pixel changes (e.g. different search term in same search box): count
         skip_retry = False
         if history and history[-1].supervisor and history[-1].supervisor.milestone_id == milestone.id:
             if history[-1].supervisor.instruction and not history[-1].executed:
                 print(f"  [Replan] 上一轮指令未执行，不计入重试次数")
                 skip_retry = True
             elif page_changed:
-                print(f"  [Replan] 页面已变化（导航推进中），不计入重试次数")
-                skip_retry = True
+                truly_new_page = bool(prev_page_id and current_page_id and prev_page_id != current_page_id)
+                if truly_new_page:
+                    print(f"  [Replan] 页面已跳转（{prev_page_id} → {current_page_id}），不计入重试次数")
+                    skip_retry = True
+                    # Failure constraints are page-scoped: an action that failed on the old UI
+                    # may work fine on the new UI. Clear action-specific failure constraints
+                    # (pattern: "指令「...」导致错误：...禁止重复此指令") so the planner
+                    # starts fresh on the new page without stale prohibitions.
+                    before = len(self._global_constraints)
+                    self._global_constraints = [
+                        c for c in self._global_constraints
+                        if not (c.startswith("指令「") and "禁止重复此指令" in c)
+                    ]
+                    cleared = before - len(self._global_constraints)
+                    if cleared:
+                        print(f"  [Replan] 清除 {cleared} 条旧页面操作约束")
+                else:
+                    print(f"  [Replan] 屏幕变化但页面未变（{current_page_id or '未知'}），计入重试次数")
         if not skip_retry:
             milestone.retry_count += 1
 
@@ -655,6 +965,10 @@ class MilestoneSupervisorPolicy:
         print(f"  [Replan] 第 {milestone.retry_count} 次重试...")
         replan = self._invoke_replanner(milestone, check, observation, history)
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")
+
+        if replan.strategy == "force_complete":
+            print(f"  [Replan] replanner 判定验收条件已满足，强制完成")
+            return self._advance(milestone, observation, history)
 
         if replan.strategy == "escalate_human":
             fallback = self._try_filter_fallback(
@@ -789,37 +1103,19 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _SingleCheckResult:
-        prompt = SINGLE_CHECKER_PROMPT.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            success_condition=milestone.success_condition,
-            milestone_kind=milestone.kind,
-            completion_strategy=milestone.completion_strategy,
+        app_name = self._app_name or "未知应用"
+        if not self._app_name:
+            for t in reversed(history):
+                if t.supervisor and t.supervisor.app_name:
+                    app_name = t.supervisor.app_name
+                    break
+        return run_checker(
+            milestone, observation, history,
+            app_name=app_name,
             task_type=self.task_type,
-            constraints=json.dumps(self._global_constraints, ensure_ascii=False),
-            history_text=_format_history(history),
+            constraints=self._global_constraints,
+            extra=extra,
         )
-        if extra:
-            prompt += f"\n\n## 输出修正要求\n{extra}"
-        if self._app_knowledge:
-            prompt += f"\n\n## 应用导航知识\n{self._app_knowledge}"
-        result = invoke_structured(self._llm(), self._msgs(prompt, observation), _SingleCheckResult)
-
-        # Guard: done without evidence
-        if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
-            print("  [SingleCheck] done 缺少证据，重试...")
-            result = self._single_check(
-                milestone, observation, history,
-                extra="你刚才返回 done 但 visible_evidence 为空或 missing_evidence 非空。请重新核对截图，确有证据才能 done，否则返回 in_progress 或 stuck。",
-            )
-        if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
-            return _SingleCheckResult(
-                status="stuck",
-                reason="checker 返回 done 但缺少可见验收证据",
-                stuck_reason="done 缺少可见证据",
-                summary=result.summary,
-            )
-        return result
 
     def _loop_check(
         self,
@@ -844,22 +1140,12 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _PlanResult:
-        prompt = PLAN_PROMPT.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            success_condition=milestone.success_condition,
-            milestone_kind=milestone.kind,
-            constraints=json.dumps(self._global_constraints, ensure_ascii=False),
-            check_status=check.status,
-            check_reason=check.reason,
-            issues=json.dumps(check.issues, ensure_ascii=False),
-            missing_evidence=json.dumps(check.missing_evidence, ensure_ascii=False),
-            check_summary=check.summary,
-            history_text=_format_history(history),
+        return run_planner(
+            milestone, check, observation, history,
+            constraints=self._global_constraints,
+            extra=extra,
+            app_knowledge=self._app_knowledge,
         )
-        if extra:
-            prompt += f"\n\n## 输出修正要求\n{extra}"
-        return invoke_structured(self._llm(), self._msgs(prompt, observation), _PlanResult)
 
     def _invoke_loop_scroll(
         self,
@@ -913,7 +1199,10 @@ class MilestoneSupervisorPolicy:
         )
         if extra:
             prompt += f"\n\n## 输出修正要求\n{extra}"
-        result = invoke_structured(self._llm(), self._msgs(prompt, observation), _ReplanResult)
+        msgs = self._msgs(prompt, observation)
+        if self._app_knowledge:
+            msgs[1].content = [{"type": "text", "text": f"## 应用导航知识\n{self._app_knowledge}\n\n"}] + msgs[1].content
+        result = invoke_structured(self._llm(), msgs, _ReplanResult)
         if self._is_sequence(result.instruction):
             print("  [Replan] 多步序列，重试...")
             result = self._invoke_replanner(
@@ -1113,21 +1402,21 @@ class MilestoneSupervisorPolicy:
         """Apply structural fixes for issues that survive retry. Last resort."""
         fixes = []
 
-        # 0. Remove verification milestones for analysis tasks
-        if self.task_type == "analysis":
-            verification_ids = [
-                mid for mid, m in self._milestones.items()
-                if m.kind == "verification"
-            ]
-            for vid in verification_ids:
-                removed = self._milestones.pop(vid)
-                self._order.remove(vid)
-                # Rewire: milestones that depended on verification now depend on its predecessor
-                for m in self._milestones.values():
-                    if vid in m.depends_on:
-                        m.depends_on.remove(vid)
-                        m.depends_on.extend(removed.depends_on)
-                fixes.append(f"子目标「{removed.name}」（verification）已移除")
+        # 0. Remove verification milestones (verification is never valid —
+        # action tasks bake verification into action's success_condition,
+        # analysis tasks rely on collection completeness)
+        verification_ids = [
+            mid for mid, m in self._milestones.items()
+            if m.kind == "verification"
+        ]
+        for vid in verification_ids:
+            removed = self._milestones.pop(vid)
+            self._order.remove(vid)
+            for m in self._milestones.values():
+                if vid in m.depends_on:
+                    m.depends_on.remove(vid)
+                    m.depends_on.extend(removed.depends_on)
+            fixes.append(f"子目标「{removed.name}」（verification）已移除")
 
         # 1. Remove invalid depends_on
         all_ids = set(self._milestones.keys())
@@ -1233,20 +1522,38 @@ class MilestoneSupervisorPolicy:
         return None
 
     def _llm(self) -> ChatOpenAI:
-        cfg = resolve_llm_config("supervisor")
-        return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+        return _make_llm()
 
     def _msgs(self, system_prompt: str, observation: Observation) -> list:
-        from datetime import datetime
-        today = datetime.now().strftime("%Y年%m月%d日 %A")
-        b64 = base64.b64encode(resize_to_logical_png(observation.png_bytes)).decode()
-        return [
-            SystemMessage(content=f"{system_prompt}\n\n当前日期：{today}"),
-            HumanMessage(content=[
-                {"type": "text", "text": "请根据当前屏幕做出决策。"},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-            ]),
-        ]
+        return _build_msgs(system_prompt, observation.png_bytes)
+
+    @staticmethod
+    def _fix_picker_direction(plan: _PlanResult) -> None:
+        """Verify picker direction by extracting current/target values from instruction.
+
+        Also corrects direction keywords in the instruction text so the action policy
+        LLM and _normalize_drag_direction keyword-fallback both agree with the hint.
+        """
+        col_suffix = {"year": "年", "month": "月", "day": "日"}.get(plan.drag_column or "", "")
+        if not col_suffix:
+            return
+        m = re.search(rf"从\s*(?:\d+[月年])?(\d+){col_suffix}.*?[至到为]\s*(?:\d+[月年])?(\d+){col_suffix}", plan.instruction)
+        if not m:
+            return
+        cur, tgt = int(m.group(1)), int(m.group(2))
+        if tgt == cur:
+            return
+        correct = "increase" if tgt > cur else "decrease"
+        if plan.direction != correct:
+            print(f"  [Planner] direction fix: {plan.direction} → {correct} ({cur}→{tgt})")
+            plan.direction = correct
+            # Sync direction words in instruction so LLM and keyword-fallback agree.
+            if correct == "increase":
+                for old, new in [("向下拖动", "向上拖动"), ("下拉", "上拉"), ("往下", "往上")]:
+                    plan.instruction = plan.instruction.replace(old, new)
+            else:
+                for old, new in [("向上拖动", "向下拖动"), ("上拉", "下拉"), ("往上", "往下")]:
+                    plan.instruction = plan.instruction.replace(old, new)
 
     @staticmethod
     def _is_sequence(instruction: str) -> bool:
@@ -1257,33 +1564,49 @@ class MilestoneSupervisorPolicy:
     def _is_repeated_instruction(
         self, instruction: str, milestone_id: str, history: list[PolicyTurn],
     ) -> bool:
-        """Check if the instruction repeats a previously tried one for the same milestone."""
+        """Check if the instruction repeats a previously tried one for the same milestone.
+
+        Two detection modes:
+        1. Stuck-causing: if a similar instruction led to stuck, block immediately.
+        2. Persistent failure: if a similar instruction was tried >= 2 times without
+           advancing the milestone, it's a dead end — block it.
+           (Only applies to tap/type/home — scroll/drag are inherently repetitive.)
+        """
         from difflib import SequenceMatcher
-        # Only check against instructions that LED TO STUCK, not all executed ones.
-        # A normally executed instruction can be retried (e.g. same tap on same screen).
-        tried = set()
+        _strip = lambda s: re.sub(r"[，。、；：""''《》\s（）\(\)]", "", s.strip())
+        _scroll_words = ("滚动", "滑动", "拖动", "拖拽", "scroll", "drag")
+        n_new = _strip(instruction)
+
+        stuck_tried: set[str] = set()
+        all_tried: list[str] = []
         for idx, t in enumerate(history):
             sv = t.supervisor
             if not sv or not sv.instruction or sv.milestone_id != milestone_id:
                 continue
-            # Check if the NEXT turn detected stuck for the same milestone
+            all_tried.append(sv.instruction)
             next_sv = history[idx + 1].supervisor if idx + 1 < len(history) else None
             if (
                 next_sv
                 and next_sv.milestone_id == milestone_id
                 and ("卡住" in (next_sv.summary or "") or "重试" in (next_sv.summary or ""))
             ):
-                tried.add(sv.instruction)
-        if not tried:
+                stuck_tried.add(sv.instruction)
+
+        def _similar(new: str, old: str) -> bool:
+            n_old = _strip(old)
+            return bool(n_new and n_old) and SequenceMatcher(None, new, n_old).ratio() >= 0.6
+
+        # Mode 1: stuck-causing → block immediately
+        for old in stuck_tried:
+            if _similar(n_new, old):
+                return True
+
+        # Mode 2: persistent failure (>= 2 similar attempts) → block
+        # Skip for scroll/drag — these are intentionally repetitive
+        if any(w in instruction for w in _scroll_words):
             return False
-        n_new = re.sub(r"[，。、；：""''《》\s（）\(\)]", "", instruction.strip())
-        for old in tried:
-            n_old = re.sub(r"[，。、；：""''《》\s（）\(\)]", "", old.strip())
-            if n_new and n_old:
-                ratio = SequenceMatcher(None, n_new, n_old).ratio()
-                if ratio >= 0.6:
-                    return True
-        return False
+        similar_count = sum(1 for old in all_tried if _similar(n_new, old))
+        return similar_count >= 2
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -1311,6 +1634,20 @@ def _has_collected(history: list[PolicyTurn], milestone_id: str) -> bool:
         t.supervisor.milestone_id == milestone_id and t.read_added_content
         for t in history
     )
+
+
+def _is_blank_screen(png_bytes: bytes) -> bool:
+    """Return True if screenshot is a blank/loading white screen.
+
+    Checks the ratio of near-white pixels (> 250) rather than mean brightness,
+    because the iPhone Mirroring frame and status bar icons drag the mean down
+    even when the app content area is fully white.
+    Blank/loading screens have >80% near-white pixels; normal pages have <75%.
+    """
+    img = Image.open(io.BytesIO(png_bytes)).convert("L")
+    pixels = img.tobytes()
+    near_white = sum(1 for p in pixels if p > 250)
+    return near_white / len(pixels) > BLANK_SCREEN_RATIO
 
 
 def _default_read_instruction(milestone: Milestone) -> str:

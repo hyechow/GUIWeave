@@ -7,9 +7,27 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from policy_expr.recon.page_parser import ParsedPage
+
+
+# ── Exceptions ────────────────────────────────────────────
+
+class ProbeAbortedError(RuntimeError):
+    """Raised when probe_elements cannot return to initial page after a tap."""
+    def __init__(
+        self,
+        message: str,
+        failed_tap: int,
+        failed_element: str,
+        back_attempts: list[dict],
+    ):
+        super().__init__(message)
+        self.failed_tap = failed_tap
+        self.failed_element = failed_element
+        self.back_attempts = back_attempts  # list of {strategy, coords, score, success}
 
 
 # ── Data classes ──────────────────────────────────────────
@@ -25,27 +43,23 @@ class TapResult:
     tap_ok: bool
     screenshot_path: str
     navigated: bool = False
+    back_attempts: list[dict] = field(default_factory=list)
+    child_status: str = ""  # "new_explored" / "new_depth_limit" / "duplicate" / "error"
+    identity: dict = field(default_factory=dict)
 
 
 @dataclass
 class ReconResult:
     """Full recon result for one page."""
-    app_name: str
-    page_title: str
-    page_type: str
-    signature: str
-    description: str
     elements_count: int
     initial_screenshot_path: str = ""
+    parent_page: str = ""
+    selected_tab: str = ""  # detected selected tab name for this page
     taps: list[TapResult] = field(default_factory=list)
 
     def save(self, path: Path) -> None:
-        path.write_text(json.dumps({
-            "app_name": self.app_name,
-            "page_title": self.page_title,
-            "page_type": self.page_type,
-            "signature": self.signature,
-            "description": self.description,
+        data = {
+            "parent_page": self.parent_page,
             "elements_count": self.elements_count,
             "initial_screenshot": self.initial_screenshot_path,
             "taps": [
@@ -58,10 +72,14 @@ class ReconResult:
                     "tap_ok": t.tap_ok,
                     "navigated": t.navigated,
                     "screenshot": t.screenshot_path,
+                    "back_attempts": t.back_attempts,
+                    "child_status": t.child_status,
+                    "identity": t.identity,
                 }
                 for t in self.taps
             ],
-        }, ensure_ascii=False, indent=2))
+        }
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
 # ── Visualization ─────────────────────────────────────────
@@ -91,11 +109,19 @@ class ScreenMatchDecision:
 
 
 def png_similarity(png1: bytes, png2: bytes, size: int = SCREEN_MATCH_SIZE) -> float:
-    """Return grayscale pixel similarity between two PNG images."""
-    img1 = Image.open(io.BytesIO(png1)).convert("L").resize((size, size))
-    img2 = Image.open(io.BytesIO(png2)).convert("L").resize((size, size))
-    total = sum(abs(int(a) - int(b)) for a, b in zip(img1.getdata(), img2.getdata()))
-    return 1.0 - total / (255 * size * size)
+    """Return edge IoU between two PNG images (robust to dynamic content changes)."""
+    from skimage.feature import canny
+
+    img1 = np.array(Image.open(io.BytesIO(png1)).convert("L"), dtype=np.float64) / 255.0
+    img2_raw = Image.open(io.BytesIO(png2)).convert("L")
+    if img1.shape != img2_raw.size[::-1]:
+        img2_raw = img2_raw.resize((img1.shape[1], img1.shape[0]))
+    img2 = np.array(img2_raw, dtype=np.float64) / 255.0
+    e1 = canny(img1).astype(np.float64)
+    e2 = canny(img2).astype(np.float64)
+    intersection = (e1 * e2).sum()
+    union = (e1 + e2).clip(0, 1).sum()
+    return float(intersection / union) if union > 0 else 0.0
 
 
 def matches_initial(
@@ -119,21 +145,7 @@ def decide_by_similarity(initial_png: bytes, current_png: bytes) -> ScreenMatchD
 
 
 def same_page_by_structure(initial_page: ParsedPage, current_page: ParsedPage) -> tuple[bool, str]:
-    """Compare parsed page structure as a model-backed fallback."""
-    initial_ident = initial_page.identity
-    current_ident = current_page.identity
-    if initial_ident.signature and initial_ident.signature == current_ident.signature:
-        return True, "same signature"
-
-    same_identity = (
-        initial_ident.app_name == current_ident.app_name
-        and initial_ident.page_title == current_ident.page_title
-        and initial_ident.page_type == current_ident.page_type
-        and initial_page.bottom_nav.has_nav == current_page.bottom_nav.has_nav
-    )
-    if same_identity:
-        return True, "same identity fields"
-
+    """Compare parsed page structure via element overlap."""
     initial_labels = {
         (el.element_type, el.label.strip())
         for el in initial_page.interactive_elements
@@ -148,13 +160,10 @@ def same_page_by_structure(initial_page: ParsedPage, current_page: ParsedPage) -
         overlap = len(initial_labels & current_labels)
         union = len(initial_labels | current_labels)
         score = overlap / union
-        if score >= 0.7 and initial_ident.app_name == current_ident.app_name:
+        if score >= 0.7:
             return True, f"element overlap {score:.2f}"
 
-    return False, (
-        f"different page structure: initial={initial_ident.signature!r}, "
-        f"current={current_ident.signature!r}"
-    )
+    return False, "different page structure"
 
 
 def _font(size: int = 14) -> ImageFont.ImageFont:
@@ -264,14 +273,13 @@ def visualize_areas(
 
 def print_areas(knowledge: "PageKnowledge") -> None:  # noqa: F821
     """Print areas to stdout."""
-    ident = knowledge.page.identity
-    print(f"  应用 : {ident.app_name}")
-    print(f"  页面 : {ident.page_title}")
-    print(f"  指纹 : {ident.signature}")
-    print(f"  区域数 : {len(knowledge.areas)}")
-    for i, a in enumerate(knowledge.areas, 1):
-        print(f"    [{i:2d}] ({a.center_xy[0]:5.0f},{a.center_xy[1]:5.0f})  "
-              f"「{a.label}」→ {a.target_page}")
+    # print(f"  应用 : {knowledge.page.app_name}")
+    # print(f"  页面 : {knowledge.page.page_title}")
+    # print(f"  指纹 : {knowledge.page.signature}")
+    # print(f"  区域数 : {len(knowledge.areas)}")
+    # for i, a in enumerate(knowledge.areas, 1):
+    #     print(f"    [{i:2d}] ({a.center_xy[0]:5.0f},{a.center_xy[1]:5.0f})  "
+    #           f"「{a.label}」→ {a.target_page}")
 
 
 def viz_result(
@@ -294,7 +302,7 @@ def viz_result(
     if knowledge.llm_page:
         llm_viz_path = out_dir / f"{stem}_llm_viz.png"
         llm_viz_path.write_bytes(visualize(knowledge.llm_page, png_bytes))
-        print(f"  LLM 可视化 : {llm_viz_path}")
+        # print(f"  LLM 可视化 : {llm_viz_path}")
 
     # YOLO-only visualization
     if knowledge.yolo_boxes and knowledge.img_size:
@@ -303,11 +311,11 @@ def viz_result(
             png_bytes, knowledge.yolo_boxes,
             knowledge.img_size[0], knowledge.img_size[1],
         ))
-        print(f"  YOLO 可视化 : {yolo_viz_path}")
+        # print(f"  YOLO 可视化 : {yolo_viz_path}")
 
     # Area visualization
     areas_viz_path = out_dir / f"{stem}_areas_viz.png"
     areas_viz_path.write_bytes(visualize_areas(png_bytes, knowledge.areas))
 
-    print(f"  JSON : {json_path}")
-    print(f"  区域可视化 : {areas_viz_path}")
+    # print(f"  JSON : {json_path}")
+    # print(f"  区域可视化 : {areas_viz_path}")

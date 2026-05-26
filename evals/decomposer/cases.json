@@ -1,0 +1,51 @@
+[
+  {
+    "label": "单APP-美团点外卖",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "在美团中点一杯生椰拿铁外卖",
+    "expected": {
+      "min_milestones": 2,
+      "any_milestone_contains": ["生椰拿铁"],
+      "no_milestone_contains": ["微信", "支付宝", "拼多多"]
+    }
+  },
+  {
+    "label": "跨APP-拼多多分享到微信",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "在拼多多中找到收藏的商品，通过分享功能发送给微信好友",
+    "expected": {
+      "min_milestones": 4,
+      "any_milestone_contains": ["微信"],
+      "all_apps_modeled": ["拼多多", "微信"]
+    }
+  },
+  {
+    "label": "跨APP-拼多多订单分享附言微信",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "在拼多多中找到最近下单的奶粉，通过分享功能发送给老Be，附言：这个性价比高",
+    "expected": {
+      "min_milestones": 5,
+      "any_milestone_contains": ["性价比"],
+      "all_apps_modeled": ["拼多多", "微信"]
+    }
+  },
+  {
+    "label": "微信账单-日期区间-应使用filter-not-scroll",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "查看微信支付今年1月20日到1月27日的账单",
+    "expected": {
+      "min_milestones": 2,
+      "any_milestone_kind": ["filter"]
+    }
+  },
+  {
+    "label": "微信账单-上周-应换算为绝对日期写入constraints",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "我上周用微信支付花多少钱了？",
+    "expected": {
+      "min_milestones": 2,
+      "any_milestone_kind": ["filter"],
+      "constraints_contain": ["2026-05"]
+    }
+  }
+]

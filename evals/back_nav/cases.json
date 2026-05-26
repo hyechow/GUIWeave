@@ -1,0 +1,252 @@
+[
+  {
+    "id": "wechat_bottom_tab_通讯录",
+    "selected_tab": "微信",
+    "before": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "after": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/tap/tap_04_通讯录.png",
+    "nav_context": "点击了底部tab「通讯录」",
+    "tap_xy": [
+      500,
+      932
+    ],
+    "target_description": "底部导航栏含微信、通讯录、发现、我",
+    "expected": {
+      "page_type": "B",
+      "can_go_back": true,
+      "y_zone": "bottom_tab"
+    },
+    "note": "微信底部tab切换：聊天列表→通讯录"
+  },
+  {
+    "id": "wechat_bottom_tab_我",
+    "selected_tab": "微信",
+    "before": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "after": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/tap/tap_05_我.png",
+    "nav_context": "点击了底部tab「我」",
+    "tap_xy": [
+      500,
+      945
+    ],
+    "target_description": "底部导航栏含微信、通讯录、发现、我",
+    "expected": {
+      "page_type": "B",
+      "can_go_back": true,
+      "y_zone": "bottom_tab"
+    },
+    "note": "微信底部tab切换：聊天列表→我"
+  },
+  {
+    "id": "pdd_top_tab_多人团",
+    "before": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/initial.png",
+    "after": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/tap/tap_02_多人团.png",
+    "nav_context": "点击了顶部tab「多人团」",
+    "tap_xy": [
+      300,
+      180
+    ],
+    "target_description": "顶部有精选、多人团、食品、母婴等分类；底部有购物车",
+    "expected": {
+      "page_type": "C",
+      "can_go_back": true,
+      "y_zone": "back_btn"
+    },
+    "note": "拼多多顶部tab点击后进入子页面（有返回箭头），实际是页面导航"
+  },
+  {
+    "id": "pdd_top_tab_食品",
+    "selected_tab": "精选",
+    "before": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/initial.png",
+    "after": "../cascade_matcher/data/拼多多/参与平台促销活动并领取优惠/tap/tap_04_食品.png",
+    "nav_context": "点击了顶部tab「食品」",
+    "tap_xy": [
+      400,
+      180
+    ],
+    "target_description": "顶部有精选、多人团、食品、母婴等分类；底部有购物车",
+    "expected": {
+      "page_type": "B",
+      "can_go_back": true,
+      "y_zone": "top_tab"
+    },
+    "note": "拼多多顶部tab切换：精选→食品，同一页面内容切换"
+  },
+  {
+    "id": "huxiu_bottom_tab_我的",
+    "before": "../cascade_matcher/data/虎嗅/浏览资讯推荐与专题内容/initial.png",
+    "after": "../cascade_matcher/data/虎嗅/浏览资讯推荐与专题内容/tap/tap_03_我的.png",
+    "nav_context": "点击了底部tab「我的」",
+    "tap_xy": [
+      800,
+      940
+    ],
+    "target_description": "底部导航栏含资讯、视频、我的",
+    "expected": {
+      "page_type": "A",
+      "can_go_back": true,
+      "y_zone": "popup_close"
+    },
+    "note": "虎嗅AFTER截图有弹窗覆盖，应先关闭弹窗"
+  },
+  {
+    "id": "wechat_page_进入聊天",
+    "before": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "after": "../cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/tap/tap_03_珍珠.png",
+    "nav_context": "点击了icon「珍珠」",
+    "tap_xy": [
+      500,
+      400
+    ],
+    "target_description": "聊天列表页，底部导航栏含微信、通讯录、发现、我",
+    "expected": {
+      "page_type": "C",
+      "can_go_back": true,
+      "y_zone": "back_btn"
+    },
+    "note": "微信普通页面跳转：聊天列表→聊天详情"
+  },
+  {
+    "id": "huxiu_page_进入文章",
+    "before": "../cascade_matcher/data/虎嗅/浏览推荐资讯并点击查看详情/initial.png",
+    "after": "../cascade_matcher/data/虎嗅/浏览推荐资讯并点击查看详情/tap/tap_01_红餐网.png",
+    "nav_context": "点击了link「红餐网」",
+    "tap_xy": [
+      500,
+      500
+    ],
+    "target_description": "文章推荐列表页",
+    "expected": {
+      "page_type": "C",
+      "can_go_back": true,
+      "y_zone": "back_btn"
+    },
+    "note": "虎嗅普通页面跳转：文章列表→文章详情"
+  },
+  {
+    "id": "pdd_bottom_tab_个人中心",
+    "selected_tab": "首页",
+    "before": "data/pdd_bottom_tab_ref_L0_target.png",
+    "after": "data/pdd_bottom_tab_after.png",
+    "nav_context": "点击了底部tab「个人中心」",
+    "tap_xy": [
+      800,
+      940
+    ],
+    "target_description": "底部导航栏含首页、搜索、聊天、个人中心",
+    "expected": {
+      "page_type": "B",
+      "can_go_back": true,
+      "y_zone": "bottom_tab"
+    },
+    "note": "拼多多底部tab切换：商品浏览主页→个人中心"
+  },
+  {
+    "id": "xianyu_top_tab_新发",
+    "selected_tab": "推荐",
+    "before": "data/xianyu_新发_before.png",
+    "after": "data/xianyu_新发_after.png",
+    "nav_context": "点击了顶部tab「新发」",
+    "tap_xy": [
+      300,
+      180
+    ],
+    "target_description": "顶部tab栏含推荐、新发、关注；底部导航栏含首页、鱼塘、发布、消息、我的",
+    "expected": {
+      "page_type": "B",
+      "can_go_back": true,
+      "y_zone": "top_tab"
+    },
+    "note": "闲鱼顶部tab切换：推荐→新发"
+  },
+  {
+    "id": "xianyu_content_entry_省钱神券",
+    "selected_tab": "推荐",
+    "before": "data/xianyu_ref_L0_target.png",
+    "after": "data/xianyu_R1_before.png",
+    "nav_context": "点击了顶部tab「省钱神券」",
+    "tap_xy": [
+      450,
+      180
+    ],
+    "target_description": "顶部tab栏含推荐、省钱神券等",
+    "expected": {
+      "page_type": "B",
+      "can_go_back": true,
+      "y_zone": "top_tab"
+    },
+    "note": "闲鱼顶部内容tab切换：推荐→省钱神券"
+  },
+  {
+    "id": "xianyu_recon_tab_省钱神券",
+    "selected_tab": "找服务",
+    "before": "data/xianyu_recon_省钱神券_before.png",
+    "after": "data/xianyu_recon_省钱神券_after.png",
+    "nav_context": "点击了顶部tab「省钱神券」",
+    "tap_xy": [
+      450,
+      180
+    ],
+    "target_description": "顶部tab栏含省钱神券等",
+    "expected": {
+      "page_type": "B",
+      "can_go_back": true,
+      "y_zone": "top_tab"
+    },
+    "note": "闲鱼recon实录：找服务子页→省钱神券tab切换"
+  },
+  {
+    "id": "multi_step_edit_close",
+    "group": "multi_step_edit",
+    "before": "data/multi_edit_target.png",
+    "after": "data/multi_edit_page.png",
+    "nav_context": "点击了icon「消息」",
+    "tap_xy": [
+      260,
+      96
+    ],
+    "target_label": "查看AI服务详情",
+    "target_description": "AI服务详情页",
+    "expected": {
+      "page_type": "C",
+      "can_go_back": true,
+      "y_zone": "back_btn"
+    },
+    "note": "多步回退-步骤1：从编辑页回退，左上角×关闭按钮"
+  },
+  {
+    "id": "multi_step_confirm_popup",
+    "group": "multi_step_edit",
+    "before": "data/multi_edit_target.png",
+    "after": "data/multi_edit_popup.png",
+    "nav_context": "点击了icon「消息」",
+    "tap_xy": [
+      260,
+      96
+    ],
+    "target_label": "查看AI服务详情",
+    "target_description": "AI服务详情页",
+    "expected": {
+      "page_type": "A",
+      "can_go_back": true,
+      "y_zone": "popup_confirm"
+    },
+    "note": "多步回退-步骤2：确认弹窗，点击「不保存」"
+  },
+  {
+    "id": "xianyu_chat_back_btn",
+    "before": "data/xianyu_chat_target.png",
+    "after": "data/xianyu_chat_current.png",
+    "nav_context": "点击了按钮「聊一聊」",
+    "tap_xy": [
+      830,
+      921
+    ],
+    "target_description": "商品详情页，有返回箭头、商品信息、聊一聊按钮",
+    "target_label": "查看商品详情",
+    "expected": {
+      "page_type": "C",
+      "can_go_back": true,
+      "y_zone": "back_btn"
+    },
+    "note": "闲鱼商品详情→聊天页，需点返回箭头；YOLO不应吸附到状态栏"
+  }
+]

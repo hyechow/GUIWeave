@@ -4,6 +4,9 @@ llm:
   action_policy:
     provider: dashscope
     model: qwen3.5-35b-a3b
+  back_nav:
+    provider: dashscope
+    model: qwen3.6-35b-a3b
   supervisor:
     provider: dashscope
     model: qwen3.5-35b-a3b
@@ -15,5 +18,11 @@ llm:
     provider: dashscope
     model: qwen3.5-35b-a3b
   output:
+    provider: dashscope
+    model: qwen3.5-flash
+  router:
+    provider: dashscope
+    model: qwen3.5-flash
+  fingerprint:
     provider: dashscope
     model: qwen3.5-flash

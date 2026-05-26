@@ -1,0 +1,370 @@
+[
+  {
+    "label": "独立-打开微信",
+    "user_msg": "打开微信",
+    "session": [],
+    "expected": {"goal": "打开微信"}
+  },
+  {
+    "label": "独立-美团点外卖",
+    "user_msg": "在美团点个外卖",
+    "session": [],
+    "expected": {"goal": "在美团"}
+  },
+  {
+    "label": "独立-瑞幸咖啡",
+    "user_msg": "在瑞幸点一杯拿铁",
+    "session": [],
+    "expected": {"goal": "瑞幸"}
+  },
+  {
+    "label": "独立-滴滴打车",
+    "user_msg": "用滴滴打车去机场",
+    "session": [],
+    "expected": {"goal": "滴滴"}
+  },
+  {
+    "label": "独立-支付宝查余额",
+    "user_msg": "打开支付宝看看余额",
+    "session": [],
+    "expected": {"goal": "支付宝"}
+  },
+
+  {
+    "label": "承接-发消息",
+    "user_msg": "发消息给李四说你好",
+    "session": [
+      {"user_msg": "打开微信", "result_summary": "已打开微信", "goal_completed": true}
+    ],
+    "expected": {"goal": "微信"}
+  },
+  {
+    "label": "承接-再买一杯",
+    "user_msg": "再买一杯",
+    "session": [
+      {"user_msg": "在瑞幸点一杯拿铁", "result_summary": "已下单", "goal_completed": true}
+    ],
+    "expected": {"goal": "瑞幸"}
+  },
+  {
+    "label": "承接-换一个",
+    "user_msg": "不要这个换一个",
+    "session": [
+      {"user_msg": "在淘宝找一双运动鞋", "result_summary": "看到一双", "goal_completed": false}
+    ],
+    "expected": {"goal": "淘宝"}
+  },
+  {
+    "label": "承接-发给刚才那个人",
+    "user_msg": "发给刚才那个人",
+    "session": [
+      {"user_msg": "打开微信给李四发消息说你好", "result_summary": "已发送", "goal_completed": true}
+    ],
+    "expected": {"goal": "微信"}
+  },
+  {
+    "label": "承接-取消",
+    "user_msg": "取消掉",
+    "session": [
+      {"user_msg": "在瑞幸点一杯拿铁", "result_summary": "已下单", "goal_completed": true}
+    ],
+    "expected": {"goal": "瑞幸"}
+  },
+  {
+    "label": "承接-继续",
+    "user_msg": "继续",
+    "session": [
+      {"user_msg": "发朋友圈", "result_summary": "进入朋友圈页面", "goal_completed": false}
+    ],
+    "expected": {"goal": "微信", "or_clarification": true}
+  },
+
+  {
+    "label": "跨任务-换app",
+    "user_msg": "帮我在美团点一杯拿铁",
+    "session": [
+      {"user_msg": "打开微信", "result_summary": "已打开微信", "goal_completed": true},
+      {"user_msg": "发消息给李四", "result_summary": "消息已发送", "goal_completed": true}
+    ],
+    "expected": {"goal": "美团"}
+  },
+
+  {
+    "label": "模糊-饿了",
+    "user_msg": "饿了",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "模糊-点外卖",
+    "user_msg": "点个外卖",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "模糊-来杯咖啡",
+    "user_msg": "来杯咖啡",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "模糊-打车",
+    "user_msg": "我要打车去机场",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "模糊-随便刷刷",
+    "user_msg": "随便刷刷",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+
+  {
+    "label": "闲聊-你好",
+    "user_msg": "你好，你能做什么？",
+    "session": [],
+    "expected": {"empty": true}
+  },
+  {
+    "label": "问答-太阳",
+    "user_msg": "太阳有多大？",
+    "session": [],
+    "expected": {"empty": true}
+  },
+  {
+    "label": "闲聊-发错了",
+    "user_msg": "不好意思发错了",
+    "session": [],
+    "expected": {"empty": true}
+  },
+
+  {
+    "label": "多轮-要带伞吗",
+    "user_msg": "明天要带伞吗",
+    "session": [
+      {"user_msg": "帮我看看明天天气", "result_summary": "明天多云，25度", "goal_completed": true}
+    ],
+    "expected": {"empty": true}
+  },
+  {
+    "label": "多轮-看朋友圈",
+    "user_msg": "看看朋友圈",
+    "session": [
+      {"user_msg": "打开微信", "result_summary": "已打开微信", "goal_completed": true},
+      {"user_msg": "给李四发个消息说今晚吃饭", "result_summary": "消息已发送", "goal_completed": true}
+    ],
+    "expected": {"goal": "微信"}
+  },
+  {
+    "label": "多轮-算了取消",
+    "user_msg": "算了不去了，帮我取消",
+    "session": [
+      {"user_msg": "在美团订了今晚7点的餐厅", "result_summary": "已预订", "goal_completed": true}
+    ],
+    "expected": {"goal": "美团"}
+  },
+  {
+    "label": "多轮-外卖到快递",
+    "user_msg": "帮我寄个快递",
+    "session": [
+      {"user_msg": "在美团点一杯咖啡", "result_summary": "已下单", "goal_completed": true}
+    ],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "多轮-再试一次",
+    "user_msg": "再试一次",
+    "session": [
+      {"user_msg": "在淘宝买一双Nike跑鞋", "result_summary": "支付失败", "goal_completed": false}
+    ],
+    "expected": {"goal": "淘宝"}
+  },
+  {
+    "label": "多轮-太贵了",
+    "user_msg": "太贵了，找便宜点的",
+    "session": [
+      {"user_msg": "在携程搜一下北京的酒店", "result_summary": "搜索结果已展示", "goal_completed": true}
+    ],
+    "expected": {"goal": "携程"}
+  },
+  {
+    "label": "多轮-加一份",
+    "user_msg": "再加一份薯条",
+    "session": [
+      {"user_msg": "在麦当劳点一个汉堡", "result_summary": "已加入购物车", "goal_completed": false}
+    ],
+    "expected": {"goal": "麦当劳"}
+  },
+  {
+    "label": "多轮-看快递",
+    "user_msg": "对了，帮我看看快递到哪了",
+    "session": [
+      {"user_msg": "在淘宝买了一个手机壳", "result_summary": "已下单", "goal_completed": true}
+    ],
+    "expected": {"goal": "淘宝"}
+  },
+  {
+    "label": "多轮-给她也发",
+    "user_msg": "给她也发一个",
+    "session": [
+      {"user_msg": "在微信给李四发一个红包", "result_summary": "红包已发送", "goal_completed": true}
+    ],
+    "expected": {"goal": "微信"}
+  },
+  {
+    "label": "多轮-结账",
+    "user_msg": "结账",
+    "session": [
+      {"user_msg": "打开美团", "result_summary": "已打开美团", "goal_completed": true},
+      {"user_msg": "加一份黄焖鸡", "result_summary": "已加入购物车", "goal_completed": true},
+      {"user_msg": "再加一杯可乐", "result_summary": "已加入购物车", "goal_completed": true}
+    ],
+    "expected": {"goal": "美团"}
+  },
+  {
+    "label": "多轮-换个app",
+    "user_msg": "换个app试试",
+    "session": [
+      {"user_msg": "在高德打车去机场", "result_summary": "附近无车辆", "goal_completed": false}
+    ],
+    "expected": {"goal": "滴滴", "or_clarification": true}
+  },
+  {
+    "label": "多轮-多少钱",
+    "user_msg": "多少钱",
+    "session": [
+      {"user_msg": "在京东看看AirPods", "result_summary": "已显示商品页面", "goal_completed": true}
+    ],
+    "expected": {"goal": "京东", "or_empty": true}
+  },
+  {
+    "label": "多轮-微信随便看看",
+    "user_msg": "在微信随便看看",
+    "session": [],
+    "expected": {"goal": "微信"}
+  },
+  {
+    "label": "多轮-也给王五发",
+    "user_msg": "也给王五发一样的",
+    "session": [
+      {"user_msg": "在微信给李四发消息说今晚吃饭", "result_summary": "消息已发送", "goal_completed": true}
+    ],
+    "expected": {"goal": "微信"}
+  },
+
+  {
+    "label": "偏好-饿了有偏好",
+    "user_msg": "饿了",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团, 打车→滴滴",
+    "expected": {"goal": "美团", "or_empty": true}
+  },
+  {
+    "label": "偏好-打车有偏好",
+    "user_msg": "我要打车去机场",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团, 打车→滴滴",
+    "expected": {"goal": "滴滴"}
+  },
+  {
+    "label": "偏好-咖啡有偏好",
+    "user_msg": "来杯咖啡",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n咖啡→瑞幸",
+    "expected": {"goal": "瑞幸"}
+  },
+  {
+    "label": "偏好-无匹配偏好",
+    "user_msg": "帮我订个酒店",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团",
+    "expected": {"goal": "携程", "or_clarification": true}
+  },
+  {
+    "label": "偏好-明确APP忽略偏好",
+    "user_msg": "在饿了么点个外卖",
+    "session": [],
+    "prefs_context": "用户偏好（直接使用，不要反问）：\n外卖→美团",
+    "expected": {"goal": "饿了么"}
+  },
+
+  {
+    "label": "裸APP名-美团",
+    "user_msg": "美团",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "裸APP名-微信",
+    "user_msg": "微信",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+  {
+    "label": "裸APP名-饿了么",
+    "user_msg": "饿了么",
+    "session": [],
+    "expected": {"clarification": true}
+  },
+
+  {
+    "label": "澄清合并-美团点生椰拿铁",
+    "user_msg": "给我点一杯生椰拿铁（补充说明：美团）",
+    "session": [],
+    "expected": {"goal": "美团"}
+  },
+  {
+    "label": "澄清合并-叫车滴滴",
+    "user_msg": "给我叫个车（补充说明：滴滴）",
+    "session": [],
+    "expected": {"goal": "滴滴"}
+  },
+
+  {
+    "label": "APP保护-文件传输助手不被替换",
+    "user_msg": "明天提醒我提交日报，记到文件传输助手",
+    "session": [],
+    "expected": {"goal": "文件传输助手"}
+  },
+  {
+    "label": "APP保护-用美团点单",
+    "user_msg": "给我点一杯生椰拿铁，用美团",
+    "session": [],
+    "expected": {"goal": "美团"}
+  },
+
+  {
+    "label": "承接-历史换口味",
+    "user_msg": "换成奶茶",
+    "session": [
+      {"user_msg": "在美团点一杯生椰拿铁", "result_summary": "已完成点单", "goal_completed": true}
+    ],
+    "expected": {"goal": "美团"}
+  },
+
+  {
+    "label": "跨APP-拼多多分享微信",
+    "user_msg": "把拼多多里我收藏的一个商品分享到微信好友",
+    "session": [],
+    "expected": {"goal_contains_all": ["拼多多", "微信"]}
+  },
+  {
+    "label": "跨APP-支付宝截图发微信",
+    "user_msg": "打开支付宝查一下这个月的账单，截图发给微信里的张三",
+    "session": [],
+    "expected": {"goal_contains_all": ["支付宝", "微信"]}
+  },
+  {
+    "label": "跨APP-拼多多分享附言",
+    "user_msg": "把我最近在拼多多上下单的奶粉分享给老Be，这个性价比高",
+    "session": [],
+    "expected": {"goal_contains_all": ["拼多多", "老Be", "性价比"]}
+  },
+  {
+    "label": "信息查询-微信查账单",
+    "user_msg": "我上周用微信支付花多少钱了？",
+    "session": [],
+    "expected": {"goal": "微信"}
+  }
+]

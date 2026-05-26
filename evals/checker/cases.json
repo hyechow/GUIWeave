@@ -1,0 +1,172 @@
+[
+  {
+    "label": "首页-milestone已满足-done",
+    "screenshot": "evals/checker/screenshots/screenshot_turn_1.png",
+    "milestone": {
+      "name": "定位到外卖服务页面",
+      "description": "进入美团外卖首页",
+      "success_condition": "看到外卖首页，顶部显示当前商圈（长青商业广场）",
+      "kind": "navigation",
+      "app_name": "美团",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "done",
+      "loading": false
+    }
+  },
+  {
+    "label": "首页-搜索框残留他人关键词-in_progress",
+    "screenshot": "evals/checker/screenshots/screenshot_turn_1.png",
+    "milestone": {
+      "name": "搜索瑞幸咖啡店铺",
+      "description": "在搜索框输入瑞幸并提交",
+      "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
+      "kind": "filter",
+      "app_name": "美团",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
+    "label": "搜索建议页-未提交搜索-in_progress",
+    "screenshot": "evals/checker/screenshots/screenshot_turn_2.png",
+    "milestone": {
+      "name": "搜索瑞幸咖啡店铺",
+      "description": "在搜索框输入瑞幸并提交",
+      "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
+      "kind": "filter",
+      "app_name": "美团",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
+    "label": "搜索建议页-未进入商品详情-in_progress",
+    "screenshot": "evals/checker/screenshots/screenshot_turn_2.png",
+    "milestone": {
+      "name": "选择生椰拿铁商品",
+      "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
+      "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
+      "kind": "action",
+      "app_name": "美团",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
+    "label": "骨架屏-loading=true",
+    "screenshot": "evals/checker/screenshots/screenshot_turn_3.png",
+    "milestone": {
+      "name": "选择生椰拿铁商品",
+      "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
+      "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
+      "kind": "action",
+      "app_name": "美团",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": true
+    }
+  },
+  {
+    "label": "搜索建议页-旧关键词残留-in_progress",
+    "screenshot": "evals/checker/screenshots/screenshot_search_old_keyword.png",
+    "milestone": {
+      "name": "搜索瑞幸咖啡店铺",
+      "description": "在搜索框输入瑞幸并提交",
+      "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
+      "kind": "filter",
+      "app_name": "美团",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
+    "label": "微信发送界面-发送按钮可见但未发送-in_progress",
+    "screenshot": "evals/checker/screenshots/screenshot_wechat_send_button.png",
+    "milestone": {
+      "name": "在微信中选择联系人老Be并发送",
+      "description": "在微信分享界面选择联系人老Be并点击发送按钮",
+      "success_condition": "看到消息已发送成功的提示或聊天界面显示发送状态",
+      "kind": "action",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
+    "label": "店铺列表页-正常in_progress",
+    "screenshot": "evals/checker/screenshots/screenshot_turn_4.png",
+    "milestone": {
+      "name": "选择生椰拿铁商品",
+      "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
+      "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
+      "kind": "action",
+      "app_name": "美团",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
+    "label": "iMessage聊天列表-验收条件要微信-in_progress",
+    "screenshot": "evals/checker/screenshots/imessage_chat_list.png",
+    "milestone": {
+      "name": "打开微信应用",
+      "description": "点击微信图标打开应用",
+      "success_condition": "看到微信聊天列表界面（包含多个会话条目）",
+      "kind": "navigation",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "analysis"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false
+    }
+  },
+  {
+    "label": "微信账单页-加载中部分内容可见-loading=true",
+    "screenshot": "evals/checker/screenshots/wechat_bill_loading.png",
+    "milestone": {
+      "name": "查看消费记录",
+      "description": "进入微信账单页面，查看交易记录列表",
+      "success_condition": "看到账单页面，显示交易记录列表",
+      "kind": "collection",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": true
+    }
+  }
+]

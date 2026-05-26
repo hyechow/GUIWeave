@@ -1,0 +1,200 @@
+[
+  {
+    "group": "fingerprint",
+    "label": "微信-会话列表-Tab页+单列列表",
+    "screenshot": "evals/cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "单列列表"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "微信-聊天详情-全屏+气泡对话",
+    "screenshot": "evals/cascade_matcher/data/微信/查看与联系人的聊天记录/initial.png",
+    "expected": {
+      "form": "A",
+      "content": "气泡对话"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "微信-搜索页-全屏+混合布局",
+    "screenshot": "evals/cascade_matcher/data/微信/搜索本地或网络内容/initial.png",
+    "expected": {
+      "form": "A",
+      "content": "混合布局"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "微信-个人主页-Tab页+单列列表",
+    "screenshot": "evals/cascade_matcher/data/微信/查看个人账号资料与功能入口/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "单列列表"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "微信-游戏推荐-Tab页+单列列表",
+    "screenshot": "evals/cascade_matcher/data/微信/浏览推荐的游戏列表/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "单列列表"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "美团-首页-Tab页+混合布局",
+    "screenshot": "evals/cascade_matcher/data/美团/浏览本地生活服务与餐饮优惠/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "混合布局"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "美团-鲜花列表-Tab页+双列网格",
+    "screenshot": "evals/cascade_matcher/data/美团/浏览和筛选鲜花商品/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "双列网格"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "美团-酒店搜索-Tab页+单列列表",
+    "screenshot": "evals/cascade_matcher/data/美团/搜索和筛选特定区域的酒店住宿/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "单列列表"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "美团-AI助手-Tab页+气泡对话",
+    "screenshot": "evals/cascade_matcher/data/美团/引导用户通过预设话题与智能助手进行互动/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "气泡对话"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "虎嗅-资讯列表-Tab页+单列列表",
+    "screenshot": "evals/cascade_matcher/data/虎嗅/浏览推荐资讯并点击查看详情/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "单列列表"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "虎嗅-商业情报-全屏+双列网格",
+    "screenshot": "evals/cascade_matcher/data/虎嗅/浏览商业情报与AI分析报告/initial.png",
+    "expected": {
+      "form": "A",
+      "content": "双列网格"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "虎嗅-完善资料-弹窗+混合布局",
+    "screenshot": "evals/cascade_matcher/data/虎嗅/引导用户完善个人资料/initial.png",
+    "expected": {
+      "form": "C",
+      "content": "混合布局"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "拼多多-首页-Tab页+混合布局",
+    "screenshot": "evals/cascade_matcher/data/拼多多/引导用户浏览商品并参与促销活动/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "混合布局"
+    }
+  },
+  {
+    "group": "fingerprint",
+    "label": "拼多多-手机列表-Tab页+双列网格",
+    "screenshot": "evals/cascade_matcher/data/拼多多/浏览手机分类下的商品列表/initial.png",
+    "expected": {
+      "form": "B",
+      "content": "双列网格"
+    }
+  },
+  {
+    "group": "similarity",
+    "label": "同页两次截图-应该匹配",
+    "screenshot_a": "evals/cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "screenshot_b": "evals/cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "expected": {
+      "is_same": true
+    }
+  },
+  {
+    "group": "similarity",
+    "label": "不同APP-会话列表vs资讯列表-不应匹配",
+    "screenshot_a": "evals/cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "screenshot_b": "evals/cascade_matcher/data/虎嗅/浏览推荐资讯并点击查看详情/initial.png",
+    "expected": {
+      "is_same": false
+    }
+  },
+  {
+    "group": "similarity",
+    "label": "不同页面形态-Tab页vs全屏-不应匹配",
+    "screenshot_a": "evals/cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "screenshot_b": "evals/cascade_matcher/data/虎嗅/引导用户完善个人资料/initial.png",
+    "expected": {
+      "is_same": false
+    }
+  },
+  {
+    "group": "similarity",
+    "label": "不同内容区-气泡对话vs单列列表-不应匹配",
+    "screenshot_a": "evals/cascade_matcher/data/微信/查看与联系人的聊天记录/initial.png",
+    "screenshot_b": "evals/cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "expected": {
+      "is_same": false
+    }
+  },
+  {
+    "group": "similarity",
+    "label": "同类商品页-鲜花vs手机-不应匹配(purpose不同)",
+    "screenshot_a": "evals/cascade_matcher/data/美团/浏览和筛选鲜花商品/initial.png",
+    "screenshot_b": "evals/cascade_matcher/data/拼多多/浏览手机分类下的商品列表/initial.png",
+    "expected": {
+      "is_same": false
+    }
+  },
+  {
+    "group": "similarity",
+    "label": "同APP同结构-微信会话列表vs游戏推荐-不应匹配",
+    "screenshot_a": "evals/cascade_matcher/data/微信/让用户浏览并管理即时通讯会话/initial.png",
+    "screenshot_b": "evals/cascade_matcher/data/微信/浏览推荐的游戏列表/initial.png",
+    "expected": {
+      "is_same": false
+    }
+  },
+  {
+    "group": "similarity",
+    "label": "同APP同结构-虎嗅资讯vs商业情报-不应匹配",
+    "screenshot_a": "evals/cascade_matcher/data/虎嗅/浏览推荐资讯并点击查看详情/initial.png",
+    "screenshot_b": "evals/cascade_matcher/data/虎嗅/浏览商业情报与AI分析报告/initial.png",
+    "expected": {
+      "is_same": false
+    }
+  },
+  {
+    "group": "similarity",
+    "label": "跨APP同结构-微信聊天vs美团AI助手-不应匹配",
+    "screenshot_a": "evals/cascade_matcher/data/微信/查看与联系人的聊天记录/initial.png",
+    "screenshot_b": "evals/cascade_matcher/data/美团/引导用户通过预设话题与智能助手进行互动/initial.png",
+    "expected": {
+      "is_same": false
+    }
+  }
+]

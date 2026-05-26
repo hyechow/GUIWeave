@@ -1,0 +1,230 @@
+[
+  {
+    "label": "规格面板-糖度chips截断-应滚动",
+    "screenshot": "evals/planner/screenshots/screenshot_turn_10.png",
+    "milestone": {
+      "name": "设置饮品规格为'标准甜'",
+      "description": "在商品规格选择面板中，将甜度设置为标准甜",
+      "success_condition": "确认生椰拿铁的甜度选项已显示为'标准甜'",
+      "kind": "action",
+      "app_name": "美团",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为生椰拿铁规格定制面板，可见杯型、温度、咖啡豆、咖啡浓度选项，糖度分类标题可见但选项chips未显示，底部已选摘要显示'不另外加糖'，尚未设置为标准甜",
+      "issues": [],
+      "missing_evidence": ["甜度选项已显示为'标准甜'"],
+      "summary": "规格面板已打开，糖度选项行在屏幕外，需要滚动才能看到"
+    },
+    "expected": {
+      "must_contain": ["滚动", "上滑", "向上"],
+      "must_not_contain": ["点击.*标准甜", "点击甜度.*标准甜", "点击.*不另外加糖"]
+    }
+  },
+  {
+    "label": "搜索建议页-旧关键词残留-应输入新词",
+    "screenshot": "evals/planner/screenshots/screenshot_search_old_keyword.png",
+    "milestone": {
+      "name": "搜索瑞幸咖啡店铺",
+      "description": "在搜索框输入瑞幸并提交",
+      "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
+      "kind": "filter",
+      "app_name": "美团",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为搜索建议页，搜索框内显示旧关键词'生椰拿铁'，非目标词'瑞幸咖啡'，未提交搜索",
+      "issues": [],
+      "missing_evidence": ["搜索框显示'瑞幸咖啡'", "搜索结果页出现瑞幸咖啡店铺卡片"],
+      "summary": "搜索框有旧词，需先替换为目标关键词再提交搜索"
+    },
+    "expected": {
+      "must_contain": ["输入", "瑞幸"],
+      "must_not_contain": ["滚动", "返回", "清空"]
+    }
+  },
+  {
+    "label": "搜索结果页-重试后应避免重复死路",
+    "screenshot": "evals/planner/screenshots/screenshot_replan_search_results.png",
+    "milestone": {
+      "name": "选择生椰拿铁规格",
+      "description": "在搜索结果中点击目标商品进入详情页，选择规格并加入购物车",
+      "success_condition": "购物车中包含已选规格的'生椰拿铁'，且底部显示结算金额",
+      "kind": "action",
+      "retry_count": 1,
+      "app_name": "美团",
+      "task_type": "action"
+    },
+    "history": [
+      "点击第一个商家「瑞幸咖啡」下方的商品「[YYDS]生椰拿铁|甜蜜享受」",
+      "点击屏幕右上角的关闭按钮（X）",
+      "点击屏幕右上角的关闭按钮（X）",
+      "点击屏幕右上角的关闭按钮（X）",
+      "点击屏幕右上角的关闭按钮退出直播界面"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面是美团搜索结果页，显示了包含「生椰拿铁」的商家列表，尚未进入任何商品详情页进行规格选择",
+      "issues": [],
+      "missing_evidence": ["购物车包含已选规格的生椰拿铁", "底部显示结算金额"],
+      "summary": "搜索结果页，上一轮点击瑞幸咖啡商品进入了直播间，需改变策略"
+    },
+    "expected": {
+      "must_contain": ["点击"],
+      "must_not_contain": ["YYDS", "甜蜜享受"]
+    }
+  },
+  {
+    "label": "商品列表-找到目标商品-应点击",
+    "screenshot": "evals/planner/screenshots/screenshot_turn_8.png",
+    "milestone": {
+      "name": "查找并选择生椰拿铁",
+      "description": "在瑞幸咖啡店铺内找到生椰拿铁并点击",
+      "success_condition": "看到生椰拿铁的详情页面或已添加到购物车的提示",
+      "kind": "action",
+      "app_name": "美团",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为生椰家族分类列表，可见生椰拿铁商品列表项，但尚未点击进入详情页",
+      "issues": [],
+      "missing_evidence": ["生椰拿铁详情页或添加到购物车提示"],
+      "summary": "生椰拿铁在列表中可见，需点击进入详情页"
+    },
+    "expected": {
+      "must_contain": ["点击", "生椰拿铁"],
+      "must_not_contain": ["滚动", "搜索"]
+    }
+  },
+  {
+    "label": "微信账单页-日期筛选-应点击月份按钮而非全部账单",
+    "screenshot": "evals/planner/screenshots/wechat_bill_two_buttons.png",
+    "app_knowledge": "账单页顶部有两个外观相似但功能完全不同的按钮：\n- 「全部账单 ▼」（左上角）：点击后弹出收支类型/交易类型筛选弹窗，与日期无关\n- 「当前月份按钮」（如「2026年5月 ∨」，位于账单列表上方左侧）：点击后弹出日期筛选弹窗\n\n要按日期筛选账单，必须点击显示当前月份的那个按钮（如「2026年5月」），不是「全部账单」。",
+    "milestone": {
+      "name": "设置账单日期范围为1月20日至1月27日",
+      "description": "在微信支付账单页，打开日期筛选弹窗，将筛选范围设置为2026年1月20日至1月27日",
+      "success_condition": "看到账单筛选弹窗已打开，显示选择时间段的日期选择器",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前在微信支付账单列表页，尚未打开日期筛选弹窗",
+      "issues": [],
+      "missing_evidence": ["日期筛选弹窗已打开"],
+      "summary": "微信支付账单列表页，顶部可见「全部账单 ▼」和「2026年5月 ∨」两个按钮，需点击日期按钮打开筛选弹窗"
+    },
+    "expected": {
+      "must_contain": ["2026年5月"],
+      "must_not_contain": ["全部账单"]
+    }
+  },
+  {
+    "label": "picker-差1格-应drag-small",
+    "screenshot": "evals/planner/screenshots/wechat_picker_target_visible.png",
+    "milestone": {
+      "name": "设置开始日期为2026年5月18日",
+      "description": "在选择时间段弹窗中，将开始日期调整为2026年5月18日",
+      "success_condition": "开始日期字段显示2026年5月18日",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前开始日期为2026年5月17日，目标为18日，差1格",
+      "issues": [],
+      "missing_evidence": ["开始日期显示2026年5月18日"],
+      "summary": "选择时间段弹窗，当前滚轮显示17日选中，18日在17日下方可见行内"
+    },
+    "expected": {
+      "must_contain": ["拖动", "18"],
+      "must_not_contain": ["点击"]
+    }
+  },
+  {
+    "label": "picker-月份5月→1月-应decrease-large",
+    "screenshot": "evals/planner/screenshots/wechat_date_picker.png",
+    "milestone": {
+      "name": "设置开始日期为2026年1月20日",
+      "description": "在选择时间段弹窗中，将开始日期从2026年5月1日调整为2026年1月20日",
+      "success_condition": "开始日期字段显示2026年1月20日",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前选择时间段弹窗中开始日期显示2026年5月1日，目标为2026年1月20日，月份需从5月调整为1月",
+      "issues": [],
+      "missing_evidence": ["开始日期显示2026年1月20日"],
+      "summary": "选择时间段弹窗已打开，开始日期当前为2026年5月1日，月份列需向减小方向拖动"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "month"
+    }
+  },
+  {
+    "label": "picker-日期1日→20日-应increase-large",
+    "screenshot": "evals/planner/screenshots/wechat_date_picker.png",
+    "milestone": {
+      "name": "设置开始日期为2026年1月20日",
+      "description": "在选择时间段弹窗中，月份已调整为1月，将日期从1日调整为20日",
+      "success_condition": "开始日期字段显示2026年1月20日",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "月份已调整为2026年1月，但日期仍为1日，目标为20日，差19格，需large幅度向增大方向拖动日期列",
+      "issues": [],
+      "missing_evidence": ["开始日期显示2026年1月20日"],
+      "summary": "选择时间段弹窗，月份已为1月，日期列当前为1日需调整到20日"
+    },
+    "expected": {
+      "direction": "increase",
+      "drag_column": "day"
+    }
+  },
+  {
+    "label": "picker-结束日期26日→24日-应decrease-medium（回归：planner曾误判increase）",
+    "screenshot": "evals/planner/screenshots/wechat_bill_picker_end_26to24.png",
+    "milestone": {
+      "name": "筛选上周日期范围",
+      "description": "在微信账单选择时间段弹窗中，将开始日期设置为2026-05-18，结束日期设置为2026-05-24",
+      "success_condition": "账单列表仅显示2026-05-18至2026-05-24期间的交易记录",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "history": [
+      "点击顶部显示「2026年5月」的月份按钮",
+      "点击弹窗顶部的「选择时间段」标签",
+      "点击「结束日期」区域的「轻触选择日期」按钮，激活日期选择器以选择结束日期",
+      "点击「开始日期」按钮激活日期选择器以设置开始日期为2026-05-18",
+      "在日期选择器中向上拖动日期列，将日期从1日调整至18日",
+      "在日期选择器中向上拖动日期列，将日期从7日调整至18日",
+      "在日期选择器中向上拖动日期列，将日期从15日调整至18日",
+      "点击「结束日期」按钮激活日期选择器，以便将结束日期从默认的2026年5月26日修改为2026年5月24日"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于日期选择器界面，开始日期已设置为2026-05-18（符合要求），但结束日期仍为默认的2026-05-26，需要将其修改为目标值2026-05-24。日期选择器已激活，滚轮显示的月份是5月、日期列显示24/25/26日，当前选中26日，可以立即拖动调整",
+      "issues": [],
+      "missing_evidence": ["结束日期显示2026年5月24日"],
+      "summary": "选择时间段弹窗，开始日期已为18日，结束日期仍为26日需调整为24日（减小2格）"
+    },
+    "expected": {
+      "must_contain": ["拖动", "24"],
+      "must_not_contain": ["点击"],
+      "direction": "decrease",
+      "drag_column": "day"
+    }
+  }
+]

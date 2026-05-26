@@ -22,8 +22,9 @@ from llm.structured import get_llm_call_count
 from policy_expr.executor import ActionExecutor
 from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
 from policy_expr.supervisor.base import SupervisorPolicy
-from policy_expr.output import render_final_output
+from policy_expr.output import generate_reply
 from policy_expr.perception import LivePerception, LivePhoneSession
+from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
@@ -31,8 +32,11 @@ from policy_expr.schemas import (
     Observation,
     PolicyContext,
     PolicyTurn,
+    action_label,
 )
 from policy_expr.visualize import print_decision
+from policy_expr.hud import AgentHUD
+from policy_expr.self_learning.app_summary import auto_discover_knowledge
 
 POLICIES: dict[str, type[ActionPolicy]] = {
     StructuredOutputPolicy.name: StructuredOutputPolicy,
@@ -161,22 +165,34 @@ def _note_hash(note: str) -> str:
 
 
 
-def emit_final_output(
-    goal: str,
-    policy_name: str,
-    turns: list[PolicyTurn],
-    log_dir: Path,
+def _make_result(
+    context: PolicyContext,
     stop_reason: str,
-    content_notes: list[str] | None = None,
     collection_context: str | None = None,
-) -> str:
-    output = render_final_output(goal, policy_name, turns, log_dir, stop_reason, content_notes, collection_context)
-    print("\n" + "=" * 50)
-    print("最终输出")
-    print("=" * 50)
-    print(output.rstrip())
-    print("=" * 50)
-    return output
+) -> dict:
+    last_summary = context.turns[-1].supervisor.summary if context.turns else stop_reason
+    turns_detail = []
+    for t in context.turns:
+        entry: dict = {"no": t.index, "summary": t.supervisor.summary, "executed": t.executed}
+        if t.action_decision:
+            a = t.action_decision.action
+            entry["action_type"] = a.action_type
+            entry["action_desc"] = a.description
+            if t.action_decision.not_found_reason:
+                entry["not_found"] = t.action_decision.not_found_reason
+        turns_detail.append(entry)
+    return {
+        "goal": context.goal,
+        "result_summary": last_summary,
+        "stop_reason": stop_reason,
+        "goal_completed": any(t.supervisor.goal_completed for t in context.turns),
+        "turns_count": len(context.turns),
+        "turns_detail": turns_detail,
+        "content_notes": context.content_notes or None,
+        "collection_context": collection_context,
+        "collection_scope": context.collection_scope.model_dump(exclude_none=True)
+        if context.collection_scope else None,
+    }
 
 
 def _print_turn_stats(turn_no: int, started_at: float, llm_calls_before: int) -> None:
@@ -191,7 +207,8 @@ def run_once(
     supervisor: SupervisorPolicy,
     log_dir: Path,
     context_path: Path,
-) -> None:
+    hud: AgentHUD | None = None,
+) -> dict:
     context = PolicyContext(
         goal=prompt,
         supervisor_policy_name=supervisor.name,
@@ -205,22 +222,34 @@ def run_once(
         turn_started_at = time.perf_counter()
         llm_calls_before = get_llm_call_count()
 
+        if hud: hud.update("Turn 1 — 截图分析中…")
         perception = LivePerception(phone, log_dir / "screenshot.png")
         observation = perception.observe()
+        calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
+        if hud: hud.update(f"Turn 1 — 使用 {supervisor.name} supervisor 决策中…")
         print("监督决策中...")
         sv_step = supervisor.step(observation, context.goal, context.turns)
         print(f"监督者: {sv_step.summary}")
+        if hud: hud.update(f"Turn 1 — {sv_step.summary}")
 
         action_decision = None
         executed = False
 
         if sv_step.should_act:
             print(f"动作指令: {sv_step.instruction}")
+            if hud: hud.update("Turn 1 — 动作决策中…")
             print("动作决策中...")
-            action_decision = action_policy.decide(observation, sv_step.instruction)
+            action_decision = action_policy.decide(
+                observation, sv_step.instruction,
+                direction=sv_step.direction,
+                drag_column=sv_step.drag_column,
+            )
             print_decision(action_decision, observation.png_bytes, log_dir / "structured_output_result.png")
-            executed = ActionExecutor(phone).execute(action_decision, app_name=sv_step.app_name or "")
+            if hud:
+                a = action_decision.action
+                hud.update(f"Turn 1 — [{action_label(a.action_type)}] {a.description}")
+            executed = ActionExecutor(phone, calibrator).execute(action_decision, app_name=sv_step.app_name or "")
 
         turn = PolicyTurn(
             index=1,
@@ -253,16 +282,9 @@ def run_once(
         else:
             stop_reason = "动作未执行，single-step 停止"
 
-        context.output = emit_final_output(
-            context.goal,
-            supervisor.name,
-            context.turns,
-            log_dir,
-            stop_reason,
-            content_notes=context.content_notes or None,
-        )
         _save_context(context_path, context)
         _print_turn_stats(1, turn_started_at, llm_calls_before)
+        return _make_result(context, stop_reason)
 
 
 def run_agent_loop(
@@ -274,7 +296,8 @@ def run_agent_loop(
     context_path: Path,
     max_turns: int = 20,
     auto_continue: bool = False,
-) -> None:
+    hud: AgentHUD | None = None,
+) -> dict:
     context = _load_context(
         input_context_path or context_path,
         prompt,
@@ -299,19 +322,23 @@ def run_agent_loop(
             if turn_no > max_turns:
                 print(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
                 _save_context(context_path, context)
-                return
+                return _make_result(context, f"达到最大轮数 {max_turns}")
 
             turn_started_at = time.perf_counter()
             llm_calls_before = get_llm_call_count()
 
             print("\n" + TURN_HEADER.format(turn_no=turn_no))
 
+            if hud: hud.update(f"Turn {turn_no} — 截图分析中…")
             perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
+            executor.calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
+            if hud: hud.update(f"Turn {turn_no} — 使用 {supervisor.name} supervisor 决策中…")
             print("监督决策中...")
             sv_step = supervisor.step(observation, context.goal, context.turns)
             print(f"监督者: {sv_step.summary}")
+            if hud: hud.update(f"Turn {turn_no} — {sv_step.summary}")
 
             # Sync task_type from supervisor after first decomposition
             if hasattr(supervisor, "task_type") and context.task_type is None:
@@ -362,8 +389,13 @@ def run_agent_loop(
                     print("使用预生成动作，跳过 Action Policy")
                     action_decision = sv_step.preformed_action
                 else:
+                    if hud: hud.update(f"Turn {turn_no} — 动作决策中…")
                     print("动作决策中...")
-                    action_decision = action_policy.decide(observation, sv_step.instruction)
+                    action_decision = action_policy.decide(
+                        observation, sv_step.instruction,
+                        direction=sv_step.direction,
+                        drag_column=sv_step.drag_column,
+                    )
                     print_decision(
                         action_decision,
                         observation.png_bytes,
@@ -372,8 +404,12 @@ def run_agent_loop(
                 # Action policy refused: target element not found on screen
                 if action_decision.not_found_reason:
                     print(f"  [NotFound] {action_decision.not_found_reason}")
+                    if hud: hud.update(f"Turn {turn_no} — 未找到目标元素")
                     executed = False
                 else:
+                    if hud:
+                        a = action_decision.action
+                        hud.update(f"Turn {turn_no} — [{action_label(a.action_type)}] {a.description}")
                     executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
 
             turn = PolicyTurn(
@@ -396,17 +432,10 @@ def run_agent_loop(
                     print(f"\n目标已达成：{reason}")
                 else:
                     print(f"\n任务未完成：{reason}")
-                context.output = emit_final_output(
-                    original_goal,
-                    supervisor.name,
-                    context.turns,
-                    log_dir,
-                    reason,
-                    content_notes=context.content_notes or None,
-                    collection_context=sv_step.collection_summary,
-                )
                 _save_context(context_path, context)
-                return
+                if sv_step.goal_completed:
+                    return _make_result(context, reason, sv_step.collection_summary)
+                return _make_result(context, reason)
 
             if not executed and sv_step.should_act:
                 if action_decision and action_decision.not_found_reason:
@@ -414,28 +443,12 @@ def run_agent_loop(
                     noop_count += 1
                     if noop_count >= 3:
                         print(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                        context.output = emit_final_output(
-                            original_goal,
-                            supervisor.name,
-                            context.turns,
-                            log_dir,
-                            f"连续 {noop_count} 轮无动作",
-                            content_notes=context.content_notes or None,
-                        )
                         _save_context(context_path, context)
-                        return
+                        return _make_result(context, f"连续 {noop_count} 轮无动作")
                     continue
                 # Genuine execution failure — stop
-                context.output = emit_final_output(
-                    context.goal,
-                    supervisor.name,
-                    context.turns,
-                    log_dir,
-                    "动作未执行，agent-loop 停止",
-                    content_notes=context.content_notes or None,
-                )
                 _save_context(context_path, context)
-                return
+                return _make_result(context, "动作未执行，agent-loop 停止")
 
             if sv_step.milestone_id != prev_milestone_id:
                 noop_count = 0
@@ -445,16 +458,8 @@ def run_agent_loop(
                 noop_count += 1
                 if noop_count >= 3:
                     print(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                    context.output = emit_final_output(
-                        original_goal,
-                        supervisor.name,
-                        context.turns,
-                        log_dir,
-                        f"连续 {noop_count} 轮无动作",
-                        content_notes=context.content_notes or None,
-                    )
                     _save_context(context_path, context)
-                    return
+                    return _make_result(context, f"连续 {noop_count} 轮无动作")
                 continue
 
             noop_count = 0  # 有动作则重置计数
@@ -468,16 +473,9 @@ def run_agent_loop(
             except EOFError:
                 answer = ""
             if answer in {"q", "quit", "exit"}:
-                context.output = emit_final_output(
-                    context.goal,
-                    supervisor.name,
-                    context.turns,
-                    log_dir,
-                    "用户退出 agent-loop",
-                    content_notes=context.content_notes or None,
-                )
                 _save_context(context_path, context)
-                return
+                return _make_result(context, "用户退出 agent-loop")
+
 
 
 def main() -> None:
@@ -523,45 +521,63 @@ def main() -> None:
         help="agent-loop 动作执行后自动进入下一轮；默认手动确认",
     )
     parser.add_argument(
-        "--knowledge",
-        type=Path,
-        help="应用知识文档路径（markdown），注入到任务分解 prompt 中",
+        "--hud",
+        action="store_true",
+        help="在 iPhone 镜像窗口下方显示实时动作状态面板",
     )
     args = parser.parse_args()
 
     action_policy = build_policy(args.policy)
     supervisor = build_supervisor(args.supervisor)
 
-    # Load app knowledge if provided
-    if args.knowledge and args.knowledge.exists():
-        knowledge_text = args.knowledge.read_text(encoding="utf-8").strip()
-        if hasattr(supervisor, "set_app_knowledge"):
-            supervisor.set_app_knowledge(knowledge_text)
-            print(f"Knowledge: {args.knowledge} ({len(knowledge_text)} chars)")
+    # Auto-discover app knowledge from goal
+    knowledge_text, discovered_app = auto_discover_knowledge(args.prompt)
+    if knowledge_text and hasattr(supervisor, "set_app_knowledge"):
+        supervisor.set_app_knowledge(knowledge_text, app_name=discovered_app)
+        print(f"Knowledge: auto-loaded ({len(knowledge_text)} chars), app={discovered_app}")
 
     mode = args.mode
     input_context_path = args.context
     log_dir = create_run_dir(mode)
     context_path = log_dir / "context.json"
+    hud = AgentHUD() if args.hud else None
     with _tee_stdio(log_dir):
         print(f"Log Dir : {log_dir}")
         print(f"Context : {input_context_path if input_context_path else None}")
 
-        if mode == "single-step":
-            if input_context_path is not None:
-                raise ValueError("--context 目前只支持 agent-loop 模式")
-            run_once(args.prompt, action_policy, supervisor, log_dir, context_path)
-        elif mode == "agent-loop":
-            run_agent_loop(
-                args.prompt,
-                action_policy,
-                supervisor,
-                input_context_path,
-                log_dir,
-                context_path,
-                max_turns=args.max_turns,
-                auto_continue=args.auto_continue,
-            )
+        try:
+            result: dict | None = None
+            if mode == "single-step":
+                if input_context_path is not None:
+                    raise ValueError("--context 目前只支持 agent-loop 模式")
+                result = run_once(args.prompt, action_policy, supervisor, log_dir, context_path, hud=hud)
+            elif mode == "agent-loop":
+                result = run_agent_loop(
+                    args.prompt,
+                    action_policy,
+                    supervisor,
+                    input_context_path,
+                    log_dir,
+                    context_path,
+                    max_turns=args.max_turns,
+                    auto_continue=args.auto_continue,
+                    hud=hud,
+                )
+            if result:
+                output = generate_reply(
+                    result["goal"],
+                    result,
+                    content_notes=result.get("content_notes"),
+                    collection_context=result.get("collection_context"),
+                )
+                print("\n" + "=" * 50)
+                print("最终输出")
+                print("=" * 50)
+                print(output.rstrip())
+                print("=" * 50)
+        finally:
+            if hud:
+                hud.close()
 
 
 if __name__ == "__main__":

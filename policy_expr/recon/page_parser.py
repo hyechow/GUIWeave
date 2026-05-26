@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+import time
+from pathlib import Path
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from llm.structured import invoke_structured
 from policy_expr.config import resolve_llm_config
@@ -60,41 +62,48 @@ class InteractiveElement(BaseModel):
     )
     x: float = Field(description="归一化 x 坐标（0-1000，左上角为原点）")
     y: float = Field(description="归一化 y 坐标（0-1000）")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fix_xy_string(cls, data: object) -> object:
+        """Handle LLM outputting x as '500, 410' (both coords in one field)."""
+        if not isinstance(data, dict):
+            return data
+        x_val = data.get("x")
+        if isinstance(x_val, str) and "," in x_val:
+            parts = [p.strip() for p in x_val.split(",", 1)]
+            try:
+                data["x"] = float(parts[0])
+                data["y"] = float(parts[1])
+            except ValueError:
+                pass
+        # Fallback invalid icon_semantic to "other"
+        sem = data.get("icon_semantic")
+        if isinstance(sem, str) and sem not in {"search", "settings", "close", "share", "more", "notification", "profile", "camera", "scan", "add", "edit", "delete", "favorite", "filter", "download", "message", "map", "other"}:
+            data["icon_semantic"] = "other"
+        return data
+
     leads_to: str = Field(
         description="点击后的预期效果或目标页面，如「打开聊天详情」「展开搜索框」「返回上一页」"
     )
 
 
-class PageIdentity(BaseModel):
-    app_name: str = Field(description="当前前台应用名称，如「微信」「支付宝」")
-    page_title: str = Field(description="页面标题或名称，如「聊天列表」「通讯录」「个人主页」")
-    page_type: str = Field(
-        description="页面类型，如 list / detail / home / settings / form / dialog / webview"
-    )
-    signature: str = Field(
-        description=(
-            "页面去重指纹，格式：「应用/页面/稳定特征」，"
-            "只含稳定 UI 骨架，不含动态内容（未读数、时间戳、用户名等）。"
-            "示例：「微信/聊天列表/tab[微信,通讯录,发现,我]」"
-            "「微信/通讯录/section[新朋友,群聊,标签]」"
-        )
-    )
-
-
-class BottomNav(BaseModel):
-    """底部导航栏检测结果。"""
-    has_nav: bool = Field(description="页面是否有底部导航栏（tab bar / 底部操作栏）")
-
-
 class ParsedPage(BaseModel):
-    identity: PageIdentity
-    description: str = Field(description="一句话描述该页面的功能或用途")
-    bottom_nav: BottomNav = Field(
-        description="底部导航栏区域，无则 y_start=y_end=-1"
-    )
     interactive_elements: list[InteractiveElement] = Field(
         description="页面上所有可点击/可交互的元素，按从上到下、从左到右排列"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_non_dict_elements(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        elements = data.get("interactive_elements")
+        if isinstance(elements, list):
+            data["interactive_elements"] = [
+                e for e in elements if isinstance(e, (dict, InteractiveElement))
+            ]
+        return data
 
 
 class InteractiveArea(BaseModel):
@@ -102,6 +111,7 @@ class InteractiveArea(BaseModel):
     target_page: str = Field(description="目标页面名称")
     description: str = Field(description="简要描述")
     center_xy: list[float] = Field(description="可交互区中心坐标 [x, y]，0-1000")
+    element_type: str = ""  # dominant type from underlying elements (e.g. "back_button", "tab")
 
 
 class PageKnowledge(BaseModel):
@@ -186,6 +196,7 @@ def classify_elements(page: ParsedPage) -> list[InteractiveArea]:
             target_page=rep.leads_to or "",
             description=rep.leads_to or "",
             center_xy=[round(rep.x, 1), round(rep.y, 1)],
+            element_type=rep.element_type,
         ))
 
     areas.sort(key=lambda a: a.center_xy[1])
@@ -193,13 +204,9 @@ def classify_elements(page: ParsedPage) -> list[InteractiveArea]:
 
 
 SYSTEM_PROMPT = """\
-你是一个 iPhone 页面分析器。仔细分析截图，输出页面身份和所有可交互元素。
+你是一个 iPhone 页面分析器。仔细分析截图，输出页面分析结果和所有可交互元素。
 
 坐标系：左上角 (0, 0)，右下角 (1000, 1000)。坐标代表元素的视觉中心。
-
-## 底部导航栏（bottom_nav）
-判断页面是否有底部导航栏（tab bar / 底部操作栏）。有则 has_nav=true，无则 false。
-底部导航栏内的元素（tab）点击后通常只切换页面，不需要返回。
 
 ## 扫描方法（严格遵守）
 从上到下逐行扫描截图。对页面上每个可点击/可交互的区域，输出一条记录。
@@ -237,9 +244,6 @@ SYSTEM_PROMPT = """\
 search / settings / close / share / more / notification / profile /
 camera / scan / add / edit / delete / favorite / filter / download / message / map / other
 有文字标签的元素 icon_semantic 留 null。
-
-## signature（去重指纹）
-只含稳定 UI 骨架，不含动态内容。格式：「应用名/页面名/关键骨架特征」
 """
 
 
@@ -316,11 +320,82 @@ def enrich_with_icons(
         ))
 
     return ParsedPage(
-        identity=page.identity,
-        description=page.description,
-        bottom_nav=page.bottom_nav,
         interactive_elements=merged,
     )
+
+
+# ---------------------------------------------------------------------------
+# Mini-program detection via GUIClip capsule embedding
+# ---------------------------------------------------------------------------
+
+# Lazy-loaded: (matcher, ref_embs, refs, region, threshold)
+_capsule_state: tuple | None = None
+
+_ASSETS = Path(__file__).parent.parent / "assets"
+_CAPSULE_REFS_PATH = _ASSETS / "capsule_refs.json"
+_CAPSULE_EMBS_PATH = _ASSETS / "capsule_embeddings.npz"
+
+
+def _get_capsule_state():
+    global _capsule_state
+    if _capsule_state is None:
+        import json as _json
+        import numpy as _np
+        from policy_expr.recon.cascade_matcher import PageEmbedding, get_matcher
+
+        if not _CAPSULE_REFS_PATH.exists() or not _CAPSULE_EMBS_PATH.exists():
+            return None
+
+        data = _json.loads(_CAPSULE_REFS_PATH.read_text())
+        npz = _np.load(_CAPSULE_EMBS_PATH)
+        matcher = get_matcher()
+        refs = data["references"]
+        ref_embs = [PageEmbedding(visual=npz["embeddings"][i]) for i in range(len(refs))]
+        if not ref_embs:
+            return None
+
+        _capsule_state = (matcher, ref_embs, refs, data["capsule_region"], data["threshold"])
+    return _capsule_state
+
+
+def detect_miniprogram(png_bytes: bytes) -> list[float] | None:
+    """Detect mini-program by GUIClip similarity on capsule region.
+
+    Returns the matched reference's close_xy [x, y] (0-1000) if detected,
+    None otherwise.
+    """
+    import io as _io
+
+    from PIL import Image as _Image
+
+    state = _get_capsule_state()
+    if state is None:
+        return None
+
+    matcher, ref_embs, refs, region, threshold = state
+    x1r, x2r = region["x_ratio"]
+    y1r, y2r = region["y_ratio"]
+
+    img = _Image.open(_io.BytesIO(png_bytes)).convert("RGB")
+    w, h = img.size
+    crop = img.crop((int(w * x1r), int(h * y1r), int(w * x2r), int(h * y2r)))
+    buf = _io.BytesIO()
+    crop.save(buf, format="PNG")
+
+    emb = matcher.embed_visual(buf.getvalue())
+
+    best_sim, best_idx = 0.0, -1
+    for i, ref_emb in enumerate(ref_embs):
+        sim = matcher.visual_sim(ref_emb, emb)
+        if sim > best_sim:
+            best_sim, best_idx = sim, i
+
+    if best_sim >= threshold and best_idx >= 0:
+        ref = refs[best_idx]
+        close_xy = ref.get("close_xy")
+        print(f"  [miniprogram detect] ✓ 命中「{ref['name']}」sim={best_sim:.3f}  close_xy={close_xy}")
+        return close_xy
+    return None
 
 
 class PageParser:
@@ -356,16 +431,21 @@ class PageParser:
 
         img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
         w, h = img.size
+        t0 = time.time()
         det = IconDetector(conf=0.1)
         boxes = det.detect_filtered(png_bytes, w, h)
+        print(f"  [yolo] ({time.time()-t0:.1f}s) {len(boxes)} icons")
 
         merged = enrich_with_icons(page, boxes, w, h)
-        print(f"  LLM: {len(page.interactive_elements)} 个 | "
-              f"YOLO: {len(boxes)} 个 | "
-              f"融合: {len(merged.interactive_elements)} 个")
 
         areas = classify_elements(merged)
-        print(f"  区域数: {len(areas)}")
+
+        if areas:
+            print(f"  {'#':>3}  {'坐标':^12}  {'类型':^8}  标签")
+            print(f"  {'-'*3}  {'-'*12}  {'-'*8}  {'-'*24}")
+            for i, a in enumerate(areas):
+                ax, ay = a.center_xy
+                print(f"  {i:>3}  ({ax:>5.0f},{ay:>4.0f})  {a.element_type:^8}  {a.label}")
 
         return PageKnowledge(
             page=merged,
@@ -398,7 +478,10 @@ class PageParser:
         last_error: Exception | None = None
         for attempt in range(self._N_ATTEMPTS):
             try:
+                t0 = time.time()
                 result = invoke_structured(llm, messages, ParsedPage)
+                elapsed = time.time() - t0
+                print(f"  [page_parser] ({elapsed:.1f}s) {len(result.interactive_elements)} elements")
                 if best is None or len(result.interactive_elements) > len(best.interactive_elements):
                     best = result
             except Exception as exc:
@@ -408,3 +491,24 @@ class PageParser:
         if best is not None:
             return best
         raise last_error or RuntimeError("no results")
+
+
+def resolve_selected_tabs(page: ParsedPage) -> tuple[str, str]:
+    """Resolve initial selected tabs: just pick the leftmost tab in each bar.
+
+    The initial page always starts on the first (leftmost) tab. No LLM
+    detection needed — element_type from PageParser is sufficient.
+    Returns (top_tab, bottom_tab) — empty string if no tab bar found.
+    """
+    top_tabs = sorted(
+        [el for el in page.interactive_elements if el.element_type == "tab" and el.y < 400],
+        key=lambda el: el.x,
+    )
+    bottom_tabs = sorted(
+        [el for el in page.interactive_elements if el.element_type == "tab" and el.y >= 400],
+        key=lambda el: el.x,
+    )
+
+    top = top_tabs[0].label if top_tabs else ""
+    bottom = bottom_tabs[0].label if bottom_tabs else ""
+    return top, bottom
