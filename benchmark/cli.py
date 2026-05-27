@@ -120,6 +120,15 @@ def cmd_list(args) -> None:
 
 def cmd_run(args) -> None:
     """Run one or more tasks."""
+    from policy_expr.runner import (
+        build_policy,
+        build_supervisor,
+        run_agent_loop,
+        create_run_dir,
+    )
+    from policy_expr.policies import StructuredOutputPolicy
+    from policy_expr.self_learning.app_summary import auto_discover_knowledge
+
     tasks = _load_tasks()
     results = _load_results()
 
@@ -131,7 +140,6 @@ def cmd_run(args) -> None:
     if "--all" in task_ids:
         task_ids = [t["id"] for t in tasks]
 
-    # Filter by category/difficulty/app if given
     selected = []
     for tid in task_ids:
         task = _task_by_id(tasks, tid)
@@ -159,7 +167,6 @@ def cmd_run(args) -> None:
         )
         console.print(f"[bold cyan]{'─' * 60}[/bold cyan]\n")
 
-        # Record start
         results[tid] = {
             "task": task["task"],
             "status": "running",
@@ -167,25 +174,31 @@ def cmd_run(args) -> None:
         }
         _save_results(results)
 
-        # Run via chat_cli
         try:
-            from policy_expr.chat_cli import run_chat_turn
-            from policy_expr.policies import StructuredOutputPolicy
-            from policy_expr.runner import build_policy, build_supervisor
-            from policy_expr.supervisor import MilestoneSupervisorPolicy
-
             action_policy = build_policy(StructuredOutputPolicy.name)
-            supervisor = build_supervisor(args.supervisor or MilestoneSupervisorPolicy.name)
-            log_dir = ROOT / "logs" / "benchmark" / f"{tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            log_dir.mkdir(parents=True, exist_ok=True)
+            supervisor = build_supervisor(args.supervisor)
+
+            knowledge = auto_discover_knowledge(task["task"])
+            if knowledge and hasattr(supervisor, "set_app_knowledge"):
+                supervisor.set_app_knowledge(
+                    knowledge.navigation,
+                    app_name=knowledge.app_name,
+                    elements=knowledge.elements,
+                )
+
+            log_dir = create_run_dir("benchmark")
+            context_path = log_dir / "context.json"
 
             t0 = time.time()
-            result = run_chat_turn(
+            result = run_agent_loop(
                 task["task"],
                 action_policy,
                 supervisor,
-                log_dir,
+                input_context_path=None,
+                log_dir=log_dir,
+                context_path=context_path,
                 max_turns=args.max_turns,
+                auto_continue=True,
             )
             elapsed = time.time() - t0
 
@@ -216,7 +229,6 @@ def cmd_run(args) -> None:
 
         _save_results(results)
 
-    # Summary
     _print_summary(selected, results)
 
 

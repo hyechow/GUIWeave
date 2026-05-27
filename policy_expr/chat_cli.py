@@ -31,6 +31,7 @@ from rich.tree import Tree
 from policy_expr.executor import ActionExecutor
 from policy_expr.perception import LivePerception, LivePhoneSession
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
+from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.schemas import PolicyContext, PolicyTurn
 from policy_expr.self_learning.app_summary import auto_discover_knowledge
 from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
@@ -128,6 +129,7 @@ def run_chat_turn(
 
     with _silent_stdio(log_dir), LivePhoneSession() as phone, AgentHUD() as hud:
         executor = ActionExecutor(phone)
+        prev_milestone_id: str | None = None
 
         while True:
             turn_no = len(context.turns) + 1
@@ -136,6 +138,7 @@ def run_chat_turn(
 
             perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
+            executor.calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
             hud.update(f"Turn {turn_no} | 思考中…")
             if live_state:
@@ -177,7 +180,11 @@ def run_chat_turn(
                 if sv_step.preformed_action:
                     action_decision = sv_step.preformed_action
                 else:
-                    action_decision = action_policy.decide(observation, sv_step.instruction)
+                    action_decision = action_policy.decide(
+                        observation, sv_step.instruction,
+                        direction=sv_step.direction,
+                        drag_column=sv_step.drag_column,
+                    )
                     print_decision(
                         action_decision, observation.png_bytes,
                         log_dir / f"structured_output_result_turn_{turn_no}.png",
@@ -219,6 +226,10 @@ def run_chat_turn(
                 if noop_count >= 3:
                     return _make_result(context, f"连续 {noop_count} 轮无动作")
                 continue
+
+            if sv_step.milestone_id != prev_milestone_id:
+                noop_count = 0
+            prev_milestone_id = sv_step.milestone_id
 
             noop_count = 0
             time.sleep(1.5)
@@ -542,9 +553,13 @@ def main() -> None:
         goal = router_result.goal or user_msg
         turn_supervisor = build_supervisor(supervisor.name)
 
-        knowledge_text, discovered_app = auto_discover_knowledge(goal)
-        if knowledge_text and hasattr(turn_supervisor, "set_app_knowledge"):
-            turn_supervisor.set_app_knowledge(knowledge_text, app_name=discovered_app)
+        knowledge = auto_discover_knowledge(goal)
+        if knowledge and hasattr(turn_supervisor, "set_app_knowledge"):
+            turn_supervisor.set_app_knowledge(
+                knowledge.navigation,
+                app_name=knowledge.app_name,
+                elements=knowledge.elements,
+            )
 
         log_dir = recorder.next_turn_dir()
 

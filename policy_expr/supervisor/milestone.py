@@ -542,6 +542,7 @@ def run_planner(
     constraints: Optional[list[str]] = None,
     extra: str = "",
     app_knowledge: Optional[str] = None,
+    elements_knowledge: Optional[str] = None,
 ) -> _PlanResult:
     """Run the step planner. Used by both production and evals."""
     if constraints is None:
@@ -577,9 +578,23 @@ def run_planner(
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
     msgs = _build_msgs(prompt, observation.png_bytes)
-    if app_knowledge:
-        msgs[1].content = [{"type": "text", "text": f"## 应用导航知识\n{app_knowledge}\n\n"}] + msgs[1].content
+    _inject_knowledge(msgs, app_knowledge, elements_knowledge)
     return invoke_structured(_make_llm(), msgs, _PlanResult)
+
+
+def _inject_knowledge(
+    msgs: list,
+    app_knowledge: str | None,
+    elements_knowledge: str | None,
+) -> None:
+    """Inject navigation and elements knowledge into the user message."""
+    parts: list[dict] = []
+    if app_knowledge:
+        parts.append({"type": "text", "text": f"## 应用导航知识\n{app_knowledge}\n\n"})
+    if elements_knowledge:
+        parts.append({"type": "text", "text": f"## 页面元素知识\n{elements_knowledge}\n\n"})
+    if parts:
+        msgs[1].content = parts + msgs[1].content
 
 
 # ── Main class ────────────────────────────────────────────────────────
@@ -599,12 +614,14 @@ class MilestoneSupervisorPolicy:
         self._scroll_counts: dict[str, int] = {}
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
+        self._elements_knowledge: Optional[str] = None
         self._app_name: str = ""
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
 
-    def set_app_knowledge(self, text: str, app_name: str = "") -> None:
+    def set_app_knowledge(self, text: str, app_name: str = "", elements: str = "") -> None:
         self._app_knowledge = text
+        self._elements_knowledge = elements or None
         if app_name:
             self._app_name = app_name
 
@@ -1145,6 +1162,7 @@ class MilestoneSupervisorPolicy:
             constraints=self._global_constraints,
             extra=extra,
             app_knowledge=self._app_knowledge,
+            elements_knowledge=self._elements_knowledge,
         )
 
     def _invoke_loop_scroll(
@@ -1200,8 +1218,7 @@ class MilestoneSupervisorPolicy:
         if extra:
             prompt += f"\n\n## 输出修正要求\n{extra}"
         msgs = self._msgs(prompt, observation)
-        if self._app_knowledge:
-            msgs[1].content = [{"type": "text", "text": f"## 应用导航知识\n{self._app_knowledge}\n\n"}] + msgs[1].content
+        _inject_knowledge(msgs, self._app_knowledge, self._elements_knowledge)
         result = invoke_structured(self._llm(), msgs, _ReplanResult)
         if self._is_sequence(result.instruction):
             print("  [Replan] 多步序列，重试...")
@@ -1330,6 +1347,8 @@ class MilestoneSupervisorPolicy:
         user_parts: list[dict] = [{"type": "text", "text": f"用户任务：{goal}"}]
         if self._app_knowledge:
             user_parts.append({"type": "text", "text": f"\n## 应用导航知识\n{self._app_knowledge}"})
+        if self._elements_knowledge:
+            user_parts.append({"type": "text", "text": f"\n## 页面元素知识\n{self._elements_knowledge}"})
         if feedback:
             fb = "\n".join(f"  - {i}" for i in feedback)
             user_parts.append({"type": "text", "text": f"\n上一轮分解存在以下问题，请修正：\n{fb}"})

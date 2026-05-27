@@ -531,10 +531,14 @@ def main() -> None:
     supervisor = build_supervisor(args.supervisor)
 
     # Auto-discover app knowledge from goal
-    knowledge_text, discovered_app = auto_discover_knowledge(args.prompt)
-    if knowledge_text and hasattr(supervisor, "set_app_knowledge"):
-        supervisor.set_app_knowledge(knowledge_text, app_name=discovered_app)
-        print(f"Knowledge: auto-loaded ({len(knowledge_text)} chars), app={discovered_app}")
+    knowledge = auto_discover_knowledge(args.prompt)
+    if knowledge and hasattr(supervisor, "set_app_knowledge"):
+        supervisor.set_app_knowledge(
+            knowledge.navigation,
+            app_name=knowledge.app_name,
+            elements=knowledge.elements,
+        )
+        print(f"Knowledge: auto-loaded (nav={len(knowledge.navigation)} chars, elements={len(knowledge.elements)} chars), app={knowledge.app_name}")
 
     mode = args.mode
     input_context_path = args.context
