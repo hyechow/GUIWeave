@@ -2,7 +2,7 @@
 
 基于 Mac 上的 iPhone Mirroring，通过 [mirroir-mcp](https://github.com/jfarcand/mirroir-mcp) 提供截图与触控能力，用 MCP 协议控制 iPhone 的 AI Agent。给出自然语言目标，Agent 自动截图、理解当前状态、决策下一步操作、执行并循环，直到完成任务。
 
-**项目亮点**：多模态小模型（Qwen3.5-35B-A3B）即可驱动复杂的手机操作（跨 APP、多步骤、带验收闭环），支持私有化本地部署，无需依赖闭源大模型。
+**多模态小模型（Qwen3.5-35B-A3B）即可驱动复杂的手机操作（跨 APP、长程多步骤、带验收闭环），支持私有化本地部署，无需依赖闭源大模型。**
 
 ## 演示
 
