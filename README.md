@@ -6,13 +6,15 @@
 
 ## 演示
 
+以下演示视频均为 2 倍速播放。
+
 ### 对话模式
 
 **操作类**：执行具体动作（发消息、下单、修改设置）
 
 > "把我最近在拼多多上下单的奶粉分享给老 Be，这个性价比高"
 >
-> 拼多多找订单 → 微信分享给联系人，跨 APP 操作（2x 加速）
+> 拼多多找订单 → 微信分享给联系人，跨 APP 操作
 
 https://github.com/user-attachments/assets/3b10c74a-99ae-4bbb-a983-767857b62136
 
@@ -20,13 +22,13 @@ https://github.com/user-attachments/assets/3b10c74a-99ae-4bbb-a983-767857b62136
 
 > "我上周用微信支付花多少钱了？"
 >
-> 打开微信支付 → 汇总上周账单支出（2x 加速）
+> 打开微信支付 → 汇总上周账单支出
 
 https://github.com/user-attachments/assets/2deb4026-97e9-4689-bfa7-30472544d3df
 
 ### 探测模式
 
-> 自动探索闲鱼 APP 页面结构，生成页面知识库（2x 加速）
+> 自动探索闲鱼 APP 页面结构，生成页面知识库
 
 https://github.com/user-attachments/assets/183b80fd-ba0f-4f14-b599-b7ef3efc4a79
 
