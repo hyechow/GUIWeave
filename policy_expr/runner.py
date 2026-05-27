@@ -297,7 +297,19 @@ def run_agent_loop(
     max_turns: int = 20,
     auto_continue: bool = False,
     hud: AgentHUD | None = None,
+    live_state: dict | None = None,
+    silent: bool = False,
 ) -> dict:
+    def _say(s: str) -> None:
+        if not silent:
+            print(s)
+
+    def _status(turn_no: int, msg: str) -> None:
+        if hud:
+            hud.update(f"Turn {turn_no} — {msg}")
+        if live_state:
+            live_state["current"] = msg
+
     context = _load_context(
         input_context_path or context_path,
         prompt,
@@ -306,8 +318,8 @@ def run_agent_loop(
     )
     _ensure_note_hashes(context)
     _save_context(context_path, context)
-    print(f"Goal    : {context.goal}")
-    print(f"Turns   : {len(context.turns)}")
+    _say(f"Goal    : {context.goal}")
+    _say(f"Turns   : {len(context.turns)}")
 
     reader = ContentReader()
     original_goal = context.goal
@@ -320,33 +332,32 @@ def run_agent_loop(
         while True:
             turn_no = len(context.turns) + 1
             if turn_no > max_turns:
-                print(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
+                _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
                 _save_context(context_path, context)
                 return _make_result(context, f"达到最大轮数 {max_turns}")
 
             turn_started_at = time.perf_counter()
             llm_calls_before = get_llm_call_count()
 
-            print("\n" + TURN_HEADER.format(turn_no=turn_no))
+            _say("\n" + TURN_HEADER.format(turn_no=turn_no))
 
-            if hud: hud.update(f"Turn {turn_no} — 截图分析中…")
+            _status(turn_no, "截图分析中…")
             perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
             executor.calibrator = YoloCalibrator.from_png(observation.png_bytes)
 
-            if hud: hud.update(f"Turn {turn_no} — 使用 {supervisor.name} supervisor 决策中…")
-            print("监督决策中...")
+            _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
+            _say("监督决策中...")
             sv_step = supervisor.step(observation, context.goal, context.turns)
-            print(f"监督者: {sv_step.summary}")
-            if hud: hud.update(f"Turn {turn_no} — {sv_step.summary}")
+            _say(f"监督者: {sv_step.summary}")
+            _status(turn_no, sv_step.summary)
 
-            # Sync task_type from supervisor after first decomposition
             if hasattr(supervisor, "task_type") and context.task_type is None:
                 context.task_type = supervisor.task_type
-                print(f"任务类型: {context.task_type}")
+                _say(f"任务类型: {context.task_type}")
             if sv_step.collection_scope and sv_step.collection_scope != context.collection_scope:
                 context.collection_scope = sv_step.collection_scope
-                print(
+                _say(
                     "采集范围: "
                     + json.dumps(context.collection_scope.model_dump(exclude_none=True), ensure_ascii=False)
                 )
@@ -354,15 +365,14 @@ def run_agent_loop(
             read_added_content = False
             read_note_hash = None
 
-            # Content reading is controlled by the current milestone strategy.
             if sv_step.read_instruction and not sv_step.allow_read:
-                print(
+                _say(
                     "跳过读取入库: 当前阶段不允许采集 "
                     f"({sv_step.milestone_kind}/{sv_step.completion_strategy})"
                 )
             elif sv_step.read_instruction:
                 reader_instruction = build_reader_instruction(original_goal, sv_step)
-                print(f"读取内容: {reader_instruction}")
+                _say(f"读取内容: {reader_instruction}")
                 note = reader.read(observation.png_bytes, reader_instruction)
                 if note and note != "无相关内容":
                     note = annotate_content_note(
@@ -376,21 +386,21 @@ def run_agent_loop(
                         context.content_note_hashes.append(read_note_hash)
                         context.content_notes.append(note)
                         read_added_content = True
-                        print(f"内容摘要: {note[:80]}...")
+                        _say(f"内容摘要: {note[:80]}...")
                     else:
-                        print("内容摘要: 与已采集内容重复，未入库")
+                        _say("内容摘要: 与已采集内容重复，未入库")
 
             action_decision = None
             executed = False
 
             if sv_step.should_act:
-                print(f"动作指令: {sv_step.instruction}")
+                _say(f"动作指令: {sv_step.instruction}")
                 if sv_step.preformed_action:
-                    print("使用预生成动作，跳过 Action Policy")
+                    _say("使用预生成动作，跳过 Action Policy")
                     action_decision = sv_step.preformed_action
                 else:
-                    if hud: hud.update(f"Turn {turn_no} — 动作决策中…")
-                    print("动作决策中...")
+                    _status(turn_no, "动作决策中…")
+                    _say("动作决策中...")
                     action_decision = action_policy.decide(
                         observation, sv_step.instruction,
                         direction=sv_step.direction,
@@ -401,15 +411,13 @@ def run_agent_loop(
                         observation.png_bytes,
                         log_dir / f"structured_output_result_turn_{turn_no}.png",
                     )
-                # Action policy refused: target element not found on screen
                 if action_decision.not_found_reason:
-                    print(f"  [NotFound] {action_decision.not_found_reason}")
-                    if hud: hud.update(f"Turn {turn_no} — 未找到目标元素")
+                    _say(f"  [NotFound] {action_decision.not_found_reason}")
+                    _status(turn_no, "未找到目标元素")
                     executed = False
                 else:
-                    if hud:
-                        a = action_decision.action
-                        hud.update(f"Turn {turn_no} — [{action_label(a.action_type)}] {a.description}")
+                    if action_decision.action:
+                        _status(turn_no, f"[{action_label(action_decision.action.action_type)}] {action_decision.action.description}")
                     executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
 
             turn = PolicyTurn(
@@ -424,14 +432,15 @@ def run_agent_loop(
             )
             context.turns.append(turn)
             _save_context(context_path, context)
-            _print_turn_stats(turn_no, turn_started_at, llm_calls_before)
+            if not silent:
+                _print_turn_stats(turn_no, turn_started_at, llm_calls_before)
 
             if sv_step.stop or sv_step.goal_completed:
                 reason = sv_step.stop_reason or ("目标已达成" if sv_step.goal_completed else "agent-loop 停止")
                 if sv_step.goal_completed:
-                    print(f"\n目标已达成：{reason}")
+                    _say(f"\n目标已达成：{reason}")
                 else:
-                    print(f"\n任务未完成：{reason}")
+                    _say(f"\n任务未完成：{reason}")
                 _save_context(context_path, context)
                 if sv_step.goal_completed:
                     return _make_result(context, reason, sv_step.collection_summary)
@@ -439,14 +448,12 @@ def run_agent_loop(
 
             if not executed and sv_step.should_act:
                 if action_decision and action_decision.not_found_reason:
-                    # Action policy refused — treat as noop, let supervisor replan next turn
                     noop_count += 1
                     if noop_count >= 3:
-                        print(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
+                        _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
                         _save_context(context_path, context)
                         return _make_result(context, f"连续 {noop_count} 轮无动作")
                     continue
-                # Genuine execution failure — stop
                 _save_context(context_path, context)
                 return _make_result(context, "动作未执行，agent-loop 停止")
 
@@ -457,12 +464,12 @@ def run_agent_loop(
             if not sv_step.should_act:
                 noop_count += 1
                 if noop_count >= 3:
-                    print(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
+                    _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
                     _save_context(context_path, context)
                     return _make_result(context, f"连续 {noop_count} 轮无动作")
                 continue
 
-            noop_count = 0  # 有动作则重置计数
+            noop_count = 0
 
             if auto_continue:
                 time.sleep(1.5)

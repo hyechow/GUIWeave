@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import time
 import traceback
@@ -28,18 +27,10 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.tree import Tree
 
-from policy_expr.executor import ActionExecutor
-from policy_expr.perception import LivePerception, LivePhoneSession
-from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
-from policy_expr.recon.yolo_calibrator import YoloCalibrator
-from policy_expr.schemas import PolicyContext, PolicyTurn
 from policy_expr.self_learning.app_summary import auto_discover_knowledge
 from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
-from policy_expr.supervisor.base import SupervisorPolicy
-from policy_expr.visualize import print_decision
 from policy_expr.policies import StructuredOutputPolicy
-from policy_expr.policies.base import ActionPolicy
-from policy_expr.runner import _TeeStream, build_policy, build_supervisor
+from policy_expr.runner import _TeeStream, build_policy, build_supervisor, run_agent_loop
 from policy_expr.chat_session import (
     RouterResult,
     generate_reply,
@@ -87,152 +78,30 @@ def _silent_stdio(log_dir: Path) -> Iterator[None]:
             raise
 
 
-def _save_context(path: Path, context: PolicyContext) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
-
-
-def _ensure_note_hashes(context: PolicyContext) -> None:
-    if context.content_notes and not context.content_note_hashes:
-        context.content_note_hashes = [
-            re.sub(r"\s+", "", note.strip().lower())[:64] for note in context.content_notes
-        ]
-
-
-def _note_hash(note: str) -> str:
-    import hashlib
-    normalized = re.sub(r"\s+", "", note.strip().lower())
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
 def run_chat_turn(
     goal: str,
-    action_policy: ActionPolicy,
-    supervisor: SupervisorPolicy,
+    action_policy,
+    supervisor,
     log_dir: Path,
     max_turns: int = 20,
     live_state: dict | None = None,
 ) -> dict:
-    context = PolicyContext(
-        goal=goal,
-        supervisor_policy_name=supervisor.name,
-        action_policy_name=action_policy.name,
-    )
-    context_path = log_dir / "context.json"
-    _ensure_note_hashes(context)
-    _save_context(context_path, context)
-
-    reader = ContentReader()
-    noop_count = 0
-
+    """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     from policy_expr.hud import AgentHUD
 
-    with _silent_stdio(log_dir), LivePhoneSession() as phone, AgentHUD() as hud:
-        executor = ActionExecutor(phone)
-        prev_milestone_id: str | None = None
-
-        while True:
-            turn_no = len(context.turns) + 1
-            if turn_no > max_turns:
-                return _make_result(context, f"达到最大轮数 {max_turns}")
-
-            perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
-            observation = perception.observe()
-            executor.calibrator = YoloCalibrator.from_png(observation.png_bytes)
-
-            hud.update(f"Turn {turn_no} | 思考中…")
-            if live_state:
-                live_state["current"] = "观察屏幕…"
-
-            sv_step = supervisor.step(observation, context.goal, context.turns)
-            hud.update(f"Turn {turn_no} | {sv_step.summary}")
-
-            if live_state:
-                live_state["current"] = sv_step.summary
-
-            if hasattr(supervisor, "task_type") and context.task_type is None:
-                context.task_type = supervisor.task_type
-            if sv_step.collection_scope and sv_step.collection_scope != context.collection_scope:
-                context.collection_scope = sv_step.collection_scope
-
-            read_note_hash = None
-
-            if sv_step.read_instruction and sv_step.allow_read:
-                reader_instruction = build_reader_instruction(goal, sv_step)
-                note = reader.read(observation.png_bytes, reader_instruction)
-                if note and note != "无相关内容":
-                    note = annotate_content_note(
-                        note, turn_no=turn_no, sv_step=sv_step,
-                        collection_scope=context.collection_scope,
-                    )
-                    read_note_hash = _note_hash(note)
-                    if read_note_hash not in context.content_note_hashes:
-                        context.content_note_hashes.append(read_note_hash)
-                        context.content_notes.append(note)
-
-            action_decision = None
-            executed = False
-
-            if sv_step.should_act:
-                if live_state:
-                    live_state["current"] = sv_step.instruction or "执行动作…"
-
-                if sv_step.preformed_action:
-                    action_decision = sv_step.preformed_action
-                else:
-                    action_decision = action_policy.decide(
-                        observation, sv_step.instruction,
-                        direction=sv_step.direction,
-                        drag_column=sv_step.drag_column,
-                    )
-                    print_decision(
-                        action_decision, observation.png_bytes,
-                        log_dir / f"structured_output_result_turn_{turn_no}.png",
-                    )
-                if action_decision.not_found_reason:
-                    executed = False
-                else:
-                    executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
-
-            if live_state and executed:
-                live_state["current"] = "等待下一轮…"
-
-            turn = PolicyTurn(
-                index=turn_no,
-                observation_source=observation.source,
-                supervisor=sv_step,
-                action_decision=action_decision,
-                executed=executed,
-            )
-            context.turns.append(turn)
-            _save_context(context_path, context)
-
-            if sv_step.stop or sv_step.goal_completed:
-                reason = sv_step.stop_reason or (
-                    "目标已达成" if sv_step.goal_completed else "停止"
-                )
-                return _make_result(context, reason)
-
-            if not executed and sv_step.should_act:
-                if action_decision and action_decision.not_found_reason:
-                    noop_count += 1
-                    if noop_count >= 3:
-                        return _make_result(context, f"连续 {noop_count} 轮无动作")
-                    continue
-                return _make_result(context, "动作未执行")
-
-            if not sv_step.should_act:
-                noop_count += 1
-                if noop_count >= 3:
-                    return _make_result(context, f"连续 {noop_count} 轮无动作")
-                continue
-
-            if sv_step.milestone_id != prev_milestone_id:
-                noop_count = 0
-            prev_milestone_id = sv_step.milestone_id
-
-            noop_count = 0
-            time.sleep(1.5)
+    context_path = log_dir / "context.json"
+    with _silent_stdio(log_dir), AgentHUD() as hud:
+        return run_agent_loop(
+            goal, action_policy, supervisor,
+            input_context_path=None,
+            log_dir=log_dir,
+            context_path=context_path,
+            max_turns=max_turns,
+            auto_continue=True,
+            hud=hud,
+            live_state=live_state,
+            silent=True,
+        )
 
 
 _ACTION_STYLE = {
@@ -241,40 +110,6 @@ _ACTION_STYLE = {
     "scroll": "bright_magenta",
     "home": "bright_yellow",
 }
-
-
-def _make_result(context: PolicyContext, stop_reason: str) -> dict:
-    last_summary = ""
-    if context.turns:
-        last_summary = context.turns[-1].supervisor.summary
-
-    turns_detail = []
-    for t in context.turns:
-        entry: dict = {"no": t.index, "summary": t.supervisor.summary, "executed": t.executed}
-        if t.action_decision:
-            a = t.action_decision.action
-            entry["action_type"] = a.action_type
-            entry["action_desc"] = a.description
-            if t.action_decision.not_found_reason:
-                entry["not_found"] = t.action_decision.not_found_reason
-        turns_detail.append(entry)
-
-    pre_existing = any(
-        t.supervisor.goal_completed and t.supervisor.pre_existing
-        for t in context.turns
-    )
-
-    return {
-        "result_summary": last_summary or stop_reason,
-        "stop_reason": stop_reason,
-        "goal_completed": any(t.supervisor.goal_completed for t in context.turns),
-        "turns_count": len(context.turns),
-        "turns_detail": turns_detail,
-        "content_notes": context.content_notes or None,
-        "collection_scope": context.collection_scope.model_dump(exclude_none=True)
-        if context.collection_scope else None,
-        "pre_existing": pre_existing,
-    }
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────
