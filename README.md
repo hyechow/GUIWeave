@@ -1,6 +1,8 @@
 # iphone-use
 
-基于 Mac 上的 iPhone Mirroring，通过 MCP 协议控制 iPhone 的 AI Agent。给出自然语言目标，Agent 自动截图、理解当前状态、决策下一步操作、执行并循环，直到完成任务。
+基于 Mac 上的 iPhone Mirroring，通过 [mirroir-mcp](https://github.com/jfarcand/mirroir-mcp) 提供截图与触控能力，用 MCP 协议控制 iPhone 的 AI Agent。给出自然语言目标，Agent 自动截图、理解当前状态、决策下一步操作、执行并循环，直到完成任务。
+
+**项目亮点**：多模态小模型（Qwen3.5-35B-A3B）即可驱动复杂的手机操作（跨 APP、多步骤、带验收闭环），支持私有化本地部署，无需依赖闭源大模型。
 
 ## 演示
 
@@ -30,28 +32,44 @@ https://github.com/user-attachments/assets/183b80fd-ba0f-4f14-b599-b7ef3efc4a79
 
 ## 架构
 
-系统由两层 LLM 协作驱动：
-
 ```mermaid
 flowchart TD
-    User([用户输入]) --> Router[Router]
-    Router -- 闲聊 / 问答 --> Output
-    Router -- 手机操作 --> Supervisor[Supervisor\n管理 Milestone 列表]
+    User([用户自然语言]) --> Router[Router\n目标提取]
+    Router -- 无需操作手机 --> Output([自然语言回复])
+    Router -- 信息不足 --> Clarify[追问用户]
+    Clarify -- 补充信息 --> User
+    Router -- 结构化目标 --> Supervisor[Supervisor\n管理 Milestone 列表]
 
     subgraph turn[" 每 turn "]
-        Checker[Checker\n截图验收] -- 未完成 --> Planner[Planner\n规划下一步]
-        Planner --> AP[Action Policy\n截图 → 动作坐标]
-        AP --> Executor[Executor\n执行动作]
-        Executor -- 新截图 --> Checker
+        Checker["Checker\n截图 + Milestone → 是否完成"]
+        Planner["Planner\n截图 + 指令 → 下一步操作"]
+        AP["Action Policy\n截图 + 指令 → 坐标动作"]
+        Executor["Executor\n坐标 → Quartz 事件"]
+        Checker -- 未完成 --> Planner
+        Planner -- 操作指令 --> AP
+        AP -- tap/type/scroll --> Executor
+        Executor -- 截图 --> Checker
     end
 
-    Supervisor --> Checker
-    Checker -- 所有 Milestone 完成 --> Output([Output\n生成回复])
+    Supervisor -- 当前 Milestone --> Checker
+    Checker -- 当前完成 --> Supervisor
+    Supervisor -- 全部完成 --> Output
+
+    Knowledge[(知识库\nAPP 页面结构)]
+    Recon[探测模式\n自动探索 APP] --> Knowledge
+    Knowledge -- 页面结构 + 导航关系 --> Supervisor
+    Knowledge -- 元素功能 + 操作方式 --> Planner
+
+    Memory[(用户记忆\n偏好 / 习惯)]
+    Output -- 提取偏好 --> Memory
+    Memory -- 注入上下文 --> Router
 ```
 
-**Router**：解析用户消息，识别意图和目标 APP，将任务路由给 Supervisor；无需操作手机的问答/闲聊直接回复。
+**Router**：解析用户消息，判断是否需要操作手机。需要的提取明确目标（做什么）和目标 APP（在哪个应用做），传递给 Supervisor；不需要的直接回复。当信息不足（如未指定 APP、操作不明确）时追问用户。
 
 **Supervisor**：将目标拆解为有依赖关系的 Milestone 子任务，逐个执行并验收。支持多种完成策略（单步确认、滚动采集、重复直到满足条件），遇到卡住时自动 replan。
+
+**Planner**：根据当前截图和操作指令，结合知识库中的页面元素信息，规划下一步具体操作。
 
 **Action Policy**：接收截图和操作指令，输出具体的屏幕坐标动作（tap / type / scroll / drag 等）。
 
@@ -86,7 +104,7 @@ flowchart TD
 
 - macOS Sequoia 15.0 或以上（iPhone Mirroring 功能要求）
 - iPhone 已通过 iPhone Mirroring 与 Mac 完成配对
-- 兼容 OpenAI API 的 LLM 服务（ModelScope、Dashscope 或其他）
+- 兼容 OpenAI API 的 LLM 服务（ModelScope、Dashscope、本地推理或自建服务）
 
 ## 环境配置
 
@@ -194,7 +212,7 @@ scripts/                 # 工具脚本（测试、可视化）
 - 可交互元素列表及其功能描述
 - 导航关系（从当前页面可到达哪些子页面）
 
-Runner 运行时自动根据目标 APP 加载对应知识，帮助 Supervisor 和 Action Policy 理解页面结构。
+Runner 运行时自动根据目标 APP 加载对应知识，帮助 Supervisor 理解页面结构和 Planner 制定操作步骤。
 
 ## 用户记忆
 
@@ -223,3 +241,7 @@ uv run python evals/<module>/test_<module>.py
 - `pydantic` — 数据模型
 - `rich` + `prompt-toolkit` — 终端 UI
 - `uv` — 包管理
+
+## TODO
+
+- **安全操作门控**：对不可逆或高风险操作（支付确认、删除数据、发送消息等）增加人工确认机制，Executor 执行前拦截并提示用户确认。
