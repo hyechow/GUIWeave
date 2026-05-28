@@ -172,47 +172,67 @@ def generate_summary(app: str) -> AppKnowledge:
     return AppKnowledge(navigation=nav, elements=elements, app_name=app)
 
 
-# Aliases: English/common names → knowledge directory names
+# Aliases: English/common names → canonical Chinese app names
 _APP_ALIASES: dict[str, str] = {
     "wechat": "微信",
     "alipay": "支付宝",
 }
 
+# Known app names for name detection even when no knowledge directory exists
+_KNOWN_APP_NAMES: list[str] = [
+    "微信", "支付宝", "美团", "拼多多", "京东", "淘宝", "天猫",
+    "抖音", "小红书", "闲鱼", "虎嗅", "高德地图", "百度地图",
+    "饿了么", "滴滴", "携程", "大众点评",
+]
+
 
 def auto_discover_knowledge(goal: str) -> AppKnowledge | None:
     """Match goal against knowledge/{app}/ dir names and load both knowledge layers.
 
-    Returns AppKnowledge if matched, None otherwise.
+    App name detection and knowledge loading are decoupled:
+    - If a knowledge directory with _app.md exists → return full AppKnowledge
+    - If directory exists but no knowledge files → return AppKnowledge with app_name only
+    - If no directory but app name recognized from _KNOWN_APP_NAMES → return app_name only
+    - Returns None only when no app name can be identified
     """
-    if not KNOWLEDGE_DIR.is_dir():
-        return None
-
-    candidates: dict[str, Path] = {}
-    for d in KNOWLEDGE_DIR.iterdir():
-        if d.is_dir():
-            candidates[d.name.lower()] = d
-    for alias, target in _APP_ALIASES.items():
-        target_dir = KNOWLEDGE_DIR / target
-        if target_dir.is_dir():
-            candidates[alias] = target_dir
-
     goal_lower = goal.lower()
+
+    candidates: dict[str, Path | None] = {}
+    if KNOWLEDGE_DIR.is_dir():
+        for d in KNOWLEDGE_DIR.iterdir():
+            if d.is_dir():
+                candidates[d.name.lower()] = d
+        for alias, target in _APP_ALIASES.items():
+            target_dir = KNOWLEDGE_DIR / target
+            if target_dir.is_dir():
+                candidates[alias] = target_dir
+
+    # Add known app names that may not have a directory yet
+    for app in _KNOWN_APP_NAMES:
+        key = app.lower()
+        if key not in candidates:
+            candidates[key] = None
+
     for name, d in candidates.items():
-        if name in goal_lower:
-            nav_path = d / "_app.md"
-            elements_path = d / "_elements.md"
-            if nav_path.exists():
-                nav = nav_path.read_text(encoding="utf-8").strip()
-                elements = (
-                    elements_path.read_text(encoding="utf-8").strip()
-                    if elements_path.exists() else ""
-                )
-                return AppKnowledge(
-                    navigation=nav,
-                    elements=elements,
-                    app_name=d.name,
-                )
-            break
+        if name not in goal_lower:
+            continue
+        if d is None:
+            # App name recognized but no knowledge directory
+            canonical = _APP_ALIASES.get(name, name)
+            print(f"  [Knowledge] 识别到应用「{canonical}」，但暂无知识库")
+            return AppKnowledge(navigation="", elements="", app_name=canonical)
+        nav_path = d / "_app.md"
+        elements_path = d / "_elements.md"
+        if nav_path.exists():
+            nav = nav_path.read_text(encoding="utf-8").strip()
+            elements = (
+                elements_path.read_text(encoding="utf-8").strip()
+                if elements_path.exists() else ""
+            )
+            return AppKnowledge(navigation=nav, elements=elements, app_name=d.name)
+        # Directory exists but no knowledge file yet
+        print(f"  [Knowledge] 识别到应用「{d.name}」，目录存在但暂无知识文件")
+        return AppKnowledge(navigation="", elements="", app_name=d.name)
 
     return None
 

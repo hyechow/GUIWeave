@@ -59,6 +59,18 @@
     "assertions": ["filter_before_loop"]
   },
   {
+    "label": "支付宝账单-上周-日期应为5月不应为4月",
+    "source_log": "logs/policy_expr/agent-loop/20260528_184511",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "我上周用支付宝支付花多少钱了？",
+    "expected": {
+      "min_milestones": 3,
+      "any_milestone_kind": ["filter"],
+      "constraints_contain": ["2026-05"]
+    },
+    "assertions": ["filter_before_loop", "filter_dates_no_april"]
+  },
+  {
     "label": "美团点外卖-地址应在搜索前设置",
     "source_log": "logs/policy_expr/benchmark/20260528_104755/context.json",
     "screenshot": "evals/decomposer/screenshots/screenshot_home.png",

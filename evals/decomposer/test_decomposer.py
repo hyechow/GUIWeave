@@ -141,6 +141,20 @@ def _check_assertions(milestones: list, assertions: list[str]) -> list[str]:
                             f"filter_before_loop: loop milestone '{lm.name}' "
                             f"has no kind=filter in its dependency chain"
                         )
+        elif assertion == "filter_dates_no_april":
+            # Filter milestone success_condition must not contain April dates (2026-04)
+            # when the correct answer is in May. Catches month-arithmetic vs week-arithmetic bugs.
+            filter_milestones = [m for m in milestones if m.kind == "filter"]
+            if not filter_milestones:
+                details.append("filter_dates_no_april: no kind=filter milestone found")
+            else:
+                for fm in filter_milestones:
+                    text = f"{fm.name} {fm.description} {fm.success_condition}"
+                    if "2026-04" in text or "-04-" in text:
+                        details.append(
+                            f"filter_dates_no_april: filter milestone '{fm.name}' "
+                            f"contains April dates (wrong month arithmetic)"
+                        )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

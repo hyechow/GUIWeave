@@ -4,6 +4,7 @@ import io
 import json
 import re
 import time
+from datetime import date
 from typing import Literal, Optional
 
 from PIL import Image
@@ -677,8 +678,8 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _SingleCheckResult:
-        app_name = self._app_name or "未知应用"
-        if not self._app_name:
+        app_name = self._app_name
+        if not app_name:
             for t in reversed(history):
                 if t.supervisor and t.supervisor.app_name:
                     app_name = t.supervisor.app_name
@@ -897,7 +898,9 @@ class MilestoneSupervisorPolicy:
         feedback: list[str],
     ) -> None:
         msgs = self._msgs(DECOMPOSE_PROMPT, observation)
-        user_parts: list[dict] = [{"type": "text", "text": f"用户任务：{goal}"}]
+        today = date.today().strftime("%Y-%m-%d")
+        weekday = ["一", "二", "三", "四", "五", "六", "日"][date.today().weekday()]
+        user_parts: list[dict] = [{"type": "text", "text": f"当前日期：{today}（周{weekday}）\n用户任务：{goal}"}]
         if self._app_knowledge:
             user_parts.append({"type": "text", "text": f"\n## 应用导航知识\n{self._app_knowledge}"})
         if self._elements_knowledge:

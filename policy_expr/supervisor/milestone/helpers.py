@@ -89,7 +89,7 @@ def run_checker(
     observation: Observation,
     history: list[PolicyTurn],
     *,
-    app_name: str = "未知应用",
+    app_name: str = "",
     task_type: str = "action",
     constraints: Optional[list[str]] = None,
     extra: str = "",
@@ -97,6 +97,7 @@ def run_checker(
     """Run the single-step milestone checker. Used by both production and evals."""
     if constraints is None:
         constraints = []
+    app_name_context = f"任务目标涉及「{app_name}」应用，" if app_name else ""
     prompt = SINGLE_CHECKER_PROMPT.format(
         milestone_name=milestone.name,
         milestone_desc=milestone.description,
@@ -106,7 +107,7 @@ def run_checker(
         task_type=task_type,
         constraints=json.dumps(constraints, ensure_ascii=False),
         history_text=_format_history(history),
-        app_name=app_name,
+        app_name_context=app_name_context,
     )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
