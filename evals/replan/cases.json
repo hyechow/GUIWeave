@@ -50,5 +50,33 @@
       "must_contain": ["关闭", "取消"],
       "must_not_contain": ["向上滑动", "向上滚动", "继续滑动", "继续滚动"]
     }
+  },
+  {
+    "label": "支付宝账单快捷筛选弹窗-diagnosis应指向筛选按钮入口",
+    "screenshot": "evals/replan/screenshots/alipay_bill_quickfilter_no_date.png",
+    "milestone": {
+      "name": "筛选上周交易数据",
+      "description": "在账单页面筛选2026-05-18至2026-05-24范围内的支出交易",
+      "success_condition": "看到筛选后的交易列表，且每笔交易日期都在2026-05-18至2026-05-24范围内",
+      "kind": "filter",
+      "app_name": "支付宝",
+      "task_type": "action",
+      "retry_count": 1
+    },
+    "history": [
+      "点击筛选按钮",
+      "点击「支出」选项",
+      "向上滑动筛选弹窗以查看并设置日期范围选项",
+      "向上滑动筛选弹窗以暴露日期范围选择器",
+      "向上滑动筛选弹窗以暴露日期范围选择器",
+      "向上滑动筛选弹窗以暴露日期范围选择器"
+    ],
+    "stuck_reason": "连续 3 帧截图相似度 [98.81%, 98.81%]，屏幕无实质变化",
+    "issues": ["屏幕像素变化低于阈值"],
+    "expected": {
+      "must_contain": ["关闭", "取消"],
+      "must_not_contain": ["向上滑动", "向上滚动"],
+      "diagnosis_must_contain": ["筛选", "日期"]
+    }
   }
 ]
