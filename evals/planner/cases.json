@@ -359,5 +359,73 @@
       "direction": "decrease",
       "drag_column": "day"
     }
+  },
+  {
+    "label": "replan后回账单列表-不应重走全部账单死路",
+    "screenshot": "evals/planner/screenshots/wechat_bill_after_replan_back_to_list.png",
+    "milestone": {
+      "name": "设置起始日期为2026-02-04",
+      "description": "在筛选界面中，将起始日期设置为2026年2月4日。",
+      "success_condition": "起始日期显示为2026-02-04",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action",
+      "retry_count": 1
+    },
+    "history": [
+      "点击顶部'全部账单'下拉菜单",
+      "在筛选弹窗内向上滑动以查看并显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域",
+      "关闭当前筛选弹窗"
+    ],
+    "last_replan_diagnosis": "当前筛选弹窗不包含日期设置入口，且历史操作已多次尝试滚动查找未果，说明该组件不支持通过滚动访问日期功能。",
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为账单列表页，并非筛选界面。历史操作已尝试多次在筛选弹窗内向上滑动查找日期设置入口均未果，弹窗已关闭。需要采取新的策略找到日期筛选入口。",
+      "issues": [],
+      "visible_evidence": [],
+      "missing_evidence": ["起始日期设置为2026-02-04"],
+      "summary": "当前处于账单列表页，之前通过「全部账单」下拉菜单打开的筛选弹窗中没有日期控件，已关闭，需改变策略。"
+    },
+    "expected": {
+      "must_not_contain": ["全部账单"]
+    }
+  },
+  {
+    "label": "picker-结束日期28日→8日-应decrease-large（WeChat账单0528回归）",
+    "screenshot": "evals/planner/screenshots/wechat_bill_end_28to8_0528.png",
+    "milestone": {
+      "name": "设置结束日期为2026-03-08",
+      "description": "在筛选界面中，将结束日期设置为2026年3月8日。",
+      "success_condition": "结束日期显示为2026-03-08",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "点击顶部'全部账单'下拉菜单",
+      "在筛选弹窗内向上滑动以查看并显示日期选择区域",
+      "关闭当前筛选弹窗",
+      "点击顶部'2026年3月'月份按钮打开日期选择器",
+      "点击'选择时间段'标签切换到时间段选择模式",
+      "在日期选择器的月份列中，将当前选中的2026年3月向下拖动切换至2026年2月",
+      "在日期选择器的日期列中，将当前选中的1日向上拖动切换至4日",
+      "点击结束日期区域的'轻触选择日期'文字以激活结束日期选择器",
+      "在日期选择器的月份列中，将当前选中的2月向下拖动切换至3月"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于日期选择界面，起始日期已设置为2026年2月4日。但结束日期当前显示为2026年3月28日，而验收条件要求结束日期必须精确显示为2026-03-08。",
+      "issues": [],
+      "visible_evidence": ["开始日期：2026年2月4日", "结束日期：2026年3月28日"],
+      "missing_evidence": ["结束日期未显示为2026-03-08，当前为2026-03-28"],
+      "summary": "在日期选择器中，结束日期的月份已切换至3月，但日期数值仍为28日，需继续调整日期列以选中8日。"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "day"
+    }
   }
 ]

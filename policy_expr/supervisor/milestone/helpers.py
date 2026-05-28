@@ -150,12 +150,25 @@ def run_planner(
             if t.supervisor and t.supervisor.instruction
             and t.supervisor.milestone_id == milestone.id
         })
+        # Collect dead-end paths from ALL milestones (replan diagnoses)
+        dead_ends: list[str] = []
+        for t in history:
+            if t.replan and t.replan.get("diagnosis"):
+                dead_ends.append(t.replan["diagnosis"])
         if tried:
             tried_lines = "\n".join(f"  - 「{i}」" for i in tried)
             extra = (
                 f"⚠️ 该子目标已重试 {milestone.retry_count} 次。以下操作在本子目标中已全部尝试过"
                 f"（含导致失败或死路的路径），请务必选择完全不同的路径：\n{tried_lines}"
             )
+        if dead_ends:
+            dedup = list(dict.fromkeys(dead_ends))
+            dead_end_lines = "\n".join(f"  - {d}" for d in dedup)
+            extra_text = (
+                "⚠️ 以下路径已被确认为死路，禁止再次尝试：\n"
+                f"{dead_end_lines}"
+            )
+            extra = f"{extra}\n\n{extra_text}" if extra else extra_text
     prompt = PLAN_PROMPT.format(
         milestone_name=milestone.name,
         milestone_desc=milestone.description,

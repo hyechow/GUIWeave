@@ -1105,13 +1105,13 @@ class MilestoneSupervisorPolicy:
         all_tried: list[str] = []
         for idx, t in enumerate(history):
             sv = t.supervisor
-            if not sv or not sv.instruction or sv.milestone_id != milestone_id:
+            if not sv or not sv.instruction:
                 continue
-            all_tried.append(sv.instruction)
+            if sv.milestone_id == milestone_id:
+                all_tried.append(sv.instruction)
             next_sv = history[idx + 1].supervisor if idx + 1 < len(history) else None
             if (
                 next_sv
-                and next_sv.milestone_id == milestone_id
                 and ("卡住" in (next_sv.summary or "") or "重试" in (next_sv.summary or ""))
             ):
                 stuck_tried.add(sv.instruction)

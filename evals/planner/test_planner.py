@@ -51,10 +51,19 @@ def _check_hints(result: _PlanResult, expected: dict) -> list[str]:
     return details
 
 
-def _build_history(milestone_id: str, instructions: list[str]) -> list[PolicyTurn]:
-    """Build minimal PolicyTurn history from a list of instruction strings."""
+def _build_history(
+    milestone_id: str,
+    instructions: list[str],
+    last_replan_diagnosis: str = "",
+) -> list[PolicyTurn]:
+    """Build minimal PolicyTurn history from a list of instruction strings.
+
+    If last_replan_diagnosis is provided, attaches it as a replan entry on the
+    final turn so run_planner's dead-end injection logic fires correctly.
+    """
     turns = []
     for i, inst in enumerate(instructions):
+        is_last = i == len(instructions) - 1
         turns.append(PolicyTurn(
             index=i + 1,
             observation_source="eval",
@@ -67,6 +76,7 @@ def _build_history(milestone_id: str, instructions: list[str]) -> list[PolicyTur
                 milestone_id=milestone_id,
             ),
             executed=True,
+            replan={"diagnosis": last_replan_diagnosis} if (is_last and last_replan_diagnosis) else None,
         ))
     return turns
 
@@ -88,7 +98,11 @@ def test_planner() -> None:
             **c["checker"],
             "visible_evidence": c["checker"].get("visible_evidence", []),
         })
-        history = _build_history(c["label"], c.get("history", []))
+        history = _build_history(
+            c["label"],
+            c.get("history", []),
+            last_replan_diagnosis=c.get("last_replan_diagnosis", ""),
+        )
 
         try:
             result = run_planner(

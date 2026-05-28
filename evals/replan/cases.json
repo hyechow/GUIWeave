@@ -25,5 +25,30 @@
       "must_contain": ["点击"],
       "must_not_contain": ["滚动", "滑动", "scroll", "向上", "向下"]
     }
+  },
+  {
+    "label": "微信账单筛选弹窗-多次scroll未找到日期选择器-应关闭弹窗",
+    "screenshot": "evals/replan/screenshots/wechat_bill_filter_no_datepicker.png",
+    "milestone": {
+      "name": "设置起始日期为2026-02-04",
+      "description": "在筛选界面中，将起始日期设置为2026年2月4日。",
+      "success_condition": "起始日期显示为2026-02-04",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action",
+      "retry_count": 1
+    },
+    "history": [
+      "在筛选弹窗内向上滑动以查看并显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域"
+    ],
+    "stuck_reason": "连续 3 帧截图相似度 [100.00%, 100.00%]，屏幕无实质变化",
+    "issues": ["屏幕像素变化低于阈值"],
+    "expected": {
+      "must_contain": ["关闭", "取消"],
+      "must_not_contain": ["向上滑动", "向上滚动", "继续滑动", "继续滚动"]
+    }
   }
 ]
