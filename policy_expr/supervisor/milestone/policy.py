@@ -538,6 +538,13 @@ class MilestoneSupervisorPolicy:
         self._last_replan = replan
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")
 
+        # Persist diagnosis as a global constraint so the regular Planner (not just
+        # the next Replan prompt) avoids re-entering the same dead-end path.
+        if replan.diagnosis:
+            dead_end_constraint = f"⚠️ 已诊断死路-禁止重走：{replan.diagnosis}"
+            if dead_end_constraint not in self._global_constraints:
+                self._global_constraints.append(dead_end_constraint)
+
         if replan.strategy == "force_complete":
             print(f"  [Replan] replanner 判定验收条件已满足，强制完成")
             return self._advance(milestone, observation, history)
