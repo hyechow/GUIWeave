@@ -49,7 +49,7 @@ class ActionExecutor:
         self.phone = phone
         self.calibrator = calibrator
 
-    def _snap(self, ax: float, ay: float, png_bytes: bytes | None = None, hint: str = "") -> tuple[float, float]:
+    def _snap(self, ax: float, ay: float, png_bytes: bytes | None = None, hint: str = "", action: Action | None = None) -> tuple[float, float]:
         """Snap normalized (0-1000) coordinates.
 
         YOLO and OCR both run when hint is available. OCR wins when it finds a
@@ -76,14 +76,20 @@ class ActionExecutor:
                 print(f"OCR 覆盖 YOLO: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f}) [匹配={ocr_len}字]")
             else:
                 print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f})")
+            if action is not None:
+                action.snap = {"method": "ocr", "original": [ax, ay], "snapped": list(ocr_pos), "ocr_len": ocr_len}
             return ocr_pos
 
         if yolo_pos:
             print(f"YOLO 吸附: ({ax:.0f}, {ay:.0f}) → ({yolo_pos[0]:.0f}, {yolo_pos[1]:.0f})")
+            if action is not None:
+                action.snap = {"method": "yolo", "original": [ax, ay], "snapped": list(yolo_pos)}
             return yolo_pos
 
         if ocr_pos:
             print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f})")
+            if action is not None:
+                action.snap = {"method": "ocr", "original": [ax, ay], "snapped": list(ocr_pos), "ocr_len": ocr_len}
             return ocr_pos
 
         return ax, ay
@@ -124,14 +130,14 @@ class ActionExecutor:
 
         hint = action.description or ""
         if action.action_type in ("tap", "click") and action.x is not None and action.y is not None:
-            ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint)
+            ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint, action=action)
             lx, ly = logical_xy(ax, ay)
             if not self._tap(lx, ly, decision, app_name):
                 return False
 
         elif action.action_type == "type" and action.text:
             if action.x is not None and action.y is not None:
-                ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint)
+                ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint, action=action)
                 lx, ly = logical_xy(ax, ay)
                 if not self._tap(lx, ly, decision, app_name):
                     return False

@@ -136,6 +136,10 @@ class Action(BaseModel):
         description="要输入的文字内容（action_type 为 type 时必填）",
     )
     description: str = Field(description="该操作的中文说明，如「点击目标应用图标」")
+    snap: Optional[dict] = Field(
+        default=None,
+        description="执行层内部字段：YOLO/OCR 吸附记录，包含 method/original_xy/snapped_xy",
+    )
 
     @model_validator(mode="after")
     def _require_text_for_type(self) -> "Action":

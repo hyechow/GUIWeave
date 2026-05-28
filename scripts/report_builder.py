@@ -58,6 +58,7 @@ def _load_img(path: Path) -> Image.Image:
     return Image.open(path).convert("RGBA")
 
 
+
 def annotate_tap(
     img: Image.Image,
     points: list[tuple[float, float, int]],
@@ -107,6 +108,7 @@ def annotate_action(
     text: str | None = None,
     to_x: float | None = None,
     to_y: float | None = None,
+    snap: dict | None = None,
 ) -> Image.Image:
     """Draw action annotation on image with type-specific visuals."""
     img = img.copy()
@@ -118,8 +120,13 @@ def annotate_action(
 
     if x is None or y is None:
         return img
-    cx = int(x / 1000 * w)
-    cy = int(y / 1000 * h)
+    # When snap exists, draw main marker at snapped position (where action actually executed)
+    if snap and snap.get("snapped"):
+        cx = int(snap["snapped"][0] / 1000 * w)
+        cy = int(snap["snapped"][1] / 1000 * h)
+    else:
+        cx = int(x / 1000 * w)
+        cy = int(y / 1000 * h)
 
     if action_type in ("scroll", "drag"):
         # Draw start circle + arrow to end
@@ -206,6 +213,20 @@ def annotate_action(
         bbox = font.getbbox(label)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         draw.text((cx - tw // 2, cy - th // 2), label, fill=(255, 255, 255, 255), font=font)
+
+    # Draw snap visualization: original (LLM) vs snapped (YOLO/OCR)
+    if snap and snap.get("original"):
+        method = snap.get("method", "?").lower()
+        snap_color = (255, 165, 0, 220) if method == "yolo" else (0, 200, 100, 220)  # orange=YOLO, green=OCR
+        ox = int(snap["original"][0] / 1000 * w)
+        oy = int(snap["original"][1] / 1000 * h)
+        # Solid circle at original (LLM-predicted) position
+        draw.ellipse(
+            [ox - DOT_RADIUS, oy - DOT_RADIUS, ox + DOT_RADIUS, oy + DOT_RADIUS],
+            outline=snap_color, width=3,
+        )
+        # Line connecting original to snapped
+        draw.line([(ox, oy), (cx, cy)], fill=snap_color, width=2)
 
     return img
 
@@ -354,6 +375,7 @@ class ReportStep:
     action_text: str | None = None
     action_to_x: float | None = None
     action_to_y: float | None = None
+    snap: dict | None = None
 
 
 @dataclass
@@ -959,6 +981,7 @@ class RunnerReportBuilder:
                     text=action.get("text"),
                     to_x=action.get("to_x"),
                     to_y=action.get("to_y"),
+                    snap=action.get("snap"),
                 )
                 ann_path = run_dir / f"screenshot_turn_{idx}_ann.jpg"
                 _save_report_img(annotated_img, ann_path)
@@ -995,6 +1018,7 @@ class RunnerReportBuilder:
                 action_text=action.get("text"),
                 action_to_x=action.get("to_x"),
                 action_to_y=action.get("to_y"),
+                snap=action.get("snap"),
             ))
 
         # Build milestone lookup from persisted decomposition
@@ -1920,6 +1944,23 @@ def _render_step_detail(step: ReportStep, detail_id: str) -> str:
     if step.summary and step.summary != step.description:
         summary_html = f'<div class="detail-summary">{_safe(step.summary)}</div>'
 
+    snap_html = ""
+    if step.snap and step.snap.get("original"):
+        method = step.snap.get("method", "?").upper()
+        orig = step.snap["original"]
+        snapped = step.snap.get("snapped")
+        snap_color = "#f59e0b" if method == "YOLO" else "#22c55e"
+        dist = ""
+        if snapped:
+            d = ((orig[0] - snapped[0]) ** 2 + (orig[1] - snapped[1]) ** 2) ** 0.5
+            dist = f' · <span style="color:{snap_color}">距离 {d:.1f}</span>'
+        snap_html = (
+            f'<div class="detail-instruction">'
+            f'<span style="color:{snap_color};font-weight:600">{method}</span> 吸附 '
+            f'({orig[0]:.0f},{orig[1]:.0f})→({snapped[0]:.0f},{snapped[1]:.0f})'
+            f'{dist}</div>'
+        )
+
     ss_html = ""
     if step.annotated_before_url:
         ss_html = f'<div class="detail-ss"><img src="{step.annotated_before_url}" onclick="zoomImg(this.src)" alt="Turn"></div>'
@@ -1935,6 +1976,7 @@ def _render_step_detail(step: ReportStep, detail_id: str) -> str:
           <span class="detail-status {status_cls.replace('thumb-status', 'detail-status')}">{step.status}</span>
         </div>
         {instruction_html}
+        {snap_html}
         {summary_html}
         {_render_timing_html(step.timings)}
       </div>
