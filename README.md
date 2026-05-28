@@ -163,6 +163,8 @@ uv run python policy_expr/runner.py "check today's food delivery orders" \
 
 After each run, an HTML report is automatically generated showing the full task execution trace:
 
+![Execution report](policy_expr/assets/report.png)
+
 - **Milestone decomposition** — sub-goals with names, descriptions, and acceptance criteria
 - **Per-milestone thumbnail gallery** — one row of annotated screenshots per sub-goal
 - **Action annotations** — tap circles, scroll arrows, type text bubbles, drag start/end points
