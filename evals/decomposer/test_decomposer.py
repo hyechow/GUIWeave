@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from policy_expr.schemas import Observation
+from policy_expr.self_learning.app_summary import auto_discover_knowledge
 from policy_expr.supervisor.milestone import MilestoneSupervisorPolicy
 
 CASES_FILE = Path(__file__).parent / "cases.json"
@@ -66,6 +67,52 @@ def _check_milestones(milestones: list, constraints: list[str], expected: dict) 
     return details
 
 
+def _check_assertions(milestones: list, assertions: list[str]) -> list[str]:
+    """Check named assertions beyond simple keyword matching."""
+    details = []
+    for assertion in assertions:
+        if assertion == "address_before_search":
+            address_idx = None
+            search_idx = None
+            for i, m in enumerate(milestones):
+                name_desc = f"{m.name} {m.description}".lower()
+                address_terms = ("地址", "配送", "收货", "address", "delivery")
+                address_action_terms = (
+                    "设置",
+                    "修改",
+                    "选择",
+                    "确认",
+                    "切换",
+                    "设为",
+                    "set",
+                    "select",
+                    "choose",
+                    "confirm",
+                    "change",
+                )
+                search_terms = ("搜索", "查找", "search", "搜")
+                if (
+                    address_idx is None
+                    and any(kw in name_desc for kw in address_terms)
+                    and any(kw in name_desc for kw in address_action_terms)
+                ):
+                    address_idx = i
+                if search_idx is None and any(kw in name_desc for kw in search_terms):
+                    search_idx = i
+            if address_idx is None:
+                details.append("address_before_search: no milestone sets/selects address/delivery")
+            elif search_idx is None:
+                details.append("address_before_search: no milestone mentions search")
+            elif address_idx > search_idx:
+                details.append(
+                    f"address_before_search: address step (#{address_idx} '{milestones[address_idx].name}') "
+                    f"comes AFTER search step (#{search_idx} '{milestones[search_idx].name}')"
+                )
+        else:
+            details.append(f"unknown assertion: {assertion}")
+    return details
+
+
 def test_decomposer() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     for c in cases:
@@ -79,6 +126,13 @@ def test_decomposer() -> None:
 
         try:
             policy = MilestoneSupervisorPolicy()
+            knowledge = auto_discover_knowledge(c["goal"])
+            if knowledge:
+                policy.set_app_knowledge(
+                    knowledge.navigation,
+                    app_name=knowledge.app_name,
+                    elements=knowledge.elements,
+                )
             policy._decompose(c["goal"], observation)
             milestones = [policy._milestones[mid] for mid in policy._order]
             constraints = policy._global_constraints
@@ -87,6 +141,7 @@ def test_decomposer() -> None:
             continue
 
         details = _check_milestones(milestones, constraints, c["expected"])
+        details.extend(_check_assertions(milestones, c.get("assertions", [])))
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
         if not ok:

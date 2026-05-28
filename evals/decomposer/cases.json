@@ -47,5 +47,17 @@
       "any_milestone_kind": ["filter"],
       "constraints_contain": ["2026-05"]
     }
+  },
+  {
+    "label": "美团点外卖-地址应在搜索前设置",
+    "source_log": "logs/policy_expr/benchmark/20260528_104755/context.json",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "在美团上帮我点一杯瑞幸的大杯生椰拿铁，送到中惠山畔名城家里",
+    "expected": {
+      "min_milestones": 5,
+      "any_milestone_contains": ["中惠山畔名城", "瑞幸", "大杯", "生椰拿铁"],
+      "any_milestone_kind": ["action", "filter"]
+    },
+    "assertions": ["address_before_search"]
   }
 ]
