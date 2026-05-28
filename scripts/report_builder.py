@@ -340,7 +340,8 @@ class ReportStep:
     y: float | None
     description: str
     annotated_before_url: str  # path to annotated screenshot
-    after_url: str | None      # screenshot after action
+    raw_screenshot_url: str = ""  # path to raw screenshot (no annotations)
+    after_url: str | None = None      # screenshot after action
     status: str = ""  # ✓ ✗ ↩ ""
     timestamp: str = ""  # ISO timestamp
     milestone_id: str = ""
@@ -361,6 +362,10 @@ class ReportPage:
     steps: list[ReportStep] = field(default_factory=list)
     milestone_id: str = ""
     milestone_kind: str = ""
+    milestone_name: str = ""
+    milestone_description: str = ""
+    success_condition: str = ""
+    verify_url: str = ""  # verification screenshot (first turn of next milestone)
 
 
 @dataclass
@@ -369,6 +374,7 @@ class ReportData:
     pages: list[ReportPage] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     milestones: list[dict] = field(default_factory=list)
+    decompose_summary: str = ""  # First-turn supervisor summary with decomposition info
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -962,6 +968,8 @@ class RunnerReportBuilder:
             else:
                 annotated_url = ""
 
+            raw_url = ss_path.name if ss_path.exists() else ""
+
             status = "✓" if executed else "✗"
             if atype == "none":
                 status = "— skip"
@@ -973,6 +981,7 @@ class RunnerReportBuilder:
                 y=y,
                 description=desc or summary,
                 annotated_before_url=annotated_url,
+                raw_screenshot_url=raw_url,
                 after_url=None,
                 status=status,
                 timestamp=turn.get("timestamp", ""),
@@ -988,6 +997,11 @@ class RunnerReportBuilder:
                 action_to_y=action.get("to_y"),
             ))
 
+        # Build milestone lookup from persisted decomposition
+        ms_lookup: dict[str, dict] = {}
+        for ms in ctx.get("milestones", []):
+            ms_lookup[ms.get("id", "")] = ms
+
         # Group steps by milestone
         pages: list[ReportPage] = []
         current_mid = ""
@@ -998,22 +1012,30 @@ class RunnerReportBuilder:
             mid = step.milestone_id or "_no_milestone"
             if mid != current_mid:
                 if current_page_steps:
+                    ms_meta = ms_lookup.get(current_mid, {})
                     pages.append(ReportPage(
-                        title=f"Milestone {current_mid}",
+                        title=ms_meta.get("name", f"Milestone {current_mid}"),
                         steps=current_page_steps,
                         milestone_id=current_mid,
                         milestone_kind=current_page_steps[0].milestone_kind,
+                        milestone_name=ms_meta.get("name", ""),
+                        milestone_description=ms_meta.get("description", ""),
+                        success_condition=ms_meta.get("success_condition", ""),
                     ))
                 current_mid = mid
                 current_page_steps = []
             current_page_steps.append(step)
 
         if current_page_steps:
+            ms_meta = ms_lookup.get(current_mid, {})
             pages.append(ReportPage(
-                title=f"Milestone {current_mid}",
+                title=ms_meta.get("name", f"Milestone {current_mid}"),
                 steps=current_page_steps,
                 milestone_id=current_mid,
                 milestone_kind=current_page_steps[0].milestone_kind,
+                milestone_name=ms_meta.get("name", ""),
+                milestone_description=ms_meta.get("description", ""),
+                success_condition=ms_meta.get("success_condition", ""),
             ))
 
         # Build milestones summary
@@ -1025,14 +1047,29 @@ class RunnerReportBuilder:
                     ms_timings[k] = ms_timings.get(k, 0) + v
             milestones_info.append({
                 "id": page.milestone_id,
+                "name": page.milestone_name,
                 "kind": page.milestone_kind,
+                "description": page.milestone_description,
+                "success_condition": page.success_condition,
                 "turns": f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}",
                 "total_time": sum(ms_timings.values()),
                 "timings": ms_timings,
             })
 
+        # Set verification screenshot: raw (unannotated) screenshot of next milestone's first turn
+        for i, page in enumerate(pages):
+            if i + 1 < len(pages):
+                next_first = pages[i + 1].steps[0] if pages[i + 1].steps else None
+                if next_first and next_first.raw_screenshot_url:
+                    page.verify_url = next_first.raw_screenshot_url
+
         data.pages = pages
         data.milestones = milestones_info
+        # Decompose summary: list all milestones with names
+        ms_parts = []
+        for ms in milestones_info:
+            ms_parts.append(f"#{ms['id']} {ms['name']}（{ms['kind']}）")
+        data.decompose_summary = " → ".join(ms_parts) if ms_parts else ""
         data.stats = {
             "turns": len(turns),
             "executed": total_executed,
@@ -1685,81 +1722,82 @@ HTML_TEMPLATE = """\
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   :root {{
-    --bg: #f1f5f9;
-    --card: #ffffff;
-    --border: #e2e8f0;
-    --text: #1e293b;
-    --muted: #64748b;
-    --radius: 12px;
+    --bg: #f1f5f9; --card: #fff; --border: #e2e8f0;
+    --text: #1e293b; --muted: #64748b; --radius: 12px;
   }}
   body {{ font-family: -apple-system, "PingFang SC", sans-serif; background: var(--bg); padding: 24px; color: var(--text); }}
 
-  .header {{ max-width: 960px; margin: 0 auto 24px; padding: 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
-  .header h1 {{ font-size: 20px; font-weight: 700; margin-bottom: 6px; }}
-  .stats {{ color: var(--muted); font-size: 13px; }}
+  /* Header */
+  .header {{ max-width: 1080px; margin: 0 auto 20px; padding: 20px 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+  .header h1 {{ font-size: 18px; font-weight: 700; margin-bottom: 4px; }}
+  .stats {{ color: var(--muted); font-size: 12px; }}
+  .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
+  .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
 
-  /* Milestone overview */
-  .ms-overview {{ max-width: 960px; margin: 0 auto 24px; display: flex; gap: 8px; flex-wrap: wrap; }}
-  .ms-chip {{ padding: 6px 12px; border-radius: 8px; font-size: 12px; background: var(--card); border: 1px solid var(--border); }}
-  .ms-chip-id {{ font-weight: 600; color: #4338ca; }}
-  .ms-chip-kind {{ color: var(--muted); margin-left: 6px; }}
-  .ms-chip-time {{ color: var(--muted); margin-left: 8px; font-family: monospace; font-size: 11px; }}
+  /* Milestone overview timeline */
+  .ms-timeline {{ max-width: 1080px; margin: 0 auto 20px; display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; }}
+  .ms-chip {{ padding: 5px 10px; border-radius: 6px; font-size: 11px; background: var(--card); border: 1px solid var(--border); cursor: pointer; white-space: nowrap; transition: border-color 0.15s; text-decoration: none; color: inherit; }}
+  .ms-chip:hover {{ border-color: #6366f1; background: #f8fafc; }}
+  .ms-chip-id {{ font-weight: 700; color: #4338ca; }}
+  .ms-chip-kind {{ color: var(--muted); margin-left: 4px; }}
+  .ms-chip-time {{ color: #94a3b8; margin-left: 6px; font-family: monospace; font-size: 10px; }}
 
   /* Milestone section */
-  .milestone {{ max-width: 960px; margin: 0 auto 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
-  .milestone-header {{ padding: 14px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }}
-  .milestone-header h2 {{ font-size: 15px; font-weight: 600; }}
-  .milestone-badge {{ font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; }}
+  .milestone {{ max-width: 1080px; margin: 0 auto 16px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
+  .milestone-header {{ padding: 10px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
+  .milestone-header h2 {{ font-size: 14px; font-weight: 600; }}
+  .milestone-name {{ font-size: 13px; color: var(--text); }}
+  .milestone-desc {{ font-size: 11px; color: var(--muted); width: 100%; }}
+  .milestone-sc {{ font-size: 10px; color: #94a3b8; width: 100%; }}
+  .milestone-badge {{ font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 500; }}
   .milestone-badge-navigation {{ background: #dbeafe; color: #1d4ed8; }}
   .milestone-badge-action {{ background: #fef3c7; color: #92400e; }}
   .milestone-badge-filter {{ background: #ede9fe; color: #5b21b6; }}
   .milestone-badge-collection {{ background: #d1fae5; color: #065f46; }}
   .milestone-badge-default {{ background: #f1f5f9; color: #475569; }}
-  .milestone-time {{ font-size: 12px; color: var(--muted); margin-left: auto; font-family: monospace; }}
+  .milestone-time {{ font-size: 11px; color: var(--muted); margin-left: auto; font-family: monospace; }}
 
-  /* Steps */
-  .steps {{ padding: 8px 16px; }}
-  .step {{ display: flex; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }}
-  .step:last-child {{ border-bottom: none; }}
+  /* Thumbnail gallery — one row per milestone */
+  .gallery {{ display: flex; gap: 6px; padding: 12px 16px; overflow-x: auto; }}
+  .thumb {{ flex-shrink: 0; width: 140px; cursor: pointer; position: relative; border-radius: 8px; overflow: hidden; border: 2px solid transparent; transition: border-color 0.15s; }}
+  .thumb:hover {{ border-color: #6366f1; }}
+  .thumb.active {{ border-color: #4338ca; }}
+  .thumb img {{ width: 100%; display: block; }}
+  .thumb-label {{ position: absolute; bottom: 0; left: 0; right: 0; padding: 3px 6px; font-size: 10px; font-weight: 600; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,0.7)); }}
+  .thumb-status {{ position: absolute; top: 4px; right: 4px; width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #fff; font-weight: 700; }}
+  .thumb-status-ok {{ background: #22c55e; }}
+  .thumb-status-fail {{ background: #ef4444; }}
+  .thumb-status-skip {{ background: #9ca3af; }}
+  .thumb-action {{ position: absolute; top: 4px; left: 4px; width: 14px; height: 14px; border-radius: 50%; }}
 
-  /* Step left: screenshot */
-  .step-ss {{ width: 180px; flex-shrink: 0; }}
-  .step-ss img {{ width: 100%; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; display: block; }}
-
-  /* Step right: info */
-  .step-info {{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }}
-  .step-top {{ display: flex; align-items: center; gap: 8px; }}
-  .step-idx {{ display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 50%; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }}
-  .step-action-type {{ font-size: 11px; padding: 1px 6px; border-radius: 4px; font-weight: 500; }}
-  .step-action-desc {{ font-size: 13px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-  .step-status {{ font-size: 12px; font-weight: 600; margin-left: auto; flex-shrink: 0; }}
-  .step-status-ok {{ color: #16a34a; }}
-  .step-status-fail {{ color: #dc2626; }}
-  .step-status-skip {{ color: #9ca3af; }}
-
-  .step-instruction {{ font-size: 12px; color: var(--muted); }}
-  .step-instruction-label {{ color: #94a3b8; }}
-  .step-summary {{ font-size: 12px; color: #475569; line-height: 1.4; }}
+  /* Detail panel — shown when thumbnail clicked */
+  .detail {{ display: none; padding: 12px 20px; border-top: 1px solid var(--border); }}
+  .detail.show {{ display: flex; gap: 20px; }}
+  .detail-ss {{ width: 200px; flex-shrink: 0; }}
+  .detail-ss img {{ width: 100%; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; }}
+  .detail-info {{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }}
+  .detail-top {{ display: flex; align-items: center; gap: 8px; }}
+  .detail-idx {{ display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 50%; font-size: 10px; font-weight: 700; color: #fff; flex-shrink: 0; }}
+  .detail-at {{ font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 500; }}
+  .detail-desc {{ font-size: 13px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .detail-status {{ font-size: 11px; font-weight: 600; flex-shrink: 0; }}
+  .detail-instruction {{ font-size: 12px; color: var(--muted); }}
+  .detail-summary {{ font-size: 12px; color: #475569; line-height: 1.4; }}
 
   /* Timing bar */
-  .timing-bar {{ display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #f1f5f9; margin-top: 2px; }}
+  .timing-bar {{ display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: #f1f5f9; margin-top: 2px; }}
   .timing-seg {{ height: 100%; min-width: 1px; }}
-  .timing-labels {{ display: flex; gap: 10px; font-size: 10px; color: #94a3b8; margin-top: 3px; flex-wrap: wrap; }}
-  .timing-label-dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 2px; vertical-align: middle; margin-right: 2px; }}
+  .timing-labels {{ display: flex; gap: 8px; font-size: 9px; color: #94a3b8; margin-top: 2px; flex-wrap: wrap; }}
+  .timing-label-dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 2px; vertical-align: middle; margin-right: 2px; }}
 
   /* Action type colors */
-  .at-tap {{ background: #dc3232; }}
-  .at-type {{ background: #a032c8; }}
-  .at-scroll {{ background: #32b432; }}
-  .at-drag {{ background: #3296dc; }}
-  .at-home {{ background: #3278dc; }}
-  .at-press_enter {{ background: #dca000; }}
-  .at-clear_text {{ background: #808080; }}
-  .at-none {{ background: #c0c0c0; }}
+  .at-tap {{ background: #dc3232; }} .at-type {{ background: #a032c8; }}
+  .at-scroll {{ background: #32b432; }} .at-drag {{ background: #3296dc; }}
+  .at-home {{ background: #3278dc; }} .at-press_enter {{ background: #dca000; }}
+  .at-clear_text {{ background: #808080; }} .at-none {{ background: #c0c0c0; }}
 
   .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; justify-content: center; align-items: center; }}
-  .modal.show {{ display: flex; }}
-  .modal img {{ max-width: 90%; max-height: 90%; border-radius: 8px; }}
+  .modal.show {{ display: flex; }} .modal img {{ max-width: 90%; max-height: 90%; border-radius: 8px; }}
 </style>
 </head>
 <body>
@@ -1767,21 +1805,38 @@ HTML_TEMPLATE = """\
 <div class="header">
   <h1>{title}</h1>
   <div class="stats">{stats}</div>
+  {decompose_html}
 </div>
 
-{milestones_overview}
+<div class="ms-timeline">{milestones_overview}</div>
+
 {pages_html}
 
 <div class="modal" id="modal" onclick="this.classList.remove('show')">
   <img id="modal-img" src="">
 </div>
 <script>
-document.querySelectorAll('.step-ss img').forEach(img => {{
-  img.onclick = () => {{
-    document.getElementById('modal-img').src = img.src;
-    document.getElementById('modal').classList.add('show');
-  }};
-}});
+function showDetail(id) {{
+  var el = document.getElementById(id);
+  if (el.classList.contains('show')) {{
+    el.classList.remove('show');
+    var thumb = document.querySelector('[data-detail="' + id + '"]');
+    if (thumb) thumb.classList.remove('active');
+    return;
+  }}
+  // Hide all details in same milestone
+  var ms = el.closest('.milestone');
+  ms.querySelectorAll('.detail').forEach(d => d.classList.remove('show'));
+  ms.querySelectorAll('.thumb').forEach(t => t.classList.remove('active'));
+  // Show selected
+  el.classList.add('show');
+  var thumb = document.querySelector('[data-detail="' + id + '"]');
+  if (thumb) thumb.classList.add('active');
+}}
+function zoomImg(src) {{
+  document.getElementById('modal-img').src = src;
+  document.getElementById('modal').classList.add('show');
+}}
 </script>
 </body>
 </html>
@@ -1804,9 +1859,86 @@ KIND_BADGE = {
     "collection": "milestone-badge-collection",
 }
 
+AT_LABELS = {
+    "tap": "点击", "type": "输入", "scroll": "滚动", "drag": "拖动",
+    "home": "主屏", "press_enter": "回车", "clear_text": "清空", "none": "跳过",
+}
 
-def _safe(text: str) -> str:
+
+def _safe(text: str | None) -> str:
+    if not text:
+        return ""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _render_timing_html(timings: dict[str, float]) -> str:
+    if not timings:
+        return ""
+    total = sum(timings.values())
+    if total <= 0:
+        return ""
+    segs = ""
+    labels = ""
+    for tname, tval in timings.items():
+        pct = tval / total * 100
+        tc = TIMING_COLORS.get(tname, "#94a3b8")
+        segs += f'<div class="timing-seg" style="width:{pct:.1f}%;background:{tc}" title="{tname}: {tval:.2f}s"></div>'
+        labels += (
+            f'<span><span class="timing-label-dot" style="background:{tc}"></span>'
+            f'{tname} {tval:.1f}s</span>'
+        )
+    return (
+        f'<div class="timing-bar">{segs}</div>'
+        f'<div class="timing-labels">{labels} · total {total:.1f}s</div>'
+    )
+
+
+def _render_step_detail(step: ReportStep, detail_id: str) -> str:
+    """Render the expandable detail panel for a step."""
+    at_cls = f"at-{step.action_type}"
+    at_label = AT_LABELS.get(step.action_type, step.action_type)
+
+    # Status
+    if "✓" in step.status:
+        status_cls, status_text = "thumb-status-ok", "✓"
+    elif "✗" in step.status:
+        status_cls, status_text = "thumb-status-fail", "✗"
+    else:
+        status_cls, status_text = "thumb-status-skip", "—"
+
+    action_detail = _safe(step.description)
+    if step.action_text:
+        action_detail += f' <span style="color:#a032c8">「{_safe(step.action_text[:30])}」</span>'
+    if step.action_direction:
+        dir_label = {"up": "↑", "down": "↓", "left": "←", "right": "→"}.get(step.action_direction, step.action_direction)
+        action_detail += f' <span style="color:#32b432">{dir_label}</span>'
+
+    instruction_html = ""
+    if step.instruction:
+        instruction_html = f'<div class="detail-instruction">指令：{_safe(step.instruction)}</div>'
+    summary_html = ""
+    if step.summary and step.summary != step.description:
+        summary_html = f'<div class="detail-summary">{_safe(step.summary)}</div>'
+
+    ss_html = ""
+    if step.annotated_before_url:
+        ss_html = f'<div class="detail-ss"><img src="{step.annotated_before_url}" onclick="zoomImg(this.src)" alt="Turn"></div>'
+
+    return f"""
+    <div class="detail" id="{detail_id}">
+      {ss_html}
+      <div class="detail-info">
+        <div class="detail-top">
+          <span class="detail-idx {at_cls}">{step.label.split()[-1]}</span>
+          <span class="detail-at" style="background:#f1f5f9;color:#475569">{at_label}</span>
+          <span class="detail-desc">{action_detail}</span>
+          <span class="detail-status {status_cls.replace('thumb-status', 'detail-status')}">{step.status}</span>
+        </div>
+        {instruction_html}
+        {summary_html}
+        {_render_timing_html(step.timings)}
+      </div>
+    </div>"""
 
 
 def generate_html(data: ReportData, grid: bool = False) -> str:
@@ -1815,119 +1947,99 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts.append(f"total_time: {total_time:.1f}s")
     stats_str = "  |  ".join(stats_parts)
 
-    # Milestones overview chips
+    # Decompose summary
+    decompose_html = ""
+    if data.decompose_summary:
+        decompose_html = (
+            f'<div class="decompose">'
+            f'<span class="decompose-label">子目标分解：</span>'
+            f'{_safe(data.decompose_summary)}</div>'
+        )
+
+    # Milestone timeline chips
     overview_parts = []
     for m in data.milestones:
         mid = _safe(m.get("id", "?"))
+        name = _safe(m.get("name", ""))
         kind = _safe(m.get("kind", ""))
         turns = m.get("turns", "")
         t = m.get("total_time", 0)
         overview_parts.append(
-            f'<div class="ms-chip">'
+            f'<a class="ms-chip" href="#ms-{mid}">'
             f'<span class="ms-chip-id">#{mid}</span>'
-            f'<span class="ms-chip-kind">{kind}</span>'
-            f'<span class="ms-chip-time">{t:.1f}s (Turn {turns})</span>'
-            f'</div>'
+            f'<span class="ms-chip-kind">{name or kind}</span>'
+            f'<span class="ms-chip-time">{t:.1f}s · Turn {turns}</span>'
+            f'</a>'
         )
-    milestones_overview = f'<div class="ms-overview">{"".join(overview_parts)}</div>'
+    milestones_overview = "".join(overview_parts)
 
     # Per-milestone sections
     pages_html = ""
     for page in data.pages:
         badge_cls = KIND_BADGE.get(page.milestone_kind, "milestone-badge-default")
         ms_time = sum(sum(s.timings.values()) for s in page.steps)
+        mid_safe = _safe(page.milestone_id)
 
-        steps_html = ""
-        for step in page.steps:
-            # Screenshot
-            ss_html = ""
-            if step.annotated_before_url:
-                ss_html = f'<div class="step-ss"><img src="{step.annotated_before_url}" alt="Turn"></div>'
+        thumbs_html = ""
+        details_html = ""
+        for si, step in enumerate(page.steps):
+            turn_no = step.label.split()[-1]
+            detail_id = f"detail-ms{mid_safe}-s{si}"
 
-            # Action type badge
-            at_cls = f"at-{step.action_type}"
-            at_label = {
-                "tap": "点击", "type": "输入", "scroll": "滚动", "drag": "拖动",
-                "home": "主屏", "press_enter": "回车", "clear_text": "清空", "none": "跳过",
-            }.get(step.action_type, step.action_type)
-
-            # Status
+            # Status indicator
             if "✓" in step.status:
-                status_cls = "step-status-ok"
+                status_cls, status_text = "thumb-status-ok", "✓"
             elif "✗" in step.status:
-                status_cls = "step-status-fail"
+                status_cls, status_text = "thumb-status-fail", "✗"
             else:
-                status_cls = "step-status-skip"
+                status_cls, status_text = "thumb-status-skip", "—"
 
-            # Action detail
-            action_detail = _safe(step.description)
-            if step.action_text:
-                action_detail += f' <span style="color:#a032c8">「{_safe(step.action_text[:30])}」</span>'
-            if step.action_direction:
-                dir_label = {"up": "↑", "down": "↓", "left": "←", "right": "→"}.get(step.action_direction, step.action_direction)
-                action_detail += f' <span style="color:#32b432">{dir_label}</span>'
+            at_cls = f"at-{step.action_type}"
+            at_label = AT_LABELS.get(step.action_type, "")
 
-            # Instruction + summary
-            instruction_html = ""
-            if step.instruction:
-                instruction_html = (
-                    f'<div class="step-instruction">'
-                    f'<span class="step-instruction-label">指令：</span>{_safe(step.instruction)}'
+            # Thumbnail
+            if step.annotated_before_url:
+                thumbs_html += (
+                    f'<div class="thumb" data-detail="{detail_id}" onclick="showDetail(\'{detail_id}\')">'
+                    f'<img src="{step.annotated_before_url}" alt="Turn {turn_no}">'
+                    f'<div class="thumb-action {at_cls}" title="{at_label}"></div>'
+                    f'<div class="thumb-status {status_cls}">{status_text}</div>'
+                    f'<div class="thumb-label">T{turn_no} · {at_label}</div>'
                     f'</div>'
                 )
-            summary_html = ""
-            if step.summary and step.summary != step.description:
-                summary_html = f'<div class="step-summary">{_safe(step.summary)}</div>'
 
-            # Timing bar
-            timing_html = ""
-            if step.timings:
-                total = sum(step.timings.values())
-                if total > 0:
-                    segs = ""
-                    labels = ""
-                    for tname, tval in step.timings.items():
-                        pct = tval / total * 100
-                        tc = TIMING_COLORS.get(tname, "#94a3b8")
-                        segs += f'<div class="timing-seg" style="width:{pct:.1f}%;background:{tc}" title="{tname}: {tval:.2f}s"></div>'
-                        labels += (
-                            f'<span><span class="timing-label-dot" style="background:{tc}"></span>'
-                            f'{tname} {tval:.1f}s</span>'
-                        )
-                    timing_html = (
-                        f'<div class="timing-bar">{segs}</div>'
-                        f'<div class="timing-labels">{labels} · total {total:.1f}s</div>'
-                    )
+            # Detail panel (hidden until clicked)
+            details_html += _render_step_detail(step, detail_id)
 
-            steps_html += f"""
-            <div class="step">
-              {ss_html}
-              <div class="step-info">
-                <div class="step-top">
-                  <span class="step-idx {at_cls}">{step.label.split()[-1]}</span>
-                  <span class="step-action-type" style="background:#f1f5f9;color:#475569">{at_label}</span>
-                  <span class="step-action-desc">{action_detail}</span>
-                  <span class="step-status {status_cls}">{step.status}</span>
-                </div>
-                {instruction_html}
-                {summary_html}
-                {timing_html}
-              </div>
-            </div>"""
-
+        desc_html = f'<div class="milestone-desc">{_safe(page.milestone_description)}</div>' if page.milestone_description else ""
+        sc_html = f'<div class="milestone-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
+        verify_thumb = ""
+        if page.verify_url:
+            verify_thumb = (
+                f'<div class="thumb" style="border-color:#22c55e40" onclick="zoomImg(this.querySelector(\'img\').src)">'
+                f'<img src="{page.verify_url}" alt="验收截图">'
+                f'<div class="thumb-status thumb-status-ok">✓</div>'
+                f'<div class="thumb-label" style="background:linear-gradient(transparent, rgba(34,197,94,0.7))">验收</div>'
+                f'</div>'
+            )
         pages_html += f"""
-        <div class="milestone" id="ms-{_safe(page.milestone_id)}">
+        <div class="milestone" id="ms-{mid_safe}">
           <div class="milestone-header">
-            <h2>Milestone #{_safe(page.milestone_id)}</h2>
+            <h2>#{mid_safe}</h2>
+            <span class="milestone-name">{_safe(page.milestone_name)}</span>
             <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
-            <span class="milestone-time">{ms_time:.1f}s</span>
+            <span class="milestone-time">{ms_time:.1f}s · {len(page.steps)} turns</span>
+            {desc_html}
+            {sc_html}
           </div>
-          <div class="steps">{steps_html}</div>
+          <div class="gallery">{thumbs_html}{verify_thumb}</div>
+          {details_html}
         </div>"""
 
     return HTML_TEMPLATE.format(
         title=_safe(data.title),
         stats=stats_str,
+        decompose_html=decompose_html,
         milestones_overview=milestones_overview,
         pages_html=pages_html,
     )

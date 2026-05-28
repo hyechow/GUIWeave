@@ -423,7 +423,15 @@ def _print_summary(tasks: list[dict], results: dict) -> None:
     total = len(tasks)
     passed = sum(1 for t in tasks if results.get(t["id"], {}).get("status") == "pass")
     failed = sum(1 for t in tasks if results.get(t["id"], {}).get("status") == "fail")
-    console.print(f"\n[bold]结果汇总: {passed}/{total} passed, {failed} failed[/bold]\n")
+    console.print(f"\n[bold]结果汇总: {passed}/{total} passed, {failed} failed[/bold]")
+
+    for t in tasks:
+        r = results.get(t["id"], {})
+        report = r.get("report")
+        if report:
+            console.print(f"  [link=file://{report}]{t['id']} report: {report}[/link]")
+
+    console.print()
 
 
 # ── Main ────────────────────────────────────────────────────────────────────

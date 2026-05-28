@@ -243,6 +243,14 @@ def run_once(
         print(f"监督者: {sv_step.summary}")
         if hud: hud.update(f"Turn 1 — {sv_step.summary}")
 
+        # Persist milestone decomposition
+        if not context.milestones and hasattr(supervisor, "_milestones"):
+            context.milestones = [
+                {"id": m.id, "name": m.name, "description": m.description,
+                 "kind": m.kind, "success_condition": m.success_condition}
+                for m in supervisor._milestones.values()
+            ]
+
         action_decision = None
         executed = False
 
@@ -367,6 +375,14 @@ def run_agent_loop(
             sv_step = supervisor.step(observation, context.goal, context.turns)
             _say(f"监督者: {sv_step.summary}")
             _status(turn_no, sv_step.summary)
+
+            # Persist milestone decomposition after first step
+            if not context.milestones and hasattr(supervisor, "_milestones"):
+                context.milestones = [
+                    {"id": m.id, "name": m.name, "description": m.description,
+                     "kind": m.kind, "success_condition": m.success_condition}
+                    for m in supervisor._milestones.values()
+                ]
 
             if hasattr(supervisor, "task_type") and context.task_type is None:
                 context.task_type = supervisor.task_type

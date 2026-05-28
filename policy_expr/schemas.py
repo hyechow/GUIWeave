@@ -298,3 +298,7 @@ class PolicyContext(BaseModel):
     content_notes: list[str] = Field(default_factory=list)
     content_note_hashes: list[str] = Field(default_factory=list)
     output: Optional[str] = None
+    milestones: list[dict] = Field(
+        default_factory=list,
+        description="子目标分解结果 [{id, name, description, kind, success_condition}]",
+    )
