@@ -155,6 +155,26 @@ uv run python policy_expr/runner.py "查看今日外卖订单" \
   --mode agent-loop --supervisor milestone --auto-continue --hud
 ```
 
+### 任务执行可视化
+
+每次运行后自动生成 HTML 报告，展示完整的任务执行轨迹：
+
+![执行报告](policy_expr/assets/report.png)
+
+- **子目标分解** — 名称、描述、验收条件
+- **按子目标分行展示** — 每行一组缩略图，展示该子目标的操作步骤
+- **Action 标注** — 点击圆圈、滚动箭头、输入文本气泡、拖拽起终点
+- **模块耗时** — 每轮 checker / planner / action_policy 的 stacked bar 图
+- **验收截图** — 每个子目标完成时的无标注截图
+
+```bash
+# Runner 运行后自动在日志目录生成 report.html
+bin/runner "打开微信发一条消息"
+
+# 从已有日志生成报告
+python scripts/report.py runner --run logs/policy_expr/agent-loop/20260528_104755
+```
+
 ### 应用侦察（生成知识库）
 
 ```bash
