@@ -47,6 +47,7 @@ picker 调整数值时优先填写 value_direction，不要用 direction 表达�
 - 不要点击当前选中的年份/月/日文本；点击不会改变 picker 数值。
 - 不要点击顶部绿色/高亮的已选日期展示框；那只是当前值展示，不是调值动作。
 - 根据要调整的列选择 target_area：年份/小时/省份等左列用 picker_left；月份/分钟/城市等中列用 picker_center；日期/秒/区县等右列用 picker_right。
+- 日期范围选择器（含「开始时间」「结束时间」两个字段）：「开始时间」在左侧（x < 400），「结束时间」在右侧（x > 600）。⚠️ 必须严格按照指令中的字段名称选择目标，指令说「开始时间」就点左侧，说「结束时间」就点右侧。description 中的字段名称必须与指令一致，严禁把「开始时间」写成「结束时间」或反过来。
 - amount 一格/一步用 small；多格或大幅调整才用 medium/large。具体阈值：差1-2格用 small，差3-6格用 medium，差7格及以上用 large。必须根据指令中当前值和目标值的差值选择 amount，不要一律输出 small。
 - method 必须是 drag；普通 picker 调值不要用 auto 或 wheel。
 - picker 调值通常不要填写 x/y；只用 target_area 表示列。只有当 picker 列不是常见左/中/右布局时，才填写 x 作为列锚点；不要填写 y。
@@ -62,6 +63,7 @@ scroll/drag 的 x/y 是「滚动锚点」：
 ⚠️ home 只用于「明确需要退出当前应用回到桌面」的场景。如果目标元素在当前页面不可见，应优先寻找应用内的导航路径（如左上角返回按钮、底部 tab），而不是直接 home。
 如果指令含义是「停止操作」「无需操作」「目标已完成」，使用 stop，无需填写任何坐标或文字。
 action 的 description 用中文简要说明操作目标即可。
+⚠️ description 必须与指令中的目标元素名称完全一致！指令说「开始时间」时 description 必须写「开始时间」，指令说「结束时间」时 description 必须写「结束时间」。严禁在 description 中把「开始时间」替换成「结束时间」或反过来。
 
 ## 目标元素不可见时的处理
 如果仔细检查截图后发现指令要求操作的 UI 元素确实不在当前屏幕上，不要猜测坐标或执行其他操作。
@@ -138,6 +140,7 @@ class StructuredOutputPolicy(BaseActionPolicy):
         decision = invoke_structured(llm, messages, ActionDecision)
         _normalize_drag_direction(decision, instruction, direction)
         _normalize_scroll_direction(decision, direction)
+        _fix_date_range_field_mixup(decision, instruction)
         return decision
 
 
@@ -210,3 +213,32 @@ def _normalize_scroll_direction(decision: ActionDecision, direction_hint: Option
     if action.action_type != "scroll":
         return
     action.direction = direction_hint
+
+
+def _fix_date_range_field_mixup(decision: ActionDecision, instruction: str) -> None:
+    """Guard against LLM confusing 开始时间 (left) and 结束时间 (right).
+
+    The action policy model consistently misidentifies the two fields on the
+    screenshot.  When the instruction says 开始时间 but the model outputs
+    结束时间 (or vice versa), swap both description and coordinates.
+    """
+    action = decision.action
+    if action.action_type not in ("tap", "click") or not action.description:
+        return
+
+    inst_has_start = "开始时间" in instruction or "开始日期" in instruction
+    inst_has_end = "结束时间" in instruction or "结束日期" in instruction
+    desc_has_start = "开始时间" in action.description or "开始日期" in action.description
+    desc_has_end = "结束时间" in action.description or "结束日期" in action.description
+
+    if inst_has_start and not inst_has_end and desc_has_end and not desc_has_start:
+        action.description = action.description.replace("结束时间", "开始时间").replace("结束日期", "开始日期")
+        if action.x is not None and action.x > 500:
+            action.x = 1000 - action.x
+            print(f"  ⚠️ 日期范围字段混淆：开始→结束 已自动纠正，x {1000 - action.x + action.x:.0f}→{action.x:.0f}")
+    elif inst_has_end and not inst_has_start and desc_has_start and not desc_has_end:
+        action.description = action.description.replace("开始时间", "结束时间").replace("开始日期", "结束日期")
+        if action.x is not None and action.x < 500:
+            old_x = action.x
+            action.x = 1000 - action.x
+            print(f"  ⚠️ 日期范围字段混淆：结束→开始 已自动纠正，x {old_x:.0f}→{action.x:.0f}")

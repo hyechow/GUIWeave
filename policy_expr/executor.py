@@ -33,7 +33,7 @@ from Quartz import (
     kCGNullWindowID,
 )
 
-from policy_expr.perception import LivePhoneSession
+from policy_expr.perception import LivePhoneSession, try_resume_mac
 from policy_expr.schemas import Action, ActionDecision
 
 # App Switcher / kill-app 相关常量（通过像素分析得出）
@@ -195,6 +195,12 @@ class ActionExecutor:
         print(f"执行点击: ({lx:.0f}, {ly:.0f})")
         result = self._client().tap(lx, ly)
         print(f"结果: {result}")
+        if "paused" in result.lower():
+            print("Mac 弹窗阻断，尝试恢复...")
+            if try_resume_mac():
+                time.sleep(0.5)
+                result = self._client().tap(lx, ly)
+                print(f"恢复后重试: {result}")
         if "interrupted" in result.lower() or "failed" in result.lower():
             print("点击失败：落点在窗口外或操作被中断，跳过")
             return False

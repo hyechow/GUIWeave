@@ -427,5 +427,29 @@
       "direction": "decrease",
       "drag_column": "day"
     }
+  },
+  {
+    "label": "picker-日期范围-应点左侧开始时间而非右侧结束时间（回归：支付宝action policy混淆左右）",
+    "screenshot": "evals/planner/screenshots/alipay_date_range_picker_start_field.png",
+    "milestone": {
+      "name": "筛选上周支付记录",
+      "description": "设置日期范围为2026-05-18至2026-05-24，筛选出上周的支付交易",
+      "success_condition": "账单页显示2026-05-18至2026-05-24期间的记录",
+      "kind": "filter",
+      "app_name": "支付宝",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于自定义时间选择界面，开始时间显示为2026-05-28（今天），结束时间为空白。验收条件要求筛选2026-05-18至2026-05-24期间的记录，当前日期设置与目标范围不符。需要先点击开始时间字段激活焦点，再拖动调整日期。",
+      "issues": [],
+      "visible_evidence": ["页面标题显示「自定义时间」标签被选中", "开始时间显示为2026-05-28"],
+      "missing_evidence": ["开始时间应为2026-05-18", "结束时间应为2026-05-24"],
+      "summary": "支付宝账单自定义时间选择界面，开始时间为2026-05-28需调整为2026-05-18，结束时间待设置"
+    },
+    "expected": {
+      "must_contain": ["开始时间", "左侧"],
+      "must_not_contain": ["结束时间"]
+    }
   }
 ]

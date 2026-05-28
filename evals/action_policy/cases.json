@@ -130,5 +130,14 @@
       "amount": "small",
       "method": "drag"
     }
+  },
+  {
+    "label": "picker-日期范围-点击开始时间应点左侧字段（回归：支付宝混淆左右）",
+    "screenshot": "evals/action_policy/screenshots/alipay_date_range_picker_start_field.png",
+    "instruction": "点击左侧「开始时间」区域以激活日期选择器焦点，准备设置起始日期为2026-05-18",
+    "expected": {
+      "action_type": "tap",
+      "description_must_not_contain": ["结束时间"]
+    }
   }
 ]

@@ -66,7 +66,16 @@ def test_action_policy() -> None:
             continue
 
         expected = c["expected"]
-        details = _check_action(decision.action, c["instruction"], expected)
+        # Only pass action-field checks to _check_action; custom checks handled below.
+        _meta_keys = {"description_must_not_contain", "not_found"}
+        action_expected = {k: v for k, v in expected.items() if k not in _meta_keys}
+        details = _check_action(decision.action, c["instruction"], action_expected)
+
+        # Check description must_not_contain (regex patterns)
+        for pat in expected.get("description_must_not_contain", []):
+            import re
+            if re.search(pat, decision.action.description or ""):
+                details.append(f"description must not match '{pat}'")
 
         if "not_found" in expected:
             has_not_found = bool(decision.not_found_reason)
