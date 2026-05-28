@@ -238,7 +238,13 @@ class MilestoneSupervisorPolicy:
         sim_stuck = self._check_screen_similarity(observation)
 
         prev_check_summary = self._last_check_summary.get(milestone.id, "")
-        if sim_stuck is not None and sim_stuck.frozen and prev_check_summary and prev_check_summary != check.summary:
+        prev_action = history[-1].action_decision.action if history and history[-1].action_decision else None
+        was_picker_drag = (
+            prev_action is not None
+            and prev_action.action_type == "drag"
+            and (prev_action.target_area or "").startswith("picker_")
+        )
+        if sim_stuck is not None and sim_stuck.frozen and was_picker_drag and prev_check_summary and prev_check_summary != check.summary:
             print(f"  [SimStuck] 已抑制：picker 进展（frozen+摘要变化）")
             sim_stuck = None
             self._recent_screenshots.clear()
