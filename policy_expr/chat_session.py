@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from llm.structured import invoke_structured
 from policy_expr.config import resolve_llm_config
 from policy_expr.output import generate_reply  # re-exported for callers
+from policy_expr.temporal import resolve_temporal_expressions
 
 __all__ = ["RouterResult", "generate_reply", "route_message", "format_session_history"]
 
@@ -94,6 +95,8 @@ def route_message(
 ) -> RouterResult:
     llm = _get_llm()
     system = _ROUTER_SYSTEM
+    # Resolve temporal expressions so the router outputs absolute dates in the goal.
+    resolved_msg = resolve_temporal_expressions(user_msg)
     if prefs_context:
         system += (
             "\n重要规则：以下偏好由用户设定，当用户未指定 APP 时优先使用偏好中的 APP，不要反问。"
@@ -103,7 +106,7 @@ def route_message(
     history_text = format_session_history(session) if session else "（无历史）"
     messages = [
         SystemMessage(content=system),
-        HumanMessage(content=f"对话历史：\n{history_text}\n\n当前用户指令：{user_msg}"),
+        HumanMessage(content=f"对话历史：\n{history_text}\n\n当前用户指令：{resolved_msg}"),
     ]
     return invoke_structured(llm, messages, RouterResult)
 

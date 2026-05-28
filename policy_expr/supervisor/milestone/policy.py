@@ -898,9 +898,7 @@ class MilestoneSupervisorPolicy:
         feedback: list[str],
     ) -> None:
         msgs = self._msgs(DECOMPOSE_PROMPT, observation)
-        today = date.today().strftime("%Y-%m-%d")
-        weekday = ["一", "二", "三", "四", "五", "六", "日"][date.today().weekday()]
-        user_parts: list[dict] = [{"type": "text", "text": f"当前日期：{today}（周{weekday}）\n用户任务：{goal}"}]
+        user_parts: list[dict] = [{"type": "text", "text": f"用户任务：{goal}"}]
         if self._app_knowledge:
             user_parts.append({"type": "text", "text": f"\n## 应用导航知识\n{self._app_knowledge}"})
         if self._elements_knowledge:
@@ -965,61 +963,6 @@ class MilestoneSupervisorPolicy:
             issues.append(f"task_type=action 但目标含查询关键词（{', '.join(kw for kw in analysis_keywords if kw in goal)}），应为 analysis")
 
         return issues
-
-    def _fix_filter_date_mismatch(self, fixes: list[str]) -> None:
-        """Fix filter milestones whose success_condition contradicts global_constraints date range.
-
-        The LLM sometimes copies the prompt example ("显示4月记录") instead of using the
-        actual date range it computed for global_constraints. This guard extracts the range
-        from constraints and rewrites the filter success_condition.
-        """
-        import re as _re
-
-        # Extract date range from global_constraints, e.g. "时间范围：2026-05-18 ~ 2026-05-24"
-        date_range = None
-        for c in self._global_constraints:
-            m = _re.search(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})", c)
-            if m:
-                date_range = (m.group(1), m.group(2))
-                break
-        if not date_range:
-            return
-
-        start, end = date_range
-        start_month = start[:7]  # "2026-05"
-        end_month = end[:7]
-
-        for m in self._milestones.values():
-            if m.kind != "filter":
-                continue
-            sc = m.success_condition
-            if not sc:
-                continue
-            # Check if success_condition already mentions the correct range
-            if start in sc and end in sc:
-                continue
-            if start_month in sc or end_month in sc:
-                continue
-            # Check if it mentions a conflicting month (e.g. "4月" when range is 5月)
-            wrong_month_patterns = _re.findall(r"(\d{4}-\d{2}|(\d{1,2})月)", sc)
-            has_wrong_month = False
-            for full, bare in wrong_month_patterns:
-                if full and full != start_month and full != end_month:
-                    has_wrong_month = True
-                    break
-                if bare:
-                    # "4月" → check against start month number
-                    try:
-                        target_months = {int(start_month[5:7]), int(end_month[5:7])}
-                        if int(bare) not in target_months:
-                            has_wrong_month = True
-                            break
-                    except ValueError:
-                        pass
-            if has_wrong_month or not _re.search(r"\d{4}-\d{2}-\d{2}|\d{1,2}月", sc):
-                old = sc
-                m.success_condition = f"显示 {start} 至 {end} 期间的记录"
-                fixes.append(f"子目标「{m.name}」验收条件日期修正：{old} → {m.success_condition}")
 
     def _patch_decomposition(self, llm: ChatOpenAI, goal: str) -> None:
         fixes = []
@@ -1119,10 +1062,6 @@ class MilestoneSupervisorPolicy:
         if self.task_type == "action" and any(kw in goal for kw in analysis_keywords):
             self.task_type = "analysis"
             fixes.append("task_type 从 action 修正为 analysis")
-
-        # Guard: filter milestone success_condition must reference the date range
-        # from global_constraints, not a contradictory month/date.
-        self._fix_filter_date_mismatch(fixes)
 
         if fixes:
             print(f"  [Guard] 补丁修复 {len(fixes)} 项：")

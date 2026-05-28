@@ -189,6 +189,11 @@ def _infer_goal_period(
     content_notes: list[str],
     collection_scope: dict | None = None,
 ) -> tuple[str, str, str] | None:
+    # Check for pre-resolved ISO date range in goal (e.g. "2026-05-18至2026-05-24")
+    iso_match = re.search(r"(\d{4}-\d{2}-\d{2})至(\d{4}-\d{2}-\d{2})", goal)
+    if iso_match:
+        return iso_match.group(1), iso_match.group(2), "goal 中已解析的日期范围"
+
     if "上周" not in goal:
         return None
 

@@ -26,6 +26,7 @@ from policy_expr.output import generate_reply
 from policy_expr.perception import LivePerception, LivePhoneSession
 from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
+from policy_expr.temporal import resolve_temporal_expressions
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
 from policy_expr.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
@@ -243,7 +244,7 @@ def run_once(
     hud: AgentHUD | None = None,
 ) -> dict:
     context = PolicyContext(
-        goal=prompt,
+        goal=resolve_temporal_expressions(prompt),
         supervisor_policy_name=supervisor.name,
         action_policy_name=action_policy.name,
     )
@@ -363,7 +364,7 @@ def run_agent_loop(
 
     context = _load_context(
         input_context_path or context_path,
-        prompt,
+        resolve_temporal_expressions(prompt),
         supervisor.name,
         action_policy.name,
     )
