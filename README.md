@@ -132,6 +132,16 @@ MODELSCOPE_API_KEY=your_api_key
 
 Model assignments for each module are configured in `policy_expr/config.yaml`.
 
+### Screenshot Server
+
+The agent uses `bin/sck_server` (a compiled Swift binary) to take screenshots via ScreenCaptureKit instead of the system `screencapture` command. This avoids triggering the iOS recording indicator on every frame — it fires only once when the stream starts.
+
+The binary is pre-compiled for Apple Silicon (arm64). If you modify the Swift source, recompile:
+
+```bash
+swiftc sck/sck_stream_server.swift -o bin/sck_server
+```
+
 ## Entry Points
 
 ### Chat Mode

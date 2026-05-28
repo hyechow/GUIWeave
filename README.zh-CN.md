@@ -130,6 +130,16 @@ MODELSCOPE_API_KEY=your_api_key
 
 各模块使用的模型在 `policy_expr/config.yaml` 中配置。
 
+### 截图服务
+
+Agent 使用 `bin/sck_server`（编译好的 Swift 二进制）通过 ScreenCaptureKit 截图，而非系统 `screencapture` 命令。这样做可以避免每帧触发 iOS 录屏指示灯——使用 SCStream 只在会话开始时触发一次。
+
+二进制已预编译（Apple Silicon arm64）。如修改 Swift 源码，需重新编译：
+
+```bash
+swiftc sck/sck_stream_server.swift -o bin/sck_server
+```
+
 ## 入口
 
 ### 对话模式（主入口）
