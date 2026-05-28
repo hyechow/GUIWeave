@@ -7,7 +7,14 @@
   },
   "op-002": {
     "task": "在美团上帮我点一杯瑞幸的大杯生椰拿铁，送到中惠山畔名城家里",
-    "status": "running",
-    "started_at": "2026-05-27T22:02:27.056342"
+    "status": "pass",
+    "goal_completed": true,
+    "stop_reason": "所有子目标已完成",
+    "result_summary": "子目标「发起结算支付」已完成，任务全部完成。",
+    "turns_count": 16,
+    "elapsed": 131.2,
+    "log_dir": "logs/policy_expr/benchmark/20260528_104755",
+    "report": "logs/policy_expr/benchmark/20260528_104755/report.html",
+    "completed_at": "2026-05-28T10:50:06.291914"
   }
 }
