@@ -28,7 +28,9 @@ from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
+from policy_expr.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
 from policy_expr.schemas import (
+    ActionDecision,
     Observation,
     PolicyContext,
     PolicyTurn,
@@ -349,6 +351,8 @@ def run_agent_loop(
     original_goal = context.goal
     noop_count = 0
     prev_milestone_id: str | None = None
+    scroll_profiles: dict[str, ScrollProfile] = {}
+    scroll_probe_failures: dict[str, str] = {}
 
     with LivePhoneSession() as phone:
         executor = ActionExecutor(phone)
@@ -424,6 +428,7 @@ def run_agent_loop(
 
             action_decision = None
             executed = False
+            probe_failed = False
 
             if sv_step.should_act:
                 _say(f"动作指令: {sv_step.instruction}")
@@ -433,9 +438,21 @@ def run_agent_loop(
                 else:
                     _status(turn_no, "动作决策中…")
                     _say("动作决策中...")
+                    instruction_for_action = sv_step.instruction
+                    profile_key = sv_step.milestone_id or "_global"
+                    if (
+                        sv_step.completion_strategy == "scroll_until_boundary"
+                        and profile_key in scroll_probe_failures
+                    ):
+                        instruction_for_action = (
+                            f"{instruction_for_action}\n\n"
+                            "⚠️ 滚动探测反馈："
+                            f"{scroll_probe_failures[profile_key]}。"
+                            "请避免重复这些无效滚动落点/幅度，选择当前屏幕上更可能作用于主内容的滚动方式。"
+                        )
                     _ap_t0 = time.perf_counter()
                     action_decision = action_policy.decide(
-                        observation, sv_step.instruction,
+                        observation, instruction_for_action,
                         direction=sv_step.direction,
                         drag_column=sv_step.drag_column,
                     )
@@ -454,7 +471,46 @@ def run_agent_loop(
                 else:
                     if action_decision.action:
                         _status(turn_no, f"[{action_label(action_decision.action.action_type)}] {action_decision.action.description}")
-                    executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
+                    action = action_decision.action
+                    profile_key = sv_step.milestone_id or "_global"
+                    should_probe_scroll = (
+                        action.action_type == "scroll"
+                        and sv_step.completion_strategy == "scroll_until_boundary"
+                    )
+                    if should_probe_scroll and profile_key in scroll_profiles:
+                        profile = scroll_profiles[profile_key]
+                        action = apply_profile(action, profile)
+                        action_decision = action_decision.model_copy(update={"action": action})
+                        _say(
+                            "  [ScrollProbe] 使用缓存滚动点: "
+                            f"method={profile.method}, x={profile.x:.0f}, y={profile.y:.0f}, "
+                            f"ticks={profile.ticks}, delta={profile.delta_px}"
+                        )
+                        if action.action_type == "scroll":
+                            print(f"\n动作: [{action.action_type}] {action.description}")
+                            executor.execute_scroll(action, ticks=profile.ticks, delta_px=profile.delta_px)
+                        else:
+                            executor.execute(ActionDecision(action=action), app_name=sv_step.app_name or "")
+                        executed = True
+                    elif should_probe_scroll:
+                        probe = ScrollProbe(phone, executor, log_dir)
+                        result = probe.probe(observation.png_bytes, action, turn_no=turn_no)
+                        if result.success and result.profile:
+                            scroll_profiles[profile_key] = result.profile
+                            scroll_probe_failures.pop(profile_key, None)
+                            action = apply_profile(action, result.profile)
+                            action_decision = action_decision.model_copy(update={"action": action})
+                            executed = True
+                        else:
+                            probe_failed = True
+                            scroll_probe_failures[profile_key] = result.reason
+                            _say(
+                                "  [ScrollProbe] 未找到可靠滚动点，停止本轮动作: "
+                                f"{result.reason}"
+                            )
+                            executed = False
+                    else:
+                        executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
 
             turn = PolicyTurn(
                 index=turn_no,
@@ -485,6 +541,14 @@ def run_agent_loop(
                 return _make_result(context, reason)
 
             if not executed and sv_step.should_act:
+                if probe_failed:
+                    noop_count += 1
+                    if noop_count >= 3:
+                        _say(f"\n连续 {noop_count} 轮滚动探测失败，agent-loop 停止")
+                        _save_context(context_path, context)
+                        return _make_result(context, f"连续 {noop_count} 轮滚动探测失败")
+                    _say("滚动探测失败，进入下一轮重新规划")
+                    continue
                 if action_decision and action_decision.not_found_reason:
                     noop_count += 1
                     if noop_count >= 3:

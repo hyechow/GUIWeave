@@ -82,6 +82,16 @@ def _last_scroll_was_for(history: list[PolicyTurn], milestone_id: str) -> bool:
     )
 
 
+def _has_successful_scroll_for(history: list[PolicyTurn], milestone_id: str) -> bool:
+    return any(
+        t.supervisor.milestone_id == milestone_id
+        and t.action_decision
+        and t.action_decision.action.action_type in {"scroll", "drag"}
+        and t.executed
+        for t in history
+    )
+
+
 def _has_collected(history: list[PolicyTurn], milestone_id: str) -> bool:
     return any(
         t.supervisor.milestone_id == milestone_id and t.read_added_content
@@ -312,6 +322,16 @@ class MilestoneSupervisorPolicy:
             budget = 10
         if scroll_count > budget:
             print(f"  [Loop] 滚动预算耗尽（{scroll_count}/{budget}，observable={milestone.observable_boundary}）→ 结束收集")
+            if not _has_successful_scroll_for(history, milestone.id):
+                stuck = _SingleCheckResult(
+                    status="stuck",
+                    reason="滚动预算耗尽，但尚未观测到任何成功执行的纵向滚动",
+                    stuck_reason="无法区分页面边界与无效滚动，且缺少有效滚动证据",
+                    issues=["没有成功滚动记录"],
+                    summary="滚动未取得可验证进展",
+                )
+                read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
+                return self._handle_stuck(milestone, stuck, read_inst, observation, history)
             return self._advance(milestone, observation, history)
 
         sim_stuck = self._check_screen_similarity(observation)
@@ -322,9 +342,17 @@ class MilestoneSupervisorPolicy:
         )
         if sim_stuck:
             if sim_stuck.frozen:
+                if not _has_successful_scroll_for(history, milestone.id):
+                    print("  [Loop] 屏幕冻结且无成功滚动证据 → 判为无效滚动，触发重规划")
+                    read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
+                    return self._handle_stuck(milestone, sim_stuck, read_inst, observation, history)
                 print("  [Loop] 屏幕冻结（≥99%），即使 reader 返回新内容也结束收集")
                 return self._advance(milestone, observation, history)
             if not last_read_added:
+                if not _has_successful_scroll_for(history, milestone.id):
+                    print("  [Loop] 截图连续无变化且无成功滚动证据 → 判为无效滚动，触发重规划")
+                    read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
+                    return self._handle_stuck(milestone, sim_stuck, read_inst, observation, history)
                 print("  [Loop] 截图连续无变化且无新增内容 → 判为边界，结束收集")
                 return self._advance(milestone, observation, history)
             print("  [Loop] 截图相似但上一轮读到了新内容，继续收集")

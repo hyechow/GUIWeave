@@ -90,7 +90,7 @@ class Action(BaseModel):
     )
     direction: Optional[str] = Field(
         default=None,
-        description="滚动方向：up（向上滚动，查看更多内容）、down（向下滚动，回到顶部）、left（向左滑动，如主屏翻到下一页）、right（向右滑动，如主屏翻到上一页），scroll 时必填",
+        description="滚动方向：up（向上滚动，查看上方内容）、down（向下滚动，查看下方内容）、left（向左滑动，如主屏翻到下一页）、right（向右滑动，如主屏翻到上一页），scroll 时必填",
     )
     to_x: Optional[float] = Field(
         default=None,

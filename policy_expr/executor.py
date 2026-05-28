@@ -173,9 +173,15 @@ class ActionExecutor:
         time.sleep(1.0)
         return True
 
-    def _scroll(self, action: Action) -> None:
+    def execute_scroll(self, action: Action, *, ticks: int = SCROLL_TICKS, delta_px: int = SCROLL_DELTA) -> None:
+        self._scroll(action, ticks=ticks, delta_px=delta_px)
+
+    def execute_drag(self, action: Action) -> None:
+        self._drag(action)
+
+    def _scroll(self, action: Action, *, ticks: int = SCROLL_TICKS, delta_px: int = SCROLL_DELTA) -> None:
         direction = (action.direction or "").strip().lower()
-        delta = _scroll_delta(direction)
+        delta = _scroll_delta(direction, delta_px)
 
         # Find iPhone Mirroring window on screen
         origin = _find_iphone_window()
@@ -195,7 +201,7 @@ class ActionExecutor:
         sx = wx + ax / 1000 * WIN_W
         sy = wy + ay / 1000 * WIN_H
 
-        print(f"  鼠标移至 ({sx:.0f}, {sy:.0f})，滚轮 {direction} × {SCROLL_TICKS}")
+        print(f"  鼠标移至 ({sx:.0f}, {sy:.0f})，滚轮 {direction} × {ticks}")
 
         # Move cursor to target position
         move = CGEventCreateMouseEvent(None, kCGEventMouseMoved, (sx, sy), kCGMouseButtonLeft)
@@ -203,11 +209,11 @@ class ActionExecutor:
         time.sleep(0.1)
 
         # Send scroll wheel ticks
-        for i in range(SCROLL_TICKS):
+        for i in range(ticks):
             ev = CGEventCreateScrollWheelEvent(None, kCGScrollEventUnitPixel, 1, delta)
             CGEventSetLocation(ev, (sx, sy))
             CGEventPost(kCGHIDEventTap, ev)
-            if i < SCROLL_TICKS - 1:
+            if i < ticks - 1:
                 time.sleep(SCROLL_INTERVAL)
 
     def _drag(self, action: Action) -> None:
@@ -320,18 +326,18 @@ def _quartz_swipe(from_x: float, from_y: float, to_x: float, to_y: float,
     CGEventPost(kCGHIDEventTap, ev)
 
 
-def _scroll_delta(direction: str) -> int:
+def _scroll_delta(direction: str, magnitude: int = SCROLL_DELTA) -> int:
     """Map scroll direction to CGEvent scroll wheel delta (pixels per tick).
 
     Positive = scroll up (content moves down, view earlier content).
     Negative = scroll down (content moves up, view later content).
     """
     if direction in ("up", "向上", "upward"):
-        return SCROLL_DELTA
+        return magnitude
     if direction in ("down", "向下", "downward"):
-        return -SCROLL_DELTA
+        return -magnitude
     if direction in ("left", "向左", "leftward"):
-        return -SCROLL_DELTA
+        return -magnitude
     if direction in ("right", "向右", "rightward"):
-        return SCROLL_DELTA
+        return magnitude
     raise ValueError(f"scroll direction must be up/down/left/right, got: {direction!r}")
