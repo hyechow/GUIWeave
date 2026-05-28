@@ -160,6 +160,9 @@ class MilestoneSupervisorPolicy:
         self._app_name: str = ""
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
+        self._last_check: Optional[_SingleCheckResult] = None
+        self._last_plan: Optional[_PlanResult] = None
+        self._last_replan: Optional[_ReplanResult] = None
         self._timings: dict[str, float] = {}
         self._timings_order: list[str] = []
 
@@ -215,6 +218,7 @@ class MilestoneSupervisorPolicy:
 
         with _Timer(self._timings, self._timings_order, "checker"):
             check = self._single_check(milestone, observation, history)
+        self._last_check = check
         print(f"  [SingleCheck] {check.status}: {check.reason}")
 
         if check.loading:
@@ -294,6 +298,7 @@ class MilestoneSupervisorPolicy:
             print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column}")
         if plan.direction in ("increase", "decrease") and plan.drag_column:
             self._fix_picker_direction(plan)
+        self._last_plan = plan
         milestone.status = "running"
         return SupervisorStep(
             should_act=bool(plan.instruction),
@@ -359,6 +364,7 @@ class MilestoneSupervisorPolicy:
 
         with _Timer(self._timings, self._timings_order, "loop_check"):
             frame = self._loop_check(milestone, observation, history)
+        self._last_check = None  # loop milestones use _LoopFrameResult, not _SingleCheckResult
         print(f"  [LoopFrame] boundary={frame.boundary_reached}, should_stop={frame.should_stop}")
         if frame.should_stop:
             print(f"  [Loop] 停止条件触发：{frame.stop_reason}")
@@ -520,6 +526,7 @@ class MilestoneSupervisorPolicy:
         print(f"  [Replan] 第 {milestone.retry_count} 次重试...")
         with _Timer(self._timings, self._timings_order, "replanner"):
             replan = self._invoke_replanner(milestone, check, observation, history)
+        self._last_replan = replan
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")
 
         if replan.strategy == "force_complete":

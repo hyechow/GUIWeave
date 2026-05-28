@@ -10,7 +10,7 @@ import traceback
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Iterator
+from typing import IO, Iterator, Optional
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -139,6 +139,27 @@ def build_supervisor(name: str) -> SupervisorPolicy:
 def _save_context(path: Path, context: PolicyContext) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _extract_checker(supervisor: object) -> Optional[dict]:
+    check = getattr(supervisor, "_last_check", None)
+    if check is None:
+        return None
+    return check.model_dump(exclude_none=True)
+
+
+def _extract_plan(supervisor: object) -> Optional[dict]:
+    plan = getattr(supervisor, "_last_plan", None)
+    if plan is None:
+        return None
+    return plan.model_dump(exclude_none=True)
+
+
+def _extract_replan(supervisor: object) -> Optional[dict]:
+    replan = getattr(supervisor, "_last_replan", None)
+    if replan is None:
+        return None
+    return replan.model_dump(exclude_none=True)
 
 
 def _load_context(
@@ -280,6 +301,7 @@ def run_once(
             observation_source=observation.source,
             supervisor=sv_step,
             action_decision=action_decision,
+            checker=_extract_checker(supervisor),
             executed=executed,
             timings=getattr(supervisor, "_timings", {}),
         )
@@ -302,6 +324,9 @@ def run_once(
                 observation_source="live",
                 supervisor=confirm,
                 action_decision=None,
+                checker=_extract_checker(supervisor),
+                planner=_extract_plan(supervisor),
+                replan=_extract_replan(supervisor),
                 executed=False,
             ))
             stop_reason = confirm.stop_reason or "single-step 完成一轮后停止"
@@ -517,6 +542,9 @@ def run_agent_loop(
                 observation_source=observation.source,
                 supervisor=sv_step,
                 action_decision=action_decision,
+                checker=_extract_checker(supervisor),
+                planner=_extract_plan(supervisor),
+                replan=_extract_replan(supervisor),
                 executed=executed,
                 llm_calls=get_llm_call_count() - llm_calls_before,
                 read_added_content=read_added_content,

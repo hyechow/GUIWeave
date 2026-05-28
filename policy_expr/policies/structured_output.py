@@ -47,7 +47,7 @@ picker 调整数值时优先填写 value_direction，不要用 direction 表达�
 - 不要点击当前选中的年份/月/日文本；点击不会改变 picker 数值。
 - 不要点击顶部绿色/高亮的已选日期展示框；那只是当前值展示，不是调值动作。
 - 根据要调整的列选择 target_area：年份/小时/省份等左列用 picker_left；月份/分钟/城市等中列用 picker_center；日期/秒/区县等右列用 picker_right。
-- amount 一格/一步用 small；多格或大幅调整才用 medium/large。
+- amount 一格/一步用 small；多格或大幅调整才用 medium/large。具体阈值：差1-2格用 small，差3-6格用 medium，差7格及以上用 large。必须根据指令中当前值和目标值的差值选择 amount，不要一律输出 small。
 - method 必须是 drag；普通 picker 调值不要用 auto 或 wheel。
 - picker 调值通常不要填写 x/y；只用 target_area 表示列。只有当 picker 列不是常见左/中/右布局时，才填写 x 作为列锚点；不要填写 y。
 示例：
@@ -149,14 +149,21 @@ _PICKER_ROW_NORM: int = 47
 def _picker_step_distance(instruction: str) -> Optional[int]:
     """Compute drag distance for picker adjustments by counting steps in instruction.
 
-    Parses patterns like '从18日调整至24日' or '从5月到1月', returns |cur - tgt| * row_height.
-    Returns None for non-picker instructions so callers fall through to magnitude hints.
+    Parses patterns like '从18日调整至24日', '将当前选中的28日切换至8日', '从5月到1月'.
+    Returns |cur - tgt| * row_height, or None for non-picker instructions.
     """
     for suffix in ("日", "月", "年"):
+        # Pattern 1: "从X日至Y日" / "从X月调整至Y月"
         m = re.search(
             rf"从\s*(?:\d+[月年])?(\d+){suffix}.*?[至到调].*?(?:\d+[月年])?(\d+){suffix}",
             instruction,
         )
+        if not m:
+            # Pattern 2: "选中的X日...切换/调整至Y日" / "X日...至Y日"
+            m = re.search(
+                rf"(\d+){suffix}.*?[至到切换调].*?(\d+){suffix}",
+                instruction,
+            )
         if m:
             steps = abs(int(m.group(2)) - int(m.group(1)))
             if steps > 0:

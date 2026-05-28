@@ -305,6 +305,9 @@ class PolicyTurn(BaseModel):
     observation_source: str
     supervisor: SupervisorStep
     action_decision: Optional[ActionDecision] = None
+    checker: Optional[dict] = Field(default=None, description="Checker 原始结果：status, reason, summary, missing_evidence 等")
+    planner: Optional[dict] = Field(default=None, description="Planner 原始结果：instruction, summary, direction, drag_column")
+    replan: Optional[dict] = Field(default=None, description="Replan 原始结果：diagnosis, strategy, instruction")
     executed: bool = False
     llm_calls: int = 0
     read_added_content: bool = False

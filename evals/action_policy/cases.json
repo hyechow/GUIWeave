@@ -82,5 +82,53 @@
       "amount": "small",
       "method": "drag"
     }
+  },
+  {
+    "label": "picker-日期decrease-large-28→8",
+    "screenshot": "evals/action_policy/screenshots/picker_day_28to8.png",
+    "instruction": "在日期选择器的日期列中，将当前选中的28日向上拖动切换至8日",
+    "expected": {
+      "action_type": "drag",
+      "value_direction": "decrease",
+      "target_area": "picker_right",
+      "amount": "large",
+      "method": "drag"
+    }
+  },
+  {
+    "label": "picker-日期decrease-large-25→8",
+    "screenshot": "evals/action_policy/screenshots/picker_day_25to8.png",
+    "instruction": "在日期选择器的日期列中，将当前选中的25日向上拖动切换至8日",
+    "expected": {
+      "action_type": "drag",
+      "value_direction": "decrease",
+      "target_area": "picker_right",
+      "amount": "large",
+      "method": "drag"
+    }
+  },
+  {
+    "label": "picker-月份decrease-small-3月→2月",
+    "screenshot": "evals/action_policy/screenshots/picker_month_3to2.png",
+    "instruction": "在日期选择器的月份列中，将当前选中的2026年3月向下拖动切换至2026年2月",
+    "expected": {
+      "action_type": "drag",
+      "value_direction": "decrease",
+      "target_area": "picker_center",
+      "amount": "small",
+      "method": "drag"
+    }
+  },
+  {
+    "label": "picker-日期increase-small-1→4",
+    "screenshot": "evals/action_policy/screenshots/picker_day_1to4.png",
+    "instruction": "在日期选择器的日期列中，将当前选中的1日向上拖动切换至4日",
+    "expected": {
+      "action_type": "drag",
+      "value_direction": "increase",
+      "target_area": "picker_right",
+      "amount": "small",
+      "method": "drag"
+    }
   }
 ]
