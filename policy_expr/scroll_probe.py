@@ -1,4 +1,4 @@
-"""Runtime calibration for wheel-based page scrolling."""
+"""Runtime calibration for semantic page scrolling."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from policy_expr.executor import ActionExecutor, SCROLL_DELTA, SCROLL_TICKS
+from policy_expr.executor import ActionExecutor
+from policy_expr.executor_constants import SCROLL_DELTA, SCROLL_TICKS
+from policy_expr.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
 from policy_expr.perception import LivePhoneSession
 from policy_expr.schemas import Action
 
@@ -47,20 +49,24 @@ def apply_profile(action: Action, profile: ScrollProfile) -> Action:
     """Return an action using a validated scroll profile."""
 
     if profile.method == "drag":
-        return Action(
-            action_type="drag",
-            x=profile.x,
-            y=profile.y,
-            to_x=profile.to_x,
-            to_y=profile.to_y,
-            duration_ms=profile.duration_ms,
-            description=f"{action.description}（使用已验证拖动点 y={profile.y:.0f}）",
+        return action.model_copy(
+            update={
+                "action_type": "drag",
+                "method": "drag",
+                "x": profile.x,
+                "y": profile.y,
+                "to_x": profile.to_x,
+                "to_y": profile.to_y,
+                "duration_ms": profile.duration_ms,
+                "description": f"{action.description}（使用已验证拖动点 y={profile.y:.0f}）",
+            }
         )
     return action.model_copy(
         update={
             "x": profile.x,
             "y": profile.y,
             "direction": profile.direction,
+            "method": "wheel",
             "description": f"{action.description}（使用已验证滚动点 y={profile.y:.0f}）",
         }
     )
@@ -93,16 +99,21 @@ class ScrollProbe:
         last_after: bytes | None = None
         attempt_summaries: list[str] = []
         for idx, candidate in enumerate(candidates, start=1):
-            print(
-                "  [ScrollProbe] "
-                f"try {idx}: {candidate.action_type} x={candidate.x:.0f}, y={candidate.y:.0f}"
-            )
             if candidate.action_type == "scroll":
-                self.executor.execute_scroll(candidate, ticks=SCROLL_TICKS, delta_px=SCROLL_DELTA)
+                concrete = action_with_wheel(candidate, wheel_gesture(candidate))
             elif candidate.action_type == "drag":
-                self.executor.execute_drag(candidate)
+                concrete = action_with_drag(candidate, drag_gesture(candidate))
             else:
                 continue
+            print(
+                "  [ScrollProbe] "
+                f"try {idx}: {candidate.action_type} x={concrete.x:.0f}, y={concrete.y:.0f}"
+            )
+            if candidate.action_type == "scroll":
+                gesture = wheel_gesture(candidate)
+                self.executor.execute_scroll(concrete, ticks=gesture.ticks, delta_px=gesture.delta_px)
+            elif candidate.action_type == "drag":
+                self.executor.execute_drag(concrete)
             time.sleep(self.settle_seconds)
             after_png = self.phone.screenshot()
             last_after = after_png
@@ -114,16 +125,19 @@ class ScrollProbe:
                 "  [ScrollProbe] "
                 f"shift={shift:+d}px confidence={confidence:.3f} changed={changed:.3f}"
             )
-            attempt_summaries.append(f"{candidate.action_type}@y={candidate.y:.0f}:shift={shift:+d}px")
+            attempt_summaries.append(f"{candidate.action_type}@y={concrete.y:.0f}:shift={shift:+d}px")
             if _is_expected_progress(direction, shift, confidence, changed):
+                wheel = wheel_gesture(candidate) if candidate.action_type == "scroll" else None
                 profile = ScrollProfile(
                     method=candidate.action_type,
-                    x=float(candidate.x or 500),
-                    y=float(candidate.y or 500),
+                    x=float(concrete.x or 500),
+                    y=float(concrete.y or 500),
                     direction=str(candidate.direction or direction),
-                    to_x=candidate.to_x,
-                    to_y=candidate.to_y,
-                    duration_ms=candidate.duration_ms,
+                    ticks=wheel.ticks if wheel else SCROLL_TICKS,
+                    delta_px=wheel.delta_px if wheel else SCROLL_DELTA,
+                    to_x=concrete.to_x,
+                    to_y=concrete.to_y,
+                    duration_ms=concrete.duration_ms,
                     observed_shift_px=shift,
                     confidence=confidence,
                 )
@@ -168,27 +182,23 @@ def estimate_vertical_shift(before_png: bytes, after_png: bytes, *, max_shift: i
 
 
 def _candidate_actions(action: Action) -> list[Action]:
-    base_x = 500.0
-    base_y = 760.0
     direction = action.direction or "down"
     # Keep this intentionally tiny: one wheel attempt at a stable lower-center
     # content point, then one touch-like drag at the same point.
     wheel = action.model_copy(
         update={
-            "x": base_x,
-            "y": base_y,
+            "method": "wheel",
             "direction": direction,
             "description": f"{action.description}（滚动探测-wheel）",
         }
     )
-    drag = Action(
-        action_type="drag",
-        x=base_x,
-        y=base_y,
-        to_x=base_x,
-        to_y=360.0,
-        duration_ms=900,
-        description=f"{action.description}（滚动探测-drag）",
+    drag = action.model_copy(
+        update={
+            "action_type": "drag",
+            "method": "drag",
+            "direction": direction,
+            "description": f"{action.description}（滚动探测-drag）",
+        }
     )
     return [wheel, drag]
 

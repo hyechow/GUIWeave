@@ -25,23 +25,27 @@ SYSTEM_PROMPT = """\
 只有当操作指令明确说明输入框已经聚焦时，type 可以只填写 text、不填写 x/y。
 ⚠️ 输入文字后如果需要发送/提交/确认（如发送消息、确认搜索），必须使用 press_enter，无需填写坐标。禁止用 tap 去点击发送按钮。
 需要清空当前输入框内容时，使用 clear_text，无需填写坐标。
-需要滚动普通列表页面时，使用 scroll，填写 direction 和 x/y 坐标。
+需要滚动普通列表页面时，使用 scroll，填写 direction、target_area、amount、method；必要时填写 x/y 作为滚动锚点。
 - down：向下滚动，查看页面下方的内容
 - up：向上滚动，查看页面上方的内容
 - left：向左滚动，查看右侧内容（翻到下一页）
 - right：向右滚动，查看左侧内容（翻到上一页）
 多数按时间倒序的列表页新内容在顶部，要查看更早/更旧的内容通常选择 down；若截图显示相反方向，应以当前 UI 结构为准。
-x/y 是滚轮事件的鼠标落点坐标，决定了滚轮作用于哪个 UI 元素：
-- 整页滚动：x/y 放在可滚动内容的中部
-y 坐标范围严格限制在 200-850 之间，禁止使用 y<200 或 y>850
-滚轮选择器/日期选择器/时间选择器/城市选择器等多列 picker，不要使用 scroll，必须使用 drag（按住拖动）。
-- drag 需要填写起点 x/y、终点 to_x/to_y、duration_ms
-- x/to_x 必须落在目标列中心：年份列偏左、月份列偏右，日期列按截图位置选择
-- y 放在当前选中行或目标列可拖动区域中间；to_y 表示拖动后的终点
-- 如果用户消息中有「⚠️ 方向约束」，to_y 方向必须遵守该约束，不以指令文字为准：down → to_y > y，up → to_y < y
-- 如果用户消息中有「⚠️ 拖动幅度」，按幅度控制 |to_y - y|：小幅、中幅、大幅对应的拖动距离由系统自动计算，你只需确保 to_y 和 y 的方向正确即可
-- duration_ms 参考：小幅=800ms，中幅=1200ms，大幅=1600ms
-- 例如要把年份列往下拉（大幅）：action_type=drag, x=270, y=635, to_x=270, to_y=835, duration_ms=1600
+target_area 表示默认滚动作用区域：
+- main_content：主内容区/整页列表
+- left_panel/right_panel：左右分栏列表
+- top_content/bottom_content：屏幕上方/下方内容区域
+- picker_left/picker_center/picker_right：选择器左/中/右列
+amount 表示幅度：small（细微调整）、medium（普通翻看）、large（快速翻页）。
+method 表示执行方式：auto（运行时自动探测）、wheel（滚轮）、drag（触摸拖动）。
+普通页面滚动使用 method=auto；滚轮选择器/日期选择器/时间选择器/城市选择器等多列 picker 使用 drag，并选择对应 picker_* target_area。
+picker 调整数值时优先填写 value_direction，不要用 direction 表达数值变化：
+- value_direction=increase：调大数值，例如 2025年→2026年、1月→2月、1日→2日
+- value_direction=decrease：调小数值，例如 2026年→2025年、5月→4月、2日→1日
+scroll/drag 的 x/y 是「滚动锚点」：
+- 普通整页滚动可不填 x/y，执行层使用 target_area 默认点。
+- 局部滚动容器、picker 多列、左右分栏必须填写 x/y，落在要滚动的容器或列中心。
+- 不要填写 to_x/to_y/duration_ms；这些由执行层根据 direction/amount/method 自动计算。
 需要返回主屏幕时，使用 home，无需填写坐标。
 ⚠️ home 只用于「明确需要退出当前应用回到桌面」的场景。如果目标元素在当前页面不可见，应优先寻找应用内的导航路径（如左上角返回按钮、底部 tab），而不是直接 home。
 如果指令含义是「停止操作」「无需操作」「目标已完成」，使用 stop，无需填写任何坐标或文字。
@@ -153,36 +157,30 @@ def _normalize_drag_direction(
     instruction: str,
     direction_hint: Optional[str] = None,
 ) -> None:
-    """Enforce drag direction and distance. Distance is computed from step count in the
-    instruction (picker adjustments like '从26日至24日'); falls back to the LLM's chosen delta."""
+    """Normalize semantic drag direction and amount."""
     action = decision.action
     if action.action_type != "drag":
         return
-    if action.y is None or action.to_y is None:
-        return
 
-    if direction_hint in ("up", "down"):
-        wants_down = direction_hint == "down"
-        wants_up = direction_hint == "up"
-    else:
-        wants_down = any(word in instruction for word in ("向下", "下拉", "往下"))
-        wants_up = any(word in instruction for word in ("向上", "上滑", "上拉", "往上"))
+        if direction_hint in ("increase", "decrease"):
+            action.value_direction = direction_hint
+        elif direction_hint in ("up", "down"):
+            action.direction = direction_hint
+    elif not action.value_direction:
+        if any(word in instruction for word in ("调大", "增加", "增大", "往后", "下一")):
+            action.value_direction = "increase"
+        elif any(word in instruction for word in ("调小", "减少", "减小", "往前", "上一")):
+            action.value_direction = "decrease"
+        elif any(word in instruction for word in ("向下", "下滑", "往下")):
+            action.direction = "down"
+        elif any(word in instruction for word in ("向上", "上滑", "往上")):
+            action.direction = "up"
 
-    # Deterministic step-count distance for picker drags; LLM delta for everything else.
-    distance = _picker_step_distance(instruction) or abs(action.to_y - action.y) or 200
-
-    if wants_down and wants_up:
-        if _picker_step_distance(instruction):
-            if action.to_y > action.y:
-                action.to_y = min(850, action.y + distance)
-            else:
-                action.to_y = max(200, action.y - distance)
-        return
-
-    if wants_down:
-        action.to_y = min(850, action.y + distance)
-    elif wants_up:
-        action.to_y = max(200, action.y - distance)
+    step_distance = _picker_step_distance(instruction)
+    if step_distance and step_distance <= _PICKER_ROW_NORM:
+        action.amount = "small"
+    elif step_distance and step_distance >= _PICKER_ROW_NORM * 4:
+        action.amount = "large"
 
 
 def _normalize_scroll_direction(decision: ActionDecision, direction_hint: Optional[str]) -> None:

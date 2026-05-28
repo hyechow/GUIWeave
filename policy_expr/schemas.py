@@ -7,6 +7,19 @@ from pydantic import BaseModel, Field, model_validator
 
 
 ActionType = Literal["tap", "type", "clear_text", "press_enter", "scroll", "drag", "home", "stop"]
+ScrollTargetArea = Literal[
+    "main_content",
+    "left_panel",
+    "right_panel",
+    "top_content",
+    "bottom_content",
+    "picker_left",
+    "picker_center",
+    "picker_right",
+]
+ScrollAmount = Literal["small", "medium", "large"]
+ScrollMethod = Literal["auto", "wheel", "drag"]
+ValueDirection = Literal["increase", "decrease"]
 
 _ACTION_TYPE_LABELS: dict[str, str] = {
     "tap": "点击",
@@ -70,39 +83,53 @@ class Action(BaseModel):
                     data["description"] = f"执行{action_type}并输入{text}"
                 else:
                     data["description"] = f"执行{action_type}操作"
-            # Clamp scroll/drag y to avoid edge dead zones
-            if data.get("action_type") in {"scroll", "drag"} and "y" in data and data["y"] is not None:
+            # Clamp user-visible anchor coordinates to avoid edge dead zones.
+            if data.get("action_type") in {"tap", "type", "scroll", "drag"} and "y" in data and data["y"] is not None:
                 data["y"] = max(200, min(float(data["y"]), 850))
-            if data.get("action_type") == "drag" and data.get("to_y") is not None:
-                data["to_y"] = max(200, min(float(data["to_y"]), 850))
         return data
 
     action_type: ActionType = Field(
-        description="操作类型：tap（纯点击）、type（点击输入框并输入文字）、press_enter（按回车提交/发送）、clear_text（清空输入框）、scroll（滚轮滚动）、drag（按住拖动/滑动）、home（返回主屏幕）、stop（停止）之一"
+        description="操作类型：tap、type、press_enter、clear_text、scroll、drag、home、stop 之一"
     )
     x: Optional[float] = Field(
         default=None,
-        description="归一化 x 坐标（0-1000，tap/type/scroll 时必填）",
+        description="归一化 x 坐标（0-1000）。tap/type 为目标中心；scroll/drag 为滚动锚点，可为空走 target_area 默认点",
     )
     y: Optional[float] = Field(
         default=None,
-        description="归一化 y 坐标（0-1000，tap/type/scroll 时必填）",
+        description="归一化 y 坐标（0-1000）。tap/type 为目标中心；scroll/drag 为滚动锚点，可为空走 target_area 默认点",
     )
     direction: Optional[str] = Field(
         default=None,
-        description="滚动方向：up（向上滚动，查看上方内容）、down（向下滚动，查看下方内容）、left（向左滑动，如主屏翻到下一页）、right（向右滑动，如主屏翻到上一页），scroll 时必填",
+        description="内容方向：up（查看上方内容）、down（查看下方内容）、left（查看右侧内容）、right（查看左侧内容）。普通列表 scroll/drag 使用",
+    )
+    value_direction: Optional[ValueDirection] = Field(
+        default=None,
+        description="数值方向：increase（调大数值）、decrease（调小数值）。picker 滚轮优先使用它，避免和手势方向混淆",
+    )
+    target_area: ScrollTargetArea = Field(
+        default="main_content",
+        description="滚动目标区域：main_content/left_panel/right_panel/top_content/bottom_content/picker_left/picker_center/picker_right",
+    )
+    amount: ScrollAmount = Field(
+        default="medium",
+        description="滚动幅度：small/medium/large。普通翻看用 medium，细微调整用 small，快速翻页用 large",
+    )
+    method: ScrollMethod = Field(
+        default="auto",
+        description="滚动执行方式：auto（运行时自动探测）、wheel（滚轮）、drag（触摸拖动）。普通页面优先 auto，picker 用 drag",
     )
     to_x: Optional[float] = Field(
         default=None,
-        description="drag 结束点归一化 x 坐标（0-1000，drag 时必填）",
+        description="执行层内部字段：drag 结束点归一化 x 坐标，action policy 不要填写",
     )
     to_y: Optional[float] = Field(
         default=None,
-        description="drag 结束点归一化 y 坐标（0-1000，drag 时必填）",
+        description="执行层内部字段：drag 结束点归一化 y 坐标，action policy 不要填写",
     )
     duration_ms: Optional[int] = Field(
         default=None,
-        description="drag 手势持续时间毫秒，默认 1200",
+        description="执行层内部字段：drag 手势持续时间毫秒，action policy 不要填写",
     )
     text: Optional[str] = Field(
         default=None,
@@ -114,9 +141,8 @@ class Action(BaseModel):
     def _require_text_for_type(self) -> "Action":
         if self.action_type == "type" and not self.text:
             raise ValueError("type 动作必须填写 text 字段，不能为空")
-        if self.action_type == "drag":
-            if self.x is None or self.y is None or self.to_x is None or self.to_y is None:
-                raise ValueError("drag 动作必须填写 x/y/to_x/to_y")
+        if self.action_type in {"scroll", "drag"} and not (self.direction or self.value_direction):
+            raise ValueError("scroll/drag 动作必须填写 direction 或 value_direction")
         return self
 
 

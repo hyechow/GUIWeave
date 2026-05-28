@@ -7,6 +7,15 @@ import time
 
 from policy_expr.utils import clear_text_field, paste_text, press_enter
 from policy_expr.recon.yolo_calibrator import YoloCalibrator
+from policy_expr.executor_constants import (
+    SCROLL_DELTA,
+    SCROLL_INTERVAL,
+    SCROLL_TICKS,
+    WIN_H,
+    WIN_H_TAP_MAX,
+    WIN_W,
+)
+from policy_expr.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
 from Quartz import (
     CGEventCreateMouseEvent,
     CGEventCreateScrollWheelEvent,
@@ -26,13 +35,6 @@ from Quartz import (
 
 from policy_expr.perception import LivePhoneSession
 from policy_expr.schemas import Action, ActionDecision
-
-WIN_W = 318
-WIN_H = 701
-WIN_H_TAP_MAX = WIN_H - 20   # 避开底部 Home 指示条安全区（约 20px）
-SCROLL_TICKS = 3
-SCROLL_DELTA = 120            # pixels per tick
-SCROLL_INTERVAL = 0.1         # seconds between ticks (避免 macOS 合并事件)
 
 # App Switcher / kill-app 相关常量（通过像素分析得出）
 _TITLE_BAR_H  = 38   # iPhone Mirroring 透明标题栏高度（逻辑 px）
@@ -91,10 +93,14 @@ class ActionExecutor:
             press_enter()
 
         elif action.action_type == "scroll" and action.direction:
-            self._scroll(action)
+            if action.method == "drag":
+                self._drag(action_with_drag(action, drag_gesture(action)))
+            else:
+                gesture = wheel_gesture(action)
+                self._scroll(action_with_wheel(action, gesture), ticks=gesture.ticks, delta_px=gesture.delta_px)
 
         elif action.action_type == "drag":
-            self._drag(action)
+            self._drag(action_with_drag(action, drag_gesture(action)))
 
         elif action.action_type == "home":
             print("执行返回主屏")
