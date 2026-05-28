@@ -49,28 +49,58 @@ class ActionExecutor:
         self.phone = phone
         self.calibrator = calibrator
 
-    def _snap(self, ax: float, ay: float) -> tuple[float, float]:
-        """Snap normalized (0-1000) coordinates to nearest YOLO-detected icon center."""
+    def _snap(self, ax: float, ay: float, png_bytes: bytes | None = None, hint: str = "") -> tuple[float, float]:
+        """Snap normalized (0-1000) coordinates: YOLO first, OCR fallback."""
         if self.calibrator:
             snapped = self.calibrator.nearest(ax, ay)
             if snapped:
                 print(f"YOLO 吸附: ({ax:.0f}, {ay:.0f}) → ({snapped[0]:.0f}, {snapped[1]:.0f})")
                 return snapped
+
+        if png_bytes and hint:
+            snapped = self._ocr_snap(ax, ay, png_bytes, hint)
+            if snapped:
+                print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({snapped[0]:.0f}, {snapped[1]:.0f})")
+                return snapped
+
         return ax, ay
 
-    def execute(self, decision: ActionDecision, app_name: str = "") -> bool:
+    def _ocr_snap(self, ax: float, ay: float, png_bytes: bytes, hint: str) -> tuple[float, float] | None:
+        """Find the nearest OCR text token that appears in hint, within 200 normalized units."""
+        try:
+            from policy_expr.utils import ocr_from_bytes
+            results, _ = ocr_from_bytes(png_bytes)
+        except Exception:
+            return None
+
+        best_dist, best_pos = float("inf"), None
+        for r in results:
+            if len(r.text) < 2 or r.text not in hint:
+                continue
+            tx, ty = r.tap_coords(WIN_W, WIN_H)
+            nx, ny = tx / WIN_W * 1000, ty / WIN_H * 1000
+            dist = ((nx - ax) ** 2 + (ny - ay) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist, best_pos = dist, (nx, ny)
+
+        if best_pos is not None and best_dist <= 150:
+            return best_pos
+        return None
+
+    def execute(self, decision: ActionDecision, app_name: str = "", png_bytes: bytes | None = None) -> bool:
         action = decision.action
         print(f"\n动作: [{action.action_type}] {action.description}")
 
+        hint = action.description or ""
         if action.action_type in ("tap", "click") and action.x is not None and action.y is not None:
-            ax, ay = self._snap(action.x, action.y)
+            ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint)
             lx, ly = logical_xy(ax, ay)
             if not self._tap(lx, ly, decision, app_name):
                 return False
 
         elif action.action_type == "type" and action.text:
             if action.x is not None and action.y is not None:
-                ax, ay = self._snap(action.x, action.y)
+                ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint)
                 lx, ly = logical_xy(ax, ay)
                 if not self._tap(lx, ly, decision, app_name):
                     return False

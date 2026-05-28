@@ -294,7 +294,7 @@ def run_once(
             if hud:
                 a = action_decision.action
                 hud.update(f"Turn 1 — [{action_label(a.action_type)}] {a.description}")
-            executed = ActionExecutor(phone, calibrator).execute(action_decision, app_name=sv_step.app_name or "")
+            executed = ActionExecutor(phone, calibrator).execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes)
 
         turn = PolicyTurn(
             index=1,
@@ -535,7 +535,7 @@ def run_agent_loop(
                             )
                             executed = False
                     else:
-                        executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
+                        executed = executor.execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes)
 
             turn = PolicyTurn(
                 index=turn_no,
