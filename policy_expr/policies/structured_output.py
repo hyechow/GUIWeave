@@ -42,6 +42,18 @@ method 表示执行方式：auto（运行时自动探测）、wheel（滚轮）�
 picker 调整数值时优先填写 value_direction，不要用 direction 表达数值变化：
 - value_direction=increase：调大数值，例如 2025年→2026年、1月→2月、1日→2日
 - value_direction=decrease：调小数值，例如 2026年→2025年、5月→4月、2日→1日
+⚠️ Picker 数值调整强规则：
+- 只要指令要求「把年份/月/日期/小时/分钟调大/调小」「上一年/下一年/上一月/下一月」「移动一格」，必须输出 action_type=drag，禁止输出 tap。
+- 不要点击当前选中的年份/月/日文本；点击不会改变 picker 数值。
+- 不要点击顶部绿色/高亮的已选日期展示框；那只是当前值展示，不是调值动作。
+- 根据要调整的列选择 target_area：年份/小时/省份等左列用 picker_left；月份/分钟/城市等中列用 picker_center；日期/秒/区县等右列用 picker_right。
+- amount 一格/一步用 small；多格或大幅调整才用 medium/large。
+- method 必须是 drag；普通 picker 调值不要用 auto 或 wheel。
+- picker 调值通常不要填写 x/y；只用 target_area 表示列。只有当 picker 列不是常见左/中/右布局时，才填写 x 作为列锚点；不要填写 y。
+示例：
+- 指令「把年份调小一格」→ action_type=drag, target_area=picker_left, value_direction=decrease, amount=small, method=drag
+- 指令「把月份调大一格」→ action_type=drag, target_area=picker_center, value_direction=increase, amount=small, method=drag
+- 指令「把日期调小一格」→ action_type=drag, target_area=picker_right, value_direction=decrease, amount=small, method=drag
 scroll/drag 的 x/y 是「滚动锚点」：
 - 普通整页滚动可不填 x/y，执行层使用 target_area 默认点。
 - 局部滚动容器、picker 多列、左右分栏必须填写 x/y，落在要滚动的容器或列中心。

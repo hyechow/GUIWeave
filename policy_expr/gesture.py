@@ -133,8 +133,15 @@ def _effective_content_direction(action: Action) -> str:
 
 def _anchor_point(action: Action) -> tuple[float, float]:
     default_x, default_y = _AREA_POINTS.get(action.target_area, _AREA_POINTS["main_content"])
-    x = action.x if action.x is not None else default_x
-    y = action.y if action.y is not None else default_y
+    if _is_picker_area(action.target_area):
+        # For picker wheels, the model may point at labels or the selected-value
+        # display instead of the draggable wheel band. Keep the column x if it
+        # supplied one, but always use the calibrated selected-row y.
+        x = action.x if action.x is not None else default_x
+        y = default_y
+    else:
+        x = action.x if action.x is not None else default_x
+        y = action.y if action.y is not None else default_y
     return max(30.0, min(970.0, float(x))), max(200.0, min(850.0, float(y)))
 
 
