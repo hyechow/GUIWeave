@@ -128,6 +128,18 @@ bin/benchmark generate
 bin/benchmark run op-001 --supervisor simple --max-turns 30
 ```
 
+## 执行可视化
+
+每个任务运行后自动生成 HTML 报告（`report.html`），包含：
+
+- **子目标分解** — 名称、描述、验收条件
+- **按子目标分行展示** — 每行一组缩略图，展示该子目标的操作步骤
+- **Action 标注** — 点击圆圈、滚动箭头、输入文本气泡、拖拽起终点
+- **模块耗时** — 每轮 checker / planner / action_policy 的 stacked bar 图
+- **验收截图** — 每个子目标完成时的无标注截图
+
+报告路径在 `results.json` 的 `report` 字段和汇总输出中显示。
+
 ## 任务结构
 
 ```json

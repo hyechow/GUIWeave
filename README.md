@@ -159,6 +159,24 @@ uv run python policy_expr/runner.py "check today's food delivery orders" \
   --mode agent-loop --supervisor milestone --auto-continue --hud
 ```
 
+### Execution Visualization
+
+After each run, an HTML report is automatically generated showing the full task execution trace:
+
+- **Milestone decomposition** — sub-goals with names, descriptions, and acceptance criteria
+- **Per-milestone thumbnail gallery** — one row of annotated screenshots per sub-goal
+- **Action annotations** — tap circles, scroll arrows, type text bubbles, drag start/end points
+- **Timing breakdown** — stacked bar per turn showing time spent in checker, planner, action policy, etc.
+- **Verification screenshots** — unannotated screenshot confirming each milestone's completion
+
+```bash
+# Runner auto-generates report.html in the log directory
+bin/runner "open WeChat and send a message"
+
+# Generate report from an existing log
+python scripts/report.py runner --run logs/policy_expr/agent-loop/20260528_104755
+```
+
 ### App Reconnaissance
 
 Generate a reusable knowledge base for an app.

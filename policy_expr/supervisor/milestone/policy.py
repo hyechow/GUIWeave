@@ -426,6 +426,9 @@ class MilestoneSupervisorPolicy:
                 should_act=False, stop=True, stop_reason="所有子目标已完成",
                 goal_completed=True, pre_existing=pre_existing,
                 summary=f"子目标「{done_name}」已完成，任务全部完成。",
+                milestone_id=milestone.id,
+                milestone_kind=milestone.kind,
+                completion_strategy=milestone.completion_strategy,
                 **(final_read or {}),
             )
 
