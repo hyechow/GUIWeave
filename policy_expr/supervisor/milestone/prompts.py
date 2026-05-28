@@ -224,9 +224,13 @@ PLAN_PROMPT = """\
 每次输出时必须决定以下字段：
 - direction：
   * 下一步是 scroll → 填手指移动方向（down/up/left/right）
-  * 下一步是 picker drag → 填「值的变化方向」（不是手指方向！）：
-    - 目标值比当前值小（如5月→1月，2026年→2024年，20日→5日）：direction=decrease
-    - 目标值比当前值大（如1月→5月，2024年→2026年，5日→20日）：direction=increase
+  * 下一步是 picker drag → 填「值的变化方向」（不是手指方向！）。判断步骤：
+    1. 从 check_reason / missing_evidence 中读出「当前值」和「目标值」（数字）
+    2. 比较大小：target < current → direction=decrease；target > current → direction=increase
+    3. instruction 中的拖动方向也要对应：decrease=向下拖动；increase=向上拖动
+    - 示例：当前28日→目标8日，8 < 28 → direction=decrease，instruction 写「向下拖动」
+    - 示例：当前1日→目标20日，20 > 1 → direction=increase，instruction 写「向上拖动」
+    - ⚠️ 跨度大小（差1格还是差20格）不影响方向，只影响拖动幅度
   * 其他动作（tap/type/home/stop）→ 留空
 - drag_column：
   * 下一步是 picker drag → 填目标列（year=年份列，month=月份列，day=日期列）

@@ -1070,10 +1070,10 @@ class MilestoneSupervisorPolicy:
         col_suffix = {"year": "年", "month": "月", "day": "日"}.get(plan.drag_column or "", "")
         if not col_suffix:
             return
-        m = re.search(rf"从\s*(?:\d+[月年])?(\d+){col_suffix}.*?[至到为]\s*(?:\d+[月年])?(\d+){col_suffix}", plan.instruction)
-        if not m:
+        nums = re.findall(rf"(\d+){col_suffix}", plan.instruction)
+        if len(nums) < 2:
             return
-        cur, tgt = int(m.group(1)), int(m.group(2))
+        cur, tgt = int(nums[0]), int(nums[1])
         if tgt == cur:
             return
         correct = "increase" if tgt > cur else "decrease"
