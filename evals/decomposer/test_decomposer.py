@@ -108,6 +108,39 @@ def _check_assertions(milestones: list, assertions: list[str]) -> list[str]:
                     f"address_before_search: address step (#{address_idx} '{milestones[address_idx].name}') "
                     f"comes AFTER search step (#{search_idx} '{milestones[search_idx].name}')"
                 )
+        elif assertion == "filter_before_loop":
+            milestones_by_id = {m.id: m for m in milestones}
+
+            def _deps_closure(mid: str) -> set[str]:
+                seen: set[str] = set()
+                queue = [mid]
+                while queue:
+                    cur = queue.pop()
+                    if cur in seen:
+                        continue
+                    seen.add(cur)
+                    dep_m = milestones_by_id.get(cur)
+                    if dep_m:
+                        queue.extend(dep_m.depends_on)
+                seen.discard(mid)
+                return seen
+
+            loop_milestones = [m for m in milestones if m.completion_strategy == "scroll_until_boundary"]
+            if not loop_milestones:
+                details.append("filter_before_loop: no scroll_until_boundary milestone found")
+            else:
+                for lm in loop_milestones:
+                    dep_ids = _deps_closure(lm.id)
+                    has_filter = any(
+                        milestones_by_id.get(dep_id) is not None
+                        and milestones_by_id[dep_id].kind == "filter"
+                        for dep_id in dep_ids
+                    )
+                    if not has_filter:
+                        details.append(
+                            f"filter_before_loop: loop milestone '{lm.name}' "
+                            f"has no kind=filter in its dependency chain"
+                        )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

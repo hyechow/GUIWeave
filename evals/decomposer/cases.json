@@ -49,6 +49,16 @@
     }
   },
   {
+    "label": "支付宝账单-4月最后一周-筛选应独立于采集",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "我4月最后一周支付宝支付花多少钱了？",
+    "expected": {
+      "min_milestones": 3,
+      "any_milestone_kind": ["filter"]
+    },
+    "assertions": ["filter_before_loop"]
+  },
+  {
     "label": "美团点外卖-地址应在搜索前设置",
     "source_log": "logs/policy_expr/benchmark/20260528_104755/context.json",
     "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
