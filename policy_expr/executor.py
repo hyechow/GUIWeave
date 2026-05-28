@@ -50,42 +50,73 @@ class ActionExecutor:
         self.calibrator = calibrator
 
     def _snap(self, ax: float, ay: float, png_bytes: bytes | None = None, hint: str = "") -> tuple[float, float]:
-        """Snap normalized (0-1000) coordinates: YOLO first, OCR fallback."""
+        """Snap normalized (0-1000) coordinates.
+
+        YOLO and OCR both run when hint is available. OCR wins when it finds a
+        specific text match (≥4 chars) — this catches text elements (search bars,
+        labels) where YOLO may snap to a nearby icon instead of the actual target.
+        """
+        yolo_pos = None
         if self.calibrator:
             snapped = self.calibrator.nearest(ax, ay)
             if snapped:
-                print(f"YOLO 吸附: ({ax:.0f}, {ay:.0f}) → ({snapped[0]:.0f}, {snapped[1]:.0f})")
-                return snapped
+                yolo_pos = snapped
 
+        ocr_pos: tuple[float, float] | None = None
+        ocr_len = 0
         if png_bytes and hint:
-            snapped = self._ocr_snap(ax, ay, png_bytes, hint)
-            if snapped:
-                print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({snapped[0]:.0f}, {snapped[1]:.0f})")
-                return snapped
+            ocr = self._ocr_snap(ax, ay, png_bytes, hint)
+            if ocr:
+                ocr_pos, ocr_len = ocr
+
+        # OCR wins when the matched text is specific enough (≥4 chars) to be
+        # trusted over a YOLO icon snap that may have landed on a wrong element.
+        if ocr_pos and ocr_len >= 4:
+            if yolo_pos:
+                print(f"OCR 覆盖 YOLO: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f}) [匹配={ocr_len}字]")
+            else:
+                print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f})")
+            return ocr_pos
+
+        if yolo_pos:
+            print(f"YOLO 吸附: ({ax:.0f}, {ay:.0f}) → ({yolo_pos[0]:.0f}, {yolo_pos[1]:.0f})")
+            return yolo_pos
+
+        if ocr_pos:
+            print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f})")
+            return ocr_pos
 
         return ax, ay
 
-    def _ocr_snap(self, ax: float, ay: float, png_bytes: bytes, hint: str) -> tuple[float, float] | None:
-        """Find the nearest OCR text token that appears in hint, within 200 normalized units."""
+    def _ocr_snap(self, ax: float, ay: float, png_bytes: bytes, hint: str) -> tuple[tuple[float, float], int] | None:
+        """Find OCR text matching hint within 150 normalized units.
+
+        Picks the candidate with the longest matched text first (most specific),
+        breaking ties by distance. Returns ((nx, ny), match_len) or None.
+        """
         try:
             from policy_expr.utils import ocr_from_bytes
             results, _ = ocr_from_bytes(png_bytes)
         except Exception:
             return None
 
-        best_dist, best_pos = float("inf"), None
+        candidates: list[tuple[float, int, tuple[float, float]]] = []
         for r in results:
             if len(r.text) < 2 or r.text not in hint:
                 continue
             tx, ty = r.tap_coords(WIN_W, WIN_H)
             nx, ny = tx / WIN_W * 1000, ty / WIN_H * 1000
             dist = ((nx - ax) ** 2 + (ny - ay) ** 2) ** 0.5
-            if dist < best_dist:
-                best_dist, best_pos = dist, (nx, ny)
+            if dist <= 150:
+                candidates.append((dist, len(r.text), (nx, ny)))
 
-        if best_pos is not None and best_dist <= 150:
-            return best_pos
-        return None
+        if not candidates:
+            return None
+
+        # Longer match = more specific = preferred; break ties by distance.
+        candidates.sort(key=lambda c: (-c[1], c[0]))
+        _, best_len, best_pos = candidates[0]
+        return best_pos, best_len
 
     def execute(self, decision: ActionDecision, app_name: str = "", png_bytes: bytes | None = None) -> bool:
         action = decision.action
