@@ -608,6 +608,16 @@ def main() -> None:
                 print("=" * 50)
                 print(output.rstrip())
                 print("=" * 50)
+
+            # Auto-generate HTML report
+            if (log_dir / "context.json").exists():
+                try:
+                    from scripts.report_builder import RunnerReportBuilder, save_report
+                    report_data = RunnerReportBuilder().build(log_dir)
+                    report_path = save_report(report_data, log_dir / "report.html")
+                    print(f"\nReport  : {report_path}")
+                except Exception as exc:
+                    print(f"\nReport  : 生成失败 ({exc})")
         finally:
             if hud:
                 hud.close()

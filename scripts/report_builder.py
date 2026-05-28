@@ -86,6 +86,130 @@ def annotate_tap(
     return img
 
 
+_ACTION_COLORS_FULL: dict[str, tuple[int, int, int]] = {
+    "tap": (220, 50, 50),
+    "type": (160, 50, 200),
+    "scroll": (50, 180, 50),
+    "drag": (50, 150, 220),
+    "home": (50, 120, 220),
+    "press_enter": (220, 160, 0),
+    "clear_text": (128, 128, 128),
+}
+
+
+def annotate_action(
+    img: Image.Image,
+    action_type: str,
+    x: float | None,
+    y: float | None,
+    idx: int,
+    direction: str | None = None,
+    text: str | None = None,
+    to_x: float | None = None,
+    to_y: float | None = None,
+) -> Image.Image:
+    """Draw action annotation on image with type-specific visuals."""
+    img = img.copy()
+    draw = ImageDraw.Draw(img, "RGBA")
+    w, h = img.size
+    font = _font(FONT_SIZE)
+    small_font = _font(12)
+    color = _ACTION_COLORS_FULL.get(action_type, DEFAULT_COLOR)
+
+    if x is None or y is None:
+        return img
+    cx = int(x / 1000 * w)
+    cy = int(y / 1000 * h)
+
+    if action_type in ("scroll", "drag"):
+        # Draw start circle + arrow to end
+        draw.ellipse(
+            [cx - DOT_RADIUS, cy - DOT_RADIUS, cx + DOT_RADIUS, cy + DOT_RADIUS],
+            fill=(*color, 200),
+            outline=(255, 255, 255, 255),
+            width=2,
+        )
+        # Direction arrow or end point
+        if to_x is not None and to_y is not None:
+            ex = int(to_x / 1000 * w)
+            ey = int(to_y / 1000 * h)
+            draw.line([(cx, cy), (ex, ey)], fill=(*color, 220), width=3)
+            draw.ellipse(
+                [ex - 8, ey - 8, ex + 8, ey + 8],
+                fill=(*color, 180),
+                outline=(255, 255, 255, 255),
+                width=2,
+            )
+        elif direction:
+            arrow_len = 60
+            dx, dy = 0, 0
+            if direction == "up": dy = -arrow_len
+            elif direction == "down": dy = arrow_len
+            elif direction == "left": dx = -arrow_len
+            elif direction == "right": dx = arrow_len
+            ex, ey = cx + dx, cy + dy
+            draw.line([(cx, cy), (ex, ey)], fill=(*color, 220), width=3)
+            # Arrowhead
+            import math
+            angle = math.atan2(dy, dx)
+            a1 = angle + 2.5
+            a2 = angle - 2.5
+            for a in (a1, a2):
+                ax = ex - int(12 * math.cos(a))
+                ay = ey - int(12 * math.sin(a))
+                draw.line([(ex, ey), (ax, ay)], fill=(*color, 220), width=2)
+        # Label
+        label = str(idx)
+        bbox = font.getbbox(label)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text((cx - tw // 2, cy - th // 2), label, fill=(255, 255, 255, 255), font=font)
+
+    elif action_type == "type":
+        # Circle + text bubble
+        draw.ellipse(
+            [cx - DOT_RADIUS, cy - DOT_RADIUS, cx + DOT_RADIUS, cy + DOT_RADIUS],
+            fill=(*color, 200),
+            outline=(255, 255, 255, 255),
+            width=2,
+        )
+        label = str(idx)
+        bbox = font.getbbox(label)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text((cx - tw // 2, cy - th // 2), label, fill=(255, 255, 255, 255), font=font)
+        # Text bubble above
+        if text:
+            display = text[:20] + ("…" if len(text) > 20 else "")
+            tbbox = small_font.getbbox(display)
+            btw, bth = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
+            pad = 4
+            bx = cx - btw // 2 - pad
+            by = cy - DOT_RADIUS - bth - 14
+            draw.rounded_rectangle(
+                [bx, by, bx + btw + pad * 2, by + bth + pad * 2],
+                radius=4, fill=(255, 255, 255, 230), outline=(*color, 200), width=1,
+            )
+            draw.text((bx + pad, by + pad), display, fill=(*color, 255), font=small_font)
+
+    else:
+        # Default: circle with index (tap, home, press_enter, etc.)
+        draw.ellipse(
+            [cx - DOT_RADIUS, cy - DOT_RADIUS, cx + DOT_RADIUS, cy + DOT_RADIUS],
+            fill=(*color, 200),
+            outline=(255, 255, 255, 255),
+            width=2,
+        )
+        label = str(idx)
+        if action_type == "press_enter":
+            label = "↵"
+        elif action_type == "home":
+            label = "⌂"
+        bbox = font.getbbox(label)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text((cx - tw // 2, cy - th // 2), label, fill=(255, 255, 255, 255), font=font)
+
+    return img
+
+
 def annotate_recon_taps(
     img: Image.Image,
     points: list[tuple[float, float, int, bool]],
@@ -211,20 +335,32 @@ def _render_identity_json(identity: dict) -> str:
 @dataclass
 class ReportStep:
     label: str
-    action_type: str  # tap, home, swipe, text, none
+    action_type: str  # tap, home, swipe, text, none, scroll, drag
     x: float | None   # 0-1000 normalized
     y: float | None
     description: str
-    annotated_before_url: str  # base64 data url with tap point drawn
+    annotated_before_url: str  # path to annotated screenshot
     after_url: str | None      # screenshot after action
     status: str = ""  # ✓ ✗ ↩ ""
     timestamp: str = ""  # ISO timestamp
+    milestone_id: str = ""
+    milestone_kind: str = ""
+    instruction: str = ""
+    summary: str = ""
+    timings: dict[str, float] = field(default_factory=dict)
+    llm_calls: int = 0
+    action_direction: str | None = None
+    action_text: str | None = None
+    action_to_x: float | None = None
+    action_to_y: float | None = None
 
 
 @dataclass
 class ReportPage:
     title: str
     steps: list[ReportStep] = field(default_factory=list)
+    milestone_id: str = ""
+    milestone_kind: str = ""
 
 
 @dataclass
@@ -232,6 +368,7 @@ class ReportData:
     title: str
     pages: list[ReportPage] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    milestones: list[dict] = field(default_factory=list)
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -785,11 +922,11 @@ class RunnerReportBuilder:
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
         data.title = ctx.get("goal", run_dir.name)
 
-        page = ReportPage(title="Execution")
         turns = ctx.get("turns", [])
 
         total_actions = 0
         total_executed = 0
+        all_steps: list[ReportStep] = []
 
         for turn in turns:
             idx = turn.get("index", 0)
@@ -810,7 +947,13 @@ class RunnerReportBuilder:
             ss_path = run_dir / f"screenshot_turn_{idx}.png"
             if ss_path.exists() and x is not None and y is not None:
                 img = _load_img(ss_path)
-                annotated_img = annotate_tap(img, [(x, y, idx)])
+                annotated_img = annotate_action(
+                    img, atype, x, y, idx,
+                    direction=action.get("direction"),
+                    text=action.get("text"),
+                    to_x=action.get("to_x"),
+                    to_y=action.get("to_y"),
+                )
                 ann_path = run_dir / f"screenshot_turn_{idx}_ann.jpg"
                 _save_report_img(annotated_img, ann_path)
                 annotated_url = ann_path.name
@@ -823,7 +966,7 @@ class RunnerReportBuilder:
             if atype == "none":
                 status = "— skip"
 
-            page.steps.append(ReportStep(
+            all_steps.append(ReportStep(
                 label=f"Turn {idx}",
                 action_type=atype,
                 x=x,
@@ -833,9 +976,63 @@ class RunnerReportBuilder:
                 after_url=None,
                 status=status,
                 timestamp=turn.get("timestamp", ""),
+                milestone_id=sup.get("milestone_id", ""),
+                milestone_kind=sup.get("milestone_kind", ""),
+                instruction=sup.get("instruction", ""),
+                summary=summary,
+                timings=turn.get("timings", {}),
+                llm_calls=turn.get("llm_calls", 0),
+                action_direction=action.get("direction"),
+                action_text=action.get("text"),
+                action_to_x=action.get("to_x"),
+                action_to_y=action.get("to_y"),
             ))
 
-        data.pages.append(page)
+        # Group steps by milestone
+        pages: list[ReportPage] = []
+        current_mid = ""
+        current_page_steps: list[ReportStep] = []
+        milestones_info: list[dict] = []
+
+        for step in all_steps:
+            mid = step.milestone_id or "_no_milestone"
+            if mid != current_mid:
+                if current_page_steps:
+                    pages.append(ReportPage(
+                        title=f"Milestone {current_mid}",
+                        steps=current_page_steps,
+                        milestone_id=current_mid,
+                        milestone_kind=current_page_steps[0].milestone_kind,
+                    ))
+                current_mid = mid
+                current_page_steps = []
+            current_page_steps.append(step)
+
+        if current_page_steps:
+            pages.append(ReportPage(
+                title=f"Milestone {current_mid}",
+                steps=current_page_steps,
+                milestone_id=current_mid,
+                milestone_kind=current_page_steps[0].milestone_kind,
+            ))
+
+        # Build milestones summary
+        for page in pages:
+            ms_steps = page.steps
+            ms_timings: dict[str, float] = {}
+            for s in ms_steps:
+                for k, v in s.timings.items():
+                    ms_timings[k] = ms_timings.get(k, 0) + v
+            milestones_info.append({
+                "id": page.milestone_id,
+                "kind": page.milestone_kind,
+                "turns": f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}",
+                "total_time": sum(ms_timings.values()),
+                "timings": ms_timings,
+            })
+
+        data.pages = pages
+        data.milestones = milestones_info
         data.stats = {
             "turns": len(turns),
             "executed": total_executed,
@@ -1487,34 +1684,82 @@ HTML_TEMPLATE = """\
 <title>{title}</title>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: -apple-system, "PingFang SC", sans-serif; background: #f5f5f5; padding: 20px; }}
-  .header {{ max-width: 900px; margin: 0 auto 24px; padding: 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-  .header h1 {{ font-size: 20px; margin-bottom: 8px; }}
-  .stats {{ color: #666; font-size: 14px; }}
-  .page {{ max-width: 900px; margin: 0 auto 24px; padding: 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-  .page h2 {{ font-size: 16px; color: #333; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #eee; }}
-  .step {{ margin-bottom: 20px; padding: 12px; border: 1px solid #eee; border-radius: 8px; }}
-  .step-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }}
-  .step-idx {{ display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 50%; font-size: 13px; font-weight: bold; color: #fff; }}
-  .step-label {{ font-size: 14px; font-weight: 500; }}
-  .step-desc {{ font-size: 13px; color: #666; margin-bottom: 8px; }}
-  .step-status {{ font-size: 12px; font-weight: 500; margin-left: auto; }}
-  .step-images {{ display: flex; gap: 8px; }}
-  .step-images img {{ max-height: 300px; border-radius: 6px; cursor: pointer; border: 1px solid #eee; }}
-  .img-label {{ font-size: 11px; color: #999; text-align: center; margin-top: 2px; }}
-  .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 999; justify-content: center; align-items: center; }}
+  :root {{
+    --bg: #f1f5f9;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --muted: #64748b;
+    --radius: 12px;
+  }}
+  body {{ font-family: -apple-system, "PingFang SC", sans-serif; background: var(--bg); padding: 24px; color: var(--text); }}
+
+  .header {{ max-width: 960px; margin: 0 auto 24px; padding: 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+  .header h1 {{ font-size: 20px; font-weight: 700; margin-bottom: 6px; }}
+  .stats {{ color: var(--muted); font-size: 13px; }}
+
+  /* Milestone overview */
+  .ms-overview {{ max-width: 960px; margin: 0 auto 24px; display: flex; gap: 8px; flex-wrap: wrap; }}
+  .ms-chip {{ padding: 6px 12px; border-radius: 8px; font-size: 12px; background: var(--card); border: 1px solid var(--border); }}
+  .ms-chip-id {{ font-weight: 600; color: #4338ca; }}
+  .ms-chip-kind {{ color: var(--muted); margin-left: 6px; }}
+  .ms-chip-time {{ color: var(--muted); margin-left: 8px; font-family: monospace; font-size: 11px; }}
+
+  /* Milestone section */
+  .milestone {{ max-width: 960px; margin: 0 auto 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
+  .milestone-header {{ padding: 14px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }}
+  .milestone-header h2 {{ font-size: 15px; font-weight: 600; }}
+  .milestone-badge {{ font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; }}
+  .milestone-badge-navigation {{ background: #dbeafe; color: #1d4ed8; }}
+  .milestone-badge-action {{ background: #fef3c7; color: #92400e; }}
+  .milestone-badge-filter {{ background: #ede9fe; color: #5b21b6; }}
+  .milestone-badge-collection {{ background: #d1fae5; color: #065f46; }}
+  .milestone-badge-default {{ background: #f1f5f9; color: #475569; }}
+  .milestone-time {{ font-size: 12px; color: var(--muted); margin-left: auto; font-family: monospace; }}
+
+  /* Steps */
+  .steps {{ padding: 8px 16px; }}
+  .step {{ display: flex; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }}
+  .step:last-child {{ border-bottom: none; }}
+
+  /* Step left: screenshot */
+  .step-ss {{ width: 180px; flex-shrink: 0; }}
+  .step-ss img {{ width: 100%; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; display: block; }}
+
+  /* Step right: info */
+  .step-info {{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }}
+  .step-top {{ display: flex; align-items: center; gap: 8px; }}
+  .step-idx {{ display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 50%; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }}
+  .step-action-type {{ font-size: 11px; padding: 1px 6px; border-radius: 4px; font-weight: 500; }}
+  .step-action-desc {{ font-size: 13px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .step-status {{ font-size: 12px; font-weight: 600; margin-left: auto; flex-shrink: 0; }}
+  .step-status-ok {{ color: #16a34a; }}
+  .step-status-fail {{ color: #dc2626; }}
+  .step-status-skip {{ color: #9ca3af; }}
+
+  .step-instruction {{ font-size: 12px; color: var(--muted); }}
+  .step-instruction-label {{ color: #94a3b8; }}
+  .step-summary {{ font-size: 12px; color: #475569; line-height: 1.4; }}
+
+  /* Timing bar */
+  .timing-bar {{ display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #f1f5f9; margin-top: 2px; }}
+  .timing-seg {{ height: 100%; min-width: 1px; }}
+  .timing-labels {{ display: flex; gap: 10px; font-size: 10px; color: #94a3b8; margin-top: 3px; flex-wrap: wrap; }}
+  .timing-label-dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 2px; vertical-align: middle; margin-right: 2px; }}
+
+  /* Action type colors */
+  .at-tap {{ background: #dc3232; }}
+  .at-type {{ background: #a032c8; }}
+  .at-scroll {{ background: #32b432; }}
+  .at-drag {{ background: #3296dc; }}
+  .at-home {{ background: #3278dc; }}
+  .at-press_enter {{ background: #dca000; }}
+  .at-clear_text {{ background: #808080; }}
+  .at-none {{ background: #c0c0c0; }}
+
+  .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; justify-content: center; align-items: center; }}
   .modal.show {{ display: flex; }}
-  .modal img {{ max-width: 90%; max-height: 90%; }}
-  .arrow {{ display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ccc; padding: 0 4px; }}
-  .grid {{ display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 12px; padding-bottom: 8px; }}
-  .grid .card {{ min-width: 240px; max-width: 240px; flex-shrink: 0; padding: 8px; }}
-  .grid .card-header {{ margin-bottom: 4px; }}
-  .card-seq {{ font-size: 12px; color: #aaa; margin-right: 2px; }}
-  .card {{ border: 1px solid #eee; border-radius: 8px; padding: 12px; }}
-  .card-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }}
-  .card-images {{ display: flex; justify-content: center; }}
-  .card-images img {{ width: 100%; border-radius: 6px; cursor: pointer; border: 1px solid #eee; }}
-  .step-time {{ font-size: 11px; color: #aaa; margin-left: auto; margin-right: 4px; }}
+  .modal img {{ max-width: 90%; max-height: 90%; border-radius: 8px; }}
 </style>
 </head>
 <body>
@@ -1524,13 +1769,14 @@ HTML_TEMPLATE = """\
   <div class="stats">{stats}</div>
 </div>
 
+{milestones_overview}
 {pages_html}
 
 <div class="modal" id="modal" onclick="this.classList.remove('show')">
   <img id="modal-img" src="">
 </div>
 <script>
-document.querySelectorAll('.step-images img').forEach(img => {{
+document.querySelectorAll('.step-ss img').forEach(img => {{
   img.onclick = () => {{
     document.getElementById('modal-img').src = img.src;
     document.getElementById('modal').classList.add('show');
@@ -1541,68 +1787,148 @@ document.querySelectorAll('.step-images img').forEach(img => {{
 </html>
 """
 
+TIMING_COLORS: dict[str, str] = {
+    "decompose": "#6366f1",
+    "checker": "#f59e0b",
+    "planner": "#3b82f6",
+    "replanner": "#ef4444",
+    "loop_check": "#8b5cf6",
+    "loop_scroll": "#06b6d4",
+    "action_policy": "#22c55e",
+}
 
-def color_for_type(action_type: str) -> tuple[int, int, int]:
-    return ACTION_COLORS.get(action_type, DEFAULT_COLOR)
+KIND_BADGE = {
+    "navigation": "milestone-badge-navigation",
+    "action": "milestone-badge-action",
+    "filter": "milestone-badge-filter",
+    "collection": "milestone-badge-collection",
+}
 
 
-def color_hex(color: tuple[int, int, int]) -> str:
-    return f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+def _safe(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
-    stats_str = " | ".join(stats_parts)
+    total_time = sum(m.get("total_time", 0) for m in data.milestones)
+    stats_parts.append(f"total_time: {total_time:.1f}s")
+    stats_str = "  |  ".join(stats_parts)
 
+    # Milestones overview chips
+    overview_parts = []
+    for m in data.milestones:
+        mid = _safe(m.get("id", "?"))
+        kind = _safe(m.get("kind", ""))
+        turns = m.get("turns", "")
+        t = m.get("total_time", 0)
+        overview_parts.append(
+            f'<div class="ms-chip">'
+            f'<span class="ms-chip-id">#{mid}</span>'
+            f'<span class="ms-chip-kind">{kind}</span>'
+            f'<span class="ms-chip-time">{t:.1f}s (Turn {turns})</span>'
+            f'</div>'
+        )
+    milestones_overview = f'<div class="ms-overview">{"".join(overview_parts)}</div>'
+
+    # Per-milestone sections
     pages_html = ""
     for page in data.pages:
+        badge_cls = KIND_BADGE.get(page.milestone_kind, "milestone-badge-default")
+        ms_time = sum(sum(s.timings.values()) for s in page.steps)
+
         steps_html = ""
-        for step_idx, step in enumerate(page.steps, 1):
-            color = color_hex(color_for_type(step.action_type))
-            images_html = ""
-
+        for step in page.steps:
+            # Screenshot
+            ss_html = ""
             if step.annotated_before_url:
-                images_html += f'<div><img src="{step.annotated_before_url}" alt="before"></div>'
-                if step.after_url:
-                    images_html += '<div class="arrow">→</div>'
-                    images_html += f'<div><img src="{step.after_url}" alt="after"><div class="img-label">结果</div></div>'
+                ss_html = f'<div class="step-ss"><img src="{step.annotated_before_url}" alt="Turn"></div>'
 
-            if grid:
-                time_str = ""
-                if step.timestamp:
-                    time_str = step.timestamp.split("T")[1][:8]
-                seq = f'{step_idx}. '
-                steps_html += f"""
-                <div class="card">
-                  <div class="card-header">
-                    <span class="card-seq">{seq}</span>
-                    <span class="step-desc">{step.description}</span>
-                    <span class="step-time">{time_str}</span>
-                    <span class="step-status">{step.status}</span>
-                  </div>
-                  <div class="card-images">{images_html}</div>
-                </div>"""
+            # Action type badge
+            at_cls = f"at-{step.action_type}"
+            at_label = {
+                "tap": "点击", "type": "输入", "scroll": "滚动", "drag": "拖动",
+                "home": "主屏", "press_enter": "回车", "clear_text": "清空", "none": "跳过",
+            }.get(step.action_type, step.action_type)
+
+            # Status
+            if "✓" in step.status:
+                status_cls = "step-status-ok"
+            elif "✗" in step.status:
+                status_cls = "step-status-fail"
             else:
-                steps_html += f"""
-                <div class="step">
-                  <div class="step-header">
-                    <span class="step-idx" style="background:{color}">{step.label}</span>
-                    <span class="step-desc">{step.description}</span>
-                    <span class="step-status">{step.status}</span>
-                  </div>
-                  <div class="step-images">{images_html}</div>
-                </div>"""
+                status_cls = "step-status-skip"
 
-        container_cls = "grid" if grid else ""
+            # Action detail
+            action_detail = _safe(step.description)
+            if step.action_text:
+                action_detail += f' <span style="color:#a032c8">「{_safe(step.action_text[:30])}」</span>'
+            if step.action_direction:
+                dir_label = {"up": "↑", "down": "↓", "left": "←", "right": "→"}.get(step.action_direction, step.action_direction)
+                action_detail += f' <span style="color:#32b432">{dir_label}</span>'
+
+            # Instruction + summary
+            instruction_html = ""
+            if step.instruction:
+                instruction_html = (
+                    f'<div class="step-instruction">'
+                    f'<span class="step-instruction-label">指令：</span>{_safe(step.instruction)}'
+                    f'</div>'
+                )
+            summary_html = ""
+            if step.summary and step.summary != step.description:
+                summary_html = f'<div class="step-summary">{_safe(step.summary)}</div>'
+
+            # Timing bar
+            timing_html = ""
+            if step.timings:
+                total = sum(step.timings.values())
+                if total > 0:
+                    segs = ""
+                    labels = ""
+                    for tname, tval in step.timings.items():
+                        pct = tval / total * 100
+                        tc = TIMING_COLORS.get(tname, "#94a3b8")
+                        segs += f'<div class="timing-seg" style="width:{pct:.1f}%;background:{tc}" title="{tname}: {tval:.2f}s"></div>'
+                        labels += (
+                            f'<span><span class="timing-label-dot" style="background:{tc}"></span>'
+                            f'{tname} {tval:.1f}s</span>'
+                        )
+                    timing_html = (
+                        f'<div class="timing-bar">{segs}</div>'
+                        f'<div class="timing-labels">{labels} · total {total:.1f}s</div>'
+                    )
+
+            steps_html += f"""
+            <div class="step">
+              {ss_html}
+              <div class="step-info">
+                <div class="step-top">
+                  <span class="step-idx {at_cls}">{step.label.split()[-1]}</span>
+                  <span class="step-action-type" style="background:#f1f5f9;color:#475569">{at_label}</span>
+                  <span class="step-action-desc">{action_detail}</span>
+                  <span class="step-status {status_cls}">{step.status}</span>
+                </div>
+                {instruction_html}
+                {summary_html}
+                {timing_html}
+              </div>
+            </div>"""
+
         pages_html += f"""
-        <div class="page">
-          <h2>{page.title}</h2>
-          <div class="{container_cls}">{steps_html}</div>
+        <div class="milestone" id="ms-{_safe(page.milestone_id)}">
+          <div class="milestone-header">
+            <h2>Milestone #{_safe(page.milestone_id)}</h2>
+            <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
+            <span class="milestone-time">{ms_time:.1f}s</span>
+          </div>
+          <div class="steps">{steps_html}</div>
         </div>"""
 
     return HTML_TEMPLATE.format(
-        title=data.title,
+        title=_safe(data.title),
         stats=stats_str,
+        milestones_overview=milestones_overview,
         pages_html=pages_html,
     )
 

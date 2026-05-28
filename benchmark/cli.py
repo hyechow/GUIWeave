@@ -212,8 +212,18 @@ def cmd_run(args) -> None:
                 "turns_count": result.get("turns_count", 0),
                 "elapsed": round(elapsed, 1),
                 "log_dir": str(log_dir.relative_to(ROOT)),
+                "report": str((log_dir / "report.html").relative_to(ROOT)),
                 "completed_at": datetime.now().isoformat(),
             }
+
+            # Auto-generate HTML report
+            try:
+                from scripts.report_builder import RunnerReportBuilder, save_report
+                report_data = RunnerReportBuilder().build(log_dir)
+                report_path = save_report(report_data, log_dir / "report.html")
+                console.print(f"  [dim]Report: {report_path}[/dim]")
+            except Exception:
+                pass
 
             icon = "[green]PASS[/green]" if ok else "[red]FAIL[/red]"
             console.print(f"\n  {icon}  {result.get('stop_reason', '')}  [dim]{result.get('turns_count', 0)} turns, {elapsed:.1f}s[/dim]\n")
