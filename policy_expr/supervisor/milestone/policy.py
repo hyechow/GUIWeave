@@ -328,9 +328,12 @@ class MilestoneSupervisorPolicy:
         self._scroll_counts[milestone.id] = self._scroll_counts.get(milestone.id, 0) + 1
         scroll_count = self._scroll_counts[milestone.id]
 
-        budget = MAX_SCROLL_PER_MILESTONE
-        if milestone.observable_boundary:
+        if milestone.scroll_budget > 0:
+            budget = milestone.scroll_budget
+        elif milestone.observable_boundary:
             budget = 10
+        else:
+            budget = MAX_SCROLL_PER_MILESTONE
         if scroll_count > budget:
             print(f"  [Loop] 滚动预算耗尽（{scroll_count}/{budget}，observable={milestone.observable_boundary}）→ 结束收集")
             if not _has_successful_scroll_for(history, milestone.id):
@@ -620,6 +623,7 @@ class MilestoneSupervisorPolicy:
                 f"当可见内容不再满足筛选条件「{filter_intent}」时停止滚动"
             )
             dependent.observable_boundary = False
+            dependent.scroll_budget = 15
         milestone.status = "done"
         self._current_id = dependent.id
         self._recent_screenshots.clear()

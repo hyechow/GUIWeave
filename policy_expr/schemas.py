@@ -292,6 +292,10 @@ class Milestone(BaseModel):
         default=True,
         description="停止条件是否在屏幕上可直接观察。日期标记、列表结束标识为 true；关键词相关性为 false",
     )
+    scroll_budget: int = Field(
+        default=0,
+        description="滚动预算上限（0=使用系统默认）。筛选降级为全量采集时由系统自动放大。",
+    )
     failure_hints: list[str] = Field(default_factory=list)
     status: str = Field(default="pending", description="pending | running | done | failed")
     retry_count: int = 0
