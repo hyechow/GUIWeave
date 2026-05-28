@@ -283,6 +283,7 @@ class PolicyTurn(BaseModel):
     llm_calls: int = 0
     read_added_content: bool = False
     read_note_hash: Optional[str] = None
+    timings: dict[str, float] = Field(default_factory=dict, description="各模块耗时(秒)，如 {checker: 1.2, planner: 2.3}")
 
 
 class PolicyContext(BaseModel):

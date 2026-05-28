@@ -201,6 +201,16 @@ def _print_turn_stats(turn_no: int, started_at: float, llm_calls_before: int) ->
     print(TURN_STATS.format(turn_no=turn_no, llm_calls=llm_calls, elapsed=elapsed))
 
 
+def _print_timings(supervisor: SupervisorPolicy) -> None:
+    timings = getattr(supervisor, "_timings", None)
+    order = getattr(supervisor, "_timings_order", None)
+    if not timings or not order:
+        return
+    parts = [f"{n}={timings[n]:.2f}s" for n in order]
+    total = sum(timings.values())
+    print(f"  [Timing] {' | '.join(parts)} | total={total:.2f}s")
+
+
 def run_once(
     prompt: str,
     action_policy: ActionPolicy,
@@ -240,11 +250,15 @@ def run_once(
             print(f"动作指令: {sv_step.instruction}")
             if hud: hud.update("Turn 1 — 动作决策中…")
             print("动作决策中...")
+            _ap_t0 = time.perf_counter()
             action_decision = action_policy.decide(
                 observation, sv_step.instruction,
                 direction=sv_step.direction,
                 drag_column=sv_step.drag_column,
             )
+            if hasattr(supervisor, "_timings"):
+                supervisor._timings["action_policy"] = time.perf_counter() - _ap_t0
+                supervisor._timings_order.append("action_policy")
             print_decision(action_decision, observation.png_bytes, log_dir / "structured_output_result.png")
             if hud:
                 a = action_decision.action
@@ -257,7 +271,9 @@ def run_once(
             supervisor=sv_step,
             action_decision=action_decision,
             executed=executed,
+            timings=getattr(supervisor, "_timings", {}),
         )
+        _print_timings(supervisor)
         context.turns.append(turn)
         _save_context(context_path, context)
 
@@ -401,11 +417,15 @@ def run_agent_loop(
                 else:
                     _status(turn_no, "动作决策中…")
                     _say("动作决策中...")
+                    _ap_t0 = time.perf_counter()
                     action_decision = action_policy.decide(
                         observation, sv_step.instruction,
                         direction=sv_step.direction,
                         drag_column=sv_step.drag_column,
                     )
+                    if hasattr(supervisor, "_timings"):
+                        supervisor._timings["action_policy"] = time.perf_counter() - _ap_t0
+                        supervisor._timings_order.append("action_policy")
                     print_decision(
                         action_decision,
                         observation.png_bytes,
@@ -429,7 +449,9 @@ def run_agent_loop(
                 llm_calls=get_llm_call_count() - llm_calls_before,
                 read_added_content=read_added_content,
                 read_note_hash=read_note_hash,
+                timings=getattr(supervisor, "_timings", {}),
             )
+            _print_timings(supervisor)
             context.turns.append(turn)
             _save_context(context_path, context)
             if not silent:

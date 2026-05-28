@@ -3,6 +3,7 @@
 import io
 import json
 import re
+import time
 from typing import Literal, Optional
 
 from PIL import Image
@@ -42,6 +43,26 @@ STUCK_REPEAT_WORD_OVERLAP = 0.85
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
+
+
+class _Timer:
+    """Context manager: time a named section, accumulating into a collector dict."""
+
+    def __init__(self, collector: dict[str, float], order: list[str], name: str):
+        self._c = collector
+        self._o = order
+        self._n = name
+        self._s = 0.0
+
+    def __enter__(self):
+        self._s = time.perf_counter()
+        return self
+
+    def __exit__(self, *a):
+        d = time.perf_counter() - self._s
+        if self._n not in self._c:
+            self._o.append(self._n)
+        self._c[self._n] = self._c.get(self._n, 0) + d
 
 
 def _is_loop(milestone: Milestone) -> bool:
@@ -129,6 +150,8 @@ class MilestoneSupervisorPolicy:
         self._app_name: str = ""
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
+        self._timings: dict[str, float] = {}
+        self._timings_order: list[str] = []
 
     def set_app_knowledge(self, text: str, app_name: str = "", elements: str = "") -> None:
         self._app_knowledge = text
@@ -137,16 +160,23 @@ class MilestoneSupervisorPolicy:
             self._app_name = app_name
 
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
+        self._timings.clear()
+        self._timings_order.clear()
+
         if not self._order:
-            self._decompose(goal, observation)
+            with _Timer(self._timings, self._timings_order, "decompose"):
+                self._decompose(goal, observation)
 
         if self._current_id is None:
             return self._terminal_step()
 
         milestone = self._milestones[self._current_id]
         if _is_loop(milestone):
-            return self._run_loop_turn(milestone, observation, history)
-        return self._run_single_turn(milestone, observation, history)
+            result = self._run_loop_turn(milestone, observation, history)
+        else:
+            result = self._run_single_turn(milestone, observation, history)
+
+        return result
 
     # ── Single-step machine ───────────────────────────────────────────
 
@@ -173,7 +203,8 @@ class MilestoneSupervisorPolicy:
 
         prev_page_id = self._last_page_identity.get(milestone.id, "")
 
-        check = self._single_check(milestone, observation, history)
+        with _Timer(self._timings, self._timings_order, "checker"):
+            check = self._single_check(milestone, observation, history)
         print(f"  [SingleCheck] {check.status}: {check.reason}")
 
         if check.loading:
@@ -220,22 +251,25 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        plan = self._invoke_planner(milestone, check, observation, history)
+        with _Timer(self._timings, self._timings_order, "planner"):
+            plan = self._invoke_planner(milestone, check, observation, history)
         if self._is_sequence(plan.instruction):
             print("  [Planner] 多步序列，重试...")
-            plan = self._invoke_planner(
-                milestone, check, observation, history,
-                extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
-            )
+            with _Timer(self._timings, self._timings_order, "planner"):
+                plan = self._invoke_planner(
+                    milestone, check, observation, history,
+                    extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
+                )
         if self._is_repeated_instruction(plan.instruction, milestone.id, history):
             print("  [Planner] 指令重复已失败操作，重试...")
-            plan = self._invoke_planner(
-                milestone, check, observation, history,
-                extra=(
-                    "你刚才的指令与之前失败的操作相同。"
-                    "请仔细查看截图，找一个不同的 UI 元素或操作路径。"
-                ),
-            )
+            with _Timer(self._timings, self._timings_order, "planner"):
+                plan = self._invoke_planner(
+                    milestone, check, observation, history,
+                    extra=(
+                        "你刚才的指令与之前失败的操作相同。"
+                        "请仔细查看截图，找一个不同的 UI 元素或操作路径。"
+                    ),
+                )
             if self._is_repeated_instruction(plan.instruction, milestone.id, history):
                 print("  [Planner] 重试仍重复，升级为 stuck 处理")
                 stuck_check = _SingleCheckResult(
@@ -295,7 +329,8 @@ class MilestoneSupervisorPolicy:
                 return self._advance(milestone, observation, history)
             print("  [Loop] 截图相似但上一轮读到了新内容，继续收集")
 
-        frame = self._loop_check(milestone, observation, history)
+        with _Timer(self._timings, self._timings_order, "loop_check"):
+            frame = self._loop_check(milestone, observation, history)
         print(f"  [LoopFrame] boundary={frame.boundary_reached}, should_stop={frame.should_stop}")
         if frame.should_stop:
             print(f"  [Loop] 停止条件触发：{frame.stop_reason}")
@@ -347,7 +382,8 @@ class MilestoneSupervisorPolicy:
                 collection_scope=frame.collection_scope,
             )
 
-        plan = self._invoke_loop_scroll(milestone, frame, observation)
+        with _Timer(self._timings, self._timings_order, "loop_scroll"):
+            plan = self._invoke_loop_scroll(milestone, frame, observation)
         print(f"  [LoopScroll] {plan.instruction}")
         return SupervisorStep(
             should_act=True,
@@ -451,7 +487,8 @@ class MilestoneSupervisorPolicy:
             return self._fail(milestone, check, read_inst)
 
         print(f"  [Replan] 第 {milestone.retry_count} 次重试...")
-        replan = self._invoke_replanner(milestone, check, observation, history)
+        with _Timer(self._timings, self._timings_order, "replanner"):
+            replan = self._invoke_replanner(milestone, check, observation, history)
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")
 
         if replan.strategy == "force_complete":
