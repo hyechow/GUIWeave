@@ -12,6 +12,7 @@ client.connect()
 img = client.screenshot()
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 out_path = Path("Images") / f"screen_{timestamp}.png"
+out_path.parent.mkdir(parents=True, exist_ok=True)
 out_path.write_bytes(img)
 print(f"Saved: {out_path} ({len(img)} bytes)")
 
