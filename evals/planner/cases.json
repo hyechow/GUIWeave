@@ -226,5 +226,138 @@
       "direction": "decrease",
       "drag_column": "day"
     }
+  },
+  {
+    "label": "picker-年份2025→2026-应increase",
+    "screenshot": "evals/planner/screenshots/picker_year_increase.png",
+    "milestone": {
+      "name": "选择开始日期的年份和月份",
+      "description": "在时间段选择器中，将开始日期从2025年4月更改为2026年3月",
+      "success_condition": "开始日期显示为2026年3月",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "开始日期当前为2025年4月，需先通过向上拖动年份列将年份从2025切换至2026",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月"],
+      "summary": "picker中开始日期当前为2025年4月，年份列需从2025调至2026"
+    },
+    "expected": {
+      "direction": "increase",
+      "drag_column": "year"
+    }
+  },
+  {
+    "label": "picker-月份4月→3月-应decrease",
+    "screenshot": "evals/planner/screenshots/picker_month_decrease.png",
+    "milestone": {
+      "name": "选择开始日期的年份和月份",
+      "description": "在时间段选择器中，将开始日期从2025年4月更改为2026年3月",
+      "success_condition": "开始日期显示为2026年3月",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "在年份列向上拖动滚轮，从2025年滚动至2026年"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "年份已调整为2026年，但月份仍为4月，需将月份从4月向下滚动至3月",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月"],
+      "summary": "picker中年份已为2026年，月份列需从4月调至3月"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "month"
+    }
+  },
+  {
+    "label": "picker-日期17→8-应decrease-large",
+    "screenshot": "evals/planner/screenshots/picker_day_decrease_large.png",
+    "milestone": {
+      "name": "设置开始日期的具体日期",
+      "description": "在已选定2026年3月的情况下，将日期设置为8日",
+      "success_condition": "开始日期显示为2026年3月8日",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "在年份列向上拖动滚轮，从2025年滚动至2026年",
+      "在月份列向下拖动滚轮，从4月滚动至3月"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前开始日期显示为2026年3月17日，需要将日期从17日调整为8日，差9格，需large幅度向减小方向拖动日期列",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月8日"],
+      "summary": "picker中开始日期当前为2026年3月17日，日期列需从17调至8"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "day"
+    }
+  },
+  {
+    "label": "picker-日期13→8-应decrease-large",
+    "screenshot": "evals/planner/screenshots/picker_day_decrease_large_2.png",
+    "milestone": {
+      "name": "设置开始日期的具体日期",
+      "description": "在已选定2026年3月的情况下，将日期设置为8日",
+      "success_condition": "开始日期显示为2026年3月8日",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "在年份列向上拖动滚轮，从2025年滚动至2026年",
+      "在月份列向下拖动滚轮，从4月滚动至3月",
+      "在日期列向下拖动滚轮，从17日滚动至8日"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前开始日期显示为2026年3月13日，需将日期列向下拖动调整至目标值8日",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月8日"],
+      "summary": "picker中日期列当前为13日，需继续向减小方向拖至8日"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "day"
+    }
+  },
+  {
+    "label": "picker-日期9→8-应decrease-small",
+    "screenshot": "evals/planner/screenshots/picker_day_decrease_small.png",
+    "milestone": {
+      "name": "设置开始日期的具体日期",
+      "description": "在已选定2026年3月的情况下，将日期设置为8日",
+      "success_condition": "开始日期显示为2026年3月8日",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "在年份列向上拖动滚轮，从2025年滚动至2026年",
+      "在月份列向下拖动滚轮，从4月滚动至3月",
+      "在日期列向下拖动滚轮，从17日滚动至8日",
+      "在日期列向下拖动滚轮，从13日滚动至8日"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前开始日期显示为2026年3月9日，差1格即可到达目标8日",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月8日"],
+      "summary": "picker中日期列当前为9日，差1格到8日"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "day"
+    }
   }
 ]
