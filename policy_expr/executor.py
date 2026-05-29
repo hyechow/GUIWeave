@@ -56,24 +56,14 @@ class ActionExecutor:
     def _snap(self, ax: float, ay: float, png_bytes: bytes | None = None, hint: str = "", action: Action | None = None) -> tuple[float, float]:
         """Snap normalized (0-1000) coordinates.
 
-        YOLO and OCR both run when hint is available. OCR wins when it finds a
-        text match (≥2 chars) — this catches text elements (search bars, labels,
-        and especially bottom-tab labels like 我的/消息 which are exactly 2 chars)
-        where YOLO may snap to a nearby icon instead of the actual target.
-        _ocr_snap already guards matches: substring-of-hint, longest-first, ≤150.
-
-        Exception: when the point lands inside a confident icon box AND the OCR
-        match also falls inside that same box, the OCR text is just that icon's
-        own label — prefer the YOLO box center. This is the iOS home screen: an
-        app's name sits below its icon (within the detected icon box) and tapping
-        the label does not launch the app, so "点击支付宝App图标" must snap to the
-        icon, not the 支付宝 label. When the OCR match lies OUTSIDE the containing
-        box it points to a different element (e.g. a 我的/首页 tab below a header
-        misdetection), so OCR is trusted. This is geometric, not confidence-
-        thresholded, so it is stable across the icon's frame-to-frame conf jitter.
+        YOLO and OCR both run when hint is available. When both produce a
+        candidate, the one whose snapped point is nearer the model's original
+        point wins (the model usually aims at its intended element, so the
+        closer candidate is the better grounding). A wrong pick is cheap now:
+        the post-action targeting verify catches it and routes to replan.
+        _ocr_snap already filters matches: substring-of-hint, longest-first, ≤150.
         """
         yolo_pos = None
-        ocr_is_own_label = False
         if self.calibrator:
             snapped = self.calibrator.nearest(ax, ay)
             if snapped:
@@ -86,21 +76,18 @@ class ActionExecutor:
             if ocr:
                 ocr_pos, ocr_len = ocr
 
-        if ocr_pos and self.calibrator:
-            box = self.calibrator.containing_box(ax, ay)
-            if box is not None:
-                x1, y1, x2, y2 = box
-                ocr_is_own_label = x1 <= ocr_pos[0] <= x2 and y1 <= ocr_pos[1] <= y2
+        def _dist(p: tuple[float, float]) -> float:
+            return ((p[0] - ax) ** 2 + (p[1] - ay) ** 2) ** 0.5
 
-        # OCR wins when it matched a hint text (≥2 chars): a substring match on
-        # the target's own label is a stronger signal than a YOLO icon snap that
-        # may have landed on a wrong/adjacent element — unless that OCR match is
-        # merely the contained icon's own label (then snap to the icon center).
-        if ocr_pos and ocr_len >= 2 and not ocr_is_own_label:
-            if yolo_pos:
-                print(f"OCR 覆盖 YOLO: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f}) [匹配={ocr_len}字]")
+        # Both matched → nearer-to-original wins.
+        if yolo_pos and ocr_pos:
+            if _dist(ocr_pos) < _dist(yolo_pos):
+                yolo_pos = None
             else:
-                print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f})")
+                ocr_pos = None
+
+        if ocr_pos:
+            print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f}) [匹配={ocr_len}字]")
             if action is not None:
                 action.snap = {"method": "ocr", "original": [ax, ay], "snapped": list(ocr_pos), "ocr_len": ocr_len}
             return ocr_pos
@@ -110,12 +97,6 @@ class ActionExecutor:
             if action is not None:
                 action.snap = {"method": "yolo", "original": [ax, ay], "snapped": list(yolo_pos)}
             return yolo_pos
-
-        if ocr_pos:
-            print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f})")
-            if action is not None:
-                action.snap = {"method": "ocr", "original": [ax, ay], "snapped": list(ocr_pos), "ocr_len": ocr_len}
-            return ocr_pos
 
         return ax, ay
 

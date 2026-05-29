@@ -22,8 +22,8 @@ uv run python evals/<module>/test_<module>.py
 | back_nav | 14 | 回退导航：从当前页面找到返回目标页面的路径 |
 | cascade_matcher | 22 | 级联页面匹配：基于视觉指纹和相似度判断两个截图是否是同一页面 |
 | popup_detect | 7 | 弹窗检测：识别截图中是否存在覆盖主界面的弹窗/浮层 |
-| snap | 7+9 | 坐标吸附：YOLO/OCR 把 LLM 给的 tap 坐标吸到真实元素（7 截图 case + 9 几何回归） |
-| target_verify | 2 | 动作落点校验：标记帧上判断 tap 是否落在指令意图的目标元素（on/off_target） |
+| snap | 6+5 | 坐标吸附：closer-wins（YOLO/OCR 取离原点近者），6 截图 case + 5 几何回归 |
+| target_verify | 3 | 动作落点校验：标记帧上判断 tap 是否落在指令意图的目标元素（on/off_target） |
 | repeat_detect | — | 重复指令检测（无固定 cases，程序化生成测试） |
 | stuck_detect | — | 卡住检测（无固定 cases，程序化生成测试） |
 
@@ -98,15 +98,16 @@ uv run python evals/<module>/test_<module>.py
 
 ### snap
 
-截图 case 跑真实 `ActionExecutor._snap`（YOLO+OCR 仲裁），几何回归直接驱动
-`YoloCalibrator.nearest()`，不依赖 LLM。截图被 gitignore，缺图时 SKIP。
+截图 case 跑真实 `ActionExecutor._snap`，几何回归直接驱动 `YoloCalibrator.nearest()`，
+不依赖 LLM。截图被 gitignore，缺图时 SKIP。
+
+仲裁规则已简化为 **closer-wins**：YOLO 和 OCR 都匹配时，取离 LLM 原始点更近的那个。
+点错由 target_verify→replan 兜底，snap 不再追求完美（不再有 containing_box/OCR-lock 守卫）。
 
 | 分组 | 说明 | 关键验证点 |
 |------|------|-----------|
-| 底部 tab「我的」 | 2 字标签 + conf=0.28 超宽误检框 | method=ocr 且吸到「我的」文字 |
-| 主屏 App 图标 | 点落在图标框内，名字在图标下方 | method=yolo；OCR 命中落在图标框内=自身标签则走 YOLO，不受 conf 抖动影响 |
-| 首页 tab（宽合并框） | 点落进宽误检框但远离其中心 | method=ocr，move>45 不锁定 YOLO，OCR 救回 |
-| 我的 tab（弱框干扰） | conf 0.40 弱框压在过高的 tap 估计上 | method=ocr，弱框不够格锁 OCR，吸到真标签 |
-| 会员页返回箭头（宽 banner） | 全屏 banner 包含左上角点 | method=yolo，snap 上限拒绝 banner 中心，吸到真箭头 |
-| 左上角返回箭头 | 无文字、LLM 纵向估偏 | method=yolo 且经 margin 层吸到箭头 |
-| 几何回归 | 分层不变式 + 守卫 | 小图标不偷点、超宽误检被拒、snap 上限防瞬移、contains()/OCR-lock 阈值判定 |
+| 主屏 App 图标（微信/支付宝） | 点瞄准图标本体，名字在图标下方 | method=yolo（图标比下方标签离点近）；conf 抖动不影响 |
+| 底部 tab「我的」 | LLM 把 tab 估偏高 | method=yolo（tab 图标比标签略近），落在可点的 tab 图标 |
+| 会员页返回箭头（宽 banner） | 全屏 banner 包含左上角点 | method=yolo，nearest 的 snap 上限拒绝 banner 中心，吸到真箭头 |
+| 左上角返回箭头 | 无文字、LLM 纵向估偏 | method=yolo，经 margin 层吸到箭头 |
+| 几何回归 | nearest 分层不变式 | 小图标不偷点、超宽误检被拒、snap 上限防瞬移、低 conf 仍可凭距离吸附 |

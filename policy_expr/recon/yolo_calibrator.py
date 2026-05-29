@@ -127,28 +127,3 @@ class YoloCalibrator:
             return margin_hits[0][1]
         return None
 
-    def containing_box(
-        self, target_x: float, target_y: float
-    ) -> tuple[float, float, float, float] | None:
-        """Tightest confident box whose real bbox contains the point.
-
-        Returns its normalized (x1, y1, x2, y2), or None. Same confidence floor
-        as Tier-1 containment. Callers use this to tell whether an OCR match is
-        the contained element's own label (inside this box) versus a separate
-        element elsewhere — see ActionExecutor._snap.
-        """
-        best: tuple[float, float, float, float] | None = None
-        best_area = float("inf")
-        for b in self.boxes:
-            if b.conf < self._REAL_CONTAINMENT_MIN_CONF:
-                continue
-            x1 = b.x1 / self.img_w * 1000
-            y1 = b.y1 / self.img_h * 1000
-            x2 = b.x2 / self.img_w * 1000
-            y2 = b.y2 / self.img_h * 1000
-            if x1 <= target_x <= x2 and y1 <= target_y <= y2:
-                area = (x2 - x1) * (y2 - y1)
-                if area < best_area:
-                    best_area = area
-                    best = (x1, y1, x2, y2)
-        return best

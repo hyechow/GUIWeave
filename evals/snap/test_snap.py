@@ -121,23 +121,7 @@ def test_geometric_regressions() -> None:
             r is not None and abs(r[0] - 890) < 5,
             "" if (r and abs(r[0] - 890) < 5) else f"got {r}")
 
-    # 4. containing_box(): tightest confident box containing the point, else None.
-    icon = IconBbox(494, 570, 723, 669, 0.49)        # a home-screen app icon
-    cal4 = YoloCalibrator([icon], img_w=1000, img_h=1000)
-    box = cal4.containing_box(609, 617)
-    _report("synthetic: containing_box returns the icon box",
-            box is not None and abs(box[0] - 494) < 5 and abs(box[3] - 669) < 5,
-            "" if box else "expected the icon bbox")
-    _report("synthetic: containing_box None outside",
-            cal4.containing_box(100, 100) is None,
-            "" if cal4.containing_box(100, 100) is None else "expected None")
-    weak = IconBbox(505, 842, 958, 901, 0.28)        # wide low-conf misdetect
-    cal5 = YoloCalibrator([weak], img_w=1000, img_h=1000)
-    _report("synthetic: containing_box None for sub-0.4 box",
-            cal5.containing_box(890, 850) is None,
-            "" if cal5.containing_box(890, 850) is None else "expected None (0.28 < floor)")
-
-    # 5. Snap cap: a full-width banner containing a top-left point must not snap
+    # 4. Snap cap: a full-width banner containing a top-left point must not snap
     #    to its far-off center; a closer margin candidate wins instead.
     banner = IconBbox(61, 166, 940, 343, 0.56)       # center ~500,255, width ~880
     arrow = IconBbox(28, 115, 127, 162, 0.56)        # the real back arrow ~77,138
@@ -146,18 +130,6 @@ def test_geometric_regressions() -> None:
     ok = r is not None and abs(r[0] - 77) < 15 and abs(r[1] - 138) < 15
     _report("synthetic: wide banner over snap-cap rejected",
             ok, "" if ok else f"got {r} (expected back arrow ~77,138, not banner center)")
-
-    # 6. OCR-own-label geometry: an OCR match inside the containing box is the
-    #    icon's own label (suppress OCR); a match below/outside it is a separate
-    #    element (let OCR win). Conf 0.40 is fine — the discriminator is geometry,
-    #    not a confidence threshold (stable across the icon's conf jitter).
-    distractor = IconBbox(846, 831, 966, 882, 0.40)  # weak box over a too-high tap
-    cal7 = YoloCalibrator([distractor], img_w=1000, img_h=1000)
-    b7 = cal7.containing_box(894, 850)
-    inside = b7 is not None and b7[1] <= 944 <= b7[3]   # 我的 tab OCR at y=944
-    _report("synthetic: OCR below box is NOT the own label",
-            b7 is not None and not inside,
-            "" if (b7 and not inside) else f"box={b7}, inside={inside}")
 
 
 def main():

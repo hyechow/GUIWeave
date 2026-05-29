@@ -14,5 +14,13 @@
     "snapped": [878, 944],
     "expected_on_target": true,
     "note": "落点 OCR 吸到「我的」标签，正确命中目标 tab，应判 on_target。"
+  },
+  {
+    "label": "我的tab-snap落进弱框-应off_target",
+    "screenshot": "evals/target_verify/screenshots/wode_tab_hit_distractor.png",
+    "instruction": "点击底部导航栏最右侧的「我的」Tab",
+    "snapped": [906, 857],
+    "expected_on_target": false,
+    "note": "closer-wins 把偏高点(894,850)吸到 y~857 的弱干扰框(906,857)，不是 y~927 的我的 tab。靠落点校验判 off_target→replan。"
   }
 ]
