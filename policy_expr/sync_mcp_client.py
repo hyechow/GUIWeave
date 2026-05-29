@@ -1,9 +1,31 @@
 """Synchronous MCP client using subprocess + newline-delimited JSON-RPC."""
 
 import base64
+import glob
 import json
+import os
+import shlex
 import subprocess
 import time
+
+
+def _resolve_server_command() -> list[str]:
+    """How to launch the mirroir-mcp server.
+
+    `npx -y mirroir-mcp` contacts the npm registry on every launch and exits
+    when offline (→ stdout EOF → "MCP server closed connection"). Prefer the
+    cached native binary so launches need no network; fall back to npx with
+    --prefer-offline (cache when present), then plain npx.
+    Override entirely with the MIRROIR_MCP_CMD env var.
+    """
+    override = os.environ.get("MIRROIR_MCP_CMD")
+    if override:
+        return shlex.split(override)
+    native = sorted(glob.glob(os.path.expanduser(
+        "~/.npm/_npx/*/node_modules/mirroir-mcp/bin/mirroir-mcp-native")))
+    if native:
+        return [native[-1]]
+    return ["npx", "-y", "--prefer-offline", "mirroir-mcp"]
 
 
 class SyncMCPClient:
@@ -13,7 +35,7 @@ class SyncMCPClient:
 
     def connect(self):
         self._proc = subprocess.Popen(
-            ["npx", "-y", "mirroir-mcp"],
+            _resolve_server_command(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
