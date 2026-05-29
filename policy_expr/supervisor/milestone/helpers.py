@@ -98,6 +98,7 @@ def run_checker(
     task_type: str = "action",
     constraints: Optional[list[str]] = None,
     extra: str = "",
+    _is_retry: bool = False,
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals."""
     if constraints is None:
@@ -120,12 +121,17 @@ def run_checker(
         prompt += f"\n\n## 输出修正要求\n{extra}"
     result = invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _SingleCheckResult)
 
-    if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
+    if not _is_retry and result.status == "done" and (not result.visible_evidence or result.missing_evidence):
+        # Retry exactly once. The retry passes _is_retry=True so it skips this
+        # block — without that the recursion would re-trigger the guard and
+        # retry unboundedly (observed up to 4×), making the stuck-force below
+        # unreachable. Capped at 2 LLM calls total.
         print("  [SingleCheck] done 缺少证据，重试...")
         result = run_checker(
             milestone, observation, history,
             app_name=app_name, task_type=task_type, constraints=constraints,
             extra="你刚才返回 done 但 visible_evidence 为空或 missing_evidence 非空。请重新核对截图，确有证据才能 done，否则返回 in_progress 或 stuck。",
+            _is_retry=True,
         )
     if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
         return _SingleCheckResult(

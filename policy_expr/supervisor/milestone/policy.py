@@ -515,6 +515,28 @@ class MilestoneSupervisorPolicy:
 
         if _is_loop(next_ms):
             return self._run_loop_turn(next_ms, observation, history)
+
+        # Freshly entered navigation milestone: it depends on the just-completed
+        # one, so it is in_progress by construction. Skip its initial done-check
+        # and plan the first nav action directly — this drops the 2nd checker
+        # call on advance turns (the user-visible "2 轮 checker" latency). The
+        # frame is known-loaded here (we only reach _advance after a done check
+        # on this same frame). A residual already-done state is caught by the
+        # next turn's normal check; re-tapping a nav target is idempotent so the
+        # extra action is harmless. Other kinds keep the check — re-running an
+        # action milestone could double-execute (re-send/re-submit), and
+        # collection/verification need the checker's read_instruction.
+        if next_ms.kind == "navigation":
+            print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
+            synthetic = _SingleCheckResult(
+                status="in_progress",
+                reason=f"刚进入子目标「{next_ms.name}」，默认未完成",
+                summary="",
+            )
+            self._last_check = synthetic
+            self._last_page_identity[next_ms.id] = ""
+            return self._plan_single(next_ms, synthetic, observation, history)
+
         return self._run_single_turn(next_ms, observation, history)
 
     def _handle_stuck(

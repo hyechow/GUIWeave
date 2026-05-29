@@ -18,6 +18,24 @@
     "note": "微信启动闪屏（小人站在地球前的全屏深色插画，无时钟）。曾被误判为'锁屏界面'→发 home 退出→白白重点一次微信。应判 loading=true 等待启动完成。"
   },
   {
+    "label": "微信聊天列表-启动微信navigation-done带证据",
+    "screenshot": "evals/checker/screenshots/wechat_chatlist_nav_done.png",
+    "milestone": {
+      "name": "启动微信应用",
+      "description": "从主屏点击微信图标启动应用",
+      "success_condition": "看到微信聊天列表页面（底部有'微信'、'通讯录'、'发现'、'我'四个 Tab）",
+      "kind": "navigation",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "done",
+      "loading": false
+    },
+    "note": "navigation 类 done。旧 nav section 写'in_progress 可留空'，模型连 done 也把 visible_evidence 留空 → 撞 done 守卫反复重试(实测 6/6 次重试，最多 4 次)，checker 从 1 次涨到 4 次调用。section 改为'done 必须列证据'后 0/6 重试。"
+    },
+  {
     "label": "首页-milestone已满足-done",
     "screenshot": "evals/checker/screenshots/screenshot_turn_1.png",
     "milestone": {

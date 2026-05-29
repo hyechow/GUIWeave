@@ -134,8 +134,9 @@ loading 是独立布尔字段，与 status 无关。status 只能填 done 或 in
 _CHECK_SECTION_NAVIGATION = """
 ## 导航类子目标（kind=navigation）
 - done 仅当当前页面身份与目标页精确匹配（标题文字匹配、目标 tab 高亮选中）。
+- 判 done 时**必须**在 visible_evidence 列出页面身份证据（如标题文字、高亮 tab、关键分组名），不能留空，否则 done 会被判无效并重试。
 - 仍在导航途中、页面不匹配、加载中，一律 in_progress。
-- in_progress 时 visible_evidence / missing_evidence 可留空，无需逐条列证据。
+- 仅 in_progress 时 visible_evidence / missing_evidence 可留空，无需逐条列证据。
 """
 
 _CHECK_SECTION_FILTER = """
