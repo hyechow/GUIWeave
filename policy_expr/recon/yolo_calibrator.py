@@ -49,25 +49,59 @@ class YoloCalibrator:
             return None
         return cls(boxes, img.width, img.height)
 
-    def nearest(self, target_x: float, target_y: float, max_dist: float = 30.0) -> tuple[float, float] | None:
-        """Find the detected icon nearest to (target_x, target_y) within max_dist.
+    def nearest(
+        self,
+        target_x: float,
+        target_y: float,
+        max_dist: float = 30.0,
+        bbox_margin: float = 50.0,
+    ) -> tuple[float, float] | None:
+        """Find the detected icon to snap (target_x, target_y) to.
 
-        When two boxes are within 30px of each other (distance-wise), prefer
-        the one with higher confidence to avoid low-confidence misdetections
-        pulling the snap away from the correct target.
+        Tiered so a small icon near the point can't steal a tap that actually
+        lands inside a larger element:
+          1. Point inside a box's real bbox → snap to the tightest such box
+             (the most specific element under the point).
+          2. Point within max_dist of a box center → nearest center wins.
+          3. Point inside a bbox expanded by bbox_margin → nearest center wins
+             (rescues coordinates the model estimated just outside an element).
+        Confidence breaks ties so low-confidence misdetections don't win.
         """
-        candidates: list[tuple[float, tuple[float, float], float]] = []
+        real_hits: list[tuple[float, float, tuple[float, float], float]] = []
+        near_hits: list[tuple[float, tuple[float, float], float]] = []
+        margin_hits: list[tuple[float, tuple[float, float], float]] = []
         for b in self.boxes:
             nx = b.cx / self.img_w * 1000
             ny = b.cy / self.img_h * 1000
+            x1 = b.x1 / self.img_w * 1000
+            y1 = b.y1 / self.img_h * 1000
+            x2 = b.x2 / self.img_w * 1000
+            y2 = b.y2 / self.img_h * 1000
             dist = ((nx - target_x) ** 2 + (ny - target_y) ** 2) ** 0.5
+            center = (nx, ny)
+            if x1 <= target_x <= x2 and y1 <= target_y <= y2:
+                area = (x2 - x1) * (y2 - y1)
+                real_hits.append((area, dist, center, b.conf))
             if dist <= max_dist:
-                candidates.append((dist, (nx, ny), b.conf))
-        if not candidates:
-            return None
-        candidates.sort(key=lambda c: c[0])
-        best_dist = candidates[0][0]
-        # Among candidates within 30px of the closest, pick highest confidence
-        tied = [c for c in candidates if c[0] <= best_dist + 30]
-        tied.sort(key=lambda c: c[2], reverse=True)
-        return tied[0][1]
+                near_hits.append((dist, center, b.conf))
+            if (
+                x1 - bbox_margin <= target_x <= x2 + bbox_margin
+                and y1 - bbox_margin <= target_y <= y2 + bbox_margin
+            ):
+                margin_hits.append((dist, center, b.conf))
+
+        if real_hits:
+            # Tightest box = most specific element; tie by distance then conf.
+            real_hits.sort(key=lambda c: (c[0], c[1], -c[3]))
+            return real_hits[0][2]
+        if near_hits:
+            near_hits.sort(key=lambda c: c[0])
+            best_dist = near_hits[0][0]
+            # Among centers within 30px of the closest, pick highest confidence.
+            tied = [c for c in near_hits if c[0] <= best_dist + 30]
+            tied.sort(key=lambda c: c[2], reverse=True)
+            return tied[0][1]
+        if margin_hits:
+            margin_hits.sort(key=lambda c: (c[0], -c[2]))
+            return margin_hits[0][1]
+        return None
