@@ -215,6 +215,21 @@ class MilestoneSupervisorPolicy:
             if history[-1].action_decision.action.action_type == "type":
                 self._recent_screenshots.clear()
 
+        # Off-target last action (post-action targeting verify said the tap
+        # missed): skip the checker — the milestone obviously isn't done — and
+        # route straight into replan. Catches "screen changed but to the wrong
+        # element" (e.g. 搜索框 tap hit 转账 tab), which SimStuck can't.
+        last_tv = history[-1].target_verify if history else None
+        if last_tv is not None and not last_tv.on_target:
+            print(f"  [OffTarget] 上一步误中「{last_tv.actual_element}」，跳过 checker 直接 replan")
+            stuck = _SingleCheckResult(
+                status="stuck",
+                reason=f"上一步动作落点误中「{last_tv.actual_element}」，未点到目标",
+                stuck_reason=f"动作 off-target：误中{last_tv.actual_element}",
+                summary="",
+            )
+            return self._handle_stuck(milestone, stuck, None, observation, history)
+
         prev_page_id = self._last_page_identity.get(milestone.id, "")
 
         with _Timer(self._timings, self._timings_order, "checker"):
