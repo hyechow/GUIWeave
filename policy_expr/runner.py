@@ -25,7 +25,6 @@ from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPo
 from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.output import generate_reply
 from policy_expr.perception import LivePerception, LivePhoneSession
-from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.temporal import resolve_temporal_expressions
 from policy_expr.policies import StructuredOutputPolicy
@@ -115,6 +114,10 @@ def _settle_after_action(phone: LivePhoneSession, pre_frame: bytes | None) -> fl
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
 # settle wait (near-zero added latency). Daemon threads; finishes at process exit.
 _VERIFY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="verify")
+
+# YOLO detection + OCR run here, concurrent with the supervisor decide, so the
+# snap has its boxes/text ready by execute time (~0.4s off the critical path).
+_PREP_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="prep")
 
 
 def _snapped_point(action_decision: ActionDecision | None) -> tuple[float, float] | None:
@@ -365,7 +368,9 @@ def run_agent_loop(
             _status(turn_no, "截图分析中…")
             perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
-            executor.calibrator = YoloCalibrator.from_png(observation.png_bytes)
+            # YOLO + OCR run in the background, overlapping the decide below;
+            # awaited just before execute (snap) so they add ~no latency.
+            prep_future = _PREP_POOL.submit(executor.prepare_frame, observation.png_bytes)
 
             _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
             _say("监督决策中...")
@@ -457,6 +462,10 @@ def run_agent_loop(
                         observation.png_bytes,
                         log_dir / f"structured_output_result_turn_{turn_no}.png",
                     )
+                # Ensure YOLO/OCR prep finished before any execute/snap (covers
+                # both the preformed-action and action-policy paths). Started
+                # after screenshot, overlapped the decide → normally done already.
+                prep_future.result()
                 if action_decision.not_found_reason:
                     _say(f"  [NotFound] {action_decision.not_found_reason}")
                     _status(turn_no, "未找到目标元素")

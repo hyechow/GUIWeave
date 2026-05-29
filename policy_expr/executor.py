@@ -52,6 +52,30 @@ class ActionExecutor:
     def __init__(self, phone: LivePhoneSession, calibrator: YoloCalibrator | None = None):
         self.phone = phone
         self.calibrator = calibrator
+        # Per-frame OCR results, precomputed by prepare_frame() so snapping reuses
+        # them instead of running OCR on the critical path. Tied to the exact
+        # frame via identity (_prepared_png) so a stale cache is never reused.
+        self._prepared_png: bytes | None = None
+        self._frame_ocr: list | None = None
+
+    def prepare_frame(self, png_bytes: bytes) -> None:
+        """Precompute YOLO calibrator + OCR for this frame.
+
+        Meant to run in a background thread concurrent with the supervisor
+        decide (checker/planner/action_policy), so by execute time the snap has
+        its YOLO boxes and OCR results ready — moving ~0.4s off the critical
+        path per turn. Idempotent; safe to call once per turn before execute.
+        """
+        try:
+            self.calibrator = YoloCalibrator.from_png(png_bytes)
+        except Exception:
+            self.calibrator = None
+        try:
+            from policy_expr.utils import ocr_from_bytes
+            self._frame_ocr = ocr_from_bytes(png_bytes)[0]
+        except Exception:
+            self._frame_ocr = None
+        self._prepared_png = png_bytes
 
     def _snap(self, ax: float, ay: float, png_bytes: bytes | None = None, hint: str = "", action: Action | None = None, is_home_screen: bool = False) -> tuple[float, float]:
         """Snap normalized (0-1000) coordinates.
@@ -94,11 +118,14 @@ class ActionExecutor:
         Picks the candidate with the longest matched text first (most specific),
         breaking ties by distance. Returns ((nx, ny), match_len) or None.
         """
-        try:
-            from policy_expr.utils import ocr_from_bytes
-            results, _ = ocr_from_bytes(png_bytes)
-        except Exception:
-            return None
+        if self._frame_ocr is not None and png_bytes is self._prepared_png:
+            results = self._frame_ocr  # precomputed by prepare_frame (off critical path)
+        else:
+            try:
+                from policy_expr.utils import ocr_from_bytes
+                results, _ = ocr_from_bytes(png_bytes)
+            except Exception:
+                return None
 
         candidates: list[tuple[float, int, tuple[float, float]]] = []
         for r in results:
