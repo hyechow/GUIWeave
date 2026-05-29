@@ -53,8 +53,10 @@ class ActionExecutor:
         """Snap normalized (0-1000) coordinates.
 
         YOLO and OCR both run when hint is available. OCR wins when it finds a
-        specific text match (≥4 chars) — this catches text elements (search bars,
-        labels) where YOLO may snap to a nearby icon instead of the actual target.
+        text match (≥2 chars) — this catches text elements (search bars, labels,
+        and especially bottom-tab labels like 我的/消息 which are exactly 2 chars)
+        where YOLO may snap to a nearby icon instead of the actual target.
+        _ocr_snap already guards matches: substring-of-hint, longest-first, ≤150.
         """
         yolo_pos = None
         if self.calibrator:
@@ -69,9 +71,10 @@ class ActionExecutor:
             if ocr:
                 ocr_pos, ocr_len = ocr
 
-        # OCR wins when the matched text is specific enough (≥4 chars) to be
-        # trusted over a YOLO icon snap that may have landed on a wrong element.
-        if ocr_pos and ocr_len >= 4:
+        # OCR wins when it matched a hint text (≥2 chars): a substring match on
+        # the target's own label is a stronger signal than a YOLO icon snap that
+        # may have landed on a wrong/adjacent element.
+        if ocr_pos and ocr_len >= 2:
             if yolo_pos:
                 print(f"OCR 覆盖 YOLO: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f}) [匹配={ocr_len}字]")
             else:

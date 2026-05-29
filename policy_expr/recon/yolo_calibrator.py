@@ -49,6 +49,14 @@ class YoloCalibrator:
             return None
         return cls(boxes, img.width, img.height)
 
+    # A box must be at least this confident before its bbox is trusted to
+    # *contain* the target (Tier 1). YOLO runs at conf=0.1 to catch every icon,
+    # so weak boxes are common and a single low-conf misdetection can sprawl
+    # across half the screen — trusting its containment would hijack the snap.
+    # Below this floor a box still competes by center distance (Tiers 2/3),
+    # which a misdetection's center rarely wins.
+    _REAL_CONTAINMENT_MIN_CONF = 0.4
+
     def nearest(
         self,
         target_x: float,
@@ -60,8 +68,8 @@ class YoloCalibrator:
 
         Tiered so a small icon near the point can't steal a tap that actually
         lands inside a larger element:
-          1. Point inside a box's real bbox → snap to the tightest such box
-             (the most specific element under the point).
+          1. Point inside a box's real bbox (and conf ≥ floor) → snap to the
+             tightest such box (the most specific element under the point).
           2. Point within max_dist of a box center → nearest center wins.
           3. Point inside a bbox expanded by bbox_margin → nearest center wins
              (rescues coordinates the model estimated just outside an element).
@@ -79,7 +87,10 @@ class YoloCalibrator:
             y2 = b.y2 / self.img_h * 1000
             dist = ((nx - target_x) ** 2 + (ny - target_y) ** 2) ** 0.5
             center = (nx, ny)
-            if x1 <= target_x <= x2 and y1 <= target_y <= y2:
+            if (
+                x1 <= target_x <= x2 and y1 <= target_y <= y2
+                and b.conf >= self._REAL_CONTAINMENT_MIN_CONF
+            ):
                 area = (x2 - x1) * (y2 - y1)
                 real_hits.append((area, dist, center, b.conf))
             if dist <= max_dist:

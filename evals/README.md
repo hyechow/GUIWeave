@@ -22,6 +22,7 @@ uv run python evals/<module>/test_<module>.py
 | back_nav | 14 | 回退导航：从当前页面找到返回目标页面的路径 |
 | cascade_matcher | 22 | 级联页面匹配：基于视觉指纹和相似度判断两个截图是否是同一页面 |
 | popup_detect | 7 | 弹窗检测：识别截图中是否存在覆盖主界面的弹窗/浮层 |
+| snap | 2+4 | 坐标吸附：YOLO/OCR 把 LLM 给的 tap 坐标吸到真实元素（2 截图 case + 4 几何回归） |
 | repeat_detect | — | 重复指令检测（无固定 cases，程序化生成测试） |
 | stuck_detect | — | 卡住检测（无固定 cases，程序化生成测试） |
 
@@ -93,3 +94,14 @@ uv run python evals/<module>/test_<module>.py
 |------|------|
 | fingerprint | 基于视觉指纹的页面同一性判断 |
 | similarity | 基于像素/结构相似度的页面匹配 |
+
+### snap
+
+截图 case 跑真实 `ActionExecutor._snap`（YOLO+OCR 仲裁），几何回归直接驱动
+`YoloCalibrator.nearest()`，不依赖 LLM。截图被 gitignore，缺图时 SKIP。
+
+| 分组 | 说明 | 关键验证点 |
+|------|------|-----------|
+| 底部 tab「我的」 | 2 字标签 + conf=0.28 超宽误检框 | method=ocr 且吸到「我的」文字 |
+| 左上角返回箭头 | 无文字、LLM 纵向估偏 | method=yolo 且经 margin 层吸到箭头 |
+| 几何回归 | 分层不变式 | 小图标不偷点、超宽低 conf 误检被拒、低 conf 框仍可凭距离吸附 |

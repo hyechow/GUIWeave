@@ -1,0 +1,26 @@
+[
+  {
+    "label": "底部tab我的-OCR覆盖YOLO(2字标签)",
+    "screenshot": "evals/snap/screenshots/alipay_meituan_bottom_tabs.png",
+    "target": [890.0, 850.0],
+    "hint": "点击底部导航栏右起第一个「我的」Tab",
+    "expected": {
+      "method": "ocr",
+      "snapped_near": [878.0, 944.0],
+      "tolerance": 40.0
+    },
+    "note": "「我的」仅2字，旧的 ocr_len>=4 阈值会丢弃 OCR；同时一个 conf=0.28 的超宽误检框真实包含目标点，会劫持 YOLO 吸附。两个 bug 叠加导致点到「消息」与「我的」之间。修复后 OCR 以2字标签精确吸到「我的」。"
+  },
+  {
+    "label": "左上角返回箭头-YOLO-margin救援",
+    "screenshot": "evals/snap/screenshots/alipay_message_back_arrow.png",
+    "target": [80.0, 200.0],
+    "hint": "点击左上角的返回箭头按钮",
+    "expected": {
+      "method": "yolo",
+      "snapped_near": [80.0, 137.0],
+      "tolerance": 30.0
+    },
+    "note": "返回箭头无文字，OCR 无命中；LLM 纵向估偏(y=200 实际框中心137)，超过30的中心距阈值。修复后靠 bbox±50 margin 层救回，吸到返回箭头。"
+  }
+]
