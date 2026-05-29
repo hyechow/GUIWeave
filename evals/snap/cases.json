@@ -1,5 +1,29 @@
 [
   {
+    "label": "钱包入口-指令含金额-OCR不吸到¥0.54",
+    "screenshot": "evals/snap/screenshots/wechat_service_wallet_amount.png",
+    "target": [700.0, 238.0],
+    "hint": "点击「钱包」入口（位于顶部绿色卡片右侧，显示余额¥0.54的图标）",
+    "expected": {
+      "method": "ocr",
+      "snapped_near": [704.0, 265.0],
+      "tolerance": 30.0
+    },
+    "note": "planner 把余额「¥0.54」写进了指令描述。OCR longest-match-first 曾让 5 字「¥0.54」(704,289) 击败 2 字「钱包」(704,265,更近)→吸到金额。修复：跳过无 CJK/字母的纯数值 token(金额/计数/角标),只剩「钱包」→吸到入口。"
+    },
+  {
+    "label": "我Tab-单字-导航带内OCR命中",
+    "screenshot": "evals/snap/screenshots/wechat_singlechar_wo_tab.png",
+    "target": [875.0, 850.0],
+    "hint": "点击底部导航栏右起第一个Tab「我」",
+    "expected": {
+      "method": "ocr",
+      "snapped_near": [854.0, 940.0],
+      "tolerance": 30.0
+    },
+    "note": "单字 tab「我」。LLM 把 tab y 估高到 850，原来 OCR 过滤掉 len<2 → 回退 YOLO，YOLO 就近吸到上方聊天行「微信游戏」(920,878)→off_target 费一轮 replan。修复：底部 tab 横带(ny≥900)内允许单字 OCR → 命中「我」(854,940)。带外单字仍过滤(聊天文本里到处是单字)。"
+  },
+  {
     "label": "微信主屏图标-主屏抑制OCR走YOLO",
     "screenshot": "evals/snap/screenshots/home_screen_wechat_icon.png",
     "target": [374.0, 618.0],

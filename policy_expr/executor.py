@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 
@@ -40,6 +41,10 @@ from policy_expr.schemas import Action, ActionDecision
 _TITLE_BAR_H  = 38   # iPhone Mirroring 透明标题栏高度（逻辑 px）
 _BTN_Y_OFFSET = 19   # App Switcher 按钮距窗口顶部中心
 _BTN_RIGHT    = 22   # App Switcher 按钮距窗口右边缘
+
+# 底部 tab 横带的归一化 y 下界：单字标签（我/钱）只在此带内才作为 OCR 吸附目标。
+# tab 文字在 ~940，其上方聊天/内容行 ≤880，900 可干净分隔。
+_OCR_SINGLE_CHAR_MIN_NY = 900.0
 
 
 class ActionExecutor:
@@ -129,10 +134,21 @@ class ActionExecutor:
 
         candidates: list[tuple[float, int, tuple[float, float]]] = []
         for r in results:
-            if len(r.text) < 2 or r.text not in hint:
+            if not r.text or r.text not in hint:
+                continue
+            # Skip value-display tokens (amounts/counts/badges like ¥0.54, 124):
+            # they're not tap targets, and being longer they'd otherwise beat the
+            # real label under longest-match-first — e.g. a 钱包 instruction whose
+            # descriptor mentions the balance "¥0.54" snapping to the amount.
+            if not re.search(r"[一-鿿A-Za-z]", r.text):
                 continue
             tx, ty = r.tap_coords(WIN_W, WIN_H)
             nx, ny = tx / WIN_W * 1000, ty / WIN_H * 1000
+            # Single-char labels (我/钱) only count in the bottom tab band, where
+            # they are real tap targets. Elsewhere a 1-char OCR hit is too
+            # ambiguous (appears in chat text, etc.), so keep the ≥2-char floor.
+            if len(r.text) < 2 and ny < _OCR_SINGLE_CHAR_MIN_NY:
+                continue
             dist = ((nx - ax) ** 2 + (ny - ay) ** 2) ** 0.5
             if dist <= 150:
                 candidates.append((dist, len(r.text), (nx, ny)))
