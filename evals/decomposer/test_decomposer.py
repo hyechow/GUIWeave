@@ -55,6 +55,11 @@ def _check_milestones(milestones: list, constraints: list[str], expected: dict) 
         if not any(m.kind == required_kind for m in milestones):
             details.append(f"no milestone with kind='{required_kind}'")
 
+    for forbidden_kind in expected.get("no_milestone_kind", []):
+        violators = [m.name for m in milestones if m.kind == forbidden_kind]
+        if violators:
+            details.append(f"milestone(s) {violators} should not be kind='{forbidden_kind}'")
+
     for forbidden_strategy in expected.get("no_milestone_strategy", []):
         violators = [m.name for m in milestones if m.completion_strategy == forbidden_strategy]
         if violators:

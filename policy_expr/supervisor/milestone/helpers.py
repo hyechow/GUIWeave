@@ -121,28 +121,41 @@ def run_checker(
         prompt += f"\n\n## 输出修正要求\n{extra}"
     result = invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _SingleCheckResult)
 
-    if not _is_retry and result.status == "done" and (not result.visible_evidence or result.missing_evidence):
+    # Validate a done verdict. Reject if self-contradictory (admits missing
+    # evidence) or the reason is too thin to justify completion. Additionally,
+    # for non-navigation kinds (action/filter/collection) a done claims a state
+    # change (sent/applied/collected) — require cited visible_evidence, because
+    # a *wrong* done on the pre-action screen typically can't cite any, and the
+    # retry then catches it (measured: send-screen wrong-done 4/10 → 0/10).
+    # Navigation done is self-evident from the page identity in `reason`, so an
+    # empty array there is just a format slip — don't retry on it (avoids a
+    # wasteful ~1s tax on every nav completion).
+    def _done_unsupported(r: _SingleCheckResult) -> bool:
+        if r.missing_evidence or len((r.reason or "").strip()) < 10:
+            return True
+        return milestone.kind != "navigation" and not r.visible_evidence
+
+    if not _is_retry and result.status == "done" and _done_unsupported(result):
         # Retry exactly once. The retry passes _is_retry=True so it skips this
         # block — without that the recursion would re-trigger the guard and
         # retry unboundedly (observed up to 4×), making the stuck-force below
         # unreachable. Capped at 2 LLM calls total.
-        print("  [SingleCheck] done 缺少证据，重试...")
+        print("  [SingleCheck] done 证据不足，重试...")
         result = run_checker(
             milestone, observation, history,
             app_name=app_name, task_type=task_type, constraints=constraints,
             extra=(
-                "你刚才判定为 done，但 visible_evidence 数组为空。done 判断很可能是对的，"
-                "只是漏填了证据：请把你在截图中实际看到、支持 done 的内容（如标题文字、高亮选中的 tab、"
-                "关键内容项）逐条填入 visible_evidence 数组，不要留空。"
-                "只有当你确实在截图里找不到任何支持 done 的可见证据时，才改判 in_progress。"
+                "你刚才判定为 done，但理由不足以支撑（missing_evidence 非空，或 reason 过于空泛）。"
+                "请重新核对截图：若确实满足验收条件，请在 reason 里写清你看到的具体依据（标题文字、"
+                "高亮选中的 tab、关键内容项），并清空 missing_evidence；否则改判 in_progress。"
             ),
             _is_retry=True,
         )
-    if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
+    if result.status == "done" and _done_unsupported(result):
         return _SingleCheckResult(
             status="stuck",
-            reason="checker 返回 done 但缺少可见验收证据",
-            stuck_reason="done 缺少可见证据",
+            reason="checker 返回 done 但理由不足（缺验收依据或自相矛盾）",
+            stuck_reason="done 理由不足",
             summary=result.summary,
         )
     return result

@@ -18,11 +18,11 @@ uv run python evals/<module>/test_<module>.py
 | replan | 1 | 修复规划器：stuck 触发后生成新策略（local_replan/escalate） |
 | reply | 11 | 回复生成：任务结束后生成面向用户的自然语言回复 |
 | prefs | 10 | 用户偏好提取：从对话历史中识别并结构化用户偏好 |
-| decomposer | 5 | 任务分解：将用户目标拆解为有依赖关系的 milestone 列表 |
+| decomposer | 9 | 任务分解：将用户目标拆解为有依赖关系的 milestone 列表 |
 | back_nav | 14 | 回退导航：从当前页面找到返回目标页面的路径 |
 | cascade_matcher | 22 | 级联页面匹配：基于视觉指纹和相似度判断两个截图是否是同一页面 |
 | popup_detect | 7 | 弹窗检测：识别截图中是否存在覆盖主界面的弹窗/浮层 |
-| snap | 8+5 | 坐标吸附：App 内 OCR 文本优先、匹配不上回退 YOLO，主屏抑制 OCR，8 截图 case + 5 几何回归 |
+| snap | 10+5 | 坐标吸附：App 内 OCR 文本优先（含导航带内单字）、匹配不上回退 YOLO，主屏抑制 OCR，10 截图 case + 5 几何回归 |
 | target_verify | 4 | 动作落点校验：标记帧上判断 tap 是否落在指令意图的目标元素（on/off_target） |
 | repeat_detect | — | 重复指令检测（无固定 cases，程序化生成测试） |
 | stuck_detect | — | 卡住检测（无固定 cases，程序化生成测试） |

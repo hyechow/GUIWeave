@@ -1,5 +1,16 @@
 [
   {
+    "label": "到达页面任务-应全部navigation不应action",
+    "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
+    "goal": "打开微信账单",
+    "expected": {
+      "min_milestones": 2,
+      "any_milestone_kind": ["navigation"],
+      "no_milestone_kind": ["action"]
+    },
+    "note": "「打开微信账单」每步都是到达/查看某页面(我→服务→钱包→账单),应全部 navigation。曾把「进入账单页面」误标 action → SkipCheck 不跳、nav-done 空数组重试，checker 跑两次(20260529_193617)。"
+  },
+  {
     "label": "单APP-美团点外卖",
     "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
     "goal": "在美团中点一杯生椰拿铁外卖",

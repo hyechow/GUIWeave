@@ -39,10 +39,10 @@ goal 中已包含预处理后的绝对日期（如 2026-05-18 至 2026-05-24）�
 2. 如果当前已在主屏幕或已在目标应用内，不需要「回到主屏幕」步骤
 3. depends_on 填依赖的前置子目标 id，无依赖留空
 4. kind 必须表达子目标语义：
-   - navigation：打开应用、进入页面、切换 tab
+   - navigation：打开应用、进入/到达某页面、切换 tab——验收是「看到某页面」、不改变任何数据/状态。即便要走多步点击才能到达（如「进入账单页」需 我→服务→钱包→账单），只要终点是「看到某页面」，就归 navigation
    - filter：设置范围、搜索词、筛选条件、排序条件
    - collection：读取并收集页面内容（记录列表、消息流、搜索结果）
-   - action：执行一次具体操作
+   - action：执行一次**改变状态**的操作（发送、提交、购买、支付、删除、点赞、修改设置）。⚠️ 仅仅「到达/打开/查看某页面」不是 action，必须归 navigation
    - verification：确认结果是否满足目标
 5. completion_strategy 必须表达完成方式：
    - visible_once：看到指定页面/状态即可完成
@@ -108,7 +108,7 @@ SINGLE_CHECKER_PROMPT = """\
 - 验收条件要求某段文字内容（如消息文本）：截图中对应元素的文字必须与验收条件中的文字精确匹配，包含多余前缀、后缀或拼写错误都不能判 done
 - 只看可观测事实，不要凭感觉判断
 - ⚠️ 页面底部「已选：...」或「当前选择：...」摘要文字只反映当前值，不代表对应的选项 chip/按钮可点击——判断某选项可见，必须在截图中看到实际的选项 chip 元素，不能从摘要文字推断
-- done 时：visible_evidence 必须列出截图中直接支持验收条件的文字；missing_evidence 必须为空
+- done 时：reason 必须写清截图中直接支持验收条件的具体依据（标题文字、高亮 tab、关键内容）；missing_evidence 必须为空。visible_evidence 可附上证据条目（可选）
 - 存在任何 missing_evidence 不能返回 done
 - read_instruction 仅在内容读取（collection）场景填写，其余子目标留空
 
@@ -135,7 +135,7 @@ loading 是独立布尔字段，与 status 无关。status 只能填 done 或 in
 _CHECK_SECTION_NAVIGATION = """
 ## 导航类子目标（kind=navigation）
 - done 仅当当前页面身份与目标页精确匹配（标题文字匹配、目标 tab 高亮选中）。
-- 判 done 时**必须**在 visible_evidence 列出页面身份证据（如标题文字、高亮 tab、关键分组名），不能留空，否则 done 会被判无效并重试。
+- 判 done 时，reason 必须写清页面身份证据（如标题文字、高亮 tab、关键分组名），不能空泛；visible_evidence 可附证据条目（可选）。
 - 仍在导航途中、页面不匹配、加载中，一律 in_progress。
 - 仅 in_progress 时 visible_evidence / missing_evidence 可留空，无需逐条列证据。
 """
