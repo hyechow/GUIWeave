@@ -1,5 +1,23 @@
 [
   {
+    "label": "微信启动屏-地球插画-loading",
+    "screenshot": "evals/checker/screenshots/wechat_splash_earth.png",
+    "milestone": {
+      "name": "打开微信应用",
+      "description": "从主屏点击微信图标启动应用",
+      "success_condition": "看到微信聊天列表界面（底部导航栏显示'微信'、'通讯录'、'发现'、'我'）",
+      "kind": "navigation",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": true
+    },
+    "note": "微信启动闪屏（小人站在地球前的全屏深色插画，无时钟）。曾被误判为'锁屏界面'→发 home 退出→白白重点一次微信。应判 loading=true 等待启动完成。"
+  },
+  {
     "label": "首页-milestone已满足-done",
     "screenshot": "evals/checker/screenshots/screenshot_turn_1.png",
     "milestone": {
