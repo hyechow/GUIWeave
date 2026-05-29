@@ -133,6 +133,17 @@ def _ctx(milestone: Milestone, read_instruction: Optional[str], collection_scope
     }
 
 
+def _is_home_identity(page_identity: str) -> bool:
+    """Derive 'on the iOS home screen' from the checker's free-text page_identity.
+
+    Home-screen icon labels are not tappable (only the icon glyph launches the
+    app), so the executor must skip OCR text-snap there. The checker reliably
+    writes '主屏' for springboard; also accept the English variants.
+    """
+    pid = (page_identity or "").lower()
+    return "主屏" in (page_identity or "") or "home screen" in pid or "springboard" in pid
+
+
 def _png_sim(png1: bytes, png2: bytes, size: int = 64) -> float:
     img1 = Image.open(io.BytesIO(png1)).convert("L").resize((size, size))
     img2 = Image.open(io.BytesIO(png2)).convert("L").resize((size, size))
@@ -330,6 +341,7 @@ class MilestoneSupervisorPolicy:
             summary=plan.summary,
             direction=plan.direction,
             drag_column=plan.drag_column,
+            is_home_screen=_is_home_identity(check.page_identity),
             **_ctx(milestone, check.read_instruction),
         )
 
@@ -589,6 +601,7 @@ class MilestoneSupervisorPolicy:
             stop=False,
             goal_completed=False,
             summary=f"子目标「{milestone.name}」卡住，第 {milestone.retry_count} 次重试。{replan.diagnosis}",
+            is_home_screen=_is_home_identity(self._last_check.page_identity) if self._last_check else False,
             **_ctx(milestone, read_inst),
         )
 

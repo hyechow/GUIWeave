@@ -58,7 +58,8 @@ def test_screenshot_cases() -> int:
         hint = c.get("hint", "")
         act = Action(action_type="tap", x=tx, y=ty, description=hint)
         try:
-            sx, sy = ex._snap(tx, ty, png_bytes=png, hint=hint, action=act)
+            sx, sy = ex._snap(tx, ty, png_bytes=png, hint=hint, action=act,
+                              is_home_screen=c.get("is_home", False))
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")
             continue

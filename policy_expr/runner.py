@@ -493,7 +493,7 @@ def run_agent_loop(
                             )
                             executed = False
                     else:
-                        executed = executor.execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes)
+                        executed = executor.execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes, is_home_screen=sv_step.is_home_screen)
 
             # Post-action targeting verify: did the snapped tap land on target?
             # Submit now so it runs concurrently with the settle below; resolved

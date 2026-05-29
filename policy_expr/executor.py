@@ -53,50 +53,38 @@ class ActionExecutor:
         self.phone = phone
         self.calibrator = calibrator
 
-    def _snap(self, ax: float, ay: float, png_bytes: bytes | None = None, hint: str = "", action: Action | None = None) -> tuple[float, float]:
+    def _snap(self, ax: float, ay: float, png_bytes: bytes | None = None, hint: str = "", action: Action | None = None, is_home_screen: bool = False) -> tuple[float, float]:
         """Snap normalized (0-1000) coordinates.
 
-        YOLO and OCR both run when hint is available. When both produce a
-        candidate, the one whose snapped point is nearer the model's original
-        point wins (the model usually aims at its intended element, so the
-        closer candidate is the better grounding). A wrong pick is cheap now:
-        the post-action targeting verify catches it and routes to replan.
+        In-app, OCR text-match has priority: the visible text label is tappable
+        and the hint usually names it, so a matched label is the strongest
+        grounding. YOLO icon detection is the fallback for icon-only elements
+        with no matchable text. A wrong pick is cheap now: the post-action
+        targeting verify catches it and routes to replan.
         _ocr_snap already filters matches: substring-of-hint, longest-first, ≤150.
-        """
-        yolo_pos = None
-        if self.calibrator:
-            snapped = self.calibrator.nearest(ax, ay)
-            if snapped:
-                yolo_pos = snapped
 
-        ocr_pos: tuple[float, float] | None = None
-        ocr_len = 0
-        if png_bytes and hint:
+        On the iOS home screen the icon's text label is NOT tappable (only the
+        icon glyph launches the app), so OCR is disabled there and the tap snaps
+        to the YOLO icon body alone.
+        """
+        # OCR first (in-app only): a matched visible label wins outright.
+        if png_bytes and hint and not is_home_screen:
             ocr = self._ocr_snap(ax, ay, png_bytes, hint)
             if ocr:
                 ocr_pos, ocr_len = ocr
+                print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f}) [匹配={ocr_len}字]")
+                if action is not None:
+                    action.snap = {"method": "ocr", "original": [ax, ay], "snapped": list(ocr_pos), "ocr_len": ocr_len}
+                return ocr_pos
 
-        def _dist(p: tuple[float, float]) -> float:
-            return ((p[0] - ax) ** 2 + (p[1] - ay) ** 2) ** 0.5
-
-        # Both matched → nearer-to-original wins.
-        if yolo_pos and ocr_pos:
-            if _dist(ocr_pos) < _dist(yolo_pos):
-                yolo_pos = None
-            else:
-                ocr_pos = None
-
-        if ocr_pos:
-            print(f"OCR 吸附: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f}) [匹配={ocr_len}字]")
-            if action is not None:
-                action.snap = {"method": "ocr", "original": [ax, ay], "snapped": list(ocr_pos), "ocr_len": ocr_len}
-            return ocr_pos
-
-        if yolo_pos:
-            print(f"YOLO 吸附: ({ax:.0f}, {ay:.0f}) → ({yolo_pos[0]:.0f}, {yolo_pos[1]:.0f})")
-            if action is not None:
-                action.snap = {"method": "yolo", "original": [ax, ay], "snapped": list(yolo_pos)}
-            return yolo_pos
+        # Fallback: YOLO icon body (icon-only buttons, or home screen).
+        if self.calibrator:
+            snapped = self.calibrator.nearest(ax, ay)
+            if snapped:
+                print(f"YOLO 吸附: ({ax:.0f}, {ay:.0f}) → ({snapped[0]:.0f}, {snapped[1]:.0f})")
+                if action is not None:
+                    action.snap = {"method": "yolo", "original": [ax, ay], "snapped": list(snapped)}
+                return snapped
 
         return ax, ay
 
@@ -130,20 +118,20 @@ class ActionExecutor:
         _, best_len, best_pos = candidates[0]
         return best_pos, best_len
 
-    def execute(self, decision: ActionDecision, app_name: str = "", png_bytes: bytes | None = None) -> bool:
+    def execute(self, decision: ActionDecision, app_name: str = "", png_bytes: bytes | None = None, is_home_screen: bool = False) -> bool:
         action = decision.action
         print(f"\n动作: [{action.action_type}] {action.description}")
 
         hint = action.description or ""
         if action.action_type in ("tap", "click") and action.x is not None and action.y is not None:
-            ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint, action=action)
+            ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint, action=action, is_home_screen=is_home_screen)
             lx, ly = logical_xy(ax, ay)
             if not self._tap(lx, ly, decision, app_name):
                 return False
 
         elif action.action_type == "type" and action.text:
             if action.x is not None and action.y is not None:
-                ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint, action=action)
+                ax, ay = self._snap(action.x, action.y, png_bytes=png_bytes, hint=hint, action=action, is_home_screen=is_home_screen)
                 lx, ly = logical_xy(ax, ay)
                 if not self._tap(lx, ly, decision, app_name):
                     return False

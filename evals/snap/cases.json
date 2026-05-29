@@ -1,51 +1,79 @@
 [
   {
-    "label": "微信主屏图标-closer-wins走YOLO",
+    "label": "微信主屏图标-主屏抑制OCR走YOLO",
     "screenshot": "evals/snap/screenshots/home_screen_wechat_icon.png",
     "target": [374.0, 618.0],
     "hint": "点击微信应用图标",
+    "is_home": true,
     "expected": {
       "method": "yolo",
       "snapped_near": [389.0, 620.0],
       "tolerance": 30.0
     },
-    "note": "主屏图标点：LLM 瞄准图标本体(618)，YOLO 图标中心(620) 比 OCR「微信」标签(658) 离 LLM 点更近 → 取 YOLO，落在图标上。点文字不启动 App。"
+    "note": "主屏：图标下方文字 label 不可点，is_home=true 抑制 OCR，吸到 YOLO 图标本体(389,620)。"
   },
   {
-    "label": "底部tab我的-closer-wins走YOLO tab图标",
+    "label": "微信主屏-LLM瞄到label-is_home抑制OCR走YOLO",
+    "screenshot": "evals/snap/screenshots/home_screen_wechat_icon.png",
+    "target": [389.0, 660.0],
+    "hint": "点击微信应用图标",
+    "is_home": true,
+    "expected": {
+      "method": "yolo",
+      "snapped_near": [389.0, 620.0],
+      "tolerance": 30.0
+    },
+    "note": "LLM 把落点估到了「微信」文字 label(660) 上。非主屏会 OCR 吸到 label(391,658)→点文字不启动 App；is_home=true 抑制 OCR，强制吸到 YOLO 图标本体(389,620)。这是 is_home 标志真正起作用的回归。"
+  },
+  {
+    "label": "底部tab我的-App内OCR优先命中标签",
     "screenshot": "evals/snap/screenshots/alipay_meituan_bottom_tabs.png",
     "target": [890.0, 850.0],
     "hint": "点击底部导航栏右起第一个「我的」Tab",
     "expected": {
-      "method": "yolo",
-      "snapped_near": [878.0, 928.0],
+      "method": "ocr",
+      "snapped_near": [878.0, 944.0],
       "tolerance": 30.0
     },
-    "note": "LLM 把 tab 估到 y=850。YOLO tab 图标(878,928,距78) 比 OCR「我的」标签(878,944,距94) 略近 → 取 YOLO。tab 图标可点，正确。"
+    "note": "App 内文本优先：OCR 命中「我的」标签(878,944)，直接落在可点的 tab 标签上。LLM 把 y 估到 850 不影响。"
   },
   {
-    "label": "主屏App图标-closer-wins走YOLO",
+    "label": "微信通讯录tab-App内OCR优先避开噪声框",
+    "screenshot": "evals/snap/screenshots/wechat_chatlist_contacts_tab.png",
+    "target": [375.0, 850.0],
+    "hint": "点击底部导航栏左起第二个Tab「通讯录」",
+    "expected": {
+      "method": "ocr",
+      "snapped_near": [380.0, 940.0],
+      "tolerance": 30.0
+    },
+    "note": "微信聊天列表底部 tab。LLM 把 y 估高到 850（真 tab 在 922），closer-wins 曾吸到上方「服务号」行的 conf=0.18 噪声框(337,879)→误点服务号。App 内 OCR 优先命中「通讯录」标签(380,940)→正确落在 tab 上。"
+  },
+  {
+    "label": "主屏App图标-主屏抑制OCR走YOLO",
     "screenshot": "evals/snap/screenshots/home_screen_alipay_icon.png",
     "target": [609.0, 617.0],
     "hint": "点击支付宝App图标",
+    "is_home": true,
     "expected": {
       "method": "yolo",
       "snapped_near": [609.0, 620.0],
       "tolerance": 30.0
     },
-    "note": "支付宝图标：YOLO 图标中心比下方标签离 LLM 点近 → YOLO。"
+    "note": "主屏支付宝图标：is_home=true 抑制 OCR，吸到 YOLO 图标本体。"
   },
   {
     "label": "主屏App图标-conf抖动到0.44仍走YOLO",
     "screenshot": "evals/snap/screenshots/home_screen_alipay_icon_low_conf.png",
     "target": [612.0, 619.0],
     "hint": "点击支付宝App图标",
+    "is_home": true,
     "expected": {
       "method": "yolo",
       "snapped_near": [608.0, 620.0],
       "tolerance": 30.0
     },
-    "note": "同一图标 YOLO conf 帧间抖动(0.49~0.44)；closer-wins 不依赖 conf，仍走 YOLO 图标中心。"
+    "note": "同一图标 YOLO conf 帧间抖动(0.49~0.44)；主屏走 YOLO，nearest 不依赖 conf，仍吸到图标中心。"
   },
   {
     "label": "会员页返回箭头-宽banner不teleport",

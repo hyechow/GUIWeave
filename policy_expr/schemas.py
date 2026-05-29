@@ -211,6 +211,11 @@ class SupervisorStep(BaseModel):
     )
     direction: Optional[str] = Field(default=None, description="scroll/drag 手指方向 hint（up/down/left/right）")
     drag_column: Optional[str] = Field(default=None, description="picker drag 目标列 hint（year/month/day）")
+    # 由 checker 的 page_identity 在代码中派生（见 _is_home_identity），非 LLM 填写。
+    is_home_screen: bool = Field(
+        default=False,
+        description="当前是否为 iOS 主屏幕（springboard）",
+    )
 
 
 class GoalValidationResult(BaseModel):
