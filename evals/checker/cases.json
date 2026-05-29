@@ -18,6 +18,25 @@
     "note": "微信启动闪屏（小人站在地球前的全屏深色插画，无时钟）。曾被误判为'锁屏界面'→发 home 退出→白白重点一次微信。应判 loading=true 等待启动完成。"
   },
   {
+    "label": "iOS主屏-启动微信navigation-page_identity必填",
+    "screenshot": "evals/checker/screenshots/home_screen_wechat_launch.png",
+    "milestone": {
+      "name": "打开微信应用",
+      "description": "从主屏点击微信图标启动应用",
+      "success_condition": "看到微信聊天列表界面（显示会话列表及底部导航栏）",
+      "kind": "navigation",
+      "app_name": "微信",
+      "completion_strategy": "visible_once",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "loading": false,
+      "page_identity_contains": ["主屏"]
+    },
+    "note": "iOS 主屏。page_identity 必须非空且含「主屏」——它驱动 is_home 派生，进而在主屏抑制 OCR（否则 OCR 会吸到图标下方「微信」文字 label，点空不启动）。曾因 page_identity 留空导致 is_home=False、OCR 误吸 label、浪费一整轮(20260529_173218 turn1)。"
+  },
+  {
     "label": "微信聊天列表-启动微信navigation-done带证据",
     "screenshot": "evals/checker/screenshots/wechat_chatlist_nav_done.png",
     "milestone": {

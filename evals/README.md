@@ -13,7 +13,7 @@ uv run python evals/<module>/test_<module>.py
 | 模块 | Cases | 说明 |
 |------|------:|------|
 | router | 51 | 意图路由：将用户消息分类为手机操作/问答/闲聊，提取目标 APP 和 goal |
-| checker | 12 | 验收员：根据截图判断当前 milestone 是否完成（done/in_progress/loading） |
+| checker | 13 | 验收员：根据截图判断当前 milestone 是否完成（done/in_progress/loading） |
 | planner | 9 | 规划器：根据当前屏幕和 milestone 生成下一步操作指令 |
 | replan | 1 | 修复规划器：stuck 触发后生成新策略（local_replan/escalate） |
 | reply | 11 | 回复生成：任务结束后生成面向用户的自然语言回复 |

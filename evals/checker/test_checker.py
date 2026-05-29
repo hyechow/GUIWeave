@@ -101,6 +101,9 @@ def test_checker() -> None:
         if "reason_contains" in expected:
             if not any(kw in result.reason for kw in expected["reason_contains"]):
                 details.append(f'reason should contain one of {expected["reason_contains"]}, got: {result.reason[:100]}')
+        if "page_identity_contains" in expected:
+            if not any(kw in result.page_identity for kw in expected["page_identity_contains"]):
+                details.append(f'page_identity should contain one of {expected["page_identity_contains"]}, got: {result.page_identity!r}')
 
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")

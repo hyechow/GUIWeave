@@ -130,7 +130,12 @@ def run_checker(
         result = run_checker(
             milestone, observation, history,
             app_name=app_name, task_type=task_type, constraints=constraints,
-            extra="你刚才返回 done 但 visible_evidence 为空或 missing_evidence 非空。请重新核对截图，确有证据才能 done，否则返回 in_progress 或 stuck。",
+            extra=(
+                "你刚才判定为 done，但 visible_evidence 数组为空。done 判断很可能是对的，"
+                "只是漏填了证据：请把你在截图中实际看到、支持 done 的内容（如标题文字、高亮选中的 tab、"
+                "关键内容项）逐条填入 visible_evidence 数组，不要留空。"
+                "只有当你确实在截图里找不到任何支持 done 的可见证据时，才改判 in_progress。"
+            ),
             _is_retry=True,
         )
     if result.status == "done" and (not result.visible_evidence or result.missing_evidence):
