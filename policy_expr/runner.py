@@ -7,6 +7,7 @@ import re
 import sys
 import time
 import traceback
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from policy_expr.temporal import resolve_temporal_expressions
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
 from policy_expr.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
+from policy_expr.target_verify import verify_target
 from policy_expr.schemas import (
     ActionDecision,
     PolicyContext,
@@ -98,6 +100,25 @@ def _settle_after_action(phone: LivePhoneSession, pre_frame: bytes | None) -> No
         if changed and stable:
             return
         prev = cur
+
+
+# Post-action targeting verify runs in this 1-worker pool so it overlaps the
+# settle wait (near-zero added latency). Daemon threads; finishes at process exit.
+_VERIFY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="verify")
+
+
+def _snapped_point(action_decision: ActionDecision | None) -> tuple[float, float] | None:
+    """The actual tap location (snapped if snapping fired, else raw) for tap/click."""
+    if action_decision is None:
+        return None
+    a = action_decision.action
+    if a.action_type not in ("tap", "click") or a.x is None or a.y is None:
+        return None
+    snap = a.snap
+    if snap and snap.get("snapped"):
+        sx, sy = snap["snapped"]
+        return float(sx), float(sy)
+    return float(a.x), float(a.y)
 
 
 def create_run_dir(mode: str) -> Path:
@@ -474,6 +495,17 @@ def run_agent_loop(
                     else:
                         executed = executor.execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes)
 
+            # Post-action targeting verify: did the snapped tap land on target?
+            # Submit now so it runs concurrently with the settle below; resolved
+            # there and stored on the turn for the next turn's off_target check.
+            verify_future: Future | None = None
+            verify_point = _snapped_point(action_decision) if executed else None
+            if verify_point is not None and sv_step.instruction:
+                verify_future = _VERIFY_POOL.submit(
+                    verify_target, observation.png_bytes,
+                    verify_point[0], verify_point[1], sv_step.instruction,
+                )
+
             turn = PolicyTurn(
                 index=turn_no,
                 observation_source=observation.source,
@@ -540,6 +572,15 @@ def run_agent_loop(
 
             if auto_continue:
                 _settle_after_action(phone, observation.png_bytes)
+                if verify_future is not None:
+                    try:
+                        turn.target_verify = verify_future.result(timeout=8)
+                        _save_context(context_path, context)
+                        tv = turn.target_verify
+                        if tv is not None and not tv.on_target:
+                            _say(f"  [TargetVerify] off_target：标记落在「{tv.actual_element}」")
+                    except Exception as e:
+                        _say(f"  [TargetVerify] 校验失败（忽略）：{e}")
                 continue
 
             try:

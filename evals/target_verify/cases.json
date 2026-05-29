@@ -1,0 +1,18 @@
+[
+  {
+    "label": "搜索框误中转账tab-应off_target",
+    "screenshot": "evals/target_verify/screenshots/search_box_hit_transfer_tab.png",
+    "instruction": "点击搜索框",
+    "snapped": [425, 187],
+    "expected_on_target": false,
+    "note": "LLM 把搜索框 y 估到 200(实际~137)，落点被吸到 y~187 的「转账」tab。落点校验应判 off_target 并识别为转账，供下一轮 off_target→replan。"
+  },
+  {
+    "label": "我的tab-落点准确-应on_target",
+    "screenshot": "evals/target_verify/screenshots/wode_tab_on_target.png",
+    "instruction": "点击底部导航栏右起第一个「我的」Tab",
+    "snapped": [878, 944],
+    "expected_on_target": true,
+    "note": "落点 OCR 吸到「我的」标签，正确命中目标 tab，应判 on_target。"
+  }
+]

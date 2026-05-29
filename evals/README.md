@@ -23,6 +23,7 @@ uv run python evals/<module>/test_<module>.py
 | cascade_matcher | 22 | 级联页面匹配：基于视觉指纹和相似度判断两个截图是否是同一页面 |
 | popup_detect | 7 | 弹窗检测：识别截图中是否存在覆盖主界面的弹窗/浮层 |
 | snap | 7+9 | 坐标吸附：YOLO/OCR 把 LLM 给的 tap 坐标吸到真实元素（7 截图 case + 9 几何回归） |
+| target_verify | 2 | 动作落点校验：标记帧上判断 tap 是否落在指令意图的目标元素（on/off_target） |
 | repeat_detect | — | 重复指令检测（无固定 cases，程序化生成测试） |
 | stuck_detect | — | 卡住检测（无固定 cases，程序化生成测试） |
 

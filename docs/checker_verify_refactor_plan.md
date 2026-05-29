@@ -50,7 +50,15 @@ prompt 也每轮把所有 kind 段落都发。问题：
 
 ---
 
-## 阶段 2：navigation 指纹快路（唯一能越过 ~1.07s 地板的路径）
+## 阶段 2：navigation 指纹快路（⏸ 推迟 — 缺页面参考库）
+
+> **状态（调查后）**：当前 knowledge/ 是每页 **markdown 文本**，**无任何页面级视觉 embedding**；
+> `auto_discover_knowledge` 给的是 app 级文本知识，不是"当前屏 vs 目标页"的视觉匹配；
+> CascadeMatcher 视觉匹配只用于离线 recon。**没有目标页参考指纹可比** → 指纹快路无法直接落地。
+> 要做需先建"目标页 embedding 采集+存储+绑定 navigation 目标"的基础设施（独立工程）。
+> 故推迟，先做阶段 3。下文为原设计，待基础设施就绪后再启。
+
+
 
 **动机**：navigation 是最高频 kind；页面指纹匹配可不发 LLM → ~0.2s 而非 ~1.5s。
 

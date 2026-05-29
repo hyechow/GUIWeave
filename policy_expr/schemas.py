@@ -305,6 +305,14 @@ class Milestone(BaseModel):
     retry_count: int = 0
 
 
+class TargetVerify(BaseModel):
+    """Post-action targeting verify: did the snapped tap land on the intended element."""
+
+    on_target: bool = Field(description="标记圆环是否正好落在指令意图的目标元素上")
+    actual_element: str = Field(default="", description="标记实际落在的元素（如「转账 tab」「搜索框」）")
+    reason: str = Field(default="", description="一句话理由")
+
+
 class PolicyTurn(BaseModel):
     """One observe-decide-act turn saved in continue mode."""
 
@@ -320,6 +328,7 @@ class PolicyTurn(BaseModel):
     llm_calls: int = 0
     read_added_content: bool = False
     read_note_hash: Optional[str] = None
+    target_verify: Optional[TargetVerify] = Field(default=None, description="动作后落点校验：on_target, actual_element")
     timings: dict[str, float] = Field(default_factory=dict, description="各模块耗时(秒)，如 {checker: 1.2, planner: 2.3}")
 
 
