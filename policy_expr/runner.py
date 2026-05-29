@@ -54,10 +54,29 @@ ROOT = Path(__file__).parent.parent
 POLICY_LOG_ROOT = ROOT / "logs" / "policy_expr"
 TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 TURN_STATS = "\033[2mTurn {turn_no} stats: llm_calls={llm_calls}, elapsed={elapsed:.2f}s\033[0m"
+POST_ACTION_DELAYS = {
+    "tap": 0.8,
+    "click": 0.8,
+    "scroll": 0.3,
+    "drag": 0.3,
+    "type": 0.8,
+}
+APP_LAUNCH_TAP_DELAY = 1.8
 
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
+
+
+def _post_action_delay_seconds(action_decision: ActionDecision | None) -> float:
+    if action_decision is None or action_decision.action is None:
+        return 0.3
+    action = action_decision.action
+    if action.action_type in {"tap", "click"}:
+        description = action.description or ""
+        if "应用图标" in description or ("打开" in description and "应用" in description):
+            return APP_LAUNCH_TAP_DELAY
+    return POST_ACTION_DELAYS.get(action.action_type, 0.3)
 
 
 def create_run_dir(mode: str) -> Path:
@@ -603,7 +622,7 @@ def run_agent_loop(
             noop_count = 0
 
             if auto_continue:
-                time.sleep(1.5)
+                time.sleep(_post_action_delay_seconds(action_decision))
                 continue
 
             try:

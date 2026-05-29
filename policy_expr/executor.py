@@ -192,12 +192,6 @@ class ActionExecutor:
         return True
 
     def _tap(self, lx: float, ly: float, decision: ActionDecision, app_name: str = "") -> bool:
-        action = decision.action
-        in_wechat = app_name.strip() in ("微信", "WeChat")
-        in_bottom_right = bool(action.x and action.y and action.x > 700 and action.y > 800)
-        if in_wechat and in_bottom_right:
-            print("检测到微信右下角点击，等待浮层消失...")
-            time.sleep(2.0)
         print(f"执行点击: ({lx:.0f}, {ly:.0f})")
         result = self._client().tap(lx, ly)
         print(f"结果: {result}")
