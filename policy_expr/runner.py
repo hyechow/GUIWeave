@@ -54,10 +54,12 @@ ROOT = Path(__file__).parent.parent
 POLICY_LOG_ROOT = ROOT / "logs" / "policy_expr"
 TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 TURN_STATS = "\033[2mTurn {turn_no} stats: llm_calls={llm_calls}, elapsed={elapsed:.2f}s\033[0m"
-# 动作后自适应等待：以 SETTLE_UNIT_S 为单位轮询截图，等到屏幕「相对动作前帧
-# 变过、且相对上一帧停稳」再进入下一轮决策。tap 冷启动会续等到效果出现（避免截到
-# 旧画面），scroll 会续等到惯性停止（避免截在运动中），no-op 则等到上限兜底。
-SETTLE_UNIT_S = 0.5
+# 动作后自适应等待：轮询截图，等到屏幕「相对动作前帧变过、且相对上一帧停稳」再进入
+# 下一轮决策。首帧间隔较长（SETTLE_FIRST_S），让 App 启动 zoom、页面横滑等转场动画
+# 先跑完，避免在动画中途采样导致相邻两帧「碰巧相似」被误判停稳；之后用 SETTLE_UNIT_S
+# 细粒度轮询。tap 冷启动会续等到效果出现，scroll 续等惯性停止，no-op 等到上限兜底。
+SETTLE_FIRST_S = 1.0      # 首帧等待：覆盖大多数转场动画（zoom/横滑 ~0.3-0.5s）
+SETTLE_UNIT_S = 0.5       # 后续轮询间隔
 SETTLE_MAX_UNITS = 6
 SETTLE_CHANGE_THR = 8.0   # 相对动作前帧的灰度均值差，超过即视为动作已生效（噪声地板 ~0.05）
 SETTLE_STABLE_THR = 2.0   # 相对上一帧的灰度均值差，低于即视为画面已停稳
@@ -86,13 +88,14 @@ def _settle_after_action(phone: LivePhoneSession, pre_frame: bytes | None) -> fl
     """
     t0 = time.perf_counter()
     if pre_frame is None:
-        time.sleep(SETTLE_UNIT_S)
+        time.sleep(SETTLE_FIRST_S)
         dur = time.perf_counter() - t0
         print(f"  [Settle] {dur:.1f}s (无动作前帧)")
         return dur
     prev: bytes | None = None
     for i in range(1, SETTLE_MAX_UNITS + 1):
-        time.sleep(SETTLE_UNIT_S)
+        # 首帧等久一点让转场动画跑完，再用细粒度轮询。
+        time.sleep(SETTLE_FIRST_S if i == 1 else SETTLE_UNIT_S)
         try:
             cur = phone.screenshot()
         except Exception:
