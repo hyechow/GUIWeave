@@ -6,6 +6,7 @@ import io
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -1805,6 +1806,8 @@ HTML_TEMPLATE = """\
   .detail-at {{ font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 500; }}
   .detail-desc {{ font-size: 13px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .detail-status {{ font-size: 11px; font-weight: 600; flex-shrink: 0; }}
+  .detail-time {{ font-size: 13px; font-weight: 600; color: #64748b; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
+  .detail-gap {{ font-size: 11px; font-weight: 600; color: #f59e0b; background: #fffbeb; padding: 1px 6px; border-radius: 10px; margin-left: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
   .detail-instruction {{ font-size: 12px; color: var(--muted); }}
   .detail-summary {{ font-size: 12px; color: #475569; line-height: 1.4; }}
 
@@ -1917,8 +1920,21 @@ def _render_timing_html(timings: dict[str, float]) -> str:
     )
 
 
-def _render_step_detail(step: ReportStep, detail_id: str) -> str:
-    """Render the expandable detail panel for a step."""
+def _gap_seconds(prev_iso: str, cur_iso: str) -> float | None:
+    """Seconds between two ISO timestamps, or None if either is unparseable."""
+    if not prev_iso or not cur_iso:
+        return None
+    try:
+        return (datetime.fromisoformat(cur_iso) - datetime.fromisoformat(prev_iso)).total_seconds()
+    except ValueError:
+        return None
+
+
+def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = "") -> str:
+    """Render the expandable detail panel for a step.
+
+    prev_timestamp: the previous action's timestamp, to show the inter-action gap.
+    """
     at_cls = f"at-{step.action_type}"
     at_label = AT_LABELS.get(step.action_type, step.action_type)
 
@@ -1965,6 +1981,16 @@ def _render_step_detail(step: ReportStep, detail_id: str) -> str:
     if step.annotated_before_url:
         ss_html = f'<div class="detail-ss"><img src="{step.annotated_before_url}" onclick="zoomImg(this.src)" alt="Turn"></div>'
 
+    # Absolute wall-clock time the action executed (PolicyTurn.timestamp, captured
+    # right after dispatch). Show the time-of-day prominently, full ISO on hover.
+    time_html = ""
+    if step.timestamp:
+        ts = step.timestamp
+        disp = ts.split("T", 1)[1] if "T" in ts else ts
+        gap = _gap_seconds(prev_timestamp, ts)
+        gap_html = f'<span class="detail-gap" title="距上一个动作">+{gap:.0f}s</span>' if gap is not None else ""
+        time_html = f'<span class="detail-time" title="{_safe(ts)}">🕒 {_safe(disp)}</span>{gap_html}'
+
     return f"""
     <div class="detail" id="{detail_id}">
       {ss_html}
@@ -1973,6 +1999,7 @@ def _render_step_detail(step: ReportStep, detail_id: str) -> str:
           <span class="detail-idx {at_cls}">{step.label.split()[-1]}</span>
           <span class="detail-at" style="background:#f1f5f9;color:#475569">{at_label}</span>
           <span class="detail-desc">{action_detail}</span>
+          {time_html}
           <span class="detail-status {status_cls.replace('thumb-status', 'detail-status')}">{step.status}</span>
         </div>
         {instruction_html}
@@ -2017,6 +2044,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
 
     # Per-milestone sections
     pages_html = ""
+    prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
     for page in data.pages:
         badge_cls = KIND_BADGE.get(page.milestone_kind, "milestone-badge-default")
         ms_time = sum(sum(s.timings.values()) for s in page.steps)
@@ -2051,7 +2079,9 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 )
 
             # Detail panel (hidden until clicked)
-            details_html += _render_step_detail(step, detail_id)
+            details_html += _render_step_detail(step, detail_id, prev_timestamp=prev_ts)
+            if step.timestamp:
+                prev_ts = step.timestamp
 
         desc_html = f'<div class="milestone-desc">{_safe(page.milestone_description)}</div>' if page.milestone_description else ""
         sc_html = f'<div class="milestone-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
