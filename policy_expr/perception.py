@@ -14,7 +14,7 @@ from policy_expr.sync_mcp_client import SyncMCPClient
 from policy_expr.schemas import Observation
 
 ROOT = Path(__file__).parent.parent
-SCREENSHOT = ROOT / "logs" / "policy_expr" / "single-step" / "screenshot.png"
+SCREENSHOT = ROOT / "logs" / "policy_expr" / "scratch" / "screenshot.png"
 _SCK_SERVER = ROOT / "bin" / "sck_server"
 _MASK_PATH = Path(__file__).parent / "assets" / "mcp_frame_mask.png"
 

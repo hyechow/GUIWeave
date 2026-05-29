@@ -32,7 +32,6 @@ from policy_expr.policies.base import ActionPolicy
 from policy_expr.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
 from policy_expr.schemas import (
     ActionDecision,
-    Observation,
     PolicyContext,
     PolicyTurn,
     action_label,
@@ -54,29 +53,51 @@ ROOT = Path(__file__).parent.parent
 POLICY_LOG_ROOT = ROOT / "logs" / "policy_expr"
 TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 TURN_STATS = "\033[2mTurn {turn_no} stats: llm_calls={llm_calls}, elapsed={elapsed:.2f}s\033[0m"
-POST_ACTION_DELAYS = {
-    "tap": 0.8,
-    "click": 0.8,
-    "scroll": 0.3,
-    "drag": 0.3,
-    "type": 0.8,
-}
-APP_LAUNCH_TAP_DELAY = 1.8
+# 动作后自适应等待：以 SETTLE_UNIT_S 为单位轮询截图，等到屏幕「相对动作前帧
+# 变过、且相对上一帧停稳」再进入下一轮决策。tap 冷启动会续等到效果出现（避免截到
+# 旧画面），scroll 会续等到惯性停止（避免截在运动中），no-op 则等到上限兜底。
+SETTLE_UNIT_S = 0.5
+SETTLE_MAX_UNITS = 6
+SETTLE_CHANGE_THR = 8.0   # 相对动作前帧的灰度均值差，超过即视为动作已生效（噪声地板 ~0.05）
+SETTLE_STABLE_THR = 2.0   # 相对上一帧的灰度均值差，低于即视为画面已停稳
 
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
 
 
-def _post_action_delay_seconds(action_decision: ActionDecision | None) -> float:
-    if action_decision is None or action_decision.action is None:
-        return 0.3
-    action = action_decision.action
-    if action.action_type in {"tap", "click"}:
-        description = action.description or ""
-        if "应用图标" in description or ("打开" in description and "应用" in description):
-            return APP_LAUNCH_TAP_DELAY
-    return POST_ACTION_DELAYS.get(action.action_type, 0.3)
+def _frame_diff(png_a: bytes, png_b: bytes) -> float:
+    """两帧灰度图缩放到 160x320 后的平均绝对差（0-255 量级）。"""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    a = np.array(Image.open(io.BytesIO(png_a)).convert("L").resize((160, 320)), dtype=np.float32)
+    b = np.array(Image.open(io.BytesIO(png_b)).convert("L").resize((160, 320)), dtype=np.float32)
+    return float(np.abs(a - b).mean())
+
+
+def _settle_after_action(phone: LivePhoneSession, pre_frame: bytes | None) -> None:
+    """等到屏幕相对动作前帧「变过且停稳」，或达到上限。
+
+    必须对照动作前帧：否则冷启动那 ~1s 静止旧画面会被误判为已就绪。
+    """
+    if pre_frame is None:
+        time.sleep(SETTLE_UNIT_S)
+        return
+    prev: bytes | None = None
+    for _ in range(SETTLE_MAX_UNITS):
+        time.sleep(SETTLE_UNIT_S)
+        try:
+            cur = phone.screenshot()
+        except Exception:
+            return
+        changed = _frame_diff(pre_frame, cur) > SETTLE_CHANGE_THR
+        stable = prev is not None and _frame_diff(prev, cur) < SETTLE_STABLE_THR
+        if changed and stable:
+            return
+        prev = cur
 
 
 def create_run_dir(mode: str) -> Path:
@@ -252,110 +273,6 @@ def _print_timings(supervisor: SupervisorPolicy) -> None:
     parts = [f"{n}={timings[n]:.2f}s" for n in order]
     total = sum(timings.values())
     print(f"  [Timing] {' | '.join(parts)} | total={total:.2f}s")
-
-
-def run_once(
-    prompt: str,
-    action_policy: ActionPolicy,
-    supervisor: SupervisorPolicy,
-    log_dir: Path,
-    context_path: Path,
-    hud: AgentHUD | None = None,
-) -> dict:
-    context = PolicyContext(
-        goal=resolve_temporal_expressions(prompt),
-        supervisor_policy_name=supervisor.name,
-        action_policy_name=action_policy.name,
-    )
-    _save_context(context_path, context)
-    print(f"Goal    : {context.goal}")
-    print(f"Turns   : {len(context.turns)}")
-
-    with LivePhoneSession() as phone:
-        turn_started_at = time.perf_counter()
-        llm_calls_before = get_llm_call_count()
-
-        if hud: hud.update("Turn 1 — 截图分析中…")
-        perception = LivePerception(phone, log_dir / "screenshot.png")
-        observation = perception.observe()
-        calibrator = YoloCalibrator.from_png(observation.png_bytes)
-
-        if hud: hud.update(f"Turn 1 — 使用 {supervisor.name} supervisor 决策中…")
-        print("监督决策中...")
-        sv_step = supervisor.step(observation, context.goal, context.turns)
-        print(f"监督者: {sv_step.summary}")
-        if hud: hud.update(f"Turn 1 — {sv_step.summary}")
-
-        # Persist milestone decomposition
-        if not context.milestones and hasattr(supervisor, "_milestones"):
-            context.milestones = [
-                {"id": m.id, "name": m.name, "description": m.description,
-                 "kind": m.kind, "success_condition": m.success_condition}
-                for m in supervisor._milestones.values()
-            ]
-
-        action_decision = None
-        executed = False
-
-        if sv_step.should_act:
-            print(f"动作指令: {sv_step.instruction}")
-            if hud: hud.update("Turn 1 — 动作决策中…")
-            print("动作决策中...")
-            _ap_t0 = time.perf_counter()
-            action_decision = action_policy.decide(
-                observation, sv_step.instruction,
-                direction=sv_step.direction,
-                drag_column=sv_step.drag_column,
-            )
-            if hasattr(supervisor, "_timings"):
-                supervisor._timings["action_policy"] = time.perf_counter() - _ap_t0
-                supervisor._timings_order.append("action_policy")
-            print_decision(action_decision, observation.png_bytes, log_dir / "structured_output_result.png")
-            if hud:
-                a = action_decision.action
-                hud.update(f"Turn 1 — [{action_label(a.action_type)}] {a.description}")
-            executed = ActionExecutor(phone, calibrator).execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes)
-
-        turn = PolicyTurn(
-            index=1,
-            observation_source=observation.source,
-            supervisor=sv_step,
-            action_decision=action_decision,
-            checker=_extract_checker(supervisor),
-            executed=executed,
-            timings=getattr(supervisor, "_timings", {}),
-        )
-        _print_timings(supervisor)
-        context.turns.append(turn)
-        _save_context(context_path, context)
-
-        if executed:
-            time.sleep(1.5)
-            after_bytes = phone.screenshot()
-            after_obs = Observation(png_bytes=after_bytes, source="live")
-            after_path = log_dir / "screenshot_after.png"
-            after_path.write_bytes(after_bytes)
-            print(f"已保存: {after_path}")
-
-            print("验证中...")
-            confirm = supervisor.step(after_obs, context.goal, context.turns)
-            context.turns.append(PolicyTurn(
-                index=2,
-                observation_source="live",
-                supervisor=confirm,
-                action_decision=None,
-                checker=_extract_checker(supervisor),
-                planner=_extract_plan(supervisor),
-                replan=_extract_replan(supervisor),
-                executed=False,
-            ))
-            stop_reason = confirm.stop_reason or "single-step 完成一轮后停止"
-        else:
-            stop_reason = "动作未执行，single-step 停止"
-
-        _save_context(context_path, context)
-        _print_turn_stats(1, turn_started_at, llm_calls_before)
-        return _make_result(context, stop_reason)
 
 
 def run_agent_loop(
@@ -622,7 +539,7 @@ def run_agent_loop(
             noop_count = 0
 
             if auto_continue:
-                time.sleep(_post_action_delay_seconds(action_decision))
+                _settle_after_action(phone, observation.png_bytes)
                 continue
 
             try:
@@ -654,12 +571,6 @@ def main() -> None:
         default=SimpleSupervisorPolicy.name,
         choices=sorted(SUPERVISORS),
         help="监督者策略模块",
-    )
-    parser.add_argument(
-        "--mode",
-        default="single-step",
-        choices=["single-step", "agent-loop"],
-        help="运行模式：single-step 单步；agent-loop 多步自动循环",
     )
     parser.add_argument(
         "--context",
@@ -697,9 +608,8 @@ def main() -> None:
         )
         print(f"Knowledge: auto-loaded (nav={len(knowledge.navigation)} chars, elements={len(knowledge.elements)} chars), app={knowledge.app_name}")
 
-    mode = args.mode
     input_context_path = args.context
-    log_dir = create_run_dir(mode)
+    log_dir = create_run_dir("agent-loop")
     context_path = log_dir / "context.json"
     hud = AgentHUD() if args.hud else None
     with _tee_stdio(log_dir):
@@ -707,23 +617,17 @@ def main() -> None:
         print(f"Context : {input_context_path if input_context_path else None}")
 
         try:
-            result: dict | None = None
-            if mode == "single-step":
-                if input_context_path is not None:
-                    raise ValueError("--context 目前只支持 agent-loop 模式")
-                result = run_once(args.prompt, action_policy, supervisor, log_dir, context_path, hud=hud)
-            elif mode == "agent-loop":
-                result = run_agent_loop(
-                    args.prompt,
-                    action_policy,
-                    supervisor,
-                    input_context_path,
-                    log_dir,
-                    context_path,
-                    max_turns=args.max_turns,
-                    auto_continue=args.auto_continue,
-                    hud=hud,
-                )
+            result: dict | None = run_agent_loop(
+                args.prompt,
+                action_policy,
+                supervisor,
+                input_context_path,
+                log_dir,
+                context_path,
+                max_turns=args.max_turns,
+                auto_continue=args.auto_continue,
+                hud=hud,
+            )
             if result:
                 output = generate_reply(
                     result["goal"],

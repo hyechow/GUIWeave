@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 from policy_expr.schemas import Action, ActionDecision
 
 ROOT = Path(__file__).parent.parent
-OUTPUT = ROOT / "logs" / "policy_expr" / "single-step" / "structured_output_result.png"
+OUTPUT = ROOT / "logs" / "policy_expr" / "scratch" / "structured_output_result.png"
 
 
 def print_decision(
