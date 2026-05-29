@@ -67,6 +67,11 @@ goal 中已包含预处理后的绝对日期（如 2026-05-18 至 2026-05-24）�
    - 示例：拼多多分享到微信 → ①「在拼多多找到商品并点击分享到微信，看到微信界面」→ ②「在微信中选择联系人并发送，看到发送成功提示」
 """
 
+# Checker prompt is assembled per milestone.kind: SINGLE_CHECKER_PROMPT is the
+# shared core with a {kind_section} slot; CHECK_KIND_SECTIONS supplies only the
+# rules relevant to the current kind. This keeps each checker focused (sharper
+# done-judgment, less hallucination) and its output terse (faster). See
+# helpers.run_checker for the dispatch.
 SINGLE_CHECKER_PROMPT = """\
 你是 iPhone 自动化任务的验收员。根据当前屏幕截图和子目标验收条件，判断执行进展。
 
@@ -92,32 +97,7 @@ SINGLE_CHECKER_PROMPT = """\
 
 ## 历史操作记录
 {history_text}
-
-## 筛选类子目标（kind=filter）
-- 截图必须显示精确的筛选条件或等价范围，才能判 done
-- 更宽的范围不能当作筛选完成；即使可见项都在目标范围内，筛选摘要显示更宽范围也不能 done
-
-## 搜索类子目标（kind=filter，含搜索操作）
-判 done 必须同时满足：
-1. 当前页面是结果页，不是信息流、建议页、历史页或加载页
-2. 搜索框或标题显示完整目标查询/条件
-3. 页面显示与查询对应的结果列表或详情
-
-⚠️ 搜索建议页 vs 搜索结果页 区分：
-- 若搜索框右侧仍显示「搜索」按钮（尚未提交），或搜索框处于激活输入状态，则当前是自动补全/建议页——即使下方列表出现了目标商家名称，也必须判 in_progress
-- 搜索建议项通常左侧有放大镜图标或时钟图标，且没有评分、标签等商家详情元素
-- 只有用户已提交搜索（按下搜索按钮或回车），进入独立的搜索结果页，才能判 done
-
-## 内容读取（kind=collection read_once 或 kind=verification）
-- 如果当前屏幕有与用户目标相关的可提取内容，填写 read_instruction
-- navigation/filter/action 阶段 read_instruction 必须留空
-
-## 发送/分享类子目标（验收条件含「发送」「分享」「消息」）
-⚠️ 严格区分「可以发送」与「已发送」：
-- 发送按钮可见、联系人已选中、分享界面显示 → 仍是准备状态，必须判 in_progress
-- 只有看到以下证据才能判 done：消息气泡出现在聊天记录中、发送成功 Toast 提示、"已发送"文字标识
-- 不能将「发送按钮就绪」「界面已就绪」「视为发送状态」等推断作为 done 依据
-
+{kind_section}
 ## 通用规则
 - done：验收条件中描述的每个具体内容都必须在截图上可直接观察到
 - in_progress：验收条件尚未完全满足，包括页面不匹配、还在导航中、操作未完成等所有非 done 的情况
@@ -129,6 +109,11 @@ SINGLE_CHECKER_PROMPT = """\
 - ⚠️ 页面底部「已选：...」或「当前选择：...」摘要文字只反映当前值，不代表对应的选项 chip/按钮可点击——判断某选项可见，必须在截图中看到实际的选项 chip 元素，不能从摘要文字推断
 - done 时：visible_evidence 必须列出截图中直接支持验收条件的文字；missing_evidence 必须为空
 - 存在任何 missing_evidence 不能返回 done
+- read_instruction 仅在内容读取（collection）场景填写，其余子目标留空
+
+## 输出要求
+- reason：一句话说明判断依据，不要长篇推理
+- summary：一句话描述当前屏幕状态
 
 ## loading 字段
 loading 是独立布尔字段，与 status 无关。status 只能填 done 或 in_progress，不要填 loading。
@@ -142,6 +127,64 @@ loading 是独立布尔字段，与 status 无关。status 只能填 done 或 in
 - 页面内容已完整渲染，无任何加载指示器
 - 有错误提示、空状态提示等可交互元素
 """
+
+# ── Per-kind checker sections (only the relevant one is injected) ──────────
+_CHECK_SECTION_NAVIGATION = """
+## 导航类子目标（kind=navigation）
+- done 仅当当前页面身份与目标页精确匹配（标题文字匹配、目标 tab 高亮选中）。
+- 仍在导航途中、页面不匹配、加载中，一律 in_progress。
+- in_progress 时 visible_evidence / missing_evidence 可留空，无需逐条列证据。
+"""
+
+_CHECK_SECTION_FILTER = """
+## 筛选类子目标（kind=filter）
+- 截图必须显示精确的筛选条件或等价范围，才能判 done
+- 更宽的范围不能当作筛选完成；即使可见项都在目标范围内，筛选摘要显示更宽范围也不能 done
+- ⚠️ 即使 in_progress，也必须在 missing_evidence 中写出「当前值」与「目标值」（例：当前=5月整月、目标=05-18~05-24），供规划器决定调整方向。
+
+## 搜索类子目标（kind=filter，含搜索操作）
+判 done 必须同时满足：
+1. 当前页面是结果页，不是信息流、建议页、历史页或加载页
+2. 搜索框或标题显示完整目标查询/条件
+3. 页面显示与查询对应的结果列表或详情
+
+⚠️ 搜索建议页 vs 搜索结果页 区分：
+- 若搜索框右侧仍显示「搜索」按钮（尚未提交），或搜索框处于激活输入状态，则当前是自动补全/建议页——即使下方列表出现了目标商家名称，也必须判 in_progress
+- 搜索建议项通常左侧有放大镜图标或时钟图标，且没有评分、标签等商家详情元素
+- 只有用户已提交搜索（按下搜索按钮或回车），进入独立的搜索结果页，才能判 done
+"""
+
+_CHECK_SECTION_ACTION = """
+## 动作类子目标（kind=action）
+- done 仅当动作的预期效果已在屏幕上发生（弹窗关闭、目标值已改变、出现成功提示等）。
+- in_progress 时 visible_evidence / missing_evidence 可留空。
+
+## 发送/分享类（验收条件含「发送」「分享」「消息」）
+⚠️ 严格区分「可以发送」与「已发送」：
+- 发送按钮可见、联系人已选中、分享界面显示 → 仍是准备状态，必须判 in_progress
+- 只有看到以下证据才能判 done：消息气泡出现在聊天记录中、发送成功 Toast 提示、"已发送"文字标识
+- 不能将「发送按钮就绪」「界面已就绪」「视为发送状态」等推断作为 done 依据
+"""
+
+_CHECK_SECTION_COLLECTION = """
+## 内容读取（kind=collection）
+- 如果当前屏幕有与用户目标相关的可提取内容，填写 read_instruction
+- in_progress 时 visible_evidence / missing_evidence 可留空
+"""
+
+# Unknown/other kinds fall back to all sections (same coverage as before split).
+_CHECK_SECTION_DEFAULT = (
+    _CHECK_SECTION_NAVIGATION + _CHECK_SECTION_FILTER
+    + _CHECK_SECTION_ACTION + _CHECK_SECTION_COLLECTION
+)
+
+CHECK_KIND_SECTIONS = {
+    "navigation": _CHECK_SECTION_NAVIGATION,
+    "filter": _CHECK_SECTION_FILTER,
+    "action": _CHECK_SECTION_ACTION,
+    "collection": _CHECK_SECTION_COLLECTION,
+    "verification": _CHECK_SECTION_COLLECTION,  # banned by decomposer, treat as read
+}
 
 LOOP_FRAME_PROMPT = """\
 你是内容收集的屏幕状态评估员。当前任务正在滚动收集页面列表内容。

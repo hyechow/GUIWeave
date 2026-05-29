@@ -13,7 +13,12 @@ from policy_expr.policies.base import resize_to_logical_png
 from policy_expr.schemas import Milestone, Observation, PolicyTurn
 
 from .schemas import _PlanResult, _SingleCheckResult
-from .prompts import PLAN_PROMPT, SINGLE_CHECKER_PROMPT
+from .prompts import (
+    CHECK_KIND_SECTIONS,
+    PLAN_PROMPT,
+    SINGLE_CHECKER_PROMPT,
+    _CHECK_SECTION_DEFAULT,
+)
 
 load_dotenv()
 
@@ -98,6 +103,7 @@ def run_checker(
     if constraints is None:
         constraints = []
     app_name_context = f"任务目标涉及「{app_name}」应用，" if app_name else ""
+    kind_section = CHECK_KIND_SECTIONS.get(milestone.kind, _CHECK_SECTION_DEFAULT)
     prompt = SINGLE_CHECKER_PROMPT.format(
         milestone_name=milestone.name,
         milestone_desc=milestone.description,
@@ -108,6 +114,7 @@ def run_checker(
         constraints=json.dumps(constraints, ensure_ascii=False),
         history_text=_format_history(history),
         app_name_context=app_name_context,
+        kind_section=kind_section,
     )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
