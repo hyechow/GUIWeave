@@ -36,6 +36,30 @@
     "note": "LLM 点(124,850)落进一个 conf 0.66、宽273 的合并误检框(横跨首页+理财)，框中心在(195,848)离点71。若用 contains() 守卫会锁定 YOLO 吸到错误的(195,848)。move>45 不算精准命中，放行 OCR，吸到「首页」标签(119,944)。X 与 LLM 点一致。"
   },
   {
+    "label": "我的tab-弱框不锁OCR-标签救回",
+    "screenshot": "evals/snap/screenshots/alipay_tab_weak_distractor_box.png",
+    "target": [894.0, 850.0],
+    "hint": "点击底部导航栏最右侧的「我的」Tab",
+    "expected": {
+      "method": "ocr",
+      "snapped_near": [880.0, 944.0],
+      "tolerance": 40.0
+    },
+    "note": "LLM 把 tab 的 y 估成 850(真 tab 在 y~927)。一个 conf 0.40 的弱框恰好压在 y~857 包含该点，move 仅14。若 OCR-lock 用 0.4 下限会锁定弱框、抑制 OCR。提高到 0.45 后弱框不算「确信图标」，放行 OCR 吸到真「我的」标签(880,944)。"
+  },
+  {
+    "label": "会员页返回箭头-宽banner不teleport",
+    "screenshot": "evals/snap/screenshots/member_page_back_arrow_wide_banner.png",
+    "target": [80.0, 200.0],
+    "hint": "点击屏幕左上角的返回箭头按钮",
+    "expected": {
+      "method": "yolo",
+      "snapped_near": [77.0, 138.0],
+      "tolerance": 30.0
+    },
+    "note": "返回箭头无文字。一个宽880的全屏banner框(conf 0.56)真实包含左上角点，其中心在(500,255)离点424。无 _MAX_SNAP_MOVE 上限时 Tier-1 会吸到屏幕正中。上限150丢弃banner，margin 层吸到真返回箭头(77,138)。"
+  },
+  {
     "label": "左上角返回箭头-YOLO-margin救援",
     "screenshot": "evals/snap/screenshots/alipay_message_back_arrow.png",
     "target": [80.0, 200.0],

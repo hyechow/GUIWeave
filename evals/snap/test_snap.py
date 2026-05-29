@@ -134,6 +134,24 @@ def test_geometric_regressions() -> None:
             cal5.contains(890, 850) is False and cal4.contains(100, 100) is False,
             "" if (not cal5.contains(890, 850) and not cal4.contains(100, 100)) else "expected False")
 
+    # 5. Snap cap: a full-width banner containing a top-left point must not snap
+    #    to its far-off center; a closer margin candidate wins instead.
+    banner = IconBbox(61, 166, 940, 343, 0.56)       # center ~500,255, width ~880
+    arrow = IconBbox(28, 115, 127, 162, 0.56)        # the real back arrow ~77,138
+    cal6 = YoloCalibrator([banner, arrow], img_w=1000, img_h=1000)
+    r = cal6.nearest(80, 200)                        # point below arrow, inside banner
+    ok = r is not None and abs(r[0] - 77) < 15 and abs(r[1] - 138) < 15
+    _report("synthetic: wide banner over snap-cap rejected",
+            ok, "" if ok else f"got {r} (expected back arrow ~77,138, not banner center)")
+
+    # 6. OCR-lock floor: a conf-0.40 box containing the point is NOT confident
+    #    enough to lock OCR out (contains() false), but a 0.49 icon is.
+    distractor = IconBbox(846, 831, 966, 882, 0.40)  # weak box over a too-high tap
+    cal7 = YoloCalibrator([distractor], img_w=1000, img_h=1000)
+    _report("synthetic: contains() false for sub-0.45 box",
+            cal7.contains(894, 850) is False,
+            "" if cal7.contains(894, 850) is False else "expected False (0.40 < OCR-lock floor)")
+
 
 def main():
     print("── Snap Eval ──")

@@ -57,6 +57,13 @@ class YoloCalibrator:
     # which a misdetection's center rarely wins.
     _REAL_CONTAINMENT_MIN_CONF = 0.4
 
+    # Snapping is a nudge, not a teleport: never move the tap farther than this
+    # from the model's point. A full-width header/banner box can "contain" a
+    # top-left back-arrow tap yet have its center ~400 units away mid-screen —
+    # snapping there is far worse than not snapping. Boxes whose center exceeds
+    # this are dropped so a closer (e.g. margin-tier) candidate can win instead.
+    _MAX_SNAP_MOVE = 150.0
+
     def nearest(
         self,
         target_x: float,
@@ -73,7 +80,8 @@ class YoloCalibrator:
           2. Point within max_dist of a box center → nearest center wins.
           3. Point inside a bbox expanded by bbox_margin → nearest center wins
              (rescues coordinates the model estimated just outside an element).
-        Confidence breaks ties so low-confidence misdetections don't win.
+        Confidence breaks ties so low-confidence misdetections don't win, and a
+        candidate whose center is farther than _MAX_SNAP_MOVE is never used.
         """
         real_hits: list[tuple[float, float, tuple[float, float], float]] = []
         near_hits: list[tuple[float, tuple[float, float], float]] = []
@@ -87,6 +95,8 @@ class YoloCalibrator:
             y2 = b.y2 / self.img_h * 1000
             dist = ((nx - target_x) ** 2 + (ny - target_y) ** 2) ** 0.5
             center = (nx, ny)
+            if dist > self._MAX_SNAP_MOVE:
+                continue  # too far to be a sane snap target, whatever the tier
             if (
                 x1 <= target_x <= x2 and y1 <= target_y <= y2
                 and b.conf >= self._REAL_CONTAINMENT_MIN_CONF
@@ -117,15 +127,22 @@ class YoloCalibrator:
             return margin_hits[0][1]
         return None
 
+    # Locking OCR out (treating the point as a deliberate icon hit) is a strong
+    # move, so it needs more confidence than mere Tier-1 containment: a weak box
+    # (e.g. conf 0.40) that happens to sit under a too-high tab estimate must NOT
+    # suppress an OCR match on the real tab label below it.
+    _OCR_LOCK_MIN_CONF = 0.45
+
     def contains(self, target_x: float, target_y: float) -> bool:
         """Whether the point falls inside a confidently-detected icon box.
 
-        Same confidence floor as Tier-1 containment. Used to tell a deliberate
-        icon target (LLM aimed inside a real icon) from a point that merely sits
-        near some text — so OCR doesn't drag an icon tap onto an adjacent label.
+        Used to tell a deliberate icon target (LLM aimed inside a real icon)
+        from a point that merely sits near some text — so OCR doesn't drag an
+        icon tap onto an adjacent label. Uses a higher floor than Tier-1
+        containment because suppressing OCR is a strong action.
         """
         for b in self.boxes:
-            if b.conf < self._REAL_CONTAINMENT_MIN_CONF:
+            if b.conf < self._OCR_LOCK_MIN_CONF:
                 continue
             x1 = b.x1 / self.img_w * 1000
             y1 = b.y1 / self.img_h * 1000
