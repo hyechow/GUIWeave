@@ -335,6 +335,7 @@ class PolicyTurn(BaseModel):
     read_note_hash: Optional[str] = None
     target_verify: Optional[TargetVerify] = Field(default=None, description="动作后落点校验：on_target, actual_element")
     timings: dict[str, float] = Field(default_factory=dict, description="各模块耗时(秒)，如 {checker: 1.2, planner: 2.3}")
+    settle_s: Optional[float] = Field(default=None, description="本轮动作后 settle 等待时长(秒)，等屏幕变过且停稳")
 
 
 class PolicyContext(BaseModel):

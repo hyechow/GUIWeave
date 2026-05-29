@@ -80,26 +80,36 @@ def _frame_diff(png_a: bytes, png_b: bytes) -> float:
     return float(np.abs(a - b).mean())
 
 
-def _settle_after_action(phone: LivePhoneSession, pre_frame: bytes | None) -> None:
-    """等到屏幕相对动作前帧「变过且停稳」，或达到上限。
+def _settle_after_action(phone: LivePhoneSession, pre_frame: bytes | None) -> float:
+    """等到屏幕相对动作前帧「变过且停稳」，或达到上限。返回实际等待秒数。
 
     必须对照动作前帧：否则冷启动那 ~1s 静止旧画面会被误判为已就绪。
     """
+    t0 = time.perf_counter()
     if pre_frame is None:
         time.sleep(SETTLE_UNIT_S)
-        return
+        dur = time.perf_counter() - t0
+        print(f"  [Settle] {dur:.1f}s (无动作前帧)")
+        return dur
     prev: bytes | None = None
-    for _ in range(SETTLE_MAX_UNITS):
+    for i in range(1, SETTLE_MAX_UNITS + 1):
         time.sleep(SETTLE_UNIT_S)
         try:
             cur = phone.screenshot()
         except Exception:
-            return
+            dur = time.perf_counter() - t0
+            print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
+            return dur
         changed = _frame_diff(pre_frame, cur) > SETTLE_CHANGE_THR
         stable = prev is not None and _frame_diff(prev, cur) < SETTLE_STABLE_THR
         if changed and stable:
-            return
+            dur = time.perf_counter() - t0
+            print(f"  [Settle] {dur:.1f}s ({i} 轮，变过且停稳)")
+            return dur
         prev = cur
+    dur = time.perf_counter() - t0
+    print(f"  [Settle] {dur:.1f}s ({SETTLE_MAX_UNITS} 轮，达上限)")
+    return dur
 
 
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
@@ -571,16 +581,16 @@ def run_agent_loop(
             noop_count = 0
 
             if auto_continue:
-                _settle_after_action(phone, observation.png_bytes)
+                turn.settle_s = _settle_after_action(phone, observation.png_bytes)
                 if verify_future is not None:
                     try:
                         turn.target_verify = verify_future.result(timeout=8)
-                        _save_context(context_path, context)
                         tv = turn.target_verify
                         if tv is not None and not tv.on_target:
                             _say(f"  [TargetVerify] off_target：标记落在「{tv.actual_element}」")
                     except Exception as e:
                         _say(f"  [TargetVerify] 校验失败（忽略）：{e}")
+                _save_context(context_path, context)  # 落盘 settle_s（+ target_verify）
                 continue
 
             try:
