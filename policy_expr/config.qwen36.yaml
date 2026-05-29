@@ -1,0 +1,28 @@
+# qwen3.6 对比测试用配置（速度更快但 token 成本 ~3-4.5×，见 docs/runtime_latency_analysis.md）。
+# 用法：POLICY_EXPR_CONFIG=policy_expr/config.qwen36.yaml ./bin/runner ...
+# 默认 config.yaml 用 qwen3.5（便宜），此文件仅用于 3.5 vs 3.6 对比跑。
+llm:
+  action_policy:
+    provider: dashscope
+    model: qwen3.6-35b-a3b
+  back_nav:
+    provider: dashscope
+    model: qwen3.6-35b-a3b
+  supervisor:
+    provider: dashscope
+    model: qwen3.6-35b-a3b
+    decompose:
+      provider: dashscope
+      model: qwen3.6-35b-a3b
+  reader:
+    provider: dashscope
+    model: qwen3.5-35b-a3b
+  output:
+    provider: dashscope
+    model: qwen3.5-flash
+  router:
+    provider: dashscope
+    model: qwen3.5-flash
+  fingerprint:
+    provider: dashscope
+    model: qwen3.5-flash

@@ -1,5 +1,6 @@
 """Configuration helpers for policy_expr."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,11 @@ import yaml
 
 from llm.provider_config import ChatProviderConfig, resolve_chat_provider_config
 
-CONFIG_PATH = Path(__file__).with_name("config.yaml")
+# Default config.yaml (cheap qwen3.5). Override with POLICY_EXPR_CONFIG to point
+# at an alternate file, e.g. config.qwen36.yaml for the 3.6 comparison runs:
+#   POLICY_EXPR_CONFIG=policy_expr/config.qwen36.yaml ./bin/runner ...
+_env_config = os.environ.get("POLICY_EXPR_CONFIG")
+CONFIG_PATH = Path(_env_config) if _env_config else Path(__file__).with_name("config.yaml")
 
 
 @lru_cache(maxsize=1)

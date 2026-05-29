@@ -1,19 +1,21 @@
 # LLM settings for policy_expr.
 # Leave fields empty to use existing environment-variable defaults.
 llm:
+  # 默认 qwen3.5-35b-a3b（≤128K 档便宜：输入 0.4 / 输出 3.2 元每百万 token）。
+  # 对比测试 qwen3.6 用 POLICY_EXPR_CONFIG=policy_expr/config.qwen36.yaml（更快但 ~3-4.5× 成本）。
   action_policy:
     provider: dashscope
-    model: qwen3.6-35b-a3b
+    model: qwen3.5-35b-a3b
   back_nav:
     provider: dashscope
-    model: qwen3.6-35b-a3b
+    model: qwen3.5-35b-a3b
   supervisor:
     provider: dashscope
-    model: qwen3.6-35b-a3b
+    model: qwen3.5-35b-a3b
     decompose:
       # 任务分解——只在开始时调用一次，建议用更强的模型
       provider: dashscope
-      model: qwen3.6-35b-a3b
+      model: qwen3.5-35b-a3b
   reader:
     provider: dashscope
     model: qwen3.5-35b-a3b
