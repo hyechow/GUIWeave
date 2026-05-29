@@ -36,6 +36,18 @@
     "note": "LLM 点(124,850)落进一个 conf 0.66、宽273 的合并误检框(横跨首页+理财)，框中心在(195,848)离点71。若用 contains() 守卫会锁定 YOLO 吸到错误的(195,848)。move>45 不算精准命中，放行 OCR，吸到「首页」标签(119,944)。X 与 LLM 点一致。"
   },
   {
+    "label": "主屏App图标-conf抖动到0.44仍走YOLO",
+    "screenshot": "evals/snap/screenshots/home_screen_alipay_icon_low_conf.png",
+    "target": [612.0, 619.0],
+    "hint": "点击支付宝应用图标",
+    "expected": {
+      "method": "yolo",
+      "snapped_near": [608.0, 620.0],
+      "tolerance": 30.0
+    },
+    "note": "同一支付宝图标的 YOLO conf 在帧间抖动(0.49~0.44)。曾用 conf≥0.45 守卫会在 0.44 这帧失效→OCR 拽到标签(612,658)→连点不启动卡死。改用几何判据(OCR 命中是否落在包含框内)后不受 conf 抖动影响：OCR(612,658)在图标框内=自身标签→走 YOLO 图标中心(608,620)。"
+  },
+  {
     "label": "我的tab-弱框不锁OCR-标签救回",
     "screenshot": "evals/snap/screenshots/alipay_tab_weak_distractor_box.png",
     "target": [894.0, 850.0],

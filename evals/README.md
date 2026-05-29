@@ -22,7 +22,7 @@ uv run python evals/<module>/test_<module>.py
 | back_nav | 14 | 回退导航：从当前页面找到返回目标页面的路径 |
 | cascade_matcher | 22 | 级联页面匹配：基于视觉指纹和相似度判断两个截图是否是同一页面 |
 | popup_detect | 7 | 弹窗检测：识别截图中是否存在覆盖主界面的弹窗/浮层 |
-| snap | 6+8 | 坐标吸附：YOLO/OCR 把 LLM 给的 tap 坐标吸到真实元素（6 截图 case + 8 几何回归） |
+| snap | 7+9 | 坐标吸附：YOLO/OCR 把 LLM 给的 tap 坐标吸到真实元素（7 截图 case + 9 几何回归） |
 | repeat_detect | — | 重复指令检测（无固定 cases，程序化生成测试） |
 | stuck_detect | — | 卡住检测（无固定 cases，程序化生成测试） |
 
@@ -103,7 +103,7 @@ uv run python evals/<module>/test_<module>.py
 | 分组 | 说明 | 关键验证点 |
 |------|------|-----------|
 | 底部 tab「我的」 | 2 字标签 + conf=0.28 超宽误检框 | method=ocr 且吸到「我的」文字 |
-| 主屏 App 图标 | 点精准落在图标框内，名字在图标下方 | method=yolo，不被 OCR 拽到下方标签 |
+| 主屏 App 图标 | 点落在图标框内，名字在图标下方 | method=yolo；OCR 命中落在图标框内=自身标签则走 YOLO，不受 conf 抖动影响 |
 | 首页 tab（宽合并框） | 点落进宽误检框但远离其中心 | method=ocr，move>45 不锁定 YOLO，OCR 救回 |
 | 我的 tab（弱框干扰） | conf 0.40 弱框压在过高的 tap 估计上 | method=ocr，弱框不够格锁 OCR，吸到真标签 |
 | 会员页返回箭头（宽 banner） | 全屏 banner 包含左上角点 | method=yolo，snap 上限拒绝 banner 中心，吸到真箭头 |

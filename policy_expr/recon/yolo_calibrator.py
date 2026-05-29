@@ -127,27 +127,28 @@ class YoloCalibrator:
             return margin_hits[0][1]
         return None
 
-    # Locking OCR out (treating the point as a deliberate icon hit) is a strong
-    # move, so it needs more confidence than mere Tier-1 containment: a weak box
-    # (e.g. conf 0.40) that happens to sit under a too-high tab estimate must NOT
-    # suppress an OCR match on the real tab label below it.
-    _OCR_LOCK_MIN_CONF = 0.45
+    def containing_box(
+        self, target_x: float, target_y: float
+    ) -> tuple[float, float, float, float] | None:
+        """Tightest confident box whose real bbox contains the point.
 
-    def contains(self, target_x: float, target_y: float) -> bool:
-        """Whether the point falls inside a confidently-detected icon box.
-
-        Used to tell a deliberate icon target (LLM aimed inside a real icon)
-        from a point that merely sits near some text — so OCR doesn't drag an
-        icon tap onto an adjacent label. Uses a higher floor than Tier-1
-        containment because suppressing OCR is a strong action.
+        Returns its normalized (x1, y1, x2, y2), or None. Same confidence floor
+        as Tier-1 containment. Callers use this to tell whether an OCR match is
+        the contained element's own label (inside this box) versus a separate
+        element elsewhere — see ActionExecutor._snap.
         """
+        best: tuple[float, float, float, float] | None = None
+        best_area = float("inf")
         for b in self.boxes:
-            if b.conf < self._OCR_LOCK_MIN_CONF:
+            if b.conf < self._REAL_CONTAINMENT_MIN_CONF:
                 continue
             x1 = b.x1 / self.img_w * 1000
             y1 = b.y1 / self.img_h * 1000
             x2 = b.x2 / self.img_w * 1000
             y2 = b.y2 / self.img_h * 1000
             if x1 <= target_x <= x2 and y1 <= target_y <= y2:
-                return True
-        return False
+                area = (x2 - x1) * (y2 - y1)
+                if area < best_area:
+                    best_area = area
+                    best = (x1, y1, x2, y2)
+        return best
