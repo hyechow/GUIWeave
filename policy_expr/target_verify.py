@@ -22,11 +22,20 @@ from llm.structured import invoke_structured
 from policy_expr.config import resolve_llm_config
 from policy_expr.schemas import TargetVerify
 
-_SYSTEM = """你是一个 GUI 操作的「落点校验器」。截图上有一个红色圆环+十字标记，表示即将点击的位置。
-给你一条操作指令，判断这个标记是否**正好落在指令想点的目标元素上**。
-- on_target=true 仅当标记中心压在目标元素本体上。
-- 若标记落在相邻/其它元素上（哪怕很近），on_target=false，并在 actual_element 写出标记实际压住的是什么。
-只看标记的实际位置，不要脑补指令“应该”点哪。reason 一句话。"""
+_SYSTEM = """你是一个 GUI 操作的「落点校验器」。截图上有一个红色圆环+十字标记，表示刚刚点击的位置。
+给你一条操作指令，判断标记**十字中心**是否正好压在指令想点的目标元素本体上。
+
+务必按此顺序，先描述、后判断，不要先看指令下结论：
+1. 只盯着红色十字的正中心，说出它正下方紧贴压住的是哪一个具体 UI 元素——读出该元素上的文字/图标，
+   写进 actual_element。注意它到底属于哪一行/哪一层：是内容区里的按钮、chip、列表条目，还是屏幕最底缘那一排 Tab？
+2. 再判断 actual_element 是不是指令要点的目标。完全是同一个元素 → on_target=true；否则 on_target=false。
+
+硬性规则：
+- 只认十字中心的真实位置，绝不能因为「指令说要点 X」就把标记脑补成落在 X 上。
+- 底部 Tab 栏紧贴屏幕最底缘。判断垂直高度：只要十字明显在最底那排 Tab 的**上方**（哪怕只高出一点点、
+  落在内容区的按钮/chip/列表项上），就不是 Tab，必须 off_target——即使水平方向与某个 Tab 同列。
+- 标记落在目标相邻的元素上（上下相邻行、左右相邻列），哪怕很近，一律 off_target。
+reason 一句话，说明十字中心实际压住了什么。"""
 
 
 def render_marker(png: bytes, nx: float, ny: float) -> bytes:

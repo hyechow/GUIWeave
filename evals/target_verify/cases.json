@@ -8,6 +8,14 @@
     "note": "LLM 把搜索框 y 估到 200(实际~137)，落点被吸到 y~187 的「转账」tab。落点校验应判 off_target 并识别为转账，供下一轮 off_target→replan。"
   },
   {
+    "label": "通讯录tab误中服务号行-应off_target",
+    "screenshot": "evals/target_verify/screenshots/contacts_tab_hit_service_row.png",
+    "instruction": "点击底部导航栏左起第二个Tab「通讯录」",
+    "snapped": [337, 879],
+    "expected_on_target": false,
+    "note": "snap 曾把偏高点(375,850)吸到「服务号」聊天行的噪声框(337,879)，比真 tab(377,922)高一整行。标记水平方向虽与通讯录 tab 同列，但垂直落在 Tab 栏上方的列表行里。verify 曾脑补成'压在通讯录图标上'(on_target=true)，应判 off_target 并识别为服务号行。"
+  },
+  {
     "label": "我的tab-落点准确-应on_target",
     "screenshot": "evals/target_verify/screenshots/wode_tab_on_target.png",
     "instruction": "点击底部导航栏右起第一个「我的」Tab",
