@@ -24,6 +24,18 @@
     "note": "主屏 App 名「支付宝」文字在图标下方，点文字不会启动 App。LLM 点(609,617)落在图标 YOLO 框内(conf 0.49)，contains() 守卫触发，OCR 不得覆盖，吸到图标中心而非标签(612,658)。"
   },
   {
+    "label": "首页tab-宽合并框不锁定-OCR救回",
+    "screenshot": "evals/snap/screenshots/alipay_home_tab_wide_box.png",
+    "target": [124.0, 850.0],
+    "hint": "点击底部导航栏左起第一个Tab「首页」",
+    "expected": {
+      "method": "ocr",
+      "snapped_near": [119.0, 944.0],
+      "tolerance": 40.0
+    },
+    "note": "LLM 点(124,850)落进一个 conf 0.66、宽273 的合并误检框(横跨首页+理财)，框中心在(195,848)离点71。若用 contains() 守卫会锁定 YOLO 吸到错误的(195,848)。move>45 不算精准命中，放行 OCR，吸到「首页」标签(119,944)。X 与 LLM 点一致。"
+  },
+  {
     "label": "左上角返回箭头-YOLO-margin救援",
     "screenshot": "evals/snap/screenshots/alipay_message_back_arrow.png",
     "target": [80.0, 200.0],

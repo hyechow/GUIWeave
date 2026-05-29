@@ -45,6 +45,12 @@ _BTN_RIGHT    = 22   # App Switcher 按钮距窗口右边缘
 class ActionExecutor:
     """Execute normalized policy actions via mirroir-mcp."""
 
+    # Max distance (normalized) the YOLO containment snap may move the point and
+    # still count as "the model deliberately hit this icon" (suppresses OCR).
+    # Below a typical icon half-width so an accurate tap locks, but well under a
+    # wide merged misdetection's center offset so those don't lock.
+    _ICON_OWN_MAX_MOVE = 45.0
+
     def __init__(self, phone: LivePhoneSession, calibrator: YoloCalibrator | None = None):
         self.phone = phone
         self.calibrator = calibrator
@@ -58,11 +64,15 @@ class ActionExecutor:
         where YOLO may snap to a nearby icon instead of the actual target.
         _ocr_snap already guards matches: substring-of-hint, longest-first, ≤150.
 
-        Exception: when the model's point already lands inside a confident YOLO
+        Exception: when the model's point lands squarely on a confident YOLO
         icon box, that icon IS the target — OCR must not drag the tap onto an
         adjacent text label. On the iOS home screen an app's name sits below its
         icon and tapping the label does not launch the app; without this guard a
         hint like "点击支付宝App图标" would OCR-snap to the 支付宝 label and miss.
+        "Squarely" means the containing box's center is within
+        _ICON_OWN_MAX_MOVE of the point: a wide merged misdetection may also
+        contain the point but pulls the snap far off, so let OCR compete there
+        (e.g. a 273-wide box spanning 首页+理财 must not lock the 首页 tap).
         """
         yolo_pos = None
         yolo_owns_point = False
@@ -70,7 +80,9 @@ class ActionExecutor:
             snapped = self.calibrator.nearest(ax, ay)
             if snapped:
                 yolo_pos = snapped
-            yolo_owns_point = self.calibrator.contains(ax, ay)
+            if yolo_pos and self.calibrator.contains(ax, ay):
+                move = ((yolo_pos[0] - ax) ** 2 + (yolo_pos[1] - ay) ** 2) ** 0.5
+                yolo_owns_point = move <= self._ICON_OWN_MAX_MOVE
 
         ocr_pos: tuple[float, float] | None = None
         ocr_len = 0
