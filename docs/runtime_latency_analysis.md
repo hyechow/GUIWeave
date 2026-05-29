@@ -71,6 +71,38 @@
 - **延迟敏感 / 对比验证**：`POLICY_EXPR_CONFIG=policy_expr/config.qwen36.yaml`（全 3.6）。
 - 决策时按场景权衡：低量、重延迟 → 3.6；成本敏感、批量回归 → 3.5。
 
+### 横向对比 OpenAI（汇率 ~7.1 RMB/USD，每百万 token）
+
+| 模型 | 输入 $/M | 输出 $/M | vs qwen3.6 |
+|---|---|---|---|
+| qwen3.5-35b-a3b | $0.056 | $0.45 | 0.2× / 0.3× |
+| **qwen3.6-35b-a3b** | **$0.25** | **$1.52** | 1× / 1× |
+| GPT-5-Codex | $1.25 | $10.00 | 5× / 6.6× |
+| GPT-5.2 / 5.3-Codex | $1.75 | $14.00 | 7× / 9.2× |
+| GPT-5（标准） | $1.25 | $10.00 | 5× / 6.6× |
+| GPT-5.5 | $5.00 | $30.00 | 20× / 20× |
+
+→ **Codex / GPT-5 系是 qwen3.6 的 5–9×，是默认 qwen3.5 的 ~22× 以上。** 两个 caveat：
+1. **Codex 是编码模型，非 GUI 视觉模型**——本 agent 每轮要读截图做 grounding，Codex 未必适配（要对标得看通用多模态 GPT-5）。
+2. **本 workload 视觉重、输出极小**（每轮一张截图输入 + ~200 字 JSON 输出）；OpenAI **图像输入单独高价（~$8/M 图像 token）**，而 qwen 35b-a3b 视觉走文本档——**输入侧真实差距比上表文本倍数更大**。
+
+**实测对照（codex computer use，同任务）**：平均 **~5s/turn**，其中 LLM 推理 **~3s**。
+速度上 **比 qwen3.5（decide ~3.5s）快，但不及 qwen3.6（~2.5s）**。
+
+→ 即 **codex 比 qwen3.6 既慢（~3s vs ~2.5s decide）又贵（~5-9× token）**——在速度和成本两个维度都被 qwen3.6 压制，无可取之处。
+
+| 方案 | decide/轮 | token 成本（vs qwen3.6） |
+|---|---|---|
+| qwen3.5 | ~3.5s | 0.2-0.3× |
+| **qwen3.6** | **~2.5s** | **1×** |
+| codex computer use | ~3s | ~5-9× |
+
+**结论**：对截图驱动的 GUI agent，OpenAI/codex 系既贵一个数量级、图像侧更甚，速度还慢于 qwen3.6，视觉适配也存疑；**留在 qwen 档（3.5 省 / 3.6 快）是性价比最优解**。
+
+> 定价来源（2026-05 查）：[OpenAI Codex rate card](https://help.openai.com/en/articles/20001106-codex-rate-card)、
+> [pricepertoken gpt-5-codex](https://pricepertoken.com/pricing-page/model/openai-gpt-5-codex)、
+> [OpenAI API Pricing](https://openai.com/api/pricing/)；阿里云百炼 qwen3.5/3.6 官方定价页。
+
 ## 关键发现：瓶颈已从 LLM 转移到 settle
 
 3.6 让「思考」变快后，**settle（真机经 Mac 镜像渲染的物理等待）成了占比 ~23–35%、且波动最大的一项**——
