@@ -57,12 +57,20 @@ class ActionExecutor:
         and especially bottom-tab labels like 我的/消息 which are exactly 2 chars)
         where YOLO may snap to a nearby icon instead of the actual target.
         _ocr_snap already guards matches: substring-of-hint, longest-first, ≤150.
+
+        Exception: when the model's point already lands inside a confident YOLO
+        icon box, that icon IS the target — OCR must not drag the tap onto an
+        adjacent text label. On the iOS home screen an app's name sits below its
+        icon and tapping the label does not launch the app; without this guard a
+        hint like "点击支付宝App图标" would OCR-snap to the 支付宝 label and miss.
         """
         yolo_pos = None
+        yolo_owns_point = False
         if self.calibrator:
             snapped = self.calibrator.nearest(ax, ay)
             if snapped:
                 yolo_pos = snapped
+            yolo_owns_point = self.calibrator.contains(ax, ay)
 
         ocr_pos: tuple[float, float] | None = None
         ocr_len = 0
@@ -73,8 +81,9 @@ class ActionExecutor:
 
         # OCR wins when it matched a hint text (≥2 chars): a substring match on
         # the target's own label is a stronger signal than a YOLO icon snap that
-        # may have landed on a wrong/adjacent element.
-        if ocr_pos and ocr_len >= 2:
+        # may have landed on a wrong/adjacent element — unless the point already
+        # sits inside a confident icon (then that icon is the deliberate target).
+        if ocr_pos and ocr_len >= 2 and not yolo_owns_point:
             if yolo_pos:
                 print(f"OCR 覆盖 YOLO: ({ax:.0f}, {ay:.0f}) → ({ocr_pos[0]:.0f}, {ocr_pos[1]:.0f}) [匹配={ocr_len}字]")
             else:

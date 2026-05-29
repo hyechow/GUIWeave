@@ -121,6 +121,19 @@ def test_geometric_regressions() -> None:
             r is not None and abs(r[0] - 890) < 5,
             "" if (r and abs(r[0] - 890) < 5) else f"got {r}")
 
+    # 4. contains(): point inside a confident box → True (OCR override suppressed);
+    #    point outside all boxes / inside only a weak box → False (OCR may run).
+    icon = IconBbox(494, 570, 723, 669, 0.49)        # a home-screen app icon
+    cal4 = YoloCalibrator([icon], img_w=1000, img_h=1000)
+    _report("synthetic: contains() true inside confident icon",
+            cal4.contains(609, 617) is True,
+            "" if cal4.contains(609, 617) else "expected True")
+    weak = IconBbox(505, 842, 958, 901, 0.28)        # wide low-conf misdetect
+    cal5 = YoloCalibrator([weak], img_w=1000, img_h=1000)
+    _report("synthetic: contains() false for weak box / outside",
+            cal5.contains(890, 850) is False and cal4.contains(100, 100) is False,
+            "" if (not cal5.contains(890, 850) and not cal4.contains(100, 100)) else "expected False")
+
 
 def main():
     print("── Snap Eval ──")

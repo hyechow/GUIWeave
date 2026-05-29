@@ -116,3 +116,21 @@ class YoloCalibrator:
             margin_hits.sort(key=lambda c: (c[0], -c[2]))
             return margin_hits[0][1]
         return None
+
+    def contains(self, target_x: float, target_y: float) -> bool:
+        """Whether the point falls inside a confidently-detected icon box.
+
+        Same confidence floor as Tier-1 containment. Used to tell a deliberate
+        icon target (LLM aimed inside a real icon) from a point that merely sits
+        near some text — so OCR doesn't drag an icon tap onto an adjacent label.
+        """
+        for b in self.boxes:
+            if b.conf < self._REAL_CONTAINMENT_MIN_CONF:
+                continue
+            x1 = b.x1 / self.img_w * 1000
+            y1 = b.y1 / self.img_h * 1000
+            x2 = b.x2 / self.img_w * 1000
+            y2 = b.y2 / self.img_h * 1000
+            if x1 <= target_x <= x2 and y1 <= target_y <= y2:
+                return True
+        return False
