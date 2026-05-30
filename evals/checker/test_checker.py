@@ -82,6 +82,7 @@ def test_checker() -> None:
                     milestone, observation, history,
                     app_name=m["app_name"],
                     task_type=m.get("task_type", "action"),
+                    constraints=c.get("constraints", []),
                 )
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")

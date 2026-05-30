@@ -109,17 +109,18 @@ class StructuredOutputPolicy(BaseActionPolicy):
         if _tap_only:
             direction = drag_column = None
 
-        # Translate picker value-direction (increase/decrease) to gesture direction.
-        # increase = value grows = gesture up (to_y < y)
-        # decrease = value shrinks = gesture down (to_y > y)
+        # ⚠️ 只为 prompt 的「手指方向」提示把 value-direction(increase/decrease) 译成 up/down；
+        # 但传给 _normalize_drag_direction 的必须是**原始 direction**(increase/decrease)，让它设
+        # value_direction——gesture 层对 value_direction 的映射才是正确的。若把译后的 up/down 传进
+        # 去，会被当 finger 方向、再被 _drag_delta 反向解读(向上→数值变小)，picker 数值发散。
+        # increase = value grows = gesture 手指向上(to_y < y)；decrease = 手指向下。
         _PICKER_VALUE_TO_GESTURE = {"increase": "up", "decrease": "down"}
-        if direction in _PICKER_VALUE_TO_GESTURE:
-            direction = _PICKER_VALUE_TO_GESTURE[direction]
+        gesture_hint_dir = _PICKER_VALUE_TO_GESTURE.get(direction or "", direction)
 
         hint_parts: list[str] = []
-        if direction:
-            dir_zh = {"up": "上", "down": "下", "left": "左", "right": "右"}.get(direction, direction)
-            hint_parts.append(f"⚠️ 方向约束：手指必须向{dir_zh}移动（{direction}）。")
+        if gesture_hint_dir:
+            dir_zh = {"up": "上", "down": "下", "left": "左", "right": "右"}.get(gesture_hint_dir, gesture_hint_dir)
+            hint_parts.append(f"⚠️ 方向约束：手指必须向{dir_zh}移动（{gesture_hint_dir}）。")
         if drag_column:
             hint_parts.append(f"⚠️ 目标列：{drag_column}。")
         hint_prefix = "\n".join(hint_parts)
@@ -139,7 +140,8 @@ class StructuredOutputPolicy(BaseActionPolicy):
         ]
         decision = invoke_structured(llm, messages, ActionDecision)
         _normalize_drag_direction(decision, instruction, direction)
-        _normalize_scroll_direction(decision, direction)
+        _normalize_scroll_direction(decision, gesture_hint_dir)
+        _force_picker_column(decision, drag_column)
         _fix_date_range_field_mixup(decision, instruction)
         return decision
 
@@ -206,6 +208,32 @@ def _normalize_drag_direction(
         action.amount = "small"
     elif step_distance and step_distance >= _PICKER_ROW_NORM * 4:
         action.amount = "large"
+
+
+_DRAG_COLUMN_TO_AREA = {"year": "picker_left", "month": "picker_center", "day": "picker_right"}
+
+
+def _force_picker_column(decision: ActionDecision, drag_column: Optional[str]) -> None:
+    """用 planner 结构化算出的 drag_column 硬覆盖 picker 列，不信任 action_policy 从指令文本
+    解析出的列。
+
+    根因：列此前完全由不可靠的自由指令文本决定——planner 偶尔把月份误写成「年份列」(reasoning
+    /drag_column 其实是 month)，action_policy 跟文本选了年份列 → 拖错列、把已对齐的年份拖坏。
+    drag_column 是经规则校正的权威列，year/month/day 直接映射到校准好的 picker_left/center/right，
+    并清空文本估计的 x，改用该列的校准坐标。
+    """
+    if not drag_column:
+        return
+    area = _DRAG_COLUMN_TO_AREA.get(drag_column)
+    if not area:
+        return
+    action = decision.action
+    if action.action_type != "drag":
+        return
+    if action.target_area != area or action.x is not None:
+        print(f"  [ActionPolicy] picker 列校正：{action.target_area}→{area}（按 drag_column={drag_column}）")
+        action.target_area = area
+        action.x = None  # 用 picker_* 的校准列坐标，弃用文本估计的 x
 
 
 def _normalize_scroll_direction(decision: ActionDecision, direction_hint: Optional[str]) -> None:

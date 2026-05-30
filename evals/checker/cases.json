@@ -248,6 +248,25 @@
     "note": "连续调值类 done：开始日期滚轮中心吸附在3月/10日、绿框也显示'2026年3月10日'。模型按 prompt 把证据写进 reason、visible_evidence(可选)留空。曾因 done 守卫硬性要求必须有 visible_evidence 而被误判 stuck(20260530_094941 turn7)，级联导致 subgoal 锁死。守卫改为只看 reason+missing_evidence 后应正常 done。"
   },
   {
+    "label": "微信日期选择器-开始日期已达标-不因全局约束含结束日期而误判in_progress",
+    "screenshot": "evals/checker/screenshots/wechat_date_picker_start_10_done.png",
+    "milestone": {
+      "name": "设置开始日期为2026年3月10日",
+      "description": "在时间段选择器中将开始日期滚动设置为2026年3月10日",
+      "success_condition": "开始日期显示为'2026年3月10日'",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "action"
+    },
+    "constraints": ["时间范围：2026-03-10 ~ 2026-04-07"],
+    "expected": {
+      "status": "done",
+      "loading": false
+    },
+    "note": "回归：开始日期已是3月10日(success_condition满足)→必须 done，不能因为全局约束里还含『结束日期4月7日』未设而判 in_progress。结束日期由另一个子目标负责。曾因 checker 把全局约束当本子目标验收标准，开始日期已达标却判 in_progress→没推进→值漂到3月11日→反复补救(20260530_121615 turn9-15)。"
+  },
+  {
     "label": "微信日期选择器-结束日期摘要框滞后-读中心行4月-in_progress",
     "screenshot": "evals/checker/screenshots/wechat_date_picker_end_wheel4_box3_lag.png",
     "milestone": {
