@@ -134,24 +134,31 @@ class ActionExecutor:
 
         candidates: list[tuple[float, int, tuple[float, float]]] = []
         for r in results:
-            if not r.text or r.text not in hint:
+            if not r.text:
+                continue
+            # Strip leading/trailing UI affordance glyphs before matching: OCR often
+            # fuses a chevron/arrow/bracket onto the label ("收支统计＞", "更多›",
+            # "「钱包」") so a strict substring-of-hint check misses it and falls back
+            # to a wrong YOLO box (real: 收支统计 entry → "..." button, 20260530_151539).
+            core = re.sub(r"^[^0-9A-Za-z一-鿿]+|[^0-9A-Za-z一-鿿]+$", "", r.text)
+            if not core or core not in hint:
                 continue
             # Skip value-display tokens (amounts/counts/badges like ¥0.54, 124):
             # they're not tap targets, and being longer they'd otherwise beat the
             # real label under longest-match-first — e.g. a 钱包 instruction whose
             # descriptor mentions the balance "¥0.54" snapping to the amount.
-            if not re.search(r"[一-鿿A-Za-z]", r.text):
+            if not re.search(r"[一-鿿A-Za-z]", core):
                 continue
             tx, ty = r.tap_coords(WIN_W, WIN_H)
             nx, ny = tx / WIN_W * 1000, ty / WIN_H * 1000
             # Single-char labels (我/钱) only count in the bottom tab band, where
             # they are real tap targets. Elsewhere a 1-char OCR hit is too
             # ambiguous (appears in chat text, etc.), so keep the ≥2-char floor.
-            if len(r.text) < 2 and ny < _OCR_SINGLE_CHAR_MIN_NY:
+            if len(core) < 2 and ny < _OCR_SINGLE_CHAR_MIN_NY:
                 continue
             dist = ((nx - ax) ** 2 + (ny - ay) ** 2) ** 0.5
             if dist <= 150:
-                candidates.append((dist, len(r.text), (nx, ny)))
+                candidates.append((dist, len(core), (nx, ny)))
 
         if not candidates:
             return None

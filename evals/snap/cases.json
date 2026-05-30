@@ -122,5 +122,17 @@
       "tolerance": 30.0
     },
     "note": "返回箭头无文字；LLM 纵向估偏(y=200 实际137)，靠 nearest 的 bbox±50 margin 层吸到箭头。"
+  },
+  {
+    "label": "收支统计入口-OCR带尾随箭头＞-剥离后命中",
+    "screenshot": "evals/snap/screenshots/wechat_bill_income_stats_entry.png",
+    "target": [840.0, 200.0],
+    "hint": "点击右上角的「收支统计」入口",
+    "expected": {
+      "method": "ocr",
+      "snapped_near": [856.0, 199.0],
+      "tolerance": 30.0
+    },
+    "note": "OCR 把 UI 箭头连进去识别成「收支统计＞」(全角＞)，hint 是「…「收支统计」…」不含＞，严格 substring 匹配失败→回退 YOLO→吸到右上角「...」按钮(904,139)，点错(20260530_151539 turn3)。修复：匹配前剥离 OCR 文本首尾的非文字符号(＞》›「」→ 等)，core=「收支统计」∈hint→OCR 命中入口(856,199)。"
   }
 ]
