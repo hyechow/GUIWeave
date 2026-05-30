@@ -106,51 +106,56 @@ class ScrollProbe:
                 concrete = action_with_drag(candidate, drag_gesture(candidate))
             else:
                 continue
-            print(
-                "  [ScrollProbe] "
-                f"try {idx}: {candidate.action_type} x={concrete.x:.0f}, y={concrete.y:.0f}"
-            )
-            if candidate.action_type == "scroll":
-                gesture = wheel_gesture(candidate)
-                self.executor.execute_scroll(concrete, ticks=gesture.ticks, delta_px=gesture.delta_px)
-            elif candidate.action_type == "drag":
-                self.executor.execute_drag(concrete)
-            time.sleep(self.settle_seconds)
-            after_png = self.phone.screenshot()
-            last_after = after_png
-            _save_probe_shot(self.log_dir, turn_no, idx, after_png)
-
-            # 关键点匹配估位移（ORB）：在「重复行+大片白底」列表上比全局像素相关/残差鲁棒，
-            # 后者会被行混叠/白对白骗到 shift=0（真机 20260530_145732 turn4 成功滚动被误判失败）。
-            shift, confidence = _kp_robust_shift(_kp_gray(current_png), _kp_gray(after_png))
-            changed = _changed_ratio(current_png, after_png)
-            print(
-                "  [ScrollProbe] "
-                f"shift={shift:+d}px confidence={confidence:.3f} changed={changed:.3f}"
-            )
-            attempt_summaries.append(f"{candidate.action_type}@y={concrete.y:.0f}:shift={shift:+d}px")
-            if _is_expected_progress(direction, shift, confidence, changed):
-                wheel = wheel_gesture(candidate) if candidate.action_type == "scroll" else None
-                profile = ScrollProfile(
-                    method=candidate.action_type,
-                    x=float(concrete.x or 500),
-                    y=float(concrete.y or 500),
-                    direction=str(candidate.direction or direction),
-                    ticks=wheel.ticks if wheel else SCROLL_TICKS,
-                    delta_px=wheel.delta_px if wheel else SCROLL_DELTA,
-                    to_x=concrete.to_x,
-                    to_y=concrete.to_y,
-                    duration_ms=concrete.duration_ms,
-                    observed_shift_px=shift,
-                    confidence=confidence,
-                )
+            # 第一个候选承担「冷启动税」：刚进页/刚切焦点时第一次手势常不生效，给它 2 次机会，
+            # 重试一次(此时已被上一次手势热身)往往就成。否则会把可靠的 wheel 误判为无效、退而
+            # 选复用不可靠的 drag（真机 20260530_162926：冷 wheel=0→选 drag→drag 复用失败→
+            # turn2 被迫重探）。后续候选此时已是热的，单次即可，不浪费手势。
+            max_attempts = 2 if idx == 1 else 1
+            for attempt in range(1, max_attempts + 1):
                 print(
-                    "  [ScrollProbe] 命中有效滚动点: "
-                    f"method={profile.method}, x={profile.x:.0f}, y={profile.y:.0f}, shift={shift:+d}px"
+                    "  [ScrollProbe] "
+                    f"try {idx}.{attempt}: {candidate.action_type} x={concrete.x:.0f}, y={concrete.y:.0f}"
                 )
-                return ScrollProbeResult(True, profile, after_png, idx, "vertical progress observed")
+                if candidate.action_type == "scroll":
+                    gesture = wheel_gesture(candidate)
+                    self.executor.execute_scroll(concrete, ticks=gesture.ticks, delta_px=gesture.delta_px)
+                else:
+                    self.executor.execute_drag(concrete)
+                time.sleep(self.settle_seconds)
+                after_png = self.phone.screenshot()
+                last_after = after_png
+                _save_probe_shot(self.log_dir, turn_no, idx, after_png)
 
-            current_png = after_png
+                # 关键点匹配估位移（ORB）：在「重复行+大片白底」列表上比全局像素相关/残差鲁棒，
+                # 后者会被行混叠/白对白骗到 shift=0（真机 20260530_145732 turn4 成功滚动被误判失败）。
+                shift, confidence = _kp_robust_shift(_kp_gray(current_png), _kp_gray(after_png))
+                changed = _changed_ratio(current_png, after_png)
+                print(
+                    "  [ScrollProbe] "
+                    f"shift={shift:+d}px confidence={confidence:.3f} changed={changed:.3f}"
+                )
+                attempt_summaries.append(f"{candidate.action_type}@y={concrete.y:.0f}:shift={shift:+d}px")
+                current_png = after_png  # 更新基准：下一次(重试或下个候选)从当前态比
+                if _is_expected_progress(direction, shift, confidence, changed):
+                    wheel = wheel_gesture(candidate) if candidate.action_type == "scroll" else None
+                    profile = ScrollProfile(
+                        method=candidate.action_type,
+                        x=float(concrete.x or 500),
+                        y=float(concrete.y or 500),
+                        direction=str(candidate.direction or direction),
+                        ticks=wheel.ticks if wheel else SCROLL_TICKS,
+                        delta_px=wheel.delta_px if wheel else SCROLL_DELTA,
+                        to_x=concrete.to_x,
+                        to_y=concrete.to_y,
+                        duration_ms=concrete.duration_ms,
+                        observed_shift_px=shift,
+                        confidence=confidence,
+                    )
+                    print(
+                        "  [ScrollProbe] 命中有效滚动点: "
+                        f"method={profile.method}, x={profile.x:.0f}, y={profile.y:.0f}, shift={shift:+d}px"
+                    )
+                    return ScrollProbeResult(True, profile, after_png, idx, "vertical progress observed")
 
         return ScrollProbeResult(
             False,
