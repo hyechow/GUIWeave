@@ -513,14 +513,20 @@ class MilestoneSupervisorPolicy:
             print(f"  [PreExisting] 子目标「{done_name}」未执行任何动作即判完成，目标状态在会话前已存在")
 
         if self._current_id is None:
+            # final_read(_ctx) 已含 milestone_id/kind/completion_strategy；显式再传会撞车
+            # （TypeError: got multiple values for 'milestone_id'）。合并为一个 ctx：无
+            # final_read 时只带这三个 milestone 字段，有则其同名键(同值)覆盖、并补 read_* 等。
+            ctx = {
+                "milestone_id": milestone.id,
+                "milestone_kind": milestone.kind,
+                "completion_strategy": milestone.completion_strategy,
+                **(final_read or {}),
+            }
             return SupervisorStep(
                 should_act=False, stop=True, stop_reason="所有子目标已完成",
                 goal_completed=True, pre_existing=pre_existing,
                 summary=f"子目标「{done_name}」已完成，任务全部完成。",
-                milestone_id=milestone.id,
-                milestone_kind=milestone.kind,
-                completion_strategy=milestone.completion_strategy,
-                **(final_read or {}),
+                **ctx,
             )
 
         next_ms = self._milestones[self._current_id]
