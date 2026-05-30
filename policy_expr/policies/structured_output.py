@@ -183,11 +183,14 @@ def _normalize_drag_direction(
     action = decision.action
     if action.action_type != "drag":
         return
-
-        if direction_hint in ("increase", "decrease"):
-            action.value_direction = direction_hint
-        elif direction_hint in ("up", "down"):
-            action.direction = direction_hint
+    # ⚠️ planner 的结构化 direction_hint（increase/decrease）必须优先生效——它是经
+    # _fix_picker_direction 校正后的权威方向。此前本块因缩进错误被放在 return 之后成了死代码，
+    # 导致 hint 完全没应用、落到下方关键词分支把「向上」当 finger 方向，再被 gesture 反向解读
+    # （向上→数值变小），造成 picker 数值朝反方向无限发散（如年份 2026→2016）。
+    if direction_hint in ("increase", "decrease"):
+        action.value_direction = direction_hint
+    elif direction_hint in ("up", "down"):
+        action.direction = direction_hint
     elif not action.value_direction:
         if any(word in instruction for word in ("调大", "增加", "增大", "往后", "下一")):
             action.value_direction = "increase"

@@ -1,6 +1,6 @@
 [
   {
-    "label": "微信日期选择器-scroll失败-replan应改tap",
+    "label": "微信日期选择器-滚轮未到位-replan应继续拖动而非改tap",
     "screenshot": "evals/replan/screenshots/wechat_date_picker.png",
     "milestone": {
       "name": "筛选上周日期范围",
@@ -8,23 +8,22 @@
       "success_condition": "看到筛选后的账单列表，日期在2026年5月19日至5月25日之间",
       "kind": "filter",
       "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
       "task_type": "action",
       "retry_count": 1
     },
     "history": [
-      "在当前筛选弹窗中向上滑动以查找日期范围筛选选项",
-      "点击「确定」按钮关闭筛选弹窗",
-      "点击「全部账单」筛选按钮",
-      "点击「2026年5月」月份筛选区域查看是否有更详细的日期选择选项",
       "点击筛选弹窗顶部的「选择时间段」标签页",
-      "在日期选择区域向上滑动，查找并点击2026年5月19日作为开始日期"
+      "在日期滚轮上向下拖动右侧日期列，查找2026年5月19日",
+      "在日期滚轮上向下拖动右侧日期列，查找2026年5月19日"
     ],
     "stuck_reason": "连续 3 帧截图相似度 [100.00%, 100.00%]，屏幕无实质变化",
     "issues": ["屏幕像素变化低于阈值"],
     "expected": {
-      "must_contain": ["点击"],
-      "must_not_contain": ["滚动", "滑动", "scroll", "向上", "向下"]
-    }
+      "must_contain": ["拖动", "滑动", "滚动"],
+      "must_not_contain": ["改用点击", "点击滚轮", "不支持滚动", "不支持拖"]
+    },
+    "note": "回归（行为已纠正）：截图是真滚轮（可见5月1/2/3日），结束日期未滚到5月19日。picker 卡住时 replan 必须『继续拖动/滑动滚轮（换列/加幅/纠向）』，绝不改成 tap 点击滚轮数值——iOS 滚轮不响应点击。旧 case 期望『应改tap』编码的是被 ④ 架构纠正掉的错误行为。must_contain 用拖动/滑动/滚动任一（模型对滚轮手势这几个词混用）。"
   },
   {
     "label": "微信账单筛选弹窗-多次scroll未找到日期选择器-应关闭弹窗",

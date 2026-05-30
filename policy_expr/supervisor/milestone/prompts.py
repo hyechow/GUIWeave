@@ -45,10 +45,12 @@ goal 中已包含预处理后的绝对日期（如 2026-05-18 至 2026-05-24）�
    - action：执行一次**改变状态**的操作（发送、提交、购买、支付、删除、点赞、修改设置）。⚠️ 仅仅「到达/打开/查看某页面」不是 action，必须归 navigation
    - verification：确认结果是否满足目标
 5. completion_strategy 必须表达完成方式：
-   - visible_once：看到指定页面/状态即可完成
+   - visible_once：看到指定页面/状态即可完成（一次离散动作达成，如 tap 进入某页、tap 发送）
    - read_once：读取当前屏幕一次即可完成
    - scroll_until_boundary：需要反复滚动，直到列表到底或无更多内容
-   - repeat_until_satisfied：重复操作直到条件满足
+   - repeat_until_satisfied：靠**重复调整逐步逼近一个目标值**才能完成——目标是「把某个值设到指定值」，单次操作通常调不到位、要重复多次。典型：滚轮/日期/时间 picker 调到目标日期或时间、步进器加减数量到目标、滑块拖到目标档位。
+     * ⚠️ 凡 success_condition 是「某值显示为/设为 <具体目标值>」且靠 picker 滚轮/步进器/滑块达成的子目标（如「开始日期显示为2026年3月10日」「数量设为3」），必须用 repeat_until_satisfied，**不要**用 visible_once——这类目标需要多轮拖动逼近，标记为 visible_once 会让系统把"一次没调到位"误判为失败。
+     * 设置日期范围（开始/结束日期 picker）属于 kind=filter + completion_strategy=repeat_until_satisfied。
    - human_escalation：需要人工处理
 6. 信息获取类任务的内容收集子目标必须使用 kind=collection；来自可滚动列表、记录流或消息流的内容必须使用 completion_strategy=scroll_until_boundary
    - scroll_until_boundary 的子目标必须填写 scroll_stop_condition（一句话说明何时停止滚动）：
@@ -176,6 +178,19 @@ _CHECK_SECTION_COLLECTION = """
 - in_progress 时 visible_evidence / missing_evidence 可留空
 """
 
+# 连续调值类（completion_strategy=repeat_until_satisfied）专用补充段。叠加在 kind 段之上，
+# 由 run_checker 在 milestone.is_converge 时追加。核心：当前值以滚轮中心带为准（摘要框滞后），
+# 并强制输出当前值/目标值，作为连续操作的进展传感器（供 planner 算步长、供 stuck 判值停滞）。
+_CHECK_SECTION_CONVERGE = """
+## ⚠️ 连续调值类子目标（completion_strategy=repeat_until_satisfied，如滚轮/日期/时间 picker、步进器）
+- 这类目标靠**多轮拖动逐步逼近目标值**，未到目标是正常的 in_progress，不是失败，不要因"上一轮没到位"判 done 或异常。
+- ⚠️ 读「当前值」的**唯一依据是滚轮各列正中间那一行**（选中带/居中高亮行）：picker 的真实当前值永远是滚到正中间的那一行——年列中间行=当前年、月列中间行=当前月、日列中间行=当前日，组合起来即当前值。
+- ⚠️ **绝对不要**用页面上的摘要框 / 「已选」/ 绿色高亮文字来读当前值：① 不是所有 picker 都有这种摘要框，中间行才通用；② 即使有，它刷新常滞后于滚轮，刚拖动后会显示旧值。一旦摘要框与滚轮中间行不一致，**一律以滚轮中间行为准**，摘要框的值视为过期、忽略它。
+- ⚠️ done 仅当**滚轮各列中间行组合出的值**与 success_condition 的目标值精确一致（不是看摘要框）。
+- 无论 done 还是 in_progress，都必须在 missing_evidence 中写出「当前值=<从滚轮中间行读到的值>」「目标值=<success_condition 目标>」
+  （例：当前值=4月、目标值=4月7日），这是规划器算拖动步长/方向、以及判断是否在推进的唯一依据。
+"""
+
 # Unknown/other kinds fall back to all sections (same coverage as before split).
 _CHECK_SECTION_DEFAULT = (
     _CHECK_SECTION_NAVIGATION + _CHECK_SECTION_FILTER
@@ -272,7 +287,7 @@ PLAN_PROMPT = """\
     - 流程：① tap「开始时间」区域（通常默认激活）→ drag 设置起始日期 → ② tap「结束时间」文字/占位符切换焦点 → drag 设置结束日期 → ③ tap 确认按钮
     - 如果 Checker 反馈「结束日期尚未设置」「结束时间为占位符」「灰色不可选」，必须先 tap「结束时间」标签，再 drag
     - 此处 tap 是切换字段焦点，不是选择 picker 滚轮数值，不受「禁止点击 picker 数值」规则限制
-- ⚠️ 「未生效」「屏幕无变化」对 picker 的处理：先检查拖动方向是否正确，方向反了才会无变化；普通列表/网格无响应时才改用 tap
+- ⚠️ 「未生效」「屏幕无变化」对 picker/滚轮/日期选择器的处理：**绝不改用 tap**（滚轮只能拖、点击不选值）。依次排查并继续用拖动：① 拖动方向是否反了（按值的增减重新定向）② 是否该先调更高位列（年/月不同必须先对齐月份/年份列）③ 步长不够就加大拖动幅度。只有**普通可点列表/网格**（非滚轮）无响应时才改用 tap
 - ⚠️ 生成输入文字指令时，必须使用子目标描述或验收条件中明确指定的原始文字，禁止凭空编造或改写输入内容
 - ⚠️ 输入文字动作已包含自动点击输入框的步骤，不需要先单独生成「点击/激活输入框」指令，看到输入框时直接生成输入指令即可
 - 商品规格选择面板（bottomsheet）中，若目标属性（如糖度/甜度）的分类标题可见但选项 chips 未出现或被截断，应先在面板内向上滑动使该属性的选项行完整显示，再点击目标选项
@@ -282,15 +297,24 @@ PLAN_PROMPT = """\
 - direction：
   * 下一步是 scroll → 填手指移动方向（down/up/left/right）
   * 下一步是 picker drag → 填「值的变化方向」（不是手指方向！）。判断步骤：
-    1. 从 check_reason / missing_evidence 中读出「当前值」和「目标值」（数字）
+    1. 从 check_reason / missing_evidence 中读出「当前值」和「目标值」，取**你这一步要拖的那一列**的数字（拖月份列就比月份数，拖日期列就比日期数）
     2. 比较大小：target < current → direction=decrease；target > current → direction=increase
     3. instruction 中的拖动方向也要对应：decrease=向下拖动；increase=向上拖动
-    - 示例：当前28日→目标8日，8 < 28 → direction=decrease，instruction 写「向下拖动」
-    - 示例：当前1日→目标20日，20 > 1 → direction=increase，instruction 写「向上拖动」
+    - 示例：拖月份列，当前5月→目标1月，1 < 5 → direction=decrease，instruction 写「向下拖动」
+    - 示例：拖日期列（同年同月），当前1日→目标20日，20 > 1 → direction=increase，instruction 写「向上拖动」
+    - 示例：拖日期列（同年同月），当前28日→目标8日，8 < 28 → direction=decrease，instruction 写「向下拖动」
     - ⚠️ 跨度大小（差1格还是差20格）不影响方向，只影响拖动幅度
+    - ⚠️ **只比同一列的数字**：不要拿当前的「日」去和目标的「日」比却忽略月份不同。如当前 3月31日、目标 4月7日，本步要拖的是月份列（见下方 drag_column 规则），就比月份 4>3 → increase，绝不能拿 7 和 31 比得出 decrease。
   * 其他动作（tap/type/home/stop）→ 留空
 - drag_column：
   * 下一步是 picker drag → 填目标列（year=年份列，month=月份列，day=日期列）
+  * ⚠️ **多列 picker（年/月/日）只拖「当前值与目标值不一致的最高位列」，已经一致的列绝不要碰**。判断步骤：
+    - 年份不同 → 拖 year 列；
+    - 年份**已相同**、月份不同 → 拖 month 列；
+    - 年、月**都已相同**、仅日不同 → 拖 day 列。
+    - ⚠️ 已对齐的列禁止再拖、也禁止写进 instruction：如年份已是目标年（2026=2026），**绝不能**生成「拖动年份列」——那会把已对齐的年份拖坏，引发数值发散。
+    - ⚠️ instruction 文本里写的列名必须和 drag_column **完全一致**：drag_column=month 时 instruction 只能说「月份列」，不能说「年份列」「日期列」。执行器按 instruction 文本选列，写错列名会拖错列。
+    - 反例（禁止）：当前 3月31日、目标 4月7日，月份不同（3≠4），必须拖 month 列（3→4），不能拖 day 列。
   * 其他动作 → 留空
 """
 
@@ -356,7 +380,8 @@ REPLAN_PROMPT = """\
 - 如果子目标要求「回到主屏幕」，必须指令「按 Home 键返回主屏幕」
 - ⚠️ 打开应用后发现不是目标应用或进入错误页面时，应先在应用内导航到该应用的主界面（点击返回按钮、关闭弹窗等），确认当前所在的应用身份后，再决定是继续在应用内操作还是按 Home 键回主屏。禁止未确认应用身份就直接按 Home 键。
 - 滚动指令描述要查看什么内容，不要指定手指方向
-- ⚠️ 如果失败原因包含「屏幕无变化」「屏幕冻结」「未生效」，说明当前 UI 不支持滚动（日历选择器、滚轮、静态网格等）。此时必须改用 tap 点击目标位置，绝对禁止生成包含「滚动」「滑动」「向上」「向下」的指令
+- ⚠️ 「屏幕无变化」「屏幕冻结」「未生效」对**滚轮/日期/时间选择器（picker）不代表不支持拖动**——picker 本就只能拖。禁止改用 tap 点击滚轮数值（iOS 滚轮不响应点击）；应换一种拖动策略继续：先对齐更高位列（年/月不同先调月份列）、加大拖动幅度、或纠正拖动方向。
+- ⚠️ 仅当是**真正不可滚动的静态 UI**（固定列表、静态网格、可点按钮区）时，「无变化」才意味着改用 tap 点击目标位置，此时绝对禁止生成「滚动」「滑动」「向上」「向下」类指令
 """
 
 STOP_CONDITION_PATCH_PROMPT = """\

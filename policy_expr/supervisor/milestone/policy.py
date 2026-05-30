@@ -41,6 +41,9 @@ MAX_SCROLL_PER_MILESTONE = 3
 STUCK_REPEAT_WINDOW = 3
 BLANK_SCREEN_RATIO = 0.84  # Near-white pixel ratio above this = blank/loading screen
 STUCK_REPEAT_WORD_OVERLAP = 0.85
+# 连续调值类（is_iterative）的卡住判据：屏幕冻结/指令重复都是正常的（picker 反复拖同一下），
+# 不适用。改判「被监控值连续 N 轮未变化」=真停滞。N>1 容忍摘要框提交滞后(1 轮) + 小步未到一格。
+STUCK_VALUE_STALL_WINDOW = 4
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -172,6 +175,8 @@ class MilestoneSupervisorPolicy:
         self._app_name: str = ""
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
+        # 连续调值类的进展追踪：每 milestone 一个滑动窗口，存最近若干轮 checker 读到的「当前值」。
+        self._progress_values: dict[str, list[str]] = {}
         self._last_check: Optional[_SingleCheckResult] = None
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
@@ -262,6 +267,19 @@ class MilestoneSupervisorPolicy:
         if check.status == "done":
             return self._advance(milestone, observation, history)
 
+        # 连续调值类（picker/步进器收敛）：SimStuck/RepStuck 不适用（屏幕冻结、反复拖同一下
+        # 都正常）。改用「被监控值多轮不变」判停滞；未停滞就继续规划，不会因单轮无进展判死路。
+        if milestone.is_iterative:
+            self._last_check_summary[milestone.id] = check.summary
+            stall = self._check_value_stall(milestone, check)
+            if stall is not None:
+                return self._handle_stuck(
+                    milestone, stall, check.read_instruction, observation, history,
+                    page_changed=False,
+                    prev_page_id=prev_page_id, current_page_id=current_page_id,
+                )
+            return self._plan_single(milestone, check, observation, history)
+
         sim_stuck = self._check_screen_similarity(observation)
 
         prev_check_summary = self._last_check_summary.get(milestone.id, "")
@@ -307,7 +325,9 @@ class MilestoneSupervisorPolicy:
                     milestone, check, observation, history,
                     extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
                 )
-        if self._is_repeated_instruction(plan.instruction, milestone.id, history):
+        # 连续调值类豁免「指令重复=失败」升级：对 picker 而言重复"向上拖月份列"直到到位本就
+        # 是正确做法，单步式的重复检测会误把它判成撞墙→死路。其停滞由 _check_value_stall 兜。
+        if not milestone.is_iterative and self._is_repeated_instruction(plan.instruction, milestone.id, history):
             print("  [Planner] 指令重复已失败操作，重试...")
             with _Timer(self._timings, self._timings_order, "planner"):
                 plan = self._invoke_planner(
@@ -583,8 +603,17 @@ class MilestoneSupervisorPolicy:
             return self._fail(milestone, check, read_inst)
 
         print(f"  [Replan] 第 {milestone.retry_count} 次重试...")
+        # 连续调值类停滞时的纠偏方向：继续用拖动（picker 本就只能拖），换一种连续策略——
+        # 加大拖动幅度 / 换调整的列 / 调整顺序（如先把"日"调到合法范围再调"月"，破非法日期回弹死锁）。
+        # 绝不退化成点击 picker 滚轮数值（iOS 滚轮不认点击），也不要判"组件不支持拖拽"。
+        iter_extra = (
+            "⚠️ 当前子目标是连续调值类（靠滚轮/步进器反复拖动逼近目标值）。停滞≠不支持拖拽。"
+            "必须继续用拖动，换一种连续策略：加大拖动幅度、或换要调整的列、或调整顺序"
+            "（如把'日'先调到目标月份的合法范围内、再调'月'，以破解非法日期被回弹的死锁）。"
+            "禁止改用点击 picker 滚轮上的具体数值（iOS 滚轮不响应点击），禁止判定'组件不支持滚动/拖拽'。"
+        ) if milestone.is_iterative else ""
         with _Timer(self._timings, self._timings_order, "replanner"):
-            replan = self._invoke_replanner(milestone, check, observation, history)
+            replan = self._invoke_replanner(milestone, check, observation, history, extra=iter_extra)
         self._last_replan = replan
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")
 
@@ -706,6 +735,10 @@ class MilestoneSupervisorPolicy:
     ) -> None:
         reason = check.stuck_reason or check.reason
         if "planner 陷入重复" in reason:
+            return
+        # 连续调值类不记「禁止重复此指令」：会把唯一可靠的拖动操作拉黑，逼系统退化成点击 picker
+        # （iOS 滚轮不认点击）。停滞时的纠偏靠 replan 换连续策略（换列/加大步长/调顺序），而非禁操作。
+        if milestone.is_iterative:
             return
         last_action = next(
             (t for t in reversed(history)
@@ -903,6 +936,48 @@ class MilestoneSupervisorPolicy:
                 stuck_reason="连续相似指令，重复操作未生效",
                 issues=["supervisor 指令持续重复"],
                 summary="操作陷入重复循环",
+            )
+        return None
+
+    @staticmethod
+    def _extract_progress_value(check: _SingleCheckResult) -> str:
+        """从 checker 输出抽出「当前值」作为连续操作的进展度量。
+
+        连续调值 section 要求 checker 在 missing_evidence 写「当前值=...」；优先取它，
+        取不到则退回 summary（值变化时 summary 通常也变）。返回归一化字符串供逐轮比对。
+        """
+        for ev in check.missing_evidence or []:
+            m = re.search(r"当前值\s*[=:：]\s*(.+)", ev.strip())
+            if m:
+                return re.sub(r"\s+", "", m.group(1))
+        return re.sub(r"\s+", "", check.summary or "")
+
+    def _check_value_stall(
+        self, milestone: Milestone, check: _SingleCheckResult,
+    ) -> Optional[_SingleCheckResult]:
+        """连续调值类专用卡住判据：被监控值连续 STUCK_VALUE_STALL_WINDOW 轮不变 = 真停滞。
+
+        替代 SimStuck/RepStuck——对 picker 而言屏幕冻结、反复拖同一下都是正常的，唯有
+        「当前值多轮没朝目标动」才是真卡住（方向错、步长恒不到一格、非法值回弹等）。
+        """
+        val = self._extract_progress_value(check)
+        window = self._progress_values.setdefault(milestone.id, [])
+        window.append(val)
+        if len(window) > STUCK_VALUE_STALL_WINDOW:
+            window.pop(0)
+        if len(window) < STUCK_VALUE_STALL_WINDOW or not val:
+            return None
+        if len(set(window)) == 1:
+            print(f"  [ValueStall] 连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留「{val}」，未朝目标推进")
+            # 触发后清空窗口：replan 会换新策略，让它重新攒满 STUCK_VALUE_STALL_WINDOW 轮再判，
+            # 否则窗口仍满、下一轮值没立刻变就又立即 stall，新策略只有 1 轮机会、很快耗尽重试。
+            window.clear()
+            return _SingleCheckResult(
+                status="stuck",
+                reason=f"连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留在「{val}」，调整未朝目标推进",
+                stuck_reason="连续调值无进展：当前值多轮未变化",
+                issues=["监控值多轮未朝目标推进（疑似方向错/步长不足/非法值回弹）"],
+                summary=check.summary,
             )
         return None
 
@@ -1135,9 +1210,19 @@ class MilestoneSupervisorPolicy:
 
     @staticmethod
     def _fix_picker_direction(plan: _PlanResult) -> None:
-        col_suffix = {"year": "年", "month": "月", "day": "日"}.get(plan.drag_column or "", "")
+        col = plan.drag_column or ""
+        col_suffix = {"year": "年", "month": "月", "day": "日"}.get(col, "")
         if not col_suffix:
             return
+        # 跨边界保护：拖某列时，若指令里**更高位的列**（拖 day→看 月/年，拖 month→看 年）
+        # 出现两个不同的值，说明目标跨越了该列边界（如 3月31日→4月7日，月份 3≠4）。此时单看
+        # 本列数字（31 vs 7）会得出相反方向，必须跳过翻转——正确做法是先对齐高位列（见 PLAN_PROMPT）。
+        higher_suffixes = {"day": ["月", "年"], "month": ["年"], "year": []}.get(col, [])
+        for hs in higher_suffixes:
+            hvals = re.findall(rf"(\d+){hs}", plan.instruction)
+            if len(hvals) >= 2 and len(set(hvals[:2])) > 1:
+                print(f"  [Planner] direction fix 跳过：跨{hs}边界（{hvals[0]}{hs}→{hvals[1]}{hs}），本列数字比较无效")
+                return
         nums = re.findall(rf"(\d+){col_suffix}", plan.instruction)
         if len(nums) < 2:
             return

@@ -223,5 +223,49 @@
       "status": "in_progress",
       "loading": true
     }
+  },
+  {
+    "label": "微信日期选择器-开始日期已到3月10日-converge-done",
+    "screenshot": "evals/checker/screenshots/wechat_date_picker_start_10_done.png",
+    "milestone": {
+      "name": "设置开始日期为2026年3月10日",
+      "description": "在时间段选择器中将开始日期滚动设置为2026年3月10日",
+      "success_condition": "开始日期显示为'2026年3月10日'",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "action"
+    },
+    "history": [
+      "向下拖动日期列从16日切换到10日",
+      "向上拖动日期列从9日切换到10日"
+    ],
+    "expected": {
+      "status": "done",
+      "loading": false,
+      "reason_contains": ["10日", "3月10"]
+    },
+    "note": "连续调值类 done：开始日期滚轮中心吸附在3月/10日、绿框也显示'2026年3月10日'。模型按 prompt 把证据写进 reason、visible_evidence(可选)留空。曾因 done 守卫硬性要求必须有 visible_evidence 而被误判 stuck(20260530_094941 turn7)，级联导致 subgoal 锁死。守卫改为只看 reason+missing_evidence 后应正常 done。"
+  },
+  {
+    "label": "微信日期选择器-结束日期摘要框滞后-读中心行4月-in_progress",
+    "screenshot": "evals/checker/screenshots/wechat_date_picker_end_wheel4_box3_lag.png",
+    "milestone": {
+      "name": "设置结束日期为2026年4月7日",
+      "description": "在时间段选择器中将结束日期滚动设置为2026年4月7日",
+      "success_condition": "结束日期显示为'2026年4月7日'",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "action"
+    },
+    "history": [
+      "向上拖动结束日期的月份列，从3月切换到4月"
+    ],
+    "expected": {
+      "status": "in_progress",
+      "missing_evidence_contains": ["当前值", "目标值"]
+    },
+    "note": "连续调值类进展传感器 case：结束日期未到目标=in_progress（不是失败），且必须结构化输出『当前值=』『目标值=』供 planner/stuck 用。section 引导优先读滚轮中间行（box 不普适、会滞后），但纯 prompt 读单帧不稳（实测约 1/3 读中心行 2/3 读滞后框）——鲁棒性靠 ④ 连续操作容忍层兜底（窗口停滞才升级、绝不判死路/退 tap），故此处不押 box/wheel 方向。源 case：20260530_100639 turn11-16。"
   }
 ]

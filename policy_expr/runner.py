@@ -63,6 +63,13 @@ SETTLE_UNIT_S = 0.5       # 后续轮询间隔
 SETTLE_MAX_UNITS = 6
 SETTLE_CHANGE_THR = 8.0   # 相对动作前帧的灰度均值差，超过即视为动作已生效（噪声地板 ~0.05）
 SETTLE_STABLE_THR = 2.0   # 相对上一帧的灰度均值差，低于即视为画面已停稳
+# drag/scroll 是页内操作，不触发页面加载/转场，但改动常局限一小块（如 picker 滚轮带），
+# 全屏均值差测不出「changed」（实测 picker 拖动仅 0.1-0.25 << CHANGE_THR=8.0），用原
+# 「变过且停稳」逻辑会每次顶满上限白等 ~4s。但也不能盲等固定时长：fling 惯性时长不定
+# （轻拨 ~0.3s，重拨 1-2s），固定值太短会在滚轮没停稳时就截图，checker 读到滞后的标签
+# 值（轮子已滑过、标签未更新），导致位移误算、来回震荡。故对 drag/scroll 只判「停稳」
+# （相邻帧不再变化）、不判「changed」：轻拨很快返回，重拨等到真停，且保证读数准。
+SETTLE_GESTURE_FIRST_S = 0.3  # drag/scroll 首帧：让惯性先跑起来，避免抬手瞬间误判停稳
 
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
@@ -81,12 +88,35 @@ def _frame_diff(png_a: bytes, png_b: bytes) -> float:
     return float(np.abs(a - b).mean())
 
 
-def _settle_after_action(phone: LivePhoneSession, pre_frame: bytes | None) -> float:
+def _settle_after_action(
+    phone: LivePhoneSession, pre_frame: bytes | None, action_type: str | None = None
+) -> float:
     """等到屏幕相对动作前帧「变过且停稳」，或达到上限。返回实际等待秒数。
 
     必须对照动作前帧：否则冷启动那 ~1s 静止旧画面会被误判为已就绪。
+
+    drag/scroll 只判「停稳」（相邻帧不再变化）、不判「changed」：picker 改动小测不出
+    changed 会顶满上限，而固定盲等又会在 fling 没停时截图导致读数滞后、来回震荡。
     """
     t0 = time.perf_counter()
+    if action_type in ("drag", "scroll"):
+        prev: bytes | None = None
+        for i in range(1, SETTLE_MAX_UNITS + 1):
+            time.sleep(SETTLE_GESTURE_FIRST_S if i == 1 else SETTLE_UNIT_S)
+            try:
+                cur = phone.screenshot()
+            except Exception:
+                dur = time.perf_counter() - t0
+                print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
+                return dur
+            if prev is not None and _frame_diff(prev, cur) < SETTLE_STABLE_THR:
+                dur = time.perf_counter() - t0
+                print(f"  [Settle] {dur:.1f}s ({i} 轮，停稳: {action_type})")
+                return dur
+            prev = cur
+        dur = time.perf_counter() - t0
+        print(f"  [Settle] {dur:.1f}s ({SETTLE_MAX_UNITS} 轮，达上限: {action_type})")
+        return dur
     if pre_frame is None:
         time.sleep(SETTLE_FIRST_S)
         dur = time.perf_counter() - t0
@@ -593,7 +623,14 @@ def run_agent_loop(
             noop_count = 0
 
             if auto_continue:
-                turn.settle_s = _settle_after_action(phone, observation.png_bytes)
+                settle_action_type = (
+                    action_decision.action.action_type
+                    if action_decision and action_decision.action
+                    else None
+                )
+                turn.settle_s = _settle_after_action(
+                    phone, observation.png_bytes, settle_action_type
+                )
                 if verify_future is not None:
                     try:
                         turn.target_verify = verify_future.result(timeout=8)

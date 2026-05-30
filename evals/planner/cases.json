@@ -451,5 +451,56 @@
       "must_contain": ["开始时间", "左侧"],
       "must_not_contain": ["结束时间"]
     }
+  },
+  {
+    "label": "picker-跨月3月31→4月7-应先调月份列increase（回归：planner错选日列）",
+    "screenshot": "evals/planner/screenshots/wechat_date_picker_end_3m31_target_4m7.png",
+    "milestone": {
+      "name": "设置结束日期为2026年4月7日",
+      "description": "在选择时间段弹窗中，将结束日期从2026年3月31日调整为2026年4月7日",
+      "success_condition": "结束日期字段显示2026年4月7日",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "结束日期字段已激活（绿色高亮2026年3月31日），滚轮已可拖动；滚轮中间行为2026年3月31日，目标2026年4月7日，月份需从3月调整到4月",
+      "issues": [],
+      "missing_evidence": ["当前值=2026年3月31日", "目标值=2026年4月7日"],
+      "summary": "选择时间段弹窗，结束日期字段已激活，滚轮中间行年=2026、月=3月、日=31日，目标4月7日，可直接拖动滚轮"
+    },
+    "expected": {
+      "direction": "increase",
+      "drag_column": "month"
+    },
+    "note": "跨月场景：当前3月31日、目标4月7日，月份(3≠4)必须先调。曾因 planner 错选日列(31→7)+ _fix_picker_direction 把 increase 误翻成 decrease(7<31)，导致 turn7-9 徒劳拖动(20260530_112049)。月份目标4>当前3 → drag_column=month、direction=increase。"
+  },
+  {
+    "label": "picker-年份已对齐-应拖月份列不应碰年份列（回归：错拖年份致发散）",
+    "screenshot": "evals/planner/screenshots/wechat_date_picker_start_2026m5_year_aligned.png",
+    "milestone": {
+      "name": "设置开始日期为2026年3月10日",
+      "description": "在选择时间段弹窗中，将开始日期从2026年5月1日调整为2026年3月10日",
+      "success_condition": "开始日期字段显示2026年3月10日",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "开始日期滚轮中间行为2026年5月1日，目标2026年3月10日；年份已对齐(均2026)，月份需从5月调到3月",
+      "issues": [],
+      "missing_evidence": ["当前值=2026年5月1日", "目标值=2026年3月10日"],
+      "summary": "选择时间段弹窗，开始日期滚轮中间行年=2026、月=5月、日=1日，年份已对齐，目标3月10日"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "month",
+      "must_not_contain": ["年份列", "年份"]
+    },
+    "note": "年份已对齐(2026=2026)场景：必须拖月份列(5→3,decrease)，绝不能碰已对齐的年份列。曾因 planner 指令文本误写「向下拖动年份列」(reasoning/hint 其实是 month)→执行器按文本拖了年份列→年份被拖坏，叠加 structured_output 方向反向 bug→年份2026→2016 无限发散(20260530_120154)。"
   }
 ]

@@ -65,6 +65,11 @@ def _check_milestones(milestones: list, constraints: list[str], expected: dict) 
         if violators:
             details.append(f"milestone(s) {violators} use forbidden strategy '{forbidden_strategy}'")
 
+    for required_strategy in expected.get("any_milestone_strategy", []):
+        if not any(m.completion_strategy == required_strategy for m in milestones):
+            got = [(m.name, m.completion_strategy) for m in milestones]
+            details.append(f"no milestone with completion_strategy='{required_strategy}' (got: {got})")
+
     for kw in expected.get("constraints_contain", []):
         if kw not in constraints_text:
             details.append(f"global_constraints missing '{kw}' (got: {constraints_text!r})")

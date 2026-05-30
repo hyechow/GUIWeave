@@ -1,5 +1,16 @@
 [
   {
+    "label": "日期范围picker-应repeat_until_satisfied",
+    "screenshot": "evals/decomposer/screenshots/wechat_date_range_picker.png",
+    "goal": "把时间改到2026年3月10日-2026年4月7日",
+    "expected": {
+      "min_milestones": 2,
+      "any_milestone_strategy": ["repeat_until_satisfied"],
+      "no_milestone_strategy": ["read_once"]
+    },
+    "note": "设置开始/结束日期靠滚轮 picker 反复拖动逼近目标值，属连续操作=repeat_until_satisfied。曾被 decomposer 误标 None/read_once(20260530_094941,100639)→运行时按单步处理，一次拖动没到位就被判失败、禁拖拽、退化点击导致整任务失败。"
+  },
+  {
     "label": "到达页面任务-应全部navigation不应action",
     "screenshot": "evals/decomposer/screenshots/screenshot_home.png",
     "goal": "打开微信账单",

@@ -17,6 +17,7 @@ from .prompts import (
     CHECK_KIND_SECTIONS,
     PLAN_PROMPT,
     SINGLE_CHECKER_PROMPT,
+    _CHECK_SECTION_CONVERGE,
     _CHECK_SECTION_DEFAULT,
 )
 
@@ -105,6 +106,10 @@ def run_checker(
         constraints = []
     app_name_context = f"任务目标涉及「{app_name}」应用，" if app_name else ""
     kind_section = CHECK_KIND_SECTIONS.get(milestone.kind, _CHECK_SECTION_DEFAULT)
+    # 连续调值类（picker 收敛）在 kind 段之上叠加专用段：当前值以滚轮中心带为准、强制输出
+    # 当前值/目标值。这是连续操作进展传感器的基础——避免把已推进的拖动误读为"没动"。
+    if milestone.is_converge:
+        kind_section = kind_section + _CHECK_SECTION_CONVERGE
     prompt = SINGLE_CHECKER_PROMPT.format(
         milestone_name=milestone.name,
         milestone_desc=milestone.description,
@@ -121,37 +126,47 @@ def run_checker(
         prompt += f"\n\n## 输出修正要求\n{extra}"
     result = invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _SingleCheckResult)
 
-    # Validate a done verdict. Reject if self-contradictory (admits missing
-    # evidence) or the reason is too thin to justify completion. Additionally,
-    # for non-navigation kinds (action/filter/collection) a done claims a state
-    # change (sent/applied/collected) — require cited visible_evidence, because
-    # a *wrong* done on the pre-action screen typically can't cite any, and the
-    # retry then catches it (measured: send-screen wrong-done 4/10 → 0/10).
-    # Navigation done is self-evident from the page identity in `reason`, so an
-    # empty array there is just a format slip — don't retry on it (avoids a
-    # wasteful ~1s tax on every nav completion).
-    def _done_unsupported(r: _SingleCheckResult) -> bool:
+    # Validate a done verdict in two stages, because the retry and the force-stuck
+    # play different roles:
+    #
+    # _retry_worthy — triggers exactly ONE re-verification. For non-navigation kinds
+    # an empty visible_evidence is included here: a *wrong* done on a pre-action
+    # screen (e.g. send button visible but not yet sent) typically can't cite real
+    # evidence, and forcing a re-check makes the model recant to in_progress
+    # (measured: send-screen wrong-done 4/10 → 0/10). This is the actual
+    # hallucination catcher — the recant on re-verify, not the force-stuck.
+    #
+    # _still_invalid — after the retry, only HARD contradictions force stuck:
+    # missing_evidence non-empty (self-contradiction) or a too-thin reason. We do
+    # NOT force stuck on empty visible_evidence here: the prompt declares that field
+    # optional, so a legitimate done that survives re-verification (date really IS
+    # set, page identity really IS right) but cited its evidence in reason/summary
+    # rather than the optional array must be accepted — else we kill a correct done
+    # and lock the subgoal (observed: 20260530_094941 turn7 → cascaded task failure).
+    def _retry_worthy(r: _SingleCheckResult) -> bool:
         if r.missing_evidence or len((r.reason or "").strip()) < 10:
             return True
         return milestone.kind != "navigation" and not r.visible_evidence
 
-    if not _is_retry and result.status == "done" and _done_unsupported(result):
+    def _still_invalid(r: _SingleCheckResult) -> bool:
+        return bool(r.missing_evidence) or len((r.reason or "").strip()) < 10
+
+    if not _is_retry and result.status == "done" and _retry_worthy(result):
         # Retry exactly once. The retry passes _is_retry=True so it skips this
-        # block — without that the recursion would re-trigger the guard and
-        # retry unboundedly (observed up to 4×), making the stuck-force below
-        # unreachable. Capped at 2 LLM calls total.
+        # block — without that the recursion would re-trigger and retry unboundedly
+        # (observed up to 4×). Capped at 2 LLM calls total.
         print("  [SingleCheck] done 证据不足，重试...")
         result = run_checker(
             milestone, observation, history,
             app_name=app_name, task_type=task_type, constraints=constraints,
             extra=(
-                "你刚才判定为 done，但理由不足以支撑（missing_evidence 非空，或 reason 过于空泛）。"
-                "请重新核对截图：若确实满足验收条件，请在 reason 里写清你看到的具体依据（标题文字、"
-                "高亮选中的 tab、关键内容项），并清空 missing_evidence；否则改判 in_progress。"
+                "你刚才判定为 done，请重新核对截图确认验收条件是否*已经发生*（而非仅具备执行条件）。"
+                "若确实满足，请在 reason 里写清你看到的具体依据（标题文字、高亮选中项、已设定的值、"
+                "结果提示），并清空 missing_evidence；若截图只显示「可以执行」但结果尚未出现，改判 in_progress。"
             ),
             _is_retry=True,
         )
-    if result.status == "done" and _done_unsupported(result):
+    if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
             status="stuck",
             reason="checker 返回 done 但理由不足（缺验收依据或自相矛盾）",

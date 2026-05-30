@@ -45,6 +45,13 @@ CompletionStrategy = Literal[
     "human_escalation",
 ]
 
+# 「连续操作」轴（与 kind 正交）：靠重复调整逼近目标的策略，区别于单步达成。
+#   - repeat_until_satisfied：收敛到目标值（picker 调日期/时间、步进器、滑块）
+#   - scroll_until_boundary：滚动采集直到边界（已有 loop 机制）
+# 连续操作的「进展/卡住」判据与单步不同：进展=被监控值朝目标逼近，重复同一操作属正常，
+# 故 checker(进展传感器)/planner(收敛分流)/stuck(值停滞判据) 都按此轴分流。
+ITERATIVE_STRATEGIES: tuple[str, ...] = ("repeat_until_satisfied", "scroll_until_boundary")
+
 
 class CollectionScope(BaseModel):
     """Structured scope for collected content."""
@@ -308,6 +315,18 @@ class Milestone(BaseModel):
     failure_hints: list[str] = Field(default_factory=list)
     status: str = Field(default="pending", description="pending | running | done | failed")
     retry_count: int = 0
+
+    @property
+    def is_iterative(self) -> bool:
+        """连续操作：靠重复调整逼近目标（picker 调值 / 滚动采集），区别于单步达成。
+        驱动 checker/planner/stuck 按「单步 vs 连续」分流。见 ITERATIVE_STRATEGIES。"""
+        return self.completion_strategy in ITERATIVE_STRATEGIES
+
+    @property
+    def is_converge(self) -> bool:
+        """连续操作中的「收敛到目标值」一味（picker/步进器/滑块）：重复同一操作逐步逼近
+        success_condition 指定的目标值。区别于 scroll_until_boundary（滚动采集）。"""
+        return self.completion_strategy == "repeat_until_satisfied"
 
 
 class TargetVerify(BaseModel):

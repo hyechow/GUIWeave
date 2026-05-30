@@ -49,10 +49,14 @@ _DRAG_AMOUNT: dict[str, tuple[float, int]] = {
     "large": (500.0, 1100),
 }
 
+# picker 滚轮：减小步长 + 降速以抑制 fling 惯性。实测旧 medium(180px) 一拨 ~8 格，
+# 离目标 1-3 格时必然冲过头来回震荡。缩短距离让步长更细，拉长时长降低抬手末速度
+# （fling 与末速度正相关），轮子跟手、抬手即停，既少冲过头也更快停稳。
+# 注：px→格 系数随机型/页面变化，下列为起始值，按实跑日志校准。
 _PICKER_DRAG_AMOUNT: dict[str, tuple[float, int]] = {
-    "small": (60.0, 800),
-    "medium": (180.0, 900),
-    "large": (360.0, 1200),
+    "small": (40.0, 850),
+    "medium": (100.0, 1000),
+    "large": (220.0, 1300),
 }
 
 
