@@ -15,6 +15,7 @@ from policy_expr.executor_constants import SCROLL_DELTA, SCROLL_TICKS
 from policy_expr.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
 from policy_expr.perception import LivePhoneSession
 from policy_expr.schemas import Action
+from policy_expr.stitch import robust_shift as _kp_robust_shift, _gray_u8 as _kp_gray
 
 
 @dataclass(frozen=True)
@@ -119,7 +120,9 @@ class ScrollProbe:
             last_after = after_png
             _save_probe_shot(self.log_dir, turn_no, idx, after_png)
 
-            shift, confidence = estimate_vertical_shift(current_png, after_png)
+            # 关键点匹配估位移（ORB）：在「重复行+大片白底」列表上比全局像素相关/残差鲁棒，
+            # 后者会被行混叠/白对白骗到 shift=0（真机 20260530_145732 turn4 成功滚动被误判失败）。
+            shift, confidence = _kp_robust_shift(_kp_gray(current_png), _kp_gray(after_png))
             changed = _changed_ratio(current_png, after_png)
             print(
                 "  [ScrollProbe] "
@@ -244,9 +247,15 @@ def _changed_ratio(before_png: bytes, after_png: bytes) -> float:
 
 
 def _is_expected_progress(direction: str, shift: int, confidence: float, changed: float) -> bool:
+    # confidence 现为关键点主导簇内点占比（0~1）：真实滚动 ~0.3+，无滚动时 robust_shift 直接返回 0。
     if abs(shift) < 14:
         return False
-    if confidence < 0.015:
+    if confidence < 0.10:
+        return False
+    d = (direction or "").lower()
+    if d == "down" and shift > 0:   # 向下滚 → 内容上移 shift<0；符号相反说明不是预期滚动
+        return False
+    if d == "up" and shift < 0:
         return False
     return changed >= 0.015
 
