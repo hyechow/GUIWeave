@@ -30,6 +30,7 @@ from policy_expr.temporal import resolve_temporal_expressions
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
 from policy_expr.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
+from policy_expr.stitch import StitchAccumulator
 from policy_expr.target_verify import verify_target
 from policy_expr.schemas import (
     ActionDecision,
@@ -295,6 +296,68 @@ def _note_hash(note: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+# ── 拼接采集：逐帧拼成长内容，满一屏才 reader 读，chunk 间留 overlap ──
+STITCH_OVERLAP_PX = 150  # chunk 间重叠像素：防止行被切断；重叠区像素相同 → 行级去重可靠
+
+
+def _store_chunk_note(
+    note: str,
+    context: PolicyContext,
+    seen_rows: set[str],
+    *,
+    turn_no: int,
+    sv_step,
+) -> bool:
+    """把一段拼接块的 reader 文本按行去重后入库。返回是否有新行入库。
+
+    chunk 间 overlap 区像素完全相同 → reader 输出文本一致 → 精确行哈希去重可靠剔除重复行
+    （区别于旧的逐帧重叠：那是不同像素、文本会抖、去不掉）。
+    """
+    if not note or note == "无相关内容":
+        return False
+    new_lines: list[str] = []
+    for raw in note.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        h = _note_hash(line)
+        if h in seen_rows:
+            continue
+        seen_rows.add(h)
+        new_lines.append(line)
+    if not new_lines:
+        return False
+    stored = annotate_content_note(
+        "\n".join(new_lines),
+        turn_no=turn_no,
+        sv_step=sv_step,
+        collection_scope=context.collection_scope,
+    )
+    context.content_notes.append(stored)
+    return True
+
+
+def _flush_and_read(
+    acc: "StitchAccumulator | None",
+    instruction: str,
+    sv_step,
+    reader: "ContentReader",
+    context: PolicyContext,
+    seen_rows: set[str],
+    *,
+    turn_no: int,
+    say,
+) -> None:
+    """采集子目标结束时吐出累积器尾段并读入库（剩余不足一屏的内容）。"""
+    if acc is None or sv_step is None:
+        return
+    tail = acc.flush()
+    if tail is None:
+        return
+    note = reader.read(tail, instruction or "")
+    if _store_chunk_note(note, context, seen_rows, turn_no=turn_no, sv_step=sv_step):
+        say(f"内容摘要(收尾块): {context.content_notes[-1][:80]}...")
+
 
 def _make_result(
     context: PolicyContext,
@@ -382,6 +445,18 @@ def run_agent_loop(
     prev_milestone_id: str | None = None
     scroll_profiles: dict[str, ScrollProfile] = {}
     scroll_probe_failures: dict[str, str] = {}
+    # 拼接采集状态：同一时刻只有一个采集子目标，故单个「当前累积器」即可。
+    stitch_acc: StitchAccumulator | None = None
+    stitch_acc_mid: str | None = None
+    stitch_acc_instr: str = ""
+    stitch_acc_sv = None
+    # 已采集行的精确哈希集合（跨 chunk + resume 去重）。resume 时从既有内容按行重建。
+    seen_rows: set[str] = set()
+    for _n in context.content_notes:
+        for _ln in _n.splitlines():
+            _s = _ln.strip()
+            if _s:
+                seen_rows.add(_note_hash(_s))
 
     with LivePhoneSession() as phone:
         executor = ActionExecutor(phone)
@@ -389,6 +464,9 @@ def run_agent_loop(
         while True:
             turn_no = len(context.turns) + 1
             if turn_no > max_turns:
+                _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
+                                context, seen_rows, turn_no=turn_no - 1, say=_say)
+                stitch_acc = None
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
                 _save_context(context_path, context)
                 return _make_result(context, f"达到最大轮数 {max_turns}")
@@ -432,6 +510,14 @@ def run_agent_loop(
             read_added_content = False
             read_note_hash = None
 
+            # 采集子目标切换 → 先 flush 上一个累积器的尾段（哪怕新子目标不采集，也别丢残留）。
+            cur_mid = sv_step.milestone_id or "_global"
+            if stitch_acc is not None and stitch_acc_mid != cur_mid:
+                _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
+                                context, seen_rows, turn_no=turn_no, say=_say)
+                stitch_acc = None
+                stitch_acc_mid = None
+
             if sv_step.read_instruction and not sv_step.allow_read:
                 _say(
                     "跳过读取入库: 当前阶段不允许采集 "
@@ -439,23 +525,40 @@ def run_agent_loop(
                 )
             elif sv_step.read_instruction:
                 reader_instruction = build_reader_instruction(original_goal, sv_step)
-                _say(f"读取内容: {reader_instruction}")
-                note = reader.read(observation.png_bytes, reader_instruction)
-                if note and note != "无相关内容":
-                    note = annotate_content_note(
-                        note,
-                        turn_no=turn_no,
-                        sv_step=sv_step,
-                        collection_scope=context.collection_scope,
-                    )
-                    read_note_hash = _note_hash(note)
-                    if read_note_hash not in context.content_note_hashes:
-                        context.content_note_hashes.append(read_note_hash)
-                        context.content_notes.append(note)
-                        read_added_content = True
-                        _say(f"内容摘要: {note[:80]}...")
+                if sv_step.completion_strategy == "scroll_until_boundary":
+                    # 多帧滚动采集：逐帧喂累积器拼接，几何去重；攒满约一屏才真正 reader 读，
+                    # chunk 间留 overlap 防切行。read_added_content=拼接是否推进，供边界判定。
+                    if stitch_acc is None:
+                        stitch_acc = StitchAccumulator(overlap_px=STITCH_OVERLAP_PX)
+                        stitch_acc_mid = cur_mid
+                    stitch_acc_instr = reader_instruction
+                    stitch_acc_sv = sv_step
+                    chunks, advanced = stitch_acc.feed(observation.png_bytes)
+                    read_added_content = advanced
+                    if chunks:
+                        _say(f"读取内容: {reader_instruction}（{len(chunks)} 拼接块, "
+                             f"待读 {stitch_acc.pending_px}px）")
+                        for chunk_png in chunks:
+                            note = reader.read(chunk_png, reader_instruction)
+                            if _store_chunk_note(note, context, seen_rows,
+                                                 turn_no=turn_no, sv_step=sv_step):
+                                read_note_hash = _note_hash(context.content_notes[-1])
+                                _say(f"内容摘要(块): {context.content_notes[-1][:80]}...")
+                    elif advanced:
+                        _say(f"拼接累积中（{stitch_acc.pending_px}px，未满一屏，暂不读）")
                     else:
-                        _say("内容摘要: 与已采集内容重复，未入库")
+                        _say("列表未推进（滚动无效/到底），不追加")
+                else:
+                    # 单帧读取（read_once / 普通 analysis，无滚动重叠问题）→ 立即读。
+                    _say(f"读取内容: {reader_instruction}")
+                    note = reader.read(observation.png_bytes, reader_instruction)
+                    if _store_chunk_note(note, context, seen_rows,
+                                         turn_no=turn_no, sv_step=sv_step):
+                        read_added_content = True
+                        read_note_hash = _note_hash(context.content_notes[-1])
+                        _say(f"内容摘要: {context.content_notes[-1][:80]}...")
+                    else:
+                        _say("内容摘要: 无新增/与已采集重复，未入库")
 
             action_decision = None
             executed = False
@@ -580,6 +683,10 @@ def run_agent_loop(
 
             if sv_step.stop or sv_step.goal_completed:
                 reason = sv_step.stop_reason or ("目标已达成" if sv_step.goal_completed else "agent-loop 停止")
+                # 收尾：读出累积器里剩余不足一屏的内容，避免末尾几行丢失。
+                _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
+                                context, seen_rows, turn_no=turn_no, say=_say)
+                stitch_acc = None
                 if sv_step.goal_completed:
                     _say(f"\n目标已达成：{reason}")
                 else:
