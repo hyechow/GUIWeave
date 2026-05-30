@@ -103,5 +103,15 @@
       "any_milestone_kind": ["action", "filter"]
     },
     "assertions": ["address_before_search"]
+  },
+  {
+    "label": "算账类-不应生成汇总计算子目标",
+    "screenshot": "evals/decomposer/screenshots/wechat_bill_list_compute.png",
+    "goal": "滚动屏幕收集数据，算算这周一共花了多少钱",
+    "expected": {
+      "any_milestone_strategy": ["scroll_until_boundary"],
+      "no_milestone_contains": ["汇总", "计算"]
+    },
+    "note": "「算算花了多少钱」的求和是对已采集数据的纯运算，由输出环节做，不该单独建子目标。曾多分解出「汇总计算总支出金额」(20260530_161048)→agent 跑去翻微信「收支统计→月账单」白费3轮，还读到整月而非目标周的错范围数(¥17473.53)，所幸最终输出仍用采集数据(-1014.50)。采集(scroll_until_boundary)应是最后一个操作子目标。"
   }
 ]
