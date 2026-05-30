@@ -30,7 +30,7 @@ from policy_expr.temporal import resolve_temporal_expressions
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
 from policy_expr.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
-from policy_expr.stitch import StitchAccumulator
+from policy_expr.stitch import StitchAccumulator, robust_shift, _gray_u8
 from policy_expr.target_verify import verify_target
 from policy_expr.schemas import (
     ActionDecision,
@@ -152,6 +152,14 @@ _VERIFY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="verify")
 # YOLO detection + OCR run here, concurrent with the supervisor decide, so the
 # snap has its boxes/text ready by execute time (~0.4s off the critical path).
 _PREP_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="prep")
+
+# Stitched-chunk reader (~1.8s LLM read) runs here so it overlaps the action +
+# settle + next turn's loop_check. Result is drained at the next turn's read
+# block (read_added_content is set inline from the cheap stitch feed, so the
+# supervisor's boundary check never waits on the reader). 1 worker keeps
+# content_notes ordering. Stitch feed (robust_shift, ~25ms) stays inline: it
+# produces read_added_content which the turn record needs synchronously.
+_READER_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reader")
 
 
 def _snapped_point(action_decision: ActionDecision | None) -> tuple[float, float] | None:
@@ -458,12 +466,28 @@ def run_agent_loop(
             if _s:
                 seen_rows.add(_note_hash(_s))
 
+    # 后台 reader 读取的待入库结果：(future→list[note], turn_no, sv_step)。在下一轮 read 块
+    # 开头 drain（此时它早已与动作/settle/下一轮 loop_check 重叠完成）。文本去重+入库都在主
+    # 线程做（仅 reader.read 的网络 I/O 在后台），避免 content_notes/seen_rows 并发写。
+    pending_read: tuple[Future, int, object] | None = None
+
+    def _drain_pending_read() -> None:
+        nonlocal pending_read
+        if pending_read is None:
+            return
+        fut, tno, sv = pending_read
+        pending_read = None
+        for note in fut.result():
+            if _store_chunk_note(note, context, seen_rows, turn_no=tno, sv_step=sv):
+                _say(f"内容摘要(块): {context.content_notes[-1][:80]}...")
+
     with LivePhoneSession() as phone:
         executor = ActionExecutor(phone)
 
         while True:
             turn_no = len(context.turns) + 1
             if turn_no > max_turns:
+                _drain_pending_read()
                 _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
                                 context, seen_rows, turn_no=turn_no - 1, say=_say)
                 stitch_acc = None
@@ -510,6 +534,10 @@ def run_agent_loop(
             read_added_content = False
             read_note_hash = None
 
+            # 先把上一轮后台 reader 读好的内容入库（此时已与上一轮动作/settle + 本轮截图/
+            # loop_check 重叠完成，drain 几乎不等待 → 出块轮的 ~1.8s reader 被完全藏起）。
+            _drain_pending_read()
+
             # 采集子目标切换 → 先 flush 上一个累积器的尾段（哪怕新子目标不采集，也别丢残留）。
             cur_mid = sv_step.milestone_id or "_global"
             if stitch_acc is not None and stitch_acc_mid != cur_mid:
@@ -533,17 +561,19 @@ def run_agent_loop(
                         stitch_acc_mid = cur_mid
                     stitch_acc_instr = reader_instruction
                     stitch_acc_sv = sv_step
-                    chunks, advanced = stitch_acc.feed(observation.png_bytes)
+                    chunks, advanced = stitch_acc.feed(observation.png_bytes)  # ~25ms，内联
                     read_added_content = advanced
                     if chunks:
-                        _say(f"读取内容: {reader_instruction}（{len(chunks)} 拼接块, "
+                        # 后台读这些块（与动作/settle/下一轮 loop_check 重叠），下一轮 drain 入库。
+                        _say(f"读取内容: {reader_instruction}（{len(chunks)} 拼接块后台读, "
                              f"待读 {stitch_acc.pending_px}px）")
-                        for chunk_png in chunks:
-                            note = reader.read(chunk_png, reader_instruction)
-                            if _store_chunk_note(note, context, seen_rows,
-                                                 turn_no=turn_no, sv_step=sv_step):
-                                read_note_hash = _note_hash(context.content_notes[-1])
-                                _say(f"内容摘要(块): {context.content_notes[-1][:80]}...")
+                        pending_read = (
+                            _READER_POOL.submit(
+                                lambda cs=chunks, ins=reader_instruction:
+                                    [reader.read(c, ins) for c in cs]
+                            ),
+                            turn_no, sv_step,
+                        )
                     elif advanced:
                         _say(f"拼接累积中（{stitch_acc.pending_px}px，未满一屏，暂不读）")
                     else:
@@ -563,6 +593,7 @@ def run_agent_loop(
             action_decision = None
             executed = False
             probe_failed = False
+            branch_settle_s: float | None = None  # 缓存滚动已在分支内 settle → 轮末跳过重复
 
             if sv_step.should_act:
                 _say(f"动作指令: {sv_step.instruction}")
@@ -617,20 +648,36 @@ def run_agent_loop(
                     )
                     if should_probe_scroll and profile_key in scroll_profiles:
                         profile = scroll_profiles[profile_key]
-                        action = apply_profile(action, profile)
-                        action_decision = action_decision.model_copy(update={"action": action})
+                        cached = apply_profile(action, profile)
                         _say(
                             "  [ScrollProbe] 使用缓存滚动点: "
                             f"method={profile.method}, x={profile.x:.0f}, y={profile.y:.0f}, "
                             f"ticks={profile.ticks}, delta={profile.delta_px}"
                         )
-                        if action.action_type == "scroll":
-                            print(f"\n动作: [{action.action_type}] {action.description}")
-                            executor.execute_scroll(action, ticks=profile.ticks, delta_px=profile.delta_px)
+                        if cached.action_type == "scroll":
+                            print(f"\n动作: [{cached.action_type}] {cached.description}")
+                            executor.execute_scroll(cached, ticks=profile.ticks, delta_px=profile.delta_px)
                         else:
-                            executor.execute(ActionDecision(action=action), app_name=sv_step.app_name or "")
-                        executed = True
-                    elif should_probe_scroll:
+                            executor.execute(ActionDecision(action=cached), app_name=sv_step.app_name or "")
+                        # 验证缓存滚动是否真的动了：真机同一手势(尤其 MCP drag)会偶发不生效，
+                        # turn1 滚了 turn2 没滚（20260530_155828）。不验证就会被下一轮 SimStuck
+                        # 「冻结→边界」误判成到底、采集截断。**必须先 settle 再测**：滚动有延迟/
+                        # 惯性，execute 后立刻截图屏幕还没动，会把每次缓存都误判成 0 位移而每轮空
+                        # 重探（20260530_161048）。settle 等画面稳后再比，真滚→保留缓存、真没滚→重探。
+                        branch_settle_s = _settle_after_action(
+                            phone, observation.png_bytes, cached.action_type
+                        )
+                        after_png = phone.screenshot()
+                        cshift, _ = robust_shift(_gray_u8(observation.png_bytes), _gray_u8(after_png))
+                        if cshift != 0:
+                            action = cached
+                            action_decision = action_decision.model_copy(update={"action": action})
+                            executed = True
+                        else:
+                            _say("  [ScrollProbe] 缓存滚动点 settle 后仍 0 位移 → 废弃缓存，重新探测")
+                            scroll_profiles.pop(profile_key, None)
+                            branch_settle_s = None  # 改走重探+轮末 settle
+                    if should_probe_scroll and not executed and not probe_failed:
                         probe = ScrollProbe(phone, executor, log_dir)
                         result = probe.probe(observation.png_bytes, action, turn_no=turn_no)
                         if result.success and result.profile:
@@ -647,7 +694,7 @@ def run_agent_loop(
                                 f"{result.reason}"
                             )
                             executed = False
-                    else:
+                    elif not should_probe_scroll:
                         executed = executor.execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes, is_home_screen=sv_step.is_home_screen)
 
             # Post-action targeting verify: did the snapped tap land on target?
@@ -683,7 +730,8 @@ def run_agent_loop(
 
             if sv_step.stop or sv_step.goal_completed:
                 reason = sv_step.stop_reason or ("目标已达成" if sv_step.goal_completed else "agent-loop 停止")
-                # 收尾：读出累积器里剩余不足一屏的内容，避免末尾几行丢失。
+                # 收尾：先 drain 本轮后台读，再读出累积器剩余不足一屏的内容，避免末尾几行丢失。
+                _drain_pending_read()
                 _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
                                 context, seen_rows, turn_no=turn_no, say=_say)
                 stitch_acc = None
@@ -730,14 +778,18 @@ def run_agent_loop(
             noop_count = 0
 
             if auto_continue:
-                settle_action_type = (
-                    action_decision.action.action_type
-                    if action_decision and action_decision.action
-                    else None
-                )
-                turn.settle_s = _settle_after_action(
-                    phone, observation.png_bytes, settle_action_type
-                )
+                if branch_settle_s is not None:
+                    # 缓存滚动已在分支内 settle 过（为验证位移），不重复等待。
+                    turn.settle_s = branch_settle_s
+                else:
+                    settle_action_type = (
+                        action_decision.action.action_type
+                        if action_decision and action_decision.action
+                        else None
+                    )
+                    turn.settle_s = _settle_after_action(
+                        phone, observation.png_bytes, settle_action_type
+                    )
                 if verify_future is not None:
                     try:
                         turn.target_verify = verify_future.result(timeout=8)
