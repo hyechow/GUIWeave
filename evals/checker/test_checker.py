@@ -119,6 +119,10 @@ def test_checker() -> None:
             for kw in expected["reason_not_contains"]:
                 if kw in result.reason:
                     details.append(f"reason should NOT contain {kw!r}, got: {result.reason[:120]}")
+        if "output_not_contains" in expected:
+            for kw in expected["output_not_contains"]:
+                if kw in output:
+                    details.append(f"output should NOT contain {kw!r} (意外的重试/守卫触发)")
 
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")

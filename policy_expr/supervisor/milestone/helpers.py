@@ -126,6 +126,17 @@ def run_checker(
         prompt += f"\n\n## 输出修正要求\n{extra}"
     result = invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _SingleCheckResult)
 
+    def _strip_progress_evidence(r: _SingleCheckResult) -> None:
+        # 连续调值类(is_converge)的 checker section 要求把「当前值=/目标值=」写进 missing_evidence
+        # 作进展传感器。这些在 done(值已达标)时是冗余的、不是真正缺失的验收证据；若留着会被下面
+        # 的 done 守卫当成「证据不足」而每次 done 都误触发一次重试(实测频繁,~1s/次)。done 时剔除它们。
+        if milestone.is_converge and r.status == "done" and r.missing_evidence:
+            r.missing_evidence = [
+                e for e in r.missing_evidence if "当前值" not in e and "目标值" not in e
+            ]
+
+    _strip_progress_evidence(result)
+
     # Validate a done verdict in two stages, because the retry and the force-stuck
     # play different roles:
     #
@@ -146,6 +157,11 @@ def run_checker(
     def _retry_worthy(r: _SingleCheckResult) -> bool:
         if r.missing_evidence or len((r.reason or "").strip()) < 10:
             return True
+        # 连续调值类(converge)的 done 由「滚轮中间行值 == success_condition 目标」直接验证，
+        # 证据是客观可读的(写在 reason 里)，不需要 visible_evidence 数组——豁免该条，否则每个
+        # converge done 都会因 visible_evidence 空而白白重试一次。
+        if milestone.is_converge:
+            return False
         return milestone.kind != "navigation" and not r.visible_evidence
 
     def _still_invalid(r: _SingleCheckResult) -> bool:
@@ -166,6 +182,7 @@ def run_checker(
             ),
             _is_retry=True,
         )
+        _strip_progress_evidence(result)
     if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
             status="stuck",

@@ -32,7 +32,9 @@
     "expected": {
       "status": "in_progress",
       "loading": false,
-      "page_identity_contains": ["主屏"]
+      "page_identity_contains": [
+        "主屏"
+      ]
     },
     "note": "iOS 主屏。page_identity 必须非空且含「主屏」——它驱动 is_home 派生，进而在主屏抑制 OCR（否则 OCR 会吸到图标下方「微信」文字 label，点空不启动）。曾因 page_identity 留空导致 is_home=False、OCR 误吸 label、浪费一整轮(20260529_173218 turn1)。"
   },
@@ -53,7 +55,7 @@
       "loading": false
     },
     "note": "navigation 类 done。旧 nav section 写'in_progress 可留空'，模型连 done 也把 visible_evidence 留空 → 撞 done 守卫反复重试(实测 6/6 次重试，最多 4 次)，checker 从 1 次涨到 4 次调用。section 改为'done 必须列证据'后 0/6 重试。"
-    },
+  },
   {
     "label": "首页-milestone已满足-done",
     "screenshot": "evals/checker/screenshots/screenshot_turn_1.png",
@@ -243,7 +245,13 @@
     "expected": {
       "status": "done",
       "loading": false,
-      "reason_contains": ["10日", "3月10"]
+      "reason_contains": [
+        "10日",
+        "3月10"
+      ],
+      "output_not_contains": [
+        "证据不足"
+      ]
     },
     "note": "连续调值类 done：开始日期滚轮中心吸附在3月/10日、绿框也显示'2026年3月10日'。模型按 prompt 把证据写进 reason、visible_evidence(可选)留空。曾因 done 守卫硬性要求必须有 visible_evidence 而被误判 stuck(20260530_094941 turn7)，级联导致 subgoal 锁死。守卫改为只看 reason+missing_evidence 后应正常 done。"
   },
@@ -259,10 +267,15 @@
       "completion_strategy": "repeat_until_satisfied",
       "task_type": "action"
     },
-    "constraints": ["时间范围：2026-03-10 ~ 2026-04-07"],
+    "constraints": [
+      "时间范围：2026-03-10 ~ 2026-04-07"
+    ],
     "expected": {
       "status": "done",
-      "loading": false
+      "loading": false,
+      "output_not_contains": [
+        "证据不足"
+      ]
     },
     "note": "回归：开始日期已是3月10日(success_condition满足)→必须 done，不能因为全局约束里还含『结束日期4月7日』未设而判 in_progress。结束日期由另一个子目标负责。曾因 checker 把全局约束当本子目标验收标准，开始日期已达标却判 in_progress→没推进→值漂到3月11日→反复补救(20260530_121615 turn9-15)。"
   },
@@ -283,7 +296,10 @@
     ],
     "expected": {
       "status": "in_progress",
-      "missing_evidence_contains": ["当前值", "目标值"]
+      "missing_evidence_contains": [
+        "当前值",
+        "目标值"
+      ]
     },
     "note": "连续调值类进展传感器 case：结束日期未到目标=in_progress（不是失败），且必须结构化输出『当前值=』『目标值=』供 planner/stuck 用。section 引导优先读滚轮中间行（box 不普适、会滞后），但纯 prompt 读单帧不稳（实测约 1/3 读中心行 2/3 读滞后框）——鲁棒性靠 ④ 连续操作容忍层兜底（窗口停滞才升级、绝不判死路/退 tap），故此处不押 box/wheel 方向。源 case：20260530_100639 turn11-16。"
   }
