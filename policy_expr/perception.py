@@ -1,6 +1,7 @@
 """Environment sensing for policy experiments."""
 
 import io
+import os
 import struct
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from policy_expr.client import SyncMCPClient
+from policy_expr.client import SyncMCPClient, MirrorDaemonClient
 from policy_expr.schemas import Observation
 
 ROOT = Path(__file__).parent.parent
@@ -94,23 +95,40 @@ class SCKSession:
 
 
 class LivePhoneSession:
-    """Own the mirroir-mcp connection used for execution, and SCK for screenshots."""
+    """拥有执行用的输入连接 + 截图源。后端由 PHONE_BACKEND 选择:
+
+    - "mirroir"(默认):SCK 截图流 + SyncMCPClient 输入(抢占原版)。
+    - "daemon":MirrorDaemonClient 一体提供截图 + 零抢占输入 + agent 光标 overlay
+      (截图前自动隐藏光标,不进感知图)。tap/home/screenshot 走 daemon;scroll/drag/
+      type 仍走 executor 的现有路径(Quartz/osascript),够先测 tap。MIRROR_CURSOR=0 关光标。
+    """
 
     def __init__(self):
-        self.client: SyncMCPClient | None = None
+        self.client: SyncMCPClient | MirrorDaemonClient | None = None
         self._sck: SCKSession | None = None
+        self._screenshot_via_client = False   # daemon 后端:截图走 client 而非 SCK
 
     def __enter__(self) -> "LivePhoneSession":
-        print("启动 SCK 截图流...")
-        sck = SCKSession()
-        sck.start()
-        self._sck = sck
-        print("SCK 截图流就绪")
-
-        print("连接手机中...")
-        self.client = SyncMCPClient()
-        self.client.connect()
-        print("MCP 连接成功")
+        backend = os.environ.get("PHONE_BACKEND", "mirroir").lower()
+        if backend == "daemon":
+            if MirrorDaemonClient is None:
+                raise RuntimeError("MirrorDaemonClient 不可用(检查 bin/mirror_daemon 与依赖)")
+            print("连接手机中 (mirror_daemon, 零抢占)...")
+            cursor = os.environ.get("MIRROR_CURSOR", "1") != "0"
+            self.client = MirrorDaemonClient(cursor=cursor)
+            self.client.connect()
+            self._screenshot_via_client = True
+            print("mirror_daemon 连接成功")
+        else:
+            print("启动 SCK 截图流...")
+            sck = SCKSession()
+            sck.start()
+            self._sck = sck
+            print("SCK 截图流就绪")
+            print("连接手机中 (mirroir-mcp)...")
+            self.client = SyncMCPClient()
+            self.client.connect()
+            print("MCP 连接成功")
         return self
 
     def __exit__(self, *_):
@@ -122,6 +140,9 @@ class LivePhoneSession:
         self.client = None
 
     def screenshot(self) -> bytes:
+        if self._screenshot_via_client:
+            assert self.client is not None
+            return self.client.screenshot()
         if not self._sck:
             raise RuntimeError("SCK 尚未连接")
         return self._sck.screenshot()
