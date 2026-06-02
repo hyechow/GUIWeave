@@ -1,0 +1,190 @@
+// agent_cursor.swift — 项目自有的 agent 虚拟光标 overlay 守护进程(基础版 + 跨点平滑滑动)
+//
+// 一个透明、点击穿透、不抢焦点的【小窗口】overlay,每帧跟随到当前(平滑插值的)光标点。
+// 蓝渐变箭头 + bloom 光晕(与 cua-driver 同款配色)。从 stdin 读 move 指令平滑滑过去;
+// 空闲自动淡出。click/scroll/drag 统一复用它,全局只有这一个 agent 光标;真实物理光标不动。
+//
+// 为何小窗跟随(而非一个全屏巨窗):macOS "显示器独立空间"下,跨屏巨窗会被整体分配到其中心
+// 所在的那块屏(实测跑去副屏)。小窗按其位置被分配到对应那块屏 → 正确落在主屏镜像处。
+//
+// 协议(stdin,一行一条):
+//   move <x> <y>   平滑滑到屏幕点 (x,y) —— 逻辑点、左上原点(同 CGWindow)
+//   show / hide / quit
+//
+// 独立进程(不整合进 mirror_daemon):overlay 画在镜像之上会进 SCStream 截图、污染 OCR/YOLO,
+// 故保持独立。build: swiftc sck/agent_cursor.swift -o /tmp/agent_cursor
+
+import AppKit
+import Foundation
+
+setbuf(stdout, nil)
+let DEBUG = ProcessInfo.processInfo.environment["AC_DEBUG"] == "1"
+func dbg(_ s: String) { if DEBUG { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) } }
+
+let GLIDE_K: CGFloat = 0.28          // 每帧向目标插值比例(弹性滑动手感)
+let ALPHA_K: CGFloat = 0.25
+let IDLE_HIDE_S: Double = 4.0
+let FPS: Double = 60.0
+let BOX: CGFloat = 160               // 小窗边长(容纳箭头 + bloom)
+
+func primaryHeight() -> CGFloat {
+    (NSScreen.screens.first { $0.frame.origin == .zero }?.frame.height)
+        ?? NSScreen.main?.frame.height ?? 1080
+}
+
+// 箭头永远画在小窗中心(窗口移动,内容只画一次)
+final class CursorView: NSView {
+    var phase: CGFloat = 0   // 呼吸脉冲相位(Controller 每帧推进)
+    override var isFlipped: Bool { false }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        if ProcessInfo.processInfo.environment["AC_DEBUG"] == "1" {
+            ctx.setFillColor(CGColor(red: 1, green: 0, blue: 1, alpha: 0.6)); ctx.fill(bounds)
+        }
+        // teal-green 折纸/飞镖箭头 + 呼吸柔光脉冲 + 落地阴影。nose 在中心(=光标热点)。
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let s: CGFloat = 0.74   // ≈25px
+        func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: c.x + x * s, y: c.y + y * s) }
+        let N = P(0, 0)      // 尖端
+        let R = P(34, -16)   // 右翼
+        let M = P(20, -20)   // 尾部凹口
+        let L = P(16, -34)   // 左翼
+
+        let tealHi = CGColor(colorSpace: cs, components: [0.30, 0.78, 0.60, 1.0])!
+        let tealLo = CGColor(colorSpace: cs, components: [0.13, 0.55, 0.44, 1.0])!
+        let mintHi = CGColor(colorSpace: cs, components: [0.96, 1.00, 0.98, 1.0])!
+        let mintLo = CGColor(colorSpace: cs, components: [0.80, 0.96, 0.90, 1.0])!
+
+        func outline() -> CGMutablePath {
+            let p = CGMutablePath()
+            p.move(to: N); p.addLine(to: R); p.addLine(to: M); p.addLine(to: L); p.closeSubpath(); return p
+        }
+        func tri(_ a: CGPoint, _ b: CGPoint, _ d: CGPoint) -> CGMutablePath {
+            let p = CGMutablePath(); p.move(to: a); p.addLine(to: b); p.addLine(to: d); p.closeSubpath(); return p
+        }
+
+        // 1) 呼吸柔光脉冲(teal 光晕,半径 + 透明度随 phase 起伏)——动态、更显眼
+        let pulse = 0.5 + 0.5 * sin(phase)
+        let mid = P(16, -18)
+        let glowR = (24 + 16 * pulse) * s
+        let glowA = 0.14 + 0.26 * pulse
+        if let g = CGGradient(colorsSpace: cs, colors: [
+            CGColor(colorSpace: cs, components: [0.32, 0.85, 0.66, glowA])!,
+            CGColor(colorSpace: cs, components: [0.32, 0.85, 0.66, 0.0])!] as CFArray, locations: [0, 1]) {
+            ctx.drawRadialGradient(g, startCenter: mid, startRadius: 0, endCenter: mid, endRadius: glowR, options: [])
+        }
+
+        // 2) 落地阴影:对整形填一次底色(带 shadow)→ 统一投影,再画折面盖上
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -2.0), blur: 5.0,
+                      color: CGColor(colorSpace: cs, components: [0.0, 0.12, 0.09, 0.55])!)
+        ctx.addPath(outline()); ctx.setFillColor(tealLo); ctx.fillPath()
+        ctx.restoreGState()
+
+        // 3) 折面渐变(无阴影)
+        ctx.saveGState(); ctx.addPath(tri(N, R, M)); ctx.clip()
+        if let g = CGGradient(colorsSpace: cs, colors: [tealHi, tealLo] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: N, end: R, options: [])
+        }
+        ctx.restoreGState()
+        ctx.saveGState(); ctx.addPath(tri(N, M, L)); ctx.clip()
+        if let g = CGGradient(colorsSpace: cs, colors: [mintHi, mintLo] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: N, end: L, options: [])
+        }
+        ctx.restoreGState()
+
+        // 4) 描边 + 折线
+        ctx.addPath(outline())
+        ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.92, 1.0, 0.96, 0.95])!)
+        ctx.setLineWidth(1.0); ctx.setLineJoin(.round); ctx.strokePath()
+        let crease = CGMutablePath(); crease.move(to: N); crease.addLine(to: M)
+        ctx.addPath(crease)
+        ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.13, 0.55, 0.44, 0.55])!)
+        ctx.setLineWidth(0.6); ctx.strokePath()
+    }
+}
+
+final class Controller: @unchecked Sendable {
+    let window: NSWindow
+    var cur = CGPoint(x: -2000, y: -2000)   // cocoa global
+    var target = CGPoint(x: -2000, y: -2000)
+    var curAlpha: CGFloat = 0
+    var targetAlpha: CGFloat = 0
+    var lastMove = CFAbsoluteTimeGetCurrent()
+    var haveTarget = false
+    var frame = 0
+
+    init() {
+        let w = NSWindow(contentRect: NSRect(x: -2000, y: -2000, width: BOX, height: BOX),
+                         styleMask: .borderless, backing: .buffered, defer: false)
+        w.isOpaque = false; w.backgroundColor = .clear; w.hasShadow = false
+        w.ignoresMouseEvents = true
+        w.level = .screenSaver
+        w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        w.alphaValue = 0
+        w.contentView = CursorView(frame: NSRect(x: 0, y: 0, width: BOX, height: BOX))
+        w.orderFrontRegardless()
+        self.window = w
+        dbg("[init] BOX=\(BOX) primaryH=\(primaryHeight()) screens=\(NSScreen.screens.map { $0.frame })")
+    }
+
+    func toCocoa(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: primaryHeight() - y) }
+
+    func moveTo(_ x: CGFloat, _ y: CGFloat) {
+        let p = toCocoa(x, y)
+        if !haveTarget { cur = p; haveTarget = true }
+        target = p; targetAlpha = 1; lastMove = CFAbsoluteTimeGetCurrent()
+        dbg("[move] cg=(\(Int(x)),\(Int(y))) -> cocoa=(\(Int(p.x)),\(Int(p.y)))")
+    }
+    func show() { targetAlpha = 1; lastMove = CFAbsoluteTimeGetCurrent() }
+    func hide() { targetAlpha = 0 }
+
+    func tick() {
+        guard haveTarget else { return }
+        cur.x += (target.x - cur.x) * GLIDE_K
+        cur.y += (target.y - cur.y) * GLIDE_K
+        if CFAbsoluteTimeGetCurrent() - lastMove > IDLE_HIDE_S { targetAlpha = 0 }
+        curAlpha += (targetAlpha - curAlpha) * ALPHA_K
+        window.alphaValue = curAlpha
+        window.setFrameOrigin(NSPoint(x: cur.x - BOX / 2, y: cur.y - BOX / 2))   // 小窗跟随
+        // 推进呼吸脉冲并重绘(仅可见时,省 CPU);周期 ~1.05s
+        if curAlpha > 0.02, let v = window.contentView as? CursorView {
+            v.phase += 0.10
+            v.needsDisplay = true
+        }
+        frame += 1
+        if frame % 30 == 0 {
+            dbg("[tick] alpha=\(String(format: "%.2f", curAlpha)) winOrigin=(\(Int(window.frame.minX)),\(Int(window.frame.minY))) screen=\(window.screen.map { "\($0.frame)" } ?? "nil")")
+        }
+    }
+}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+app.finishLaunching()
+let ctrl = Controller()
+
+Thread.detachNewThread {
+    while let line = readLine(strippingNewline: true) {
+        let parts = line.split(separator: " ")
+        guard let cmd = parts.first else { continue }
+        DispatchQueue.main.async {
+            switch cmd {
+            case "move":
+                if parts.count >= 3, let x = Double(parts[1]), let y = Double(parts[2]) {
+                    ctrl.moveTo(CGFloat(x), CGFloat(y))
+                }
+            case "show": ctrl.show()
+            case "hide": ctrl.hide()
+            case "quit": exit(0)
+            default: break
+            }
+        }
+    }
+    DispatchQueue.main.async { exit(0) }
+}
+
+let timer = Timer(timeInterval: 1.0 / FPS, repeats: true) { _ in ctrl.tick() }
+RunLoop.main.add(timer, forMode: .common)
+app.run()
