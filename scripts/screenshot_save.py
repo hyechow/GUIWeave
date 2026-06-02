@@ -2,7 +2,7 @@
 
 import sys
 sys.path.insert(0, ".")
-from policy_expr.sync_mcp_client import SyncMCPClient
+from policy_expr.client import SyncMCPClient
 from datetime import datetime
 from pathlib import Path
 
