@@ -16,3 +16,7 @@ evals/**/*.png
 evals/**/*.jpg
 *.mov
 videos
+
+# Swift sources for bin/mirror_daemon; built out of tree.
+sck/mirror_daemon.swift
+scripts/mirror_*.swift
