@@ -302,5 +302,29 @@
       ]
     },
     "note": "连续调值类进展传感器 case：结束日期未到目标=in_progress（不是失败），且必须结构化输出『当前值=』『目标值=』供 planner/stuck 用。section 引导优先读滚轮中间行（box 不普适、会滞后），但纯 prompt 读单帧不稳（实测约 1/3 读中心行 2/3 读滞后框）——鲁棒性靠 ④ 连续操作容忍层兜底（窗口停滞才升级、绝不判死路/退 tap），故此处不押 box/wheel 方向。源 case：20260530_100639 turn11-16。"
+  },
+  {
+    "label": "PDD个人中心-推荐流+红色618键-不误读为首页",
+    "screenshot": "evals/checker/screenshots/pdd_personal_center_618.png",
+    "milestone": {
+      "name": "定位最近下单的奶粉商品",
+      "description": "在订单列表中浏览或搜索，找到最近下单的奶粉商品并点击进入详情页。",
+      "success_condition": "看到奶粉商品的订单详情或商品详情页",
+      "kind": "action",
+      "app_name": "拼多多",
+      "task_type": "action"
+    },
+    "expected": {
+      "status": "in_progress",
+      "page_identity_contains": [
+        "个人中心",
+        "订单",
+        "我的"
+      ],
+      "page_identity_not_contains": [
+        "首页"
+      ]
+    },
+    "note": "源 session 20260603_195353 turn1：拼多多个人中心页（顶部「我的订单」、个人资料）底部有推荐商品流 + 常驻红色618促销键，checker 偶发(~3%)把它误读成「拼多多首页 618高亮」，导致 planner 反复重点已在的「个人中心」Tab、原地冻结 2 轮才被 SimStuck 捞出。断言：身份须为个人中心(含订单/我的)、绝不含「首页」；status=in_progress(奶粉订单尚未定位，确定性正确)。提示词第一步加 guard：页面身份以顶部标题+主内容为准，勿被促销按钮/推荐流带偏。"
   }
 ]

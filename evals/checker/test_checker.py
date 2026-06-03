@@ -105,6 +105,10 @@ def test_checker() -> None:
         if "page_identity_contains" in expected:
             if not any(kw in result.page_identity for kw in expected["page_identity_contains"]):
                 details.append(f'page_identity should contain one of {expected["page_identity_contains"]}, got: {result.page_identity!r}')
+        if "page_identity_not_contains" in expected:
+            for kw in expected["page_identity_not_contains"]:
+                if kw in result.page_identity:
+                    details.append(f'page_identity should NOT contain {kw!r} (页面身份误读), got: {result.page_identity!r}')
         if "missing_evidence_contains" in expected:
             ev_text = " ".join(result.missing_evidence or [])
             for kw in expected["missing_evidence_contains"]:
