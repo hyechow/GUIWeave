@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-基于 Mac 上的 iPhone Mirroring，通过 [mirroir-mcp](https://github.com/jfarcand/mirroir-mcp) 提供截图与触控能力，用 MCP 协议控制 iPhone 的 AI Agent。给出自然语言目标，Agent 自动截图、理解当前状态、决策下一步操作、执行并循环，直到完成任务。
+基于 Mac 上的 iPhone Mirroring，用 AI Agent 自动控制 iPhone。给出自然语言目标，Agent 自动截图、理解当前状态、决策下一步操作、执行并循环，直到完成任务。
 
 **多模态小模型（Qwen3.5-35B-A3B）即可驱动复杂的手机操作（跨 APP、长程多步骤、带验收闭环），支持私有化本地部署，无需依赖闭源大模型。**
 
@@ -48,7 +48,7 @@ flowchart TD
         Checker["Checker\n截图 + Milestone → 是否完成"]
         Planner["Planner\n截图 + 指令 → 下一步操作"]
         AP["Action Policy\n截图 + 指令 → 坐标动作"]
-        Executor["Executor\n坐标 → Quartz 事件"]
+        Executor["Executor\n坐标 → 触控事件"]
         Checker -- 未完成 --> Planner
         Planner -- 操作指令 --> AP
         AP -- tap/type/scroll --> Executor
@@ -69,7 +69,7 @@ flowchart TD
     Memory -- 注入上下文 --> Router
 ```
 
-**Router**：解析用户消息，判断是否需要操作手机。需要的提取明确目标（做什么）和目标 APP（在哪个应用做），传递给 Supervisor；不需要的直接回复。当信息不足（如未指定 APP、操作不明确）时追问用户。
+**Router**：解析用户消息，判断是否需要操作手机。需要的提取明确目标（做什么）和目标 APP（在哪个应用做），传递给 Supervisor；不需要的直接回复。当信息不足时追问用户。
 
 **Supervisor**：将目标拆解为有依赖关系的 Milestone 子任务，逐个执行并验收。支持多种完成策略（单步确认、滚动采集、重复直到满足条件），遇到卡住时自动 replan。
 
@@ -77,9 +77,9 @@ flowchart TD
 
 **Action Policy**：接收截图和操作指令，输出具体的屏幕坐标动作（tap / type / scroll / drag 等）。
 
-**Executor**：将坐标动作转换为 Quartz 鼠标/键盘事件，经 iPhone Mirroring 控制手机。
+**Executor**：将坐标动作发送到手机。`silent` 模式使用内置 `mirror_daemon` 后端（零抢占，不移动光标、不切换前台窗口）；`standard` 模式通过 mirroir-mcp 注入 Quartz 事件。
 
-**Output**：任务完成后，根据执行过程和屏幕内容生成面向用户的自然语言回复，查询类任务会直接输出提取到的数据。
+**Output**：任务完成后，根据执行过程和屏幕内容生成面向用户的自然语言回复，查询类任务直接输出提取到的数据。
 
 ## 健壮性机制
 
@@ -113,7 +113,7 @@ flowchart TD
 ## 环境配置
 
 ```bash
-# 安装 mirroir-mcp（iPhone 控制 MCP server）
+# 安装 mirroir-mcp（standard 模式使用）
 brew tap jfarcand/tap
 npx -y mirroir-mcp install
 
@@ -123,7 +123,7 @@ uv sync
 
 复制 `.env` 并填写 API 配置：
 
-```
+```env
 API_PROVIDER=modelscope
 MODELSCOPE_API_KEY=your_api_key
 ```
@@ -140,20 +140,40 @@ bin/chat
 
 多轮对话界面，支持连续下达任务，自动维护会话上下文和进度。
 
+**会话内命令：**
+
+| 命令 | 说明 |
+|------|------|
+| `/mode [silent\|standard]` | 切换输入后端。`silent` = 零抢占 mirror_daemon（默认）；`standard` = mirroir-mcp 原版 |
+| `/model [qwen35\|qwen36]` | 切换模型配置。`qwen35` = config.yaml（默认）；`qwen36` = config.qwen36.yaml |
+| `/supervisor` | 在 Milestone 与 Simple supervisor 之间切换 |
+| `/clear` | 清空对话历史 |
+| `/exit` | 退出 |
+
 ### Runner（实验/调试）
 
 ```bash
-# 单步执行
-uv run python policy_expr/runner.py "打开微信"
+# 使用默认配置运行（silent 模式，qwen35）
+bin/runner "打开微信并进入通讯录"
 
-# 多步 Agent 循环
-uv run python policy_expr/runner.py "打开微信并进入通讯录" \
-  --mode agent-loop --supervisor milestone --auto-continue --max-turns 15
-
-# 带 HUD 的可视化运行
-uv run python policy_expr/runner.py "查看今日外卖订单" \
-  --mode agent-loop --supervisor milestone --auto-continue --hud
+# 通过环境变量切换模型或模式
+AGENT_MODEL=qwen36 bin/runner "打开微信"
+AGENT_MODE=standard bin/runner "打开微信"
 ```
+
+脚本化或编程调用：
+
+```bash
+uv run python policy_expr/runner.py "打开微信并进入通讯录" \
+  --mode agent-loop --supervisor milestone --auto-continue --max-turns 15 --hud
+```
+
+**环境变量：**
+
+| 变量 | 可选值 | 默认 | 说明 |
+|------|--------|------|------|
+| `AGENT_MODE` | `silent`、`standard` | `silent` | 输入后端 |
+| `AGENT_MODEL` | `qwen35`、`qwen36` | `qwen35` | LLM 配置文件 |
 
 ### 任务执行可视化
 
@@ -165,7 +185,7 @@ uv run python policy_expr/runner.py "查看今日外卖订单" \
 - **按子目标分行展示** — 每行一组缩略图，展示该子目标的操作步骤
 - **Action 标注** — 点击圆圈、滚动箭头、输入文本气泡、拖拽起终点
 - **模块耗时** — 每轮 checker / planner / action_policy 的 stacked bar 图
-- **验收截图** — 每个子目标完成时的无标注截图
+- **验收详情面板** — 点击验收缩略图展示 Checker 的推理依据（判断子目标完成的具体理由）
 
 ```bash
 # Runner 运行后自动在日志目录生成 report.html
@@ -193,17 +213,18 @@ uv run python -m policy_expr.recon_cli --app 微信 --mode update \
 
 ## 目录结构
 
-```
+```text
 policy_expr/
 ├── chat_cli.py          # 对话模式主程序
 ├── runner.py            # 实验/调试用 Runner
 ├── recon_cli.py         # 应用侦察 CLI
-├── executor.py          # 动作执行器（Quartz + MCP）
+├── executor.py          # 动作执行器（mirror_daemon / Quartz + MCP）
 ├── perception.py        # 截图感知层
 ├── output.py            # 回复生成
 ├── schemas.py           # 核心数据模型
-├── config.yaml          # LLM provider/model 配置
-├── prefs.py             # 用户偏好记忆（常用 APP、联系人、习惯等）
+├── config.yaml          # LLM provider/model 配置（qwen35）
+├── config.qwen36.yaml   # 备用 LLM 配置（qwen36）
+├── prefs.py             # 用户偏好记忆
 ├── supervisor/
 │   └── milestone.py     # Milestone 状态机：分解→执行→验收
 ├── policies/
@@ -215,10 +236,15 @@ policy_expr/
 │   ├── bfs.py           # BFS 元素探测
 │   ├── back_nav.py      # 从子页面回退
 │   ├── page_identity.py # 页面去重（视觉指纹）
-│   └── cascade_matcher.py  # SIFT 级联匹配
+│   └── cascade_matcher.py  # 级联视觉/语义页面匹配
 └── self_learning/
     ├── knowledge.py     # 从侦察结果生成知识文件
     └── app_summary.py   # 自动发现并加载 APP 知识
+
+bin/
+├── chat                 # 启动对话模式
+├── runner               # 启动 Runner（AGENT_MODE / AGENT_MODEL 可配置）
+└── mirror_daemon        # 零抢占输入后端二进制（silent 模式）
 
 knowledge/               # 各应用页面知识库（Markdown）
 data/user_preferences.json  # 用户偏好记忆（跨会话持久化）
@@ -255,11 +281,13 @@ uv run python evals/<module>/test_<module>.py
 ## 技术栈
 
 - Python 3.11+
-- `mcp` — MCP client，连接 mirroir-mcp server 控制手机
+- `mirror_daemon` — Swift 二进制，提供零抢占截图 + 触控输入（SCStream + SkyLight 私有 SPI），用于 silent 模式
+- `mirroir-mcp` — 标准模式的手机控制 MCP server
+- `mcp` — MCP client
 - `langchain-openai` / `langchain-qwq` — LLM 调用（兼容 OpenAI API 的 provider）
 - `onnxruntime` — YOLO 图标检测（ONNX 推理，用于点击坐标吸附）
 - `ocrmac` — macOS 原生 OCR
-- `Quartz` — macOS 鼠标/键盘事件注入
+- `Quartz` — macOS 事件注入（standard 模式）
 - `pillow` / `numpy` / `scikit-image` / `imagehash` — 图像处理
 - `torch` + `transformers` + `sentence-transformers` — CLIP 视觉匹配（cascade_matcher，按需加载）
 - `pydantic` — 数据模型

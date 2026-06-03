@@ -4,7 +4,7 @@ English | [中文](README.zh-CN.md)
 
 An AI agent that controls a real iPhone through macOS iPhone Mirroring.
 
-It uses [mirroir-mcp](https://github.com/jfarcand/mirroir-mcp) to obtain screenshots and send touch events through the MCP protocol. Given a natural-language goal, the agent repeatedly observes the current screen, reasons about the next step, executes an action, and verifies progress until the task is complete.
+Given a natural-language goal, the agent repeatedly observes the current screen, reasons about the next step, executes an action, and verifies progress until the task is complete.
 
 **iphone-use can drive long-horizon mobile workflows with a multimodal small model such as Qwen3.5-35B-A3B, including cross-app tasks, multi-step navigation, and explicit completion checks. It is designed to work with private or self-hosted OpenAI-compatible model providers, without depending on closed-source frontier models.**
 
@@ -50,7 +50,7 @@ flowchart TD
         Checker["Checker\nScreenshot + Milestone -> done?"]
         Planner["Planner\nScreenshot + instruction -> next step"]
         AP["Action Policy\nScreenshot + instruction -> coordinate action"]
-        Executor["Executor\nCoordinates -> Quartz events"]
+        Executor["Executor\nCoordinates -> touch events"]
         Checker -- Not done --> Planner
         Planner -- Operation instruction --> AP
         AP -- tap/type/scroll --> Executor
@@ -79,7 +79,7 @@ flowchart TD
 
 **Action Policy** converts a high-level operation instruction into screen-coordinate actions such as `tap`, `type`, `scroll`, and `drag`.
 
-**Executor** sends coordinate actions as Quartz mouse and keyboard events, which control the iPhone through iPhone Mirroring.
+**Executor** dispatches coordinate actions to the phone. In `silent` mode it uses the built-in `mirror_daemon` backend (zero-preemption, no cursor movement or window focus changes). In `standard` mode it uses Quartz events through mirroir-mcp.
 
 **Output** generates the final user-facing response after the task completes. For information workflows, it returns the extracted data or summary.
 
@@ -115,7 +115,7 @@ flowchart TD
 ## Setup
 
 ```bash
-# Install mirroir-mcp, the MCP server used for iPhone control
+# Install mirroir-mcp (used in standard mode)
 brew tap jfarcand/tap
 npx -y mirroir-mcp install
 
@@ -142,22 +142,42 @@ bin/chat
 
 Interactive multi-turn chat interface. It supports consecutive tasks and maintains session context and task progress.
 
+**In-session commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/mode [silent\|standard]` | Switch input backend. `silent` = zero-preempt mirror_daemon (default); `standard` = mirroir-mcp original |
+| `/model [qwen35\|qwen36]` | Switch LLM config. `qwen35` = config.yaml (default); `qwen36` = config.qwen36.yaml |
+| `/supervisor` | Toggle between Milestone and Simple supervisor |
+| `/clear` | Clear conversation history |
+| `/exit` | Exit |
+
 ### Runner
 
 Useful for experiments and debugging.
 
 ```bash
-# Single-step execution
-uv run python policy_expr/runner.py "open WeChat"
+# Run with defaults (silent mode, qwen35)
+bin/runner "open WeChat and go to contacts"
 
-# Multi-step agent loop
-uv run python policy_expr/runner.py "open WeChat and go to contacts" \
-  --mode agent-loop --supervisor milestone --auto-continue --max-turns 15
-
-# Visual run with HUD
-uv run python policy_expr/runner.py "check today's food delivery orders" \
-  --mode agent-loop --supervisor milestone --auto-continue --hud
+# Switch model or mode via environment variables
+AGENT_MODEL=qwen36 bin/runner "open WeChat"
+AGENT_MODE=standard bin/runner "open WeChat"
 ```
+
+For scripted or programmatic use:
+
+```bash
+uv run python policy_expr/runner.py "open WeChat and go to contacts" \
+  --mode agent-loop --supervisor milestone --auto-continue --max-turns 15 --hud
+```
+
+**Environment variables:**
+
+| Variable | Values | Default | Description |
+|----------|--------|---------|-------------|
+| `AGENT_MODE` | `silent`, `standard` | `silent` | Input backend |
+| `AGENT_MODEL` | `qwen35`, `qwen36` | `qwen35` | LLM config file |
 
 ### Execution Visualization
 
@@ -169,7 +189,7 @@ After each run, an HTML report is automatically generated showing the full task 
 - **Per-milestone thumbnail gallery** — one row of annotated screenshots per sub-goal
 - **Action annotations** — tap circles, scroll arrows, type text bubbles, drag start/end points
 - **Timing breakdown** — stacked bar per turn showing time spent in checker, planner, action policy, etc.
-- **Verification screenshots** — unannotated screenshot confirming each milestone's completion
+- **Verification panel** — clicking the verification thumbnail shows the checker's reasoning for why the milestone was marked complete
 
 ```bash
 # Runner auto-generates report.html in the log directory
@@ -204,11 +224,12 @@ policy_expr/
 ├── chat_cli.py          # Chat mode entry point
 ├── runner.py            # Experimental/debug runner
 ├── recon_cli.py         # App reconnaissance CLI
-├── executor.py          # Action executor: Quartz + MCP
+├── executor.py          # Action executor: mirror_daemon / Quartz + MCP
 ├── perception.py        # Screenshot perception layer
 ├── output.py            # Final response generation
 ├── schemas.py           # Core data models
-├── config.yaml          # LLM provider/model configuration
+├── config.yaml          # LLM provider/model configuration (qwen35)
+├── config.qwen36.yaml   # Alternative LLM config (qwen36)
 ├── prefs.py             # User preference memory
 ├── supervisor/
 │   └── milestone.py     # Milestone state machine: decompose -> execute -> verify
@@ -225,6 +246,11 @@ policy_expr/
 └── self_learning/
     ├── knowledge.py     # Generate knowledge files from recon results
     └── app_summary.py   # Discover and load app knowledge
+
+bin/
+├── chat                 # Launch chat mode
+├── runner               # Launch runner (AGENT_MODE / AGENT_MODEL configurable)
+└── mirror_daemon        # Zero-preempt input backend binary (silent mode)
 
 knowledge/               # Per-app page knowledge base in Markdown
 data/user_preferences.json  # Persistent user preference memory
@@ -261,11 +287,13 @@ See [`evals/README.md`](evals/README.md) for details.
 ## Tech Stack
 
 - Python 3.11+
-- `mcp` — MCP client connected to `mirroir-mcp` for phone control
+- `mirror_daemon` — Swift binary providing zero-preempt screenshot + touch input for silent mode (SCStream + SkyLight private SPI)
+- `mirroir-mcp` — MCP server for standard mode phone control
+- `mcp` — MCP client
 - `langchain-openai` / `langchain-qwq` — LLM calls through OpenAI-compatible providers
 - `onnxruntime` — YOLO icon detection with ONNX inference for coordinate snapping
 - `ocrmac` — Native macOS OCR
-- `Quartz` — macOS mouse and keyboard event injection
+- `Quartz` — macOS event injection (standard mode)
 - `pillow` / `numpy` / `scikit-image` / `imagehash` — Image processing
 - `torch` + `transformers` + `sentence-transformers` — CLIP-based visual matching in `cascade_matcher`, loaded on demand
 - `pydantic` — Data models
