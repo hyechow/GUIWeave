@@ -266,7 +266,7 @@ def main() -> None:
     supervisor = build_supervisor(MilestoneSupervisorPolicy.name)
     prefs = PreferenceManager()
     _MODE_BACKEND = {"silent": "daemon", "standard": "mirroir"}
-    _env_default = "standard" if os.environ.get("PHONE_MODE", "silent").lower() in ("mirroir", "standard") else "silent"
+    _env_default = "standard" if os.environ.get("AGENT_MODE", "silent").lower() in ("mirroir", "standard") else "silent"
     mode: str = _env_default
 
     SESSIONS_ROOT = ROOT / "data" / "sessions"

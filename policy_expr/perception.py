@@ -95,7 +95,7 @@ class SCKSession:
 
 
 class LivePhoneSession:
-    """拥有执行用的输入连接 + 截图源。后端由 PHONE_MODE 选择:
+    """拥有执行用的输入连接 + 截图源。后端由 AGENT_MODE 选择:
 
     - "daemon"(默认):MirrorDaemonClient 一体提供截图 + 零抢占输入 + agent 光标 overlay
       (截图前自动隐藏光标,不进感知图)。tap/home/screenshot 走 daemon;scroll/drag/
@@ -106,11 +106,11 @@ class LivePhoneSession:
         self.client: SyncMCPClient | MirrorDaemonClient | None = None
         self._sck: SCKSession | None = None
         self._screenshot_via_client = False   # daemon 后端:截图走 client 而非 SCK
-        self._backend = backend  # explicit override; None → fall back to PHONE_MODE env
+        self._backend = backend  # explicit override; None → fall back to AGENT_MODE env
 
     def __enter__(self) -> "LivePhoneSession":
         _MODE_MAP = {"silent": "daemon", "standard": "mirroir"}
-        raw = (self._backend or os.environ.get("PHONE_MODE", "silent")).lower()
+        raw = (self._backend or os.environ.get("AGENT_MODE", "silent")).lower()
         backend = _MODE_MAP.get(raw, raw)  # silent→daemon, standard→mirroir, else pass through
         if backend == "daemon":
             if MirrorDaemonClient is None:
