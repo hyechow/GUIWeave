@@ -17,5 +17,5 @@ evals/**/*.jpg
 videos
 
 # Swift sources for bin/mirror_daemon; built out of tree.
-sck/mirror_daemon.swift
-scripts/mirror_*.swift
+# 本地注入层(独立仓库管理),不进主仓库
+injection/
