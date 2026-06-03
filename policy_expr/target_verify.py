@@ -39,19 +39,27 @@ reason 一句话，说明十字中心实际压住了什么。"""
 
 
 def render_marker(png: bytes, nx: float, ny: float) -> bytes:
-    """Draw a hollow ring + crosshair at normalized (0-1000) point on the frame.
+    """Draw a hollow ring + center-gapped crosshair at normalized (0-1000) point.
 
-    Hollow so the element under the marker stays visible to the verifier.
+    The crosshair has a GAP at the center so a small, low-contrast element under
+    the exact point stays visible to the verifier. A solid crosshair through the
+    center occludes small targets (e.g. the home-screen search capsule), which
+    forced the judge to fall back on the bottom-Tab rule and reject correct hits
+    (false off_target). The four inward stubs + ring still pinpoint the center.
     """
     img = Image.open(io.BytesIO(png)).convert("RGB")
     w, h = img.size
     px, py = nx / 1000 * w, ny / 1000 * h
     d = ImageDraw.Draw(img)
-    r = max(18, int(w * 0.035))
+    r = max(14, int(w * 0.030))
+    gap = max(12, int(w * 0.022))   # clear center window so small targets show through
     for off in (0, 1, 2):  # thicken ring
         d.ellipse([px - r + off, py - r + off, px + r - off, py + r - off], outline=(255, 0, 0))
-    d.line([px - r - 8, py, px + r + 8, py], fill=(255, 0, 0), width=2)
-    d.line([px, py - r - 8, px, py + r + 8], fill=(255, 0, 0), width=2)
+    # crosshair as four inward stubs, leaving the central [-gap, gap] window clear
+    d.line([px - r - 8, py, px - gap, py], fill=(255, 0, 0), width=2)
+    d.line([px + gap, py, px + r + 8, py], fill=(255, 0, 0), width=2)
+    d.line([px, py - r - 8, px, py - gap], fill=(255, 0, 0), width=2)
+    d.line([px, py + gap, px, py + r + 8], fill=(255, 0, 0), width=2)
     out = io.BytesIO()
     img.save(out, format="PNG")
     return out.getvalue()

@@ -30,5 +30,13 @@
     "snapped": [906, 857],
     "expected_on_target": false,
     "note": "closer-wins 把偏高点(894,850)吸到 y~857 的弱干扰框(906,857)，不是 y~927 的我的 tab。靠落点校验判 off_target→replan。"
+  },
+  {
+    "label": "主屏搜索胶囊-落点准确-应on_target",
+    "screenshot": "evals/target_verify/screenshots/home_search_capsule_on_target.png",
+    "instruction": "点击底部搜索胶囊按钮",
+    "snapped": [500, 823],
+    "expected_on_target": true,
+    "note": "agent-loop/20260603_193217 turn1 回归：tap 准确命中 dock 上方的悬浮搜索胶囊(drift=0px)，但旧 marker 的实心十字穿过又小又半透明的胶囊把它盖住，verify 看不清中心→退回 Tab 规则(底缘上方→off_target)误判 off_target，引爆 off_target→replan→按 Home 撤退、丢掉拼多多在第一位的 Siri 建议页。实测：原 marker 0/3 on_target；中心留空十字 3/3。修复=render_marker 中心留空，让小目标透出来。"
   }
 ]
