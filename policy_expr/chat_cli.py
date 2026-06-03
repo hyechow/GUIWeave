@@ -266,6 +266,7 @@ def main() -> None:
     prefs = PreferenceManager()
     _MODE_BACKEND = {"silent": "daemon", "standard": "mirroir"}
     _env_default = "standard" if os.environ.get("AGENT_MODE", "silent").lower() in ("mirroir", "standard") else "silent"
+    # /model reads AGENT_MODEL at startup; switch_config already handles it via _active_config_path
     mode: str = _env_default
 
     SESSIONS_ROOT = ROOT / "data" / "sessions"

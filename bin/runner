@@ -2,5 +2,5 @@
 set -e
 cd "$(dirname "$0")/.."
 exec env AGENT_MODE="${AGENT_MODE:-daemon}" \
-         POLICY_EXPR_CONFIG="${POLICY_EXPR_CONFIG:-policy_expr/config.yaml}" \
+         AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
          uv run python -m policy_expr.runner "$@" --auto-continue --hud --supervisor milestone
