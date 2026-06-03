@@ -16,7 +16,8 @@ overlay 是独立进程、不进 daemon 的 SCStream 截图区(设计 B)。
 坐标:tap/scroll 的 x/y = 窗口本地逻辑像素(318×701,top-left,同 executor)。光标用屏幕点
 = 镜像窗口 origin + (x,y),窗口 origin 经 Quartz 查得。
 
-mirror_daemon 无连续手势(drag/swipe 需激活抬窗,非零抢占)→ drag/swipe 返回不支持提示。
+连续手势(drag/swipe)走 daemon 的 drag 命令:后台 pid 路连续 mouseDragged,真光标 0px、
+前台不翻;duration_ms 换算成 steps/stepMs。app 切换器卡片上滑关 app 实测可用。
 """
 from __future__ import annotations
 
@@ -215,14 +216,44 @@ class MirrorDaemonClient:
     def spotlight(self) -> str:
         return self._text("menu spotlight")
 
-    # mirror_daemon 无连续手势(viewport 后台过滤,需激活抬窗)→ 明确不支持
+    # 零抢占连续手势:daemon 的 drag 命令(后台 pid 路 mouseDragged,真光标 0px、前台不翻)。
+    # duration_ms → (steps, stepMs):每步约一帧(16ms)求平滑,步数夹在 [3,60] 防事件爆炸;
+    # 总拖拽时长 ≈ steps×stepMs ≈ duration_ms(另有 ~166ms 固定 focus/primer 开销)。
+    def _drag_cmd(self, from_x: float, from_y: float, to_x: float, to_y: float,
+                  duration_ms: int) -> str:
+        import threading
+        steps = max(3, min(60, round(duration_ms / 16)))
+        step_ms = max(1, round(duration_ms / steps))
+
+        # 起点先显示光标
+        self._cursor_to(from_x, from_y)
+
+        # 后台线程实时推光标位置,与 daemon drag 并行
+        def _animate():
+            wb = self._win or self._query_window()
+            if not (self._cursor and wb):
+                return
+            for i in range(1, steps + 1):
+                f = i / steps
+                lx = from_x + (to_x - from_x) * f
+                ly = from_y + (to_y - from_y) * f
+                self._cursor.move(wb[0] + lx, wb[1] + ly)
+                time.sleep(step_ms / 1000)
+
+        t = threading.Thread(target=_animate, daemon=True)
+        t.start()
+        resp = self._text(
+            f"drag {round(from_x)} {round(from_y)} {round(to_x)} {round(to_y)} {steps} {step_ms}")
+        t.join()
+        return resp
+
     def swipe(self, from_x: float, from_y: float, to_x: float, to_y: float,
               duration_ms: int = 400, cursor_mode: str | None = None) -> str:
-        return "swipe 不支持 (mirror_daemon 无零抢占连续手势;改用 scroll / tap-to-select)"
+        return self._drag_cmd(from_x, from_y, to_x, to_y, duration_ms)
 
     def drag(self, from_x: float, from_y: float, to_x: float, to_y: float,
              duration_ms: int = 1000, cursor_mode: str | None = None) -> str:
-        return "drag 不支持 (mirror_daemon 无零抢占连续手势;改用 scroll / tap-to-select)"
+        return self._drag_cmd(from_x, from_y, to_x, to_y, duration_ms)
 
     def list_targets(self) -> str:
         return "list_targets 不支持 (mirror_daemon 只驱动 iPhone 镜像)"

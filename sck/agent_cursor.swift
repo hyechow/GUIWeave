@@ -41,7 +41,7 @@ final class CursorView: NSView {
         if ProcessInfo.processInfo.environment["AC_DEBUG"] == "1" {
             ctx.setFillColor(CGColor(red: 1, green: 0, blue: 1, alpha: 0.6)); ctx.fill(bounds)
         }
-        // teal-green 折纸/飞镖箭头 + 呼吸柔光脉冲 + 落地阴影。nose 在中心(=光标热点)。
+        // blue 折纸/飞镖箭头 + 呼吸柔光脉冲 + 落地阴影。nose 在中心(=光标热点)。
         let c = CGPoint(x: bounds.midX, y: bounds.midY)
         let cs = CGColorSpaceCreateDeviceRGB()
         let s: CGFloat = 0.74   // ≈25px
@@ -51,10 +51,10 @@ final class CursorView: NSView {
         let M = P(20, -20)   // 尾部凹口
         let L = P(16, -34)   // 左翼
 
-        let tealHi = CGColor(colorSpace: cs, components: [0.30, 0.78, 0.60, 1.0])!
-        let tealLo = CGColor(colorSpace: cs, components: [0.13, 0.55, 0.44, 1.0])!
-        let mintHi = CGColor(colorSpace: cs, components: [0.96, 1.00, 0.98, 1.0])!
-        let mintLo = CGColor(colorSpace: cs, components: [0.80, 0.96, 0.90, 1.0])!
+        let tealHi = CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, 1.0])!  // 亮蓝
+        let tealLo = CGColor(colorSpace: cs, components: [0.10, 0.35, 0.85, 1.0])!  // 深蓝
+        let mintHi = CGColor(colorSpace: cs, components: [0.85, 0.95, 1.00, 1.0])!  // 浅冰蓝高光
+        let mintLo = CGColor(colorSpace: cs, components: [0.60, 0.82, 1.00, 1.0])!  // 淡蓝
 
         func outline() -> CGMutablePath {
             let p = CGMutablePath()
@@ -70,15 +70,15 @@ final class CursorView: NSView {
         let glowR = (24 + 16 * pulse) * s
         let glowA = 0.14 + 0.26 * pulse
         if let g = CGGradient(colorsSpace: cs, colors: [
-            CGColor(colorSpace: cs, components: [0.32, 0.85, 0.66, glowA])!,
-            CGColor(colorSpace: cs, components: [0.32, 0.85, 0.66, 0.0])!] as CFArray, locations: [0, 1]) {
+            CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, glowA])!,
+            CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, 0.0])!] as CFArray, locations: [0, 1]) {
             ctx.drawRadialGradient(g, startCenter: mid, startRadius: 0, endCenter: mid, endRadius: glowR, options: [])
         }
 
         // 2) 落地阴影:对整形填一次底色(带 shadow)→ 统一投影,再画折面盖上
         ctx.saveGState()
         ctx.setShadow(offset: CGSize(width: 0, height: -2.0), blur: 5.0,
-                      color: CGColor(colorSpace: cs, components: [0.0, 0.12, 0.09, 0.55])!)
+                      color: CGColor(colorSpace: cs, components: [0.0, 0.05, 0.20, 0.55])!)
         ctx.addPath(outline()); ctx.setFillColor(tealLo); ctx.fillPath()
         ctx.restoreGState()
 
@@ -96,11 +96,11 @@ final class CursorView: NSView {
 
         // 4) 描边 + 折线
         ctx.addPath(outline())
-        ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.92, 1.0, 0.96, 0.95])!)
+        ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.90, 0.97, 1.00, 0.95])!)
         ctx.setLineWidth(1.0); ctx.setLineJoin(.round); ctx.strokePath()
         let crease = CGMutablePath(); crease.move(to: N); crease.addLine(to: M)
         ctx.addPath(crease)
-        ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.13, 0.55, 0.44, 0.55])!)
+        ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.10, 0.35, 0.85, 0.55])!)
         ctx.setLineWidth(0.6); ctx.strokePath()
     }
 }
