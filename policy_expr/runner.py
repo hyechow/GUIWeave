@@ -91,10 +91,14 @@ def _frame_diff(png_a: bytes, png_b: bytes) -> float:
 
 def _settle_after_action(
     phone: LivePhoneSession, pre_frame: bytes | None, action_type: str | None = None
-) -> float:
-    """等到屏幕相对动作前帧「变过且停稳」，或达到上限。返回实际等待秒数。
+) -> tuple[float, bool]:
+    """等到屏幕相对动作前帧「变过且停稳」，或达到上限。返回 (等待秒数, no_effect)。
 
     必须对照动作前帧：否则冷启动那 ~1s 静止旧画面会被误判为已就绪。
+
+    no_effect=True 仅用于 tap 类动作：跑满上限且**全程相对动作前帧从未 changed**——
+    即这一击对屏幕零效果（如重点已高亮的 tab、点到惰性元素）。drag/scroll 改动可能很
+    小、不押 changed，故恒为 False；无动作前帧时也无从判断，False。
 
     drag/scroll 只判「停稳」（相邻帧不再变化）、不判「changed」：picker 改动小测不出
     changed 会顶满上限，而固定盲等又会在 fling 没停时截图导致读数滞后、来回震荡。
@@ -109,21 +113,22 @@ def _settle_after_action(
             except Exception:
                 dur = time.perf_counter() - t0
                 print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
-                return dur
+                return dur, False
             if prev is not None and _frame_diff(prev, cur) < SETTLE_STABLE_THR:
                 dur = time.perf_counter() - t0
                 print(f"  [Settle] {dur:.1f}s ({i} 轮，停稳: {action_type})")
-                return dur
+                return dur, False
             prev = cur
         dur = time.perf_counter() - t0
         print(f"  [Settle] {dur:.1f}s ({SETTLE_MAX_UNITS} 轮，达上限: {action_type})")
-        return dur
+        return dur, False
     if pre_frame is None:
         time.sleep(SETTLE_FIRST_S)
         dur = time.perf_counter() - t0
         print(f"  [Settle] {dur:.1f}s (无动作前帧)")
-        return dur
+        return dur, False
     prev: bytes | None = None
+    ever_changed = False
     for i in range(1, SETTLE_MAX_UNITS + 1):
         # 首帧等久一点让转场动画跑完，再用细粒度轮询。
         time.sleep(SETTLE_FIRST_S if i == 1 else SETTLE_UNIT_S)
@@ -132,17 +137,20 @@ def _settle_after_action(
         except Exception:
             dur = time.perf_counter() - t0
             print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
-            return dur
+            return dur, False
         changed = _frame_diff(pre_frame, cur) > SETTLE_CHANGE_THR
+        ever_changed = ever_changed or changed
         stable = prev is not None and _frame_diff(prev, cur) < SETTLE_STABLE_THR
         if changed and stable:
             dur = time.perf_counter() - t0
             print(f"  [Settle] {dur:.1f}s ({i} 轮，变过且停稳)")
-            return dur
+            return dur, False
         prev = cur
     dur = time.perf_counter() - t0
-    print(f"  [Settle] {dur:.1f}s ({SETTLE_MAX_UNITS} 轮，达上限)")
-    return dur
+    no_effect = not ever_changed
+    tag = "达上限·零效果" if no_effect else "达上限"
+    print(f"  [Settle] {dur:.1f}s ({SETTLE_MAX_UNITS} 轮，{tag})")
+    return dur, no_effect
 
 
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
@@ -678,7 +686,7 @@ def run_agent_loop(
                         # 「冻结→边界」误判成到底、采集截断。**必须先 settle 再测**：滚动有延迟/
                         # 惯性，execute 后立刻截图屏幕还没动，会把每次缓存都误判成 0 位移而每轮空
                         # 重探（20260530_161048）。settle 等画面稳后再比，真滚→保留缓存、真没滚→重探。
-                        branch_settle_s = _settle_after_action(
+                        branch_settle_s, _ = _settle_after_action(
                             phone, observation.png_bytes, cached.action_type
                         )
                         after_png = phone.screenshot()
@@ -811,7 +819,7 @@ def run_agent_loop(
                         if action_decision and action_decision.action
                         else None
                     )
-                    turn.settle_s = _settle_after_action(
+                    turn.settle_s, turn.no_effect = _settle_after_action(
                         phone, observation.png_bytes, settle_action_type
                     )
                 if verify_future is not None:

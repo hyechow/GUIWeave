@@ -247,6 +247,31 @@ class MilestoneSupervisorPolicy:
             )
             return self._handle_stuck(milestone, stuck, None, observation, history)
 
+        # Ineffective last tap: target_verify said on_target (hit the intended
+        # element) yet settle saw zero screen change across all polls → the tap
+        # did nothing (re-tapped an already-active tab / inert element). Skip the
+        # checker and replan now, instead of waiting ~3 frames for SimStuck to
+        # fill. Complements off_target above: that owns wrong-element (on_target
+        # False); this owns right-element-but-no-effect. Gated on tap so gestures
+        # (which legitimately may not move much) never trigger it.
+        last_turn = history[-1] if history else None
+        if (
+            last_turn is not None
+            and getattr(last_turn, "no_effect", False)
+            and last_turn.action_decision is not None
+            and last_turn.action_decision.action.action_type in ("tap", "click")
+            and (last_tv is None or last_tv.on_target)
+        ):
+            tapped = last_turn.action_decision.action.description or "目标元素"
+            print(f"  [NoEffect] 上一步点击「{tapped}」落点正确但屏幕零变化（已在该态/元素无效），跳过 checker 直接 replan")
+            stuck = _SingleCheckResult(
+                status="stuck",
+                reason=f"上一步点击「{tapped}」落点正确但屏幕无变化，该操作对当前页面无效",
+                stuck_reason=f"动作无效果：点击「{tapped}」屏幕零变化，应换路径",
+                summary="",
+            )
+            return self._handle_stuck(milestone, stuck, None, observation, history)
+
         prev_page_id = self._last_page_identity.get(milestone.id, "")
 
         with _Timer(self._timings, self._timings_order, "checker"):
