@@ -438,6 +438,7 @@ def run_agent_loop(
     live_state: dict | None = None,
     silent: bool = False,
     backend: str | None = None,
+    on_turn: object = None,  # callable(entry: dict) called after each turn
 ) -> dict:
     def _say(s: str) -> None:
         if not silent:
@@ -741,6 +742,15 @@ def run_agent_loop(
             _save_context(context_path, context)
             if not silent:
                 _print_turn_stats(turn_no, turn_started_at, llm_calls_before)
+            if on_turn and callable(on_turn):
+                _entry: dict = {"no": turn.index, "summary": sv_step.summary, "executed": executed}
+                if action_decision:
+                    a = action_decision.action
+                    _entry["action_type"] = a.action_type
+                    _entry["action_desc"] = a.description
+                    if action_decision.not_found_reason:
+                        _entry["not_found"] = action_decision.not_found_reason
+                on_turn(_entry)
 
             if sv_step.stop or sv_step.goal_completed:
                 reason = sv_step.stop_reason or ("目标已达成" if sv_step.goal_completed else "agent-loop 停止")

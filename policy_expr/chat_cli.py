@@ -87,6 +87,7 @@ def run_chat_turn(
     max_turns: int = 20,
     live_state: dict | None = None,
     backend: str = "daemon",
+    on_turn: object = None,
 ) -> dict:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     from policy_expr.hud import AgentHUD
@@ -104,6 +105,7 @@ def run_chat_turn(
             live_state=live_state,
             silent=True,
             backend=backend,
+            on_turn=on_turn,
         )
 
 
@@ -171,6 +173,20 @@ def _print_reply(text: str) -> None:
     console.print()
 
 
+def _turn_line(t: dict) -> str:
+    """Format a single turn entry as a Rich markup string."""
+    atype = t.get("action_type")
+    no = t.get("no", "?")
+    if t.get("not_found"):
+        return f"  [dim]Turn {no}[/dim]  [yellow]{t['not_found']}[/yellow]"
+    if atype and t.get("executed"):
+        style = _ACTION_STYLE.get(atype, "white")
+        return f"  [dim]Turn {no}[/dim]  [{style}]{atype}[/]  [dim]{t.get('action_desc', '')}[/dim]"
+    if atype:
+        return f"  [dim]Turn {no}[/dim]  [dim]{atype} (未执行)[/dim]"
+    return f"  [dim]Turn {no}[/dim]  [dim]{t.get('summary', '')}[/dim]"
+
+
 def _print_result(result: dict) -> None:
     ok = result["goal_completed"]
     color = "green" if ok else "red"
@@ -178,27 +194,9 @@ def _print_result(result: dict) -> None:
     icon = "✓" if ok else "✗"
     label = "done" if ok else "failed"
 
-    tree = Tree(f"[bold {color}]{icon}  {result['result_summary']}[/bold {color}]")
-
-    for t in result.get("turns_detail", []):
-        atype = t.get("action_type")
-        if t.get("not_found"):
-            tree.add(
-                f"[dim]Turn {t['no']}[/dim]  [yellow]{t['not_found']}[/yellow]"
-            )
-        elif atype and t["executed"]:
-            style = _ACTION_STYLE.get(atype, "white")
-            tree.add(
-                f"[dim]Turn {t['no']}[/dim]  [{style}]{atype}[/] {t['action_desc']}"
-            )
-        elif atype and not t["executed"]:
-            tree.add(f"[dim]Turn {t['no']}[/dim]  [dim]{atype} (未执行)[/dim]")
-        else:
-            tree.add(f"[dim]Turn {t['no']}[/dim]  {t['summary']}")
-
-    turns = result["turns_count"]
-    if turns:
-        tree.add(f"[dim]{turns} turns[/dim]")
+    turns = result.get("turns_count", 0)
+    suffix = f"  [dim]{turns} turns[/dim]" if turns else ""
+    tree = Tree(f"[bold {color}]{icon}  {result['result_summary']}[/bold {color}]{suffix}")
 
     console.print()
     console.print(
@@ -424,12 +422,16 @@ def main() -> None:
             console=console,
             refresh_per_second=10,
             transient=False,
-        ):
+        ) as live:
+            def _on_turn(entry: dict) -> None:
+                live.console.print(_turn_line(entry))
+
             try:
                 result = run_chat_turn(
                     goal, action_policy, turn_supervisor, log_dir,
                     max_turns=args.max_turns, live_state=live_state,
                     backend=_MODE_BACKEND[mode],
+                    on_turn=_on_turn,
                 )
             except SystemExit:
                 raise
