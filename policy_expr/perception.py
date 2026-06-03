@@ -198,29 +198,6 @@ def dismiss_iphone_sheet() -> bool:
         return False
 
 
-def try_resume_mac(button_lx: float = WIN_W / 2, button_ly: float = WIN_H * 0.58) -> bool:
-    """Click a dismiss button inside the Mac iPhone-mirroring window.
-
-    Dismisses Mac-side system dialogs (e.g. "无法从 Mac 使用 iPhone 麦克风") that
-    block iPhone interaction, causing client.tap() to return a 'paused' message.
-    button_lx / button_ly: pixel offset from window top-left (defaults to ~center-x, 58%-down).
-    """
-    try:
-        import Quartz
-        bounds = mirroring_window_bounds()
-        if bounds is None:
-            return False
-        win_x, win_y, _, _ = bounds
-        pt = Quartz.CGPoint(win_x + button_lx, win_y + button_ly)
-        for ev_type in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-            ev = Quartz.CGEventCreateMouseEvent(None, ev_type, pt, Quartz.kCGMouseButtonLeft)
-            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
-        time.sleep(1.0)
-        return True
-    except Exception:
-        return False
-
-
 class LivePerception:
     """Capture the current phone screen through an active live session."""
 
