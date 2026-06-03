@@ -166,6 +166,38 @@ def mirroring_window_bounds() -> tuple[float, float, float, float] | None:
     return None
 
 
+def dismiss_iphone_sheet() -> bool:
+    """Dismiss a Mac-side AXSheet in the iPhone Mirroring window via AXPress (zero-preempt).
+
+    Handles dialogs like "无法从 Mac 使用 iPhone 相机/麦克风".
+    Returns True if a sheet was found and pressed, False otherwise.
+    """
+    try:
+        import Cocoa
+        import ApplicationServices as AX
+
+        def _ax(el, attr):
+            err, val = AX.AXUIElementCopyAttributeValue(el, attr, None)
+            return val if err == 0 else None
+
+        for app in Cocoa.NSWorkspace.sharedWorkspace().runningApplications():
+            if "iphone" not in (app.localizedName() or "").lower():
+                continue
+            root = AX.AXUIElementCreateApplication(app.processIdentifier())
+            for win in (_ax(root, "AXWindows") or []):
+                for child in (_ax(win, "AXChildren") or []):
+                    if _ax(child, "AXRole") != "AXSheet":
+                        continue
+                    for btn in (_ax(child, "AXChildren") or []):
+                        if _ax(btn, "AXRole") == "AXButton":
+                            AX.AXUIElementPerformAction(btn, "AXPress")
+                            time.sleep(0.4)
+                            return True
+        return False
+    except Exception:
+        return False
+
+
 def try_resume_mac(button_lx: float = WIN_W / 2, button_ly: float = WIN_H * 0.58) -> bool:
     """Click a dismiss button inside the Mac iPhone-mirroring window.
 

@@ -32,10 +32,11 @@ from Quartz import (
     kCGEventLeftMouseDragged,
     kCGMouseButtonLeft,
     kCGWindowListOptionAll,
+    kCGWindowListOptionOnScreenOnly,
     kCGNullWindowID,
 )
 
-from policy_expr.perception import LivePhoneSession, try_resume_mac
+from policy_expr.perception import LivePhoneSession, dismiss_iphone_sheet
 from policy_expr.schemas import Action, ActionDecision
 
 # App Switcher / kill-app 相关常量（通过像素分析得出）
@@ -242,16 +243,25 @@ class ActionExecutor:
 
         return True
 
+    def _recover_if_blocked(self, result: str) -> None:
+        """Detect and dismiss a Mac-side sheet blocking iPhone interaction.
+
+        mirroir: session returns "paused" in result.
+        daemon:  tap returns "OK" regardless; detect via CGWindowList extra window.
+        """
+        client = self._client()
+        blocked = "paused" in result.lower()
+        if not blocked and getattr(client, "zero_preempt", False):
+            blocked = _has_iphone_sheet()
+        if blocked:
+            print("Mac 弹窗阻断，尝试恢复...")
+            dismiss_iphone_sheet()
+
     def _tap(self, lx: float, ly: float, decision: ActionDecision, app_name: str = "") -> bool:
         print(f"执行点击: ({lx:.0f}, {ly:.0f})")
         result = self._client().tap(lx, ly)
         print(f"结果: {result}")
-        if "paused" in result.lower():
-            print("Mac 弹窗阻断，尝试恢复...")
-            if try_resume_mac():
-                time.sleep(0.5)
-                result = self._client().tap(lx, ly)
-                print(f"恢复后重试: {result}")
+        self._recover_if_blocked(result)
         if "interrupted" in result.lower() or "failed" in result.lower():
             print("点击失败：落点在窗口外或操作被中断，跳过")
             return False
@@ -415,6 +425,22 @@ _TAP_Y_MIN, _TAP_Y_MAX = 80, 970
 def is_valid_tap(ax: float, ay: float) -> bool:
     """Check if normalized (0-1000) coordinates fall on the phone screen, not the frame/desktop."""
     return _TAP_X_MIN <= ax <= _TAP_X_MAX and _TAP_Y_MIN <= ay <= _TAP_Y_MAX
+
+
+def _has_iphone_sheet() -> bool:
+    """Fast check: does iPhone Mirroring have a Mac-side alert/sheet window?
+
+    Cheaper than AX traversal — just counts onscreen windows owned by iPhone
+    Mirroring that are smaller than the main phone window (alerts are ~260×176).
+    """
+    wins = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+    return any(
+        "iphone" in str(w.get("kCGWindowOwnerName", "")).lower()
+        and w.get("kCGWindowIsOnscreen")
+        and w["kCGWindowBounds"]["Width"] < 300
+        and w["kCGWindowBounds"]["Height"] < 300
+        for w in (wins or [])
+    )
 
 
 def _find_iphone_window() -> tuple[float, float] | None:
