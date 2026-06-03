@@ -137,7 +137,7 @@ def _print_header() -> None:
     console.print("  [bold bright_cyan]iPhone GUI Agent[/]  [dim]─  自动操控 iPhone 的智能助手[/]")
     console.print("  [dim]操作各类 App · 发消息 · 点外卖 · 搜索内容 · 更多…[/]")
     console.print()
-    console.print("  [dim]/exit  退出  ·  /clear  清空历史  ·  /supervisor  切换策略引擎  ·  /mode [silent|standard]  切换操作模式[/]")
+    console.print("  [dim]/exit  退出  ·  /clear  清空历史  ·  /supervisor  切换策略引擎  ·  /mode [silent|standard]  ·  /model [qwen35|qwen36][/]")
     console.print()
 
 
@@ -214,7 +214,8 @@ def _print_result(result: dict) -> None:
 # ── Main loop ──────────────────────────────────────────────────────────────
 
 
-_COMMANDS = ["/exit", "/clear", "/supervisor", "/mode", "/mode silent", "/mode standard", "/pref"]
+_COMMANDS = ["/exit", "/clear", "/supervisor", "/mode", "/mode silent", "/mode standard",
+             "/model", "/model qwen35", "/model qwen36", "/pref"]
 _completer = WordCompleter(
     _COMMANDS,
     meta_dict={
@@ -326,6 +327,21 @@ def main() -> None:
             console.print()
             desc = "零抢占 mirror_daemon" if mode == "silent" else "mirroir-mcp 原版"
             console.print(f"  [dim]mode: {mode}  ({desc})[/dim]")
+            console.print()
+            continue
+
+        if user_msg.startswith("/model"):
+            from policy_expr.config import switch_config, active_config_name, _NAMED_CONFIGS
+            parts = user_msg.split()
+            _MODELS = list(_NAMED_CONFIGS.keys())
+            if len(parts) >= 2 and parts[1] in _MODELS:
+                model_name = parts[1]
+            else:
+                current = active_config_name()
+                model_name = next(m for m in _MODELS if m != current)
+            path = switch_config(model_name)
+            console.print()
+            console.print(f"  [dim]model: {model_name}  ({path.name})[/dim]")
             console.print()
             continue
 

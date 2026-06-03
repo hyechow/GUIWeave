@@ -15,14 +15,38 @@ from llm.provider_config import ChatProviderConfig, resolve_chat_provider_config
 _env_config = os.environ.get("POLICY_EXPR_CONFIG")
 CONFIG_PATH = Path(_env_config) if _env_config else Path(__file__).with_name("config.yaml")
 
+_NAMED_CONFIGS: dict[str, Path] = {
+    "qwen35": Path(__file__).with_name("config.yaml"),
+    "qwen36": Path(__file__).with_name("config.qwen36.yaml"),
+}
+
+_active_config_path: Path = CONFIG_PATH
+
+
+def active_config_name() -> str:
+    """Return the short name of the currently active config, or its filename."""
+    for name, path in _NAMED_CONFIGS.items():
+        if path == _active_config_path:
+            return name
+    return _active_config_path.name
+
+
+def switch_config(name_or_path: str) -> Path:
+    """Switch active config by name ('qwen35'/'qwen36') or file path. Clears lru_cache."""
+    global _active_config_path
+    resolved = _NAMED_CONFIGS.get(name_or_path) or Path(name_or_path)
+    _active_config_path = resolved
+    load_config.cache_clear()
+    return resolved
+
 
 @lru_cache(maxsize=1)
-def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
-    if not path.exists():
+def load_config() -> dict[str, Any]:
+    if not _active_config_path.exists():
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load(_active_config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
-        raise ValueError(f"{path} must contain a YAML mapping")
+        raise ValueError(f"{_active_config_path} must contain a YAML mapping")
     return data
 
 
