@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 import sys
 import time
@@ -138,7 +137,7 @@ def _print_header() -> None:
     console.print("  [dim]操作各类 App · 发消息 · 点外卖 · 搜索内容 · 更多…[/]")
     console.print()
     console.print("  [dim]/exit  退出  ·  /clear  清空历史  ·  /supervisor  切换策略引擎[/]")
-    console.print("  [dim]/mode [silent|standard]  切换操作模式  ·  /model [qwen35|qwen36]  切换模型[/]")
+    console.print("  [dim]/mode [silent|standard]  切换操作模式  ·  /model [qwen35|qwen36]  切换模型  ·  /max-turns <n>  最大轮数[/]")
     console.print()
 
 
@@ -216,13 +215,14 @@ def _print_result(result: dict) -> None:
 
 
 _COMMANDS = ["/exit", "/clear", "/supervisor", "/mode", "/mode silent", "/mode standard",
-             "/model", "/model qwen35", "/model qwen36", "/pref"]
+             "/model", "/model qwen35", "/model qwen36", "/max-turns", "/pref"]
 _completer = WordCompleter(
     _COMMANDS,
     meta_dict={
         "/exit": "退出",
         "/clear": "清空历史",
         "/supervisor": "切换 supervisor (simple/milestone)",
+        "/max-turns": "设置单任务最大轮数 (/max-turns 30)",
         "/pref": "查看/设置偏好 (set 外卖 美团 / del 外卖)",
     },
 )
@@ -258,10 +258,6 @@ def _handle_pref(cmd: str, prefs: PreferenceManager) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Lucas 多轮对话")
-    parser.add_argument("--max-turns", type=int, default=20)
-    args = parser.parse_args()
-
     action_policy = build_policy(StructuredOutputPolicy.name)
     supervisor = build_supervisor(MilestoneSupervisorPolicy.name)
     prefs = PreferenceManager()
@@ -269,6 +265,7 @@ def main() -> None:
     _env_default = "standard" if os.environ.get("AGENT_MODE", "silent").lower() in ("mirroir", "standard") else "silent"
     # /model switches the active profile at runtime (AGENT_MODEL sets the startup default)
     mode: str = _env_default
+    max_turns: int = 25   # 默认 25；运行时用 /max-turns 调整
 
     SESSIONS_ROOT = ROOT / "data" / "sessions"
     _print_header()
@@ -344,6 +341,17 @@ def main() -> None:
             switch_config(model_name)
             console.print()
             console.print(f"  [dim]model profile: {model_name}[/dim]")
+            console.print()
+            continue
+
+        if user_msg == "/max-turns" or user_msg.startswith("/max-turns "):
+            parts = user_msg.split()
+            console.print()
+            if len(parts) >= 2 and parts[1].isdigit() and int(parts[1]) > 0:
+                max_turns = int(parts[1])
+                console.print(f"  [dim]max_turns: {max_turns}[/dim]")
+            else:
+                console.print(f"  [dim]当前 max_turns: {max_turns}  ·  用法: /max-turns <正整数>[/dim]")
             console.print()
             continue
 
@@ -447,7 +455,7 @@ def main() -> None:
             try:
                 result = run_chat_turn(
                     goal, action_policy, turn_supervisor, log_dir,
-                    max_turns=args.max_turns, live_state=live_state,
+                    max_turns=max_turns, live_state=live_state,
                     backend=_MODE_BACKEND[mode],
                     on_turn=_on_turn,
                 )
