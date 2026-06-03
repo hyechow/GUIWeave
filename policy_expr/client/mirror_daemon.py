@@ -62,7 +62,6 @@ class MirrorDaemonClient:
         self._cursor_enabled = cursor
         self._cursor: AgentCursor | None = None
         self._cursor_shown = False
-        self._cursor_hide_s = 0.25      # screenshot 前隐藏光标后等淡出
         self._win: tuple[float, float, float, float] | None = None  # (x,y,w,h)
 
     # --- lifecycle -----------------------------------------------------
@@ -173,11 +172,8 @@ class MirrorDaemonClient:
     # --- public surface(对齐 SyncMCPClient)----------------------------
 
     def screenshot(self) -> bytes:
-        # 截图前隐藏光标,别让绿箭头进喂模型/OCR/YOLO 的图(daemon 的 SCStream 截显示器区域)。
-        if self._cursor and self._cursor_shown:
-            self._cursor.hide()
-            self._cursor_shown = False
-            time.sleep(self._cursor_hide_s)
+        # 光标 overlay 由 daemon 的 SCContentFilter 排除在捕获之外(按可执行名定位、按 pid
+        # 追踪、随重启自愈),不会进截图,故无需截图前隐藏——光标可常驻可见、零延迟。
         for _ in range(10):
             raw = self._cmd("screenshot")
             if raw:
