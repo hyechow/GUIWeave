@@ -451,7 +451,7 @@ def main() -> None:
                     backend=_MODE_BACKEND[mode],
                     on_turn=_on_turn,
                 )
-            except SystemExit:
+            except (SystemExit, KeyboardInterrupt):
                 raise
             except Exception as exc:
                 result = {

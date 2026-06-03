@@ -91,6 +91,11 @@ class SCKSession:
     def close(self):
         if self._proc:
             self._proc.terminate()
+            try:
+                self._proc.wait(timeout=3)
+            except Exception:
+                self._proc.kill()
+            self._proc = None
             self._proc = None
 
 
