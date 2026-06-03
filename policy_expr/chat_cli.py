@@ -267,7 +267,7 @@ def main() -> None:
     prefs = PreferenceManager()
     _MODE_BACKEND = {"silent": "daemon", "standard": "mirroir"}
     _env_default = "standard" if os.environ.get("AGENT_MODE", "silent").lower() in ("mirroir", "standard") else "silent"
-    # /model reads AGENT_MODEL at startup; switch_config already handles it via _active_config_path
+    # /model switches the active profile at runtime (AGENT_MODEL sets the startup default)
     mode: str = _env_default
 
     SESSIONS_ROOT = ROOT / "data" / "sessions"
@@ -333,17 +333,17 @@ def main() -> None:
             continue
 
         if user_msg == "/model" or user_msg.startswith("/model "):
-            from policy_expr.config import switch_config, active_config_name, _NAMED_CONFIGS
+            from policy_expr.config import switch_config, active_config_name, available_profiles
             parts = user_msg.split()
-            _MODELS = list(_NAMED_CONFIGS.keys())
+            _MODELS = available_profiles()
             if len(parts) >= 2 and parts[1] in _MODELS:
                 model_name = parts[1]
             else:
                 current = active_config_name()
-                model_name = next(m for m in _MODELS if m != current)
-            path = switch_config(model_name)
+                model_name = next((m for m in _MODELS if m != current), current)
+            switch_config(model_name)
             console.print()
-            console.print(f"  [dim]model: {model_name}  ({path.name})[/dim]")
+            console.print(f"  [dim]model profile: {model_name}[/dim]")
             console.print()
             continue
 

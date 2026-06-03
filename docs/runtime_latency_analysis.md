@@ -68,7 +68,7 @@
 
 **权衡**：3.6 每轮 decide 快 ~26%（~1s/轮），但 token 成本涨 ~3-4.5×。
 - **默认/批量测试**：用 `config.yaml`（qwen3.5，便宜）。
-- **延迟敏感 / 对比验证**：`POLICY_EXPR_CONFIG=policy_expr/config.qwen36.yaml`（全 3.6）。
+- **延迟敏感 / 对比验证**：`AGENT_MODEL=qwen36`（profile 覆盖核心模型为 3.6）。
 - 决策时按场景权衡：低量、重延迟 → 3.6；成本敏感、批量回归 → 3.5。
 
 ### 横向对比 OpenAI（汇率 ~7.1 RMB/USD，每百万 token）
@@ -122,7 +122,7 @@
 | decomposer「到达页面=navigation」分类 | 避免 action 误标使 SkipCheck / nav-done 优化失效 |
 | 动态 settle 间隔（首帧 1s 后 0.5s） | 挡住转场动画中途采样的假停稳，避免浪费整轮 |
 | YOLO+OCR 与 decide 并行预算 | 吸附计算移出关键路径，~0.4s/轮 |
-| qwen3.6 可选（`config.qwen36.yaml`） | 每轮 decide −26%，但成本 ~3-4.5×；默认仍用 3.5 |
+| qwen3.6 可选（`AGENT_MODEL=qwen36`） | 每轮 decide −26%，但成本 ~3-4.5×；默认仍用 3.5 |
 
 ## 结论与后续空间
 

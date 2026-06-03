@@ -1,5 +1,6 @@
 """Configuration helpers for policy_expr."""
 
+import copy
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -9,41 +10,65 @@ import yaml
 
 from llm.provider_config import ChatProviderConfig, resolve_chat_provider_config
 
-# AGENT_MODEL=qwen35|qwen36 selects the LLM config at startup.
-_NAMED_CONFIGS: dict[str, Path] = {
-    "qwen35": Path(__file__).with_name("config.yaml"),
-    "qwen36": Path(__file__).with_name("config.qwen36.yaml"),
-}
+# Single config file. AGENT_MODEL selects a *profile* (default 'qwen35' = base, no
+# override); a profile under `profiles:` deep-merges into `llm` to swap the core model,
+# so adding a comparison model is one small block, not a whole duplicated file.
+CONFIG_PATH = Path(__file__).with_name("config.yaml")
+_DEFAULT_PROFILE = "qwen35"
+_active_profile: str = os.environ.get("AGENT_MODEL", _DEFAULT_PROFILE)
 
-_env_model = os.environ.get("AGENT_MODEL", "qwen35")
-_active_config_path: Path = _NAMED_CONFIGS.get(_env_model) or Path(_env_model)
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    out = copy.deepcopy(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+@lru_cache(maxsize=1)
+def _load_raw() -> dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        return {}
+    data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{CONFIG_PATH} must contain a YAML mapping")
+    return data
+
+
+def available_profiles() -> list[str]:
+    """Selectable profile names: the base default plus any defined under `profiles`."""
+    raw = _load_raw()
+    profs = list(raw.get("profiles", {}).keys()) if isinstance(raw.get("profiles"), dict) else []
+    return [_DEFAULT_PROFILE] + [p for p in profs if p != _DEFAULT_PROFILE]
 
 
 def active_config_name() -> str:
-    """Return the short name of the currently active config, or its filename."""
-    for name, path in _NAMED_CONFIGS.items():
-        if path == _active_config_path:
-            return name
-    return _active_config_path.name
+    """Return the active profile name."""
+    return _active_profile
 
 
-def switch_config(name_or_path: str) -> Path:
-    """Switch active config by name ('qwen35'/'qwen36') or file path. Clears lru_cache."""
-    global _active_config_path
-    resolved = _NAMED_CONFIGS.get(name_or_path) or Path(name_or_path)
-    _active_config_path = resolved
+def switch_config(profile: str) -> str:
+    """Switch the active profile (e.g. 'qwen35'/'qwen36'); clears the merged-config cache."""
+    global _active_profile
+    _active_profile = profile
     load_config.cache_clear()
-    return resolved
+    return profile
 
 
 @lru_cache(maxsize=1)
 def load_config() -> dict[str, Any]:
-    if not _active_config_path.exists():
-        return {}
-    data = yaml.safe_load(_active_config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"{_active_config_path} must contain a YAML mapping")
-    return data
+    """Base config with the active profile's overrides deep-merged into `llm`."""
+    raw = _load_raw()
+    override = (raw.get("profiles") or {}).get(_active_profile) if isinstance(raw.get("profiles"), dict) else None
+    if isinstance(override, dict) and override:
+        merged = copy.deepcopy(raw)
+        base_llm = raw.get("llm") if isinstance(raw.get("llm"), dict) else {}
+        merged["llm"] = _deep_merge(base_llm, override)
+        return merged
+    return raw
 
 
 def resolve_llm_config(name: str) -> ChatProviderConfig:

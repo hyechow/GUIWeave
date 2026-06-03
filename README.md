@@ -147,7 +147,7 @@ Interactive multi-turn chat interface. It supports consecutive tasks and maintai
 | Command | Description |
 |---------|-------------|
 | `/mode [silent\|standard]` | Switch input backend. `silent` = zero-preempt mirror_daemon (default); `standard` = mirroir-mcp original |
-| `/model [qwen35\|qwen36]` | Switch LLM config. `qwen35` = config.yaml (default); `qwen36` = config.qwen36.yaml |
+| `/model [qwen35\|qwen36]` | Switch model profile (config.yaml `profiles`). `qwen35` = base (default); `qwen36` = qwen3.6 core models |
 | `/supervisor` | Toggle between Milestone and Simple supervisor |
 | `/clear` | Clear conversation history |
 | `/exit` | Exit |
@@ -228,8 +228,7 @@ policy_expr/
 ├── perception.py        # Screenshot perception layer
 ├── output.py            # Final response generation
 ├── schemas.py           # Core data models
-├── config.yaml          # LLM provider/model configuration (qwen35)
-├── config.qwen36.yaml   # Alternative LLM config (qwen36)
+├── config.yaml          # LLM config: base (qwen35) + profiles (AGENT_MODEL) + pricing
 ├── prefs.py             # User preference memory
 ├── supervisor/
 │   └── milestone.py     # Milestone state machine: decompose -> execute -> verify

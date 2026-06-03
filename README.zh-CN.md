@@ -145,7 +145,7 @@ bin/chat
 | 命令 | 说明 |
 |------|------|
 | `/mode [silent\|standard]` | 切换输入后端。`silent` = 零抢占 mirror_daemon（默认）；`standard` = mirroir-mcp 原版 |
-| `/model [qwen35\|qwen36]` | 切换模型配置。`qwen35` = config.yaml（默认）；`qwen36` = config.qwen36.yaml |
+| `/model [qwen35\|qwen36]` | 切换模型 profile（config.yaml 的 `profiles`）。`qwen35` = 基线（默认）；`qwen36` = qwen3.6 核心模型 |
 | `/supervisor` | 在 Milestone 与 Simple supervisor 之间切换 |
 | `/clear` | 清空对话历史 |
 | `/exit` | 退出 |
@@ -222,8 +222,7 @@ policy_expr/
 ├── perception.py        # 截图感知层
 ├── output.py            # 回复生成
 ├── schemas.py           # 核心数据模型
-├── config.yaml          # LLM provider/model 配置（qwen35）
-├── config.qwen36.yaml   # 备用 LLM 配置（qwen36）
+├── config.yaml          # LLM 配置：基线(qwen35) + profiles(AGENT_MODEL) + 单价
 ├── prefs.py             # 用户偏好记忆
 ├── supervisor/
 │   └── milestone.py     # Milestone 状态机：分解→执行→验收
