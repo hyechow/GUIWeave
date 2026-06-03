@@ -8,7 +8,8 @@
 // 所在的那块屏(实测跑去副屏)。小窗按其位置被分配到对应那块屏 → 正确落在主屏镜像处。
 //
 // 协议(stdin,一行一条):
-//   move <x> <y>   平滑滑到屏幕点 (x,y) —— 逻辑点、左上原点(同 CGWindow)
+//   move <x> <y>        平滑滑到屏幕点 (x,y) —— 逻辑点、左上原点(同 CGWindow)
+//   mode <normal|scroll_up|scroll_down|scroll_left|scroll_right>   切换箭头形状
 //   show / hide / quit
 //
 // 独立进程(不整合进 mirror_daemon):overlay 画在镜像之上会进 SCStream 截图、污染 OCR/YOLO,
@@ -35,66 +36,48 @@ func primaryHeight() -> CGFloat {
 // 箭头永远画在小窗中心(窗口移动,内容只画一次)
 final class CursorView: NSView {
     var phase: CGFloat = 0   // 呼吸脉冲相位(Controller 每帧推进)
+    var mode: String = "normal"  // normal | scroll_up | scroll_down | scroll_left | scroll_right
     override var isFlipped: Bool { false }
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         if ProcessInfo.processInfo.environment["AC_DEBUG"] == "1" {
             ctx.setFillColor(CGColor(red: 1, green: 0, blue: 1, alpha: 0.6)); ctx.fill(bounds)
         }
+        if mode == "normal" { drawPointer(ctx) } else { drawScrollArrow(ctx) }
+    }
+
+    private func drawPointer(_ ctx: CGContext) {
         // blue 折纸/飞镖箭头 + 呼吸柔光脉冲 + 落地阴影。nose 在中心(=光标热点)。
         let c = CGPoint(x: bounds.midX, y: bounds.midY)
         let cs = CGColorSpaceCreateDeviceRGB()
-        let s: CGFloat = 0.74   // ≈25px
+        let s: CGFloat = 0.74
         func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: c.x + x * s, y: c.y + y * s) }
-        let N = P(0, 0)      // 尖端
-        let R = P(34, -16)   // 右翼
-        let M = P(20, -20)   // 尾部凹口
-        let L = P(16, -34)   // 左翼
-
-        let tealHi = CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, 1.0])!  // 亮蓝
-        let tealLo = CGColor(colorSpace: cs, components: [0.10, 0.35, 0.85, 1.0])!  // 深蓝
-        let mintHi = CGColor(colorSpace: cs, components: [0.85, 0.95, 1.00, 1.0])!  // 浅冰蓝高光
-        let mintLo = CGColor(colorSpace: cs, components: [0.60, 0.82, 1.00, 1.0])!  // 淡蓝
-
+        let N = P(0, 0); let R = P(34, -16); let M = P(20, -20); let L = P(16, -34)
+        let blueHi = CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, 1.0])!
+        let blueLo = CGColor(colorSpace: cs, components: [0.10, 0.35, 0.85, 1.0])!
+        let iceHi  = CGColor(colorSpace: cs, components: [0.85, 0.95, 1.00, 1.0])!
+        let iceLo  = CGColor(colorSpace: cs, components: [0.60, 0.82, 1.00, 1.0])!
         func outline() -> CGMutablePath {
-            let p = CGMutablePath()
-            p.move(to: N); p.addLine(to: R); p.addLine(to: M); p.addLine(to: L); p.closeSubpath(); return p
+            let p = CGMutablePath(); p.move(to: N); p.addLine(to: R); p.addLine(to: M); p.addLine(to: L); p.closeSubpath(); return p
         }
         func tri(_ a: CGPoint, _ b: CGPoint, _ d: CGPoint) -> CGMutablePath {
             let p = CGMutablePath(); p.move(to: a); p.addLine(to: b); p.addLine(to: d); p.closeSubpath(); return p
         }
-
-        // 1) 呼吸柔光脉冲(teal 光晕,半径 + 透明度随 phase 起伏)——动态、更显眼
         let pulse = 0.5 + 0.5 * sin(phase)
-        let mid = P(16, -18)
-        let glowR = (24 + 16 * pulse) * s
-        let glowA = 0.14 + 0.26 * pulse
-        if let g = CGGradient(colorsSpace: cs, colors: [
-            CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, glowA])!,
-            CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, 0.0])!] as CFArray, locations: [0, 1]) {
+        let mid = P(16, -18); let glowR = (24 + 16 * pulse) * s; let glowA = 0.14 + 0.26 * pulse
+        if let g = CGGradient(colorsSpace: cs, colors: [CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, glowA])!, CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, 0.0])!] as CFArray, locations: [0, 1]) {
             ctx.drawRadialGradient(g, startCenter: mid, startRadius: 0, endCenter: mid, endRadius: glowR, options: [])
         }
-
-        // 2) 落地阴影:对整形填一次底色(带 shadow)→ 统一投影,再画折面盖上
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -2.0), blur: 5.0,
-                      color: CGColor(colorSpace: cs, components: [0.0, 0.05, 0.20, 0.55])!)
-        ctx.addPath(outline()); ctx.setFillColor(tealLo); ctx.fillPath()
+        ctx.setShadow(offset: CGSize(width: 0, height: -2.0), blur: 5.0, color: CGColor(colorSpace: cs, components: [0.0, 0.05, 0.20, 0.55])!)
+        ctx.addPath(outline()); ctx.setFillColor(blueLo); ctx.fillPath()
         ctx.restoreGState()
-
-        // 3) 折面渐变(无阴影)
         ctx.saveGState(); ctx.addPath(tri(N, R, M)); ctx.clip()
-        if let g = CGGradient(colorsSpace: cs, colors: [tealHi, tealLo] as CFArray, locations: [0, 1]) {
-            ctx.drawLinearGradient(g, start: N, end: R, options: [])
-        }
+        if let g = CGGradient(colorsSpace: cs, colors: [blueHi, blueLo] as CFArray, locations: [0, 1]) { ctx.drawLinearGradient(g, start: N, end: R, options: []) }
         ctx.restoreGState()
         ctx.saveGState(); ctx.addPath(tri(N, M, L)); ctx.clip()
-        if let g = CGGradient(colorsSpace: cs, colors: [mintHi, mintLo] as CFArray, locations: [0, 1]) {
-            ctx.drawLinearGradient(g, start: N, end: L, options: [])
-        }
+        if let g = CGGradient(colorsSpace: cs, colors: [iceHi, iceLo] as CFArray, locations: [0, 1]) { ctx.drawLinearGradient(g, start: N, end: L, options: []) }
         ctx.restoreGState()
-
-        // 4) 描边 + 折线
         ctx.addPath(outline())
         ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.90, 0.97, 1.00, 0.95])!)
         ctx.setLineWidth(1.0); ctx.setLineJoin(.round); ctx.strokePath()
@@ -102,6 +85,56 @@ final class CursorView: NSView {
         ctx.addPath(crease)
         ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.10, 0.35, 0.85, 0.55])!)
         ctx.setLineWidth(0.6); ctx.strokePath()
+    }
+
+    private func drawScrollArrow(_ ctx: CGContext) {
+        // 方向箭头(scroll 可视化):同款蓝渐变 + bloom,箭头尖指向滚动方向,居中于小窗。
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let s: CGFloat = 1.1
+        func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: c.x + x * s, y: c.y + y * s) }
+
+        // 尖端/底端因方向而异;isFlipped=false 所以 y+ 为上
+        let (tip, bL, notch, bR): (CGPoint, CGPoint, CGPoint, CGPoint)
+        switch mode {
+        case "scroll_up":
+            tip = P(0, 22); bL = P(-20, -10); notch = P(0, 2); bR = P(20, -10)
+        case "scroll_down":
+            tip = P(0, -22); bL = P(-20, 10); notch = P(0, -2); bR = P(20, 10)
+        case "scroll_left":
+            tip = P(-22, 0); bL = P(10, -20); notch = P(-2, 0); bR = P(10, 20)
+        default: // scroll_right
+            tip = P(22, 0); bL = P(-10, -20); notch = P(2, 0); bR = P(-10, 20)
+        }
+
+        let arrowPath = CGMutablePath()
+        arrowPath.move(to: tip); arrowPath.addLine(to: bR)
+        arrowPath.addLine(to: notch); arrowPath.addLine(to: bL); arrowPath.closeSubpath()
+
+        let blueHi = CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, 1.0])!
+        let blueLo = CGColor(colorSpace: cs, components: [0.10, 0.35, 0.85, 1.0])!
+
+        // 1) bloom 光晕(与 pointer 同款)
+        let pulse = 0.5 + 0.5 * sin(phase)
+        let glowR = (26 + 14 * pulse) * s; let glowA = 0.14 + 0.26 * pulse
+        if let g = CGGradient(colorsSpace: cs, colors: [CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, glowA])!, CGColor(colorSpace: cs, components: [0.25, 0.60, 1.00, 0.0])!] as CFArray, locations: [0, 1]) {
+            ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: glowR, options: [])
+        }
+        // 2) 阴影底色
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -2.0), blur: 5.0, color: CGColor(colorSpace: cs, components: [0.0, 0.05, 0.20, 0.55])!)
+        ctx.addPath(arrowPath); ctx.setFillColor(blueLo); ctx.fillPath()
+        ctx.restoreGState()
+        // 3) 渐变(尖→底)
+        ctx.saveGState(); ctx.addPath(arrowPath); ctx.clip()
+        if let g = CGGradient(colorsSpace: cs, colors: [blueHi, blueLo] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: tip, end: notch, options: [])
+        }
+        ctx.restoreGState()
+        // 4) 描边
+        ctx.addPath(arrowPath)
+        ctx.setStrokeColor(CGColor(colorSpace: cs, components: [0.90, 0.97, 1.00, 0.95])!)
+        ctx.setLineWidth(1.0); ctx.setLineJoin(.round); ctx.strokePath()
     }
 }
 
@@ -177,6 +210,10 @@ Thread.detachNewThread {
                 }
             case "show": ctrl.show()
             case "hide": ctrl.hide()
+            case "mode":
+                if parts.count >= 2, let v = ctrl.window.contentView as? CursorView {
+                    v.mode = String(parts[1]); v.needsDisplay = true
+                }
             case "quit": exit(0)
             default: break
             }

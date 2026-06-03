@@ -148,12 +148,13 @@ class MirrorDaemonClient:
     # --- 光标可视化 ----------------------------------------------------
 
     def _cursor_to(self, lx: float, ly: float):
-        """把虚拟光标滑到窗口本地点 (lx,ly) 对应的屏幕点并显示。"""
+        """把虚拟光标滑到窗口本地点 (lx,ly) 对应的屏幕点并显示。tap/drag 调用时自动切回指针形状。"""
         if not self._cursor:
             return
         wb = self._win or self._query_window()
         if not wb:
             return
+        self._cursor.set_mode("normal")
         self._cursor.move(wb[0] + lx, wb[1] + ly)
         self._cursor.show()
         self._cursor_shown = True
@@ -195,9 +196,15 @@ class MirrorDaemonClient:
         self._cursor_to(x, y)
         return self._text(f"tap {round(x)} {round(y)}")
 
-    def scroll(self, direction: str, amount: int = 16,
+    def scroll(self, direction: str, amount: int = 5,
                x: float = 159, y: float = 350) -> str:
-        self._cursor_to(x, y)
+        if self._cursor:
+            wb = self._win or self._query_window()
+            if wb:
+                self._cursor.set_mode(f"scroll_{direction}")
+                self._cursor.move(wb[0] + x, wb[1] + y)
+                self._cursor.show()
+                self._cursor_shown = True
         return self._text(f"scroll {direction} {int(amount)} {round(x)} {round(y)}")
 
     def type_text(self, text: str) -> str:

@@ -47,6 +47,10 @@ class AgentCursor:
         """把虚拟光标平滑滑到逻辑屏幕点 (x, y)(左上原点)。"""
         self._send(f"move {int(round(x))} {int(round(y))}")
 
+    def set_mode(self, mode: str) -> None:
+        """切换箭头形状: normal | scroll_up | scroll_down | scroll_left | scroll_right"""
+        self._send(f"mode {mode}")
+
     def show(self) -> None:
         self._send("show")
 
