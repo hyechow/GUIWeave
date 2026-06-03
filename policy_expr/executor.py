@@ -109,8 +109,11 @@ class ActionExecutor:
                 return ocr_pos
 
         # Fallback: YOLO icon body (icon-only buttons, or home screen).
+        # Home screen: tighter cap (80) to prevent snapping search capsule/widgets
+        # to distant dock icons. In-app: keep the default 150 for broad coverage.
         if self.calibrator:
-            snapped = self.calibrator.nearest(ax, ay)
+            snap_move = 80.0 if is_home_screen else None
+            snapped = self.calibrator.nearest(ax, ay, max_snap_move=snap_move)
             if snapped:
                 print(f"YOLO 吸附: ({ax:.0f}, {ay:.0f}) → ({snapped[0]:.0f}, {snapped[1]:.0f})")
                 if action is not None:

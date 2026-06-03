@@ -70,6 +70,7 @@ class YoloCalibrator:
         target_y: float,
         max_dist: float = 30.0,
         bbox_margin: float = 50.0,
+        max_snap_move: float | None = None,
     ) -> tuple[float, float] | None:
         """Find the detected icon to snap (target_x, target_y) to.
 
@@ -86,6 +87,7 @@ class YoloCalibrator:
         real_hits: list[tuple[float, float, tuple[float, float], float]] = []
         near_hits: list[tuple[float, tuple[float, float], float]] = []
         margin_hits: list[tuple[float, tuple[float, float], float]] = []
+        move_cap = max_snap_move if max_snap_move is not None else self._MAX_SNAP_MOVE
         for b in self.boxes:
             nx = b.cx / self.img_w * 1000
             ny = b.cy / self.img_h * 1000
@@ -95,7 +97,7 @@ class YoloCalibrator:
             y2 = b.y2 / self.img_h * 1000
             dist = ((nx - target_x) ** 2 + (ny - target_y) ** 2) ** 0.5
             center = (nx, ny)
-            if dist > self._MAX_SNAP_MOVE:
+            if dist > move_cap:
                 continue  # too far to be a sane snap target, whatever the tier
             if (
                 x1 <= target_x <= x2 and y1 <= target_y <= y2
