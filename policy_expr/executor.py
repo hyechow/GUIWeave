@@ -9,6 +9,7 @@ import time
 from policy_expr.utils import clear_text_field, paste_text, press_enter
 from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.executor_constants import (
+    DAEMON_SCROLL_AMOUNT,
     SCROLL_DELTA,
     SCROLL_INTERVAL,
     SCROLL_TICKS,
@@ -188,12 +189,18 @@ class ActionExecutor:
                 time.sleep(0.5)
             else:
                 print("未提供输入坐标，默认当前输入框已聚焦，直接输入文字")
-            # Clear first so existing text is replaced, not appended.
-            clear_text_field()
-            time.sleep(0.2)
-            print(f"输入文字: {action.text!r}")
-            paste_text(action.text)
-            print("结果: 已通过剪贴板粘贴输入")
+            # daemon 后端：type 命令内置 Cmd+A 替换，PSN 路由零抢占
+            # mirroir 后端：Quartz clear_text_field + paste_text
+            client = self._client()
+            if getattr(client, "zero_preempt", False):
+                print(f"输入文字 (daemon): {action.text!r}")
+                print(f"结果: {client.type_text(action.text)}")
+            else:
+                clear_text_field()
+                time.sleep(0.2)
+                print(f"输入文字: {action.text!r}")
+                paste_text(action.text)
+                print("结果: 已通过剪贴板粘贴输入")
 
         elif action.action_type == "clear_text":
             print("清空当前输入框")
@@ -252,6 +259,25 @@ class ActionExecutor:
 
     def _kill_frontmost_app(self) -> bool:
         """打开 App Switcher，上滑 kill 最前台 app，点底部空白区回主屏。"""
+        client = self._client()
+
+        # daemon 后端：全程零抢占（AX app_switcher + per-pid drag + tap）
+        if getattr(client, "zero_preempt", False):
+            print("  A. 打开 App Switcher (AX, 零抢占)")
+            client.app_switcher()
+            time.sleep(2.0)
+            swipe_x = WIN_W * 0.80                      # 右侧 80% ≈ 254px
+            from_y = _TITLE_BAR_H + 350                 # ≈ 388px
+            to_y   = _TITLE_BAR_H + 80                  # ≈ 118px
+            print(f"  B. 上滑 kill 卡片: x={swipe_x:.0f}, y {from_y}→{to_y}")
+            client.drag(swipe_x, from_y, swipe_x, to_y, duration_ms=350)
+            time.sleep(1.5)
+            print("  C. 点底部空白区退出 Switcher")
+            client.tap(WIN_W / 2, WIN_H - 60)
+            time.sleep(1.0)
+            return True
+
+        # mirroir 后端：Quartz 路径
         origin = _find_iphone_window()
         if origin is None:
             print("  iPhone Mirroring 窗口未找到，跳过")
@@ -298,6 +324,19 @@ class ActionExecutor:
 
     def _scroll(self, action: Action, *, ticks: int = SCROLL_TICKS, delta_px: int = SCROLL_DELTA) -> None:
         direction = (action.direction or "").strip().lower()
+        client = self._client()
+
+        # daemon 后端：走 client.scroll()，零抢占
+        if hasattr(client, "scroll"):
+            ax = action.x if action.x is not None else 500
+            ay = action.y if action.y is not None else 500
+            lx, ly = logical_xy(ax, ay)
+            amount = DAEMON_SCROLL_AMOUNT.get(action.amount, DAEMON_SCROLL_AMOUNT["medium"])
+            print(f"  daemon scroll {direction} amount={amount} ({lx:.0f},{ly:.0f})")
+            client.scroll(direction, amount, lx, ly)
+            return
+
+        # mirroir 后端：Quartz 滚轮事件
         delta = _scroll_delta(direction, delta_px)
 
         # Find iPhone Mirroring window on screen
@@ -347,9 +386,11 @@ class ActionExecutor:
             f"({from_x:.0f},{from_y:.0f}) → ({to_x:.0f},{to_y:.0f}), "
             f"{duration_ms}ms"
         )
-        _activate_iphone_mirroring()
-        _hover_logical(from_x, from_y)
-        result = self._client().drag(from_x, from_y, to_x, to_y, duration_ms)
+        client = self._client()
+        if not getattr(client, "zero_preempt", False):
+            _activate_iphone_mirroring()
+            _hover_logical(from_x, from_y)
+        result = client.drag(from_x, from_y, to_x, to_y, duration_ms)
         print(f"结果: {result}")
 
     def _client(self):

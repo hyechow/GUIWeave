@@ -55,6 +55,7 @@ def _ensure_cursor_bin() -> str | None:
 
 
 class MirrorDaemonClient:
+    zero_preempt: bool = True   # executor 用 getattr 检测：无需 activate/hover/osascript
     def __init__(self, daemon_bin: str | None = None, cursor: bool = True):
         self._bin = str(daemon_bin or _resolve_daemon())
         self._p: subprocess.Popen | None = None
