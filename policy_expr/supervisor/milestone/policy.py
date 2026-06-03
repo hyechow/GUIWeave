@@ -11,7 +11,7 @@ from PIL import Image
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from llm.structured import invoke_structured
+from llm.structured import get_llm_token_usage, invoke_structured
 from policy_expr.config import resolve_llm_config
 from policy_expr.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 
@@ -50,16 +50,26 @@ STUCK_VALUE_STALL_WINDOW = 4
 
 
 class _Timer:
-    """Context manager: time a named section, accumulating into a collector dict."""
+    """Context manager: time a named section, accumulating into a collector dict.
 
-    def __init__(self, collector: dict[str, float], order: list[str], name: str):
+    When `tokens` is given, also records the LLM input/output token delta during
+    the section into tokens[name] = {"input": .., "output": ..} (same global-counter
+    caveats as get_llm_call_count: concurrent calls in this window leak in).
+    """
+
+    def __init__(self, collector: dict[str, float], order: list[str], name: str,
+                 tokens: "dict[str, dict[str, int]] | None" = None):
         self._c = collector
         self._o = order
         self._n = name
         self._s = 0.0
+        self._tokens = tokens
+        self._tok0 = (0, 0)
 
     def __enter__(self):
         self._s = time.perf_counter()
+        if self._tokens is not None:
+            self._tok0 = get_llm_token_usage()
         return self
 
     def __exit__(self, *a):
@@ -67,6 +77,11 @@ class _Timer:
         if self._n not in self._c:
             self._o.append(self._n)
         self._c[self._n] = self._c.get(self._n, 0) + d
+        if self._tokens is not None:
+            inp, out = get_llm_token_usage()
+            slot = self._tokens.setdefault(self._n, {"input": 0, "output": 0})
+            slot["input"] += inp - self._tok0[0]
+            slot["output"] += out - self._tok0[1]
 
 
 def _is_loop(milestone: Milestone) -> bool:
@@ -183,6 +198,7 @@ class MilestoneSupervisorPolicy:
         self._last_replan: Optional[_ReplanResult] = None
         self._timings: dict[str, float] = {}
         self._timings_order: list[str] = []
+        self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
 
     def set_app_knowledge(self, text: str, app_name: str = "", elements: str = "") -> None:
         self._app_knowledge = text
@@ -193,9 +209,10 @@ class MilestoneSupervisorPolicy:
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
         self._timings.clear()
         self._timings_order.clear()
+        self._token_usage.clear()
 
         if not self._order:
-            with _Timer(self._timings, self._timings_order, "decompose"):
+            with _Timer(self._timings, self._timings_order, "decompose", self._token_usage):
                 self._decompose(goal, observation)
 
         if self._current_id is None:
@@ -274,7 +291,7 @@ class MilestoneSupervisorPolicy:
 
         prev_page_id = self._last_page_identity.get(milestone.id, "")
 
-        with _Timer(self._timings, self._timings_order, "checker"):
+        with _Timer(self._timings, self._timings_order, "checker", self._token_usage):
             check = self._single_check(milestone, observation, history)
         self._last_check = check
         print(f"  [SingleCheck] {check.status}: {check.reason}")
@@ -342,11 +359,11 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        with _Timer(self._timings, self._timings_order, "planner"):
+        with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
             plan = self._invoke_planner(milestone, check, observation, history)
         if self._is_sequence(plan.instruction):
             print("  [Planner] 多步序列，重试...")
-            with _Timer(self._timings, self._timings_order, "planner"):
+            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
                 plan = self._invoke_planner(
                     milestone, check, observation, history,
                     extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
@@ -355,7 +372,7 @@ class MilestoneSupervisorPolicy:
         # 是正确做法，单步式的重复检测会误把它判成撞墙→死路。其停滞由 _check_value_stall 兜。
         if not milestone.is_iterative and self._is_repeated_instruction(plan.instruction, milestone.id, history):
             print("  [Planner] 指令重复已失败操作，重试...")
-            with _Timer(self._timings, self._timings_order, "planner"):
+            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
                 plan = self._invoke_planner(
                     milestone, check, observation, history,
                     extra=(
@@ -445,7 +462,7 @@ class MilestoneSupervisorPolicy:
                 return self._advance(milestone, observation, history)
             print("  [Loop] 截图相似但上一轮读到了新内容，继续收集")
 
-        with _Timer(self._timings, self._timings_order, "loop_check"):
+        with _Timer(self._timings, self._timings_order, "loop_check", self._token_usage):
             frame = self._loop_check(milestone, observation, history)
         self._last_check = None  # loop milestones use _LoopFrameResult, not _SingleCheckResult
         print(f"  [LoopFrame] boundary={frame.boundary_reached}, should_stop={frame.should_stop}")
@@ -499,7 +516,7 @@ class MilestoneSupervisorPolicy:
                 collection_scope=frame.collection_scope,
             )
 
-        with _Timer(self._timings, self._timings_order, "loop_scroll"):
+        with _Timer(self._timings, self._timings_order, "loop_scroll", self._token_usage):
             plan = self._invoke_loop_scroll(milestone, frame, observation)
         print(f"  [LoopScroll] {plan.instruction}")
         return SupervisorStep(
@@ -647,7 +664,7 @@ class MilestoneSupervisorPolicy:
             "（如把'日'先调到目标月份的合法范围内、再调'月'，以破解非法日期被回弹的死锁）。"
             "禁止改用点击 picker 滚轮上的具体数值（iOS 滚轮不响应点击），禁止判定'组件不支持滚动/拖拽'。"
         ) if milestone.is_iterative else ""
-        with _Timer(self._timings, self._timings_order, "replanner"):
+        with _Timer(self._timings, self._timings_order, "replanner", self._token_usage):
             replan = self._invoke_replanner(milestone, check, observation, history, extra=iter_extra)
         self._last_replan = replan
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")

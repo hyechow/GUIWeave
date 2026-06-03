@@ -72,3 +72,25 @@ def _optional_str(value: Any) -> str | None:
         return None
     value = str(value).strip()
     return value or None
+
+
+# ── Pricing (per-model token cost, for report cost estimation) ─────────────
+
+def get_pricing() -> dict[str, Any]:
+    p = load_config().get("pricing", {})
+    return p if isinstance(p, dict) else {}
+
+
+def pricing_currency() -> str:
+    return str(get_pricing().get("currency") or "¥")
+
+
+def model_price(model: str) -> tuple[float, float]:
+    """(input, output) price per 1M tokens for a model; falls back to default → (1.0, 4.0)."""
+    pricing = get_pricing()
+    models = pricing.get("models")
+    models = models if isinstance(models, dict) else {}
+    entry = models.get(model) or pricing.get("default") or {"input": 1.0, "output": 4.0}
+    if not isinstance(entry, dict):
+        entry = {"input": 1.0, "output": 4.0}
+    return float(entry.get("input", 0) or 0), float(entry.get("output", 0) or 0)

@@ -15,12 +15,40 @@ from pydantic import BaseModel, ValidationError
 ModelT = TypeVar("ModelT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 _LLM_CALL_COUNT = 0
+_LLM_INPUT_TOKENS = 0
+_LLM_OUTPUT_TOKENS = 0
 MAX_LLM_TRANSIENT_RETRIES = 2
 
 
 def get_llm_call_count() -> int:
     """Return the number of LLM API calls made through invoke_structured."""
     return _LLM_CALL_COUNT
+
+
+def get_llm_token_usage() -> tuple[int, int]:
+    """Return cumulative (input_tokens, output_tokens) over all invoke_structured calls.
+
+    Same scope/caveats as get_llm_call_count: only counts calls routed through
+    invoke_structured; transient-retry attempts and concurrent (e.g. target_verify
+    pool) calls accumulate into the same globals. Providers that omit usage report 0.
+    """
+    return _LLM_INPUT_TOKENS, _LLM_OUTPUT_TOKENS
+
+
+def _accumulate_usage(response: object) -> None:
+    """Add one response's token usage to the global counters (best-effort)."""
+    global _LLM_INPUT_TOKENS, _LLM_OUTPUT_TOKENS
+    usage = getattr(response, "usage_metadata", None)
+    if isinstance(usage, dict) and usage:
+        _LLM_INPUT_TOKENS += int(usage.get("input_tokens") or 0)
+        _LLM_OUTPUT_TOKENS += int(usage.get("output_tokens") or 0)
+        return
+    # Fallback: OpenAI-style response_metadata.token_usage (prompt/completion)
+    meta = getattr(response, "response_metadata", None) or {}
+    tu = meta.get("token_usage") or meta.get("usage") or {}
+    if isinstance(tu, dict):
+        _LLM_INPUT_TOKENS += int(tu.get("prompt_tokens") or 0)
+        _LLM_OUTPUT_TOKENS += int(tu.get("completion_tokens") or 0)
 
 
 def invoke_structured(
@@ -80,7 +108,9 @@ def _invoke_counted_with_retry(fn: Callable[[], ReturnT], label: str) -> ReturnT
     for attempt in range(MAX_LLM_TRANSIENT_RETRIES + 1):
         _LLM_CALL_COUNT += 1
         try:
-            return fn()
+            result = fn()
+            _accumulate_usage(result)
+            return result
         except TypeError as exc:
             if not _is_transient_response_error(exc) or attempt >= MAX_LLM_TRANSIENT_RETRIES:
                 raise

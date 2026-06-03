@@ -28,3 +28,14 @@ llm:
   fingerprint:
     provider: dashscope
     model: qwen3.5-flash
+
+# 各模型单价（元/百万 token），用于报告成本估算。key 为模型名，需与上面 llm.*.model 对应；
+# 报告按「模块→该模块所用模型→单价」逐模块计费再汇总，故不同模块用不同模型也能算准。
+# 未列出的模型回退 default。按你实际计费档调整（注意输入有 ≤128K / >128K 等分档）。
+pricing:
+  currency: "¥"
+  default: {input: 1.0, output: 4.0}
+  models:
+    qwen3.5-35b-a3b: {input: 0.4, output: 3.2}    # ≤128K 档
+    qwen3.5-flash:   {input: 0.2, output: 2.0}
+    qwen3.6-35b-a3b: {input: 1.6, output: 12.8}   # ~3.5 的 4×（估算）

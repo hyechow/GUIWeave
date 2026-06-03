@@ -350,10 +350,13 @@ class PolicyTurn(BaseModel):
     replan: Optional[dict] = Field(default=None, description="Replan 原始结果：diagnosis, strategy, instruction")
     executed: bool = False
     llm_calls: int = 0
+    input_tokens: int = Field(default=0, description="本轮 LLM 调用累计输入 tokens（与 llm_calls 同口径），用于成本核算")
+    output_tokens: int = Field(default=0, description="本轮 LLM 调用累计输出 tokens（与 llm_calls 同口径），用于成本核算")
     read_added_content: bool = False
     read_note_hash: Optional[str] = None
     target_verify: Optional[TargetVerify] = Field(default=None, description="动作后落点校验：on_target, actual_element")
     timings: dict[str, float] = Field(default_factory=dict, description="各模块耗时(秒)，如 {checker: 1.2, planner: 2.3}")
+    token_usage: dict[str, dict[str, int]] = Field(default_factory=dict, description="各模块 token 用量，如 {checker: {input: 2284, output: 114}, planner: {...}}")
     settle_s: Optional[float] = Field(default=None, description="本轮动作后 settle 等待时长(秒)，等屏幕变过且停稳")
     no_effect: bool = Field(default=False, description="tap 类动作 settle 跑满上限且全程零变化：这一击对屏幕无效果（如重点已高亮 tab）")
 
@@ -373,4 +376,8 @@ class PolicyContext(BaseModel):
     milestones: list[dict] = Field(
         default_factory=list,
         description="子目标分解结果 [{id, name, description, kind, success_condition}]",
+    )
+    models: dict[str, str] = Field(
+        default_factory=dict,
+        description="本次运行各 LLM 配置键实际使用的模型 {config_key: model}，用于成本核算自描述",
     )

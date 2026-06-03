@@ -12,6 +12,49 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
+# Token cost: priced per MODULE using that module's model rate (config.yaml `pricing`).
+# Different modules may run different models (e.g. action_policy=35b, output=flash),
+# so cost is summed module-by-module rather than from one flat rate.
+from policy_expr.config import model_price, pricing_currency
+
+# _Timer module name → llm config key. checker/planner/replanner/loop_* all share the
+# supervisor model; decompose and action_policy have their own keys.
+_MODULE_CFG: dict[str, str] = {
+    "checker": "supervisor", "planner": "supervisor", "replanner": "supervisor",
+    "loop_check": "supervisor", "loop_scroll": "supervisor",
+    "decompose": "supervisor.decompose", "action_policy": "action_policy",
+}
+
+
+def _sum_tokens(token_usage: dict) -> tuple[int, int]:
+    """Sum per-module {input, output} into a (total_input, total_output) pair."""
+    ti = sum(int(v.get("input", 0)) for v in (token_usage or {}).values())
+    to = sum(int(v.get("output", 0)) for v in (token_usage or {}).values())
+    return ti, to
+
+
+# Set from context.json's run-level `models` map (config_key → model). Missing → "",
+# which model_price() prices at the configured default — no active-config fallback.
+_MODELS_MAP: dict[str, str] = {}
+
+
+def _module_model(module: str) -> str:
+    return _MODELS_MAP.get(_MODULE_CFG.get(module, module), "")
+
+
+def _token_cost(token_usage: dict) -> float:
+    """Cost (currency units) for one token_usage dict, summed per module by its model price."""
+    total = 0.0
+    for module, tu in (token_usage or {}).items():
+        pin, pout = model_price(_module_model(module))
+        total += int(tu.get("input", 0)) / 1_000_000 * pin + int(tu.get("output", 0)) / 1_000_000 * pout
+    return total
+
+
+def _fmt_tokens(n: int) -> str:
+    return f"{n/1000:.1f}k" if n >= 1000 else str(n)
+
+
 # ── Action types & colors ──────────────────────────────────────
 
 ACTION_COLORS: dict[str, tuple[int, int, int]] = {
@@ -371,6 +414,7 @@ class ReportStep:
     instruction: str = ""
     summary: str = ""
     timings: dict[str, float] = field(default_factory=dict)
+    token_usage: dict[str, dict[str, int]] = field(default_factory=dict)  # per-module {input, output}
     llm_calls: int = 0
     action_direction: str | None = None
     action_text: str | None = None
@@ -399,6 +443,7 @@ class ReportData:
     stats: dict = field(default_factory=dict)
     milestones: list[dict] = field(default_factory=list)
     decompose_summary: str = ""  # First-turn supervisor summary with decomposition info
+    models: dict[str, str] = field(default_factory=dict)  # config_key → model used this run
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -952,6 +997,11 @@ class RunnerReportBuilder:
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
         data.title = ctx.get("goal", run_dir.name)
 
+        # Run-level model record; cost is priced against these (not the active config).
+        data.models = ctx.get("models", {}) or {}
+        _MODELS_MAP.clear()
+        _MODELS_MAP.update(data.models)
+
         turns = ctx.get("turns", [])
 
         total_actions = 0
@@ -1015,6 +1065,7 @@ class RunnerReportBuilder:
                 instruction=sup.get("instruction", ""),
                 summary=summary,
                 timings=turn.get("timings", {}),
+                token_usage=turn.get("token_usage", {}),
                 llm_calls=turn.get("llm_calls", 0),
                 action_direction=action.get("direction"),
                 action_text=action.get("text"),
@@ -1069,9 +1120,13 @@ class RunnerReportBuilder:
         for page in pages:
             ms_steps = page.steps
             ms_timings: dict[str, float] = {}
+            ms_in = ms_out = 0
             for s in ms_steps:
                 for k, v in s.timings.items():
                     ms_timings[k] = ms_timings.get(k, 0) + v
+                si, so = _sum_tokens(s.token_usage)
+                ms_in += si
+                ms_out += so
             milestones_info.append({
                 "id": page.milestone_id,
                 "name": page.milestone_name,
@@ -1081,6 +1136,9 @@ class RunnerReportBuilder:
                 "turns": f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}",
                 "total_time": sum(ms_timings.values()),
                 "timings": ms_timings,
+                "input_tokens": ms_in,
+                "output_tokens": ms_out,
+                "cost": sum(_token_cost(s.token_usage) for s in ms_steps),
             })
 
         # Set verification screenshot + checker: screenshot from next milestone's first turn;
@@ -1762,6 +1820,14 @@ HTML_TEMPLATE = """\
   .stats {{ color: var(--muted); font-size: 12px; }}
   .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
   .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
+  .price-tip {{ position: relative; display: inline-block; margin-left: 8px; }}
+  .price-chip {{ font-size: 11px; padding: 1px 8px; border-radius: 10px; background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; cursor: help; }}
+  .price-pop {{ display: none; position: absolute; z-index: 50; top: 100%; left: 0; margin-top: 6px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.12); white-space: nowrap; }}
+  .price-tip:hover .price-pop {{ display: block; }}
+  .price-pop table {{ border-collapse: collapse; font-size: 11px; color: #475569; }}
+  .price-pop td {{ padding: 1px 16px 1px 0; }}
+  .price-pop .pp-num {{ text-align: right; padding-right: 0; }}
+  .price-pop .pp-head td {{ color: #94a3b8; }}
 
   /* Milestone overview timeline */
   .ms-timeline {{ max-width: 1080px; margin: 0 auto 20px; display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; }}
@@ -1837,6 +1903,7 @@ HTML_TEMPLATE = """\
   <h1>{title}</h1>
   <div class="stats">{stats}</div>
   {decompose_html}
+  {cost_note_html}
 </div>
 
 <div class="ms-timeline">{milestones_overview}</div>
@@ -1921,6 +1988,30 @@ def _render_timing_html(timings: dict[str, float]) -> str:
     return (
         f'<div class="timing-bar">{segs}</div>'
         f'<div class="timing-labels">{labels} · total {total:.1f}s</div>'
+    )
+
+
+def _render_token_html(token_usage: dict) -> str:
+    """Per-module token usage (input/output) + turn total + estimated cost."""
+    ti, to = _sum_tokens(token_usage)
+    if ti == 0 and to == 0:
+        return ""
+    parts = []
+    for name, tu in token_usage.items():
+        mi, mo = int(tu.get("input", 0)), int(tu.get("output", 0))
+        if mi == 0 and mo == 0:
+            continue
+        tc = TIMING_COLORS.get(name, "#94a3b8")
+        parts.append(
+            f'<span style="margin-right:8px">'
+            f'<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:{tc};margin-right:2px"></span>'
+            f'{name} {_fmt_tokens(mi)}/{_fmt_tokens(mo)}</span>'
+        )
+    return (
+        f'<div style="display:flex;flex-wrap:wrap;gap:4px;font-size:9px;color:#94a3b8;margin-top:2px">'
+        f'{"".join(parts)}'
+        f'<span style="font-weight:600;color:#475569">Σ tok 入 {_fmt_tokens(ti)} · 出 {_fmt_tokens(to)} · ≈{pricing_currency()}{_token_cost(token_usage):.4f}</span>'
+        f'</div>'
     )
 
 
@@ -2010,6 +2101,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         {snap_html}
         {summary_html}
         {_render_timing_html(step.timings)}
+        {_render_token_html(step.token_usage)}
       </div>
     </div>"""
 
@@ -2018,6 +2110,14 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
     total_time = sum(m.get("total_time", 0) for m in data.milestones)
     stats_parts.append(f"total_time: {total_time:.1f}s")
+    sess_in = sum(int(m.get("input_tokens", 0)) for m in data.milestones)
+    sess_out = sum(int(m.get("output_tokens", 0)) for m in data.milestones)
+    sess_cost = sum(float(m.get("cost", 0)) for m in data.milestones)
+    if sess_in or sess_out:
+        stats_parts.append(
+            f"tokens: 入 {_fmt_tokens(sess_in)} / 出 {_fmt_tokens(sess_out)}"
+            f"  |  cost: ≈{pricing_currency()}{sess_cost:.4f}"
+        )
     stats_str = "  |  ".join(stats_parts)
 
     # Decompose summary
@@ -2052,6 +2152,13 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     for page in data.pages:
         badge_cls = KIND_BADGE.get(page.milestone_kind, "milestone-badge-default")
         ms_time = sum(sum(s.timings.values()) for s in page.steps)
+        ms_in = sum(_sum_tokens(s.token_usage)[0] for s in page.steps)
+        ms_out = sum(_sum_tokens(s.token_usage)[1] for s in page.steps)
+        ms_cost = sum(_token_cost(s.token_usage) for s in page.steps)
+        ms_tok_html = (
+            f' · {_fmt_tokens(ms_in)}/{_fmt_tokens(ms_out)} tok · ≈{pricing_currency()}{ms_cost:.4f}'
+            if (ms_in or ms_out) else ""
+        )
         mid_safe = _safe(page.milestone_id)
 
         thumbs_html = ""
@@ -2133,7 +2240,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             <h2>#{mid_safe}</h2>
             <span class="milestone-name">{_safe(page.milestone_name)}</span>
             <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
-            <span class="milestone-time">{ms_time:.1f}s · {len(page.steps)} turns</span>
+            <span class="milestone-time">{ms_time:.1f}s · {len(page.steps)} turns{ms_tok_html}</span>
             {desc_html}
             {sc_html}
           </div>
@@ -2142,10 +2249,56 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
           {verify_detail}
         </div>"""
 
+    # Model-config box with an inline "参考单价" chip that pops the rate table on hover.
+    cost_note_html = ""
+    if data.models or sess_in or sess_out:
+        ccy = _safe(pricing_currency())
+
+        # 参考单价 hover chip: rate table for the cost-contributing models.
+        price_chip = ""
+        if sess_in or sess_out:
+            models_seen: dict[str, tuple[float, float]] = {}
+            for k in ("supervisor", "supervisor.decompose", "action_policy"):
+                mdl = (data.models or {}).get(k)
+                if mdl and mdl not in models_seen:
+                    models_seen[mdl] = model_price(mdl)
+            if not models_seen:
+                models_seen["default"] = model_price("")
+            rows = "".join(
+                f'<tr><td>{_safe(m)}</td>'
+                f'<td class="pp-num">{pi}</td><td class="pp-num">{po}</td></tr>'
+                for m, (pi, po) in models_seen.items()
+            )
+            price_chip = (
+                f'<span class="price-tip"><span class="price-chip">参考单价 ⓘ</span>'
+                f'<div class="price-pop">'
+                f'<div style="color:#94a3b8;margin-bottom:4px">{ccy} / 百万 token</div>'
+                f'<table><tr class="pp-head"><td>模型</td><td class="pp-num">输入</td>'
+                f'<td class="pp-num">输出</td></tr>{rows}</table></div></span>'
+            )
+
+        # 当前模型配置：group config keys by the model they used; price chip rides along.
+        if data.models:
+            grouped: dict[str, list[str]] = {}
+            for key, mdl in data.models.items():
+                if mdl:
+                    grouped.setdefault(mdl, []).append(key.replace("supervisor.", ""))
+            parts = " · ".join(
+                f'{_safe(m)}<span style="color:#94a3b8">（{_safe(", ".join(keys))}）</span>'
+                for m, keys in grouped.items()
+            )
+            cost_note_html = (
+                f'<div class="decompose"><span class="decompose-label">模型配置</span>'
+                f'{parts}{price_chip}</div>'
+            )
+        elif price_chip:
+            cost_note_html = f'<div class="decompose">{price_chip}</div>'
+
     return HTML_TEMPLATE.format(
         title=_safe(data.title),
         stats=stats_str,
         decompose_html=decompose_html,
+        cost_note_html=cost_note_html,
         milestones_overview=milestones_overview,
         pages_html=pages_html,
     )

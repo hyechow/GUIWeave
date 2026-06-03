@@ -19,7 +19,7 @@ if __package__ is None or __package__ == "":
 from dotenv import load_dotenv
 load_dotenv()
 
-from llm.structured import get_llm_call_count
+from llm.structured import get_llm_call_count, get_llm_token_usage
 from policy_expr.executor import ActionExecutor
 from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
 from policy_expr.supervisor.base import SupervisorPolicy
@@ -519,6 +519,7 @@ def run_agent_loop(
 
             turn_started_at = time.perf_counter()
             llm_calls_before = get_llm_call_count()
+            tokens_before = get_llm_token_usage()
 
             _say("\n" + TURN_HEADER.format(turn_no=turn_no))
 
@@ -534,6 +535,17 @@ def run_agent_loop(
             sv_step = supervisor.step(observation, context.goal, context.turns)
             _say(f"监督者: {sv_step.summary}")
             _status(turn_no, sv_step.summary)
+
+            # Record which model each LLM config key actually used (once, self-describing
+            # for cost — the report prefers this over re-resolving the active config later).
+            if not context.models:
+                from policy_expr.config import resolve_llm_config
+                for _key in ("supervisor", "supervisor.decompose", "action_policy",
+                             "reader", "output", "router", "back_nav"):
+                    try:
+                        context.models[_key] = resolve_llm_config(_key).model or ""
+                    except Exception:
+                        pass
 
             # Persist milestone decomposition after first step
             if not context.milestones and hasattr(supervisor, "_milestones"):
@@ -638,6 +650,7 @@ def run_agent_loop(
                             "请避免重复这些无效滚动落点/幅度，选择当前屏幕上更可能作用于主内容的滚动方式。"
                         )
                     _ap_t0 = time.perf_counter()
+                    _ap_tok0 = get_llm_token_usage()
                     action_decision = action_policy.decide(
                         observation, instruction_for_action,
                         direction=sv_step.direction,
@@ -646,6 +659,11 @@ def run_agent_loop(
                     if hasattr(supervisor, "_timings"):
                         supervisor._timings["action_policy"] = time.perf_counter() - _ap_t0
                         supervisor._timings_order.append("action_policy")
+                    if hasattr(supervisor, "_token_usage"):
+                        _ap_in, _ap_out = get_llm_token_usage()
+                        supervisor._token_usage["action_policy"] = {
+                            "input": _ap_in - _ap_tok0[0], "output": _ap_out - _ap_tok0[1],
+                        }
                     print_decision(
                         action_decision,
                         observation.png_bytes,
@@ -740,9 +758,12 @@ def run_agent_loop(
                 replan=_extract_replan(supervisor),
                 executed=executed,
                 llm_calls=get_llm_call_count() - llm_calls_before,
+                input_tokens=get_llm_token_usage()[0] - tokens_before[0],
+                output_tokens=get_llm_token_usage()[1] - tokens_before[1],
                 read_added_content=read_added_content,
                 read_note_hash=read_note_hash,
                 timings=getattr(supervisor, "_timings", {}),
+                token_usage=getattr(supervisor, "_token_usage", {}),
             )
             _print_timings(supervisor)
             context.turns.append(turn)
