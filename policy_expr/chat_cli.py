@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 import traceback
@@ -85,6 +86,7 @@ def run_chat_turn(
     log_dir: Path,
     max_turns: int = 20,
     live_state: dict | None = None,
+    backend: str = "daemon",
 ) -> dict:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     from policy_expr.hud import AgentHUD
@@ -101,6 +103,7 @@ def run_chat_turn(
             hud=hud,
             live_state=live_state,
             silent=True,
+            backend=backend,
         )
 
 
@@ -132,7 +135,7 @@ def _print_header() -> None:
     console.print("  [bold bright_cyan]iPhone GUI Agent[/]  [dim]─  自动操控 iPhone 的智能助手[/]")
     console.print("  [dim]操作各类 App · 发消息 · 点外卖 · 搜索内容 · 更多…[/]")
     console.print()
-    console.print("  [dim]/exit  退出  ·  /clear  清空对话历史  ·  /supervisor  切换策略引擎[/]")
+    console.print("  [dim]/exit  退出  ·  /clear  清空历史  ·  /supervisor  切换策略引擎  ·  /mode [silent|standard]  切换操作模式[/]")
     console.print()
 
 
@@ -213,7 +216,7 @@ def _print_result(result: dict) -> None:
 # ── Main loop ──────────────────────────────────────────────────────────────
 
 
-_COMMANDS = ["/exit", "/clear", "/supervisor", "/pref"]
+_COMMANDS = ["/exit", "/clear", "/supervisor", "/mode", "/mode silent", "/mode standard", "/pref"]
 _completer = WordCompleter(
     _COMMANDS,
     meta_dict={
@@ -262,6 +265,9 @@ def main() -> None:
     action_policy = build_policy(StructuredOutputPolicy.name)
     supervisor = build_supervisor(MilestoneSupervisorPolicy.name)
     prefs = PreferenceManager()
+    _MODE_BACKEND = {"silent": "daemon", "standard": "mirroir"}
+    _env_default = "standard" if os.environ.get("PHONE_MODE", "silent").lower() in ("mirroir", "standard") else "silent"
+    mode: str = _env_default
 
     SESSIONS_ROOT = ROOT / "data" / "sessions"
     _print_header()
@@ -310,6 +316,18 @@ def main() -> None:
                 supervisor = build_supervisor(SimpleSupervisorPolicy.name)
             console.print()
             console.print(f"  [dim]supervisor: {current} → {supervisor.name}[/dim]")
+            console.print()
+            continue
+
+        if user_msg.startswith("/mode"):
+            parts = user_msg.split()
+            if len(parts) >= 2 and parts[1] in _MODE_BACKEND:
+                mode = parts[1]
+            else:
+                mode = "standard" if mode == "silent" else "silent"
+            console.print()
+            desc = "零抢占 mirror_daemon" if mode == "silent" else "mirroir-mcp 原版"
+            console.print(f"  [dim]mode: {mode}  ({desc})[/dim]")
             console.print()
             continue
 
@@ -411,6 +429,7 @@ def main() -> None:
                 result = run_chat_turn(
                     goal, action_policy, turn_supervisor, log_dir,
                     max_turns=args.max_turns, live_state=live_state,
+                    backend=_MODE_BACKEND[mode],
                 )
             except SystemExit:
                 raise

@@ -437,6 +437,7 @@ def run_agent_loop(
     hud: AgentHUD | None = None,
     live_state: dict | None = None,
     silent: bool = False,
+    backend: str | None = None,
 ) -> dict:
     def _say(s: str) -> None:
         if not silent:
@@ -493,7 +494,7 @@ def run_agent_loop(
             if _store_chunk_note(note, context, seen_rows, turn_no=tno, sv_step=sv):
                 _say(f"内容摘要(块): {context.content_notes[-1][:80]}...")
 
-    with LivePhoneSession() as phone:
+    with LivePhoneSession(backend=backend) as phone:
         executor = ActionExecutor(phone)
 
         while True:

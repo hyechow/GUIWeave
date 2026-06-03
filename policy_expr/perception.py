@@ -95,21 +95,23 @@ class SCKSession:
 
 
 class LivePhoneSession:
-    """拥有执行用的输入连接 + 截图源。后端由 PHONE_BACKEND 选择:
+    """拥有执行用的输入连接 + 截图源。后端由 PHONE_MODE 选择:
 
-    - "mirroir"(默认):SCK 截图流 + SyncMCPClient 输入(抢占原版)。
-    - "daemon":MirrorDaemonClient 一体提供截图 + 零抢占输入 + agent 光标 overlay
+    - "daemon"(默认):MirrorDaemonClient 一体提供截图 + 零抢占输入 + agent 光标 overlay
       (截图前自动隐藏光标,不进感知图)。tap/home/screenshot 走 daemon;scroll/drag/
       type 仍走 executor 的现有路径(Quartz/osascript),够先测 tap。MIRROR_CURSOR=0 关光标。
     """
 
-    def __init__(self):
+    def __init__(self, backend: str | None = None):
         self.client: SyncMCPClient | MirrorDaemonClient | None = None
         self._sck: SCKSession | None = None
         self._screenshot_via_client = False   # daemon 后端:截图走 client 而非 SCK
+        self._backend = backend  # explicit override; None → fall back to PHONE_MODE env
 
     def __enter__(self) -> "LivePhoneSession":
-        backend = os.environ.get("PHONE_BACKEND", "mirroir").lower()
+        _MODE_MAP = {"silent": "daemon", "standard": "mirroir"}
+        raw = (self._backend or os.environ.get("PHONE_MODE", "silent")).lower()
+        backend = _MODE_MAP.get(raw, raw)  # silent→daemon, standard→mirroir, else pass through
         if backend == "daemon":
             if MirrorDaemonClient is None:
                 raise RuntimeError("MirrorDaemonClient 不可用(检查 bin/mirror_daemon 与依赖)")
