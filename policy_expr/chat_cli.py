@@ -71,11 +71,20 @@ def _silent_stdio(log_dir: Path) -> Iterator[None]:
         redirect_stdout(_SilentTeeStream(sys.stdout, stdout_file)),
         redirect_stderr(_SilentTeeStream(sys.stderr, stderr_file)),
     ):
+        # redirect_stderr only swaps Python's sys.stderr; native/Cocoa code (e.g. the
+        # AppKit "IMKCFRunLoopWakeUpReliable" warning) writes straight to OS fd 2 and
+        # would leak onto the Rich UI. Redirect fd 2 to the log too. fd 1 is left alone
+        # so the spinner (Rich console, captured original stdout) still renders.
+        saved_fd2 = os.dup(2)
         try:
+            os.dup2(stderr_file.fileno(), 2)
             yield
         except Exception:
             traceback.print_exc()
             raise
+        finally:
+            os.dup2(saved_fd2, 2)
+            os.close(saved_fd2)
 
 
 def run_chat_turn(
