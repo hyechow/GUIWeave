@@ -265,6 +265,18 @@ def _extract_checker(supervisor: object) -> Optional[dict]:
     return check.model_dump(exclude_none=True)
 
 
+def _sync_milestone_done_checks(supervisor: object, context: "PolicyContext") -> None:
+    """Copy _milestone_done_checks from supervisor into context.milestones dicts."""
+    done_checks: dict = getattr(supervisor, "_milestone_done_checks", {})
+    if not done_checks or not context.milestones:
+        return
+    for ms in context.milestones:
+        mid = ms.get("id", "")
+        if mid in done_checks and "done_check" not in ms:
+            check = done_checks[mid]
+            ms["done_check"] = check.model_dump(exclude_none=True) if hasattr(check, "model_dump") else dict(check)
+
+
 def _extract_plan(supervisor: object) -> Optional[dict]:
     plan = getattr(supervisor, "_last_plan", None)
     if plan is None:
@@ -724,6 +736,7 @@ def run_agent_loop(
             )
             _print_timings(supervisor)
             context.turns.append(turn)
+            _sync_milestone_done_checks(supervisor, context)
             _save_context(context_path, context)
             if not silent:
                 _print_turn_stats(turn_no, turn_started_at, llm_calls_before)

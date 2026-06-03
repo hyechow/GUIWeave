@@ -389,6 +389,7 @@ class ReportPage:
     milestone_description: str = ""
     success_condition: str = ""
     verify_url: str = ""  # verification screenshot (first turn of next milestone)
+    verify_checker: dict = field(default_factory=dict)  # checker result from the last turn (done/in_progress)
 
 
 @dataclass
@@ -1027,6 +1028,7 @@ class RunnerReportBuilder:
         for ms in ctx.get("milestones", []):
             ms_lookup[ms.get("id", "")] = ms
 
+
         # Group steps by milestone
         pages: list[ReportPage] = []
         current_mid = ""
@@ -1081,12 +1083,14 @@ class RunnerReportBuilder:
                 "timings": ms_timings,
             })
 
-        # Set verification screenshot: raw (unannotated) screenshot of next milestone's first turn
+        # Set verification screenshot + checker: screenshot from next milestone's first turn;
+        # checker from ms_lookup[id].done_check (saved by runner when milestone completes).
         for i, page in enumerate(pages):
             if i + 1 < len(pages):
                 next_first = pages[i + 1].steps[0] if pages[i + 1].steps else None
                 if next_first and next_first.raw_screenshot_url:
                     page.verify_url = next_first.raw_screenshot_url
+            page.verify_checker = ms_lookup.get(page.milestone_id, {}).get("done_check", {})
 
         data.pages = pages
         data.milestones = milestones_info
@@ -2086,12 +2090,41 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         desc_html = f'<div class="milestone-desc">{_safe(page.milestone_description)}</div>' if page.milestone_description else ""
         sc_html = f'<div class="milestone-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
         verify_thumb = ""
+        verify_detail = ""
         if page.verify_url:
+            vd_id = f"detail-ms{mid_safe}-verify"
             verify_thumb = (
-                f'<div class="thumb" style="border-color:#22c55e40" onclick="zoomImg(this.querySelector(\'img\').src)">'
+                f'<div class="thumb" data-detail="{vd_id}" onclick="showDetail(\'{vd_id}\')" style="border-color:#22c55e40">'
                 f'<img src="{page.verify_url}" alt="验收截图">'
                 f'<div class="thumb-status thumb-status-ok">✓</div>'
                 f'<div class="thumb-label" style="background:linear-gradient(transparent, rgba(34,197,94,0.7))">验收</div>'
+                f'</div>'
+            )
+            ck = page.verify_checker
+            ck_status = ck.get("status", "")
+            ck_reason = ck.get("reason", "")
+            ck_identity = ck.get("page_identity", "")
+            ck_summary = ck.get("summary", "")
+            if ck_status == "done":
+                badge = '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ done</span>'
+            elif ck_status == "in_progress":
+                badge = '<span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">⏳ in_progress</span>'
+            else:
+                badge = ""
+            identity_html = f'<span style="font-size:11px;color:#64748b;margin-left:6px">{_safe(ck_identity)}</span>' if ck_identity else ""
+            reason_html = f'<div class="detail-instruction" style="margin-top:4px">{_safe(ck_reason)}</div>' if ck_reason else ""
+            summary_html = f'<div class="detail-summary">{_safe(ck_summary)}</div>' if ck_summary and ck_summary != ck_reason else ""
+            verify_detail = (
+                f'<div class="detail" id="{vd_id}">'
+                f'<div class="detail-ss"><img src="{page.verify_url}" onclick="zoomImg(this.src)" alt="验收截图"></div>'
+                f'<div class="detail-info">'
+                f'<div class="detail-top" style="flex-wrap:wrap;gap:8px">'
+                f'<span style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.04em">验收结果</span>'
+                f'{badge}{identity_html}'
+                f'</div>'
+                f'{reason_html}'
+                f'{summary_html}'
+                f'</div>'
                 f'</div>'
             )
         pages_html += f"""
@@ -2106,6 +2139,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
           </div>
           <div class="gallery">{thumbs_html}{verify_thumb}</div>
           {details_html}
+          {verify_detail}
         </div>"""
 
     return HTML_TEMPLATE.format(

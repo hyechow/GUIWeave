@@ -178,6 +178,7 @@ class MilestoneSupervisorPolicy:
         # 连续调值类的进展追踪：每 milestone 一个滑动窗口，存最近若干轮 checker 读到的「当前值」。
         self._progress_values: dict[str, list[str]] = {}
         self._last_check: Optional[_SingleCheckResult] = None
+        self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
         self._timings: dict[str, float] = {}
@@ -554,6 +555,9 @@ class MilestoneSupervisorPolicy:
         # collection/verification need the checker's read_instruction.
         if next_ms.kind == "navigation":
             print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
+            # Save the done check for the completed milestone before overwriting _last_check.
+            if self._last_check is not None:
+                self._milestone_done_checks[milestone.id] = self._last_check
             synthetic = _SingleCheckResult(
                 status="in_progress",
                 reason=f"刚进入子目标「{next_ms.name}」，默认未完成",
