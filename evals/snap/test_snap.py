@@ -132,6 +132,28 @@ def test_geometric_regressions() -> None:
     _report("synthetic: wide banner over snap-cap rejected",
             ok, "" if ok else f"got {r} (expected back arrow ~77,138, not banner center)")
 
+    # 5. Home-screen search capsule regression (agent-loop/20260603_173539 turn1):
+    #    LLM correctly pointed to the search capsule at (500, 821). The nearest YOLO
+    #    icon (dock Mail icon) sits at (397, 915) — distance 139.9 units. Dock icons
+    #    are large (~250 normalized units wide); the expanded bbox reaches the capsule
+    #    area and triggers a Tier-3 margin hit.
+    #    With the home-screen cap of 80 the snap must be blocked (None returned).
+    #    With old cap=150 the dock icon center (dist 139.9) passes the filter and
+    #    wins via the margin tier (bbox expanded by +50 covers y=821).
+    # Dock icon is wide — use realistic size (~250 units wide, 220 tall)
+    mail_dock = IconBbox(272, 790, 522, 1000, 0.82)  # center ≈ (397, 895), dist≈140
+    cal7 = YoloCalibrator([mail_dock], img_w=1000, img_h=1000)
+    # Old behaviour (max_snap_move=150): distance 139.9 < 150, Tier-1 containment fires
+    r_old = cal7.nearest(500, 821, max_snap_move=150.0)
+    _report("synthetic: home-screen search capsule — old cap=150 snaps to dock icon",
+            r_old is not None,
+            "" if r_old is not None else "unexpected: old cap=150 should have snapped")
+    # New behaviour (max_snap_move=80): center dist 139.9 > 80 → blocked → None
+    r_new = cal7.nearest(500, 821, max_snap_move=80.0)
+    _report("synthetic: home-screen search capsule — new cap=80 blocks distant dock icon",
+            r_new is None,
+            "" if r_new is None else f"snapped to {r_new} (dist ~140 should exceed cap=80)")
+
 
 def main():
     print("── Snap Eval ──")

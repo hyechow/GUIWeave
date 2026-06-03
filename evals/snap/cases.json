@@ -100,6 +100,19 @@
     "note": "同一图标 YOLO conf 帧间抖动(0.49~0.44)；主屏走 YOLO，nearest 不依赖 conf，仍吸到图标中心。"
   },
   {
+    "label": "主屏搜索胶囊-不被远距dock图标吸附",
+    "screenshot": "evals/snap/screenshots/home_screen_search_capsule.png",
+    "target": [500.0, 821.0],
+    "hint": "点击底部搜索胶囊按钮",
+    "is_home": true,
+    "expected": {
+      "method": "none",
+      "snapped_near": [500.0, 821.0],
+      "tolerance": 30.0
+    },
+    "note": "agent-loop/20260603_173539 turn1 回归：LLM 正确指向搜索胶囊(500,821)，旧 _MAX_SNAP_MOVE=150 允许 YOLO 吸到 140 单位外的邮件 dock 图标(397,915)。修复：主屏传 max_snap_move=80，distance=139.9 > 80 → 不吸附，保留原始点。"
+  },
+  {
     "label": "会员页返回箭头-宽banner不teleport",
     "screenshot": "evals/snap/screenshots/member_page_back_arrow_wide_banner.png",
     "target": [80.0, 200.0],
