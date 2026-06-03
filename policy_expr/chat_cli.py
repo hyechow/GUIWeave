@@ -137,7 +137,8 @@ def _print_header() -> None:
     console.print("  [bold bright_cyan]iPhone GUI Agent[/]  [dim]─  自动操控 iPhone 的智能助手[/]")
     console.print("  [dim]操作各类 App · 发消息 · 点外卖 · 搜索内容 · 更多…[/]")
     console.print()
-    console.print("  [dim]/exit  退出  ·  /clear  清空历史  ·  /supervisor  切换策略引擎  ·  /mode [silent|standard]  ·  /model [qwen35|qwen36][/]")
+    console.print("  [dim]/exit  退出  ·  /clear  清空历史  ·  /supervisor  切换策略引擎[/]")
+    console.print("  [dim]/mode [silent|standard]  切换操作模式  ·  /model [qwen35|qwen36]  切换模型[/]")
     console.print()
 
 
