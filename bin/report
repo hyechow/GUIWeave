@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# 生成并打开某次运行的可视化报告。
+# 用法: bin/report <run_dir>
+#   例: bin/report data/sessions/20260603_220508/turn_1
+#       bin/report logs/policy_expr/agent-loop/20260528_104755
+set -e
+cd "$(dirname "$0")/.."
+
+if [ -z "$1" ]; then
+  echo "用法: bin/report <run_dir>"
+  echo "  例: bin/report data/sessions/20260603_220508/turn_1"
+  exit 1
+fi
+if [ ! -f "$1/context.json" ]; then
+  echo "✗ 找不到 $1/context.json（需要一个含 context.json 的运行目录）"
+  exit 1
+fi
+
+out=$(uv run python scripts/report.py runner --run "$1")
+echo "$out"
+path=$(printf '%s\n' "$out" | sed -n 's/^Report saved: //p')
+[ -n "$path" ] && open "$path"
