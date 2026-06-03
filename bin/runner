@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -e
 cd "$(dirname "$0")/.."
-exec env PHONE_BACKEND=daemon uv run python -m policy_expr.runner "$@" --auto-continue --hud --supervisor milestone
+exec env AGENT_MODE=daemon uv run python -m policy_expr.runner "$@" --auto-continue --hud --supervisor milestone
