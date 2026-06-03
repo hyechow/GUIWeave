@@ -319,7 +319,7 @@ def main() -> None:
             console.print()
             continue
 
-        if user_msg.startswith("/mode"):
+        if user_msg == "/mode" or user_msg.startswith("/mode "):
             parts = user_msg.split()
             if len(parts) >= 2 and parts[1] in _MODE_BACKEND:
                 mode = parts[1]
@@ -331,7 +331,7 @@ def main() -> None:
             console.print()
             continue
 
-        if user_msg.startswith("/model"):
+        if user_msg == "/model" or user_msg.startswith("/model "):
             from policy_expr.config import switch_config, active_config_name, _NAMED_CONFIGS
             parts = user_msg.split()
             _MODELS = list(_NAMED_CONFIGS.keys())
