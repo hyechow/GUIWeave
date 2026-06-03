@@ -27,7 +27,7 @@ load_dotenv(ROOT / ".env")
 
 from _vis import open_annotated, print_items
 
-from policy_expr.perception import LivePhoneSession, try_resume_mac
+from policy_expr.perception import LivePhoneSession, dismiss_iphone_sheet
 from policy_expr.executor import logical_xy
 from policy_expr.recon.page_compare import make_comparator
 from policy_expr.recon.page_parser import PageParser, classify_elements, resolve_selected_tabs
@@ -173,7 +173,7 @@ def main() -> None:
         resp = client.tap(lx, ly)
         if "paused" in resp.lower():
             print("  Mac 弹窗阻断，尝试恢复...")
-            if try_resume_mac():
+            if dismiss_iphone_sheet():
                 time.sleep(0.5)
                 resp = client.tap(lx, ly)
         return resp

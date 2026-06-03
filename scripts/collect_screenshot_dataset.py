@@ -196,9 +196,9 @@ def collect(app: str, depth: int = 0, sample: int = 0) -> None:
 
             after_bytes = phone.screenshot()
             if not after_bytes:
-                from policy_expr.perception import try_resume_mac
+                from policy_expr.perception import dismiss_iphone_sheet
                 print(f"      Mac 弹窗阻断，关闭后跳过")
-                try_resume_mac(phone.client)
+                dismiss_iphone_sheet()
                 continue
             safe_label = area.label.replace("/", "_").replace(":", "_")[:20]
             after_path = f"{_page_seq(idx, page_name)}/taps/tap_{i:02d}_{safe_label}.png"
