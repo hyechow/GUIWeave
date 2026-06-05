@@ -7,7 +7,7 @@ import time
 from datetime import date
 from typing import Literal, Optional
 
-from PIL import Image
+from PIL import Image, ImageStat
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
@@ -39,7 +39,11 @@ STUCK_SCREEN_SIMILARITY = 0.95
 STUCK_SCREEN_FROZEN = 0.99
 MAX_SCROLL_PER_MILESTONE = 3
 STUCK_REPEAT_WINDOW = 3
-BLANK_SCREEN_RATIO = 0.84  # Near-white pixel ratio above this = blank/loading screen
+# Blank/loading screen = the app's content body is light AND near-uniform (no
+# text/list rendered yet). Measured on the de-bezeled body, not the full frame.
+# This app's blank body renders ~gray 239 (not pure white), so don't gate on >250.
+BLANK_BODY_MEAN_MIN = 225.0  # body must be light (rules out dark splash/dark mode)
+BLANK_BODY_STD_MAX = 12.0    # body must be near-uniform (text/icons push std up)
 STUCK_REPEAT_WORD_OVERLAP = 0.85
 # 连续调值类（is_iterative）的卡住判据：屏幕冻结/指令重复都是正常的（picker 反复拖同一下），
 # 不适用。改判「被监控值连续 N 轮未变化」=真停滞。N>1 容忍摘要框提交滞后(1 轮) + 小步未到一格。
@@ -119,17 +123,34 @@ def _has_collected(history: list[PolicyTurn], milestone_id: str) -> bool:
 
 
 def _is_blank_screen(png_bytes: bytes) -> bool:
-    """Return True if screenshot is a blank/loading white screen.
+    """Return True if the screenshot is a blank/loading screen (content not yet rendered).
 
-    Checks the ratio of near-white pixels (> 250) rather than mean brightness,
-    because the iPhone Mirroring frame and status bar icons drag the mean down
-    even when the app content area is fully white.
-    Blank/loading screens have >80% near-white pixels; normal pages have <75%.
+    A blank/loading body is a large, LIGHT, near-UNIFORM region. We measure the
+    app content body, not the full frame, because:
+      - the iPhone Mirroring black bezel dilutes any whole-image ratio, and
+      - this app's blank body renders ~gray 239 (not pure white), so a `>250`
+        near-white count finds nothing.
+    So: trim the black bezel (bbox of non-dark pixels), drop the top chrome
+    (status bar / header / toolbar), then treat the body as blank when it is
+    both light (mean ≥ BLANK_BODY_MEAN_MIN) and near-uniform (stddev ≤ BLANK_BODY_STD_MAX).
+    Text, icons or a rendered list push the stddev up and fail the uniform test.
     """
     img = Image.open(io.BytesIO(png_bytes)).convert("L")
-    pixels = img.tobytes()
-    near_white = sum(1 for p in pixels if p > 250)
-    return near_white / len(pixels) > BLANK_SCREEN_RATIO
+    # Trim the black mirroring bezel to the actual screen rectangle.
+    bbox = img.point(lambda p: 255 if p > 40 else 0).getbbox()
+    if bbox:
+        img = img.crop(bbox)
+    w, h = img.size
+    if w == 0 or h == 0:
+        return False
+    # Measure the body below the top chrome (status bar + header + toolbar ≈ 18%)
+    # and above the home indicator.
+    body = img.crop((0, int(h * 0.18), w, int(h * 0.97)))
+    if body.width == 0 or body.height == 0:
+        return False
+    stat = ImageStat.Stat(body)
+    mean, std = stat.mean[0], stat.stddev[0]
+    return mean >= BLANK_BODY_MEAN_MIN and std <= BLANK_BODY_STD_MAX
 
 
 def _default_read_instruction(milestone: Milestone) -> str:

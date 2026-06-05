@@ -1,6 +1,5 @@
 from .helpers import run_checker, run_planner
 from .policy import (
-    BLANK_SCREEN_RATIO,
     MAX_RETRIES,
     MAX_SCROLL_PER_MILESTONE,
     STUCK_REPEAT_WORD_OVERLAP,
@@ -56,6 +55,5 @@ __all__ = [
     "STUCK_SCREEN_FROZEN",
     "MAX_SCROLL_PER_MILESTONE",
     "STUCK_REPEAT_WINDOW",
-    "BLANK_SCREEN_RATIO",
     "STUCK_REPEAT_WORD_OVERLAP",
 ]
