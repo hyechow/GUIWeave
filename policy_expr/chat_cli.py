@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -507,6 +508,18 @@ def main() -> None:
             reply_state["current"] = f"回复生成完成  {reply_secs:.1f}s"
 
         _print_reply(reply)
+
+        # Persist the reply into the turn's context.json so its report (bin/report) shows it.
+        try:
+            ctx_path = log_dir / "context.json"
+            if ctx_path.exists():
+                ctx_data = json.loads(ctx_path.read_text(encoding="utf-8"))
+                ctx_data["output"] = reply
+                ctx_path.write_text(
+                    json.dumps(ctx_data, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+        except Exception:
+            pass
 
         entry = {
             "user_msg": display_msg,

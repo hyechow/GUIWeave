@@ -447,6 +447,7 @@ class ReportData:
     raw_input: str = ""  # original human input (title); empty for old logs
     goal: str = ""       # resolved goal that drove the run
     router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
+    output: str = ""     # final reply / 最终输出 of the run
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -1003,6 +1004,7 @@ class RunnerReportBuilder:
         data.raw_input = ctx.get("raw_input") or ""
         data.goal = ctx.get("goal", "")
         data.router = ctx.get("router") or {}
+        data.output = ctx.get("output") or ""
         data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
         # Run-level model record; cost is priced against these (not the active config).
@@ -1850,6 +1852,11 @@ HTML_TEMPLATE = """\
   .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
   .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
 
+  /* Final output / 最终输出 card */
+  .result-card {{ max-width: 1080px; margin: 0 auto 20px; padding: 16px 20px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #22c55e; }}
+  .result-label {{ font-size: 11px; font-weight: 700; color: #16a34a; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }}
+  .result-body {{ font-size: 14px; color: var(--text); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }}
+
   /* Router / input-resolution row (shares the 模型配置 box style) */
   .prov-arrow {{ color: #94a3b8; margin: 0 6px; }}
   .prov-goal {{ color: #1e293b; font-weight: 500; }}
@@ -1943,6 +1950,7 @@ HTML_TEMPLATE = """\
     </div>
 
     {pages_html}
+    {result_html}
   </main>
 </div>
 
@@ -2391,12 +2399,22 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         elif price_chip:
             cost_note_html = f'<div class="decompose">{price_chip}</div>'
 
+    result_html = ""
+    if data.output:
+        result_html = (
+            f'<div class="result-card">'
+            f'<div class="result-label">最终输出</div>'
+            f'<div class="result-body">{_safe(data.output)}</div>'
+            f'</div>'
+        )
+
     return HTML_TEMPLATE.format(
         title=_safe(data.title),
         stats=stats_str,
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
         outline_html=outline_html,
         cost_note_html=cost_note_html,
+        result_html=result_html,
         pages_html=pages_html,
     )
 

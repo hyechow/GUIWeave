@@ -978,8 +978,10 @@ def main() -> None:
                 router=router_result.model_dump() if router_result else None,
             )
             if result:
+                # Reply to the user's ORIGINAL input (parity with chat, which
+                # passes user_msg) rather than the router-rewritten goal.
                 output = generate_reply(
-                    result["goal"],
+                    raw_input,
                     result,
                     content_notes=result.get("content_notes"),
                     collection_context=result.get("collection_context"),
@@ -989,6 +991,15 @@ def main() -> None:
                 print("=" * 50)
                 print(output.rstrip())
                 print("=" * 50)
+                # Persist the final reply so the HTML report can render it.
+                try:
+                    final_ctx = PolicyContext.model_validate(
+                        json.loads(context_path.read_text(encoding="utf-8"))
+                    )
+                    final_ctx.output = output
+                    _save_context(context_path, final_ctx)
+                except Exception as exc:
+                    print(f"（输出未写入 context: {exc}）")
 
             # Auto-generate HTML report
             if (log_dir / "context.json").exists():
