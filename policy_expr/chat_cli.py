@@ -96,6 +96,8 @@ def run_chat_turn(
     live_state: dict | None = None,
     backend: str = "daemon",
     on_turn: object = None,
+    raw_input: str | None = None,
+    router: dict | None = None,
 ) -> dict:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     from policy_expr.hud import AgentHUD
@@ -114,6 +116,8 @@ def run_chat_turn(
             silent=True,
             backend=backend,
             on_turn=on_turn,
+            raw_input=raw_input,
+            router=router,
         )
 
 
@@ -467,6 +471,8 @@ def main() -> None:
                     max_turns=max_turns, live_state=live_state,
                     backend=_MODE_BACKEND[mode],
                     on_turn=_on_turn,
+                    raw_input=display_msg,
+                    router=router_result.model_dump(),
                 )
             except (SystemExit, KeyboardInterrupt):
                 raise

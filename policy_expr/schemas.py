@@ -367,6 +367,14 @@ class PolicyContext(BaseModel):
     goal: str
     supervisor_policy_name: str
     action_policy_name: str
+    raw_input: Optional[str] = Field(
+        default=None,
+        description="用户/CLI 原始输入(temporal 解析、router 改写之前);旧 log 无此字段则为 None",
+    )
+    router: Optional[dict] = Field(
+        default=None,
+        description="RouterResult {goal, needs_clarification, clarification};bin/runner 直跑路径未经 router，为 None",
+    )
     turns: list[PolicyTurn] = Field(default_factory=list)
     task_type: Optional[TaskType] = None
     collection_scope: Optional[CollectionScope] = None

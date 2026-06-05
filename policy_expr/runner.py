@@ -304,6 +304,8 @@ def _load_context(
     prompt: str,
     supervisor_name: str,
     action_name: str,
+    raw_input: str | None = None,
+    router: dict | None = None,
 ) -> PolicyContext:
     if path.exists():
         return PolicyContext.model_validate(json.loads(path.read_text(encoding="utf-8")))
@@ -311,6 +313,8 @@ def _load_context(
         goal=prompt,
         supervisor_policy_name=supervisor_name,
         action_policy_name=action_name,
+        raw_input=raw_input if raw_input is not None else prompt,
+        router=router,
     )
 
 
@@ -447,6 +451,8 @@ def run_agent_loop(
     silent: bool = False,
     backend: str | None = None,
     on_turn: object = None,  # callable(entry: dict) called after each turn
+    raw_input: str | None = None,  # original human input; defaults to `prompt` (bin/runner)
+    router: dict | None = None,    # RouterResult dict (chat path); None for bin/runner
 ) -> dict:
     def _say(s: str) -> None:
         if not silent:
@@ -463,6 +469,8 @@ def run_agent_loop(
         resolve_temporal_expressions(prompt),
         supervisor.name,
         action_policy.name,
+        raw_input=raw_input if raw_input is not None else prompt,
+        router=router,
     )
     _ensure_note_hashes(context)
     _save_context(context_path, context)
@@ -905,13 +913,40 @@ def main() -> None:
         action="store_true",
         help="在 iPhone 镜像窗口下方显示实时动作状态面板",
     )
+    parser.add_argument(
+        "--no-router",
+        action="store_true",
+        help="跳过 router 意图改写，直接把输入当作目标（默认经 router，与 chat 模式一致）",
+    )
     args = parser.parse_args()
 
     action_policy = build_policy(args.policy)
     supervisor = build_supervisor(args.supervisor)
 
-    # Auto-discover app knowledge from goal
-    knowledge = auto_discover_knowledge(args.prompt)
+    # Route the raw input through the LLM router (same path as chat mode) so the
+    # goal is intent-classified and normalized consistently. Skipped when resuming
+    # a saved context (--context, goal comes from the file) or with --no-router.
+    raw_input = args.prompt
+    router_result = None
+    goal = args.prompt
+    if not args.context and not args.no_router:
+        try:
+            from policy_expr.chat_session import route_message
+            router_result = route_message(raw_input, session=[], prefs_context="")
+        except Exception as exc:
+            print(f"Router  : 调用失败，回退原始输入（{exc}）")
+        if router_result is not None:
+            if not router_result.goal:
+                if router_result.needs_clarification:
+                    print(f"Router  : 需要补充信息 — {router_result.clarification}")
+                else:
+                    print("Router  : 非手机操作任务（闲聊/问答），已跳过")
+                return
+            goal = router_result.goal
+            print(f"Router  : {raw_input!r} → {goal!r}")
+
+    # Auto-discover app knowledge from the resolved goal
+    knowledge = auto_discover_knowledge(goal)
     if knowledge and hasattr(supervisor, "set_app_knowledge"):
         supervisor.set_app_knowledge(
             knowledge.navigation,
@@ -930,7 +965,7 @@ def main() -> None:
 
         try:
             result: dict | None = run_agent_loop(
-                args.prompt,
+                goal,
                 action_policy,
                 supervisor,
                 input_context_path,
@@ -939,6 +974,8 @@ def main() -> None:
                 max_turns=args.max_turns,
                 auto_continue=args.auto_continue,
                 hud=hud,
+                raw_input=raw_input,
+                router=router_result.model_dump() if router_result else None,
             )
             if result:
                 output = generate_reply(

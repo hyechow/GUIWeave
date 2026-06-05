@@ -15,7 +15,8 @@ def resolve_temporal_expressions(text: str, today: date | None = None) -> str:
     """Replace Chinese relative time expressions with absolute date ranges.
 
     Handles: 上周, 本周, 上上周, 本月, 上月, 昨天, 今天, 前天, 最近N天,
-    N月最后一周, 今年.
+    N月最后一周, 今年, and month-qualified day ranges (上个月3号到10号,
+    5月3日-10日, 本月15号) where a month word/number scopes a day(-range).
     Idempotent: text already containing ISO dates is left unchanged.
     """
     if today is None:
@@ -117,9 +118,73 @@ def _last_week_of_month(m: re.Match, today: date) -> tuple[date, date]:
     return start, _sunday(last_day)
 
 
+# ── Month-qualified day ranges (上个月3号到10号, 5月3日-10日 …) ──────────────
+# A month word/number used as *context* for a day(-range), e.g. "上个月3号到10号".
+# The standalone handlers above would expand "上个月" to a full month and silently
+# drop the "3号到10号" qualifier — these handlers keep the day range instead.
+
+
+def _safe_day(year: int, month: int, day: int) -> date:
+    """Build a date, clamping day into the month's valid range (1..28/30/31)."""
+    last = _month_end(date(year, month, 1)).day
+    return date(year, month, min(max(day, 1), last))
+
+
+def _month_anchor(word: str, today: date) -> tuple[int, int]:
+    """Resolve a relative month word to (year, month)."""
+    if word in ("上个月", "上月"):
+        prev = today.replace(day=1) - timedelta(days=1)
+        return prev.year, prev.month
+    if word in ("下个月", "下月"):
+        nxt = _month_end(today) + timedelta(days=1)
+        return nxt.year, nxt.month
+    return today.year, today.month  # 这个月 / 本月
+
+
+def _anchor_day_range(m: re.Match, today: date) -> tuple[date, date]:
+    year, month = _month_anchor(m.group(1), today)
+    d1, d2 = int(m.group(2)), int(m.group(3))
+    if d2 < d1:
+        d1, d2 = d2, d1
+    return _safe_day(year, month, d1), _safe_day(year, month, d2)
+
+
+def _anchor_single_day(m: re.Match, today: date) -> tuple[date, date]:
+    year, month = _month_anchor(m.group(1), today)
+    d = int(m.group(2))
+    return _safe_day(year, month, d), _safe_day(year, month, d)
+
+
+def _explicit_month_day_range(m: re.Match, today: date) -> tuple[date, date]:
+    """"5月3号到10号" or cross-month "5月3号到6月10号"."""
+    mon1, d1 = int(m.group(1)), int(m.group(2))
+    mon2 = int(m.group(3)) if m.group(3) else mon1
+    d2 = int(m.group(4))
+    return _safe_day(today.year, mon1, d1), _safe_day(today.year, mon2, d2)
+
+
+def _explicit_month_single_day(m: re.Match, today: date) -> tuple[date, date]:
+    mon, d = int(m.group(1)), int(m.group(2))
+    return _safe_day(today.year, mon, d), _safe_day(today.year, mon, d)
+
+
+# Shared sub-patterns for the month-qualified day expressions.
+_ANCHOR = r"(上个月|上月|下个月|下月|这个月|本月)"
+_MON = r"(1[0-2]|[1-9])"        # month number 1-12
+_DAY = r"(\d{1,2})"             # day 1-31 (clamped by _safe_day)
+_SEP = r"\s*(?:到|至|~|—|－|-)\s*"
+
+
 # ── Pattern table (order matters: longest match first) ────────────────────
 
 _PATTERNS: list[tuple[re.Pattern, object]] = [
+    # Month-qualified day ranges — MUST precede the standalone month patterns,
+    # else "上个月" is expanded to a full month and "3号到10号" is dropped.
+    # Day ranges before single days so "3号到10号" isn't split.
+    (re.compile(_ANCHOR + r"从?" + _DAY + r"[号日]?" + _SEP + _DAY + r"[号日]?"), _anchor_day_range),
+    (re.compile(_MON + r"月" + _DAY + r"[号日]?" + _SEP + r"(?:" + _MON + r"月)?" + _DAY + r"[号日]?"), _explicit_month_day_range),
+    (re.compile(_ANCHOR + r"从?" + _DAY + r"[号日]"), _anchor_single_day),
+    (re.compile(_MON + r"月" + _DAY + r"[号日]"), _explicit_month_single_day),
     # Multi-char fixed expressions (longer first)
     (re.compile(r"上上周"), _week_before_last),
     (re.compile(r"上个月|上月"), _last_month),

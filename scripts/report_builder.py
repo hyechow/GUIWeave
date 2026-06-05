@@ -444,6 +444,9 @@ class ReportData:
     milestones: list[dict] = field(default_factory=list)
     decompose_summary: str = ""  # First-turn supervisor summary with decomposition info
     models: dict[str, str] = field(default_factory=dict)  # config_key → model used this run
+    raw_input: str = ""  # original human input (title); empty for old logs
+    goal: str = ""       # resolved goal that drove the run
+    router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -995,7 +998,12 @@ class RunnerReportBuilder:
             return data
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
-        data.title = ctx.get("goal", run_dir.name)
+        # Title is the user's ORIGINAL input; the resolved goal is shown as provenance.
+        # Old logs without raw_input fall back to the goal.
+        data.raw_input = ctx.get("raw_input") or ""
+        data.goal = ctx.get("goal", "")
+        data.router = ctx.get("router") or {}
+        data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
         # Run-level model record; cost is priced against these (not the active config).
         data.models = ctx.get("models", {}) or {}
@@ -1812,7 +1820,28 @@ HTML_TEMPLATE = """\
     --bg: #f1f5f9; --card: #fff; --border: #e2e8f0;
     --text: #1e293b; --muted: #64748b; --radius: 12px;
   }}
-  body {{ font-family: -apple-system, "PingFang SC", sans-serif; background: var(--bg); padding: 24px; color: var(--text); }}
+  body {{ font-family: -apple-system, "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }}
+
+  /* ── Layout: sticky outline sidebar + scrolling main ── */
+  .layout {{ display: flex; align-items: flex-start; }}
+  .sidebar {{
+    width: 240px; flex-shrink: 0; position: sticky; top: 0; height: 100vh;
+    overflow-y: auto; background: var(--card); border-right: 1px solid var(--border);
+    padding: 20px 0;
+  }}
+  .main {{ flex: 1; min-width: 0; padding: 24px; }}
+
+  /* ── Outline (子目标分解) ── */
+  .sidebar-title {{ font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 18px 12px; }}
+  .outline {{ display: flex; flex-direction: column; }}
+  .outline-item {{ display: block; text-decoration: none; color: inherit; padding: 8px 16px 8px 18px; border-left: 2px solid transparent; transition: background 0.12s, border-color 0.12s; }}
+  .outline-item:hover {{ background: #f8fafc; }}
+  .outline-item.active {{ border-left-color: #6366f1; background: #eef2ff; }}
+  .outline-top {{ display: flex; align-items: baseline; gap: 6px; }}
+  .outline-id {{ font-weight: 700; color: #4338ca; font-size: 12px; flex-shrink: 0; }}
+  .outline-name {{ font-size: 12px; color: var(--text); font-weight: 500; line-height: 1.35; }}
+  .outline-meta {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; padding-left: 22px; font-size: 10px; color: #94a3b8; font-family: monospace; }}
+  .sidebar-empty {{ padding: 4px 18px; font-size: 12px; color: var(--muted); }}
 
   /* Header */
   .header {{ max-width: 1080px; margin: 0 auto 20px; padding: 20px 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
@@ -1820,6 +1849,15 @@ HTML_TEMPLATE = """\
   .stats {{ color: var(--muted); font-size: 12px; }}
   .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
   .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
+
+  /* Router / input-resolution row (shares the 模型配置 box style) */
+  .prov-arrow {{ color: #94a3b8; margin: 0 6px; }}
+  .prov-goal {{ color: #1e293b; font-weight: 500; }}
+  .prov-via {{ display: inline-block; margin-left: 8px; font-size: 10px; padding: 1px 8px; border-radius: 10px; font-family: monospace; vertical-align: middle; }}
+  .prov-via-router {{ background: #dcfce7; color: #166534; }}
+  .prov-via-temporal {{ background: #dbeafe; color: #1d4ed8; }}
+  .prov-via-none {{ background: #f1f5f9; color: #64748b; }}
+  .prov-via-clarify {{ background: #fef9c3; color: #854d0e; }}
   .price-tip {{ position: relative; display: inline-block; margin-left: 8px; }}
   .price-chip {{ font-size: 11px; padding: 1px 8px; border-radius: 10px; background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; cursor: help; }}
   .price-pop {{ display: none; position: absolute; z-index: 50; top: 100%; left: 0; margin-top: 6px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.12); white-space: nowrap; }}
@@ -1828,14 +1866,6 @@ HTML_TEMPLATE = """\
   .price-pop td {{ padding: 1px 16px 1px 0; }}
   .price-pop .pp-num {{ text-align: right; padding-right: 0; }}
   .price-pop .pp-head td {{ color: #94a3b8; }}
-
-  /* Milestone overview timeline */
-  .ms-timeline {{ max-width: 1080px; margin: 0 auto 20px; display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; }}
-  .ms-chip {{ padding: 5px 10px; border-radius: 6px; font-size: 11px; background: var(--card); border: 1px solid var(--border); cursor: pointer; white-space: nowrap; transition: border-color 0.15s; text-decoration: none; color: inherit; }}
-  .ms-chip:hover {{ border-color: #6366f1; background: #f8fafc; }}
-  .ms-chip-id {{ font-weight: 700; color: #4338ca; }}
-  .ms-chip-kind {{ color: var(--muted); margin-left: 4px; }}
-  .ms-chip-time {{ color: #94a3b8; margin-left: 6px; font-family: monospace; font-size: 10px; }}
 
   /* Milestone section */
   .milestone {{ max-width: 1080px; margin: 0 auto 16px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
@@ -1899,21 +1929,46 @@ HTML_TEMPLATE = """\
 </head>
 <body>
 
-<div class="header">
-  <h1>{title}</h1>
-  <div class="stats">{stats}</div>
-  {decompose_html}
-  {cost_note_html}
+<div class="layout">
+  <nav class="sidebar">
+    <div class="sidebar-title">子目标分解</div>
+    <div class="outline">{outline_html}</div>
+  </nav>
+  <main class="main">
+    <div class="header">
+      <h1>{title}</h1>
+      <div class="stats">{stats}</div>
+      {provenance_html}
+      {cost_note_html}
+    </div>
+
+    {pages_html}
+  </main>
 </div>
-
-<div class="ms-timeline">{milestones_overview}</div>
-
-{pages_html}
 
 <div class="modal" id="modal" onclick="this.classList.remove('show')">
   <img id="modal-img" src="">
 </div>
 <script>
+// Scroll-spy: highlight the outline item whose milestone is near the top.
+(function() {{
+  var items = Array.prototype.slice.call(document.querySelectorAll('.outline-item'));
+  if (!items.length || !('IntersectionObserver' in window)) return;
+  var map = {{}};
+  items.forEach(function(it) {{ map[it.dataset.target] = it; }});
+  var obs = new IntersectionObserver(function(entries) {{
+    entries.forEach(function(e) {{
+      if (!e.isIntersecting) return;
+      items.forEach(function(i) {{ i.classList.remove('active'); }});
+      var it = map[e.target.id];
+      if (it) it.classList.add('active');
+    }});
+  }}, {{ rootMargin: '-15% 0px -75% 0px', threshold: 0 }});
+  items.forEach(function(it) {{
+    var sec = document.getElementById(it.dataset.target);
+    if (sec) obs.observe(sec);
+  }});
+}})();
 function showDetail(id) {{
   var el = document.getElementById(id);
   if (el.classList.contains('show')) {{
@@ -2106,6 +2161,47 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
     </div>"""
 
 
+def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
+    """Header row showing the Router/input-resolution result for the run.
+
+    Always rendered (when raw_input is known) so every report states the router
+    status explicitly — router goal, a clarification request, a deterministic
+    temporal rewrite, or '未经 router' for bin/runner direct runs. The <h1> title
+    is the raw input; this row shows what it resolved to and how.
+    """
+    if not raw_input:
+        return ""  # old logs without provenance — nothing to show
+
+    changed = bool(goal) and goal != raw_input
+    if router and router.get("needs_clarification"):
+        via_cls, via_text = "prov-via-clarify", "需澄清"
+        body = f'需要澄清：{_safe(router.get("clarification", "") or "—")}'
+    elif router:
+        via_cls, via_text = "prov-via-router", "router"
+        body = (
+            f'<span class="prov-goal">{_safe(goal)}</span>' if not changed else
+            f'{_safe(raw_input)}<span class="prov-arrow">→</span>'
+            f'<span class="prov-goal">{_safe(goal)}</span>'
+        )
+    elif changed:
+        via_cls, via_text = "prov-via-temporal", "temporal · 未经 router"
+        body = (
+            f'{_safe(raw_input)}<span class="prov-arrow">→</span>'
+            f'<span class="prov-goal">{_safe(goal)}</span>'
+        )
+    else:
+        via_cls, via_text = "prov-via-none", "未经 router"
+        body = f'<span class="prov-goal">{_safe(goal or raw_input)}</span>（输入未改写）'
+
+    return (
+        f'<div class="decompose">'
+        f'<span class="decompose-label">Router</span>'
+        f'{body}'
+        f'<span class="prov-via {via_cls}">{via_text}</span>'
+        f'</div>'
+    )
+
+
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
     total_time = sum(m.get("total_time", 0) for m in data.milestones)
@@ -2120,31 +2216,32 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
     stats_str = "  |  ".join(stats_parts)
 
-    # Decompose summary
-    decompose_html = ""
-    if data.decompose_summary:
-        decompose_html = (
-            f'<div class="decompose">'
-            f'<span class="decompose-label">子目标分解：</span>'
-            f'{_safe(data.decompose_summary)}</div>'
-        )
-
-    # Milestone timeline chips
-    overview_parts = []
+    # Sidebar outline (子目标分解): one clickable node per milestone, scroll-spy active.
+    outline_parts = []
     for m in data.milestones:
         mid = _safe(m.get("id", "?"))
         name = _safe(m.get("name", ""))
-        kind = _safe(m.get("kind", ""))
+        kind = m.get("kind", "")
+        kind_safe = _safe(kind)
         turns = m.get("turns", "")
         t = m.get("total_time", 0)
-        overview_parts.append(
-            f'<a class="ms-chip" href="#ms-{mid}">'
-            f'<span class="ms-chip-id">#{mid}</span>'
-            f'<span class="ms-chip-kind">{name or kind}</span>'
-            f'<span class="ms-chip-time">{t:.1f}s · Turn {turns}</span>'
+        badge_cls = KIND_BADGE.get(kind, "milestone-badge-default")
+        meta_bits = ""
+        if kind_safe:
+            meta_bits += f'<span class="milestone-badge {badge_cls}">{kind_safe}</span>'
+        meta_bits += f'<span>{t:.1f}s</span>'
+        if turns:
+            meta_bits += f'<span>T{_safe(str(turns))}</span>'
+        outline_parts.append(
+            f'<a class="outline-item" href="#ms-{mid}" data-target="ms-{mid}">'
+            f'<span class="outline-top">'
+            f'<span class="outline-id">#{mid}</span>'
+            f'<span class="outline-name">{name or kind_safe}</span>'
+            f'</span>'
+            f'<span class="outline-meta">{meta_bits}</span>'
             f'</a>'
         )
-    milestones_overview = "".join(overview_parts)
+    outline_html = "".join(outline_parts) or '<div class="sidebar-empty">无子目标</div>'
 
     # Per-milestone sections
     pages_html = ""
@@ -2297,9 +2394,9 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     return HTML_TEMPLATE.format(
         title=_safe(data.title),
         stats=stats_str,
-        decompose_html=decompose_html,
+        provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
+        outline_html=outline_html,
         cost_note_html=cost_note_html,
-        milestones_overview=milestones_overview,
         pages_html=pages_html,
     )
 

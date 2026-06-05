@@ -1,6 +1,7 @@
 """Router eval runner. Loads cases from cases.json and runs route_message."""
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -30,6 +31,15 @@ def check(result, expected: dict) -> tuple[bool, str]:
         missing = [kw for kw in expected["goal_contains_all"] if kw not in (result.goal or "")]
         if missing:
             return False, f'goal missing {missing}, got "{result.goal}"'
+    # Structural check: goal must match a regex (e.g. an ISO date range) — used
+    # for date-relative cases where hardcoding the resolved dates would expire.
+    if "goal_regex" in expected:
+        if not result.goal or not re.search(expected["goal_regex"], result.goal):
+            return False, f'goal did not match /{expected["goal_regex"]}/, got "{result.goal}"'
+    if "goal_not_contains" in expected:
+        present = [kw for kw in expected["goal_not_contains"] if kw in (result.goal or "")]
+        if present:
+            return False, f'goal should not contain {present}, got "{result.goal}"'
     if expected.get("clarification") and not expected.get("or_clarification"):
         if not result.needs_clarification:
             return False, f"expected needs_clarification=true, got goal=\"{result.goal}\""
