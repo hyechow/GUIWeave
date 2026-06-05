@@ -2032,6 +2032,16 @@ def _safe(text: str | None) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _short_mid(mid) -> str:
+    """Display-only short id: leading number of a slug ('1_open_wechat' -> '1').
+
+    The full id is still used for anchors/links; this only shortens what's shown
+    so a long slug doesn't crowd out the milestone name in the sidebar.
+    """
+    m = re.match(r"\s*(\d+)", str(mid))
+    return m.group(1) if m else str(mid)
+
+
 def _render_timing_html(timings: dict[str, float]) -> str:
     if not timings:
         return ""
@@ -2227,7 +2237,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     # Sidebar outline (子目标分解): one clickable node per milestone, scroll-spy active.
     outline_parts = []
     for m in data.milestones:
-        mid = _safe(m.get("id", "?"))
+        mid = _safe(m.get("id", "?"))           # full id — for the anchor/link
+        mid_disp = _safe(_short_mid(m.get("id", "?")))  # short id — for display
         name = _safe(m.get("name", ""))
         kind = m.get("kind", "")
         kind_safe = _safe(kind)
@@ -2243,7 +2254,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         outline_parts.append(
             f'<a class="outline-item" href="#ms-{mid}" data-target="ms-{mid}">'
             f'<span class="outline-top">'
-            f'<span class="outline-id">#{mid}</span>'
+            f'<span class="outline-id">#{mid_disp}</span>'
             f'<span class="outline-name">{name or kind_safe}</span>'
             f'</span>'
             f'<span class="outline-meta">{meta_bits}</span>'
@@ -2264,7 +2275,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             f' · {_fmt_tokens(ms_in)}/{_fmt_tokens(ms_out)} tok · ≈{pricing_currency()}{ms_cost:.4f}'
             if (ms_in or ms_out) else ""
         )
-        mid_safe = _safe(page.milestone_id)
+        mid_safe = _safe(page.milestone_id)       # full id — anchor target
+        mid_disp = _safe(_short_mid(page.milestone_id))  # short id — heading
 
         thumbs_html = ""
         details_html = ""
@@ -2342,7 +2354,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         pages_html += f"""
         <div class="milestone" id="ms-{mid_safe}">
           <div class="milestone-header">
-            <h2>#{mid_safe}</h2>
+            <h2>#{mid_disp}</h2>
             <span class="milestone-name">{_safe(page.milestone_name)}</span>
             <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
             <span class="milestone-time">{ms_time:.1f}s · {len(page.steps)} turns{ms_tok_html}</span>
