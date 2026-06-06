@@ -127,6 +127,28 @@ def main() -> int:
     else:
         _report("153300 端到端回归(缺截图,跳过)", True, "  (gitignored)")
 
+    # 5) 真机回归 20260606_170344 turn18→22：picker(点确定)→账单列表 的转场。
+    #    旧 bug：robust_shift(picker, 列表)=0 → 第一帧列表被当「无进展」丢弃 → 列表顶/中部
+    #    永久漏采(最终只剩底部 5 条)。修复：shift==0 但两帧内容明显不同(相似度<阈值)→ 重定
+    #    基线，把转场后的列表整帧采下而非丢弃。断言：转场那一帧触发出块(advanced+chunk)。
+    reb = [SHOTS / n for n in ("rebase_picker.png", "rebase_list1.png", "rebase_list2.png",
+                               "rebase_list3.png", "rebase_list4.png")]
+    if all(p.exists() for p in reb):
+        racc2 = StitchAccumulator(overlap_px=150)
+        feeds = [racc2.feed(p.read_bytes()) for p in reb]
+        # picker(第0帧)→列表(第1帧)：转场必须重定基线(出块 + advanced)，绝不能被丢
+        l1_chunks, l1_adv = feeds[1]
+        ok = l1_adv and len(l1_chunks) >= 1
+        _report("170344：picker→列表转场重定基线(不丢首屏列表)", ok,
+                "" if ok else f"  list1: chunks={len(l1_chunks)} adv={l1_adv} (旧bug=丢弃)")
+        # 转场后的滚动帧应持续推进(advanced)，把列表中/底部也采下
+        rest_adv = all(a for _, a in feeds[2:])
+        racc2.flush()
+        _report("170344：转场后滚动帧持续推进(采到中/底部)", rest_adv,
+                "" if rest_adv else f"  adv={[a for _, a in feeds[2:]]}")
+    else:
+        _report("170344 picker→列表转场回归(缺截图,跳过)", True, "  (gitignored)")
+
     print(f"\n  [info] 吐出 {len(emitted)} 段, 高度={heights}")
     print(f"{passed + failed} tests: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 1

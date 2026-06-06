@@ -39,6 +39,20 @@ def _gray_u8(png_bytes: bytes) -> np.ndarray:
     return np.asarray(Image.open(io.BytesIO(png_bytes)).convert("L"), dtype=np.uint8)
 
 
+# shift==0 有两种：① 同一帧(真没滚)→ 不追加；② 换页/加载跳变(两帧不相干、无可追踪重叠)
+# → 不能丢，要重定基线。robust_shift 对两者都返回 0，靠内容带粗相似度区分：低于此阈值=换页。
+REBASELINE_SIM = 0.90
+
+
+def _content_sim(prev_u8: np.ndarray, cur_u8: np.ndarray) -> float:
+    """内容带的粗相似度(0~1)：1=完全相同。用于区分『同一帧』与『换页/跳变』。"""
+    h = prev_u8.shape[0]
+    top, bot = int(h * CONTENT_TOP), int(h * CONTENT_BOT)
+    a = cv2.resize(prev_u8[top:bot], (48, 96)).astype(np.float32)
+    b = cv2.resize(cur_u8[top:bot], (48, 96)).astype(np.float32)
+    return 1.0 - float(np.abs(a - b).mean()) / 255.0
+
+
 def _orb_mask(h: int, w: int) -> np.ndarray:
     """ORB 特征检测掩码（uint8 0/255）：设备屏幕区 ∩ 内容带。"""
     m = np.zeros((h, w), dtype=np.uint8)
@@ -133,6 +147,7 @@ class StitchAccumulator:
     def feed(self, png_bytes: bytes) -> tuple[list[bytes], bool]:
         gray = _gray_u8(png_bytes)
         advanced = False
+        chunks: list[bytes] = []
         if self._canvas is None:
             self._canvas = _content_crop(png_bytes)
             self._prev_gray = gray
@@ -142,16 +157,23 @@ class StitchAccumulator:
         else:
             assert self._prev_gray is not None
             shift, _ = robust_shift(self._prev_gray, gray)
-            self._prev_gray = gray
             if shift < 0:                         # 有可信的向下滚 → 追加新条带
                 content = _content_crop(png_bytes)
                 new_h = min(abs(shift), content.height)
                 new_band = content.crop((0, content.height - new_h, content.width, content.height))
                 self._canvas = _vstack(self._canvas, new_band)
                 advanced = True
-            # shift==0：失败/无效滚动或转场 → 不追加（不重复采集同一屏）
+            elif _content_sim(self._prev_gray, gray) < REBASELINE_SIM:
+                # shift==0 但两帧明显不同（换页 / 加载跳变 / picker→列表转场，无可追踪重叠）
+                # → 重定基线：先把当前画布吐成 chunk（让其被读、不丢残留），再用这一新帧重开
+                # 画布、整帧采下。绝不能像旧逻辑那样直接丢弃新页（会漏掉转场后的第一屏内容）。
+                if self._canvas.height > self._overlap_px:
+                    chunks.append(_png(self._canvas))
+                self._canvas = _content_crop(png_bytes)
+                advanced = True
+            # else: shift==0 且两帧近乎相同 → 真没滚动/无效滚动，不追加（不重复采集同一屏）
+            self._prev_gray = gray
 
-        chunks: list[bytes] = []
         chunk_px = self._chunk_px or 1
         while self._canvas is not None and self._canvas.height >= chunk_px:
             chunk = self._canvas.crop((0, 0, self._canvas.width, chunk_px))

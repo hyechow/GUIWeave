@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,17 @@ class ScrollProbeResult:
     reason: str
 
 
+# Matches an already-appended verified-point suffix so re-applying the profile
+# (e.g. every turn of a scroll loop) doesn't accumulate it: …y=760）（…y=760）（…）.
+_VERIFIED_SUFFIX = re.compile(r"（使用已验证(?:拖动|滚动)点 y=\d+）")
+
+
+def _with_verified_suffix(description: str | None, kind: str, y: float) -> str:
+    """Append the verified-point note once, stripping any prior one first (idempotent)."""
+    base = _VERIFIED_SUFFIX.sub("", description or "").rstrip()
+    return f"{base}（使用已验证{kind}点 y={y:.0f}）"
+
+
 def apply_profile(action: Action, profile: ScrollProfile) -> Action:
     """Return an action using a validated scroll profile."""
 
@@ -59,7 +71,7 @@ def apply_profile(action: Action, profile: ScrollProfile) -> Action:
                 "to_x": profile.to_x,
                 "to_y": profile.to_y,
                 "duration_ms": profile.duration_ms,
-                "description": f"{action.description}（使用已验证拖动点 y={profile.y:.0f}）",
+                "description": _with_verified_suffix(action.description, "拖动", profile.y),
             }
         )
     return action.model_copy(
@@ -68,7 +80,7 @@ def apply_profile(action: Action, profile: ScrollProfile) -> Action:
             "y": profile.y,
             "direction": profile.direction,
             "method": "wheel",
-            "description": f"{action.description}（使用已验证滚动点 y={profile.y:.0f}）",
+            "description": _with_verified_suffix(action.description, "滚动", profile.y),
         }
     )
 
