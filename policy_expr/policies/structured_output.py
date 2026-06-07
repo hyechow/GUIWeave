@@ -84,6 +84,7 @@ class StructuredOutputPolicy(BaseActionPolicy):
         *,
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
+        drag_steps: Optional[int] = None,
         verbose: bool = True,
     ) -> ActionDecision:
         cfg = resolve_llm_config("action_policy")
@@ -108,6 +109,7 @@ class StructuredOutputPolicy(BaseActionPolicy):
         )
         if _tap_only:
             direction = drag_column = None
+            drag_steps = None
 
         # ⚠️ 只为 prompt 的「手指方向」提示把 value-direction(increase/decrease) 译成 up/down；
         # 但传给 _normalize_drag_direction 的必须是**原始 direction**(increase/decrease)，让它设
@@ -139,7 +141,7 @@ class StructuredOutputPolicy(BaseActionPolicy):
             ),
         ]
         decision = invoke_structured(llm, messages, ActionDecision)
-        _normalize_drag_direction(decision, instruction, direction)
+        _normalize_drag_direction(decision, instruction, direction, drag_steps)
         _normalize_scroll_direction(decision, gesture_hint_dir)
         _force_picker_column(decision, drag_column)
         _fix_date_range_field_mixup(decision, instruction)
@@ -180,8 +182,13 @@ def _normalize_drag_direction(
     decision: ActionDecision,
     instruction: str,
     direction_hint: Optional[str] = None,
+    step_count: Optional[int] = None,
 ) -> None:
-    """Normalize semantic drag direction and amount."""
+    """Normalize semantic drag direction and amount.
+
+    step_count（来自 planner 的结构化 drag_steps）优先用于按距离选幅度；缺省时退回
+    从指令文本正则抠 |当前-目标| 的旧路径。差≥4 格用 large 粗调、2-3 格 medium、≤1 格 small。
+    """
     action = decision.action
     if action.action_type != "drag":
         return
@@ -203,11 +210,19 @@ def _normalize_drag_direction(
         elif any(word in instruction for word in ("向上", "上滑", "往上")):
             action.direction = "up"
 
-    step_distance = _picker_step_distance(instruction)
-    if step_distance and step_distance <= _PICKER_ROW_NORM:
-        action.amount = "small"
-    elif step_distance and step_distance >= _PICKER_ROW_NORM * 4:
-        action.amount = "large"
+    # 选幅度：优先用结构化 step_count（格数）；缺省时回退到从指令文本正则抠出的距离。
+    # 阈值与历史一致：1 格→small（近距离精调）、≥4 格→large（远距离粗调）；2-3 格不强制、
+    # 保留 LLM 给的 amount。本修复只为补上「距离根本读不出 → 远距离也退化成 small」这个洞，
+    # 不改 2-3 格的既有行为。
+    steps = step_count
+    if steps is None:
+        step_distance = _picker_step_distance(instruction)
+        steps = round(step_distance / _PICKER_ROW_NORM) if step_distance else None
+    if steps is not None:
+        if steps <= 1:
+            action.amount = "small"
+        elif steps >= 4:
+            action.amount = "large"
 
 
 _DRAG_COLUMN_TO_AREA = {"year": "picker_left", "month": "picker_center", "day": "picker_right"}

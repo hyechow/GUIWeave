@@ -663,6 +663,7 @@ def run_agent_loop(
                         observation, instruction_for_action,
                         direction=sv_step.direction,
                         drag_column=sv_step.drag_column,
+                        drag_steps=sv_step.drag_steps,
                     )
                     if hasattr(supervisor, "_timings"):
                         supervisor._timings["action_policy"] = time.perf_counter() - _ap_t0

@@ -54,6 +54,21 @@ class _PlanResult(BaseModel):
         default=None,
         description="picker drag 时的目标列，如 'year'/'month'/'day'；非 picker drag 留空",
     )
+    drag_current_value: Optional[int] = Field(
+        default=None,
+        description=(
+            "picker drag 时，要拖的【那一列】当前停在中间行的数字（从 check_reason 读出，"
+            "如日列当前为 5月1日就填 1、月列当前 6月就填 6）；非 picker drag 留空。"
+            "它与 drag_target_value 一起让系统按差几格自动放大拖动幅度——少填会退化成一格一格挪。"
+        ),
+    )
+    drag_target_value: Optional[int] = Field(
+        default=None,
+        description=(
+            "picker drag 时，要拖的【那一列】的目标数字（如目标 5月21日、本步拖日列就填 21）；"
+            "非 picker drag 留空。必须与 drag_current_value 取同一列的数字。"
+        ),
+    )
 
 
 class _ReplanResult(BaseModel):

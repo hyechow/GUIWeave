@@ -218,10 +218,19 @@ class SupervisorStep(BaseModel):
     )
     direction: Optional[str] = Field(default=None, description="scroll/drag 手指方向 hint（up/down/left/right）")
     drag_column: Optional[str] = Field(default=None, description="picker drag 目标列 hint（year/month/day）")
+    drag_steps: Optional[int] = Field(
+        default=None,
+        description="picker drag 目标列当前值与目标值相差的格数（绝对值）hint，用于按距离放大拖动幅度",
+    )
     # 由 checker 的 page_identity 在代码中派生（见 _is_home_identity），非 LLM 填写。
     is_home_screen: bool = Field(
         default=False,
         description="当前是否为 iOS 主屏幕（springboard）",
+    )
+    # 页面未稳定（白屏/加载中）的等待帧：runner 据此跳过本帧、不计入 max_turns、不累加 noop。
+    is_loading: bool = Field(
+        default=False,
+        description="当前帧页面尚未渲染稳定（白屏/加载中），应等待重新观察而非执行/计数",
     )
 
 

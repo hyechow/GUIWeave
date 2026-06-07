@@ -580,5 +580,33 @@
       "must_not_contain": ["标签", "标题"]
     },
     "note": "源 20260606_163552 turn15→16：要激活结束日期，planner 指令『点击「结束日期」标签』点的是上方标题文字（不可交互）→点空、未激活（turn16 replan 确认）。实际可点的是该字段下方显示「轻触选择日期」的灰色占位框。提示词原写『tap 字段标签』把目标指错了（标题 vs 占位框）。期望：点占位符/值框，不点标题标签。"
+  },
+  {
+    "label": "日期picker大跨度-当前1日目标21日-须带当前值并放大幅度",
+    "screenshot": "evals/planner/screenshots/wechat_start_date_day1_target21.png",
+    "milestone": {
+      "name": "将开始日期设为2026年5月21日",
+      "description": "在微信账单「选择时间段」弹窗中，把开始日期 picker 调整为 2026年5月21日",
+      "success_condition": "开始日期滚轮中间行显示为 2026年5月21日",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于账单「选择时间段」弹窗，开始日期滚轮各列中间行显示为 2026年 / 5月 / 1日（即当前开始日期为2026年5月1日），年、月已与目标对齐，仅日列需从1日调到21日；结束日期尚未设置（显示「轻触选择日期」）。",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年5月21日"],
+      "summary": "开始日期picker已聚焦且年月已对齐5月，仅日列当前1日需调到21日（差20格）"
+    },
+    "expected": {
+      "must_contain": ["拖动"],
+      "must_not_contain": ["直到显示", "点击.{0,4}21", "点击.{0,4}日期", "tap"],
+      "direction": "increase",
+      "drag_column": "day",
+      "drag_current_value": 1,
+      "drag_target_value": 21
+    },
+    "note": "源 20260607_092437 turn1：开始日期需从5月1日调到5月21日（日列差20格），但 planner 把指令写成开环的「向上拖动日期列直到显示21日」——只有目标值、没有当前值。下游 _picker_step_distance/_fix_picker_direction 都靠正则从指令文本抠两个数字算跨度，单数字匹配失败 → 幅度退回 small/medium（≈1-2格/轮），20格距离按≈1格/轮挪，25轮跑满仍差1天没到。修复：planner 必须输出结构化 drag_current_value/drag_target_value，并把指令写成「从1日调整至21日」带上当前值；据此算出 drag_steps=20 → action policy 选 large 粗调、接近后自动收回 small 精调。"
   }
 ]

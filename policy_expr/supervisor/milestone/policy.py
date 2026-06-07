@@ -411,7 +411,14 @@ class MilestoneSupervisorPolicy:
                 )
                 return self._handle_stuck(milestone, stuck_check, check.read_instruction, observation, history)
         print(f"  [Planner] {plan.instruction}")
-        if plan.direction or plan.drag_column:
+        # 结构化 drag 距离：当 planner 给出本列的当前值/目标值时，按差几格算出 drag_steps，
+        # 让 action policy 据此放大拖动幅度（差 20 格用 large 粗调、接近后自动收回 small 精调）。
+        # 这条结构化通路绕开「从 instruction 文本正则抠数字」的脆弱性——指令只写了目标值
+        # （如「直到显示21日」缺当前值）时，正则抠不到距离会退化成一格一格挪、跑满轮数也到不了。
+        drag_steps = self._picker_drag_steps(plan)
+        if drag_steps is not None and plan.drag_column:
+            print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column} steps={drag_steps}")
+        elif plan.direction or plan.drag_column:
             print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column}")
         if plan.direction in ("increase", "decrease") and plan.drag_column:
             self._fix_picker_direction(plan)
@@ -425,6 +432,7 @@ class MilestoneSupervisorPolicy:
             summary=plan.summary,
             direction=plan.direction,
             drag_column=plan.drag_column,
+            drag_steps=drag_steps,
             is_home_screen=_is_home_identity(check.page_identity),
             **_ctx(milestone, check.read_instruction),
         )
@@ -1280,6 +1288,24 @@ class MilestoneSupervisorPolicy:
 
     def _msgs(self, system_prompt: str, observation: Observation) -> list:
         return _build_msgs(system_prompt, observation.png_bytes)
+
+    @staticmethod
+    def _picker_drag_steps(plan: _PlanResult) -> Optional[int]:
+        """从 planner 的结构化当前值/目标值算出 picker drag 要走的格数（绝对值）。
+
+        仅在 drag_column 已填、且当前值与目标值都给出时生效。除返回格数外，还用这两个数
+        直接定方向——同一列的数字比较永远有效，比从 instruction 文本正则抠数字更可靠（正则在
+        指令只写目标值、如「直到显示21日」时会抠不到当前值而失效）。非 picker drag 或信息
+        不全时返回 None，由下游回退到旧的文本解析路径。
+        """
+        if not plan.drag_column:
+            return None
+        cur, tgt = plan.drag_current_value, plan.drag_target_value
+        if cur is None or tgt is None:
+            return None
+        if tgt != cur:
+            plan.direction = "increase" if tgt > cur else "decrease"
+        return abs(tgt - cur)
 
     @staticmethod
     def _fix_picker_direction(plan: _PlanResult) -> None:
