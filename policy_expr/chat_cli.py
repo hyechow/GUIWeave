@@ -29,8 +29,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from policy_expr.self_learning.app_summary import auto_discover_knowledge
-from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
-from policy_expr.policies import StructuredOutputPolicy
+from policy_expr.core.factory import build_platform
 from policy_expr.runner import _TeeStream, build_policy, build_supervisor, run_agent_loop
 from policy_expr.chat_session import (
     RouterResult,
@@ -101,10 +100,10 @@ def run_chat_turn(
     router: dict | None = None,
 ) -> dict:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
-    from policy_expr.adapters.iphone.hud import AgentHUD
-
     context_path = log_dir / "context.json"
-    with _silent_stdio(log_dir), AgentHUD() as hud:
+    # HUD comes from the platform bundle (make_status_reporter(True) -> the HUD
+    # context manager); same object the standalone runner uses, no adapter import.
+    with _silent_stdio(log_dir), build_platform().make_status_reporter(True) as hud:
         return run_agent_loop(
             goal, action_policy, supervisor,
             input_context_path=None,
@@ -272,8 +271,11 @@ def _handle_pref(cmd: str, prefs: PreferenceManager) -> None:
 
 
 def main() -> None:
-    action_policy = build_policy(StructuredOutputPolicy.name)
-    supervisor = build_supervisor(MilestoneSupervisorPolicy.name)
+    # Default policy/supervisor names come from the platform bundle (no adapter
+    # import); they resolve to "structured_output" / "milestone" as before.
+    bundle = build_platform()
+    action_policy = build_policy(bundle.default_action_policy)
+    supervisor = build_supervisor(bundle.default_supervisor)
     prefs = PreferenceManager()
     _MODE_BACKEND = {"silent": "daemon", "standard": "mirroir"}
     _env_default = "standard" if os.environ.get("AGENT_MODE", "silent").lower() in ("mirroir", "standard") else "silent"
@@ -322,10 +324,10 @@ def main() -> None:
 
         if user_msg == "/supervisor":
             current = supervisor.name
-            if current == SimpleSupervisorPolicy.name:
-                supervisor = build_supervisor(MilestoneSupervisorPolicy.name)
+            if current == "simple":
+                supervisor = build_supervisor("milestone")
             else:
-                supervisor = build_supervisor(SimpleSupervisorPolicy.name)
+                supervisor = build_supervisor("simple")
             console.print()
             console.print(f"  [dim]supervisor: {current} → {supervisor.name}[/dim]")
             console.print()

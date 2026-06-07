@@ -40,8 +40,17 @@ class PlatformBundle:
     make_action_policy: Callable[[str], "ActionPolicy"]
     make_supervisor: Callable[[str], "SupervisorPolicy"]
     make_status_reporter: Callable[[bool], "Optional[AbstractContextManager]"]
+    # Scroll-collect helpers the agent loop needs (iphone-specific objects today,
+    # typed as object so this neutral signature carries no adapter type).
+    make_scroll_probe: Callable[["PerceptionSession", object, "Path"], object]
+    apply_scroll_profile: Callable[[object, object], object]
+    make_stitch_accumulator: Callable[..., object]
+    robust_shift: Callable[..., object]
+    gray_u8: Callable[[bytes], object]
     default_action_policy: str
     default_supervisor: str
+    action_policy_choices: tuple[str, ...]
+    supervisor_choices: tuple[str, ...]
 
 
 def build_platform(

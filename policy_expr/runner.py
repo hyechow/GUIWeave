@@ -1,5 +1,7 @@
 """CLI runner for policy experiments with two-layer architecture."""
 
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -11,7 +13,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Iterator, Optional
+from typing import IO, TYPE_CHECKING, Iterator, Optional
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -20,17 +22,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
-from policy_expr.adapters.iphone.executor import ActionExecutor
-from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
+from policy_expr.core.factory import build_platform
 from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.output import generate_reply
-from policy_expr.adapters.iphone.perception import LivePerception, LivePhoneSession
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.temporal import resolve_temporal_expressions
-from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
-from policy_expr.adapters.iphone.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
-from policy_expr.adapters.iphone.stitch import StitchAccumulator, robust_shift, _gray_u8
 from policy_expr.target_verify import verify_target
 from policy_expr.schemas import (
     ActionDecision,
@@ -39,17 +36,16 @@ from policy_expr.schemas import (
     action_label,
 )
 from policy_expr.visualize import print_decision
-from policy_expr.adapters.iphone.hud import AgentHUD
 from policy_expr.self_learning.app_summary import auto_discover_knowledge
 
-POLICIES: dict[str, type[ActionPolicy]] = {
-    StructuredOutputPolicy.name: StructuredOutputPolicy,
-}
-
-SUPERVISORS: dict[str, type[SupervisorPolicy]] = {
-    SimpleSupervisorPolicy.name: SimpleSupervisorPolicy,
-    MilestoneSupervisorPolicy.name: MilestoneSupervisorPolicy,
-}
+if TYPE_CHECKING:
+    # Adapter types used only in annotations. With `from __future__ import
+    # annotations` these stay lazy strings, so importing runner pulls in no
+    # adapter at module top.
+    from policy_expr.adapters.iphone.hud import AgentHUD
+    from policy_expr.adapters.iphone.scroll_probe import ScrollProfile
+    from policy_expr.adapters.iphone.stitch import StitchAccumulator
+    from policy_expr.core.contracts import PerceptionSession
 
 ROOT = Path(__file__).parent.parent
 POLICY_LOG_ROOT = ROOT / "logs" / "policy_expr"
@@ -95,7 +91,7 @@ def _frame_diff(png_a: bytes, png_b: bytes) -> float:
 
 
 def _settle_after_action(
-    phone: LivePhoneSession, pre_frame: bytes | None, action_type: str | None = None
+    phone: "PerceptionSession", pre_frame: bytes | None, action_type: str | None = None
 ) -> tuple[float, bool]:
     """等到屏幕相对动作前帧「变过且停稳」，或达到上限。返回 (等待秒数, no_effect)。
 
@@ -249,21 +245,14 @@ def _tee_stdio(log_dir: Path) -> Iterator[None]:
             raise SystemExit(1) from None
 
 
-def build_policy(name: str) -> ActionPolicy:
-    try:
-        return POLICIES[name]()
-    except KeyError as exc:
-        choices = ", ".join(sorted(POLICIES))
-        raise ValueError(f"未知策略 {name!r}，可选：{choices}") from exc
+def build_policy(name: str) -> "ActionPolicy":
+    # Selection routes through the platform bundle; the factory raises ValueError
+    # with the available choices on an unknown name (same behavior as before).
+    return build_platform().make_action_policy(name)
 
 
-
-def build_supervisor(name: str) -> SupervisorPolicy:
-    try:
-        return SUPERVISORS[name]()
-    except KeyError as exc:
-        choices = ", ".join(sorted(SUPERVISORS))
-        raise ValueError(f"未知监督者 {name!r}，可选：{choices}") from exc
+def build_supervisor(name: str) -> "SupervisorPolicy":
+    return build_platform().make_supervisor(name)
 
 
 def _save_context(path: Path, context: PolicyContext) -> None:
@@ -518,8 +507,13 @@ def run_agent_loop(
             if _store_chunk_note(note, context, seen_rows, turn_no=tno, sv_step=sv):
                 _say(f"内容摘要(块): {context.content_notes[-1][:80]}...")
 
-    with LivePhoneSession(backend=backend) as phone:
-        executor = ActionExecutor(phone)
+    # The platform bundle is the single seam through which the agent loop obtains
+    # the session, executor, perception and scroll/stitch helpers — no adapter
+    # class is referenced directly here.
+    bundle = build_platform(backend=backend)
+
+    with bundle.open_session() as phone:
+        executor = bundle.make_executor(phone)
 
         while True:
             turn_no = len(context.turns) + 1
@@ -539,7 +533,7 @@ def run_agent_loop(
             _say("\n" + TURN_HEADER.format(turn_no=turn_no))
 
             _status(turn_no, "截图分析中…")
-            perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
+            perception = bundle.make_perception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
             # YOLO + OCR run in the background, overlapping the decide below;
             # awaited just before execute (snap) so they add ~no latency.
@@ -621,7 +615,7 @@ def run_agent_loop(
                     # 多帧滚动采集：逐帧喂累积器拼接，几何去重；攒满约一屏才真正 reader 读，
                     # chunk 间留 overlap 防切行。read_added_content=拼接是否推进，供边界判定。
                     if stitch_acc is None:
-                        stitch_acc = StitchAccumulator(overlap_px=STITCH_OVERLAP_PX)
+                        stitch_acc = bundle.make_stitch_accumulator(overlap_px=STITCH_OVERLAP_PX)
                         stitch_acc_mid = cur_mid
                     stitch_acc_instr = reader_instruction
                     stitch_acc_sv = sv_step
@@ -719,7 +713,7 @@ def run_agent_loop(
                     )
                     if should_probe_scroll and profile_key in scroll_profiles:
                         profile = scroll_profiles[profile_key]
-                        cached = apply_profile(action, profile)
+                        cached = bundle.apply_scroll_profile(action, profile)
                         _say(
                             "  [ScrollProbe] 使用缓存滚动点: "
                             f"method={profile.method}, x={profile.x:.0f}, y={profile.y:.0f}, "
@@ -739,7 +733,9 @@ def run_agent_loop(
                             phone, observation.png_bytes, cached.action_type
                         )
                         after_png = phone.screenshot()
-                        cshift, _ = robust_shift(_gray_u8(observation.png_bytes), _gray_u8(after_png))
+                        cshift, _ = bundle.robust_shift(
+                            bundle.gray_u8(observation.png_bytes), bundle.gray_u8(after_png)
+                        )
                         if cshift != 0:
                             action = cached
                             action_decision = action_decision.model_copy(update={"action": action})
@@ -749,12 +745,12 @@ def run_agent_loop(
                             scroll_profiles.pop(profile_key, None)
                             branch_settle_s = None  # 改走重探+轮末 settle
                     if should_probe_scroll and not executed and not probe_failed:
-                        probe = ScrollProbe(phone, executor, log_dir)
+                        probe = bundle.make_scroll_probe(phone, executor, log_dir)
                         result = probe.probe(observation.png_bytes, action, turn_no=turn_no)
                         if result.success and result.profile:
                             scroll_profiles[profile_key] = result.profile
                             scroll_probe_failures.pop(profile_key, None)
-                            action = apply_profile(action, result.profile)
+                            action = bundle.apply_scroll_profile(action, result.profile)
                             action_decision = action_decision.model_copy(update={"action": action})
                             executed = True
                         else:
@@ -896,6 +892,9 @@ def run_agent_loop(
 
 
 def main() -> None:
+    # The platform bundle supplies the default/choice names so argparse stays in
+    # sync with the registry without importing any adapter at module top.
+    bundle = build_platform()
     parser = argparse.ArgumentParser(description="测试手机策略运行模式")
     parser.add_argument(
         "prompt",
@@ -905,14 +904,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--policy",
-        default=StructuredOutputPolicy.name,
-        choices=sorted(POLICIES),
+        default=bundle.default_action_policy,
+        choices=list(bundle.action_policy_choices),
         help="动作策略模块",
     )
     parser.add_argument(
         "--supervisor",
-        default=SimpleSupervisorPolicy.name,
-        choices=sorted(SUPERVISORS),
+        default="simple",
+        choices=list(bundle.supervisor_choices),
         help="监督者策略模块",
     )
     parser.add_argument(
@@ -981,7 +980,7 @@ def main() -> None:
     input_context_path = args.context
     log_dir = create_run_dir("agent-loop")
     context_path = log_dir / "context.json"
-    hud = AgentHUD() if args.hud else None
+    hud = bundle.make_status_reporter(args.hud)
     with _tee_stdio(log_dir):
         print(f"Log Dir : {log_dir}")
         print(f"Context : {input_context_path if input_context_path else None}")

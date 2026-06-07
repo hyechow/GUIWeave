@@ -207,3 +207,35 @@ def test_build_platform_unknown_raises():
 
     with pytest.raises(ValueError):
         build_platform("android")  # not registered yet
+
+
+# --------------------------------------------------------------------------- #
+# core/factory (S3, Step 4): the orchestration entrypoints must now depend on   #
+# the platform FACTORY, not the iphone adapter. Importing runner / chat_cli      #
+# must pull in NO policy_expr.adapters.* module at module top — adapters are      #
+# reached only lazily inside build_platform() when the loop actually runs.        #
+# --------------------------------------------------------------------------- #
+def test_runner_has_no_eager_adapter_import():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, policy_expr.runner; "
+        "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
+        "assert not leaked, leaked"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_chat_cli_has_no_eager_adapter_import():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, policy_expr.chat_cli; "
+        "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
+        "assert not leaked, leaked"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

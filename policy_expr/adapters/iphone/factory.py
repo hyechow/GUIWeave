@@ -58,6 +58,36 @@ def _make_hud() -> "AbstractContextManager":
     return AgentHUD()
 
 
+def _make_scroll_probe(phone: object, executor: object, log_dir: object) -> object:
+    from policy_expr.adapters.iphone.scroll_probe import ScrollProbe
+
+    return ScrollProbe(phone, executor, log_dir)
+
+
+def _apply_scroll_profile(action: object, profile: object) -> object:
+    from policy_expr.adapters.iphone.scroll_probe import apply_profile
+
+    return apply_profile(action, profile)
+
+
+def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
+    from policy_expr.adapters.iphone.stitch import StitchAccumulator
+
+    return StitchAccumulator(*args, **kwargs)
+
+
+def _robust_shift(*args: object, **kwargs: object) -> object:
+    from policy_expr.adapters.iphone.stitch import robust_shift
+
+    return robust_shift(*args, **kwargs)
+
+
+def _gray_u8(png_bytes: bytes) -> object:
+    from policy_expr.adapters.iphone.stitch import _gray_u8 as _impl
+
+    return _impl(png_bytes)
+
+
 def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) -> PlatformBundle:
     """Construct the iPhone PlatformBundle. ``backend`` is the daemon/mirroir knob
     (passed through to LivePhoneSession; None lets it fall back to AGENT_MODE)."""
@@ -69,6 +99,13 @@ def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) ->
         make_action_policy=_build_action_policy,
         make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_hud() if enabled else None),
+        make_scroll_probe=_make_scroll_probe,
+        apply_scroll_profile=_apply_scroll_profile,
+        make_stitch_accumulator=_make_stitch_accumulator,
+        robust_shift=_robust_shift,
+        gray_u8=_gray_u8,
         default_action_policy=StructuredOutputPolicy.name,
         default_supervisor=MilestoneSupervisorPolicy.name,
+        action_policy_choices=tuple(sorted(_POLICIES)),
+        supervisor_choices=tuple(sorted(_SUPERVISORS)),
     )
