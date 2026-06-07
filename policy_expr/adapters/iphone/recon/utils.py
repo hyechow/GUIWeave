@@ -15,19 +15,8 @@ from policy_expr.adapters.iphone.recon.page_parser import ParsedPage
 
 # ── Exceptions ────────────────────────────────────────────
 
-class ProbeAbortedError(RuntimeError):
-    """Raised when probe_elements cannot return to initial page after a tap."""
-    def __init__(
-        self,
-        message: str,
-        failed_tap: int,
-        failed_element: str,
-        back_attempts: list[dict],
-    ):
-        super().__init__(message)
-        self.failed_tap = failed_tap
-        self.failed_element = failed_element
-        self.back_attempts = back_attempts  # list of {strategy, coords, score, success}
+# ProbeAbortedError moved to policy_expr.core.schema (S3); re-exported here for back-compat.
+from policy_expr.core.schema import ProbeAbortedError
 
 
 # ── Data classes ──────────────────────────────────────────
@@ -99,13 +88,8 @@ SCREEN_MATCH_THRESHOLD = 0.99
 SCREEN_DIFFERENT_THRESHOLD = 0.97
 
 
-@dataclass(frozen=True)
-class ScreenMatchDecision:
-    """Layered decision for whether a screen matches the initial page."""
-    matched: bool | None
-    similarity: float
-    method: str
-    reason: str
+# ScreenMatchDecision moved to policy_expr.core.schema (S3); re-exported here for back-compat.
+from policy_expr.core.schema import ScreenMatchDecision
 
 
 def png_similarity(png1: bytes, png2: bytes, size: int = SCREEN_MATCH_SIZE) -> float:

@@ -37,6 +37,14 @@ from policy_expr.adapters.iphone.recon.page_parser import PageParser
 from policy_expr.adapters.iphone.recon.page_identity import PageIdentity
 from policy_expr.adapters.iphone.recon.page_compare import PageComparator, EdgeIoUBackend
 from policy_expr.schemas import Observation
+from policy_expr.core.schema import IdentityResult, ScreenMatchDecision, ProbeAbortedError
+from policy_expr.adapters.iphone.recon.utils import (
+    ScreenMatchDecision as _ShimScreenMatchDecision,
+    ProbeAbortedError as _ShimProbeAbortedError,
+)
+from policy_expr.adapters.iphone.recon.page_identity import (
+    IdentityResult as _ShimIdentityResult,
+)
 
 
 def _blank(cls):
@@ -122,3 +130,80 @@ def test_contracts_is_a_pure_leaf_import():
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+# --------------------------------------------------------------------------- #
+# core/schema (S3): neutral data types lifted out of the iphone recon adapter. #
+# Must stay a pure leaf, and the adapter must re-export the SAME class objects. #
+# --------------------------------------------------------------------------- #
+def test_core_schema_is_a_pure_leaf_import():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, policy_expr.core.schema; "
+        "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
+        "assert not leaked, leaked"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_adapter_reexports_core_schema_types():
+    # The former adapter locations must re-export the exact same class objects, so
+    # isinstance / contract conformance is unaffected by the move to core.schema.
+    assert _ShimIdentityResult is IdentityResult
+    assert _ShimScreenMatchDecision is ScreenMatchDecision
+    assert _ShimProbeAbortedError is ProbeAbortedError
+
+
+def test_core_schema_types_construct():
+    assert IdentityResult(is_duplicate=False, reason="new").is_duplicate is False
+    decision = ScreenMatchDecision(matched=True, similarity=1.0, method="m", reason="r")
+    assert decision.matched is True
+    assert isinstance(ProbeAbortedError("x", 0, "el", []), RuntimeError)
+
+
+# --------------------------------------------------------------------------- #
+# core/factory (S3): the platform seam. The neutral dispatcher must stay        #
+# adapter-free (lazy import); the iphone bundle must be well-formed and the      #
+# dispatcher must reject unknown platforms.                                      #
+# --------------------------------------------------------------------------- #
+def test_core_factory_is_a_pure_leaf_import():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, policy_expr.core.factory; "
+        "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
+        "assert not leaked, leaked"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_build_platform_returns_iphone_bundle():
+    from policy_expr.core.factory import build_platform, PlatformBundle
+
+    bundle = build_platform("iphone", backend="daemon")
+    assert isinstance(bundle, PlatformBundle)
+    assert bundle.platform == "iphone"
+    assert bundle.default_action_policy and bundle.default_supervisor
+    for attr in (
+        "open_session",
+        "make_executor",
+        "make_perception",
+        "make_action_policy",
+        "make_supervisor",
+        "make_status_reporter",
+    ):
+        assert callable(getattr(bundle, attr)), attr
+
+
+def test_build_platform_unknown_raises():
+    import pytest
+
+    from policy_expr.core.factory import build_platform
+
+    with pytest.raises(ValueError):
+        build_platform("android")  # not registered yet

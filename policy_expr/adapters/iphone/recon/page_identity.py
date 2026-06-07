@@ -45,16 +45,8 @@ def _infer_form_group(png: bytes) -> str | None:
     return None  # unknown — don't filter
 
 
-@dataclass
-class IdentityResult:
-    is_duplicate: bool
-    reason: str
-    best_visual_sim: float = 0.0
-    best_text_sim: float | None = None
-    matched_index: int | None = None
-    matched_name: str | None = None
-    library_size: int = 0
-    phase: str = ""  # "visual_shortcut" / "semantic_match" / "new_page"
+# IdentityResult moved to policy_expr.core.schema (S3); re-exported here for back-compat.
+from policy_expr.core.schema import IdentityResult
 
 
 # Library entry: (embedding, png_bytes, name, fingerprint | None, form_group | None)

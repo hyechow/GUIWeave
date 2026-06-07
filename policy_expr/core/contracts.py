@@ -38,10 +38,10 @@ IMPORT HYGIENE
 --------------
 ``contracts`` must NOT import executor / runner / perception / recon (that would
 create an import cycle, since those depend on core). It imports ONLY the leaf
-``policy_expr.schemas`` module at runtime; the richer recon return types
-(PageKnowledge, IdentityResult, PageEmbedding, ScreenMatchDecision) are referred
-to via ``TYPE_CHECKING`` forward references so no heavy / cyclic import happens
-at module load.
+``policy_expr.schemas`` module at runtime. Recon return types are forward refs
+under ``TYPE_CHECKING``: the neutral ones (IdentityResult, ScreenMatchDecision)
+from ``policy_expr.core.schema``; the pixel/model-bearing ones (PageKnowledge,
+PageEmbedding) from the iphone adapter -- so no heavy / cyclic import at load.
 """
 
 from __future__ import annotations
@@ -61,9 +61,8 @@ if TYPE_CHECKING:
     # in heavy / adapter-coupled deps, so we never import them at runtime to
     # keep `contracts` a pure leaf seam with no cycles.
     from policy_expr.adapters.iphone.recon.cascade_matcher import PageEmbedding
-    from policy_expr.adapters.iphone.recon.page_identity import IdentityResult
     from policy_expr.adapters.iphone.recon.page_parser import PageKnowledge
-    from policy_expr.adapters.iphone.recon.utils import ScreenMatchDecision
+    from policy_expr.core.schema import IdentityResult, ScreenMatchDecision
 
 
 # ===========================================================================
