@@ -12,9 +12,10 @@ from policy_expr.config import resolve_llm_config
 from policy_expr.policies.base import resize_to_logical_png
 from policy_expr.schemas import Milestone, Observation, PolicyTurn
 
-from .schemas import _PlanResult, _SingleCheckResult
+from .schemas import _LoopFrameResult, _PlanResult, _SingleCheckResult
 from .prompts import (
     CHECK_KIND_SECTIONS,
+    LOOP_FRAME_PROMPT,
     PLAN_PROMPT,
     SINGLE_CHECKER_PROMPT,
     _CHECK_SECTION_CONVERGE,
@@ -251,3 +252,21 @@ def run_planner(
     msgs = _build_msgs(prompt, observation.png_bytes)
     _inject_knowledge(msgs, app_knowledge, elements_knowledge)
     return invoke_structured(_make_llm(), msgs, _PlanResult)
+
+
+def run_loop_check(
+    milestone: Milestone,
+    observation: Observation,
+    history: list[PolicyTurn],
+    *,
+    constraints: Optional[list[str]] = None,
+) -> _LoopFrameResult:
+    """Run the per-frame scroll_until_boundary assessment. Used by both production and evals."""
+    prompt = LOOP_FRAME_PROMPT.format(
+        milestone_name=milestone.name,
+        milestone_desc=milestone.description,
+        scroll_stop_condition=milestone.scroll_stop_condition or "滚动至列表物理底部时停止",
+        constraints=json.dumps(constraints or [], ensure_ascii=False),
+        history_text=_format_history(history),
+    )
+    return invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _LoopFrameResult)

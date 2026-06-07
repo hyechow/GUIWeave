@@ -31,6 +31,7 @@ class _SingleCheckResult(BaseModel):
 
 class _LoopFrameResult(BaseModel):
     """Per-frame assessment for scroll_until_boundary milestones."""
+    loading: bool = Field(default=False, description="页面尚未稳定渲染（加载中/骨架屏/旧内容未刷新），本帧不应作为采集内容读取")
     boundary_reached: bool = Field(default=False, description="当前可见内容是否已到达列表物理边界（无更多条目）")
     should_stop: bool = Field(default=False, description="是否满足停止条件，应结束滚动采集")
     stop_reason: str = Field(default="", description="停止原因（should_stop=true 时填写）")

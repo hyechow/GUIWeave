@@ -69,9 +69,11 @@ def _make_policy() -> tuple[MilestoneSupervisorPolicy, Milestone]:
     return p, ms
 
 
-def _stub_loop(p: MilestoneSupervisorPolicy, *, should_stop: bool, boundary: bool = False) -> None:
+def _stub_loop(
+    p: MilestoneSupervisorPolicy, *, should_stop: bool, boundary: bool = False, loading: bool = False,
+) -> None:
     p._loop_check = lambda *a, **k: _LoopFrameResult(  # type: ignore[assignment]
-        should_stop=should_stop, boundary_reached=boundary,
+        loading=loading, should_stop=should_stop, boundary_reached=boundary,
         stop_reason="看起来已到底", read_instruction="读取账单明细", summary="账单列表",
     )
     p._invoke_loop_scroll = lambda *a, **k: _PlanResult(  # type: ignore[assignment]
@@ -161,6 +163,30 @@ def main() -> int:
         "已采集+should_stop → 正常结束收集（advance）",
         ok,
         f"status={ms.status} stop={step.stop}",
+    )
+
+    # Case 5: loading frame on the ENTRY phase (no scroll yet) → wait (is_loading),
+    # don't read/scroll the stale frame.
+    p, ms = _make_policy()
+    _stub_loop(p, should_stop=False, loading=True)
+    step = p._run_loop_turn(ms, obs, [])
+    ok = step.is_loading and not step.should_act and not step.allow_read and ms.status != "done"
+    _report(
+        "启动帧 loading → 等待(is_loading)、不读不滚",
+        ok,
+        f"is_loading={step.is_loading} should_act={step.should_act} allow_read={step.allow_read}",
+    )
+
+    # Case 6: loading flag AFTER a successful scroll → ignored (gating off), proceeds to
+    # plan a scroll. Loading detection only guards the entry phase.
+    p, ms = _make_policy()
+    _stub_loop(p, should_stop=False, loading=True)
+    step = p._run_loop_turn(ms, obs, [_scroll_turn("5", read_added=True)])
+    ok = step.should_act and not step.is_loading
+    _report(
+        "已滚动后 loading → 忽略、继续采集",
+        ok,
+        f"should_act={step.should_act} is_loading={step.is_loading}",
     )
 
     print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")

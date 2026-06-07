@@ -1,4 +1,4 @@
-from .helpers import run_checker, run_planner
+from .helpers import run_checker, run_loop_check, run_planner
 from .policy import (
     MAX_RETRIES,
     MAX_SCROLL_PER_MILESTONE,
@@ -33,6 +33,7 @@ from .helpers import _format_history, _build_msgs
 __all__ = [
     "MilestoneSupervisorPolicy",
     "run_checker",
+    "run_loop_check",
     "run_planner",
     "_format_history",
     "_build_msgs",

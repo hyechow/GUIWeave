@@ -1,0 +1,61 @@
+[
+  {
+    "label": "账单筛选后加载中-旧内容未刷新-应判loading",
+    "screenshot": "evals/loop_check/screenshots/wechat_bill_loading_stale_postfilter.png",
+    "milestone": {
+      "name": "采集指定日期区间的账单明细",
+      "description": "滚动采集2026-05-21至2026-05-28的微信支付账单明细",
+      "kind": "collection",
+      "completion_strategy": "scroll_until_boundary",
+      "scroll_stop_condition": "滚动至列表物理底部（出现'暂无更多记录'）时停止",
+      "success_condition": "账单列表已滚动至物理底部，确保所有符合条件的记录可见",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "history": ["点击「确定」按钮应用日期筛选"],
+    "expected": {
+      "loading": true
+    },
+    "note": "源 20260607_105731 turn20：刚点「确定」应用 5/21-5/28 筛选，列表体仍在「加载中」（半透明遮罩），顶部显示的是范围外的 5月29/30/31 旧记录。必须判 loading=true——否则旧帧被读入 content_notes，并把 stitch 基线钉在旧帧上，导致后续真实内容拼接错位、漏采 5/24-28、混入 5/29。"
+  },
+  {
+    "label": "账单已渲染-列表中段-应判非loading",
+    "screenshot": "evals/loop_check/screenshots/wechat_bill_rendered_midlist.png",
+    "milestone": {
+      "name": "采集指定日期区间的账单明细",
+      "description": "滚动采集2026-05-21至2026-05-28的微信支付账单明细",
+      "kind": "collection",
+      "completion_strategy": "scroll_until_boundary",
+      "scroll_stop_condition": "滚动至列表物理底部（出现'暂无更多记录'）时停止",
+      "success_condition": "账单列表已滚动至物理底部，确保所有符合条件的记录可见",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "history": ["滚动查看更多记录"],
+    "expected": {
+      "loading": false,
+      "boundary_reached": false
+    },
+    "note": "源 20260607_105731 turn21：筛选已生效，列表完整渲染、无加载指示，可见 5月26/23/22 记录（均在区间内）。loading=false，且未到底 boundary_reached=false。"
+  },
+  {
+    "label": "账单到底-暂无更多记录-非loading且到边界",
+    "screenshot": "evals/loop_check/screenshots/wechat_bill_bottom_no_more.png",
+    "milestone": {
+      "name": "采集指定日期区间的账单明细",
+      "description": "滚动采集2026-05-21至2026-05-28的微信支付账单明细",
+      "kind": "collection",
+      "completion_strategy": "scroll_until_boundary",
+      "scroll_stop_condition": "滚动至列表物理底部（出现'暂无更多记录'）时停止",
+      "success_condition": "账单列表已滚动至物理底部，确保所有符合条件的记录可见",
+      "app_name": "微信",
+      "task_type": "analysis"
+    },
+    "history": ["滚动查看更多记录", "滚动查看更多记录"],
+    "expected": {
+      "loading": false,
+      "boundary_reached": true
+    },
+    "note": "源 20260607_105731 turn23：列表底部显示「暂无更多记录」，最后一条为 5月21日。非加载态 loading=false，已到物理底部 boundary_reached=true。"
+  }
+]

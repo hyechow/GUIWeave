@@ -15,7 +15,7 @@ from llm.structured import get_llm_token_usage, invoke_structured
 from policy_expr.config import resolve_llm_config
 from policy_expr.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 
-from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_planner
+from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_loop_check, run_planner
 from .prompts import (
     DECOMPOSE_PROMPT,
     LOOP_FRAME_PROMPT,
@@ -496,6 +496,21 @@ class MilestoneSupervisorPolicy:
             frame = self._loop_check(milestone, observation, history)
         self._last_check = None  # loop milestones use _LoopFrameResult, not _SingleCheckResult
         print(f"  [LoopFrame] boundary={frame.boundary_reached}, should_stop={frame.should_stop}")
+
+        # 采集启动阶段（首次成功滚动之前）拦截 loading 帧：刚应用筛选/进入列表时，页面常还在
+        # 「加载中」、列表体仍显示旧内容（如范围外的更晚日期）。若读入会污染 content_notes 并把
+        # stitch 基线钉在旧帧上，导致后续真实内容拼接错位、漏采中段（实测 20260607_105731：
+        # 读了加载中的旧帧 → 漏掉 5/24-28、混入 5/29）。返回 is_loading 等待帧，由 runner 短路
+        # 跳过本帧（不读、不喂 stitch、不计轮数）。一旦开始滚动，内容已确认渲染，不再判 loading。
+        if frame.loading and not _has_successful_scroll_for(history, milestone.id):
+            print("  [Loop] 采集启动帧仍在加载中 → 等待重渲染，不读取本帧")
+            self._scroll_counts[milestone.id] -= 1  # 加载等待不计入滚动预算
+            return SupervisorStep(
+                should_act=False, stop=False, goal_completed=False, is_loading=True,
+                summary="采集页加载中，等待...",
+                **_ctx(milestone, None),
+            )
+
         if frame.should_stop:
             print(f"  [Loop] 停止条件触发：{frame.stop_reason}")
         if self.task_type == "action":
@@ -871,14 +886,9 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
     ) -> _LoopFrameResult:
-        prompt = LOOP_FRAME_PROMPT.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            scroll_stop_condition=milestone.scroll_stop_condition or "滚动至列表物理底部时停止",
-            constraints=json.dumps(self._global_constraints, ensure_ascii=False),
-            history_text=_format_history(history),
+        return run_loop_check(
+            milestone, observation, history, constraints=self._global_constraints,
         )
-        return invoke_structured(self._llm(), self._msgs(prompt, observation), _LoopFrameResult)
 
     def _invoke_planner(
         self,
