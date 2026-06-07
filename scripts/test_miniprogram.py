@@ -22,8 +22,8 @@ sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-from policy_expr.perception import LivePhoneSession
-from policy_expr.executor import logical_xy
+from policy_expr.adapters.iphone.perception import LivePhoneSession
+from policy_expr.adapters.iphone.executor import logical_xy
 from policy_expr.recon.page_parser import detect_miniprogram
 
 

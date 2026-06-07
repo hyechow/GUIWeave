@@ -31,7 +31,7 @@ def _infer_form_group(png: bytes) -> str | None:
     import io
     import numpy as np
     from PIL import Image as _PIL
-    from policy_expr.overlay_detect import detect_fullscreen_popup
+    from policy_expr.adapters.iphone.overlay_detect import detect_fullscreen_popup
 
     img = np.array(_PIL.open(io.BytesIO(png)).convert("RGB"), dtype=np.float32)
     if detect_fullscreen_popup(img):

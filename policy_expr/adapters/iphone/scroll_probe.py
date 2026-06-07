@@ -11,12 +11,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from policy_expr.executor import ActionExecutor
-from policy_expr.executor_constants import SCROLL_DELTA, SCROLL_TICKS
-from policy_expr.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
-from policy_expr.perception import LivePhoneSession
+from policy_expr.adapters.iphone.executor import ActionExecutor
+from policy_expr.adapters.iphone.executor_constants import SCROLL_DELTA, SCROLL_TICKS
+from policy_expr.adapters.iphone.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
+from policy_expr.adapters.iphone.perception import LivePhoneSession
 from policy_expr.schemas import Action
-from policy_expr.stitch import robust_shift as _kp_robust_shift, _gray_u8 as _kp_gray
+from policy_expr.adapters.iphone.stitch import robust_shift as _kp_robust_shift, _gray_u8 as _kp_gray
 
 
 @dataclass(frozen=True)

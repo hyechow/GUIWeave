@@ -28,7 +28,7 @@ import sys
 import time
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]   # policy_expr/client/x.py → 项目根
+_ROOT = Path(__file__).resolve().parents[4]   # policy_expr/adapters/iphone/client/x.py → 项目根
 _DAEMON = _ROOT / "bin" / "mirror_daemon"
 _CURSOR_SRC = _ROOT / "sck" / "agent_cursor.swift"
 
@@ -184,7 +184,7 @@ class MirrorDaemonClient:
     def _apply_mask(self, png: bytes) -> bytes:
         # 复用 perception 的设备边框遮罩(懒导入,避免循环依赖);不可用则原样返回。
         try:
-            from policy_expr.perception import _apply_mcp_frame
+            from policy_expr.adapters.iphone.perception import _apply_mcp_frame
             return _apply_mcp_frame(png)
         except Exception:
             return png

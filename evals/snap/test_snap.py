@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from policy_expr.executor import ActionExecutor
+from policy_expr.adapters.iphone.executor import ActionExecutor
 from policy_expr.recon.icon_detector import IconBbox
 from policy_expr.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.schemas import Action

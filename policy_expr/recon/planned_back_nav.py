@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from policy_expr.executor import is_valid_tap, logical_xy
+from policy_expr.adapters.iphone.executor import is_valid_tap, logical_xy
 from policy_expr.policies.structured_output import StructuredOutputPolicy
 from policy_expr.recon.back_nav import (
     BACK_SETTLE_SECONDS,
@@ -202,7 +202,7 @@ def planned_return_to_initial(
             if action.action_type == "home":
                 result = client.press_home()
                 if "Failed" in result:
-                    from policy_expr.executor import WIN_W, WIN_H
+                    from policy_expr.adapters.iphone.executor import WIN_W, WIN_H
                     result = client.tap(WIN_W / 2, WIN_H - 16)
             elif action.action_type == "scroll" and action.direction:
                 _execute_scroll(action)
@@ -335,7 +335,7 @@ def planned_return_to_initial(
 def _execute_scroll(action) -> None:
     """Execute a scroll action via Quartz events."""
     import subprocess
-    from policy_expr.executor import (
+    from policy_expr.adapters.iphone.executor import (
         WIN_W, WIN_H, SCROLL_TICKS, SCROLL_DELTA, SCROLL_INTERVAL,
         _find_iphone_window, _quartz_hover,
     )

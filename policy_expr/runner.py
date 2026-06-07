@@ -20,17 +20,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
-from policy_expr.executor import ActionExecutor
+from policy_expr.adapters.iphone.executor import ActionExecutor
 from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
 from policy_expr.supervisor.base import SupervisorPolicy
 from policy_expr.output import generate_reply
-from policy_expr.perception import LivePerception, LivePhoneSession
+from policy_expr.adapters.iphone.perception import LivePerception, LivePhoneSession
 from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
 from policy_expr.temporal import resolve_temporal_expressions
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.policies.base import ActionPolicy
-from policy_expr.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
-from policy_expr.stitch import StitchAccumulator, robust_shift, _gray_u8
+from policy_expr.adapters.iphone.scroll_probe import ScrollProfile, ScrollProbe, apply_profile
+from policy_expr.adapters.iphone.stitch import StitchAccumulator, robust_shift, _gray_u8
 from policy_expr.target_verify import verify_target
 from policy_expr.schemas import (
     ActionDecision,
@@ -39,7 +39,7 @@ from policy_expr.schemas import (
     action_label,
 )
 from policy_expr.visualize import print_decision
-from policy_expr.hud import AgentHUD
+from policy_expr.adapters.iphone.hud import AgentHUD
 from policy_expr.self_learning.app_summary import auto_discover_knowledge
 
 POLICIES: dict[str, type[ActionPolicy]] = {

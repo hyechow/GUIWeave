@@ -52,7 +52,7 @@ def probe_elements(
                    Last entry is the initial page. If None, built from initial screenshot.
     """
     import random
-    from policy_expr.executor import logical_xy
+    from policy_expr.adapters.iphone.executor import logical_xy
     from llm.structured import get_llm_call_count
 
     llm_count_start = get_llm_call_count()

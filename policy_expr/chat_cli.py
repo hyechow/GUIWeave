@@ -101,7 +101,7 @@ def run_chat_turn(
     router: dict | None = None,
 ) -> dict:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
-    from policy_expr.hud import AgentHUD
+    from policy_expr.adapters.iphone.hud import AgentHUD
 
     context_path = log_dir / "context.json"
     with _silent_stdio(log_dir), AgentHUD() as hud:

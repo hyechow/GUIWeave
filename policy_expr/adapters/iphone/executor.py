@@ -8,7 +8,7 @@ import time
 
 from policy_expr.utils import clear_text_field, paste_text, press_enter
 from policy_expr.recon.yolo_calibrator import YoloCalibrator
-from policy_expr.executor_constants import (
+from policy_expr.adapters.iphone.executor_constants import (
     DAEMON_SCROLL_AMOUNT,
     SCROLL_DELTA,
     SCROLL_INTERVAL,
@@ -17,7 +17,7 @@ from policy_expr.executor_constants import (
     WIN_H_TAP_MAX,
     WIN_W,
 )
-from policy_expr.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
+from policy_expr.adapters.iphone.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
 from Quartz import (
     CGEventCreateMouseEvent,
     CGEventCreateScrollWheelEvent,
@@ -36,7 +36,7 @@ from Quartz import (
     kCGNullWindowID,
 )
 
-from policy_expr.perception import LivePhoneSession, dismiss_iphone_sheet
+from policy_expr.adapters.iphone.perception import LivePhoneSession, dismiss_iphone_sheet
 from policy_expr.schemas import Action, ActionDecision
 
 # App Switcher / kill-app 相关常量（通过像素分析得出）

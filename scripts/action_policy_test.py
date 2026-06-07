@@ -18,8 +18,8 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from policy_expr.executor import ActionExecutor
-from policy_expr.perception import LivePhoneSession
+from policy_expr.adapters.iphone.executor import ActionExecutor
+from policy_expr.adapters.iphone.perception import LivePhoneSession
 from policy_expr.policies import StructuredOutputPolicy
 from policy_expr.schemas import Observation
 

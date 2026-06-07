@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from policy_expr.executor import logical_xy
-from policy_expr.perception import dismiss_iphone_sheet
+from policy_expr.adapters.iphone.executor import logical_xy
+from policy_expr.adapters.iphone.perception import dismiss_iphone_sheet
 from policy_expr.recon.back_nav import make_nav_context, manual_recover as _manual_recover
 from policy_expr.recon.planned_back_nav import planned_return_to_initial as return_to_initial
 from policy_expr.recon.page_identity import PageIdentity
@@ -541,7 +541,7 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     Returns (ReconResult, out_dir).
     """
     import random
-    from policy_expr.executor import logical_xy
+    from policy_expr.adapters.iphone.executor import logical_xy
     from policy_expr.recon import viz_result
     from policy_expr.recon.utils import TapResult, ReconResult
     from llm.structured import get_llm_call_count
@@ -803,7 +803,7 @@ def _check_overlay(nav_stack, png_bytes: bytes):
     import io
     import numpy as np
     from PIL import Image as _PIL
-    from policy_expr.overlay_detect import detect_overlay
+    from policy_expr.adapters.iphone.overlay_detect import detect_overlay
 
     if not nav_stack or len(nav_stack) < 2:
         return None

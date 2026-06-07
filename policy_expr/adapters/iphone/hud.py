@@ -63,7 +63,7 @@ class AgentHUD:
     """Floating HUD panel showing live agent status below the iPhone mirror window."""
 
     def __init__(self) -> None:
-        from policy_expr.executor import _find_iphone_window
+        from policy_expr.adapters.iphone.executor import _find_iphone_window
 
         pos = _find_iphone_window()
         if pos:

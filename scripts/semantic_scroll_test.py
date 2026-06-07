@@ -16,10 +16,10 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from policy_expr.executor import ActionExecutor
-from policy_expr.perception import LivePhoneSession
+from policy_expr.adapters.iphone.executor import ActionExecutor
+from policy_expr.adapters.iphone.perception import LivePhoneSession
 from policy_expr.schemas import Action, ActionDecision
-from policy_expr.scroll_probe import ScrollProbe, _changed_ratio, estimate_vertical_shift
+from policy_expr.adapters.iphone.scroll_probe import ScrollProbe, _changed_ratio, estimate_vertical_shift
 
 
 ROOT = Path(__file__).parent.parent

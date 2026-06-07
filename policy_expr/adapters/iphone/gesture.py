@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from policy_expr.executor_constants import SCROLL_DELTA, SCROLL_TICKS
+from policy_expr.adapters.iphone.executor_constants import SCROLL_DELTA, SCROLL_TICKS
 from policy_expr.schemas import Action
 
 

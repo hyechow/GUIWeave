@@ -6,10 +6,10 @@
 两者暴露同一 surface(tap / type_text / screenshot / press_home / ...),可互换。
 MirrorDaemonClient 缺依赖(agent_cursor/Quartz 等)时容错为 None,不影响 mirroir 后端。
 """
-from policy_expr.client.sync_mcp import SyncMCPClient, text_content
+from policy_expr.adapters.iphone.client.sync_mcp import SyncMCPClient, text_content
 
 try:
-    from policy_expr.client.mirror_daemon import MirrorDaemonClient
+    from policy_expr.adapters.iphone.client.mirror_daemon import MirrorDaemonClient
 except Exception:  # noqa: BLE001 — daemon 后端不可用不应拖垮 mirroir
     MirrorDaemonClient = None  # type: ignore[assignment,misc]
 

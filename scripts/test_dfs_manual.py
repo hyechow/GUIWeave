@@ -30,8 +30,8 @@ from PIL import Image
 
 from _vis import open_annotated, parse_items, print_items
 
-from policy_expr.perception import LivePhoneSession
-from policy_expr.executor import logical_xy
+from policy_expr.adapters.iphone.perception import LivePhoneSession
+from policy_expr.adapters.iphone.executor import logical_xy
 from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context
 from policy_expr.recon.page_parser import PageParser
 from policy_expr.recon.page_identity import PageIdentity
@@ -101,7 +101,7 @@ def main() -> None:
             if len(nav_stack) >= 2:
                 import numpy as np
                 from PIL import Image as _PIL
-                from policy_expr.overlay_detect import detect_overlay
+                from policy_expr.adapters.iphone.overlay_detect import detect_overlay
                 _before = nav_stack[-2][0]
                 def _b2rgb(b: bytes):
                     return np.array(_PIL.open(io.BytesIO(b)).convert("RGB"))

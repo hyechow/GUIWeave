@@ -119,7 +119,7 @@ if __name__ == "__main__":
     import sys
     from pathlib import Path
 
-    from policy_expr.perception import LivePhoneSession
+    from policy_expr.adapters.iphone.perception import LivePhoneSession
 
     goal = sys.argv[1] if len(sys.argv) > 1 else "打开微信"
     print(f"Goal: {goal}\n")

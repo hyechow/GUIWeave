@@ -69,7 +69,7 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
     mode: None=initial, "add"=add page to existing app, "update"=re-probe target page.
     target: required for both "add" (parent page dir) and "update" (page dir to overwrite).
     """
-    from policy_expr.perception import LivePhoneSession
+    from policy_expr.adapters.iphone.perception import LivePhoneSession
     from policy_expr.recon.dfs import explore_dfs
 
     if mode in ("add", "update") and not target:
@@ -125,7 +125,7 @@ def run_parse(paths: list[Path]) -> None:
 
 
 def _parse_online() -> None:
-    from policy_expr.perception import LivePhoneSession
+    from policy_expr.adapters.iphone.perception import LivePhoneSession
 
     print("在线解析: 截取手机屏幕...")
     with LivePhoneSession() as phone:
@@ -277,7 +277,7 @@ def main() -> None:
 
     hud = None
     if args.hud:
-        from policy_expr.hud import AgentHUD
+        from policy_expr.adapters.iphone.hud import AgentHUD
         hud = AgentHUD()
 
     try:

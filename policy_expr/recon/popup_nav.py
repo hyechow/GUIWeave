@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
 from policy_expr.config import resolve_llm_config
-from policy_expr.executor import logical_xy
-from policy_expr.overlay_detect import detect_fullscreen_popup
+from policy_expr.adapters.iphone.executor import logical_xy
+from policy_expr.adapters.iphone.overlay_detect import detect_fullscreen_popup
 from policy_expr.policies.base import resize_to_logical_png
 _POPUP_PROMPT = """\
 你是一个 iPhone 页面分析专家。

@@ -13,7 +13,7 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 import numpy as np
 from PIL import Image
 
-from policy_expr.overlay_detect import detect_fullscreen_popup
+from policy_expr.adapters.iphone.overlay_detect import detect_fullscreen_popup
 from policy_expr.recon.cascade_matcher import PageFingerprint, get_matcher  # noqa: F401
 
 CASES_FILE = Path(__file__).parent / "cases.json"

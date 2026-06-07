@@ -82,10 +82,10 @@ class PageEntry:
 
 
 def collect(app: str, depth: int = 0, sample: int = 0) -> None:
-    from policy_expr.perception import LivePhoneSession
+    from policy_expr.adapters.iphone.perception import LivePhoneSession
     from policy_expr.recon.page_parser import PageParser
     from policy_expr.recon.page_compare import PageComparator
-    from policy_expr.executor import logical_xy
+    from policy_expr.adapters.iphone.executor import logical_xy
 
     out_dir = LOG_ROOT / app
     pages_dir = out_dir / "pages"
@@ -196,7 +196,7 @@ def collect(app: str, depth: int = 0, sample: int = 0) -> None:
 
             after_bytes = phone.screenshot()
             if not after_bytes:
-                from policy_expr.perception import dismiss_iphone_sheet
+                from policy_expr.adapters.iphone.perception import dismiss_iphone_sheet
                 print(f"      Mac 弹窗阻断，关闭后跳过")
                 dismiss_iphone_sheet()
                 continue

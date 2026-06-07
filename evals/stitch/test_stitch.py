@@ -16,7 +16,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from policy_expr import stitch
-from policy_expr.stitch import StitchAccumulator, robust_shift, _gray_u8
+from policy_expr.adapters.iphone.stitch import StitchAccumulator, robust_shift, _gray_u8
 
 SHOTS = Path(__file__).parent / "screenshots"
 passed = 0

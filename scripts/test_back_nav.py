@@ -27,8 +27,8 @@ load_dotenv(ROOT / ".env")
 
 from _vis import open_annotated, print_items
 
-from policy_expr.perception import LivePhoneSession, dismiss_iphone_sheet
-from policy_expr.executor import logical_xy
+from policy_expr.adapters.iphone.perception import LivePhoneSession, dismiss_iphone_sheet
+from policy_expr.adapters.iphone.executor import logical_xy
 from policy_expr.recon.page_compare import make_comparator
 from policy_expr.recon.page_parser import PageParser, classify_elements, resolve_selected_tabs
 from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context, BACK_PROMPT

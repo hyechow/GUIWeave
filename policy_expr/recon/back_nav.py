@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
 from policy_expr.config import resolve_llm_config
-from policy_expr.executor import is_valid_tap
+from policy_expr.adapters.iphone.executor import is_valid_tap
 from policy_expr.policies.base import resize_to_logical_png
 from policy_expr.recon.page_compare import PageComparator, make_comparator
 
@@ -163,7 +163,7 @@ def _sanitize_nav_context(nav_context: str, after_png: bytes) -> str:
 
 def tap_back(client) -> tuple[float, float, str]:
     """Tap the iOS back button area."""
-    from policy_expr.executor import logical_xy
+    from policy_expr.adapters.iphone.executor import logical_xy
 
     lx, ly = logical_xy(*BACK_TAP_CENTER)
     result = client.tap(lx, ly)
@@ -172,7 +172,7 @@ def tap_back(client) -> tuple[float, float, str]:
 
 def tap_llm_back(client, action: BackAction) -> tuple[float, float, str] | None:
     """Tap the return target selected by the vision model. Returns None if coords invalid."""
-    from policy_expr.executor import logical_xy
+    from policy_expr.adapters.iphone.executor import logical_xy
 
     if not is_valid_tap(action.back_x, action.back_y):
         return None
@@ -480,7 +480,7 @@ def _try_tap(
 
     # Handle Mac system popup blocking tap (e.g. microphone access dialog)
     if "paused" in tap_response.lower():
-        from policy_expr.perception import dismiss_iphone_sheet
+        from policy_expr.adapters.iphone.perception import dismiss_iphone_sheet
         print(f"    ↩ [{strategy}] Mac 弹窗阻断，尝试恢复...")
         if dismiss_iphone_sheet():
             time.sleep(0.5)
@@ -552,7 +552,7 @@ def _execute_strategy(
     Strategies: "fixed", "LLM_1", "LLM_2", "LLM_3".
     Returns (lx, ly, after_bytes) if page changed, None otherwise.
     """
-    from policy_expr.executor import logical_xy
+    from policy_expr.adapters.iphone.executor import logical_xy
 
     current_bytes = screenshot()
 
