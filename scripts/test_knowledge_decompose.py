@@ -23,11 +23,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from llm.structured import invoke_structured
-from policy_expr.core.config import resolve_llm_config
-from policy_expr.core.policies.base import resize_to_logical_png
-from policy_expr.core.schemas import Observation
-from policy_expr.core.self_learning.app_summary import auto_discover_knowledge
-from policy_expr.core.supervisor.milestone import (
+from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.policies.base import resize_to_logical_png
+from gui_agent.core.schemas import Observation
+from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
+from gui_agent.core.supervisor.milestone import (
     DECOMPOSE_PROMPT,
     _DecomposeResponse,
     Milestone,
@@ -101,7 +101,7 @@ def find_screenshot() -> bytes:
         print(f"Using screenshot: {SCREENSHOT_PATH}")
         return SCREENSHOT_PATH.read_bytes()
 
-    logs = Path(__file__).parent.parent / "logs" / "policy_expr"
+    logs = Path(__file__).parent.parent / "logs" / "gui_agent"
     candidates = sorted(logs.rglob("screenshot*.png")) if logs.exists() else []
     if candidates:
         print(f"Using screenshot: {candidates[-1]}")

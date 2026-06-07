@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from policy_expr.adapters.iphone.recon.back_nav import infer_back_action, make_nav_context
+from gui_agent.adapters.iphone.recon.back_nav import infer_back_action, make_nav_context
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 EVAL_DIR = Path(__file__).resolve().parent

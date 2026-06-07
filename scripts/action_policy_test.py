@@ -18,10 +18,10 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from policy_expr.adapters.iphone.executor import ActionExecutor
-from policy_expr.adapters.iphone.perception import LivePhoneSession
-from policy_expr.core.policies import StructuredOutputPolicy
-from policy_expr.core.schemas import Observation
+from gui_agent.adapters.iphone.executor import ActionExecutor
+from gui_agent.adapters.iphone.perception import LivePhoneSession
+from gui_agent.core.policies import StructuredOutputPolicy
+from gui_agent.core.schemas import Observation
 
 
 PRESETS = {

@@ -16,14 +16,14 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from policy_expr.adapters.iphone.executor import ActionExecutor
-from policy_expr.adapters.iphone.perception import LivePhoneSession
-from policy_expr.core.schemas import Action, ActionDecision
-from policy_expr.adapters.iphone.scroll_probe import ScrollProbe, _changed_ratio, estimate_vertical_shift
+from gui_agent.adapters.iphone.executor import ActionExecutor
+from gui_agent.adapters.iphone.perception import LivePhoneSession
+from gui_agent.core.schemas import Action, ActionDecision
+from gui_agent.adapters.iphone.scroll_probe import ScrollProbe, _changed_ratio, estimate_vertical_shift
 
 
 ROOT = Path(__file__).parent.parent
-OUT = ROOT / "logs" / "policy_expr" / "semantic_scroll_test"
+OUT = ROOT / "logs" / "gui_agent" / "semantic_scroll_test"
 
 
 def main() -> None:

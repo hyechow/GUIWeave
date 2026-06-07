@@ -8,10 +8,10 @@ Usage:
 import sys
 from pathlib import Path
 
-from policy_expr.adapters.iphone.perception import SCKSession
-from policy_expr.core.policies import StructuredOutputPolicy
-from policy_expr.core.schemas import Observation
-from policy_expr.adapters.iphone.executor import ActionExecutor
+from gui_agent.adapters.iphone.perception import SCKSession
+from gui_agent.core.policies import StructuredOutputPolicy
+from gui_agent.core.schemas import Observation
+from gui_agent.adapters.iphone.executor import ActionExecutor
 
 
 def main():

@@ -9,9 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from policy_expr.core.schemas import Observation
-from policy_expr.core.self_learning.app_summary import auto_discover_knowledge
-from policy_expr.core.supervisor.milestone import MilestoneSupervisorPolicy
+from gui_agent.core.schemas import Observation
+from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
+from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

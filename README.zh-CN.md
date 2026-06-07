@@ -155,7 +155,7 @@ API_PROVIDER=modelscope
 MODELSCOPE_API_KEY=your_api_key
 ```
 
-各模块使用的模型在 `policy_expr/config.yaml` 中配置。
+各模块使用的模型在 `gui_agent/config.yaml` 中配置。
 
 ### 截图服务
 
@@ -201,7 +201,7 @@ AGENT_MODE=standard bin/runner "打开微信"
 脚本化或编程调用：
 
 ```bash
-uv run python -m policy_expr.core.runner "打开微信并进入通讯录" \
+uv run python -m gui_agent.core.runner "打开微信并进入通讯录" \
   --mode agent-loop --supervisor milestone --auto-continue --max-turns 15 --hud
 ```
 
@@ -216,7 +216,7 @@ uv run python -m policy_expr.core.runner "打开微信并进入通讯录" \
 
 每次运行后自动生成 HTML 报告，展示完整的任务执行轨迹：
 
-![执行报告](policy_expr/assets/report.png)
+![执行报告](gui_agent/assets/report.png)
 
 - **子目标分解** — 名称、描述、验收条件
 - **按子目标分行展示** — 每行一组缩略图，展示该子目标的操作步骤
@@ -229,20 +229,20 @@ uv run python -m policy_expr.core.runner "打开微信并进入通讯录" \
 bin/runner "打开微信发一条消息"
 
 # 从已有日志生成报告
-python scripts/report.py runner --run logs/policy_expr/agent-loop/20260528_104755
+python scripts/report.py runner --run logs/gui_agent/agent-loop/20260528_104755
 ```
 
 ### 应用侦察（生成知识库）
 
 ```bash
 # 探测应用并生成页面知识库
-uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --depth 2
+uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --depth 2
 
 # 手动导航到新页面后，追加到已有知识库
-uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode add --depth 1
+uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --mode add --depth 1
 
 # 更新指定页面的知识
-uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode update \
+uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --mode update \
   --target "微信主界面，显示聊天列表和底部导航栏"
 ```
 
@@ -251,7 +251,7 @@ uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode updat
 ## 目录结构
 
 ```text
-policy_expr/
+gui_agent/
 ├── chat_cli.py          # 对话模式主程序
 ├── runner.py            # 实验/调试用 Runner
 ├── recon_cli.py         # 应用侦察 CLI

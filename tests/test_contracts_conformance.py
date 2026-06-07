@@ -1,7 +1,7 @@
 """S1 conformance gate for the core+adapter refactor.
 
 Asserts that the existing concrete classes satisfy the platform-neutral
-``policy_expr.core.contracts`` Protocols with ZERO source modifications. This is
+``gui_agent.core.contracts`` Protocols with ZERO source modifications. This is
 the permanent regression boundary: if a later change drifts a method signature
 or moves a capability, structural conformance breaks and this fails.
 
@@ -10,7 +10,7 @@ method-only / class-attribute Protocols; ``Observation`` is constructed for real
 because its members are Pydantic instance fields.
 """
 
-from policy_expr.core.contracts import (
+from gui_agent.core.contracts import (
     ActionPolicy,
     Device,
     FrontierEnumerator,
@@ -27,22 +27,22 @@ from policy_expr.core.contracts import (
     ZeroPreemptDevice,
 )
 
-from policy_expr.adapters.iphone.client.sync_mcp import SyncMCPClient
-from policy_expr.adapters.iphone.client.mirror_daemon import MirrorDaemonClient
-from policy_expr.adapters.iphone.policies.structured_output import StructuredOutputPolicy
-from policy_expr.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy
-from policy_expr.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from policy_expr.adapters.iphone.perception import LivePhoneSession, LivePerception
-from policy_expr.adapters.iphone.recon.page_parser import PageParser
-from policy_expr.adapters.iphone.recon.page_identity import PageIdentity
-from policy_expr.adapters.iphone.recon.page_compare import PageComparator, EdgeIoUBackend
-from policy_expr.core.schemas import Observation
-from policy_expr.core.schema import IdentityResult, ScreenMatchDecision, ProbeAbortedError
-from policy_expr.adapters.iphone.recon.utils import (
+from gui_agent.adapters.iphone.client.sync_mcp import SyncMCPClient
+from gui_agent.adapters.iphone.client.mirror_daemon import MirrorDaemonClient
+from gui_agent.adapters.iphone.policies.structured_output import StructuredOutputPolicy
+from gui_agent.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy
+from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.adapters.iphone.perception import LivePhoneSession, LivePerception
+from gui_agent.adapters.iphone.recon.page_parser import PageParser
+from gui_agent.adapters.iphone.recon.page_identity import PageIdentity
+from gui_agent.adapters.iphone.recon.page_compare import PageComparator, EdgeIoUBackend
+from gui_agent.core.schemas import Observation
+from gui_agent.core.schema import IdentityResult, ScreenMatchDecision, ProbeAbortedError
+from gui_agent.adapters.iphone.recon.utils import (
     ScreenMatchDecision as _ShimScreenMatchDecision,
     ProbeAbortedError as _ShimProbeAbortedError,
 )
-from policy_expr.adapters.iphone.recon.page_identity import (
+from gui_agent.adapters.iphone.recon.page_identity import (
     IdentityResult as _ShimIdentityResult,
 )
 
@@ -114,7 +114,7 @@ def test_pixel_observation_is_not_a_tree_observation():
 
 # --------------------------------------------------------------------------- #
 # The seam must stay a pure leaf: importing it alone must pull in NO platform   #
-# adapter (policy_expr.adapters.*) and no orchestration entrypoint. Drift-proof #
+# adapter (gui_agent.adapters.*) and no orchestration entrypoint. Drift-proof #
 # prefix invariant, verified in a clean subprocess.                             #
 # --------------------------------------------------------------------------- #
 def test_contracts_is_a_pure_leaf_import():
@@ -122,10 +122,10 @@ def test_contracts_is_a_pure_leaf_import():
     import sys
 
     code = (
-        "import sys, policy_expr.core.contracts; "
+        "import sys, gui_agent.core.contracts; "
         "leaked = [m for m in sys.modules "
-        "if m.startswith('policy_expr.adapters') "
-        "or m in ('policy_expr.core.runner', 'policy_expr.core.chat_cli')]; "
+        "if m.startswith('gui_agent.adapters') "
+        "or m in ('gui_agent.core.runner', 'gui_agent.core.chat_cli')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -141,8 +141,8 @@ def test_core_schema_is_a_pure_leaf_import():
     import sys
 
     code = (
-        "import sys, policy_expr.core.schema; "
-        "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
+        "import sys, gui_agent.core.schema; "
+        "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -174,8 +174,8 @@ def test_core_factory_is_a_pure_leaf_import():
     import sys
 
     code = (
-        "import sys, policy_expr.core.factory; "
-        "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
+        "import sys, gui_agent.core.factory; "
+        "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -183,7 +183,7 @@ def test_core_factory_is_a_pure_leaf_import():
 
 
 def test_build_platform_returns_iphone_bundle():
-    from policy_expr.core.factory import build_platform, PlatformBundle
+    from gui_agent.core.factory import build_platform, PlatformBundle
 
     bundle = build_platform("iphone", backend="daemon")
     assert isinstance(bundle, PlatformBundle)
@@ -203,7 +203,7 @@ def test_build_platform_returns_iphone_bundle():
 def test_build_platform_unknown_raises():
     import pytest
 
-    from policy_expr.core.factory import build_platform
+    from gui_agent.core.factory import build_platform
 
     with pytest.raises(ValueError):
         build_platform("android")  # not registered yet
@@ -215,12 +215,12 @@ def test_build_platform_unknown_raises():
 # (built via __new__, exactly like the iphone conformance above).                #
 # --------------------------------------------------------------------------- #
 def _import_browser():
-    from policy_expr.adapters.browser.device import PlaywrightDevice
-    from policy_expr.adapters.browser.perception import (
+    from gui_agent.adapters.browser.device import PlaywrightDevice
+    from gui_agent.adapters.browser.perception import (
         BrowserPerception,
         BrowserSession,
     )
-    from policy_expr.adapters.browser.policies import BrowserActionPolicy
+    from gui_agent.adapters.browser.policies import BrowserActionPolicy
 
     return PlaywrightDevice, BrowserSession, BrowserPerception, BrowserActionPolicy
 
@@ -254,7 +254,7 @@ def test_browser_action_policy_conforms():
 
 
 def test_build_platform_returns_browser_bundle():
-    from policy_expr.core.factory import build_platform, PlatformBundle
+    from gui_agent.core.factory import build_platform, PlatformBundle
 
     bundle = build_platform("browser")
     assert isinstance(bundle, PlatformBundle)
@@ -289,7 +289,7 @@ def test_browser_scroll_collect_fields_are_stubs():
     # a clear NotImplementedError rather than silently returning bad objects.
     import pytest
 
-    from policy_expr.core.factory import build_platform
+    from gui_agent.core.factory import build_platform
 
     bundle = build_platform("browser")
     with pytest.raises(NotImplementedError):
@@ -309,9 +309,9 @@ def test_core_factory_stays_leaf_without_browser_adapter():
     import sys
 
     code = (
-        "import sys, policy_expr.core.factory; "
+        "import sys, gui_agent.core.factory; "
         "leaked = [m for m in sys.modules "
-        "if m.startswith('policy_expr.adapters') "
+        "if m.startswith('gui_agent.adapters') "
         "or m == 'playwright' or m.startswith('playwright.')]; "
         "assert not leaked, leaked"
     )
@@ -322,7 +322,7 @@ def test_core_factory_stays_leaf_without_browser_adapter():
 # --------------------------------------------------------------------------- #
 # core/factory (S3, Step 4): the orchestration entrypoints must now depend on   #
 # the platform FACTORY, not the iphone adapter. Importing runner / chat_cli      #
-# must pull in NO policy_expr.adapters.* module at module top — adapters are      #
+# must pull in NO gui_agent.adapters.* module at module top — adapters are      #
 # reached only lazily inside build_platform() when the loop actually runs.        #
 # --------------------------------------------------------------------------- #
 def test_runner_has_no_eager_adapter_import():
@@ -330,8 +330,8 @@ def test_runner_has_no_eager_adapter_import():
     import sys
 
     code = (
-        "import sys, policy_expr.core.runner; "
-        "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
+        "import sys, gui_agent.core.runner; "
+        "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -343,8 +343,8 @@ def test_chat_cli_has_no_eager_adapter_import():
     import sys
 
     code = (
-        "import sys, policy_expr.core.chat_cli; "
-        "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
+        "import sys, gui_agent.core.chat_cli; "
+        "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

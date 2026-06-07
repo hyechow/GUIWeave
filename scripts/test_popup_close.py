@@ -15,8 +15,8 @@ sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-from policy_expr.adapters.iphone.overlay_detect import detect_fullscreen_popup
-from policy_expr.adapters.iphone.recon.popup_nav import llm_locate_close, yolo_snap
+from gui_agent.adapters.iphone.overlay_detect import detect_fullscreen_popup
+from gui_agent.adapters.iphone.recon.popup_nav import llm_locate_close, yolo_snap
 
 
 def _draw_cross(draw: ImageDraw.ImageDraw, x: float, y: float,

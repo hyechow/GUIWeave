@@ -82,10 +82,10 @@ class PageEntry:
 
 
 def collect(app: str, depth: int = 0, sample: int = 0) -> None:
-    from policy_expr.adapters.iphone.perception import LivePhoneSession
-    from policy_expr.adapters.iphone.recon.page_parser import PageParser
-    from policy_expr.adapters.iphone.recon.page_compare import PageComparator
-    from policy_expr.adapters.iphone.executor import logical_xy
+    from gui_agent.adapters.iphone.perception import LivePhoneSession
+    from gui_agent.adapters.iphone.recon.page_parser import PageParser
+    from gui_agent.adapters.iphone.recon.page_compare import PageComparator
+    from gui_agent.adapters.iphone.executor import logical_xy
 
     out_dir = LOG_ROOT / app
     pages_dir = out_dir / "pages"
@@ -97,7 +97,7 @@ def collect(app: str, depth: int = 0, sample: int = 0) -> None:
 
     # Preload GUIClip model
     print("预加载 GUIClip 模型...")
-    from policy_expr.adapters.iphone.recon.back_nav import _get_identity_comp
+    from gui_agent.adapters.iphone.recon.back_nav import _get_identity_comp
     import io
     from PIL import Image
     dummy = io.BytesIO()
@@ -196,7 +196,7 @@ def collect(app: str, depth: int = 0, sample: int = 0) -> None:
 
             after_bytes = phone.screenshot()
             if not after_bytes:
-                from policy_expr.adapters.iphone.perception import dismiss_iphone_sheet
+                from gui_agent.adapters.iphone.perception import dismiss_iphone_sheet
                 print(f"      Mac 弹窗阻断，关闭后跳过")
                 dismiss_iphone_sheet()
                 continue
@@ -258,7 +258,7 @@ def collect(app: str, depth: int = 0, sample: int = 0) -> None:
 
 
 def _back_to(phone, nav_stack: list, target_name: str = "", path: list[str] | None = None) -> bool:
-    from policy_expr.adapters.iphone.recon.back_nav import return_to_initial, manual_recover
+    from gui_agent.adapters.iphone.recon.back_nav import return_to_initial, manual_recover
 
     ok, _ = return_to_initial(
         phone.client, phone.screenshot, nav_stack,

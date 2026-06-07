@@ -30,12 +30,12 @@ from PIL import Image
 
 from _vis import open_annotated, parse_items, print_items
 
-from policy_expr.adapters.iphone.perception import LivePhoneSession
-from policy_expr.adapters.iphone.executor import logical_xy
-from policy_expr.adapters.iphone.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context
-from policy_expr.adapters.iphone.recon.page_parser import PageParser
-from policy_expr.adapters.iphone.recon.page_identity import PageIdentity
-from policy_expr.adapters.iphone.recon.cascade_matcher import get_matcher
+from gui_agent.adapters.iphone.perception import LivePhoneSession
+from gui_agent.adapters.iphone.executor import logical_xy
+from gui_agent.adapters.iphone.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context
+from gui_agent.adapters.iphone.recon.page_parser import PageParser
+from gui_agent.adapters.iphone.recon.page_identity import PageIdentity
+from gui_agent.adapters.iphone.recon.cascade_matcher import get_matcher
 
 SETTLE = BACK_SETTLE_SECONDS
 
@@ -101,7 +101,7 @@ def main() -> None:
             if len(nav_stack) >= 2:
                 import numpy as np
                 from PIL import Image as _PIL
-                from policy_expr.adapters.iphone.overlay_detect import detect_overlay
+                from gui_agent.adapters.iphone.overlay_detect import detect_overlay
                 _before = nav_stack[-2][0]
                 def _b2rgb(b: bytes):
                     return np.array(_PIL.open(io.BytesIO(b)).convert("RGB"))

@@ -1,4 +1,4 @@
-"""Deterministic regression tests for policy_expr.core.temporal.
+"""Deterministic regression tests for gui_agent.core.temporal.
 
 These are NOT evals. `resolve_temporal_expressions` is a pure function
 (regex + datetime, no LLM), so every case has a single correct output and is
@@ -13,7 +13,7 @@ from datetime import date
 
 import pytest
 
-from policy_expr.core.temporal import resolve_temporal_expressions as resolve
+from gui_agent.core.temporal import resolve_temporal_expressions as resolve
 
 # Reference "today" values used across cases.
 THU = date(2026, 5, 28)   # a Thursday

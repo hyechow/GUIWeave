@@ -2,7 +2,7 @@
 # 生成并打开某次运行的可视化报告。
 # 用法: bin/report <run_dir>
 #   例: bin/report data/sessions/20260603_220508/turn_1
-#       bin/report logs/policy_expr/agent-loop/20260528_104755
+#       bin/report logs/gui_agent/agent-loop/20260528_104755
 set -e
 cd "$(dirname "$0")/.."
 

@@ -21,7 +21,7 @@ def main():
 
     # Runner mode
     p_runner = sub.add_parser("runner", help="Policy runner report")
-    p_runner.add_argument("--run", required=True, type=Path, help="Run directory under logs/policy_expr/")
+    p_runner.add_argument("--run", required=True, type=Path, help="Run directory under logs/gui_agent/")
 
     args = parser.parse_args()
 
@@ -45,7 +45,7 @@ def main():
     elif args.mode == "runner":
         run_dir = args.run.resolve()
         if not run_dir.is_absolute():
-            run_dir = (LOGS / "policy_expr" / run_dir).resolve()
+            run_dir = (LOGS / "gui_agent" / run_dir).resolve()
         builder = RunnerReportBuilder()
         data = builder.build(run_dir)
         output = run_dir / "report.html"

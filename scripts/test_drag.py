@@ -14,11 +14,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from policy_expr.adapters.iphone.executor import ActionExecutor
-from policy_expr.adapters.iphone.perception import LivePhoneSession
-from policy_expr.core.policies import StructuredOutputPolicy
-from policy_expr.core.schemas import Action, ActionDecision, Milestone, Observation, PolicyTurn, SupervisorStep
-from policy_expr.core.supervisor.milestone import run_checker, run_planner
+from gui_agent.adapters.iphone.executor import ActionExecutor
+from gui_agent.adapters.iphone.perception import LivePhoneSession
+from gui_agent.core.policies import StructuredOutputPolicy
+from gui_agent.core.schemas import Action, ActionDecision, Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.supervisor.milestone import run_checker, run_planner
 
 
 OUT_DIR = Path("/tmp/drag_policy_test")
@@ -141,7 +141,7 @@ def test_magnitude_calibration(phone: LivePhoneSession, executor: ActionExecutor
 
     Run with: uv run python scripts/test_drag.py --start 2
     """
-    from policy_expr.adapters.iphone.policies.structured_output import _PICKER_ROW_NORM
+    from gui_agent.adapters.iphone.policies.structured_output import _PICKER_ROW_NORM
 
     print("\n=== Level 2b: picker row calibration ===")
     print(f"  _PICKER_ROW_NORM = {_PICKER_ROW_NORM}")

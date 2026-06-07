@@ -12,8 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from policy_expr.core.schemas import PolicyTurn, SupervisorStep
-from policy_expr.core.supervisor.milestone import MilestoneSupervisorPolicy
+from gui_agent.core.schemas import PolicyTurn, SupervisorStep
+from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
 
 MID = "m1"
 

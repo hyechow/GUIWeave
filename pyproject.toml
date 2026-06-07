@@ -41,7 +41,7 @@ dev = [
 ]
 
 # Deterministic regression tests live in tests/ (evals are kept separate).
-# pythonpath="." lets test modules import the repo-root `policy_expr` package.
+# pythonpath="." lets test modules import the repo-root `gui_agent` package.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

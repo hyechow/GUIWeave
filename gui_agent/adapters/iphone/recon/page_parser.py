@@ -1,0 +1,514 @@
+"""Page parser: screenshot → page identity + interactive elements."""
+
+from __future__ import annotations
+
+import base64
+import time
+from pathlib import Path
+from typing import Literal
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field, model_validator
+
+from llm.structured import invoke_structured
+from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.policies.base import resize_to_logical_png
+
+
+ElementType = Literal[
+    "back_button",  # < / 返回
+    "tab",          # bottom / top tab bar item
+    "button",       # tappable control (non-nav)
+    "link",         # row / cell that navigates to another screen
+    "input",        # text field / search bar
+    "menu_item",    # action sheet / context menu item
+    "icon",         # icon-only tappable with no visible label
+]
+
+# Semantic category for icon-only elements (element_type == "icon")
+IconSemantic = Literal[
+    "search",        # 放大镜
+    "settings",      # 齿轮/设置
+    "close",         # × 关闭
+    "share",         # 分享/上传箭头
+    "more",          # … / ⋮ 更多选项
+    "notification",  # 铃铛/通知
+    "profile",       # 人像/头像
+    "camera",        # 相机
+    "scan",          # 扫码/二维码
+    "add",           # + 新增
+    "edit",          # 铅笔/编辑
+    "delete",        # 垃圾桶/删除
+    "favorite",      # 心形/星形/收藏
+    "filter",        # 漏斗/筛选
+    "download",      # 下载箭头
+    "message",       # 消息气泡
+    "map",           # 地图/位置定位
+    "other",         # 无法归入以上类别
+]
+
+
+class InteractiveElement(BaseModel):
+    label: str = Field(description="可见文字标签；无文字的纯图标元素填空字符串 ''")
+    element_type: ElementType = Field(description="元素类型")
+    icon_semantic: IconSemantic | None = Field(
+        default=None,
+        description=(
+            "仅当 element_type='icon' 时必填，其余留 null。"
+            "从常见 iOS 图标语义中选择最匹配的分类，"
+            "如放大镜→search、齿轮→settings、×→close、三点→more 等"
+        ),
+    )
+    x: float = Field(description="归一化 x 坐标（0-1000，左上角为原点）")
+    y: float = Field(description="归一化 y 坐标（0-1000）")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fix_xy_string(cls, data: object) -> object:
+        """Handle LLM outputting x as '500, 410' (both coords in one field)."""
+        if not isinstance(data, dict):
+            return data
+        x_val = data.get("x")
+        if isinstance(x_val, str) and "," in x_val:
+            parts = [p.strip() for p in x_val.split(",", 1)]
+            try:
+                data["x"] = float(parts[0])
+                data["y"] = float(parts[1])
+            except ValueError:
+                pass
+        # Fallback invalid icon_semantic to "other"
+        sem = data.get("icon_semantic")
+        if isinstance(sem, str) and sem not in {"search", "settings", "close", "share", "more", "notification", "profile", "camera", "scan", "add", "edit", "delete", "favorite", "filter", "download", "message", "map", "other"}:
+            data["icon_semantic"] = "other"
+        return data
+
+    leads_to: str = Field(
+        description="点击后的预期效果或目标页面，如「打开聊天详情」「展开搜索框」「返回上一页」"
+    )
+
+
+class ParsedPage(BaseModel):
+    interactive_elements: list[InteractiveElement] = Field(
+        description="页面上所有可点击/可交互的元素，按从上到下、从左到右排列"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_non_dict_elements(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        elements = data.get("interactive_elements")
+        if isinstance(elements, list):
+            data["interactive_elements"] = [
+                e for e in elements if isinstance(e, (dict, InteractiveElement))
+            ]
+        return data
+
+
+class InteractiveArea(BaseModel):
+    label: str = Field(description="简短标签，2-6 字")
+    target_page: str = Field(description="目标页面名称")
+    description: str = Field(description="简要描述")
+    center_xy: list[float] = Field(description="可交互区中心坐标 [x, y]，0-1000")
+    element_type: str = ""  # dominant type from underlying elements (e.g. "back_button", "tab")
+
+
+class PageKnowledge(BaseModel):
+    page: ParsedPage
+    areas: list[InteractiveArea]
+    llm_page: ParsedPage | None = None
+    yolo_boxes: list | None = None
+    img_size: tuple[int, int] | None = None
+
+
+def classify_elements(page: ParsedPage) -> list[InteractiveArea]:
+    """Group elements into tappable areas by leads_to + y proximity.
+
+    Uses the LLM-generated leads_to (semantic) combined with spatial
+    proximity — deterministic, no extra LLM call.
+    """
+    els = page.interactive_elements
+    if not els:
+        return []
+
+    # Sort by y, then x
+    indexed = sorted(range(len(els)), key=lambda i: (els[i].y, els[i].x))
+
+    # Cluster by y proximity, then split by leads_to within each cluster
+    groups: list[list[int]] = []
+    current: list[int] = []
+
+    for idx in indexed:
+        if not current:
+            current.append(idx)
+            continue
+
+        # y proximity check
+        min_y = min(els[i].y for i in current)
+        max_y = max(els[i].y for i in current)
+        el = els[idx]
+
+        if abs(el.y - min_y) < 40 or abs(el.y - max_y) < 40:
+            # Within y range — merge if leads_to compatible
+            current_leads = {els[i].leads_to for i in current if els[i].leads_to}
+            if not el.leads_to or not current_leads or el.leads_to in current_leads:
+                current.append(idx)
+                continue
+            # Same row but different target — split
+            groups.append(current)
+            current = [idx]
+        else:
+            # Different row
+            if current:
+                groups.append(current)
+            current = [idx]
+
+    if current:
+        groups.append(current)
+
+    ICON_LABEL = {
+        "search": "搜索", "settings": "设置", "close": "关闭",
+        "share": "分享", "more": "更多", "notification": "通知",
+        "profile": "头像", "camera": "相机", "scan": "扫码",
+        "add": "新建", "edit": "编辑", "delete": "删除",
+        "favorite": "收藏", "filter": "筛选", "download": "下载",
+        "message": "消息", "map": "地图", "other": "图标",
+    }
+
+    # Build areas from groups
+    areas = []
+    for group in groups:
+        group_els = [els[i] for i in group]
+        rep = next((e for e in group_els if e.label.strip()), None)
+        if rep is None:
+            rep = next((e for e in group_els if e.leads_to), group_els[0])
+        if rep.label:
+            label = rep.label[:8]
+        elif rep.icon_semantic and rep.icon_semantic in ICON_LABEL:
+            label = ICON_LABEL[rep.icon_semantic]
+        elif rep.leads_to:
+            label = rep.leads_to[:6]
+        else:
+            label = "图标"
+        areas.append(InteractiveArea(
+            label=label,
+            target_page=rep.leads_to or "",
+            description=rep.leads_to or "",
+            center_xy=[round(rep.x, 1), round(rep.y, 1)],
+            element_type=rep.element_type,
+        ))
+
+    areas.sort(key=lambda a: a.center_xy[1])
+    return areas
+
+
+SYSTEM_PROMPT = """\
+你是一个 iPhone 页面分析器。仔细分析截图，输出页面分析结果和所有可交互元素。
+
+坐标系：左上角 (0, 0)，右下角 (1000, 1000)。坐标代表元素的视觉中心。
+
+## 扫描方法（严格遵守）
+从上到下逐行扫描截图。对页面上每个可点击/可交互的区域，输出一条记录。
+相邻的不同可交互元素必须分开输出，不要合并。
+
+具体规则：
+1. **导航栏**：返回按钮（<）、右侧图标按钮（分享、更多等），每个单独一条
+2. **时间线/进度条**：每个节点（如"26日已签收"）单独一条 link
+3. **地址栏**：「修改」链接、复制/拨号等小图标，每个单独一条
+4. **商品区**：
+   - 商品图片/缩略图 → 单独一条 link
+   - 商品标题文字 → 单独一条 link
+   - 店铺名称 → 单独一条 link
+   - 服务标签（坏了包赔、免费送货上门等）→ 每个标签单独一条 link，即使它们在同一行
+5. **操作按钮行**：分享、联系、退款等，每个单独一条 button
+6. **推荐/促销区**：每个商品卡片、横幅、广告单独一条 link（如果有两张并排卡片就输出两条）
+7. **底部操作栏**：每个 tab 和按钮单独一条
+
+## 绝对不要做的事
+- 不要把多个相邻的标签合并为一个元素（如"坏了包赔"和"免费送货上门"必须分开）
+- 不要跳过商品图片/缩略图
+- 不要跳过时间线中的节点
+- 不要跳过推荐区的每个商品卡片
+
+## 元素类型
+- back_button：返回 < 或 ‹
+- tab：导航栏的每个 tab
+- button：有明确边框/背景的控件
+- link：跳转到其他页面的文字、行、卡片（带 > 的行、商品卡片、列表行）
+- input：文本输入框
+- menu_item：弹出菜单项
+- icon：纯图标按钮（无可见文字）
+
+## icon_semantic（element_type = "icon" 时必填）
+search / settings / close / share / more / notification / profile /
+camera / scan / add / edit / delete / favorite / filter / download / message / map / other
+有文字标签的元素 icon_semantic 留 null。
+"""
+
+
+def enrich_with_icons(
+    page: ParsedPage,
+    icon_bboxes: list,   # list[IconBbox] — avoid circular import
+    img_w: int,
+    img_h: int,
+) -> ParsedPage:
+    """Merge LLM elements with YOLO bboxes via point-in-box matching.
+
+    For each LLM element, check if its center point (converted to pixel
+    coords) falls inside a YOLO bbox.  If so, replace the LLM coordinates
+    with the YOLO bbox center (pixel-level precision).
+
+    YOLO bboxes that matched no LLM element are appended as extra icon
+    elements so no detection results are lost.
+    """
+    matched_boxes: set[int] = set()
+    merged: list[InteractiveElement] = []
+
+    for el in page.interactive_elements:
+        px = el.x / 1000.0 * img_w
+        py = el.y / 1000.0 * img_h
+        matched = False
+        for bi, bbox in enumerate(icon_bboxes):
+            if bi in matched_boxes:
+                continue
+            if bbox.x1 <= px <= bbox.x2 and bbox.y1 <= py <= bbox.y2:
+                merged.append(InteractiveElement(
+                    label=el.label,
+                    element_type=el.element_type,
+                    icon_semantic=el.icon_semantic,
+                    x=round(bbox.cx / img_w * 1000, 1),
+                    y=round(bbox.cy / img_h * 1000, 1),
+                    leads_to=el.leads_to,
+                ))
+                matched_boxes.add(bi)
+                matched = True
+                break
+        if not matched and el.element_type == "icon" and el.icon_semantic == "add":
+            candidates = [
+                (bi, bbox) for bi, bbox in enumerate(icon_bboxes)
+                if bi not in matched_boxes
+                and bbox.cx / img_w * 1000 >= 750
+                and 120 <= bbox.cy / img_h * 1000 <= 220
+            ]
+            if candidates:
+                bi, bbox = max(candidates, key=lambda item: item[1].conf)
+                merged.append(InteractiveElement(
+                    label=el.label,
+                    element_type=el.element_type,
+                    icon_semantic=el.icon_semantic,
+                    x=round(bbox.cx / img_w * 1000, 1),
+                    y=round(bbox.cy / img_h * 1000, 1),
+                    leads_to=el.leads_to,
+                ))
+                matched_boxes.add(bi)
+                matched = True
+        if not matched:
+            merged.append(el)
+
+    # Append unmatched YOLO bboxes as extra icons
+    for bi, bbox in enumerate(icon_bboxes):
+        if bi in matched_boxes:
+            continue
+        merged.append(InteractiveElement(
+            label="",
+            element_type="icon",
+            icon_semantic="other",
+            x=round(bbox.cx / img_w * 1000, 1),
+            y=round(bbox.cy / img_h * 1000, 1),
+            leads_to="",
+        ))
+
+    return ParsedPage(
+        interactive_elements=merged,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Mini-program detection via GUIClip capsule embedding
+# ---------------------------------------------------------------------------
+
+# Lazy-loaded: (matcher, ref_embs, refs, region, threshold)
+_capsule_state: tuple | None = None
+
+_ASSETS = Path(__file__).parent.parent / "assets"
+_CAPSULE_REFS_PATH = _ASSETS / "capsule_refs.json"
+_CAPSULE_EMBS_PATH = _ASSETS / "capsule_embeddings.npz"
+
+
+def _get_capsule_state():
+    global _capsule_state
+    if _capsule_state is None:
+        import json as _json
+        import numpy as _np
+        from gui_agent.adapters.iphone.recon.cascade_matcher import PageEmbedding, get_matcher
+
+        if not _CAPSULE_REFS_PATH.exists() or not _CAPSULE_EMBS_PATH.exists():
+            return None
+
+        data = _json.loads(_CAPSULE_REFS_PATH.read_text())
+        npz = _np.load(_CAPSULE_EMBS_PATH)
+        matcher = get_matcher()
+        refs = data["references"]
+        ref_embs = [PageEmbedding(visual=npz["embeddings"][i]) for i in range(len(refs))]
+        if not ref_embs:
+            return None
+
+        _capsule_state = (matcher, ref_embs, refs, data["capsule_region"], data["threshold"])
+    return _capsule_state
+
+
+def detect_miniprogram(png_bytes: bytes) -> list[float] | None:
+    """Detect mini-program by GUIClip similarity on capsule region.
+
+    Returns the matched reference's close_xy [x, y] (0-1000) if detected,
+    None otherwise.
+    """
+    import io as _io
+
+    from PIL import Image as _Image
+
+    state = _get_capsule_state()
+    if state is None:
+        return None
+
+    matcher, ref_embs, refs, region, threshold = state
+    x1r, x2r = region["x_ratio"]
+    y1r, y2r = region["y_ratio"]
+
+    img = _Image.open(_io.BytesIO(png_bytes)).convert("RGB")
+    w, h = img.size
+    crop = img.crop((int(w * x1r), int(h * y1r), int(w * x2r), int(h * y2r)))
+    buf = _io.BytesIO()
+    crop.save(buf, format="PNG")
+
+    emb = matcher.embed_visual(buf.getvalue())
+
+    best_sim, best_idx = 0.0, -1
+    for i, ref_emb in enumerate(ref_embs):
+        sim = matcher.visual_sim(ref_emb, emb)
+        if sim > best_sim:
+            best_sim, best_idx = sim, i
+
+    if best_sim >= threshold and best_idx >= 0:
+        ref = refs[best_idx]
+        close_xy = ref.get("close_xy")
+        print(f"  [miniprogram detect] ✓ 命中「{ref['name']}」sim={best_sim:.3f}  close_xy={close_xy}")
+        return close_xy
+    return None
+
+
+class PageParser:
+    """Parse a screenshot into structured page identity and interactive elements."""
+
+    _N_ATTEMPTS = 1
+
+    def parse_screen(self, png_bytes: bytes) -> ParsedPage:
+        """Full pipeline: LLM parse → YOLO detect → point-in-box merge."""
+        import io
+
+        from PIL import Image
+
+        from gui_agent.adapters.iphone.recon.icon_detector import IconDetector
+
+        page = self.parse(png_bytes)
+
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        w, h = img.size
+        det = IconDetector(conf=0.1)
+        boxes = det.detect_filtered(png_bytes, w, h)
+        return enrich_with_icons(page, boxes, w, h)
+
+    def analyze_screen(self, png_bytes: bytes) -> PageKnowledge:
+        """Full pipeline: parse + YOLO merge + classify areas."""
+        import io
+
+        from PIL import Image
+
+        from gui_agent.adapters.iphone.recon.icon_detector import IconDetector
+
+        page = self.parse(png_bytes)
+
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        w, h = img.size
+        t0 = time.time()
+        det = IconDetector(conf=0.1)
+        boxes = det.detect_filtered(png_bytes, w, h)
+        print(f"  [yolo] ({time.time()-t0:.1f}s) {len(boxes)} icons")
+
+        merged = enrich_with_icons(page, boxes, w, h)
+
+        areas = classify_elements(merged)
+
+        if areas:
+            print(f"  {'#':>3}  {'坐标':^12}  {'类型':^8}  标签")
+            print(f"  {'-'*3}  {'-'*12}  {'-'*8}  {'-'*24}")
+            for i, a in enumerate(areas):
+                ax, ay = a.center_xy
+                print(f"  {i:>3}  ({ax:>5.0f},{ay:>4.0f})  {a.element_type:^8}  {a.label}")
+
+        return PageKnowledge(
+            page=merged,
+            areas=areas,
+            llm_page=page,
+            yolo_boxes=boxes,
+            img_size=(w, h),
+        )
+
+    def parse(self, png_bytes: bytes) -> ParsedPage:
+        cfg = resolve_llm_config("action_policy")
+        llm = ChatOpenAI(
+            model=cfg.model,
+            api_key=cfg.api_key,
+            base_url=cfg.base_url,
+            temperature=0,
+        )
+        b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": "请分析这张 iPhone 截图，输出页面身份和所有可交互元素。"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                ]
+            ),
+        ]
+
+        best: ParsedPage | None = None
+        last_error: Exception | None = None
+        for attempt in range(self._N_ATTEMPTS):
+            try:
+                t0 = time.time()
+                result = invoke_structured(llm, messages, ParsedPage)
+                elapsed = time.time() - t0
+                print(f"  [page_parser] ({elapsed:.1f}s) {len(result.interactive_elements)} elements")
+                if best is None or len(result.interactive_elements) > len(best.interactive_elements):
+                    best = result
+            except Exception as exc:
+                last_error = exc
+                print(f"  attempt {attempt + 1} 失败: {type(exc).__name__}")
+
+        if best is not None:
+            return best
+        raise last_error or RuntimeError("no results")
+
+
+def resolve_selected_tabs(page: ParsedPage) -> tuple[str, str]:
+    """Resolve initial selected tabs: just pick the leftmost tab in each bar.
+
+    The initial page always starts on the first (leftmost) tab. No LLM
+    detection needed — element_type from PageParser is sufficient.
+    Returns (top_tab, bottom_tab) — empty string if no tab bar found.
+    """
+    top_tabs = sorted(
+        [el for el in page.interactive_elements if el.element_type == "tab" and el.y < 400],
+        key=lambda el: el.x,
+    )
+    bottom_tabs = sorted(
+        [el for el in page.interactive_elements if el.element_type == "tab" and el.y >= 400],
+        key=lambda el: el.x,
+    )
+
+    top = top_tabs[0].label if top_tabs else ""
+    bottom = bottom_tabs[0].label if bottom_tabs else ""
+    return top, bottom

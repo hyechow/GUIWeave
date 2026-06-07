@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PIL import Image
 
-from policy_expr.core.schemas import (
+from gui_agent.core.schemas import (
     Action,
     ActionDecision,
     Milestone,
@@ -28,8 +28,8 @@ from policy_expr.core.schemas import (
     PolicyTurn,
     SupervisorStep,
 )
-from policy_expr.core.supervisor.milestone import MilestoneSupervisorPolicy
-from policy_expr.core.supervisor.milestone.schemas import _LoopFrameResult, _PlanResult
+from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.milestone.schemas import _LoopFrameResult, _PlanResult
 
 passed = 0
 failed = 0

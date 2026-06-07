@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from policy_expr.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from policy_expr.core.supervisor.milestone import _PlanResult, _SingleCheckResult, run_planner
+from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.supervisor.milestone import _PlanResult, _SingleCheckResult, run_planner
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

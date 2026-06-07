@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 # Token cost: priced per MODULE using that module's model rate (config.yaml `pricing`).
 # Different modules may run different models (e.g. action_policy=35b, output=flash),
 # so cost is summed module-by-module rather than from one flat rate.
-from policy_expr.core.config import model_price, pricing_currency
+from gui_agent.core.config import model_price, pricing_currency
 
 # _Timer module name → llm config key. checker/planner/replanner/loop_* all share the
 # supervisor model; decompose and action_policy have their own keys.

@@ -13,9 +13,9 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
-from policy_expr.core.config import resolve_llm_config
-from policy_expr.core.policies.base import resize_to_logical_png
-from policy_expr.adapters.iphone.recon.cascade_matcher import get_matcher, PageFingerprint
+from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.policies.base import resize_to_logical_png
+from gui_agent.adapters.iphone.recon.cascade_matcher import get_matcher, PageFingerprint
 
 
 # ── Semantic fingerprint ──────────────────────────────────────────────────

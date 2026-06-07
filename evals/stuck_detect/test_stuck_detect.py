@@ -25,7 +25,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from policy_expr.core.schemas import (
+from gui_agent.core.schemas import (
     Action,
     ActionDecision,
     Milestone,
@@ -34,7 +34,7 @@ from policy_expr.core.schemas import (
     SupervisorStep,
     TargetVerify,
 )
-from policy_expr.core.supervisor.milestone import (
+from gui_agent.core.supervisor.milestone import (
     STUCK_SCREEN_FROZEN,
     STUCK_SCREEN_WINDOW,
     MilestoneSupervisorPolicy,

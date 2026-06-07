@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from policy_expr.adapters.iphone.policies.structured_output import StructuredOutputPolicy
-from policy_expr.adapters.iphone.recon.planned_back_nav import build_back_instruction
-from policy_expr.core.schemas import Observation
-from policy_expr.core.config import resolve_llm_config
+from gui_agent.adapters.iphone.policies.structured_output import StructuredOutputPolicy
+from gui_agent.adapters.iphone.recon.planned_back_nav import build_back_instruction
+from gui_agent.core.schemas import Observation
+from gui_agent.core.config import resolve_llm_config
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 EVAL_DIR = Path(__file__).resolve().parent

@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent  # project root
 sys.path.insert(0, str(ROOT))
-from policy_expr.perception import _apply_mcp_frame
+from gui_agent.perception import _apply_mcp_frame
 SCK_SERVER = ROOT / "bin" / "sck_server"
 OUT = Path("/tmp/sck_test.png")
 

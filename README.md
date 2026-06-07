@@ -157,7 +157,7 @@ API_PROVIDER=modelscope
 MODELSCOPE_API_KEY=your_api_key
 ```
 
-Model assignments for each module are configured in `policy_expr/config.yaml`.
+Model assignments for each module are configured in `gui_agent/config.yaml`.
 
 ### Screenshot Server
 
@@ -205,7 +205,7 @@ AGENT_MODE=standard bin/runner "open WeChat"
 For scripted or programmatic use:
 
 ```bash
-uv run python -m policy_expr.core.runner "open WeChat and go to contacts" \
+uv run python -m gui_agent.core.runner "open WeChat and go to contacts" \
   --mode agent-loop --supervisor milestone --auto-continue --max-turns 15 --hud
 ```
 
@@ -220,7 +220,7 @@ uv run python -m policy_expr.core.runner "open WeChat and go to contacts" \
 
 After each run, an HTML report is automatically generated showing the full task execution trace:
 
-![Execution report](policy_expr/assets/report.png)
+![Execution report](gui_agent/assets/report.png)
 
 - **Milestone decomposition** — sub-goals with names, descriptions, and acceptance criteria
 - **Per-milestone thumbnail gallery** — one row of annotated screenshots per sub-goal
@@ -233,7 +233,7 @@ After each run, an HTML report is automatically generated showing the full task 
 bin/runner "open WeChat and send a message"
 
 # Generate report from an existing log
-python scripts/report.py runner --run logs/policy_expr/agent-loop/20260528_104755
+python scripts/report.py runner --run logs/gui_agent/agent-loop/20260528_104755
 ```
 
 ### App Reconnaissance
@@ -242,13 +242,13 @@ Generate a reusable knowledge base for an app.
 
 ```bash
 # Explore an app and generate page knowledge
-uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --depth 2
+uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --depth 2
 
 # Manually navigate to a new page, then append it to an existing knowledge base
-uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode add --depth 1
+uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --mode add --depth 1
 
 # Update knowledge for a specific page
-uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode update \
+uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --mode update \
   --target "WeChat main screen, showing chat list and bottom navigation"
 ```
 
@@ -257,7 +257,7 @@ uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode updat
 ## Project Structure
 
 ```text
-policy_expr/
+gui_agent/
 ├── chat_cli.py          # Chat mode entry point
 ├── runner.py            # Experimental/debug runner
 ├── recon_cli.py         # App reconnaissance CLI

@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from policy_expr.adapters.iphone.recon.back_nav import infer_back_action
+from gui_agent.adapters.iphone.recon.back_nav import infer_back_action
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 EVAL_DIR   = Path(__file__).resolve().parent
@@ -41,7 +41,7 @@ def _b64(path: Path) -> str:
 
 def _yolo_boxes(png_bytes: bytes) -> list[dict]:
     try:
-        from policy_expr.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
+        from gui_agent.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
         cal = YoloCalibrator.from_png(png_bytes)
         if cal is None:
             return []
