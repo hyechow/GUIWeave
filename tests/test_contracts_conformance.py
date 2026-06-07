@@ -125,7 +125,7 @@ def test_contracts_is_a_pure_leaf_import():
         "import sys, policy_expr.core.contracts; "
         "leaked = [m for m in sys.modules "
         "if m.startswith('policy_expr.adapters') "
-        "or m in ('policy_expr.runner', 'policy_expr.chat_cli', 'policy_expr.recon_cli')]; "
+        "or m in ('policy_expr.runner', 'policy_expr.chat_cli')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

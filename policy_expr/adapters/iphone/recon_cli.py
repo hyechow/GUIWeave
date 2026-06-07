@@ -8,7 +8,7 @@ from pathlib import Path
 
 if __package__ is None or __package__ == "":
     import sys
-    sys.path.insert(0, str(Path(__file__).parent.parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from dotenv import load_dotenv
 from PIL import Image
@@ -18,7 +18,7 @@ load_dotenv()
 from policy_expr.adapters.iphone.recon import PageParser, viz_result
 from policy_expr.adapters.iphone.recon.bfs import probe_elements
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 LOG_ROOT = ROOT / "logs" / "recon"
 KNOWLEDGE_ROOT = ROOT / "knowledge"
 OFFLINE_EXPECTED_SIZE = (636, 1402)

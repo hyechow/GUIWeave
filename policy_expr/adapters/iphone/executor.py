@@ -6,7 +6,7 @@ import re
 import subprocess
 import time
 
-from policy_expr.utils import clear_text_field, paste_text, press_enter
+from policy_expr.adapters.iphone.text_input import clear_text_field, paste_text, press_enter
 from policy_expr.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.adapters.iphone.executor_constants import (
     DAEMON_SCROLL_AMOUNT,
@@ -78,7 +78,7 @@ class ActionExecutor:
         except Exception:
             self.calibrator = None
         try:
-            from policy_expr.utils import ocr_from_bytes
+            from policy_expr.adapters.iphone.ocr import ocr_from_bytes
             self._frame_ocr = ocr_from_bytes(png_bytes)[0]
         except Exception:
             self._frame_ocr = None
@@ -132,7 +132,7 @@ class ActionExecutor:
             results = self._frame_ocr  # precomputed by prepare_frame (off critical path)
         else:
             try:
-                from policy_expr.utils import ocr_from_bytes
+                from policy_expr.adapters.iphone.ocr import ocr_from_bytes
                 results, _ = ocr_from_bytes(png_bytes)
             except Exception:
                 return None
