@@ -7,9 +7,9 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from policy_expr.config import resolve_llm_config
-from policy_expr.policies.base import resize_to_logical_png
-from policy_expr.schemas import CollectionScope, SupervisorStep
+from policy_expr.core.config import resolve_llm_config
+from policy_expr.core.policies.base import resize_to_logical_png
+from policy_expr.core.schemas import CollectionScope, SupervisorStep
 
 load_dotenv()
 

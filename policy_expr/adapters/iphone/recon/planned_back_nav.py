@@ -28,7 +28,7 @@ from policy_expr.adapters.iphone.recon.back_nav import (
     back_shot_path,
     save_if_changed,
 )
-from policy_expr.schemas import Observation
+from policy_expr.core.schemas import Observation
 
 
 # ---------------------------------------------------------------------------

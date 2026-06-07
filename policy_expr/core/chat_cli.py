@@ -16,7 +16,7 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import ANSI
 
 if __package__ is None or __package__ == "":
-    sys.path.insert(0, str(Path(__file__).parent.parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -28,18 +28,18 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.tree import Tree
 
-from policy_expr.self_learning.app_summary import auto_discover_knowledge
+from policy_expr.core.self_learning.app_summary import auto_discover_knowledge
 from policy_expr.core.factory import build_platform
-from policy_expr.runner import _TeeStream, build_policy, build_supervisor, run_agent_loop
-from policy_expr.chat_session import (
+from policy_expr.core.runner import _TeeStream, build_policy, build_supervisor, run_agent_loop
+from policy_expr.core.chat_session import (
     RouterResult,
     generate_reply,
     route_message,
 )
-from policy_expr.prefs import PreferenceManager
-from policy_expr.session_recorder import SessionRecorder
+from policy_expr.core.prefs import PreferenceManager
+from policy_expr.core.session_recorder import SessionRecorder
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 console = Console()
 
@@ -346,7 +346,7 @@ def main() -> None:
             continue
 
         if user_msg == "/model" or user_msg.startswith("/model "):
-            from policy_expr.config import switch_config, active_config_name, available_profiles
+            from policy_expr.core.config import switch_config, active_config_name, available_profiles
             parts = user_msg.split()
             _MODELS = available_profiles()
             if len(parts) >= 2 and parts[1] in _MODELS:

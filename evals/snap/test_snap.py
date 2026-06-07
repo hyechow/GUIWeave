@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from policy_expr.adapters.iphone.executor import ActionExecutor
 from policy_expr.adapters.iphone.recon.icon_detector import IconBbox
 from policy_expr.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
-from policy_expr.schemas import Action
+from policy_expr.core.schemas import Action
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

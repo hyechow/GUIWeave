@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 
 from policy_expr.adapters.iphone.client import SyncMCPClient, MirrorDaemonClient
-from policy_expr.schemas import Observation
+from policy_expr.core.schemas import Observation
 
 ROOT = Path(__file__).resolve().parents[3]
 SCREENSHOT = ROOT / "logs" / "policy_expr" / "scratch" / "screenshot.png"

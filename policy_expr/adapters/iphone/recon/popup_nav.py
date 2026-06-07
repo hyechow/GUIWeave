@@ -14,10 +14,10 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
+from policy_expr.core.config import resolve_llm_config
 from policy_expr.adapters.iphone.executor import logical_xy
 from policy_expr.adapters.iphone.overlay_detect import detect_fullscreen_popup
-from policy_expr.policies.base import resize_to_logical_png
+from policy_expr.core.policies.base import resize_to_logical_png
 _POPUP_PROMPT = """\
 你是一个 iPhone 页面分析专家。
 分析截图，找到全屏弹窗（广告弹窗、全屏促销弹窗）的关闭按钮（× 或「关闭」或「跳过」）的位置。

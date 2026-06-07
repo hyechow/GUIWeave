@@ -2,7 +2,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from policy_expr.schemas import CollectionScope, Milestone
+from policy_expr.core.schemas import CollectionScope, Milestone
 
 
 class _SingleCheckResult(BaseModel):

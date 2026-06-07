@@ -19,8 +19,8 @@ from langchain_openai import ChatOpenAI
 from PIL import Image, ImageDraw
 
 from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
-from policy_expr.schemas import TargetVerify
+from policy_expr.core.config import resolve_llm_config
+from policy_expr.core.schemas import TargetVerify
 
 _SYSTEM = """你是一个 GUI 操作的「落点校验器」。截图上有一个红色圆环+十字标记，表示刚刚点击的位置。
 给你一条操作指令，判断标记**十字中心**是否正好压在指令想点的目标元素本体上。

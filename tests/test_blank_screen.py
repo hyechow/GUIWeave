@@ -19,7 +19,7 @@ import io
 import pytest
 from PIL import Image, ImageDraw
 
-from policy_expr.supervisor.milestone.policy import _is_blank_screen
+from policy_expr.core.supervisor.milestone.policy import _is_blank_screen
 
 W, H = 600, 1300
 

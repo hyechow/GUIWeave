@@ -120,14 +120,14 @@ def cmd_list(args) -> None:
 
 def cmd_run(args) -> None:
     """Run one or more tasks."""
-    from policy_expr.runner import (
+    from policy_expr.core.runner import (
         build_policy,
         build_supervisor,
         run_agent_loop,
         create_run_dir,
     )
-    from policy_expr.policies import StructuredOutputPolicy
-    from policy_expr.self_learning.app_summary import auto_discover_knowledge
+    from policy_expr.core.policies import StructuredOutputPolicy
+    from policy_expr.core.self_learning.app_summary import auto_discover_knowledge
 
     tasks = _load_tasks()
     results = _load_results()

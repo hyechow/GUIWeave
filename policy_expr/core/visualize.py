@@ -6,9 +6,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from policy_expr.schemas import Action, ActionDecision
+from policy_expr.core.schemas import Action, ActionDecision
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "logs" / "policy_expr" / "scratch" / "structured_output_result.png"
 
 

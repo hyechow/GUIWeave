@@ -15,7 +15,7 @@ from policy_expr.adapters.iphone.executor import ActionExecutor
 from policy_expr.adapters.iphone.executor_constants import SCROLL_DELTA, SCROLL_TICKS
 from policy_expr.adapters.iphone.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
 from policy_expr.adapters.iphone.perception import LivePhoneSession
-from policy_expr.schemas import Action
+from policy_expr.core.schemas import Action
 from policy_expr.adapters.iphone.stitch import robust_shift as _kp_robust_shift, _gray_u8 as _kp_gray
 
 

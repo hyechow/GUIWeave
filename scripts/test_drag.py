@@ -16,9 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from policy_expr.adapters.iphone.executor import ActionExecutor
 from policy_expr.adapters.iphone.perception import LivePhoneSession
-from policy_expr.policies import StructuredOutputPolicy
-from policy_expr.schemas import Action, ActionDecision, Milestone, Observation, PolicyTurn, SupervisorStep
-from policy_expr.supervisor.milestone import run_checker, run_planner
+from policy_expr.core.policies import StructuredOutputPolicy
+from policy_expr.core.schemas import Action, ActionDecision, Milestone, Observation, PolicyTurn, SupervisorStep
+from policy_expr.core.supervisor.milestone import run_checker, run_planner
 
 
 OUT_DIR = Path("/tmp/drag_policy_test")

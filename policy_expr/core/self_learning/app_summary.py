@@ -5,7 +5,7 @@ Produces two files in knowledge/{app}/:
 - _elements.md: UI element details for Planner (instruction generation)
 
 Usage:
-    uv run python -m policy_expr.self_learning.app_summary 微信
+    uv run python -m policy_expr.core.self_learning.app_summary 微信
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from policy_expr.config import resolve_llm_config
+from policy_expr.core.config import resolve_llm_config
 
-KNOWLEDGE_DIR = Path(__file__).resolve().parents[2] / "knowledge"
+KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "knowledge"
 
 # ── Prompts for _app.md (navigation structure) ─────────────────────────────
 
@@ -240,7 +240,7 @@ def auto_discover_knowledge(goal: str) -> AppKnowledge | None:
 if __name__ == "__main__":
     load_dotenv()
     if len(sys.argv) < 2:
-        print(f"Usage: python -m policy_expr.self_learning.app_summary <app_name>")
+        print(f"Usage: python -m policy_expr.core.self_learning.app_summary <app_name>")
         print(f"Available: {[d.name for d in KNOWLEDGE_DIR.iterdir() if d.is_dir()]}")
         sys.exit(1)
     generate_summary(sys.argv[1])

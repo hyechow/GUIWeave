@@ -20,8 +20,8 @@ if __package__ is None or __package__ == "":
 
 from policy_expr.adapters.iphone.executor import ActionExecutor
 from policy_expr.adapters.iphone.perception import LivePhoneSession
-from policy_expr.policies import StructuredOutputPolicy
-from policy_expr.schemas import Observation
+from policy_expr.core.policies import StructuredOutputPolicy
+from policy_expr.core.schemas import Observation
 
 
 PRESETS = {

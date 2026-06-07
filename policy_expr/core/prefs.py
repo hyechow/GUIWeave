@@ -13,9 +13,9 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
+from policy_expr.core.config import resolve_llm_config
 
-PREFS_PATH = Path(__file__).resolve().parent.parent / "data" / "user_preferences.json"
+PREFS_PATH = Path(__file__).resolve().parents[2] / "data" / "user_preferences.json"
 
 
 # ── Data models ─────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ class ExtractedPreference(BaseModel):
 
 
 def extract_prefs_llm(user_msg: str, goal: str, session: list[dict]) -> ExtractedPreference:
-    from policy_expr.chat_session import format_session_history
+    from policy_expr.core.chat_session import format_session_history
 
     cfg = resolve_llm_config("router")
     llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)

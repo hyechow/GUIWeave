@@ -1,7 +1,7 @@
 """Vision-only browser action policy: screenshot + instruction -> one Action.
 
 Mirrors the iphone ``StructuredOutputPolicy`` LLM machinery — same config via
-``policy_expr.config.resolve_llm_config('action_policy')``, same structured-output
+``policy_expr.core.config.resolve_llm_config('action_policy')``, same structured-output
 call via ``llm.structured.invoke_structured`` into an ``ActionDecision``, same
 ``BaseActionPolicy`` base — but with a BROWSER system prompt: operate a web page
 with a desktop pointer, output ONE action within the neutral action vocabulary
@@ -22,10 +22,10 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from policy_expr.config import resolve_llm_config
+from policy_expr.core.config import resolve_llm_config
 from llm.structured import invoke_structured
-from policy_expr.policies.base import BaseActionPolicy
-from policy_expr.schemas import ActionDecision, Observation
+from policy_expr.core.policies.base import BaseActionPolicy
+from policy_expr.core.schemas import ActionDecision, Observation
 
 load_dotenv()
 

@@ -5,7 +5,7 @@ __all__ = ["MilestoneSupervisorPolicy", "SimpleSupervisorPolicy"]
 
 def __getattr__(name: str):
     if name == "MilestoneSupervisorPolicy":
-        from policy_expr.supervisor.milestone import MilestoneSupervisorPolicy
+        from policy_expr.core.supervisor.milestone import MilestoneSupervisorPolicy
         return MilestoneSupervisorPolicy
     if name == "SimpleSupervisorPolicy":
         from policy_expr.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy

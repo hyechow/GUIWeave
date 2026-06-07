@@ -18,7 +18,7 @@ if __package__ is None or __package__ == "":
 
 from policy_expr.adapters.iphone.executor import ActionExecutor
 from policy_expr.adapters.iphone.perception import LivePhoneSession
-from policy_expr.schemas import Action, ActionDecision
+from policy_expr.core.schemas import Action, ActionDecision
 from policy_expr.adapters.iphone.scroll_probe import ScrollProbe, _changed_ratio, estimate_vertical_shift
 
 

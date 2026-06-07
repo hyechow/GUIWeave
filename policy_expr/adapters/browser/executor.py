@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 
-from policy_expr.schemas import ActionDecision
+from policy_expr.core.schemas import ActionDecision
 
 
 class BrowserExecutor:

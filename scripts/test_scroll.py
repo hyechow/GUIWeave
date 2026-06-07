@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 from policy_expr.adapters.iphone.perception import SCKSession
-from policy_expr.policies import StructuredOutputPolicy
-from policy_expr.schemas import Observation
+from policy_expr.core.policies import StructuredOutputPolicy
+from policy_expr.core.schemas import Observation
 from policy_expr.adapters.iphone.executor import ActionExecutor
 
 

@@ -16,27 +16,27 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Iterator, Optional
 
 if __package__ is None or __package__ == "":
-    sys.path.insert(0, str(Path(__file__).parent.parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import load_dotenv
 load_dotenv()
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 from policy_expr.core.factory import build_platform
-from policy_expr.supervisor.base import SupervisorPolicy
-from policy_expr.output import generate_reply
-from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
-from policy_expr.temporal import resolve_temporal_expressions
-from policy_expr.policies.base import ActionPolicy
-from policy_expr.target_verify import verify_target
-from policy_expr.schemas import (
+from policy_expr.core.supervisor.base import SupervisorPolicy
+from policy_expr.core.output import generate_reply
+from policy_expr.core.reader import ContentReader, annotate_content_note, build_reader_instruction
+from policy_expr.core.temporal import resolve_temporal_expressions
+from policy_expr.core.policies.base import ActionPolicy
+from policy_expr.core.target_verify import verify_target
+from policy_expr.core.schemas import (
     ActionDecision,
     PolicyContext,
     PolicyTurn,
     action_label,
 )
-from policy_expr.visualize import print_decision
-from policy_expr.self_learning.app_summary import auto_discover_knowledge
+from policy_expr.core.visualize import print_decision
+from policy_expr.core.self_learning.app_summary import auto_discover_knowledge
 
 if TYPE_CHECKING:
     # Adapter types used only in annotations. With `from __future__ import
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from policy_expr.adapters.iphone.stitch import StitchAccumulator
     from policy_expr.core.contracts import PerceptionSession
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 POLICY_LOG_ROOT = ROOT / "logs" / "policy_expr"
 TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 TURN_STATS = "\033[2mTurn {turn_no} stats: llm_calls={llm_calls}, elapsed={elapsed:.2f}s\033[0m"
@@ -563,7 +563,7 @@ def run_agent_loop(
             # Record which model each LLM config key actually used (once, self-describing
             # for cost — the report prefers this over re-resolving the active config later).
             if not context.models:
-                from policy_expr.config import resolve_llm_config
+                from policy_expr.core.config import resolve_llm_config
                 for _key in ("supervisor", "supervisor.decompose", "action_policy",
                              "reader", "output", "router", "back_nav"):
                     try:
@@ -956,7 +956,7 @@ def main() -> None:
     goal = args.prompt
     if not args.context and not args.no_router:
         try:
-            from policy_expr.chat_session import route_message
+            from policy_expr.core.chat_session import route_message
             router_result = route_message(raw_input, session=[], prefs_context="")
         except Exception as exc:
             print(f"Router  : 调用失败，回退原始输入（{exc}）")

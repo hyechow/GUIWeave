@@ -17,7 +17,7 @@ from policy_expr.adapters.iphone.executor import ActionExecutor
 from policy_expr.adapters.iphone.perception import LivePerception, LivePhoneSession
 from policy_expr.adapters.iphone.policies.structured_output import StructuredOutputPolicy
 from policy_expr.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy
-from policy_expr.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from policy_expr.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager

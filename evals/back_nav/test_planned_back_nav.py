@@ -19,8 +19,8 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from policy_expr.adapters.iphone.policies.structured_output import StructuredOutputPolicy
 from policy_expr.adapters.iphone.recon.planned_back_nav import build_back_instruction
-from policy_expr.schemas import Observation
-from policy_expr.config import resolve_llm_config
+from policy_expr.core.schemas import Observation
+from policy_expr.core.config import resolve_llm_config
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 EVAL_DIR = Path(__file__).resolve().parent

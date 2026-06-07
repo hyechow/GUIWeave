@@ -23,11 +23,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
-from policy_expr.policies.base import resize_to_logical_png
-from policy_expr.schemas import Observation
-from policy_expr.self_learning.app_summary import auto_discover_knowledge
-from policy_expr.supervisor.milestone import (
+from policy_expr.core.config import resolve_llm_config
+from policy_expr.core.policies.base import resize_to_logical_png
+from policy_expr.core.schemas import Observation
+from policy_expr.core.self_learning.app_summary import auto_discover_knowledge
+from policy_expr.core.supervisor.milestone import (
     DECOMPOSE_PROMPT,
     _DecomposeResponse,
     Milestone,

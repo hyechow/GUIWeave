@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from policy_expr.config import resolve_llm_config
+from policy_expr.core.config import resolve_llm_config
 
 
 # 分析类任务采集为空时的兜底回复：固定文案、不调 LLM，杜绝凭空编造数字。

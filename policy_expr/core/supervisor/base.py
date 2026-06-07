@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from policy_expr.schemas import Observation, PolicyTurn, SupervisorStep
+from policy_expr.core.schemas import Observation, PolicyTurn, SupervisorStep
 
 
 class SupervisorPolicy(Protocol):

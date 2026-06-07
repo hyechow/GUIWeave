@@ -37,7 +37,7 @@ from Quartz import (
 )
 
 from policy_expr.adapters.iphone.perception import LivePhoneSession, dismiss_iphone_sheet
-from policy_expr.schemas import Action, ActionDecision
+from policy_expr.core.schemas import Action, ActionDecision
 
 # App Switcher / kill-app 相关常量（通过像素分析得出）
 _TITLE_BAR_H  = 38   # iPhone Mirroring 透明标题栏高度（逻辑 px）

@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from policy_expr.supervisor.milestone import _PlanResult
-from policy_expr.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from policy_expr.core.supervisor.milestone import _PlanResult
+from policy_expr.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 passed = 0
 failed = 0

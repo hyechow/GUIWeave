@@ -82,7 +82,7 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
     app_log_dir = LOG_ROOT / app
     app_log_dir.mkdir(parents=True, exist_ok=True)
 
-    from policy_expr.runner import _tee_stdio
+    from policy_expr.core.runner import _tee_stdio
     with _tee_stdio(app_log_dir):
         if hud:
             hud.update(f"侦察 {app}: 预加载模型…")
@@ -168,7 +168,7 @@ def run_export(app: str, page: str | None = None, enhanced: bool = False, hud=No
     writes page_meta.json + knowledge.md locally and syncs to knowledge/{app}/.
     Also generates knowledge for leaf pages discovered but not probed.
     """
-    from policy_expr.self_learning.knowledge import (
+    from policy_expr.core.self_learning.knowledge import (
         build_export, build_leaf_export, collect_leaf_pages, save_export,
     )
 

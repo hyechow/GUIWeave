@@ -7,9 +7,9 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
-from policy_expr.output import generate_reply  # re-exported for callers
-from policy_expr.temporal import resolve_temporal_expressions
+from policy_expr.core.config import resolve_llm_config
+from policy_expr.core.output import generate_reply  # re-exported for callers
+from policy_expr.core.temporal import resolve_temporal_expressions
 
 __all__ = ["RouterResult", "generate_reply", "route_message", "format_session_history"]
 

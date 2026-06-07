@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
+from policy_expr.core.config import resolve_llm_config
 
 
 PageType = Literal["list", "detail", "chat", "form", "modal", "home", "other"]

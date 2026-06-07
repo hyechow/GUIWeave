@@ -15,7 +15,7 @@ from policy_expr.adapters.iphone.recon.back_nav import make_nav_context, manual_
 from policy_expr.adapters.iphone.recon.planned_back_nav import planned_return_to_initial as return_to_initial
 from policy_expr.adapters.iphone.recon.page_identity import PageIdentity
 from policy_expr.adapters.iphone.recon.utils import ProbeAbortedError
-from policy_expr.trace import Tracer
+from policy_expr.core.trace import Tracer
 
 # Module-level HUD status callback; set by explore_dfs, read by _probe_page_dfs.
 _status_cb: Callable[[str], None] | None = None

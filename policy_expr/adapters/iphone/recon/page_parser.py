@@ -12,8 +12,8 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, model_validator
 
 from llm.structured import invoke_structured
-from policy_expr.config import resolve_llm_config
-from policy_expr.policies.base import resize_to_logical_png
+from policy_expr.core.config import resolve_llm_config
+from policy_expr.core.policies.base import resize_to_logical_png
 
 
 ElementType = Literal[

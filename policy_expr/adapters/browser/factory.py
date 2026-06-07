@@ -51,7 +51,7 @@ def _build_action_policy(name: str) -> "ActionPolicy":
 def _build_supervisor(name: str) -> "SupervisorPolicy":
     # Browser defaults to the structure-neutral milestone supervisor (the iphone
     # SimpleSupervisorPolicy is iphone-specific and intentionally not offered here).
-    from policy_expr.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from policy_expr.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
     registry: dict[str, type] = {MilestoneSupervisorPolicy.name: MilestoneSupervisorPolicy}
     try:

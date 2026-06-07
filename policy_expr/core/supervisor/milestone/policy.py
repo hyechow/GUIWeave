@@ -12,8 +12,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from llm.structured import get_llm_token_usage, invoke_structured
-from policy_expr.config import resolve_llm_config
-from policy_expr.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from policy_expr.core.config import resolve_llm_config
+from policy_expr.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 
 from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_loop_check, run_planner
 from .prompts import (

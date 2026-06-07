@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from policy_expr.schemas import Observation
+from policy_expr.core.schemas import Observation
 
 ROOT = Path(__file__).resolve().parents[3]
 SCREENSHOT = ROOT / "logs" / "policy_expr" / "scratch" / "browser_screenshot.png"

@@ -31,12 +31,12 @@ from policy_expr.adapters.iphone.client.sync_mcp import SyncMCPClient
 from policy_expr.adapters.iphone.client.mirror_daemon import MirrorDaemonClient
 from policy_expr.adapters.iphone.policies.structured_output import StructuredOutputPolicy
 from policy_expr.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy
-from policy_expr.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from policy_expr.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from policy_expr.adapters.iphone.perception import LivePhoneSession, LivePerception
 from policy_expr.adapters.iphone.recon.page_parser import PageParser
 from policy_expr.adapters.iphone.recon.page_identity import PageIdentity
 from policy_expr.adapters.iphone.recon.page_compare import PageComparator, EdgeIoUBackend
-from policy_expr.schemas import Observation
+from policy_expr.core.schemas import Observation
 from policy_expr.core.schema import IdentityResult, ScreenMatchDecision, ProbeAbortedError
 from policy_expr.adapters.iphone.recon.utils import (
     ScreenMatchDecision as _ShimScreenMatchDecision,
@@ -125,7 +125,7 @@ def test_contracts_is_a_pure_leaf_import():
         "import sys, policy_expr.core.contracts; "
         "leaked = [m for m in sys.modules "
         "if m.startswith('policy_expr.adapters') "
-        "or m in ('policy_expr.runner', 'policy_expr.chat_cli')]; "
+        "or m in ('policy_expr.core.runner', 'policy_expr.core.chat_cli')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -330,7 +330,7 @@ def test_runner_has_no_eager_adapter_import():
     import sys
 
     code = (
-        "import sys, policy_expr.runner; "
+        "import sys, policy_expr.core.runner; "
         "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
         "assert not leaked, leaked"
     )
@@ -343,7 +343,7 @@ def test_chat_cli_has_no_eager_adapter_import():
     import sys
 
     code = (
-        "import sys, policy_expr.chat_cli; "
+        "import sys, policy_expr.core.chat_cli; "
         "leaked = [m for m in sys.modules if m.startswith('policy_expr.adapters')]; "
         "assert not leaked, leaked"
     )

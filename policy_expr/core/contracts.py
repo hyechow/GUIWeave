@@ -38,7 +38,7 @@ IMPORT HYGIENE
 --------------
 ``contracts`` must NOT import executor / runner / perception / recon (that would
 create an import cycle, since those depend on core). It imports ONLY the leaf
-``policy_expr.schemas`` module at runtime. Recon return types are forward refs
+``policy_expr.core.schemas`` module at runtime. Recon return types are forward refs
 under ``TYPE_CHECKING``: the neutral ones (IdentityResult, ScreenMatchDecision)
 from ``policy_expr.core.schema``; the pixel/model-bearing ones (PageKnowledge,
 PageEmbedding) from the iphone adapter -- so no heavy / cyclic import at load.
@@ -49,7 +49,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
 
 # Leaf, dependency-free schema types are safe to import at runtime.
-from policy_expr.schemas import (
+from policy_expr.core.schemas import (
     ActionDecision,
     Observation,
     PolicyTurn,
@@ -210,7 +210,7 @@ class ObservationLike(Protocol):
     browser / android: ``png_bytes`` set, ``element_tree`` (DOM / a11y tree) and
     ``page_key`` (route / URL / activity id) populated.
 
-    The CURRENT ``policy_expr.schemas.Observation`` carries only ``png_bytes`` +
+    The CURRENT ``policy_expr.core.schemas.Observation`` carries only ``png_bytes`` +
     ``source``. ``runtime_checkable`` Protocols enforce attribute PRESENCE on the
     instance, so to keep the live ``Observation`` conformant with ZERO edits this
     Protocol requires ONLY ``png_bytes`` + ``source``. The optional structured
@@ -221,7 +221,7 @@ class ObservationLike(Protocol):
 
     HOW TREE PLATFORMS GET THE OPTIONALS: add ``element_tree`` and ``page_key``
     as additive ``Optional[...] = None`` fields to the shared
-    ``policy_expr.schemas.Observation`` (a one-line, behaviour-neutral change).
+    ``policy_expr.core.schemas.Observation`` (a one-line, behaviour-neutral change).
     Once the model declares them with None defaults, ALL instances (including
     iphone, where they stay None) carry the attrs, and the richer
     ``TreeObservationLike`` Protocol below becomes satisfiable everywhere.

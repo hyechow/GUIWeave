@@ -5,7 +5,7 @@ from typing import Optional, Protocol
 
 from PIL import Image
 
-from policy_expr.schemas import ActionDecision, Observation
+from policy_expr.core.schemas import ActionDecision, Observation
 
 
 class ActionPolicy(Protocol):

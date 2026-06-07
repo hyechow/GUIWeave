@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from policy_expr.config import resolve_llm_config
+from policy_expr.core.config import resolve_llm_config
 from llm.structured import invoke_structured
-from policy_expr.policies.base import BaseActionPolicy, resize_to_logical_png
-from policy_expr.schemas import ActionDecision, Observation
+from policy_expr.core.policies.base import BaseActionPolicy, resize_to_logical_png
+from policy_expr.core.schemas import ActionDecision, Observation
 
 load_dotenv()
 
