@@ -910,7 +910,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--supervisor",
-        default="simple",
+        # Preserve iphone's historical default ("simple") when the platform offers
+        # it; otherwise fall back to the platform's own default (e.g. browser only
+        # offers "milestone"). Keeps iphone identical, fixes browser out-of-the-box.
+        default="simple" if "simple" in bundle.supervisor_choices else bundle.default_supervisor,
         choices=list(bundle.supervisor_choices),
         help="监督者策略模块",
     )

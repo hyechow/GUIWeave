@@ -38,6 +38,25 @@ class BrowserExecutor:
         y = ay / 1000 * h
         return max(0.0, min(x, w - 1)), max(0.0, min(y, h - 1))
 
+    def prepare_frame(self, png_bytes: bytes) -> None:
+        """No-op: the browser adapter is vision-only (no YOLO/OCR tap snapping).
+        The runner submits this to a background thread each turn; iphone uses it to
+        precompute snap data — browser has nothing to precompute."""
+        return None
+
+    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
+        """Scroll without execute()'s bool wrapper (runner scroll-cache path).
+        ``ticks`` / ``delta_px`` are iphone scroll-probe params and are ignored —
+        browser scroll is deterministic via the device wheel."""
+        client = self._client()
+        ax = action.x if action.x is not None else 500
+        ay = action.y if action.y is not None else 500
+        px, py = self._denorm(ax, ay)
+        amount = _amount_to_units(action.amount)
+        direction = action.direction or "down"
+        print(f"  scroll {direction} amount={amount} @({px:.0f},{py:.0f})")
+        print(f"  结果: {client.scroll(direction, amount, px, py)}")
+
     def execute(
         self,
         decision: ActionDecision,
