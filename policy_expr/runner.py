@@ -72,6 +72,11 @@ SETTLE_STABLE_THR = 2.0   # 相对上一帧的灰度均值差，低于即视为�
 # （相邻帧不再变化）、不判「changed」：轻拨很快返回，重拨等到真停，且保证读数准。
 SETTLE_GESTURE_FIRST_S = 0.3  # drag/scroll 首帧：让惯性先跑起来，避免抬手瞬间误判停稳
 
+# 页面未稳定（白屏/加载中）的等待帧：不计入 max_turns、不累加 noop，只重新观察。
+# 加载是 App 渲染延迟、不是 agent 的一步操作，不该消耗轮数预算；但要设上限防页面永挂死循环。
+LOADING_WAIT_S = 0.6          # 每个加载帧重新观察前的等待，给页面渲染时间
+MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂、停止
+
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
@@ -414,6 +419,7 @@ def _make_result(
         "goal_completed": any(t.supervisor.goal_completed for t in context.turns),
         "turns_count": len(context.turns),
         "turns_detail": turns_detail,
+        "task_type": context.task_type,
         "content_notes": context.content_notes or None,
         "collection_context": collection_context,
         "collection_scope": context.collection_scope.model_dump(exclude_none=True)
@@ -480,6 +486,7 @@ def run_agent_loop(
     reader = ContentReader()
     original_goal = context.goal
     noop_count = 0
+    loading_streak = 0
     prev_milestone_id: str | None = None
     scroll_profiles: dict[str, ScrollProfile] = {}
     scroll_probe_failures: dict[str, str] = {}
@@ -543,6 +550,21 @@ def run_agent_loop(
             sv_step = supervisor.step(observation, context.goal, context.turns)
             _say(f"监督者: {sv_step.summary}")
             _status(turn_no, sv_step.summary)
+
+            # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.turns、不消耗
+            # max_turns、不累加 noop_count。加载是 App 渲染延迟、不是 agent 的一步操作。
+            # 连续加载设上限，防页面永挂导致死循环（旧行为：loading 帧既占轮数，又会因
+            # should_act=False 累加 noop_count，连续 3 帧就误判"连续无动作"终止 agent）。
+            if sv_step.is_loading:
+                loading_streak += 1
+                if loading_streak > MAX_LOADING_FRAMES:
+                    _say(f"\n页面持续加载 {loading_streak} 帧仍未稳定，agent-loop 停止")
+                    _save_context(context_path, context)
+                    return _make_result(context, f"页面持续加载未稳定（>{MAX_LOADING_FRAMES} 帧）")
+                _say(f"  [Loading] 等待页面稳定（第 {loading_streak} 帧，不计入轮数）...")
+                time.sleep(LOADING_WAIT_S)
+                continue
+            loading_streak = 0
 
             # Record which model each LLM config key actually used (once, self-describing
             # for cost — the report prefers this over re-resolving the active config later).

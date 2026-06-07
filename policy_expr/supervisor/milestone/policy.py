@@ -262,6 +262,7 @@ class MilestoneSupervisorPolicy:
                 instruction=None,
                 stop=False,
                 goal_completed=False,
+                is_loading=True,
                 summary="页面加载中（白屏），等待...",
                 **_ctx(milestone, None),
             )
@@ -321,7 +322,7 @@ class MilestoneSupervisorPolicy:
             print("  [Loading] 检测到加载状态，等待下一帧...")
             return SupervisorStep(
                 should_act=False, instruction=None, stop=False,
-                goal_completed=False, summary="页面加载中，等待...",
+                goal_completed=False, is_loading=True, summary="页面加载中，等待...",
                 **_ctx(milestone, None),
             )
 
@@ -515,13 +516,21 @@ class MilestoneSupervisorPolicy:
                     milestone, observation, history,
                     final_read=final_read,
                 )
-            stuck = _SingleCheckResult(
-                status="stuck",
-                reason=f"停止条件已触发但尚未采集到目标内容：{frame.stop_reason}",
-                stuck_reason="停止条件触发且没有可用采集结果",
-                summary=frame.summary,
-            )
-            return self._handle_stuck(milestone, stuck, read_inst, observation, history)
+            # 停止条件触发、但本采集子目标尚未采到任何内容。
+            if not _has_successful_scroll_for(history, milestone.id):
+                # ⚠️ 还没滚动过就报"停止/到底"不可信：刚进入采集子目标的首帧，列表常一屏可见、
+                # 下方却还有内容（这正是 force_complete 误判、零采集即完成的根源——筛选结果一屏
+                # 显示完就被判 done，实则可滚）。强制先滚一次采集、用真实滚动验证边界，绝不在
+                # 零滚动+零采集时结束收集。落到下方滚动规划块。
+                print("  [Loop] 停止条件触发但尚未滚动过且零采集 → 先强制滚动一次验证边界，不判完成")
+            else:
+                stuck = _SingleCheckResult(
+                    status="stuck",
+                    reason=f"停止条件已触发但尚未采集到目标内容：{frame.stop_reason}",
+                    stuck_reason="停止条件触发且没有可用采集结果",
+                    summary=frame.summary,
+                )
+                return self._handle_stuck(milestone, stuck, read_inst, observation, history)
 
         if frame.boundary_reached and _last_scroll_was_for(history, milestone.id):
             print("  [Loop] 确认列表边界 → 结束收集")
