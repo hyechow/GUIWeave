@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from policy_expr.recon.cascade_matcher import CascadeMatcher
-from policy_expr.recon.page_identity import PageIdentity
+from policy_expr.adapters.iphone.recon.cascade_matcher import CascadeMatcher
+from policy_expr.adapters.iphone.recon.page_identity import PageIdentity
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

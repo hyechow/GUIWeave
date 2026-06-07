@@ -33,9 +33,9 @@ from policy_expr.policies.structured_output import StructuredOutputPolicy
 from policy_expr.supervisor.simple import SimpleSupervisorPolicy
 from policy_expr.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from policy_expr.adapters.iphone.perception import LivePhoneSession, LivePerception
-from policy_expr.recon.page_parser import PageParser
-from policy_expr.recon.page_identity import PageIdentity
-from policy_expr.recon.page_compare import PageComparator, EdgeIoUBackend
+from policy_expr.adapters.iphone.recon.page_parser import PageParser
+from policy_expr.adapters.iphone.recon.page_identity import PageIdentity
+from policy_expr.adapters.iphone.recon.page_compare import PageComparator, EdgeIoUBackend
 from policy_expr.schemas import Observation
 
 
@@ -105,8 +105,9 @@ def test_pixel_observation_is_not_a_tree_observation():
 
 
 # --------------------------------------------------------------------------- #
-# The seam must stay a pure leaf: importing it alone pulls in no adapter/cyclic #
-# modules (executor / runner / perception / recon). Checked in a clean process. #
+# The seam must stay a pure leaf: importing it alone must pull in NO platform   #
+# adapter (policy_expr.adapters.*) and no orchestration entrypoint. Drift-proof #
+# prefix invariant, verified in a clean subprocess.                             #
 # --------------------------------------------------------------------------- #
 def test_contracts_is_a_pure_leaf_import():
     import subprocess
@@ -114,10 +115,9 @@ def test_contracts_is_a_pure_leaf_import():
 
     code = (
         "import sys, policy_expr.core.contracts; "
-        "leaked = [m for m in "
-        "('policy_expr.adapters.iphone.executor', 'policy_expr.runner', "
-        "'policy_expr.adapters.iphone.perception', 'policy_expr.recon') "
-        "if m in sys.modules]; "
+        "leaked = [m for m in sys.modules "
+        "if m.startswith('policy_expr.adapters') "
+        "or m in ('policy_expr.runner', 'policy_expr.chat_cli', 'policy_expr.recon_cli')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

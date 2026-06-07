@@ -6,14 +6,14 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from policy_expr.recon.dfs import _safe_tap
-from policy_expr.recon.page_compare import PageComparator, make_comparator
-from policy_expr.recon.page_parser import PageKnowledge
-from policy_expr.recon.back_nav import (
+from policy_expr.adapters.iphone.recon.dfs import _safe_tap
+from policy_expr.adapters.iphone.recon.page_compare import PageComparator, make_comparator
+from policy_expr.adapters.iphone.recon.page_parser import PageKnowledge
+from policy_expr.adapters.iphone.recon.back_nav import (
     return_to_initial, back_shot_path, save_if_changed, _match_stack, manual_recover,
 )
-from policy_expr.recon.back_nav import make_nav_context
-from policy_expr.recon.utils import (
+from policy_expr.adapters.iphone.recon.back_nav import make_nav_context
+from policy_expr.adapters.iphone.recon.utils import (
     ProbeAbortedError,
     ReconResult,
     TapResult,

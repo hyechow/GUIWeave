@@ -29,11 +29,11 @@ from _vis import open_annotated, print_items
 
 from policy_expr.adapters.iphone.perception import LivePhoneSession, dismiss_iphone_sheet
 from policy_expr.adapters.iphone.executor import logical_xy
-from policy_expr.recon.page_compare import make_comparator
-from policy_expr.recon.page_parser import PageParser, classify_elements, resolve_selected_tabs
-from policy_expr.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context, BACK_PROMPT
-from policy_expr.recon.planned_back_nav import planned_return_to_initial
-from policy_expr.recon.dfs import _page_name_from_fingerprint
+from policy_expr.adapters.iphone.recon.page_compare import make_comparator
+from policy_expr.adapters.iphone.recon.page_parser import PageParser, classify_elements, resolve_selected_tabs
+from policy_expr.adapters.iphone.recon.back_nav import return_to_initial, BACK_SETTLE_SECONDS, make_nav_context, BACK_PROMPT
+from policy_expr.adapters.iphone.recon.planned_back_nav import planned_return_to_initial
+from policy_expr.adapters.iphone.recon.dfs import _page_name_from_fingerprint
 
 MAX_DEPTH = 5
 SETTLE = BACK_SETTLE_SECONDS

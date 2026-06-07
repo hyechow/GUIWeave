@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from policy_expr.recon.utils import ScreenMatchDecision, png_similarity
+from policy_expr.adapters.iphone.recon.utils import ScreenMatchDecision, png_similarity
 
 if TYPE_CHECKING:
-    from policy_expr.recon.cascade_matcher import CascadeMatcher
+    from policy_expr.adapters.iphone.recon.cascade_matcher import CascadeMatcher
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +214,7 @@ def make_comparator(method: str = "edge_iou", **kwargs) -> PageComparator:
         **kwargs: forwarded to PageComparator (e.g. same_page_threshold).
     """
     if method == "cascade":
-        from policy_expr.recon.cascade_matcher import get_matcher
+        from policy_expr.adapters.iphone.recon.cascade_matcher import get_matcher
         cascade = get_matcher()
         return PageComparator(cascade=cascade, **kwargs)
     return PageComparator(**kwargs)

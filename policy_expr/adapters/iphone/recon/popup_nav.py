@@ -56,7 +56,7 @@ def llm_locate_close(png: bytes) -> tuple[float, float] | None:
 def yolo_snap(png: bytes, x: float, y: float) -> tuple[float, float]:
     """Snap (x, y) to nearest YOLO icon center if within 100px, else return as-is."""
     try:
-        from policy_expr.recon.yolo_calibrator import YoloCalibrator
+        from policy_expr.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
         cal = YoloCalibrator.from_png(png)
         if cal is not None:
             snapped = cal.nearest(x, y, max_dist=100.0)

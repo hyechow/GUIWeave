@@ -15,7 +15,7 @@ from llm.structured import invoke_structured
 from policy_expr.config import resolve_llm_config
 from policy_expr.adapters.iphone.executor import is_valid_tap
 from policy_expr.policies.base import resize_to_logical_png
-from policy_expr.recon.page_compare import PageComparator, make_comparator
+from policy_expr.adapters.iphone.recon.page_compare import PageComparator, make_comparator
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +365,7 @@ def _navigate_forward(
 
 def _yolo_detect(png_bytes: bytes) -> tuple[float, float] | None:
     """YOLO detect nearest back/close icon. Returns normalized (ax, ay) or None."""
-    from policy_expr.recon.yolo_calibrator import YoloCalibrator
+    from policy_expr.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
     cal = YoloCalibrator.from_png(png_bytes)
     if cal is None:
         return None
@@ -375,7 +375,7 @@ def _yolo_detect(png_bytes: bytes) -> tuple[float, float] | None:
 def _yolo_detect_near(png_bytes: bytes, ax: float, ay: float,
                       max_dist: float = 100.0) -> tuple[float, float] | None:
     """YOLO detect icon nearest to given coords. Returns normalized (ax, ay) or None."""
-    from policy_expr.recon.yolo_calibrator import YoloCalibrator
+    from policy_expr.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
     cal = YoloCalibrator.from_png(png_bytes)
     if cal is None:
         return None
@@ -392,7 +392,7 @@ def _annotate_back_icons(png_bytes: bytes) -> tuple[bytes, tuple[float, float] |
     try:
         import io as _io
         from PIL import Image, ImageDraw
-        from policy_expr.recon.yolo_calibrator import YoloCalibrator
+        from policy_expr.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
 
         cal = YoloCalibrator.from_png(png_bytes)
         if cal is None:

@@ -83,7 +83,7 @@ def parse_items(
     filter_back: bool = False,
 ) -> list[tuple[float, float, str, str]]:
     """Parse interactive elements from screenshot. Returns (ax, ay, label, etype) tuples."""
-    from policy_expr.recon.page_parser import classify_elements
+    from policy_expr.adapters.iphone.recon.page_parser import classify_elements
     areas = classify_elements(parser.parse_screen(png))
     if filter_back:
         areas = [a for a in areas if a.element_type != "back_button"]

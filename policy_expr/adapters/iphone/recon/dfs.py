@@ -11,10 +11,10 @@ from typing import Callable
 
 from policy_expr.adapters.iphone.executor import logical_xy
 from policy_expr.adapters.iphone.perception import dismiss_iphone_sheet
-from policy_expr.recon.back_nav import make_nav_context, manual_recover as _manual_recover
-from policy_expr.recon.planned_back_nav import planned_return_to_initial as return_to_initial
-from policy_expr.recon.page_identity import PageIdentity
-from policy_expr.recon.utils import ProbeAbortedError
+from policy_expr.adapters.iphone.recon.back_nav import make_nav_context, manual_recover as _manual_recover
+from policy_expr.adapters.iphone.recon.planned_back_nav import planned_return_to_initial as return_to_initial
+from policy_expr.adapters.iphone.recon.page_identity import PageIdentity
+from policy_expr.adapters.iphone.recon.utils import ProbeAbortedError
 from policy_expr.trace import Tracer
 
 # Module-level HUD status callback; set by explore_dfs, read by _probe_page_dfs.
@@ -93,8 +93,8 @@ def explore_dfs(phone, app_log_dir: Path, max_depth: int = 0,
 def _explore_dfs_impl(phone, app_log_dir: Path, max_depth: int = 0,
                       sample: int = 0, mode: str | None = None,
                       target_dir: str | None = None) -> list[DfsPageNode]:
-    from policy_expr.recon.page_parser import PageParser, resolve_selected_tabs
-    from policy_expr.recon.cascade_matcher import get_matcher
+    from policy_expr.adapters.iphone.recon.page_parser import PageParser, resolve_selected_tabs
+    from policy_expr.adapters.iphone.recon.cascade_matcher import get_matcher
 
     app = app_log_dir.name
     app_log_dir.mkdir(parents=True, exist_ok=True)
@@ -282,7 +282,7 @@ def _dfs_recursive(
     png_bytes = phone.screenshot()
 
     # Mini-program fast exit: GUIClip capsule detection — no LLM needed
-    from policy_expr.recon.page_parser import detect_miniprogram
+    from policy_expr.adapters.iphone.recon.page_parser import detect_miniprogram
     close_xy = detect_miniprogram(png_bytes)
     if close_xy is not None:
         print(f"  [小程序] 检测到小程序，跳过探测，直接关闭")
@@ -290,7 +290,7 @@ def _dfs_recursive(
         return None, {"is_new": False, "phase": "miniprogram"}
 
     # Full-screen popup: pixel pre-check → LLM locate → YOLO snap → tap
-    from policy_expr.recon.popup_nav import close_popup
+    from policy_expr.adapters.iphone.recon.popup_nav import close_popup
     if close_popup(phone.client, phone.screenshot, png_bytes):
         png_bytes = phone.screenshot()
 
@@ -300,7 +300,7 @@ def _dfs_recursive(
         print(f"  [overlay] 检测到 {_overlay.type}  bbox={_overlay.bbox}")
 
     # ── Dedup BEFORE LLM parse (saves LLM call for duplicate pages) ──
-    from policy_expr.recon.cascade_matcher import get_matcher
+    from policy_expr.adapters.iphone.recon.cascade_matcher import get_matcher
     candidate_emb = get_matcher().embed_visual(png_bytes)
     dedup_result = dedup.check(png_bytes, precomputed=candidate_emb)
     lib_n = dedup_result.library_size
@@ -332,7 +332,7 @@ def _dfs_recursive(
     # ── New page: fingerprint always, LLM parse only for non-leaf ──
     import re as _re
     import concurrent.futures as _cf
-    from policy_expr.recon.page_parser import PageParser
+    from policy_expr.adapters.iphone.recon.page_parser import PageParser
 
     if max_depth > 0:
         with _cf.ThreadPoolExecutor(max_workers=2) as _ex:
@@ -542,8 +542,8 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
     """
     import random
     from policy_expr.adapters.iphone.executor import logical_xy
-    from policy_expr.recon import viz_result
-    from policy_expr.recon.utils import TapResult, ReconResult
+    from policy_expr.adapters.iphone.recon import viz_result
+    from policy_expr.adapters.iphone.recon.utils import TapResult, ReconResult
     from llm.structured import get_llm_call_count
 
     llm_count_start = get_llm_call_count()
@@ -637,7 +637,7 @@ def _probe_page_dfs(phone, knowledge, png_bytes, out_dir: Path,
 
         navigated = False
         if after_bytes and nav_stack:
-            from policy_expr.recon.back_nav import _get_change_comp, _get_identity_comp
+            from policy_expr.adapters.iphone.recon.back_nav import _get_change_comp, _get_identity_comp
             comp = _get_change_comp()
             nav_result, nav_reason = comp.detect_navigation(nav_stack[top_level][0], after_bytes)
             if not nav_result:
@@ -719,7 +719,7 @@ def _page_name_from_fingerprint(png_bytes: bytes) -> tuple[str, str, str]:
     Returns (page_name, fingerprint_text, form).
     """
     import re
-    from policy_expr.recon.cascade_matcher import get_matcher
+    from policy_expr.adapters.iphone.recon.cascade_matcher import get_matcher
     matcher = get_matcher()
     fp = matcher.generate_fingerprint(png_bytes)
     name = re.sub(r'[\\/:*?"<>|\s]+', '_', fp.purpose)
@@ -767,7 +767,7 @@ def compute_pairwise_similarity(
         list of {"page_a", "page_b", "similarity"} sorted by similarity desc.
     """
     import json
-    from policy_expr.recon.page_compare import PageComparator
+    from policy_expr.adapters.iphone.recon.page_compare import PageComparator
 
     comparator = PageComparator()
     n = len(page_entries)

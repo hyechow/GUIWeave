@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from llm.structured import invoke_structured
 from policy_expr.config import resolve_llm_config
 from policy_expr.policies.base import resize_to_logical_png
-from policy_expr.recon.cascade_matcher import get_matcher, PageFingerprint
+from policy_expr.adapters.iphone.recon.cascade_matcher import get_matcher, PageFingerprint
 
 
 # ── Semantic fingerprint ──────────────────────────────────────────────────

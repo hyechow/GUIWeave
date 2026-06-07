@@ -15,8 +15,8 @@ from PIL import Image
 
 load_dotenv()
 
-from policy_expr.recon import PageParser, viz_result
-from policy_expr.recon.bfs import probe_elements
+from policy_expr.adapters.iphone.recon import PageParser, viz_result
+from policy_expr.adapters.iphone.recon.bfs import probe_elements
 
 ROOT = Path(__file__).parent.parent
 LOG_ROOT = ROOT / "logs" / "recon"
@@ -30,7 +30,7 @@ OFFLINE_EXPECTED_SIZE = (636, 1402)
 
 def _parse_identity(phone) -> tuple:
     """Screenshot → parse page identity. Returns (png_bytes, knowledge, page_name)."""
-    from policy_expr.recon.dfs import _page_name_from_fingerprint
+    from policy_expr.adapters.iphone.recon.dfs import _page_name_from_fingerprint
     png_bytes = phone.screenshot()
 
     knowledge = PageParser().analyze_screen(png_bytes)
@@ -70,7 +70,7 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
     target: required for both "add" (parent page dir) and "update" (page dir to overwrite).
     """
     from policy_expr.adapters.iphone.perception import LivePhoneSession
-    from policy_expr.recon.dfs import explore_dfs
+    from policy_expr.adapters.iphone.recon.dfs import explore_dfs
 
     if mode in ("add", "update") and not target:
         label = "父页面目录名" if mode == "add" else "页面目录名"
@@ -89,8 +89,8 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
 
         # Preload all local models before exploration starts
         print("预加载模型...")
-        from policy_expr.recon.cascade_matcher import get_matcher
-        from policy_expr.recon.icon_detector import warm_up as _yolo_warm_up
+        from policy_expr.adapters.iphone.recon.cascade_matcher import get_matcher
+        from policy_expr.adapters.iphone.recon.icon_detector import warm_up as _yolo_warm_up
         get_matcher().warm_up()
         _yolo_warm_up()
 
@@ -112,7 +112,7 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
 
 
 def _count_tree_nodes(nodes) -> int:
-    from policy_expr.recon.dfs import _count_nodes
+    from policy_expr.adapters.iphone.recon.dfs import _count_nodes
     return _count_nodes(nodes)
 
 

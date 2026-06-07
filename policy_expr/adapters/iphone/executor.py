@@ -7,7 +7,7 @@ import subprocess
 import time
 
 from policy_expr.utils import clear_text_field, paste_text, press_enter
-from policy_expr.recon.yolo_calibrator import YoloCalibrator
+from policy_expr.adapters.iphone.recon.yolo_calibrator import YoloCalibrator
 from policy_expr.adapters.iphone.executor_constants import (
     DAEMON_SCROLL_AMOUNT,
     SCROLL_DELTA,

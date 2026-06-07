@@ -83,8 +83,8 @@ class PageEntry:
 
 def collect(app: str, depth: int = 0, sample: int = 0) -> None:
     from policy_expr.adapters.iphone.perception import LivePhoneSession
-    from policy_expr.recon.page_parser import PageParser
-    from policy_expr.recon.page_compare import PageComparator
+    from policy_expr.adapters.iphone.recon.page_parser import PageParser
+    from policy_expr.adapters.iphone.recon.page_compare import PageComparator
     from policy_expr.adapters.iphone.executor import logical_xy
 
     out_dir = LOG_ROOT / app
@@ -97,7 +97,7 @@ def collect(app: str, depth: int = 0, sample: int = 0) -> None:
 
     # Preload GUIClip model
     print("预加载 GUIClip 模型...")
-    from policy_expr.recon.back_nav import _get_identity_comp
+    from policy_expr.adapters.iphone.recon.back_nav import _get_identity_comp
     import io
     from PIL import Image
     dummy = io.BytesIO()
@@ -258,7 +258,7 @@ def collect(app: str, depth: int = 0, sample: int = 0) -> None:
 
 
 def _back_to(phone, nav_stack: list, target_name: str = "", path: list[str] | None = None) -> bool:
-    from policy_expr.recon.back_nav import return_to_initial, manual_recover
+    from policy_expr.adapters.iphone.recon.back_nav import return_to_initial, manual_recover
 
     ok, _ = return_to_initial(
         phone.client, phone.screenshot, nav_stack,

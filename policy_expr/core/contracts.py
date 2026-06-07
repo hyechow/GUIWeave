@@ -60,10 +60,10 @@ if TYPE_CHECKING:
     # Imported for typing only. These live in modules that (transitively) pull
     # in heavy / adapter-coupled deps, so we never import them at runtime to
     # keep `contracts` a pure leaf seam with no cycles.
-    from policy_expr.recon.cascade_matcher import PageEmbedding
-    from policy_expr.recon.page_identity import IdentityResult
-    from policy_expr.recon.page_parser import PageKnowledge
-    from policy_expr.recon.utils import ScreenMatchDecision
+    from policy_expr.adapters.iphone.recon.cascade_matcher import PageEmbedding
+    from policy_expr.adapters.iphone.recon.page_identity import IdentityResult
+    from policy_expr.adapters.iphone.recon.page_parser import PageKnowledge
+    from policy_expr.adapters.iphone.recon.utils import ScreenMatchDecision
 
 
 # ===========================================================================

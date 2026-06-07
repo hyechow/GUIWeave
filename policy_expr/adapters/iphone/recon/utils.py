@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from policy_expr.recon.page_parser import ParsedPage
+from policy_expr.adapters.iphone.recon.page_parser import ParsedPage
 
 
 # ── Exceptions ────────────────────────────────────────────

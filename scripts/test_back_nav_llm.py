@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from PIL import Image, ImageDraw, ImageFont
 
-from policy_expr.recon.back_nav import infer_back_action, _parse_page_elements, _format_elements_context
+from policy_expr.adapters.iphone.recon.back_nav import infer_back_action, _parse_page_elements, _format_elements_context
 
 
 def annotate_tap(png: bytes, x: float, y: float, label: str, color: tuple) -> bytes:

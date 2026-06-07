@@ -9,7 +9,7 @@ from PIL import Image
 
 import numpy as np
 
-from policy_expr.recon.icon_detector import IconBbox, IconDetector
+from policy_expr.adapters.iphone.recon.icon_detector import IconBbox, IconDetector
 
 
 def _content_top(img: Image.Image, threshold: int = 30) -> int:

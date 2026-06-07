@@ -17,7 +17,7 @@ from pathlib import Path
 
 from policy_expr.adapters.iphone.executor import is_valid_tap, logical_xy
 from policy_expr.policies.structured_output import StructuredOutputPolicy
-from policy_expr.recon.back_nav import (
+from policy_expr.adapters.iphone.recon.back_nav import (
     BACK_SETTLE_SECONDS,
     _PIXEL_DIFF_THRESHOLD,
     _get_identity_comp,

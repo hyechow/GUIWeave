@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from policy_expr.recon.cascade_matcher import CascadeMatcher, PageEmbedding, PageFingerprint
+from policy_expr.adapters.iphone.recon.cascade_matcher import CascadeMatcher, PageEmbedding, PageFingerprint
 
 # Form groups: pages (A/B) are full standalone screens; overlays (C/D/E/F/G) sit on top.
 # Visual shortcut is filtered by group so an overlay never short-circuits against a page.

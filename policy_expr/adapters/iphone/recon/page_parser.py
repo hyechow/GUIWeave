@@ -341,7 +341,7 @@ def _get_capsule_state():
     if _capsule_state is None:
         import json as _json
         import numpy as _np
-        from policy_expr.recon.cascade_matcher import PageEmbedding, get_matcher
+        from policy_expr.adapters.iphone.recon.cascade_matcher import PageEmbedding, get_matcher
 
         if not _CAPSULE_REFS_PATH.exists() or not _CAPSULE_EMBS_PATH.exists():
             return None
@@ -409,7 +409,7 @@ class PageParser:
 
         from PIL import Image
 
-        from policy_expr.recon.icon_detector import IconDetector
+        from policy_expr.adapters.iphone.recon.icon_detector import IconDetector
 
         page = self.parse(png_bytes)
 
@@ -425,7 +425,7 @@ class PageParser:
 
         from PIL import Image
 
-        from policy_expr.recon.icon_detector import IconDetector
+        from policy_expr.adapters.iphone.recon.icon_detector import IconDetector
 
         page = self.parse(png_bytes)
 
