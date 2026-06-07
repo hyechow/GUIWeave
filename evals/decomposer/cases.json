@@ -113,5 +113,17 @@
       "no_milestone_contains": ["汇总", "计算"]
     },
     "note": "「算算花了多少钱」的求和是对已采集数据的纯运算，由输出环节做，不该单独建子目标。曾多分解出「汇总计算总支出金额」(20260530_161048)→agent 跑去翻微信「收支统计→月账单」白费3轮，还读到整月而非目标周的错范围数(¥17473.53)，所幸最终输出仍用采集数据(-1014.50)。采集(scroll_until_boundary)应是最后一个操作子目标。"
+  },
+  {
+    "label": "账单页起始+查花多少钱-必须滚动采集而非读屏上统计摘要",
+    "screenshot": "evals/decomposer/screenshots/wechat_bill_page_summary.png",
+    "goal": "在微信中查看2026-05-21至2026-05-28的支付金额",
+    "expected": {
+      "any_milestone_kind": ["collection"],
+      "any_milestone_strategy": ["scroll_until_boundary"],
+      "no_milestone_contains": ["收支统计", "支出统计"]
+    },
+    "assertions": ["filter_before_loop"],
+    "note": "源 20260606_223516 turn2：起始画面是带「支出¥X 收入¥Y」摘要的账单列表页，decomposer 被屏上摘要诱导，把终点做成 action『确认筛选并读取支出统计』、漏掉 collection 滚动采集 → 只筛选不采集、且读到错范围(整月)的统计。规则11 已禁止用 APP 收支统计页，但对『摘要已显示在起始屏』不鲁棒。分析类『花多少钱』必须以 kind=collection + scroll_until_boundary 采集明细收尾，绝不能把屏上统计摘要当终点/验收。"
   }
 ]
