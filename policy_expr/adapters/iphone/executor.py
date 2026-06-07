@@ -175,6 +175,13 @@ class ActionExecutor:
 
     def execute(self, decision: ActionDecision, app_name: str = "", png_bytes: bytes | None = None, is_home_screen: bool = False) -> bool:
         action = decision.action
+        # iPhone status-bar / home-indicator dead-zone clamp: keep the tap anchor
+        # in the tappable band [200, 850] (normalized). Moved here from the shared
+        # Action schema (S3) so it stays an iPhone-only concern — other platforms
+        # (browser) must NOT inherit this phone-screen band. Mirrors the old schema
+        # condition exactly (main y only, not drag's to_y).
+        if action.action_type in {"tap", "type", "scroll", "drag"} and action.y is not None:
+            action.y = max(200.0, min(float(action.y), 850.0))
         print(f"\n动作: [{action.action_type}] {action.description}")
 
         hint = action.description or ""

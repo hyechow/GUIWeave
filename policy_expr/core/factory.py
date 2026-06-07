@@ -70,4 +70,8 @@ def build_platform(
         from policy_expr.adapters.iphone.factory import build_iphone_bundle
 
         return build_iphone_bundle(backend=backend, **kwargs)
-    raise ValueError(f"unknown platform {name!r}; registered: iphone")
+    if name == "browser":
+        from policy_expr.adapters.browser.factory import build_browser_bundle
+
+        return build_browser_bundle(backend=backend, **kwargs)
+    raise ValueError(f"unknown platform {name!r}; registered: iphone, browser")

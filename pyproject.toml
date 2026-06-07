@@ -32,6 +32,7 @@ dependencies = [
     "onnxruntime",
     "onnx",
     "onnxslim",
+    "playwright>=1.60.0",
 ]
 
 [dependency-groups]

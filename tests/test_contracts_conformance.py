@@ -210,6 +210,116 @@ def test_build_platform_unknown_raises():
 
 
 # --------------------------------------------------------------------------- #
+# Browser adapter (VISION-ONLY): the new platform must conform to the SAME       #
+# neutral Protocols as iphone, with NO real Chrome connection in any test        #
+# (built via __new__, exactly like the iphone conformance above).                #
+# --------------------------------------------------------------------------- #
+def _import_browser():
+    from policy_expr.adapters.browser.device import PlaywrightDevice
+    from policy_expr.adapters.browser.perception import (
+        BrowserPerception,
+        BrowserSession,
+    )
+    from policy_expr.adapters.browser.policies import BrowserActionPolicy
+
+    return PlaywrightDevice, BrowserSession, BrowserPerception, BrowserActionPolicy
+
+
+def test_playwright_device_is_a_scrollable_device():
+    PlaywrightDevice, *_ = _import_browser()
+    dev = _blank(PlaywrightDevice)
+    assert isinstance(dev, Device)
+    assert isinstance(dev, ScrollableDevice)
+
+
+def test_playwright_device_is_not_zero_preempt_capability():
+    # The class carries zero_preempt = False as a runtime flag, so core's
+    # getattr(client, "zero_preempt", False) probe correctly treats the browser
+    # as NON zero-preempt (it drives the user's real Chrome).
+    PlaywrightDevice, *_ = _import_browser()
+    dev = _blank(PlaywrightDevice)
+    assert getattr(dev, "zero_preempt", False) is False
+
+
+def test_browser_session_and_perception_conform():
+    _, BrowserSession, BrowserPerception, _ = _import_browser()
+    assert isinstance(_blank(BrowserSession), PerceptionSession)
+    assert isinstance(_blank(BrowserPerception), Perception)
+
+
+def test_browser_action_policy_conforms():
+    *_, BrowserActionPolicy = _import_browser()
+    assert isinstance(_blank(BrowserActionPolicy), ActionPolicy)
+    assert BrowserActionPolicy.name == "browser_vision"
+
+
+def test_build_platform_returns_browser_bundle():
+    from policy_expr.core.factory import build_platform, PlatformBundle
+
+    bundle = build_platform("browser")
+    assert isinstance(bundle, PlatformBundle)
+    assert bundle.platform == "browser"
+    assert bundle.default_action_policy == "browser_vision"
+    assert bundle.default_supervisor == "milestone"
+    assert bundle.action_policy_choices == ("browser_vision",)
+    assert bundle.supervisor_choices == ("milestone",)
+    for attr in (
+        "open_session",
+        "make_executor",
+        "make_perception",
+        "make_action_policy",
+        "make_supervisor",
+        "make_status_reporter",
+        "make_scroll_probe",
+        "apply_scroll_profile",
+        "make_stitch_accumulator",
+        "robust_shift",
+        "gray_u8",
+    ):
+        assert callable(getattr(bundle, attr)), attr
+    # Browser has no HUD yet; status reporter is always None.
+    assert bundle.make_status_reporter(True) is None
+    # apply_scroll_profile is the identity pass-through.
+    assert bundle.apply_scroll_profile("ACT", "PROF") == "ACT"
+
+
+def test_browser_scroll_collect_fields_are_stubs():
+    # The iphone-shaped scroll/stitch helpers are only hit in the runner's
+    # collection branch, which the browser MVP does not support. They must raise
+    # a clear NotImplementedError rather than silently returning bad objects.
+    import pytest
+
+    from policy_expr.core.factory import build_platform
+
+    bundle = build_platform("browser")
+    with pytest.raises(NotImplementedError):
+        bundle.make_scroll_probe(None, None, None)
+    with pytest.raises(NotImplementedError):
+        bundle.make_stitch_accumulator()
+    with pytest.raises(NotImplementedError):
+        bundle.robust_shift()
+    with pytest.raises(NotImplementedError):
+        bundle.gray_u8(b"")
+
+
+def test_core_factory_stays_leaf_without_browser_adapter():
+    # Importing the neutral dispatcher must pull in NEITHER any adapter NOR
+    # playwright — the browser bundle is reached only lazily inside build_platform.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, policy_expr.core.factory; "
+        "leaked = [m for m in sys.modules "
+        "if m.startswith('policy_expr.adapters') "
+        "or m == 'playwright' or m.startswith('playwright.')]; "
+        "assert not leaked, leaked"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+# --------------------------------------------------------------------------- #
 # core/factory (S3, Step 4): the orchestration entrypoints must now depend on   #
 # the platform FACTORY, not the iphone adapter. Importing runner / chat_cli      #
 # must pull in NO policy_expr.adapters.* module at module top — adapters are      #

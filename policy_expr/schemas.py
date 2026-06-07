@@ -90,9 +90,10 @@ class Action(BaseModel):
                     data["description"] = f"执行{action_type}并输入{text}"
                 else:
                     data["description"] = f"执行{action_type}操作"
-            # Clamp user-visible anchor coordinates to avoid edge dead zones.
-            if data.get("action_type") in {"tap", "type", "scroll", "drag"} and "y" in data and data["y"] is not None:
-                data["y"] = max(200, min(float(data["y"]), 850))
+            # NOTE: the iPhone status-bar / home-indicator dead-zone clamp that
+            # used to live here moved into the iphone executor (S3) — it is a
+            # phone-screen concern and must NOT apply to other platforms (it was
+            # mis-clicking the top/bottom of web pages on the browser adapter).
         return data
 
     action_type: ActionType = Field(
