@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from policy_expr.schemas import Observation
-from policy_expr.policies.structured_output import StructuredOutputPolicy
+from policy_expr.adapters.iphone.policies.structured_output import StructuredOutputPolicy
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

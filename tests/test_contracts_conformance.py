@@ -29,8 +29,8 @@ from policy_expr.core.contracts import (
 
 from policy_expr.adapters.iphone.client.sync_mcp import SyncMCPClient
 from policy_expr.adapters.iphone.client.mirror_daemon import MirrorDaemonClient
-from policy_expr.policies.structured_output import StructuredOutputPolicy
-from policy_expr.supervisor.simple import SimpleSupervisorPolicy
+from policy_expr.adapters.iphone.policies.structured_output import StructuredOutputPolicy
+from policy_expr.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy
 from policy_expr.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from policy_expr.adapters.iphone.perception import LivePhoneSession, LivePerception
 from policy_expr.adapters.iphone.recon.page_parser import PageParser

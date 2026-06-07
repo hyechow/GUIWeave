@@ -141,7 +141,7 @@ def test_magnitude_calibration(phone: LivePhoneSession, executor: ActionExecutor
 
     Run with: uv run python scripts/test_drag.py --start 2
     """
-    from policy_expr.policies.structured_output import _PICKER_ROW_NORM
+    from policy_expr.adapters.iphone.policies.structured_output import _PICKER_ROW_NORM
 
     print("\n=== Level 2b: picker row calibration ===")
     print(f"  _PICKER_ROW_NORM = {_PICKER_ROW_NORM}")

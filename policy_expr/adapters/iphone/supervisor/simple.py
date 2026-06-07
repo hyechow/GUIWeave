@@ -112,7 +112,7 @@ def _format_history(history: list[PolicyTurn]) -> str:
     return "\n".join(lines)
 
 
-# ── CLI entry point: uv run python -m policy_expr.supervisor.simple "goal" ──
+# ── CLI entry point: uv run python -m policy_expr.adapters.iphone.supervisor.simple "goal" ──
 
 
 if __name__ == "__main__":
@@ -130,7 +130,7 @@ if __name__ == "__main__":
         png_bytes = phone.screenshot()
         observation = Observation(png_bytes=png_bytes, source="live")
 
-        log_dir = Path(__file__).parent.parent.parent / "logs" / "policy_expr" / "test"
+        log_dir = Path(__file__).resolve().parents[4] / "logs" / "policy_expr" / "test"
         log_dir.mkdir(parents=True, exist_ok=True)
         shot_path = log_dir / "screenshot.png"
         shot_path.write_bytes(png_bytes)

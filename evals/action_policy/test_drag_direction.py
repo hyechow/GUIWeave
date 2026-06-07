@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from policy_expr.schemas import Action, ActionDecision
-from policy_expr.policies.structured_output import _normalize_drag_direction, _force_picker_column
+from policy_expr.adapters.iphone.policies.structured_output import _normalize_drag_direction, _force_picker_column
 from policy_expr.adapters.iphone.gesture import drag_gesture
 
 passed = 0

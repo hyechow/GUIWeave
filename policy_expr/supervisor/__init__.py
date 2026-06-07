@@ -8,6 +8,6 @@ def __getattr__(name: str):
         from policy_expr.supervisor.milestone import MilestoneSupervisorPolicy
         return MilestoneSupervisorPolicy
     if name == "SimpleSupervisorPolicy":
-        from policy_expr.supervisor.simple import SimpleSupervisorPolicy
+        from policy_expr.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy
         return SimpleSupervisorPolicy
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
