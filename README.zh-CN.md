@@ -201,7 +201,7 @@ AGENT_MODE=standard bin/runner "打开微信"
 脚本化或编程调用：
 
 ```bash
-uv run python policy_expr/runner.py "打开微信并进入通讯录" \
+uv run python -m policy_expr.core.runner "打开微信并进入通讯录" \
   --mode agent-loop --supervisor milestone --auto-continue --max-turns 15 --hud
 ```
 
@@ -236,13 +236,13 @@ python scripts/report.py runner --run logs/policy_expr/agent-loop/20260528_10475
 
 ```bash
 # 探测应用并生成页面知识库
-uv run python -m policy_expr.recon_cli --app 微信 --depth 2
+uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --depth 2
 
 # 手动导航到新页面后，追加到已有知识库
-uv run python -m policy_expr.recon_cli --app 微信 --mode add --depth 1
+uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode add --depth 1
 
 # 更新指定页面的知识
-uv run python -m policy_expr.recon_cli --app 微信 --mode update \
+uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode update \
   --target "微信主界面，显示聊天列表和底部导航栏"
 ```
 

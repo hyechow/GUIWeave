@@ -205,7 +205,7 @@ AGENT_MODE=standard bin/runner "open WeChat"
 For scripted or programmatic use:
 
 ```bash
-uv run python policy_expr/runner.py "open WeChat and go to contacts" \
+uv run python -m policy_expr.core.runner "open WeChat and go to contacts" \
   --mode agent-loop --supervisor milestone --auto-continue --max-turns 15 --hud
 ```
 
@@ -242,13 +242,13 @@ Generate a reusable knowledge base for an app.
 
 ```bash
 # Explore an app and generate page knowledge
-uv run python -m policy_expr.recon_cli --app 微信 --depth 2
+uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --depth 2
 
 # Manually navigate to a new page, then append it to an existing knowledge base
-uv run python -m policy_expr.recon_cli --app 微信 --mode add --depth 1
+uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode add --depth 1
 
 # Update knowledge for a specific page
-uv run python -m policy_expr.recon_cli --app 微信 --mode update \
+uv run python -m policy_expr.adapters.iphone.recon_cli --app 微信 --mode update \
   --target "WeChat main screen, showing chat list and bottom navigation"
 ```
 
