@@ -8,11 +8,42 @@ Given a natural-language goal, the agent repeatedly observes the current screen,
 
 **iphone-use can drive long-horizon mobile workflows with a multimodal small model such as Qwen3.5-35B-A3B, including cross-app tasks, multi-step navigation, and explicit completion checks. It is designed to work with private or self-hosted OpenAI-compatible model providers, without depending on closed-source frontier models.**
 
+## Highlights
+
+- **Milestone-supervised GUI agent**: a decompose -> act -> verify/replan loop, plus app reconnaissance and a page knowledge base, reliably running long-horizon mobile tasks on a small model like Qwen3.5-35B. At this stage input was **preemptive** — it drove the Mac's mouse and keyboard.
+- **Zero-preempt input**: actions go straight to the mirror window, never grabbing your mouse, keyboard, or foreground focus, so the agent works the phone in the background while you keep using your computer.
+
 ## Demos
 
-All demo videos below are played at 2x speed. The UI and agent traces are in Chinese because the demos use real Chinese apps, but the task patterns are general mobile GUI workflows.
+The UI and agent traces are in Chinese because the demos use real Chinese apps, but the task patterns are general mobile GUI workflows. Each clip notes its own playback speed.
 
 ### Chat Mode
+
+**Information workflow**: read and summarize information inside an app, such as bills, order history, or message threads.
+
+**Zero-preempt input** is an important feature of this project. Most GUI / computer-use agents are *preemptive* — they take over your mouse and keyboard, so you can't use the computer while they run. Here, actions are delivered **directly to the mirror window**, without grabbing your cursor or foreground focus, so the agent can work the phone in the background while you keep using your computer.
+
+Below is the same WeChat bill query, run both ways:
+
+Zero-preempt:
+
+> "How much did I spend via WeChat Pay from the 21st to the 28th last month?"
+>
+> Set a custom date range in the picker -> scroll-collect the matching transactions -> summarize the spending. The cursor never leaves your hands.
+
+https://github.com/user-attachments/assets/6805dd78-fd8c-4b23-9f85-4409851882e7
+
+*This demo runs at real-time speed (1x, not accelerated).*
+
+Preemptive:
+
+> "How much did I spend via WeChat Pay last week?"
+>
+> Open the payment bill page -> filter/read last week's transactions -> summarize the spending.
+
+https://github.com/user-attachments/assets/2deb4026-97e9-4689-bfa7-30472544d3df
+
+*This demo is played at 2x speed.*
 
 **Action workflow**: execute concrete actions such as sending a message, placing an order, or changing a setting.
 
@@ -22,19 +53,15 @@ All demo videos below are played at 2x speed. The UI and agent traces are in Chi
 
 https://github.com/user-attachments/assets/3b10c74a-99ae-4bbb-a983-767857b62136
 
-**Information workflow**: read and summarize information inside an app, such as bills, order history, or message threads.
-
-> "How much did I spend via WeChat Pay last week?"
->
-> Open the payment bill page -> filter/read last week's transactions -> summarize the spending.
-
-https://github.com/user-attachments/assets/2deb4026-97e9-4689-bfa7-30472544d3df
+*This demo is played at 2x speed.*
 
 ### Recon Mode
 
 > Automatically explore the page structure of a marketplace app and generate a reusable page knowledge base.
 
 https://github.com/user-attachments/assets/183b80fd-ba0f-4f14-b599-b7ef3efc4a79
+
+*This demo is played at 2x speed.*
 
 ## Architecture
 
