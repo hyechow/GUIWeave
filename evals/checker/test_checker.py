@@ -82,6 +82,7 @@ def test_checker() -> None:
                     milestone, observation, history,
                     app_name=m["app_name"],
                     task_type=m.get("task_type", "action"),
+                    constraints=c.get("constraints", []),
                 )
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")
@@ -101,6 +102,31 @@ def test_checker() -> None:
         if "reason_contains" in expected:
             if not any(kw in result.reason for kw in expected["reason_contains"]):
                 details.append(f'reason should contain one of {expected["reason_contains"]}, got: {result.reason[:100]}')
+        if "page_identity_contains" in expected:
+            if not any(kw in result.page_identity for kw in expected["page_identity_contains"]):
+                details.append(f'page_identity should contain one of {expected["page_identity_contains"]}, got: {result.page_identity!r}')
+        if "page_identity_not_contains" in expected:
+            for kw in expected["page_identity_not_contains"]:
+                if kw in result.page_identity:
+                    details.append(f'page_identity should NOT contain {kw!r} (页面身份误读), got: {result.page_identity!r}')
+        if "missing_evidence_contains" in expected:
+            ev_text = " ".join(result.missing_evidence or [])
+            for kw in expected["missing_evidence_contains"]:
+                if kw not in ev_text:
+                    details.append(f"missing_evidence should contain {kw!r}, got: {result.missing_evidence}")
+        if "missing_evidence_not_contains" in expected:
+            ev_text = " ".join(result.missing_evidence or [])
+            for kw in expected["missing_evidence_not_contains"]:
+                if kw in ev_text:
+                    details.append(f"missing_evidence should NOT contain {kw!r} (read lagging box?), got: {result.missing_evidence}")
+        if "reason_not_contains" in expected:
+            for kw in expected["reason_not_contains"]:
+                if kw in result.reason:
+                    details.append(f"reason should NOT contain {kw!r}, got: {result.reason[:120]}")
+        if "output_not_contains" in expected:
+            for kw in expected["output_not_contains"]:
+                if kw in output:
+                    details.append(f"output should NOT contain {kw!r} (意外的重试/守卫触发)")
 
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")

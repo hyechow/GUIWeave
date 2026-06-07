@@ -12,6 +12,14 @@ from langchain_openai import ChatOpenAI
 from policy_expr.config import resolve_llm_config
 
 
+# 分析类任务采集为空时的兜底回复：固定文案、不调 LLM，杜绝凭空编造数字。
+_NO_DATA_REPLY = (
+    "抱歉，本次没能采集到可用于回答的数据，无法给出准确结果。\n\n"
+    "可能是目标页面的明细列表未成功加载，或未滚动采集到内容。建议您直接在对应 App 中"
+    "手动查看，或让我重试一次。"
+)
+
+
 _ACTION_SYSTEM = """\
 你是 iPhone 自动化任务的最终结果总结助手。
 你会收到一次策略运行的完整 context，包括用户目标、停止原因、每轮动作和执行状态。
@@ -79,6 +87,12 @@ def generate_reply(
         messages = _analysis_messages(goal, result, content_notes, collection_context)
     elif session is not None:
         messages = _chat_messages(goal, result, session, non_action_reason)
+    elif (result or {}).get("task_type") == "analysis":
+        # 分析类任务却没采到任何数据（content_notes 为空）：绝不能落到动作模板凭空作答——
+        # 那会编造金额/统计（实测：账单列表被零采集判完成，却回「共花费 456.80 元」，比屏上
+        # 可见部分的和还小）。如实告知未采集到数据，不调用 LLM、不给具体数字。
+        return _NO_DATA_REPLY
+
     else:
         messages = _action_messages(goal, result or {})
 
@@ -189,6 +203,11 @@ def _infer_goal_period(
     content_notes: list[str],
     collection_scope: dict | None = None,
 ) -> tuple[str, str, str] | None:
+    # Check for pre-resolved ISO date range in goal (e.g. "2026-05-18至2026-05-24")
+    iso_match = re.search(r"(\d{4}-\d{2}-\d{2})至(\d{4}-\d{2}-\d{2})", goal)
+    if iso_match:
+        return iso_match.group(1), iso_match.group(2), "goal 中已解析的日期范围"
+
     if "上周" not in goal:
         return None
 

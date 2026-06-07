@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import argparse
-import re
+import json
+import os
 import sys
 import time
 import traceback
@@ -28,17 +28,10 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.tree import Tree
 
-from policy_expr.executor import ActionExecutor
-from policy_expr.perception import LivePerception, LivePhoneSession
-from policy_expr.reader import ContentReader, annotate_content_note, build_reader_instruction
-from policy_expr.schemas import PolicyContext, PolicyTurn
 from policy_expr.self_learning.app_summary import auto_discover_knowledge
 from policy_expr.supervisor import MilestoneSupervisorPolicy, SimpleSupervisorPolicy
-from policy_expr.supervisor.base import SupervisorPolicy
-from policy_expr.visualize import print_decision
 from policy_expr.policies import StructuredOutputPolicy
-from policy_expr.policies.base import ActionPolicy
-from policy_expr.runner import _TeeStream, build_policy, build_supervisor
+from policy_expr.runner import _TeeStream, build_policy, build_supervisor, run_agent_loop
 from policy_expr.chat_session import (
     RouterResult,
     generate_reply,
@@ -79,149 +72,54 @@ def _silent_stdio(log_dir: Path) -> Iterator[None]:
         redirect_stdout(_SilentTeeStream(sys.stdout, stdout_file)),
         redirect_stderr(_SilentTeeStream(sys.stderr, stderr_file)),
     ):
+        # redirect_stderr only swaps Python's sys.stderr; native/Cocoa code (e.g. the
+        # AppKit "IMKCFRunLoopWakeUpReliable" warning) writes straight to OS fd 2 and
+        # would leak onto the Rich UI. Redirect fd 2 to the log too. fd 1 is left alone
+        # so the spinner (Rich console, captured original stdout) still renders.
+        saved_fd2 = os.dup(2)
         try:
+            os.dup2(stderr_file.fileno(), 2)
             yield
         except Exception:
             traceback.print_exc()
             raise
-
-
-def _save_context(path: Path, context: PolicyContext) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
-
-
-def _ensure_note_hashes(context: PolicyContext) -> None:
-    if context.content_notes and not context.content_note_hashes:
-        context.content_note_hashes = [
-            re.sub(r"\s+", "", note.strip().lower())[:64] for note in context.content_notes
-        ]
-
-
-def _note_hash(note: str) -> str:
-    import hashlib
-    normalized = re.sub(r"\s+", "", note.strip().lower())
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        finally:
+            os.dup2(saved_fd2, 2)
+            os.close(saved_fd2)
 
 
 def run_chat_turn(
     goal: str,
-    action_policy: ActionPolicy,
-    supervisor: SupervisorPolicy,
+    action_policy,
+    supervisor,
     log_dir: Path,
     max_turns: int = 20,
     live_state: dict | None = None,
+    backend: str = "daemon",
+    on_turn: object = None,
+    raw_input: str | None = None,
+    router: dict | None = None,
 ) -> dict:
-    context = PolicyContext(
-        goal=goal,
-        supervisor_policy_name=supervisor.name,
-        action_policy_name=action_policy.name,
-    )
-    context_path = log_dir / "context.json"
-    _ensure_note_hashes(context)
-    _save_context(context_path, context)
-
-    reader = ContentReader()
-    noop_count = 0
-
+    """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     from policy_expr.hud import AgentHUD
 
-    with _silent_stdio(log_dir), LivePhoneSession() as phone, AgentHUD() as hud:
-        executor = ActionExecutor(phone)
-
-        while True:
-            turn_no = len(context.turns) + 1
-            if turn_no > max_turns:
-                return _make_result(context, f"达到最大轮数 {max_turns}")
-
-            perception = LivePerception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
-            observation = perception.observe()
-
-            hud.update(f"Turn {turn_no} | 思考中…")
-            if live_state:
-                live_state["current"] = "观察屏幕…"
-
-            sv_step = supervisor.step(observation, context.goal, context.turns)
-            hud.update(f"Turn {turn_no} | {sv_step.summary}")
-
-            if live_state:
-                live_state["current"] = sv_step.summary
-
-            if hasattr(supervisor, "task_type") and context.task_type is None:
-                context.task_type = supervisor.task_type
-            if sv_step.collection_scope and sv_step.collection_scope != context.collection_scope:
-                context.collection_scope = sv_step.collection_scope
-
-            read_note_hash = None
-
-            if sv_step.read_instruction and sv_step.allow_read:
-                reader_instruction = build_reader_instruction(goal, sv_step)
-                note = reader.read(observation.png_bytes, reader_instruction)
-                if note and note != "无相关内容":
-                    note = annotate_content_note(
-                        note, turn_no=turn_no, sv_step=sv_step,
-                        collection_scope=context.collection_scope,
-                    )
-                    read_note_hash = _note_hash(note)
-                    if read_note_hash not in context.content_note_hashes:
-                        context.content_note_hashes.append(read_note_hash)
-                        context.content_notes.append(note)
-
-            action_decision = None
-            executed = False
-
-            if sv_step.should_act:
-                if live_state:
-                    live_state["current"] = sv_step.instruction or "执行动作…"
-
-                if sv_step.preformed_action:
-                    action_decision = sv_step.preformed_action
-                else:
-                    action_decision = action_policy.decide(observation, sv_step.instruction)
-                    print_decision(
-                        action_decision, observation.png_bytes,
-                        log_dir / f"structured_output_result_turn_{turn_no}.png",
-                    )
-                if action_decision.not_found_reason:
-                    executed = False
-                else:
-                    executed = executor.execute(action_decision, app_name=sv_step.app_name or "")
-
-            if live_state and executed:
-                live_state["current"] = "等待下一轮…"
-
-            turn = PolicyTurn(
-                index=turn_no,
-                observation_source=observation.source,
-                supervisor=sv_step,
-                action_decision=action_decision,
-                executed=executed,
-            )
-            context.turns.append(turn)
-            _save_context(context_path, context)
-
-            if sv_step.stop or sv_step.goal_completed:
-                reason = sv_step.stop_reason or (
-                    "目标已达成" if sv_step.goal_completed else "停止"
-                )
-                return _make_result(context, reason)
-
-            if not executed and sv_step.should_act:
-                if action_decision and action_decision.not_found_reason:
-                    noop_count += 1
-                    if noop_count >= 3:
-                        return _make_result(context, f"连续 {noop_count} 轮无动作")
-                    continue
-                return _make_result(context, "动作未执行")
-
-            if not sv_step.should_act:
-                noop_count += 1
-                if noop_count >= 3:
-                    return _make_result(context, f"连续 {noop_count} 轮无动作")
-                continue
-
-            noop_count = 0
-            time.sleep(1.5)
+    context_path = log_dir / "context.json"
+    with _silent_stdio(log_dir), AgentHUD() as hud:
+        return run_agent_loop(
+            goal, action_policy, supervisor,
+            input_context_path=None,
+            log_dir=log_dir,
+            context_path=context_path,
+            max_turns=max_turns,
+            auto_continue=True,
+            hud=hud,
+            live_state=live_state,
+            silent=True,
+            backend=backend,
+            on_turn=on_turn,
+            raw_input=raw_input,
+            router=router,
+        )
 
 
 _ACTION_STYLE = {
@@ -230,40 +128,6 @@ _ACTION_STYLE = {
     "scroll": "bright_magenta",
     "home": "bright_yellow",
 }
-
-
-def _make_result(context: PolicyContext, stop_reason: str) -> dict:
-    last_summary = ""
-    if context.turns:
-        last_summary = context.turns[-1].supervisor.summary
-
-    turns_detail = []
-    for t in context.turns:
-        entry: dict = {"no": t.index, "summary": t.supervisor.summary, "executed": t.executed}
-        if t.action_decision:
-            a = t.action_decision.action
-            entry["action_type"] = a.action_type
-            entry["action_desc"] = a.description
-            if t.action_decision.not_found_reason:
-                entry["not_found"] = t.action_decision.not_found_reason
-        turns_detail.append(entry)
-
-    pre_existing = any(
-        t.supervisor.goal_completed and t.supervisor.pre_existing
-        for t in context.turns
-    )
-
-    return {
-        "result_summary": last_summary or stop_reason,
-        "stop_reason": stop_reason,
-        "goal_completed": any(t.supervisor.goal_completed for t in context.turns),
-        "turns_count": len(context.turns),
-        "turns_detail": turns_detail,
-        "content_notes": context.content_notes or None,
-        "collection_scope": context.collection_scope.model_dump(exclude_none=True)
-        if context.collection_scope else None,
-        "pre_existing": pre_existing,
-    }
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────
@@ -286,7 +150,8 @@ def _print_header() -> None:
     console.print("  [bold bright_cyan]iPhone GUI Agent[/]  [dim]─  自动操控 iPhone 的智能助手[/]")
     console.print("  [dim]操作各类 App · 发消息 · 点外卖 · 搜索内容 · 更多…[/]")
     console.print()
-    console.print("  [dim]/exit  退出  ·  /clear  清空对话历史  ·  /supervisor  切换策略引擎[/]")
+    console.print("  [dim]/exit  退出  ·  /clear  清空历史  ·  /supervisor  切换策略引擎[/]")
+    console.print("  [dim]/mode [silent|standard]  切换操作模式  ·  /model [qwen35|qwen36]  切换模型  ·  /max-turns <n>  最大轮数[/]")
     console.print()
 
 
@@ -322,6 +187,20 @@ def _print_reply(text: str) -> None:
     console.print()
 
 
+def _turn_line(t: dict) -> str:
+    """Format a single turn entry as a Rich markup string."""
+    atype = t.get("action_type")
+    no = t.get("no", "?")
+    if t.get("not_found"):
+        return f"  [dim]Turn {no}[/dim]  [yellow]{t['not_found']}[/yellow]"
+    if atype and t.get("executed"):
+        style = _ACTION_STYLE.get(atype, "white")
+        return f"  [dim]Turn {no}[/dim]  [{style}]{atype}[/]  [dim]{t.get('action_desc', '')}[/dim]"
+    if atype:
+        return f"  [dim]Turn {no}[/dim]  [dim]{atype} (未执行)[/dim]"
+    return f"  [dim]Turn {no}[/dim]  [dim]{t.get('summary', '')}[/dim]"
+
+
 def _print_result(result: dict) -> None:
     ok = result["goal_completed"]
     color = "green" if ok else "red"
@@ -329,27 +208,9 @@ def _print_result(result: dict) -> None:
     icon = "✓" if ok else "✗"
     label = "done" if ok else "failed"
 
-    tree = Tree(f"[bold {color}]{icon}  {result['result_summary']}[/bold {color}]")
-
-    for t in result.get("turns_detail", []):
-        atype = t.get("action_type")
-        if t.get("not_found"):
-            tree.add(
-                f"[dim]Turn {t['no']}[/dim]  [yellow]{t['not_found']}[/yellow]"
-            )
-        elif atype and t["executed"]:
-            style = _ACTION_STYLE.get(atype, "white")
-            tree.add(
-                f"[dim]Turn {t['no']}[/dim]  [{style}]{atype}[/] {t['action_desc']}"
-            )
-        elif atype and not t["executed"]:
-            tree.add(f"[dim]Turn {t['no']}[/dim]  [dim]{atype} (未执行)[/dim]")
-        else:
-            tree.add(f"[dim]Turn {t['no']}[/dim]  {t['summary']}")
-
-    turns = result["turns_count"]
-    if turns:
-        tree.add(f"[dim]{turns} turns[/dim]")
+    turns = result.get("turns_count", 0)
+    suffix = f"  [dim]{turns} turns[/dim]" if turns else ""
+    tree = Tree(f"[bold {color}]{icon}  {result['result_summary']}[/bold {color}]{suffix}")
 
     console.print()
     console.print(
@@ -367,13 +228,15 @@ def _print_result(result: dict) -> None:
 # ── Main loop ──────────────────────────────────────────────────────────────
 
 
-_COMMANDS = ["/exit", "/clear", "/supervisor", "/pref"]
+_COMMANDS = ["/exit", "/clear", "/supervisor", "/mode", "/mode silent", "/mode standard",
+             "/model", "/model qwen35", "/model qwen36", "/max-turns", "/pref"]
 _completer = WordCompleter(
     _COMMANDS,
     meta_dict={
         "/exit": "退出",
         "/clear": "清空历史",
         "/supervisor": "切换 supervisor (simple/milestone)",
+        "/max-turns": "设置单任务最大轮数 (/max-turns 30)",
         "/pref": "查看/设置偏好 (set 外卖 美团 / del 外卖)",
     },
 )
@@ -409,13 +272,14 @@ def _handle_pref(cmd: str, prefs: PreferenceManager) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Lucas 多轮对话")
-    parser.add_argument("--max-turns", type=int, default=20)
-    args = parser.parse_args()
-
     action_policy = build_policy(StructuredOutputPolicy.name)
     supervisor = build_supervisor(MilestoneSupervisorPolicy.name)
     prefs = PreferenceManager()
+    _MODE_BACKEND = {"silent": "daemon", "standard": "mirroir"}
+    _env_default = "standard" if os.environ.get("AGENT_MODE", "silent").lower() in ("mirroir", "standard") else "silent"
+    # /model switches the active profile at runtime (AGENT_MODEL sets the startup default)
+    mode: str = _env_default
+    max_turns: int = 25   # 默认 25；运行时用 /max-turns 调整
 
     SESSIONS_ROOT = ROOT / "data" / "sessions"
     _print_header()
@@ -464,6 +328,44 @@ def main() -> None:
                 supervisor = build_supervisor(SimpleSupervisorPolicy.name)
             console.print()
             console.print(f"  [dim]supervisor: {current} → {supervisor.name}[/dim]")
+            console.print()
+            continue
+
+        if user_msg == "/mode" or user_msg.startswith("/mode "):
+            parts = user_msg.split()
+            if len(parts) >= 2 and parts[1] in _MODE_BACKEND:
+                mode = parts[1]
+            else:
+                mode = "standard" if mode == "silent" else "silent"
+            console.print()
+            desc = "零抢占 mirror_daemon" if mode == "silent" else "mirroir-mcp 原版"
+            console.print(f"  [dim]mode: {mode}  ({desc})[/dim]")
+            console.print()
+            continue
+
+        if user_msg == "/model" or user_msg.startswith("/model "):
+            from policy_expr.config import switch_config, active_config_name, available_profiles
+            parts = user_msg.split()
+            _MODELS = available_profiles()
+            if len(parts) >= 2 and parts[1] in _MODELS:
+                model_name = parts[1]
+            else:
+                current = active_config_name()
+                model_name = next((m for m in _MODELS if m != current), current)
+            switch_config(model_name)
+            console.print()
+            console.print(f"  [dim]model profile: {model_name}[/dim]")
+            console.print()
+            continue
+
+        if user_msg == "/max-turns" or user_msg.startswith("/max-turns "):
+            parts = user_msg.split()
+            console.print()
+            if len(parts) >= 2 and parts[1].isdigit() and int(parts[1]) > 0:
+                max_turns = int(parts[1])
+                console.print(f"  [dim]max_turns: {max_turns}[/dim]")
+            else:
+                console.print(f"  [dim]当前 max_turns: {max_turns}  ·  用法: /max-turns <正整数>[/dim]")
             console.print()
             continue
 
@@ -542,9 +444,13 @@ def main() -> None:
         goal = router_result.goal or user_msg
         turn_supervisor = build_supervisor(supervisor.name)
 
-        knowledge_text, discovered_app = auto_discover_knowledge(goal)
-        if knowledge_text and hasattr(turn_supervisor, "set_app_knowledge"):
-            turn_supervisor.set_app_knowledge(knowledge_text, app_name=discovered_app)
+        knowledge = auto_discover_knowledge(goal)
+        if knowledge and hasattr(turn_supervisor, "set_app_knowledge"):
+            turn_supervisor.set_app_knowledge(
+                knowledge.navigation,
+                app_name=knowledge.app_name,
+                elements=knowledge.elements,
+            )
 
         log_dir = recorder.next_turn_dir()
 
@@ -556,13 +462,20 @@ def main() -> None:
             console=console,
             refresh_per_second=10,
             transient=False,
-        ):
+        ) as live:
+            def _on_turn(entry: dict) -> None:
+                live.console.print(_turn_line(entry))
+
             try:
                 result = run_chat_turn(
                     goal, action_policy, turn_supervisor, log_dir,
-                    max_turns=args.max_turns, live_state=live_state,
+                    max_turns=max_turns, live_state=live_state,
+                    backend=_MODE_BACKEND[mode],
+                    on_turn=_on_turn,
+                    raw_input=display_msg,
+                    router=router_result.model_dump(),
                 )
-            except SystemExit:
+            except (SystemExit, KeyboardInterrupt):
                 raise
             except Exception as exc:
                 result = {
@@ -595,6 +508,18 @@ def main() -> None:
             reply_state["current"] = f"回复生成完成  {reply_secs:.1f}s"
 
         _print_reply(reply)
+
+        # Persist the reply into the turn's context.json so its report (bin/report) shows it.
+        try:
+            ctx_path = log_dir / "context.json"
+            if ctx_path.exists():
+                ctx_data = json.loads(ctx_path.read_text(encoding="utf-8"))
+                ctx_data["output"] = reply
+                ctx_path.write_text(
+                    json.dumps(ctx_data, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+        except Exception:
+            pass
 
         entry = {
             "user_msg": display_msg,

@@ -13,15 +13,17 @@ uv run python evals/<module>/test_<module>.py
 | 模块 | Cases | 说明 |
 |------|------:|------|
 | router | 51 | 意图路由：将用户消息分类为手机操作/问答/闲聊，提取目标 APP 和 goal |
-| checker | 10 | 验收员：根据截图判断当前 milestone 是否完成（done/in_progress/loading） |
+| checker | 13 | 验收员：根据截图判断当前 milestone 是否完成（done/in_progress/loading） |
 | planner | 9 | 规划器：根据当前屏幕和 milestone 生成下一步操作指令 |
 | replan | 1 | 修复规划器：stuck 触发后生成新策略（local_replan/escalate） |
 | reply | 11 | 回复生成：任务结束后生成面向用户的自然语言回复 |
 | prefs | 10 | 用户偏好提取：从对话历史中识别并结构化用户偏好 |
-| decomposer | 5 | 任务分解：将用户目标拆解为有依赖关系的 milestone 列表 |
+| decomposer | 9 | 任务分解：将用户目标拆解为有依赖关系的 milestone 列表 |
 | back_nav | 14 | 回退导航：从当前页面找到返回目标页面的路径 |
 | cascade_matcher | 22 | 级联页面匹配：基于视觉指纹和相似度判断两个截图是否是同一页面 |
 | popup_detect | 7 | 弹窗检测：识别截图中是否存在覆盖主界面的弹窗/浮层 |
+| snap | 10+5 | 坐标吸附：App 内 OCR 文本优先（含导航带内单字）、匹配不上回退 YOLO，主屏抑制 OCR，10 截图 case + 5 几何回归 |
+| target_verify | 4 | 动作落点校验：标记帧上判断 tap 是否落在指令意图的目标元素（on/off_target） |
 | repeat_detect | — | 重复指令检测（无固定 cases，程序化生成测试） |
 | stuck_detect | — | 卡住检测（无固定 cases，程序化生成测试） |
 
@@ -67,6 +69,7 @@ uv run python evals/<module>/test_<module>.py
 | 店铺列表页 | 有实质内容但未达验收条件 | status=in_progress, loading=false |
 | iMessage聊天列表 | 应用身份识别防混淆 | status=in_progress |
 | 微信账单页 | 有加载指示器时 loading=true | loading=true |
+| 微信启动屏 | 全屏地球插画无时钟，曾误判锁屏 | loading=true（启动屏，非锁屏） |
 
 ### planner
 
@@ -93,3 +96,23 @@ uv run python evals/<module>/test_<module>.py
 |------|------|
 | fingerprint | 基于视觉指纹的页面同一性判断 |
 | similarity | 基于像素/结构相似度的页面匹配 |
+
+### snap
+
+截图 case 跑真实 `ActionExecutor._snap`，几何回归直接驱动 `YoloCalibrator.nearest()`，
+不依赖 LLM。截图被 gitignore，缺图时 SKIP。
+
+仲裁规则：
+- **App 内**：OCR 文本优先——hint 命中的可见标签是最强 grounding（标签即可点元素），直接落在标签上；
+  OCR 无匹配（纯图标按钮）才回退 YOLO 图标。
+- **主屏**：图标下方 label 不可点，`is_home_screen` 抑制 OCR，只走 YOLO 图标本体。
+- 点错由 target_verify→replan 兜底，snap 不追求完美（无 containing_box/conf 守卫）。
+
+| 分组 | 说明 | 关键验证点 |
+|------|------|-----------|
+| 主屏 App 图标（微信/支付宝） | 图标下方文字不可点 | is_home 抑制 OCR → method=yolo 图标本体；conf 抖动不影响 |
+| 主屏-LLM 瞄到 label | 落点估到文字 label 上 | is_home 抑制 OCR → 仍吸 YOLO 图标，不点文字 |
+| 底部 tab「我的」/「通讯录」 | App 内，LLM 把 tab 估偏高 | method=ocr，命中标签落在可点 tab；避开上方噪声框 |
+| 会员页返回箭头（宽 banner） | 无文字，全屏 banner 含落点 | method=yolo，nearest 的 snap 上限拒绝 banner 中心，吸到真箭头 |
+| 左上角返回箭头 | 无文字、LLM 纵向估偏 | OCR 无命中 → method=yolo，经 margin 层吸到箭头 |
+| 几何回归 | nearest 分层不变式 | 小图标不偷点、超宽误检被拒、snap 上限防瞬移、低 conf 仍可凭距离吸附 |

@@ -6,9 +6,53 @@ import io
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+
+# Token cost: priced per MODULE using that module's model rate (config.yaml `pricing`).
+# Different modules may run different models (e.g. action_policy=35b, output=flash),
+# so cost is summed module-by-module rather than from one flat rate.
+from policy_expr.config import model_price, pricing_currency
+
+# _Timer module name → llm config key. checker/planner/replanner/loop_* all share the
+# supervisor model; decompose and action_policy have their own keys.
+_MODULE_CFG: dict[str, str] = {
+    "checker": "supervisor", "planner": "supervisor", "replanner": "supervisor",
+    "loop_check": "supervisor", "loop_scroll": "supervisor",
+    "decompose": "supervisor.decompose", "action_policy": "action_policy",
+}
+
+
+def _sum_tokens(token_usage: dict) -> tuple[int, int]:
+    """Sum per-module {input, output} into a (total_input, total_output) pair."""
+    ti = sum(int(v.get("input", 0)) for v in (token_usage or {}).values())
+    to = sum(int(v.get("output", 0)) for v in (token_usage or {}).values())
+    return ti, to
+
+
+# Set from context.json's run-level `models` map (config_key → model). Missing → "",
+# which model_price() prices at the configured default — no active-config fallback.
+_MODELS_MAP: dict[str, str] = {}
+
+
+def _module_model(module: str) -> str:
+    return _MODELS_MAP.get(_MODULE_CFG.get(module, module), "")
+
+
+def _token_cost(token_usage: dict) -> float:
+    """Cost (currency units) for one token_usage dict, summed per module by its model price."""
+    total = 0.0
+    for module, tu in (token_usage or {}).items():
+        pin, pout = model_price(_module_model(module))
+        total += int(tu.get("input", 0)) / 1_000_000 * pin + int(tu.get("output", 0)) / 1_000_000 * pout
+    return total
+
+
+def _fmt_tokens(n: int) -> str:
+    return f"{n/1000:.1f}k" if n >= 1000 else str(n)
 
 
 # ── Action types & colors ──────────────────────────────────────
@@ -58,6 +102,7 @@ def _load_img(path: Path) -> Image.Image:
     return Image.open(path).convert("RGBA")
 
 
+
 def annotate_tap(
     img: Image.Image,
     points: list[tuple[float, float, int]],
@@ -82,6 +127,150 @@ def annotate_tap(
         bbox = font.getbbox(text)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         draw.text((cx - tw // 2, cy - th // 2), text, fill=(255, 255, 255, 255), font=font)
+
+    return img
+
+
+_ACTION_COLORS_FULL: dict[str, tuple[int, int, int]] = {
+    "tap": (220, 50, 50),
+    "type": (160, 50, 200),
+    "scroll": (50, 180, 50),
+    "drag": (50, 150, 220),
+    "home": (50, 120, 220),
+    "press_enter": (220, 160, 0),
+    "clear_text": (128, 128, 128),
+}
+
+
+def annotate_action(
+    img: Image.Image,
+    action_type: str,
+    x: float | None,
+    y: float | None,
+    idx: int,
+    direction: str | None = None,
+    text: str | None = None,
+    to_x: float | None = None,
+    to_y: float | None = None,
+    snap: dict | None = None,
+) -> Image.Image:
+    """Draw action annotation on image with type-specific visuals."""
+    img = img.copy()
+    draw = ImageDraw.Draw(img, "RGBA")
+    w, h = img.size
+    font = _font(FONT_SIZE)
+    small_font = _font(12)
+    color = _ACTION_COLORS_FULL.get(action_type, DEFAULT_COLOR)
+
+    if x is None or y is None:
+        return img
+    # When snap exists, draw main marker at snapped position (where action actually executed)
+    if snap and snap.get("snapped"):
+        cx = int(snap["snapped"][0] / 1000 * w)
+        cy = int(snap["snapped"][1] / 1000 * h)
+    else:
+        cx = int(x / 1000 * w)
+        cy = int(y / 1000 * h)
+
+    if action_type in ("scroll", "drag"):
+        # Draw start circle + arrow to end
+        draw.ellipse(
+            [cx - DOT_RADIUS, cy - DOT_RADIUS, cx + DOT_RADIUS, cy + DOT_RADIUS],
+            fill=(*color, 200),
+            outline=(255, 255, 255, 255),
+            width=2,
+        )
+        # Direction arrow or end point
+        if to_x is not None and to_y is not None:
+            ex = int(to_x / 1000 * w)
+            ey = int(to_y / 1000 * h)
+            draw.line([(cx, cy), (ex, ey)], fill=(*color, 220), width=3)
+            draw.ellipse(
+                [ex - 8, ey - 8, ex + 8, ey + 8],
+                fill=(*color, 180),
+                outline=(255, 255, 255, 255),
+                width=2,
+            )
+        elif direction:
+            arrow_len = 60
+            dx, dy = 0, 0
+            if direction == "up": dy = -arrow_len
+            elif direction == "down": dy = arrow_len
+            elif direction == "left": dx = -arrow_len
+            elif direction == "right": dx = arrow_len
+            ex, ey = cx + dx, cy + dy
+            draw.line([(cx, cy), (ex, ey)], fill=(*color, 220), width=3)
+            # Arrowhead
+            import math
+            angle = math.atan2(dy, dx)
+            a1 = angle + 2.5
+            a2 = angle - 2.5
+            for a in (a1, a2):
+                ax = ex - int(12 * math.cos(a))
+                ay = ey - int(12 * math.sin(a))
+                draw.line([(ex, ey), (ax, ay)], fill=(*color, 220), width=2)
+        # Label
+        label = str(idx)
+        bbox = font.getbbox(label)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text((cx - tw // 2, cy - th // 2), label, fill=(255, 255, 255, 255), font=font)
+
+    elif action_type == "type":
+        # Circle + text bubble
+        draw.ellipse(
+            [cx - DOT_RADIUS, cy - DOT_RADIUS, cx + DOT_RADIUS, cy + DOT_RADIUS],
+            fill=(*color, 200),
+            outline=(255, 255, 255, 255),
+            width=2,
+        )
+        label = str(idx)
+        bbox = font.getbbox(label)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text((cx - tw // 2, cy - th // 2), label, fill=(255, 255, 255, 255), font=font)
+        # Text bubble above
+        if text:
+            display = text[:20] + ("…" if len(text) > 20 else "")
+            tbbox = small_font.getbbox(display)
+            btw, bth = tbbox[2] - tbbox[0], tbbox[3] - tbbox[1]
+            pad = 4
+            bx = cx - btw // 2 - pad
+            by = cy - DOT_RADIUS - bth - 14
+            draw.rounded_rectangle(
+                [bx, by, bx + btw + pad * 2, by + bth + pad * 2],
+                radius=4, fill=(255, 255, 255, 230), outline=(*color, 200), width=1,
+            )
+            draw.text((bx + pad, by + pad), display, fill=(*color, 255), font=small_font)
+
+    else:
+        # Default: circle with index (tap, home, press_enter, etc.)
+        draw.ellipse(
+            [cx - DOT_RADIUS, cy - DOT_RADIUS, cx + DOT_RADIUS, cy + DOT_RADIUS],
+            fill=(*color, 200),
+            outline=(255, 255, 255, 255),
+            width=2,
+        )
+        label = str(idx)
+        if action_type == "press_enter":
+            label = "↵"
+        elif action_type == "home":
+            label = "⌂"
+        bbox = font.getbbox(label)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text((cx - tw // 2, cy - th // 2), label, fill=(255, 255, 255, 255), font=font)
+
+    # Draw snap visualization: original (LLM) vs snapped (YOLO/OCR)
+    if snap and snap.get("original"):
+        method = snap.get("method", "?").lower()
+        snap_color = (255, 165, 0, 220) if method == "yolo" else (0, 200, 100, 220)  # orange=YOLO, green=OCR
+        ox = int(snap["original"][0] / 1000 * w)
+        oy = int(snap["original"][1] / 1000 * h)
+        # Solid circle at original (LLM-predicted) position
+        draw.ellipse(
+            [ox - DOT_RADIUS, oy - DOT_RADIUS, ox + DOT_RADIUS, oy + DOT_RADIUS],
+            outline=snap_color, width=3,
+        )
+        # Line connecting original to snapped
+        draw.line([(ox, oy), (cx, cy)], fill=snap_color, width=2)
 
     return img
 
@@ -211,20 +400,40 @@ def _render_identity_json(identity: dict) -> str:
 @dataclass
 class ReportStep:
     label: str
-    action_type: str  # tap, home, swipe, text, none
+    action_type: str  # tap, home, swipe, text, none, scroll, drag
     x: float | None   # 0-1000 normalized
     y: float | None
     description: str
-    annotated_before_url: str  # base64 data url with tap point drawn
-    after_url: str | None      # screenshot after action
+    annotated_before_url: str  # path to annotated screenshot
+    raw_screenshot_url: str = ""  # path to raw screenshot (no annotations)
+    after_url: str | None = None      # screenshot after action
     status: str = ""  # ✓ ✗ ↩ ""
     timestamp: str = ""  # ISO timestamp
+    milestone_id: str = ""
+    milestone_kind: str = ""
+    instruction: str = ""
+    summary: str = ""
+    timings: dict[str, float] = field(default_factory=dict)
+    token_usage: dict[str, dict[str, int]] = field(default_factory=dict)  # per-module {input, output}
+    llm_calls: int = 0
+    action_direction: str | None = None
+    action_text: str | None = None
+    action_to_x: float | None = None
+    action_to_y: float | None = None
+    snap: dict | None = None
 
 
 @dataclass
 class ReportPage:
     title: str
     steps: list[ReportStep] = field(default_factory=list)
+    milestone_id: str = ""
+    milestone_kind: str = ""
+    milestone_name: str = ""
+    milestone_description: str = ""
+    success_condition: str = ""
+    verify_url: str = ""  # verification screenshot (first turn of next milestone)
+    verify_checker: dict = field(default_factory=dict)  # checker result from the last turn (done/in_progress)
 
 
 @dataclass
@@ -232,6 +441,13 @@ class ReportData:
     title: str
     pages: list[ReportPage] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    milestones: list[dict] = field(default_factory=list)
+    decompose_summary: str = ""  # First-turn supervisor summary with decomposition info
+    models: dict[str, str] = field(default_factory=dict)  # config_key → model used this run
+    raw_input: str = ""  # original human input (title); empty for old logs
+    goal: str = ""       # resolved goal that drove the run
+    router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
+    output: str = ""     # final reply / 最终输出 of the run
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -783,13 +999,24 @@ class RunnerReportBuilder:
             return data
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
-        data.title = ctx.get("goal", run_dir.name)
+        # Title is the user's ORIGINAL input; the resolved goal is shown as provenance.
+        # Old logs without raw_input fall back to the goal.
+        data.raw_input = ctx.get("raw_input") or ""
+        data.goal = ctx.get("goal", "")
+        data.router = ctx.get("router") or {}
+        data.output = ctx.get("output") or ""
+        data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
-        page = ReportPage(title="Execution")
+        # Run-level model record; cost is priced against these (not the active config).
+        data.models = ctx.get("models", {}) or {}
+        _MODELS_MAP.clear()
+        _MODELS_MAP.update(data.models)
+
         turns = ctx.get("turns", [])
 
         total_actions = 0
         total_executed = 0
+        all_steps: list[ReportStep] = []
 
         for turn in turns:
             idx = turn.get("index", 0)
@@ -810,7 +1037,14 @@ class RunnerReportBuilder:
             ss_path = run_dir / f"screenshot_turn_{idx}.png"
             if ss_path.exists() and x is not None and y is not None:
                 img = _load_img(ss_path)
-                annotated_img = annotate_tap(img, [(x, y, idx)])
+                annotated_img = annotate_action(
+                    img, atype, x, y, idx,
+                    direction=action.get("direction"),
+                    text=action.get("text"),
+                    to_x=action.get("to_x"),
+                    to_y=action.get("to_y"),
+                    snap=action.get("snap"),
+                )
                 ann_path = run_dir / f"screenshot_turn_{idx}_ann.jpg"
                 _save_report_img(annotated_img, ann_path)
                 annotated_url = ann_path.name
@@ -819,23 +1053,120 @@ class RunnerReportBuilder:
             else:
                 annotated_url = ""
 
+            raw_url = ss_path.name if ss_path.exists() else ""
+
             status = "✓" if executed else "✗"
             if atype == "none":
                 status = "— skip"
 
-            page.steps.append(ReportStep(
+            all_steps.append(ReportStep(
                 label=f"Turn {idx}",
                 action_type=atype,
                 x=x,
                 y=y,
                 description=desc or summary,
                 annotated_before_url=annotated_url,
+                raw_screenshot_url=raw_url,
                 after_url=None,
                 status=status,
                 timestamp=turn.get("timestamp", ""),
+                milestone_id=sup.get("milestone_id", ""),
+                milestone_kind=sup.get("milestone_kind", ""),
+                instruction=sup.get("instruction", ""),
+                summary=summary,
+                timings=turn.get("timings", {}),
+                token_usage=turn.get("token_usage", {}),
+                llm_calls=turn.get("llm_calls", 0),
+                action_direction=action.get("direction"),
+                action_text=action.get("text"),
+                action_to_x=action.get("to_x"),
+                action_to_y=action.get("to_y"),
+                snap=action.get("snap"),
             ))
 
-        data.pages.append(page)
+        # Build milestone lookup from persisted decomposition
+        ms_lookup: dict[str, dict] = {}
+        for ms in ctx.get("milestones", []):
+            ms_lookup[ms.get("id", "")] = ms
+
+
+        # Group steps by milestone
+        pages: list[ReportPage] = []
+        current_mid = ""
+        current_page_steps: list[ReportStep] = []
+        milestones_info: list[dict] = []
+
+        for step in all_steps:
+            mid = step.milestone_id or "_no_milestone"
+            if mid != current_mid:
+                if current_page_steps:
+                    ms_meta = ms_lookup.get(current_mid, {})
+                    pages.append(ReportPage(
+                        title=ms_meta.get("name", f"Milestone {current_mid}"),
+                        steps=current_page_steps,
+                        milestone_id=current_mid,
+                        milestone_kind=current_page_steps[0].milestone_kind,
+                        milestone_name=ms_meta.get("name", ""),
+                        milestone_description=ms_meta.get("description", ""),
+                        success_condition=ms_meta.get("success_condition", ""),
+                    ))
+                current_mid = mid
+                current_page_steps = []
+            current_page_steps.append(step)
+
+        if current_page_steps:
+            ms_meta = ms_lookup.get(current_mid, {})
+            pages.append(ReportPage(
+                title=ms_meta.get("name", f"Milestone {current_mid}"),
+                steps=current_page_steps,
+                milestone_id=current_mid,
+                milestone_kind=current_page_steps[0].milestone_kind,
+                milestone_name=ms_meta.get("name", ""),
+                milestone_description=ms_meta.get("description", ""),
+                success_condition=ms_meta.get("success_condition", ""),
+            ))
+
+        # Build milestones summary
+        for page in pages:
+            ms_steps = page.steps
+            ms_timings: dict[str, float] = {}
+            ms_in = ms_out = 0
+            for s in ms_steps:
+                for k, v in s.timings.items():
+                    ms_timings[k] = ms_timings.get(k, 0) + v
+                si, so = _sum_tokens(s.token_usage)
+                ms_in += si
+                ms_out += so
+            milestones_info.append({
+                "id": page.milestone_id,
+                "name": page.milestone_name,
+                "kind": page.milestone_kind,
+                "description": page.milestone_description,
+                "success_condition": page.success_condition,
+                "turns": f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}",
+                "total_time": sum(ms_timings.values()),
+                "timings": ms_timings,
+                "input_tokens": ms_in,
+                "output_tokens": ms_out,
+                "cost": sum(_token_cost(s.token_usage) for s in ms_steps),
+            })
+
+        # Set verification screenshot + checker: screenshot from next milestone's first turn;
+        # checker from ms_lookup[id].done_check (saved by runner when milestone completes).
+        for i, page in enumerate(pages):
+            if i + 1 < len(pages):
+                next_first = pages[i + 1].steps[0] if pages[i + 1].steps else None
+                if next_first and next_first.raw_screenshot_url:
+                    page.verify_url = next_first.raw_screenshot_url
+            page.verify_checker = ms_lookup.get(page.milestone_id, {}).get("done_check", {})
+
+        data.pages = pages
+        data.milestones = milestones_info
+        # Decompose summary: list all milestones with names
+        ms_parts = []
+        for ms in milestones_info:
+            ms_parts.append(f"#{ms['id']} {ms['name']}（{ms['kind']}）")
+        data.decompose_summary = " → ".join(ms_parts) if ms_parts else ""
         data.stats = {
             "turns": len(turns),
             "executed": total_executed,
@@ -1487,122 +1818,615 @@ HTML_TEMPLATE = """\
 <title>{title}</title>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: -apple-system, "PingFang SC", sans-serif; background: #f5f5f5; padding: 20px; }}
-  .header {{ max-width: 900px; margin: 0 auto 24px; padding: 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-  .header h1 {{ font-size: 20px; margin-bottom: 8px; }}
-  .stats {{ color: #666; font-size: 14px; }}
-  .page {{ max-width: 900px; margin: 0 auto 24px; padding: 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-  .page h2 {{ font-size: 16px; color: #333; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #eee; }}
-  .step {{ margin-bottom: 20px; padding: 12px; border: 1px solid #eee; border-radius: 8px; }}
-  .step-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }}
-  .step-idx {{ display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 50%; font-size: 13px; font-weight: bold; color: #fff; }}
-  .step-label {{ font-size: 14px; font-weight: 500; }}
-  .step-desc {{ font-size: 13px; color: #666; margin-bottom: 8px; }}
-  .step-status {{ font-size: 12px; font-weight: 500; margin-left: auto; }}
-  .step-images {{ display: flex; gap: 8px; }}
-  .step-images img {{ max-height: 300px; border-radius: 6px; cursor: pointer; border: 1px solid #eee; }}
-  .img-label {{ font-size: 11px; color: #999; text-align: center; margin-top: 2px; }}
-  .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 999; justify-content: center; align-items: center; }}
-  .modal.show {{ display: flex; }}
-  .modal img {{ max-width: 90%; max-height: 90%; }}
-  .arrow {{ display: flex; align-items: center; justify-content: center; font-size: 24px; color: #ccc; padding: 0 4px; }}
-  .grid {{ display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 12px; padding-bottom: 8px; }}
-  .grid .card {{ min-width: 240px; max-width: 240px; flex-shrink: 0; padding: 8px; }}
-  .grid .card-header {{ margin-bottom: 4px; }}
-  .card-seq {{ font-size: 12px; color: #aaa; margin-right: 2px; }}
-  .card {{ border: 1px solid #eee; border-radius: 8px; padding: 12px; }}
-  .card-header {{ display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }}
-  .card-images {{ display: flex; justify-content: center; }}
-  .card-images img {{ width: 100%; border-radius: 6px; cursor: pointer; border: 1px solid #eee; }}
-  .step-time {{ font-size: 11px; color: #aaa; margin-left: auto; margin-right: 4px; }}
+  :root {{
+    --bg: #f1f5f9; --card: #fff; --border: #e2e8f0;
+    --text: #1e293b; --muted: #64748b; --radius: 12px;
+  }}
+  body {{ font-family: -apple-system, "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }}
+
+  /* ── Layout: sticky outline sidebar + scrolling main ── */
+  .layout {{ display: flex; align-items: flex-start; }}
+  .sidebar {{
+    width: 240px; flex-shrink: 0; position: sticky; top: 0; height: 100vh;
+    overflow-y: auto; background: var(--card); border-right: 1px solid var(--border);
+    padding: 20px 0;
+  }}
+  .main {{ flex: 1; min-width: 0; padding: 24px; }}
+
+  /* ── Outline (子目标分解) ── */
+  .sidebar-title {{ font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 18px 12px; }}
+  .outline {{ display: flex; flex-direction: column; }}
+  .outline-item {{ display: block; text-decoration: none; color: inherit; padding: 8px 16px 8px 18px; border-left: 2px solid transparent; transition: background 0.12s, border-color 0.12s; }}
+  .outline-item:hover {{ background: #f8fafc; }}
+  .outline-item.active {{ border-left-color: #6366f1; background: #eef2ff; }}
+  .outline-top {{ display: flex; align-items: baseline; gap: 6px; }}
+  .outline-id {{ font-weight: 700; color: #4338ca; font-size: 12px; flex-shrink: 0; }}
+  .outline-name {{ font-size: 12px; color: var(--text); font-weight: 500; line-height: 1.35; }}
+  .outline-meta {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; padding-left: 22px; font-size: 10px; color: #94a3b8; font-family: monospace; }}
+  .sidebar-empty {{ padding: 4px 18px; font-size: 12px; color: var(--muted); }}
+
+  /* Header */
+  .header {{ max-width: 1080px; margin: 0 auto 20px; padding: 20px 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+  .header h1 {{ font-size: 18px; font-weight: 700; margin-bottom: 4px; }}
+  .stats {{ color: var(--muted); font-size: 12px; }}
+  .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
+  .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
+
+  /* Final output / 最终输出 card */
+  .result-card {{ max-width: 1080px; margin: 0 auto 20px; padding: 16px 20px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #22c55e; }}
+  .result-label {{ font-size: 11px; font-weight: 700; color: #16a34a; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }}
+  .result-body {{ font-size: 14px; color: var(--text); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }}
+
+  /* Router / input-resolution row (shares the 模型配置 box style) */
+  .prov-arrow {{ color: #94a3b8; margin: 0 6px; }}
+  .prov-goal {{ color: #1e293b; font-weight: 500; }}
+  .prov-via {{ display: inline-block; margin-left: 8px; font-size: 10px; padding: 1px 8px; border-radius: 10px; font-family: monospace; vertical-align: middle; }}
+  .prov-via-router {{ background: #dcfce7; color: #166534; }}
+  .prov-via-temporal {{ background: #dbeafe; color: #1d4ed8; }}
+  .prov-via-none {{ background: #f1f5f9; color: #64748b; }}
+  .prov-via-clarify {{ background: #fef9c3; color: #854d0e; }}
+  .price-tip {{ position: relative; display: inline-block; margin-left: 8px; }}
+  .price-chip {{ font-size: 11px; padding: 1px 8px; border-radius: 10px; background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; cursor: help; }}
+  .price-pop {{ display: none; position: absolute; z-index: 50; top: 100%; left: 0; margin-top: 6px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.12); white-space: nowrap; }}
+  .price-tip:hover .price-pop {{ display: block; }}
+  .price-pop table {{ border-collapse: collapse; font-size: 11px; color: #475569; }}
+  .price-pop td {{ padding: 1px 16px 1px 0; }}
+  .price-pop .pp-num {{ text-align: right; padding-right: 0; }}
+  .price-pop .pp-head td {{ color: #94a3b8; }}
+
+  /* Milestone section */
+  .milestone {{ max-width: 1080px; margin: 0 auto 16px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
+  .milestone-header {{ padding: 10px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
+  .milestone-header h2 {{ font-size: 14px; font-weight: 600; }}
+  .milestone-name {{ font-size: 13px; color: var(--text); }}
+  .milestone-desc {{ font-size: 11px; color: var(--muted); width: 100%; }}
+  .milestone-sc {{ font-size: 10px; color: #94a3b8; width: 100%; }}
+  .milestone-badge {{ font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 500; }}
+  .milestone-badge-navigation {{ background: #dbeafe; color: #1d4ed8; }}
+  .milestone-badge-action {{ background: #fef3c7; color: #92400e; }}
+  .milestone-badge-filter {{ background: #ede9fe; color: #5b21b6; }}
+  .milestone-badge-collection {{ background: #d1fae5; color: #065f46; }}
+  .milestone-badge-default {{ background: #f1f5f9; color: #475569; }}
+  .milestone-time {{ font-size: 11px; color: var(--muted); margin-left: auto; font-family: monospace; }}
+
+  /* Thumbnail gallery — one row per milestone */
+  .gallery {{ display: flex; gap: 6px; padding: 12px 16px; overflow-x: auto; }}
+  .thumb {{ flex-shrink: 0; width: 140px; cursor: pointer; position: relative; border-radius: 8px; overflow: hidden; border: 2px solid transparent; transition: border-color 0.15s; }}
+  .thumb:hover {{ border-color: #6366f1; }}
+  .thumb.active {{ border-color: #4338ca; }}
+  .thumb img {{ width: 100%; display: block; }}
+  .thumb-label {{ position: absolute; bottom: 0; left: 0; right: 0; padding: 3px 6px; font-size: 10px; font-weight: 600; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,0.7)); }}
+  .thumb-status {{ position: absolute; top: 4px; right: 4px; width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #fff; font-weight: 700; }}
+  .thumb-status-ok {{ background: #22c55e; }}
+  .thumb-status-fail {{ background: #ef4444; }}
+  .thumb-status-skip {{ background: #9ca3af; }}
+  .thumb-action {{ position: absolute; top: 4px; left: 4px; width: 14px; height: 14px; border-radius: 50%; }}
+
+  /* Detail panel — shown when thumbnail clicked */
+  .detail {{ display: none; padding: 12px 20px; border-top: 1px solid var(--border); }}
+  .detail.show {{ display: flex; gap: 20px; }}
+  .detail-ss {{ width: 200px; flex-shrink: 0; }}
+  .detail-ss img {{ width: 100%; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; }}
+  .detail-info {{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }}
+  .detail-top {{ display: flex; align-items: center; gap: 8px; }}
+  .detail-idx {{ display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 50%; font-size: 10px; font-weight: 700; color: #fff; flex-shrink: 0; }}
+  .detail-at {{ font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 500; }}
+  .detail-desc {{ font-size: 13px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .detail-status {{ font-size: 11px; font-weight: 600; flex-shrink: 0; }}
+  .detail-time {{ font-size: 13px; font-weight: 600; color: #64748b; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
+  .detail-gap {{ font-size: 11px; font-weight: 600; color: #f59e0b; background: #fffbeb; padding: 1px 6px; border-radius: 10px; margin-left: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
+  .detail-instruction {{ font-size: 12px; color: var(--muted); }}
+  .detail-summary {{ font-size: 12px; color: #475569; line-height: 1.4; }}
+
+  /* Timing bar */
+  .timing-bar {{ display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: #f1f5f9; margin-top: 2px; }}
+  .timing-seg {{ height: 100%; min-width: 1px; }}
+  .timing-labels {{ display: flex; gap: 8px; font-size: 9px; color: #94a3b8; margin-top: 2px; flex-wrap: wrap; }}
+  .timing-label-dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 2px; vertical-align: middle; margin-right: 2px; }}
+
+  /* Action type colors */
+  .at-tap {{ background: #dc3232; }} .at-type {{ background: #a032c8; }}
+  .at-scroll {{ background: #32b432; }} .at-drag {{ background: #3296dc; }}
+  .at-home {{ background: #3278dc; }} .at-press_enter {{ background: #dca000; }}
+  .at-clear_text {{ background: #808080; }} .at-none {{ background: #c0c0c0; }}
+
+  .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; justify-content: center; align-items: center; }}
+  .modal.show {{ display: flex; }} .modal img {{ max-width: 90%; max-height: 90%; border-radius: 8px; }}
 </style>
 </head>
 <body>
 
-<div class="header">
-  <h1>{title}</h1>
-  <div class="stats">{stats}</div>
-</div>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="sidebar-title">子目标分解</div>
+    <div class="outline">{outline_html}</div>
+  </nav>
+  <main class="main">
+    <div class="header">
+      <h1>{title}</h1>
+      <div class="stats">{stats}</div>
+      {provenance_html}
+      {cost_note_html}
+    </div>
 
-{pages_html}
+    {pages_html}
+    {result_html}
+  </main>
+</div>
 
 <div class="modal" id="modal" onclick="this.classList.remove('show')">
   <img id="modal-img" src="">
 </div>
 <script>
-document.querySelectorAll('.step-images img').forEach(img => {{
-  img.onclick = () => {{
-    document.getElementById('modal-img').src = img.src;
-    document.getElementById('modal').classList.add('show');
-  }};
-}});
+// Scroll-spy: highlight the outline item whose milestone is near the top.
+(function() {{
+  var items = Array.prototype.slice.call(document.querySelectorAll('.outline-item'));
+  if (!items.length || !('IntersectionObserver' in window)) return;
+  var map = {{}};
+  items.forEach(function(it) {{ map[it.dataset.target] = it; }});
+  var obs = new IntersectionObserver(function(entries) {{
+    entries.forEach(function(e) {{
+      if (!e.isIntersecting) return;
+      items.forEach(function(i) {{ i.classList.remove('active'); }});
+      var it = map[e.target.id];
+      if (it) it.classList.add('active');
+    }});
+  }}, {{ rootMargin: '-15% 0px -75% 0px', threshold: 0 }});
+  items.forEach(function(it) {{
+    var sec = document.getElementById(it.dataset.target);
+    if (sec) obs.observe(sec);
+  }});
+}})();
+function showDetail(id) {{
+  var el = document.getElementById(id);
+  if (el.classList.contains('show')) {{
+    el.classList.remove('show');
+    var thumb = document.querySelector('[data-detail="' + id + '"]');
+    if (thumb) thumb.classList.remove('active');
+    return;
+  }}
+  // Hide all details in same milestone
+  var ms = el.closest('.milestone');
+  ms.querySelectorAll('.detail').forEach(d => d.classList.remove('show'));
+  ms.querySelectorAll('.thumb').forEach(t => t.classList.remove('active'));
+  // Show selected
+  el.classList.add('show');
+  var thumb = document.querySelector('[data-detail="' + id + '"]');
+  if (thumb) thumb.classList.add('active');
+}}
+function zoomImg(src) {{
+  document.getElementById('modal-img').src = src;
+  document.getElementById('modal').classList.add('show');
+}}
 </script>
 </body>
 </html>
 """
 
+TIMING_COLORS: dict[str, str] = {
+    "decompose": "#6366f1",
+    "checker": "#f59e0b",
+    "planner": "#3b82f6",
+    "replanner": "#ef4444",
+    "loop_check": "#8b5cf6",
+    "loop_scroll": "#06b6d4",
+    "action_policy": "#22c55e",
+}
 
-def color_for_type(action_type: str) -> tuple[int, int, int]:
-    return ACTION_COLORS.get(action_type, DEFAULT_COLOR)
+KIND_BADGE = {
+    "navigation": "milestone-badge-navigation",
+    "action": "milestone-badge-action",
+    "filter": "milestone-badge-filter",
+    "collection": "milestone-badge-collection",
+}
+
+AT_LABELS = {
+    "tap": "点击", "type": "输入", "scroll": "滚动", "drag": "拖动",
+    "home": "主屏", "press_enter": "回车", "clear_text": "清空", "none": "跳过",
+}
 
 
-def color_hex(color: tuple[int, int, int]) -> str:
-    return f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+def _safe(text: str | None) -> str:
+    if not text:
+        return ""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _short_mid(mid) -> str:
+    """Display-only short id: leading number of a slug ('1_open_wechat' -> '1').
+
+    The full id is still used for anchors/links; this only shortens what's shown
+    so a long slug doesn't crowd out the milestone name in the sidebar.
+    """
+    m = re.match(r"\s*(\d+)", str(mid))
+    return m.group(1) if m else str(mid)
+
+
+def _render_timing_html(timings: dict[str, float]) -> str:
+    if not timings:
+        return ""
+    total = sum(timings.values())
+    if total <= 0:
+        return ""
+    segs = ""
+    labels = ""
+    for tname, tval in timings.items():
+        pct = tval / total * 100
+        tc = TIMING_COLORS.get(tname, "#94a3b8")
+        segs += f'<div class="timing-seg" style="width:{pct:.1f}%;background:{tc}" title="{tname}: {tval:.2f}s"></div>'
+        labels += (
+            f'<span><span class="timing-label-dot" style="background:{tc}"></span>'
+            f'{tname} {tval:.1f}s</span>'
+        )
+    return (
+        f'<div class="timing-bar">{segs}</div>'
+        f'<div class="timing-labels">{labels} · total {total:.1f}s</div>'
+    )
+
+
+def _render_token_html(token_usage: dict) -> str:
+    """Per-module token usage (input/output) + turn total + estimated cost."""
+    ti, to = _sum_tokens(token_usage)
+    if ti == 0 and to == 0:
+        return ""
+    parts = []
+    for name, tu in token_usage.items():
+        mi, mo = int(tu.get("input", 0)), int(tu.get("output", 0))
+        if mi == 0 and mo == 0:
+            continue
+        tc = TIMING_COLORS.get(name, "#94a3b8")
+        parts.append(
+            f'<span style="margin-right:8px">'
+            f'<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:{tc};margin-right:2px"></span>'
+            f'{name} {_fmt_tokens(mi)}/{_fmt_tokens(mo)}</span>'
+        )
+    return (
+        f'<div style="display:flex;flex-wrap:wrap;gap:4px;font-size:9px;color:#94a3b8;margin-top:2px">'
+        f'{"".join(parts)}'
+        f'<span style="font-weight:600;color:#475569">Σ tok 入 {_fmt_tokens(ti)} · 出 {_fmt_tokens(to)} · ≈{pricing_currency()}{_token_cost(token_usage):.4f}</span>'
+        f'</div>'
+    )
+
+
+def _gap_seconds(prev_iso: str, cur_iso: str) -> float | None:
+    """Seconds between two ISO timestamps, or None if either is unparseable."""
+    if not prev_iso or not cur_iso:
+        return None
+    try:
+        return (datetime.fromisoformat(cur_iso) - datetime.fromisoformat(prev_iso)).total_seconds()
+    except ValueError:
+        return None
+
+
+def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = "") -> str:
+    """Render the expandable detail panel for a step.
+
+    prev_timestamp: the previous action's timestamp, to show the inter-action gap.
+    """
+    at_cls = f"at-{step.action_type}"
+    at_label = AT_LABELS.get(step.action_type, step.action_type)
+
+    # Status
+    if "✓" in step.status:
+        status_cls, status_text = "thumb-status-ok", "✓"
+    elif "✗" in step.status:
+        status_cls, status_text = "thumb-status-fail", "✗"
+    else:
+        status_cls, status_text = "thumb-status-skip", "—"
+
+    action_detail = _safe(step.description)
+    if step.action_text:
+        action_detail += f' <span style="color:#a032c8">「{_safe(step.action_text[:30])}」</span>'
+    if step.action_direction:
+        dir_label = {"up": "↑", "down": "↓", "left": "←", "right": "→"}.get(step.action_direction, step.action_direction)
+        action_detail += f' <span style="color:#32b432">{dir_label}</span>'
+
+    instruction_html = ""
+    if step.instruction:
+        instruction_html = f'<div class="detail-instruction">指令：{_safe(step.instruction)}</div>'
+    summary_html = ""
+    if step.summary and step.summary != step.description:
+        summary_html = f'<div class="detail-summary">{_safe(step.summary)}</div>'
+
+    snap_html = ""
+    if step.snap and step.snap.get("original"):
+        method = step.snap.get("method", "?").upper()
+        orig = step.snap["original"]
+        snapped = step.snap.get("snapped")
+        snap_color = "#f59e0b" if method == "YOLO" else "#22c55e"
+        dist = ""
+        if snapped:
+            d = ((orig[0] - snapped[0]) ** 2 + (orig[1] - snapped[1]) ** 2) ** 0.5
+            dist = f' · <span style="color:{snap_color}">距离 {d:.1f}</span>'
+        snap_html = (
+            f'<div class="detail-instruction">'
+            f'<span style="color:{snap_color};font-weight:600">{method}</span> 吸附 '
+            f'({orig[0]:.0f},{orig[1]:.0f})→({snapped[0]:.0f},{snapped[1]:.0f})'
+            f'{dist}</div>'
+        )
+
+    ss_html = ""
+    if step.annotated_before_url:
+        ss_html = f'<div class="detail-ss"><img src="{step.annotated_before_url}" onclick="zoomImg(this.src)" alt="Turn"></div>'
+
+    # Absolute wall-clock time the action executed (PolicyTurn.timestamp, captured
+    # right after dispatch). Show the time-of-day prominently, full ISO on hover.
+    time_html = ""
+    if step.timestamp:
+        ts = step.timestamp
+        disp = ts.split("T", 1)[1] if "T" in ts else ts
+        gap = _gap_seconds(prev_timestamp, ts)
+        gap_html = f'<span class="detail-gap" title="距上一个动作">+{gap:.0f}s</span>' if gap is not None else ""
+        time_html = f'<span class="detail-time" title="{_safe(ts)}">🕒 {_safe(disp)}</span>{gap_html}'
+
+    return f"""
+    <div class="detail" id="{detail_id}">
+      {ss_html}
+      <div class="detail-info">
+        <div class="detail-top">
+          <span class="detail-idx {at_cls}">{step.label.split()[-1]}</span>
+          <span class="detail-at" style="background:#f1f5f9;color:#475569">{at_label}</span>
+          <span class="detail-desc">{action_detail}</span>
+          {time_html}
+          <span class="detail-status {status_cls.replace('thumb-status', 'detail-status')}">{step.status}</span>
+        </div>
+        {instruction_html}
+        {snap_html}
+        {summary_html}
+        {_render_timing_html(step.timings)}
+        {_render_token_html(step.token_usage)}
+      </div>
+    </div>"""
+
+
+def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
+    """Header row showing the Router/input-resolution result for the run.
+
+    Always rendered (when raw_input is known) so every report states the router
+    status explicitly — router goal, a clarification request, a deterministic
+    temporal rewrite, or '未经 router' for bin/runner direct runs. The <h1> title
+    is the raw input; this row shows what it resolved to and how.
+    """
+    if not raw_input:
+        return ""  # old logs without provenance — nothing to show
+
+    changed = bool(goal) and goal != raw_input
+    if router and router.get("needs_clarification"):
+        via_cls, via_text = "prov-via-clarify", "需澄清"
+        body = f'需要澄清：{_safe(router.get("clarification", "") or "—")}'
+    elif router:
+        via_cls, via_text = "prov-via-router", "router"
+        body = (
+            f'<span class="prov-goal">{_safe(goal)}</span>' if not changed else
+            f'{_safe(raw_input)}<span class="prov-arrow">→</span>'
+            f'<span class="prov-goal">{_safe(goal)}</span>'
+        )
+    elif changed:
+        via_cls, via_text = "prov-via-temporal", "temporal · 未经 router"
+        body = (
+            f'{_safe(raw_input)}<span class="prov-arrow">→</span>'
+            f'<span class="prov-goal">{_safe(goal)}</span>'
+        )
+    else:
+        via_cls, via_text = "prov-via-none", "未经 router"
+        body = f'<span class="prov-goal">{_safe(goal or raw_input)}</span>（输入未改写）'
+
+    return (
+        f'<div class="decompose">'
+        f'<span class="decompose-label">Router</span>'
+        f'{body}'
+        f'<span class="prov-via {via_cls}">{via_text}</span>'
+        f'</div>'
+    )
 
 
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
-    stats_str = " | ".join(stats_parts)
+    total_time = sum(m.get("total_time", 0) for m in data.milestones)
+    stats_parts.append(f"total_time: {total_time:.1f}s")
+    sess_in = sum(int(m.get("input_tokens", 0)) for m in data.milestones)
+    sess_out = sum(int(m.get("output_tokens", 0)) for m in data.milestones)
+    sess_cost = sum(float(m.get("cost", 0)) for m in data.milestones)
+    if sess_in or sess_out:
+        stats_parts.append(
+            f"tokens: 入 {_fmt_tokens(sess_in)} / 出 {_fmt_tokens(sess_out)}"
+            f"  |  cost: ≈{pricing_currency()}{sess_cost:.4f}"
+        )
+    stats_str = "  |  ".join(stats_parts)
 
+    # Sidebar outline (子目标分解): one clickable node per milestone, scroll-spy active.
+    outline_parts = []
+    for m in data.milestones:
+        mid = _safe(m.get("id", "?"))           # full id — for the anchor/link
+        mid_disp = _safe(_short_mid(m.get("id", "?")))  # short id — for display
+        name = _safe(m.get("name", ""))
+        kind = m.get("kind", "")
+        kind_safe = _safe(kind)
+        turns = m.get("turns", "")
+        t = m.get("total_time", 0)
+        badge_cls = KIND_BADGE.get(kind, "milestone-badge-default")
+        meta_bits = ""
+        if kind_safe:
+            meta_bits += f'<span class="milestone-badge {badge_cls}">{kind_safe}</span>'
+        meta_bits += f'<span>{t:.1f}s</span>'
+        if turns:
+            meta_bits += f'<span>T{_safe(str(turns))}</span>'
+        outline_parts.append(
+            f'<a class="outline-item" href="#ms-{mid}" data-target="ms-{mid}">'
+            f'<span class="outline-top">'
+            f'<span class="outline-id">#{mid_disp}</span>'
+            f'<span class="outline-name">{name or kind_safe}</span>'
+            f'</span>'
+            f'<span class="outline-meta">{meta_bits}</span>'
+            f'</a>'
+        )
+    outline_html = "".join(outline_parts) or '<div class="sidebar-empty">无子目标</div>'
+
+    # Per-milestone sections
     pages_html = ""
+    prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
     for page in data.pages:
-        steps_html = ""
-        for step_idx, step in enumerate(page.steps, 1):
-            color = color_hex(color_for_type(step.action_type))
-            images_html = ""
+        badge_cls = KIND_BADGE.get(page.milestone_kind, "milestone-badge-default")
+        ms_time = sum(sum(s.timings.values()) for s in page.steps)
+        ms_in = sum(_sum_tokens(s.token_usage)[0] for s in page.steps)
+        ms_out = sum(_sum_tokens(s.token_usage)[1] for s in page.steps)
+        ms_cost = sum(_token_cost(s.token_usage) for s in page.steps)
+        ms_tok_html = (
+            f' · {_fmt_tokens(ms_in)}/{_fmt_tokens(ms_out)} tok · ≈{pricing_currency()}{ms_cost:.4f}'
+            if (ms_in or ms_out) else ""
+        )
+        mid_safe = _safe(page.milestone_id)       # full id — anchor target
+        mid_disp = _safe(_short_mid(page.milestone_id))  # short id — heading
 
-            if step.annotated_before_url:
-                images_html += f'<div><img src="{step.annotated_before_url}" alt="before"></div>'
-                if step.after_url:
-                    images_html += '<div class="arrow">→</div>'
-                    images_html += f'<div><img src="{step.after_url}" alt="after"><div class="img-label">结果</div></div>'
+        thumbs_html = ""
+        details_html = ""
+        for si, step in enumerate(page.steps):
+            turn_no = step.label.split()[-1]
+            detail_id = f"detail-ms{mid_safe}-s{si}"
 
-            if grid:
-                time_str = ""
-                if step.timestamp:
-                    time_str = step.timestamp.split("T")[1][:8]
-                seq = f'{step_idx}. '
-                steps_html += f"""
-                <div class="card">
-                  <div class="card-header">
-                    <span class="card-seq">{seq}</span>
-                    <span class="step-desc">{step.description}</span>
-                    <span class="step-time">{time_str}</span>
-                    <span class="step-status">{step.status}</span>
-                  </div>
-                  <div class="card-images">{images_html}</div>
-                </div>"""
+            # Status indicator
+            if "✓" in step.status:
+                status_cls, status_text = "thumb-status-ok", "✓"
+            elif "✗" in step.status:
+                status_cls, status_text = "thumb-status-fail", "✗"
             else:
-                steps_html += f"""
-                <div class="step">
-                  <div class="step-header">
-                    <span class="step-idx" style="background:{color}">{step.label}</span>
-                    <span class="step-desc">{step.description}</span>
-                    <span class="step-status">{step.status}</span>
-                  </div>
-                  <div class="step-images">{images_html}</div>
-                </div>"""
+                status_cls, status_text = "thumb-status-skip", "—"
 
-        container_cls = "grid" if grid else ""
+            at_cls = f"at-{step.action_type}"
+            at_label = AT_LABELS.get(step.action_type, "")
+
+            # Thumbnail
+            if step.annotated_before_url:
+                thumbs_html += (
+                    f'<div class="thumb" data-detail="{detail_id}" onclick="showDetail(\'{detail_id}\')">'
+                    f'<img src="{step.annotated_before_url}" alt="Turn {turn_no}">'
+                    f'<div class="thumb-action {at_cls}" title="{at_label}"></div>'
+                    f'<div class="thumb-status {status_cls}">{status_text}</div>'
+                    f'<div class="thumb-label">T{turn_no} · {at_label}</div>'
+                    f'</div>'
+                )
+
+            # Detail panel (hidden until clicked)
+            details_html += _render_step_detail(step, detail_id, prev_timestamp=prev_ts)
+            if step.timestamp:
+                prev_ts = step.timestamp
+
+        desc_html = f'<div class="milestone-desc">{_safe(page.milestone_description)}</div>' if page.milestone_description else ""
+        sc_html = f'<div class="milestone-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
+        verify_thumb = ""
+        verify_detail = ""
+        if page.verify_url:
+            vd_id = f"detail-ms{mid_safe}-verify"
+            verify_thumb = (
+                f'<div class="thumb" data-detail="{vd_id}" onclick="showDetail(\'{vd_id}\')" style="border-color:#22c55e40">'
+                f'<img src="{page.verify_url}" alt="验收截图">'
+                f'<div class="thumb-status thumb-status-ok">✓</div>'
+                f'<div class="thumb-label" style="background:linear-gradient(transparent, rgba(34,197,94,0.7))">验收</div>'
+                f'</div>'
+            )
+            ck = page.verify_checker
+            ck_status = ck.get("status", "")
+            ck_reason = ck.get("reason", "")
+            ck_identity = ck.get("page_identity", "")
+            ck_summary = ck.get("summary", "")
+            if ck_status == "done":
+                badge = '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ done</span>'
+            elif ck_status == "in_progress":
+                badge = '<span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">⏳ in_progress</span>'
+            else:
+                badge = ""
+            identity_html = f'<span style="font-size:11px;color:#64748b;margin-left:6px">{_safe(ck_identity)}</span>' if ck_identity else ""
+            reason_html = f'<div class="detail-instruction" style="margin-top:4px">{_safe(ck_reason)}</div>' if ck_reason else ""
+            summary_html = f'<div class="detail-summary">{_safe(ck_summary)}</div>' if ck_summary and ck_summary != ck_reason else ""
+            verify_detail = (
+                f'<div class="detail" id="{vd_id}">'
+                f'<div class="detail-ss"><img src="{page.verify_url}" onclick="zoomImg(this.src)" alt="验收截图"></div>'
+                f'<div class="detail-info">'
+                f'<div class="detail-top" style="flex-wrap:wrap;gap:8px">'
+                f'<span style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.04em">验收结果</span>'
+                f'{badge}{identity_html}'
+                f'</div>'
+                f'{reason_html}'
+                f'{summary_html}'
+                f'</div>'
+                f'</div>'
+            )
         pages_html += f"""
-        <div class="page">
-          <h2>{page.title}</h2>
-          <div class="{container_cls}">{steps_html}</div>
+        <div class="milestone" id="ms-{mid_safe}">
+          <div class="milestone-header">
+            <h2>#{mid_disp}</h2>
+            <span class="milestone-name">{_safe(page.milestone_name)}</span>
+            <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
+            <span class="milestone-time">{ms_time:.1f}s · {len(page.steps)} turns{ms_tok_html}</span>
+            {desc_html}
+            {sc_html}
+          </div>
+          <div class="gallery">{thumbs_html}{verify_thumb}</div>
+          {details_html}
+          {verify_detail}
         </div>"""
 
+    # Model-config box with an inline "参考单价" chip that pops the rate table on hover.
+    cost_note_html = ""
+    if data.models or sess_in or sess_out:
+        ccy = _safe(pricing_currency())
+
+        # 参考单价 hover chip: rate table for the cost-contributing models.
+        price_chip = ""
+        if sess_in or sess_out:
+            models_seen: dict[str, tuple[float, float]] = {}
+            for k in ("supervisor", "supervisor.decompose", "action_policy"):
+                mdl = (data.models or {}).get(k)
+                if mdl and mdl not in models_seen:
+                    models_seen[mdl] = model_price(mdl)
+            if not models_seen:
+                models_seen["default"] = model_price("")
+            rows = "".join(
+                f'<tr><td>{_safe(m)}</td>'
+                f'<td class="pp-num">{pi}</td><td class="pp-num">{po}</td></tr>'
+                for m, (pi, po) in models_seen.items()
+            )
+            price_chip = (
+                f'<span class="price-tip"><span class="price-chip">参考单价 ⓘ</span>'
+                f'<div class="price-pop">'
+                f'<div style="color:#94a3b8;margin-bottom:4px">{ccy} / 百万 token</div>'
+                f'<table><tr class="pp-head"><td>模型</td><td class="pp-num">输入</td>'
+                f'<td class="pp-num">输出</td></tr>{rows}</table></div></span>'
+            )
+
+        # 当前模型配置：group config keys by the model they used; price chip rides along.
+        if data.models:
+            grouped: dict[str, list[str]] = {}
+            for key, mdl in data.models.items():
+                if mdl:
+                    grouped.setdefault(mdl, []).append(key.replace("supervisor.", ""))
+            parts = " · ".join(
+                f'{_safe(m)}<span style="color:#94a3b8">（{_safe(", ".join(keys))}）</span>'
+                for m, keys in grouped.items()
+            )
+            cost_note_html = (
+                f'<div class="decompose"><span class="decompose-label">模型配置</span>'
+                f'{parts}{price_chip}</div>'
+            )
+        elif price_chip:
+            cost_note_html = f'<div class="decompose">{price_chip}</div>'
+
+    result_html = ""
+    if data.output:
+        result_html = (
+            f'<div class="result-card">'
+            f'<div class="result-label">最终输出</div>'
+            f'<div class="result-body">{_safe(data.output)}</div>'
+            f'</div>'
+        )
+
     return HTML_TEMPLATE.format(
-        title=data.title,
+        title=_safe(data.title),
         stats=stats_str,
+        provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
+        outline_html=outline_html,
+        cost_note_html=cost_note_html,
+        result_html=result_html,
         pages_html=pages_html,
     )
 

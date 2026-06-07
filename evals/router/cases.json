@@ -366,5 +366,15 @@
     "user_msg": "我上周用微信支付花多少钱了？",
     "session": [],
     "expected": {"goal": "微信"}
+  },
+  {
+    "label": "信息查询-上月日子区间",
+    "user_msg": "我上个月3号到10号用微信支付花多少钱了？",
+    "session": [],
+    "expected": {
+      "goal_contains_all": ["微信"],
+      "goal_regex": "\\d{4}-\\d{2}-\\d{2}\\s*至\\s*\\d{4}-\\d{2}-\\d{2}",
+      "goal_not_contains": ["上个月", "号到"]
+    }
   }
 ]

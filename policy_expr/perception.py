@@ -1,6 +1,7 @@
 """Environment sensing for policy experiments."""
 
 import io
+import os
 import struct
 import subprocess
 import sys
@@ -10,11 +11,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from policy_expr.sync_mcp_client import SyncMCPClient
+from policy_expr.client import SyncMCPClient, MirrorDaemonClient
 from policy_expr.schemas import Observation
 
 ROOT = Path(__file__).parent.parent
-SCREENSHOT = ROOT / "logs" / "policy_expr" / "single-step" / "screenshot.png"
+SCREENSHOT = ROOT / "logs" / "policy_expr" / "scratch" / "screenshot.png"
 _SCK_SERVER = ROOT / "bin" / "sck_server"
 _MASK_PATH = Path(__file__).parent / "assets" / "mcp_frame_mask.png"
 
@@ -90,27 +91,51 @@ class SCKSession:
     def close(self):
         if self._proc:
             self._proc.terminate()
+            try:
+                self._proc.wait(timeout=3)
+            except Exception:
+                self._proc.kill()
+            self._proc = None
             self._proc = None
 
 
 class LivePhoneSession:
-    """Own the mirroir-mcp connection used for execution, and SCK for screenshots."""
+    """拥有执行用的输入连接 + 截图源。后端由 AGENT_MODE 选择:
 
-    def __init__(self):
-        self.client: SyncMCPClient | None = None
+    - "daemon"(默认):MirrorDaemonClient 一体提供截图 + 零抢占输入 + agent 光标 overlay
+      (截图前自动隐藏光标,不进感知图)。tap/home/screenshot 走 daemon;scroll/drag/
+      type 仍走 executor 的现有路径(Quartz/osascript),够先测 tap。MIRROR_CURSOR=0 关光标。
+    """
+
+    def __init__(self, backend: str | None = None):
+        self.client: SyncMCPClient | MirrorDaemonClient | None = None
         self._sck: SCKSession | None = None
+        self._screenshot_via_client = False   # daemon 后端:截图走 client 而非 SCK
+        self._backend = backend  # explicit override; None → fall back to AGENT_MODE env
 
     def __enter__(self) -> "LivePhoneSession":
-        print("启动 SCK 截图流...")
-        sck = SCKSession()
-        sck.start()
-        self._sck = sck
-        print("SCK 截图流就绪")
-
-        print("连接手机中...")
-        self.client = SyncMCPClient()
-        self.client.connect()
-        print("MCP 连接成功")
+        _MODE_MAP = {"silent": "daemon", "standard": "mirroir"}
+        raw = (self._backend or os.environ.get("AGENT_MODE", "silent")).lower()
+        backend = _MODE_MAP.get(raw, raw)  # silent→daemon, standard→mirroir, else pass through
+        if backend == "daemon":
+            if MirrorDaemonClient is None:
+                raise RuntimeError("MirrorDaemonClient 不可用(检查 bin/mirror_daemon 与依赖)")
+            print("连接手机中 (mirror_daemon, 零抢占)...")
+            cursor = os.environ.get("MIRROR_CURSOR", "1") != "0"
+            self.client = MirrorDaemonClient(cursor=cursor)
+            self.client.connect()
+            self._screenshot_via_client = True
+            print("mirror_daemon 连接成功")
+        else:
+            print("启动 SCK 截图流...")
+            sck = SCKSession()
+            sck.start()
+            self._sck = sck
+            print("SCK 截图流就绪")
+            print("连接手机中 (mirroir-mcp)...")
+            self.client = SyncMCPClient()
+            self.client.connect()
+            print("MCP 连接成功")
         return self
 
     def __exit__(self, *_):
@@ -122,6 +147,9 @@ class LivePhoneSession:
         self.client = None
 
     def screenshot(self) -> bytes:
+        if self._screenshot_via_client:
+            assert self.client is not None
+            return self.client.screenshot()
         if not self._sck:
             raise RuntimeError("SCK 尚未连接")
         return self._sck.screenshot()
@@ -145,25 +173,34 @@ def mirroring_window_bounds() -> tuple[float, float, float, float] | None:
     return None
 
 
-def try_resume_mac(button_lx: float = WIN_W / 2, button_ly: float = WIN_H * 0.58) -> bool:
-    """Click a dismiss button inside the Mac iPhone-mirroring window.
+def dismiss_iphone_sheet() -> bool:
+    """Dismiss a Mac-side AXSheet in the iPhone Mirroring window via AXPress (zero-preempt).
 
-    Dismisses Mac-side system dialogs (e.g. "无法从 Mac 使用 iPhone 麦克风") that
-    block iPhone interaction, causing client.tap() to return a 'paused' message.
-    button_lx / button_ly: pixel offset from window top-left (defaults to ~center-x, 58%-down).
+    Handles dialogs like "无法从 Mac 使用 iPhone 相机/麦克风".
+    Returns True if a sheet was found and pressed, False otherwise.
     """
     try:
-        import Quartz
-        bounds = mirroring_window_bounds()
-        if bounds is None:
-            return False
-        win_x, win_y, _, _ = bounds
-        pt = Quartz.CGPoint(win_x + button_lx, win_y + button_ly)
-        for ev_type in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-            ev = Quartz.CGEventCreateMouseEvent(None, ev_type, pt, Quartz.kCGMouseButtonLeft)
-            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
-        time.sleep(1.0)
-        return True
+        import Cocoa
+        import ApplicationServices as AX
+
+        def _ax(el, attr):
+            err, val = AX.AXUIElementCopyAttributeValue(el, attr, None)
+            return val if err == 0 else None
+
+        for app in Cocoa.NSWorkspace.sharedWorkspace().runningApplications():
+            if "iphone" not in (app.localizedName() or "").lower():
+                continue
+            root = AX.AXUIElementCreateApplication(app.processIdentifier())
+            for win in (_ax(root, "AXWindows") or []):
+                for child in (_ax(win, "AXChildren") or []):
+                    if _ax(child, "AXRole") != "AXSheet":
+                        continue
+                    for btn in (_ax(child, "AXChildren") or []):
+                        if _ax(btn, "AXRole") == "AXButton":
+                            AX.AXUIElementPerformAction(btn, "AXPress")
+                            time.sleep(0.4)
+                            return True
+        return False
     except Exception:
         return False
 

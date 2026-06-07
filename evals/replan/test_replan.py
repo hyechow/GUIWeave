@@ -62,6 +62,17 @@ def _check_instruction(instruction: str, expected: dict) -> list[str]:
     return details
 
 
+def _check_diagnosis(diagnosis: str, expected: dict) -> list[str]:
+    details = []
+    for kw in expected.get("diagnosis_must_contain", []):
+        if kw not in diagnosis:
+            details.append(f"diagnosis must contain '{kw}'")
+    for pattern in expected.get("diagnosis_must_not_contain", []):
+        if re.search(pattern, diagnosis):
+            details.append(f"diagnosis must not match '{pattern}'")
+    return details
+
+
 def test_replan() -> None:
     global passed, failed
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
@@ -114,6 +125,7 @@ def test_replan() -> None:
             continue
 
         details = _check_instruction(result.instruction, c["expected"])
+        details += _check_diagnosis(result.diagnosis, c["expected"])
         ok = len(details) == 0
         passed += ok
         failed += not ok
@@ -122,6 +134,7 @@ def test_replan() -> None:
         if not ok:
             print(f"        {'; '.join(details)}")
             print(f"        instruction: {result.instruction}")
+            print(f"        diagnosis:   {result.diagnosis}")
 
 
 def main():

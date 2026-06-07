@@ -226,5 +226,387 @@
       "direction": "decrease",
       "drag_column": "day"
     }
+  },
+  {
+    "label": "picker-年份2025→2026-应increase",
+    "screenshot": "evals/planner/screenshots/picker_year_increase.png",
+    "milestone": {
+      "name": "选择开始日期的年份和月份",
+      "description": "在时间段选择器中，将开始日期从2025年4月更改为2026年3月",
+      "success_condition": "开始日期显示为2026年3月",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "开始日期当前为2025年4月，需先通过向上拖动年份列将年份从2025切换至2026",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月"],
+      "summary": "picker中开始日期当前为2025年4月，年份列需从2025调至2026"
+    },
+    "expected": {
+      "direction": "increase",
+      "drag_column": "year"
+    }
+  },
+  {
+    "label": "picker-月份4月→3月-应decrease",
+    "screenshot": "evals/planner/screenshots/picker_month_decrease.png",
+    "milestone": {
+      "name": "选择开始日期的年份和月份",
+      "description": "在时间段选择器中，将开始日期从2025年4月更改为2026年3月",
+      "success_condition": "开始日期显示为2026年3月",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "在年份列向上拖动滚轮，从2025年滚动至2026年"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "年份已调整为2026年，但月份仍为4月，需将月份从4月向下滚动至3月",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月"],
+      "summary": "picker中年份已为2026年，月份列需从4月调至3月"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "month"
+    }
+  },
+  {
+    "label": "picker-日期17→8-应decrease-large",
+    "screenshot": "evals/planner/screenshots/picker_day_decrease_large.png",
+    "milestone": {
+      "name": "设置开始日期的具体日期",
+      "description": "在已选定2026年3月的情况下，将日期设置为8日",
+      "success_condition": "开始日期显示为2026年3月8日",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "在年份列向上拖动滚轮，从2025年滚动至2026年",
+      "在月份列向下拖动滚轮，从4月滚动至3月"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前开始日期显示为2026年3月17日，需要将日期从17日调整为8日，差9格，需large幅度向减小方向拖动日期列",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月8日"],
+      "summary": "picker中开始日期当前为2026年3月17日，日期列需从17调至8"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "day"
+    }
+  },
+  {
+    "label": "picker-日期13→8-应decrease-large",
+    "screenshot": "evals/planner/screenshots/picker_day_decrease_large_2.png",
+    "milestone": {
+      "name": "设置开始日期的具体日期",
+      "description": "在已选定2026年3月的情况下，将日期设置为8日",
+      "success_condition": "开始日期显示为2026年3月8日",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "在年份列向上拖动滚轮，从2025年滚动至2026年",
+      "在月份列向下拖动滚轮，从4月滚动至3月",
+      "在日期列向下拖动滚轮，从17日滚动至8日"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前开始日期显示为2026年3月13日，需将日期列向下拖动调整至目标值8日",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月8日"],
+      "summary": "picker中日期列当前为13日，需继续向减小方向拖至8日"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "day"
+    }
+  },
+  {
+    "label": "picker-日期9→8-应decrease-small",
+    "screenshot": "evals/planner/screenshots/picker_day_decrease_small.png",
+    "milestone": {
+      "name": "设置开始日期的具体日期",
+      "description": "在已选定2026年3月的情况下，将日期设置为8日",
+      "success_condition": "开始日期显示为2026年3月8日",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "在年份列向上拖动滚轮，从2025年滚动至2026年",
+      "在月份列向下拖动滚轮，从4月滚动至3月",
+      "在日期列向下拖动滚轮，从17日滚动至8日",
+      "在日期列向下拖动滚轮，从13日滚动至8日"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前开始日期显示为2026年3月9日，差1格即可到达目标8日",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年3月8日"],
+      "summary": "picker中日期列当前为9日，差1格到8日"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "day"
+    }
+  },
+  {
+    "label": "replan后回账单列表-不应重走全部账单死路",
+    "screenshot": "evals/planner/screenshots/wechat_bill_after_replan_back_to_list.png",
+    "milestone": {
+      "name": "设置起始日期为2026-02-04",
+      "description": "在筛选界面中，将起始日期设置为2026年2月4日。",
+      "success_condition": "起始日期显示为2026-02-04",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action",
+      "retry_count": 1
+    },
+    "history": [
+      "点击顶部'全部账单'下拉菜单",
+      "在筛选弹窗内向上滑动以查看并显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域",
+      "在筛选弹窗内向上滑动以显示日期选择区域",
+      "关闭当前筛选弹窗"
+    ],
+    "last_replan_diagnosis": "当前筛选弹窗不包含日期设置入口，且历史操作已多次尝试滚动查找未果，说明该组件不支持通过滚动访问日期功能。",
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为账单列表页，并非筛选界面。历史操作已尝试多次在筛选弹窗内向上滑动查找日期设置入口均未果，弹窗已关闭。需要采取新的策略找到日期筛选入口。",
+      "issues": [],
+      "visible_evidence": [],
+      "missing_evidence": ["起始日期设置为2026-02-04"],
+      "summary": "当前处于账单列表页，之前通过「全部账单」下拉菜单打开的筛选弹窗中没有日期控件，已关闭，需改变策略。"
+    },
+    "expected": {
+      "must_not_contain": ["全部账单"]
+    }
+  },
+  {
+    "label": "picker-结束日期28日→8日-应decrease-large（WeChat账单0528回归）",
+    "screenshot": "evals/planner/screenshots/wechat_bill_end_28to8_0528.png",
+    "milestone": {
+      "name": "设置结束日期为2026-03-08",
+      "description": "在筛选界面中，将结束日期设置为2026年3月8日。",
+      "success_condition": "结束日期显示为2026-03-08",
+      "kind": "action",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "history": [
+      "点击顶部'全部账单'下拉菜单",
+      "在筛选弹窗内向上滑动以查看并显示日期选择区域",
+      "关闭当前筛选弹窗",
+      "点击顶部'2026年3月'月份按钮打开日期选择器",
+      "点击'选择时间段'标签切换到时间段选择模式",
+      "在日期选择器的月份列中，将当前选中的2026年3月向下拖动切换至2026年2月",
+      "在日期选择器的日期列中，将当前选中的1日向上拖动切换至4日",
+      "点击结束日期区域的'轻触选择日期'文字以激活结束日期选择器",
+      "在日期选择器的月份列中，将当前选中的2月向下拖动切换至3月"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于日期选择界面，起始日期已设置为2026年2月4日。但结束日期当前显示为2026年3月28日，而验收条件要求结束日期必须精确显示为2026-03-08。",
+      "issues": [],
+      "visible_evidence": ["开始日期：2026年2月4日", "结束日期：2026年3月28日"],
+      "missing_evidence": ["结束日期未显示为2026-03-08，当前为2026-03-28"],
+      "summary": "在日期选择器中，结束日期的月份已切换至3月，但日期数值仍为28日，需继续调整日期列以选中8日。"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "day"
+    }
+  },
+  {
+    "label": "picker-日期范围-应点左侧开始时间而非右侧结束时间（回归：支付宝action policy混淆左右）",
+    "screenshot": "evals/planner/screenshots/alipay_date_range_picker_start_field.png",
+    "milestone": {
+      "name": "筛选上周支付记录",
+      "description": "设置日期范围为2026-05-18至2026-05-24，筛选出上周的支付交易",
+      "success_condition": "账单页显示2026-05-18至2026-05-24期间的记录",
+      "kind": "filter",
+      "app_name": "支付宝",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于自定义时间选择界面，开始时间显示为2026-05-28（今天），结束时间为空白。验收条件要求筛选2026-05-18至2026-05-24期间的记录，当前日期设置与目标范围不符。需要先点击开始时间字段激活焦点，再拖动调整日期。",
+      "issues": [],
+      "visible_evidence": ["页面标题显示「自定义时间」标签被选中", "开始时间显示为2026-05-28"],
+      "missing_evidence": ["开始时间应为2026-05-18", "结束时间应为2026-05-24"],
+      "summary": "支付宝账单自定义时间选择界面，开始时间为2026-05-28需调整为2026-05-18，结束时间待设置"
+    },
+    "expected": {
+      "must_contain": ["开始时间", "左侧"],
+      "must_not_contain": ["结束时间"]
+    }
+  },
+  {
+    "label": "picker-跨月3月31→4月7-应先调月份列increase（回归：planner错选日列）",
+    "screenshot": "evals/planner/screenshots/wechat_date_picker_end_3m31_target_4m7.png",
+    "milestone": {
+      "name": "设置结束日期为2026年4月7日",
+      "description": "在选择时间段弹窗中，将结束日期从2026年3月31日调整为2026年4月7日",
+      "success_condition": "结束日期字段显示2026年4月7日",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "结束日期字段已激活（绿色高亮2026年3月31日），滚轮已可拖动；滚轮中间行为2026年3月31日，目标2026年4月7日，月份需从3月调整到4月",
+      "issues": [],
+      "missing_evidence": ["当前值=2026年3月31日", "目标值=2026年4月7日"],
+      "summary": "选择时间段弹窗，结束日期字段已激活，滚轮中间行年=2026、月=3月、日=31日，目标4月7日，可直接拖动滚轮"
+    },
+    "expected": {
+      "direction": "increase",
+      "drag_column": "month"
+    },
+    "note": "跨月场景：当前3月31日、目标4月7日，月份(3≠4)必须先调。曾因 planner 错选日列(31→7)+ _fix_picker_direction 把 increase 误翻成 decrease(7<31)，导致 turn7-9 徒劳拖动(20260530_112049)。月份目标4>当前3 → drag_column=month、direction=increase。"
+  },
+  {
+    "label": "picker-年份已对齐-应拖月份列不应碰年份列（回归：错拖年份致发散）",
+    "screenshot": "evals/planner/screenshots/wechat_date_picker_start_2026m5_year_aligned.png",
+    "milestone": {
+      "name": "设置开始日期为2026年3月10日",
+      "description": "在选择时间段弹窗中，将开始日期从2026年5月1日调整为2026年3月10日",
+      "success_condition": "开始日期字段显示2026年3月10日",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "analysis"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "开始日期滚轮中间行为2026年5月1日，目标2026年3月10日；年份已对齐(均2026)，月份需从5月调到3月",
+      "issues": [],
+      "missing_evidence": ["当前值=2026年5月1日", "目标值=2026年3月10日"],
+      "summary": "选择时间段弹窗，开始日期滚轮中间行年=2026、月=5月、日=1日，年份已对齐，目标3月10日"
+    },
+    "expected": {
+      "direction": "decrease",
+      "drag_column": "month",
+      "must_not_contain": ["年份列", "年份"]
+    },
+    "note": "年份已对齐(2026=2026)场景：必须拖月份列(5→3,decrease)，绝不能碰已对齐的年份列。曾因 planner 指令文本误写「向下拖动年份列」(reasoning/hint 其实是 month)→执行器按文本拖了年份列→年份被拖坏，叠加 structured_output 方向反向 bug→年份2026→2016 无限发散(20260530_120154)。"
+  },
+  {
+    "label": "日期区间-已点结束日期但未激活-应重新tap而非drag",
+    "screenshot": "evals/planner/screenshots/wechat_daterange_refocus_end.png",
+    "milestone": {
+      "name": "设置日期筛选范围",
+      "description": "在账单页日期筛选弹窗的'选择时间段'中，设置开始日期2026-05-21、结束日期2026-05-28",
+      "success_condition": "账单列表仅显示2026-05-21至2026-05-28期间的记录",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "开始日期已设为2026-05-21，但结束日期尚未设置（显示为'轻触选择日期'），且滚轮中间行显示的日期为21日而非目标范围结束的28日，需继续调整结束日期。",
+      "issues": [],
+      "missing_evidence": ["当前结束日期=未设置（轻触选择日期），目标=2026-05-28"],
+      "summary": "时间段选择器，结束日期显示'轻触选择日期'未设置"
+    },
+    "history": ["点击「结束日期」标签以切换焦点至结束日期选择器"],
+    "expected": {
+      "must_contain": ["结束"],
+      "must_not_contain": ["拖动", "向上拖", "向下拖", "滚动", "滑动"]
+    },
+    "note": "源 20260605_233401 turn17→18：planner 上一步已 tap「结束日期」切焦点，但 tap no_effect 没生效（结束日期仍未激活、滚轮仍在 start）。此时若直接 drag 结束日期，会落在仍激活的 start 上把它拖坏(21→25)。正确：重新 tap 结束日期，不能 drag。"
+  },
+  {
+    "label": "日期区间-结束已达标开始未到-应切到开始日期而非wiggle月份",
+    "screenshot": "evals/planner/screenshots/wechat_daterange_focus_start.png",
+    "milestone": {
+      "name": "设置日期筛选范围",
+      "description": "在账单页日期筛选弹窗的'选择时间段'中，设置开始日期2026-05-21、结束日期2026-05-28",
+      "success_condition": "账单列表仅显示2026-05-21至2026-05-28期间的记录",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于「选择时间段」的日期选择器界面，开始日期显示为2026年5月25日（目标为5月21日），结束日期显示为2026年5月28日（符合目标）。根据滚轮中间行判断，开始日期尚未调整到位，因此筛选条件未完全满足。",
+      "issues": [],
+      "missing_evidence": ["当前值：开始日期=5月25日、结束日期=5月28日", "目标值：开始日期=5月21日、结束日期=5月28日"],
+      "summary": "时间段选择器，结束日期28日已达标，开始日期25日未到21日"
+    },
+    "history": ["向下拖动日期列，将结束日期从2026年5月29日调整为2026年5月28日"],
+    "expected": {
+      "must_contain": ["开始"],
+      "must_not_contain": ["月份", "4月", "稳定", "微调", "拖动", "向上拖", "向下拖", "滚动", "滑动"]
+    },
+    "note": "源 20260605_233401 turn23：结束日期已达标，开始日期(25)未到目标(21)。要调开始日期必须先 tap「开始日期」切焦点再拖。planner 实际却『微调月份列稳定焦点』(月5→5、拖已对齐列)，且作用在激活的结束日期上把它拖坏成6月1日。正确：tap 开始日期切焦点（不许 wiggle 月份、也不能在未切焦点时直接拖 start）。"
+  },
+  {
+    "label": "日期区间-激活结束日期-应点占位符框而非标题标签",
+    "screenshot": "evals/planner/screenshots/wechat_daterange_tap_end_placeholder.png",
+    "milestone": {
+      "name": "设置日期筛选范围",
+      "description": "在账单页日期筛选弹窗的'选择时间段'中，设置开始日期2026-05-21、结束日期2026-05-28",
+      "success_condition": "账单列表仅显示2026-05-21至2026-05-28期间的记录",
+      "kind": "filter",
+      "app_name": "微信",
+      "completion_strategy": "repeat_until_satisfied",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于时间段选择模式，开始日期已调整为2026年5月17日（接近目标21日），但结束日期尚未设置（显示为'轻触选择日期'），不满足验收条件中'显示2026-05-21至2026-05-28期间记录'的要求。",
+      "issues": [],
+      "missing_evidence": ["当前值=开始日期:2026年5月17日, 结束日期:未设置; 目标值=开始日期:2026-05-21, 结束日期:2026-05-28"],
+      "summary": "时间段选择器，开始日期17日、结束日期未设置（轻触选择日期）"
+    },
+    "history": ["向上拖动日期列，将当前显示的17日切换至21日"],
+    "expected": {
+      "must_contain": ["轻触选择日期", "占位符", "框"],
+      "must_not_contain": ["标签", "标题"]
+    },
+    "note": "源 20260606_163552 turn15→16：要激活结束日期，planner 指令『点击「结束日期」标签』点的是上方标题文字（不可交互）→点空、未激活（turn16 replan 确认）。实际可点的是该字段下方显示「轻触选择日期」的灰色占位框。提示词原写『tap 字段标签』把目标指错了（标题 vs 占位框）。期望：点占位符/值框，不点标题标签。"
+  },
+  {
+    "label": "日期picker大跨度-当前1日目标21日-须带当前值并放大幅度",
+    "screenshot": "evals/planner/screenshots/wechat_start_date_day1_target21.png",
+    "milestone": {
+      "name": "将开始日期设为2026年5月21日",
+      "description": "在微信账单「选择时间段」弹窗中，把开始日期 picker 调整为 2026年5月21日",
+      "success_condition": "开始日期滚轮中间行显示为 2026年5月21日",
+      "kind": "filter",
+      "app_name": "微信",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于账单「选择时间段」弹窗，开始日期滚轮各列中间行显示为 2026年 / 5月 / 1日（即当前开始日期为2026年5月1日），年、月已与目标对齐，仅日列需从1日调到21日；结束日期尚未设置（显示「轻触选择日期」）。",
+      "issues": [],
+      "missing_evidence": ["开始日期显示为2026年5月21日"],
+      "summary": "开始日期picker已聚焦且年月已对齐5月，仅日列当前1日需调到21日（差20格）"
+    },
+    "expected": {
+      "must_contain": ["拖动"],
+      "must_not_contain": ["直到显示", "点击.{0,4}21", "点击.{0,4}日期", "tap"],
+      "direction": "increase",
+      "drag_column": "day",
+      "drag_current_value": 1,
+      "drag_target_value": 21
+    },
+    "note": "源 20260607_092437 turn1：开始日期需从5月1日调到5月21日（日列差20格），但 planner 把指令写成开环的「向上拖动日期列直到显示21日」——只有目标值、没有当前值。下游 _picker_step_distance/_fix_picker_direction 都靠正则从指令文本抠两个数字算跨度，单数字匹配失败 → 幅度退回 small/medium（≈1-2格/轮），20格距离按≈1格/轮挪，25轮跑满仍差1天没到。修复：planner 必须输出结构化 drag_current_value/drag_target_value，并把指令写成「从1日调整至21日」带上当前值；据此算出 drag_steps=20 → action policy 选 large 粗调、接近后自动收回 small 精调。"
   }
 ]

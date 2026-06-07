@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -e
+cd "$(dirname "$0")/.."
+exec env AGENT_MODE="${AGENT_MODE:-daemon}" \
+         AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
+         uv run python -m policy_expr.runner "$@" --auto-continue --hud --supervisor milestone --max-turns 20

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from policy_expr.executor import logical_xy
-from policy_expr.perception import try_resume_mac
+from policy_expr.perception import dismiss_iphone_sheet
 from policy_expr.recon.back_nav import make_nav_context, manual_recover as _manual_recover
 from policy_expr.recon.planned_back_nav import planned_return_to_initial as return_to_initial
 from policy_expr.recon.page_identity import PageIdentity
@@ -48,7 +48,7 @@ def _safe_tap(client, lx: float, ly: float) -> str:
     resp = client.tap(lx, ly)
     if "paused" in resp.lower():
         print(f"    Mac 弹窗阻断，尝试恢复...")
-        if try_resume_mac(client):
+        if dismiss_iphone_sheet():
             time.sleep(0.5)
             resp = client.tap(lx, ly)
     return resp

@@ -480,9 +480,9 @@ def _try_tap(
 
     # Handle Mac system popup blocking tap (e.g. microphone access dialog)
     if "paused" in tap_response.lower():
-        from policy_expr.perception import try_resume_mac
+        from policy_expr.perception import dismiss_iphone_sheet
         print(f"    ↩ [{strategy}] Mac 弹窗阻断，尝试恢复...")
-        if try_resume_mac():
+        if dismiss_iphone_sheet():
             time.sleep(0.5)
             coords = tap_fn()
             if coords is None:

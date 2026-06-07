@@ -25,7 +25,15 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from policy_expr.schemas import Observation
+from policy_expr.schemas import (
+    Action,
+    ActionDecision,
+    Milestone,
+    Observation,
+    PolicyTurn,
+    SupervisorStep,
+    TargetVerify,
+)
 from policy_expr.supervisor.milestone import (
     STUCK_SCREEN_FROZEN,
     STUCK_SCREEN_WINDOW,
@@ -155,6 +163,88 @@ def test_window_too_small_returns_none() -> None:
             f"unexpected: {result}" if not ok else "")
 
 
+# ── no_effect tap → early replan (decide-level routing, no LLM) ──────────────────
+
+class _ReachedChecker(Exception):
+    """Raised by the stubbed _single_check to prove the turn did NOT short-circuit."""
+
+
+def _policy_one_milestone() -> tuple[MilestoneSupervisorPolicy, Milestone]:
+    p = MilestoneSupervisorPolicy()
+    m = Milestone.model_validate({
+        "id": "M3", "name": "定位最近下单的奶粉商品",
+        "description": "在订单列表中找到最近下单的奶粉商品并点击进入详情页。",
+        "kind": "action", "success_condition": "看到奶粉商品的订单详情或商品详情页",
+    })
+    p._milestones = {"M3": m}
+    p._order = ["M3"]
+    p._current_id = "M3"
+    return p, m
+
+
+def _tap_turn(desc: str, *, action_type: str, no_effect: bool, on_target: bool) -> PolicyTurn:
+    extra = {"direction": "down"} if action_type in ("scroll", "drag") else {}
+    return PolicyTurn(
+        index=1, observation_source="eval",
+        supervisor=SupervisorStep(should_act=True, instruction=desc, stop=False,
+                                  goal_completed=False, summary=desc, milestone_id="M3"),
+        action_decision=ActionDecision(action=Action(action_type=action_type, x=880, y=944, description=desc, **extra)),
+        target_verify=TargetVerify(on_target=on_target, actual_element=desc),
+        no_effect=no_effect, executed=True,
+    )
+
+
+def _route(history: list[PolicyTurn]) -> dict:
+    """Drive _run_single_turn on a non-blank frame; capture whether it short-circuited
+    to _handle_stuck (and with which stuck_reason) or reached the checker."""
+    p, m = _policy_one_milestone()
+    captured: dict = {}
+
+    def fake_handle_stuck(milestone, stuck, read_inst, observation, hist):
+        captured["stuck_reason"] = stuck.stuck_reason
+        return SupervisorStep(should_act=False, instruction=None, stop=False,
+                              goal_completed=False, summary="stuck", milestone_id="M3")
+
+    def fake_single_check(*a, **k):
+        raise _ReachedChecker()
+
+    p._handle_stuck = fake_handle_stuck       # type: ignore[method-assign]
+    p._single_check = fake_single_check        # type: ignore[method-assign]
+    try:
+        p._run_single_turn(m, _obs(FRAME_DARK), history)
+    except _ReachedChecker:
+        captured["reached_checker"] = True
+    return captured
+
+
+def test_no_effect_on_target_tap_routes_replan() -> None:
+    """on_target tap + 屏幕零变化 → 跳过 checker，走 no_effect replan。"""
+    r = _route([_tap_turn("个人中心 Tab", action_type="tap", no_effect=True, on_target=True)])
+    ok = "reached_checker" not in r and "无效果" in r.get("stuck_reason", "")
+    _report("no_effect+on_target的tap-跳checker走replan", ok, f"got {r}" if not ok else "")
+
+
+def test_off_target_takes_precedence() -> None:
+    """off_target 优先于 no_effect：误中元素走 off-target 分支，不走 no_effect。"""
+    r = _route([_tap_turn("个人中心 Tab", action_type="tap", no_effect=True, on_target=False)])
+    ok = "reached_checker" not in r and "off-target" in r.get("stuck_reason", "")
+    _report("off_target优先-不被no_effect截走", ok, f"got {r}" if not ok else "")
+
+
+def test_effective_tap_not_short_circuited() -> None:
+    """tap 有效果（屏幕变过）→ 不短路，正常进 checker。"""
+    r = _route([_tap_turn("个人中心 Tab", action_type="tap", no_effect=False, on_target=True)])
+    ok = r.get("reached_checker") is True and "stuck_reason" not in r
+    _report("有效果的tap-不短路-正常进checker", ok, f"got {r}" if not ok else "")
+
+
+def test_gesture_no_effect_gated_out() -> None:
+    """非 tap（scroll）即使 no_effect 也不触发 no_effect 分支（gesture 不押 changed）。"""
+    r = _route([_tap_turn("向下滚动", action_type="scroll", no_effect=True, on_target=True)])
+    ok = r.get("reached_checker") is True and "stuck_reason" not in r
+    _report("scroll的no_effect-被tap门控挡住", ok, f"got {r}" if not ok else "")
+
+
 def main() -> int:
     print("── Stuck Detection Eval ──")
     test_window_too_small_returns_none()
@@ -163,6 +253,10 @@ def main() -> int:
     test_ab_loop_not_suppressed_by_summary_change()
     test_picker_freeze_detected()
     test_picker_freeze_suppressible()
+    test_no_effect_on_target_tap_routes_replan()
+    test_off_target_takes_precedence()
+    test_effective_tap_not_short_circuited()
+    test_gesture_no_effect_gated_out()
     print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 1
 
