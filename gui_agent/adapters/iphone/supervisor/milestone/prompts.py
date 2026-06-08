@@ -435,3 +435,23 @@ STOP_CONDITION_PATCH_PROMPT = """\
 - 必须从约束维度推导，不能默认使用"物理底部"
 - 如果已给出当前停止条件且与约束维度一致，保持不变
 """
+
+
+# ── Bundle the above into the neutral MilestonePrompts seam ──────────────────
+# These prompts are iPhone-flavored (iPhone Mirroring / iOS 主屏 / 底部 Tab …) and
+# live in the iphone adapter; the core milestone framework (policy/helpers) receives
+# this set by injection. browser borrows it for now (see adapters/browser/factory.py).
+from gui_agent.core.supervisor.milestone.schemas import MilestonePrompts  # noqa: E402
+
+IPHONE_MILESTONE_PROMPTS = MilestonePrompts(
+    decompose=DECOMPOSE_PROMPT,
+    single_checker=SINGLE_CHECKER_PROMPT,
+    check_kind_sections=CHECK_KIND_SECTIONS,
+    check_section_default=_CHECK_SECTION_DEFAULT,
+    check_section_converge=_CHECK_SECTION_CONVERGE,
+    loop_frame=LOOP_FRAME_PROMPT,
+    plan=PLAN_PROMPT,
+    loop_scroll=LOOP_SCROLL_PROMPT,
+    replan=REPLAN_PROMPT,
+    stop_condition_patch=STOP_CONDITION_PATCH_PROMPT,
+)

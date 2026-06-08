@@ -1,8 +1,34 @@
+from dataclasses import dataclass
+
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from gui_agent.core.schemas import CollectionScope, Milestone
+
+
+@dataclass(frozen=True)
+class MilestonePrompts:
+    """Platform-specific LLM prompt set for the milestone supervisor.
+
+    The supervisor FRAMEWORK (policy.py decompose→check→plan loop + helpers) is
+    platform-neutral; the actual prompts are iphone-flavored ("你是 iPhone…返回
+    主屏幕…底部 Tab") and must be INJECTED per platform — iphone provides
+    ``adapters/iphone/supervisor/milestone/prompts.py:IPHONE_MILESTONE_PROMPTS``;
+    browser will provide a web-tuned set (today it borrows iphone's). This container
+    is the neutral seam: only the field SHAPE lives in core, never the content.
+    Fields cover every prompt policy.py + helpers.py consume."""
+
+    decompose: str
+    single_checker: str
+    check_kind_sections: dict
+    check_section_default: str
+    check_section_converge: str
+    loop_frame: str
+    plan: str
+    loop_scroll: str
+    replan: str
+    stop_condition_patch: str
 
 
 class _SingleCheckResult(BaseModel):

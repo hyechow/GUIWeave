@@ -17,8 +17,8 @@ from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.adapters.iphone.supervisor.milestone.prompts import REPLAN_PROMPT
 from gui_agent.core.supervisor.milestone import (
-    REPLAN_PROMPT,
     _ReplanResult,
     _SingleCheckResult,
     _format_history,

@@ -57,8 +57,13 @@ def _build_action_policy(name: str) -> "ActionPolicy":
 
 
 def _build_supervisor(name: str) -> "SupervisorPolicy":
-    # Browser defaults to the structure-neutral milestone supervisor (the iphone
+    # Browser uses the structure-neutral milestone supervisor FRAMEWORK (the iphone
     # SimpleSupervisorPolicy is iphone-specific and intentionally not offered here).
+    # ⚠️ PROMPTS: constructing with no args falls back to the iphone milestone prompts
+    # (MilestoneSupervisorPolicy's lazy default — "你是 iPhone…返回主屏幕…底部 Tab").
+    # browser BORROWS them for now; a web-tuned MilestonePrompts set should be written
+    # and injected here (MilestoneSupervisorPolicy(prompts=...)). See memory
+    # project_core_semantic_debt_prompts.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
     registry: dict[str, type] = {MilestoneSupervisorPolicy.name: MilestoneSupervisorPolicy}

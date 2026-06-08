@@ -96,6 +96,42 @@ def test_recon_capabilities_conform():
     assert isinstance(_blank(EdgeIoUBackend), SimilarityBackend)
 
 
+def test_milestone_prompts_injected_from_adapter():
+    # Semantic-neutrality seam: the iphone-flavored milestone prompts live in the
+    # ADAPTER and are injected into the neutral supervisor framework; core holds only
+    # the MilestonePrompts shape. Construction falls back to the iphone set (lazy).
+    from gui_agent.core.supervisor.milestone import MilestonePrompts, MilestoneSupervisorPolicy
+    from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
+
+    sup = MilestoneSupervisorPolicy()
+    assert isinstance(sup._prompts, MilestonePrompts)
+    assert sup._prompts is IPHONE_MILESTONE_PROMPTS
+    assert all(
+        getattr(sup._prompts, f)
+        for f in (
+            "decompose", "single_checker", "check_kind_sections", "check_section_default",
+            "check_section_converge", "loop_frame", "plan", "loop_scroll", "replan",
+            "stop_condition_patch",
+        )
+    )
+    assert sup._prompts.decompose.startswith("你是 iPhone")  # iphone strings preserved verbatim
+
+
+def test_core_milestone_is_leaf_without_iphone_prompts():
+    # Importing the core milestone package must NOT pull the iphone adapter — its
+    # prompts are imported lazily only at supervisor construction.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, gui_agent.core.supervisor.milestone; "
+        "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
+        "assert not leaked, leaked"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
 def test_recon_navigator_conforms():
     # Step 5a: the iphone navigator (thin delegation to back_nav/popup_nav) satisfies
     # the neutral ReconNavigator seam the explore loop will route through in 5b.

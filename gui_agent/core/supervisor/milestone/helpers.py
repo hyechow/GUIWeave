@@ -12,15 +12,18 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 
-from .schemas import _LoopFrameResult, _PlanResult, _SingleCheckResult
-from .prompts import (
-    CHECK_KIND_SECTIONS,
-    LOOP_FRAME_PROMPT,
-    PLAN_PROMPT,
-    SINGLE_CHECKER_PROMPT,
-    _CHECK_SECTION_CONVERGE,
-    _CHECK_SECTION_DEFAULT,
-)
+from .schemas import MilestonePrompts, _LoopFrameResult, _PlanResult, _SingleCheckResult
+
+
+def _default_milestone_prompts() -> MilestonePrompts:
+    """Lazy iphone-prompts default: keeps every no-prompts caller (iphone factory,
+    evals, tests, scripts) working unchanged while the prompt STRINGS live in the
+    iphone adapter — not core. A platform that wants its own prompts injects them."""
+    from gui_agent.adapters.iphone.supervisor.milestone.prompts import (
+        IPHONE_MILESTONE_PROMPTS,
+    )
+    return IPHONE_MILESTONE_PROMPTS
+
 
 load_dotenv()
 
@@ -101,17 +104,20 @@ def run_checker(
     constraints: Optional[list[str]] = None,
     extra: str = "",
     _is_retry: bool = False,
+    prompts: Optional[MilestonePrompts] = None,
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals."""
+    if prompts is None:
+        prompts = _default_milestone_prompts()
     if constraints is None:
         constraints = []
     app_name_context = f"任务目标涉及「{app_name}」应用，" if app_name else ""
-    kind_section = CHECK_KIND_SECTIONS.get(milestone.kind, _CHECK_SECTION_DEFAULT)
+    kind_section = prompts.check_kind_sections.get(milestone.kind, prompts.check_section_default)
     # 连续调值类（picker 收敛）在 kind 段之上叠加专用段：当前值以滚轮中心带为准、强制输出
     # 当前值/目标值。这是连续操作进展传感器的基础——避免把已推进的拖动误读为"没动"。
     if milestone.is_converge:
-        kind_section = kind_section + _CHECK_SECTION_CONVERGE
-    prompt = SINGLE_CHECKER_PROMPT.format(
+        kind_section = kind_section + prompts.check_section_converge
+    prompt = prompts.single_checker.format(
         milestone_name=milestone.name,
         milestone_desc=milestone.description,
         success_condition=milestone.success_condition,
@@ -182,6 +188,7 @@ def run_checker(
                 "结果提示），并清空 missing_evidence；若截图只显示「可以执行」但结果尚未出现，改判 in_progress。"
             ),
             _is_retry=True,
+            prompts=prompts,
         )
         _strip_progress_evidence(result)
     if result.status == "done" and _still_invalid(result):
@@ -204,8 +211,11 @@ def run_planner(
     extra: str = "",
     app_knowledge: Optional[str] = None,
     elements_knowledge: Optional[str] = None,
+    prompts: Optional[MilestonePrompts] = None,
 ) -> _PlanResult:
     """Run the step planner. Used by both production and evals."""
+    if prompts is None:
+        prompts = _default_milestone_prompts()
     if constraints is None:
         constraints = []
     if milestone.retry_count > 0 and not extra:
@@ -234,7 +244,7 @@ def run_planner(
                 f"{dead_end_lines}"
             )
             extra = f"{extra}\n\n{extra_text}" if extra else extra_text
-    prompt = PLAN_PROMPT.format(
+    prompt = prompts.plan.format(
         milestone_name=milestone.name,
         milestone_desc=milestone.description,
         success_condition=milestone.success_condition,
@@ -260,9 +270,12 @@ def run_loop_check(
     history: list[PolicyTurn],
     *,
     constraints: Optional[list[str]] = None,
+    prompts: Optional[MilestonePrompts] = None,
 ) -> _LoopFrameResult:
     """Run the per-frame scroll_until_boundary assessment. Used by both production and evals."""
-    prompt = LOOP_FRAME_PROMPT.format(
+    if prompts is None:
+        prompts = _default_milestone_prompts()
+    prompt = prompts.loop_frame.format(
         milestone_name=milestone.name,
         milestone_desc=milestone.description,
         scroll_stop_condition=milestone.scroll_stop_condition or "滚动至列表物理底部时停止",

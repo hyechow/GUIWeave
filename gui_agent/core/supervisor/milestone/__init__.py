@@ -9,16 +9,8 @@ from .policy import (
     STUCK_REPEAT_WINDOW,
     MilestoneSupervisorPolicy,
 )
-from .prompts import (
-    DECOMPOSE_PROMPT,
-    LOOP_FRAME_PROMPT,
-    LOOP_SCROLL_PROMPT,
-    PLAN_PROMPT,
-    REPLAN_PROMPT,
-    SINGLE_CHECKER_PROMPT,
-    STOP_CONDITION_PATCH_PROMPT,
-)
 from .schemas import (
+    MilestonePrompts,
     _DecomposeResponse,
     _LoopFrameResult,
     _PlanResult,
@@ -43,13 +35,7 @@ __all__ = [
     "_ReplanResult",
     "_StopConditionPatch",
     "_DecomposeResponse",
-    "DECOMPOSE_PROMPT",
-    "SINGLE_CHECKER_PROMPT",
-    "LOOP_FRAME_PROMPT",
-    "PLAN_PROMPT",
-    "LOOP_SCROLL_PROMPT",
-    "REPLAN_PROMPT",
-    "STOP_CONDITION_PATCH_PROMPT",
+    "MilestonePrompts",
     "MAX_RETRIES",
     "STUCK_SCREEN_WINDOW",
     "STUCK_SCREEN_SIMILARITY",

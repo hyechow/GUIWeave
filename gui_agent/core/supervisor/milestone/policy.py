@@ -16,15 +16,9 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 
 from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_loop_check, run_planner
-from .prompts import (
-    DECOMPOSE_PROMPT,
-    LOOP_FRAME_PROMPT,
-    LOOP_SCROLL_PROMPT,
-    REPLAN_PROMPT,
-    STOP_CONDITION_PATCH_PROMPT,
-)
-from .helpers import run_checker
+from .helpers import run_checker, _default_milestone_prompts
 from .schemas import (
+    MilestonePrompts,
     _DecomposeResponse,
     _LoopFrameResult,
     _PlanResult,
@@ -198,7 +192,11 @@ class MilestoneSupervisorPolicy:
 
     name = "milestone"
 
-    def __init__(self) -> None:
+    def __init__(self, prompts: Optional[MilestonePrompts] = None) -> None:
+        # Platform prompt set. Defaults to iphone's (lazy import) so every existing
+        # no-arg constructor (iphone factory, evals, tests) is unchanged; browser can
+        # inject its own once written — today it borrows iphone's.
+        self._prompts = prompts or _default_milestone_prompts()
         self._global_constraints: list[str] = []
         self._milestones: dict[str, Milestone] = {}
         self._order: list[str] = []
@@ -878,6 +876,7 @@ class MilestoneSupervisorPolicy:
             task_type=self.task_type,
             constraints=self._global_constraints,
             extra=extra,
+            prompts=self._prompts,
         )
 
     def _loop_check(
@@ -888,6 +887,7 @@ class MilestoneSupervisorPolicy:
     ) -> _LoopFrameResult:
         return run_loop_check(
             milestone, observation, history, constraints=self._global_constraints,
+            prompts=self._prompts,
         )
 
     def _invoke_planner(
@@ -904,6 +904,7 @@ class MilestoneSupervisorPolicy:
             extra=extra,
             app_knowledge=self._app_knowledge,
             elements_knowledge=self._elements_knowledge,
+            prompts=self._prompts,
         )
 
     def _invoke_loop_scroll(
@@ -912,7 +913,7 @@ class MilestoneSupervisorPolicy:
         frame: _LoopFrameResult,
         observation: Observation,
     ) -> _PlanResult:
-        prompt = LOOP_SCROLL_PROMPT.format(
+        prompt = self._prompts.loop_scroll.format(
             milestone_name=milestone.name,
             milestone_desc=milestone.description,
             constraints=json.dumps(self._global_constraints, ensure_ascii=False),
@@ -942,7 +943,7 @@ class MilestoneSupervisorPolicy:
             if m.status == "done" and m.id != milestone.id
         ]
         done_context = "\n".join(done_lines) if done_lines else "  （无）"
-        prompt = REPLAN_PROMPT.format(
+        prompt = self._prompts.replan.format(
             milestone_name=milestone.name,
             milestone_desc=milestone.description,
             success_condition=milestone.success_condition,
@@ -1122,7 +1123,7 @@ class MilestoneSupervisorPolicy:
         self, llm: ChatOpenAI, goal: str, observation: Observation,
         feedback: list[str],
     ) -> None:
-        msgs = self._msgs(DECOMPOSE_PROMPT, observation)
+        msgs = self._msgs(self._prompts.decompose, observation)
         user_parts: list[dict] = [{"type": "text", "text": f"用户任务：{goal}"}]
         if self._app_knowledge:
             user_parts.append({"type": "text", "text": f"\n## 应用导航知识\n{self._app_knowledge}"})
@@ -1263,7 +1264,7 @@ class MilestoneSupervisorPolicy:
             patch = invoke_structured(
                 llm,
                 [
-                    SystemMessage(content=STOP_CONDITION_PATCH_PROMPT),
+                    SystemMessage(content=self._prompts.stop_condition_patch),
                     HumanMessage(content=(
                         f"用户目标：{goal}\n"
                         f"子目标名称：{m.name}\n"

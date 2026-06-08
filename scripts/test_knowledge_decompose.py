@@ -27,8 +27,8 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import Observation
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
+from gui_agent.adapters.iphone.supervisor.milestone.prompts import DECOMPOSE_PROMPT
 from gui_agent.core.supervisor.milestone import (
-    DECOMPOSE_PROMPT,
     _DecomposeResponse,
     Milestone,
 )
