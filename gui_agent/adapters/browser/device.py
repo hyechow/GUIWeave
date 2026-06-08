@@ -53,6 +53,7 @@ class PlaywrightDevice:
         self._browser = None
         self._context = None
         self.page = None
+        self._cdp = None  # cached raw CDP session for one-shot screenshots
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -85,35 +86,107 @@ class PlaywrightDevice:
                 self._browser = None
                 self._context = None
                 self.page = None
+                self._cdp = None
 
     # ----- viewport (for the executor's denormalization) -------------------
     @property
     def viewport_size(self) -> tuple[int, int]:
         """(width, height) in CSS px the executor uses to denormalize 0-1000 -> px.
 
-        Prefers the live page's viewport; falls back to evaluating the window's
-        innerWidth/innerHeight (CDP-attached pages often report viewport_size as
-        None), then to a sane default.
+        Reads window.innerWidth/innerHeight via a raw CDP ``Runtime.evaluate``. We do
+        NOT use ``page.evaluate`` here: when the high-level execution-context binding
+        fails over ``connect_over_cdp`` (Playwright<->Chrome version skew), every
+        ``page.evaluate`` hangs forever — and ``page.viewport_size`` is usually None
+        on a CDP-attached tab anyway. Falls back to a sane default on any failure.
         """
-        page = self.page
-        if page is not None:
-            vp = page.viewport_size
-            if vp:
-                return int(vp["width"]), int(vp["height"])
-            try:
-                size = page.evaluate(
-                    "() => ({w: window.innerWidth, h: window.innerHeight})"
-                )
-                if size and size.get("w") and size.get("h"):
-                    return int(size["w"]), int(size["h"])
-            except Exception:
-                pass
+        try:
+            res = self._cdp_send(
+                "Runtime.evaluate",
+                {
+                    "expression": "({w: window.innerWidth, h: window.innerHeight})",
+                    "returnByValue": True,
+                },
+            )
+            val = (res.get("result") or {}).get("value") or {}
+            w, h = int(val.get("w") or 0), int(val.get("h") or 0)
+            if w and h:
+                return w, h
+        except Exception:
+            pass
         return _DEFAULT_VIEWPORT_W, _DEFAULT_VIEWPORT_H
 
     # ----- perception ------------------------------------------------------
     def screenshot(self) -> bytes:
-        """Return the current page as PNG bytes."""
-        return self._require_page().screenshot()
+        """Return the current page as PNG bytes via a raw CDP one-shot capture.
+
+        WHY NOT ``page.screenshot()``: the high-level wrapper (a) auto-waits for the
+        page to stop navigating — a Google results page never looks "settled", so it
+        retried to its timeout (the persistent ~25s post-Enter stall), and (b) hangs
+        outright when the execution-context binding fails over ``connect_over_cdp``
+        (Playwright<->Chrome version skew). Raw ``Page.captureScreenshot`` does
+        neither: it grabs the current frame immediately, mid-navigation included.
+        """
+        try:
+            return self._cdp_screenshot()
+        except Exception:
+            pass
+        # Last-resort fallback (e.g. an occluded window where the CDP surface capture
+        # could not get a frame): bring the tab forward and use the wrapper, bounded
+        # so it can never hang the loop. On a binding-broken setup this also fails
+        # fast rather than hanging — but the CDP primary above is the working path.
+        page = self._require_page()
+        try:
+            page.bring_to_front()
+        except Exception:
+            pass
+        return page.screenshot(timeout=8000)
+
+    def _cdp_send(self, method: str, params: dict) -> dict:
+        """Send a raw CDP command on the cached per-page session, rebuilding it once
+        if it went stale (the page target changed). Raw CDP is used throughout for
+        anything the high-level Playwright page API would route through the
+        execution-context binding (evaluate / wrapper screenshot / viewport), which
+        hangs when that binding fails over ``connect_over_cdp`` on a mismatched
+        Chrome — whereas raw CDP keeps working."""
+        page = self._require_page()
+        if self._cdp is None:
+            self._cdp = self._context.new_cdp_session(page)
+        try:
+            return self._cdp.send(method, params)
+        except Exception:
+            self._cdp = self._context.new_cdp_session(page)
+            return self._cdp.send(method, params)
+
+    def _cdp_screenshot(self) -> bytes:
+        import base64
+
+        result = self._cdp_send("Page.captureScreenshot", {"format": "png"})
+        return base64.b64decode(result["data"])
+
+    def eval_js(self, expression: str) -> object:
+        """Best-effort JS eval via raw CDP ``Runtime.evaluate`` (NOT
+        ``page.evaluate``, which hangs on a broken execution-context binding). Used
+        by the action visualizer to draw its overlay. Returns the evaluated value
+        (when ``returnByValue`` data is present) or None; never raises."""
+        try:
+            res = self._cdp_send(
+                "Runtime.evaluate", {"expression": expression, "returnByValue": False}
+            )
+            return (res.get("result") or {}).get("value")
+        except Exception:
+            return None
+
+    def window_bounds(self) -> tuple[int, int, int, int] | None:
+        """(left, top, width, height) of the browser window in screen points (CSS
+        px, top-left origin) via raw CDP ``Browser.getWindowForTarget``. Used by the
+        screen-cursor visualizer to map page coords -> macOS screen coords. Returns
+        None on any failure (cursor then skips this action)."""
+        try:
+            res = self._cdp_send("Browser.getWindowForTarget", {})
+            b = res.get("bounds") or {}
+            return int(b["left"]), int(b["top"]), int(b["width"]), int(b["height"])
+        except Exception:
+            return None
 
     # ----- input primitives ------------------------------------------------
     def tap(self, x: float, y: float) -> str:
