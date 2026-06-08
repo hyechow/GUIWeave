@@ -78,8 +78,14 @@ MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
 
 
-def _frame_diff(png_a: bytes, png_b: bytes) -> float:
-    """两帧灰度图缩放到 160x320 后的平均绝对差（0-255 量级）。"""
+def _frame_diff(png_a: bytes, png_b: bytes, focus_y: float | None = None) -> float:
+    """两帧灰度图缩放到 160x320 后的平均绝对差（0-255 量级）。
+
+    focus_y（归一化 0-1000）给定时只比该 y 周围的横向带，而非整帧——type 是**局部改动**
+    （只改输入框那一行），整帧均值会把它稀释（实测打字「NVIDIA stock price」整帧仅 4.5、低于
+    CHANGE_THR=8.0，误判零效果）；裁到输入行带后局部改动凸显（实测 ~11，远超阈值）。
+    点击/跳转等影响整页的动作不传 focus_y，仍按整帧比。
+    """
     import io
 
     import numpy as np
@@ -87,11 +93,18 @@ def _frame_diff(png_a: bytes, png_b: bytes) -> float:
 
     a = np.array(Image.open(io.BytesIO(png_a)).convert("L").resize((160, 320)), dtype=np.float32)
     b = np.array(Image.open(io.BytesIO(png_b)).convert("L").resize((160, 320)), dtype=np.float32)
+    if focus_y is not None:
+        cy = focus_y / 1000.0 * 320.0
+        half = 0.05 * 320.0  # 输入行带半高 ~16px（带高 ~10% 屏；越窄局部信号越凸显）
+        y0, y1 = max(0, int(cy - half)), min(320, int(cy + half))
+        if y1 - y0 >= 4:  # 防退化裁剪
+            a, b = a[y0:y1], b[y0:y1]
     return float(np.abs(a - b).mean())
 
 
 def _settle_after_action(
-    phone: "PerceptionSession", pre_frame: bytes | None, action_type: str | None = None
+    phone: "PerceptionSession", pre_frame: bytes | None, action_type: str | None = None,
+    focus_y: float | None = None,
 ) -> tuple[float, bool]:
     """等到屏幕相对动作前帧「变过且停稳」，或达到上限。返回 (等待秒数, no_effect)。
 
@@ -139,9 +152,10 @@ def _settle_after_action(
             dur = time.perf_counter() - t0
             print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
             return dur, False
-        changed = _frame_diff(pre_frame, cur) > SETTLE_CHANGE_THR
+        # type 是局部改动：只比输入坐标周围的带（focus_y），整帧会把它稀释成假零效果。
+        changed = _frame_diff(pre_frame, cur, focus_y) > SETTLE_CHANGE_THR
         ever_changed = ever_changed or changed
-        stable = prev is not None and _frame_diff(prev, cur) < SETTLE_STABLE_THR
+        stable = prev is not None and _frame_diff(prev, cur, focus_y) < SETTLE_STABLE_THR
         if changed and stable:
             dur = time.perf_counter() - t0
             print(f"  [Settle] {dur:.1f}s ({i} 轮，变过且停稳)")
@@ -892,13 +906,16 @@ def run_agent_loop(
                     # 缓存滚动已在分支内 settle 过（为验证位移），不重复等待。
                     turn.settle_s = branch_settle_s
                 else:
-                    settle_action_type = (
-                        action_decision.action.action_type
-                        if action_decision and action_decision.action
+                    _settle_act = action_decision.action if action_decision else None
+                    settle_action_type = _settle_act.action_type if _settle_act else None
+                    # type 是局部改动：把输入坐标的 y 传给 settle，只比输入行带、不被整帧稀释。
+                    settle_focus_y = (
+                        _settle_act.y
+                        if (_settle_act and settle_action_type == "type" and _settle_act.y is not None)
                         else None
                     )
                     turn.settle_s, turn.no_effect = _settle_after_action(
-                        phone, observation.png_bytes, settle_action_type
+                        phone, observation.png_bytes, settle_action_type, settle_focus_y
                     )
                 if verify_future is not None:
                     try:
