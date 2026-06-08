@@ -9,8 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from gui_agent.adapters.iphone.executor import logical_xy
-from gui_agent.adapters.iphone.perception import dismiss_iphone_sheet
+from gui_agent.adapters.iphone.executor import logical_xy, recover_if_sheet_blocked
 from gui_agent.adapters.iphone.recon.back_nav import make_nav_context, manual_recover as _manual_recover
 from gui_agent.adapters.iphone.recon.planned_back_nav import planned_return_to_initial as return_to_initial
 from gui_agent.adapters.iphone.recon.page_identity import PageIdentity
@@ -44,13 +43,14 @@ def _tab_bar_gone(before_bytes: bytes, after_bytes: bytes, region: str = "top") 
 
 
 def _safe_tap(client, lx: float, ly: float) -> str:
-    """Tap with automatic Mac popup recovery. Returns tap response string."""
+    """Tap with automatic Mac-sheet recovery. Covers BOTH backends — the daemon
+    detects the sheet via CGWindowList (the old "paused"-only check missed it, which
+    is why recon left the "无法从 Mac 使用 iPhone 相机" dialog up). Returns the tap
+    response string."""
     resp = client.tap(lx, ly)
-    if "paused" in resp.lower():
-        print(f"    Mac 弹窗阻断，尝试恢复...")
-        if dismiss_iphone_sheet():
-            time.sleep(0.5)
-            resp = client.tap(lx, ly)
+    if recover_if_sheet_blocked(client, resp):
+        time.sleep(0.5)
+        resp = client.tap(lx, ly)
     return resp
 
 

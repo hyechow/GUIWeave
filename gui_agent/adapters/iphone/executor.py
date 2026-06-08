@@ -254,18 +254,10 @@ class ActionExecutor:
         return True
 
     def _recover_if_blocked(self, result: str) -> None:
-        """Detect and dismiss a Mac-side sheet blocking iPhone interaction.
-
-        mirroir: session returns "paused" in result.
-        daemon:  tap returns "OK" regardless; detect via CGWindowList extra window.
-        """
-        client = self._client()
-        blocked = "paused" in result.lower()
-        if not blocked and getattr(client, "zero_preempt", False):
-            blocked = _has_iphone_sheet()
-        if blocked:
-            print("Mac 弹窗阻断，尝试恢复...")
-            dismiss_iphone_sheet()
+        """Detect and dismiss a Mac-side sheet blocking iPhone interaction. Delegates
+        to the shared module helper (also used by recon, so both backends are
+        covered in one place)."""
+        recover_if_sheet_blocked(self._client(), result)
 
     def _tap(self, lx: float, ly: float, decision: ActionDecision, app_name: str = "") -> bool:
         print(f"执行点击: ({lx:.0f}, {ly:.0f})")
@@ -451,6 +443,24 @@ def _has_iphone_sheet() -> bool:
         and w["kCGWindowBounds"]["Height"] < 300
         for w in (wins or [])
     )
+
+
+def recover_if_sheet_blocked(client, result: str) -> bool:
+    """Detect a Mac-side iPhone-Mirroring sheet (e.g. "无法从 Mac 使用 iPhone 相机")
+    that blocks iPhone interaction, and dismiss it. Shared by the executor AND recon
+    so BOTH backends are covered in one place:
+      - mirroir: the tap ``result`` contains "paused".
+      - daemon : the tap returns "OK" regardless, so detect via CGWindowList
+                 (``_has_iphone_sheet``) — the path recon was missing.
+    Returns True if a sheet was detected (and dismissal attempted), so the caller
+    can retry the tap."""
+    blocked = "paused" in result.lower()
+    if not blocked and getattr(client, "zero_preempt", False):
+        blocked = _has_iphone_sheet()
+    if blocked:
+        print("Mac 弹窗阻断，尝试恢复...")
+        dismiss_iphone_sheet()
+    return blocked
 
 
 def _find_iphone_window() -> tuple[float, float] | None:
