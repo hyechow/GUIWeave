@@ -99,6 +99,10 @@ def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) ->
         make_action_policy=_build_action_policy,
         make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_hud() if enabled else None),
+        # No action visualizer yet: wiring the existing agent_cursor blue-arrow
+        # overlay (sck/agent_cursor.py) into an ActionVisualizer is the iphone
+        # follow-up; until then the agent loop simply skips visualization.
+        make_action_visualizer=lambda session: None,
         make_scroll_probe=_make_scroll_probe,
         apply_scroll_profile=_apply_scroll_profile,
         make_stitch_accumulator=_make_stitch_accumulator,

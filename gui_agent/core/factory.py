@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
     from gui_agent.core.contracts import (
         ActionPolicy,
+        ActionVisualizer,
         Perception,
         PerceptionSession,
         SupervisorPolicy,
@@ -40,6 +41,11 @@ class PlatformBundle:
     make_action_policy: Callable[[str], "ActionPolicy"]
     make_supervisor: Callable[[str], "SupervisorPolicy"]
     make_status_reporter: Callable[[bool], "Optional[AbstractContextManager]"]
+    # Optional cross-platform action / cursor visualization, constructed per
+    # session. Returns None when the platform has no visualizer (the agent loop
+    # then skips it). iphone: None for now (agent_cursor overlay is a follow-up);
+    # browser: a live DOM overlay; android: None.
+    make_action_visualizer: Callable[["PerceptionSession"], "Optional[ActionVisualizer]"]
     # Scroll-collect helpers the agent loop needs (iphone-specific objects today,
     # typed as object so this neutral signature carries no adapter type).
     make_scroll_probe: Callable[["PerceptionSession", object, "Path"], object]

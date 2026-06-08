@@ -514,6 +514,10 @@ def run_agent_loop(
 
     with bundle.open_session() as phone:
         executor = bundle.make_executor(phone)
+        # Optional action visualizer (cursor/overlay). None when the platform has
+        # none (iphone today); show_action is called best-effort before each
+        # execute and must never raise into the loop.
+        visualizer = bundle.make_action_visualizer(phone)
 
         while True:
             turn_no = len(context.turns) + 1
@@ -762,6 +766,12 @@ def run_agent_loop(
                             )
                             executed = False
                     elif not should_probe_scroll:
+                        # Flash where/what we're about to do (best-effort; cosmetic).
+                        if visualizer is not None:
+                            try:
+                                visualizer.show_action(action)
+                            except Exception:
+                                pass
                         executed = executor.execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes, is_home_screen=sv_step.is_home_screen)
 
             # Post-action targeting verify: did the snapped tap land on target?

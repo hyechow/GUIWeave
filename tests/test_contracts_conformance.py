@@ -12,6 +12,7 @@ because its members are Pydantic instance fields.
 
 from gui_agent.core.contracts import (
     ActionPolicy,
+    ActionVisualizer,
     Device,
     FrontierEnumerator,
     KnowledgeAwareSupervisor,
@@ -196,8 +197,11 @@ def test_build_platform_returns_iphone_bundle():
         "make_action_policy",
         "make_supervisor",
         "make_status_reporter",
+        "make_action_visualizer",
     ):
         assert callable(getattr(bundle, attr)), attr
+    # iphone has no action visualizer yet (agent_cursor wiring is a follow-up).
+    assert bundle.make_action_visualizer(None) is None
 
 
 def test_build_platform_unknown_raises():
@@ -223,6 +227,20 @@ def _import_browser():
     from gui_agent.adapters.browser.policies import BrowserActionPolicy
 
     return PlaywrightDevice, BrowserSession, BrowserPerception, BrowserActionPolicy
+
+
+def test_browser_visualizer_conforms():
+    # Both browser visualizers satisfy the neutral ActionVisualizer contract (built
+    # via __new__, no page/connection/daemon needed for structural conformance):
+    #   - BrowserActionVisualizer : in-page DOM overlay (host-agnostic fallback)
+    #   - BrowserCursorVisualizer : reuses the agent_cursor OS overlay (default)
+    from gui_agent.adapters.browser.visualizer import (
+        BrowserActionVisualizer,
+        BrowserCursorVisualizer,
+    )
+
+    assert isinstance(_blank(BrowserActionVisualizer), ActionVisualizer)
+    assert isinstance(_blank(BrowserCursorVisualizer), ActionVisualizer)
 
 
 def test_playwright_device_is_a_scrollable_device():
@@ -270,6 +288,7 @@ def test_build_platform_returns_browser_bundle():
         "make_action_policy",
         "make_supervisor",
         "make_status_reporter",
+        "make_action_visualizer",
         "make_scroll_probe",
         "apply_scroll_profile",
         "make_stitch_accumulator",
@@ -279,6 +298,10 @@ def test_build_platform_returns_browser_bundle():
         assert callable(getattr(bundle, attr)), attr
     # Browser has no HUD yet; status reporter is always None.
     assert bundle.make_status_reporter(True) is None
+    # Browser DOES provide a live DOM action overlay (conforms to ActionVisualizer).
+    visualizer = bundle.make_action_visualizer(None)
+    assert visualizer is not None
+    assert isinstance(visualizer, ActionVisualizer)
     # apply_scroll_profile is the identity pass-through.
     assert bundle.apply_scroll_profile("ACT", "PROF") == "ACT"
 

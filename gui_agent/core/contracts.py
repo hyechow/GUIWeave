@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
 
 # Leaf, dependency-free schema types are safe to import at runtime.
 from gui_agent.core.schemas import (
+    Action,
     ActionDecision,
     Observation,
     PolicyTurn,
@@ -339,6 +340,42 @@ class KnowledgeAwareSupervisor(Protocol):
 
 
 # ===========================================================================
+# ActionVisualizer — optional cross-platform action / cursor visualization
+# ===========================================================================
+@runtime_checkable
+class ActionVisualizer(Protocol):
+    """Optional platform capability: render WHERE / WHAT the agent is acting so a
+    human watching the live screen sees each action (a cursor / ripple / arrow /
+    drag trace).
+
+    SAME SPLIT AS THE REST OF THIS SEAM. The "what" is platform-neutral — the
+    neutral ``Action`` (normalized 0-1000 coords + type). The "how" is
+    platform-specific and lives in each adapter:
+      - iphone : an OS overlay window over the mirror (the agent_cursor arrow).
+      - browser: a DOM overlay drawn on the page (animated ripple / arrow / line).
+      - android: TBD.
+
+    Constructed per-session via ``PlatformBundle.make_action_visualizer(session)``
+    so the renderer can hold the device / page it draws on; the factory returns
+    ``None`` when a platform has no visualizer (the agent loop just skips it).
+
+    LIFECYCLE: the agent loop calls ``show_action`` immediately before the executor
+    runs each action, and ``clear`` at teardown. BOTH must be best-effort and MUST
+    NOT raise into the loop — visualization is cosmetic, so a render failure
+    (restricted page, detached client, mid-navigation) must never abort a turn.
+    """
+
+    def show_action(self, action: Action) -> None:
+        """Render the impending ``action`` at its location (flash a cursor on
+        tap/type, an arrow on scroll, a trace on drag). Best-effort; never raises."""
+        ...
+
+    def clear(self) -> None:
+        """Remove any active visualization (teardown / between runs). Best-effort."""
+        ...
+
+
+# ===========================================================================
 # Recon explore capabilities (enumerate_frontier + page_key / is_new_state)
 # ===========================================================================
 # The two platform needs the explore strategies (dfs / bfs) lift today:
@@ -444,6 +481,8 @@ __all__ = [
     "ActionPolicy",
     "SupervisorPolicy",
     "KnowledgeAwareSupervisor",
+    # Presentation
+    "ActionVisualizer",
     # Recon explore capabilities
     "FrontierEnumerator",
     "StateDeduper",

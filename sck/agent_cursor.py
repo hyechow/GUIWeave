@@ -18,6 +18,24 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
+
+
+def ensure_cursor_bin() -> str | None:
+    """定位 agent_cursor 二进制(env AGENT_CURSOR_BIN 或 /tmp/agent_cursor);缺失则从同目录
+    的 agent_cursor.swift 编译一次。返回路径,或 None(调用方据此禁用光标可视化)。
+
+    与 iphone mirror_daemon 的 _ensure_cursor_bin 同款逻辑,放在 sck/ 这个 agent_cursor
+    的“家”里,供任意平台(iphone/browser)复用同一个 overlay 渲染器。"""
+    cb = os.environ.get("AGENT_CURSOR_BIN") or "/tmp/agent_cursor"
+    if os.path.exists(cb):
+        return cb
+    src = Path(__file__).resolve().parent / "agent_cursor.swift"
+    try:
+        subprocess.run(["swiftc", str(src), "-o", cb], check=True, capture_output=True)
+        return cb
+    except Exception:
+        return None
 
 
 class AgentCursor:

@@ -19,6 +19,13 @@ mid-run. Until browser collection is built (the neutral stitch algos
 robust_shift/gray_u8/StitchAccumulator can be reused; only the scroll-probe is
 iphone-specific), restrict the browser platform to direct-action goals.
 The status reporter (HUD) is None: browser has no on-screen agent HUD yet.
+
+ACTION VISUALIZATION
+--------------------
+``make_action_visualizer`` provides a live DOM overlay (``BrowserActionVisualizer``)
+that the agent loop flashes on the page at each action's location, so a human
+watching the real Chrome sees where/what the agent clicks/types/scrolls. It is the
+browser implementation of the neutral ``ActionVisualizer`` contract.
 """
 
 from __future__ import annotations
@@ -94,6 +101,28 @@ def _gray_u8(png_bytes: bytes) -> object:
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
+def _make_action_visualizer(session: object) -> object:
+    """The browser ActionVisualizer.
+
+    Default: ``BrowserCursorVisualizer`` — reuses the iphone ``agent_cursor`` OS
+    overlay (blue arrow over the real Chrome window). It draws OUTSIDE the page, so
+    it never pollutes the agent's own screenshot perception, and it is immune to the
+    connect_over_cdp binding that hangs ``page.evaluate``. macOS-host only.
+
+    Set ``BROWSER_VISUALIZER=dom`` for the host-agnostic in-page DOM overlay fallback
+    (``BrowserActionVisualizer``) — useful if the browser adapter ever runs off macOS.
+    """
+    import os
+
+    if (os.environ.get("BROWSER_VISUALIZER") or "cursor").lower() == "dom":
+        from gui_agent.adapters.browser.visualizer import BrowserActionVisualizer
+
+        return BrowserActionVisualizer(session)
+    from gui_agent.adapters.browser.visualizer import BrowserCursorVisualizer
+
+    return BrowserCursorVisualizer(session)
+
+
 def build_browser_bundle(
     *,
     backend: Optional[str] = None,
@@ -118,6 +147,7 @@ def build_browser_bundle(
         make_action_policy=_build_action_policy,
         make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: None,  # browser has no HUD yet
+        make_action_visualizer=_make_action_visualizer,
         make_scroll_probe=_make_scroll_probe,
         apply_scroll_profile=_apply_scroll_profile,
         make_stitch_accumulator=_make_stitch_accumulator,
