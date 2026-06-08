@@ -296,8 +296,10 @@ def test_build_platform_returns_browser_bundle():
         "gray_u8",
     ):
         assert callable(getattr(bundle, attr)), attr
-    # Browser has no HUD yet; status reporter is always None.
-    assert bundle.make_status_reporter(True) is None
+    # HUD is created only when enabled; disabled -> None. (Enabling spawns a real
+    # tkinter overlay subprocess that locates the Chrome window, so we don't
+    # construct it in the test — just assert the disabled path.)
+    assert bundle.make_status_reporter(False) is None
     # Browser DOES provide a live DOM action overlay (conforms to ActionVisualizer).
     visualizer = bundle.make_action_visualizer(None)
     assert visualizer is not None

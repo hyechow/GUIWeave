@@ -18,7 +18,8 @@ gathering goals (e.g. "read all items on this page"), so such a goal raises
 mid-run. Until browser collection is built (the neutral stitch algos
 robust_shift/gray_u8/StitchAccumulator can be reused; only the scroll-probe is
 iphone-specific), restrict the browser platform to direct-action goals.
-The status reporter (HUD) is None: browser has no on-screen agent HUD yet.
+The status reporter is a translucent HUD floating over the Chrome window (the
+neutral core AgentHUD; macOS-host only), enabled by the --hud flag.
 
 ACTION VISUALIZATION
 --------------------
@@ -101,6 +102,48 @@ def _gray_u8(png_bytes: bytes) -> object:
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
+def _find_chrome_window() -> "tuple[int, int, int, int] | None":
+    """(x, y, w, h) screen rect of the largest on-screen Google Chrome window via
+    CGWindowList — a pre-connect best-effort guess for HUD placement (refined to the
+    exact CDP window rect once the agent connects). None if not found / unavailable.
+    macOS-host only (Quartz); imported lazily so the browser bundle stays Quartz-free
+    unless the HUD is actually requested."""
+    try:
+        from Quartz import (  # type: ignore
+            CGWindowListCopyWindowInfo,
+            kCGNullWindowID,
+            kCGWindowListOptionOnScreenOnly,
+        )
+    except Exception:
+        return None
+    wins = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID) or []
+    best: "tuple[int, int, int, int] | None" = None
+    best_area = 0
+    for w in wins:
+        if "chrome" not in str(w.get("kCGWindowOwnerName", "")).lower():
+            continue
+        b = w.get("kCGWindowBounds", {})
+        ww, wh = int(b.get("Width", 0)), int(b.get("Height", 0))
+        if ww > 200 and wh > 200 and ww * wh > best_area:
+            best_area = ww * wh
+            best = (int(b.get("X", 0)), int(b.get("Y", 0)), ww, wh)
+    return best
+
+
+def _make_browser_hud() -> object:
+    """Translucent status HUD floating over the Chrome window (the browser status
+    reporter): a horizontally-centered bar low in the window (≈ iOS dock height).
+    It floats over the page but, being an OS overlay, never enters the agent's
+    Page.captureScreenshot perception. Positioned best-effort pre-connect via
+    CGWindowList; the runner repositions it to the exact CDP window rect once
+    connected (both use core.hud.dock_rect, so the placement matches)."""
+    from gui_agent.core.hud import AgentHUD, dock_rect
+
+    rect = _find_chrome_window()
+    hx, hy, hw, hh = dock_rect(*rect) if rect else (140, 600, 360, 56)
+    return AgentHUD(origin=(hx, hy), width=hw, height=hh, alpha=0.82)
+
+
 def _make_action_visualizer(session: object) -> object:
     """The browser ActionVisualizer.
 
@@ -146,7 +189,7 @@ def build_browser_bundle(
         make_perception=lambda session, png_path: BrowserPerception(session, png_path),
         make_action_policy=_build_action_policy,
         make_supervisor=_build_supervisor,
-        make_status_reporter=lambda enabled: None,  # browser has no HUD yet
+        make_status_reporter=lambda enabled: (_make_browser_hud() if enabled else None),
         make_action_visualizer=_make_action_visualizer,
         make_scroll_probe=_make_scroll_probe,
         apply_scroll_profile=_apply_scroll_profile,

@@ -53,9 +53,9 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
 
 
 def _make_hud() -> "AbstractContextManager":
-    from gui_agent.adapters.iphone.hud import AgentHUD
+    from gui_agent.adapters.iphone.hud import make_iphone_hud
 
-    return AgentHUD()
+    return make_iphone_hud()
 
 
 def _make_scroll_probe(phone: object, executor: object, log_dir: object) -> object:

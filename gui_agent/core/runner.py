@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     # Adapter types used only in annotations. With `from __future__ import
     # annotations` these stay lazy strings, so importing runner pulls in no
     # adapter at module top.
-    from gui_agent.adapters.iphone.hud import AgentHUD
+    from gui_agent.core.hud import AgentHUD
     from gui_agent.adapters.iphone.scroll_probe import ScrollProfile
     from gui_agent.adapters.iphone.stitch import StitchAccumulator
     from gui_agent.core.contracts import PerceptionSession
@@ -527,6 +527,17 @@ def run_agent_loop(
         # none (iphone today); show_action is called best-effort before each
         # execute and must never raise into the loop.
         visualizer = bundle.make_action_visualizer(phone)
+
+        # If the device exposes its exact window rect (browser via CDP), pin the HUD
+        # into that window now that we are connected — the pre-connect CGWindowList
+        # guess can pick the wrong same-named Chrome window. Same placement helper as
+        # the factory (centered, ≈ iOS dock height), so the position is consistent.
+        if hud is not None and hasattr(hud, "reposition"):
+            _client = getattr(phone, "client", None)
+            _wb = _client.window_bounds() if hasattr(_client, "window_bounds") else None
+            if _wb:
+                from gui_agent.core.hud import dock_rect
+                hud.reposition(*dock_rect(*_wb))
 
         while True:
             turn_no = len(context.turns) + 1

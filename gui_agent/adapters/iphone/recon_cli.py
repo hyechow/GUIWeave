@@ -277,8 +277,8 @@ def main() -> None:
 
     hud = None
     if args.hud:
-        from gui_agent.adapters.iphone.hud import AgentHUD
-        hud = AgentHUD()
+        from gui_agent.adapters.iphone.hud import make_iphone_hud
+        hud = make_iphone_hud()
 
     try:
         if args.app:
