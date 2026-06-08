@@ -10,6 +10,7 @@
 // 协议(stdin,一行一条):
 //   move <x> <y>        平滑滑到屏幕点 (x,y) —— 逻辑点、左上原点(同 CGWindow)
 //   mode <normal|scroll_up|scroll_down|scroll_left|scroll_right>   切换箭头形状
+//   persist <0|1>       常驻:1=关闭空闲自动隐藏(光标停在上次点不消失);0=恢复默认
 //   show / hide / quit
 //
 // 独立进程(不整合进 mirror_daemon):overlay 画在镜像之上会进 SCStream 截图、污染 OCR/YOLO,
@@ -147,6 +148,7 @@ final class Controller: @unchecked Sendable {
     var lastMove = CFAbsoluteTimeGetCurrent()
     var haveTarget = false
     var frame = 0
+    var persist = false   // 常驻:关掉空闲自动隐藏(browser 用,浮层不进截图)
 
     init() {
         let w = NSWindow(contentRect: NSRect(x: -2000, y: -2000, width: BOX, height: BOX),
@@ -177,7 +179,7 @@ final class Controller: @unchecked Sendable {
         guard haveTarget else { return }
         cur.x += (target.x - cur.x) * GLIDE_K
         cur.y += (target.y - cur.y) * GLIDE_K
-        if CFAbsoluteTimeGetCurrent() - lastMove > IDLE_HIDE_S { targetAlpha = 0 }
+        if !persist && CFAbsoluteTimeGetCurrent() - lastMove > IDLE_HIDE_S { targetAlpha = 0 }
         curAlpha += (targetAlpha - curAlpha) * ALPHA_K
         window.alphaValue = curAlpha
         window.setFrameOrigin(NSPoint(x: cur.x - BOX / 2, y: cur.y - BOX / 2))   // 小窗跟随
@@ -214,6 +216,9 @@ Thread.detachNewThread {
                 if parts.count >= 2, let v = ctrl.window.contentView as? CursorView {
                     v.mode = String(parts[1]); v.needsDisplay = true
                 }
+            case "persist":
+                ctrl.persist = parts.count < 2 || parts[1] == "1" || parts[1].lowercased() == "on"
+                if ctrl.persist { ctrl.show() }
             case "quit": exit(0)
             default: break
             }

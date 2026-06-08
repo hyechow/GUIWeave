@@ -28,14 +28,17 @@ def ensure_cursor_bin() -> str | None:
     与 iphone mirror_daemon 的 _ensure_cursor_bin 同款逻辑,放在 sck/ 这个 agent_cursor
     的“家”里,供任意平台(iphone/browser)复用同一个 overlay 渲染器。"""
     cb = os.environ.get("AGENT_CURSOR_BIN") or "/tmp/agent_cursor"
-    if os.path.exists(cb):
-        return cb
     src = Path(__file__).resolve().parent / "agent_cursor.swift"
+    # Up-to-date binary (exists AND not older than the source) → reuse. Rebuilding
+    # when the .swift is newer means edits (e.g. the persist command) aren't masked
+    # by a stale cached build.
+    if os.path.exists(cb) and (not src.exists() or os.path.getmtime(cb) >= os.path.getmtime(src)):
+        return cb
     try:
         subprocess.run(["swiftc", str(src), "-o", cb], check=True, capture_output=True)
         return cb
     except Exception:
-        return None
+        return cb if os.path.exists(cb) else None  # fall back to a stale build if present
 
 
 class AgentCursor:
@@ -68,6 +71,11 @@ class AgentCursor:
     def set_mode(self, mode: str) -> None:
         """切换箭头形状: normal | scroll_up | scroll_down | scroll_left | scroll_right"""
         self._send(f"mode {mode}")
+
+    def persist(self, on: bool = True) -> None:
+        """常驻:on=True 关闭空闲自动隐藏,光标停在上次动作点不消失(browser 用——
+        OS 浮层不进页面截图,常驻不污染感知)。on=False 恢复默认空闲隐藏。"""
+        self._send(f"persist {1 if on else 0}")
 
     def show(self) -> None:
         self._send("show")

@@ -245,6 +245,10 @@ class BrowserCursorVisualizer:
                 return
             self._cursor = AgentCursor(cb)
             self._cursor.start()
+            # Keep the cursor resident at the last action point — the OS overlay
+            # never enters the page screenshot (verified), so the idle auto-hide is
+            # unnecessary here (iphone, which doesn't call this, keeps its default).
+            self._cursor.persist(True)
             atexit.register(self.clear)  # daemon also auto-exits on stdin EOF
         except Exception:
             self._disabled = True
