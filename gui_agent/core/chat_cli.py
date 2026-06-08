@@ -388,7 +388,7 @@ def main() -> None:
 
         try:
             prefs_context = prefs.format_prefs_for_prompt()
-            router_result = route_message(route_msg, session, prefs_context=prefs_context)
+            router_result = route_message(route_msg, session, prefs_context=prefs_context, platform=bundle.platform)
         except Exception:
             router_result = RouterResult(goal=route_msg)
 

@@ -984,10 +984,13 @@ def main() -> None:
     raw_input = args.prompt
     router_result = None
     goal = args.prompt
+    # Router (route_message) is platform-aware: each platform injects its own prompt
+    # (iphone: 操控手机/APP; browser: 网页任务). Passing bundle.platform makes browser
+    # tasks ("搜索nvidia股价") classify correctly instead of being rejected.
     if not args.context and not args.no_router:
         try:
             from gui_agent.core.chat_session import route_message
-            router_result = route_message(raw_input, session=[], prefs_context="")
+            router_result = route_message(raw_input, session=[], prefs_context="", platform=bundle.platform)
         except Exception as exc:
             print(f"Router  : 调用失败，回退原始输入（{exc}）")
         if router_result is not None:
@@ -995,7 +998,7 @@ def main() -> None:
                 if router_result.needs_clarification:
                     print(f"Router  : 需要补充信息 — {router_result.clarification}")
                 else:
-                    print("Router  : 非手机操作任务（闲聊/问答），已跳过")
+                    print("Router  : 非任务（闲聊/问答），已跳过")
                 return
             goal = router_result.goal
             print(f"Router  : {raw_input!r} → {goal!r}")
