@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -e
 cd "$(dirname "$0")/.."
-exec env AGENT_MODE="${AGENT_MODE:-daemon}" \
+
+platform="${1:-}"
+task="${2:-}"
+case "$platform" in
+  iphone|browser) ;;
+  *)
+    echo "用法: bin/runner <iphone|browser> <任务> [额外参数...]" >&2
+    echo "  例: bin/runner browser \"搜索一下nvidia的股价\"" >&2
+    exit 1 ;;
+esac
+if [[ -z "$task" ]]; then
+  echo "缺少任务参数。用法: bin/runner $platform <任务>" >&2
+  exit 1
+fi
+shift 2  # 平台 + 任务已取出,余下透传给 runner
+
+# 默认放前、"$@" 放后 → 额外参数能覆盖默认(argparse 后者胜),如 --max-turns 5 生效。
+exec env AGENT_PLATFORM="$platform" \
+         AGENT_MODE="${AGENT_MODE:-daemon}" \
          AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
-         uv run python -m gui_agent.core.runner "$@" --auto-continue --hud --supervisor milestone --max-turns 20
+         uv run python -m gui_agent.core.runner "$task" --auto-continue --hud --supervisor milestone --max-turns 20 "$@"
