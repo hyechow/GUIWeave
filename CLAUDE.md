@@ -45,8 +45,8 @@ AGENT_PLATFORM=browser uv run python -m gui_agent.core.runner "点击右上角�
 # 非默认端口:PORT=<port> bin/launch_chrome_cdp,agent 侧 export CHROME_CDP_URL=http://localhost:<port>
 # 动作可视化:默认复用 agent_cursor OS 覆盖层(蓝箭头,画在页面外不污染截图);BROWSER_VISUALIZER=dom 切到页内 DOM 覆盖
 
-# iPhone 应用结构探测(recon mode,adapter-side CLI)
-uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --depth 2
+# iPhone 应用结构探测(recon mode):零抢占 daemon + agent 光标;参数透传 recon_cli
+bin/iphone_recon --app 微信 --depth 2          # 加 --hud 显示状态面板;--export 微信 导出知识
 
 # 回归闸(确定性单测 + 契约 conformance,无需真机)
 uv run pytest tests/ -q

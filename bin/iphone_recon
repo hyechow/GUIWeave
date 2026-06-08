@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# iPhone 应用结构探测(recon)启动器。默认零抢占 daemon 后端 + agent 光标(蓝箭头)。
+#
+# 参数原样透传给 recon_cli:
+#   bin/iphone_recon --app 微信 --depth 2            # 在线探测微信,DFS 深度 2
+#   bin/iphone_recon --app 微信 --depth 2 --hud       # 加实时状态面板(镜像下方)
+#   bin/iphone_recon --export 微信                     # 导出已探测页面的知识
+#   bin/iphone_recon --app 微信 --mode add --target <父页面目录>
+#   bin/iphone_recon --help                           # 全部参数
+#
+# AGENT_MODE=daemon → 零抢占输入 + agent 光标(MIRROR_CURSOR=0 可关光标;
+# AGENT_MODE=standard 切到抢占式 mirroir 后端)。
+set -e
+cd "$(dirname "$0")/.."
+exec env AGENT_MODE="${AGENT_MODE:-daemon}" \
+         AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
+         uv run python -m gui_agent.adapters.iphone.recon_cli "$@"
