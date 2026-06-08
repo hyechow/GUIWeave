@@ -205,7 +205,7 @@ def planned_return_to_initial(
                     from gui_agent.adapters.iphone.executor import WIN_W, WIN_H
                     result = client.tap(WIN_W / 2, WIN_H - 16)
             elif action.action_type == "scroll" and action.direction:
-                _execute_scroll(action)
+                _execute_scroll(action, client)
                 tap_xy = (action.x or 500, action.y or 500)
                 result = "scroll"
             elif action.action_type in ("tap", "click") and action.x is not None and action.y is not None:
@@ -332,8 +332,27 @@ def planned_return_to_initial(
 # Scroll helper
 # ---------------------------------------------------------------------------
 
-def _execute_scroll(action) -> None:
-    """Execute a scroll action via Quartz events."""
+def _execute_scroll(action, client) -> None:
+    """Execute a back-navigation scroll.
+
+    Prefer the daemon's zero-preempt ``client.scroll`` (no focus steal) — this is
+    what makes recon non-preemptive on the default daemon backend, mirroring
+    ``ActionExecutor._scroll``. Only the mirroir backend (which lacks
+    ``client.scroll``) falls back to the Quartz wheel path below, which IS
+    preemptive (it osascript-activates the mirror window)."""
+    direction = (action.direction or "").strip().lower()
+
+    # Daemon backend: zero-preempt scroll through the client.
+    if hasattr(client, "scroll"):
+        from gui_agent.adapters.iphone.executor import logical_xy, DAEMON_SCROLL_AMOUNT
+        ax = action.x if action.x is not None else 500
+        ay = action.y if action.y is not None else 500
+        lx, ly = logical_xy(ax, ay)
+        amount = DAEMON_SCROLL_AMOUNT.get(action.amount, DAEMON_SCROLL_AMOUNT["medium"])
+        client.scroll(direction, amount, lx, ly)
+        return
+
+    # mirroir backend: Quartz wheel events (preemptive — activates the window).
     import subprocess
     from gui_agent.adapters.iphone.executor import (
         WIN_W, WIN_H, SCROLL_TICKS, SCROLL_DELTA, SCROLL_INTERVAL,
