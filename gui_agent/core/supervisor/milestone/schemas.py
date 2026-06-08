@@ -77,6 +77,9 @@ class _PlanResult(BaseModel):
             "tap/type/home/stop 留空"
         ),
     )
+    # iOS picker-wheel fields (the only iphone-specific part of these otherwise
+    # platform-neutral schemas): year/month/day column drag. Neutral platforms
+    # (browser) have no such UI and simply leave them None.
     drag_column: Optional[str] = Field(
         default=None,
         description="picker drag 时的目标列，如 'year'/'month'/'day'；非 picker drag 留空",
