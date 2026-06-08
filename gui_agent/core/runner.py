@@ -185,12 +185,15 @@ def _snapped_point(action_decision: ActionDecision | None) -> tuple[float, float
     return float(a.x), float(a.y)
 
 
-def create_run_dir(mode: str) -> Path:
+def create_run_dir(mode: str, platform: str = "") -> Path:
+    # logs/gui_agent/<mode>/<platform>/<ts>/ — the platform segment keeps iphone vs
+    # browser runs in separate trees. Omitted (legacy layout) when platform is "".
     started_at = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = POLICY_LOG_ROOT / mode / started_at
+    base = POLICY_LOG_ROOT / mode / platform if platform else POLICY_LOG_ROOT / mode
+    path = base / started_at
     suffix = 2
     while path.exists():
-        path = POLICY_LOG_ROOT / mode / f"{started_at}_{suffix}"
+        path = base / f"{started_at}_{suffix}"
         suffix += 1
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -511,6 +514,12 @@ def run_agent_loop(
     # the session, executor, perception and scroll/stitch helpers — no adapter
     # class is referenced directly here.
     bundle = build_platform(backend=backend)
+    # Record the platform on the context so the log and the HTML report can label
+    # the run (iphone vs browser). Set here so both the runner and chat (which both
+    # call run_agent_loop) persist it.
+    if context.platform != bundle.platform:
+        context.platform = bundle.platform
+        _save_context(context_path, context)
 
     with bundle.open_session() as phone:
         executor = bundle.make_executor(phone)
@@ -991,10 +1000,11 @@ def main() -> None:
         print(f"Knowledge: auto-loaded (nav={len(knowledge.navigation)} chars, elements={len(knowledge.elements)} chars), app={knowledge.app_name}")
 
     input_context_path = args.context
-    log_dir = create_run_dir("agent-loop")
+    log_dir = create_run_dir("agent-loop", bundle.platform)
     context_path = log_dir / "context.json"
     hud = bundle.make_status_reporter(args.hud)
     with _tee_stdio(log_dir):
+        print(f"Platform: {bundle.platform}")
         print(f"Log Dir : {log_dir}")
         print(f"Context : {input_context_path if input_context_path else None}")
 

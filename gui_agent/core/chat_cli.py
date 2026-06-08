@@ -290,6 +290,7 @@ def main() -> None:
         SESSIONS_ROOT,
         supervisor=supervisor.name,
         action_policy=action_policy.name,
+        platform=bundle.platform,
     )
     _pending_clarification_msg: str | None = None  # original msg that triggered clarification
 

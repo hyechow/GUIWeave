@@ -35,10 +35,12 @@ def _atomic_write(path: Path, data: str) -> None:
 class SessionRecorder:
     """Record one CLI session's conversation history; write to disk on exit."""
 
-    def __init__(self, sessions_root: Path, supervisor: str = "", action_policy: str = "") -> None:
+    def __init__(self, sessions_root: Path, supervisor: str = "", action_policy: str = "", platform: str = "") -> None:
         self._started_at = _now_local()
         self._id = self._started_at.strftime("%Y%m%d_%H%M%S")
-        self._session_dir = sessions_root / self._id
+        # data/sessions/<platform>/<id>/ — keep iphone vs browser chat sessions in
+        # separate trees (legacy data/sessions/<id>/ when platform is "").
+        self._session_dir = (sessions_root / platform / self._id) if platform else sessions_root / self._id
         self._entries: list[dict] = []
         self._turn_counter = 0
         self._supervisor = supervisor

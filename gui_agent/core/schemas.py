@@ -377,6 +377,10 @@ class PolicyContext(BaseModel):
     goal: str
     supervisor_policy_name: str
     action_policy_name: str
+    platform: Optional[str] = Field(
+        default=None,
+        description="运行平台 iphone/browser/android(AGENT_PLATFORM);旧 log 无此字段则为 None",
+    )
     raw_input: Optional[str] = Field(
         default=None,
         description="用户/CLI 原始输入(temporal 解析、router 改写之前);旧 log 无此字段则为 None",

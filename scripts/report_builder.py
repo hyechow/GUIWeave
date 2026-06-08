@@ -448,6 +448,7 @@ class ReportData:
     goal: str = ""       # resolved goal that drove the run
     router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
     output: str = ""     # final reply / 最终输出 of the run
+    platform: str = ""   # run platform (iphone/browser); empty for old logs
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -1004,6 +1005,7 @@ class RunnerReportBuilder:
         data.raw_input = ctx.get("raw_input") or ""
         data.goal = ctx.get("goal", "")
         data.router = ctx.get("router") or {}
+        data.platform = ctx.get("platform") or ""
         data.output = ctx.get("output") or ""
         data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
@@ -1943,7 +1945,7 @@ HTML_TEMPLATE = """\
   </nav>
   <main class="main">
     <div class="header">
-      <h1>{title}</h1>
+      <h1>{title}{platform_badge}</h1>
       <div class="stats">{stats}</div>
       {provenance_html}
       {cost_note_html}
@@ -2177,6 +2179,23 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         {_render_token_html(step.token_usage)}
       </div>
     </div>"""
+
+
+def _render_platform_badge(platform: str) -> str:
+    """Small colored badge next to the title showing the run platform. Empty for
+    old logs that predate the context.platform field."""
+    if not platform:
+        return ""
+    icon = {"iphone": "📱", "browser": "🌐", "android": "🤖"}.get(platform, "🖥")
+    label = {"iphone": "iPhone", "browser": "Browser", "android": "Android"}.get(
+        platform, _safe(platform)
+    )
+    return (
+        '<span class="platform-badge" style="display:inline-block;margin-left:10px;'
+        "padding:2px 11px;border-radius:11px;background:#2f81f7;color:#fff;"
+        'font-size:13px;font-weight:600;vertical-align:middle;">'
+        f"{icon} {label}</span>"
+    )
 
 
 def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
@@ -2422,6 +2441,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
 
     return HTML_TEMPLATE.format(
         title=_safe(data.title),
+        platform_badge=_render_platform_badge(data.platform),
         stats=stats_str,
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
         outline_html=outline_html,
