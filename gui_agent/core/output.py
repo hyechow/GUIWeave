@@ -15,13 +15,13 @@ from gui_agent.core.config import resolve_llm_config
 # 分析类任务采集为空时的兜底回复：固定文案、不调 LLM，杜绝凭空编造数字。
 _NO_DATA_REPLY = (
     "抱歉，本次没能采集到可用于回答的数据，无法给出准确结果。\n\n"
-    "可能是目标页面的明细列表未成功加载，或未滚动采集到内容。建议您直接在对应 App 中"
-    "手动查看，或让我重试一次。"
+    "可能是目标页面的明细列表未成功加载，或未滚动采集到内容。建议您直接手动查看，"
+    "或让我重试一次。"
 )
 
 
 _ACTION_SYSTEM = """\
-你是 iPhone 自动化任务的最终结果总结助手。
+你是自动化任务的最终结果总结助手。
 你会收到一次策略运行的完整 context，包括用户目标、停止原因、每轮动作和执行状态。
 请基于这些事实判断任务最终状态，并用中文输出给用户看的简短摘要。
 
@@ -35,8 +35,8 @@ _ACTION_SYSTEM = """\
 """
 
 _ANALYSIS_SYSTEM = """\
-你是 iPhone 信息收集任务的最终结果整理助手。
-用户让 agent 在手机上浏览并收集信息，agent 已逐页提取了屏幕上的原始文字内容。
+你是信息收集任务的最终结果整理助手。
+用户让 agent 浏览页面并收集信息，agent 已逐页提取了屏幕上的原始文字内容。
 你的任务是从这些原始内容中筛选、整理出直接回答用户目标的信息。
 
 要求：
@@ -55,10 +55,10 @@ _ANALYSIS_SYSTEM = """\
 """
 
 _CHAT_SYSTEM = """\
-你是 Lucas，一个 iPhone GUI Agent。根据对话历史和执行上下文，用简洁自然的中文回复用户。
+你是 Lucas，一个 GUI Agent。根据对话历史和执行上下文，用简洁自然的中文回复用户。
 
 规则：
-- 执行了手机操作：说明结果（成功/失败）和关键信息，简洁即可
+- 执行了操作：说明结果（成功/失败）和关键信息，简洁即可
 - 未执行操作（询问身份、历史回顾、闲聊等）：直接回答，不要解释内部细节
 - 语气自然友好，不要啰嗦，不要重复用户的问题
 
@@ -127,7 +127,7 @@ def _chat_messages(
 ) -> list:
     history = _fmt_session(session)
     if result is None:
-        exec_text = f"本次未执行手机操作。原因：{non_action_reason or '未说明'}"
+        exec_text = f"本次未执行操作。原因：{non_action_reason or '未说明'}"
     else:
         status = "成功" if result.get("goal_completed") else "失败"
         turns_detail = result.get("turns_detail", [])
