@@ -117,6 +117,45 @@ def test_milestone_prompts_injected_from_adapter():
     assert sup._prompts.decompose.startswith("你是 iPhone")  # iphone strings preserved verbatim
 
 
+def test_milestone_prompt_sets_format_cleanly():
+    # Both the iphone and browser MilestonePrompts sets must .format() with EXACTLY
+    # the kwargs helpers.py / policy.py pass — a stray/missing placeholder in a prompt
+    # would be a runtime KeyError. Pins the format wiring for both platforms.
+    import string
+
+    from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
+    from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
+
+    kwargs = {
+        "single_checker": dict(
+            app_name_context="", milestone_name="", milestone_desc="", success_condition="",
+            milestone_kind="", completion_strategy="", task_type="", constraints="",
+            history_text="", kind_section="",
+        ),
+        "plan": dict(
+            milestone_name="", milestone_desc="", success_condition="", milestone_kind="",
+            constraints="", check_status="", check_reason="", issues="", missing_evidence="",
+            check_summary="", history_text="",
+        ),
+        "loop_frame": dict(
+            milestone_name="", milestone_desc="", scroll_stop_condition="", constraints="",
+            history_text="",
+        ),
+        "loop_scroll": dict(milestone_name="", milestone_desc="", constraints="", frame_summary=""),
+        "replan": dict(
+            milestone_name="", milestone_desc="", success_condition="", stuck_reason="", issues="",
+            retry_count="", constraints="", failure_hints="", completed_milestones="",
+            history_text="", tried_instructions="",
+        ),
+    }
+    for prompts in (IPHONE_MILESTONE_PROMPTS, BROWSER_MILESTONE_PROMPTS):
+        for field, kw in kwargs.items():
+            template = getattr(prompts, field)
+            template.format(**kw)  # raises KeyError on an unexpected placeholder
+            used = {fn for _, fn, _, _ in string.Formatter().parse(template) if fn}
+            assert used <= set(kw), f"{field} has placeholders not passed by the code: {used - set(kw)}"
+
+
 def test_core_milestone_is_leaf_without_iphone_prompts():
     # Importing the core milestone package must NOT pull the iphone adapter — its
     # prompts are imported lazily only at supervisor construction.

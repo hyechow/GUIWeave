@@ -57,21 +57,16 @@ def _build_action_policy(name: str) -> "ActionPolicy":
 
 
 def _build_supervisor(name: str) -> "SupervisorPolicy":
-    # Browser uses the structure-neutral milestone supervisor FRAMEWORK (the iphone
-    # SimpleSupervisorPolicy is iphone-specific and intentionally not offered here).
-    # ⚠️ PROMPTS: constructing with no args falls back to the iphone milestone prompts
-    # (MilestoneSupervisorPolicy's lazy default — "你是 iPhone…返回主屏幕…底部 Tab").
-    # browser BORROWS them for now; a web-tuned MilestonePrompts set should be written
-    # and injected here (MilestoneSupervisorPolicy(prompts=...)). See memory
-    # project_core_semantic_debt_prompts.
+    # Browser uses the structure-neutral milestone supervisor FRAMEWORK with its OWN
+    # web-tuned prompts (adapters/browser/supervisor/milestone/prompts.py) injected —
+    # it no longer borrows the iphone set. ⚠️ those prompts are a DRAFT and need real
+    # browser-task A/B tuning. The iphone SimpleSupervisorPolicy is not offered here.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
 
-    registry: dict[str, type] = {MilestoneSupervisorPolicy.name: MilestoneSupervisorPolicy}
-    try:
-        return registry[name]()
-    except KeyError as exc:
-        choices = ", ".join(sorted(registry))
-        raise ValueError(f"未知监督者 {name!r}，可选：{choices}") from exc
+    if name == MilestoneSupervisorPolicy.name:
+        return MilestoneSupervisorPolicy(prompts=BROWSER_MILESTONE_PROMPTS)
+    raise ValueError(f"未知监督者 {name!r}，可选：{MilestoneSupervisorPolicy.name}")
 
 
 def _apply_scroll_profile(action: object, profile: object) -> object:
