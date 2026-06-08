@@ -99,9 +99,16 @@ def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) ->
         make_action_policy=_build_action_policy,
         make_supervisor=_build_supervisor,
         make_status_reporter=lambda enabled: (_make_hud() if enabled else None),
-        # No action visualizer yet: wiring the existing agent_cursor blue-arrow
-        # overlay (sck/agent_cursor.py) into an ActionVisualizer is the iphone
-        # follow-up; until then the agent loop simply skips visualization.
+        # None BY DESIGN — not a TODO. iphone drives its agent_cursor overlay at the
+        # DEVICE layer (MirrorDaemonClient.tap/scroll/drag), which is the only place
+        # that has (a) the POST-snap coordinates (OCR/YOLO snapping happens inside
+        # ActionExecutor.execute, AFTER the runner's pre-execute show_action hook) and
+        # (b) coverage of EVERY runner path (main / scroll-probe / cached-scroll all
+        # funnel through the device, whereas show_action only fires on the main path).
+        # Returning a runner-driven ActionVisualizer here would regress both (pre-snap
+        # cursor + no cursor on scroll-collect). The seam stays unified at the contract
+        # + renderer level (browser reuses the same agent_cursor); the driving layer
+        # differs because that is iphone's correct home. See ActionVisualizer docstring.
         make_action_visualizer=lambda session: None,
         make_scroll_probe=_make_scroll_probe,
         apply_scroll_profile=_apply_scroll_profile,

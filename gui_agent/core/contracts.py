@@ -350,14 +350,22 @@ class ActionVisualizer(Protocol):
 
     SAME SPLIT AS THE REST OF THIS SEAM. The "what" is platform-neutral — the
     neutral ``Action`` (normalized 0-1000 coords + type). The "how" is
-    platform-specific and lives in each adapter:
-      - iphone : an OS overlay window over the mirror (the agent_cursor arrow).
-      - browser: a DOM overlay drawn on the page (animated ripple / arrow / line).
+    platform-specific and lives in each adapter. The RENDERER (the agent_cursor OS
+    overlay) is shared across platforms; only the coordinate mapping differs:
+      - browser: BrowserCursorVisualizer drives agent_cursor via CDP window-bounds
+                 -> screen mapping (DOM overlay is a host-agnostic fallback).
+      - iphone : ALSO uses agent_cursor, but driven at the DEVICE layer
+                 (MirrorDaemonClient), NOT through this runner-level seam — so its
+                 make_action_visualizer returns None BY DESIGN. The device layer is
+                 the only place with post-snap coords (OCR/YOLO snap runs inside the
+                 executor, after show_action) AND coverage of every runner path
+                 (main / scroll-probe / cached-scroll). Routing it here would regress
+                 both. See adapters/iphone/factory.py.
       - android: TBD.
 
     Constructed per-session via ``PlatformBundle.make_action_visualizer(session)``
     so the renderer can hold the device / page it draws on; the factory returns
-    ``None`` when a platform has no visualizer (the agent loop just skips it).
+    ``None`` when a platform has no RUNNER-DRIVEN visualizer (the loop skips the hook).
 
     LIFECYCLE: the agent loop calls ``show_action`` immediately before the executor
     runs each action, and ``clear`` at teardown. BOTH must be best-effort and MUST

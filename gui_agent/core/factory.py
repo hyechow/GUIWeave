@@ -42,9 +42,12 @@ class PlatformBundle:
     make_supervisor: Callable[[str], "SupervisorPolicy"]
     make_status_reporter: Callable[[bool], "Optional[AbstractContextManager]"]
     # Optional cross-platform action / cursor visualization, constructed per
-    # session. Returns None when the platform has no visualizer (the agent loop
-    # then skips it). iphone: None for now (agent_cursor overlay is a follow-up);
-    # browser: a live DOM overlay; android: None.
+    # session. Returns None when the platform has no runner-driven visualizer (the
+    # agent loop then skips the show_action hook).
+    #   browser: agent_cursor OS overlay (BrowserCursorVisualizer; DOM fallback).
+    #   iphone : None BY DESIGN — its agent_cursor is driven at the device layer
+    #            (post-snap coords + all-path coverage); see adapters/iphone/factory.
+    #   android: None (TBD).
     make_action_visualizer: Callable[["PerceptionSession"], "Optional[ActionVisualizer]"]
     # Scroll-collect helpers the agent loop needs (iphone-specific objects today,
     # typed as object so this neutral signature carries no adapter type).
