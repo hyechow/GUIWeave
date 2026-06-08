@@ -33,6 +33,7 @@ dependencies = [
     "onnx",
     "onnxslim",
     "playwright>=1.60.0",
+    "webarena-verified>=1.2.3",
 ]
 
 [dependency-groups]

@@ -296,13 +296,172 @@ class PlaywrightDevice:
             return self.navigate(self.start_url)
         return "OK home noop (no start_url configured)"
 
+    # ----- auth / cookies (raw CDP — replaces headless ui_login) -----------
+    # The example WebArena human agent spins up a HEADLESS browser purely to log
+    # in and dump a Playwright ``storage_state``. We don't need it: the session is
+    # just cookies, and CDP reads/writes them natively. ``load_cookies`` replays a
+    # saved state into the live takeover tab; ``dump_cookies`` mints one FROM the
+    # live tab (so you log in once — manually in the persistent profile or via the
+    # agent — then capture it here, with no headless browser anywhere).
+
+    @staticmethod
+    def _storage_state_cookies(storage_state) -> list[dict]:
+        """Accept a path / JSON str / parsed dict / raw cookie list and return the
+        Playwright-format cookie dicts (``{name,value,domain,path,...}``)."""
+        import json
+
+        data = storage_state
+        if isinstance(data, (str, bytes)):
+            text = data.decode() if isinstance(data, bytes) else data
+            # A filesystem path vs. an inline JSON blob.
+            if text.lstrip()[:1] in "[{":
+                data = json.loads(text)
+            else:
+                with open(text) as fh:
+                    data = json.load(fh)
+        if isinstance(data, dict):
+            return list(data.get("cookies") or [])
+        if isinstance(data, list):
+            return list(data)
+        return []
+
+    @staticmethod
+    def _to_cdp_cookie(c: dict) -> dict:
+        """Map one Playwright/storage_state cookie to a CDP ``Network.CookieParam``."""
+        out: dict = {"name": c["name"], "value": c["value"]}
+        # Anchor by domain+path when present; else fall back to a url so CDP can
+        # infer scope. Strip a leading dot — CDP setCookie wants a bare host.
+        domain = c.get("domain")
+        if domain:
+            out["domain"] = domain.lstrip(".")
+        out["path"] = c.get("path") or "/"
+        if c.get("secure") is not None:
+            out["secure"] = bool(c["secure"])
+        if c.get("httpOnly") is not None:
+            out["httpOnly"] = bool(c["httpOnly"])
+        ss = c.get("sameSite")
+        if ss in ("Strict", "Lax", "None"):
+            out["sameSite"] = ss
+        exp = c.get("expires")
+        # Playwright uses -1 for a session cookie; CDP treats "no expires" as session.
+        if isinstance(exp, (int, float)) and exp > 0:
+            out["expires"] = exp
+        return out
+
+    def load_cookies(self, storage_state, *, then_navigate: str | None = None) -> str:
+        """Inject saved session cookies into the attached Chrome over raw CDP.
+
+        ``storage_state`` may be a path to a Playwright ``storage_state.json``, an
+        inline JSON string, a parsed dict, or a bare cookie list. Cookies are pushed
+        via ``Network.setCookies`` (batch; falls back to per-cookie ``Network.setCookie``
+        so one malformed entry can't drop the rest). Pass ``then_navigate`` (e.g. the
+        task start_url) to reload into the now-authenticated page. Returns a status
+        str the caller can scan; never raises.
+        """
+        try:
+            raw = self._storage_state_cookies(storage_state)
+        except Exception as exc:  # noqa: BLE001
+            return f"failed: cannot read storage_state ({exc})"
+        if not raw:
+            return "failed: no cookies in storage_state"
+
+        cdp_cookies = []
+        for c in raw:
+            try:
+                cdp_cookies.append(self._to_cdp_cookie(c))
+            except Exception:  # noqa: BLE001 — skip malformed, keep the rest
+                continue
+
+        injected = 0
+        try:
+            self._cdp_send("Network.setCookies", {"cookies": cdp_cookies})
+            injected = len(cdp_cookies)
+        except Exception:
+            # Batch rejected (often one bad sameSite/secure combo) — set individually.
+            for ck in cdp_cookies:
+                try:
+                    self._cdp_send("Network.setCookie", ck)
+                    injected += 1
+                except Exception:  # noqa: BLE001
+                    continue
+
+        if injected == 0:
+            return "failed: 0 cookies injected"
+
+        nav = ""
+        if then_navigate:
+            nav = "  " + self.navigate(then_navigate)
+        return f"OK load_cookies {injected}/{len(raw)} injected{nav}"
+
+    def dump_cookies(self, path: str) -> str:
+        """Export the attached Chrome's live cookies to a Playwright-format
+        ``storage_state.json`` via raw CDP ``Network.getAllCookies`` — lets you
+        capture a login state minted in the takeover browser itself (no headless).
+        ``origins``/localStorage is left empty (auth lives in cookies). Returns a
+        status str; never raises."""
+        import json
+
+        try:
+            res = self._cdp_send("Network.getAllCookies", {})
+        except Exception as exc:  # noqa: BLE001
+            return f"failed: getAllCookies ({exc})"
+        out_cookies = []
+        for c in res.get("cookies") or []:
+            out_cookies.append(
+                {
+                    "name": c.get("name"),
+                    "value": c.get("value"),
+                    "domain": c.get("domain"),
+                    "path": c.get("path") or "/",
+                    "expires": c.get("expires", -1),
+                    "httpOnly": bool(c.get("httpOnly")),
+                    "secure": bool(c.get("secure")),
+                    "sameSite": c.get("sameSite") or "Lax",
+                }
+            )
+        try:
+            with open(path, "w") as fh:
+                json.dump({"cookies": out_cookies, "origins": []}, fh, indent=2)
+        except Exception as exc:  # noqa: BLE001
+            return f"failed: write {path} ({exc})"
+        return f"OK dump_cookies {len(out_cookies)} -> {path}"
+
     # ----- browser-only extras --------------------------------------------
     def navigate(self, url: str) -> str:
         try:
             self._require_page().goto(url)
+        except Exception:
+            # High-level goto is flaky on a broken connect_over_cdp binding
+            # ("Frame has been detached" / hangs). Fall back to raw CDP, which is
+            # the same regime screenshot/evaluate already rely on here.
+            return self._cdp_navigate(url)
+        return f"OK navigate {url}"
+
+    def _cdp_navigate(self, url: str, *, timeout_s: float = 10.0) -> str:
+        """Navigate via raw CDP ``Page.navigate`` and poll readyState — robust when
+        the high-level ``page.goto`` detaches/hangs on a version-skewed CDP attach."""
+        import time
+
+        try:
+            self._cdp_send("Page.enable", {})
+            self._cdp_send("Page.navigate", {"url": url})
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
-        return f"OK navigate {url}"
+        deadline = timeout_s / 0.25
+        i = 0
+        while i < deadline:
+            try:
+                r = self._cdp_send(
+                    "Runtime.evaluate",
+                    {"expression": "document.readyState", "returnByValue": True},
+                )
+                if (r.get("result") or {}).get("value") == "complete":
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.25)
+            i += 1
+        return f"OK navigate {url} (cdp)"
 
     def go_back(self) -> str:
         try:

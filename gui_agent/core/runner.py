@@ -465,6 +465,7 @@ def run_agent_loop(
     on_turn: object = None,  # callable(entry: dict) called after each turn
     raw_input: str | None = None,  # original human input; defaults to `prompt` (bin/runner)
     router: dict | None = None,    # RouterResult dict (chat path); None for bin/runner
+    on_session_open: object = None,  # callable(phone) run once after session open, before the loop
 ) -> dict:
     def _say(s: str) -> None:
         if not silent:
@@ -541,6 +542,15 @@ def run_agent_loop(
         # none (iphone today); show_action is called best-effort before each
         # execute and must never raise into the loop.
         visualizer = bundle.make_action_visualizer(phone)
+
+        # One-shot post-open hook (before the first observe): lets a caller prime
+        # the just-connected session — e.g. the WebArena entry injects auth cookies,
+        # starts HAR capture and navigates to the task start_url. Runs on the neutral
+        # `phone` (device at phone.client); default None keeps iphone/chat untouched.
+        # NOT wrapped in try: an opt-in caller wants a failed prime (bad cookies /
+        # unreachable start_url) to surface, not run the task in a wrong state.
+        if on_session_open is not None and callable(on_session_open):
+            on_session_open(phone)
 
         # If the device exposes its exact window rect (browser via CDP), pin the HUD
         # into that window now that we are connected — the pre-connect CGWindowList
