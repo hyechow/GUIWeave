@@ -5,19 +5,19 @@ construct the browser session (Chrome over CDP), executor, perception, action
 policy and supervisor. Core orchestration receives the neutral bundle and never
 imports these classes directly. Mirrors ``adapters/iphone/factory.py``.
 
-SCROLL-COLLECT NOT YET SUPPORTED
---------------------------------
-The iphone-shaped scroll/stitch bundle fields back the runner's scroll-collect /
-stitching branch, which the browser adapter does NOT implement yet:
-  - ``apply_scroll_profile`` is the identity (no per-platform scroll profiles).
-  - ``make_scroll_probe`` / ``make_stitch_accumulator`` / ``robust_shift`` /
-    ``gray_u8`` raise ``NotImplementedError``.
-WARNING: this branch IS reachable on ordinary browser goals — the milestone
-supervisor plans completion_strategy='scroll_until_boundary' for information-
-gathering goals (e.g. "read all items on this page"), so such a goal raises
-mid-run. Until browser collection is built (the neutral stitch algos
-robust_shift/gray_u8/StitchAccumulator can be reused; only the scroll-probe is
-iphone-specific), restrict the browser platform to direct-action goals.
+SCROLL-COLLECT
+--------------
+The scroll/stitch bundle fields back the runner's scroll-collect / stitching branch
+(reached when the milestone supervisor plans completion_strategy='scroll_until_boundary'
+for information-gathering goals). Browser collection IS implemented:
+  - ``make_stitch_accumulator`` / ``robust_shift`` / ``gray_u8`` reuse the NEUTRAL
+    ``gui_agent.core.stitch`` algos with the browser content band (whole frame, no
+    device-frame mask).
+  - ``make_scroll_probe`` / ``apply_scroll_profile`` use the trivial
+    ``adapters/browser/scroll_probe.py`` (browser wheel scroll is deterministic, so
+    the probe just scrolls once and verifies vertical progress).
+⚠️ DRAFT: validated on simple lists; the stitch tuning (chunk size / overlap / shift
+thresholds) inherits iphone defaults and may need browser A/B tuning on long pages.
 The status reporter is a translucent HUD floating over the Chrome window (the
 neutral core AgentHUD; macOS-host only), enabled by the --hud flag.
 
@@ -69,37 +69,47 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
     raise ValueError(f"未知监督者 {name!r}，可选：{MilestoneSupervisorPolicy.name}")
 
 
+# Browser screenshots are full-page content (no device frame / iOS status bar), so
+# the neutral stitch runs with the WHOLE frame as content band and no frame mask.
+_BROWSER_CONTENT_TOP, _BROWSER_CONTENT_BOT = 0.0, 1.0
+
+
 def _apply_scroll_profile(action: object, profile: object) -> object:
-    """Identity: browser has no per-platform scroll profiles (no-op pass-through)."""
-    return action
+    """Pin a fresh scroll action to a verified scroll point (runner cached path)."""
+    from gui_agent.adapters.browser.scroll_probe import apply_profile
 
-
-_SCROLL_COLLECT_MSG = (
-    "browser scroll-collect not yet supported (the milestone supervisor planned "
-    "completion_strategy='scroll_until_boundary'). Use a direct-action goal, or run "
-    "such collection on the iphone platform. See the SCROLL-COLLECT note in "
-    "adapters/browser/factory.py."
-)
+    return apply_profile(action, profile)
 
 
 def _make_scroll_probe(session: object, executor: object, log_dir: object) -> object:
-    """Raised if a scroll_until_boundary milestone reaches the runner's collection branch (browser collection not yet supported)."""
-    raise NotImplementedError(_SCROLL_COLLECT_MSG)
+    """Trivial browser scroll-probe (wheel scroll is deterministic — one scroll +
+    shift check). See adapters/browser/scroll_probe.py."""
+    from gui_agent.adapters.browser.scroll_probe import BrowserScrollProbe
+
+    return BrowserScrollProbe(session, executor, log_dir)
 
 
 def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
-    """Raised if a scroll_until_boundary milestone reaches the runner's collection branch (browser collection not yet supported)."""
-    raise NotImplementedError(_SCROLL_COLLECT_MSG)
+    """Neutral core StitchAccumulator with the browser content band (whole frame)."""
+    from gui_agent.core.stitch import StitchAccumulator
+
+    kwargs.setdefault("content_top", _BROWSER_CONTENT_TOP)
+    kwargs.setdefault("content_bot", _BROWSER_CONTENT_BOT)
+    kwargs.setdefault("frame_mask", None)
+    return StitchAccumulator(*args, **kwargs)
 
 
 def _robust_shift(*args: object, **kwargs: object) -> object:
-    """Raised if a scroll_until_boundary milestone reaches the runner's collection branch (browser collection not yet supported)."""
-    raise NotImplementedError(_SCROLL_COLLECT_MSG)
+    """Vertical shift on full-frame browser screenshots (whole-frame band, no mask)."""
+    from gui_agent.adapters.browser.scroll_probe import browser_robust_shift
+
+    return browser_robust_shift(*args, **kwargs)
 
 
 def _gray_u8(png_bytes: bytes) -> object:
-    """Raised if a scroll_until_boundary milestone reaches the runner's collection branch (browser collection not yet supported)."""
-    raise NotImplementedError(_SCROLL_COLLECT_MSG)
+    from gui_agent.core.stitch import _gray_u8 as _impl
+
+    return _impl(png_bytes)
 
 
 def _find_chrome_window() -> "tuple[int, int, int, int] | None":

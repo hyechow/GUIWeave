@@ -388,27 +388,45 @@ def test_build_platform_returns_browser_bundle():
     visualizer = bundle.make_action_visualizer(None)
     assert visualizer is not None
     assert isinstance(visualizer, ActionVisualizer)
-    # apply_scroll_profile is the identity pass-through.
-    assert bundle.apply_scroll_profile("ACT", "PROF") == "ACT"
+    # apply_scroll_profile pins a fresh scroll action to a verified scroll point.
+    from gui_agent.adapters.browser.scroll_probe import BrowserScrollProfile
+    from gui_agent.core.schemas import Action
+
+    _pinned = bundle.apply_scroll_profile(
+        Action(action_type="scroll", direction="down", amount="medium"),
+        BrowserScrollProfile(x=123.0, y=456.0, direction="down"),
+    )
+    assert _pinned.x == 123.0 and _pinned.y == 456.0 and _pinned.direction == "down"
 
 
-def test_browser_scroll_collect_fields_are_stubs():
-    # The iphone-shaped scroll/stitch helpers are only hit in the runner's
-    # collection branch, which the browser MVP does not support. They must raise
-    # a clear NotImplementedError rather than silently returning bad objects.
-    import pytest
+def test_browser_scroll_collect_is_implemented():
+    # Browser collection reuses the NEUTRAL core.stitch algos (whole-frame content
+    # band, no device mask) + a trivial deterministic-wheel scroll-probe. The runner's
+    # collection branch must receive real working objects (not the old stubs).
+    import io
+
+    import numpy as np
+    from PIL import Image
 
     from gui_agent.core.factory import build_platform
+    from gui_agent.core.stitch import StitchAccumulator
 
     bundle = build_platform("browser")
-    with pytest.raises(NotImplementedError):
-        bundle.make_scroll_probe(None, None, None)
-    with pytest.raises(NotImplementedError):
-        bundle.make_stitch_accumulator()
-    with pytest.raises(NotImplementedError):
-        bundle.robust_shift()
-    with pytest.raises(NotImplementedError):
-        bundle.gray_u8(b"")
+    buf = io.BytesIO()
+    Image.new("RGB", (400, 800), "white").save(buf, "PNG")
+    png = buf.getvalue()
+
+    g = bundle.gray_u8(png)
+    assert isinstance(g, np.ndarray)
+    assert bundle.robust_shift(g, g) == (0, 0.0)            # identical frame -> no progress
+
+    acc = bundle.make_stitch_accumulator(overlap_px=150)
+    assert isinstance(acc, StitchAccumulator)
+    # browser uses the whole frame as content (no iOS status bar to crop), no mask
+    assert acc._content_top == 0.0 and acc._content_bot == 1.0 and acc._frame_mask is None
+
+    probe = bundle.make_scroll_probe(None, None, None)
+    assert hasattr(probe, "probe")
 
 
 def test_core_factory_stays_leaf_without_browser_adapter():
