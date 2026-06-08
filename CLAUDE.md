@@ -39,10 +39,11 @@ uv sync
 # iPhone(默认平台)
 uv run python -m gui_agent.core.runner "打开微信并进入通讯录" --auto-continue --hud --supervisor milestone
 
-# Browser:先用独立 profile 起带远程调试的 Chrome(默认 profile 开不了 CDP),登录目标页,再:
-#   /path/to/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="$HOME/chrome-cdp-profile"
+# Browser:先起带远程调试的 Chrome(独立 profile,默认 profile 开不了 CDP),在弹出窗口登录目标页,再跑 agent:
+bin/launch_chrome_cdp   # 独立 profile + 关遮挡节流(遮住也持续出帧→截图快、非抢占);默认端口 9222
 AGENT_PLATFORM=browser uv run python -m gui_agent.core.runner "点击右上角设置按钮" --auto-continue
-# 非默认端口设 CHROME_CDP_URL=http://localhost:<port>
+# 非默认端口:PORT=<port> bin/launch_chrome_cdp,agent 侧 export CHROME_CDP_URL=http://localhost:<port>
+# 动作可视化:默认复用 agent_cursor OS 覆盖层(蓝箭头,画在页面外不污染截图);BROWSER_VISUALIZER=dom 切到页内 DOM 覆盖
 
 # iPhone 应用结构探测(recon mode,adapter-side CLI)
 uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --depth 2

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# 为 browser adapter 启动一个带远程调试(CDP)的 Chrome,供 Playwright connect_over_cdp 接管。
+#
+# 为什么要独立 profile + 这几个 flag:
+#   --user-data-dir                          默认 profile 拒绝 --remote-debugging-port,CDP 必须用非默认数据目录
+#   --disable-backgrounding-occluded-windows
+#   --disable-features=CalculateNativeWinOcclusion
+#                                            窗口被终端遮住时仍持续出帧 → 截图保持快、agent 无需 bring_to_front
+#                                            (保持非抢占)。否则遮挡窗口会停止合成,截图变慢甚至卡。
+#
+# 用法:
+#   bin/launch_chrome_cdp                 # 端口 9222,profile ~/chrome-cdp-profile
+#   PORT=9333 bin/launch_chrome_cdp       # 自定义端口(agent 侧记得 export CHROME_CDP_URL=http://localhost:9333)
+#   CHROME_BIN=/path/to/Chrome bin/launch_chrome_cdp
+#
+# 启动后在弹出的 Chrome 窗口里登录/打开目标页,再到另一个终端跑:
+#   AGENT_PLATFORM=browser uv run python -m gui_agent.core.runner "你的指令" --auto-continue
+set -euo pipefail
+
+PORT="${PORT:-9222}"
+PROFILE="${PROFILE:-$HOME/chrome-cdp-profile}"
+CHROME_BIN="${CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+
+if [[ ! -x "$CHROME_BIN" ]]; then
+  echo "找不到 Chrome:$CHROME_BIN" >&2
+  echo "用 CHROME_BIN=/path/to/chrome 指定后重试。" >&2
+  exit 1
+fi
+
+# 该端口已经有一个调试 Chrome → 直接复用,不重复拉起。
+if curl -s --max-time 1 "http://localhost:$PORT/json/version" >/dev/null 2>&1; then
+  echo "已有调试 Chrome 监听 :$PORT,直接复用。"
+  echo "  AGENT_PLATFORM=browser CHROME_CDP_URL=http://localhost:$PORT uv run python -m gui_agent.core.runner \"...\" --auto-continue"
+  exit 0
+fi
+
+mkdir -p "$PROFILE"
+echo "启动 Chrome(CDP :$PORT,profile $PROFILE)..."
+# 后台启动 + nohup 脱离终端 HUP;Chrome 留在前台窗口供你操作,终端释放出来。
+nohup "$CHROME_BIN" \
+  --remote-debugging-port="$PORT" \
+  --user-data-dir="$PROFILE" \
+  --disable-backgrounding-occluded-windows \
+  --disable-features=CalculateNativeWinOcclusion \
+  --no-first-run \
+  --no-default-browser-check \
+  >/dev/null 2>&1 &
+PID=$!
+
+# 等 CDP 端点就绪(最多 ~9s),确认起来了再返回。
+for _ in $(seq 1 30); do
+  if curl -s --max-time 1 "http://localhost:$PORT/json/version" >/dev/null 2>&1; then
+    echo "Chrome CDP 就绪 :$PORT (pid $PID)"
+    echo "  停止:kill $PID"
+    if [[ "$PORT" != "9222" ]]; then
+      echo "  agent 侧需 export CHROME_CDP_URL=http://localhost:$PORT"
+    fi
+    exit 0
+  fi
+  sleep 0.3
+done
+
+echo "Chrome 在超时内未暴露 CDP :$PORT(pid $PID),请检查。" >&2
+exit 1
