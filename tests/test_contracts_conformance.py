@@ -19,6 +19,7 @@ from gui_agent.core.contracts import (
     ObservationLike,
     Perception,
     PerceptionSession,
+    ReconNavigator,
     ScrollableDevice,
     SimilarityBackend,
     StateDeduper,
@@ -93,6 +94,14 @@ def test_recon_capabilities_conform():
     assert isinstance(_blank(PageIdentity), StateDeduper)
     assert isinstance(_blank(PageComparator), TransitionDetector)
     assert isinstance(_blank(EdgeIoUBackend), SimilarityBackend)
+
+
+def test_recon_navigator_conforms():
+    # Step 5a: the iphone navigator (thin delegation to back_nav/popup_nav) satisfies
+    # the neutral ReconNavigator seam the explore loop will route through in 5b.
+    from gui_agent.adapters.iphone.recon.navigator import IPhoneReconNavigator
+
+    assert isinstance(_blank(IPhoneReconNavigator), ReconNavigator)
 
 
 # --------------------------------------------------------------------------- #

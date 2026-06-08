@@ -475,6 +475,63 @@ class SimilarityBackend(Protocol):
     def similarity(self, png_a: bytes, png_b: bytes) -> float: ...
 
 
+@runtime_checkable
+class ReconNavigator(Protocol):
+    """Capability (3): the platform-specific navigation the explore loop needs
+    BEYOND tap + perceive — the part with no contract yet (Step 5a). After tapping
+    an element and recording a child page, the loop must get BACK to a known page,
+    dismiss popups that block exploration, describe an element for back-context, and
+    escalate to manual recovery when automatic back fails. All of that is
+    platform-specific:
+      - iphone : back-arrow / close-button taps + edge gestures
+                 (recon/back_nav · planned_back_nav · popup_nav).
+      - browser: browser back / history + modal dismissal (future).
+
+    Satisfied structurally by the iphone adapter's
+    ``recon/navigator.py:IPhoneReconNavigator``, whose methods DELEGATE to the
+    existing module functions with ZERO behaviour change. Today the explore loop
+    (dfs/bfs) imports those functions directly; Step 5b lifts the loop to core and
+    routes them through this Protocol so a browser navigator can plug in.
+
+    ``client`` is a ``Device``; ``screenshot`` is a ``Callable[[], bytes]``;
+    ``nav_stack`` is the explore loop's stack of ``(png, tap_xy)`` frames. Signatures
+    mirror the current functions verbatim so the delegating impl conforms unchanged.
+    """
+
+    def make_nav_context(self, label: str, element_type: str) -> str: ...
+
+    def return_to_initial(
+        self,
+        client: object,
+        screenshot: object,
+        nav_stack: list,
+        before_back_bytes: Optional[bytes] = None,
+        out_dir: object = None,
+        tap_index: int = 0,
+        nav_context: str = "",
+        status_cb: object = None,
+        selected_tab: str = "",
+    ) -> tuple[bool, list]: ...
+
+    def close_popup(
+        self,
+        client: object,
+        screenshot_fn: object,
+        current_png: Optional[bytes] = None,
+        threshold: float = 0.25,
+    ) -> bool: ...
+
+    def manual_recover(
+        self,
+        client: object,
+        screenshot: object,
+        nav_stack: list,
+        top_level: int,
+        prompt: str = "",
+        max_attempts: int = 3,
+    ) -> bool: ...
+
+
 __all__ = [
     # Device + capabilities
     "Device",
@@ -496,4 +553,5 @@ __all__ = [
     "StateDeduper",
     "TransitionDetector",
     "SimilarityBackend",
+    "ReconNavigator",
 ]
