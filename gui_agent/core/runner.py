@@ -489,6 +489,10 @@ def run_agent_loop(
     _save_context(context_path, context)
     _say(f"Goal    : {context.goal}")
     _say(f"Turns   : {len(context.turns)}")
+    # Pin the task goal as a persistent HUD header (above the live turn status), so
+    # the floating panel over the browser/mirror shows WHAT the agent is doing.
+    if hud is not None and hasattr(hud, "set_goal"):
+        hud.set_goal(context.goal)
 
     reader = ContentReader()
     original_goal = context.goal

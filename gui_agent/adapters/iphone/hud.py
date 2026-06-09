@@ -20,4 +20,4 @@ def make_iphone_hud() -> AgentHUD:
         ox, oy = int(pos[0]), int(pos[1]) + 701 + 2
     else:
         ox, oy = 100, 100
-    return AgentHUD(origin=(ox, oy), width=318, height=72, alpha=1.0)
+    return AgentHUD(origin=(ox, oy), width=318, height=104, alpha=1.0)

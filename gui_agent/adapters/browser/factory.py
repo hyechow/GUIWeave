@@ -150,7 +150,7 @@ def _make_browser_hud() -> object:
     from gui_agent.core.hud import AgentHUD, dock_rect
 
     rect = _find_chrome_window()
-    hx, hy, hw, hh = dock_rect(*rect) if rect else (140, 600, 360, 56)
+    hx, hy, hw, hh = dock_rect(*rect) if rect else (140, 600, 360, 100)
     return AgentHUD(origin=(hx, hy), width=hw, height=hh, alpha=0.82)
 
 

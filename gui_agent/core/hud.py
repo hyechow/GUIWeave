@@ -111,6 +111,7 @@ class AgentHUD:
     ) -> None:
         self._x, self._y = int(origin[0]), int(origin[1])
         self._w, self._h = int(width), int(height)
+        self._header = ""  # persistent top line (the task goal), above live status
         self._text = "等待 Agent 启动…"
 
         fd, tmp = tempfile.mkstemp(suffix=".txt")
@@ -127,9 +128,12 @@ class AgentHUD:
         )
 
     def _write(self) -> None:
+        # Body = optional goal header + live status, both shown in the panel (the
+        # tkinter side renders everything after the geometry line as wrapped text).
+        body = f"🎯 {self._header}\n{self._text}" if self._header else self._text
         try:
             self._status_file.write_text(
-                f"{self._x} {self._y} {self._w} {self._h}\n{self._text}",
+                f"{self._x} {self._y} {self._w} {self._h}\n{body}",
                 encoding="utf-8",
             )
         except OSError:
@@ -139,6 +143,15 @@ class AgentHUD:
         if self._proc.poll() is not None:
             return
         self._text = text
+        self._write()
+
+    def set_goal(self, goal: str) -> None:
+        """Set a persistent header (the task goal) shown above the live status.
+        Single-lined and length-capped so the panel stays bounded."""
+        g = (goal or "").strip().replace("\n", " ")
+        if len(g) > 60:
+            g = g[:59] + "…"
+        self._header = g
         self._write()
 
     def reposition(self, x: int, y: int, width: int | None = None, height: int | None = None) -> None:
@@ -173,12 +186,13 @@ class AgentHUD:
 
 def dock_rect(
     x: int, y: int, w: int, h: int,
-    *, bar_h: int = 56, max_w: int = 420, bottom_frac: float = 0.08,
+    *, bar_h: int = 100, max_w: int = 420, bottom_frac: float = 0.08,
 ) -> tuple[int, int, int, int]:
-    """HUD placement inside a window rect: a horizontally-CENTERED bar sitting LOW —
-    at roughly the iOS home-screen dock height (a margin beneath it, not flush to
-    the bottom edge). Returns (hx, hy, hw, hh). Shared by the browser factory's
-    pre-connect guess and the runner's post-connect reposition so both agree."""
+    """HUD placement inside a window rect: a horizontally-CENTERED panel sitting LOW
+    (a margin above the bottom edge, not flush). ``bar_h`` is tall enough to fit the
+    goal header (1-2 wrapped lines) plus the live status line. Returns (hx, hy, hw,
+    hh). Shared by the browser factory's pre-connect guess and the runner's
+    post-connect reposition so both agree."""
     hw = min(max(w - 32, 160), max_w)
     hx = x + (w - hw) // 2
     hy = y + h - bar_h - max(40, int(h * bottom_frac))
