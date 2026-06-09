@@ -24,5 +24,21 @@
     "expected": {
       "action_type": ["type", "tap"]
     }
+  },
+  {
+    "label": "type-标题输入文字应直接 type（回归：曾退化为先 tap 聚焦致零效果死循环）",
+    "screenshot": "evals/browser/action_policy/screenshots/feishu_blank_doc_editor.png",
+    "instruction": "在文档标题栏输入文字「测试文档」",
+    "expected": {
+      "action_type": "type"
+    }
+  },
+  {
+    "label": "type-正文输入文字应直接 type（同源回归：输入意图须映射到 type 而非 tap）",
+    "screenshot": "evals/browser/action_policy/screenshots/feishu_blank_doc_editor.png",
+    "instruction": "在文档正文区域输入文字「你好飞书」",
+    "expected": {
+      "action_type": "type"
+    }
   }
 ]
