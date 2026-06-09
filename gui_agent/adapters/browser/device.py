@@ -64,6 +64,8 @@ class PlaywrightDevice:
         self.page = None
         self._cdp = None  # cached raw CDP session for one-shot screenshots
         self._prev_pages = None  # last-seen page list, for new-tab-appearance follow
+        self._prev_raw_ids = None  # last-seen raw-CDP page-target id set (always fresh)
+        self._browser_cdp = None  # browser-level CDP session for Target.getTargets
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -83,6 +85,8 @@ class PlaywrightDevice:
         # spawns (see there). Reset the new-tab snapshot for a fresh connection.
         self.page = pages[0] if pages else self._context.new_page()
         self._prev_pages = None
+        self._prev_raw_ids = None
+        self._browser_cdp = None
         return self
 
     def close(self):
@@ -101,6 +105,8 @@ class PlaywrightDevice:
                 self.page = None
                 self._cdp = None
                 self._prev_pages = None
+                self._prev_raw_ids = None
+                self._browser_cdp = None
 
     # ----- viewport (for the executor's denormalization) -------------------
     @property
@@ -511,15 +517,25 @@ class PlaywrightDevice:
         the page set each call and, when a page appears that wasn't there before,
         follow the newest newcomer regardless of foreground.
 
-        ``context.pages`` surfaces tabs via CDP target events (independent of the
-        version-skew-broken execution-context binding that empties page.url / hangs
-        page.evaluate), so enumeration stays reliable even though per-page evaluate
-        does not. Best-effort — never raises, never recurses (no ``_require_page`` /
-        ``_cdp_send``).
+        ⚠️ ``context.pages`` LAGS for tabs opened OUT OF BAND (by a click / window.open):
+        sync-Playwright only ingests the ``Target.targetCreated`` event when one of its
+        own calls yields to the dispatcher, and our screenshots go through raw CDP — so
+        a bare screenshot/settle never pumps it and ``context.pages`` stays stale at the
+        old count (measured: rawCDP=3 while context.pages=2 until a Playwright wait).
+        Raw CDP ``Target.getTargets`` is always fresh, so we use it to NOTICE a changed
+        tab set, then pump the dispatcher (``wait_for_timeout``) until context.pages
+        catches up — we still need the Page object for high-level input. Best-effort —
+        never raises, never recurses (no ``_require_page`` / ``_cdp_send``).
         """
         ctx = self._context
         if ctx is None:
             return
+        # Detect a tab-set change via always-fresh raw CDP; only then pump the (sync)
+        # event loop so context.pages absorbs an out-of-band (click-opened) tab.
+        raw_ids = self._raw_page_target_ids()
+        if raw_ids is not None and raw_ids != self._prev_raw_ids:
+            self._prev_raw_ids = raw_ids
+            self._pump_until_pages(len(raw_ids))
         try:
             pages = [p for p in ctx.pages if not _page_closed(p)]
         except Exception:
@@ -546,6 +562,35 @@ class PlaywrightDevice:
         if self.page not in pages:
             self._switch_page(pages[-1])
             print(f"  [tab] 标签页关闭（{len(prev)}->{len(pages)}），切换 -> {self._page_url(self.page)}")
+
+    def _raw_page_target_ids(self):
+        """The set of page-target ids from raw CDP ``Target.getTargets`` — ALWAYS
+        fresh (unlike context.pages, which lags for out-of-band tabs). Uses a
+        browser-level CDP session, created lazily. None on any failure."""
+        try:
+            if self._browser_cdp is None:
+                self._browser_cdp = self._browser.new_browser_cdp_session()
+            res = self._browser_cdp.send("Target.getTargets")
+            return frozenset(
+                t["targetId"]
+                for t in (res.get("targetInfos") or [])
+                if t.get("type") == "page"
+            )
+        except Exception:
+            return None
+
+    def _pump_until_pages(self, target_n: int, *, tries: int = 5, ms: int = 120) -> None:
+        """Pump the sync-Playwright dispatcher until ``context.pages`` reaches
+        ``target_n`` (the fresh raw-CDP count), so an out-of-band tab is surfaced as a
+        Page. ``wait_for_timeout`` yields to the dispatcher (a bare sleep does not).
+        Bounded; best-effort."""
+        for _ in range(tries):
+            try:
+                if len(self._context.pages) >= target_n:
+                    return
+                self._require_page().wait_for_timeout(ms)
+            except Exception:
+                return
 
     def _switch_page(self, page) -> None:
         """Bind ``self.page`` to ``page`` and drop the stale per-page CDP session
