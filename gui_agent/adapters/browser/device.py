@@ -27,6 +27,8 @@ via ``playwright.stop()`` WITHOUT closing their browser.
 from __future__ import annotations
 
 import os
+import signal
+import threading
 from typing import Optional
 
 # Default viewport used to denormalize coordinates and for screenshots when the
@@ -34,6 +36,21 @@ from typing import Optional
 # None for the user's existing tab). Typical laptop content size.
 _DEFAULT_VIEWPORT_W = 1280
 _DEFAULT_VIEWPORT_H = 800
+
+# Hard wall-clock cap for a single raw-CDP send (mainly Page.captureScreenshot). A
+# non-responding Chrome — observed intermittently right after a navigation, NOT
+# reliably reproducible — would otherwise hang the agent loop forever in
+# selector.select with no exit but ^C. The cap is generous: a normal CDP round-trip
+# is well under a second, so this only ever fires on a genuinely wedged response.
+_CDP_SEND_TIMEOUT_S = 10.0
+
+
+class _CDPTimeout(Exception):
+    """A raw-CDP send exceeded _CDP_SEND_TIMEOUT_S (Chrome did not respond)."""
+
+
+def _cdp_alarm(signum, frame):  # SIGALRM handler — interrupts the blocked send
+    raise _CDPTimeout()
 
 # Pixels of wheel scroll per unit of the iphone-style ``amount`` (amount=5 -> a
 # bit under one screen). Keeps the neutral scroll(direction, amount=5, ...)
@@ -151,6 +168,17 @@ class PlaywrightDevice:
         self._follow_active_tab()
         try:
             return self._cdp_screenshot()
+        except _CDPTimeout:
+            # Chrome didn't answer captureScreenshot within the cap. Reset the session
+            # and try once more (often the next frame answers). The high-level fallback
+            # below shares the same possibly-wedged connection, so on a second timeout
+            # we raise rather than risk hanging there — the loop ends cleanly, not ^C.
+            print("  [screenshot] CDP 截图超时（Chrome 未响应），重置会话重试…")
+            self._cdp = None
+            try:
+                return self._cdp_screenshot()
+            except _CDPTimeout as exc:
+                raise RuntimeError("浏览器截图持续超时，页面无响应") from exc
         except Exception:
             pass
         # Last-resort fallback (e.g. an occluded window where the CDP surface capture
@@ -175,10 +203,31 @@ class PlaywrightDevice:
         if self._cdp is None:
             self._cdp = self._context.new_cdp_session(page)
         try:
-            return self._cdp.send(method, params)
+            return self._timed_send(method, params)
+        except _CDPTimeout:
+            raise  # don't retry a hang into another hang — let the caller fall back
         except Exception:
             self._cdp = self._context.new_cdp_session(page)
+            return self._timed_send(method, params)
+
+    def _timed_send(self, method: str, params: dict) -> dict:
+        """``self._cdp.send`` with a hard wall-clock cap via SIGALRM, so a Chrome that
+        never answers (intermittent ``Page.captureScreenshot`` stalls) raises
+        ``_CDPTimeout`` instead of blocking ``selector.select`` forever. MAIN THREAD
+        ONLY (SIGALRM); off it (or where SIGALRM is absent) it sends uncapped. The
+        normal path adds only a setitimer arm/disarm — microseconds."""
+        if (
+            threading.current_thread() is not threading.main_thread()
+            or not hasattr(signal, "SIGALRM")
+        ):
             return self._cdp.send(method, params)
+        prev = signal.signal(signal.SIGALRM, _cdp_alarm)
+        signal.setitimer(signal.ITIMER_REAL, _CDP_SEND_TIMEOUT_S)
+        try:
+            return self._cdp.send(method, params)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, prev)
 
     def _cdp_screenshot(self) -> bytes:
         import base64
