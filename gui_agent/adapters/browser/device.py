@@ -186,6 +186,24 @@ class PlaywrightDevice:
         result = self._cdp_send("Page.captureScreenshot", {"format": "png"})
         return base64.b64decode(result["data"])
 
+    def is_loading(self) -> bool:
+        """Whether the current page hasn't finished loading (``document.readyState``
+        != 'complete'). The browser's STRUCTURAL loading sensor — it replaces the
+        iphone PIXEL blank-screen heuristic, which misfires on desktop web: a
+        rendered-but-sparse page (an empty doc editor, a wide centered layout) is a
+        large light uniform region and reads as 'blank', so the agent waits forever.
+        Raw CDP ``Runtime.evaluate`` so it survives the broken high-level binding.
+        False on any failure — never block the loop on a flaky sensor."""
+        try:
+            res = self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": "document.readyState", "returnByValue": True},
+            )
+            val = (res.get("result") or {}).get("value")
+            return bool(val) and val != "complete"
+        except Exception:
+            return False
+
     def eval_js(self, expression: str) -> object:
         """Best-effort JS eval via raw CDP ``Runtime.evaluate`` (NOT
         ``page.evaluate``, which hangs on a broken execution-context binding). Used

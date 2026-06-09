@@ -72,4 +72,9 @@ class BrowserPerception:
         self.screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.screenshot_path.write_bytes(png_bytes)
         print(f"截图大小: {len(png_bytes) // 1024} KB，已保存到 {self.screenshot_path}")
-        return Observation(png_bytes=png_bytes, source="browser")
+        # Structural loading signal (document.readyState) for the supervisor — far
+        # more reliable than a pixel blank-screen guess on desktop web, where a
+        # rendered empty page is mostly whitespace. None-safe if the device lacks it.
+        client = getattr(self.session, "client", None)
+        loading = bool(client.is_loading()) if (client is not None and hasattr(client, "is_loading")) else None
+        return Observation(png_bytes=png_bytes, source="browser", loading=loading)

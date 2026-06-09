@@ -179,6 +179,13 @@ class Observation(BaseModel):
 
     png_bytes: bytes = Field(description="当前 iPhone 截图 PNG bytes")
     source: str = Field(description="观测来源")
+    loading: Optional[bool] = Field(
+        default=None,
+        description=(
+            "平台感知层的「页面是否仍在加载」结构信号（如 web 的 document.readyState!=complete）。"
+            "None=该平台不提供此信号，由 supervisor 退回视觉白屏启发式判断。"
+        ),
+    )
 
 
 class ActionDecision(BaseModel):

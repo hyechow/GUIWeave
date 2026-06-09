@@ -147,6 +147,21 @@ def _is_blank_screen(png_bytes: bytes) -> bool:
     return mean >= BLANK_BODY_MEAN_MIN and std <= BLANK_BODY_STD_MAX
 
 
+def _frame_is_loading(observation: Observation) -> bool:
+    """Whether this frame is an unstable / still-loading page (so wait, don't act).
+
+    Prefer the PLATFORM's structural signal when perception supplies one
+    (``observation.loading`` — e.g. browser's ``document.readyState != 'complete'``).
+    The iphone PIXEL heuristic (``_is_blank_screen``: large light uniform body) is
+    used ONLY as the fallback when the platform gives no signal (``loading is None``),
+    because on desktop web it MISFIRES — a rendered-but-sparse page (an empty doc
+    editor, a wide centered layout) is mostly whitespace and reads as 'blank', which
+    made the agent wait out MAX_LOADING_FRAMES and fail a perfectly good page."""
+    if observation.loading is not None:
+        return observation.loading
+    return _is_blank_screen(observation.png_bytes)
+
+
 def _default_read_instruction(milestone: Milestone) -> str:
     return (
         f"提取当前屏幕中与「{milestone.name}」相关的所有可见内容，"
@@ -253,7 +268,7 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        if _is_blank_screen(observation.png_bytes):
+        if _frame_is_loading(observation):
             print("  [BlankScreen] 检测到白屏，页面加载中，等待下一帧...")
             return SupervisorStep(
                 should_act=False,
