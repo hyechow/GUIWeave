@@ -1,27 +1,23 @@
 """Playwright/CDP I/O backend implementing gui_agent.core.contracts.Device.
 
-``PlaywrightDevice`` attaches to a user's running Chrome over the Chrome DevTools
-Protocol (CDP) and drives the active page through a desktop pointer + keyboard. It
-satisfies the neutral ``Device`` Protocol (connect/close/screenshot/tap/type_text/
-drag/press_home) AND the optional ``ScrollableDevice`` capability (scroll), plus
-the browser-only extras ``navigate(url)`` / ``go_back()``.
+``PlaywrightDevice`` attaches to a running Chrome for Testing over the Chrome
+DevTools Protocol (CDP) and drives the active page through a desktop pointer +
+keyboard.  It satisfies the neutral ``Device`` Protocol (connect/close/screenshot/
+tap/type_text/drag/press_home) AND the optional ``ScrollableDevice`` capability
+(scroll), plus the browser-only extras ``navigate(url)`` / ``go_back()``.
 
-UNLIKE mobile (one screen forever), the web has N tabs and a click / ``window.open``
-can spawn a NEW tab (often in the background). ``self.page`` is bound once at
-``connect()``; left alone it would keep screenshotting + clicking the old tab, so
-every observe/input first calls ``_follow_active_tab()`` which snapshots the page
-set and, when a tab appears that wasn't there before, follows the newcomer (see
-there for why foreground/``visibilityState`` is the wrong signal here). This keeps
-core's "observation surface is a single screen" abstraction intact while the
-adapter quietly follows the tab a click opened.
+UNLIKE mobile (one screen forever), the web has N tabs and a click / window.open
+can spawn a NEW tab (often in the background).  ``self.page`` is bound once at
+``connect()``; every observe/input first calls ``_follow_active_tab()`` which
+snapshots context.pages and, when a tab appears that wasn't there before, follows
+the newcomer.  This keeps core's "single screen" abstraction intact.
 
 Coordinates passed to ``tap`` / ``drag`` / ``scroll`` are VIEWPORT PIXELS — the
-executor denormalizes 0-1000 -> px using ``viewport_size`` before calling here
-(mirroring how the iphone executor denormalizes via ``logical_xy`` / WIN_W / WIN_H).
+executor denormalizes 0-1000 -> px using ``viewport_size`` before calling here.
 
 Every input method returns a status ``str`` (the executor scans it for
-"paused" / "interrupted" / "failed"). ``close()`` detaches from the user's Chrome
-via ``playwright.stop()`` WITHOUT closing their browser.
+"paused" / "interrupted" / "failed"). ``close()`` detaches from Chrome WITHOUT
+closing the user's browser.
 """
 
 from __future__ import annotations
@@ -37,11 +33,8 @@ from typing import Optional
 _DEFAULT_VIEWPORT_W = 1280
 _DEFAULT_VIEWPORT_H = 800
 
-# Hard wall-clock cap for a single raw-CDP send (mainly Page.captureScreenshot). A
-# non-responding Chrome — observed intermittently right after a navigation, NOT
-# reliably reproducible — would otherwise hang the agent loop forever in
-# selector.select with no exit but ^C. The cap is generous: a normal CDP round-trip
-# is well under a second, so this only ever fires on a genuinely wedged response.
+# Hard wall-clock cap for a single raw-CDP send. A non-responding Chrome would
+# otherwise hang the agent loop forever. Normal round-trips are well under a second.
 _CDP_SEND_TIMEOUT_S = 10.0
 
 
@@ -79,10 +72,9 @@ class PlaywrightDevice:
         self._browser = None
         self._context = None
         self.page = None
-        self._cdp = None  # cached raw CDP session for one-shot screenshots
+        self._cdp = None  # cached raw CDP session (for window_bounds / eval_js fallback)
         self._prev_pages = None  # last-seen page list, for new-tab-appearance follow
-        self._prev_raw_ids = None  # last-seen raw-CDP page-target id set (always fresh)
-        self._browser_cdp = None  # browser-level CDP session for Target.getTargets
+        self._tab_switched = False  # set by _switch_page; cleared by pop_tab_switched()
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -102,8 +94,7 @@ class PlaywrightDevice:
         # spawns (see there). Reset the new-tab snapshot for a fresh connection.
         self.page = pages[0] if pages else self._context.new_page()
         self._prev_pages = None
-        self._prev_raw_ids = None
-        self._browser_cdp = None
+        self._tab_switched = False
         return self
 
     def close(self):
@@ -122,29 +113,16 @@ class PlaywrightDevice:
                 self.page = None
                 self._cdp = None
                 self._prev_pages = None
-                self._prev_raw_ids = None
-                self._browser_cdp = None
+                self._tab_switched = False
 
     # ----- viewport (for the executor's denormalization) -------------------
     @property
     def viewport_size(self) -> tuple[int, int]:
-        """(width, height) in CSS px the executor uses to denormalize 0-1000 -> px.
-
-        Reads window.innerWidth/innerHeight via a raw CDP ``Runtime.evaluate``. We do
-        NOT use ``page.evaluate`` here: when the high-level execution-context binding
-        fails over ``connect_over_cdp`` (Playwright<->Chrome version skew), every
-        ``page.evaluate`` hangs forever — and ``page.viewport_size`` is usually None
-        on a CDP-attached tab anyway. Falls back to a sane default on any failure.
-        """
+        """(width, height) in CSS px the executor uses to denormalize 0-1000 -> px."""
         try:
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {
-                    "expression": "({w: window.innerWidth, h: window.innerHeight})",
-                    "returnByValue": True,
-                },
+            val = self._require_page().evaluate(
+                "({w: window.innerWidth, h: window.innerHeight})"
             )
-            val = (res.get("result") or {}).get("value") or {}
             w, h = int(val.get("w") or 0), int(val.get("h") or 0)
             if w and h:
                 return w, h
@@ -154,43 +132,17 @@ class PlaywrightDevice:
 
     # ----- perception ------------------------------------------------------
     def screenshot(self) -> bytes:
-        """Return the current page as PNG bytes via a raw CDP one-shot capture.
+        """Return the current page as PNG bytes.
 
-        WHY NOT ``page.screenshot()``: the high-level wrapper (a) auto-waits for the
-        page to stop navigating — a Google results page never looks "settled", so it
-        retried to its timeout (the persistent ~25s post-Enter stall), and (b) hangs
-        outright when the execution-context binding fails over ``connect_over_cdp``
-        (Playwright<->Chrome version skew). Raw ``Page.captureScreenshot`` does
-        neither: it grabs the current frame immediately, mid-navigation included.
+        Primary path: page.screenshot() — fast, no navigation wait.
+        Fallback: raw CDP Page.captureScreenshot (e.g. occluded window).
         """
-        # Follow the foreground tab first: a click on the previous turn may have
-        # opened a new front tab, and we must observe THAT, not the stale one.
         self._follow_active_tab()
-        try:
-            return self._cdp_screenshot()
-        except _CDPTimeout:
-            # Chrome didn't answer captureScreenshot within the cap. Reset the session
-            # and try once more (often the next frame answers). The high-level fallback
-            # below shares the same possibly-wedged connection, so on a second timeout
-            # we raise rather than risk hanging there — the loop ends cleanly, not ^C.
-            print("  [screenshot] CDP 截图超时（Chrome 未响应），重置会话重试…")
-            self._cdp = None
-            try:
-                return self._cdp_screenshot()
-            except _CDPTimeout as exc:
-                raise RuntimeError("浏览器截图持续超时，页面无响应") from exc
-        except Exception:
-            pass
-        # Last-resort fallback (e.g. an occluded window where the CDP surface capture
-        # could not get a frame): bring the tab forward and use the wrapper, bounded
-        # so it can never hang the loop. On a binding-broken setup this also fails
-        # fast rather than hanging — but the CDP primary above is the working path.
         page = self._require_page()
         try:
-            page.bring_to_front()
+            return page.screenshot(type="png")
         except Exception:
-            pass
-        return page.screenshot(timeout=8000)
+            return self._cdp_screenshot()
 
     def _cdp_send(self, method: str, params: dict) -> dict:
         """Send a raw CDP command on the cached per-page session, rebuilding it once
@@ -201,13 +153,13 @@ class PlaywrightDevice:
         Chrome — whereas raw CDP keeps working."""
         page = self._require_page()
         if self._cdp is None:
-            self._cdp = self._context.new_cdp_session(page)
+            self._cdp = page.context.new_cdp_session(page)
         try:
             return self._timed_send(method, params)
         except _CDPTimeout:
             raise  # don't retry a hang into another hang — let the caller fall back
         except Exception:
-            self._cdp = self._context.new_cdp_session(page)
+            self._cdp = page.context.new_cdp_session(page)
             return self._timed_send(method, params)
 
     def _timed_send(self, method: str, params: dict) -> dict:
@@ -236,33 +188,21 @@ class PlaywrightDevice:
         return base64.b64decode(result["data"])
 
     def is_loading(self) -> bool:
-        """Whether the current page hasn't finished loading (``document.readyState``
-        != 'complete'). The browser's STRUCTURAL loading sensor — it replaces the
-        iphone PIXEL blank-screen heuristic, which misfires on desktop web: a
-        rendered-but-sparse page (an empty doc editor, a wide centered layout) is a
-        large light uniform region and reads as 'blank', so the agent waits forever.
-        Raw CDP ``Runtime.evaluate`` so it survives the broken high-level binding.
-        False on any failure — never block the loop on a flaky sensor."""
+        """True only when document.readyState == 'loading' (structural sensor).
+
+        SPAs like Feishu stay at 'interactive' for a long time — only 'loading'
+        means the page is truly not yet actionable.  False on any failure.
+        """
         try:
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {"expression": "document.readyState", "returnByValue": True},
-            )
-            val = (res.get("result") or {}).get("value")
-            return bool(val) and val != "complete"
+            return self._require_page().evaluate("document.readyState") == "loading"
         except Exception:
             return False
 
     def eval_js(self, expression: str) -> object:
-        """Best-effort JS eval via raw CDP ``Runtime.evaluate`` (NOT
-        ``page.evaluate``, which hangs on a broken execution-context binding). Used
-        by the action visualizer to draw its overlay. Returns the evaluated value
-        (when ``returnByValue`` data is present) or None; never raises."""
+        """Best-effort JS eval via page.evaluate(). Used by the action visualizer.
+        Returns None on any failure; never raises."""
         try:
-            res = self._cdp_send(
-                "Runtime.evaluate", {"expression": expression, "returnByValue": False}
-            )
-            return (res.get("result") or {}).get("value")
+            return self._require_page().evaluate(expression)
         except Exception:
             return None
 
@@ -282,8 +222,13 @@ class PlaywrightDevice:
     def tap(self, x: float, y: float) -> str:
         self._follow_active_tab()
         try:
-            self._require_page().mouse.click(x, y)
-        except Exception as exc:  # noqa: BLE001 — surface as status str for executor
+            page = self._require_page()
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            page.mouse.click(x, y)
+        except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return f"OK tap ({x:.0f},{y:.0f})"
 
@@ -527,38 +472,9 @@ class PlaywrightDevice:
     def navigate(self, url: str) -> str:
         try:
             self._require_page().goto(url)
-        except Exception:
-            # High-level goto is flaky on a broken connect_over_cdp binding
-            # ("Frame has been detached" / hangs). Fall back to raw CDP, which is
-            # the same regime screenshot/evaluate already rely on here.
-            return self._cdp_navigate(url)
-        return f"OK navigate {url}"
-
-    def _cdp_navigate(self, url: str, *, timeout_s: float = 10.0) -> str:
-        """Navigate via raw CDP ``Page.navigate`` and poll readyState — robust when
-        the high-level ``page.goto`` detaches/hangs on a version-skewed CDP attach."""
-        import time
-
-        try:
-            self._cdp_send("Page.enable", {})
-            self._cdp_send("Page.navigate", {"url": url})
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
-        deadline = timeout_s / 0.25
-        i = 0
-        while i < deadline:
-            try:
-                r = self._cdp_send(
-                    "Runtime.evaluate",
-                    {"expression": "document.readyState", "returnByValue": True},
-                )
-                if (r.get("result") or {}).get("value") == "complete":
-                    break
-            except Exception:  # noqa: BLE001
-                pass
-            time.sleep(0.25)
-            i += 1
-        return f"OK navigate {url} (cdp)"
+        return f"OK navigate {url}"
 
     def go_back(self) -> str:
         try:
@@ -569,95 +485,62 @@ class PlaywrightDevice:
 
     # ----- active-tab follow ----------------------------------------------
     def _follow_active_tab(self) -> None:
-        """Re-point ``self.page`` at the tab a click / ``window.open`` just spawned.
+        """Re-point self.page at the tab a click / window.open just opened.
 
-        On the web a click can open a NEW tab while ``self.page`` stays pinned to the
-        old one — that is exactly how "click landed, screen never changed" happens
-        (mobile has one screen, so core never modeled this).
+        Checks ALL browser contexts — under connect_over_cdp, click-opened tabs
+        may land in a new context rather than self._context, so we must iterate
+        self._browser.contexts rather than only self._context.pages.
 
-        We follow by **new-tab appearance**, NOT by foreground/``visibilityState``.
-        An earlier version followed the 'visible' tab and kept missing this case:
-        under a CDP-synthesized click the new tab frequently opens in the BACKGROUND
-        (the old tab stays 'visible'), and under this adapter's occluded / non-preempt
-        window visibility is unreliable for ALL tabs — so "follow the visible tab"
-        either kept the wrong tab or found no foreground at all. Instead we snapshot
-        the page set each call and, when a page appears that wasn't there before,
-        follow the newest newcomer regardless of foreground.
-
-        ⚠️ ``context.pages`` LAGS for tabs opened OUT OF BAND (by a click / window.open):
-        sync-Playwright only ingests the ``Target.targetCreated`` event when one of its
-        own calls yields to the dispatcher, and our screenshots go through raw CDP — so
-        a bare screenshot/settle never pumps it and ``context.pages`` stays stale at the
-        old count (measured: rawCDP=3 while context.pages=2 until a Playwright wait).
-        Raw CDP ``Target.getTargets`` is always fresh, so we use it to NOTICE a changed
-        tab set, then pump the dispatcher (``wait_for_timeout``) until context.pages
-        catches up — we still need the Page object for high-level input. Best-effort —
-        never raises, never recurses (no ``_require_page`` / ``_cdp_send``).
+        WHY wait_for_timeout: Playwright's sync dispatcher only ingests
+        Target.targetCreated (and updates context.pages) when one of its own
+        calls yields to the event loop. time.sleep() does NOT do this. One pump
+        on any page covers all contexts (shared transport under connect_over_cdp).
         """
-        ctx = self._context
-        if ctx is None:
+        if self._browser is None:
             return
-        # Detect a tab-set change via always-fresh raw CDP; only then pump the (sync)
-        # event loop so context.pages absorbs an out-of-band (click-opened) tab.
-        raw_ids = self._raw_page_target_ids()
-        if raw_ids is not None and raw_ids != self._prev_raw_ids:
-            self._prev_raw_ids = raw_ids
-            self._pump_until_pages(len(raw_ids))
+        # Flush pending Playwright events so context.pages lists are up-to-date.
+        if self.page is not None:
+            try:
+                self.page.wait_for_timeout(200)
+            except Exception:
+                pass
+        # Collect pages across ALL contexts — connect_over_cdp puts click-opened
+        # tabs in a fresh context, not necessarily self._context.
+        all_pages: list = []
         try:
-            pages = [p for p in ctx.pages if not _page_closed(p)]
+            for ctx in self._browser.contexts:
+                try:
+                    all_pages.extend(p for p in ctx.pages if not _page_closed(p))
+                except Exception:
+                    pass
         except Exception:
             return
-        if not pages:
+        if not all_pages:
             return
         prev = self._prev_pages
-        self._prev_pages = pages  # snapshot for the next call
+        self._prev_pages = all_pages
         if prev is None:
-            # First observation: keep connect()'s choice; just seed the snapshot.
-            if self.page not in pages:
-                self._switch_page(pages[-1])
+            if self.page not in all_pages:
+                self._switch_page(all_pages[-1])
             return
-        # A page we hadn't seen before = a tab a click/window.open just opened. Follow
-        # the newest such tab even if it opened in the background — that is where the
-        # action led. (Same-tab navigations add no page, so they never trigger this.)
-        newcomers = [p for p in pages if p not in prev]
+        newcomers = [p for p in all_pages if p not in prev]
         if newcomers:
             target = newcomers[-1]
+            self._context = target.context
             self._switch_page(target)
-            print(f"  [tab] 新标签页（{len(prev)}->{len(pages)}），跟随 -> {self._page_url(target)}")
+            print(f"  [tab] 新标签页（{len(prev)}->{len(all_pages)}），跟随 -> {target.url}")
             return
-        # No new tab: stay put unless our current tab has gone away.
-        if self.page not in pages:
-            self._switch_page(pages[-1])
-            print(f"  [tab] 标签页关闭（{len(prev)}->{len(pages)}），切换 -> {self._page_url(self.page)}")
+        if self.page not in all_pages:
+            self._switch_page(all_pages[-1])
+            print(f"  [tab] 标签页关闭，切换 -> {self.page.url}")
 
-    def _raw_page_target_ids(self):
-        """The set of page-target ids from raw CDP ``Target.getTargets`` — ALWAYS
-        fresh (unlike context.pages, which lags for out-of-band tabs). Uses a
-        browser-level CDP session, created lazily. None on any failure."""
-        try:
-            if self._browser_cdp is None:
-                self._browser_cdp = self._browser.new_browser_cdp_session()
-            res = self._browser_cdp.send("Target.getTargets")
-            return frozenset(
-                t["targetId"]
-                for t in (res.get("targetInfos") or [])
-                if t.get("type") == "page"
-            )
-        except Exception:
-            return None
-
-    def _pump_until_pages(self, target_n: int, *, tries: int = 5, ms: int = 120) -> None:
-        """Pump the sync-Playwright dispatcher until ``context.pages`` reaches
-        ``target_n`` (the fresh raw-CDP count), so an out-of-band tab is surfaced as a
-        Page. ``wait_for_timeout`` yields to the dispatcher (a bare sleep does not).
-        Bounded; best-effort."""
-        for _ in range(tries):
-            try:
-                if len(self._context.pages) >= target_n:
-                    return
-                self._require_page().wait_for_timeout(ms)
-            except Exception:
-                return
+    def pop_tab_switched(self) -> bool:
+        """Return True (and clear the flag) if a tab switch happened since the last
+        call. Used by the settle loop to detect navigation-to-new-tab even when the
+        pixel diff between old and new tab content falls below SETTLE_CHANGE_THR."""
+        val = self._tab_switched
+        self._tab_switched = False
+        return val
 
     def _switch_page(self, page) -> None:
         """Bind ``self.page`` to ``page`` and drop the stale per-page CDP session
@@ -665,24 +548,7 @@ class PlaywrightDevice:
         if page is not self.page:
             self.page = page
             self._cdp = None
-
-    def _page_url(self, page) -> str:
-        """Best-effort URL of ``page`` via raw CDP ``Target.getTargetInfo`` (page.url
-        is '' under the broken binding). Diagnostics only; '' on any failure."""
-        try:
-            sess = self._context.new_cdp_session(page)
-        except Exception:
-            return ""
-        try:
-            info = sess.send("Target.getTargetInfo", {}) or {}
-            return (info.get("targetInfo") or {}).get("url") or ""
-        except Exception:
-            return ""
-        finally:
-            try:
-                sess.detach()
-            except Exception:
-                pass
+            self._tab_switched = True
 
     # ----- internals -------------------------------------------------------
     def _require_page(self):

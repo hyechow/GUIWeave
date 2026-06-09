@@ -207,7 +207,7 @@ class AgentHUD:
 
 def dock_rect(
     x: int, y: int, w: int, h: int,
-    *, bar_h: int = 155, max_w: int = 600, bottom_frac: float = 0.08,
+    *, bar_h: int = 150, max_w: int = 600, bottom_frac: float = 0.08,
 ) -> tuple[int, int, int, int]:
     """HUD placement inside a window rect: a horizontally-CENTERED panel sitting LOW
     (a margin above the bottom edge, not flush). ``bar_h`` fits the goal (1-2 lines)

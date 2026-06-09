@@ -143,6 +143,8 @@ def _settle_after_action(
         return dur, False
     prev: bytes | None = None
     ever_changed = False
+    # Browser tab-switch detector (optional: only present on browser session).
+    _pop_tab = getattr(phone, "pop_tab_switched", None)
     for i in range(1, SETTLE_MAX_UNITS + 1):
         # 首帧等久一点让转场动画跑完，再用细粒度轮询。
         time.sleep(SETTLE_FIRST_S if i == 1 else SETTLE_UNIT_S)
@@ -152,11 +154,17 @@ def _settle_after_action(
             dur = time.perf_counter() - t0
             print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
             return dur, False
+        # Browser: a tab switch is always "effect" even when pixel diff < threshold
+        # (new tab may look visually similar to the old one at 160x320 resolution).
+        tab_just_switched = bool(_pop_tab and _pop_tab())
+        if tab_just_switched:
+            ever_changed = True
+            print(f"  [Settle] {time.perf_counter() - t0:.1f}s ({i} 轮，tab切换→有效果)")
         # type 是局部改动：只比输入坐标周围的带（focus_y），整帧会把它稀释成假零效果。
         changed = _frame_diff(pre_frame, cur, focus_y) > SETTLE_CHANGE_THR
         ever_changed = ever_changed or changed
         stable = prev is not None and _frame_diff(prev, cur, focus_y) < SETTLE_STABLE_THR
-        if changed and stable:
+        if (changed or tab_just_switched) and stable:
             dur = time.perf_counter() - t0
             print(f"  [Settle] {dur:.1f}s ({i} 轮，变过且停稳)")
             return dur, False
