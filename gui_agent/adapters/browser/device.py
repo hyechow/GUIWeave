@@ -75,6 +75,8 @@ class PlaywrightDevice:
         self._cdp = None  # cached raw CDP session (for window_bounds / eval_js fallback)
         self._prev_pages = None  # last-seen page list, for new-tab-appearance follow
         self._tab_switched = False  # set by _switch_page; cleared by pop_tab_switched()
+        self._last_viewport = None  # CSS-px (w, h) derived from the last screenshot
+        self._dpr = None  # cached devicePixelRatio (stable; only changes across monitors)
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -95,6 +97,8 @@ class PlaywrightDevice:
         self.page = pages[0] if pages else self._context.new_page()
         self._prev_pages = None
         self._tab_switched = False
+        self._last_viewport = None
+        self._dpr = None
         return self
 
     def close(self):
@@ -114,35 +118,102 @@ class PlaywrightDevice:
                 self._cdp = None
                 self._prev_pages = None
                 self._tab_switched = False
+                self._last_viewport = None
+                self._dpr = None
 
     # ----- viewport (for the executor's denormalization) -------------------
     @property
     def viewport_size(self) -> tuple[int, int]:
-        """(width, height) in CSS px the executor uses to denormalize 0-1000 -> px."""
+        """(width, height) in CSS px the executor denormalizes 0-1000 -> px against.
+
+        DERIVED FROM THE SCREENSHOT, not a separate JS read. The PNG the LLM looked
+        at IS the coordinate frame; its pixel size / devicePixelRatio is the CSS-px
+        viewport ``page.mouse.click`` expects. Binding denorm to the captured image
+        this way means it can NEVER desync from what the model saw.
+
+        This replaces an earlier per-tap ``window.innerHeight`` read that could
+        transiently fail and silently fall back to a hardcoded ``(1280, 800)``;
+        when the real window was 1281x963 that scaled every y by 800/963 and lifted
+        a left-nav tap ~40px up onto the wrong item (the "点云文档却开视频会议" bug).
+        Now there is no separate, separately-failing size read at all.
+
+        ``screenshot()`` refreshes this each turn. If queried before any screenshot
+        (rare), fall back to a direct CSS-viewport read via CDP, then the default.
+        """
+        if self._last_viewport is not None:
+            return self._last_viewport
+        wh = self._read_css_viewport()
+        if wh is not None:
+            self._last_viewport = wh
+            return wh
+        return _DEFAULT_VIEWPORT_W, _DEFAULT_VIEWPORT_H
+
+    def _device_pixel_ratio(self) -> float:
+        """devicePixelRatio, cached. Stable for a session (only changes if the
+        window moves to a differently-scaled monitor), so — unlike the viewport —
+        it is safe to read ONCE. Raw CDP; defaults to 1.0 until a read succeeds."""
+        if self._dpr is not None:
+            return self._dpr
         try:
-            val = self._require_page().evaluate(
-                "({w: window.innerWidth, h: window.innerHeight})"
+            res = self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": "window.devicePixelRatio", "returnByValue": True},
             )
-            w, h = int(val.get("w") or 0), int(val.get("h") or 0)
+            dpr = float((res.get("result") or {}).get("value") or 0)
+            if dpr > 0:
+                self._dpr = dpr
+                return dpr
+        except Exception:
+            pass
+        return 1.0
+
+    def _css_viewport_from_png(self, png: bytes) -> tuple[int, int] | None:
+        """CSS-px viewport = PNG device-px size / devicePixelRatio. None if the PNG
+        header can't be parsed."""
+        size = _png_size(png)
+        if size is None:
+            return None
+        dpr = self._device_pixel_ratio() or 1.0
+        w, h = size
+        return max(1, round(w / dpr)), max(1, round(h / dpr))
+
+    def _read_css_viewport(self) -> tuple[int, int] | None:
+        """Direct CSS-px viewport via raw CDP ``Page.getLayoutMetrics`` (no JS
+        execution context needed). Only used as the before-first-screenshot
+        fallback for ``viewport_size``."""
+        try:
+            m = self._cdp_send("Page.getLayoutMetrics", {})
+            vp = m.get("cssVisualViewport") or m.get("cssLayoutViewport") or {}
+            w = int(vp.get("clientWidth") or 0)
+            h = int(vp.get("clientHeight") or 0)
             if w and h:
                 return w, h
         except Exception:
             pass
-        return _DEFAULT_VIEWPORT_W, _DEFAULT_VIEWPORT_H
+        return None
 
     # ----- perception ------------------------------------------------------
     def screenshot(self) -> bytes:
-        """Return the current page as PNG bytes.
+        """Return the current page as PNG bytes, and refresh the denorm viewport.
 
         Primary path: page.screenshot() — fast, no navigation wait.
         Fallback: raw CDP Page.captureScreenshot (e.g. occluded window).
+
+        After capture, derive the CSS-px viewport from THIS PNG's size /
+        devicePixelRatio and cache it (see viewport_size), so the executor
+        denormalizes 0-1000 against the exact frame the LLM is about to see —
+        with no separate, separately-failing window.innerHeight read.
         """
         self._follow_active_tab()
         page = self._require_page()
         try:
-            return page.screenshot(type="png")
+            png = page.screenshot(type="png")
         except Exception:
-            return self._cdp_screenshot()
+            png = self._cdp_screenshot()
+        wh = self._css_viewport_from_png(png)
+        if wh is not None:
+            self._last_viewport = wh
+        return png
 
     def _cdp_send(self, method: str, params: dict) -> dict:
         """Send a raw CDP command on the cached per-page session, rebuilding it once
@@ -570,3 +641,18 @@ def _page_closed(page) -> bool:
         return page.is_closed()
     except Exception:
         return True
+
+
+def _png_size(png: bytes) -> tuple[int, int] | None:
+    """(width, height) in pixels from a PNG's IHDR header — no PIL/decode needed.
+    The 8-byte signature is followed by the IHDR chunk whose width/height are two
+    big-endian uint32 at byte offsets 16 and 20. None if it isn't a PNG."""
+    import struct
+
+    if len(png) < 24 or png[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    try:
+        w, h = struct.unpack(">II", png[16:24])
+    except Exception:
+        return None
+    return (int(w), int(h)) if w and h else None

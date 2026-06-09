@@ -82,8 +82,20 @@ class BrowserExecutor:
             else:
                 print("未提供输入坐标，默认当前输入框已聚焦，直接输入文字")
             # Replace existing contents: select-all + type the new text.
-            print(f"  清空并输入: {action.text!r}")
-            print(f"  结果: {client.select_all()}")
+            #
+            # BUT only for plain <input>/<textarea>. On a contenteditable rich
+            # block editor (Feishu/Notion-style docs), Cmd+A on an empty block
+            # enters BLOCK-NODE selection and the following keyboard.type is
+            # SWALLOWED — the body looked un-typeable ("零效果" replan loop).
+            # For contenteditable we skip select-all and type at the cursor
+            # (the field is empty in the overwhelming majority of type targets;
+            # for a genuine replace the policy can emit a separate clear_text).
+            kind = _focused_kind(client)
+            if kind == "input":
+                print(f"  清空并输入: {action.text!r}")
+                print(f"  结果: {client.select_all()}")
+            else:
+                print(f"  输入（{kind}，跳过 select_all 防块编辑器吞字）: {action.text!r}")
             print(f"  结果: {client.type_text(action.text)}")
 
         elif action.action_type == "clear_text":
@@ -155,6 +167,33 @@ _AMOUNT_UNITS = {"small": 3, "medium": 5, "large": 9}
 
 def _amount_to_units(amount: str) -> int:
     return _AMOUNT_UNITS.get(amount, 5)
+
+
+_FOCUS_KIND_JS = """(() => {
+    const a = document.activeElement;
+    if (!a) return 'none';
+    const t = a.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA') return 'input';
+    if (a.isContentEditable) return 'ce';
+    return 'other';
+})()"""
+
+
+def _focused_kind(client) -> str:
+    """Classify the currently-focused element so the type path knows whether a
+    select-all (Cmd+A) is safe. Returns 'input' for <input>/<textarea> (select-all
+    reliably replaces), 'ce' for contenteditable rich editors (select-all enters
+    block-node selection and swallows the next type — must be skipped), 'other'/
+    'none' otherwise. Defaults to 'input' (legacy select-all) if eval is
+    unavailable, so plain-input replace semantics are preserved on any failure."""
+    ev = getattr(client, "eval_js", None)
+    if ev is None:
+        return "input"
+    try:
+        kind = ev(_FOCUS_KIND_JS)
+    except Exception:  # noqa: BLE001
+        return "input"
+    return kind if isinstance(kind, str) and kind else "input"
 
 
 def _normalize_url(url: str | None) -> str:
