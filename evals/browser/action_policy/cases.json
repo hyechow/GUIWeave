@@ -1,0 +1,28 @@
+[
+  {
+    "label": "navigate-进入飞书官网（回归：曾误用 type 撞 Google 搜索框）",
+    "screenshot": "evals/browser/action_policy/screenshots/google_home.png",
+    "instruction": "进入飞书官网 feishu.cn",
+    "expected": {
+      "action_type": "navigate",
+      "url_contains": "feishu.cn"
+    }
+  },
+  {
+    "label": "navigate-在地址栏输入网址（地址栏措辞应映射到 navigate 而非 type）",
+    "screenshot": "evals/browser/action_policy/screenshots/google_home.png",
+    "instruction": "在地址栏输入 feishu.cn 并打开",
+    "expected": {
+      "action_type": "navigate",
+      "url_contains": "feishu.cn"
+    }
+  },
+  {
+    "label": "contrast-站内搜索应 type 不应 navigate（防 navigate 过触发）",
+    "screenshot": "evals/browser/action_policy/screenshots/google_home.png",
+    "instruction": "在 Google 搜索框中搜索「飞书」",
+    "expected": {
+      "action_type": ["type", "tap"]
+    }
+  }
+]

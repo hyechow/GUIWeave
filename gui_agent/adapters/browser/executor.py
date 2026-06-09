@@ -112,6 +112,17 @@ class BrowserExecutor:
             print(f"  drag ({fx:.0f},{fy:.0f})->({tx:.0f},{ty:.0f}), {duration_ms}ms")
             print(f"  结果: {client.drag(fx, fy, tx, ty, duration_ms)}")
 
+        elif action.action_type == "navigate":
+            url = _normalize_url(action.url)
+            if not url:
+                print("导航失败：缺少 url")
+                return False
+            print(f"导航到地址栏: {url}")
+            result = client.navigate(url)
+            print(f"  结果: {result}")
+            if "failed" in result.lower():
+                return False
+
         elif action.action_type == "home":
             print("执行返回起始页")
             print(f"  结果: {client.press_home()}")
@@ -144,3 +155,19 @@ _AMOUNT_UNITS = {"small": 3, "medium": 5, "large": 9}
 
 def _amount_to_units(amount: str) -> int:
     return _AMOUNT_UNITS.get(amount, 5)
+
+
+def _normalize_url(url: str | None) -> str:
+    """Prepend https:// when the model gives a bare host (e.g. 'feishu.cn').
+
+    The LLM commonly emits a scheme-less host. Anything already carrying a scheme
+    (http/https) — or an about:/chrome:/file: URL — is passed through untouched.
+    """
+    if not url:
+        return ""
+    u = url.strip()
+    if not u:
+        return ""
+    if "://" in u or u.startswith("about:") or u.startswith("chrome:"):
+        return u
+    return f"https://{u}"

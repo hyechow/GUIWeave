@@ -1,0 +1,24 @@
+[
+  {
+    "label": "navigate-打开网址应指令导航而非搜索框输入（回归：曾指令在搜索框输入 baidu.com）",
+    "screenshot": "evals/browser/planner/screenshots/google_home.png",
+    "milestone": {
+      "name": "导航至百度首页",
+      "description": "打开百度首页 baidu.com",
+      "success_condition": "页面显示为百度首页（包含百度搜索框及百度 Logo）",
+      "kind": "navigation",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为 Google 首页，未显示百度首页所需的百度搜索框及百度 Logo",
+      "issues": [],
+      "missing_evidence": ["页面显示为百度首页"],
+      "summary": "当前在 Google 首页，尚未前往百度"
+    },
+    "expected": {
+      "must_contain": ["导航", "打开", "前往"],
+      "must_not_contain": ["搜索框", "地址栏"]
+    }
+  }
+]

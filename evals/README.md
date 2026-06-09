@@ -3,7 +3,7 @@
 LLM 驱动的按需评测，按平台分目录：
 
 - **`iphone/`** — iPhone 平台各核心模块的单元测评（每个模块独立运行，不依赖真实手机，直接调用 LLM 并与预期输出对比）。
-- **`browser/`** — Browser 平台评测（待建）。
+- **`browser/`** — Browser 平台评测（已起步：action_policy；详见 `browser/README.md`）。
 
 下方「模块一览」及之后的分组说明均指 `evals/iphone/` 下的模块。
 

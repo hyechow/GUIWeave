@@ -6,7 +6,14 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
-ActionType = Literal["tap", "type", "clear_text", "press_enter", "scroll", "drag", "home", "stop"]
+# ``navigate`` is the platform-neutral "go to an address" action: browser → load a
+# URL (omnibox is browser chrome, invisible to the page screenshot and unreachable by
+# page-keyboard, so it CANNOT be typed via tap+type); android → deep-link/URL intent.
+# Platforms that have no address concept (iphone) simply don't expose it in their
+# action-policy prompt and ignore it in their executor.
+ActionType = Literal[
+    "tap", "type", "clear_text", "press_enter", "scroll", "drag", "navigate", "home", "stop"
+]
 ScrollTargetArea = Literal[
     "main_content",
     "left_panel",
@@ -28,6 +35,7 @@ _ACTION_TYPE_LABELS: dict[str, str] = {
     "press_enter": "回车",
     "scroll": "滚动",
     "drag": "拖动",
+    "navigate": "导航",
     "home": "主屏",
     "stop": "停止",
 }
@@ -86,7 +94,9 @@ class Action(BaseModel):
             if not data.get("description"):
                 action_type = data.get("action_type") or "操作"
                 text = data.get("text")
-                if text:
+                if action_type == "navigate" and data.get("url"):
+                    data["description"] = f"导航到 {data['url']}"
+                elif text:
                     data["description"] = f"执行{action_type}并输入{text}"
                 else:
                     data["description"] = f"执行{action_type}操作"
@@ -97,7 +107,7 @@ class Action(BaseModel):
         return data
 
     action_type: ActionType = Field(
-        description="操作类型：tap、type、press_enter、clear_text、scroll、drag、home、stop 之一"
+        description="操作类型：tap、type、press_enter、clear_text、scroll、drag、navigate、home、stop 之一"
     )
     x: Optional[float] = Field(
         default=None,
@@ -143,6 +153,10 @@ class Action(BaseModel):
         default=None,
         description="要输入的文字内容（action_type 为 type 时必填）",
     )
+    url: Optional[str] = Field(
+        default=None,
+        description="要导航到的网址（action_type 为 navigate 时必填）。可不带 http(s):// 前缀，执行层会补全",
+    )
     description: str = Field(description="该操作的中文说明，如「点击目标应用图标」")
     snap: Optional[dict] = Field(
         default=None,
@@ -153,6 +167,8 @@ class Action(BaseModel):
     def _require_text_for_type(self) -> "Action":
         if self.action_type == "type" and not self.text:
             raise ValueError("type 动作必须填写 text 字段，不能为空")
+        if self.action_type == "navigate" and not self.url:
+            raise ValueError("navigate 动作必须填写 url 字段，不能为空")
         if self.action_type in {"scroll", "drag"} and not (self.direction or self.value_direction):
             raise ValueError("scroll/drag 动作必须填写 direction 或 value_direction")
         return self

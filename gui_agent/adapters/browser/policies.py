@@ -45,11 +45,12 @@ SYSTEM_PROMPT = """\
 - scroll：滚动页面以显示更多内容。填写 direction（down 看下方、up 看上方、right 看右侧、left 看左侧）、amount（small/medium/large）；
   局部滚动容器需填写 x/y 作为滚动锚点，落在要滚动的区域内。
 - drag：拖动滑块、调整控件、拖拽元素。填写起点 x/y。
+- navigate：直接让浏览器跳转到某个网址。只要指令意图是「打开/进入/前往某网站」「访问/在地址栏输入某网址」
+  「导航到 X」，且你知道目标网址（如 feishu.cn），就一律用 navigate、填 url（可省略 https://）、无需坐标。
+  这类「去往某网址」的目标一律优先 navigate；不要把网址当普通文字 type 进页面里的搜索框（站内搜索不会跳到该网站）。
 - stop：当指令含义是「停止」「无需操作」「目标已完成」，或目标元素确实不在当前截图中时使用，无需坐标。
 
 约束：
-- 这是网页，不是 iPhone。没有 iPhone 选择器（picker）、没有主屏幕/桌面、没有 App 概念。
-  不要输出 picker 相关的 target_area（picker_left/center/right）或 value_direction。
 - amount 表示滚动幅度：small（细调）、medium（普通翻看）、large（快速翻页）。
 - 普通整页滚动可不填 x/y；局部滚动容器、分栏区域必须填写 x/y 落在该容器中心。
 - 不要填写 to_x/to_y/duration_ms（拖动除外，drag 由你给出起点，终点由执行层处理或你按需提供）。
