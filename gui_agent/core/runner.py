@@ -543,6 +543,15 @@ def run_agent_loop(
         # execute and must never raise into the loop.
         visualizer = bundle.make_action_visualizer(phone)
 
+        def _flash(a) -> None:
+            # Best-effort cursor/overlay flash before executing `a`; never raises into
+            # the loop. No-op when the platform has no visualizer (iphone).
+            if visualizer is not None and a is not None:
+                try:
+                    visualizer.show_action(a)
+                except Exception:
+                    pass
+
         # One-shot post-open hook (before the first observe): lets a caller prime
         # the just-connected session — e.g. the WebArena entry injects auth cookies,
         # starts HAR capture and navigates to the task start_url. Runs on the neutral
@@ -767,6 +776,7 @@ def run_agent_loop(
                             f"method={profile.method}, x={profile.x:.0f}, y={profile.y:.0f}, "
                             f"ticks={profile.ticks}, delta={profile.delta_px}"
                         )
+                        _flash(cached)
                         if cached.action_type == "scroll":
                             print(f"\n动作: [{cached.action_type}] {cached.description}")
                             executor.execute_scroll(cached, ticks=profile.ticks, delta_px=profile.delta_px)
@@ -793,6 +803,7 @@ def run_agent_loop(
                             scroll_profiles.pop(profile_key, None)
                             branch_settle_s = None  # 改走重探+轮末 settle
                     if should_probe_scroll and not executed and not probe_failed:
+                        _flash(action)
                         probe = bundle.make_scroll_probe(phone, executor, log_dir)
                         result = probe.probe(observation.png_bytes, action, turn_no=turn_no)
                         if result.success and result.profile:
@@ -811,11 +822,7 @@ def run_agent_loop(
                             executed = False
                     elif not should_probe_scroll:
                         # Flash where/what we're about to do (best-effort; cosmetic).
-                        if visualizer is not None:
-                            try:
-                                visualizer.show_action(action)
-                            except Exception:
-                                pass
+                        _flash(action)
                         executed = executor.execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes, is_home_screen=sv_step.is_home_screen)
 
             # Post-action targeting verify: did the snapped tap land on target?
