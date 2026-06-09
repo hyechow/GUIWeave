@@ -1,14 +1,19 @@
 # Evals
 
-针对 iphone-use 各核心模块的单元测评。每个模块独立运行，不依赖真实手机，直接调用 LLM 并与预期输出对比。
+LLM 驱动的按需评测，按平台分目录：
+
+- **`iphone/`** — iPhone 平台各核心模块的单元测评（每个模块独立运行，不依赖真实手机，直接调用 LLM 并与预期输出对比）。
+- **`browser/`** — Browser 平台评测（待建）。
+
+下方「模块一览」及之后的分组说明均指 `evals/iphone/` 下的模块。
 
 ## 运行
 
 ```bash
-uv run python evals/<module>/test_<module>.py
+uv run python evals/iphone/<module>/test_<module>.py
 ```
 
-## 模块一览
+## 模块一览（iphone）
 
 | 模块 | Cases | 说明 |
 |------|------:|------|
