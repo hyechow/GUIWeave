@@ -6,6 +6,15 @@ satisfies the neutral ``Device`` Protocol (connect/close/screenshot/tap/type_tex
 drag/press_home) AND the optional ``ScrollableDevice`` capability (scroll), plus
 the browser-only extras ``navigate(url)`` / ``go_back()``.
 
+UNLIKE mobile (one screen forever), the web has N tabs and a click / ``window.open``
+can spawn a NEW tab (often in the background). ``self.page`` is bound once at
+``connect()``; left alone it would keep screenshotting + clicking the old tab, so
+every observe/input first calls ``_follow_active_tab()`` which snapshots the page
+set and, when a tab appears that wasn't there before, follows the newcomer (see
+there for why foreground/``visibilityState`` is the wrong signal here). This keeps
+core's "observation surface is a single screen" abstraction intact while the
+adapter quietly follows the tab a click opened.
+
 Coordinates passed to ``tap`` / ``drag`` / ``scroll`` are VIEWPORT PIXELS — the
 executor denormalizes 0-1000 -> px using ``viewport_size`` before calling here
 (mirroring how the iphone executor denormalizes via ``logical_xy`` / WIN_W / WIN_H).
@@ -54,6 +63,7 @@ class PlaywrightDevice:
         self._context = None
         self.page = None
         self._cdp = None  # cached raw CDP session for one-shot screenshots
+        self._prev_pages = None  # last-seen page list, for new-tab-appearance follow
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -69,7 +79,10 @@ class PlaywrightDevice:
         contexts = self._browser.contexts
         self._context = contexts[0] if contexts else self._browser.new_context()
         pages = self._context.pages
+        # Initial bind; _follow_active_tab() re-points this at any tab a click later
+        # spawns (see there). Reset the new-tab snapshot for a fresh connection.
         self.page = pages[0] if pages else self._context.new_page()
+        self._prev_pages = None
         return self
 
     def close(self):
@@ -87,6 +100,7 @@ class PlaywrightDevice:
                 self._context = None
                 self.page = None
                 self._cdp = None
+                self._prev_pages = None
 
     # ----- viewport (for the executor's denormalization) -------------------
     @property
@@ -126,6 +140,9 @@ class PlaywrightDevice:
         (Playwright<->Chrome version skew). Raw ``Page.captureScreenshot`` does
         neither: it grabs the current frame immediately, mid-navigation included.
         """
+        # Follow the foreground tab first: a click on the previous turn may have
+        # opened a new front tab, and we must observe THAT, not the stale one.
+        self._follow_active_tab()
         try:
             return self._cdp_screenshot()
         except Exception:
@@ -190,6 +207,7 @@ class PlaywrightDevice:
 
     # ----- input primitives ------------------------------------------------
     def tap(self, x: float, y: float) -> str:
+        self._follow_active_tab()
         try:
             self._require_page().mouse.click(x, y)
         except Exception as exc:  # noqa: BLE001 — surface as status str for executor
@@ -197,6 +215,7 @@ class PlaywrightDevice:
         return f"OK tap ({x:.0f},{y:.0f})"
 
     def type_text(self, text: str) -> str:
+        self._follow_active_tab()
         try:
             self._require_page().keyboard.type(text)
         except Exception as exc:  # noqa: BLE001
@@ -204,6 +223,7 @@ class PlaywrightDevice:
         return f"OK type {text!r}"
 
     def press_enter(self) -> str:
+        self._follow_active_tab()
         try:
             self._require_page().keyboard.press("Enter")
         except Exception as exc:  # noqa: BLE001
@@ -212,6 +232,7 @@ class PlaywrightDevice:
 
     def clear_text(self) -> str:
         """Select-all + delete in the focused field (browser select-all is Meta/Ctrl-A)."""
+        self._follow_active_tab()
         try:
             page = self._require_page()
             page.keyboard.press(f"{_select_all_modifier()}+a")
@@ -222,6 +243,7 @@ class PlaywrightDevice:
 
     def select_all(self) -> str:
         """Select all text in the focused field (used before re-typing)."""
+        self._follow_active_tab()
         try:
             self._require_page().keyboard.press(f"{_select_all_modifier()}+a")
         except Exception as exc:  # noqa: BLE001
@@ -240,6 +262,7 @@ class PlaywrightDevice:
         down=+y, up=-y, right=+x, left=-x. Moves the pointer to (x,y) first so the
         wheel lands on the intended scroll container.
         """
+        self._follow_active_tab()
         page = self._require_page()
         dist = max(1, int(amount)) * _SCROLL_PX_PER_AMOUNT
         d = (direction or "").strip().lower()
@@ -275,6 +298,7 @@ class PlaywrightDevice:
         Stepped intermediate moves let drag-driven widgets (sliders, canvases)
         register a continuous gesture rather than a teleport.
         """
+        self._follow_active_tab()
         page = self._require_page()
         steps = max(1, min(int(duration_ms / 16) if duration_ms else 10, 60))
         try:
@@ -470,6 +494,84 @@ class PlaywrightDevice:
             return f"failed: {exc}"
         return "OK back"
 
+    # ----- active-tab follow ----------------------------------------------
+    def _follow_active_tab(self) -> None:
+        """Re-point ``self.page`` at the tab a click / ``window.open`` just spawned.
+
+        On the web a click can open a NEW tab while ``self.page`` stays pinned to the
+        old one — that is exactly how "click landed, screen never changed" happens
+        (mobile has one screen, so core never modeled this).
+
+        We follow by **new-tab appearance**, NOT by foreground/``visibilityState``.
+        An earlier version followed the 'visible' tab and kept missing this case:
+        under a CDP-synthesized click the new tab frequently opens in the BACKGROUND
+        (the old tab stays 'visible'), and under this adapter's occluded / non-preempt
+        window visibility is unreliable for ALL tabs — so "follow the visible tab"
+        either kept the wrong tab or found no foreground at all. Instead we snapshot
+        the page set each call and, when a page appears that wasn't there before,
+        follow the newest newcomer regardless of foreground.
+
+        ``context.pages`` surfaces tabs via CDP target events (independent of the
+        version-skew-broken execution-context binding that empties page.url / hangs
+        page.evaluate), so enumeration stays reliable even though per-page evaluate
+        does not. Best-effort — never raises, never recurses (no ``_require_page`` /
+        ``_cdp_send``).
+        """
+        ctx = self._context
+        if ctx is None:
+            return
+        try:
+            pages = [p for p in ctx.pages if not _page_closed(p)]
+        except Exception:
+            return
+        if not pages:
+            return
+        prev = self._prev_pages
+        self._prev_pages = pages  # snapshot for the next call
+        if prev is None:
+            # First observation: keep connect()'s choice; just seed the snapshot.
+            if self.page not in pages:
+                self._switch_page(pages[-1])
+            return
+        # A page we hadn't seen before = a tab a click/window.open just opened. Follow
+        # the newest such tab even if it opened in the background — that is where the
+        # action led. (Same-tab navigations add no page, so they never trigger this.)
+        newcomers = [p for p in pages if p not in prev]
+        if newcomers:
+            target = newcomers[-1]
+            self._switch_page(target)
+            print(f"  [tab] 新标签页（{len(prev)}->{len(pages)}），跟随 -> {self._page_url(target)}")
+            return
+        # No new tab: stay put unless our current tab has gone away.
+        if self.page not in pages:
+            self._switch_page(pages[-1])
+            print(f"  [tab] 标签页关闭（{len(prev)}->{len(pages)}），切换 -> {self._page_url(self.page)}")
+
+    def _switch_page(self, page) -> None:
+        """Bind ``self.page`` to ``page`` and drop the stale per-page CDP session
+        (``_cdp_send`` rebuilds it lazily against the new target)."""
+        if page is not self.page:
+            self.page = page
+            self._cdp = None
+
+    def _page_url(self, page) -> str:
+        """Best-effort URL of ``page`` via raw CDP ``Target.getTargetInfo`` (page.url
+        is '' under the broken binding). Diagnostics only; '' on any failure."""
+        try:
+            sess = self._context.new_cdp_session(page)
+        except Exception:
+            return ""
+        try:
+            info = sess.send("Target.getTargetInfo", {}) or {}
+            return (info.get("targetInfo") or {}).get("url") or ""
+        except Exception:
+            return ""
+        finally:
+            try:
+                sess.detach()
+            except Exception:
+                pass
+
     # ----- internals -------------------------------------------------------
     def _require_page(self):
         if self.page is None:
@@ -482,3 +584,11 @@ def _select_all_modifier() -> str:
     import sys
 
     return "Meta" if sys.platform == "darwin" else "Control"
+
+
+def _page_closed(page) -> bool:
+    """Whether a Playwright page has been closed (treated as closed on error)."""
+    try:
+        return page.is_closed()
+    except Exception:
+        return True
