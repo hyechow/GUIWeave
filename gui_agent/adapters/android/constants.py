@@ -35,6 +35,18 @@ SCROLL_PX_PER_AMOUNT = 200
 # image size. 0 disables. Override via env ANDROID_SCREENSHOT_WIDTH.
 SCREENSHOT_MAX_WIDTH = int(os.environ.get("ANDROID_SCREENSHOT_WIDTH") or 320)
 
+# ADBKeyboard IME (github.com/senzhk/ADBKeyBoard): a null keyboard that types text
+# received via `am broadcast -a ADB_INPUT_B64 --es msg <base64>`. The ONLY reliable
+# adb path for non-ASCII (Chinese) input — `input text` is ASCII-only and writing the
+# clipboard from shell is blocked on Android 10+. The platform setup_check switches the
+# device to it ONCE (and leaves it set; it shows no soft keyboard, so it never occludes
+# screenshots). The per-connect path (_detect_ime) only OBSERVES the current IME.
+ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
+# Package id — used by the environment setup (AndroidDevice.ensure_adbkeyboard, called
+# from setup_check) to check the IME is installed before switching. NOT used in the
+# per-connect execution path.
+ADBKEYBOARD_PKG = "com.android.adbkeyboard"
+
 # Android key event codes (https://developer.android.com/reference/android/view/KeyEvent).
 KEYCODE = {
     "home": 3,          # KEYCODE_HOME

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from gui_agent.core.factory import PlatformBundle
+from gui_agent.core.factory import PlatformBundle, SetupCheckResult
 
 if TYPE_CHECKING:
     from gui_agent.core.contracts import ActionPolicy, SupervisorPolicy
@@ -140,6 +140,36 @@ def _find_chrome_window() -> "tuple[int, int, int, int] | None":
     return best
 
 
+def _setup_check(cdp_url: "Optional[str]") -> SetupCheckResult:
+    """Pre-session environment check: is the Chrome CDP endpoint reachable? The whole
+    browser adapter is connect_over_cdp on an already-running Chrome started with
+    remote debugging (bin/launch_chrome_cdp). A clean HTTP probe of ``/json/version``
+    catches a not-started / wrong-port Chrome early, with the fix in the message,
+    instead of hanging inside connect_over_cdp."""
+    import json
+    import os
+    import urllib.request
+
+    url = cdp_url or os.environ.get("CHROME_CDP_URL") or "http://localhost:9222"
+    try:
+        with urllib.request.urlopen(f"{url}/json/version", timeout=3) as resp:
+            info = json.loads(resp.read().decode())
+    except Exception as exc:  # noqa: BLE001
+        return SetupCheckResult(
+            ok=False,
+            summary=f"Chrome CDP 不可用 @ {url}",
+            lines=(
+                f"  ✗ 连不上 CDP：{exc}",
+                "    先跑 bin/launch_chrome_cdp 起一个带远程调试的 Chrome（独立 profile）",
+            ),
+        )
+    return SetupCheckResult(
+        ok=True,
+        summary="Chrome CDP 已就绪",
+        lines=(f"  ✓ Chrome CDP 可用 @ {url}（{info.get('Browser', '?')}）",),
+    )
+
+
 def _make_browser_hud() -> object:
     """Translucent status HUD floating over the Chrome window (the browser status
     reporter): a horizontally-centered bar low in the window (≈ iOS dock height).
@@ -195,6 +225,7 @@ def build_browser_bundle(
     return PlatformBundle(
         platform="browser",
         open_session=lambda: BrowserSession(cdp_url=cdp_url, start_url=start_url),
+        setup_check=lambda: _setup_check(cdp_url),
         make_executor=lambda session: BrowserExecutor(session),
         make_perception=lambda session, png_path: BrowserPerception(session, png_path),
         make_action_policy=_build_action_policy,

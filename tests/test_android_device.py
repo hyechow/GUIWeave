@@ -128,3 +128,115 @@ def test_executor_denorm_maps_normalized_to_device_pixels(calls):
 
     px2, py2 = executor._denorm(1000, 1000)
     assert (round(px2), round(py2)) == (1079, 2399)  # clamped to w-1, h-1
+
+
+# --------------------------------------------------------------------------- #
+# IME handling: per-connect detect (read-only) vs setup-time switch.           #
+# ADBKeyboard is the non-ASCII (Chinese) input path. The SWITCH lives in        #
+# ensure_adbkeyboard (env setup / setup_check); the per-connect _detect_ime     #
+# only OBSERVES, never mutates the IME.                                         #
+# --------------------------------------------------------------------------- #
+class _ImeFakeDev:
+    """Fake adb device modelling the IME-relevant shell commands (settings get /
+    pm list packages / ime enable / ime set), tracking the live IME so a switch
+    is observable via re-read."""
+
+    def __init__(self, *, installed: bool, current_ime: str):
+        self.installed = installed
+        self.current_ime = current_ime
+        self.shell_log: list[str] = []
+
+    def shell(self, cmd):
+        s = cmd if isinstance(cmd, str) else " ".join(cmd)
+        self.shell_log.append(s)
+        if s.startswith("settings get secure default_input_method"):
+            return self.current_ime + "\n"
+        if s.startswith("pm list packages"):
+            return "package:com.android.adbkeyboard\n" if self.installed else ""
+        if s.startswith("ime set "):
+            self.current_ime = s.split("ime set ", 1)[1].strip()  # the switch takes effect
+            return ""
+        return ""
+
+
+def _device_with(dev):
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    d = AndroidDevice(serial="x:5555")
+    d._dev = dev
+    return d
+
+
+def test_detect_ime_read_only_sets_flag_true_when_already_adbkeyboard():
+    from gui_agent.adapters.android.constants import ADBKEYBOARD_IME
+
+    fake = _ImeFakeDev(installed=True, current_ime=ADBKEYBOARD_IME)
+    d = _device_with(fake)
+    d._detect_ime()
+    assert d._adbkeyboard_active is True
+    assert not any(s.startswith("ime set") for s in fake.shell_log)  # never mutates
+
+
+def test_detect_ime_false_for_other_ime_and_does_not_switch():
+    fake = _ImeFakeDev(installed=True, current_ime="com.baidu.input/.X")
+    d = _device_with(fake)
+    d._detect_ime()
+    assert d._adbkeyboard_active is False
+    assert fake.current_ime == "com.baidu.input/.X"  # connect path leaves IME untouched
+    assert not any(s.startswith("ime set") for s in fake.shell_log)
+
+
+def test_ensure_adbkeyboard_switches_when_installed():
+    from gui_agent.adapters.android.constants import ADBKEYBOARD_IME
+
+    fake = _ImeFakeDev(installed=True, current_ime="com.baidu.input/.X")
+    d = _device_with(fake)
+    assert d.ensure_adbkeyboard() == (True, True)
+    assert fake.current_ime == ADBKEYBOARD_IME
+    assert d._adbkeyboard_active is True
+
+
+def test_ensure_adbkeyboard_noop_when_not_installed():
+    fake = _ImeFakeDev(installed=False, current_ime="com.baidu.input/.X")
+    d = _device_with(fake)
+    assert d.ensure_adbkeyboard() == (False, False)
+    assert fake.current_ime == "com.baidu.input/.X"  # not switched
+    assert d._adbkeyboard_active is False
+    assert not any(s.startswith("ime set") for s in fake.shell_log)
+
+
+def test_type_text_single_adbkeyboard_path_for_ascii_and_chinese():
+    """ADBKeyboard is the ONE input method: both ASCII and non-ASCII go through the
+    ADB_INPUT_B64 broadcast — no `input text` / ASCII-vs-Chinese split."""
+    from gui_agent.adapters.android.constants import ADBKEYBOARD_IME
+
+    for text in ("hello world", "你好 hello 123"):
+        dev = _device_with(_ImeFakeDev(installed=True, current_ime=ADBKEYBOARD_IME))
+        dev._adbkeyboard_active = True
+        assert dev.type_text(text).startswith("OK type")
+        log = dev._dev.shell_log
+        assert any("ADB_INPUT_B64" in s for s in log)
+        assert not any("input text" in s for s in log)  # never the old ASCII path
+
+
+def test_type_text_fails_clearly_when_adbkeyboard_not_ready():
+    inactive = _device_with(_ImeFakeDev(installed=False, current_ime="com.baidu.input/.X"))
+    inactive._adbkeyboard_active = False
+    out = inactive.type_text("你好")
+    assert out.startswith("failed")
+    assert not any("ADB_INPUT_B64" in s for s in inactive._dev.shell_log)
+
+
+def test_clear_text_uses_adbkeyboard_native_broadcast_when_active():
+    from gui_agent.adapters.android.constants import ADBKEYBOARD_IME
+
+    active = _device_with(_ImeFakeDev(installed=True, current_ime=ADBKEYBOARD_IME))
+    active._adbkeyboard_active = True
+    assert active.clear_text() == "OK clear"
+    assert any("ADB_CLEAR_TEXT" in s for s in active._dev.shell_log)
+    assert not any("keyevent" in s for s in active._dev.shell_log)  # not the DEL-loop fallback
+
+    inactive = _device_with(_ImeFakeDev(installed=True, current_ime="com.baidu.input/.X"))
+    inactive._adbkeyboard_active = False
+    assert inactive.clear_text() == "OK clear"
+    assert any("keyevent" in s for s in inactive._dev.shell_log)  # fallback DEL loop

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from gui_agent.core.factory import PlatformBundle
+from gui_agent.core.factory import PlatformBundle, SetupCheckResult
 
 if TYPE_CHECKING:
     from gui_agent.core.contracts import ActionPolicy, SupervisorPolicy
@@ -90,6 +90,53 @@ def _gray_u8(png_bytes: bytes) -> object:
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
+def _setup_check(serial: "Optional[str]") -> SetupCheckResult:
+    """Pre-session environment check for android:
+      1. an adb device is reachable (HARD block — nothing works without it);
+      2. scrcpy is available (WARN only — it backs the optional mirror window /
+         HUD / cursor visualization; the agent runs headless of it via adb);
+      3. ADBKeyboard is installed → switch the device IME to it now (Chinese-input
+         setup; WARN if absent — ASCII input is unaffected).
+    The IME switch lives HERE, in setup (before the session opens, before any field is
+    focused), not in the per-connect path. Uses a short-lived adb connection; the switch
+    persists device-side, so the real session's connect() then detects ADBKeyboard."""
+    import shutil
+
+    from gui_agent.adapters.android.constants import VENDORED_ADB
+    from gui_agent.adapters.android.device import AndroidDevice
+
+    dev = AndroidDevice(serial=serial)
+    try:
+        dev.connect()
+    except Exception as exc:  # noqa: BLE001
+        return SetupCheckResult(
+            ok=False,
+            summary="adb 设备不可用",
+            lines=(
+                f"  ✗ 连不上 adb 设备：{exc}",
+                "    设 ANDROID_SERIAL，或 `adb connect <ip:port>`（无线）/ 插 USB",
+            ),
+        )
+    lines = [f"  ✓ adb 设备已连接 ({dev.win_w}x{dev.win_h})"]
+    try:
+        scrcpy_ok = (VENDORED_ADB.parent / "scrcpy").exists() or bool(shutil.which("scrcpy"))
+        lines.append(
+            "  ✓ scrcpy 可用（镜像窗口 / 动作可视化）"
+            if scrcpy_ok
+            else "  ⚠ 未找到 scrcpy——镜像窗口 / 动作可视化不可用（agent 仍可无镜像运行）"
+        )
+        installed, active = dev.ensure_adbkeyboard()
+        if active:
+            lines.append("  ✓ ADBKeyboard 已设为输入法（支持中文、无软键盘遮挡）")
+        elif installed:
+            lines.append("  ⚠ ADBKeyboard 已安装但切换失败——中文输入可能不可用")
+        else:
+            lines.append("  ⚠ 未安装 ADBKeyboard——中文输入不可用（ASCII 正常）")
+    finally:
+        dev.close()
+    return SetupCheckResult(ok=True, summary="android 环境就绪", lines=tuple(lines))
+
+
 def _make_android_hud() -> object:
     """Status HUD positioned just BELOW the scrcpy mirror window (the iphone model —
     a narrow phone mirror with the HUD under it, NOT browser's over-the-wide-window
@@ -138,6 +185,7 @@ def build_android_bundle(
     return PlatformBundle(
         platform="android",
         open_session=lambda: AndroidSession(serial=serial),
+        setup_check=lambda: _setup_check(serial),
         make_executor=lambda session: AndroidExecutor(session),
         make_perception=lambda session, png_path: AndroidPerception(session, png_path),
         make_action_policy=_build_action_policy,

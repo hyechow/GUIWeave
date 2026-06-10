@@ -548,6 +548,17 @@ def run_agent_loop(
         context.platform = bundle.platform
         _save_context(context_path, context)
 
+    # Pre-session environment check (mirror open / CDP up / adb+ADBKeyboard ready). Runs
+    # ONCE here, before the session opens, so a blocking precondition aborts with a clear
+    # message instead of crashing deep inside connect. Any one-time setup a platform needs
+    # (android switching the IME to ADBKeyboard) happens inside the check.
+    setup = bundle.setup_check()
+    for _line in setup.lines:
+        _say(_line)
+    if not setup.ok:
+        _say(f"\n环境检查未通过：{setup.summary}")
+        return _make_result(context, f"环境检查未通过：{setup.summary}")
+
     with bundle.open_session() as phone:
         executor = bundle.make_executor(phone)
         # Optional action visualizer (cursor/overlay). None when the platform has

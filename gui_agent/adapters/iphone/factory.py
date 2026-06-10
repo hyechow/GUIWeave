@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from gui_agent.core.factory import PlatformBundle
+from gui_agent.core.factory import PlatformBundle, SetupCheckResult
 
 from gui_agent.adapters.iphone.executor import ActionExecutor
 from gui_agent.adapters.iphone.perception import LivePerception, LivePhoneSession
@@ -58,6 +58,28 @@ def _make_hud() -> "AbstractContextManager":
     return make_iphone_hud()
 
 
+def _setup_check() -> SetupCheckResult:
+    """Pre-session environment check: is the iPhone Mirroring window open? Everything
+    iphone does (SCK capture, zero-preempt input, window geometry) hangs off that
+    macOS window, so its absence is a hard block worth catching early with a clear
+    message rather than failing deep in the session/SCK layer."""
+    from gui_agent.adapters.iphone.perception import mirroring_window_bounds
+
+    rect = mirroring_window_bounds()
+    if rect is None:
+        return SetupCheckResult(
+            ok=False,
+            summary="iPhone 镜像窗口未打开",
+            lines=("  ✗ 未找到 iPhone Mirroring 窗口——请先打开「iPhone 镜像」并保持窗口可见",),
+        )
+    _, _, w, h = rect
+    return SetupCheckResult(
+        ok=True,
+        summary="iPhone 镜像已就绪",
+        lines=(f"  ✓ iPhone Mirroring 窗口已打开 ({int(w)}x{int(h)})",),
+    )
+
+
 def _make_scroll_probe(phone: object, executor: object, log_dir: object) -> object:
     from gui_agent.adapters.iphone.scroll_probe import ScrollProbe
 
@@ -94,6 +116,7 @@ def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) ->
     return PlatformBundle(
         platform="iphone",
         open_session=lambda: LivePhoneSession(backend=backend),
+        setup_check=_setup_check,
         make_executor=lambda phone: ActionExecutor(phone),
         make_perception=lambda phone, png_path: LivePerception(phone, png_path),
         make_action_policy=_build_action_policy,

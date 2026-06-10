@@ -277,6 +277,7 @@ def test_build_platform_returns_iphone_bundle():
     assert bundle.default_action_policy and bundle.default_supervisor
     for attr in (
         "open_session",
+        "setup_check",
         "make_executor",
         "make_perception",
         "make_action_policy",
@@ -368,6 +369,7 @@ def test_build_platform_returns_browser_bundle():
     assert bundle.supervisor_choices == ("milestone",)
     for attr in (
         "open_session",
+        "setup_check",
         "make_executor",
         "make_perception",
         "make_action_policy",
@@ -504,6 +506,7 @@ def test_build_platform_returns_android_bundle():
     assert bundle.supervisor_choices == ("milestone",)
     for attr in (
         "open_session",
+        "setup_check",
         "make_executor",
         "make_perception",
         "make_action_policy",

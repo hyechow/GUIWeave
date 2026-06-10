@@ -31,6 +31,8 @@ import os
 from typing import Optional
 
 from gui_agent.adapters.android.constants import (
+    ADBKEYBOARD_IME,
+    ADBKEYBOARD_PKG,
     DEFAULT_SERIAL,
     KEYCODE,
     SCROLL_PX_PER_AMOUNT,
@@ -57,6 +59,7 @@ class AndroidDevice:
         # Defaults are overwritten by window_size() on connect().
         self.win_w = 1080
         self.win_h = 2400
+        self._adbkeyboard_active = False  # set by _detect_ime() at connect when ADBKeyboard is on
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -103,10 +106,56 @@ class AndroidDevice:
             self.win_w, self.win_h = int(ws[0]), int(ws[1])
         except Exception:  # noqa: BLE001 — keep defaults
             pass
+        self._detect_ime()
         return self
 
+    def _detect_ime(self) -> None:
+        """Per-connect path — READ-ONLY: record whether the device's current IME is
+        ADBKeyboard (sets ``_adbkeyboard_active``, which gates non-ASCII type_text). It
+        does NOT switch the IME: switching is one-time environment setup done in
+        ``ensure_adbkeyboard`` (called from the platform setup_check), kept out of the
+        execution path. So connect only OBSERVES; if setup_check already switched the
+        device to ADBKeyboard, this sees it and enables Chinese typing."""
+        try:
+            cur = self._dev.shell("settings get secure default_input_method").strip()
+        except Exception:  # noqa: BLE001
+            return
+        self._adbkeyboard_active = cur == ADBKEYBOARD_IME
+
+    def ensure_adbkeyboard(self) -> tuple[bool, bool]:
+        """Environment SETUP (called from the android setup_check, NOT the per-connect
+        path): if ADBKeyboard is installed, switch the device IME to it so the session
+        can type non-ASCII (Chinese) and no soft keyboard occludes screenshots. The
+        switch persists device-side across sessions (deliberately not restored). Must run
+        BEFORE any field is focused (switching the IME defocuses the active field), which
+        setup_check guarantees by running before the session opens.
+
+        Returns ``(installed, active)``: ``installed`` whether the ADBKeyboard package is
+        present, ``active`` whether the IME is now ADBKeyboard (verified by re-read)."""
+        dev = self._require_dev()
+        try:
+            installed = ADBKEYBOARD_PKG in dev.shell(f"pm list packages {ADBKEYBOARD_PKG}")
+        except Exception:  # noqa: BLE001
+            return (False, False)
+        if not installed:
+            self._adbkeyboard_active = False
+            return (False, False)
+        try:
+            cur = dev.shell("settings get secure default_input_method").strip()
+            if cur != ADBKEYBOARD_IME:
+                dev.shell(f"ime enable {ADBKEYBOARD_IME}")
+                dev.shell(f"ime set {ADBKEYBOARD_IME}")
+            # Verify — `ime set` on a missing/invalid IME fails silently.
+            now = dev.shell("settings get secure default_input_method").strip()
+        except Exception:  # noqa: BLE001
+            return (True, False)
+        self._adbkeyboard_active = now == ADBKEYBOARD_IME
+        return (True, self._adbkeyboard_active)
+
     def close(self):
-        """Drop the device handle WITHOUT killing the adb server."""
+        """Drop the device handle WITHOUT killing the adb server. The ADBKeyboard IME
+        is intentionally left active (not restored)."""
+        self._adbkeyboard_active = False
         self._dev = None
 
     # ----- viewport (for the executor's denormalization) -------------------
@@ -175,19 +224,34 @@ class AndroidDevice:
         return f"OK tap ({x:.0f},{y:.0f})"
 
     def type_text(self, text: str) -> str:
-        """Type ASCII text via ``input text`` (spaces -> %s). Non-ASCII unsupported."""
-        if not text.isascii():
-            return "failed: non-ascii text not supported yet (TODO: IME/clipboard)"
+        """Type into the focused field via the ADBKeyboard IME — the SINGLE input path
+        for android. It handles every character (ASCII, Chinese, symbols, emoji) the
+        same way, so there is no ASCII-vs-non-ASCII split: the text is base64-encoded
+        and sent with ``am broadcast -a ADB_INPUT_B64``, inserted at the cursor (the
+        executor clears the field first). ADBKeyboard is switched on once in setup_check;
+        ``_adbkeyboard_active`` (set by _detect_ime at connect) gates this."""
+        if not self._adbkeyboard_active:
+            return "failed: 需 ADBKeyboard 输入法（setup_check 未就绪 / 未安装）"
+        import base64
+
+        b64 = base64.b64encode(text.encode("utf-8")).decode()
         try:
-            # `input text` treats a literal space specially; %s encodes a space.
-            self._require_dev().shell(["input", "text", text.replace(" ", "%s")])
+            self._require_dev().shell(["am", "broadcast", "-a", "ADB_INPUT_B64", "--es", "msg", b64])
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return f"OK type {text!r}"
 
     def clear_text(self) -> str:
-        """Best-effort clear of the focused field: MOVE_END then a bounded run of
-        DEL (one shell call). Clears up to ~60 chars — enough for search boxes."""
+        """Clear the focused field. With ADBKeyboard active (the single input path) use
+        its native ``ADB_CLEAR_TEXT`` broadcast — one call, clears the whole field
+        regardless of length. Fallback when ADBKeyboard is not ready: MOVE_END + a
+        bounded run of DEL (~60 chars)."""
+        if self._adbkeyboard_active:
+            try:
+                self._require_dev().shell(["am", "broadcast", "-a", "ADB_CLEAR_TEXT"])
+            except Exception as exc:  # noqa: BLE001
+                return f"failed: {exc}"
+            return "OK clear"
         codes = " ".join([str(KEYCODE["move_end"])] + [str(KEYCODE["del"])] * 60)
         try:
             self._require_dev().shell(f"input keyevent {codes}")

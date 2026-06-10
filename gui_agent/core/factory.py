@@ -28,6 +28,23 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class SetupCheckResult:
+    """Outcome of a platform's pre-session environment check (``PlatformBundle.setup_check``).
+
+    ``ok`` False means a BLOCKING precondition failed — the runner aborts with ``summary``
+    BEFORE opening the session, instead of crashing deep inside ``connect``. ``lines`` are
+    human-readable per-check notes (passes ✓ and non-blocking warnings ⚠) printed before the
+    run. A platform that does any one-time SETUP (e.g. android switching the IME to
+    ADBKeyboard) does it here, in the check — the check is the environment-preparation seam,
+    deliberately kept OUT of the per-turn execution path.
+    """
+
+    ok: bool
+    summary: str
+    lines: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PlatformBundle:
     """Everything core orchestration needs to drive one platform, expressed as
     callables that return contract-typed objects. No adapter type appears in this
@@ -36,6 +53,15 @@ class PlatformBundle:
 
     platform: str
     open_session: Callable[[], "ContextManager[PerceptionSession]"]
+    # Pre-session environment check, run ONCE by the runner before ``open_session`` so a
+    # missing precondition fails early with a clear message instead of crashing deep in
+    # connect. Each adapter probes (and, where needed, prepares) its OWN backend:
+    #   iphone : the iPhone Mirroring window is open.
+    #   browser: the Chrome CDP endpoint is reachable.
+    #   android: an adb device is reachable; scrcpy present; ADBKeyboard installed → switch
+    #            the device IME to ADBKeyboard (the Chinese-input setup lives here, not in
+    #            the per-connect path).
+    setup_check: Callable[[], "SetupCheckResult"]
     make_executor: Callable[["PerceptionSession"], object]
     make_perception: Callable[["PerceptionSession", "Path"], "Perception"]
     make_action_policy: Callable[[str], "ActionPolicy"]
