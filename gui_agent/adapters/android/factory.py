@@ -47,16 +47,15 @@ def _build_action_policy(name: str) -> "ActionPolicy":
 
 
 def _build_supervisor(name: str) -> "SupervisorPolicy":
-    # Android defaults to the structure-neutral milestone supervisor (the iphone
-    # SimpleSupervisorPolicy is iphone-specific and intentionally not offered here).
+    # Android uses the structure-neutral milestone supervisor FRAMEWORK with its OWN
+    # mobile-tuned prompts injected (no longer the iphone-flavored default that called
+    # everything an "iOS 主屏"). The iphone SimpleSupervisorPolicy is not offered here.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
 
-    registry: dict[str, type] = {MilestoneSupervisorPolicy.name: MilestoneSupervisorPolicy}
-    try:
-        return registry[name]()
-    except KeyError as exc:
-        choices = ", ".join(sorted(registry))
-        raise ValueError(f"未知监督者 {name!r}，可选：{choices}") from exc
+    if name == MilestoneSupervisorPolicy.name:
+        return MilestoneSupervisorPolicy(prompts=ANDROID_MILESTONE_PROMPTS)
+    raise ValueError(f"未知监督者 {name!r}，可选：{MilestoneSupervisorPolicy.name}")
 
 
 def _apply_scroll_profile(action: object, profile: object) -> object:

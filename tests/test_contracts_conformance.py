@@ -123,6 +123,7 @@ def test_milestone_prompt_sets_format_cleanly():
     # would be a runtime KeyError. Pins the format wiring for both platforms.
     import string
 
+    from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
     from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
     from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
 
