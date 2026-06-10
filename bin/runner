@@ -21,5 +21,5 @@ shift 2  # 平台 + 任务已取出,余下透传给 runner
 # 默认放前、"$@" 放后 → 额外参数能覆盖默认(argparse 后者胜),如 --max-turns 5 生效。
 exec env AGENT_PLATFORM="$platform" \
          AGENT_MODE="${AGENT_MODE:-daemon}" \
-         AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
+         AGENT_MODEL="${AGENT_MODEL:-qwen36}" \
          uv run python -m gui_agent.core.runner "$task" --auto-continue --hud --supervisor milestone --max-turns 20 "$@"
