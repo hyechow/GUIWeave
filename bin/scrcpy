@@ -11,6 +11,7 @@
 #
 # 第一个形如 host:port 的参数当作无线 serial 取走(USB 设备用 ANDROID_SERIAL=<序列号>)。
 # --off 展开成 --turn-screen-off --stay-awake。
+# 后台启动,不占用终端(立即返回;输出落 $TMPDIR/scrcpy-<serial>.log,关镜像窗口或 kill pid 即退)。
 # 窗口宽默认 320(像 iPhone 那样的小窗),可用 --width=N 或 SCRCPY_WIDTH=N 覆盖;
 # 若你显式传了 --window-width/--window-height/-m/--max-size,则尊重你的、不再注入默认宽。
 # 其余参数原样透传给 scrcpy。
@@ -65,5 +66,11 @@ fi
 SEL=()
 [ -n "$SERIAL" ] && SEL=(-s "$SERIAL")
 
-echo "scrcpy: ${SERIAL:-<auto>}  (adb=$ADB)"
-exec "$SCRCPY" "${SEL[@]}" "${ARGS[@]}"
+# 后台启动,不占用终端;输出落日志,scrcpy 脱离终端继续跑(关镜像窗口即退)。
+_safe="${SERIAL//[:.]/_}"
+LOG="${TMPDIR:-/tmp}/scrcpy-${_safe:-auto}.log"
+nohup "$SCRCPY" "${SEL[@]}" "${ARGS[@]}" >"$LOG" 2>&1 &
+PID=$!
+disown 2>/dev/null || true
+echo "scrcpy 已后台启动: ${SERIAL:-<auto>}  (pid $PID, adb=$ADB)"
+echo "  日志: $LOG   (关镜像窗口即退,或 kill $PID)"
