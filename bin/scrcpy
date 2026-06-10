@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# 用 vendored 的独立 scrcpy + adb 镜像 Android 设备(不依赖 brew)。
+#
+# 用法:
+#   bin/scrcpy                          # 镜像 $ANDROID_SERIAL 或唯一连接的设备(默认 320 宽小窗)
+#   bin/scrcpy 192.168.31.240:5555      # 先 adb connect 该无线设备再镜像
+#   bin/scrcpy --off                    # 息屏镜像(--turn-screen-off --stay-awake)
+#   bin/scrcpy --width=420              # 自定义窗口宽度(高度按设备比例自动算)
+#   bin/scrcpy 192.168.31.240:5555 --off --width=320 --max-size 1280
+#                                       # 无线 + 息屏 + 自定义宽 + 透传任意 scrcpy 参数
+#
+# 第一个形如 host:port 的参数当作无线 serial 取走(USB 设备用 ANDROID_SERIAL=<序列号>)。
+# --off 展开成 --turn-screen-off --stay-awake。
+# 窗口宽默认 320(像 iPhone 那样的小窗),可用 --width=N 或 SCRCPY_WIDTH=N 覆盖;
+# 若你显式传了 --window-width/--window-height/-m/--max-size,则尊重你的、不再注入默认宽。
+# 其余参数原样透传给 scrcpy。
+set -e
+cd "$(dirname "$0")/.."
+
+# 定位 vendored scrcpy(版本无关 glob);找不到则回退 PATH 上的 scrcpy。
+SCRCPY_DIR=$(ls -d vendor/scrcpy-macos-*/ 2>/dev/null | head -1)
+if [ -n "$SCRCPY_DIR" ]; then
+  SCRCPY="${SCRCPY_DIR%/}/scrcpy"
+  ADB="${SCRCPY_DIR%/}/adb"
+elif command -v scrcpy >/dev/null 2>&1; then
+  SCRCPY=$(command -v scrcpy)
+  ADB=$(command -v adb || echo adb)
+else
+  echo "✗ 找不到 scrcpy:vendor/scrcpy-macos-*/ 不存在,PATH 上也没有 scrcpy。" >&2
+  echo "  解法:下载官方独立包到 vendor/(见 .gitignore 的 vendor/ 约定),或 brew install scrcpy。" >&2
+  exit 1
+fi
+export ADB                       # scrcpy 经 $ADB 找 adb
+export ADBUTILS_ADB_PATH="$ADB"  # 顺带让本仓库的 adbutils 用同一个 adb
+
+# serial:默认取环境变量;第一个形如 host:port 的参数覆盖之并取走。
+SERIAL="${ANDROID_SERIAL:-}"
+if [ -n "$1" ] && [[ "$1" == *:* ]]; then
+  SERIAL="$1"; shift
+fi
+
+# 展开 --off / --width,其余透传;记录用户是否已显式给尺寸 flag。
+WIDTH="${SCRCPY_WIDTH:-320}"
+HAS_SIZE=0
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --off)        ARGS+=(--turn-screen-off --stay-awake) ;;
+    --width=*)    WIDTH="${a#--width=}" ;;
+    --window-width|--window-width=*|--window-height|--window-height=*|--max-size|--max-size=*|-m|-m*)
+                  HAS_SIZE=1; ARGS+=("$a") ;;
+    *)            ARGS+=("$a") ;;
+  esac
+done
+# 用户未显式指定尺寸 → 注入默认小窗宽(高度由设备比例自动算)。WIDTH=0 可禁用默认。
+if [ "$HAS_SIZE" = 0 ] && [ -n "$WIDTH" ] && [ "$WIDTH" != "0" ]; then
+  ARGS+=(--window-width="$WIDTH")
+fi
+
+# 无线设备(host:port)先确保 adb 已连。
+if [ -n "$SERIAL" ] && [[ "$SERIAL" == *:* ]]; then
+  "$ADB" connect "$SERIAL" >/dev/null 2>&1 || true
+fi
+
+SEL=()
+[ -n "$SERIAL" ] && SEL=(-s "$SERIAL")
+
+echo "scrcpy: ${SERIAL:-<auto>}  (adb=$ADB)"
+exec "$SCRCPY" "${SEL[@]}" "${ARGS[@]}"
