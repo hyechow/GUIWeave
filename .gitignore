@@ -20,3 +20,6 @@ videos
 # 本地注入层(独立仓库管理),不进主仓库
 injection/
 webarena-verified/
+
+# Vendored native binaries (adb + scrcpy standalone), fetched per-machine
+vendor/

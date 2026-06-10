@@ -294,7 +294,7 @@ def test_build_platform_unknown_raises():
     from gui_agent.core.factory import build_platform
 
     with pytest.raises(ValueError):
-        build_platform("android")  # not registered yet
+        build_platform("windows")  # not registered
 
 
 # --------------------------------------------------------------------------- #
@@ -440,6 +440,130 @@ def test_core_factory_stays_leaf_without_browser_adapter():
         "leaked = [m for m in sys.modules "
         "if m.startswith('gui_agent.adapters') "
         "or m == 'playwright' or m.startswith('playwright.')]; "
+        "assert not leaked, leaked"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+# --------------------------------------------------------------------------- #
+# Android adapter (VISION-ONLY): the new platform must conform to the SAME        #
+# neutral Protocols as iphone/browser, with NO real adb connection in any test    #
+# (built via __new__, exactly like the conformance above). adbutils is reached    #
+# only lazily inside AndroidDevice.connect(), never at import.                     #
+# --------------------------------------------------------------------------- #
+def _import_android():
+    from gui_agent.adapters.android.device import AndroidDevice
+    from gui_agent.adapters.android.perception import (
+        AndroidPerception,
+        AndroidSession,
+    )
+    from gui_agent.adapters.android.policies import AndroidActionPolicy
+
+    return AndroidDevice, AndroidSession, AndroidPerception, AndroidActionPolicy
+
+
+def test_android_device_is_a_scrollable_device():
+    AndroidDevice, *_ = _import_android()
+    dev = _blank(AndroidDevice)
+    assert isinstance(dev, Device)
+    assert isinstance(dev, ScrollableDevice)
+
+
+def test_android_device_is_not_zero_preempt_capability():
+    # adb input injects on-device (zero-preempt by nature) but is NOT the iphone
+    # daemon path, so core's getattr(client, "zero_preempt", False) probe treats it
+    # as ordinary input (zero_preempt = False).
+    AndroidDevice, *_ = _import_android()
+    dev = _blank(AndroidDevice)
+    assert getattr(dev, "zero_preempt", False) is False
+
+
+def test_android_session_and_perception_conform():
+    _, AndroidSession, AndroidPerception, _ = _import_android()
+    assert isinstance(_blank(AndroidSession), PerceptionSession)
+    assert isinstance(_blank(AndroidPerception), Perception)
+
+
+def test_android_action_policy_conforms():
+    *_, AndroidActionPolicy = _import_android()
+    assert isinstance(_blank(AndroidActionPolicy), ActionPolicy)
+    assert AndroidActionPolicy.name == "android_vision"
+
+
+def test_build_platform_returns_android_bundle():
+    from gui_agent.core.factory import build_platform, PlatformBundle
+
+    bundle = build_platform("android")
+    assert isinstance(bundle, PlatformBundle)
+    assert bundle.platform == "android"
+    assert bundle.default_action_policy == "android_vision"
+    assert bundle.default_supervisor == "milestone"
+    assert bundle.action_policy_choices == ("android_vision",)
+    assert bundle.supervisor_choices == ("milestone",)
+    for attr in (
+        "open_session",
+        "make_executor",
+        "make_perception",
+        "make_action_policy",
+        "make_supervisor",
+        "make_status_reporter",
+        "make_action_visualizer",
+        "make_scroll_probe",
+        "apply_scroll_profile",
+        "make_stitch_accumulator",
+        "robust_shift",
+        "gray_u8",
+    ):
+        assert callable(getattr(bundle, attr)), attr
+    # HUD only when enabled (passing False must NOT spawn the tkinter subprocess).
+    assert bundle.make_status_reporter(False) is None
+    # Android DOES provide a live action visualizer (agent_cursor over scrcpy).
+    visualizer = bundle.make_action_visualizer(None)
+    assert visualizer is not None
+    assert isinstance(visualizer, ActionVisualizer)
+    # apply_scroll_profile is the identity pass-through.
+    assert bundle.apply_scroll_profile("ACT", "PROF") == "ACT"
+
+
+def test_android_visualizer_conforms():
+    # The android cursor visualizer satisfies the neutral ActionVisualizer contract
+    # (built via __new__ — no agent_cursor binary / scrcpy window in the test).
+    from gui_agent.adapters.android.visualizer import AndroidActionVisualizer
+
+    assert isinstance(_blank(AndroidActionVisualizer), ActionVisualizer)
+
+
+def test_android_scroll_collect_fields_are_stubs():
+    # The iphone-shaped scroll/stitch helpers are only hit in the runner's
+    # collection branch, which the android MVP does not support. They must raise a
+    # clear NotImplementedError rather than silently returning bad objects.
+    import pytest
+
+    from gui_agent.core.factory import build_platform
+
+    bundle = build_platform("android")
+    with pytest.raises(NotImplementedError):
+        bundle.make_scroll_probe(None, None, None)
+    with pytest.raises(NotImplementedError):
+        bundle.make_stitch_accumulator()
+    with pytest.raises(NotImplementedError):
+        bundle.robust_shift()
+    with pytest.raises(NotImplementedError):
+        bundle.gray_u8(b"")
+
+
+def test_core_factory_stays_leaf_without_android_adapter():
+    # Importing the neutral dispatcher must pull in NEITHER any adapter NOR
+    # adbutils — the android bundle is reached only lazily inside build_platform.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, gui_agent.core.factory; "
+        "leaked = [m for m in sys.modules "
+        "if m.startswith('gui_agent.adapters') "
+        "or m == 'adbutils' or m.startswith('adbutils.')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

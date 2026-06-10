@@ -83,4 +83,8 @@ def build_platform(
         from gui_agent.adapters.browser.factory import build_browser_bundle
 
         return build_browser_bundle(backend=backend, **kwargs)
-    raise ValueError(f"unknown platform {name!r}; registered: iphone, browser")
+    if name == "android":
+        from gui_agent.adapters.android.factory import build_android_bundle
+
+        return build_android_bundle(backend=backend, **kwargs)
+    raise ValueError(f"unknown platform {name!r}; registered: iphone, browser, android")
