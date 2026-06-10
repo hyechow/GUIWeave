@@ -24,7 +24,28 @@ from pathlib import Path
 _CLOSE_SENTINEL = "__CLOSE__"
 
 
+def _ensure_tcl_env() -> None:
+    """Point TCL_LIBRARY/TK_LIBRARY at the bundled Tcl/Tk so ``tkinter`` can init.
+
+    python-build-standalone (what ``uv`` installs) SHIPS Tcl/Tk but ``tkinter``
+    probes a hard-coded build-time path (``/tools/deps/...``) and fails to find
+    ``init.tcl``. Pointing the env vars at ``<base_prefix>/lib/tcl*`` (the dir that
+    actually holds ``init.tcl``) fixes it for ALL platforms' HUDs. No-op when the
+    vars are already set or the dirs are absent (a normal system Python)."""
+    import glob
+
+    base = sys.base_prefix
+    for var, pat, marker in (("TCL_LIBRARY", "tcl*", "init.tcl"), ("TK_LIBRARY", "tk*", "tk.tcl")):
+        if os.environ.get(var):
+            continue
+        for d in sorted(glob.glob(os.path.join(base, "lib", pat))):
+            if os.path.exists(os.path.join(d, marker)):
+                os.environ[var] = d
+                break
+
+
 def _hud_main(x: int, y: int, w: int, h: int, alpha: float, status_file: str) -> None:
+    _ensure_tcl_env()  # fix the bundled-Tcl path before importing tkinter
     import tkinter as tk
 
     root = tk.Tk()
