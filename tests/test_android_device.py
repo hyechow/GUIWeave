@@ -117,6 +117,29 @@ def test_scroll_down_swipes_finger_up_within_screen(calls):
     assert 0 <= ey and sy <= 2400   # endpoints clamped inside the screen
 
 
+def test_scroll_anchored_near_top_stays_off_gesture_zone(calls):
+    """A picker scroll anchored high must NOT start the swipe at the very top edge —
+    that pulls down the HarmonyOS notification shade / Control Center and derails."""
+    dev = _connected_device()  # 1080x2400
+    dev.scroll("up", amount=8, x=750, y=150)  # large amount, anchored high
+    _, sx, sy, ex, ey, _ = [c for c in calls if c[0] == "swipe"][-1]
+    inset = max(120, 2400 // 12)  # gesture-safe band
+    assert sy >= inset and ey >= inset            # both endpoints off the top zone
+    assert sy <= 2400 - inset and ey <= 2400 - inset
+
+
+def test_android_executor_amount_units_widen_range():
+    """small must be a fine wheel-picker nudge (1 unit), large a list fling (8)."""
+    import types
+
+    from gui_agent.adapters.android.executor import AndroidExecutor
+
+    ex = AndroidExecutor(types.SimpleNamespace(client=None))
+    assert ex._amount_units("small") == 1
+    assert ex._amount_units("medium") == 4
+    assert ex._amount_units("large") == 8
+
+
 def test_executor_denorm_maps_normalized_to_device_pixels(calls):
     from gui_agent.adapters.android.executor import AndroidExecutor
 

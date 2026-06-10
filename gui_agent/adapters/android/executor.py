@@ -17,6 +17,13 @@ from gui_agent.adapters.android.actions import AndroidAction
 from gui_agent.core.executor import VisionExecutor
 
 
+# Android scroll units per ScrollAmount label. WIDER range than the neutral 3/5/9 so
+# `small` is a fine wheel-picker nudge (~1 row) while `large` still flings a list:
+# with SCROLL_PX_PER_AMOUNT≈140 -> small≈140px (≈1 picker row), medium≈560px (≈¼
+# screen), large≈1120px (≈½ screen).
+_ANDROID_AMOUNT_UNITS = {"small": 1, "medium": 4, "large": 8}
+
+
 class AndroidExecutor(VisionExecutor):
     """Execute normalized policy actions against the phone via AndroidDevice."""
 
@@ -25,6 +32,9 @@ class AndroidExecutor(VisionExecutor):
         if client is None:
             raise RuntimeError("Android 设备尚未连接")
         return client
+
+    def _amount_units(self, amount: str) -> int:
+        return _ANDROID_AMOUNT_UNITS.get(amount, 4)
 
     def _dispatch_extra(self, action: AndroidAction, client) -> Optional[bool]:
         at = action.action_type

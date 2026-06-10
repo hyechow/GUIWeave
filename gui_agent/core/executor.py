@@ -57,6 +57,12 @@ class VisionExecutor:
         The runner submits this to a background thread each turn."""
         return None
 
+    def _amount_units(self, amount: str) -> int:
+        """Map a coarse ScrollAmount label to device ``scroll`` units. Default is the
+        neutral small/medium/large -> 3/5/9. A platform overrides this to widen the
+        range when it needs both fine (wheel-picker, ~1 row) and coarse (list) steps."""
+        return amount_to_units(amount)
+
     def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
         """Scroll without execute()'s bool wrapper (runner scroll-cache path).
         ``ticks`` / ``delta_px`` are iphone scroll-probe params and are ignored."""
@@ -64,7 +70,7 @@ class VisionExecutor:
         ax = action.x if action.x is not None else 500
         ay = action.y if action.y is not None else 500
         px, py = self._denorm(ax, ay)
-        amount = amount_to_units(action.amount)
+        amount = self._amount_units(action.amount)
         direction = action.direction or "down"
         print(f"  scroll {direction} amount={amount} @({px:.0f},{py:.0f})")
         print(f"  结果: {client.scroll(direction, amount, px, py)}")
@@ -108,7 +114,7 @@ class VisionExecutor:
             ax = action.x if action.x is not None else 500
             ay = action.y if action.y is not None else 500
             px, py = self._denorm(ax, ay)
-            amount = amount_to_units(action.amount)
+            amount = self._amount_units(action.amount)
             print(f"  scroll {action.direction} amount={amount} @({px:.0f},{py:.0f})")
             print(f"  结果: {client.scroll(action.direction, amount, px, py)}")
 

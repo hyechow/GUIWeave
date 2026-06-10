@@ -29,8 +29,19 @@ from .schemas import (
 
 MAX_RETRIES = 3
 STUCK_SCREEN_WINDOW = 3
-STUCK_SCREEN_SIMILARITY = 0.95
+STUCK_SCREEN_SIMILARITY = 0.95   # 全局 tier: whole-frame similarity above this = no global change
 STUCK_SCREEN_FROZEN = 0.99
+# 局部 tier: the action that produced a frame carries coordinates (tap/scroll/drag all have
+# x/y), so look at whether the REGION the agent actually touched changed — the max small-tile
+# change inside a box around the action's (x,y). A picker / spinner moves only that small
+# region: global similarity stays ~99.9% but the touched region jumps to ~0.15, while a scroll
+# that did nothing stays ~0.00. A frame pair is "no change" (stuck candidate) only when BOTH
+# tiers are under threshold — global similar AND the action region didn't move. Calibrated on
+# real alarm-picker frames (picker step ≈0.14–0.18, no-op scroll ≈0.00; PNG is lossless).
+STUCK_LOCAL_CHANGE = 0.06
+# Half-size (fraction of frame) of the box around the action's (x,y), and the analysis grid.
+STUCK_LOCAL_HALF = 0.14
+STUCK_SIM_GRID = 256
 MAX_SCROLL_PER_MILESTONE = 3
 STUCK_REPEAT_WINDOW = 3
 # Blank/loading screen = the app's content body is light AND near-uniform (no
@@ -192,11 +203,45 @@ def _is_home_identity(page_identity: str) -> bool:
     return "主屏" in (page_identity or "") or "home screen" in pid or "springboard" in pid
 
 
-def _png_sim(png1: bytes, png2: bytes, size: int = 64) -> float:
-    img1 = Image.open(io.BytesIO(png1)).convert("L").resize((size, size))
-    img2 = Image.open(io.BytesIO(png2)).convert("L").resize((size, size))
-    total = sum(abs(int(a) - int(b)) for a, b in zip(img1.getdata(), img2.getdata()))
-    return 1.0 - total / (255 * size * size)
+def _png_change(
+    png1: bytes,
+    png2: bytes,
+    center: Optional[tuple[float, float]] = None,
+    size: int = STUCK_SIM_GRID,
+    half: float = STUCK_LOCAL_HALF,
+    tile: int = 8,
+) -> tuple[float, Optional[float]]:
+    """Two-tier change between two frames (grayscale at ``size``).
+
+    Returns ``(global_sim, local_change)``:
+      - ``global_sim``  = 1 - mean abs diff over the whole frame (legacy whole-frame tier).
+      - ``local_change``= the LARGEST ``tile``-sized block change (0..1) inside a box of
+        half-size ``half`` around ``center`` (the action's normalized 0-1000 x/y). This is
+        the 局部 tier: did the REGION the agent actually touched move? A picker step keeps
+        global_sim ~0.999 yet drives local_change to ~0.15; a no-op scroll leaves it ~0.0.
+        ``None`` when the action had no coordinates (press_enter / home / back / stop) — the
+        caller then falls back to the global tier alone.
+    """
+    import numpy as np
+
+    a = np.asarray(Image.open(io.BytesIO(png1)).convert("L").resize((size, size)), dtype=np.int16)
+    b = np.asarray(Image.open(io.BytesIO(png2)).convert("L").resize((size, size)), dtype=np.int16)
+    d = np.abs(a - b) / 255.0
+    global_sim = 1.0 - float(d.mean())
+    if center is None:
+        return global_sim, None
+    cx, cy = center[0] / 1000 * size, center[1] / 1000 * size
+    h = half * size
+    x0, x1 = max(0, int(cx - h)), min(size, int(cx + h))
+    y0, y1 = max(0, int(cy - h)), min(size, int(cy + h))
+    if x1 - x0 < tile or y1 - y0 < tile:
+        return global_sim, None
+    reg = d[y0:y1, x0:x1]
+    best = 0.0
+    for yy in range(0, reg.shape[0] - tile + 1, tile):
+        for xx in range(0, reg.shape[1] - tile + 1, tile):
+            best = max(best, float(reg[yy : yy + tile, xx : xx + tile].mean()))
+    return global_sim, best
 
 
 # ── Main class ────────────────────────────────────────────────────────
@@ -216,7 +261,9 @@ class MilestoneSupervisorPolicy:
         self._milestones: dict[str, Milestone] = {}
         self._order: list[str] = []
         self._current_id: Optional[str] = None
-        self._recent_screenshots: list[bytes] = []
+        # Each entry pairs a frame with the action CENTER (normalized 0-1000 x/y, or None)
+        # that produced it — the 局部 stuck tier inspects the region the agent touched.
+        self._recent_screenshots: list[tuple[bytes, Optional[tuple[float, float]]]] = []
         self._scroll_counts: dict[str, int] = {}
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
@@ -358,22 +405,18 @@ class MilestoneSupervisorPolicy:
                 )
             return self._plan_single(milestone, check, observation, history)
 
-        sim_stuck = self._check_screen_similarity(observation)
-
-        prev_check_summary = self._last_check_summary.get(milestone.id, "")
         prev_action = history[-1].action_decision.action if history and history[-1].action_decision else None
-        was_picker_drag = (
-            prev_action is not None
-            and prev_action.action_type == "drag"
-            and (prev_action.target_area or "").startswith("picker_")
-        )
-        if sim_stuck is not None and sim_stuck.frozen and was_picker_drag and prev_check_summary and prev_check_summary != check.summary:
-            print(f"  [SimStuck] 已抑制：picker 进展（frozen+摘要变化）")
-            sim_stuck = None
-            self._recent_screenshots.clear()
+        sim_stuck = self._check_screen_similarity(observation, self._action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
 
         rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
+        # Stepping a picker / value means repeating the SAME column scroll. The two-tier
+        # _check_screen_similarity already returns stuck when the touched region is NOT moving,
+        # so reaching here (sim_stuck is None) means the region IS changing — a repeated
+        # value-adjust scroll is progress, not a loop. Don't let repetition flag it.
+        if rep_stuck is not None and self._is_value_adjust(prev_action):
+            print("  [RepStuck] 已抑制：调值类重复滚动属正常（动作区在变）")
+            rep_stuck = None
         if sim_stuck or rep_stuck:
             stuck = sim_stuck or rep_stuck
             assert stuck is not None
@@ -986,33 +1029,47 @@ class MilestoneSupervisorPolicy:
 
     # ── Stuck detection ───────────────────────────────────────────────
 
-    def _check_screen_similarity(self, observation: Observation) -> Optional[_SingleCheckResult]:
-        self._recent_screenshots.append(observation.png_bytes)
+    def _check_screen_similarity(
+        self, observation: Observation, action_center: Optional[tuple[float, float]] = None
+    ) -> Optional[_SingleCheckResult]:
+        self._recent_screenshots.append((observation.png_bytes, action_center))
         if len(self._recent_screenshots) > STUCK_SCREEN_WINDOW:
             self._recent_screenshots.pop(0)
         if len(self._recent_screenshots) < STUCK_SCREEN_WINDOW:
             return None
 
-        current = self._recent_screenshots[-1]
-        sims = [_png_sim(current, p) for p in self._recent_screenshots[:-1]]
-        max_sim = max(sims)
-        if all(s >= STUCK_SCREEN_SIMILARITY for s in sims):
-            sim_str = ", ".join(f"{s:.2%}" for s in sims)
-            frozen = max_sim >= STUCK_SCREEN_FROZEN
-            if frozen:
-                print(f"  [SimStuck] {sim_str} → 屏幕冻结（≥{STUCK_SCREEN_FROZEN:.0%}）")
-            else:
-                print(f"  [SimStuck] {sim_str} → 截图连续无变化")
+        # Two-tier per adjacent step: a step is "no change" ONLY when the whole frame stayed
+        # similar (全局) AND the region the action touched did not move (局部). A picker step
+        # keeps global ~99.9% but moves the touched region (~0.15) → NOT no-change → not stuck.
+        frames = self._recent_screenshots
+        gsims: list[float] = []
+        locs: list[Optional[float]] = []
+        for i in range(1, len(frames)):
+            gs, lc = _png_change(frames[i - 1][0], frames[i][0], frames[i][1])
+            gsims.append(gs)
+            locs.append(lc)
+
+        def _no_change(gs: float, lc: Optional[float]) -> bool:
+            return gs >= STUCK_SCREEN_SIMILARITY and (lc is None or lc <= STUCK_LOCAL_CHANGE)
+
+        if all(_no_change(gs, lc) for gs, lc in zip(gsims, locs)):
+            gstr = ", ".join(f"{g:.2%}" for g in gsims)
+            lstr = ", ".join("∅" if l is None else f"{l:.3f}" for l in locs)
+            frozen = max(gsims) >= STUCK_SCREEN_FROZEN
+            tag = "屏幕冻结（局部+全局均无变化）" if frozen else "连续无变化（局部+全局）"
+            print(f"  [SimStuck] 全局[{gstr}] 局部[{lstr}] → {tag}")
             return _SingleCheckResult(
                 status="stuck",
-                reason=f"连续 {STUCK_SCREEN_WINDOW} 帧截图相似度 [{sim_str}]，屏幕无实质变化",
-                stuck_reason="连续帧高度相似，上一步操作未生效",
-                issues=["屏幕像素变化低于阈值"],
+                reason=f"连续 {STUCK_SCREEN_WINDOW} 帧局部与全局均无实质变化（全局 [{gstr}]，动作区 [{lstr}]）",
+                stuck_reason="动作所在区域与全局像素连续无变化，上一步操作未生效",
+                issues=["动作所在区域与全局像素变化均低于阈值"],
                 summary="屏幕连续无变化",
                 frozen=frozen,
             )
-        sim_2back = _png_sim(self._recent_screenshots[-1], self._recent_screenshots[-3])
-        sim_adj = _png_sim(self._recent_screenshots[-1], self._recent_screenshots[-2])
+        # AB-cycle: whole-state oscillation (current ≈ 2-back globally but ≠ adjacent). Uses
+        # the global tier — oscillation is a full-state flip, not a local nudge.
+        sim_2back, _ = _png_change(frames[-1][0], frames[-3][0])
+        sim_adj, _ = _png_change(frames[-1][0], frames[-2][0])
         if sim_2back >= STUCK_SCREEN_SIMILARITY and sim_adj < STUCK_SCREEN_SIMILARITY:
             print(f"  [SimStuck] 2back={sim_2back:.2%}, adj={sim_adj:.2%} → AB 循环")
             return _SingleCheckResult(
@@ -1054,6 +1111,34 @@ class MilestoneSupervisorPolicy:
                 summary="操作陷入重复循环",
             )
         return None
+
+    @staticmethod
+    def _action_center(action) -> Optional[tuple[float, float]]:
+        """The action's center as normalized 0-1000 ``(x, y)``, or None when it carries no
+        coordinates (press_enter / home / back / stop). tap / scroll / drag all have x/y; the
+        局部 stuck tier uses this to inspect the screen region the agent actually touched."""
+        if action is None:
+            return None
+        x, y = getattr(action, "x", None), getattr(action, "y", None)
+        if x is None or y is None:
+            return None
+        return (float(x), float(y))
+
+    @staticmethod
+    def _is_value_adjust(action) -> bool:
+        """Is this a picker / value adjustment, where repeating the SAME instruction is the
+        normal mechanism (not a stuck loop)? android pickers are ``scroll``; iphone pickers
+        are ``drag target_area=picker_*``. Used to suppress instruction-repetition stuck once
+        the two-tier screen check has confirmed the touched region IS moving.
+
+        ``getattr``: AndroidAction has no ``target_area`` field — the scroll branch covers
+        android, the drag branch covers iphone."""
+        if action is None:
+            return False
+        ta = getattr(action, "target_area", "") or ""
+        return action.action_type == "scroll" or (
+            action.action_type == "drag" and ta.startswith("picker_")
+        )
 
     @staticmethod
     def _extract_progress_value(check: _SingleCheckResult) -> str:

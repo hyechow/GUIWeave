@@ -273,7 +273,11 @@ class AndroidDevice:
 
         Content semantics: down=see content below (finger swipes up); up=see above;
         right=see content to the right (finger swipes left); left=see content left.
-        Endpoints are clamped inside the screen.
+
+        Vertical endpoints are kept INSIDE a system-gesture-safe band (away from the very
+        top / bottom edges): a swipe starting at the top edge pulls down the HarmonyOS
+        notification shade / Control Center, and one at the bottom edge triggers nav
+        gestures — an edge-anchored picker scroll otherwise derails the whole task.
         """
         dist = max(1, int(amount)) * SCROLL_PX_PER_AMOUNT
         half = dist // 2
@@ -290,10 +294,15 @@ class AndroidDevice:
         else:
             return f"failed: unknown scroll direction {direction!r}"
         w, h = self.win_w, self.win_h
+        v_inset = max(120, h // 12)  # keep off the top/bottom OS-gesture zones
         fx, tx = _clamp(fx, 5, w - 5), _clamp(tx, 5, w - 5)
-        fy, ty = _clamp(fy, 5, h - 5), _clamp(ty, 5, h - 5)
+        fy, ty = _clamp(fy, v_inset, h - v_inset), _clamp(ty, v_inset, h - v_inset)
+        # Swipe SPEED matters for wheel pickers: a fast flick flings past the target by
+        # momentum (~2 rows for a 1-row distance). Make fine (small) scrolls SLOW so they
+        # move ~1 row with no fling; keep big (large) scrolls fast so lists still fling.
+        secs = 0.7 if amount <= 1 else 0.45 if amount <= 4 else 0.25
         try:
-            self._require_dev().swipe(fx, fy, tx, ty, 0.3)
+            self._require_dev().swipe(fx, fy, tx, ty, secs)
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return f"OK scroll {d} {dist}px ({fx},{fy})->({tx},{ty})"

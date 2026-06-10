@@ -25,9 +25,11 @@ VENDORED_ADB = _REPO_ROOT / "vendor" / "scrcpy-macos-aarch64-v4.0" / "adb"
 # or a USB serial. None -> auto-select the sole connected device.
 DEFAULT_SERIAL = os.environ.get("ANDROID_SERIAL") or None
 
-# Swipe pixels per unit of the neutral scroll ``amount`` (amount=5 -> ~1000px,
-# a bit under half of a 2400px-tall panel). First-pass value; calibrate later.
-SCROLL_PX_PER_AMOUNT = 200
+# Swipe pixels per scroll unit. With AndroidExecutor's wider unit map (small/medium/
+# large -> 1/4/8) this gives small≈140px (≈1 wheel-picker row on a 1080x2400 panel),
+# medium≈560px (≈¼ screen), large≈1120px (≈½ screen). Tuned so a wheel/time picker can
+# be nudged ~1 row at a time (small) instead of overshooting, while lists still fling.
+SCROLL_PX_PER_AMOUNT = 140
 
 # Downscale the captured screenshot to this WIDTH (px), preserving aspect, before it
 # becomes the Observation — cuts LLM image tokens. Coordinates are UNAFFECTED: the

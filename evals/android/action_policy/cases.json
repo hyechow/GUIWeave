@@ -1,0 +1,26 @@
+[
+  {
+    "label": "picker-小时改值用 scroll 不 tap（回归 20260610_205402：曾 tap 选中数字致零效果中止）",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "在小时列把小时从 8 调整到 6",
+    "expected": { "action_type": "scroll" }
+  },
+  {
+    "label": "picker-分钟改值用 scroll 不 tap（回归：分钟 54→30 曾升级成 tap 中止）",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "在分钟列把分钟调整到 30",
+    "expected": { "action_type": "scroll" }
+  },
+  {
+    "label": "picker-直白设值指令也须 scroll（绝不点 picker 数字来选值/确认）",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "把小时设置为 6 点",
+    "expected": { "action_type": "scroll" }
+  },
+  {
+    "label": "contrast-点击列表设置项仍用 tap（防 picker 规则把一切都变 scroll）",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "点击『重复』设置项",
+    "expected": { "action_type": "tap" }
+  }
+]
