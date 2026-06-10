@@ -29,6 +29,12 @@ DEFAULT_SERIAL = os.environ.get("ANDROID_SERIAL") or None
 # a bit under half of a 2400px-tall panel). First-pass value; calibrate later.
 SCROLL_PX_PER_AMOUNT = 200
 
+# Downscale the captured screenshot to this WIDTH (px), preserving aspect, before it
+# becomes the Observation — cuts LLM image tokens. Coordinates are UNAFFECTED: the
+# executor denormalizes 0-1000 against the DEVICE resolution (window_size), not the
+# image size. 0 disables. Override via env ANDROID_SCREENSHOT_WIDTH.
+SCREENSHOT_MAX_WIDTH = int(os.environ.get("ANDROID_SCREENSHOT_WIDTH") or 320)
+
 # Android key event codes (https://developer.android.com/reference/android/view/KeyEvent).
 KEYCODE = {
     "home": 3,          # KEYCODE_HOME
