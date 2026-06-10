@@ -5,10 +5,11 @@ cd "$(dirname "$0")/.."
 platform="${1:-}"
 task="${2:-}"
 case "$platform" in
-  iphone|browser) ;;
+  iphone|browser|android) ;;
   *)
-    echo "用法: bin/runner <iphone|browser> <任务> [额外参数...]" >&2
+    echo "用法: bin/runner <iphone|browser|android> <任务> [额外参数...]" >&2
     echo "  例: bin/runner browser \"搜索一下nvidia的股价\"" >&2
+    echo "      ANDROID_SERIAL=192.168.31.240:5555 bin/runner android \"打开设置\"" >&2
     exit 1 ;;
 esac
 if [[ -z "$task" ]]; then
