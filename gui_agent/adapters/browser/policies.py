@@ -5,7 +5,8 @@ Mirrors the iphone ``StructuredOutputPolicy`` LLM machinery — same config via
 call via ``llm.structured.invoke_structured`` into an ``ActionDecision``, same
 ``BaseActionPolicy`` base — but with a BROWSER system prompt: operate a web page
 with a desktop pointer, output ONE action within the neutral action vocabulary
-(tap / type / clear_text / press_enter / scroll / drag / navigate / back / stop).
+(tap / type / clear_text / press_enter / scroll / drag / navigate / back /
+new_tab / select_tab / close_tab / stop).
 
 VISION-ONLY: the screenshot is sent as-is (optionally downscaled if very large) —
 it is NOT the iphone 2x retina image, so ``resize_to_logical_png`` is deliberately
@@ -46,6 +47,9 @@ SYSTEM_PROMPT = """\
   「导航到 X」，且你知道目标网址（如 feishu.cn），就一律用 navigate、填 url（可省略 https://）、无需坐标。
   这类「去往某网址」的目标一律优先 navigate；不要把网址当普通文字 type 进页面里的搜索框（站内搜索不会跳到该网站）。
 - back：浏览器历史后退（等同点浏览器后退按钮，回到上一个页面），无需坐标。
+- new_tab：新建标签页；要在新标签页打开某网址就填 url（可省略 https://），否则开空白页，无需坐标。
+- select_tab：切换到已打开的某个标签页，填 tab_match=该标签页的标题或网址子串（如「飞书」「feishu」），无需坐标。
+- close_tab：关闭标签页，填 tab_match 关指定标签页、留空关当前标签页，无需坐标。
 - stop：当指令含义是「停止」「无需操作」「目标已完成」，或目标元素确实不在当前截图中时使用，无需坐标。
 
 约束：

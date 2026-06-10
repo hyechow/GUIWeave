@@ -139,6 +139,19 @@ class BrowserExecutor:
             print("浏览器历史后退")
             print(f"  结果: {client.go_back()}")
 
+        elif action.action_type == "new_tab":
+            url = _normalize_url(action.url) if action.url else None
+            print(f"新建标签页{('，导航到 ' + url) if url else ''}")
+            print(f"  结果: {client.new_tab(url)}")
+
+        elif action.action_type == "select_tab":
+            print(f"切换到标签页（匹配 {action.tab_match!r}）")
+            print(f"  结果: {client.select_tab(action.tab_match)}")
+
+        elif action.action_type == "close_tab":
+            print(f"关闭标签页（{action.tab_match or '当前'}）")
+            print(f"  结果: {client.close_tab(action.tab_match)}")
+
         elif action.action_type == "stop":
             print("停止操作（当前状态已满足目标，无需执行）")
             return True

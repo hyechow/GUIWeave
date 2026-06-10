@@ -39,6 +39,7 @@ def test_iphone_vocabulary():
 def test_browser_vocabulary():
     v = _action_type_values(BrowserAction)
     assert "navigate" in v and "back" in v   # back = history back (shared with android)
+    assert {"new_tab", "select_tab", "close_tab"} <= v   # tab management
     assert "home" not in v
     assert "app_switch" not in v
 
@@ -54,8 +55,16 @@ def test_positive_construction():
     IPhoneAction(action_type="app_switch", description="打开切换器")
     IPhoneAction(action_type="drag", target_area="picker_left", value_direction="increase", description="调大年份")
     BrowserAction(action_type="navigate", url="example.com", description="打开网站")
+    BrowserAction(action_type="new_tab", url="feishu.cn", description="新标签页打开飞书")
+    BrowserAction(action_type="select_tab", tab_match="飞书", description="切到飞书标签页")
+    BrowserAction(action_type="close_tab", description="关当前标签页")
     AndroidAction(action_type="back", description="返回")
     AndroidAction(action_type="app_switch", description="切换应用")
+
+
+def test_select_tab_requires_match():
+    with pytest.raises(Exception):
+        BrowserAction(action_type="select_tab", description="切标签")  # no tab_match
 
 
 @pytest.mark.parametrize(

@@ -73,6 +73,7 @@ class PlaywrightDevice:
         self._context = None
         self.page = None
         self._cdp = None  # cached raw CDP session (for window_bounds / eval_js fallback)
+        self._browser_cdp = None  # cached browser-level CDP session (Target.* for tabs)
         self._prev_pages = None  # last-seen page list, for new-tab-appearance follow
         self._tab_switched = False  # set by _switch_page; cleared by pop_tab_switched()
         self._last_viewport = None  # CSS-px (w, h) derived from the last screenshot
@@ -116,6 +117,7 @@ class PlaywrightDevice:
                 self._context = None
                 self.page = None
                 self._cdp = None
+                self._browser_cdp = None
                 self._prev_pages = None
                 self._tab_switched = False
                 self._last_viewport = None
@@ -553,6 +555,114 @@ class PlaywrightDevice:
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return "OK back"
+
+    # ----- tab management (CDP Target.* + Playwright pages) -----------------
+    def _all_pages(self) -> list:
+        """All open page tabs across ALL browser contexts (connect_over_cdp may put
+        click-opened tabs in a fresh context, not self._context)."""
+        pages: list = []
+        try:
+            for ctx in self._browser.contexts:
+                try:
+                    pages.extend(p for p in ctx.pages if not _page_closed(p))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return pages
+
+    def _target_meta(self) -> dict:
+        """url -> title for page targets via raw CDP ``Target.getTargets`` (reliable
+        titles even when the high-level page.title() would hang on a version skew)."""
+        meta: dict = {}
+        try:
+            if self._browser_cdp is None:
+                self._browser_cdp = self._browser.new_browser_cdp_session()
+            res = self._browser_cdp.send("Target.getTargets")
+            for t in res.get("targetInfos", []):
+                if t.get("type") == "page":
+                    meta[t.get("url", "")] = t.get("title", "")
+        except Exception:
+            self._browser_cdp = None
+        return meta
+
+    def list_tabs(self) -> list[tuple[int, str, str]]:
+        """(index, title, url) for every open tab. Titles via raw CDP."""
+        meta = self._target_meta()
+        out: list[tuple[int, str, str]] = []
+        for i, p in enumerate(self._all_pages()):
+            try:
+                url = p.url
+            except Exception:
+                url = ""
+            out.append((i, meta.get(url, ""), url))
+        return out
+
+    def new_tab(self, url: Optional[str] = None) -> str:
+        """Open a new tab (optionally navigate to ``url``) and make it the active tab."""
+        try:
+            p = self._context.new_page()
+            self._switch_page(p)
+            if url:
+                return "OK new_tab; " + self.navigate(url)
+            try:
+                p.bring_to_front()
+            except Exception:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            return f"failed: {exc}"
+        return "OK new_tab"
+
+    def select_tab(self, match: str) -> str:
+        """Switch to the tab whose title or url contains ``match`` (case-insensitive)."""
+        m = (match or "").strip().lower()
+        if not m:
+            return "failed: select_tab 需要 tab 标题或 url 子串"
+        meta = self._target_meta()
+        for p in self._all_pages():
+            try:
+                url = p.url
+            except Exception:
+                url = ""
+            title = meta.get(url, "")
+            if m in title.lower() or m in url.lower():
+                try:
+                    p.bring_to_front()
+                    self._context = p.context
+                    self._switch_page(p)
+                except Exception as exc:  # noqa: BLE001
+                    return f"failed: {exc}"
+                return f"OK select_tab {title[:30]!r} {url[:40]}"
+        return f"failed: 没有标题/url 含 {match!r} 的标签页"
+
+    def close_tab(self, match: Optional[str] = None) -> str:
+        """Close the tab matching ``match`` (title/url substring), or the current tab
+        when ``match`` is empty. Re-points self.page at a remaining tab."""
+        target = None
+        if match and match.strip():
+            m = match.strip().lower()
+            meta = self._target_meta()
+            for p in self._all_pages():
+                try:
+                    url = p.url
+                except Exception:
+                    url = ""
+                if m in meta.get(url, "").lower() or m in url.lower():
+                    target = p
+                    break
+            if target is None:
+                return f"failed: 没有含 {match!r} 的标签页"
+        else:
+            target = self.page
+        try:
+            target.close()
+        except Exception as exc:  # noqa: BLE001
+            return f"failed: {exc}"
+        remaining = self._all_pages()
+        if remaining:
+            self._context = remaining[-1].context
+            self._switch_page(remaining[-1])
+        return "OK close_tab"
 
     # ----- active-tab follow ----------------------------------------------
     def _follow_active_tab(self) -> None:
