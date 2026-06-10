@@ -3,31 +3,26 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
 
-# ``navigate`` is the platform-neutral "go to an address" action: browser → load a
-# URL (omnibox is browser chrome, invisible to the page screenshot and unreachable by
-# page-keyboard, so it CANNOT be typed via tap+type); android → deep-link/URL intent.
-# Platforms that have no address concept (iphone) simply don't expose it in their
-# action-policy prompt and ignore it in their executor.
-ActionType = Literal[
-    "tap", "type", "clear_text", "press_enter", "scroll", "drag", "navigate", "home", "stop"
+# The 7 shared actions every platform supports. Platform-specific actions (iphone
+# home/kill_frontmost_app, browser navigate, android home/back/recents) live in each
+# adapter's <Plat>Action.action_type, so a policy injects only its own vocabulary.
+BaseActionType = Literal[
+    "tap", "type", "clear_text", "press_enter", "scroll", "drag", "stop"
 ]
-ScrollTargetArea = Literal[
+BaseScrollTargetArea = Literal[
     "main_content",
     "left_panel",
     "right_panel",
     "top_content",
     "bottom_content",
-    "picker_left",
-    "picker_center",
-    "picker_right",
 ]
 ScrollAmount = Literal["small", "medium", "large"]
-ScrollMethod = Literal["auto", "wheel", "drag"]
-ValueDirection = Literal["increase", "decrease"]
 
+# Neutral full-set labels for logging/HUD across all platforms (action_label is
+# platform-agnostic; unknown types fall back to the raw string).
 _ACTION_TYPE_LABELS: dict[str, str] = {
     "tap": "点击",
     "type": "输入",
@@ -37,6 +32,9 @@ _ACTION_TYPE_LABELS: dict[str, str] = {
     "drag": "拖动",
     "navigate": "导航",
     "home": "主屏",
+    "back": "返回",
+    "recents": "最近任务",
+    "kill_frontmost_app": "退出应用",
     "stop": "停止",
 }
 
@@ -70,8 +68,12 @@ class CollectionScope(BaseModel):
     evidence: list[str] = Field(default_factory=list, description="截图中支持该范围的可见证据")
 
 
-class Action(BaseModel):
-    """A single phone action in normalized coordinates."""
+class BaseAction(BaseModel):
+    """The platform-neutral action: the 7 shared actions + fields every platform's
+    scroll/drag executor consumes. Each adapter subclasses this (adapters/<plat>/
+    actions.py) to add its own action_type values + platform-specific fields, so a
+    policy injects ONLY its platform's vocabulary into the LLM (no cross-platform leak).
+    """
 
     @model_validator(mode="before")
     @classmethod
@@ -94,9 +96,7 @@ class Action(BaseModel):
             if not data.get("description"):
                 action_type = data.get("action_type") or "操作"
                 text = data.get("text")
-                if action_type == "navigate" and data.get("url"):
-                    data["description"] = f"导航到 {data['url']}"
-                elif text:
+                if text:
                     data["description"] = f"执行{action_type}并输入{text}"
                 else:
                     data["description"] = f"执行{action_type}操作"
@@ -106,8 +106,8 @@ class Action(BaseModel):
             # mis-clicking the top/bottom of web pages on the browser adapter).
         return data
 
-    action_type: ActionType = Field(
-        description="操作类型：tap、type、press_enter、clear_text、scroll、drag、navigate、home、stop 之一"
+    action_type: BaseActionType = Field(
+        description="操作类型：tap、type、press_enter、clear_text、scroll、drag、stop 之一"
     )
     x: Optional[float] = Field(
         default=None,
@@ -121,21 +121,13 @@ class Action(BaseModel):
         default=None,
         description="内容方向：up（查看上方内容）、down（查看下方内容）、left（查看右侧内容）、right（查看左侧内容）。普通列表 scroll/drag 使用",
     )
-    value_direction: Optional[ValueDirection] = Field(
-        default=None,
-        description="数值方向：increase（调大数值）、decrease（调小数值）。picker 滚轮优先使用它，避免和手势方向混淆",
-    )
-    target_area: ScrollTargetArea = Field(
+    target_area: BaseScrollTargetArea = Field(
         default="main_content",
-        description="滚动目标区域：main_content/left_panel/right_panel/top_content/bottom_content/picker_left/picker_center/picker_right",
+        description="滚动目标区域：main_content/left_panel/right_panel/top_content/bottom_content",
     )
     amount: ScrollAmount = Field(
         default="medium",
         description="滚动幅度：small/medium/large。普通翻看用 medium，细微调整用 small，快速翻页用 large",
-    )
-    method: ScrollMethod = Field(
-        default="auto",
-        description="滚动执行方式：auto（运行时自动探测）、wheel（滚轮）、drag（触摸拖动）。普通页面优先 auto，picker 用 drag",
     )
     to_x: Optional[float] = Field(
         default=None,
@@ -153,10 +145,6 @@ class Action(BaseModel):
         default=None,
         description="要输入的文字内容（action_type 为 type 时必填）",
     )
-    url: Optional[str] = Field(
-        default=None,
-        description="要导航到的网址（action_type 为 navigate 时必填）。可不带 http(s):// 前缀，执行层会补全",
-    )
     description: str = Field(description="该操作的中文说明，如「点击目标应用图标」")
     snap: Optional[dict] = Field(
         default=None,
@@ -164,12 +152,14 @@ class Action(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _require_text_for_type(self) -> "Action":
+    def _require_text_for_type(self) -> "BaseAction":
         if self.action_type == "type" and not self.text:
             raise ValueError("type 动作必须填写 text 字段，不能为空")
-        if self.action_type == "navigate" and not self.url:
-            raise ValueError("navigate 动作必须填写 url 字段，不能为空")
-        if self.action_type in {"scroll", "drag"} and not (self.direction or self.value_direction):
+        # value_direction is an iphone-only field (picker); getattr keeps this base
+        # validator correct for both the base and the iphone subclass.
+        if self.action_type in {"scroll", "drag"} and not (
+            self.direction or getattr(self, "value_direction", None)
+        ):
             raise ValueError("scroll/drag 动作必须填写 direction 或 value_direction")
         return self
 
@@ -188,10 +178,13 @@ class Observation(BaseModel):
     )
 
 
-class ActionDecision(BaseModel):
+class BaseActionDecision(BaseModel):
     """Action policy output: the next action to execute."""
 
-    action: Action = Field(description="当前应该执行的操作")
+    # SerializeAsAny so model_dump_json preserves per-platform Action subclass fields
+    # (e.g. iphone value_direction, browser url). Without it, a base-typed field drops
+    # subclass-only fields on serialization (context.json in runner.py:285).
+    action: SerializeAsAny[BaseAction] = Field(description="当前应该执行的操作")
     not_found_reason: Optional[str] = Field(
         default=None,
         description="当截图中找不到指令要求的目标元素时填写原因（如「当前页面无通讯录标签」）；找到目标时留空",
@@ -219,7 +212,7 @@ class SupervisorStep(BaseModel):
     goal_completed: bool = Field(description="用户目标是否已完全达成")
     app_name: Optional[str] = Field(default=None, description="当前前台应用名称")
     summary: str = Field(description="对当前屏幕状态和任务进展的简要描述")
-    preformed_action: Optional[ActionDecision] = Field(
+    preformed_action: Optional[BaseActionDecision] = Field(
         default=None,
         description="预生成的动作决策（设置后 runner 跳过 Action Policy 直接执行）",
     )
@@ -377,7 +370,7 @@ class PolicyTurn(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     observation_source: str
     supervisor: SupervisorStep
-    action_decision: Optional[ActionDecision] = None
+    action_decision: Optional[BaseActionDecision] = None
     checker: Optional[dict] = Field(default=None, description="Checker 原始结果：status, reason, summary, missing_evidence 等")
     planner: Optional[dict] = Field(default=None, description="Planner 原始结果：instruction, summary, direction, drag_column")
     replan: Optional[dict] = Field(default=None, description="Replan 原始结果：diagnosis, strategy, instruction")
@@ -426,3 +419,13 @@ class PolicyContext(BaseModel):
         default_factory=dict,
         description="本次运行各 LLM 配置键实际使用的模型 {config_key: model}，用于成本核算自描述",
     )
+
+
+# --- Back-compat aliases -----------------------------------------------------
+# Many modules ``from gui_agent.core.schemas import Action, ActionDecision``. The
+# neutral classes were renamed to BaseAction/BaseActionDecision (so adapters can
+# subclass per platform); these aliases keep every existing importer working. Files
+# that read platform-specific fields (iphone picker, browser url) import their
+# adapter's <Plat>Action instead — the runtime object is always the right subclass.
+Action = BaseAction
+ActionDecision = BaseActionDecision

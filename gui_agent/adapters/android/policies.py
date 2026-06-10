@@ -4,8 +4,8 @@ Mirrors the iphone ``StructuredOutputPolicy`` LLM machinery — same config via
 ``resolve_llm_config('action_policy')``, same structured-output call via
 ``invoke_structured`` into an ``ActionDecision``, same ``BaseActionPolicy`` base —
 but with an ANDROID system prompt: operate a phone touchscreen, output ONE action
-within the neutral action vocabulary (tap / type / clear_text / press_enter /
-scroll / drag / home / stop).
+within the android action vocabulary (tap / type / clear_text / press_enter /
+scroll / drag / home / back / recents / stop).
 
 VISION-ONLY: the screenshot is sent as-is (downscaled only if very large) — it is
 NOT the iphone 2x retina image, so ``resize_to_logical_png`` is deliberately NOT
@@ -21,18 +21,12 @@ does not fill them; the executor ignores them anyway.
 
 from __future__ import annotations
 
-import base64
 import io
-from typing import Optional
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
-from gui_agent.core.config import resolve_llm_config
-from llm.structured import invoke_structured
 from gui_agent.core.policies.base import BaseActionPolicy
-from gui_agent.core.schemas import ActionDecision, Observation
+from gui_agent.adapters.android.actions import AndroidActionDecision
 
 load_dotenv()
 
@@ -53,11 +47,13 @@ SYSTEM_PROMPT = """\
 - scroll：滚动列表或页面以显示更多内容。填写 direction（down 看下方、up 看上方、left 看左侧、right 看右侧）、amount（small/medium/large）；
   局部滚动容器需填写 x/y 作为滚动锚点，落在要滚动的区域内。
 - drag：拖动滑块、进度条等需要拖拽的控件。填写起点 x/y。
-- home：回到手机主屏幕（等价于系统主屏键）。
+- home：回到手机主屏幕（等价于系统主屏键），无需坐标。
+- back：系统返回键，返回上一级 / 关闭当前弹窗或页面，无需坐标。
+- recents：打开最近任务（多任务切换），无需坐标。
 - stop：当指令含义是「停止」「无需操作」「目标已完成」，或目标元素确实不在当前截图中时使用，无需坐标。
 
 Android 操作约定：
-- 「返回上一级」优先点击界面内的返回按钮（通常在左上角，形如 ← 箭头）或底部导航栏对应标签；只有明确需要退出当前应用回到桌面时才用 home。
+- 「返回上一级」优先用 back（系统返回键），或点击界面内的返回按钮（通常在左上角，形如 ← 箭头）/ 底部导航栏对应标签；只有明确需要退出当前应用回到桌面时才用 home。
 - 屏幕顶部是状态栏 / 通知栏，底部常有导航栏（多个标签 tab）。应用列表 / 抽屉中的图标用 tap 打开。
 - 输入文字后软键盘会从屏幕下半部分弹出并遮挡内容；输入完成后用 press_enter 提交并收起键盘。
 - amount 表示滚动幅度：small（细微调整）、medium（普通翻看）、large（快速翻页）。普通整页滚动可不填 x/y；局部容器 / 分栏滚动必须填 x/y 落在该区域中心。
@@ -100,46 +96,12 @@ def _prepare_android_png(png_bytes: bytes) -> bytes:
 
 
 class AndroidActionPolicy(BaseActionPolicy):
-    """Vision-based android action policy: LLM screenshot analysis + structured output."""
+    """Vision-based android action policy. Uses the shared BaseActionPolicy.decide()
+    template; the iphone picker hints are accepted by that signature and ignored."""
 
     name = "android_vision"
+    SYSTEM_PROMPT = SYSTEM_PROMPT
+    decision_schema = AndroidActionDecision
 
-    def decide(
-        self,
-        observation: Observation,
-        instruction: str,
-        *,
-        direction: Optional[str] = None,
-        drag_column: Optional[str] = None,
-        drag_steps: Optional[int] = None,
-        verbose: bool = True,
-    ) -> ActionDecision:
-        # direction/drag_column/drag_steps are iphone picker/scroll hints; accepted
-        # for signature compatibility but ignored (the vision prompt reasons over the
-        # screenshot directly).
-        cfg = resolve_llm_config("action_policy")
-        if verbose:
-            print(f"Provider : {cfg.provider}")
-            print(f"Model    : {cfg.model}")
-
-        b64 = base64.b64encode(_prepare_android_png(observation.png_bytes)).decode()
-        llm = ChatOpenAI(
-            model=cfg.model,
-            api_key=cfg.api_key,
-            base_url=cfg.base_url,
-        )
-
-        user_text = f"操作指令：{instruction}\n\n请根据手机截图执行该指令。"
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(
-                content=[
-                    {"type": "text", "text": user_text},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    },
-                ]
-            ),
-        ]
-        return invoke_structured(llm, messages, ActionDecision)
+    def _prepare_png(self, png_bytes: bytes) -> bytes:
+        return _prepare_android_png(png_bytes)

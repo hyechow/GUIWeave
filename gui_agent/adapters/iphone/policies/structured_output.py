@@ -1,17 +1,12 @@
 """Structured-output multimodal LLM action policy."""
 
-import base64
 import re
 from typing import Optional
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
-from gui_agent.core.config import resolve_llm_config
-from llm.structured import invoke_structured
 from gui_agent.core.policies.base import BaseActionPolicy, resize_to_logical_png
-from gui_agent.core.schemas import ActionDecision, Observation
+from gui_agent.adapters.iphone.actions import IPhoneActionDecision
 
 load_dotenv()
 
@@ -72,53 +67,62 @@ action 使用 stop，description 说明找不到目标。
 """
 
 
+# ⚠️ 只为 prompt 的「手指方向」提示把 value-direction(increase/decrease) 译成 up/down；
+# 但传给 _normalize_drag_direction 的必须是**原始 direction**(increase/decrease)，让它设
+# value_direction——gesture 层对 value_direction 的映射才是正确的。若把译后的 up/down 传进去，
+# 会被当 finger 方向、再被 _drag_delta 反向解读(向上→数值变小)，picker 数值发散。
+# increase = value grows = gesture 手指向上(to_y < y)；decrease = 手指向下。
+_PICKER_VALUE_TO_GESTURE = {"increase": "up", "decrease": "down"}
+
+
+def _resolve_hints(
+    instruction: str,
+    direction: Optional[str],
+    drag_column: Optional[str],
+    drag_steps: Optional[int],
+) -> tuple[Optional[str], Optional[str], Optional[int], Optional[str]]:
+    """Tap-only suppression + translate value-direction to a finger-gesture hint.
+
+    Hints only apply to drag/scroll. If the instruction is clearly a tap (tap keywords,
+    no drag/scroll keywords), suppress hints so the policy doesn't choose drag.
+    Returns ``(direction, drag_column, drag_steps, gesture_hint_dir)``.
+    """
+    _drag_scroll_words = ("拖动", "拖拽", "滑动", "滚动", "drag", "scroll")
+    _tap_only = (
+        any(w in instruction for w in ("点击", "tap", "轻触"))
+        and not any(w in instruction for w in _drag_scroll_words)
+    )
+    if _tap_only:
+        direction = drag_column = None
+        drag_steps = None
+    gesture_hint_dir = _PICKER_VALUE_TO_GESTURE.get(direction or "", direction)
+    return direction, drag_column, drag_steps, gesture_hint_dir
+
+
 class StructuredOutputPolicy(BaseActionPolicy):
-    """Vision-based action policy: LLM screenshot analysis + structured output."""
+    """Vision-based iPhone action policy: LLM screenshot analysis + structured output
+    + picker post-processing. Uses the shared BaseActionPolicy.decide() template;
+    only the iphone-specific hooks live here."""
 
     name = "structured_output"
+    SYSTEM_PROMPT = SYSTEM_PROMPT
+    decision_schema = IPhoneActionDecision
 
-    def decide(
+    def _prepare_png(self, png_bytes: bytes) -> bytes:
+        # iPhone mirror is 2x Retina; downsample to logical px for the vision model.
+        return resize_to_logical_png(png_bytes)
+
+    def _build_user_text(
         self,
-        observation: Observation,
         instruction: str,
         *,
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
-        verbose: bool = True,
-    ) -> ActionDecision:
-        cfg = resolve_llm_config("action_policy")
-        if verbose:
-            print(f"Provider : {cfg.provider}")
-            print(f"Model    : {cfg.model}")
-
-        b64 = base64.b64encode(resize_to_logical_png(observation.png_bytes)).decode()
-        llm = ChatOpenAI(
-            model=cfg.model,
-            api_key=cfg.api_key,
-            base_url=cfg.base_url,
+    ) -> str:
+        direction, drag_column, _, gesture_hint_dir = _resolve_hints(
+            instruction, direction, drag_column, drag_steps
         )
-
-        # Hints only apply to drag/scroll actions. If the instruction is clearly a tap
-        # (contains tap keywords and no drag/scroll keywords), suppress hints to avoid
-        # the action policy choosing drag when it should tap.
-        _drag_scroll_words = ("拖动", "拖拽", "滑动", "滚动", "drag", "scroll")
-        _tap_only = (
-            any(w in instruction for w in ("点击", "tap", "轻触"))
-            and not any(w in instruction for w in _drag_scroll_words)
-        )
-        if _tap_only:
-            direction = drag_column = None
-            drag_steps = None
-
-        # ⚠️ 只为 prompt 的「手指方向」提示把 value-direction(increase/decrease) 译成 up/down；
-        # 但传给 _normalize_drag_direction 的必须是**原始 direction**(increase/decrease)，让它设
-        # value_direction——gesture 层对 value_direction 的映射才是正确的。若把译后的 up/down 传进
-        # 去，会被当 finger 方向、再被 _drag_delta 反向解读(向上→数值变小)，picker 数值发散。
-        # increase = value grows = gesture 手指向上(to_y < y)；decrease = 手指向下。
-        _PICKER_VALUE_TO_GESTURE = {"increase": "up", "decrease": "down"}
-        gesture_hint_dir = _PICKER_VALUE_TO_GESTURE.get(direction or "", direction)
-
         hint_parts: list[str] = []
         if gesture_hint_dir:
             dir_zh = {"up": "上", "down": "下", "left": "左", "right": "右"}.get(gesture_hint_dir, gesture_hint_dir)
@@ -126,21 +130,24 @@ class StructuredOutputPolicy(BaseActionPolicy):
         if drag_column:
             hint_parts.append(f"⚠️ 目标列：{drag_column}。")
         hint_prefix = "\n".join(hint_parts)
-        user_text = f"{hint_prefix}\n操作指令：{instruction}\n\n请根据截图执行该指令。" if hint_prefix else f"操作指令：{instruction}\n\n请根据截图执行该指令。"
+        return (
+            f"{hint_prefix}\n操作指令：{instruction}\n\n请根据截图执行该指令。"
+            if hint_prefix
+            else f"操作指令：{instruction}\n\n请根据截图执行该指令。"
+        )
 
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(
-                content=[
-                    {"type": "text", "text": user_text},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    },
-                ]
-            ),
-        ]
-        decision = invoke_structured(llm, messages, ActionDecision)
+    def _postprocess(
+        self,
+        decision: IPhoneActionDecision,
+        instruction: str,
+        *,
+        direction: Optional[str] = None,
+        drag_column: Optional[str] = None,
+        drag_steps: Optional[int] = None,
+    ) -> IPhoneActionDecision:
+        direction, drag_column, drag_steps, gesture_hint_dir = _resolve_hints(
+            instruction, direction, drag_column, drag_steps
+        )
         _normalize_drag_direction(decision, instruction, direction, drag_steps)
         _normalize_scroll_direction(decision, gesture_hint_dir)
         _force_picker_column(decision, drag_column)
@@ -179,7 +186,7 @@ def _picker_step_distance(instruction: str) -> Optional[int]:
 
 
 def _normalize_drag_direction(
-    decision: ActionDecision,
+    decision: IPhoneActionDecision,
     instruction: str,
     direction_hint: Optional[str] = None,
     step_count: Optional[int] = None,
@@ -228,7 +235,7 @@ def _normalize_drag_direction(
 _DRAG_COLUMN_TO_AREA = {"year": "picker_left", "month": "picker_center", "day": "picker_right"}
 
 
-def _force_picker_column(decision: ActionDecision, drag_column: Optional[str]) -> None:
+def _force_picker_column(decision: IPhoneActionDecision, drag_column: Optional[str]) -> None:
     """用 planner 结构化算出的 drag_column 硬覆盖 picker 列，不信任 action_policy 从指令文本
     解析出的列。
 
@@ -251,7 +258,7 @@ def _force_picker_column(decision: ActionDecision, drag_column: Optional[str]) -
         action.x = None  # 用 picker_* 的校准列坐标，弃用文本估计的 x
 
 
-def _normalize_scroll_direction(decision: ActionDecision, direction_hint: Optional[str]) -> None:
+def _normalize_scroll_direction(decision: IPhoneActionDecision, direction_hint: Optional[str]) -> None:
     """Override scroll direction with structured hint."""
     if direction_hint not in ("up", "down", "left", "right"):
         return
@@ -261,7 +268,7 @@ def _normalize_scroll_direction(decision: ActionDecision, direction_hint: Option
     action.direction = direction_hint
 
 
-def _fix_date_range_field_mixup(decision: ActionDecision, instruction: str) -> None:
+def _fix_date_range_field_mixup(decision: IPhoneActionDecision, instruction: str) -> None:
     """Guard against LLM confusing 开始时间 (left) and 结束时间 (right).
 
     The action policy model consistently misidentifies the two fields on the

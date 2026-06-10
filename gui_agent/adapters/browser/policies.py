@@ -14,18 +14,12 @@ NOT used. No iPhone picker, no home-screen / springboard concepts, no DOM.
 
 from __future__ import annotations
 
-import base64
 import io
-from typing import Optional
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
-from gui_agent.core.config import resolve_llm_config
-from llm.structured import invoke_structured
 from gui_agent.core.policies.base import BaseActionPolicy
-from gui_agent.core.schemas import ActionDecision, Observation
+from gui_agent.adapters.browser.actions import BrowserActionDecision
 
 load_dotenv()
 
@@ -99,47 +93,13 @@ def _prepare_browser_png(png_bytes: bytes) -> bytes:
 
 
 class BrowserActionPolicy(BaseActionPolicy):
-    """Vision-based browser action policy: LLM screenshot analysis + structured output."""
+    """Vision-based browser action policy. Uses the shared BaseActionPolicy.decide()
+    template; the iphone picker hints (direction/drag_column/drag_steps) are accepted
+    by that signature and ignored (browser has no picker)."""
 
     name = "browser_vision"
+    SYSTEM_PROMPT = SYSTEM_PROMPT
+    decision_schema = BrowserActionDecision
 
-    def decide(
-        self,
-        observation: Observation,
-        instruction: str,
-        *,
-        direction: Optional[str] = None,
-        drag_column: Optional[str] = None,
-        drag_steps: Optional[int] = None,
-        verbose: bool = True,
-    ) -> ActionDecision:
-        # direction/drag_column/drag_steps are iphone picker/scroll hints; the
-        # browser policy accepts them for signature compatibility but ignores the
-        # picker-specific ones. (A direction hint could refine scroll, but the
-        # vision prompt already reasons over the screenshot.)
-        cfg = resolve_llm_config("action_policy")
-        if verbose:
-            print(f"Provider : {cfg.provider}")
-            print(f"Model    : {cfg.model}")
-
-        b64 = base64.b64encode(_prepare_browser_png(observation.png_bytes)).decode()
-        llm = ChatOpenAI(
-            model=cfg.model,
-            api_key=cfg.api_key,
-            base_url=cfg.base_url,
-        )
-
-        user_text = f"操作指令：{instruction}\n\n请根据网页截图执行该指令。"
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(
-                content=[
-                    {"type": "text", "text": user_text},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    },
-                ]
-            ),
-        ]
-        return invoke_structured(llm, messages, ActionDecision)
+    def _prepare_png(self, png_bytes: bytes) -> bytes:
+        return _prepare_browser_png(png_bytes)

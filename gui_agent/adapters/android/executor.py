@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import time
 
-from gui_agent.core.schemas import ActionDecision
+from gui_agent.adapters.android.actions import AndroidActionDecision
 
 
 class AndroidExecutor:
@@ -65,7 +65,7 @@ class AndroidExecutor:
 
     def execute(
         self,
-        decision: ActionDecision,
+        decision: AndroidActionDecision,
         app_name: str = "",
         png_bytes: bytes | None = None,
         is_home_screen: bool = False,
@@ -121,6 +121,14 @@ class AndroidExecutor:
         elif action.action_type == "home":
             print("回到主屏幕")
             print(f"  结果: {client.press_home()}")
+
+        elif action.action_type == "back":
+            print("返回上一级")
+            print(f"  结果: {client.back()}")
+
+        elif action.action_type == "recents":
+            print("打开最近任务")
+            print(f"  结果: {client.recents()}")
 
         elif action.action_type == "stop":
             print("停止操作（当前状态已满足目标，无需执行）")

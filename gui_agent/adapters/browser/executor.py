@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 
-from gui_agent.core.schemas import ActionDecision
+from gui_agent.adapters.browser.actions import BrowserActionDecision
 
 
 class BrowserExecutor:
@@ -59,7 +59,7 @@ class BrowserExecutor:
 
     def execute(
         self,
-        decision: ActionDecision,
+        decision: BrowserActionDecision,
         app_name: str = "",
         png_bytes: bytes | None = None,
         is_home_screen: bool = False,
@@ -134,10 +134,6 @@ class BrowserExecutor:
             print(f"  结果: {result}")
             if "failed" in result.lower():
                 return False
-
-        elif action.action_type == "home":
-            print("执行返回起始页")
-            print(f"  结果: {client.press_home()}")
 
         elif action.action_type == "stop":
             print("停止操作（当前状态已满足目标，无需执行）")

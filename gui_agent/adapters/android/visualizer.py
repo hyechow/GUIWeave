@@ -25,7 +25,7 @@ macOS-host only (agent_cursor is a Swift NSWindow; window lookup is Quartz).
 
 from __future__ import annotations
 
-from gui_agent.core.schemas import Action
+from gui_agent.core.schemas import BaseAction
 
 # Action types with a screen location worth a cursor. press_enter / home / stop /
 # clear_text are non-spatial and skipped (no misleading center flash).
@@ -141,7 +141,7 @@ class AndroidActionVisualizer:
         py = norm_y / 1000.0 * disp_h
         return cx0 + off_x + px, cy0 + off_y + py
 
-    def show_action(self, action: Action) -> None:
+    def show_action(self, action: BaseAction) -> None:
         action_type = getattr(action, "action_type", None)
         if action_type not in _SPATIAL:
             return

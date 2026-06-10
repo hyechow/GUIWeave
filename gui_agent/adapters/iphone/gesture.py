@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from gui_agent.adapters.iphone.executor_constants import SCROLL_DELTA, SCROLL_TICKS
-from gui_agent.core.schemas import Action
+from gui_agent.adapters.iphone.actions import IPhoneAction as Action
 
 
 @dataclass(frozen=True)

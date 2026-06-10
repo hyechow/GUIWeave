@@ -15,7 +15,7 @@ from gui_agent.adapters.iphone.executor import ActionExecutor
 from gui_agent.adapters.iphone.executor_constants import SCROLL_DELTA, SCROLL_TICKS
 from gui_agent.adapters.iphone.gesture import action_with_drag, action_with_wheel, drag_gesture, wheel_gesture
 from gui_agent.adapters.iphone.perception import LivePhoneSession
-from gui_agent.core.schemas import Action
+from gui_agent.adapters.iphone.actions import IPhoneAction as Action
 from gui_agent.adapters.iphone.stitch import robust_shift as _kp_robust_shift, _gray_u8 as _kp_gray
 
 
