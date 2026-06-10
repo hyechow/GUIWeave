@@ -1,29 +1,24 @@
 """Browser action executor: dispatch one ActionDecision onto the page.
 
-``BrowserExecutor.execute`` matches the iphone ``ActionExecutor.execute`` signature
-EXACTLY — ``execute(decision, app_name='', png_bytes=None, is_home_screen=False)
--> bool`` — so the generic runner loop drives it the same way (the trailing
-iphone-only args are accepted and ignored).
-
-Coordinates ``action.x`` / ``action.y`` are normalized 0-1000 over the viewport;
-they are denormalized to viewport pixels via the device's ``viewport_size`` (the
-browser analogue of the iphone ``logical_xy`` / WIN_W / WIN_H step). Intentionally
-SIMPLE: NO YOLO snap, NO OCR, NO picker.
+Reuses the shared ``gui_agent.core.executor.VisionExecutor`` (the 7 shared actions +
+denorm + _tap); only the browser-specific bits live here:
+  - ``_clear_before_type`` — select-all for plain <input>/<textarea>, but SKIP it on
+    contenteditable rich editors (Cmd+A there enters block-node selection and swallows
+    the next type).
+  - ``_dispatch_extra`` — navigate / back / new_tab / select_tab / close_tab.
+Coordinates are normalized 0-1000 over the viewport; NO YOLO snap, NO picker.
 """
 
 from __future__ import annotations
 
-import time
+from typing import Optional
 
-from gui_agent.adapters.browser.actions import BrowserActionDecision
+from gui_agent.adapters.browser.actions import BrowserAction
+from gui_agent.core.executor import VisionExecutor
 
 
-class BrowserExecutor:
+class BrowserExecutor(VisionExecutor):
     """Execute normalized policy actions against the browser via PlaywrightDevice."""
-
-    def __init__(self, session):
-        # ``session`` is a BrowserSession; the device lives on ``.client``.
-        self.session = session
 
     def _client(self):
         client = getattr(self.session, "client", None)
@@ -31,100 +26,23 @@ class BrowserExecutor:
             raise RuntimeError("浏览器尚未连接")
         return client
 
-    def _denorm(self, ax: float, ay: float) -> tuple[float, float]:
-        """Normalized 0-1000 -> viewport pixels, clamped inside the viewport."""
-        w, h = self._client().viewport_size
-        x = ax / 1000 * w
-        y = ay / 1000 * h
-        return max(0.0, min(x, w - 1)), max(0.0, min(y, h - 1))
+    def _clear_before_type(self, client, text: str) -> None:
+        # Replace existing contents: select-all + type. BUT only for plain
+        # <input>/<textarea>. On a contenteditable rich block editor (Feishu/Notion),
+        # Cmd+A on an empty block enters BLOCK-NODE selection and the following type is
+        # SWALLOWED — so for contenteditable we skip select-all and type at the cursor
+        # (the field is empty in the vast majority of type targets; a genuine replace
+        # can emit a separate clear_text).
+        kind = _focused_kind(client)
+        if kind == "input":
+            print(f"  清空并输入: {text!r}")
+            print(f"  结果: {client.select_all()}")
+        else:
+            print(f"  输入（{kind}，跳过 select_all 防块编辑器吞字）: {text!r}")
 
-    def prepare_frame(self, png_bytes: bytes) -> None:
-        """No-op: the browser adapter is vision-only (no YOLO/OCR tap snapping).
-        The runner submits this to a background thread each turn; iphone uses it to
-        precompute snap data — browser has nothing to precompute."""
-        return None
-
-    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
-        """Scroll without execute()'s bool wrapper (runner scroll-cache path).
-        ``ticks`` / ``delta_px`` are iphone scroll-probe params and are ignored —
-        browser scroll is deterministic via the device wheel."""
-        client = self._client()
-        ax = action.x if action.x is not None else 500
-        ay = action.y if action.y is not None else 500
-        px, py = self._denorm(ax, ay)
-        amount = _amount_to_units(action.amount)
-        direction = action.direction or "down"
-        print(f"  scroll {direction} amount={amount} @({px:.0f},{py:.0f})")
-        print(f"  结果: {client.scroll(direction, amount, px, py)}")
-
-    def execute(
-        self,
-        decision: BrowserActionDecision,
-        app_name: str = "",
-        png_bytes: bytes | None = None,
-        is_home_screen: bool = False,
-    ) -> bool:
-        # app_name / png_bytes / is_home_screen are iphone-only; ignored here.
-        action = decision.action
-        print(f"\n动作: [{action.action_type}] {action.description}")
-        client = self._client()
-
-        if action.action_type in ("tap", "click") and action.x is not None and action.y is not None:
-            px, py = self._denorm(action.x, action.y)
-            return self._tap(px, py)
-
-        elif action.action_type == "type" and action.text:
-            if action.x is not None and action.y is not None:
-                px, py = self._denorm(action.x, action.y)
-                if not self._tap(px, py):
-                    return False
-                time.sleep(0.3)
-            else:
-                print("未提供输入坐标，默认当前输入框已聚焦，直接输入文字")
-            # Replace existing contents: select-all + type the new text.
-            #
-            # BUT only for plain <input>/<textarea>. On a contenteditable rich
-            # block editor (Feishu/Notion-style docs), Cmd+A on an empty block
-            # enters BLOCK-NODE selection and the following keyboard.type is
-            # SWALLOWED — the body looked un-typeable ("零效果" replan loop).
-            # For contenteditable we skip select-all and type at the cursor
-            # (the field is empty in the overwhelming majority of type targets;
-            # for a genuine replace the policy can emit a separate clear_text).
-            kind = _focused_kind(client)
-            if kind == "input":
-                print(f"  清空并输入: {action.text!r}")
-                print(f"  结果: {client.select_all()}")
-            else:
-                print(f"  输入（{kind}，跳过 select_all 防块编辑器吞字）: {action.text!r}")
-            print(f"  结果: {client.type_text(action.text)}")
-
-        elif action.action_type == "clear_text":
-            print("清空当前输入框")
-            print(f"  结果: {client.clear_text()}")
-
-        elif action.action_type == "press_enter":
-            print("按回车确认输入")
-            print(f"  结果: {client.press_enter()}")
-
-        elif action.action_type == "scroll" and action.direction:
-            ax = action.x if action.x is not None else 500
-            ay = action.y if action.y is not None else 500
-            px, py = self._denorm(ax, ay)
-            amount = _amount_to_units(action.amount)
-            print(f"  scroll {action.direction} amount={amount} @({px:.0f},{py:.0f})")
-            print(f"  结果: {client.scroll(action.direction, amount, px, py)}")
-
-        elif action.action_type == "drag":
-            if action.x is None or action.y is None or action.to_x is None or action.to_y is None:
-                print("拖动失败：缺少 x/y/to_x/to_y")
-                return False
-            fx, fy = self._denorm(action.x, action.y)
-            tx, ty = self._denorm(action.to_x, action.to_y)
-            duration_ms = action.duration_ms or 1000
-            print(f"  drag ({fx:.0f},{fy:.0f})->({tx:.0f},{ty:.0f}), {duration_ms}ms")
-            print(f"  结果: {client.drag(fx, fy, tx, ty, duration_ms)}")
-
-        elif action.action_type == "navigate":
+    def _dispatch_extra(self, action: BrowserAction, client) -> Optional[bool]:
+        at = action.action_type
+        if at == "navigate":
             url = _normalize_url(action.url)
             if not url:
                 print("导航失败：缺少 url")
@@ -132,54 +50,25 @@ class BrowserExecutor:
             print(f"导航到地址栏: {url}")
             result = client.navigate(url)
             print(f"  结果: {result}")
-            if "failed" in result.lower():
-                return False
-
-        elif action.action_type == "back":
+            return "failed" not in result.lower()
+        if at == "back":
             print("浏览器历史后退")
             print(f"  结果: {client.go_back()}")
-
-        elif action.action_type == "new_tab":
+            return True
+        if at == "new_tab":
             url = _normalize_url(action.url) if action.url else None
             print(f"新建标签页{('，导航到 ' + url) if url else ''}")
             print(f"  结果: {client.new_tab(url)}")
-
-        elif action.action_type == "select_tab":
+            return True
+        if at == "select_tab":
             print(f"切换到标签页（匹配 {action.tab_match!r}）")
             print(f"  结果: {client.select_tab(action.tab_match)}")
-
-        elif action.action_type == "close_tab":
+            return True
+        if at == "close_tab":
             print(f"关闭标签页（{action.tab_match or '当前'}）")
             print(f"  结果: {client.close_tab(action.tab_match)}")
-
-        elif action.action_type == "stop":
-            print("停止操作（当前状态已满足目标，无需执行）")
             return True
-
-        else:
-            print(f"跳过执行：action_type={action.action_type!r}，需手动处理")
-            return False
-
-        return True
-
-    def _tap(self, px: float, py: float) -> bool:
-        print(f"执行点击: ({px:.0f}, {py:.0f})")
-        result = self._client().tap(px, py)
-        print(f"结果: {result}")
-        low = result.lower()
-        if "interrupted" in low or "failed" in low:
-            print("点击失败：跳过")
-            return False
-        return True
-
-
-# Map the schema's coarse ScrollAmount onto PlaywrightDevice.scroll amount units.
-# (PlaywrightDevice scrolls amount * 120px; 3/5/9 ≈ small/medium/large screen-fracs.)
-_AMOUNT_UNITS = {"small": 3, "medium": 5, "large": 9}
-
-
-def _amount_to_units(amount: str) -> int:
-    return _AMOUNT_UNITS.get(amount, 5)
+        return None
 
 
 _FOCUS_KIND_JS = """(() => {
@@ -194,11 +83,9 @@ _FOCUS_KIND_JS = """(() => {
 
 def _focused_kind(client) -> str:
     """Classify the currently-focused element so the type path knows whether a
-    select-all (Cmd+A) is safe. Returns 'input' for <input>/<textarea> (select-all
-    reliably replaces), 'ce' for contenteditable rich editors (select-all enters
-    block-node selection and swallows the next type — must be skipped), 'other'/
-    'none' otherwise. Defaults to 'input' (legacy select-all) if eval is
-    unavailable, so plain-input replace semantics are preserved on any failure."""
+    select-all (Cmd+A) is safe. 'input' for <input>/<textarea> (select-all reliably
+    replaces), 'ce' for contenteditable (select-all swallows the next type — skip),
+    'other'/'none' otherwise. Defaults to 'input' if eval is unavailable."""
     ev = getattr(client, "eval_js", None)
     if ev is None:
         return "input"
@@ -211,10 +98,7 @@ def _focused_kind(client) -> str:
 
 def _normalize_url(url: str | None) -> str:
     """Prepend https:// when the model gives a bare host (e.g. 'feishu.cn').
-
-    The LLM commonly emits a scheme-less host. Anything already carrying a scheme
-    (http/https) — or an about:/chrome:/file: URL — is passed through untouched.
-    """
+    Anything already carrying a scheme — or an about:/chrome:/file: URL — passes through."""
     if not url:
         return ""
     u = url.strip()
