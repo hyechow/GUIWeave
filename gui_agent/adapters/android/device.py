@@ -4,7 +4,7 @@
 ``screencap`` for frames, ``input tap/swipe/text/keyevent`` for control. It
 satisfies the neutral ``Device`` Protocol (connect/close/screenshot/tap/type_text/
 drag/press_home) AND the optional ``ScrollableDevice`` capability (scroll), plus
-the android-only extras ``back()`` / ``recents()`` / ``key(code)`` / ``long_press``.
+the android-only extras ``back()`` / ``app_switch()`` / ``key(code)`` / ``long_press``.
 
 COORDINATES — THE KEY SIMPLIFICATION vs iPhone
 ----------------------------------------------
@@ -258,11 +258,11 @@ class AndroidDevice:
 
     # ----- android-only extras (executor / manual use; not Device Protocol) -
     def back(self) -> str:
-        """System back (KEYCODE_BACK). Not wired into the action schema yet."""
+        """System back (KEYCODE_BACK)."""
         return self.key(KEYCODE["back"])
 
-    def recents(self) -> str:
-        """Recents / multitask switcher (KEYCODE_APP_SWITCH)."""
+    def app_switch(self) -> str:
+        """App switcher / recents / multitask view (KEYCODE_APP_SWITCH)."""
         return self.key(KEYCODE["app_switch"])
 
     def wake(self) -> str:

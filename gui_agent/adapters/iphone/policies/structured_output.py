@@ -56,6 +56,7 @@ scroll/drag 的 x/y 是「滚动锚点」：
 - 不要填写 to_x/to_y/duration_ms；这些由执行层根据 direction/amount/method 自动计算。
 需要返回主屏幕时，使用 home，无需填写坐标。
 ⚠️ home 只用于「明确需要退出当前应用回到桌面」的场景。如果目标元素在当前页面不可见，应优先寻找应用内的导航路径（如左上角返回按钮、底部 tab），而不是直接 home。
+需要在多个 App 之间切换时，使用 app_switch 打开 App 切换器（多任务视图），随后再 tap 目标 App 卡片切换过去，无需填写坐标。
 如果指令含义是「停止操作」「无需操作」「目标已完成」，使用 stop，无需填写任何坐标或文字。
 action 的 description 用中文简要说明操作目标即可。
 ⚠️ description 必须与指令中的目标元素名称完全一致！指令说「开始时间」时 description 必须写「开始时间」，指令说「结束时间」时 description 必须写「结束时间」。严禁在 description 中把「开始时间」替换成「结束时间」或反过来。

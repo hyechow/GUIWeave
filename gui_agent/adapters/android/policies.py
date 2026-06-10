@@ -5,7 +5,7 @@ Mirrors the iphone ``StructuredOutputPolicy`` LLM machinery — same config via
 ``invoke_structured`` into an ``ActionDecision``, same ``BaseActionPolicy`` base —
 but with an ANDROID system prompt: operate a phone touchscreen, output ONE action
 within the android action vocabulary (tap / type / clear_text / press_enter /
-scroll / drag / home / back / recents / stop).
+scroll / drag / home / back / app_switch / stop).
 
 VISION-ONLY: the screenshot is sent as-is (downscaled only if very large) — it is
 NOT the iphone 2x retina image, so ``resize_to_logical_png`` is deliberately NOT
@@ -49,7 +49,7 @@ SYSTEM_PROMPT = """\
 - drag：拖动滑块、进度条等需要拖拽的控件。填写起点 x/y。
 - home：回到手机主屏幕（等价于系统主屏键），无需坐标。
 - back：系统返回键，返回上一级 / 关闭当前弹窗或页面，无需坐标。
-- recents：打开最近任务（多任务切换），无需坐标。
+- app_switch：打开 App 切换器 / 最近任务（多任务视图），随后可 tap 卡片切换 App，无需坐标。
 - stop：当指令含义是「停止」「无需操作」「目标已完成」，或目标元素确实不在当前截图中时使用，无需坐标。
 
 Android 操作约定：

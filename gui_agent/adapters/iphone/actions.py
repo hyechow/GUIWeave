@@ -27,12 +27,12 @@ IPhoneScrollTargetArea = Literal[
 ]
 IPhoneActionType = Literal[
     "tap", "type", "clear_text", "press_enter", "scroll", "drag",
-    "home", "kill_frontmost_app", "stop",
+    "home", "app_switch", "stop",
 ]
 
 
 class IPhoneAction(BaseAction):
-    """An iPhone action: shared base + picker fields + home / kill_frontmost_app."""
+    """An iPhone action: shared base + picker fields + home / app_switch."""
 
     action_type: IPhoneActionType  # type: ignore[assignment]
     target_area: IPhoneScrollTargetArea = "main_content"  # type: ignore[assignment]  # adds picker_*

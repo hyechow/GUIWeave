@@ -31,32 +31,31 @@ def test_shared_overlap_in_every_platform():
 
 def test_iphone_vocabulary():
     v = _action_type_values(IPhoneAction)
-    assert {"home", "kill_frontmost_app"} <= v
+    assert {"home", "app_switch"} <= v        # app_switch shared with android
     assert "navigate" not in v
-    assert "back" not in v and "recents" not in v
+    assert "back" not in v
 
 
 def test_browser_vocabulary():
     v = _action_type_values(BrowserAction)
     assert "navigate" in v
     assert "home" not in v
-    assert "kill_frontmost_app" not in v and "back" not in v
+    assert "app_switch" not in v and "back" not in v
 
 
 def test_android_vocabulary():
     v = _action_type_values(AndroidAction)
-    assert {"home", "back", "recents"} <= v
+    assert {"home", "back", "app_switch"} <= v
     assert "navigate" not in v
-    assert "kill_frontmost_app" not in v
 
 
 # --- construction: positive + negative (rejects foreign action_type) -------- #
 def test_positive_construction():
-    IPhoneAction(action_type="kill_frontmost_app", description="退出应用")
+    IPhoneAction(action_type="app_switch", description="打开切换器")
     IPhoneAction(action_type="drag", target_area="picker_left", value_direction="increase", description="调大年份")
     BrowserAction(action_type="navigate", url="example.com", description="打开网站")
     AndroidAction(action_type="back", description="返回")
-    AndroidAction(action_type="recents", description="最近任务")
+    AndroidAction(action_type="app_switch", description="切换应用")
 
 
 @pytest.mark.parametrize(
@@ -65,10 +64,9 @@ def test_positive_construction():
         (IPhoneAction, "navigate"),
         (IPhoneAction, "back"),
         (BrowserAction, "home"),
-        (BrowserAction, "kill_frontmost_app"),
+        (BrowserAction, "app_switch"),
         (BrowserAction, "back"),
         (AndroidAction, "navigate"),
-        (AndroidAction, "kill_frontmost_app"),
     ],
 )
 def test_rejects_foreign_action_type(cls, bad):
@@ -137,6 +135,6 @@ def test_android_schema_has_neither_picker_nor_url():
 
 
 def test_base_rejects_all_platform_actions():
-    for bad in ("navigate", "home", "back", "recents", "kill_frontmost_app"):
+    for bad in ("navigate", "home", "back", "app_switch"):
         with pytest.raises(Exception):
             BaseAction(action_type=bad, description="x")

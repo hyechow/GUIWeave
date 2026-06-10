@@ -242,9 +242,9 @@ class ActionExecutor:
                 result = self._client().tap(WIN_W / 2, WIN_H - 16)
             print(f"结果: {result}")
 
-        elif action.action_type == "kill_frontmost_app":
-            print("执行：打开 App Switcher 并 kill 最前台 App")
-            return self._kill_frontmost_app()
+        elif action.action_type == "app_switch":
+            print("执行：打开 App Switcher（多任务切换）")
+            return self._app_switch()
 
         elif action.action_type == "stop":
             print("停止操作（当前状态已满足目标，无需执行）")
@@ -272,27 +272,19 @@ class ActionExecutor:
             return False
         return True
 
-    def _kill_frontmost_app(self) -> bool:
-        """打开 App Switcher，上滑 kill 最前台 app，点底部空白区回主屏。"""
+    def _app_switch(self) -> bool:
+        """打开 App Switcher（多任务）并停在那里，让 agent 下一步 tap 某个卡片切换 app。
+        只「打开切换器」，不上滑 kill、不退出。"""
         client = self._client()
 
-        # daemon 后端：全程零抢占（AX app_switcher + per-pid drag + tap）
+        # daemon 后端：零抢占 AX 打开切换器
         if getattr(client, "zero_preempt", False):
-            print("  A. 打开 App Switcher (AX, 零抢占)")
+            print("  打开 App Switcher (AX, 零抢占)")
             client.app_switcher()
-            time.sleep(2.0)
-            swipe_x = WIN_W * 0.80                      # 右侧 80% ≈ 254px
-            from_y = _TITLE_BAR_H + 350                 # ≈ 388px
-            to_y   = _TITLE_BAR_H + 80                  # ≈ 118px
-            print(f"  B. 上滑 kill 卡片: x={swipe_x:.0f}, y {from_y}→{to_y}")
-            client.drag(swipe_x, from_y, swipe_x, to_y, duration_ms=350)
             time.sleep(1.5)
-            print("  C. 点底部空白区退出 Switcher")
-            client.tap(WIN_W / 2, WIN_H - 60)
-            time.sleep(1.0)
             return True
 
-        # mirroir 后端：Quartz 路径
+        # mirroir 后端：Quartz 路径——激活窗口 + 点右上角 App Switcher 按钮
         origin = _find_iphone_window()
         if origin is None:
             print("  iPhone Mirroring 窗口未找到，跳过")
@@ -307,28 +299,13 @@ class ActionExecutor:
         )
         time.sleep(0.4)
 
-        # A. 点右上角 App Switcher 按钮
         btn_x = wx + WIN_W - _BTN_RIGHT
         btn_y = wy + _BTN_Y_OFFSET
-        print(f"  A. 点 App Switcher 按钮 ({btn_x:.0f}, {btn_y:.0f})")
+        print(f"  点 App Switcher 按钮 ({btn_x:.0f}, {btn_y:.0f})")
         _quartz_hover(btn_x, btn_y)
         time.sleep(0.2)
         _quartz_click(btn_x, btn_y)
-        time.sleep(2.0)
-
-        # B. 上滑 kill 最前台卡片（卡片在右侧 80% 处）
-        content_top = wy + _TITLE_BAR_H
-        swipe_x = wx + WIN_W * 0.80
-        print(f"  B. 上滑 kill 卡片: x={swipe_x:.0f}, y {content_top+350:.0f}→{content_top+80:.0f}")
-        _quartz_swipe(swipe_x, content_top + 350, swipe_x, content_top + 80, duration_ms=350)
         time.sleep(1.5)
-
-        # C. 点底部导航空白区退出 App Switcher
-        nav_x = wx + WIN_W / 2
-        nav_y = wy + WIN_H - 60
-        print(f"  C. 点底部空白区退出 Switcher ({nav_x:.0f}, {nav_y:.0f})")
-        _quartz_click(nav_x, nav_y)
-        time.sleep(1.0)
         return True
 
     def execute_scroll(self, action: Action, *, ticks: int = SCROLL_TICKS, delta_px: int = SCROLL_DELTA) -> None:

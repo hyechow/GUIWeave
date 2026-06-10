@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
 
 # The 7 shared actions every platform supports. Platform-specific actions (iphone
-# home/kill_frontmost_app, browser navigate, android home/back/recents) live in each
+# home/app_switch, browser navigate, android home/back/app_switch) live in each
 # adapter's <Plat>Action.action_type, so a policy injects only its own vocabulary.
 BaseActionType = Literal[
     "tap", "type", "clear_text", "press_enter", "scroll", "drag", "stop"
@@ -33,8 +33,7 @@ _ACTION_TYPE_LABELS: dict[str, str] = {
     "navigate": "导航",
     "home": "主屏",
     "back": "返回",
-    "recents": "最近任务",
-    "kill_frontmost_app": "退出应用",
+    "app_switch": "切换应用",
     "stop": "停止",
 }
 

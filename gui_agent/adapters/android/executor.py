@@ -126,9 +126,9 @@ class AndroidExecutor:
             print("返回上一级")
             print(f"  结果: {client.back()}")
 
-        elif action.action_type == "recents":
-            print("打开最近任务")
-            print(f"  结果: {client.recents()}")
+        elif action.action_type == "app_switch":
+            print("打开 App 切换器（多任务）")
+            print(f"  结果: {client.app_switch()}")
 
         elif action.action_type == "stop":
             print("停止操作（当前状态已满足目标，无需执行）")

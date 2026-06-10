@@ -91,11 +91,11 @@ def test_keyevent_mappings(calls):
     dev = _connected_device()
     dev.press_home()
     dev.back()
-    dev.recents()
+    dev.app_switch()
     dev.press_enter()
     assert ("key", 3) in calls    # HOME
     assert ("key", 4) in calls    # BACK
-    assert ("key", 187) in calls  # APP_SWITCH (recents)
+    assert ("key", 187) in calls  # APP_SWITCH
     assert ("key", 66) in calls   # ENTER
 
 
