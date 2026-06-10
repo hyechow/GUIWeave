@@ -135,6 +135,10 @@ class BrowserExecutor:
             if "failed" in result.lower():
                 return False
 
+        elif action.action_type == "back":
+            print("浏览器历史后退")
+            print(f"  结果: {client.go_back()}")
+
         elif action.action_type == "stop":
             print("停止操作（当前状态已满足目标，无需执行）")
             return True

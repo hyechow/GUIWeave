@@ -38,9 +38,9 @@ def test_iphone_vocabulary():
 
 def test_browser_vocabulary():
     v = _action_type_values(BrowserAction)
-    assert "navigate" in v
+    assert "navigate" in v and "back" in v   # back = history back (shared with android)
     assert "home" not in v
-    assert "app_switch" not in v and "back" not in v
+    assert "app_switch" not in v
 
 
 def test_android_vocabulary():
@@ -65,7 +65,6 @@ def test_positive_construction():
         (IPhoneAction, "back"),
         (BrowserAction, "home"),
         (BrowserAction, "app_switch"),
-        (BrowserAction, "back"),
         (AndroidAction, "navigate"),
     ],
 )

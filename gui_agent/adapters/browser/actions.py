@@ -14,12 +14,13 @@ from pydantic import SerializeAsAny, model_validator
 from gui_agent.core.schemas import BaseAction, BaseActionDecision
 
 BrowserActionType = Literal[
-    "tap", "type", "clear_text", "press_enter", "scroll", "drag", "navigate", "stop",
+    "tap", "type", "clear_text", "press_enter", "scroll", "drag", "navigate", "back", "stop",
 ]
 
 
 class BrowserAction(BaseAction):
-    """A browser action: shared base + ``navigate`` / ``url`` (no iphone picker, no home)."""
+    """A browser action: shared base + ``navigate`` / ``url`` + ``back`` (history back).
+    No iphone picker, no home."""
 
     action_type: BrowserActionType  # type: ignore[assignment]
     url: Optional[str] = None
