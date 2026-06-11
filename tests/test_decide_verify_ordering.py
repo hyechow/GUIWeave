@@ -55,7 +55,7 @@ def _tap_turn(*, on_target: bool, no_effect: bool = False) -> PolicyTurn:
 
 def _wire(monkeypatch, p, check_status: str) -> list[str]:
     """Mock the LLM checker + the two terminal branches; record which fired."""
-    monkeypatch.setattr(P, "_frame_is_loading", lambda obs: False)
+    monkeypatch.setattr(P, "is_loading_frame", lambda obs: False)
     monkeypatch.setattr(
         p, "_single_check",
         lambda *a, **k: _SingleCheckResult(status=check_status, reason="r", summary="s"),

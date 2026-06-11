@@ -718,7 +718,8 @@ class PlaywrightDevice:
     def pop_tab_switched(self) -> bool:
         """Return True (and clear the flag) if a tab switch happened since the last
         call. Used by the settle loop to detect navigation-to-new-tab even when the
-        pixel diff between old and new tab content falls below SETTLE_CHANGE_THR."""
+        new tab looks visually similar to the old one (below frame_analysis.frame_changed
+        thresholds)."""
         val = self._tab_switched
         self._tab_switched = False
         return val

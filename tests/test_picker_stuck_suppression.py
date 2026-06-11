@@ -7,7 +7,7 @@ change" only when BOTH the whole frame stayed similar AND the region the action 
 (tap/scroll/drag all carry x/y) did not move; and it suppresses instruction-repetition
 stuck for value adjustments once the screen is confirmed to be moving.
 
-Locks the metric ``_png_change`` and the predicates ``_action_center`` / ``_is_value_adjust``.
+Locks the metric ``region_change`` and the predicates ``_action_center`` / ``_is_value_adjust``.
 """
 
 from __future__ import annotations
@@ -17,10 +17,8 @@ import types
 
 from PIL import Image, ImageDraw
 
-from gui_agent.core.supervisor.milestone.policy import (
-    MilestoneSupervisorPolicy,
-    _png_change,
-)
+from gui_agent.core.frame_analysis import region_change
+from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 
 def _png(img: Image.Image) -> bytes:
@@ -29,37 +27,37 @@ def _png(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-# ── 局部 tier: _png_change(global_sim, local-change-in-action-region) ──────────
-def test_png_change_local_region_catches_small_change_global_misses_it():
+# ── 局部 tier: region_change(global_sim, local-change-in-action-region) ──────────
+def test_region_change_local_region_catches_small_change_global_misses_it():
     base = Image.new("L", (256, 256), 255)
     mod = base.copy()
     ImageDraw.Draw(mod).rectangle([100, 100, 130, 130], fill=0)  # one small region changed
     p1, p2 = _png(base), _png(mod)
 
     # Whole frame barely changed (a tiny region) -> global similarity stays high...
-    gs, loc_here = _png_change(p1, p2, center=(100 / 256 * 1000, 115 / 256 * 1000))
+    gs, loc_here = region_change(p1, p2, center=(100 / 256 * 1000, 115 / 256 * 1000))
     assert gs > 0.95
     # ...but the region the action TOUCHED clearly moved.
     assert loc_here is not None and loc_here > 0.3
 
 
-def test_png_change_region_far_from_change_sees_nothing():
+def test_region_change_region_far_from_change_sees_nothing():
     base = Image.new("L", (256, 256), 255)
     mod = base.copy()
     ImageDraw.Draw(mod).rectangle([100, 100, 130, 130], fill=0)
-    gs, loc_far = _png_change(_png(base), _png(mod), center=(10, 10))  # top-left, far away
+    gs, loc_far = region_change(_png(base), _png(mod), center=(10, 10))  # top-left, far away
     assert loc_far is not None and loc_far < 0.05
 
 
-def test_png_change_no_center_returns_global_only():
+def test_region_change_no_center_returns_global_only():
     base = Image.new("L", (256, 256), 255)
-    gs, loc = _png_change(_png(base), _png(base), center=None)
+    gs, loc = region_change(_png(base), _png(base), center=None)
     assert loc is None  # coordless action -> caller falls back to the global tier
 
 
-def test_png_change_identical_frames_no_change_anywhere():
+def test_region_change_identical_frames_no_change_anywhere():
     base = _png(Image.new("L", (256, 256), 255))
-    gs, loc = _png_change(base, base, center=(500, 500))
+    gs, loc = region_change(base, base, center=(500, 500))
     assert gs > 0.999 and loc == 0.0
 
 

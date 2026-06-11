@@ -1,4 +1,4 @@
-"""Deterministic regression tests for _is_blank_screen (loading-screen guard).
+"""Deterministic regression tests for is_blank_screen (loading-screen guard).
 
 Regression: log 20260605_224604 turn 6. The WeChat 账单 page was still loading
 (thin green progress bar + empty list), but the guard missed it because:
@@ -19,7 +19,7 @@ import io
 import pytest
 from PIL import Image, ImageDraw
 
-from gui_agent.core.supervisor.milestone.policy import _is_blank_screen
+from gui_agent.core.frame_analysis import is_blank_screen
 
 W, H = 600, 1300
 
@@ -55,7 +55,7 @@ def _make_png(body_fill: int, *, textured: bool = False, with_bezel: bool = True
     return buf.getvalue()
 
 
-# (id, png-bytes builder, expected _is_blank_screen)
+# (id, png-bytes builder, expected is_blank_screen)
 CASES = [
     ("gray239_body_blank",       _make_png(239),                         True),   # the turn-6 case
     ("near_white_blank",         _make_png(252),                         True),
@@ -66,5 +66,5 @@ CASES = [
 
 
 @pytest.mark.parametrize("png,expected", [(c[1], c[2]) for c in CASES], ids=[c[0] for c in CASES])
-def test_is_blank_screen(png, expected):
-    assert _is_blank_screen(png) is expected
+def testis_blank_screen(png, expected):
+    assert is_blank_screen(png) is expected

@@ -1,18 +1,17 @@
 """MilestoneSupervisorPolicy: two-machine milestone supervisor."""
 
-import io
 import json
 import re
 import time
 from datetime import date
 from typing import Literal, Optional
 
-from PIL import Image, ImageStat
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from llm.structured import get_llm_token_usage, invoke_structured
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.frame_analysis import is_loading_frame, region_change
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 
 from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_loop_check, run_planner
@@ -38,17 +37,9 @@ STUCK_SCREEN_FROZEN = 0.99
 # that did nothing stays ~0.00. A frame pair is "no change" (stuck candidate) only when BOTH
 # tiers are under threshold — global similar AND the action region didn't move. Calibrated on
 # real alarm-picker frames (picker step ≈0.14–0.18, no-op scroll ≈0.00; PNG is lossless).
-STUCK_LOCAL_CHANGE = 0.06
-# Half-size (fraction of frame) of the box around the action's (x,y), and the analysis grid.
-STUCK_LOCAL_HALF = 0.14
-STUCK_SIM_GRID = 256
+STUCK_LOCAL_CHANGE = 0.06  # 局部 tier 阈值；度量见 frame_analysis.region_change（box 半边/网格在那里）
 MAX_SCROLL_PER_MILESTONE = 3
 STUCK_REPEAT_WINDOW = 3
-# Blank/loading screen = the app's content body is light AND near-uniform (no
-# text/list rendered yet). Measured on the de-bezeled body, not the full frame.
-# This app's blank body renders ~gray 239 (not pure white), so don't gate on >250.
-BLANK_BODY_MEAN_MIN = 225.0  # body must be light (rules out dark splash/dark mode)
-BLANK_BODY_STD_MAX = 12.0    # body must be near-uniform (text/icons push std up)
 STUCK_REPEAT_WORD_OVERLAP = 0.85
 # 连续调值类（is_iterative）的卡住判据：屏幕冻结/指令重复都是正常的（picker 反复拖同一下），
 # 不适用。改判「被监控值连续 N 轮未变化」=真停滞。N>1 容忍摘要框提交滞后(1 轮) + 小步未到一格。
@@ -127,52 +118,6 @@ def _has_collected(history: list[PolicyTurn], milestone_id: str) -> bool:
     )
 
 
-def _is_blank_screen(png_bytes: bytes) -> bool:
-    """Return True if the screenshot is a blank/loading screen (content not yet rendered).
-
-    A blank/loading body is a large, LIGHT, near-UNIFORM region. We measure the
-    app content body, not the full frame, because:
-      - the iPhone Mirroring black bezel dilutes any whole-image ratio, and
-      - this app's blank body renders ~gray 239 (not pure white), so a `>250`
-        near-white count finds nothing.
-    So: trim the black bezel (bbox of non-dark pixels), drop the top chrome
-    (status bar / header / toolbar), then treat the body as blank when it is
-    both light (mean ≥ BLANK_BODY_MEAN_MIN) and near-uniform (stddev ≤ BLANK_BODY_STD_MAX).
-    Text, icons or a rendered list push the stddev up and fail the uniform test.
-    """
-    img = Image.open(io.BytesIO(png_bytes)).convert("L")
-    # Trim the black mirroring bezel to the actual screen rectangle.
-    bbox = img.point(lambda p: 255 if p > 40 else 0).getbbox()
-    if bbox:
-        img = img.crop(bbox)
-    w, h = img.size
-    if w == 0 or h == 0:
-        return False
-    # Measure the body below the top chrome (status bar + header + toolbar ≈ 18%)
-    # and above the home indicator.
-    body = img.crop((0, int(h * 0.18), w, int(h * 0.97)))
-    if body.width == 0 or body.height == 0:
-        return False
-    stat = ImageStat.Stat(body)
-    mean, std = stat.mean[0], stat.stddev[0]
-    return mean >= BLANK_BODY_MEAN_MIN and std <= BLANK_BODY_STD_MAX
-
-
-def _frame_is_loading(observation: Observation) -> bool:
-    """Whether this frame is an unstable / still-loading page (so wait, don't act).
-
-    Prefer the PLATFORM's structural signal when perception supplies one
-    (``observation.loading`` — e.g. browser's ``document.readyState != 'complete'``).
-    The iphone PIXEL heuristic (``_is_blank_screen``: large light uniform body) is
-    used ONLY as the fallback when the platform gives no signal (``loading is None``),
-    because on desktop web it MISFIRES — a rendered-but-sparse page (an empty doc
-    editor, a wide centered layout) is mostly whitespace and reads as 'blank', which
-    made the agent wait out MAX_LOADING_FRAMES and fail a perfectly good page."""
-    if observation.loading is not None:
-        return observation.loading
-    return _is_blank_screen(observation.png_bytes)
-
-
 def _default_read_instruction(milestone: Milestone) -> str:
     return (
         f"提取当前屏幕中与「{milestone.name}」相关的所有可见内容，"
@@ -201,47 +146,6 @@ def _is_home_identity(page_identity: str) -> bool:
     """
     pid = (page_identity or "").lower()
     return "主屏" in (page_identity or "") or "home screen" in pid or "springboard" in pid
-
-
-def _png_change(
-    png1: bytes,
-    png2: bytes,
-    center: Optional[tuple[float, float]] = None,
-    size: int = STUCK_SIM_GRID,
-    half: float = STUCK_LOCAL_HALF,
-    tile: int = 8,
-) -> tuple[float, Optional[float]]:
-    """Two-tier change between two frames (grayscale at ``size``).
-
-    Returns ``(global_sim, local_change)``:
-      - ``global_sim``  = 1 - mean abs diff over the whole frame (legacy whole-frame tier).
-      - ``local_change``= the LARGEST ``tile``-sized block change (0..1) inside a box of
-        half-size ``half`` around ``center`` (the action's normalized 0-1000 x/y). This is
-        the 局部 tier: did the REGION the agent actually touched move? A picker step keeps
-        global_sim ~0.999 yet drives local_change to ~0.15; a no-op scroll leaves it ~0.0.
-        ``None`` when the action had no coordinates (press_enter / home / back / stop) — the
-        caller then falls back to the global tier alone.
-    """
-    import numpy as np
-
-    a = np.asarray(Image.open(io.BytesIO(png1)).convert("L").resize((size, size)), dtype=np.int16)
-    b = np.asarray(Image.open(io.BytesIO(png2)).convert("L").resize((size, size)), dtype=np.int16)
-    d = np.abs(a - b) / 255.0
-    global_sim = 1.0 - float(d.mean())
-    if center is None:
-        return global_sim, None
-    cx, cy = center[0] / 1000 * size, center[1] / 1000 * size
-    h = half * size
-    x0, x1 = max(0, int(cx - h)), min(size, int(cx + h))
-    y0, y1 = max(0, int(cy - h)), min(size, int(cy + h))
-    if x1 - x0 < tile or y1 - y0 < tile:
-        return global_sim, None
-    reg = d[y0:y1, x0:x1]
-    best = 0.0
-    for yy in range(0, reg.shape[0] - tile + 1, tile):
-        for xx in range(0, reg.shape[1] - tile + 1, tile):
-            best = max(best, float(reg[yy : yy + tile, xx : xx + tile].mean()))
-    return global_sim, best
 
 
 # ── Main class ────────────────────────────────────────────────────────
@@ -315,7 +219,7 @@ class MilestoneSupervisorPolicy:
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        if _frame_is_loading(observation):
+        if is_loading_frame(observation):
             print("  [BlankScreen] 检测到白屏，页面加载中，等待下一帧...")
             return SupervisorStep(
                 should_act=False,
@@ -1050,7 +954,7 @@ class MilestoneSupervisorPolicy:
         gsims: list[float] = []
         locs: list[Optional[float]] = []
         for i in range(1, len(frames)):
-            gs, lc = _png_change(frames[i - 1][0], frames[i][0], frames[i][1])
+            gs, lc = region_change(frames[i - 1][0], frames[i][0], frames[i][1])
             gsims.append(gs)
             locs.append(lc)
 
@@ -1073,8 +977,8 @@ class MilestoneSupervisorPolicy:
             )
         # AB-cycle: whole-state oscillation (current ≈ 2-back globally but ≠ adjacent). Uses
         # the global tier — oscillation is a full-state flip, not a local nudge.
-        sim_2back, _ = _png_change(frames[-1][0], frames[-3][0])
-        sim_adj, _ = _png_change(frames[-1][0], frames[-2][0])
+        sim_2back, _ = region_change(frames[-1][0], frames[-3][0])
+        sim_adj, _ = region_change(frames[-1][0], frames[-2][0])
         if sim_2back >= STUCK_SCREEN_SIMILARITY and sim_adj < STUCK_SCREEN_SIMILARITY:
             print(f"  [SimStuck] 2back={sim_2back:.2%}, adj={sim_adj:.2%} → AB 循环")
             return _SingleCheckResult(
