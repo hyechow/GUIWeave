@@ -456,6 +456,8 @@ def run_agent_loop(
     on_session_open: object = None,  # callable(phone) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
 ) -> dict:
+    _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
+
     def _say(s: str) -> None:
         if not silent:
             print(s)
@@ -477,7 +479,15 @@ def run_agent_loop(
     _ensure_note_hashes(context)
     if knowledge is not None:
         context.knowledge = knowledge
-    _save_context(context_path, context)
+
+    def _save_ctx() -> None:
+        """Persist context, stamping the run's wall-clock elapsed so far — so the final file
+        carries the true end-to-end time (LLM + settle + perception/execution/overhead), not
+        just the sum of LLM-module timings."""
+        context.wall_clock_s = time.perf_counter() - _run_started
+        _save_context(context_path, context)
+
+    _save_ctx()
     _say(f"Goal    : {context.goal}")
     _say(f"Turns   : {len(context.turns)}")
     # Pin the task goal as a persistent HUD header (above the live turn status), so
@@ -529,7 +539,7 @@ def run_agent_loop(
     # call run_agent_loop) persist it.
     if context.platform != bundle.platform:
         context.platform = bundle.platform
-        _save_context(context_path, context)
+        _save_ctx()
 
     # Pre-session environment check (mirror open / CDP up / adb+ADBKeyboard ready). Runs
     # ONCE here, before the session opens, so a blocking precondition aborts with a clear
@@ -586,7 +596,7 @@ def run_agent_loop(
                                 context, seen_rows, turn_no=turn_no - 1, say=_say)
                 stitch_acc = None
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
-                _save_context(context_path, context)
+                _save_ctx()
                 return _make_result(context, f"达到最大轮数 {max_turns}")
 
             turn_started_at = time.perf_counter()
@@ -616,7 +626,7 @@ def run_agent_loop(
                 loading_streak += 1
                 if loading_streak > MAX_LOADING_FRAMES:
                     _say(f"\n页面持续加载 {loading_streak} 帧仍未稳定，agent-loop 停止")
-                    _save_context(context_path, context)
+                    _save_ctx()
                     return _make_result(context, f"页面持续加载未稳定（>{MAX_LOADING_FRAMES} 帧）")
                 _say(f"  [Loading] 等待页面稳定（第 {loading_streak} 帧，不计入轮数）...")
                 time.sleep(LOADING_WAIT_S)
@@ -863,7 +873,7 @@ def run_agent_loop(
             _print_timings(supervisor)
             context.turns.append(turn)
             _sync_milestone_done_checks(supervisor, context)
-            _save_context(context_path, context)
+            _save_ctx()
             if not silent:
                 _print_turn_stats(turn_no, turn_started_at, llm_calls_before)
             if on_turn and callable(on_turn):
@@ -887,7 +897,7 @@ def run_agent_loop(
                     _say(f"\n目标已达成：{reason}")
                 else:
                     _say(f"\n任务未完成：{reason}")
-                _save_context(context_path, context)
+                _save_ctx()
                 if sv_step.goal_completed:
                     return _make_result(context, reason, sv_step.collection_summary)
                 return _make_result(context, reason)
@@ -897,7 +907,7 @@ def run_agent_loop(
                     noop_count += 1
                     if noop_count >= 3:
                         _say(f"\n连续 {noop_count} 轮滚动探测失败，agent-loop 停止")
-                        _save_context(context_path, context)
+                        _save_ctx()
                         return _make_result(context, f"连续 {noop_count} 轮滚动探测失败")
                     _say("滚动探测失败，进入下一轮重新规划")
                     continue
@@ -905,10 +915,10 @@ def run_agent_loop(
                     noop_count += 1
                     if noop_count >= 3:
                         _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                        _save_context(context_path, context)
+                        _save_ctx()
                         return _make_result(context, f"连续 {noop_count} 轮无动作")
                     continue
-                _save_context(context_path, context)
+                _save_ctx()
                 return _make_result(context, "动作未执行，agent-loop 停止")
 
             if sv_step.milestone_id != prev_milestone_id:
@@ -919,7 +929,7 @@ def run_agent_loop(
                 noop_count += 1
                 if noop_count >= 3:
                     _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                    _save_context(context_path, context)
+                    _save_ctx()
                     return _make_result(context, f"连续 {noop_count} 轮无动作")
                 continue
 
@@ -960,7 +970,7 @@ def run_agent_loop(
                             _say(f"  [TargetVerify] off_target：标记落在「{tv.actual_element}」")
                     except Exception as e:
                         _say(f"  [TargetVerify] 校验失败（忽略）：{e}")
-                _save_context(context_path, context)  # 落盘 settle_s（+ target_verify）
+                _save_ctx()  # 落盘 settle_s（+ target_verify）
                 continue
 
             try:
@@ -968,7 +978,7 @@ def run_agent_loop(
             except EOFError:
                 answer = ""
             if answer in {"q", "quit", "exit"}:
-                _save_context(context_path, context)
+                _save_ctx()
                 return _make_result(context, "用户退出 agent-loop")
 
 

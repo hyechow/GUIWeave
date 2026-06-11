@@ -454,6 +454,10 @@ class PolicyContext(BaseModel):
         default=None,
         description="本次注入的应用知识摘要 {app_name, nav_chars, elements_chars, section_count}；未命中知识库则为 None。每轮实际注入的章节见 turns[].sections_loaded",
     )
+    wall_clock_s: Optional[float] = Field(
+        default=None,
+        description="本次 run_agent_loop 端到端真实墙钟耗时(秒)；含 LLM、settle、感知/执行/调度等全部。旧 log 无此字段则为 None",
+    )
 
 
 # --- Back-compat aliases -----------------------------------------------------
