@@ -55,6 +55,17 @@ def _fmt_tokens(n: int) -> str:
     return f"{n/1000:.1f}k" if n >= 1000 else str(n)
 
 
+CONTEXT_WINDOW = 128_000  # model context budget to monitor against (peak single-call input)
+_CTX_WARN = 0.75          # amber ≥ 75% of the window
+_CTX_DANGER = 0.90        # red   ≥ 90%
+
+
+def _ctx_color(used: int) -> str:
+    """Color for a context-size figure by its share of CONTEXT_WINDOW."""
+    frac = used / CONTEXT_WINDOW if CONTEXT_WINDOW else 0
+    return "#dc2626" if frac >= _CTX_DANGER else "#f59e0b" if frac >= _CTX_WARN else "#64748b"
+
+
 # ── Action types & colors ──────────────────────────────────────
 
 ACTION_COLORS: dict[str, tuple[int, int, int]] = {
@@ -456,6 +467,8 @@ class ReportData:
     router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
     output: str = ""     # final reply / 最终输出 of the run
     platform: str = ""   # run platform (iphone/browser); empty for old logs
+    wall_clock_s: float = 0.0    # true end-to-end runner elapsed (context.wall_clock_s); 0 for old logs
+    settle_s_total: float = 0.0  # Σ per-turn settle waits (post-action screen-settle)
     knowledge: dict = field(default_factory=dict)  # injected app-knowledge summary {app_name, nav_chars, elements_chars, section_count}
     knowledge_sections: list[dict] = field(default_factory=list)  # sections injected ≥1 turn: {stem, title, body} (body read from knowledge dir for the click-to-view modal)
 
@@ -1017,6 +1030,7 @@ class RunnerReportBuilder:
         data.platform = ctx.get("platform") or ""
         data.output = ctx.get("output") or ""
         data.knowledge = ctx.get("knowledge") or {}
+        data.wall_clock_s = ctx.get("wall_clock_s") or 0.0
         data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
         # Run-level model record; cost is priced against these (not the active config).
@@ -1025,6 +1039,7 @@ class RunnerReportBuilder:
         _MODELS_MAP.update(data.models)
 
         turns = ctx.get("turns", [])
+        data.settle_s_total = sum((t.get("settle_s") or 0) for t in turns)
 
         # Sections injected into the planner at least once this run (ordered by first appearance),
         # with bodies read from the knowledge dir so the sidebar can show them on click.
@@ -1968,7 +1983,7 @@ HTML_TEMPLATE = """\
   /* Timing bar */
   .timing-bar {{ display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: #f1f5f9; margin-top: 2px; }}
   .timing-seg {{ height: 100%; min-width: 1px; }}
-  .timing-labels {{ display: flex; gap: 8px; font-size: 9px; color: #94a3b8; margin-top: 2px; flex-wrap: wrap; }}
+  .timing-labels {{ display: flex; gap: 8px; font-size: 11px; color: #94a3b8; margin-top: 2px; flex-wrap: wrap; }}
   .timing-label-dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 2px; vertical-align: middle; margin-right: 2px; }}
 
   /* Action type colors */
@@ -2128,11 +2143,26 @@ def _render_timing_html(timings: dict[str, float]) -> str:
     )
 
 
+def _ctx_pct_tag(n: int) -> str:
+    """A small, spaced ``N%`` — an input-token count as a share of the model context window,
+    colored by pressure (gray <75%, amber ≥75%, red ≥90%). A subordinate annotation after each
+    module's input count (e.g. ``checker 3.9k 3% /136``), kept light so it doesn't crowd the
+    numbers. Empty when it rounds to 0%."""
+    if not n:
+        return ""
+    pct = n / CONTEXT_WINDOW * 100 if CONTEXT_WINDOW else 0
+    if pct < 0.5:
+        return ""
+    return f'<span style="font-size:0.84em;color:{_ctx_color(n)};margin-right:4px">{pct:.0f}%</span>'
+
+
 def _render_token_html(token_usage: dict) -> str:
-    """Per-module token usage (input/output) + turn total + estimated cost."""
+    """Per-module token usage (input <ctx%> / output) + turn total + estimated cost. The small
+    % after each module's input is that prompt's share of the 128k context window."""
     ti, to = _sum_tokens(token_usage)
     if ti == 0 and to == 0:
         return ""
+    sep = '<span style="color:#cbd5e1;margin:0 3px">/</span>'  # muted divider, recedes
     parts = []
     for name, tu in token_usage.items():
         mi, mo = int(tu.get("input", 0)), int(tu.get("output", 0))
@@ -2140,14 +2170,14 @@ def _render_token_html(token_usage: dict) -> str:
             continue
         tc = TIMING_COLORS.get(name, "#94a3b8")
         parts.append(
-            f'<span style="margin-right:8px">'
-            f'<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:{tc};margin-right:2px"></span>'
-            f'{name} {_fmt_tokens(mi)}/{_fmt_tokens(mo)}</span>'
+            f'<span style="margin-right:12px;white-space:nowrap">'
+            f'<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:{tc};margin-right:3px"></span>'
+            f'{name} {_ctx_pct_tag(mi)}{_fmt_tokens(mi)}{sep}{_fmt_tokens(mo)}</span>'
         )
     return (
-        f'<div style="display:flex;flex-wrap:wrap;gap:4px;font-size:9px;color:#94a3b8;margin-top:2px">'
+        f'<div style="display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:#94a3b8;margin-top:3px">'
         f'{"".join(parts)}'
-        f'<span style="font-weight:600;color:#475569">Σ tok 入 {_fmt_tokens(ti)} · 出 {_fmt_tokens(to)} · ≈{pricing_currency()}{_token_cost(token_usage):.4f}</span>'
+        f'<span style="font-weight:600;color:#475569">Σ tok in {_fmt_tokens(ti)} · out {_fmt_tokens(to)} · ≈{pricing_currency()}{_token_cost(token_usage):.4f}</span>'
         f'</div>'
     )
 
@@ -2364,23 +2394,41 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
 
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
-    total_time = sum(m.get("total_time", 0) for m in data.milestones)
-    stats_parts.append(f"total_time: {total_time:.1f}s")
+    llm_s = sum(m.get("total_time", 0) for m in data.milestones)  # Σ LLM-module timings
+    if data.wall_clock_s:
+        # True end-to-end elapsed, split into LLM compute, settle waits, and "other"
+        # (perception / action execution / scheduling overhead = wall − LLM − settle).
+        other_s = max(0.0, data.wall_clock_s - llm_s - data.settle_s_total)
+        stats_parts.append(
+            f"elapsed: {data.wall_clock_s:.1f}s "
+            f"(LLM {llm_s:.1f} · settle {data.settle_s_total:.1f} · other {other_s:.1f})"
+        )
+    else:
+        stats_parts.append(f"LLM: {llm_s:.1f}s")  # old logs without wall_clock_s
     sess_in = sum(int(m.get("input_tokens", 0)) for m in data.milestones)
     sess_out = sum(int(m.get("output_tokens", 0)) for m in data.milestones)
     sess_cost = sum(float(m.get("cost", 0)) for m in data.milestones)
     if sess_in or sess_out:
         stats_parts.append(
-            f"tokens: 入 {_fmt_tokens(sess_in)} / 出 {_fmt_tokens(sess_out)}"
+            f"tokens: in {_fmt_tokens(sess_in)} / out {_fmt_tokens(sess_out)}"
             f"  |  cost: ≈{pricing_currency()}{sess_cost:.4f}"
         )
     stats_str = "  |  ".join(stats_parts)
+
+    # Display ordinal per milestone (#1, #2, …). Milestone ids are descriptive slugs now
+    # (e.g. 'navigate_to_riot_app'), which _short_mid can't shorten — showing the raw slug
+    # crowds the name out of the sidebar. The ordinal is always short; the raw id stays for
+    # the anchor. Falls back to _short_mid for ids not in the milestone list (e.g. _no_milestone).
+    _mid_ordinal = {m.get("id", ""): i for i, m in enumerate(data.milestones, 1)}
+
+    def _mid_disp(mid: str) -> str:
+        return str(_mid_ordinal[mid]) if mid in _mid_ordinal else _short_mid(mid)
 
     # Sidebar outline (子目标分解): one clickable node per milestone, scroll-spy active.
     outline_parts = []
     for m in data.milestones:
         mid = _safe(m.get("id", "?"))           # full id — for the anchor/link
-        mid_disp = _safe(_short_mid(m.get("id", "?")))  # short id — for display
+        mid_disp = _safe(_mid_disp(m.get("id", "?")))  # ordinal — for display
         name = _safe(m.get("name", ""))
         kind = m.get("kind", "")
         kind_safe = _safe(kind)
@@ -2418,7 +2466,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             if (ms_in or ms_out) else ""
         )
         mid_safe = _safe(page.milestone_id)       # full id — anchor target
-        mid_disp = _safe(_short_mid(page.milestone_id))  # short id — heading
+        mid_disp = _safe(_mid_disp(page.milestone_id))  # ordinal — heading
 
         thumbs_html = ""
         details_html = ""
