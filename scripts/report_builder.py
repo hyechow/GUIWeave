@@ -258,10 +258,15 @@ def annotate_action(
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         draw.text((cx - tw // 2, cy - th // 2), label, fill=(255, 255, 255, 255), font=font)
 
-    # Draw snap visualization: original (LLM) vs snapped (YOLO/OCR)
+    # Draw snap visualization: original (LLM) vs snapped (YOLO/OCR/DOM)
     if snap and snap.get("original"):
         method = snap.get("method", "?").lower()
-        snap_color = (255, 165, 0, 220) if method == "yolo" else (0, 200, 100, 220)  # orange=YOLO, green=OCR
+        # orange=YOLO, cyan=DOM(browser), green=OCR
+        snap_color = (
+            (34, 211, 238, 220) if method == "dom"
+            else (255, 165, 0, 220) if method == "yolo"
+            else (0, 200, 100, 220)
+        )
         ox = int(snap["original"][0] / 1000 * w)
         oy = int(snap["original"][1] / 1000 * h)
         # Solid circle at original (LLM-predicted) position
@@ -2135,7 +2140,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         method = step.snap.get("method", "?").upper()
         orig = step.snap["original"]
         snapped = step.snap.get("snapped")
-        snap_color = "#f59e0b" if method == "YOLO" else "#22c55e"
+        snap_color = "#22d3ee" if method == "DOM" else "#f59e0b" if method == "YOLO" else "#22c55e"
         dist = ""
         if snapped:
             d = ((orig[0] - snapped[0]) ** 2 + (orig[1] - snapped[1]) ** 2) ** 0.5

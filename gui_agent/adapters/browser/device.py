@@ -332,6 +332,48 @@ class PlaywrightDevice:
             return f"failed: {exc}"
         return f"OK tap ({x:.0f},{y:.0f})"
 
+    def dom_snap(self, x: float, y: float) -> "tuple[float, float, Optional[str]]":
+        """Snap a viewport-CSS click point to the center of the small clickable element under it
+        — browser's coordinate correction, the DOM analogue of iphone's YOLO snap.
+
+        CONSERVATIVE: only snaps to a reasonably-sized clickable element (button / link / list
+        row / menu item / checkbox …). Returns the point UNCHANGED for canvas / svg / video /
+        sliders / huge containers-overlays / when nothing clickable is under it — where snapping
+        to a center would land in the WRONG place (e.g. a canvas map is ONE element → its center
+        is the middle of the map). So snap only fixes a near-miss on a real control, never hurts.
+        Coords are CSS viewport px (same space as getBoundingClientRect / page.mouse.click).
+        Returns ``(sx, sy, info)`` — ``info`` is a short "tag WxH" string when snapped, else None.
+        """
+        import json
+
+        js = (
+            "(()=>{const x=%d,y=%d;let el=document.elementFromPoint(x,y);if(!el)return '';"
+            "const n=el.closest&&el.closest('a,button,input,select,textarea,label,[role=button],"
+            "[role=option],[role=menuitem],[role=tab],[role=checkbox],[role=radio],[onclick],.cursor-pointer,li');"
+            "if(!n)return '';const tag=n.tagName.toLowerCase();"
+            "const role=(n.getAttribute&&n.getAttribute('role'))||'';"
+            "const itype=tag==='input'?((n.getAttribute('type')||'').toLowerCase()):'';"
+            "if(['canvas','svg','video','html','body','main','form'].includes(tag))return '';"
+            "if(['slider','scrollbar'].includes(role)||itype==='range')return '';"
+            "const r=n.getBoundingClientRect(),vw=innerWidth,vh=innerHeight;"
+            "if(r.width<=0||r.height<=0||r.width>vw*0.9||r.height>vh*0.6)return '';"
+            "return JSON.stringify({cx:Math.round(r.x+r.width/2),cy:Math.round(r.y+r.height/2),"
+            "tag,w:Math.round(r.width),h:Math.round(r.height)});})()"
+            % (int(round(x)), int(round(y)))
+        )
+        try:
+            res = self._cdp_send("Runtime.evaluate", {"expression": js, "returnByValue": True})
+            val = (res.get("result", {}) or {}).get("value")
+        except Exception:  # noqa: BLE001
+            return x, y, None
+        if not val:
+            return x, y, None
+        try:
+            d = json.loads(val)
+            return float(d["cx"]), float(d["cy"]), f"{d['tag']} {d['w']}x{d['h']}"
+        except Exception:  # noqa: BLE001
+            return x, y, None
+
     def upload_file(self, x: float, y: float, file_path: str) -> str:
         """Click the upload control at (x,y) and feed ``file_path`` through the file chooser —
         WITHOUT the native dialog. Arms ``_pending_upload`` so the persistent ``_on_file_chooser``

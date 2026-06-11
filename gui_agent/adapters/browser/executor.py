@@ -26,6 +26,47 @@ class BrowserExecutor(VisionExecutor):
             raise RuntimeError("浏览器尚未连接")
         return client
 
+    def execute(self, decision, app_name: str = "", png_bytes=None, is_home_screen: bool = False) -> bool:
+        # Stash the action so _tap can record its DOM snap on it (the report / runtime visualizer
+        # read action.snap to draw original→snapped, the same as iphone YOLO/OCR).
+        self._cur_action = decision.action
+        return super().execute(decision, app_name, png_bytes, is_home_screen)
+
+    def _tap(self, px: float, py: float) -> bool:
+        """DOM-snap the click point to the clickable element under it, then click. The DOM
+        analogue of iphone's YOLO snap (browser only — it has the DOM). Conservative: a no-op
+        for canvas / huge containers / non-clickable points (see device.dom_snap), so it only
+        fixes a near-miss on a real control and never moves a legitimate precise click.
+
+        Records ``action.snap`` (normalized 0-1000, method 'dom') when it moves the point, so the
+        HTML report / runtime visualizer draw the original→snapped correction like YOLO/OCR."""
+        sx, sy = px, py
+        try:
+            cx, cy, info = self._client().dom_snap(px, py)
+            if info is not None and (abs(cx - px) > 1 or abs(cy - py) > 1):
+                print(f"  DOM 吸附: ({px:.0f},{py:.0f}) → ({cx:.0f},{cy:.0f}) [{info}]")
+                sx, sy = cx, cy
+                self._record_snap(px, py, sx, sy, info)
+        except Exception:  # noqa: BLE001 — never block a click on a snap failure
+            pass
+        return super()._tap(sx, sy)
+
+    def _record_snap(self, px: float, py: float, sx: float, sy: float, info: str) -> None:
+        """Write action.snap in normalized 0-1000 (original=LLM coords, snapped=DOM center)."""
+        action = getattr(self, "_cur_action", None)
+        if action is None or action.x is None or action.y is None:
+            return
+        try:
+            w, h = self._client().viewport_size
+            action.snap = {
+                "method": "dom",
+                "original": [action.x, action.y],          # LLM's normalized coords
+                "snapped": [sx / w * 1000, sy / h * 1000],  # DOM center, normalized back
+                "info": info,
+            }
+        except Exception:  # noqa: BLE001
+            pass
+
     def _clear_before_type(self, client, text: str) -> None:
         # Replace existing contents: select-all + type. BUT only for plain
         # <input>/<textarea>. On a contenteditable rich block editor (Feishu/Notion),

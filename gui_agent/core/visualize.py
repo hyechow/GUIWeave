@@ -48,11 +48,16 @@ def visualize(png_bytes: bytes, action: Action, output_path: Path = OUTPUT) -> N
     yellow = (255, 224, 64, 255)
     shadow = (0, 0, 0, 210)
 
-    # Draw snap visualization: original (LLM) vs snapped (YOLO/OCR)
+    # Draw snap visualization: original (LLM) vs snapped (YOLO/OCR/DOM)
     snap = action.snap
     if snap and snap.get("original"):
         method = snap.get("method", "?").lower()
-        snap_color = (255, 165, 0, 255) if method == "yolo" else (0, 200, 100, 255)  # orange=YOLO, green=OCR
+        # orange=YOLO, cyan=DOM(browser), green=OCR
+        snap_color = (
+            (34, 211, 238, 255) if method == "dom"
+            else (255, 165, 0, 255) if method == "yolo"
+            else (0, 200, 100, 255)
+        )
         ox = snap["original"][0] / 1000 * img.width
         oy = snap["original"][1] / 1000 * img.height
         # Solid circle at original (LLM-predicted) position
