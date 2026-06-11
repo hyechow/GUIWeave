@@ -175,6 +175,18 @@ class Observation(BaseModel):
             "None=该平台不提供此信号，由 supervisor 退回视觉白屏启发式判断。"
         ),
     )
+    url: Optional[str] = Field(
+        default=None,
+        description=(
+            "平台感知层提供的当前页面 URL（如浏览器地址）。结构化元信息——它**不在截图里**"
+            "（vision-only 截图只含网页 viewport），却是页面身份/验收的强信号，供 checker 取真值，"
+            "免得它从看不见的地址栏编造。None=该平台不提供（iphone/android 留空）。"
+        ),
+    )
+    title: Optional[str] = Field(
+        default=None,
+        description="平台感知层提供的当前页面/标签标题（如浏览器 document.title）。同样不在截图里。None=不提供。",
+    )
 
 
 class BaseActionDecision(BaseModel):

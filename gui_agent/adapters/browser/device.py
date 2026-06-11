@@ -271,6 +271,30 @@ class PlaywrightDevice:
         except Exception:
             return False
 
+    def page_info(self) -> tuple[str, str]:
+        """(url, title) of the active page — the browser chrome the vision-only screenshot
+        omits, so the checker can judge page identity from ground truth instead of fabricating.
+
+        Via raw CDP ``Target.getTargetInfo`` (returns both, no JS execution) — robust to the
+        high-level ``page.url`` / ``page.evaluate`` breakage over connect_over_cdp on a
+        mismatched Chrome. Falls back to ``Runtime.evaluate`` if the target info lacks a url.
+        ``("", "")`` on any failure; never raises.
+        """
+        try:
+            info = self._cdp_send("Target.getTargetInfo", {}).get("targetInfo", {})
+            url, title = info.get("url", "") or "", info.get("title", "") or ""
+            if not url or not title:  # 任一缺就回退 JS，分别只补缺失的字段
+                res = self._cdp_send(
+                    "Runtime.evaluate",
+                    {"expression": "[location.href, document.title]", "returnByValue": True},
+                )
+                pair = ((res.get("result", {}) or {}).get("value") or ["", ""]) + ["", ""]
+                url = url or (pair[0] or "")
+                title = title or (pair[1] or "")
+            return url, title
+        except Exception:
+            return "", ""
+
     def eval_js(self, expression: str) -> object:
         """Best-effort JS eval via page.evaluate(). Used by the action visualizer.
         Returns None on any failure; never raises."""

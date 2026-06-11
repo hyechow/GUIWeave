@@ -11,6 +11,19 @@ the same.
 ⚠️ DRAFT — un-tuned. Validated only structurally (placeholders + construction); the
 prompt QUALITY needs real browser-task A/B tuning. Until then, iphone remains the
 default; browser injects this set via adapters/browser/factory.py.
+
+NOTE (vision-only screenshot + structured metadata): screenshots are page.screenshot() = the
+page VIEWPORT only — no browser chrome (address bar / URL) and no tab title. The URL + tab title
+are instead supplied as STRUCTURED metadata: browser perception captures them via raw CDP
+(Target.getTargetInfo) into Observation.url/title, and helpers.run_checker injects them into the
+checker as 页面元信息 (ground truth). So the checker SHOULD use the GIVEN URL/title (never
+fabricate one from the screenshot) together with on-page rendered content (headings, breadcrumbs,
+main content, page-specific elements) for page identity / done.
+
+Capture is BEST-EFFORT: page_info() returns ("","") on failure → url/title are None → NO 页面元信息
+block is injected. The checker wording is therefore CONDITIONAL ("若提供…以其为准；若未提供…仅凭
+可见内容、绝不臆测") so a missing block degrades to on-page content instead of becoming a fabrication
+prompt.
 """
 
 DECOMPOSE_PROMPT = """\
@@ -36,7 +49,7 @@ DECOMPOSE_PROMPT = """\
 
 ## 验收条件
 每个 success_condition 必须指向**唯一可截图确认的状态**，只用一个核心判定，不要用「且」连接多个条件。
-好：「页面标题/URL 含 XX」「结果列表显示 XX」「提交后出现成功提示」
+好：「页头标题/结果列表含 XX」「提交后出现成功提示」（页面 URL/标题若作为元信息提供，也可用于验收）
 差：「看到导航栏及结果列表」（两个条件）
 **action 类的验收条件必须描述操作的最终可见结果**（提交后的成功提示/结果页），不能只验证中间步骤（如「按钮可见」「输入框已聚焦」）。
 
@@ -71,7 +84,7 @@ SINGLE_CHECKER_PROMPT = """\
 
 **第一步：页面识别**
 先识别当前是什么页面。{app_name_context}你必须独立判断当前实际所在的页面——不要预设已在目标页。
-依据**页面标题、URL、主内容区**确定页面身份（如：搜索结果页、商品详情、登录页、设置页、某列表页）。
+⚠️ 截图只含网页内容区（viewport），不含浏览器地址栏/标签栏。**若**下方给出『页面元信息』（URL/标题，浏览器提供的真值，不在截图里），**以它为准**判断页面身份；**若未给出**，则仅凭页面可见内容判断，**绝不臆测或编造 URL/标题**。综合判断：（若有）URL/标题元信息 + 页面可见内容（页头/大标题 H1、面包屑、导航栏高亮项、主内容区、页面特有元素），得出当前是什么页（如：搜索结果页、商品详情、登录页、设置页、某列表页）。
 page_identity **必填、绝不能留空**——它是后续逻辑的判断依据。
 将结果填入 page_identity 字段。
 
@@ -90,13 +103,13 @@ page_identity **必填、绝不能留空**——它是后续逻辑的判断依�
 {history_text}
 {kind_section}
 ## 通用规则
-- done：验收条件中描述的每个具体内容都必须在截图上可直接观察到
+- done：验收条件中描述的每个具体内容，都必须能由页面元信息（若提供）或截图中的可见页面内容直接验证
 - in_progress：验收条件尚未完全满足，包括页面不匹配、还在导航、操作未完成等所有非 done 情况
 - ⚠️ **只按当前子目标的 success_condition 判定**：全局约束（constraints）仅供理解整体背景，不是当前子目标的验收标准。只要 success_condition 字面满足就判 done——绝不能因约束里涉及的其他维度/后续步骤未完成，就把已满足的子目标判成 in_progress。
-- 验收条件提及特定页面/网站时，必须先确认当前确实在该页面（标题、URL、页面特有元素），否则一律 in_progress
+- 验收条件提及特定页面/网站时，必须先确认当前确实在该页面（若有页面元信息 URL/标题则据之，并结合页内页头/面包屑/页面特有元素；无则仅凭可见内容，不臆测），否则一律 in_progress
 - 验收条件要求某段文字内容：截图中对应元素文字必须与验收条件精确匹配
 - 只看可观测事实，不要凭感觉判断
-- done 时：reason 必须写清截图中直接支持验收条件的具体依据（标题、URL、关键内容）；missing_evidence 必须为空。visible_evidence 可选
+- done 时：reason 必须写清直接支持验收条件的具体依据（若有则可引用 URL/标题元信息，并含页内页头/关键可见内容）；missing_evidence 必须为空。visible_evidence 可选
 - 存在任何 missing_evidence 不能返回 done
 - read_instruction 仅在内容读取（collection）场景填写，其余子目标留空
 
@@ -115,8 +128,8 @@ loading 是独立布尔字段，与 status 无关。status 只能填 done 或 in
 # ── Per-kind checker sections (only the relevant one is injected) ──────────
 _CHECK_SECTION_NAVIGATION = """
 ## 导航类子目标（kind=navigation）
-- done 仅当当前页面身份与目标页精确匹配（页面标题/URL 匹配、主内容区符合）。
-- 判 done 时 reason 必须写清页面身份证据（标题文字、URL、关键区块）。
+- done 仅当当前页面身份与目标页精确匹配（若有 URL/标题元信息则据之匹配，或页内页头/主内容区/页面特有元素符合）。
+- 判 done 时 reason 必须写清页面身份证据（若有则用 URL/标题元信息，或页内页头/关键可见区块）。
 - 仍在导航途中、页面不匹配、加载中，一律 in_progress。
 """
 

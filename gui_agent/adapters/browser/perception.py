@@ -85,4 +85,13 @@ class BrowserPerception:
         # rendered empty page is mostly whitespace. None-safe if the device lacks it.
         client = getattr(self.session, "client", None)
         loading = bool(client.is_loading()) if (client is not None and hasattr(client, "is_loading")) else None
-        return Observation(png_bytes=png_bytes, source="browser", loading=loading)
+        # Structured page metadata the vision-only screenshot can't show (no address bar / tab
+        # title): hand the checker the real URL/title so it judges page identity from ground
+        # truth instead of fabricating it.
+        url = title = None
+        if client is not None and hasattr(client, "page_info"):
+            url, title = client.page_info()
+        return Observation(
+            png_bytes=png_bytes, source="browser", loading=loading,
+            url=url or None, title=title or None,
+        )
