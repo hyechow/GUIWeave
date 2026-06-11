@@ -55,7 +55,8 @@ goal 中已含预处理后的绝对日期。若 goal 含日期范围，提取到
    - visible_once：看到指定界面/状态即完成（一次离散动作达成）
    - read_once：读取当前屏一次即完成
    - scroll_until_boundary：需反复滚动，直到列表到底或无更多内容
-   - repeat_until_satisfied：靠重复调整逐步逼近目标值（手机较少见）
+   - repeat_until_satisfied：靠**重复调整逐步逼近一个目标值**——目标是「把某个值设到指定值」，单次操作通常调不到位、要重复多次。典型：时间/日期滚轮 picker 调到目标时间或日期、步进器加减到目标数量。
+     * ⚠️ 凡 success_condition 是「某值显示为/设为 <具体目标值>」且靠 picker 滚轮/步进器/滑块达成（如「时间设为 06:30」「数量设为 3」），**必须用 repeat_until_satisfied，不要用 visible_once**——这类目标要多轮滚动逼近，标 visible_once 会把「一次没调到位」误判为完成或失败。
    - human_escalation：需人工处理
 5. 信息获取类的内容收集子目标用 kind=collection；来自可滚动列表/信息流的内容用 completion_strategy=scroll_until_boundary，并填 scroll_stop_condition（一句话说明何时停止滚动：有时间范围用「当可见记录日期早于 起始日期 时停止」，全量用「滚动至列表底部时停止」）。
 6. 禁止生成 kind=verification 的子目标。analysis 任务里的「计算/汇总/求和/统计/对比」是对**已采集数据的纯运算**，由系统输出环节自动完成，**禁止**为它单独生成子目标。collection 采集子目标就是最后一步，验收只需「数据采全」。
@@ -142,10 +143,15 @@ _CHECK_SECTION_COLLECTION = """
 """
 
 _CHECK_SECTION_CONVERGE = """
-## 连续调值类子目标（completion_strategy=repeat_until_satisfied）
-- 这类目标靠**多轮调整逐步逼近目标值**（如步进器加减、滑块拖动），未到目标是正常 in_progress，不是失败。
-- done 仅当当前值与 success_condition 的目标值精确一致；in_progress 时在 missing_evidence 写出「当前值」「目标值」供规划器算步长。
-- done 时 missing_evidence 必须为空。
+## ⚠️ 连续调值类子目标（completion_strategy=repeat_until_satisfied，如时间/日期滚轮 picker、步进器、滑块）
+- 这类目标靠**多轮调整逐步逼近目标值**，未到目标是正常的 in_progress，不是失败，不要因「上一轮没到位」判 done 或异常。
+- ⚠️ 读「当前值」的**唯一依据是滚轮各列正中间那一行**（选中带/居中高亮行）：小时列中间行=当前小时、分钟列中间行=当前分钟、上午下午列中间行=当前时段，各列组合即当前值。**绝不要**用页面别处的摘要/「已选」文字（不通用、且刷新常滞后于滚轮）。
+- ⚠️ 判定步骤，**不许跳步**：
+  1. 逐列把可见数字从上到下**原样列出**（如分钟列「58 / 59 / 00 / 01 / 02」、时段列「上午 / 下午」），写进 reason；
+  2. 用方括号标出每列**中间高亮行**那个 = 当前选中值，拼成当前值（如「下午 06:00」）；
+  3. 把当前值**逐位**与 success_condition 的目标值比对——**每一位都精确相等才 done**（含分钟个位、含上午/下午）；差任意一位判 in_progress。
+- ⚠️ **禁止被目标值带着走**：不要因为目标是 06:30 就把屏幕上的 00 读成 30、把下午读成上午；不许脑补「差不多」「12小时制换算一下就对了」。只认中间高亮行真正显示的数字。
+- in_progress 时必须在 missing_evidence 写出「当前值=<从滚轮中间行读到的值>」「目标值=<success_condition 目标>」，供规划器算步长/方向；done 时 missing_evidence 必须为空。
 """
 
 _CHECK_SECTION_DEFAULT = (

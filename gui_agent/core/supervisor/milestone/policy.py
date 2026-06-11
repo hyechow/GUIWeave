@@ -331,46 +331,6 @@ class MilestoneSupervisorPolicy:
             if history[-1].action_decision.action.action_type == "type":
                 self._recent_screenshots.clear()
 
-        # Off-target last action (post-action targeting verify said the tap
-        # missed): skip the checker — the milestone obviously isn't done — and
-        # route straight into replan. Catches "screen changed but to the wrong
-        # element" (e.g. 搜索框 tap hit 转账 tab), which SimStuck can't.
-        last_tv = history[-1].target_verify if history else None
-        if last_tv is not None and not last_tv.on_target:
-            print(f"  [OffTarget] 上一步误中「{last_tv.actual_element}」，跳过 checker 直接 replan")
-            stuck = _SingleCheckResult(
-                status="stuck",
-                reason=f"上一步动作落点误中「{last_tv.actual_element}」，未点到目标",
-                stuck_reason=f"动作 off-target：误中{last_tv.actual_element}",
-                summary="",
-            )
-            return self._handle_stuck(milestone, stuck, None, observation, history)
-
-        # Ineffective last tap: target_verify said on_target (hit the intended
-        # element) yet settle saw zero screen change across all polls → the tap
-        # did nothing (re-tapped an already-active tab / inert element). Skip the
-        # checker and replan now, instead of waiting ~3 frames for SimStuck to
-        # fill. Complements off_target above: that owns wrong-element (on_target
-        # False); this owns right-element-but-no-effect. Gated on tap so gestures
-        # (which legitimately may not move much) never trigger it.
-        last_turn = history[-1] if history else None
-        if (
-            last_turn is not None
-            and getattr(last_turn, "no_effect", False)
-            and last_turn.action_decision is not None
-            and last_turn.action_decision.action.action_type in ("tap", "click")
-            and (last_tv is None or last_tv.on_target)
-        ):
-            tapped = last_turn.action_decision.action.description or "目标元素"
-            print(f"  [NoEffect] 上一步点击「{tapped}」落点正确但屏幕零变化（已在该态/元素无效），跳过 checker 直接 replan")
-            stuck = _SingleCheckResult(
-                status="stuck",
-                reason=f"上一步点击「{tapped}」落点正确但屏幕无变化，该操作对当前页面无效",
-                stuck_reason=f"动作无效果：点击「{tapped}」屏幕零变化，应换路径",
-                summary="",
-            )
-            return self._handle_stuck(milestone, stuck, None, observation, history)
-
         prev_page_id = self._last_page_identity.get(milestone.id, "")
 
         with _Timer(self._timings, self._timings_order, "checker", self._token_usage):
@@ -389,8 +349,53 @@ class MilestoneSupervisorPolicy:
         current_page_id = check.page_identity or ""
         self._last_page_identity[milestone.id] = current_page_id
 
+        # VERIFY FIRST, before consuming the prior turn's off-target / no-effect signals.
+        # An action that ACTUALLY satisfied the milestone advances even when the verifiers
+        # misreported it — TargetVerify false off-target (tap hit the right tab but was read
+        # as the wrong one) or settle false no-effect (the screen did change but under the
+        # diff threshold). Only when NOT done do those signals route to replan; otherwise the
+        # fast-paths (placed before the checker) would skip verification and replan a
+        # milestone the action already completed. See logs/.../android/20260611_085000.
         if check.status == "done":
             return self._advance(milestone, observation, history)
+
+        # Off-target last action (post-action targeting verify said the tap missed) — and the
+        # milestone is NOT done (checked above) → route straight into replan. Catches "screen
+        # changed but to the wrong element" (e.g. 搜索框 tap hit 转账 tab), which SimStuck can't.
+        last_tv = history[-1].target_verify if history else None
+        if last_tv is not None and not last_tv.on_target:
+            print(f"  [OffTarget] 上一步误中「{last_tv.actual_element}」，已先验收(未完成)→ replan")
+            stuck = _SingleCheckResult(
+                status="stuck",
+                reason=f"上一步动作落点误中「{last_tv.actual_element}」，未点到目标",
+                stuck_reason=f"动作 off-target：误中{last_tv.actual_element}",
+                summary="",
+            )
+            return self._handle_stuck(milestone, stuck, None, observation, history)
+
+        # Ineffective last tap: target_verify said on_target (hit the intended element) yet
+        # settle saw zero screen change → the tap did nothing (re-tapped an already-active tab
+        # / inert element). Milestone not done (checked above) → replan now instead of waiting
+        # ~3 frames for SimStuck. Complements off_target above (wrong-element vs
+        # right-element-but-no-effect). Gated on tap so gestures (which legitimately may not
+        # move much) never trigger it.
+        last_turn = history[-1] if history else None
+        if (
+            last_turn is not None
+            and getattr(last_turn, "no_effect", False)
+            and last_turn.action_decision is not None
+            and last_turn.action_decision.action.action_type in ("tap", "click")
+            and (last_tv is None or last_tv.on_target)
+        ):
+            tapped = last_turn.action_decision.action.description or "目标元素"
+            print(f"  [NoEffect] 上一步点击「{tapped}」落点正确但屏幕零变化，已先验收(未完成)→ replan")
+            stuck = _SingleCheckResult(
+                status="stuck",
+                reason=f"上一步点击「{tapped}」落点正确但屏幕无变化，该操作对当前页面无效",
+                stuck_reason=f"动作无效果：点击「{tapped}」屏幕零变化，应换路径",
+                summary="",
+            )
+            return self._handle_stuck(milestone, stuck, None, observation, history)
 
         # 连续调值类（picker/步进器收敛）：SimStuck/RepStuck 不适用（屏幕冻结、反复拖同一下
         # 都正常）。改用「被监控值多轮不变」判停滞；未停滞就继续规划，不会因单轮无进展判死路。

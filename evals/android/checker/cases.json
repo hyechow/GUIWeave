@@ -1,18 +1,19 @@
 [
   {
-    "label": "picker值幻觉-显示06:00却被判成06:30（回归 20260610_220003 T8）",
+    "label": "picker值幻觉-显示06:00不能判成06:30（回归 20260610_220003 T8）",
     "screenshot": "evals/android/checker/screenshots/alarm_picker_0600pm.png",
     "milestone": {
       "name": "设置时间为06:30",
       "description": "将闹钟的时间设置为早上06:30。",
       "success_condition": "时间选择器中显示的数值为06:30",
       "kind": "action",
+      "completion_strategy": "repeat_until_satisfied",
       "app_name": "时钟"
     },
     "expected": {
       "status": "in_progress"
     },
-    "note": "时间选择器实际显示『下午 06:00』（分钟=00，非30；且为下午非上午）。T8 的 checker 幻觉成『时间已调整为06:30』判定 set_time 完成，越级到保存子目标，整轮跑飞。checker 必须如实读出选中值≠06:30 → in_progress，不能脑补已完成。"
+    "note": "时间选择器实际显示『下午 06:00』（分钟=00，非30；且为下午非上午）。T8 的 checker 幻觉成『时间已调整为06:30』判 done、越级保存致跑飞。设值类 picker 子目标应被 decomposer 标 completion_strategy=repeat_until_satisfied（同 iphone），走 _CHECK_SECTION_CONVERGE 值传感器段：强制逐列枚举可见数字、只认中间高亮行、逐位比对、禁止被目标值带跑。"
   },
   {
     "label": "picker值-显示10:59明显非06:30（基线：不应误判 done）",
@@ -22,6 +23,7 @@
       "description": "将闹钟的时间设置为早上06:30。",
       "success_condition": "时间选择器中显示的数值为06:30",
       "kind": "action",
+      "completion_strategy": "repeat_until_satisfied",
       "app_name": "时钟"
     },
     "expected": {
