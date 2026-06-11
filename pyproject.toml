@@ -36,6 +36,7 @@ dependencies = [
     "webarena-verified>=1.2.3",
     "adbutils>=2",
     "pypdf>=6.13.2",
+    "pymupdf>=1.27.2.3",
 ]
 
 [dependency-groups]

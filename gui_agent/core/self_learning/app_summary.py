@@ -27,7 +27,7 @@ KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "knowledge"
 # ── Prompts for _app.md (navigation structure) ─────────────────────────────
 
 _NAV_SYSTEM = """\
-你是一个 iPhone 应用导航结构分析专家。
+你是一个应用导航结构分析专家。
 
 给定一个应用的所有页面知识文档，生成一份 **应用级导航概览**，只关注页面间的导航关系，\
 不包含具体 UI 元素细节。要求：
@@ -55,7 +55,7 @@ _NAV_PROMPT = """\
 # ── Prompts for _elements.md (UI elements) ────────────────────────────────
 
 _ELEMENTS_SYSTEM = """\
-你是一个 iPhone 应用 UI 元素分析专家。
+你是一个应用 UI 元素分析专家。
 
 给定一个应用的所有页面知识文档，提取并汇总所有页面中的 UI 元素信息。要求：
 
@@ -158,17 +158,19 @@ def generate_summary(app: str, platform: str = "iphone") -> AppKnowledge:
     if not pages:
         raise ValueError(f"No page knowledge files found in {app_dir}")
 
-    print(f"Loading {len(pages)} page files from {app_dir}")
+    print(f"  归约 {len(pages)} 个页知识 → 两层概览", flush=True)
 
+    print("  [1/2] 归约导航层 _app.md …", flush=True)
     nav = build_navigation_summary(app, pages)
     nav_path = app_dir / "_app.md"
     nav_path.write_text(nav, encoding="utf-8")
-    print(f"Written: {nav_path} ({len(nav)} chars)")
+    print(f"        ✓ {nav_path.name} ({len(nav)} 字)", flush=True)
 
+    print("  [2/2] 归约元素层 _elements.md …", flush=True)
     elements = build_elements_summary(app, pages)
     elements_path = app_dir / "_elements.md"
     elements_path.write_text(elements, encoding="utf-8")
-    print(f"Written: {elements_path} ({len(elements)} chars)")
+    print(f"        ✓ {elements_path.name} ({len(elements)} 字)", flush=True)
 
     return AppKnowledge(navigation=nav, elements=elements, app_name=app)
 
