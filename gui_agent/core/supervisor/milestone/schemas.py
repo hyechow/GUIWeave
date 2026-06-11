@@ -50,6 +50,10 @@ class _SingleCheckResult(BaseModel):
     visible_evidence: list[str] = Field(default_factory=list, description="截图中支持 done 的可见证据")
     missing_evidence: list[str] = Field(default_factory=list, description="缺失的验收证据")
     page_identity: str = Field(default="", description="当前页面的身份识别（如：订单列表、发票管理、个人中心）")
+    relevant_sections: list[str] = Field(
+        default_factory=list,
+        description="若提供了『可用页面知识章节』清单：挑出与当前屏幕/下一步最相关的 1~3 个章节名（原样照抄清单里的名字）；未提供清单则留空",
+    )
     summary: str = Field(description="当前屏幕状态一句话描述")
     read_instruction: Optional[str] = Field(
         default=None,

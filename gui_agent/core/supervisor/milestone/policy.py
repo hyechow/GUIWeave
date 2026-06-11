@@ -14,6 +14,7 @@ from llm.structured import get_llm_token_usage, invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.frame_analysis import is_loading_frame, region_change
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 
 from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_loop_check, run_planner
 from .helpers import run_checker, _default_milestone_prompts
@@ -241,6 +242,7 @@ class MilestoneSupervisorPolicy:
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
         self._elements_knowledge: Optional[str] = None
+        self._pk: Optional[ProgressiveKnowledge] = None  # progressive (skill-like) section loader
         self._app_name: str = ""
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
@@ -254,9 +256,18 @@ class MilestoneSupervisorPolicy:
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
 
-    def set_app_knowledge(self, text: str, app_name: str = "", elements: str = "") -> None:
+    def set_app_knowledge(
+        self,
+        text: str,
+        app_name: str = "",
+        elements: str = "",
+        sections: Optional[dict[str, str]] = None,
+    ) -> None:
         self._app_knowledge = text
         self._elements_knowledge = elements or None
+        # When per-section bodies exist, the planner loads them progressively (checker picks
+        # relevant_sections each turn). Falls back to the full `elements` blob when absent.
+        self._pk = ProgressiveKnowledge(sections) if sections else None
         if app_name:
             self._app_name = app_name
 
@@ -946,6 +957,7 @@ class MilestoneSupervisorPolicy:
             constraints=self._global_constraints,
             extra=extra,
             prompts=self._prompts,
+            section_manifest=self._pk.manifest_text() if self._pk else "",
         )
 
     def _loop_check(
@@ -967,12 +979,19 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _PlanResult:
+        # Progressive: inject only the section(s) the checker flagged relevant this turn,
+        # instead of the whole elements blob. Falls back to the full blob when no per-section
+        # knowledge is loaded (self._pk is None).
+        elements = (
+            self._pk.select(check.relevant_sections, check.page_identity)
+            if self._pk else self._elements_knowledge
+        )
         return run_planner(
             milestone, check, observation, history,
             constraints=self._global_constraints,
             extra=extra,
             app_knowledge=self._app_knowledge,
-            elements_knowledge=self._elements_knowledge,
+            elements_knowledge=elements,
             prompts=self._prompts,
         )
 

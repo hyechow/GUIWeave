@@ -1046,6 +1046,7 @@ def main() -> None:
             knowledge.navigation,
             app_name=knowledge.app_name,
             elements=knowledge.elements,
+            sections=knowledge.sections,
         )
         print(f"Knowledge: auto-loaded (nav={len(knowledge.navigation)} chars, elements={len(knowledge.elements)} chars), app={knowledge.app_name}")
 

@@ -136,8 +136,13 @@ def run_checker(
     extra: str = "",
     _is_retry: bool = False,
     prompts: Optional[MilestonePrompts] = None,
+    section_manifest: str = "",
 ) -> _SingleCheckResult:
-    """Run the single-step milestone checker. Used by both production and evals."""
+    """Run the single-step milestone checker. Used by both production and evals.
+
+    ``section_manifest`` (progressive knowledge): when given, the section list is appended so
+    the checker also picks ``relevant_sections`` for the same turn's planner to load on demand.
+    """
     if prompts is None:
         prompts = _default_milestone_prompts()
     if constraints is None:
@@ -162,6 +167,8 @@ def run_checker(
     )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
+    if section_manifest:
+        prompt += f"\n\n{section_manifest}"
     result = invoke_structured(
         _make_llm(),
         _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize),

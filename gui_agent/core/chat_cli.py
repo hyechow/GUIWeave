@@ -453,6 +453,7 @@ def main() -> None:
                 knowledge.navigation,
                 app_name=knowledge.app_name,
                 elements=knowledge.elements,
+                sections=knowledge.sections,
             )
 
         log_dir = recorder.next_turn_dir()

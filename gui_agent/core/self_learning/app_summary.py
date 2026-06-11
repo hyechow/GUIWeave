@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -81,8 +81,9 @@ _ELEMENTS_PROMPT = """\
 class AppKnowledge:
     """Two-layer knowledge for an app."""
     navigation: str  # _app.md content → Supervisor
-    elements: str    # _elements.md content → Planner
+    elements: str    # _elements.md content → Planner (full; replan/decompose + fallback)
     app_name: str
+    sections: dict[str, str] = field(default_factory=dict)  # per-section bodies → progressive load
 
 
 def _parse_frontmatter(text: str) -> dict[str, str]:
@@ -235,11 +236,21 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
         elements_path = d / "_elements.md"
         if nav_path.exists():
             nav = nav_path.read_text(encoding="utf-8").strip()
+            # Deployment facts not in the manual (entry URL, host, creds). Hand-maintained,
+            # survives re-ingest (starts with _, so generate_summary/_clear_page_files leave it),
+            # and is pinned to the TOP of the always-on navigation so the agent has the entry URL.
+            deploy_path = d / "_deploy.md"
+            if deploy_path.exists():
+                deploy = deploy_path.read_text(encoding="utf-8").strip()
+                if deploy:
+                    nav = f"{deploy}\n\n{nav}"
             elements = (
                 elements_path.read_text(encoding="utf-8").strip()
                 if elements_path.exists() else ""
             )
-            return AppKnowledge(navigation=nav, elements=elements, app_name=d.name)
+            # Per-section page files (excludes _app.md/_elements.md) → progressive-load bodies.
+            sections = {stem: body for stem, body in load_page_files(d)}
+            return AppKnowledge(navigation=nav, elements=elements, app_name=d.name, sections=sections)
         # Directory exists but no knowledge file yet
         print(f"  [Knowledge] 识别到应用「{d.name}」，目录存在但暂无知识文件")
         return AppKnowledge(navigation="", elements="", app_name=d.name)
