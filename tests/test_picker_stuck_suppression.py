@@ -17,7 +17,7 @@ import types
 
 from PIL import Image, ImageDraw
 
-from gui_agent.core.frame_analysis import region_change
+from gui_agent.core.frame_analysis import CHANGE_SSIM_DIST_THR, region_change
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 
@@ -27,7 +27,7 @@ def _png(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-# ── 局部 tier: region_change(global_sim, local-change-in-action-region) ──────────
+# ── 局部 tier: region_change(global_sim, local 1-SSIM in action region) ──────────
 def test_region_change_local_region_catches_small_change_global_misses_it():
     base = Image.new("L", (256, 256), 255)
     mod = base.copy()
@@ -37,8 +37,8 @@ def test_region_change_local_region_catches_small_change_global_misses_it():
     # Whole frame barely changed (a tiny region) -> global similarity stays high...
     gs, loc_here = region_change(p1, p2, center=(100 / 256 * 1000, 115 / 256 * 1000))
     assert gs > 0.95
-    # ...but the region the action TOUCHED clearly moved.
-    assert loc_here is not None and loc_here > 0.3
+    # ...but the region the action TOUCHED structurally changed (1-SSIM well over the bar).
+    assert loc_here is not None and loc_here > CHANGE_SSIM_DIST_THR
 
 
 def test_region_change_region_far_from_change_sees_nothing():
@@ -46,7 +46,7 @@ def test_region_change_region_far_from_change_sees_nothing():
     mod = base.copy()
     ImageDraw.Draw(mod).rectangle([100, 100, 130, 130], fill=0)
     gs, loc_far = region_change(_png(base), _png(mod), center=(10, 10))  # top-left, far away
-    assert loc_far is not None and loc_far < 0.05
+    assert loc_far is not None and loc_far < CHANGE_SSIM_DIST_THR  # reads as "no change"
 
 
 def test_region_change_no_center_returns_global_only():

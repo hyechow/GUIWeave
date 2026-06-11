@@ -81,7 +81,7 @@ MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂
 
 def _settle_after_action(
     phone: "PerceptionSession", pre_frame: bytes | None, action_type: str | None = None,
-    focus_y: float | None = None,
+    focus_y: float | None = None, center: tuple[float, float] | None = None,
 ) -> tuple[float, bool]:
     """等到屏幕相对动作前帧「变过且停稳」，或达到上限。返回 (等待秒数, no_effect)。
 
@@ -138,9 +138,10 @@ def _settle_after_action(
             ever_changed = True
             print(f"  [Settle] {time.perf_counter() - t0:.1f}s ({i} 轮，tab切换→有效果)")
         # 「是否生效」用结构+颜色信号判（见 frame_analysis.frame_changed），不靠全屏灰度均值——
-        # 后者会把 tab 切换这种明显变页(ssim_dist 0.167、但 mean 仅 6.1)误判成零效果。type 是
-        # 局部改动，传 focus_y 只看输入行带。
-        changed = frame_changed(pre_frame, cur, focus_y)
+        # 后者会把 tab 切换这种明显变页(ssim_dist 0.167、但 mean 仅 6.1)误判成零效果。type 传
+        # focus_y 只看输入行带；tap 传 center 只看点击点周围 box——否则菜单展开/下拉这种局部改动
+        # 会被整帧稀释成「零效果」(实测点订单菜单整帧 ssim_dist 0.026<0.08，点击点 box 内达 0.29)。
+        changed = frame_changed(pre_frame, cur, focus_y, center=center)
         ever_changed = ever_changed or changed
         stable = prev is not None and frame_diff(prev, cur, focus_y) < STABLE_MEAN_THR
         if (changed or tab_just_switched) and stable:
@@ -933,8 +934,19 @@ def run_agent_loop(
                         if (_settle_act and settle_action_type == "type" and _settle_act.y is not None)
                         else None
                     )
+                    # tap 触发局部 UI 改动(菜单展开/下拉/勾选)：把点击点传给 settle，只看点击点附近
+                    # box，避免局部变化被整帧稀释成「零效果」而误触发 replan。
+                    settle_center = (
+                        (_settle_act.x, _settle_act.y)
+                        if (
+                            _settle_act and settle_action_type == "tap"
+                            and _settle_act.x is not None and _settle_act.y is not None
+                        )
+                        else None
+                    )
                     turn.settle_s, turn.no_effect = _settle_after_action(
-                        phone, observation.png_bytes, settle_action_type, settle_focus_y
+                        phone, observation.png_bytes, settle_action_type, settle_focus_y,
+                        center=settle_center,
                     )
                 if verify_future is not None:
                     try:

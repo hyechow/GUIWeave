@@ -6,8 +6,8 @@ Each function answers ONE narrow pixel question about screenshots:
                          picture stop moving"); NOT a judge of whether an action worked.
   - ``frame_changed``  — did the screen MEANINGFULLY change (action effect)? Structure
                          (SSIM) + color (changed-pixel ratio) + mean, any one over the bar.
-  - ``region_change``  — two-tier change (whole-frame similarity + the max change inside the
-                         box the action touched); the stuck detector's local/global metric.
+  - ``region_change``  — two-tier change (whole-frame grayscale similarity + the SSIM structural
+                         change inside the box the action touched); the stuck detector's metric.
   - ``is_blank_screen`` / ``is_loading_frame`` — is this a blank / still-loading page (wait)?
 
 DESIGN NOTE: a grayscale mean is the wrong judge of "did the action work" or "is the task
@@ -33,11 +33,14 @@ from gui_agent.core.schemas import Observation
 CHANGE_MEAN_THR = 8.0           # 灰度均值差佐证信号(噪声地板 ~0.05；冻结/静止邻帧 <1.1)
 CHANGE_SSIM_DIST_THR = 0.08     # 1-SSIM 结构差(主信号)：tab 切换 0.167 vs 静止邻帧 ≤0.03
 CHANGED_PIXEL_THR = 0.025       # 变色像素占比(任一通道差 >25)：tab 切换 0.042 vs 静止 ≤0.013
+EFFECT_REGION_HALF = 0.12       # tap 生效检测：点击点周围 2D box 半边(占比，24% box)——局部 UI
+                                # 改动(菜单展开/下拉/勾选)整帧会被稀释，裁到点击点附近用 SSIM+颜色
+                                # 判：实测菜单展开局部 ssim_dist≈0.29 / changed_ratio≈0.21 ≫ 阈值
 # frame_diff (画面是否停稳) — stability only, grayscale is fine here.
 STABLE_MEAN_THR = 2.0           # 相邻帧灰度均值差低于此即视为画面已停稳
-# region_change (两级 stuck 度量) defaults.
+# region_change (两级 stuck 度量) defaults。局部级 = 1-SSIM(结构),阈值复用 CHANGE_SSIM_DIST_THR。
 SIM_GRID = 256                  # 分析用灰度边长
-LOCAL_REGION_HALF = 0.14        # 动作坐标周围方框半边(占比)
+LOCAL_REGION_HALF = 0.14        # 动作坐标周围方框半边(占比，28% box)
 # is_blank_screen: a blank/loading body is a large, LIGHT, near-UNIFORM region.
 BLANK_BODY_MEAN_MIN = 225.0     # body must be light (rules out dark splash/dark mode)
 BLANK_BODY_STD_MAX = 12.0       # body must be near-uniform (text/icons push std up)
@@ -64,7 +67,13 @@ def frame_diff(png_a: bytes, png_b: bytes, focus_y: float | None = None) -> floa
     return float(np.abs(a - b).mean())
 
 
-def frame_changed(png_a: bytes, png_b: bytes, focus_y: float | None = None) -> bool:
+def frame_changed(
+    png_a: bytes,
+    png_b: bytes,
+    focus_y: float | None = None,
+    center: tuple[float, float] | None = None,
+    box_half: float = EFFECT_REGION_HALF,
+) -> bool:
     """两帧之间「屏幕是否发生了有意义的变化」——动作生效判定专用。
 
     不用全屏灰度均值差当裁判：它会稀释局部变化(卡片/底部导航)、对颜色变化(tab 灰→蓝)盲、
@@ -73,14 +82,26 @@ def frame_changed(png_a: bytes, png_b: bytes, focus_y: float | None = None) -> b
     判定在所有 settle 轮里都为 False(三信号全弱)才置 no_effect——而且那也只是个提示，最终
     是否完成由语义层 checker 裁决。
 
-    ``focus_y``(归一化 0-1000)给定时只看该 y 周围横向带(type 是局部改动，整帧会稀释)。
+    聚焦(都对**同一套 SSIM+颜色信号**生效，只是缩小比较范围让局部改动凸显，绝不退回灰度)：
+      - ``center``(tap 的归一化 0-1000 x/y)：只看点击点周围 ``box_half`` 的 2D box。tap 触发的
+        是**局部** UI 改动(菜单展开/下拉/勾选/边栏)，整帧 SSIM 会被稀释成「没变」(实测菜单展开
+        整帧 ssim_dist 仅 0.026<0.08，而点击点 24% box 内达 0.29)——裁到点击点附近才看得见。
+      - ``focus_y``(归一化 0-1000)：只看该 y 周围横向带(type 只改输入框那一行)。
+      - 都不给：整帧。``center`` 优先于 ``focus_y``。
     """
     import numpy as np
     from skimage.metrics import structural_similarity as ssim
 
     a = np.asarray(Image.open(io.BytesIO(png_a)).convert("RGB").resize((160, 320)), dtype=np.int16)
     b = np.asarray(Image.open(io.BytesIO(png_b)).convert("RGB").resize((160, 320)), dtype=np.int16)
-    if focus_y is not None:
+    if center is not None:
+        cx, cy = center[0] / 1000.0 * 160.0, center[1] / 1000.0 * 320.0
+        hx, hy = box_half * 160.0, box_half * 320.0
+        x0, x1 = max(0, int(cx - hx)), min(160, int(cx + hx))
+        y0, y1 = max(0, int(cy - hy)), min(320, int(cy + hy))
+        if (x1 - x0) >= 8 and (y1 - y0) >= 8:  # SSIM 窗口下限；太小退回整帧
+            a, b = a[y0:y1, x0:x1], b[y0:y1, x0:x1]
+    elif focus_y is not None:
         cy = focus_y / 1000.0 * 320.0
         half = 0.05 * 320.0
         y0, y1 = max(0, int(cy - half)), min(320, int(cy + half))
@@ -103,39 +124,36 @@ def region_change(
     center: Optional[tuple[float, float]] = None,
     size: int = SIM_GRID,
     half: float = LOCAL_REGION_HALF,
-    tile: int = 8,
 ) -> tuple[float, Optional[float]]:
-    """Two-tier change between two frames (grayscale at ``size``).
+    """Two-tier change between two frames.
 
     Returns ``(global_sim, local_change)``:
-      - ``global_sim``  = 1 - mean abs diff over the whole frame (legacy whole-frame tier).
-      - ``local_change``= the LARGEST ``tile``-sized block change (0..1) inside a box of
-        half-size ``half`` around ``center`` (the action's normalized 0-1000 x/y). This is
-        the 局部 tier: did the REGION the agent actually touched move? A picker step keeps
-        global_sim ~0.999 yet drives local_change to ~0.15; a no-op scroll leaves it ~0.0.
-        ``None`` when the action had no coordinates (press_enter / home / back / stop) — the
-        caller then falls back to the global tier alone.
+      - ``global_sim``  = 1 - grayscale mean abs diff over the whole frame. The 全局 tier asks
+        「整帧还是不是原样」(a sameness/STABILITY question — grayscale is fine for that).
+      - ``local_change``= ``1 - SSIM`` (structural distance) inside a box of half-size ``half``
+        around ``center`` (the action's normalized 0-1000 x/y). The 局部 tier asks「动作所在区域
+        动没动」(a CHANGE question → SSIM, not grayscale — consistent with ``frame_changed``;
+        avoids the grayscale failure mode the module DESIGN NOTE warns about). A picker step
+        keeps global_sim ~0.999 yet drives local_change to ~0.24; a no-op leaves it ~0.0.
+        Threshold against ``CHANGE_SSIM_DIST_THR``. ``None`` when the action had no coordinates
+        (press_enter / home / back / stop) — the caller falls back to the global tier alone.
     """
     import numpy as np
+    from skimage.metrics import structural_similarity as ssim
 
-    a = np.asarray(Image.open(io.BytesIO(png1)).convert("L").resize((size, size)), dtype=np.int16)
-    b = np.asarray(Image.open(io.BytesIO(png2)).convert("L").resize((size, size)), dtype=np.int16)
-    d = np.abs(a - b) / 255.0
-    global_sim = 1.0 - float(d.mean())
+    a = np.asarray(Image.open(io.BytesIO(png1)).convert("L").resize((size, size)), dtype=np.float64)
+    b = np.asarray(Image.open(io.BytesIO(png2)).convert("L").resize((size, size)), dtype=np.float64)
+    global_sim = 1.0 - float(np.abs(a - b).mean()) / 255.0
     if center is None:
         return global_sim, None
     cx, cy = center[0] / 1000 * size, center[1] / 1000 * size
     h = half * size
     x0, x1 = max(0, int(cx - h)), min(size, int(cx + h))
     y0, y1 = max(0, int(cy - h)), min(size, int(cy + h))
-    if x1 - x0 < tile or y1 - y0 < tile:
+    if x1 - x0 < 7 or y1 - y0 < 7:  # SSIM 窗口下限(默认 7×7)；太小退回整帧
         return global_sim, None
-    reg = d[y0:y1, x0:x1]
-    best = 0.0
-    for yy in range(0, reg.shape[0] - tile + 1, tile):
-        for xx in range(0, reg.shape[1] - tile + 1, tile):
-            best = max(best, float(reg[yy : yy + tile, xx : xx + tile].mean()))
-    return global_sim, best
+    local_change = 1.0 - float(ssim(a[y0:y1, x0:x1], b[y0:y1, x0:x1], data_range=255))
+    return global_sim, local_change
 
 
 def is_blank_screen(png_bytes: bytes) -> bool:

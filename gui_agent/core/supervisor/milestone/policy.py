@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 
 from llm.structured import get_llm_token_usage, invoke_structured
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.frame_analysis import is_loading_frame, region_change
+from gui_agent.core.frame_analysis import CHANGE_SSIM_DIST_THR, is_loading_frame, region_change
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 
@@ -33,13 +33,12 @@ STUCK_SCREEN_WINDOW = 3
 STUCK_SCREEN_SIMILARITY = 0.95   # 全局 tier: whole-frame similarity above this = no global change
 STUCK_SCREEN_FROZEN = 0.99
 # 局部 tier: the action that produced a frame carries coordinates (tap/scroll/drag all have
-# x/y), so look at whether the REGION the agent actually touched changed — the max small-tile
-# change inside a box around the action's (x,y). A picker / spinner moves only that small
-# region: global similarity stays ~99.9% but the touched region jumps to ~0.15, while a scroll
-# that did nothing stays ~0.00. A frame pair is "no change" (stuck candidate) only when BOTH
-# tiers are under threshold — global similar AND the action region didn't move. Calibrated on
-# real alarm-picker frames (picker step ≈0.14–0.18, no-op scroll ≈0.00; PNG is lossless).
-STUCK_LOCAL_CHANGE = 0.06  # 局部 tier 阈值；度量见 frame_analysis.region_change（box 半边/网格在那里）
+# x/y), so look at whether the REGION the agent actually touched changed — the 1-SSIM structural
+# distance inside a box around the action's (x,y) (see frame_analysis.region_change). A picker /
+# spinner moves only that small region: global similarity stays ~99.9% but the touched region's
+# 1-SSIM jumps to ~0.24, while a no-op stays ~0.00. A frame pair is "no change" (stuck candidate)
+# only when BOTH tiers are under threshold — global similar AND the action region didn't move.
+# 局部阈值复用 frame_changed 的 CHANGE_SSIM_DIST_THR(同一套 SSIM 生效判据，不再用灰度)。
 MAX_SCROLL_PER_MILESTONE = 3
 STUCK_REPEAT_WINDOW = 3
 STUCK_REPEAT_WORD_OVERLAP = 0.85
@@ -1069,8 +1068,9 @@ class MilestoneSupervisorPolicy:
             return None
 
         # Two-tier per adjacent step: a step is "no change" ONLY when the whole frame stayed
-        # similar (全局) AND the region the action touched did not move (局部). A picker step
-        # keeps global ~99.9% but moves the touched region (~0.15) → NOT no-change → not stuck.
+        # similar (全局, 灰度) AND the region the action touched did not change (局部, 1-SSIM). A
+        # picker step keeps global ~99.9% but moves the touched region (1-SSIM ~0.24) → NOT
+        # no-change → not stuck.
         frames = self._recent_screenshots
         gsims: list[float] = []
         locs: list[Optional[float]] = []
@@ -1080,7 +1080,8 @@ class MilestoneSupervisorPolicy:
             locs.append(lc)
 
         def _no_change(gs: float, lc: Optional[float]) -> bool:
-            return gs >= STUCK_SCREEN_SIMILARITY and (lc is None or lc <= STUCK_LOCAL_CHANGE)
+            # 全局相似(灰度) 且 局部未发生结构变化(1-SSIM ≤ 生效阈值)。lc=None(无坐标)→只看全局。
+            return gs >= STUCK_SCREEN_SIMILARITY and (lc is None or lc <= CHANGE_SSIM_DIST_THR)
 
         if all(_no_change(gs, lc) for gs, lc in zip(gsims, locs)):
             gstr = ", ".join(f"{g:.2%}" for g in gsims)
