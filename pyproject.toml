@@ -35,6 +35,7 @@ dependencies = [
     "playwright>=1.60.0",
     "webarena-verified>=1.2.3",
     "adbutils>=2",
+    "pypdf>=6.13.2",
 ]
 
 [dependency-groups]

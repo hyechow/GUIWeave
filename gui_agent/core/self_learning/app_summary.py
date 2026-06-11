@@ -1,6 +1,7 @@
 """Generate app-level knowledge files from per-page knowledge.
 
-Produces two files in knowledge/{app}/:
+Produces two files in knowledge/{platform}/{app}/ (platform defaults to iphone, the only
+platform with per-page recon today):
 - _app.md: Navigation structure for Supervisor (task decomposition)
 - _elements.md: UI element details for Planner (instruction generation)
 
@@ -147,9 +148,9 @@ def build_elements_summary(app: str, pages: list[tuple[str, str]]) -> str:
     )
 
 
-def generate_summary(app: str) -> AppKnowledge:
-    """Generate _app.md and _elements.md for the given app."""
-    app_dir = KNOWLEDGE_DIR / app
+def generate_summary(app: str, platform: str = "iphone") -> AppKnowledge:
+    """Generate _app.md and _elements.md for the given app (under knowledge/<platform>/)."""
+    app_dir = KNOWLEDGE_DIR / platform / app
     if not app_dir.is_dir():
         raise FileNotFoundError(f"Knowledge directory not found: {app_dir}")
 
@@ -186,32 +187,39 @@ _KNOWN_APP_NAMES: list[str] = [
 ]
 
 
-def auto_discover_knowledge(goal: str) -> AppKnowledge | None:
-    """Match goal against knowledge/{app}/ dir names and load both knowledge layers.
+def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge | None:
+    """Match goal against knowledge/<platform>/<app>/ dir names and load both layers.
+
+    Knowledge is **platform-scoped**: a manual / recon captures ONE platform's UI &
+    navigation, and the same app operates differently on iPhone vs browser vs Android. So we
+    only look under the CURRENT platform's subtree — a browser app's knowledge is never
+    injected into an iPhone run. The mobile-app name/alias fallbacks (recognize the app even
+    when it has no knowledge dir yet) are iPhone-only.
 
     App name detection and knowledge loading are decoupled:
     - If a knowledge directory with _app.md exists → return full AppKnowledge
     - If directory exists but no knowledge files → return AppKnowledge with app_name only
-    - If no directory but app name recognized from _KNOWN_APP_NAMES → return app_name only
+    - If no directory but app name recognized (iPhone _KNOWN_APP_NAMES) → return app_name only
     - Returns None only when no app name can be identified
     """
     goal_lower = goal.lower()
+    platform_dir = KNOWLEDGE_DIR / platform
 
     candidates: dict[str, Path | None] = {}
-    if KNOWLEDGE_DIR.is_dir():
-        for d in KNOWLEDGE_DIR.iterdir():
+    if platform_dir.is_dir():
+        for d in platform_dir.iterdir():
             if d.is_dir():
                 candidates[d.name.lower()] = d
+    if platform == "iphone":
         for alias, target in _APP_ALIASES.items():
-            target_dir = KNOWLEDGE_DIR / target
+            target_dir = platform_dir / target
             if target_dir.is_dir():
                 candidates[alias] = target_dir
-
-    # Add known app names that may not have a directory yet
-    for app in _KNOWN_APP_NAMES:
-        key = app.lower()
-        if key not in candidates:
-            candidates[key] = None
+        # Add known app names that may not have a directory yet
+        for app in _KNOWN_APP_NAMES:
+            key = app.lower()
+            if key not in candidates:
+                candidates[key] = None
 
     for name, d in candidates.items():
         if name not in goal_lower:
@@ -239,8 +247,10 @@ def auto_discover_knowledge(goal: str) -> AppKnowledge | None:
 
 if __name__ == "__main__":
     load_dotenv()
+    iphone_dir = KNOWLEDGE_DIR / "iphone"
     if len(sys.argv) < 2:
         print(f"Usage: python -m gui_agent.core.self_learning.app_summary <app_name>")
-        print(f"Available: {[d.name for d in KNOWLEDGE_DIR.iterdir() if d.is_dir()]}")
+        available = [d.name for d in iphone_dir.iterdir() if d.is_dir()] if iphone_dir.is_dir() else []
+        print(f"Available (iphone): {available}")
         sys.exit(1)
     generate_summary(sys.argv[1])

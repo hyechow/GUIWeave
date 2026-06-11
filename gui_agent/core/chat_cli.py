@@ -447,7 +447,7 @@ def main() -> None:
         goal = router_result.goal or user_msg
         turn_supervisor = build_supervisor(supervisor.name)
 
-        knowledge = auto_discover_knowledge(goal)
+        knowledge = auto_discover_knowledge(goal, bundle.platform)
         if knowledge and hasattr(turn_supervisor, "set_app_knowledge"):
             turn_supervisor.set_app_knowledge(
                 knowledge.navigation,

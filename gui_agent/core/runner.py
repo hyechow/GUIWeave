@@ -1040,7 +1040,7 @@ def main() -> None:
             print(f"Router  : {raw_input!r} → {goal!r}")
 
     # Auto-discover app knowledge from the resolved goal
-    knowledge = auto_discover_knowledge(goal)
+    knowledge = auto_discover_knowledge(goal, bundle.platform)
     if knowledge and hasattr(supervisor, "set_app_knowledge"):
         supervisor.set_app_knowledge(
             knowledge.navigation,

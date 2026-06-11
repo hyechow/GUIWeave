@@ -20,7 +20,8 @@ from gui_agent.adapters.iphone.recon.bfs import probe_elements
 
 ROOT = Path(__file__).resolve().parents[3]
 LOG_ROOT = ROOT / "logs" / "recon"
-KNOWLEDGE_ROOT = ROOT / "knowledge"
+# Knowledge is platform-scoped (knowledge/<platform>/<app>/); recon is iPhone-only.
+KNOWLEDGE_ROOT = ROOT / "knowledge" / "iphone"
 OFFLINE_EXPECTED_SIZE = (636, 1402)
 
 
