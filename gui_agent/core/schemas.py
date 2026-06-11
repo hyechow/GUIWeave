@@ -412,6 +412,10 @@ class PolicyTurn(BaseModel):
     token_usage: dict[str, dict[str, int]] = Field(default_factory=dict, description="各模块 token 用量，如 {checker: {input: 2284, output: 114}, planner: {...}}")
     settle_s: Optional[float] = Field(default=None, description="本轮动作后 settle 等待时长(秒)，等屏幕变过且停稳")
     no_effect: bool = Field(default=False, description="tap 类动作 settle 跑满上限且全程零变化：这一击对屏幕无效果（如重点已高亮 tab）")
+    sections_loaded: list[str] = Field(
+        default_factory=list,
+        description="本轮 planner 实际注入的渐进知识章节名（progressive select 命中结果，可与 checker.relevant_sections 对照）；无渐进知识或未选中则为空",
+    )
 
 
 class PolicyContext(BaseModel):
@@ -445,6 +449,10 @@ class PolicyContext(BaseModel):
     models: dict[str, str] = Field(
         default_factory=dict,
         description="本次运行各 LLM 配置键实际使用的模型 {config_key: model}，用于成本核算自描述",
+    )
+    knowledge: Optional[dict] = Field(
+        default=None,
+        description="本次注入的应用知识摘要 {app_name, nav_chars, elements_chars, section_count}；未命中知识库则为 None。每轮实际注入的章节见 turns[].sections_loaded",
     )
 
 

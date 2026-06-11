@@ -98,6 +98,7 @@ def run_chat_turn(
     on_turn: object = None,
     raw_input: str | None = None,
     router: dict | None = None,
+    knowledge: dict | None = None,
 ) -> dict:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     context_path = log_dir / "context.json"
@@ -118,6 +119,7 @@ def run_chat_turn(
             on_turn=on_turn,
             raw_input=raw_input,
             router=router,
+            knowledge=knowledge,
         )
 
 
@@ -448,6 +450,7 @@ def main() -> None:
         turn_supervisor = build_supervisor(supervisor.name)
 
         knowledge = auto_discover_knowledge(goal, bundle.platform)
+        knowledge_summary: dict | None = None
         if knowledge and hasattr(turn_supervisor, "set_app_knowledge"):
             turn_supervisor.set_app_knowledge(
                 knowledge.navigation,
@@ -455,6 +458,7 @@ def main() -> None:
                 elements=knowledge.elements,
                 sections=knowledge.sections,
             )
+            knowledge_summary = knowledge.summary()
 
         log_dir = recorder.next_turn_dir()
 
@@ -478,6 +482,7 @@ def main() -> None:
                     on_turn=_on_turn,
                     raw_input=display_msg,
                     router=router_result.model_dump(),
+                    knowledge=knowledge_summary,
                 )
             except (SystemExit, KeyboardInterrupt):
                 raise

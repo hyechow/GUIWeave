@@ -65,3 +65,22 @@ def test_caps_at_three():
 
 def test_no_match_returns_empty():
     assert _pk().select(["不存在的页面XYZ"]) == ""
+
+
+def test_pick_returns_matched_stems_for_logging():
+    # pick() is the source of truth the runtime LOGS as turns[].sections_loaded — it must
+    # return the resolved FILE STEMS (not the checker's paraphrase), capped + deduped.
+    pk = _pk()
+    assert pk.pick(["如何访问RoboTeam"]) == ["如何访问Robo_Team"]   # fuzzy → canonical stem
+    assert pk.pick([], page_identity="如何查询订单的执行状态") == ["如何查询订单的执行状态"]
+    assert pk.pick(["如何创建用户"], page_identity="如何创建用户") == ["如何创建用户"]   # deduped
+    assert pk.pick(["页面A", "页面B", "页面C", "页面D"]) == ["页面A", "页面B", "页面C"]  # capped at 3
+    assert pk.pick(["不存在XYZ"]) == []
+
+
+def test_bodies_round_trips_with_pick():
+    # select() == bodies(pick(...)) — the split must not change the injected text.
+    pk = _pk()
+    names = ["如何创建用户", "如何查询订单的执行状态"]
+    assert pk.bodies(pk.pick(names)) == pk.select(names)
+    assert pk.bodies(["不存在的stem"]) == ""   # unknown stem is skipped, never KeyErrors

@@ -454,6 +454,7 @@ def run_agent_loop(
     raw_input: str | None = None,  # original human input; defaults to `prompt` (bin/runner)
     router: dict | None = None,    # RouterResult dict (chat path); None for bin/runner
     on_session_open: object = None,  # callable(phone) run once after session open, before the loop
+    knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
 ) -> dict:
     def _say(s: str) -> None:
         if not silent:
@@ -474,6 +475,8 @@ def run_agent_loop(
         router=router,
     )
     _ensure_note_hashes(context)
+    if knowledge is not None:
+        context.knowledge = knowledge
     _save_context(context_path, context)
     _say(f"Goal    : {context.goal}")
     _say(f"Turns   : {len(context.turns)}")
@@ -855,6 +858,7 @@ def run_agent_loop(
                 read_note_hash=read_note_hash,
                 timings=getattr(supervisor, "_timings", {}),
                 token_usage=getattr(supervisor, "_token_usage", {}),
+                sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
             )
             _print_timings(supervisor)
             context.turns.append(turn)
@@ -1051,17 +1055,6 @@ def main() -> None:
             goal = router_result.goal
             print(f"Router  : {raw_input!r} → {goal!r}")
 
-    # Auto-discover app knowledge from the resolved goal
-    knowledge = auto_discover_knowledge(goal, bundle.platform)
-    if knowledge and hasattr(supervisor, "set_app_knowledge"):
-        supervisor.set_app_knowledge(
-            knowledge.navigation,
-            app_name=knowledge.app_name,
-            elements=knowledge.elements,
-            sections=knowledge.sections,
-        )
-        print(f"Knowledge: auto-loaded (nav={len(knowledge.navigation)} chars, elements={len(knowledge.elements)} chars), app={knowledge.app_name}")
-
     input_context_path = args.context
     log_dir = create_run_dir("agent-loop", bundle.platform)
     context_path = log_dir / "context.json"
@@ -1070,6 +1063,26 @@ def main() -> None:
         print(f"Platform: {bundle.platform}")
         print(f"Log Dir : {log_dir}")
         print(f"Context : {input_context_path if input_context_path else None}")
+
+        # Auto-discover app knowledge from the resolved goal. Done INSIDE the tee so the
+        # match / load lines land in stdout.log (they used to print before the tee and vanish);
+        # the summary is also persisted to context.json (context.knowledge) for offline analysis.
+        knowledge_summary: dict | None = None
+        knowledge = auto_discover_knowledge(goal, bundle.platform)
+        if knowledge and hasattr(supervisor, "set_app_knowledge"):
+            supervisor.set_app_knowledge(
+                knowledge.navigation,
+                app_name=knowledge.app_name,
+                elements=knowledge.elements,
+                sections=knowledge.sections,
+            )
+            knowledge_summary = knowledge.summary()
+            print(
+                f"Knowledge: auto-loaded app={knowledge_summary['app_name']} "
+                f"(nav={knowledge_summary['nav_chars']} chars, "
+                f"elements={knowledge_summary['elements_chars']} chars, "
+                f"sections={knowledge_summary['section_count']})"
+            )
 
         try:
             result: dict | None = run_agent_loop(
@@ -1084,6 +1097,7 @@ def main() -> None:
                 hud=hud,
                 raw_input=raw_input,
                 router=router_result.model_dump() if router_result else None,
+                knowledge=knowledge_summary,
             )
             if result:
                 # Reply to the user's ORIGINAL input (parity with chat, which

@@ -85,6 +85,15 @@ class AppKnowledge:
     app_name: str
     sections: dict[str, str] = field(default_factory=dict)  # per-section bodies → progressive load
 
+    def summary(self) -> dict[str, object]:
+        """Compact, log-friendly description of what got injected (→ context.json knowledge)."""
+        return {
+            "app_name": self.app_name,
+            "nav_chars": len(self.navigation),
+            "elements_chars": len(self.elements),
+            "section_count": len(self.sections),
+        }
+
 
 def _parse_frontmatter(text: str) -> dict[str, str]:
     """Extract YAML frontmatter key-value pairs from markdown text."""

@@ -58,12 +58,10 @@ class ProgressiveKnowledge:
                 return orig
         return None
 
-    def select(self, names: list[str] | None, page_identity: str = "") -> str:
-        """Resolve checker-named sections (+ page_identity fallback) to concatenated bodies.
-
-        Returns ``""`` when nothing matches — the planner then runs on the navigation overview
-        alone (still describes the page), rather than re-injecting the whole elements blob.
-        """
+    def pick(self, names: list[str] | None, page_identity: str = "") -> list[str]:
+        """Resolve checker-named sections (+ page_identity fallback) to matched section stems
+        (capped at ``_MAX_SELECTED``). Split out from :meth:`select` so the runtime can LOG the
+        section names that were actually injected this turn (context.json turns[].sections_loaded)."""
         picked: list[str] = []
         seen: set[str] = set()
         for nm in list(names or []) + ([page_identity] if page_identity else []):
@@ -73,4 +71,18 @@ class ProgressiveKnowledge:
                 picked.append(key)
             if len(picked) >= _MAX_SELECTED:
                 break
-        return "\n\n".join(f"## {k.replace('_', ' ')}\n{self.sections[k]}" for k in picked)
+        return picked
+
+    def bodies(self, stems: list[str]) -> str:
+        """Concatenate the bodies of the given section stems (as returned by :meth:`pick`)."""
+        return "\n\n".join(
+            f"## {k.replace('_', ' ')}\n{self.sections[k]}" for k in stems if k in self.sections
+        )
+
+    def select(self, names: list[str] | None, page_identity: str = "") -> str:
+        """Resolve checker-named sections (+ page_identity fallback) to concatenated bodies.
+
+        Returns ``""`` when nothing matches — the planner then runs on the navigation overview
+        alone (still describes the page), rather than re-injecting the whole elements blob.
+        """
+        return self.bodies(self.pick(names, page_identity))

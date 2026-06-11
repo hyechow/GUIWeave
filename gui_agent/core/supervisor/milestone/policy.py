@@ -252,6 +252,7 @@ class MilestoneSupervisorPolicy:
         self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
+        self._last_sections_loaded: list[str] = []  # progressive section stems injected this turn (logged)
         self._timings: dict[str, float] = {}
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
@@ -275,6 +276,13 @@ class MilestoneSupervisorPolicy:
         self._timings.clear()
         self._timings_order.clear()
         self._token_usage.clear()
+        self._last_sections_loaded = []  # reset; _invoke_planner fills it when progressive knowledge is active
+        # Report-only carry-overs: clear so a turn that DOESN'T run the planner/replan reports
+        # null instead of the previous turn's stale plan (e.g. the terminal "done" turn). Both
+        # are read solely by runner's _extract_plan/_extract_replan — no internal logic depends
+        # on them persisting across turns (unlike _last_check, which is cross-turn memory).
+        self._last_plan = None
+        self._last_replan = None
 
         if not self._order:
             with _Timer(self._timings, self._timings_order, "decompose", self._token_usage):
@@ -1001,10 +1009,11 @@ class MilestoneSupervisorPolicy:
         # Progressive: inject only the section(s) the checker flagged relevant this turn,
         # instead of the whole elements blob. Falls back to the full blob when no per-section
         # knowledge is loaded (self._pk is None).
-        elements = (
-            self._pk.select(check.relevant_sections, check.page_identity)
-            if self._pk else self._elements_knowledge
-        )
+        if self._pk:
+            self._last_sections_loaded = self._pk.pick(check.relevant_sections, check.page_identity)
+            elements = self._pk.bodies(self._last_sections_loaded)
+        else:
+            elements = self._elements_knowledge
         return run_planner(
             milestone, check, observation, history,
             constraints=self._global_constraints,
