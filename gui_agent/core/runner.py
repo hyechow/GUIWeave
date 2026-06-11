@@ -23,6 +23,7 @@ load_dotenv()
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 from gui_agent.core.factory import build_platform
+from gui_agent.core.frame_analysis import STABLE_MEAN_THR, frame_changed, frame_diff
 from gui_agent.core.supervisor.base import SupervisorPolicy
 from gui_agent.core.output import generate_reply
 from gui_agent.core.reader import ContentReader, annotate_content_note, build_reader_instruction
@@ -58,8 +59,8 @@ TURN_STATS = "\033[2mTurn {turn_no} stats: llm_calls={llm_calls}, elapsed={elaps
 SETTLE_FIRST_S = 1.0      # 首帧等待：覆盖大多数转场动画（zoom/横滑 ~0.3-0.5s）
 SETTLE_UNIT_S = 0.5       # 后续轮询间隔
 SETTLE_MAX_UNITS = 6
-SETTLE_CHANGE_THR = 8.0   # 相对动作前帧的灰度均值差，超过即视为动作已生效（噪声地板 ~0.05）
-SETTLE_STABLE_THR = 2.0   # 相对上一帧的灰度均值差，低于即视为画面已停稳
+# 帧级视觉判定与其阈值（frame_diff 稳定性 / frame_changed 生效 / STABLE_MEAN_THR）都在
+# core/frame_analysis.py，不再散落在 runner。
 # drag/scroll 是页内操作，不触发页面加载/转场，但改动常局限一小块（如 picker 滚轮带），
 # 全屏均值差测不出「changed」（实测 picker 拖动仅 0.1-0.25 << CHANGE_THR=8.0），用原
 # 「变过且停稳」逻辑会每次顶满上限白等 ~4s。但也不能盲等固定时长：fling 惯性时长不定
@@ -76,30 +77,6 @@ MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
-
-
-def _frame_diff(png_a: bytes, png_b: bytes, focus_y: float | None = None) -> float:
-    """两帧灰度图缩放到 160x320 后的平均绝对差（0-255 量级）。
-
-    focus_y（归一化 0-1000）给定时只比该 y 周围的横向带，而非整帧——type 是**局部改动**
-    （只改输入框那一行），整帧均值会把它稀释（实测打字「NVIDIA stock price」整帧仅 4.5、低于
-    CHANGE_THR=8.0，误判零效果）；裁到输入行带后局部改动凸显（实测 ~11，远超阈值）。
-    点击/跳转等影响整页的动作不传 focus_y，仍按整帧比。
-    """
-    import io
-
-    import numpy as np
-    from PIL import Image
-
-    a = np.array(Image.open(io.BytesIO(png_a)).convert("L").resize((160, 320)), dtype=np.float32)
-    b = np.array(Image.open(io.BytesIO(png_b)).convert("L").resize((160, 320)), dtype=np.float32)
-    if focus_y is not None:
-        cy = focus_y / 1000.0 * 320.0
-        half = 0.05 * 320.0  # 输入行带半高 ~16px（带高 ~10% 屏；越窄局部信号越凸显）
-        y0, y1 = max(0, int(cy - half)), min(320, int(cy + half))
-        if y1 - y0 >= 4:  # 防退化裁剪
-            a, b = a[y0:y1], b[y0:y1]
-    return float(np.abs(a - b).mean())
 
 
 def _settle_after_action(
@@ -128,7 +105,7 @@ def _settle_after_action(
                 dur = time.perf_counter() - t0
                 print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
                 return dur, False
-            if prev is not None and _frame_diff(prev, cur) < SETTLE_STABLE_THR:
+            if prev is not None and frame_diff(prev, cur) < STABLE_MEAN_THR:
                 dur = time.perf_counter() - t0
                 print(f"  [Settle] {dur:.1f}s ({i} 轮，停稳: {action_type})")
                 return dur, False
@@ -160,10 +137,12 @@ def _settle_after_action(
         if tab_just_switched:
             ever_changed = True
             print(f"  [Settle] {time.perf_counter() - t0:.1f}s ({i} 轮，tab切换→有效果)")
-        # type 是局部改动：只比输入坐标周围的带（focus_y），整帧会把它稀释成假零效果。
-        changed = _frame_diff(pre_frame, cur, focus_y) > SETTLE_CHANGE_THR
+        # 「是否生效」用结构+颜色信号判（见 frame_analysis.frame_changed），不靠全屏灰度均值——
+        # 后者会把 tab 切换这种明显变页(ssim_dist 0.167、但 mean 仅 6.1)误判成零效果。type 是
+        # 局部改动，传 focus_y 只看输入行带。
+        changed = frame_changed(pre_frame, cur, focus_y)
         ever_changed = ever_changed or changed
-        stable = prev is not None and _frame_diff(prev, cur, focus_y) < SETTLE_STABLE_THR
+        stable = prev is not None and frame_diff(prev, cur, focus_y) < STABLE_MEAN_THR
         if (changed or tab_just_switched) and stable:
             dur = time.perf_counter() - t0
             print(f"  [Settle] {dur:.1f}s ({i} 轮，变过且停稳)")
