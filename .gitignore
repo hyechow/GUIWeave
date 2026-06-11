@@ -13,6 +13,10 @@ test.sh
 data/
 evals/**/*.png
 evals/**/*.jpg
+tests/**/*.png
+tests/**/*.jpg
+tests/**/*.jpeg
+tests/**/*.webp
 *.mov
 videos
 

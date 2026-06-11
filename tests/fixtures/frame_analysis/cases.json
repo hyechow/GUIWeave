@@ -1,0 +1,24 @@
+[
+  {
+    "label": "android_alarm_tab_switch_changed",
+    "before": "android_alarm_world_clock.png",
+    "after": "android_alarm_alarm_page.png",
+    "expected_changed": true,
+    "max_gray_mean_diff": 8.0,
+    "note": "回归 20260611_085000 T2->T3：点击闹钟 tab 后已从世界时钟页切到闹钟页；旧整帧灰度 mean diff 低于 8，曾误判 no_effect。"
+  },
+  {
+    "label": "android_alarm_world_clock_identical_not_changed",
+    "before": "android_alarm_world_clock.png",
+    "after": "android_alarm_world_clock.png",
+    "expected_changed": false,
+    "note": "同一帧必须不判 changed。"
+  },
+  {
+    "label": "android_alarm_alarm_page_identical_not_changed",
+    "before": "android_alarm_alarm_page.png",
+    "after": "android_alarm_alarm_page.png",
+    "expected_changed": false,
+    "note": "同一帧必须不判 changed，避免 no_effect 负例被动态阈值污染。"
+  }
+]
