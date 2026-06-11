@@ -376,5 +376,12 @@
       "goal_regex": "\\d{4}-\\d{2}-\\d{2}\\s*至\\s*\\d{4}-\\d{2}-\\d{2}",
       "goal_not_contains": ["上个月", "号到"]
     }
+  },
+
+  {
+    "label": "@引用-原样保留",
+    "user_msg": "把 @notes/草稿.txt 的内容发到微信文件传输助手",
+    "session": [],
+    "expected": {"goal_contains_all": ["@notes/草稿.txt", "文件传输助手"]}
   }
 ]

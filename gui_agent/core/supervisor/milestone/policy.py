@@ -17,7 +17,7 @@ from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, Superviso
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm as _norm_page
 
 from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_loop_check, run_planner
-from .helpers import run_checker, run_selector, _default_milestone_prompts
+from .helpers import resolve_file_refs, run_checker, run_selector, _default_milestone_prompts
 from .schemas import (
     MilestonePrompts,
     _DecomposeResponse,
@@ -1304,9 +1304,13 @@ class MilestoneSupervisorPolicy:
         print(f"Supervisor: {cfg.provider} / {cfg.model}")
         llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
 
+        # @<file> references in the goal: read once here (retries reuse the same section,
+        # no duplicate file reads / log lines).
+        file_section = resolve_file_refs(goal)
+
         issues: list[str] = []
         for attempt in range(self._MAX_DECOMPOSE_RETRIES + 1):
-            self._do_decompose(llm, goal, observation, issues)
+            self._do_decompose(llm, goal, observation, issues, file_section)
             issues = self._validate_decomposition(goal)
             if not issues:
                 break
@@ -1332,10 +1336,12 @@ class MilestoneSupervisorPolicy:
 
     def _do_decompose(
         self, llm: ChatOpenAI, goal: str, observation: Observation,
-        feedback: list[str],
+        feedback: list[str], file_section: str = "",
     ) -> None:
         msgs = self._msgs(self._prompts.decompose, observation)
         user_parts: list[dict] = [{"type": "text", "text": f"用户任务：{goal}"}]
+        if file_section:
+            user_parts.append({"type": "text", "text": f"\n{file_section}"})
         if self._app_knowledge:
             user_parts.append({"type": "text", "text": f"\n## 应用导航知识\n{self._app_knowledge}"})
         if self._elements_knowledge:

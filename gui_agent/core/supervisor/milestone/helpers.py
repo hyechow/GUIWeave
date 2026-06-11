@@ -1,6 +1,8 @@
 import base64
 import json
+import re
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -71,6 +73,63 @@ def _format_history(history: list[PolicyTurn]) -> str:
         else:
             lines.append(f"{turn.index}. [跳过动作] {sv.summary} → 结果: {result}")
     return "\n".join(lines)
+
+
+# `@<path>` file references inside the goal text (e.g. 「按 @tmp_scripts/sim.json 的配置新建」).
+# A token runs until whitespace / CJK punctuation / quotes; CJK chars themselves are allowed
+# (filenames like 交管测试_1楼.json). Disambiguation from plain @-mentions is by existence:
+# the resolver tries the token, then progressively trims trailing chars (handles prose glued
+# to the path, e.g. 「@sim.json的配置」), and gives up quietly if nothing on disk matches.
+# Chars that terminate a path token: CJK/ASCII punctuation, brackets, straight & curly quotes
+# (curly via escapes — literal quote chars inside the pattern string are too error-prone).
+_TOKEN_BREAK = "，。！？；：、()（）【】《》<>[]" + "\"'" + "“”‘’"
+_FILE_REF_RE = re.compile(rf"@([^\s@{re.escape(_TOKEN_BREAK)}]+)")
+_FILE_REF_MAX_CHARS = 50_000
+
+
+def resolve_file_refs(goal: str, base: Optional[Path] = None) -> str:
+    """Read the files referenced by ``@<path>`` tokens in the goal and return ONE labeled
+    prompt section with their contents ("" when the goal has no resolvable refs).
+
+    This is how config-heavy tasks get their field values in: a dozen form fields live in a
+    file, the spoken goal just points at it. Resolved at DECOMPOSE time (the only consumer of
+    the full goal), so both runner and chat get it with no CLI plumbing, and the router never
+    paraphrases file contents — it only ever sees the @token."""
+    base = base or Path.cwd()
+    sections: list[str] = []
+    seen: set[str] = set()
+    for raw in _FILE_REF_RE.findall(goal):
+        cand = raw.rstrip(".,;:!?")  # plain trailing ASCII punctuation is prose, not path
+        path: Optional[Path] = None
+        while cand:
+            p = Path(cand).expanduser()
+            if not p.is_absolute():
+                p = base / p
+            if p.is_file():
+                path = p
+                break
+            cand = cand[:-1]
+        if path is None:
+            print(f"  [FileRef] @{raw} 未解析到文件，按普通文本处理")
+            continue
+        if str(path) in seen:
+            continue
+        seen.add(str(path))
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"  [FileRef] 读取失败 {path}：{exc}")
+            continue
+        if len(text) > _FILE_REF_MAX_CHARS:
+            text = text[:_FILE_REF_MAX_CHARS] + "\n…（文件过长，已截断）"
+        print(f"  [FileRef] 注入 @{cand}（{len(text)} 字符）")
+        sections.append(f"### @{cand}\n{text}")
+    if not sections:
+        return ""
+    return (
+        "## 引用文件内容（任务中 @ 引用的文件；其中的字段值须严格按原文使用，不得改动或省略）\n"
+        + "\n\n".join(sections)
+    )
 
 
 def _make_llm() -> ChatOpenAI:
