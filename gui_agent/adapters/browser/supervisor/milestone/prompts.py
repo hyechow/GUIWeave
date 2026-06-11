@@ -1,40 +1,13 @@
-"""Browser milestone-supervisor prompts — web-tuned DRAFT.
-
-A first web-tuned draft of the milestone supervisor prompts, parallel to the iphone
-set (adapters/iphone/supervisor/milestone/prompts.py). The supervisor FRAMEWORK is
-neutral; these prompts inject browser concepts (URL / page-title / DOM page identity,
-web navigation, forms) instead of iphone ones (iOS home screen, tab bars, picker
-wheels, app switching). The .format() placeholders are IDENTICAL to the iphone set —
-helpers.py / policy.py fill the same kwargs, so the wording differs but the wiring is
-the same.
-
-⚠️ DRAFT — un-tuned. Validated only structurally (placeholders + construction); the
-prompt QUALITY needs real browser-task A/B tuning. Until then, iphone remains the
-default; browser injects this set via adapters/browser/factory.py.
-
-NOTE (vision-only screenshot + structured metadata): screenshots are page.screenshot() = the
-page VIEWPORT only — no browser chrome (address bar / URL) and no tab title. Perception captures
-both via raw CDP (Target.getTargetInfo) into Observation.url/title, but they are used differently:
-
-  - TITLE (viewport-language page name) → injected into the checker by helpers.run_checker as
-    ground-truth 页面标题, so the LLM uses it instead of fabricating.
-  - URL (machine route) → NOT injected (little discriminating value as LLM text, costs tokens);
-    consumed PROGRAMMATICALLY in the supervisor — a changed URL = the previous action navigated,
-    used to suppress false no_effect / sim-stuck (see policy._run_single_turn url_changed).
-
-Capture is BEST-EFFORT: page_info() returns ("","") on failure → title None → NO 页面标题 block is
-injected. The checker wording is therefore CONDITIONAL ("若提供…以其为准；若未提供…仅凭可见内容、
-绝不臆测") so a missing title degrades to on-page content, never a fabrication prompt.
-"""
+"""Browser milestone supervisor prompts."""
 
 DECOMPOSE_PROMPT = """\
-你是浏览器自动化任务的规划 Supervisor。将用户任务分解为子目标（milestone）。
+你是浏览器自动化任务的任务分解器。将用户任务分解为阶段目标。
 你会收到当前网页截图，请根据截图判断当前页面状态。
 
-可用操作：tap（点击页面元素/链接/按钮）、type（在输入框输入文字，自动清空旧内容）、press_enter（按回车提交，如搜索）、scroll（滚动页面）
+可用操作：tap（点击页面元素/链接/按钮）、type（在输入框填写或替换文字）、press_enter（按回车提交，如搜索）、scroll（滚动页面）
 - goal：任务一句话描述
 - global_constraints：全局约束列表
-- milestones：子目标列表，每个含 id/name/description/depends_on/success_condition/kind/completion_strategy/scroll_stop_condition/failure_hints
+- milestones：阶段目标列表，每个含 id/name/description/depends_on/success_condition/kind/completion_strategy/scroll_stop_condition/failure_hints
 - task_type：action（执行具体操作）/ analysis（查看/比较/总结信息）；有疑问时选 analysis
 
 原则：
@@ -60,7 +33,7 @@ goal 中已含预处理后的绝对日期。若 goal 含日期范围，提取到
 ## 其他规则
 1. 浏览器默认在**当前已打开的页面/标签**上操作；除非任务明确要求打开新网址，否则不要生成「打开某网站」类前置子目标。
    登录/认证不要单独成子目标：把「到达某页面」的整条路径（含可能的登录）合并为一个子目标，验收只写最终要到达的页面；
-   不要生成验收为「出现账号密码登录框」的子目标——系统常保持登录态、登录页未必出现，这种验收会一直无法满足。
+   若当前页面已经处于登录后的工作区，不要要求出现登录框；若实际出现登录页，则把完成登录视为到达目标页面路径的一部分。
 2. depends_on 填依赖的前置子目标 id，无依赖留空
 3. kind 表达子目标语义：
    - navigation：打开网址、进入/到达某页面、切换标签——验收是「看到某页面」、不改数据/状态
@@ -75,9 +48,9 @@ goal 中已含预处理后的绝对日期。若 goal 含日期范围，提取到
    - repeat_until_satisfied：靠重复调整逐步逼近目标值（网页较少见）
    - human_escalation：需人工处理
 5. 信息获取类的内容收集子目标用 kind=collection；来自可滚动列表/信息流的内容用 completion_strategy=scroll_until_boundary，并填 scroll_stop_condition（一句话说明何时停止滚动：有时间范围用「当可见记录日期早于 起始日期 时停止」，全量用「滚动至列表底部时停止」）。
-6. 禁止生成 kind=verification 的子目标。analysis 任务里的「计算/汇总/求和/统计/对比」是对**已采集数据的纯运算**，由系统输出环节自动完成，**禁止**为它单独生成子目标。collection 采集子目标就是最后一步，验收只需「数据采全」。
+6. 禁止生成 kind=verification 的子目标。analysis 任务里的「计算/汇总/求和/统计/对比」是对**已采集数据的纯运算**，不需要页面操作，**禁止**为它单独生成子目标。collection 采集子目标就是最后一步，验收只需「数据采全」。
 7. 需要先筛选再采集时（按日期/关键词筛选后收集），filter 与 collection 拆为独立子目标：先 filter（验收=筛选已生效的可见状态），再 collection + scroll_until_boundary（depends_on 含该 filter）。
-8. failure_hints 列出该子目标可能失败的原因。
+8. failure_hints 列出该子目标可能未达成的原因。
 """
 
 SINGLE_CHECKER_PROMPT = """\
@@ -87,8 +60,8 @@ SINGLE_CHECKER_PROMPT = """\
 
 **第一步：页面识别**
 先识别当前是什么页面。{app_name_context}你必须独立判断当前实际所在的页面——不要预设已在目标页。
-⚠️ 截图只含网页内容区（viewport），不含浏览器地址栏/标签栏。**若**下方给出『页面标题』（浏览器提供的真值，不在截图里），可结合它判断页面身份；**若未给出**，则仅凭页面可见内容判断，**绝不臆测或编造页面标题/网址**。综合判断：（若有）页面标题 + 页面可见内容（页头/大标题 H1、面包屑、导航栏高亮项、主内容区、页面特有元素），得出当前是什么页（如：搜索结果页、商品详情、登录页、设置页、某列表页）。
-page_identity **必填、绝不能留空**——它是后续逻辑的判断依据。
+⚠️ 截图只含网页内容区（viewport），不含浏览器地址栏/标签栏。**若**下方给出『页面标题』（浏览器提供的附加信息，不在截图里），可结合它判断页面身份；**若未给出**，则仅凭页面可见内容判断，**绝不臆测或编造页面标题/网址**。综合判断：（若有）页面标题 + 页面可见内容（页头/大标题 H1、面包屑、导航栏高亮项、主内容区、页面特有元素），得出当前是什么页（如：搜索结果页、商品详情页、登录页、设置页、某列表页）。
+page_identity **必填、绝不能留空**——它用于保持页面识别一致。
 将结果填入 page_identity 字段。
 
 **第二步：验收判断**
@@ -218,7 +191,7 @@ PLAN_PROMPT = """\
 - 子目标类型：{milestone_kind}
 - 全局约束：{constraints}
 
-## Checker 结果
+## 当前验收结果
 - status：{check_status}
 - reason：{check_reason}
 - issues：{issues}
@@ -232,18 +205,17 @@ PLAN_PROMPT = """\
 - ⚠️ 每条指令只包含一个动作。禁止组合（如「输入并回车」）；输入和提交必须拆成两条
 - 描述要操作的具体页面元素，如「点击搜索框」「点击结果列表第一项的标题链接」「点击右上角的登录按钮」
 - 不要给出目标级指令，如「完成搜索」「进入详情页」
-- ⚠️ 需要打开/前往某个网址、且当前不在该网站时：直接指令「导航到 <网址>」或「打开 <网址>」（如「导航到 baidu.com」），执行层会让浏览器跳转。
+- ⚠️ 需要打开/前往某个网址、且当前不在该网站时：直接指令「导航到 <网址>」或「打开 <网址>」（如「导航到 baidu.com」）。
   禁止指令「在搜索框/地址栏输入该网址」——把网址打进页面里的搜索框只会触发站内/Google 搜索，不会跳到该网站
 - 当前已在目标网站则站内导航（点链接/按钮/返回），不要再用导航重新打开网址
 - ⚠️ 需要提交搜索/确认输入时，优先指令「按回车键提交」
-- ⚠️ 输入框无论有无旧内容，直接生成输入文字指令即可——系统会自动清空后输入，无需先清空
-- 输入文字动作已包含自动点击输入框的步骤，看到输入框直接生成输入指令，不需先单独「点击输入框」
+- ⚠️ 输入框无论有无旧内容，直接生成输入文字指令即可；输入文字表示聚焦该输入框并替换为指定内容，无需先清空
+- 看到输入框且下一步目标是填写文字时，直接生成输入指令，不需先单独「点击输入框」
 - ⚠️ 生成输入文字时必须用子目标描述/验收条件中明确指定的原始文字，禁止编造或改写
 - 滚动指令描述要查看什么内容（如「滚动查看更多结果」），不要指定手指方向
 
-## 结构化方向提示（direction / drag_column / drag_current_value / drag_target_value）
+## 滚动方向提示
 - direction：下一步是 scroll → 填滚动方向（down/up/left/right，down=查看下方内容）；其他动作（tap/type/press_enter/stop）→ 留空
-- drag_column / drag_current_value / drag_target_value：网页无多列滚轮 picker，一律留空
 """
 
 LOOP_SCROLL_PROMPT = """\
@@ -264,17 +236,17 @@ LOOP_SCROLL_PROMPT = """\
 """
 
 REPLAN_PROMPT = """\
-你是浏览器自动化任务的修复规划器。某个子目标执行失败，请诊断原因并制定修复策略。
+你是浏览器自动化任务的修复规划器。某个阶段目标尚未达成，请根据当前截图诊断原因并制定修复策略。
 
-## 失败的子目标
+## 尚未达成的子目标
 - 名称：{milestone_name}
 - 描述：{milestone_desc}
 - 验收条件：{success_condition}
-- 失败原因：{stuck_reason}
+- 未达成提示：{stuck_reason}
 - 具体问题：{issues}
 - 已重试次数：{retry_count}
 - 全局约束：{constraints}
-- 预期失败提示：{failure_hints}
+- 可能未达成原因提示：{failure_hints}
 
 ## 已完成的子目标（不要退回这些状态）
 {completed_milestones}
@@ -285,17 +257,18 @@ REPLAN_PROMPT = """\
 ## 分析要求
 1. 观察截图，理解当前所有可见 UI 元素
 2. 检查历史是否存在 A→B→A→B 交替循环，存在则必须跳出
-3. 分析之前失败的根本原因
-4. 找一条不同的路径——若同一元素已尝试 2+ 次均失败，必须跳出该元素：截图中是否有尚未尝试的链接/按钮/标签/入口？当前弹窗/面板能否关闭回上级寻找替代路径？
+3. 分析之前未达成的根本原因。未达成提示只作为线索；必须以当前截图为准
+4. 找一条不同的路径——若同一元素已尝试 2+ 次仍未达成目标，应优先查看截图中是否有尚未尝试的链接/按钮/标签/入口，或当前弹窗/面板能否关闭回上级寻找替代路径
+5. 如果当前截图显示上一步已经产生局部效果（例如菜单已展开、面板已打开、选项已出现），不要把该入口诊断为无效；应基于新出现的可见元素继续规划
 
 ## diagnosis 写法要求
-- ⚠️ diagnosis 必须点名「导致失败的入口动作」（如「点击 XX 按钮」），而不只是描述末端失败现象。该诊断会注入后续规划，让 Planner 知道哪个入口不能再走。
+- ⚠️ diagnosis 必须点名「导致当前未达成的入口动作或路径」（如「点击 XX 按钮后未出现目标页面」），而不只是描述末端现象。
 
 ## 决策规则
 - 验收条件已满足（截图中可见目标状态）→ force_complete
 - 工具限制/数据问题 → local_replan
 - 如果筛选无法精确设置，但后续 collection 可逐条过滤补偿 → can_degrade_to_collection=true
-- 以下指令已尝试过且失败，禁止再次使用：
+- 以下指令已尝试过但尚未达成目标；除非当前截图出现新的明确证据，否则不要机械重复：
 {tried_instructions}
 - instruction 只含一个原子操作，禁止「并」「然后」「再」等连接词
 - 滚动指令描述要查看什么内容，不要指定手指方向
@@ -321,6 +294,21 @@ STOP_CONDITION_PATCH_PROMPT = """\
 """
 
 
+# ── Browser-specific structured planner output ──────────────────────────────
+from typing import Literal, Optional  # noqa: E402
+
+from pydantic import BaseModel, Field  # noqa: E402
+
+
+class BrowserPlanResult(BaseModel):
+    instruction: str = Field(description="下一步精确操作指令")
+    summary: str = Field(description="规划依据一句话摘要")
+    direction: Optional[Literal["up", "down", "left", "right"]] = Field(
+        default=None,
+        description="只有下一步需要滚动时填写：down=查看下方内容，up=查看上方内容，left/right=横向查看内容；其他操作留空",
+    )
+
+
 # ── Bundle into the neutral MilestonePrompts seam (web draft) ────────────────
 from gui_agent.core.supervisor.milestone.schemas import MilestonePrompts  # noqa: E402
 
@@ -336,4 +324,5 @@ BROWSER_MILESTONE_PROMPTS = MilestonePrompts(
     replan=REPLAN_PROMPT,
     stop_condition_patch=STOP_CONDITION_PATCH_PROMPT,
     image_resize="none",
+    plan_result_schema=BrowserPlanResult,
 )

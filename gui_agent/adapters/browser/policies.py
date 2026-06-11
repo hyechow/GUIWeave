@@ -33,12 +33,11 @@ SYSTEM_PROMPT = """\
 
 可用动作（只能从中选一个）：
 - tap：点击链接、按钮、菜单项、复选框、标签页等可点击元素。填写目标中心的 x/y。
-- type：在输入框/文本域中填写文字。填写输入框中心的 x/y 和 text，它会自动先点击聚焦、清空原有内容、再输入。
+- type：在输入框/文本域中填写或替换文字。填写输入框中心的 x/y 和 text；type 表示聚焦该输入框并写入目标文字。
   只要指令意图是「输入/填写/录入某段文字」（如「在标题栏输入X」「正文输入Y」），就必须直接输出 type，
-  同时给出 x/y 和 text，一步到位。绝不要为了「先聚焦/先激活输入框」而单独输出一个 tap——type 本身就会
-  点击聚焦；单独 tap 一个空输入框往往屏幕零变化、被判无效，白白浪费一步并触发重规划。
+  同时给出 x/y 和 text。不要为了「先聚焦/先激活输入框」而单独输出一个 tap；type 本身就表示聚焦并填写。
   只有当指令明确说明输入框已经聚焦时，type 才可以只填写 text、不填写 x/y。
-- press_enter：提交表单/确认搜索/换行。输入文字后需要提交时使用，无需坐标。禁止用 tap 去点提交按钮来代替回车提交。
+- press_enter：提交搜索或确认当前输入。单输入框搜索通常用 press_enter；如果页面有明确的「保存/提交/确定」按钮且指令要求点击它，则使用 tap。
 - clear_text：清空当前聚焦输入框的内容，无需坐标。
 - scroll：滚动页面以显示更多内容。填写 direction（down 看下方、up 看上方、right 看右侧、left 看左侧）、amount（small/medium/large）；
   局部滚动容器需填写 x/y 作为滚动锚点，落在要滚动的区域内。
@@ -52,14 +51,14 @@ SYSTEM_PROMPT = """\
 - close_tab：关闭标签页，填 tab_match 关指定标签页、留空关当前标签页，无需坐标。
 - upload：上传本地文件。当指令是「上传/导入/选择文件 X」且给出了文件路径时使用：填上传控件（选择文件按钮/
   拖放区/导入按钮）中心的 x/y，并把文件路径填进 file_path。**绝不要对「选择文件/点击上传/导入」这类控件用普通
-  tap**——那会弹出操作系统原生文件框，截图里看不见、还会卡死；upload 会自动拦截该文件框并直接送文件。file_path
+  tap**；文件选择框不属于网页内容，后续无法通过网页截图判断。file_path
   只能用指令/任务里给出的路径，不要自己编造；指令没给路径就不要用 upload。
 - stop：当指令含义是「停止」「无需操作」「目标已完成」，或目标元素确实不在当前截图中时使用，无需坐标。
 
 约束：
 - amount 表示滚动幅度：small（细调）、medium（普通翻看）、large（快速翻页）。
 - 普通整页滚动可不填 x/y；局部滚动容器、分栏区域必须填写 x/y 落在该容器中心。
-- 不要填写 to_x/to_y/duration_ms（拖动除外，drag 由你给出起点，终点由执行层处理或你按需提供）。
+- 不要填写 to_x/to_y/duration_ms（拖动除外，drag 可按需给出起点和终点）。
 - description 用中文简要说明操作目标，必须与指令中的目标元素名称一致。
 
 ## 目标元素不可见时的处理
@@ -102,9 +101,7 @@ def _prepare_browser_png(png_bytes: bytes) -> bytes:
 
 
 class BrowserActionPolicy(BaseActionPolicy):
-    """Vision-based browser action policy. Uses the shared BaseActionPolicy.decide()
-    template; the iphone picker hints (direction/drag_column/drag_steps) are accepted
-    by that signature and ignored (browser has no picker)."""
+    """Vision-based browser action policy."""
 
     name = "browser_vision"
     SYSTEM_PROMPT = SYSTEM_PROMPT

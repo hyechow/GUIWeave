@@ -23,8 +23,23 @@ class BrowserAction(BaseAction):
     """A browser action: shared base + ``navigate`` / ``url`` + ``back`` (history back)
     + tab management (new_tab / select_tab / close_tab) + ``upload`` (file). No iphone picker."""
 
-    action_type: BrowserActionType  # type: ignore[assignment]
-    url: Optional[str] = None
+    action_type: BrowserActionType = Field(
+        description=(
+            "浏览器动作类型：tap/type/clear_text/press_enter/scroll/drag/navigate/"
+            "back/new_tab/select_tab/close_tab/upload/stop"
+        )
+    )  # type: ignore[assignment]
+    direction: Optional[str] = Field(
+        default=None,
+        description=(
+            "内容查看方向：down=查看下方内容，up=查看上方内容，"
+            "right=查看右侧内容，left=查看左侧内容。scroll/drag 使用"
+        ),
+    )
+    url: Optional[str] = Field(
+        default=None,
+        description="navigate 或 new_tab 要打开的网址；可填写完整 URL，也可填写用户给出的域名",
+    )
     tab_match: Optional[str] = Field(
         default=None,
         description="select_tab/close_tab 时，要切换/关闭的标签页的标题或网址子串（如「飞书」「feishu」）。close_tab 留空表示关当前标签页",
