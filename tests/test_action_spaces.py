@@ -118,6 +118,24 @@ def test_serialization_preserves_subclass_fields():
     assert "example.com" in dumped                                # browser url survived
 
 
+# --- _unwrap_flat_action repairs malformed action wrappers (model quirks) ------ #
+def test_action_decision_unwraps_bare_string_action():
+    # json_object mode sometimes emits the action TYPE as a bare string instead of the nested
+    # object (e.g. {"action":"tap","x":..}); repair it so the primary parse succeeds.
+    d = BrowserActionDecision.model_validate(
+        {"action": "tap", "x": 67, "y": 175, "description": "点订单菜单"})
+    assert d.action.action_type == "tap" and d.action.x == 67 and d.action.y == 175
+    d2 = BrowserActionDecision.model_validate(
+        {"action": "navigate", "url": "http://x:22000", "description": "打开", "not_found_reason": None})
+    assert d2.action.action_type == "navigate" and d2.action.url == "http://x:22000"
+
+
+def test_action_decision_unwraps_flat_fields():
+    # action fields at the top level, no wrapper at all
+    d = IPhoneActionDecision.model_validate({"action_type": "tap", "x": 1, "y": 2, "description": "x"})
+    assert d.action.action_type == "tap" and d.action.x == 1
+
+
 # --- field isolation: a platform's injected schema has ONLY its own fields --- #
 def _schema_str(decision_cls) -> str:
     import json

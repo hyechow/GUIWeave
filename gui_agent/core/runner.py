@@ -1099,13 +1099,18 @@ def main() -> None:
                 print("=" * 50)
                 print(output.rstrip())
                 print("=" * 50)
-                # Persist the final reply so the HTML report can render it.
+                # Persist the final reply so the HTML report can render it. Patch the raw JSON
+                # dict directly instead of round-tripping through PolicyContext.model_validate:
+                # the round-trip rejects platform-only action types (e.g. browser `navigate`)
+                # because the neutral BaseAction literal can't deserialize them (SerializeAsAny
+                # covers dump, not load). The on-disk JSON already holds everything from the last
+                # _save_context; we only add the output field.
                 try:
-                    final_ctx = PolicyContext.model_validate(
-                        json.loads(context_path.read_text(encoding="utf-8"))
+                    raw = json.loads(context_path.read_text(encoding="utf-8"))
+                    raw["output"] = output
+                    context_path.write_text(
+                        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
                     )
-                    final_ctx.output = output
-                    _save_context(context_path, final_ctx)
                 except Exception as exc:
                     print(f"（输出未写入 context: {exc}）")
 

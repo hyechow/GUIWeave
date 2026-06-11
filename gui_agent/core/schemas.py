@@ -204,9 +204,25 @@ class BaseActionDecision(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _unwrap_flat_action(cls, data: object) -> object:
-        """Accept flat Action fields directly (model forgot the outer wrapper)."""
-        if isinstance(data, dict) and "action_type" in data and "action" not in data:
+        """Repair two common model malformations of the action wrapper.
+
+        1. Flat: action fields at the top level, no ``action`` wrapper → wrap them.
+        2. ``action`` given as a bare STRING (the model emitted only the type, e.g.
+           ``{"action": "tap", "x": 67, "y": 175, ...}``) → rebuild the nested object with
+           ``action_type`` = that string and the sibling fields. Without this the json_object
+           primary parse fails and we fall back to a second (text-JSON) LLM call.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "action_type" in data and "action" not in data:
             return {"action": data}
+        if isinstance(data.get("action"), str):
+            nested = {k: v for k, v in data.items() if k not in ("action", "not_found_reason")}
+            nested["action_type"] = data["action"]
+            out: dict = {"action": nested}
+            if data.get("not_found_reason") is not None:
+                out["not_found_reason"] = data["not_found_reason"]
+            return out
         return data
 
 
