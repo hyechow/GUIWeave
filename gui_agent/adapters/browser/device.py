@@ -78,6 +78,8 @@ class PlaywrightDevice:
         self._tab_switched = False  # set by _switch_page; cleared by pop_tab_switched()
         self._last_viewport = None  # CSS-px (w, h) derived from the last screenshot
         self._dpr = None  # cached devicePixelRatio (stable; only changes across monitors)
+        self._pending_upload = None  # file path armed for the NEXT file chooser (upload action)
+        self._upload_result = None   # set by the file-chooser handler so upload_file can report
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -96,6 +98,7 @@ class PlaywrightDevice:
         # Initial bind; _follow_active_tab() re-points this at any tab a click later
         # spawns (see there). Reset the new-tab snapshot for a fresh connection.
         self.page = pages[0] if pages else self._context.new_page()
+        self._arm_file_chooser(self.page)
         self._prev_pages = None
         self._tab_switched = False
         self._last_viewport = None
@@ -328,6 +331,41 @@ class PlaywrightDevice:
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return f"OK tap ({x:.0f},{y:.0f})"
+
+    def upload_file(self, x: float, y: float, file_path: str) -> str:
+        """Click the upload control at (x,y) and feed ``file_path`` through the file chooser —
+        WITHOUT the native dialog. Arms ``_pending_upload`` so the persistent ``_on_file_chooser``
+        handler (see ``_arm_file_chooser``) delivers the file when the click opens the chooser.
+
+        Works even when the page has no persistent ``<input type=file>`` (custom uploaders create
+        an ephemeral input on click) because the chooser is keyed to the click, not a located
+        node. Proven on RoboTeam 地图导入. (page.mouse / file chooser keep working over
+        connect_over_cdp even though page.evaluate is bound-broken here.)
+        """
+        import os
+
+        path = os.path.expanduser(file_path)
+        if not os.path.exists(path):
+            return f"failed: 文件不存在 {path}"
+        self._follow_active_tab()
+        try:
+            page = self._require_page()
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            self._pending_upload = path
+            self._upload_result = None
+            page.mouse.click(x, y)
+            for _ in range(20):  # pump events so the file-chooser handler can run (~≤3s)
+                if self._upload_result is not None:
+                    break
+                page.wait_for_timeout(150)
+        except Exception as exc:  # noqa: BLE001
+            self._pending_upload = None
+            return f"failed: {exc}"
+        self._pending_upload = None
+        return self._upload_result or "failed: 点击后未弹出文件选择器（该控件可能不是上传入口）"
 
     def type_text(self, text: str) -> str:
         self._follow_active_tab()
@@ -755,6 +793,48 @@ class PlaywrightDevice:
             self.page = page
             self._cdp = None
             self._tab_switched = True
+            self._arm_file_chooser(page)
+
+    # ── File-chooser safety net ────────────────────────────────────────────
+    def _arm_file_chooser(self, page) -> None:
+        """Register a PERSISTENT file-chooser handler on ``page`` (once).
+
+        Registering a 'filechooser' listener makes Playwright intercept EVERY file chooser, so
+        the native OS dialog never opens — which would otherwise block the whole CDP transport
+        and hang the agent. The LLM occasionally plain-taps a 选择文件/上传 control instead of
+        emitting the upload action; this catches that. See ``_on_file_chooser``.
+        """
+        if page is None or getattr(page, "_fc_armed", False):
+            return
+        try:
+            page.on("filechooser", self._on_file_chooser)
+            page._fc_armed = True
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_file_chooser(self, chooser) -> None:
+        """Route an intercepted file chooser: the armed upload file, else CANCEL it.
+
+        ``upload_file`` arms ``_pending_upload`` right before clicking the upload control, so the
+        next chooser gets that file. Any OTHER chooser (a stray tap that opened a file picker) is
+        cancelled with an empty selection — the native dialog never blocks the agent.
+        """
+        import os
+
+        path = self._pending_upload
+        self._pending_upload = None
+        if path:
+            try:
+                chooser.set_files(path)
+                self._upload_result = f"OK upload {os.path.basename(path)}"
+            except Exception as exc:  # noqa: BLE001
+                self._upload_result = f"failed: {exc}"
+        else:
+            try:
+                chooser.set_files([])  # empty = cancel; no file selected
+            except Exception:  # noqa: BLE001
+                pass
+            print("  [FileChooser] 拦截并取消了一个非预期的文件选择弹窗（防原生框卡死）")
 
     # ----- internals -------------------------------------------------------
     def _require_page(self):

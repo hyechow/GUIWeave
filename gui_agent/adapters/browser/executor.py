@@ -68,6 +68,15 @@ class BrowserExecutor(VisionExecutor):
             print(f"关闭标签页（{action.tab_match or '当前'}）")
             print(f"  结果: {client.close_tab(action.tab_match)}")
             return True
+        if at == "upload":
+            if not action.file_path or action.x is None or action.y is None:
+                print("上传失败：缺少 file_path 或上传控件坐标 x/y")
+                return False
+            px, py = self._denorm(action.x, action.y)
+            print(f"上传文件 {action.file_path} → 点击上传控件 ({px:.0f},{py:.0f})，经 file chooser 送文件")
+            result = client.upload_file(px, py, action.file_path)
+            print(f"  结果: {result}")
+            return "failed" not in result.lower()
         return None
 
 

@@ -40,6 +40,7 @@ def test_browser_vocabulary():
     v = _action_type_values(BrowserAction)
     assert "navigate" in v and "back" in v   # back = history back (shared with android)
     assert {"new_tab", "select_tab", "close_tab"} <= v   # tab management
+    assert "upload" in v                     # file upload via file chooser
     assert "home" not in v
     assert "app_switch" not in v
 
@@ -58,6 +59,7 @@ def test_positive_construction():
     BrowserAction(action_type="new_tab", url="feishu.cn", description="新标签页打开飞书")
     BrowserAction(action_type="select_tab", tab_match="飞书", description="切到飞书标签页")
     BrowserAction(action_type="close_tab", description="关当前标签页")
+    BrowserAction(action_type="upload", x=500, y=500, file_path="~/Downloads/m.map_export", description="上传地图文件")
     AndroidAction(action_type="back", description="返回")
     AndroidAction(action_type="app_switch", description="切换应用")
 
@@ -65,6 +67,11 @@ def test_positive_construction():
 def test_select_tab_requires_match():
     with pytest.raises(Exception):
         BrowserAction(action_type="select_tab", description="切标签")  # no tab_match
+
+
+def test_browser_upload_requires_file_path():
+    with pytest.raises(Exception):
+        BrowserAction(action_type="upload", x=1, y=1, description="x")  # no file_path
 
 
 @pytest.mark.parametrize(
@@ -75,6 +82,8 @@ def test_select_tab_requires_match():
         (BrowserAction, "home"),
         (BrowserAction, "app_switch"),
         (AndroidAction, "navigate"),
+        (IPhoneAction, "upload"),
+        (AndroidAction, "upload"),
     ],
 )
 def test_rejects_foreign_action_type(cls, bad):
