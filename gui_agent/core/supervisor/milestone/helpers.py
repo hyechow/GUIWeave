@@ -169,18 +169,16 @@ def run_checker(
         prompt += f"\n\n## 输出修正要求\n{extra}"
     if section_manifest:
         prompt += f"\n\n{section_manifest}"
-    # Structured page metadata (URL / tab title) the screenshot can't show — ground truth for
-    # page identity, so the checker uses it instead of fabricating. Only when perception supplies
-    # it (browser); iphone/android leave these None and nothing is injected.
-    meta_lines = []
-    if getattr(observation, "url", None):
-        meta_lines.append(f"- 当前页面 URL：{observation.url}")
-    if getattr(observation, "title", None):
-        meta_lines.append(f"- 当前标签页标题：{observation.title}")
-    if meta_lines:
+    # Inject the tab TITLE (the viewport-language page name the screenshot doesn't show) as
+    # ground truth, so the checker uses it instead of fabricating. The URL is deliberately NOT
+    # injected — a machine URL adds little discriminating value as LLM text and costs tokens; it
+    # is consumed programmatically instead (url-change = navigation, in the supervisor). Only
+    # browser perception supplies a title; iphone/android leave it None and nothing is injected.
+    title = getattr(observation, "title", None)
+    if title:
         prompt += (
-            "\n\n## 页面元信息（浏览器提供的真值，不在截图里——以此为准，勿从截图找或编造）\n"
-            + "\n".join(meta_lines)
+            "\n\n## 页面标题（浏览器提供的真值，不在截图里——以此为准，勿从截图找或编造）\n"
+            f"- 当前页面标题：{title}"
         )
     result = invoke_structured(
         _make_llm(),

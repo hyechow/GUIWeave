@@ -88,3 +88,30 @@ def test_done_advances_despite_false_no_effect(monkeypatch):
         [_tap_turn(on_target=True, no_effect=True)],
     )
     assert calls == ["advance"]  # false no_effect no longer blocks verification
+
+
+# ── URL-change (browser ground truth) suppresses pixel false positives ──────────
+def _wire_plan(monkeypatch, p) -> list[str]:
+    """Like _wire but in_progress + also records _plan_single / suppresses repetition."""
+    calls = _wire(monkeypatch, p, "in_progress")
+    monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (calls.append("plan"), "PLAN")[1])
+    monkeypatch.setattr(p, "_check_instruction_repetition", lambda *a, **k: None)
+    return calls
+
+
+def test_url_change_suppresses_false_no_effect(monkeypatch):
+    p, m = _policy()
+    calls = _wire_plan(monkeypatch, p)
+    p._last_url = "http://x/orders"
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/orders/transport")  # navigated
+    p._run_single_turn(m, obs, [_tap_turn(on_target=True, no_effect=True)])
+    assert calls == ["plan"]  # URL changed => the tap DID navigate => no_effect suppressed
+
+
+def test_no_url_change_keeps_no_effect_replan(monkeypatch):
+    p, m = _policy()
+    calls = _wire_plan(monkeypatch, p)
+    p._last_url = "http://x/orders"
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/orders")  # unchanged
+    p._run_single_turn(m, obs, [_tap_turn(on_target=True, no_effect=True)])
+    assert calls == ["stuck"]  # URL unchanged => no_effect stands => replan

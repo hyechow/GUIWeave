@@ -243,6 +243,7 @@ class MilestoneSupervisorPolicy:
         self._elements_knowledge: Optional[str] = None
         self._pk: Optional[ProgressiveKnowledge] = None  # progressive (skill-like) section loader
         self._app_name: str = ""
+        self._last_url: Optional[str] = None  # 上一轮页面 URL(结构化跳页信号；浏览器才有)
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
         # 连续调值类的进展追踪：每 milestone 一个滑动窗口，存最近若干轮 checker 读到的「当前值」。
@@ -332,6 +333,17 @@ class MilestoneSupervisorPolicy:
         current_page_id = check.page_identity or ""
         self._last_page_identity[milestone.id] = current_page_id
 
+        # Programmatic page-change signal: the browser URL is ground truth, so a changed URL means
+        # the previous action navigated — a definite EFFECT / page change. Use it to suppress the
+        # pixel-based false positives below (false no_effect, false sim-stuck on a visually-similar
+        # new page). None on iphone/android (url-less) → url_changed stays False, no effect there.
+        cur_url = observation.url
+        url_changed = bool(cur_url and self._last_url is not None and cur_url != self._last_url)
+        if cur_url is not None:
+            self._last_url = cur_url
+        if url_changed:
+            print(f"  [URLChanged] {cur_url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
+
         # VERIFY FIRST, before consuming the prior turn's off-target / no-effect signals.
         # An action that ACTUALLY satisfied the milestone advances even when the verifiers
         # misreported it — TargetVerify false off-target (tap hit the right tab but was read
@@ -366,6 +378,7 @@ class MilestoneSupervisorPolicy:
         if (
             last_turn is not None
             and getattr(last_turn, "no_effect", False)
+            and not url_changed  # URL changed = the tap DID navigate → not a no-effect
             and last_turn.action_decision is not None
             and last_turn.action_decision.action.action_type in ("tap", "click")
             and (last_tv is None or last_tv.on_target)
@@ -386,7 +399,7 @@ class MilestoneSupervisorPolicy:
         # 因此保留 SimStuck 的「全局+动作局部均无变化」判据；只有指令重复类 RepStuck 被抑制。
         # ValueStall 作为语义兜底：当画面在动但 checker 读到的当前值长期不变，也判停滞。
         if milestone.is_iterative:
-            sim_stuck = self._check_screen_similarity(observation, self._action_center(prev_action))
+            sim_stuck = None if url_changed else self._check_screen_similarity(observation, self._action_center(prev_action))
             if sim_stuck is not None:
                 print(f"  [Stuck] {sim_stuck.status}: {sim_stuck.reason}")
                 return self._handle_stuck(
@@ -404,7 +417,7 @@ class MilestoneSupervisorPolicy:
                 )
             return self._plan_single(milestone, check, observation, history)
 
-        sim_stuck = self._check_screen_similarity(observation, self._action_center(prev_action))
+        sim_stuck = None if url_changed else self._check_screen_similarity(observation, self._action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
 
         rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
