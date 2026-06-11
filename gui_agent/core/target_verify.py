@@ -34,6 +34,11 @@ _SYSTEM = """你是一个 GUI 操作的「落点校验器」。截图上有一�
 - 只认十字中心的真实位置，绝不能因为「指令说要点 X」就把标记脑补成落在 X 上。
 - 底部 Tab 栏紧贴屏幕最底缘。判断垂直高度：只要十字明显在最底那排 Tab 的**上方**（哪怕只高出一点点、
   落在内容区的按钮/chip/列表项上），就不是 Tab，必须 off_target——即使水平方向与某个 Tab 同列。
+- ⚠️ 底部 Tab 栏有多个并排 Tab，每个 Tab 在图标下方有自己的文字标签。**当前高亮的那个 Tab（通常变蓝/
+  加深，是当前所在页）和顶部页面标题，都是干扰项**——十字压住的 Tab 往往不是高亮那个。必须**按十字的水平
+  位置，逐字读出它正下方那一个 Tab 自己的文字标签**写进 actual_element，绝不能拿高亮 Tab 或页面标题的名字
+  顶替它（例：当前在「世界时钟」页，不代表十字下方最左那个 Tab 就叫「世界时钟」——它可能是「闹钟」）。
+  读不清时用它在 Tab 栏里**从左数第几个**+图标形状判断，不要用页面语境猜。
 - 标记落在目标相邻的元素上（上下相邻行、左右相邻列），哪怕很近，一律 off_target。
 reason 一句话，说明十字中心实际压住了什么。"""
 
@@ -72,9 +77,26 @@ def _verify_llm() -> ChatOpenAI:
     return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url, temperature=0)
 
 
+def _upscale(png: bytes, min_w: int = 900) -> bytes:
+    """Upscale a small frame so tiny labels (bottom-Tab text) are legible to the verifier.
+
+    The agent's observation is downscaled (~320px wide) to save tokens; at that size the
+    bottom-Tab labels are barely legible, and the marker ring can cover the target's own
+    label — so the judge falls back on page context and misreads the Tab. Upscaling with a
+    smooth filter gives the model bigger glyphs to OCR. No-op when already large enough."""
+    img = Image.open(io.BytesIO(png)).convert("RGB")
+    if img.width >= min_w:
+        return png
+    scale = min_w / img.width
+    img = img.resize((min_w, int(img.height * scale)), Image.LANCZOS)
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
 def verify_target(png: bytes, snapped_x: float, snapped_y: float, instruction: str) -> TargetVerify:
     """Render the snapped point on the frame and judge whether it is on target."""
-    marked = render_marker(png, snapped_x, snapped_y)
+    marked = render_marker(_upscale(png), snapped_x, snapped_y)
     b64 = base64.b64encode(marked).decode()
     msgs = [
         SystemMessage(content=_SYSTEM),

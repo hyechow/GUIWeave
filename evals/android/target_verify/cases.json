@@ -1,0 +1,13 @@
+[
+  {
+    "label": "alarm-tab-hit-should-be-on-target（回归 20260611_085000 T2：红叉在闹钟 tab 却被判世界时钟 tab）",
+    "screenshot": "evals/android/target_verify/screenshots/alarm_world_clock_before_tab.png",
+    "instruction": "点击底部导航栏中的『闹钟』标签",
+    "point": { "x": 125.0, "y": 967.0 },
+    "expected": {
+      "on_target": true,
+      "actual_element_contains_any": ["闹钟", "alarm"]
+    },
+    "note": "截图为点击前的世界时钟页；归一化点 (125,967) 的红色标记实际位于左下角『闹钟』tab。target_verify 曾幻觉成『世界时钟 tab』并触发 OffTarget replan。"
+  }
+]
