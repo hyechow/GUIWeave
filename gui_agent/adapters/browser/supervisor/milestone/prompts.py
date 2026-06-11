@@ -319,4 +319,5 @@ BROWSER_MILESTONE_PROMPTS = MilestonePrompts(
     loop_scroll=LOOP_SCROLL_PROMPT,
     replan=REPLAN_PROMPT,
     stop_condition_patch=STOP_CONDITION_PATCH_PROMPT,
+    image_resize="none",
 )

@@ -3,7 +3,13 @@
     "label": "picker-小时改值用 scroll 不 tap（回归 20260610_205402：曾 tap 选中数字致零效果中止）",
     "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
     "instruction": "在小时列把小时从 8 调整到 6",
-    "expected": { "action_type": "scroll" }
+    "expected": {
+      "action_type": "scroll",
+      "direction": "up",
+      "amount": "small",
+      "x": 500.0,
+      "y": 240.0
+    }
   },
   {
     "label": "picker-分钟改值用 scroll 不 tap（回归：分钟 54→30 曾升级成 tap 中止）",
@@ -16,6 +22,84 @@
     "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
     "instruction": "把小时设置为 6 点",
     "expected": { "action_type": "scroll" }
+  },
+  {
+    "label": "picker-095209-分钟 52→30 应滚分钟列向上且锚点不落入设置列表",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "在分钟列滚动，把 52 分钟调到 30 分钟",
+    "hints": { "direction": "decrease", "drag_column": "minute", "drag_steps": 22 },
+    "expected": {
+      "action_type": "scroll",
+      "direction": "up",
+      "amount": "large",
+      "x": 765.0,
+      "y": 240.0
+    }
+  },
+  {
+    "label": "picker-095209-分钟 21→30 冲过头后应反向增大分钟",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "在分钟列滚动，把 21 分钟调到 30 分钟",
+    "hints": { "direction": "increase", "drag_column": "minute", "drag_steps": 9 },
+    "expected": {
+      "action_type": "scroll",
+      "direction": "down",
+      "amount": "large",
+      "x": 765.0,
+      "y": 240.0
+    }
+  },
+  {
+    "label": "picker-095209-小时 05→06 应小步滚小时列向下",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "在小时列滚动一点，把 5 点调到 6 点",
+    "hints": { "direction": "increase", "drag_column": "hour", "drag_steps": 1 },
+    "expected": {
+      "action_type": "scroll",
+      "direction": "down",
+      "amount": "small",
+      "x": 500.0,
+      "y": 240.0
+    }
+  },
+  {
+    "label": "picker-104134-小时 09→06 应用 small 防止 09↔01 震荡",
+    "screenshot": "evals/android/planner/screenshots/alarm_picker_095209_t04_0952.png",
+    "instruction": "在小时列滚动，把 09 调到 06",
+    "hints": { "direction": "decrease", "drag_column": "hour", "drag_steps": 3 },
+    "expected": {
+      "action_type": "scroll",
+      "direction": "up",
+      "amount": "small",
+      "x": 500.0,
+      "y": 240.0
+    }
+  },
+  {
+    "label": "picker-111632-小时 11→06 差 5 格应用 medium 提升效率",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "在小时列滚动，把 11 调到 6",
+    "hints": { "direction": "decrease", "drag_column": "hour", "drag_steps": 5 },
+    "expected": {
+      "action_type": "scroll",
+      "direction": "up",
+      "amount": "medium",
+      "x": 500.0,
+      "y": 240.0
+    }
+  },
+  {
+    "label": "picker-111632-分钟 17→30 差 13 格应用 large 快速接近",
+    "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
+    "instruction": "在分钟列滚动，把 17 分钟调到 30 分钟",
+    "hints": { "direction": "increase", "drag_column": "minute", "drag_steps": 13 },
+    "expected": {
+      "action_type": "scroll",
+      "direction": "down",
+      "amount": "large",
+      "x": 765.0,
+      "y": 240.0
+    }
   },
   {
     "label": "contrast-点击列表设置项仍用 tap（防 picker 规则把一切都变 scroll）",

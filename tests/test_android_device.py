@@ -129,15 +129,42 @@ def test_scroll_anchored_near_top_stays_off_gesture_zone(calls):
 
 
 def test_android_executor_amount_units_widen_range():
-    """small must be a fine wheel-picker nudge (1 unit), large a list fling (8)."""
+    """List scrolls keep wide range; picker scrolls use column-specific bounded units."""
     import types
 
+    from gui_agent.adapters.android.actions import AndroidAction
     from gui_agent.adapters.android.executor import AndroidExecutor
 
     ex = AndroidExecutor(types.SimpleNamespace(client=None))
     assert ex._amount_units("small") == 1
     assert ex._amount_units("medium") == 4
     assert ex._amount_units("large") == 8
+    minute_medium = AndroidAction(
+        action_type="scroll",
+        direction="down",
+        amount="medium",
+        snap={"picker_column": "minute"},
+        description="滚动分钟列",
+    )
+    minute_large = minute_medium.model_copy(update={"amount": "large"})
+    hour_medium = minute_medium.model_copy(update={"snap": {"picker_column": "hour"}})
+    assert ex._amount_units_for_action(minute_medium) == 2
+    assert ex._amount_units_for_action(minute_large) == 3
+    assert ex._amount_units_for_action(hour_medium) == 2
+
+
+def test_scroll_two_units_uses_slow_picker_speed(calls):
+    dev = _connected_device()
+    dev.scroll("down", amount=2, x=540, y=576)
+    _, *_coords, duration = [c for c in calls if c[0] == "swipe"][-1]
+    assert duration == 0.7
+
+
+def test_scroll_three_units_uses_bounded_picker_coarse_speed(calls):
+    dev = _connected_device()
+    dev.scroll("down", amount=3, x=540, y=576)
+    _, *_coords, duration = [c for c in calls if c[0] == "swipe"][-1]
+    assert duration == 0.45
 
 
 def test_executor_denorm_maps_normalized_to_device_pixels(calls):

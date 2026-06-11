@@ -1,5 +1,6 @@
 """MilestoneSupervisorPolicy: two-machine milestone supervisor."""
 
+from dataclasses import dataclass
 import json
 import re
 import time
@@ -44,6 +45,74 @@ STUCK_REPEAT_WORD_OVERLAP = 0.85
 # 连续调值类（is_iterative）的卡住判据：屏幕冻结/指令重复都是正常的（picker 反复拖同一下），
 # 不适用。改判「被监控值连续 N 轮未变化」=真停滞。N>1 容忍摘要框提交滞后(1 轮) + 小步未到一格。
 STUCK_VALUE_STALL_WINDOW = 4
+
+_VALUE_CONVERGE_CONTROL_WORDS = (
+    "picker",
+    "滚轮",
+    "选择器",
+    "步进器",
+    "滑块",
+    "spinner",
+)
+_VALUE_SET_WORDS = ("设置为", "设为", "调到", "调整为", "改为", "选到", "显示为", "设定为")
+_VALUE_DOMAIN_WORDS = (
+    "时间",
+    "日期",
+    "闹钟",
+    "小时",
+    "分钟",
+    "上午",
+    "下午",
+    "am",
+    "pm",
+    "数量",
+    "数值",
+    "音量",
+    "亮度",
+    "比例",
+    "百分比",
+    "档",
+    "级",
+    "年",
+    "月",
+    "日",
+)
+
+_AM_WORDS = ("上午", "早上", "早晨", "清晨")
+_PM_WORDS = ("下午", "晚上", "傍晚", "夜晚")
+_TIME_ENTITY_WORDS = ("闹钟", "提醒", "日程", "会议", "预约", "时间", "alarm", "reminder", "schedule", "meeting")
+_WEEKDAY_ALIASES = {
+    "周一": ("周一", "星期一", "礼拜一"),
+    "周二": ("周二", "星期二", "礼拜二"),
+    "周三": ("周三", "星期三", "礼拜三"),
+    "周四": ("周四", "星期四", "礼拜四"),
+    "周五": ("周五", "星期五", "礼拜五"),
+    "周六": ("周六", "星期六", "礼拜六"),
+    "周日": ("周日", "周天", "星期日", "星期天", "礼拜日", "礼拜天"),
+}
+
+
+@dataclass(frozen=True)
+class _GoalValueConstraint:
+    field: str
+    target: str
+    rejects: str = ""
+    aliases: tuple[str, ...] = ()
+    trigger_words: tuple[str, ...] = ()
+
+    def global_text(self) -> str:
+        reject = f"；{self.rejects} 不算完成" if self.rejects else ""
+        return f"目标字段「{self.field}」：{self.target}{reject}"
+
+    def present_in(self, text: str) -> bool:
+        lowered = text.lower()
+        if self.target and self.target in text:
+            return True
+        for alias in self.aliases:
+            if alias in text or alias.lower() in lowered:
+                return True
+        return False
+
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -301,9 +370,20 @@ class MilestoneSupervisorPolicy:
             )
             return self._handle_stuck(milestone, stuck, None, observation, history)
 
-        # 连续调值类（picker/步进器收敛）：SimStuck/RepStuck 不适用（屏幕冻结、反复拖同一下
-        # 都正常）。改用「被监控值多轮不变」判停滞；未停滞就继续规划，不会因单轮无进展判死路。
+        prev_action = history[-1].action_decision.action if history and history[-1].action_decision else None
+
+        # 连续调值类（picker/步进器收敛）：重复同一列滚动是正常的，但动作区连续不动不是正常进展。
+        # 因此保留 SimStuck 的「全局+动作局部均无变化」判据；只有指令重复类 RepStuck 被抑制。
+        # ValueStall 作为语义兜底：当画面在动但 checker 读到的当前值长期不变，也判停滞。
         if milestone.is_iterative:
+            sim_stuck = self._check_screen_similarity(observation, self._action_center(prev_action))
+            if sim_stuck is not None:
+                print(f"  [Stuck] {sim_stuck.status}: {sim_stuck.reason}")
+                return self._handle_stuck(
+                    milestone, sim_stuck, check.read_instruction, observation, history,
+                    page_changed=False,
+                    prev_page_id=prev_page_id, current_page_id=current_page_id,
+                )
             self._last_check_summary[milestone.id] = check.summary
             stall = self._check_value_stall(milestone, check)
             if stall is not None:
@@ -314,7 +394,6 @@ class MilestoneSupervisorPolicy:
                 )
             return self._plan_single(milestone, check, observation, history)
 
-        prev_action = history[-1].action_decision.action if history and history[-1].action_decision else None
         sim_stuck = self._check_screen_similarity(observation, self._action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
 
@@ -376,12 +455,35 @@ class MilestoneSupervisorPolicy:
                     summary=check.summary,
                 )
                 return self._handle_stuck(milestone, stuck_check, check.read_instruction, observation, history)
-        print(f"  [Planner] {plan.instruction}")
         # 结构化 drag 距离：当 planner 给出本列的当前值/目标值时，按差几格算出 drag_steps，
         # 让 action policy 据此放大拖动幅度（差 20 格用 large 粗调、接近后自动收回 small 精调）。
         # 这条结构化通路绕开「从 instruction 文本正则抠数字」的脆弱性——指令只写了目标值
         # （如「直到显示21日」缺当前值）时，正则抠不到距离会退化成一格一格挪、跑满轮数也到不了。
         drag_steps = self._picker_drag_steps(plan)
+        if drag_steps == 0 and plan.drag_column:
+            print("  [Planner] picker 已到目标值但仍要求滚动，重试...")
+            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                plan = self._invoke_planner(
+                    milestone,
+                    check,
+                    observation,
+                    history,
+                    extra=(
+                        "你刚才要求滚动 picker，但结构化字段显示该列当前值已经等于目标值（steps=0）。"
+                        "禁止继续滚动/拖动这个 picker 列，也不要为了“确认精确”微调。"
+                        "请改为当前子目标剩余的一个动作：如果需要提交结果，就点击保存/确认/应用/完成/下一步等按钮；"
+                        "如果还有其他未到位的 picker 列，只能操作那一列；如果验收已经满足则停止。"
+                    ),
+                )
+            drag_steps = self._picker_drag_steps(plan)
+            if drag_steps == 0 and plan.drag_column:
+                print("  [Planner] 重试仍为零步 picker，清空 picker hints 避免执行层强制滚动")
+                plan.direction = None
+                plan.drag_column = None
+                plan.drag_current_value = None
+                plan.drag_target_value = None
+                drag_steps = None
+        print(f"  [Planner] {plan.instruction}")
         if drag_steps is not None and plan.drag_column:
             print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column} steps={drag_steps}")
         elif plan.direction or plan.drag_column:
@@ -1054,12 +1156,23 @@ class MilestoneSupervisorPolicy:
         """从 checker 输出抽出「当前值」作为连续操作的进展度量。
 
         连续调值 section 要求 checker 在 missing_evidence 写「当前值=...」；优先取它，
-        取不到则退回 summary（值变化时 summary 通常也变）。返回归一化字符串供逐轮比对。
+        取不到则从 reason/summary 抽常见时间 picker 值，再退回 summary。返回归一化字符串供逐轮比对。
         """
         for ev in check.missing_evidence or []:
             m = re.search(r"当前值\s*[=:：]\s*(.+)", ev.strip())
             if m:
                 return re.sub(r"\s+", "", m.group(1))
+        text = f"{check.reason or ''}\n{check.summary or ''}"
+        time_match = re.search(r"(上午|下午|AM|PM)?\s*0?(\d{1,2})\s*[:：]\s*0?(\d{1,2})", text, flags=re.IGNORECASE)
+        if time_match:
+            period = (time_match.group(1) or "").upper()
+            hour = int(time_match.group(2))
+            minute = int(time_match.group(3))
+            return f"{period}{hour:02d}:{minute:02d}"
+        hour_match = re.search(r"小时(?:列)?(?:中间(?:高亮|选中)?行?|选中值|显示)?(?:为|=|显示为)?['「“]?\s*0?(\d{1,2})", text)
+        minute_match = re.search(r"分钟(?:列)?(?:中间(?:高亮|选中)?行?|选中值|显示)?(?:为|=|显示为)?['「“]?\s*0?(\d{1,2})", text)
+        if hour_match and minute_match:
+            return f"{int(hour_match.group(1)):02d}:{int(minute_match.group(1)):02d}"
         return re.sub(r"\s+", "", check.summary or "")
 
     def _check_value_stall(
@@ -1199,6 +1312,174 @@ class MilestoneSupervisorPolicy:
 
         return issues
 
+    @staticmethod
+    def _looks_like_value_converge_milestone(m: Milestone) -> bool:
+        text = f"{m.name}\n{m.description}\n{m.success_condition}".lower()
+        if any(w in text for w in _VALUE_CONVERGE_CONTROL_WORDS):
+            return any(w in text for w in _VALUE_SET_WORDS)
+        has_set_word = any(w in text for w in _VALUE_SET_WORDS)
+        has_domain = any(w.lower() in text for w in _VALUE_DOMAIN_WORDS)
+        has_value = bool(re.search(r"\d|am|pm|上午|下午|%", text))
+        return has_set_word and has_domain and has_value
+
+    @staticmethod
+    def _goal_period_constraint(goal: str) -> Optional[_GoalValueConstraint]:
+        text = goal.lower()
+        has_am = any(w in goal for w in _AM_WORDS) or bool(re.search(r"\b(?:a\.?m\.?)\b", text))
+        has_pm = any(w in goal for w in _PM_WORDS) or bool(re.search(r"\b(?:p\.?m\.?)\b", text))
+        if has_am and not has_pm:
+            return _GoalValueConstraint(
+                field="时段",
+                target="上午/早上/AM",
+                rejects="下午/晚上/傍晚/PM",
+                aliases=("上午", "早上", "早晨", "清晨", "AM", "am"),
+                trigger_words=("上午", "早上", "AM", "时段", "上午/下午"),
+            )
+        if has_pm and not has_am:
+            return _GoalValueConstraint(
+                field="时段",
+                target="下午/晚上/傍晚/PM",
+                rejects="上午/早上/AM",
+                aliases=("下午", "晚上", "傍晚", "夜晚", "PM", "pm"),
+                trigger_words=("下午", "晚上", "PM", "时段", "上午/下午"),
+            )
+        return None
+
+    @staticmethod
+    def _goal_repeat_constraint(goal: str) -> Optional[_GoalValueConstraint]:
+        if "工作日" in goal:
+            return _GoalValueConstraint(
+                field="重复规则",
+                target="工作日/周一至周五",
+                rejects="周末/每天/不重复",
+                aliases=("工作日", "周一至周五", "周一到周五", "星期一至星期五"),
+                trigger_words=("重复", "工作日", "周一", "周五", "星期"),
+            )
+        if "周末" in goal:
+            return _GoalValueConstraint(
+                field="重复规则",
+                target="周末/周六周日",
+                rejects="工作日/每天/不重复",
+                aliases=("周末", "周六周日", "周六和周日", "星期六星期日"),
+                trigger_words=("重复", "周末", "周六", "周日", "星期"),
+            )
+        if any(w in goal for w in ("每天", "每日", "天天")):
+            return _GoalValueConstraint(
+                field="重复规则",
+                target="每天/每日",
+                rejects="不重复/仅一次",
+                aliases=("每天", "每日", "天天"),
+                trigger_words=("重复", "每天", "每日"),
+            )
+
+        days: list[str] = []
+        for canonical, aliases in _WEEKDAY_ALIASES.items():
+            if any(alias in goal for alias in aliases):
+                days.append(canonical)
+        if days:
+            target = "/".join(days)
+            return _GoalValueConstraint(
+                field="重复规则",
+                target=target,
+                rejects="其他星期/不重复",
+                aliases=tuple(days),
+                trigger_words=("重复", "星期", "周", *days),
+            )
+        return None
+
+    @staticmethod
+    def _goal_named_value_constraint(goal: str) -> Optional[_GoalValueConstraint]:
+        match = re.search(
+            r"(?:名称|名字|标题|备注|标签|闹钟名|提醒名)"
+            r"(?:设置为|设为|命名为|改为|叫|为)"
+            r"[「“\"']?([^」”\"'，。；;]+)",
+            goal,
+        )
+        if not match:
+            return None
+        value = match.group(1).strip()
+        if not value or len(value) > 30:
+            return None
+        return _GoalValueConstraint(
+            field="名称/标签",
+            target=value,
+            aliases=(value,),
+            trigger_words=("名称", "名字", "标题", "备注", "标签", "闹钟名", "提醒名"),
+        )
+
+    @staticmethod
+    def _looks_like_time_target_milestone(m: Milestone) -> bool:
+        text = f"{m.name}\n{m.description}\n{m.success_condition}".lower()
+        has_clock_value = bool(
+            re.search(
+                r"\d{1,2}\s*[:：]\s*\d{1,2}|\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分?)?",
+                text,
+            )
+        )
+        if has_clock_value:
+            return True
+        has_time_domain = any(w in text for w in (*_TIME_ENTITY_WORDS, "小时", "分钟", "time"))
+        has_numeric_value = bool(re.search(r"\d", text))
+        return has_time_domain and has_numeric_value
+
+    @staticmethod
+    def _extract_goal_value_constraints(goal: str) -> list[_GoalValueConstraint]:
+        constraints: list[_GoalValueConstraint] = []
+        for c in (
+            MilestoneSupervisorPolicy._goal_period_constraint(goal),
+            MilestoneSupervisorPolicy._goal_repeat_constraint(goal),
+            MilestoneSupervisorPolicy._goal_named_value_constraint(goal),
+        ):
+            if c is not None and c.global_text() not in {x.global_text() for x in constraints}:
+                constraints.append(c)
+        return constraints
+
+    def _goal_constraint_applies_to_milestone(self, constraint: _GoalValueConstraint, m: Milestone) -> bool:
+        text = f"{m.name}\n{m.description}\n{m.success_condition}"
+        if any(w in text for w in constraint.trigger_words):
+            return True
+        return self._looks_like_time_target_milestone(m)
+
+    def _patch_goal_value_constraints(self, goal: str, fixes: list[str]) -> None:
+        constraints = self._extract_goal_value_constraints(goal)
+        if not constraints:
+            return
+
+        for constraint in constraints:
+            global_text = constraint.global_text()
+            if global_text not in self._global_constraints:
+                self._global_constraints.append(global_text)
+                fixes.append(f"补充目标字段约束「{constraint.field}={constraint.target}」")
+
+        patched: set[tuple[str, str]] = set()
+        for m in self._milestones.values():
+            if m.kind not in ("action", "filter"):
+                continue
+            for constraint in constraints:
+                if not self._goal_constraint_applies_to_milestone(constraint, m):
+                    continue
+                text = f"{m.name}\n{m.description}\n{m.success_condition}"
+                if constraint.present_in(text):
+                    continue
+                reject = f"，不能是{constraint.rejects}" if constraint.rejects else ""
+                if any(w in text for w in ("列表", "条目", "返回", "新增", "出现")):
+                    m.success_condition = (
+                        f"{m.success_condition}（结果必须同时满足"
+                        f"{constraint.field}={constraint.target}{reject}）"
+                    )
+                else:
+                    m.description = (
+                        f"{m.description} 同时必须设置{constraint.field}为{constraint.target}{reject}。"
+                    )
+                    m.success_condition = (
+                        f"{m.success_condition}（必须同时满足"
+                        f"{constraint.field}={constraint.target}{reject}）"
+                    )
+                key = (m.id, constraint.field)
+                if key not in patched:
+                    fixes.append(f"子目标「{m.name}」补充目标字段「{constraint.field}={constraint.target}」")
+                    patched.add(key)
+
     def _patch_decomposition(self, llm: ChatOpenAI, goal: str) -> None:
         fixes = []
 
@@ -1254,6 +1535,17 @@ class MilestoneSupervisorPolicy:
             if m.kind == "collection" and m.completion_strategy not in ("read_once", "scroll_until_boundary"):
                 m.completion_strategy = "scroll_until_boundary"
                 fixes.append(f"子目标「{m.name}」策略修正为 scroll_until_boundary")
+
+        for m in self._milestones.values():
+            if (
+                m.kind in ("action", "filter")
+                and m.completion_strategy == "visible_once"
+                and self._looks_like_value_converge_milestone(m)
+            ):
+                m.completion_strategy = "repeat_until_satisfied"
+                fixes.append(f"子目标「{m.name}」策略修正为 repeat_until_satisfied")
+
+        self._patch_goal_value_constraints(goal, fixes)
 
         scroll_milestones = [
             m for m in self._milestones.values()
@@ -1316,7 +1608,7 @@ class MilestoneSupervisorPolicy:
         return _make_llm()
 
     def _msgs(self, system_prompt: str, observation: Observation) -> list:
-        return _build_msgs(system_prompt, observation.png_bytes)
+        return _build_msgs(system_prompt, observation.png_bytes, image_resize=self._prompts.image_resize)
 
     @staticmethod
     def _picker_drag_steps(plan: _PlanResult) -> Optional[int]:
@@ -1333,6 +1625,17 @@ class MilestoneSupervisorPolicy:
         if cur is None or tgt is None:
             return None
         if tgt != cur:
+            column = (plan.drag_column or "").strip().lower()
+            if column == "minute":
+                forward = (tgt - cur) % 60
+                backward = (cur - tgt) % 60
+                plan.direction = "increase" if forward <= backward else "decrease"
+                return min(forward, backward)
+            if column == "hour":
+                forward = (tgt - cur) % 12
+                backward = (cur - tgt) % 12
+                plan.direction = "increase" if forward <= backward else "decrease"
+                return min(forward, backward)
             plan.direction = "increase" if tgt > cur else "decrease"
         return abs(tgt - cur)
 

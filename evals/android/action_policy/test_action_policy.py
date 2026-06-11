@@ -69,8 +69,16 @@ def test_action_policy() -> None:
             continue
 
         obs = Observation(png_bytes=screenshot_path.read_bytes(), source="eval")
+        hints = c.get("hints") or {}
         try:
-            decision = policy.decide(obs, c["instruction"], verbose=False)
+            decision = policy.decide(
+                obs,
+                c["instruction"],
+                direction=hints.get("direction"),
+                drag_column=hints.get("drag_column"),
+                drag_steps=hints.get("drag_steps"),
+                verbose=False,
+            )
         except Exception as e:  # noqa: BLE001
             _report(c["label"], False, f"exception: {e}")
             continue

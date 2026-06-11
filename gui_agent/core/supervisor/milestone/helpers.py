@@ -67,9 +67,15 @@ def _make_llm() -> ChatOpenAI:
     return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
 
 
-def _build_msgs(system_prompt: str, png_bytes: bytes) -> list:
+def _prepare_prompt_png(png_bytes: bytes, image_resize: str = "retina") -> bytes:
+    if image_resize == "none":
+        return png_bytes
+    return resize_to_logical_png(png_bytes)
+
+
+def _build_msgs(system_prompt: str, png_bytes: bytes, *, image_resize: str = "retina") -> list:
     today = datetime.now().strftime("%Y年%m月%d日 %A")
-    b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
+    b64 = base64.b64encode(_prepare_prompt_png(png_bytes, image_resize)).decode()
     return [
         SystemMessage(content=f"{system_prompt}\n\n当前日期：{today}"),
         HumanMessage(content=[
@@ -92,6 +98,31 @@ def _inject_knowledge(
         parts.append({"type": "text", "text": f"## 页面元素知识\n{elements_knowledge}\n\n"})
     if parts:
         msgs[1].content = parts + msgs[1].content
+
+
+def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
+    """Make structured picker direction consistent with current/target values.
+
+    The LLM sometimes chooses the right picker column and values but flips the
+    value direction wording. The executor relies on direction for scroll polarity,
+    so normalize known numeric picker columns here; policy.py also recomputes the
+    step count later.
+    """
+    column = (plan.drag_column or "").strip().lower()
+    cur, tgt = plan.drag_current_value, plan.drag_target_value
+    if not column or cur is None or tgt is None or cur == tgt:
+        return plan
+    if column == "minute":
+        forward = (tgt - cur) % 60
+        backward = (cur - tgt) % 60
+        plan.direction = "increase" if forward <= backward else "decrease"
+    elif column == "hour":
+        forward = (tgt - cur) % 12
+        backward = (cur - tgt) % 12
+        plan.direction = "increase" if forward <= backward else "decrease"
+    else:
+        plan.direction = "increase" if tgt > cur else "decrease"
+    return plan
 
 
 def run_checker(
@@ -131,7 +162,11 @@ def run_checker(
     )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
-    result = invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _SingleCheckResult)
+    result = invoke_structured(
+        _make_llm(),
+        _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize),
+        _SingleCheckResult,
+    )
 
     def _strip_progress_evidence(r: _SingleCheckResult) -> None:
         # 连续调值类(is_converge)的 checker section 要求把「当前值=/目标值=」写进 missing_evidence
@@ -259,9 +294,9 @@ def run_planner(
     )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
-    msgs = _build_msgs(prompt, observation.png_bytes)
+    msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
     _inject_knowledge(msgs, app_knowledge, elements_knowledge)
-    return invoke_structured(_make_llm(), msgs, _PlanResult)
+    return _normalize_picker_plan_direction(invoke_structured(_make_llm(), msgs, _PlanResult))
 
 
 def run_loop_check(
@@ -282,4 +317,8 @@ def run_loop_check(
         constraints=json.dumps(constraints or [], ensure_ascii=False),
         history_text=_format_history(history),
     )
-    return invoke_structured(_make_llm(), _build_msgs(prompt, observation.png_bytes), _LoopFrameResult)
+    return invoke_structured(
+        _make_llm(),
+        _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize),
+        _LoopFrameResult,
+    )

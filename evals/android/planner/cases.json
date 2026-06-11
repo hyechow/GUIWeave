@@ -1,0 +1,131 @@
+[
+  {
+    "label": "picker-095209-T04-小时09到06应先调小时列decrease",
+    "screenshot": "evals/android/planner/screenshots/alarm_picker_095209_t04_0952.png",
+    "milestone": {
+      "name": "设置闹钟时间为上午6点30分",
+      "description": "在新建闹钟页，将时间滚轮设置为上午 06:30",
+      "success_condition": "时间滚轮中间高亮行显示为上午 06:30",
+      "kind": "action",
+      "completion_strategy": "repeat_until_satisfied"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "滚轮中间高亮行显示为 上午 / 09 / 52，目标为 上午 / 06 / 30；时段已对齐，小时需从 09 调到 06。",
+      "issues": [],
+      "missing_evidence": ["当前值=上午 09:52", "目标值=上午 06:30"],
+      "summary": "新建闹钟页，时间 picker 当前为上午 09:52，目标上午 06:30，需先调整小时列"
+    },
+    "expected": {
+      "must_contain": ["小时"],
+      "must_not_contain": ["分钟列", "点击"],
+      "direction": "decrease",
+      "drag_column": "hour",
+      "drag_current_value": 9,
+      "drag_target_value": 6
+    }
+  },
+  {
+    "label": "picker-095209-T11-分钟52到30应调分钟列decrease",
+    "screenshot": "evals/android/planner/screenshots/alarm_picker_095209_t11_0652.png",
+    "milestone": {
+      "name": "设置闹钟时间为上午6点30分",
+      "description": "在新建闹钟页，将时间滚轮设置为上午 06:30",
+      "success_condition": "时间滚轮中间高亮行显示为上午 06:30",
+      "kind": "action",
+      "completion_strategy": "repeat_until_satisfied"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "滚轮中间高亮行显示为 上午 / 06 / 52，目标为 上午 / 06 / 30；时段和小时已对齐，只需将分钟从 52 调到 30。",
+      "issues": [],
+      "missing_evidence": ["当前值=上午 06:52", "目标值=上午 06:30"],
+      "summary": "新建闹钟页，时间 picker 当前为上午 06:52，目标上午 06:30，需调整分钟列"
+    },
+    "expected": {
+      "must_contain": ["分钟"],
+      "must_not_contain": ["小时列", "点击"],
+      "direction": "decrease",
+      "drag_column": "minute",
+      "drag_current_value": 52,
+      "drag_target_value": 30
+    }
+  },
+  {
+    "label": "picker-095209-T17-分钟22到30应反向调分钟列increase",
+    "screenshot": "evals/android/planner/screenshots/alarm_picker_095209_t17_0622.png",
+    "milestone": {
+      "name": "设置闹钟时间为上午6点30分",
+      "description": "在新建闹钟页，将时间滚轮设置为上午 06:30",
+      "success_condition": "时间滚轮中间高亮行显示为上午 06:30",
+      "kind": "action",
+      "completion_strategy": "repeat_until_satisfied"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "滚轮中间高亮行显示为 上午 / 06 / 22，目标为 上午 / 06 / 30；当前分钟已低于目标，上一轮已冲过头，应反向将分钟从 22 调大到 30。",
+      "issues": [],
+      "missing_evidence": ["当前值=上午 06:22", "目标值=上午 06:30"],
+      "summary": "新建闹钟页，时间 picker 当前为上午 06:22，目标上午 06:30，需反向调整分钟列"
+    },
+    "expected": {
+      "must_contain": ["分钟"],
+      "must_not_contain": ["小时列", "点击"],
+      "direction": "increase",
+      "drag_column": "minute",
+      "drag_current_value": 22,
+      "drag_target_value": 30
+    }
+  },
+  {
+    "label": "picker-122343-T12-小时分钟已对但下午应先调时段列",
+    "screenshot": "evals/android/planner/screenshots/alarm_picker_122343_t12_0630pm.png",
+    "milestone": {
+      "name": "设置闹钟时间为上午6点30分",
+      "description": "在新建闹钟页，将时间滚轮设置为上午/AM 06:30",
+      "success_condition": "时间滚轮中间高亮行显示为上午/AM 06:30",
+      "kind": "action",
+      "completion_strategy": "repeat_until_satisfied"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "滚轮中间高亮行显示为 下午 / 06 / 30，目标为 上午 / 06 / 30；小时和分钟已对齐，但时段仍为下午，需要切换上午/下午列。",
+      "issues": [],
+      "missing_evidence": ["当前值=下午 06:30", "目标值=上午 06:30"],
+      "summary": "新建闹钟页，时间 picker 当前为下午 06:30，目标上午 06:30，需先调整时段列"
+    },
+    "expected": {
+      "must_contain": ["上午", "时段", "上午/下午"],
+      "must_not_contain": ["保存", "分钟列", "小时列", "点击"],
+      "direction": "decrease",
+      "drag_column": "period",
+      "drag_current_value": 1,
+      "drag_target_value": 0
+    }
+  },
+  {
+    "label": "picker-111632-T12-时间已到位应点击保存而非继续滚分钟",
+    "screenshot": "evals/android/planner/screenshots/alarm_picker_111632_t12_0630.png",
+    "milestone": {
+      "name": "确认上午时段并保存",
+      "description": "确保闹钟设定为上午（AM），然后点击保存按钮完成创建。",
+      "success_condition": "闹钟列表中出现了设定的“06:30 AM”闹钟条目，且状态为开启。",
+      "kind": "action",
+      "completion_strategy": "visible_once"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前界面为闹钟设置页，时间选择器滚轮中间高亮行已经显示为 06:30 AM，但尚未点击保存按钮，闹钟列表中尚未出现该条目。",
+      "issues": [],
+      "missing_evidence": ["保存操作完成后的闹钟列表条目"],
+      "summary": "闹钟时间已设置为 06:30 AM，等待点击保存。"
+    },
+    "expected": {
+      "must_contain": ["保存", "确认"],
+      "must_not_contain": ["分钟列", "小时列", "滚动", "调整"],
+      "drag_column": null,
+      "drag_current_value": null,
+      "drag_target_value": null
+    }
+  }
+]

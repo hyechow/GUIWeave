@@ -17,11 +17,17 @@ from gui_agent.adapters.android.actions import AndroidAction
 from gui_agent.core.executor import VisionExecutor
 
 
-# Android scroll units per ScrollAmount label. WIDER range than the neutral 3/5/9 so
-# `small` is a fine wheel-picker nudge (~1 row) while `large` still flings a list:
-# with SCROLL_PX_PER_AMOUNT≈140 -> small≈140px (≈1 picker row), medium≈560px (≈¼
-# screen), large≈1120px (≈½ screen).
+# Android scroll units per ScrollAmount label for ordinary lists. Picker wheels use
+# column-specific maps below; the old shared medium=4 jumped ~8 hour rows and caused
+# 09<->01 oscillation in the alarm picker.
 _ANDROID_AMOUNT_UNITS = {"small": 1, "medium": 4, "large": 8}
+_ANDROID_PICKER_AMOUNT_UNITS = {
+    "default": {"small": 1, "medium": 2, "large": 3},
+    "hour": {"small": 1, "medium": 2, "large": 2},
+    "period": {"small": 1, "medium": 1, "large": 1},
+    "ampm": {"small": 1, "medium": 1, "large": 1},
+    "minute": {"small": 1, "medium": 2, "large": 3},
+}
 
 
 class AndroidExecutor(VisionExecutor):
@@ -35,6 +41,35 @@ class AndroidExecutor(VisionExecutor):
 
     def _amount_units(self, amount: str) -> int:
         return _ANDROID_AMOUNT_UNITS.get(amount, 4)
+
+    def _amount_units_for_action(self, action: AndroidAction) -> int:
+        snap = action.snap or {}
+        column = snap.get("picker_column")
+        if action.action_type == "scroll" and column:
+            amount_map = _ANDROID_PICKER_AMOUNT_UNITS.get(column, _ANDROID_PICKER_AMOUNT_UNITS["default"])
+            return amount_map.get(action.amount, 1)
+        return self._amount_units(action.amount)
+
+    def _execute_scroll_action(self, action: AndroidAction) -> None:
+        client = self._client()
+        ax = action.x if action.x is not None else 500
+        ay = action.y if action.y is not None else 500
+        px, py = self._denorm(ax, ay)
+        amount = self._amount_units_for_action(action)
+        direction = action.direction or "down"
+        print(f"  scroll {direction} amount={amount} @({px:.0f},{py:.0f})")
+        print(f"  结果: {client.scroll(direction, amount, px, py)}")
+
+    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
+        self._execute_scroll_action(action)
+
+    def execute(self, decision, app_name: str = "", png_bytes=None, is_home_screen: bool = False) -> bool:
+        action = decision.action
+        if action.action_type == "scroll" and action.direction:
+            print(f"\n动作: [{action.action_type}] {action.description}")
+            self._execute_scroll_action(action)
+            return True
+        return super().execute(decision, app_name=app_name, png_bytes=png_bytes, is_home_screen=is_home_screen)
 
     def _dispatch_extra(self, action: AndroidAction, client) -> Optional[bool]:
         at = action.action_type

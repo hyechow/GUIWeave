@@ -298,9 +298,9 @@ class AndroidDevice:
         fx, tx = _clamp(fx, 5, w - 5), _clamp(tx, 5, w - 5)
         fy, ty = _clamp(fy, v_inset, h - v_inset), _clamp(ty, v_inset, h - v_inset)
         # Swipe SPEED matters for wheel pickers: a fast flick flings past the target by
-        # momentum (~2 rows for a 1-row distance). Make fine (small) scrolls SLOW so they
-        # move ~1 row with no fling; keep big (large) scrolls fast so lists still fling.
-        secs = 0.7 if amount <= 1 else 0.45 if amount <= 4 else 0.25
+        # momentum. Keep 1-2 unit picker gestures slow and bounded 3-5 unit picker
+        # coarse moves at medium speed; ordinary list large still flings via 8 units.
+        secs = 0.7 if amount <= 2 else 0.45 if amount <= 5 else 0.25
         try:
             self._require_dev().swipe(fx, fy, tx, ty, secs)
         except Exception as exc:  # noqa: BLE001

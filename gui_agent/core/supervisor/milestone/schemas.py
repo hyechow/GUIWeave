@@ -29,6 +29,10 @@ class MilestonePrompts:
     loop_scroll: str
     replan: str
     stop_condition_patch: str
+    # Prompt-side image preprocessing. iPhone screenshots are captured at Retina
+    # scale and should be halved before vision calls; Android/browser screenshots
+    # are already in the coordinate space the agent reasons about.
+    image_resize: Literal["retina", "none"] = "retina"
 
 
 class _SingleCheckResult(BaseModel):
@@ -72,31 +76,34 @@ class _PlanResult(BaseModel):
     direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
         default=None,
         description=(
-            "scroll 时填手指移动方向（up/down/left/right）；"
-            "picker drag 时填值的变化方向（increase=值变大，decrease=值变小）；"
+            "普通列表 scroll 时填手指移动方向（up/down/left/right）；"
+            "picker drag/scroll 时填值的变化方向（increase=值变大，decrease=值变小）；"
             "tap/type/home/stop 留空"
         ),
     )
-    # iOS picker-wheel fields (the only iphone-specific part of these otherwise
-    # platform-neutral schemas): year/month/day column drag. Neutral platforms
-    # (browser) have no such UI and simply leave them None.
+    # Picker-wheel fields: iPhone date pickers use year/month/day; Android time
+    # pickers use period/hour/minute. Platforms without pickers leave them None.
     drag_column: Optional[str] = Field(
         default=None,
-        description="picker drag 时的目标列，如 'year'/'month'/'day'；非 picker drag 留空",
+        description=(
+            "picker drag/scroll 时的目标列，如 'year'/'month'/'day' 或 "
+            "'period'/'hour'/'minute'；非 picker 操作留空"
+        ),
     )
     drag_current_value: Optional[int] = Field(
         default=None,
         description=(
-            "picker drag 时，要拖的【那一列】当前停在中间行的数字（从 check_reason 读出，"
-            "如日列当前为 5月1日就填 1、月列当前 6月就填 6）；非 picker drag 留空。"
+            "picker drag/scroll 时，要拖的【那一列】当前停在中间行的数字（从 check_reason 读出，"
+            "如日列当前为 5月1日就填 1、分钟列当前 52 就填 52；上午/下午列用 上午=0、下午=1）；"
+            "非 picker 操作留空。"
             "它与 drag_target_value 一起让系统按差几格自动放大拖动幅度——少填会退化成一格一格挪。"
         ),
     )
     drag_target_value: Optional[int] = Field(
         default=None,
         description=(
-            "picker drag 时，要拖的【那一列】的目标数字（如目标 5月21日、本步拖日列就填 21）；"
-            "非 picker drag 留空。必须与 drag_current_value 取同一列的数字。"
+            "picker drag/scroll 时，要拖的【那一列】的目标数字（如目标 5月21日、本步拖日列就填 21；"
+            "目标为上午则填 0、下午则填 1）；非 picker 操作留空。必须与 drag_current_value 取同一列的数字。"
         ),
     )
 
