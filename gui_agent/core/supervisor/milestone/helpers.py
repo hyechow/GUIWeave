@@ -12,7 +12,13 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 
-from .schemas import MilestonePrompts, _LoopFrameResult, _PlanResult, _SingleCheckResult
+from .schemas import (
+    MilestonePrompts,
+    _LoopFrameResult,
+    _PlanResult,
+    _SelectorResult,
+    _SingleCheckResult,
+)
 
 
 def _default_milestone_prompts() -> MilestonePrompts:
@@ -142,13 +148,11 @@ def run_checker(
     extra: str = "",
     _is_retry: bool = False,
     prompts: Optional[MilestonePrompts] = None,
-    section_manifest: str = "",
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals.
 
-    ``section_manifest`` (progressive knowledge): when given, the section list is appended so
-    the checker also picks ``relevant_sections`` for the same turn's planner to load on demand.
-    """
+    Pure verification: knowledge-section selection lives in :func:`run_selector` (a separate
+    cached micro-decision), so the checker prompt carries no section manifest."""
     if prompts is None:
         prompts = _default_milestone_prompts()
     if constraints is None:
@@ -173,8 +177,6 @@ def run_checker(
     )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
-    if section_manifest:
-        prompt += f"\n\n{section_manifest}"
     # Inject the tab TITLE (the viewport-language page name the screenshot doesn't show) as
     # an auxiliary identity signal, so the checker does not need to infer it from pixels. The URL is deliberately NOT
     # injected — a machine URL adds little discriminating value as LLM text and costs tokens; it
@@ -258,6 +260,57 @@ def run_checker(
             summary=result.summary,
         )
     return result
+
+
+_SELECTOR_PROMPT = """\
+你是知识章节选择器。系统正在操作一个业务应用，下面给出当前任务背景和一份知识章节清单（仅 ID 和标题）。\
+请判断哪些章节的内容对**当前页面上的下一步操作**最有帮助。
+
+## 任务背景
+- 总目标：{goal}
+- 当前子目标：{milestone_name} — {milestone_desc}
+- 完成标准：{success_condition}
+- 当前页面：{page_identity}
+
+## 选择要求
+- 从清单中挑出最相关的 1~3 个章节，把方括号里的 ID 原样填入 section_ids（如 s07）。
+- 优先选与「当前页面」直接对应的章节，其次是完成「当前子目标」所需的操作流程章节。
+- 没有相关章节就返回空列表，不要凑数。
+
+## 知识章节清单
+{manifest}
+"""
+
+
+def run_selector(
+    goal: str,
+    milestone: Milestone,
+    page_identity: str,
+    manifest: str,
+    *,
+    prompts: Optional[MilestonePrompts] = None,
+) -> _SelectorResult:
+    """KnowledgeSelector: a dedicated text-only micro-decision picking which knowledge
+    sections the upcoming planner should read.
+
+    Deliberately NOT folded into the checker (it verifies; selection diluted it and its
+    paraphrases broke fuzzy name-matching) and NOT vision: page identity comes as text from
+    the checker, which keeps this call small. The policy caches the result per
+    (milestone, page_identity), so it only fires on page/milestone changes."""
+    template = (prompts.selector if prompts and prompts.selector else _SELECTOR_PROMPT)
+    prompt = template.format(
+        goal=goal,
+        milestone_name=milestone.name,
+        milestone_desc=milestone.description,
+        success_condition=milestone.success_condition,
+        page_identity=page_identity or "（未识别）",
+        manifest=manifest,
+    )
+    msgs = [
+        SystemMessage(content=prompt),
+        HumanMessage(content="请选择章节并输出 section_ids。"),
+    ]
+    return invoke_structured(_make_llm(), msgs, _SelectorResult)
 
 
 def run_planner(

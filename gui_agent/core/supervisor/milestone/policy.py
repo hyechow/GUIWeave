@@ -14,10 +14,10 @@ from llm.structured import get_llm_token_usage, invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.frame_analysis import CHANGE_SSIM_DIST_THR, is_loading_frame, region_change
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
+from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm as _norm_page
 
 from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_loop_check, run_planner
-from .helpers import run_checker, _default_milestone_prompts
+from .helpers import run_checker, run_selector, _default_milestone_prompts
 from .schemas import (
     MilestonePrompts,
     _DecomposeResponse,
@@ -253,6 +253,11 @@ class MilestoneSupervisorPolicy:
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
         self._last_sections_loaded: list[str] = []  # progressive section stems injected this turn (logged)
+        # KnowledgeSelector cache: (milestone_id, normalized page_identity) → section stems.
+        # Selection only changes when the page or the milestone changes, so within a key the
+        # selector LLM is never re-invoked (empty selections are cached too).
+        self._selector_cache: dict[tuple[str, str], list[str]] = {}
+        self._goal: str = ""  # set by _decompose; selector prompt context
         self._timings: dict[str, float] = {}
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
@@ -266,9 +271,12 @@ class MilestoneSupervisorPolicy:
     ) -> None:
         self._app_knowledge = text
         self._elements_knowledge = elements or None
-        # When per-section bodies exist, the planner loads them progressively (checker picks
-        # relevant_sections each turn). Falls back to the full `elements` blob when absent.
+        # When per-section bodies exist, the planner loads them progressively: a dedicated
+        # KnowledgeSelector micro-decision picks section ids per (milestone, page) — cached,
+        # so it only fires on page/milestone changes. Falls back to the full `elements`
+        # blob when absent.
         self._pk = ProgressiveKnowledge(sections) if sections else None
+        self._selector_cache.clear()
         if app_name:
             self._app_name = app_name
 
@@ -984,7 +992,6 @@ class MilestoneSupervisorPolicy:
             constraints=self._global_constraints,
             extra=extra,
             prompts=self._prompts,
-            section_manifest=self._pk.manifest_text() if self._pk else "",
         )
 
     def _loop_check(
@@ -998,6 +1005,37 @@ class MilestoneSupervisorPolicy:
             prompts=self._prompts,
         )
 
+    def _select_sections(self, milestone: Milestone, check: _SingleCheckResult) -> list[str]:
+        """Resolve which knowledge sections to inject this turn, via the KnowledgeSelector.
+
+        Cache key = (milestone id, normalized page_identity): selection only changes when
+        the page or the milestone changes, so most turns reuse the cached stems and cost
+        nothing. Empty selections are cached too (a page with no relevant sections should
+        not retry every turn). On selector failure nothing is cached — the turn falls back
+        to the zero-cost page_identity fuzzy match and the next turn retries the LLM."""
+        if self._pk is None:
+            return []
+        page_id = check.page_identity or ""
+        key = (milestone.id, _norm_page(page_id))
+        if key in self._selector_cache:
+            return self._selector_cache[key]
+        try:
+            with _Timer(self._timings, self._timings_order, "selector", self._token_usage):
+                sel = run_selector(
+                    self._goal, milestone, page_id,
+                    self._pk.selector_manifest(),
+                    prompts=self._prompts,
+                )
+            stems = self._pk.by_ids(sel.section_ids)
+            if stems or sel.section_ids:
+                names = "、".join(stems) if stems else "（ID 未命中）"
+                print(f"  [Selector] {names}" + (f" — {sel.reason}" if sel.reason else ""))
+            self._selector_cache[key] = stems
+            return stems
+        except Exception as exc:  # noqa: BLE001 — selector must never block the planner
+            print(f"  [Selector] 调用失败，回退 page_identity 模糊匹配：{exc}")
+            return self._pk.pick([], page_id)
+
     def _invoke_planner(
         self,
         milestone: Milestone,
@@ -1006,11 +1044,11 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _PlanResult:
-        # Progressive: inject only the section(s) the checker flagged relevant this turn,
-        # instead of the whole elements blob. Falls back to the full blob when no per-section
-        # knowledge is loaded (self._pk is None).
+        # Progressive: inject only the sections the KnowledgeSelector picked for the current
+        # (milestone, page) — cached, so the selector LLM fires only on page/milestone changes.
+        # Falls back to the full blob when no per-section knowledge is loaded (self._pk is None).
         if self._pk:
-            self._last_sections_loaded = self._pk.pick(check.relevant_sections, check.page_identity)
+            self._last_sections_loaded = self._select_sections(milestone, check)
             elements = self._pk.bodies(self._last_sections_loaded)
         else:
             elements = self._elements_knowledge
@@ -1259,6 +1297,7 @@ class MilestoneSupervisorPolicy:
     _MAX_DECOMPOSE_RETRIES = 2
 
     def _decompose(self, goal: str, observation: Observation) -> None:
+        self._goal = goal  # kept for the KnowledgeSelector prompt context
         cfg = resolve_llm_config("supervisor.decompose")
         if not cfg.model:
             cfg = resolve_llm_config("supervisor")

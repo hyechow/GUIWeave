@@ -27,12 +27,6 @@ def test_bool_and_empty():
     assert empty.select(["如何创建用户"]) == ""
 
 
-def test_manifest_lists_names_and_instruction():
-    m = _pk().manifest_text()
-    assert "relevant_sections" in m
-    assert "如何创建用户" in m
-    assert "如何访问Robo Team" in m            # 下划线在清单里显示为空格
-    assert "如何访问Robo_Team" not in m
 
 
 def test_exact_match():
@@ -84,3 +78,25 @@ def test_bodies_round_trips_with_pick():
     names = ["如何创建用户", "如何查询订单的执行状态"]
     assert pk.bodies(pk.pick(names)) == pk.select(names)
     assert pk.bodies(["不存在的stem"]) == ""   # unknown stem is skipped, never KeyErrors
+
+
+def test_selector_manifest_lists_ids_and_titles():
+    m = _pk().selector_manifest()
+    lines = m.splitlines()
+    assert len(lines) == len(_SECTIONS)
+    assert lines[0].startswith("[s01] ")
+    assert "[s02] 如何访问Robo Team" in m     # underscores display as spaces
+    assert "如何访问Robo_Team" not in m
+
+
+def test_by_ids_exact_lookup_and_echo_variants():
+    pk = _pk()
+    # ids resolve positionally (enumeration order of the sections dict)
+    assert pk.by_ids(["s01"]) == ["如何创建用户"]
+    # tolerate echo variants: uppercase / brackets / whitespace
+    assert pk.by_ids(["S02", " [s03] "]) == ["如何访问Robo_Team", "如何查询订单的执行状态"]
+    # unknown ids dropped silently; dedupe; cap at 3
+    assert pk.by_ids(["s99", "s01", "s01", "s02", "s03", "s04"]) == [
+        "如何创建用户", "如何访问Robo_Team", "如何查询订单的执行状态",
+    ]
+    assert pk.by_ids([]) == [] and pk.by_ids(None) == []

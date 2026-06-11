@@ -10,9 +10,10 @@ context, SKILL.md body read only when invoked), we keep:
   - the **section bodies** (the per-section page-knowledge .md files) — loaded only for the
     section(s) the checker flags as relevant to the current screen.
 
-The checker (which already reads the screen each turn) picks ``relevant_sections``; the same
-turn's planner then injects only those bodies via :meth:`ProgressiveKnowledge.select`. Zero
-extra LLM calls. Leaf module: only ``re``.
+A dedicated KnowledgeSelector micro-decision (helpers.run_selector) reads the id'd manifest
+and picks ``section_ids``; the planner then injects only those bodies. The policy caches the
+selection per (milestone, page_identity), so the selector LLM only fires on page/milestone
+changes. Leaf module: only ``re``.
 """
 
 from __future__ import annotations
@@ -34,18 +35,34 @@ class ProgressiveKnowledge:
     def __init__(self, sections: dict[str, str]):
         self.sections = sections  # stem -> body markdown
         self._index = {_norm(k): k for k in sections}
+        # Short ids (s01..sNN) for the KnowledgeSelector: the LLM returns ids, not section
+        # names, so resolution is an exact table lookup — no paraphrase fuzzy-match misses
+        # (查看↔查询). Ids only need to be stable within one manifest→response cycle, so
+        # enumeration order at load time suffices; the .md files carry no id.
+        self._ids = {f"s{i:02d}": stem for i, stem in enumerate(sections, 1)}
 
     def __bool__(self) -> bool:
         return bool(self.sections)
 
-    def manifest_text(self) -> str:
-        names = "\n".join(f"- {k.replace('_', ' ')}" for k in self.sections)
-        return (
-            "## 可用页面知识章节\n"
-            "下面是本应用各功能页面的知识章节清单(仅名称)。请判断**当前屏幕/下一步操作**最相关的 "
-            "1~3 个章节,把它们的名字原样填进 relevant_sections;不确定就少填或留空。完整内容会在生成"
-            f"指令时按需调出,无需你复述。\n{names}"
+    def selector_manifest(self) -> str:
+        """One line per section — ``[s12] title`` — for the KnowledgeSelector prompt."""
+        return "\n".join(
+            f"[{sid}] {stem.replace('_', ' ')}" for sid, stem in self._ids.items()
         )
+
+    def by_ids(self, ids: list[str] | None) -> list[str]:
+        """Resolve selector-returned ids to section stems: exact lookup, deduped, capped.
+        Tolerates echo variants ('S01', '[s01]'); unknown ids are dropped silently."""
+        out: list[str] = []
+        seen: set[str] = set()
+        for sid in ids or []:
+            stem = self._ids.get(str(sid).strip().strip("[]").lower())
+            if stem and stem not in seen:
+                seen.add(stem)
+                out.append(stem)
+            if len(out) >= _MAX_SELECTED:
+                break
+        return out
 
     def _match(self, name: str) -> str | None:
         n = _norm(name)

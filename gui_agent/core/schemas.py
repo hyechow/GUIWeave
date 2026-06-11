@@ -414,7 +414,7 @@ class PolicyTurn(BaseModel):
     no_effect: bool = Field(default=False, description="tap 类动作 settle 跑满上限且全程零变化：这一击对屏幕无效果（如重点已高亮 tab）")
     sections_loaded: list[str] = Field(
         default_factory=list,
-        description="本轮 planner 实际注入的渐进知识章节名（progressive select 命中结果，可与 checker.relevant_sections 对照）；无渐进知识或未选中则为空",
+        description="本轮 planner 实际注入的渐进知识章节名（KnowledgeSelector 按 (milestone, page) 选定并缓存）；无渐进知识或未选中则为空",
     )
 
 

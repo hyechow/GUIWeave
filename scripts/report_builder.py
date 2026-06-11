@@ -21,7 +21,7 @@ from gui_agent.core.config import model_price, pricing_currency
 # supervisor model; decompose and action_policy have their own keys.
 _MODULE_CFG: dict[str, str] = {
     "checker": "supervisor", "planner": "supervisor", "replanner": "supervisor",
-    "loop_check": "supervisor", "loop_scroll": "supervisor",
+    "loop_check": "supervisor", "loop_scroll": "supervisor", "selector": "supervisor",
     "decompose": "supervisor.decompose", "action_policy": "action_policy",
 }
 
@@ -2089,6 +2089,7 @@ TIMING_COLORS: dict[str, str] = {
     "replanner": "#ef4444",
     "loop_check": "#8b5cf6",
     "loop_scroll": "#06b6d4",
+    "selector": "#0891b2",
     "action_policy": "#22c55e",
 }
 

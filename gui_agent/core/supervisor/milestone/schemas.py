@@ -37,6 +37,11 @@ class MilestonePrompts:
     # use picker fields can provide a smaller schema, so those fields are not shown
     # to the model.
     plan_result_schema: type[BaseModel] | None = None
+    # Optional override for the KnowledgeSelector prompt (helpers.run_selector). The
+    # selection task (match current page + milestone against a section-title list) is
+    # platform-neutral, so the core default in helpers.py fits all platforms; override
+    # only if a platform needs different selection guidance.
+    selector: str | None = None
 
 
 class _SingleCheckResult(BaseModel):
@@ -54,10 +59,6 @@ class _SingleCheckResult(BaseModel):
     visible_evidence: list[str] = Field(default_factory=list, description="截图中支持 done 的可见证据")
     missing_evidence: list[str] = Field(default_factory=list, description="缺失的验收证据")
     page_identity: str = Field(default="", description="当前页面的身份识别（如：订单列表、发票管理、个人中心）")
-    relevant_sections: list[str] = Field(
-        default_factory=list,
-        description="若提供了『可用页面知识章节』清单：挑出与当前屏幕/下一步最相关的 1~3 个章节名（原样照抄清单里的名字）；未提供清单则留空",
-    )
     summary: str = Field(description="当前屏幕状态一句话描述")
     read_instruction: Optional[str] = Field(
         default=None,
@@ -65,6 +66,19 @@ class _SingleCheckResult(BaseModel):
     )
     frozen: bool = Field(default=False, description="屏幕是否冻结（相似度≥99%，即使 reader 返回新内容也应停止）")
     loading: bool = Field(default=False, description="页面正在加载（骨架屏/启动屏/转场动画），应等待下一帧而非立即规划动作")
+
+
+class _SelectorResult(BaseModel):
+    """KnowledgeSelector output: which knowledge sections the upcoming planner should read.
+
+    A dedicated micro-decision (text-only, cached per (milestone, page)) — the checker no
+    longer moonlights as a retriever. Ids come from the ``[sNN]`` manifest, so resolution
+    back to files is an exact lookup."""
+    section_ids: list[str] = Field(
+        default_factory=list,
+        description="与当前页面/下一步操作最相关的 1~3 个章节 ID（照抄清单里方括号内的 ID，如 s07）；没有相关章节就返回空列表",
+    )
+    reason: str = Field(default="", description="选择依据（一句话）")
 
 
 class _LoopFrameResult(BaseModel):
