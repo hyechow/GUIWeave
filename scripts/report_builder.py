@@ -426,6 +426,8 @@ class ReportStep:
     action_to_x: float | None = None
     action_to_y: float | None = None
     snap: dict | None = None
+    sections_loaded: list[str] = field(default_factory=list)    # progressive knowledge injected into the planner this turn
+    relevant_sections: list[str] = field(default_factory=list)  # sections the checker flagged relevant (requested)
 
 
 @dataclass
@@ -454,6 +456,8 @@ class ReportData:
     router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
     output: str = ""     # final reply / 最终输出 of the run
     platform: str = ""   # run platform (iphone/browser); empty for old logs
+    knowledge: dict = field(default_factory=dict)  # injected app-knowledge summary {app_name, nav_chars, elements_chars, section_count}
+    knowledge_sections: list[dict] = field(default_factory=list)  # sections injected ≥1 turn: {stem, title, body} (body read from knowledge dir for the click-to-view modal)
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -1012,6 +1016,7 @@ class RunnerReportBuilder:
         data.router = ctx.get("router") or {}
         data.platform = ctx.get("platform") or ""
         data.output = ctx.get("output") or ""
+        data.knowledge = ctx.get("knowledge") or {}
         data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
         # Run-level model record; cost is priced against these (not the active config).
@@ -1020,6 +1025,25 @@ class RunnerReportBuilder:
         _MODELS_MAP.update(data.models)
 
         turns = ctx.get("turns", [])
+
+        # Sections injected into the planner at least once this run (ordered by first appearance),
+        # with bodies read from the knowledge dir so the sidebar can show them on click.
+        loaded_order: list[str] = []
+        _seen_sec: set[str] = set()
+        for _t in turns:
+            for _s in (_t.get("sections_loaded") or []):
+                if _s not in _seen_sec:
+                    _seen_sec.add(_s)
+                    loaded_order.append(_s)
+        if loaded_order and data.knowledge:
+            kdir = (Path(__file__).resolve().parents[1] / "knowledge"
+                    / (data.platform or "iphone") / str(data.knowledge.get("app_name", "")))
+            for stem in loaded_order:
+                fp = kdir / f"{stem}.md"
+                body = fp.read_text(encoding="utf-8") if fp.exists() else ""
+                data.knowledge_sections.append(
+                    {"stem": stem, "title": stem.replace("_", " "), "body": body}
+                )
 
         total_actions = 0
         total_executed = 0
@@ -1089,6 +1113,8 @@ class RunnerReportBuilder:
                 action_to_x=action.get("to_x"),
                 action_to_y=action.get("to_y"),
                 snap=action.get("snap"),
+                sections_loaded=turn.get("sections_loaded") or [],
+                relevant_sections=(turn.get("checker") or {}).get("relevant_sections") or [],
             ))
 
         # Build milestone lookup from persisted decomposition
@@ -1852,6 +1878,20 @@ HTML_TEMPLATE = """\
   .outline-meta {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; padding-left: 22px; font-size: 10px; color: #94a3b8; font-family: monospace; }}
   .sidebar-empty {{ padding: 4px 18px; font-size: 12px; color: var(--muted); }}
 
+  /* ── Knowledge (知识库注入) ── */
+  .sidebar-knowledge {{ margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }}
+  .sk-app {{ padding: 0 18px; font-size: 13px; font-weight: 600; color: #0891b2; }}
+  .sk-meta {{ padding: 3px 18px 0; font-size: 10px; color: #94a3b8; font-family: monospace; line-height: 1.6; }}
+  .sk-sections-label {{ padding: 12px 18px 4px; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }}
+  .sk-item {{ padding: 6px 18px 6px 26px; font-size: 12px; color: #0e7490; cursor: pointer; position: relative; line-height: 1.4; transition: background 0.12s; }}
+  .sk-item::before {{ content: "📖"; position: absolute; left: 7px; font-size: 10px; }}
+  .sk-item:hover {{ background: #ecfeff; text-decoration: underline; }}
+  .sk-modal-card {{ background: #fff; max-width: 720px; width: 86%; max-height: 80vh; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,0.3); }}
+  .sk-modal-head {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 600; color: #0891b2; }}
+  .sk-modal-x {{ cursor: pointer; color: #94a3b8; font-size: 16px; flex-shrink: 0; }}
+  .sk-modal-x:hover {{ color: var(--text); }}
+  .sk-modal-body {{ margin: 0; padding: 18px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; line-height: 1.7; color: var(--text); font-family: ui-monospace, SFMono-Regular, monospace; }}
+
   /* Header */
   .header {{ max-width: 1080px; margin: 0 auto 20px; padding: 20px 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
   .header h1 {{ font-size: 18px; font-weight: 700; margin-bottom: 4px; }}
@@ -1947,6 +1987,7 @@ HTML_TEMPLATE = """\
   <nav class="sidebar">
     <div class="sidebar-title">子目标分解</div>
     <div class="outline">{outline_html}</div>
+    {knowledge_html}
   </nav>
   <main class="main">
     <div class="header">
@@ -1963,6 +2004,15 @@ HTML_TEMPLATE = """\
 
 <div class="modal" id="modal" onclick="this.classList.remove('show')">
   <img id="modal-img" src="">
+</div>
+<div class="modal" id="sk-modal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="sk-modal-card">
+    <div class="sk-modal-head">
+      <span id="sk-modal-title"></span>
+      <span class="sk-modal-x" onclick="document.getElementById('sk-modal').classList.remove('show')">✕</span>
+    </div>
+    <pre class="sk-modal-body" id="sk-modal-body"></pre>
+  </div>
 </div>
 <script>
 // Scroll-spy: highlight the outline item whose milestone is near the top.
@@ -2004,6 +2054,13 @@ function showDetail(id) {{
 function zoomImg(src) {{
   document.getElementById('modal-img').src = src;
   document.getElementById('modal').classList.add('show');
+}}
+function showSection(id, title) {{
+  var src = document.getElementById(id);
+  if (!src) return;
+  document.getElementById('sk-modal-title').textContent = title;
+  document.getElementById('sk-modal-body').textContent = src.textContent;
+  document.getElementById('sk-modal').classList.add('show');
 }}
 </script>
 </body>
@@ -2152,6 +2209,31 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
             f'{dist}</div>'
         )
 
+    # Progressive knowledge injected into the planner this turn. cyan = sections injected;
+    # amber = the planner ran and the checker flagged sections, but none matched (a fuzzy-match
+    # miss worth surfacing). Silent when no planner ran (replan/done turns) or no knowledge.
+    sections_html = ""
+    loaded = step.sections_loaded
+    requested = step.relevant_sections
+    if loaded:
+        names = "、".join(_safe(s.replace("_", " ")) for s in loaded)
+        extra = (
+            f' <span style="color:#94a3b8">(checker 请求 {len(requested)})</span>'
+            if requested and len(requested) != len(loaded) else ""
+        )
+        sections_html = (
+            f'<div class="detail-instruction">'
+            f'<span style="color:#0891b2;font-weight:600">📖 注入知识 {len(loaded)} 章节</span>：{names}{extra}'
+            f'</div>'
+        )
+    elif requested and "planner" in (step.timings or {}):
+        names = "、".join(_safe(s.replace("_", " ")) for s in requested)
+        sections_html = (
+            f'<div class="detail-instruction">'
+            f'<span style="color:#f59e0b;font-weight:600">📖 checker 请求 {len(requested)} 章节但未命中</span>：{names}'
+            f'</div>'
+        )
+
     ss_html = ""
     if step.annotated_before_url:
         ss_html = f'<div class="detail-ss"><img src="{step.annotated_before_url}" onclick="zoomImg(this.src)" alt="Turn"></div>'
@@ -2179,11 +2261,47 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         </div>
         {instruction_html}
         {snap_html}
+        {sections_html}
         {summary_html}
         {_render_timing_html(step.timings)}
         {_render_token_html(step.token_usage)}
       </div>
     </div>"""
+
+
+def _render_knowledge_html(k: dict, sections: list[dict] | None = None) -> str:
+    """Sidebar section: which app knowledge was injected this run, how big it was, and the
+    list of sections actually injected (≥1 turn) — each clickable to view its body in a modal.
+    Per-turn injection is also marked on each turn card (📖). Empty when no knowledge matched."""
+    if not k:
+        return ""
+    app = _safe(str(k.get("app_name", "")))
+    sc = k.get("section_count", 0)
+    nav = k.get("nav_chars", 0)
+    el = k.get("elements_chars", 0)
+    _k = lambda n: f"{n / 1000:.1f}k" if n >= 1000 else str(n)  # noqa: E731
+    out = [
+        '<div class="sidebar-knowledge">',
+        '<div class="sidebar-title">知识库</div>',
+        f'<div class="sk-app">{app}</div>',
+        f'<div class="sk-meta">{sc} 章节 · 导航 {_k(nav)} / 元素 {_k(el)} 字</div>',
+    ]
+    sections = sections or []
+    if sections:
+        out.append(f'<div class="sk-sections-label">已加载章节 · {len(sections)}</div>')
+        bodies = []
+        for i, s in enumerate(sections):
+            title = _safe(str(s.get("title", "")))
+            # this.textContent passes the title to the modal — no JS string escaping needed.
+            out.append(
+                f'<div class="sk-item" onclick="showSection(\'sk-body-{i}\', this.textContent)">'
+                f'{title}</div>'
+            )
+            body = _safe(str(s.get("body") or "（未找到该章节的知识文件）"))
+            bodies.append(f'<div id="sk-body-{i}">{body}</div>')
+        out.append('<div id="sk-bodies" style="display:none">' + "".join(bodies) + "</div>")
+    out.append("</div>")
+    return "".join(out)
 
 
 def _render_platform_badge(platform: str) -> str:
@@ -2451,6 +2569,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
         outline_html=outline_html,
         cost_note_html=cost_note_html,
+        knowledge_html=_render_knowledge_html(data.knowledge, data.knowledge_sections),
         result_html=result_html,
         pages_html=pages_html,
     )
