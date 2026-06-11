@@ -33,6 +33,10 @@ class MilestonePrompts:
     # scale and should be halved before vision calls; Android/browser screenshots
     # are already in the coordinate space the agent reasons about.
     image_resize: Literal["retina", "none"] = "retina"
+    # Optional structured-output schema for the step planner. Platforms that do not
+    # use picker fields can provide a smaller schema, so those fields are not shown
+    # to the model.
+    plan_result_schema: type[BaseModel] | None = None
 
 
 class _SingleCheckResult(BaseModel):
@@ -45,7 +49,7 @@ class _SingleCheckResult(BaseModel):
         description="判断状态：done（验收通过）或 in_progress（未完成）。禁止填 'loading'——页面加载状态用独立的 loading 布尔字段表示"
     )
     reason: str = Field(description="判断理由")
-    stuck_reason: str = Field(default="", description="卡住原因（仅程序化 stuck 时填写）")
+    stuck_reason: str = Field(default="", description="额外未达成原因；一般验收判断留空")
     issues: list[str] = Field(default_factory=list)
     visible_evidence: list[str] = Field(default_factory=list, description="截图中支持 done 的可见证据")
     missing_evidence: list[str] = Field(default_factory=list, description="缺失的验收证据")
@@ -113,7 +117,7 @@ class _PlanResult(BaseModel):
 
 
 class _ReplanResult(BaseModel):
-    diagnosis: str = Field(description="失败根本原因（一句话）")
+    diagnosis: str = Field(description="当前未达成目标的原因（一句话）")
     strategy: Literal["local_replan", "escalate_human", "force_complete"]
     instruction: str = Field(default="")
     escalation_message: str = Field(default="")

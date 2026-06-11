@@ -110,11 +110,11 @@ class BaseAction(BaseModel):
     )
     x: Optional[float] = Field(
         default=None,
-        description="归一化 x 坐标（0-1000）。tap/type 为目标中心；scroll/drag 为滚动锚点，可为空走 target_area 默认点",
+        description="归一化 x 坐标（0-1000）。tap/type 为目标中心；scroll/drag 为滚动锚点；不需要坐标的动作可留空",
     )
     y: Optional[float] = Field(
         default=None,
-        description="归一化 y 坐标（0-1000）。tap/type 为目标中心；scroll/drag 为滚动锚点，可为空走 target_area 默认点",
+        description="归一化 y 坐标（0-1000）。tap/type 为目标中心；scroll/drag 为滚动锚点；不需要坐标的动作可留空",
     )
     direction: Optional[str] = Field(
         default=None,
@@ -130,24 +130,24 @@ class BaseAction(BaseModel):
     )
     to_x: Optional[float] = Field(
         default=None,
-        description="执行层内部字段：drag 结束点归一化 x 坐标，action policy 不要填写",
+        description="drag 的可选结束点归一化 x 坐标；不需要指定结束点时留空",
     )
     to_y: Optional[float] = Field(
         default=None,
-        description="执行层内部字段：drag 结束点归一化 y 坐标，action policy 不要填写",
+        description="drag 的可选结束点归一化 y 坐标；不需要指定结束点时留空",
     )
     duration_ms: Optional[int] = Field(
         default=None,
-        description="执行层内部字段：drag 手势持续时间毫秒，action policy 不要填写",
+        description="drag 的可选持续时间毫秒；通常留空",
     )
     text: Optional[str] = Field(
         default=None,
         description="要输入的文字内容（action_type 为 type 时必填）",
     )
-    description: str = Field(description="该操作的中文说明，如「点击目标应用图标」")
+    description: str = Field(description="该操作的中文说明，如「点击搜索按钮」")
     snap: Optional[dict] = Field(
         default=None,
-        description="执行层内部字段：YOLO/OCR 吸附记录，包含 method/original_xy/snapped_xy",
+        description="可选定位辅助信息；通常留空",
     )
 
     @model_validator(mode="after")
@@ -179,7 +179,7 @@ class Observation(BaseModel):
         default=None,
         description=(
             "平台感知层提供的当前页面 URL（如浏览器地址）。结构化元信息——它**不在截图里**"
-            "（vision-only 截图只含网页 viewport），却是页面身份/验收的强信号，供 checker 取真值，"
+            "（vision-only 截图只含网页 viewport），可作为页面身份/验收的辅助信号，"
             "免得它从看不见的地址栏编造。None=该平台不提供（iphone/android 留空）。"
         ),
     )

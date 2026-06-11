@@ -362,8 +362,8 @@ class MilestoneSupervisorPolicy:
             print(f"  [OffTarget] 上一步误中「{last_tv.actual_element}」，已先验收(未完成)→ replan")
             stuck = _SingleCheckResult(
                 status="stuck",
-                reason=f"上一步动作落点误中「{last_tv.actual_element}」，未点到目标",
-                stuck_reason=f"动作 off-target：误中{last_tv.actual_element}",
+                reason=f"上一步没有打开预期元素，当前停留在「{last_tv.actual_element}」相关状态",
+                stuck_reason=f"上一步没有到达预期元素，当前显示「{last_tv.actual_element}」相关状态",
                 summary="",
             )
             return self._handle_stuck(milestone, stuck, None, observation, history)
@@ -387,8 +387,8 @@ class MilestoneSupervisorPolicy:
             print(f"  [NoEffect] 上一步点击「{tapped}」落点正确但屏幕零变化，已先验收(未完成)→ replan")
             stuck = _SingleCheckResult(
                 status="stuck",
-                reason=f"上一步点击「{tapped}」落点正确但屏幕无变化，该操作对当前页面无效",
-                stuck_reason=f"动作无效果：点击「{tapped}」屏幕零变化，应换路径",
+                reason=f"点击「{tapped}」后页面没有出现验收条件所需的可见变化",
+                stuck_reason=f"点击「{tapped}」后仍未看到目标状态，应尝试其他可见入口",
                 summary="",
             )
             return self._handle_stuck(milestone, stuck, None, observation, history)
@@ -465,7 +465,7 @@ class MilestoneSupervisorPolicy:
                 plan = self._invoke_planner(
                     milestone, check, observation, history,
                     extra=(
-                        "你刚才的指令与之前失败的操作相同。"
+                        "你刚才的指令与之前未达成验收条件的操作相同。"
                         "请仔细查看截图，找一个不同的 UI 元素或操作路径。"
                     ),
                 )
@@ -473,8 +473,9 @@ class MilestoneSupervisorPolicy:
                 print("  [Planner] 重试仍重复，升级为 stuck 处理")
                 stuck_check = _SingleCheckResult(
                     status="stuck",
-                    reason=f"planner 无法找到与之前不同的操作路径，已尝试指令均导致错误",
-                    stuck_reason="planner 陷入重复，无法生成新操作",
+                    reason="连续给出相似操作，当前页面仍未满足验收条件",
+                    stuck_reason="连续给出相似指令但目标未达成，需要改用当前截图中的其他可见入口或操作顺序",
+                    issues=["连续操作策略过于相似"],
                     summary=check.summary,
                 )
                 return self._handle_stuck(milestone, stuck_check, check.read_instruction, observation, history)
@@ -483,7 +484,8 @@ class MilestoneSupervisorPolicy:
         # 这条结构化通路绕开「从 instruction 文本正则抠数字」的脆弱性——指令只写了目标值
         # （如「直到显示21日」缺当前值）时，正则抠不到距离会退化成一格一格挪、跑满轮数也到不了。
         drag_steps = self._picker_drag_steps(plan)
-        if drag_steps == 0 and plan.drag_column:
+        drag_column = getattr(plan, "drag_column", None)
+        if drag_steps == 0 and drag_column:
             print("  [Planner] picker 已到目标值但仍要求滚动，重试...")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
                 plan = self._invoke_planner(
@@ -499,7 +501,8 @@ class MilestoneSupervisorPolicy:
                     ),
                 )
             drag_steps = self._picker_drag_steps(plan)
-            if drag_steps == 0 and plan.drag_column:
+            drag_column = getattr(plan, "drag_column", None)
+            if drag_steps == 0 and drag_column:
                 print("  [Planner] 重试仍为零步 picker，清空 picker hints 避免执行层强制滚动")
                 plan.direction = None
                 plan.drag_column = None
@@ -507,11 +510,12 @@ class MilestoneSupervisorPolicy:
                 plan.drag_target_value = None
                 drag_steps = None
         print(f"  [Planner] {plan.instruction}")
-        if drag_steps is not None and plan.drag_column:
-            print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column} steps={drag_steps}")
-        elif plan.direction or plan.drag_column:
-            print(f"  [Planner] hints: direction={plan.direction} column={plan.drag_column}")
-        if plan.direction in ("increase", "decrease") and plan.drag_column:
+        drag_column = getattr(plan, "drag_column", None)
+        if drag_steps is not None and drag_column:
+            print(f"  [Planner] hints: direction={plan.direction} column={drag_column} steps={drag_steps}")
+        elif plan.direction or drag_column:
+            print(f"  [Planner] hints: direction={plan.direction} column={drag_column}")
+        if plan.direction in ("increase", "decrease") and drag_column:
             self._fix_picker_direction(plan)
         self._last_plan = plan
         milestone.status = "running"
@@ -522,7 +526,7 @@ class MilestoneSupervisorPolicy:
             goal_completed=False,
             summary=plan.summary,
             direction=plan.direction,
-            drag_column=plan.drag_column,
+            drag_column=getattr(plan, "drag_column", None),
             drag_steps=drag_steps,
             is_home_screen=_is_home_identity(check.page_identity),
             **_ctx(milestone, check.read_instruction),
@@ -779,7 +783,10 @@ class MilestoneSupervisorPolicy:
                     before = len(self._global_constraints)
                     self._global_constraints = [
                         c for c in self._global_constraints
-                        if not (c.startswith("指令「") and "禁止重复此指令" in c)
+                        if not (
+                            c.startswith("指令「")
+                            and ("禁止重复此指令" in c or "未达成目标" in c)
+                        )
                     ]
                     cleared = before - len(self._global_constraints)
                     if cleared:
@@ -813,11 +820,11 @@ class MilestoneSupervisorPolicy:
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")
 
         # Persist diagnosis as a global constraint so the regular Planner (not just
-        # the next Replan prompt) avoids re-entering the same dead-end path.
+        # the next Replan prompt) avoids immediately repeating the same unproductive path.
         if replan.diagnosis:
-            dead_end_constraint = f"⚠️ 已诊断死路-禁止重走：{replan.diagnosis}"
-            if dead_end_constraint not in self._global_constraints:
-                self._global_constraints.append(dead_end_constraint)
+            path_constraint = f"⚠️ 之前未达成目标的路径：{replan.diagnosis}。除非当前截图出现新的明确证据，否则不要重复。"
+            if path_constraint not in self._global_constraints:
+                self._global_constraints.append(path_constraint)
 
         if replan.strategy == "force_complete":
             print(f"  [Replan] replanner 判定验收条件已满足，强制完成")
@@ -846,7 +853,7 @@ class MilestoneSupervisorPolicy:
             instruction=replan.instruction or None,
             stop=False,
             goal_completed=False,
-            summary=f"子目标「{milestone.name}」卡住，第 {milestone.retry_count} 次重试。{replan.diagnosis}",
+            summary=f"子目标「{milestone.name}」尚未达成，第 {milestone.retry_count} 次调整策略。{replan.diagnosis}",
             is_home_screen=_is_home_identity(self._last_check.page_identity) if self._last_check else False,
             **_ctx(milestone, read_inst),
         )
@@ -929,7 +936,7 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
     ) -> None:
         reason = check.stuck_reason or check.reason
-        if "planner 陷入重复" in reason:
+        if "planner 陷入重复" in reason or "连续给出相似指令" in reason:
             return
         # 连续调值类不记「禁止重复此指令」：会把唯一可靠的拖动操作拉黑，逼系统退化成点击 picker
         # （iOS 滚轮不认点击）。停滞时的纠偏靠 replan 换连续策略（换列/加大步长/调顺序），而非禁操作。
@@ -944,7 +951,7 @@ class MilestoneSupervisorPolicy:
         if not last_action:
             return
         instruction = last_action.supervisor.instruction
-        constraint = f"指令「{instruction}」导致错误：{reason}，禁止重复此指令"
+        constraint = f"指令「{instruction}」未达成目标：{reason}。优先尝试当前截图中不同的可见入口。"
         if constraint not in self._global_constraints:
             self._global_constraints.append(constraint)
             print(f"  [Constraint] {constraint}")
@@ -1019,7 +1026,8 @@ class MilestoneSupervisorPolicy:
             constraints=json.dumps(self._global_constraints, ensure_ascii=False),
             frame_summary=frame.summary,
         )
-        return invoke_structured(self._llm(), self._msgs(prompt, observation), _PlanResult)
+        plan_schema = self._prompts.plan_result_schema or _PlanResult
+        return invoke_structured(self._llm(), self._msgs(prompt, observation), plan_schema)
 
     def _invoke_replanner(
         self,
@@ -1104,9 +1112,9 @@ class MilestoneSupervisorPolicy:
             print(f"  [SimStuck] 全局[{gstr}] 局部[{lstr}] → {tag}")
             return _SingleCheckResult(
                 status="stuck",
-                reason=f"连续 {STUCK_SCREEN_WINDOW} 帧局部与全局均无实质变化（全局 [{gstr}]，动作区 [{lstr}]）",
-                stuck_reason="动作所在区域与全局像素连续无变化，上一步操作未生效",
-                issues=["动作所在区域与全局像素变化均低于阈值"],
+                reason=f"连续 {STUCK_SCREEN_WINDOW} 帧没有看到与目标相关的页面变化",
+                stuck_reason="上一步操作后页面没有出现新内容或目标状态，需要尝试其他可见入口",
+                issues=["连续多帧未看到页面状态推进"],
                 summary="屏幕连续无变化",
                 frozen=frozen,
             )
@@ -1118,10 +1126,10 @@ class MilestoneSupervisorPolicy:
             print(f"  [SimStuck] 2back={sim_2back:.2%}, adj={sim_adj:.2%} → AB 循环")
             return _SingleCheckResult(
                 status="stuck",
-                reason=f"截图在两种状态间交替（2帧前 {sim_2back:.2%}，相邻帧 {sim_adj:.2%}）",
-                stuck_reason="屏幕在两种状态间振荡，操作陷入 AB 交替循环",
-                issues=["截图在两个视觉状态间交替出现"],
-                summary="屏幕在两种状态间振荡",
+                reason="页面在两个可见状态之间来回切换，验收条件仍未出现",
+                stuck_reason="页面在两个状态之间反复切换，需要换路径或先关闭当前弹窗/面板",
+                issues=["页面状态来回切换"],
+                summary="页面在两个状态之间反复切换",
             )
         return None
 
@@ -1149,9 +1157,9 @@ class MilestoneSupervisorPolicy:
             print(f"  [RepStuck] {sim_str} → 指令连续重复")
             return _SingleCheckResult(
                 status="stuck",
-                reason=f"连续 {STUCK_REPEAT_WINDOW} 步指令词语重叠 [{sim_str}]，操作策略未变化",
-                stuck_reason="连续相似指令，重复操作未生效",
-                issues=["supervisor 指令持续重复"],
+                reason=f"连续 {STUCK_REPEAT_WINDOW} 步给出相似指令，当前页面仍未满足验收条件",
+                stuck_reason="连续相似指令未达成目标，需要改用当前截图中的其他可见入口或操作顺序",
+                issues=["连续操作策略过于相似"],
                 summary="操作陷入重复循环",
             )
         return None
@@ -1652,13 +1660,14 @@ class MilestoneSupervisorPolicy:
         指令只写目标值、如「直到显示21日」时会抠不到当前值而失效）。非 picker drag 或信息
         不全时返回 None，由下游回退到旧的文本解析路径。
         """
-        if not plan.drag_column:
+        if not getattr(plan, "drag_column", None):
             return None
-        cur, tgt = plan.drag_current_value, plan.drag_target_value
+        cur = getattr(plan, "drag_current_value", None)
+        tgt = getattr(plan, "drag_target_value", None)
         if cur is None or tgt is None:
             return None
         if tgt != cur:
-            column = (plan.drag_column or "").strip().lower()
+            column = (getattr(plan, "drag_column", None) or "").strip().lower()
             if column == "minute":
                 forward = (tgt - cur) % 60
                 backward = (cur - tgt) % 60
@@ -1674,7 +1683,7 @@ class MilestoneSupervisorPolicy:
 
     @staticmethod
     def _fix_picker_direction(plan: _PlanResult) -> None:
-        col = plan.drag_column or ""
+        col = getattr(plan, "drag_column", None) or ""
         col_suffix = {"year": "年", "month": "月", "day": "日"}.get(col, "")
         if not col_suffix:
             return

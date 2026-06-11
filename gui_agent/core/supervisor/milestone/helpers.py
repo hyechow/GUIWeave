@@ -37,16 +37,21 @@ def _format_history(history: list[PolicyTurn]) -> str:
         sv = turn.supervisor
         next_sv = recent[idx + 1].supervisor if idx + 1 < len(recent) else None
         result = next_sv.summary if next_sv else "（结果尚未记录）"
-        failed = (
+        unmet = (
             turn.executed
             and next_sv
             and next_sv.milestone_id == sv.milestone_id
-            and ("卡住" in (next_sv.summary or "") or "重试" in (next_sv.summary or ""))
+            and (
+                "卡住" in (next_sv.summary or "")
+                or "重试" in (next_sv.summary or "")
+                or "尚未达成" in (next_sv.summary or "")
+                or "调整策略" in (next_sv.summary or "")
+            )
         )
-        prefix = "❌ " if failed else ""
+        prefix = "⚠️ " if unmet else ""
         if turn.action_decision and turn.executed:
             action = turn.action_decision.action
-            outcome = f"导致错误: {result}" if failed else f"结果: {result}"
+            outcome = f"未达成: {result}" if unmet else f"结果: {result}"
             lines.append(
                 f"{turn.index}. {prefix}指令=「{sv.instruction}」"
                 f" → [{action.action_type}] {action.description}"
@@ -108,8 +113,9 @@ def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
     so normalize known numeric picker columns here; policy.py also recomputes the
     step count later.
     """
-    column = (plan.drag_column or "").strip().lower()
-    cur, tgt = plan.drag_current_value, plan.drag_target_value
+    column = (getattr(plan, "drag_column", None) or "").strip().lower()
+    cur = getattr(plan, "drag_current_value", None)
+    tgt = getattr(plan, "drag_target_value", None)
     if not column or cur is None or tgt is None or cur == tgt:
         return plan
     if column == "minute":
@@ -170,14 +176,14 @@ def run_checker(
     if section_manifest:
         prompt += f"\n\n{section_manifest}"
     # Inject the tab TITLE (the viewport-language page name the screenshot doesn't show) as
-    # ground truth, so the checker uses it instead of fabricating. The URL is deliberately NOT
+    # an auxiliary identity signal, so the checker does not need to infer it from pixels. The URL is deliberately NOT
     # injected — a machine URL adds little discriminating value as LLM text and costs tokens; it
     # is consumed programmatically instead (url-change = navigation, in the supervisor). Only
     # browser perception supplies a title; iphone/android leave it None and nothing is injected.
     title = getattr(observation, "title", None)
     if title:
         prompt += (
-            "\n\n## 页面标题（浏览器提供的真值，不在截图里——以此为准，勿从截图找或编造）\n"
+            "\n\n## 附加页面标题（不在截图里，仅作页面身份辅助信号；仍需结合可见内容判断）\n"
             f"- 当前页面标题：{title}"
         )
     result = invoke_structured(
@@ -247,8 +253,8 @@ def run_checker(
     if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
             status="stuck",
-            reason="checker 返回 done 但理由不足（缺验收依据或自相矛盾）",
-            stuck_reason="done 理由不足",
+            reason="当前验收结论缺少可见依据或存在自相矛盾",
+            stuck_reason="当前页面仍缺少足够的验收依据，需要继续确认可见状态",
             summary=result.summary,
         )
     return result
@@ -286,14 +292,14 @@ def run_planner(
         if tried:
             tried_lines = "\n".join(f"  - 「{i}」" for i in tried)
             extra = (
-                f"⚠️ 该子目标已重试 {milestone.retry_count} 次。以下操作在本子目标中已全部尝试过"
-                f"（含导致失败或死路的路径），请务必选择完全不同的路径：\n{tried_lines}"
+                f"⚠️ 该子目标已尝试 {milestone.retry_count} 次。以下操作在本子目标中已经尝试过但尚未达成验收条件，"
+                f"请优先选择当前截图中不同的可见入口或下一步元素：\n{tried_lines}"
             )
         if dead_ends:
             dedup = list(dict.fromkeys(dead_ends))
             dead_end_lines = "\n".join(f"  - {d}" for d in dedup)
             extra_text = (
-                "⚠️ 以下路径已被确认为死路，禁止再次尝试：\n"
+                "⚠️ 以下路径之前未达成目标，除非当前截图出现新的明确证据，否则不要重复：\n"
                 f"{dead_end_lines}"
             )
             extra = f"{extra}\n\n{extra_text}" if extra else extra_text
@@ -314,7 +320,8 @@ def run_planner(
         prompt += f"\n\n## 输出修正要求\n{extra}"
     msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
     _inject_knowledge(msgs, app_knowledge, elements_knowledge)
-    return _normalize_picker_plan_direction(invoke_structured(_make_llm(), msgs, _PlanResult))
+    plan_schema = prompts.plan_result_schema or _PlanResult
+    return _normalize_picker_plan_direction(invoke_structured(_make_llm(), msgs, plan_schema))
 
 
 def run_loop_check(
