@@ -86,10 +86,11 @@ def test_checker() -> None:
         for kw in expected.get("missing_contains", []):
             if not any(kw in item for item in result.missing_evidence):
                 details.append(f"missing_evidence 应包含未决字段「{kw}」, got: {result.missing_evidence}")
-        claims_text = f"{result.reason} {result.summary}"
+        # must_not_claim 同时覆盖 missing_evidence——「索要页面上不存在的控件」正是写在那里
+        claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
         for pattern in expected.get("must_not_claim", []):
             if re.search(pattern, claims_text):
-                details.append(f"不得宣称 /{pattern}/")
+                details.append(f"不得宣称/索要 /{pattern}/")
 
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
