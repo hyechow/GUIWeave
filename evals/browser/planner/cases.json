@@ -1,5 +1,28 @@
 [
   {
+    "label": "combobox-候选列表已展开必须点击选项而非填下一个字段（回归 20260612_104857 浪费6轮）",
+    "screenshot": "evals/browser/planner/screenshots/roboteam_combobox_filter_open.png",
+    "milestone": {
+      "name": "按需创建虚拟机器人",
+      "description": "在新建虚拟机器人弹窗中按配置填写各字段并提交：数量 2、名称前缀 lucas-、通信方式 STD、预设地图 交管测试专用地图_1楼、预设区域 禁止停止区_区域14、初始电量 90。",
+      "success_condition": "弹窗各字段按配置填写完成并提交，列表中出现新建的虚拟机器人",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前处于「新建虚拟机器人」弹窗配置阶段，虽然已设置数量、名称前缀和地图，但初始电量、掉电速率等关键参数仍为默认值（80, 0, 0...），未修改为配置文件要求的数值（90, 10, 20...），且尚未点击确认提交，故未完成创建。",
+      "issues": [],
+      "missing_evidence": ["初始电量字段显示为80，应为90", "掉电速率字段显示为0，应为10", "预设区域字段为空，应选'禁止停止区_区域14'", "尚未点击确定按钮完成创建"],
+      "summary": "正在填写新建虚拟机器人的配置表单，部分参数待修正。"
+    },
+    "expected": {
+      "must_contain": ["选项", "候选"],
+      "must_not_contain": ["输入.*(区域|电量|速率|速度)", "区域.*输入"]
+    },
+    "note": "实跑陷阱原样复刻：checker 没看见下拉展开（以为地图已设置），missing_evidence 还在催电量/区域 → planner 必须自己从截图认出「候选列表展开=过滤词未选定」，先点选项再填别的；不点选项移焦会清空过滤词（实跑因此反复丢值浪费 6 轮）。"
+  },
+  {
     "label": "navigate-打开网址应指令导航而非搜索框输入（回归：曾指令在搜索框输入 baidu.com）",
     "screenshot": "evals/browser/planner/screenshots/google_home.png",
     "milestone": {

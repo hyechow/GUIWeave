@@ -1,0 +1,19 @@
+[
+  {
+    "label": "combobox-过滤词未选定不得算已设置（回归 20260612_104857 checker误导planner）",
+    "screenshot": "evals/browser/checker/screenshots/roboteam_combobox_filter_open.png",
+    "milestone": {
+      "name": "按需创建虚拟机器人",
+      "description": "在新建虚拟机器人弹窗中按配置填写各字段并提交：数量 2、名称前缀 lucas-、通信方式 STD、预设地图 交管测试专用地图_1楼、预设区域 禁止停止区_区域14、初始电量 90、掉电速率 10、充电速率 20。",
+      "success_condition": "弹窗各字段按配置填写完成并提交，列表中出现新建的虚拟机器人",
+      "kind": "action",
+      "app_name": "RoboTeam"
+    },
+    "expected": {
+      "status": "in_progress",
+      "missing_contains": ["预设地图"],
+      "must_not_claim": ["已设置.{0,8}地图", "地图.{0,10}已(设置|填写|选定|完成)"]
+    },
+    "note": "截图：预设地图输入框内有过滤词「交管测试专用地图_1楼」，下方候选列表展开、选项尚未点击——该字段实际未选定（移焦即清空）。实跑 checker 判「已设置…地图」且 missing_evidence 不含预设地图，把 planner 推去填下一个字段，连环丢值 6 轮。正确行为：预设地图计为未完成（missing 写明需点击候选选项）。"
+  }
+]
