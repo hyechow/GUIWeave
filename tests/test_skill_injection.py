@@ -65,3 +65,20 @@ def test_navigation_unaffected_when_no_skill(tmp_path, monkeypatch):
     assert k is not None
     assert "联调实验" not in k.navigation
     assert "左侧菜单" in k.navigation
+
+
+# ── list_known_apps（router 知识库感知的数据源）─────────────────────────────
+
+
+def test_list_known_apps_platform_scoped(tmp_path, monkeypatch):
+    _make_app(tmp_path, with_skill=False)
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+    assert app_summary.list_known_apps("browser") == ["TestApp"]
+    assert app_summary.list_known_apps("iphone") == []  # 其他平台目录不存在 → 空
+
+
+def test_list_known_apps_skips_empty_dirs(tmp_path, monkeypatch):
+    _make_app(tmp_path, with_skill=False)
+    (tmp_path / "browser" / "EmptyApp").mkdir()  # 无任何 .md 的目录不算已知应用
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+    assert app_summary.list_known_apps("browser") == ["TestApp"]

@@ -27,3 +27,17 @@ goal 生成规则：
 - 用户附带的具体输入内容（要填的文字、搜索词、@文件路径 引用）必须原样保留在 goal 中
 - 不添加用户未提到的多余信息；不要猜测用户没提到的网站
 """
+
+# Known-apps rule template, appended by core.chat_session.route_message when the
+# knowledge base has app dirs for this platform ({apps} ← dir names). Browser-only:
+# the gap it closes — "entry = a URL the router can't see but knowledge injection
+# provides downstream" — doesn't exist on iphone/android where the app name IS the
+# entry; injecting there measurably disturbed prefs/context-carry rules (4/53 evals).
+BROWSER_KNOWN_APPS_RULE = """
+已知网站：{apps}。这些网站系统已有内置知识（入口地址、访问方式、用法），\
+用户提到时视为目标明确：直接生成 goal 并原样保留网站名，\
+不要因缺少网址/入口/登录方式而反问；\
+其后的「按 @文件路径」是任务配置引用，原样保留，不要当成要在浏览器中打开的文件。\
+⚠️ 此清单只是补充信息、不是白名单：用户提到清单之外的网站时按上述规则照常处理，\
+绝不因为「不在清单中」而反问或拒绝。
+"""

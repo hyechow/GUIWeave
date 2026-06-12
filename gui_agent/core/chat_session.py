@@ -39,15 +39,22 @@ class RouterResult(BaseModel):
     )
 
 
-def _router_system_for(platform: str) -> str:
-    """Select the platform's router system prompt. The router FRAMEWORK is neutral;
-    the prompt is platform-specific (iphone: 操控手机/APP; browser: 网页任务). Lazy
-    import keeps chat_session a leaf — adapters are pulled only at route time."""
+def _router_system_for(platform: str) -> tuple[str, str | None]:
+    """Select the platform's router system prompt + optional known-apps rule template.
+    The router FRAMEWORK is neutral; the prompt is platform-specific (iphone: 操控手机/APP;
+    browser: 网页任务). The known-apps rule is also per-platform: only platforms whose
+    entry point is an address the router can't see (browser: URL) provide a template —
+    on iphone the app name IS the entry, and injecting the list there disturbed
+    prefs/context-carry behavior (4/53 eval regressions). Lazy import keeps
+    chat_session a leaf — adapters are pulled only at route time."""
     if platform == "browser":
-        from gui_agent.adapters.browser.router_prompt import BROWSER_ROUTER_SYSTEM
-        return BROWSER_ROUTER_SYSTEM
+        from gui_agent.adapters.browser.router_prompt import (
+            BROWSER_KNOWN_APPS_RULE,
+            BROWSER_ROUTER_SYSTEM,
+        )
+        return BROWSER_ROUTER_SYSTEM, BROWSER_KNOWN_APPS_RULE
     from gui_agent.adapters.iphone.router_prompt import IPHONE_ROUTER_SYSTEM
-    return IPHONE_ROUTER_SYSTEM
+    return IPHONE_ROUTER_SYSTEM, None
 
 
 def _get_llm() -> ChatOpenAI:
@@ -78,9 +85,19 @@ def route_message(
     platform: str = "iphone",
 ) -> RouterResult:
     llm = _get_llm()
-    system = _router_system_for(platform)
+    system, known_apps_rule = _router_system_for(platform)
     # Resolve temporal expressions so the router outputs absolute dates in the goal.
     resolved_msg = resolve_temporal_expressions(user_msg)
+    # Knowledge-base awareness: the router runs BEFORE knowledge injection, so without
+    # this it asks the user for facts (entry URL) that knowledge already holds and
+    # decompose will inject. The rule TEXT is the platform's (adapter router_prompt);
+    # core only discovers the app list and fills it in. Lazy import keeps chat_session
+    # a leaf at import time.
+    if known_apps_rule:
+        from gui_agent.core.self_learning.app_summary import list_known_apps
+        known_apps = list_known_apps(platform)
+        if known_apps:
+            system += known_apps_rule.format(apps="、".join(known_apps))
     if prefs_context:
         system += (
             "\n重要规则：以下偏好由用户设定，当用户未指定 APP 时优先使用偏好中的 APP，不要反问。"

@@ -267,6 +267,19 @@ _KNOWN_APP_NAMES: list[str] = [
 ]
 
 
+def list_known_apps(platform: str = "iphone") -> list[str]:
+    """App names with a knowledge dir under knowledge/<platform>/.
+
+    Used by the router (chat_session.route_message) so it treats these apps as
+    fully specified instead of asking the user for facts — entry URL, access,
+    usage — that knowledge injection provides downstream at decompose time.
+    """
+    platform_dir = KNOWLEDGE_DIR / platform
+    if not platform_dir.is_dir():
+        return []
+    return sorted(d.name for d in platform_dir.iterdir() if d.is_dir() and any(d.glob("*.md")))
+
+
 def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge | None:
     """Match goal against knowledge/<platform>/<app>/ dir names and load both layers.
 
