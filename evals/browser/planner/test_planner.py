@@ -47,6 +47,12 @@ def _check_instruction(instruction: str, expected: dict) -> list[str]:
     must_contain = expected.get("must_contain", [])
     if must_contain and not any(kw in instruction for kw in must_contain):
         details.append(f"must contain one of {must_contain}")
+    for kw in expected.get("must_contain_all", []):
+        if kw not in instruction:
+            details.append(f"must contain '{kw}'")
+    for pattern in expected.get("must_match", []):
+        if not re.search(pattern, instruction):
+            details.append(f"must match '{pattern}'")
     for pattern in expected.get("must_not_contain", []):
         if re.search(pattern, instruction):
             details.append(f"must not match '{pattern}'")

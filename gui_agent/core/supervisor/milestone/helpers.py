@@ -2,6 +2,7 @@ import base64
 import json
 import re
 from datetime import datetime
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 
@@ -193,6 +194,43 @@ def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
         plan.direction = "increase" if forward <= backward else "decrease"
     else:
         plan.direction = "increase" if tgt > cur else "decrease"
+    return plan
+
+
+_CLICKED_OPTION_RE = re.compile(
+    r"点击.{0,20}(?:候选|选项|条目).{0,8}[「『“\"'`]([^」』”\"'`]+)[」』”\"'`]"
+)
+_QUOTED_VALUE_RE = re.compile(r"[「『“\"'`]([^」』”\"'`]{2,80})[」』”\"'`]")
+
+
+def _quoted_values(text: str) -> list[str]:
+    return [m.group(1).strip() for m in _QUOTED_VALUE_RE.finditer(text or "") if m.group(1).strip()]
+
+
+def _guard_exact_dropdown_target(plan: _PlanResult, milestone: Milestone) -> _PlanResult:
+    """Repair a narrow class of searchable-dropdown hallucinations.
+
+    Vision models sometimes click the closest visible option even when the milestone's
+    success condition names a different exact value. If the planned clicked option is
+    similar to, but not exactly, a quoted target in the success condition, prefer typing
+    the target to filter the dropdown. This leaves normal candidate clicks untouched.
+    """
+    match = _CLICKED_OPTION_RE.search(plan.instruction or "")
+    if not match:
+        return plan
+    clicked = match.group(1).strip()
+    targets = _quoted_values(milestone.success_condition)
+    if not targets or clicked in targets:
+        return plan
+
+    best = max(targets, key=lambda t: SequenceMatcher(None, clicked, t).ratio())
+    if SequenceMatcher(None, clicked, best).ratio() < 0.55:
+        return plan
+
+    plan.instruction = f"在当前下拉搜索框中输入「{best}」"
+    plan.summary = (
+        f"{plan.summary}；候选「{clicked}」与目标「{best}」不完全一致，改为先输入目标全文过滤"
+    )
     return plan
 
 
@@ -433,7 +471,9 @@ def run_planner(
     msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
     _inject_knowledge(msgs, app_knowledge, elements_knowledge)
     plan_schema = prompts.plan_result_schema or _PlanResult
-    return _normalize_picker_plan_direction(invoke_structured(_make_llm(), msgs, plan_schema))
+    plan = invoke_structured(_make_llm(), msgs, plan_schema)
+    plan = _guard_exact_dropdown_target(plan, milestone)
+    return _normalize_picker_plan_direction(plan)
 
 
 def run_loop_check(

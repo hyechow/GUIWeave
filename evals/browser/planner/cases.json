@@ -17,10 +17,33 @@
       "summary": "正在填写新建虚拟机器人的配置表单，部分参数待修正。"
     },
     "expected": {
-      "must_contain": ["选项", "候选"],
-      "must_not_contain": ["输入.*(区域|电量|速率|速度)", "区域.*输入"]
+      "must_contain": ["选项", "候选", "条目"],
+      "must_not_contain": ["输入.*(区域|电量|速率|速度)", "区域.*输入", "点击.{0,8}(预设区域|初始电量|掉电|充电|速度)"]
     },
-    "note": "实跑陷阱原样复刻：checker 没看见下拉展开（以为地图已设置），missing_evidence 还在催电量/区域 → planner 必须自己从截图认出「候选列表展开=过滤词未选定」，先点选项再填别的；不点选项移焦会清空过滤词（实跑因此反复丢值浪费 6 轮）。"
+    "note": "实跑陷阱原样复刻：checker 没看见下拉展开（以为地图已设置），missing_evidence 还在催电量/区域 → planner 必须自己从截图认出「候选列表展开=过滤词未选定」，先点选项再填别的；不点选项移焦会清空过滤词（实跑因此反复丢值浪费 6 轮）。must_contain 含同义词「选项/候选/条目」(点击该项的不同措辞)，must_not_contain 守住「别跳去填/点其他字段」这一真正回归点。"
+  },
+  {
+    "label": "searchable-dropdown-目标不在可见候选必须type过滤而非肉眼挑相似项（回归 20260612_140643死循环+143331误选s3假成功）",
+    "screenshot": "evals/browser/planner/screenshots/roboteam_station_dropdown_target_absent.png",
+    "milestone": {
+      "name": "配置移动任务目标站点",
+      "description": "在快速建单弹窗的移动任务行，将目标站点设置为 s2-站点3。",
+      "success_condition": "移动任务行的站点框已显示选定值「s2-站点3」",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前执行类型已选为「指定机器人」且选中了 lucas-10001，任务列表中已添加移动指令，但目标站点输入框处于激活状态且候选列表展开，尚未选定具体站点 s2-站点3，验收条件中要求的目标站点未显示。",
+      "issues": [],
+      "missing_evidence": ["尚未选定目标站点 s2-站点3"],
+      "summary": "已添加移动指令，目标站点候选列表已展开但尚未选定 s2-站点3。"
+    },
+    "expected": {
+      "must_contain_all": ["输入", "s2-站点3"],
+      "must_not_contain": ["点击.{0,20}(选项|候选)", "s3-站点3"]
+    },
+    "note": "实跑两种结局同源：目标站点名与相似兄弟项(s2-站点3 vs s3-站点3)只差一字、且目标不在可见候选里。planner 从不 type 过滤、只肉眼挑列表→140643 反复抓 s3-站点3 被 checker 拒成死循环；143331 抓了 s3-站点3 后被 replanner force_complete 翻盘成假成功。正解=搜索式下拉按状态机处理：候选中有精确目标就点；没有精确目标且搜索框不是目标全文就输入目标全文过滤；搜索后仍无精确项则不能点相似项。与上面 104857 case 互补(那个是过滤词已输入、列表展开→必须点候选)。"
   },
   {
     "label": "navigate-打开网址应指令导航而非搜索框输入（回归：曾指令在搜索框输入 baidu.com）",
