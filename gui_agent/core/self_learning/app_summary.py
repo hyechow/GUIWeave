@@ -5,6 +5,10 @@ platform with per-page recon today):
 - _app.md: Navigation structure for Supervisor (task decomposition)
 - _elements.md: UI element details for Planner (instruction generation)
 
+Hand-maintained `_`-prefixed siblings (not generated here, survive re-ingest, folded into the
+always-on Supervisor context): _deploy.md (deployment/errata facts) and _skill.md (reusable
+multi-step orchestrations the decomposer follows when the goal matches a registered skill).
+
 Usage:
     uv run python -m gui_agent.core.self_learning.app_summary 微信
 """
@@ -265,6 +269,15 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
                 deploy = deploy_path.read_text(encoding="utf-8").strip()
                 if deploy:
                     nav = f"{deploy}\n\n{nav}"
+            # Reusable multi-step orchestrations (skills): when the goal matches a registered
+            # skill the decomposer follows its ordered steps. Hand-maintained, _-prefixed (so it
+            # survives re-ingest and isn't loaded as a retrievable section), appended after the
+            # nav structure so the decomposer sees both the layout and the workflows.
+            skill_path = d / "_skill.md"
+            if skill_path.exists():
+                skill = skill_path.read_text(encoding="utf-8").strip()
+                if skill:
+                    nav = f"{nav}\n\n{skill}"
             elements = (
                 elements_path.read_text(encoding="utf-8").strip()
                 if elements_path.exists() else ""
