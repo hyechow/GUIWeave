@@ -111,7 +111,9 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
 def load_page_files(app_dir: Path) -> list[tuple[str, str]]:
     """Load all page .md files (excluding _app.md and _elements.md) from app knowledge dir.
 
-    Returns list of (filename, content).
+    Returns list of (filename, content). Content keeps any YAML frontmatter (the ``when:``
+    retrieval line) — ProgressiveKnowledge parses/strips it at load; the reduce path strips
+    it via :func:`_page_body` so summaries never see it.
     """
     pages: list[tuple[str, str]] = []
     for md in sorted(app_dir.glob("*.md")):
@@ -121,6 +123,13 @@ def load_page_files(app_dir: Path) -> list[tuple[str, str]]:
     return pages
 
 
+def _page_body(text: str) -> str:
+    """Section content without retrieval frontmatter — what the reduce prompts should read."""
+    from gui_agent.core.self_learning.progressive import split_frontmatter
+
+    return split_frontmatter(text)[1]
+
+
 def _call_llm(system: str, prompt: str) -> str:
     cfg = resolve_llm_config("action_policy")
     llm = ChatOpenAI(
@@ -128,6 +137,9 @@ def _call_llm(system: str, prompt: str) -> str:
         api_key=cfg.api_key,
         base_url=cfg.base_url,
         temperature=0,
+        # DashScope qwen thinking mode burns 30s+ per call on these small text reductions
+        # (measured on reader: 119s → 0.9s with thinking off). Pure summarization — no need.
+        extra_body={"enable_thinking": False},
     )
     resp = llm.invoke([
         SystemMessage(content=system),
@@ -139,7 +151,7 @@ def _call_llm(system: str, prompt: str) -> str:
 def build_navigation_summary(app: str, pages: list[tuple[str, str]]) -> str:
     """Generate navigation structure summary (_app.md) for Supervisor."""
     pages_text = "\n\n---\n\n".join(
-        f"### {name}\n{content}" for name, content in pages
+        f"### {name}\n{_page_body(content)}" for name, content in pages
     )
     return _call_llm(
         _NAV_SYSTEM,
@@ -150,7 +162,7 @@ def build_navigation_summary(app: str, pages: list[tuple[str, str]]) -> str:
 def build_elements_summary(app: str, pages: list[tuple[str, str]]) -> str:
     """Generate UI elements summary (_elements.md) for Planner."""
     pages_text = "\n\n---\n\n".join(
-        f"### {name}\n{content}" for name, content in pages
+        f"### {name}\n{_page_body(content)}" for name, content in pages
     )
     return _call_llm(
         _ELEMENTS_SYSTEM,

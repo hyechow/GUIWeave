@@ -99,6 +99,12 @@ def ingest_manual(
         if n == 0:
             raise ValueError(f"未从 {manual_path.name} 解析出任何编号小节(检查手册是否带 N.N 编号大纲)")
         print(f"  得到 {n} 个小节页知识 → {app_dir}")
+
+        # 顺产检索描述:每节生成一行 when:(何时查阅)frontmatter,供 KnowledgeSelector 清单
+        # 做同物异名桥接(标题字面与任务用词不一致时,纯标题清单会选错章节)。
+        from gui_agent.core.self_learning.gen_when import generate_for_app
+
+        generate_for_app(app, platform)
     elif suffix in (".md", ".markdown", ".txt"):
         text = load_manual_text(manual_path)
         if not text:

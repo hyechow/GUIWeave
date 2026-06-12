@@ -80,6 +80,33 @@ def test_bodies_round_trips_with_pick():
     assert pk.bodies(["不存在的stem"]) == ""   # unknown stem is skipped, never KeyErrors
 
 
+def test_frontmatter_when_parsed_and_stripped():
+    from gui_agent.core.self_learning.progressive import split_frontmatter
+
+    meta, body = split_frontmatter("---\nwhen: 创建/启用虚拟机器人（模拟器）时\n---\n# 标题\n正文")
+    assert meta == {"when": "创建/启用虚拟机器人（模拟器）时"}
+    assert body == "# 标题\n正文"
+    # 无 frontmatter → 原样返回
+    assert split_frontmatter("# 直接正文") == ({}, "# 直接正文")
+
+
+def test_when_feeds_manifest_and_body_is_clean():
+    pk = ProgressiveKnowledge({
+        "如何使用机器人模拟器": "---\nwhen: 创建/启用虚拟机器人（模拟器）、无硬件调试时\n---\n模拟器正文",
+        "如何添加机器人": "---\nwhen: 注册/接入真实物理机器人设备时\n---\n添加正文",
+        "无when的章节": "裸正文",
+    })
+    m = pk.selector_manifest()
+    # 带 when 的行: [sid] 标题 — when（同物异名桥接的载体）
+    assert "如何使用机器人模拟器 — 创建/启用虚拟机器人（模拟器）、无硬件调试时" in m
+    assert "如何添加机器人 — 注册/接入真实物理机器人设备时" in m
+    # 无 when 的退化为纯标题行（不带悬空的 —）
+    assert "[s03] 无when的章节" in m and "无when的章节 —" not in m
+    # 喂 planner 的正文必须已剥离 frontmatter
+    assert pk.bodies(["如何使用机器人模拟器"]).endswith("模拟器正文")
+    assert "when:" not in pk.bodies(["如何使用机器人模拟器"])
+
+
 def test_selector_manifest_lists_ids_and_titles():
     m = _pk().selector_manifest()
     lines = m.splitlines()
