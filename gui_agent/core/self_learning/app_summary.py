@@ -6,8 +6,9 @@ platform with per-page recon today):
 - _elements.md: UI element details for Planner (instruction generation)
 
 Hand-maintained `_`-prefixed siblings (not generated here, survive re-ingest, folded into the
-always-on Supervisor context): _deploy.md (deployment/errata facts) and _skill.md (reusable
-multi-step orchestrations the decomposer follows when the goal matches a registered skill).
+always-on Supervisor context): _deploy.md (environment/access facts), _update.md (current-version
+updates over the older distilled base — trusted over conflicting sections), and _skill.md
+(reusable multi-step orchestrations the decomposer follows when the goal matches a skill).
 
 Usage:
     uv run python -m gui_agent.core.self_learning.app_summary 微信
@@ -125,6 +126,57 @@ def load_page_files(app_dir: Path) -> list[tuple[str, str]]:
             continue
         pages.append((md.stem, md.read_text(encoding="utf-8")))
     return pages
+
+
+# ── _skill.md lint: keep skills pure orchestration so they never grow into a 2nd manual ──
+# A skill may only carry 触发/数据/步骤; each step must be a short verb+data phrase with no
+# UI/HOW detail (that lives in the per-feature sections and _update.md). validate_skill_doc is
+# run by the loader (warns) and unit-tested; the constants are the enforced discipline.
+_SKILL_ALLOWED_FIELDS = ("触发", "数据", "步骤")
+_SKILL_UI_TOKENS = (
+    "点击", "单击", "双击", "右键", "菜单", "按钮", "标签", "页签", "输入框", "下拉",
+    "弹窗", "对话框", "图标", "勾选", "复选框", "单选", "滑块", "拖动", "搜索框", "地址栏",
+)
+_SKILL_MAX_STEP_LEN = 50
+
+
+def validate_skill_doc(text: str) -> list[str]:
+    """Lint a _skill.md body. Returns human-readable issues (empty list = clean).
+
+    Flags the ways a skill drifts into a second manual: a step that grows long (writing
+    detail), a step naming a UI/HOW action (which belongs in the sections), or a field other
+    than 触发/数据/步骤 (structure creep)."""
+    issues: list[str] = []
+    current: str | None = None
+    in_steps = False
+    for raw in text.splitlines():
+        s = raw.strip()
+        m = re.match(r"^##\s*skill\s*[:：]\s*(.+)$", s)
+        if m:
+            current, in_steps = m.group(1).strip(), False
+            continue
+        if current is None:
+            continue  # preamble before any skill
+        fm = re.match(r"^-\s*([^:：]+)[:：]", s)
+        if fm:
+            field = fm.group(1).strip()
+            in_steps = field.startswith("步骤")
+            if not any(field.startswith(a) for a in _SKILL_ALLOWED_FIELDS):
+                issues.append(f"skill「{current}」含非法字段「{field}」（只允许 触发/数据/步骤）")
+            continue
+        sm = re.match(r"^\d+[.)、]\s*(.+)$", s)
+        if sm and in_steps:
+            step = sm.group(1).strip()
+            if len(step) > _SKILL_MAX_STEP_LEN:
+                issues.append(
+                    f"skill「{current}」步骤过长（{len(step)}>{_SKILL_MAX_STEP_LEN} 字，像在写细节）：{step[:24]}…"
+                )
+            hits = [t for t in _SKILL_UI_TOKENS if t in step]
+            if hits:
+                issues.append(
+                    f"skill「{current}」步骤含界面操作词 {hits}（HOW 归章节，不写进 skill）：{step[:24]}…"
+                )
+    return issues
 
 
 def _page_body(text: str) -> str:
@@ -261,14 +313,22 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
         elements_path = d / "_elements.md"
         if nav_path.exists():
             nav = nav_path.read_text(encoding="utf-8").strip()
-            # Deployment facts not in the manual (entry URL, host, creds). Hand-maintained,
-            # survives re-ingest (starts with _, so generate_summary/_clear_page_files leave it),
-            # and is pinned to the TOP of the always-on navigation so the agent has the entry URL.
-            deploy_path = d / "_deploy.md"
-            if deploy_path.exists():
-                deploy = deploy_path.read_text(encoding="utf-8").strip()
-                if deploy:
-                    nav = f"{deploy}\n\n{nav}"
+            # Hand-maintained _-prefixed overlays pinned ABOVE the distilled nav (they survive
+            # re-ingest and aren't loaded as retrievable sections):
+            #   _deploy.md — environment/access facts (entry URL, host, creds): where/how to reach
+            #                this instance. Per-instance config; overrides nothing.
+            #   _update.md — current-version updates over the (older) distilled base. On conflict
+            #                the agent trusts these and the live UI. Dated, grows as the UI drifts;
+            #                folded back into the base when the app is re-distilled from live recon.
+            overlays = []
+            for overlay_name in ("_deploy.md", "_update.md"):
+                overlay_path = d / overlay_name
+                if overlay_path.exists():
+                    text = overlay_path.read_text(encoding="utf-8").strip()
+                    if text:
+                        overlays.append(text)
+            if overlays:
+                nav = "\n\n".join(overlays + [nav])
             # Reusable multi-step orchestrations (skills): when the goal matches a registered
             # skill the decomposer follows its ordered steps. Hand-maintained, _-prefixed (so it
             # survives re-ingest and isn't loaded as a retrievable section), appended after the
@@ -277,6 +337,8 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
             if skill_path.exists():
                 skill = skill_path.read_text(encoding="utf-8").strip()
                 if skill:
+                    for issue in validate_skill_doc(skill):
+                        print(f"  [Skill] ⚠️ {issue}")
                     nav = f"{nav}\n\n{skill}"
             elements = (
                 elements_path.read_text(encoding="utf-8").strip()
