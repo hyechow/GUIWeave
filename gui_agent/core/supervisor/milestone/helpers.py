@@ -200,11 +200,53 @@ def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
 _CLICKED_OPTION_RE = re.compile(
     r"点击.{0,20}(?:候选|选项|条目).{0,8}[「『“\"'`]([^」』”\"'`]+)[」』”\"'`]"
 )
+_CLICKED_OPTION_DETAIL_RE = re.compile(
+    r"点击(?P<context>.{0,40}?)(?:候选|选项|条目).{0,12}[「『“\"'`](?P<value>[^」』”\"'`]+)[」』”\"'`]"
+)
+_CLICK_DROPDOWN_FIELD_RE = re.compile(
+    r"点击(?P<context>.{0,40}?)(?:下拉框|选择框|搜索框|输入框|框).{0,30}(?:候选|选项|列表|展开|确认|选择|重选)"
+)
+_BUTTON_CLAIM_RE = re.compile(r"(?:确认|提交|执行)按钮|点击.{0,4}(?:确认|提交|执行)")
 _QUOTED_VALUE_RE = re.compile(r"[「『“\"'`]([^」』”\"'`]{2,80})[」』”\"'`]")
 
 
 def _quoted_values(text: str) -> list[str]:
     return [m.group(1).strip() for m in _QUOTED_VALUE_RE.finditer(text or "") if m.group(1).strip()]
+
+
+def _normalize_control_context(text: str) -> str:
+    quoted = _quoted_values(text or "")
+    context = quoted[-1] if quoted else (text or "")
+    context = re.sub(r"[「『“\"'`].*$", "", context).strip()
+    context = re.sub(r"(当前|该|这个|此|下拉|搜索框|输入框|框|列表|中的?|里的?|精确|匹配)", "", context)
+    context = re.sub(r"\s+", "", context)
+    return context
+
+
+def _clicked_option_detail(instruction: str) -> Optional[tuple[str, str]]:
+    match = _CLICKED_OPTION_DETAIL_RE.search(instruction or "")
+    if not match:
+        fallback = _CLICKED_OPTION_RE.search(instruction or "")
+        if not fallback:
+            return None
+        return fallback.group(1).strip(), ""
+    value = match.group("value").strip()
+    context = _normalize_control_context(match.group("context"))
+    return value, context
+
+
+def _typed_value_in_context(instruction: str, value: str, context: str) -> bool:
+    if "输入" not in (instruction or "") or value not in instruction:
+        return False
+    prefix = instruction.split("输入", 1)[0]
+    return _normalize_control_context(prefix) == context
+
+
+def _clicked_dropdown_field_context(instruction: str) -> str:
+    match = _CLICK_DROPDOWN_FIELD_RE.search(instruction or "")
+    if not match:
+        return ""
+    return _normalize_control_context(match.group("context"))
 
 
 def _guard_exact_dropdown_target(plan: _PlanResult, milestone: Milestone) -> _PlanResult:
@@ -250,16 +292,18 @@ def _repeated_candidate_click(
     in between (re-typing reopens the list, making a follow-up click legitimate).
     Returns X when the signature matches, else None.
     """
-    match = _CLICKED_OPTION_RE.search(instruction or "")
-    if not match:
+    current = _clicked_option_detail(instruction)
+    if not current:
         return None
-    clicked = match.group(1).strip()
+    clicked, current_context = current
+    if not current_context:
+        return None
     last_click_idx = None
     for i, t in enumerate(history):
         if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
             continue
-        m = _CLICKED_OPTION_RE.search(t.supervisor.instruction or "")
-        if m and m.group(1).strip() == clicked:
+        detail = _clicked_option_detail(t.supervisor.instruction or "")
+        if detail and detail[0] == clicked and detail[1] == current_context:
             last_click_idx = i
     if last_click_idx is None:
         return None
@@ -267,9 +311,41 @@ def _repeated_candidate_click(
         if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
             continue
         instr = t.supervisor.instruction or ""
-        if "输入" in instr and clicked in instr:
+        if _typed_value_in_context(instr, clicked, current_context):
             return None
     return clicked
+
+
+def _reopens_selected_dropdown(
+    instruction: str, milestone_id: Optional[str], history: list[PolicyTurn]
+) -> Optional[tuple[str, str]]:
+    """Detect attempts to reopen a dropdown field after its candidate was selected.
+
+    This is the sibling of `_repeated_candidate_click`: some plans do not click the
+    same candidate again directly; they first click the filled input/search box to
+    reopen the candidate list. The guard only fires when the field context matches a
+    prior executed candidate click in the same milestone.
+    """
+    context = _clicked_dropdown_field_context(instruction)
+    if not context:
+        return None
+    last_click_idx = None
+    last_value = ""
+    for i, t in enumerate(history):
+        if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
+            continue
+        detail = _clicked_option_detail(t.supervisor.instruction or "")
+        if detail and detail[1] == context:
+            last_click_idx = i
+            last_value = detail[0]
+    if last_click_idx is None:
+        return None
+    for t in history[last_click_idx + 1:]:
+        if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
+            continue
+        if _typed_value_in_context(t.supervisor.instruction or "", last_value, context):
+            return None
+    return context, last_value
 
 
 def run_checker(
@@ -339,6 +415,23 @@ def run_checker(
             ]
 
     _strip_progress_evidence(result)
+
+    claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
+    if result.status == "in_progress" and not _is_retry and _BUTTON_CLAIM_RE.search(claims_text):
+        print("  [SingleCheck] 提到了确认/提交/执行按钮，重核按钮是否真实可见...")
+        result = run_checker(
+            milestone, observation, history,
+            app_name=app_name, task_type=task_type, constraints=constraints,
+            extra=(
+                "你刚才提到了确认/提交/执行按钮。请重新核对当前截图：只有按钮在截图中真实可见，"
+                "且当前子目标明确要求点击它时，才可以把按钮写进 reason/summary/missing_evidence。"
+                "如果当前截图没有这类按钮，不要提按钮，也不要要求点击按钮；只根据目标值、目标状态、"
+                "成功提示或结果区域是否可见来判断。"
+            ),
+            _is_retry=True,
+            prompts=prompts,
+        )
+        _strip_progress_evidence(result)
 
     # Validate a done verdict in two stages, because the retry and the force-stuck
     # play different roles:
@@ -530,6 +623,23 @@ def run_planner(
                     "的标签）时才再次点击候选；若无浮层且输入框已显示完整目标文本，该字段**已完成**——"
                     "禁止对它做任何操作（点击该输入框本身会把候选列表重新打开，没有「点击以确认/关闭」"
                     "这种操作），直接处理其他未完成字段。"
+                ),
+                app_knowledge=app_knowledge,
+                elements_knowledge=elements_knowledge,
+                prompts=prompts,
+            )
+        reopened = _reopens_selected_dropdown(plan.instruction, milestone.id, history)
+        if reopened:
+            context, value = reopened
+            print(f"  [Planner] 字段「{context}」此前已选择候选「{value}」，疑似重开已完成的下拉框，纠偏重试...")
+            return run_planner(
+                milestone, check, observation, history,
+                constraints=constraints,
+                extra=(
+                    f"你计划点击字段「{context}」以展开/确认候选，但该字段此前已经点击候选「{value}」执行过。"
+                    "请重新只看当前截图：若该字段附近没有候选浮层、且输入框已显示目标值，它通常就是已选定状态。"
+                    "不要为了确认已选项而重新点击输入框/搜索框来展开候选列表；这会把已完成字段重新置为编辑态。"
+                    "请直接处理当前截图中其他真正未完成的字段。"
                 ),
                 app_knowledge=app_knowledge,
                 elements_knowledge=elements_knowledge,

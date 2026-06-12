@@ -8,12 +8,16 @@
 from __future__ import annotations
 
 from gui_agent.core.schemas import PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone.helpers import _repeated_candidate_click
+from gui_agent.core.supervisor.milestone.helpers import _reopens_selected_dropdown, _repeated_candidate_click
 
 MS = "m2"
 X = "交管测试专用地图_1楼"
 CLICK_X = f"点击预设地图候选列表中的「{X}」选项"
 TYPE_X = f"在「预设地图」搜索框中输入「{X}」"
+CLICK_SAME_VALUE_OTHER_FIELD = f"点击目标站点候选列表中的「{X}」选项"
+TYPE_SAME_VALUE_OTHER_FIELD = f"在「目标站点」搜索框中输入「{X}」"
+REOPEN_FIELD = "点击预设地图输入框以展开候选列表"
+REOPEN_OTHER_FIELD = "点击目标站点输入框以展开候选列表"
 
 
 def _turn(idx: int, instruction: str, *, milestone_id: str = MS, executed: bool = True) -> PolicyTurn:
@@ -50,6 +54,22 @@ def test_different_option_does_not_trigger():
     assert _repeated_candidate_click(other, MS, history) is None
 
 
+def test_same_option_in_different_field_does_not_trigger():
+    history = [_turn(7, CLICK_X)]
+    assert _repeated_candidate_click(CLICK_SAME_VALUE_OTHER_FIELD, MS, history) is None
+
+
+def test_generic_field_context_does_not_trigger():
+    history = [_turn(7, CLICK_X)]
+    generic = f"点击候选列表中的「{X}」选项"
+    assert _repeated_candidate_click(generic, MS, history) is None
+
+
+def test_retype_same_value_in_different_field_does_not_legitimize_original_repeat():
+    history = [_turn(7, CLICK_X), _turn(8, TYPE_SAME_VALUE_OTHER_FIELD)]
+    assert _repeated_candidate_click(CLICK_X, MS, history) == X
+
+
 def test_unexecuted_prior_click_does_not_trigger():
     history = [_turn(7, CLICK_X, executed=False)]
     assert _repeated_candidate_click(CLICK_X, MS, history) is None
@@ -63,3 +83,18 @@ def test_other_milestone_click_does_not_trigger():
 def test_non_click_instruction_does_not_trigger():
     history = [_turn(7, CLICK_X)]
     assert _repeated_candidate_click(TYPE_X, MS, history) is None
+
+
+def test_reopen_selected_dropdown_triggers():
+    history = [_turn(6, TYPE_X), _turn(7, CLICK_X)]
+    assert _reopens_selected_dropdown(REOPEN_FIELD, MS, history) == ("预设地图", X)
+
+
+def test_reopen_different_field_does_not_trigger():
+    history = [_turn(6, TYPE_X), _turn(7, CLICK_X)]
+    assert _reopens_selected_dropdown(REOPEN_OTHER_FIELD, MS, history) is None
+
+
+def test_retype_before_reopen_legitimizes_dropdown_reopen():
+    history = [_turn(6, TYPE_X), _turn(7, CLICK_X), _turn(8, TYPE_X)]
+    assert _reopens_selected_dropdown(REOPEN_FIELD, MS, history) is None
