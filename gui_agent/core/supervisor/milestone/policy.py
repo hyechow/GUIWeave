@@ -1321,6 +1321,20 @@ class MilestoneSupervisorPolicy:
 
         self._patch_decomposition(llm, goal)
 
+        if file_section:
+            # @config raw text must reach the execution-time channel DETERMINISTICALLY.
+            # LLM distillation into global_constraints proved unstable (same config: 8
+            # fields one run, 0 the next), leaving planners with dangling "按配置设置"
+            # references and no values. Constraints flow to checker/planner/replan every
+            # turn, so append the raw section as one entry (capped — huge files would
+            # bloat every per-turn prompt).
+            _CAP = 3000
+            snippet = (
+                file_section if len(file_section) <= _CAP
+                else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
+            )
+            self._global_constraints.append(snippet)
+
         if self._current_id not in self._milestones:
             self._current_id = self._next_milestone()
 

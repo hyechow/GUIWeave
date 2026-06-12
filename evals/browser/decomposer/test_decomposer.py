@@ -1,0 +1,158 @@
+"""Browser decomposer eval: validates milestone structure from goal + screenshot.
+
+Mirrors evals/android/decomposer; browser-specific extras: production-parity knowledge
+injection (auto_discover on the goal) and @<file> config references resolved by decompose.
+
+Run:  uv run python evals/browser/decomposer/test_decomposer.py
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)  # @<file> refs in goals resolve relative to the repo root
+
+from dotenv import load_dotenv
+
+load_dotenv(PROJECT_ROOT / ".env")
+
+from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
+from gui_agent.core.schemas import Observation
+from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
+from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
+
+CASES_FILE = Path(__file__).parent / "cases.json"
+
+passed = 0
+failed = 0
+
+
+def _report(label: str, ok: bool, detail: str = "") -> None:
+    global passed, failed
+    passed += ok
+    failed += not ok
+    tag = "PASS" if ok else "FAIL"
+    line = f"  [{tag}] {label:64s}"
+    if detail:
+        line += f"  {detail}"
+    print(line)
+
+
+def _milestone_text(m) -> str:
+    return f"{m.name} {m.description} {m.success_condition}"
+
+
+def _check_basic(milestones: list, task_type: str, expected: dict) -> list[str]:
+    details: list[str] = []
+    if "task_type" in expected and task_type != expected["task_type"]:
+        details.append(f"task_type: expected {expected['task_type']!r}, got {task_type!r}")
+    if "min_milestones" in expected and len(milestones) < expected["min_milestones"]:
+        details.append(f"expected >={expected['min_milestones']} milestones, got {len(milestones)}")
+    return details
+
+
+def _check_assertions(milestones: list, constraints: list[str], assertions: list[str]) -> list[str]:
+    details: list[str] = []
+    all_text = " ".join(_milestone_text(m) for m in milestones)
+    for assertion in assertions:
+        if assertion == "conditional_terminal_acceptance":
+            # 「确认X，不足才创建」的条件分支安全形态，二选一：
+            #  A. 保留确认/检查步（Guard 没删 或 分解为 navigation+检查语义）
+            #  B. 创建类 milestone 的验收写【终态】（"至少两台…在线"——已满足时 checker 直接
+            #     判 done 跳过创建），而非【增量】（"新增两台"——已在线场景下永不成立且会多建）
+            has_confirm = any(
+                any(kw in _milestone_text(m) for kw in ("确认", "检查", "核对", "查看"))
+                and "在线" in _milestone_text(m)
+                for m in milestones
+            )
+            create_ms = [m for m in milestones if any(kw in _milestone_text(m) for kw in ("创建", "新建", "添加"))]
+            terminal_ok = bool(create_ms) and all(
+                re.search(r"(至少|不少于)?\s*(两台|2\s*台)", m.success_condition)
+                and "在线" in m.success_condition
+                and not re.search(r"新增|增加了", m.success_condition)
+                for m in create_ms
+            )
+            if not (has_confirm or terminal_ok):
+                got = [(m.name, m.success_condition) for m in milestones]
+                details.append(f"条件分支坍塌：无确认步且创建验收非终态 (got: {got})")
+        elif assertion == "no_hallucinated_robot_names":
+            # 配置只给前缀 robot-；goal 只点名 10002/10003。验收里编造其它具体编号
+            # （如 robot-10004）会让执行期 checker 永不通过。
+            invented = sorted({
+                name for name in re.findall(r"robot-\d+", all_text)
+                if name not in ("robot-10002", "robot-10003")
+            })
+            if invented:
+                details.append(f"验收幻觉了配置中不存在的机器人编号: {invented}")
+        elif assertion == "virtual_robot_module_not_confused":
+            # 回归 20260612_093022：「机器人」(真实设备,机器人列表/手动添加=按IP注册) 与
+            # 「虚拟机器人」(模拟器,工具菜单下) 是不同模块。goal 要虚拟机器人,分解却指向
+            # 裸「机器人列表」→ planner 进错模块还手动添加真实设备。判据:提到 机器人列表/
+            # 手动添加 的 milestone 必须同时带「虚拟」限定。
+            confused = [
+                m.name for m in milestones
+                if any(kw in _milestone_text(m) for kw in ("机器人列表", "手动添加"))
+                and "虚拟" not in _milestone_text(m)
+            ]
+            if confused:
+                details.append(f"指向真实机器人模块而非虚拟机器人(工具菜单): {confused}")
+        elif assertion == "config_fields_reach_planner_channel":
+            # @配置的字段值必须到达执行期可见通道（global_constraints）。靠 LLM 蒸馏不稳定
+            # （实测同一配置有时 8 字段全进、有时 0 进）；代码层兜底后此断言应稳定通过。
+            ctext = " ".join(constraints)
+            markers = ["robot-", "STD", "80", "1000"]
+            missing = [m for m in markers if m not in ctext]
+            if missing:
+                details.append(f"配置字段未到达 constraints（缺 {missing}）: {constraints}")
+        else:
+            details.append(f"unknown assertion: {assertion}")
+    return details
+
+
+def test_decomposer() -> None:
+    cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
+    for c in cases:
+        screenshot_path = PROJECT_ROOT / c["screenshot"]
+        if not screenshot_path.exists():
+            _report(c["label"], False, f"screenshot not found: {c['screenshot']}（本地截图不入 git，需自备）")
+            continue
+
+        observation = Observation(png_bytes=screenshot_path.read_bytes(), source="eval")
+        try:
+            policy = MilestoneSupervisorPolicy(prompts=BROWSER_MILESTONE_PROMPTS)
+            # Production parity: knowledge auto-discovery on the goal (no-op if the local
+            # knowledge dir doesn't have the app).
+            k = auto_discover_knowledge(c["goal"], "browser")
+            if k and hasattr(policy, "set_app_knowledge"):
+                policy.set_app_knowledge(k.navigation, app_name=k.app_name, elements=k.elements, sections=k.sections)
+            policy._decompose(c["goal"], observation)
+            milestones = [policy._milestones[mid] for mid in policy._order]
+        except Exception as e:  # noqa: BLE001
+            _report(c["label"], False, f"exception: {e}")
+            continue
+
+        details = _check_basic(milestones, policy.task_type, c["expected"])
+        details.extend(_check_assertions(milestones, policy._global_constraints, c.get("assertions", [])))
+        ok = len(details) == 0
+        _report(c["label"], ok, "; ".join(details) if details else "")
+        if not ok:
+            for m in milestones:
+                print(f"       [{m.kind}/{m.completion_strategy}] {m.name}: {m.success_condition}")
+            print(f"       constraints: {policy._global_constraints}")
+
+
+def main() -> int:
+    print("── Browser Decomposer Eval ──")
+    test_decomposer()
+    print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
+    return 0 if failed == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

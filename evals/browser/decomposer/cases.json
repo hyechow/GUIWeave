@@ -1,0 +1,18 @@
+[
+  {
+    "label": "条件创建-确认在线不足才新建（回归 2026-06-12 离线复现）",
+    "screenshot": "evals/browser/decomposer/screenshots/roboteam_home_two_robots_online.png",
+    "goal": "在 RoboTeam 中确认 robot-10002 和 robot-10003 两台虚拟机器人是否在线；如果不足两台，则按 @evals/browser/decomposer/configs/two_robot_sim.json 的配置新建虚拟机器人并启用加入调度",
+    "expected": {
+      "min_milestones": 1,
+      "task_type": "action"
+    },
+    "assertions": [
+      "conditional_terminal_acceptance",
+      "no_hallucinated_robot_names",
+      "config_fields_reach_planner_channel",
+      "virtual_robot_module_not_confused"
+    ],
+    "note": "三连暴露(截图里两台已在线)：① goal 的条件分支「不足才建」被坍塌成无条件创建(Guard 又删掉了 verification 确认步)→已在线也会多建两台；防回归判据=确认步保留 或 创建类验收写终态(『至少两台在线』,已满足时 checker 可直接 done)而非增量(『新增两台』)。② 验收幻觉具体编号 robot-10004/10005(配置只给了前缀 robot-)→执行期验收永不通过。③ @配置字段蒸馏进 constraints 不稳定(前一日 8 字段全进,当日 0 进)→planner 悬空引用『按配置设置』无值可填。"
+  }
+]
