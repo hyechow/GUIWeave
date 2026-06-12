@@ -102,6 +102,21 @@ def _check_assertions(milestones: list, constraints: list[str], assertions: list
             ]
             if confused:
                 details.append(f"指向真实机器人模块而非虚拟机器人(工具菜单): {confused}")
+        elif assertion == "enable_acceptance_uses_ui_status_word":
+            # 回归 20260612_101639:虚拟机器人页状态列只有「启用/停用」,「启用」即已加入调度
+            # (知识 s15 与 _deploy 辨析都写明)。decompose 把 goal 口语词「在线」硬化成验收
+            # 标签 →checker 字面派永不通过,8 轮全在追一个该页不存在的标签(车其实早建好且
+            # 已启用)。判据:启用/调度类 milestone 的验收要求「在线/调度中」时必须同时含
+            # 「启用」(实际 UI 词)或「以页面实际」(语义兜底),否则视为标签硬化。
+            bad = [
+                m.name for m in milestones
+                if any(kw in (m.name + m.description) for kw in ("启用", "调度"))
+                and any(kw in m.success_condition for kw in ("在线", "调度中"))
+                and "启用" not in m.success_condition
+                and "以页面实际" not in m.success_condition
+            ]
+            if bad:
+                details.append(f"启用/调度验收硬化了页面不存在的状态标签(在线/调度中): {bad}")
         elif assertion == "config_fields_reach_planner_channel":
             # @配置的字段值必须到达执行期可见通道（global_constraints）。靠 LLM 蒸馏不稳定
             # （实测同一配置有时 8 字段全进、有时 0 进）；代码层兜底后此断言应稳定通过。
