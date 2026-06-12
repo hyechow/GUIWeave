@@ -244,6 +244,8 @@ class MilestoneSupervisorPolicy:
         self._pk: Optional[ProgressiveKnowledge] = None  # progressive (skill-like) section loader
         self._app_name: str = ""
         self._last_url: Optional[str] = None  # 上一轮页面 URL(结构化跳页信号；浏览器才有)
+        self._last_dom_state: Optional[str] = None  # 上一轮交互状态指纹(表单值+焦点；浏览器才有)
+        self._dom_changed = False  # 本轮指纹是否变化 = 确定性进展信号(填表时像素/指令都相似)
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
         # 连续调值类的进展追踪：每 milestone 一个滑动窗口，存最近若干轮 checker 读到的「当前值」。
@@ -360,6 +362,18 @@ class MilestoneSupervisorPolicy:
         if url_changed:
             print(f"  [URLChanged] {cur_url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
 
+        # Second structural progress signal: the interactive-state fingerprint (form values +
+        # focus). Filling a form field-by-field keeps pixels near-identical and produces
+        # near-identical instructions ("在X输入框输入Y") — text similarity then misreads real
+        # progress as a loop (20260612_103356: 8-step form fill escalated to stuck). A changed
+        # fingerprint is ground truth that the last action DID something.
+        cur_dom = observation.dom_state
+        self._dom_changed = bool(cur_dom and self._last_dom_state is not None and cur_dom != self._last_dom_state)
+        if cur_dom is not None:
+            self._last_dom_state = cur_dom
+        if self._dom_changed and not url_changed:
+            print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
+
         # VERIFY FIRST, before consuming the prior turn's off-target / no-effect signals.
         # An action that ACTUALLY satisfied the milestone advances even when the verifiers
         # misreported it — TargetVerify false off-target (tap hit the right tab but was read
@@ -395,6 +409,7 @@ class MilestoneSupervisorPolicy:
             last_turn is not None
             and getattr(last_turn, "no_effect", False)
             and not url_changed  # URL changed = the tap DID navigate → not a no-effect
+            and not self._dom_changed  # interactive-state fingerprint moved = the tap DID something
             and last_turn.action_decision is not None
             and last_turn.action_decision.action.action_type in ("tap", "click")
             and (last_tv is None or last_tv.on_target)
@@ -433,7 +448,7 @@ class MilestoneSupervisorPolicy:
                 )
             return self._plan_single(milestone, check, observation, history)
 
-        sim_stuck = None if url_changed else self._check_screen_similarity(observation, self._action_center(prev_action))
+        sim_stuck = None if (url_changed or self._dom_changed) else self._check_screen_similarity(observation, self._action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
 
         rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
@@ -443,6 +458,11 @@ class MilestoneSupervisorPolicy:
         # value-adjust scroll is progress, not a loop. Don't let repetition flag it.
         if rep_stuck is not None and self._is_value_adjust(prev_action):
             print("  [RepStuck] 已抑制：调值类重复滚动属正常（动作区在变）")
+            rep_stuck = None
+        # Same exemption from ground truth: the interactive-state fingerprint changed since
+        # last turn, so the "similar" instructions are advancing through a form, not looping.
+        if rep_stuck is not None and self._dom_changed:
+            print("  [RepStuck] 已抑制：交互状态指纹在变化（填表推进中）")
             rep_stuck = None
         if sim_stuck or rep_stuck:
             stuck = sim_stuck or rep_stuck
@@ -476,25 +496,31 @@ class MilestoneSupervisorPolicy:
         # 连续调值类豁免「指令重复=失败」升级：对 picker 而言重复"向上拖月份列"直到到位本就
         # 是正确做法，单步式的重复检测会误把它判成撞墙→死路。其停滞由 _check_value_stall 兜。
         if not milestone.is_iterative and self._is_repeated_instruction(plan.instruction, milestone.id, history):
-            print("  [Planner] 指令重复已失败操作，重试...")
-            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
-                plan = self._invoke_planner(
-                    milestone, check, observation, history,
-                    extra=(
-                        "你刚才的指令与之前未达成验收条件的操作相同。"
-                        "请仔细查看截图，找一个不同的 UI 元素或操作路径。"
-                    ),
-                )
-            if self._is_repeated_instruction(plan.instruction, milestone.id, history):
-                print("  [Planner] 重试仍重复，升级为 stuck 处理")
-                stuck_check = _SingleCheckResult(
-                    status="stuck",
-                    reason="连续给出相似操作，当前页面仍未满足验收条件",
-                    stuck_reason="连续给出相似指令但目标未达成，需要改用当前截图中的其他可见入口或操作顺序",
-                    issues=["连续操作策略过于相似"],
-                    summary=check.summary,
-                )
-                return self._handle_stuck(milestone, stuck_check, check.read_instruction, observation, history)
+            if self._dom_changed:
+                # Ground truth beats text similarity: the interactive-state fingerprint moved
+                # since last turn, so the prior "similar" instruction WORKED (form filling
+                # produces legitimately alike instructions). Let the plan through unchanged.
+                print("  [Planner] 指令相似但交互状态在推进（DOM 有变化），放行")
+            else:
+                print("  [Planner] 指令重复已失败操作，重试...")
+                with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                    plan = self._invoke_planner(
+                        milestone, check, observation, history,
+                        extra=(
+                            "你刚才的指令与之前未达成验收条件的操作相同。"
+                            "请仔细查看截图，找一个不同的 UI 元素或操作路径。"
+                        ),
+                    )
+                if self._is_repeated_instruction(plan.instruction, milestone.id, history):
+                    print("  [Planner] 重试仍重复，升级为 stuck 处理")
+                    stuck_check = _SingleCheckResult(
+                        status="stuck",
+                        reason="连续给出相似操作，当前页面仍未满足验收条件",
+                        stuck_reason="连续给出相似指令但目标未达成，需要改用当前截图中的其他可见入口或操作顺序",
+                        issues=["连续操作策略过于相似"],
+                        summary=check.summary,
+                    )
+                    return self._handle_stuck(milestone, stuck_check, check.read_instruction, observation, history)
         # 结构化 drag 距离：当 planner 给出本列的当前值/目标值时，按差几格算出 drag_steps，
         # 让 action policy 据此放大拖动幅度（差 20 格用 large 粗调、接近后自动收回 small 精调）。
         # 这条结构化通路绕开「从 instruction 文本正则抠数字」的脆弱性——指令只写了目标值

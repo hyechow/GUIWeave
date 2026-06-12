@@ -187,6 +187,14 @@ class Observation(BaseModel):
         default=None,
         description="平台感知层提供的当前页面/标签标题（如浏览器 document.title）。同样不在截图里。None=不提供。",
     )
+    dom_state: Optional[str] = Field(
+        default=None,
+        description=(
+            "平台感知层提供的页面交互状态指纹（如浏览器表单控件值+焦点的哈希）。"
+            "逐字段填表时像素几乎不变、指令文本高度相似，但该指纹每轮都变——"
+            "作为确定性进展信号抑制 stuck/重复误判（与 url 同模式）。None=该平台不提供。"
+        ),
+    )
 
 
 class BaseActionDecision(BaseModel):

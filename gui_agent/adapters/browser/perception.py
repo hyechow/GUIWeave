@@ -91,7 +91,13 @@ class BrowserPerception:
         url = title = None
         if client is not None and hasattr(client, "page_info"):
             url, title = client.page_info()
+        # Interactive-state fingerprint (form values + focus): the structural progress
+        # signal for form filling, where pixels barely change and planner instructions
+        # read alike — suppresses false stuck/repetition (see policy DOMChanged).
+        dom_state = None
+        if client is not None and hasattr(client, "form_state_fingerprint"):
+            dom_state = client.form_state_fingerprint()
         return Observation(
             png_bytes=png_bytes, source="browser", loading=loading,
-            url=url or None, title=title or None,
+            url=url or None, title=title or None, dom_state=dom_state,
         )

@@ -298,6 +298,32 @@ class PlaywrightDevice:
         except Exception:
             return "", ""
 
+    def form_state_fingerprint(self) -> str | None:
+        """Short hash of the page's interactive state: every form control's value/checked
+        plus the focused element. The structural progress signal behind Observation.dom_state —
+        filling a form changes this every turn while pixels stay near-identical and the
+        planner's instructions read alike ("在X输入框输入Y"), so the stuck/repetition
+        detectors get ground truth instead of guessing from text similarity. Raw CDP
+        (page.evaluate is broken over connect_over_cdp here). None on any failure."""
+        js = (
+            "(()=>{const els=[...document.querySelectorAll('input,select,textarea')];"
+            "const vals=els.map(e=>(e.type==='checkbox'||e.type==='radio')?(e.checked?'1':'0')"
+            ":String(e.value??''));"
+            "const a=document.activeElement;"
+            "const focus=a?(a.tagName+':'+(a.name||a.id||a.placeholder||'')):'';"
+            "return els.length+'|'+focus+'|'+vals.join('\\u0001');})()"
+        )
+        try:
+            res = self._cdp_send("Runtime.evaluate", {"expression": js, "returnByValue": True})
+            val = (res.get("result", {}) or {}).get("value")
+        except Exception:
+            return None
+        if not isinstance(val, str) or not val:
+            return None
+        import hashlib
+
+        return hashlib.md5(val.encode("utf-8")).hexdigest()[:16]
+
     def eval_js(self, expression: str) -> object:
         """Best-effort JS eval via page.evaluate(). Used by the action visualizer.
         Returns None on any failure; never raises."""
