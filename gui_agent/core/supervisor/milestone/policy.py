@@ -1082,6 +1082,16 @@ class MilestoneSupervisorPolicy:
             print(f"  [Selector] 调用失败，回退 page_identity 模糊匹配：{exc}")
             return self._pk.pick([], page_id)
 
+    def _elements_for(self, milestone: Milestone, check: _SingleCheckResult) -> Optional[str]:
+        """Element knowledge for instruction generation: the per-section bodies the
+        KnowledgeSelector picked for this (milestone, page) — cached — when section knowledge
+        exists, else the full _elements.md blob as fallback. Shared by planner and replanner so
+        both inject the same focused slice instead of the whole 600+-line elements blob."""
+        if self._pk:
+            self._last_sections_loaded = self._select_sections(milestone, check)
+            return self._pk.bodies(self._last_sections_loaded)
+        return self._elements_knowledge
+
     def _invoke_planner(
         self,
         milestone: Milestone,
@@ -1090,14 +1100,7 @@ class MilestoneSupervisorPolicy:
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _PlanResult:
-        # Progressive: inject only the sections the KnowledgeSelector picked for the current
-        # (milestone, page) — cached, so the selector LLM fires only on page/milestone changes.
-        # Falls back to the full blob when no per-section knowledge is loaded (self._pk is None).
-        if self._pk:
-            self._last_sections_loaded = self._select_sections(milestone, check)
-            elements = self._pk.bodies(self._last_sections_loaded)
-        else:
-            elements = self._elements_knowledge
+        elements = self._elements_for(milestone, check)
         return run_planner(
             milestone, check, observation, history,
             constraints=self._global_constraints,
@@ -1160,7 +1163,7 @@ class MilestoneSupervisorPolicy:
         if extra:
             prompt += f"\n\n## 输出修正要求\n{extra}"
         msgs = self._msgs(prompt, observation)
-        _inject_knowledge(msgs, self._app_knowledge, self._elements_knowledge)
+        _inject_knowledge(msgs, self._app_knowledge, self._elements_for(milestone, check))
         result = invoke_structured(self._llm(), msgs, _ReplanResult)
         if self._is_sequence(result.instruction):
             print("  [Replan] 多步序列，重试...")
@@ -1404,8 +1407,9 @@ class MilestoneSupervisorPolicy:
             user_parts.append({"type": "text", "text": f"\n{file_section}"})
         if self._app_knowledge:
             user_parts.append({"type": "text", "text": f"\n## 应用导航知识\n{self._app_knowledge}"})
-        if self._elements_knowledge:
-            user_parts.append({"type": "text", "text": f"\n## 页面元素知识\n{self._elements_knowledge}"})
+        # Decomposition needs page/flow structure (navigation: _app + _deploy + _skill), not the
+        # pixel-level element catalog — the 600+-line _elements.md blob was pure token weight here
+        # (the planner/replanner carry elements, progressively, where instructions are generated).
         if feedback:
             fb = "\n".join(f"  - {i}" for i in feedback)
             user_parts.append({"type": "text", "text": f"\n上一轮分解存在以下问题，请修正：\n{fb}"})
