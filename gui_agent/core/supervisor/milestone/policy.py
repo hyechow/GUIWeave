@@ -81,6 +81,26 @@ _VALUE_DOMAIN_WORDS = (
 _AM_WORDS = ("上午", "早上", "早晨", "清晨")
 _PM_WORDS = ("下午", "晚上", "傍晚", "夜晚")
 _TIME_ENTITY_WORDS = ("闹钟", "提醒", "日程", "会议", "预约", "时间", "alarm", "reminder", "schedule", "meeting")
+
+# Task-type heuristic. A task is `analysis` only when its PURPOSE is to read/compute info.
+# A query verb sitting among action-heavy steps (e.g. 「新建…建单…最后查看状态」) does NOT make
+# the whole task analysis — that final read is just a substep. So flip action→analysis only when
+# the goal has query keywords AND no state-changing action verb.
+_ANALYSIS_KEYWORDS = ("多少", "什么", "有没有", "查看", "看看", "统计", "查一下", "帮我找", "列出", "汇总", "比较")
+_ACTION_VERBS = (
+    "新建", "创建", "建单", "建一个", "提交", "启用", "停用", "添加", "删除", "修改", "设置", "设为",
+    "放到", "移动", "发送", "购买", "登录", "注册", "上传", "下单", "派发", "下达", "编辑", "切换",
+    "保存", "配置", "加入调度", "上线", "绑定", "开启", "关闭",
+)
+
+
+def _looks_like_analysis(goal: str) -> bool:
+    """True only for read/compute-purpose goals — a query keyword among action verbs stays action."""
+    has_query = any(kw in goal for kw in _ANALYSIS_KEYWORDS)
+    has_action = any(kw in goal for kw in _ACTION_VERBS)
+    return has_query and not has_action
+
+
 _WEEKDAY_ALIASES = {
     "周一": ("周一", "星期一", "礼拜一"),
     "周二": ("周二", "星期二", "礼拜二"),
@@ -1441,9 +1461,8 @@ class MilestoneSupervisorPolicy:
             if m.completion_strategy == "scroll_until_boundary" and not m.scroll_stop_condition:
                 issues.append(f"子目标「{m.name}」使用 scroll_until_boundary 但缺少 scroll_stop_condition")
 
-        analysis_keywords = ("多少", "什么", "有没有", "查看", "看看", "统计", "查一下", "帮我找", "列出", "汇总", "比较")
-        if self.task_type == "action" and any(kw in goal for kw in analysis_keywords):
-            issues.append(f"task_type=action 但目标含查询关键词（{', '.join(kw for kw in analysis_keywords if kw in goal)}），应为 analysis")
+        if self.task_type == "action" and _looks_like_analysis(goal):
+            issues.append("task_type=action 但目标是纯查询/分析（含查询词、无动作动词），应为 analysis")
 
         # ── Acceptance-shape guards (deterministic; the prompt states these, the model obeys
         # them only ~60-70% of the time — so enforce them in the validate→feedback→retry loop) ──
@@ -1747,8 +1766,7 @@ class MilestoneSupervisorPolicy:
                 m.scroll_stop_condition = patch.scroll_stop_condition
                 m.observable_boundary = patch.observable_boundary
 
-        analysis_keywords = ("多少", "什么", "有没有", "查看", "看看", "统计", "查一下", "帮我找", "列出", "汇总", "比较")
-        if self.task_type == "action" and any(kw in goal for kw in analysis_keywords):
+        if self.task_type == "action" and _looks_like_analysis(goal):
             self.task_type = "analysis"
             fixes.append("task_type 从 action 修正为 analysis")
 
