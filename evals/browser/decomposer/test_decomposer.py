@@ -130,6 +130,30 @@ def _check_assertions(milestones: list, constraints: list[str], assertions: list
             ]
             if edit_as_mover:
                 details.append(f"把「编辑」弹窗当成了移动位置入口: {edit_as_mover}")
+        elif assertion == "connectivity_verdict_states":
+            # 回归 20260612_121718:验收态定义依赖知识库——连通性检测的真实终态是
+            # 「连通=地图路径高亮(无文字判定)/不可达=出提示」,且「机器人群组」实测必填
+            # (不选则静默无结果),「记录原因」要求把判定读出来。勘误层写明后,分解应:
+            # ① 检测类 milestone 的验收用这两个标志;② 群组选择成为前置步;③ 有读取/
+            # 记录结果的步骤(goal 要求记录原因)。
+            detect_ms = [m for m in milestones if "检测" in _milestone_text(m) and m.kind == "action"]
+            if not detect_ms:
+                details.append("缺少执行检测的 action milestone")
+            elif not any(
+                ("高亮" in m.success_condition or "不可达" in m.success_condition)
+                for m in detect_ms
+            ):
+                details.append(
+                    f"检测验收未使用知识定义的终态标志(高亮/不可达提示): "
+                    f"{[(m.name, m.success_condition) for m in detect_ms]}"
+                )
+            if not any("群组" in _milestone_text(m) for m in milestones):
+                details.append("缺少机器人群组选择步(实测必填,不选则静默无结果)")
+            if not any(
+                any(kw in _milestone_text(m) for kw in ("记录", "读取", "原因"))
+                for m in milestones
+            ):
+                details.append("缺少读取/记录检测结果的步骤(goal 要求不可达记录原因)")
         elif assertion == "enable_acceptance_uses_ui_status_word":
             # 回归 20260612_101639:虚拟机器人页状态列只有「启用/停用」,「启用」即已加入调度
             # (知识 s15 与 _deploy 辨析都写明)。decompose 把 goal 口语词「在线」硬化成验收

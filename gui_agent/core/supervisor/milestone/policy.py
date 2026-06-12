@@ -1445,6 +1445,33 @@ class MilestoneSupervisorPolicy:
         if self.task_type == "action" and any(kw in goal for kw in analysis_keywords):
             issues.append(f"task_type=action 但目标含查询关键词（{', '.join(kw for kw in analysis_keywords if kw in goal)}），应为 analysis")
 
+        # ── Acceptance-shape guards (deterministic; the prompt states these, the model obeys
+        # them only ~60-70% of the time — so enforce them in the validate→feedback→retry loop) ──
+        for m in self._milestones.values():
+            sc = m.success_condition
+            # 增量验收:条件式/幂等任务下「新增了N个」在已满足场景永不成立,应写终态(「至少N个…」)。
+            if re.search(r"新增了|增加了|多出", sc):
+                issues.append(
+                    f"子目标「{m.name}」验收用了增量表述（{sc[:30]}…）：改写为完成后应处于的终态"
+                    "（如「列表中至少有 N 个符合要求的条目」），不要写相对变化"
+                )
+            # 中间态验收:action 类不能只验「弹出/展开/聚焦」等过程态,要验最终可见结果。
+            if m.kind == "action" and re.search(r"(弹出|展开|聚焦|打开).{0,6}(窗口|弹窗|对话框|下拉|面板)(?!.*(成功|完成|已|结果))", sc):
+                issues.append(
+                    f"子目标「{m.name}」验收停在中间态（{sc[:30]}…）：action 验收要写操作的最终可见结果"
+                    "（提交后的成功提示/状态更新/结果），不是「弹出某弹窗」这类过程态"
+                )
+
+        # 记录类任务必须有读取/采集落点：goal 要求「记录/报告原因」却没有 collection 或读取语义
+        # 的 milestone → 结果不会被读出来（实测 connectivity run output 含糊其辞）。
+        if re.search(r"记录|报告|原因|结果说明", goal):
+            has_read_step = any(
+                m.kind == "collection" or any(kw in f"{m.name}{m.description}" for kw in ("记录", "读取", "获取结果", "原因"))
+                for m in self._milestones.values()
+            )
+            if not has_read_step:
+                issues.append("目标要求记录/报告结果或原因，但没有 collection 或读取结果的子目标——补一个读取/记录判定的步骤")
+
         return issues
 
     @staticmethod
