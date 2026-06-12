@@ -73,8 +73,11 @@ def _check_assertions(milestones: list, constraints: list[str], assertions: list
             )
             create_ms = [m for m in milestones if any(kw in _milestone_text(m) for kw in ("创建", "新建", "添加"))]
             terminal_ok = bool(create_ms) and all(
-                re.search(r"(至少|不少于)?\s*(两台|2\s*台)", m.success_condition)
-                and "在线" in m.success_condition
+                # 终态量词:两台/2台/至少…,或直接点名两个目标机器人
+                (re.search(r"(至少|不少于)?\s*(两台|2\s*台)", m.success_condition)
+                 or ("robot-10002" in m.success_condition and "robot-10003" in m.success_condition))
+                # 状态词:在线 或 该页实际标签「启用」(见 enable_acceptance_uses_ui_status_word)
+                and re.search(r"在线|启用", m.success_condition)
                 and not re.search(r"新增|增加了", m.success_condition)
                 for m in create_ms
             )
@@ -102,6 +105,31 @@ def _check_assertions(milestones: list, constraints: list[str], assertions: list
             ]
             if confused:
                 details.append(f"指向真实机器人模块而非虚拟机器人(工具菜单): {confused}")
+        elif assertion == "robot_move_uses_control_surface":
+            # 回归 20260612_111555(2026-06-12 用户拍板:操作/移动机器人统一走场控页,知识勘误层
+            # 已只保留该入口)。正典路径=场控地图点机器人→详情面板→[模拟器操作]→更改位置=站点。
+            # 判据:① 必须落在控制面(更改位置/模拟器操作);② 必须带场控/地图语义(不得锚定
+            # 虚拟机器人列表页);③ 不得把「编辑」(参数配置弹窗,无移动功能)当移动入口。
+            uses_control_surface = any(
+                any(kw in _milestone_text(m) for kw in ("更改位置", "模拟器操作"))
+                for m in milestones
+            )
+            if not uses_control_surface:
+                got = [(m.name, m.description[:40]) for m in milestones]
+                details.append(f"没有 milestone 使用移动位置的控制面(更改位置/[模拟器操作]): {got}")
+            on_field_control = any(
+                ("场控" in _milestone_text(m) or "地图" in _milestone_text(m))
+                for m in milestones
+            )
+            if not on_field_control:
+                details.append("缺少场控/地图语义——移动机器人必须在场控页进行")
+            edit_as_mover = [
+                m.name for m in milestones
+                if "编辑" in _milestone_text(m)
+                and any(kw in _milestone_text(m) for kw in ("位置", "移动", "站点"))
+            ]
+            if edit_as_mover:
+                details.append(f"把「编辑」弹窗当成了移动位置入口: {edit_as_mover}")
         elif assertion == "enable_acceptance_uses_ui_status_word":
             # 回归 20260612_101639:虚拟机器人页状态列只有「启用/停用」,「启用」即已加入调度
             # (知识 s15 与 _deploy 辨析都写明)。decompose 把 goal 口语词「在线」硬化成验收

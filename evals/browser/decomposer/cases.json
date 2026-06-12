@@ -15,5 +15,18 @@
       "enable_acceptance_uses_ui_status_word"
     ],
     "note": "三连暴露(截图里两台已在线)：① goal 的条件分支「不足才建」被坍塌成无条件创建(Guard 又删掉了 verification 确认步)→已在线也会多建两台；防回归判据=确认步保留 或 创建类验收写终态(『至少两台在线』,已满足时 checker 可直接 done)而非增量(『新增两台』)。② 验收幻觉具体编号 robot-10004/10005(配置只给了前缀 robot-)→执行期验收永不通过。③ @配置字段蒸馏进 constraints 不稳定(前一日 8 字段全进,当日 0 进)→planner 悬空引用『按配置设置』无值可填。"
+  },
+  {
+    "label": "移车入口-必须用「操作/更改位置」控制面而非「编辑」（回归 20260612_111555 编辑弹窗死循环）",
+    "screenshot": "evals/browser/decomposer/screenshots/roboteam_virtual_robot_list.png",
+    "goal": "在 RoboTeam 场控页面使用模拟器将 lucas-10002 移动到站点 A",
+    "expected": {
+      "min_milestones": 2,
+      "task_type": "action"
+    },
+    "assertions": [
+      "robot_move_uses_control_surface"
+    ],
+    "note": "用户拍板(2026-06-12)：操作/移动机器人统一走场控页——正典路径=首页场控地图点击机器人→详情面板→[模拟器操作]→更改位置=站点(实测核验列表行「⋮」→「操作」也能打开同一面板,但不作为正式入口)。行内「编辑」只是参数配置,没有更改位置——实跑死循环正是被「编辑」诱走。_deploy.md 勘误层只保留场控入口+「列表页不做位置/控制操作」。"
   }
 ]
