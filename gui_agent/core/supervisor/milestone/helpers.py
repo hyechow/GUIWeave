@@ -234,6 +234,44 @@ def _guard_exact_dropdown_target(plan: _PlanResult, milestone: Milestone) -> _Pl
     return plan
 
 
+def _repeated_candidate_click(
+    instruction: str, milestone_id: Optional[str], history: list[PolicyTurn]
+) -> Optional[str]:
+    """Detect the dropdown re-selection loop signature (20260612_184401).
+
+    A candidate click closes the list; the box keeps the chosen text (still with the
+    search icon), which the checker sometimes misreads as "not selected yet". The planner
+    then obeys missing_evidence and clicks again — REOPENING the list and making the
+    misjudgment true for another round (4 wasted turns live; prompt rules alone did not
+    break the lock: 0/10 with the checker text asserting the list is open).
+
+    Signature: the planned instruction clicks candidate X while an already-EXECUTED turn
+    of the SAME milestone clicked candidate X, with no re-typing of X into the dropdown
+    in between (re-typing reopens the list, making a follow-up click legitimate).
+    Returns X when the signature matches, else None.
+    """
+    match = _CLICKED_OPTION_RE.search(instruction or "")
+    if not match:
+        return None
+    clicked = match.group(1).strip()
+    last_click_idx = None
+    for i, t in enumerate(history):
+        if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
+            continue
+        m = _CLICKED_OPTION_RE.search(t.supervisor.instruction or "")
+        if m and m.group(1).strip() == clicked:
+            last_click_idx = i
+    if last_click_idx is None:
+        return None
+    for t in history[last_click_idx + 1:]:
+        if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
+            continue
+        instr = t.supervisor.instruction or ""
+        if "输入" in instr and clicked in instr:
+            return None
+    return clicked
+
+
 def run_checker(
     milestone: Milestone,
     observation: Observation,
@@ -473,6 +511,30 @@ def run_planner(
     plan_schema = prompts.plan_result_schema or _PlanResult
     plan = invoke_structured(_make_llm(), msgs, plan_schema)
     plan = _guard_exact_dropdown_target(plan, milestone)
+    # Dropdown re-selection loop breaker: clicking an already-clicked candidate again
+    # (without re-typing in between) usually means the checker misread the closed,
+    # filled combobox as "not selected" and the planner is about to reopen the list,
+    # confirming the misjudgment for another round. Re-invoke once with corrective
+    # context; `extra` doubles as the recursion brake (a corrective call won't re-fire).
+    if not extra:
+        repeated = _repeated_candidate_click(plan.instruction, milestone.id, history)
+        if repeated:
+            print(f"  [Planner] 候选「{repeated}」此前已点击执行过，疑似重选已完成的下拉框，纠偏重试...")
+            return run_planner(
+                milestone, check, observation, history,
+                constraints=constraints,
+                extra=(
+                    f"你计划点击的候选「{repeated}」在之前轮次已经点击执行过。注意：点击候选后列表会收起、"
+                    "输入框保留所选文本（仍带搜索图标）——这就是已选定状态，checker 可能把它误判为未选定。"
+                    "请重新只看当前截图：只有该字段下方真的有候选浮层（无字段标签的选项行，会遮住下一个字段"
+                    "的标签）时才再次点击候选；若无浮层且输入框已显示完整目标文本，该字段**已完成**——"
+                    "禁止对它做任何操作（点击该输入框本身会把候选列表重新打开，没有「点击以确认/关闭」"
+                    "这种操作），直接处理其他未完成字段。"
+                ),
+                app_knowledge=app_knowledge,
+                elements_knowledge=elements_knowledge,
+                prompts=prompts,
+            )
     return _normalize_picker_plan_direction(plan)
 
 

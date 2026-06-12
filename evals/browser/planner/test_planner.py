@@ -21,11 +21,32 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.supervisor.milestone import _SingleCheckResult, run_planner
+from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
 
 CASES_FILE = Path(__file__).parent / "cases.json"
+
+
+def _build_history(entries: list[dict], milestone_id: str) -> list[PolicyTurn]:
+    """Reconstruct PolicyTurns from compact case-JSON history entries (mirrors the
+    checker eval). History drives run_planner's deterministic loop guards
+    (_repeated_candidate_click) — cases reproducing instruction loops must carry the
+    already-executed turns."""
+    turns = []
+    for h in entries:
+        sv = SupervisorStep(
+            should_act=True, instruction=h["instruction"], stop=False,
+            goal_completed=False, summary=h.get("summary", ""),
+            milestone_id=h.get("milestone_id", milestone_id),
+        )
+        ad = BrowserActionDecision.model_validate({"action": h["action"]}) if h.get("action") else None
+        turns.append(PolicyTurn(
+            index=h.get("index", len(turns) + 1), observation_source="eval",
+            supervisor=sv, action_decision=ad, executed=h.get("executed", True),
+        ))
+    return turns
 
 passed = 0
 failed = 0
@@ -78,7 +99,8 @@ def test_planner() -> None:
 
         try:
             result = run_planner(
-                milestone, check, observation, [],
+                milestone, check, observation,
+                _build_history(c.get("history", []), milestone.id),
                 constraints=c.get("constraints"),
                 prompts=BROWSER_MILESTONE_PROMPTS,
             )

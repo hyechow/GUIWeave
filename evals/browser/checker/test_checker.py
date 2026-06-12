@@ -29,11 +29,34 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.supervisor.milestone import run_checker
+from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
 
 CASES_FILE = Path(__file__).parent / "cases.json"
+
+
+def _build_history(entries: list[dict]) -> list[PolicyTurn]:
+    """Reconstruct PolicyTurns from compact case-JSON history entries.
+
+    History is part of the checker's INPUT and can prime hallucinations (20260612_184401:
+    with the two dropdown turns in history the checker re-asserted "候选列表仍展开" against
+    a screenshot showing it closed — 9/10; with empty history 0/10). Cases that reproduce
+    history-primed misjudgments must carry those turns.
+    """
+    turns = []
+    for h in entries:
+        sv = SupervisorStep(
+            should_act=True, instruction=h["instruction"], stop=False,
+            goal_completed=False, summary=h.get("summary", ""),
+        )
+        ad = BrowserActionDecision.model_validate({"action": h["action"]}) if h.get("action") else None
+        turns.append(PolicyTurn(
+            index=h.get("index", len(turns) + 1), observation_source="eval",
+            supervisor=sv, action_decision=ad, executed=h.get("executed", True),
+        ))
+    return turns
 
 passed = 0
 failed = 0
@@ -67,7 +90,7 @@ def test_checker() -> None:
         try:
             with redirect_stdout(buf):
                 result = run_checker(
-                    milestone, observation, [],
+                    milestone, observation, _build_history(c.get("history", [])),
                     app_name=m.get("app_name", ""),
                     task_type=m.get("task_type", "action"),
                     constraints=c.get("constraints", []),
@@ -86,6 +109,12 @@ def test_checker() -> None:
         for kw in expected.get("missing_contains", []):
             if not any(kw in item for item in result.missing_evidence):
                 details.append(f"missing_evidence 应包含未决字段「{kw}」, got: {result.missing_evidence}")
+        # missing_not_contains：已完成的字段绝不能再进 missing_evidence——checker 的
+        # 假阴性会把 planner 推回去「补救」一个不存在的问题（重开下拉框自证循环）
+        for kw in expected.get("missing_not_contains", []):
+            hits = [item for item in result.missing_evidence if kw in item]
+            if hits:
+                details.append(f"missing_evidence 不得再含已完成字段「{kw}」, got: {hits}")
         # must_not_claim 同时覆盖 missing_evidence——「索要页面上不存在的控件」正是写在那里
         claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
         for pattern in expected.get("must_not_claim", []):

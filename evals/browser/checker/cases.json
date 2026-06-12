@@ -17,6 +17,38 @@
     "note": "截图：预设地图输入框内有过滤词「交管测试专用地图_1楼」，下方候选列表展开、选项尚未点击——该字段实际未选定（移焦即清空）。实跑 checker 判「已设置…地图」且 missing_evidence 不含预设地图，把 planner 推去填下一个字段，连环丢值 6 轮。正确行为：预设地图计为未完成（missing 写明需点击候选选项）。"
   },
   {
+    "label": "combobox-列表收起且字段有值=已选定不得再判未选（回归 20260612_184401 重选自证循环）",
+    "screenshot": "evals/browser/checker/screenshots/roboteam_combobox_selected_closed.png",
+    "milestone": {
+      "name": "新建虚拟机器人配置",
+      "description": "在新建虚拟机器人弹窗中按配置填写各字段并提交：数量 1、名称前缀 lucas-、通信方式 STD、预设地图 交管测试专用地图_1楼、预设区域 禁止停止区_区域14、初始电量 90、掉电速率 10、充电速率 20、最大运动线速度 900、运动加速度 800、最大运动角速度 30。",
+      "success_condition": "虚拟机器人列表中可见名称为 'lucas-10001' 且状态为「启用」的条目",
+      "kind": "action",
+      "app_name": "RoboTeam"
+    },
+    "history": [
+      {
+        "index": 6,
+        "instruction": "在「预设地图」搜索框中输入「交管测试专用地图_1楼」",
+        "summary": "根据JSON配置，当前弹窗中预设地图字段为空，需要输入目标地图名称以完成过滤和选择。",
+        "action": {"action_type": "type", "x": 498, "y": 375, "text": "交管测试专用地图_1楼", "description": "在「预设地图」搜索框中输入「交管测试专用地图_1楼」"}
+      },
+      {
+        "index": 7,
+        "instruction": "点击预设地图候选列表中的「交管测试专用地图_1楼」选项",
+        "summary": "当前预设地图搜索框已输入目标名称且候选列表展开，根据规则需先点击精确匹配的候选项以完成地图选定。",
+        "action": {"action_type": "tap", "x": 498, "y": 423, "description": "点击预设地图候选列表中的「交管测试专用地图_1楼」选项"}
+      }
+    ],
+    "expected": {
+      "status": "in_progress",
+      "missing_contains": ["初始电量"],
+      "missing_not_contains": ["地图"],
+      "must_not_claim": ["地图.{0,24}(尚?未|没有)(完成)?选(定|择|中)", "(重新|再次)(输入|点击|选择).{0,12}地图", "地图.{0,16}候选列表(仍|未)(展开|收起)"]
+    },
+    "note": "截图：预设地图候选已点选完成——候选列表已收起、输入框显示完整目标值「交管测试专用地图_1楼」（该 UI 选定后仍保留搜索图标，与过滤态形似）。带上前两轮历史（输入过滤词、点击候选）是复现关键：checker 被历史 prime 后无视截图、坚称「候选列表仍展开/未收起」（带历史 9/10 误判，空历史 0/10）。实跑连续 4 轮判未选定，planner 服从 missing_evidence 反复点字段/重输→把列表重新点开→误判变成现实，自证循环 4 turns（turns 8-11）。正确行为：列表收起+字段有完整值=已选定（未选定的过滤词失焦即清空），地图不得再进 missing_evidence；其余未填字段（初始电量 80→90 等）照常计入。"
+  },
+  {
     "label": "即选即生效-无确认按钮的面板不得索要确认/提交证据（回归 20260612_120305 幻影按钮循环）",
     "screenshot": "evals/browser/checker/screenshots/roboteam_simops_panel_no_confirm.png",
     "milestone": {
