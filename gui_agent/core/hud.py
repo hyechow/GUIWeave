@@ -78,9 +78,9 @@ def _hud_main(x: int, y: int, w: int, h: int, alpha: float, status_file: str) ->
     outer.pack(fill="both", expand=True, padx=14, pady=11)
 
     tk.Label(outer, text="任务", bg=BG, fg=TAG_FG, font=("Helvetica Neue", 9), pady=0).pack(anchor="w")
-    # Single-line goal: the task is fixed, secondary context — one line is enough
-    # (set_goal elides if longer). NO wraplength → it never wraps, stays one line,
-    # and leaves the vertical room for the decision zone below.
+    # Single-line goal: the task is fixed, secondary context — one line is enough. NO
+    # wraplength → never wraps; set_goal elides to the panel's PIXEL budget (width-aware,
+    # CJK/ASCII weighted), so a 600px browser panel shows far more than the old 34-char cap.
     goal_label = tk.Label(
         outer, text="—", bg=BG, fg=GOAL_FG, font=("Helvetica Neue", 11),
         justify="left", anchor="w", pady=2,
@@ -189,10 +189,18 @@ class AgentHUD:
 
     def set_goal(self, goal: str) -> None:
         """Set a persistent header (the task goal) shown above the live status.
-        Single-lined and length-capped so the panel stays bounded."""
+
+        Single line, elided to the panel's PIXEL budget: CJK ≈11px / ASCII ≈6px at
+        font 11, so mixed text (robot-10002, @paths) fits far more than a flat char
+        cap — the old fixed 34-char elide wasted most of a 600px browser panel."""
         g = (goal or "").strip().replace("\n", " ")
-        if len(g) > 34:
-            g = g[:33] + "…"
+        budget = max(280, self._w - 28)  # px available on the one line (28 = padx*2)
+        used = 0.0
+        for i, ch in enumerate(g):
+            used += 11 if ord(ch) > 0x2E80 else 6
+            if used > budget:
+                g = g[: max(1, i)] + "…"
+                break
         self._header = g
         self._write()
 
