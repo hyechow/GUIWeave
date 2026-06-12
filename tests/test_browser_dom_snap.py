@@ -20,12 +20,14 @@ class _FakeClient:
         self._snap = snap  # (sx, sy, info) tuple OR an Exception to raise
         self._viewport = viewport
         self.clicked = None
+        self.seen_target = None  # target_text the executor passed to dom_snap
 
     @property
     def viewport_size(self):
         return self._viewport
 
-    def dom_snap(self, x, y):
+    def dom_snap(self, x, y, target_text=""):
+        self.seen_target = target_text
         if isinstance(self._snap, Exception):
             raise self._snap
         return self._snap
@@ -74,3 +76,29 @@ def test_execute_no_snap_leaves_action_snap_none():
     dec = BrowserActionDecision(action=BrowserAction(action_type="tap", x=342, y=616, description="点"))
     _exec(c).execute(dec)
     assert dec.action.snap is None
+
+
+# ── Text retarget (the OCR-snap analogue; regression 20260612_114219 误点删除×3) ──
+
+def test_quoted_label_extraction():
+    from gui_agent.adapters.browser.executor import _quoted_label
+
+    # 最后一个短引号标签是动作目标(前面的引号是上下文)
+    assert _quoted_label("点击「lucas-10002」所在行下拉菜单中的「操作」") == "操作"
+    assert _quoted_label("点击弹窗中的「取消」按钮") == "取消"
+    assert _quoted_label("点击'编辑'链接") == "编辑"
+    # 超过 8 字的引号内容不当标签(下拉选项长值等,本就唯一,不需要文本重定向)
+    assert _quoted_label("点击下拉列表中的'交管测试专用地图_1楼'选项") == ""
+    assert _quoted_label("没有引号的指令") == ""
+
+
+def test_execute_passes_quoted_label_to_dom_snap():
+    c = _FakeClient((966.0, 210.0, "text 44x28"), viewport=(1000, 1000))
+    dec = BrowserActionDecision(action=BrowserAction(
+        action_type="tap", x=967, y=245,
+        description="点击虚拟机器人列表中「lucas-10002」所在行操作列下拉菜单中的「操作」",
+    ))
+    _exec(c).execute(dec)
+    assert c.seen_target == "操作"            # 标签传到了 dom_snap
+    assert c.clicked == (966.0, 210.0)        # 点击落在重定向后的位置
+    assert dec.action.snap is not None and "text" in dec.action.snap["info"]

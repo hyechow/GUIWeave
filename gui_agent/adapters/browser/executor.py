@@ -11,10 +11,23 @@ Coordinates are normalized 0-1000 over the viewport; NO YOLO snap, NO picker.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.core.executor import VisionExecutor
+
+# Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
+_QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,8})[」』\"']")
+
+
+def _quoted_label(description: str) -> str:
+    """The LAST short quoted label in the description — the actionable target
+    (「点击…菜单中的「操作」」→ 操作). Longer quotes (robot names, option values with
+    underscores) are skipped by the 8-char cap: those targets are unique under the
+    point anyway, while short labels (操作/删除/确定/取消) are the ambiguous ones."""
+    matches = _QUOTE_RE.findall(description or "")
+    return matches[-1] if matches else ""
 
 
 class BrowserExecutor(VisionExecutor):
@@ -38,11 +51,18 @@ class BrowserExecutor(VisionExecutor):
         for canvas / huge containers / non-clickable points (see device.dom_snap), so it only
         fixes a near-miss on a real control and never moves a legitimate precise click.
 
+        Also passes the label quoted in the action description (e.g. 「操作」) so dom_snap can
+        TEXT-RETARGET when the point landed on a differently-labelled neighbour — the OCR-snap
+        analogue. Rescues adjacent-menu-item misses: 操作/删除 are 28px apart, the vision
+        model's y was one row off, and the click hit the DESTRUCTIVE neighbour 3× in a row
+        (run 20260612_114219).
+
         Records ``action.snap`` (normalized 0-1000, method 'dom') when it moves the point, so the
         HTML report / runtime visualizer draw the original→snapped correction like YOLO/OCR."""
         sx, sy = px, py
         try:
-            cx, cy, info = self._client().dom_snap(px, py)
+            target = _quoted_label(getattr(getattr(self, "_cur_action", None), "description", "") or "")
+            cx, cy, info = self._client().dom_snap(px, py, target_text=target)
             if info is not None and (abs(cx - px) > 1 or abs(cy - py) > 1):
                 print(f"  DOM 吸附: ({px:.0f},{py:.0f}) → ({cx:.0f},{cy:.0f}) [{info}]")
                 sx, sy = cx, cy

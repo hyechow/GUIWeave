@@ -358,24 +358,47 @@ class PlaywrightDevice:
             return f"failed: {exc}"
         return f"OK tap ({x:.0f},{y:.0f})"
 
-    def dom_snap(self, x: float, y: float) -> "tuple[float, float, Optional[str]]":
+    def dom_snap(
+        self, x: float, y: float, target_text: str = ""
+    ) -> "tuple[float, float, Optional[str]]":
         """Snap a viewport-CSS click point to the center of the small clickable element under it
         — browser's coordinate correction, the DOM analogue of iphone's YOLO snap.
 
-        CONSERVATIVE: only snaps to a reasonably-sized clickable element (button / link / list
-        row / menu item / checkbox …). Returns the point UNCHANGED for canvas / svg / video /
-        sliders / huge containers-overlays / when nothing clickable is under it — where snapping
-        to a center would land in the WRONG place (e.g. a canvas map is ONE element → its center
-        is the middle of the map). So snap only fixes a near-miss on a real control, never hurts.
-        Coords are CSS viewport px (same space as getBoundingClientRect / page.mouse.click).
-        Returns ``(sx, sy, info)`` — ``info`` is a short "tag WxH" string when snapped, else None.
+        TEXT RETARGET (the OCR-snap analogue): when ``target_text`` is given (the label quoted
+        in the action description, e.g. 「操作」) and the element under the point carries a
+        DIFFERENT label, search nearby (≤80px) for a clickable whose exact trimmed text equals
+        the target and snap there instead. This rescues the adjacent-menu-item failure mode:
+        two 28px-high items (操作/删除), the vision model's y is one row off, and the click
+        lands on the DESTRUCTIVE neighbour (run 20260612_114219: 3× clicked 删除 aiming 操作).
+        The radius keeps same-label elements elsewhere on the page (e.g. a table header) out.
+
+        CONSERVATIVE otherwise: only snaps to a reasonably-sized clickable element (button /
+        link / list row / menu item / checkbox …). Returns the point UNCHANGED for canvas /
+        svg / video / sliders / huge containers-overlays / when nothing clickable is under it.
+        Coords are CSS viewport px. Returns ``(sx, sy, info)`` — ``info`` is "tag WxH" when
+        snapped (tag='text' for a text retarget), else None.
         """
         import json
 
+        target_js = json.dumps(target_text or "")
         js = (
-            "(()=>{const x=%d,y=%d;let el=document.elementFromPoint(x,y);if(!el)return '';"
-            "const n=el.closest&&el.closest('a,button,input,select,textarea,label,[role=button],"
-            "[role=option],[role=menuitem],[role=tab],[role=checkbox],[role=radio],[onclick],.cursor-pointer,li');"
+            "(()=>{const x=%d,y=%d,target=%s;"
+            "const CLICK='a,button,input,select,textarea,label,[role=button],"
+            "[role=option],[role=menuitem],[role=tab],[role=checkbox],[role=radio],[onclick],.cursor-pointer,li';"
+            "const txt=e=>((e.innerText||e.value||'')+'').trim();"
+            "let el=document.elementFromPoint(x,y);if(!el)return '';"
+            "const n=el.closest&&el.closest(CLICK);"
+            "if(target && (!n || txt(n)!==target)){"
+            "  let best=null,bd=1e9;"
+            "  for(const c of document.querySelectorAll(CLICK)){"
+            "    if(txt(c)!==target)continue;"
+            "    const r=c.getBoundingClientRect();"
+            "    if(r.width<=0||r.height<=0)continue;"
+            "    const cx=r.x+r.width/2,cy=r.y+r.height/2,dd=Math.hypot(cx-x,cy-y);"
+            "    if(dd<bd){bd=dd;best={cx:Math.round(cx),cy:Math.round(cy),"
+            "      w:Math.round(r.width),h:Math.round(r.height)};}}"
+            "  if(best&&bd<=80)return JSON.stringify({...best,tag:'text'});"
+            "}"
             "if(!n)return '';const tag=n.tagName.toLowerCase();"
             "const role=(n.getAttribute&&n.getAttribute('role'))||'';"
             "const itype=tag==='input'?((n.getAttribute('type')||'').toLowerCase()):'';"
@@ -385,7 +408,7 @@ class PlaywrightDevice:
             "if(r.width<=0||r.height<=0||r.width>vw*0.9||r.height>vh*0.6)return '';"
             "return JSON.stringify({cx:Math.round(r.x+r.width/2),cy:Math.round(r.y+r.height/2),"
             "tag,w:Math.round(r.width),h:Math.round(r.height)});})()"
-            % (int(round(x)), int(round(y)))
+            % (int(round(x)), int(round(y)), target_js)
         )
         try:
             res = self._cdp_send("Runtime.evaluate", {"expression": js, "returnByValue": True})
