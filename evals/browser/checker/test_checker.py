@@ -30,11 +30,24 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.self_learning.app_summary import KNOWLEDGE_DIR
 from gui_agent.core.supervisor.milestone import run_checker
 from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
 
 CASES_FILE = Path(__file__).parent / "cases.json"
+
+
+def _app_check_knowledge(c: dict) -> str:
+    """Production-parity dynamic acceptance knowledge: when the case sets
+    ``with_app_check``, load knowledge/browser/<app_name>/_check.md (machine-local,
+    not in git) and inject it the way auto_discover_knowledge → run_checker does.
+    Returns "" when absent — the case then runs without it (and may justifiably fail,
+    which is the point: the rule lives in the dynamic layer, not the static prompt)."""
+    if not c.get("with_app_check"):
+        return ""
+    p = KNOWLEDGE_DIR / "browser" / c["milestone"].get("app_name", "") / "_check.md"
+    return p.read_text(encoding="utf-8").strip() if p.exists() else ""
 
 
 def _build_history(entries: list[dict]) -> list[PolicyTurn]:
@@ -95,6 +108,7 @@ def test_checker() -> None:
                     task_type=m.get("task_type", "action"),
                     constraints=c.get("constraints", []),
                     prompts=BROWSER_MILESTONE_PROMPTS,
+                    check_knowledge=_app_check_knowledge(c),
                 )
         except Exception as e:  # noqa: BLE001
             _report(c["label"], False, f"exception: {e}")

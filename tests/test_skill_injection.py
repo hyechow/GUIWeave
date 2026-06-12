@@ -9,7 +9,7 @@ from __future__ import annotations
 from gui_agent.core.self_learning import app_summary
 
 
-def _make_app(tmp_path, *, with_skill: bool, with_update: bool = False):
+def _make_app(tmp_path, *, with_skill: bool, with_update: bool = False, with_check: bool = False):
     app_dir = tmp_path / "browser" / "TestApp"
     app_dir.mkdir(parents=True)
     (app_dir / "_app.md").write_text("# 导航\n左侧菜单：订单 / 工具", encoding="utf-8")
@@ -24,6 +24,11 @@ def _make_app(tmp_path, *, with_skill: bool, with_update: bool = False):
     if with_update:
         (app_dir / "_update.md").write_text(
             "# 版本更新\n## 连通性（实测）\n群组现为必填，以本文件和实际界面为准",
+            encoding="utf-8",
+        )
+    if with_check:
+        (app_dir / "_check.md").write_text(
+            "# 验收观察规则\n- 列表「预设站点」列显示编号短形式：「10」即「s10-站点10」",
             encoding="utf-8",
         )
     return app_dir
@@ -65,6 +70,38 @@ def test_navigation_unaffected_when_no_skill(tmp_path, monkeypatch):
     assert k is not None
     assert "联调实验" not in k.navigation
     assert "左侧菜单" in k.navigation
+
+
+# ── _check.md（Checker 专用动态验收知识：静态 prompt 留通用原则,app 显示形态按 app 注入）──
+
+
+def test_check_md_loaded_into_check_channel(tmp_path, monkeypatch):
+    _make_app(tmp_path, with_skill=False, with_check=True)
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+    k = app_summary.auto_discover_knowledge("在 testapp 修改预设站点", "browser")
+    assert k is not None
+    assert "编号短形式" in k.check          # checker 专用通道
+    assert "编号短形式" not in k.navigation  # 不混入 decomposer/planner 的 navigation 通道
+    assert "_check" not in k.sections       # 不作为可检索章节
+    assert k.summary()["check_chars"] > 0
+
+
+def test_check_md_absent_is_empty(tmp_path, monkeypatch):
+    _make_app(tmp_path, with_skill=False)
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+    k = app_summary.auto_discover_knowledge("在 testapp 修改预设站点", "browser")
+    assert k is not None
+    assert k.check == ""
+
+
+def test_set_app_knowledge_stores_check():
+    from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
+    from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
+
+    p = MilestoneSupervisorPolicy(prompts=BROWSER_MILESTONE_PROMPTS)
+    assert p._check_knowledge == ""  # 未注入时为空,run_checker 不加动态段
+    p.set_app_knowledge("nav", app_name="A", check="列内「10」即「s10-站点10」")
+    assert "s10-站点10" in p._check_knowledge
 
 
 # ── list_known_apps（router 知识库感知的数据源）─────────────────────────────

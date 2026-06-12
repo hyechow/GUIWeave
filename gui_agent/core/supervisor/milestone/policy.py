@@ -260,6 +260,7 @@ class MilestoneSupervisorPolicy:
         self._scroll_counts: dict[str, int] = {}
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
+        self._check_knowledge: str = ""
         self._elements_knowledge: Optional[str] = None
         self._pk: Optional[ProgressiveKnowledge] = None  # progressive (skill-like) section loader
         self._app_name: str = ""
@@ -290,9 +291,14 @@ class MilestoneSupervisorPolicy:
         app_name: str = "",
         elements: str = "",
         sections: Optional[dict[str, str]] = None,
+        check: str = "",
     ) -> None:
         self._app_knowledge = text
         self._elements_knowledge = elements or None
+        # _check.md → Checker-only observable completion rules（动态验收知识）：描述该 app 界面
+        # 的实际显示形态（列渲染短形式/成功提示样式/错误 toast 语义等）。静态 checker prompt 只留
+        # 跨 app 通用原则；app 特定的验收事实从这里按 app 注入，避免静态规则膨胀和过拟合。
+        self._check_knowledge = check
         # When per-section bodies exist, the planner loads them progressively: a dedicated
         # KnowledgeSelector micro-decision picks section ids per (milestone, page) — cached,
         # so it only fires on page/milestone changes. Falls back to the full `elements`
@@ -1038,6 +1044,7 @@ class MilestoneSupervisorPolicy:
             constraints=self._global_constraints,
             extra=extra,
             prompts=self._prompts,
+            check_knowledge=self._check_knowledge,
         )
 
     def _loop_check(

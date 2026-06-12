@@ -359,11 +359,16 @@ def run_checker(
     extra: str = "",
     _is_retry: bool = False,
     prompts: Optional[MilestonePrompts] = None,
+    check_knowledge: str = "",
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals.
 
     Pure verification: knowledge-section selection lives in :func:`run_selector` (a separate
-    cached micro-decision), so the checker prompt carries no section manifest."""
+    cached micro-decision), so the checker prompt carries no section manifest.
+
+    ``check_knowledge``（_check.md）= 动态验收知识：该 app 界面的实际显示形态/完成标志
+    （列渲染短形式、成功提示样式、错误 toast 语义等）。静态 checker prompt 只保留跨 app
+    通用验收原则；app 特定事实按 app 从这里注入，避免静态规则膨胀与过拟合。"""
     if prompts is None:
         prompts = _default_milestone_prompts()
     if constraints is None:
@@ -386,6 +391,12 @@ def run_checker(
         app_name_context=app_name_context,
         kind_section=kind_section,
     )
+    if check_knowledge:
+        prompt += (
+            "\n\n## 应用验收观察规则（来自知识库，描述该应用界面的实际显示形态与完成标志；"
+            "与上面通用规则冲突时以此为准）\n"
+            f"{check_knowledge}"
+        )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
     # Inject the tab TITLE (the viewport-language page name the screenshot doesn't show) as
@@ -430,6 +441,7 @@ def run_checker(
             ),
             _is_retry=True,
             prompts=prompts,
+            check_knowledge=check_knowledge,
         )
         _strip_progress_evidence(result)
 
@@ -478,6 +490,7 @@ def run_checker(
             ),
             _is_retry=True,
             prompts=prompts,
+            check_knowledge=check_knowledge,
         )
         _strip_progress_evidence(result)
     if result.status == "done" and _still_invalid(result):

@@ -1,5 +1,22 @@
 [
   {
+    "label": "动态验收知识-_check.md使列编号短形式判已保存（回归 20260612_202142 验收格式错配16轮）",
+    "screenshot": "evals/browser/checker/screenshots/roboteam_preset_saved_list_short_form.png",
+    "with_app_check": true,
+    "milestone": {
+      "name": "修改预设站点为 s10-站点10",
+      "description": "在虚拟机器人列表页编辑 lucas-10001，把「预设站点」设置为 s10-站点10 并保存。",
+      "success_condition": "编辑窗口关闭（或提示保存成功），且列表页该行对应的「预设站点」列显示为「s10-站点10」。",
+      "kind": "action",
+      "app_name": "RoboTeam"
+    },
+    "expected": {
+      "status": "done",
+      "must_not_claim": ["仍显示旧值", "未更新", "未保存"]
+    },
+    "note": "截图：顶部「更新成功」提示、编辑窗口已关闭、列表「预设站点」列显示「10」（该列只显示站点编号短形式，「10」=「s10-站点10」）。SC 是实跑 20260612_202142 的原文——字面要求列表显示全名。静态规则下 checker 精确匹配判 in_progress→编辑/确定交替 16 轮打满上限。本 case 验证动态验收知识通道：注入 knowledge/browser/RoboTeam/_check.md（with_app_check）后，checker 应按「列内编号即满足 + 更新成功提示=已保存」判 done。架构：静态 prompt 只留通用验收原则，app 显示形态走 _check.md 按 app 注入，防 prompt 膨胀与过拟合。"
+  },
+  {
     "label": "combobox-过滤词未选定不得算已设置（回归 20260612_104857 checker误导planner）",
     "screenshot": "evals/browser/checker/screenshots/roboteam_combobox_filter_open.png",
     "milestone": {

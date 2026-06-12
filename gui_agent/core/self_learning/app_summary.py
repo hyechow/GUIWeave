@@ -89,6 +89,7 @@ class AppKnowledge:
     elements: str    # _elements.md content → Planner (full; replan/decompose + fallback)
     app_name: str
     sections: dict[str, str] = field(default_factory=dict)  # per-section bodies → progressive load
+    check: str = ""  # _check.md content → Checker-only observable completion rules
 
     def summary(self) -> dict[str, object]:
         """Compact, log-friendly description of what got injected (→ context.json knowledge)."""
@@ -96,6 +97,7 @@ class AppKnowledge:
             "app_name": self.app_name,
             "nav_chars": len(self.navigation),
             "elements_chars": len(self.elements),
+            "check_chars": len(self.check),
             "section_count": len(self.sections),
         }
 
@@ -357,9 +359,11 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
                 elements_path.read_text(encoding="utf-8").strip()
                 if elements_path.exists() else ""
             )
+            check_path = d / "_check.md"
+            check = check_path.read_text(encoding="utf-8").strip() if check_path.exists() else ""
             # Per-section page files (excludes _app.md/_elements.md) → progressive-load bodies.
             sections = {stem: body for stem, body in load_page_files(d)}
-            return AppKnowledge(navigation=nav, elements=elements, app_name=d.name, sections=sections)
+            return AppKnowledge(navigation=nav, elements=elements, app_name=d.name, sections=sections, check=check)
         # Directory exists but no knowledge file yet
         print(f"  [Knowledge] 识别到应用「{d.name}」，目录存在但暂无知识文件")
         return AppKnowledge(navigation="", elements="", app_name=d.name)

@@ -457,6 +457,7 @@ def main() -> None:
                 app_name=knowledge.app_name,
                 elements=knowledge.elements,
                 sections=knowledge.sections,
+                check=knowledge.check,
             )
             knowledge_summary = knowledge.summary()
 
