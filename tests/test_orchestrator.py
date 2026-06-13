@@ -106,3 +106,43 @@ def test_neq_condition():
     ])
     res = ProgramRunner(lambda r: RunResult(completed=True, reads={"状态": "告警"})).run(prog)
     assert res.reply == "异常：告警"
+
+
+# ── 可步进生成器接口（agent_loop 集成时就这么驱动）──────────────────────────────
+
+
+def test_steppable_interpreter_yields_runs_and_consumes_results():
+    from gui_agent.core.orchestrator import Interpreter
+    interp = Interpreter(_connectivity_program())
+    gen = interp.steps()
+    driven: list[str] = []
+    run = next(gen)
+    reply = None
+    while True:
+        driven.append(run.name)
+        # 把 read milestone 判成不可达 → 走 finish 支
+        reads = {"连通判定": "不可达", "不可达原因": "节点离线"} if run.var == "d" else {}
+        result = RunResult(completed=True, reads=reads, summary=run.name)
+        try:
+            run = gen.send(result)
+        except StopIteration as e:
+            reply = e.value
+            break
+    # engine 只被要求驱动到决策点为止；建单支没被 yield（生成器按条件只产命中分支）
+    assert "读取连通判定结果" in driven
+    assert "建单 s10→s9" not in driven
+    assert reply == "路径不可达，原因：节点离线"
+    # env/run_log 在生成器对象上可读，供 agent_loop 汇总
+    assert interp.env["d"].reads["连通判定"] == "不可达"
+    assert any(r.name == "读取连通判定结果" for r in interp.run_log)
+
+
+def test_steppable_program_with_only_finish():
+    from gui_agent.core.orchestrator import Interpreter
+    interp = Interpreter(Program(statements=[Finish(message="直接结束")]))
+    gen = interp.steps()
+    # 没有 run() → 第一个 next 就 StopIteration，value=reply
+    import pytest
+    with pytest.raises(StopIteration) as ei:
+        next(gen)
+    assert ei.value.value == "直接结束"

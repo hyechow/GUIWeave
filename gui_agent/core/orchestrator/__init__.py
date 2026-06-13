@@ -9,9 +9,17 @@ Boundaries:
 """
 
 from .program import Cond, Finish, If, Program, Run, RunResult, Stmt
-from .runner import MilestoneExecutor, OrchestratorResult, ProgramRunner, RunRecord
+from .runner import (
+    Interpreter,
+    MilestoneExecutor,
+    OrchestratorResult,
+    ProgramRunner,
+    RunRecord,
+    drive,
+)
 
 __all__ = [
     "Cond", "Finish", "If", "Program", "Run", "RunResult", "Stmt",
-    "MilestoneExecutor", "OrchestratorResult", "ProgramRunner", "RunRecord",
+    "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
+    "RunRecord", "drive",
 ]
