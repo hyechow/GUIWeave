@@ -1915,17 +1915,26 @@ HTML_TEMPLATE = """\
   .stats {{ color: var(--muted); font-size: 12px; }}
   .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
   .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
-  /* ── 分解 (DSL program) row ── */
-  .prog-row {{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; }}
-  .prog-step {{ display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: #fff; border: 1px solid var(--border); border-radius: 14px; }}
-  .prog-n {{ display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 2px; border-radius: 8px; background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 10px; }}
+  /* ── #0 编排 (DSL program) — vertical, indented like code ── */
+  .prog-section {{ }}
+  .prog-body {{ padding: 14px 20px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }}
+  .prog-input {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; margin-bottom: 6px; border-bottom: 1px dashed var(--border); color: var(--text); }}
+  .prog-input-label {{ font-weight: 600; color: #6366f1; font-size: 11px; padding: 1px 7px; background: #eef2ff; border-radius: 10px; }}
+  .prog-input-arrow {{ color: #94a3b8; font-size: 11px; font-family: monospace; }}
+  .prog-step {{ display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }}
+  .prog-n {{ display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 3px; border-radius: 9px; background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 11px; flex-shrink: 0; }}
+  .prog-name {{ color: var(--text); }}
   .prog-var {{ font-family: monospace; color: #0891b2; font-weight: 600; }}
-  .prog-ret {{ color: #065f46; font-size: 11px; }}
-  .prog-arrow {{ color: #cbd5e1; }}
-  .prog-if {{ display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 3px 9px; background: #fffbeb; border: 1px dashed #fcd34d; border-radius: 14px; }}
+  .prog-ret {{ color: #047857; font-size: 11px; font-family: monospace; }}
+  .prog-empty {{ color: #cbd5e1; }}
+  .prog-if {{ display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; margin: 2px 0; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }}
+  .prog-cond {{ display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }}
   .prog-kw {{ color: #b45309; font-weight: 700; font-family: monospace; }}
-  .prog-branch {{ display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }}
-  .prog-finish {{ padding: 3px 9px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 14px; color: #065f46; }}
+  .prog-condvar {{ font-family: monospace; color: #0891b2; }}
+  .prog-condval {{ font-weight: 600; color: #92400e; }}
+  .prog-branch {{ display: flex; flex-direction: column; gap: 5px; margin-left: 8px; padding-left: 12px; border-left: 2px solid #34d399; }}
+  .prog-branch-else {{ border-left-color: #f87171; }}
+  .prog-finish {{ align-self: flex-start; padding: 2px 9px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; color: #065f46; }}
 
   /* Final output / 最终输出 card */
   .result-card {{ max-width: 1080px; margin: 0 auto 20px; padding: 16px 20px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #22c55e; }}
@@ -2013,7 +2022,7 @@ HTML_TEMPLATE = """\
 
 <div class="layout">
   <nav class="sidebar">
-    <div class="sidebar-title">子目标分解</div>
+    <div class="sidebar-title">{outline_title}</div>
     <div class="outline">{outline_html}</div>
     {knowledge_html}
   </nav>
@@ -2022,10 +2031,10 @@ HTML_TEMPLATE = """\
       <h1>{title}{platform_badge}</h1>
       <div class="stats">{stats}</div>
       {provenance_html}
-      {program_html}
       {cost_note_html}
     </div>
 
+    {program_html}
     {pages_html}
     {result_html}
   </main>
@@ -2413,12 +2422,13 @@ _PROG_KIND_BADGE = {
 }
 
 
-def _render_program_row(orchestrator: dict | None) -> str:
-    """Orchestrator mode: render the decomposed DSL program as its OWN header row.
+def _render_program_section(orchestrator: dict | None) -> str:
+    """Orchestrator mode: render the decomposed DSL program as its OWN section, #0 编排.
 
-    decompose is a distinct stage now (goal → run/if/finish program), not folded into turn 1.
-    Renders the run/if/finish structure inline so the report shows WHAT was decomposed,
-    separate from the per-milestone execution below. Empty (DAG mode) → no row."""
+    decompose is a distinct stage now (goal → run/if/finish program), not folded into turn 1
+    and not lumped with the Router / 模型配置 header rows. It gets its own milestone-style card
+    (#0, before the executed milestones) showing the run/if/finish structure vertically.
+    Empty (DAG mode) → no section."""
     if not orchestrator:
         return ""
     stmts = (orchestrator.get("program") or {}).get("statements") or []
@@ -2427,19 +2437,20 @@ def _render_program_row(orchestrator: dict | None) -> str:
 
     counter = [0]
 
-    def _run_chip(s: dict) -> str:
+    def _run_row(s: dict) -> str:
         counter[0] += 1
         kind = s.get("kind", "action")
         badge = _PROG_KIND_BADGE.get(kind, "milestone-badge-default")
         var = s.get("var")
-        var_html = f'<span class="prog-var">{_safe(var)}=</span>' if var else ""
+        var_html = f'<span class="prog-var">{_safe(var)} =</span> ' if var else ""
         ret = [r for r in (s.get("returns") or []) if r]
-        ret_html = f'<span class="prog-ret">读 {_safe("、".join(ret))}</span>' if (kind == "read" and ret) else ""
+        ret_html = f'<span class="prog-ret">→ 读 {_safe("、".join(ret))}</span>' if (kind == "read" and ret) else ""
         return (
-            f'<span class="prog-step">'
-            f'<span class="prog-n">{counter[0]}</span>{var_html}{_safe(s.get("name", ""))}'
+            f'<div class="prog-step">'
+            f'<span class="prog-n">{counter[0]}</span>'
+            f'<span class="prog-name">{var_html}{_safe(s.get("name", ""))}</span>'
             f'<span class="milestone-badge {badge}">{_safe(kind)}</span>{ret_html}'
-            f'</span>'
+            f'</div>'
         )
 
     def _walk(items: list) -> list[str]:
@@ -2447,24 +2458,42 @@ def _render_program_row(orchestrator: dict | None) -> str:
         for s in items:
             op = s.get("op", "run")
             if op == "run":
-                out.append(_run_chip(s))
+                out.append(_run_row(s))
             elif op == "if":
                 cond = s.get("cond", {})
-                c = (f'{_safe(cond.get("var",""))}[{_safe(cond.get("field",""))}]'
-                     f'{_safe(cond.get("cmp","=="))}{_safe(cond.get("value",""))}')
-                then_html = '<span class="prog-arrow">→</span>'.join(_walk(s.get("then", []))) or "—"
-                else_html = '<span class="prog-arrow">→</span>'.join(_walk(s.get("otherwise", []))) or "—"
+                c = (f'<span class="prog-condvar">{_safe(cond.get("var",""))}[{_safe(cond.get("field",""))}]</span>'
+                     f' {_safe(cond.get("cmp","=="))} '
+                     f'<span class="prog-condval">{_safe(cond.get("value",""))}</span>')
+                then_html = "".join(_walk(s.get("then", []))) or '<div class="prog-step prog-empty">—</div>'
+                else_html = "".join(_walk(s.get("otherwise", []))) or '<div class="prog-step prog-empty">—</div>'
                 out.append(
-                    f'<span class="prog-if"><span class="prog-kw">if</span> {c} '
-                    f'<span class="prog-kw">?</span> <span class="prog-branch">{then_html}</span> '
-                    f'<span class="prog-kw">:</span> <span class="prog-branch">{else_html}</span></span>'
+                    f'<div class="prog-if">'
+                    f'<div class="prog-cond"><span class="prog-kw">if</span> {c} <span class="prog-kw">:</span></div>'
+                    f'<div class="prog-branch">{then_html}</div>'
+                    f'<div class="prog-cond"><span class="prog-kw">else :</span></div>'
+                    f'<div class="prog-branch prog-branch-else">{else_html}</div>'
+                    f'</div>'
                 )
             elif op == "finish":
-                out.append(f'<span class="prog-finish">finish「{_safe(s.get("message", ""))}」</span>')
+                out.append(f'<div class="prog-finish">↩ finish「{_safe(s.get("message", ""))}」</div>')
         return out
 
-    body = '<span class="prog-arrow">→</span>'.join(_walk(stmts))
-    return f'<div class="decompose prog-row"><span class="decompose-label">分解</span>{body}</div>'
+    body = "".join(_walk(stmts))
+    goal = _safe((orchestrator.get("program") or {}).get("goal") or "")
+    input_html = (
+        f'<div class="prog-input"><span class="prog-input-label">输入</span>{goal}'
+        f'<span class="prog-input-arrow">↓ 分解为</span></div>'
+    ) if goal else ""
+    return (
+        f'<div class="milestone prog-section" id="ms-orchestrate">'
+        f'<div class="milestone-header">'
+        f'<h2>#0</h2>'
+        f'<span class="milestone-name">编排 · decompose → DSL program</span>'
+        f'<span class="milestone-badge milestone-badge-default">program</span>'
+        f'</div>'
+        f'<div class="prog-body">{input_html}{body}</div>'
+        f'</div>'
+    )
 
 
 def generate_html(data: ReportData, grid: bool = False) -> str:
@@ -2500,7 +2529,16 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         return str(_mid_ordinal[mid]) if mid in _mid_ordinal else _short_mid(mid)
 
     # Sidebar outline (子目标分解): one clickable node per milestone, scroll-spy active.
+    # Orchestrator mode: the decomposed program is node #0 编排 (the stage that produced them).
     outline_parts = []
+    if (data.orchestrator.get("program") or {}).get("statements"):
+        outline_parts.append(
+            '<a class="outline-item" href="#ms-orchestrate" data-target="ms-orchestrate">'
+            '<span class="outline-top"><span class="outline-id">#0</span>'
+            '<span class="outline-name">编排</span></span>'
+            '<span class="outline-meta"><span class="milestone-badge milestone-badge-default">program</span></span>'
+            '</a>'
+        )
     for m in data.milestones:
         mid = _safe(m.get("id", "?"))           # full id — for the anchor/link
         mid_disp = _safe(_mid_disp(m.get("id", "?")))  # ordinal — for display
@@ -2690,7 +2728,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         platform_badge=_render_platform_badge(data.platform),
         stats=stats_str,
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
-        program_html=_render_program_row(data.orchestrator),
+        program_html=_render_program_section(data.orchestrator),
+        outline_title=("任务编排" if (data.orchestrator.get("program") or {}).get("statements") else "子目标分解"),
         outline_html=outline_html,
         cost_note_html=cost_note_html,
         knowledge_html=_render_knowledge_html(data.knowledge, data.knowledge_sections),
