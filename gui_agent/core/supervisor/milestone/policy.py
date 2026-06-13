@@ -1680,12 +1680,22 @@ class MilestoneSupervisorPolicy:
             if m.kind == "verification"
         ]
         for vid in verification_ids:
+            m = self._milestones[vid]
+            # 误标拯救：带读取/记录产出的「verification」其实是任务脉络的终读步（查看订单状态/
+            # 记录检测结果——schema alias 还会把 kind=report/summary 归一成 verification 送进
+            # 这里），一刀切删除会吞掉最后一环（~30% 分解中招）。救成 collection/read_once；
+            # 纯验证项（验证 X 已完成,无读取产出）照删——checker 本就逐步验收,它们是冗余。
+            if re.search(r"记录|读取|读出|获取|查看|报告|汇报", f"{m.name}{m.description}{m.success_condition}"):
+                m.kind = "collection"
+                m.completion_strategy = "read_once"
+                fixes.append(f"子目标「{m.name}」（verification→collection）按读取/记录语义拯救")
+                continue
             removed = self._milestones.pop(vid)
             self._order.remove(vid)
-            for m in self._milestones.values():
-                if vid in m.depends_on:
-                    m.depends_on.remove(vid)
-                    m.depends_on.extend(removed.depends_on)
+            for other in self._milestones.values():
+                if vid in other.depends_on:
+                    other.depends_on.remove(vid)
+                    other.depends_on.extend(removed.depends_on)
             fixes.append(f"子目标「{removed.name}」（verification）已移除")
 
         all_ids = set(self._milestones.keys())
