@@ -146,3 +146,45 @@ def test_steppable_program_with_only_finish():
     with pytest.raises(StopIteration) as ei:
         next(gen)
     assert ei.value.value == "直接结束"
+
+
+# ── engine glue: Run -> Milestone / task_type / RunResult packaging ──────────────
+
+
+def test_to_milestone_maps_runkind():
+    from gui_agent.core.orchestrator.engine import to_milestone
+    nav = to_milestone(Run(name="进入页", kind="navigation"), 0)
+    assert nav.kind == "navigation" and nav.completion_strategy == "visible_once"
+    rd = to_milestone(Run(var="d", name="读结果", kind="read", returns=["连通判定", "原因"]), 3)
+    assert rd.kind == "collection" and rd.completion_strategy == "read_once"
+    assert rd.id == "d"                              # var → milestone id
+    assert "连通判定" in rd.description and "原因" in rd.description  # returns 折进 description
+
+
+def test_task_type_for_read_is_analysis():
+    from gui_agent.core.orchestrator.engine import task_type_for
+    assert task_type_for(Run(name="读", kind="read", returns=["x"])) == "analysis"
+    assert task_type_for(Run(name="点", kind="action")) == "action"
+
+
+def test_package_result_contract():
+    from gui_agent.core.orchestrator.engine import package_result
+    ok = package_result(Run(name="x", kind="action"), completed=True, summary="成功", notes=["证据1"])
+    assert ok.completed and not ok.failed and ok.evidence == ["证据1"]
+    bad = package_result(Run(name="x", kind="action"), completed=False, summary="失败", notes=[])
+    assert bad.failed and not bad.completed
+
+
+def test_supervisor_reseed_single_milestone():
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.core.orchestrator.engine import to_milestone, task_type_for
+    p = MilestoneSupervisorPolicy()
+    # 先塞点 per-milestone 脏状态，验证 reseed 会清
+    p._milestones = {"old": object()}  # type: ignore[dict-item]
+    p._order = ["old", "x"]
+    p._scroll_counts = {"old": 5}
+    run = Run(var="d", name="读判定", kind="read", returns=["连通判定"])
+    p.reseed(to_milestone(run, 0), task_type=task_type_for(run))
+    assert list(p._order) == ["d"] and p._current_id == "d"
+    assert p.task_type == "analysis"          # read → analysis（读取门）
+    assert p._scroll_counts == {}             # per-milestone 追踪已清
