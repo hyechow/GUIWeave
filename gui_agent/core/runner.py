@@ -1156,6 +1156,12 @@ def main() -> None:
         action="store_true",
         help="跳过 router 意图改写，直接把输入当作目标（默认经 router，与 chat 模式一致）",
     )
+    parser.add_argument(
+        "--orchestrator",
+        action="store_true",
+        help="DSL 编排器模式：先把目标 decompose 成 run/if/finish 程序，由解释器排序驱动各 milestone"
+             "（默认走 DAG 路径）",
+    )
     args = parser.parse_args()
 
     action_policy = build_policy(args.policy)
@@ -1216,6 +1222,15 @@ def main() -> None:
                 f"sections={knowledge_summary['section_count']})"
             )
 
+        # DSL orchestrator mode (opt-in): decompose the goal into a run/if/finish program; the
+        # interpreter sequences milestones instead of the supervisor's DAG walker. program=None
+        # (default) → the DAG path is unchanged.
+        program = None
+        if args.orchestrator:
+            from gui_agent.core.orchestrator import decompose
+            program = decompose(goal, knowledge=knowledge.navigation if knowledge else "")
+            print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
+
         try:
             result: dict | None = run_agent_loop(
                 goal,
@@ -1230,16 +1245,23 @@ def main() -> None:
                 raw_input=raw_input,
                 router=router_result.model_dump() if router_result else None,
                 knowledge=knowledge_summary,
+                program=program,
             )
             if result:
-                # Reply to the user's ORIGINAL input (parity with chat, which
-                # passes user_msg) rather than the router-rewritten goal.
-                output = generate_reply(
-                    raw_input,
-                    result,
-                    content_notes=result.get("content_notes"),
-                    collection_context=result.get("collection_context"),
-                )
+                if program is not None:
+                    # Orchestrator mode: the answer is the interpreter's reply (finish /
+                    # auto-summary from the program's persisted reads), not a re-derivation
+                    # from content_notes — that's the whole point of the structured program.
+                    output = result.get("result_summary") or "（编排器未产生答复）"
+                else:
+                    # Reply to the user's ORIGINAL input (parity with chat, which
+                    # passes user_msg) rather than the router-rewritten goal.
+                    output = generate_reply(
+                        raw_input,
+                        result,
+                        content_notes=result.get("content_notes"),
+                        collection_context=result.get("collection_context"),
+                    )
                 print("\n" + "=" * 50)
                 print("最终输出")
                 print("=" * 50)
