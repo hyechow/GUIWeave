@@ -159,5 +159,61 @@
         }
       }
     ]
+  },
+  {
+    "label": "多选tag下拉-已带chip勿重点击(会取消选中)（回归 20260612_205558 群组重点击循环）",
+    "screenshot": "evals/browser/planner/screenshots/roboteam_multiselect_chip_selected.png",
+    "milestone": {
+      "name": "配置检测参数与选择机器人群组",
+      "description": "在路径连通性工具中设置起点 s10-站点10、终点 s9-站点9，并选择一个有效的机器人群组。",
+      "success_condition": "起点字段显示 s10-站点10，终点字段显示 s9-站点9，且已选择一个有效的机器人群组",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "history": [
+      {
+        "index": 8,
+        "instruction": "点击「请选择机器人群组」输入框以展开候选列表",
+        "summary": "起点和终点已正确设置，需点击群组输入框以选择群组。",
+        "action": {
+          "action_type": "tap",
+          "x": 813,
+          "y": 309,
+          "description": "点击「请选择机器人群组」输入框以展开候选列表"
+        }
+      },
+      {
+        "index": 9,
+        "instruction": "点击候选列表中的「testgroup」以选择机器人群组",
+        "summary": "当前机器人群组下拉框已展开，显示候选项'testgroup'，需点击该项完成群组选择。",
+        "action": {
+          "action_type": "tap",
+          "x": 810,
+          "y": 354,
+          "description": "点击候选列表中的「testgroup」以选择机器人群组"
+        }
+      }
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "机器人群组下拉菜单处于展开状态，候选项'testgroup'可见但尚未被最终确认选定（字段内仍显示提示文本且浮层未收起），不满足验收条件中“已选择一个有效的机器人群组”的状态要求。",
+      "issues": [],
+      "missing_evidence": [
+        "机器人群组字段需显示确定的选定值（testgroup）且下拉列表关闭"
+      ],
+      "summary": "路径连通性检测弹窗中起点终点已设置，但机器人群组选择操作正在进行中。"
+    },
+    "expected": {
+      "must_contain": [
+        "检测",
+        "空白",
+        "收起",
+        "关闭"
+      ],
+      "must_not_contain": [
+        "点击.{0,24}testgroup"
+      ]
+    },
+    "note": "截图：群组框内已有 chip「testgroup ×」、候选行带勾选（多选已选态，列表保持展开正常）。checker 误判原文要求「下拉列表关闭」。实跑 planner 服从误判再点 testgroup——对多选控件这会【取消选中】。正确行为：已带 chip/勾选的目标项不再点击，直接推进（点击检测按钮，或收起列表）。"
   }
 ]

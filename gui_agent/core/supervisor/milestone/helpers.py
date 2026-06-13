@@ -223,15 +223,31 @@ def _normalize_control_context(text: str) -> str:
     return context
 
 
+_TRAILING_FIELD_RE = re.compile(r"(?:以|来)(?:选择|确认|选定|设置|完成)(?P<tail>[^，。;；「『]{2,24})")
+
+
+def _trailing_field_context(instruction: str, start: int) -> str:
+    """「点击候选…『X』以选择<字段>」式指令把字段名放在尾部——前置 context 缺失时从尾部提取，
+    让同字段的重复点击能被守卫识别（多选 chip 场景重点击=取消选中，回归 20260612_205558）。
+    纯动词尾巴（「以完成选定」）不算字段名。"""
+    m = _TRAILING_FIELD_RE.search(instruction[start:] if start < len(instruction) else "")
+    if not m:
+        return ""
+    context = _normalize_control_context(m.group("tail"))
+    return "" if context in ("", "选定", "选择", "确认", "操作") else context
+
+
 def _clicked_option_detail(instruction: str) -> Optional[tuple[str, str]]:
     match = _CLICKED_OPTION_DETAIL_RE.search(instruction or "")
     if not match:
         fallback = _CLICKED_OPTION_RE.search(instruction or "")
         if not fallback:
             return None
-        return fallback.group(1).strip(), ""
+        return fallback.group(1).strip(), _trailing_field_context(instruction, fallback.end())
     value = match.group("value").strip()
     context = _normalize_control_context(match.group("context"))
+    if not context:
+        context = _trailing_field_context(instruction, match.end())
     return value, context
 
 
@@ -636,6 +652,9 @@ def run_planner(
                     "的标签）时才再次点击候选；若无浮层且输入框已显示完整目标文本，该字段**已完成**——"
                     "禁止对它做任何操作（点击该输入框本身会把候选列表重新打开，没有「点击以确认/关闭」"
                     "这种操作），直接处理其他未完成字段。"
+                    "若这是**多选/标签型**下拉（框内已出现该项的标签/chip、候选行带勾选）：该项**已选中**，"
+                    "再点击会**取消选中**；多选的列表保持展开是正常态、不需要关闭——直接做下一步"
+                    "（本步骤的执行类按钮或其他未完成字段）。"
                 ),
                 app_knowledge=app_knowledge,
                 elements_knowledge=elements_knowledge,

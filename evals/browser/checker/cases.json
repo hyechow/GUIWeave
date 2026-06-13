@@ -12,9 +12,59 @@
     },
     "expected": {
       "status": "done",
-      "must_not_claim": ["仍显示旧值", "未更新", "未保存"]
+      "must_not_claim": [
+        "仍显示旧值",
+        "未更新",
+        "未保存"
+      ]
     },
     "note": "截图：顶部「更新成功」提示、编辑窗口已关闭、列表「预设站点」列显示「10」（该列只显示站点编号短形式，「10」=「s10-站点10」）。SC 是实跑 20260612_202142 的原文——字面要求列表显示全名。静态规则下 checker 精确匹配判 in_progress→编辑/确定交替 16 轮打满上限。本 case 验证动态验收知识通道：注入 knowledge/browser/RoboTeam/_check.md（with_app_check）后，checker 应按「列内编号即满足 + 更新成功提示=已保存」判 done。架构：静态 prompt 只留通用验收原则，app 显示形态走 _check.md 按 app 注入，防 prompt 膨胀与过拟合。"
+  },
+  {
+    "label": "多选tag下拉-chip在框内=已选中,列表保持展开是正常态（回归 20260612_205558 群组重点击循环）",
+    "screenshot": "evals/browser/checker/screenshots/roboteam_multiselect_chip_selected.png",
+    "milestone": {
+      "name": "配置检测参数与选择机器人群组",
+      "description": "在路径连通性工具中设置起点 s10-站点10、终点 s9-站点9，并选择一个有效的机器人群组。",
+      "success_condition": "起点字段显示 s10-站点10，终点字段显示 s9-站点9，且已选择一个有效的机器人群组",
+      "kind": "action",
+      "app_name": "RoboTeam"
+    },
+    "history": [
+      {
+        "index": 8,
+        "instruction": "点击「请选择机器人群组」输入框以展开候选列表",
+        "summary": "起点和终点已正确设置，需点击群组输入框以选择群组。",
+        "action": {
+          "action_type": "tap",
+          "x": 813,
+          "y": 309,
+          "description": "点击「请选择机器人群组」输入框以展开候选列表"
+        }
+      },
+      {
+        "index": 9,
+        "instruction": "点击候选列表中的「testgroup」以选择机器人群组",
+        "summary": "当前机器人群组下拉框已展开，显示候选项'testgroup'，需点击该项完成群组选择。",
+        "action": {
+          "action_type": "tap",
+          "x": 810,
+          "y": 354,
+          "description": "点击候选列表中的「testgroup」以选择机器人群组"
+        }
+      }
+    ],
+    "expected": {
+      "status": "done",
+      "must_not_claim": [
+        "尚未.{0,12}选(定|中|择)",
+        "未被.{0,8}(确认)?选定",
+        "下拉列表关闭",
+        "浮层(未|仍未)收起"
+      ]
+    },
+    "note": "截图：群组输入框内已出现 chip「testgroup ×」、候选行「testgroup」带勾选标记、候选列表保持展开（多选控件的正常已选态）；起点 #10 s10-站点10、终点 #9 s9-站点9 均已设置——SC 三项全满足。实跑 checker 拿单选规则套多选：「浮层未收起=尚未选定」判 in_progress，missing 要求「下拉列表关闭」，planner 服从误判再点 testgroup（对多选=取消选中），直到 max turns。正确行为：多选下拉的选中证据=框内 chip 或候选行勾选，列表保持展开是正常态，判 done。 修复=静态紧凑多选习语 + _check.md 注明该字段为多选（app 事实走动态通道,静态预算饱和的架构实证）。",
+    "with_app_check": true
   },
   {
     "label": "combobox-过滤词未选定不得算已设置（回归 20260612_104857 checker误导planner）",
@@ -28,8 +78,13 @@
     },
     "expected": {
       "status": "in_progress",
-      "missing_contains": ["预设地图"],
-      "must_not_claim": ["已设置.{0,8}地图", "地图.{0,10}已(设置|填写|选定|完成)"]
+      "missing_contains": [
+        "预设地图"
+      ],
+      "must_not_claim": [
+        "已设置.{0,8}地图",
+        "地图.{0,10}已(设置|填写|选定|完成)"
+      ]
     },
     "note": "截图：预设地图输入框内有过滤词「交管测试专用地图_1楼」，下方候选列表展开、选项尚未点击——该字段实际未选定（移焦即清空）。实跑 checker 判「已设置…地图」且 missing_evidence 不含预设地图，把 planner 推去填下一个字段，连环丢值 6 轮。正确行为：预设地图计为未完成（missing 写明需点击候选选项）。"
   },
@@ -48,20 +103,39 @@
         "index": 6,
         "instruction": "在「预设地图」搜索框中输入「交管测试专用地图_1楼」",
         "summary": "根据JSON配置，当前弹窗中预设地图字段为空，需要输入目标地图名称以完成过滤和选择。",
-        "action": {"action_type": "type", "x": 498, "y": 375, "text": "交管测试专用地图_1楼", "description": "在「预设地图」搜索框中输入「交管测试专用地图_1楼」"}
+        "action": {
+          "action_type": "type",
+          "x": 498,
+          "y": 375,
+          "text": "交管测试专用地图_1楼",
+          "description": "在「预设地图」搜索框中输入「交管测试专用地图_1楼」"
+        }
       },
       {
         "index": 7,
         "instruction": "点击预设地图候选列表中的「交管测试专用地图_1楼」选项",
         "summary": "当前预设地图搜索框已输入目标名称且候选列表展开，根据规则需先点击精确匹配的候选项以完成地图选定。",
-        "action": {"action_type": "tap", "x": 498, "y": 423, "description": "点击预设地图候选列表中的「交管测试专用地图_1楼」选项"}
+        "action": {
+          "action_type": "tap",
+          "x": 498,
+          "y": 423,
+          "description": "点击预设地图候选列表中的「交管测试专用地图_1楼」选项"
+        }
       }
     ],
     "expected": {
       "status": "in_progress",
-      "missing_contains": ["初始电量"],
-      "missing_not_contains": ["地图"],
-      "must_not_claim": ["地图.{0,24}(尚?未|没有)(完成)?选(定|择|中)", "(重新|再次)(输入|点击|选择).{0,12}地图", "地图.{0,16}候选列表(仍|未)(展开|收起)"]
+      "missing_contains": [
+        "初始电量"
+      ],
+      "missing_not_contains": [
+        "地图"
+      ],
+      "must_not_claim": [
+        "地图.{0,24}(尚?未|没有)(完成)?选(定|择|中)",
+        "(重新|再次)(输入|点击|选择).{0,12}地图",
+        "地图.{0,16}候选列表(仍|未)(展开|收起)"
+      ]
     },
     "note": "截图：预设地图候选已点选完成——候选列表已收起、输入框显示完整目标值「交管测试专用地图_1楼」（该 UI 选定后仍保留搜索图标，与过滤态形似）。带上前两轮历史（输入过滤词、点击候选）是复现关键：checker 被历史 prime 后无视截图、坚称「候选列表仍展开/未收起」（带历史 9/10 误判，空历史 0/10）。实跑连续 4 轮判未选定，planner 服从 missing_evidence 反复点字段/重输→把列表重新点开→误判变成现实，自证循环 4 turns（turns 8-11）。正确行为：列表收起+字段有完整值=已选定（未选定的过滤词失焦即清空），地图不得再进 missing_evidence；其余未填字段（初始电量 80→90 等）照常计入。"
   },
@@ -77,7 +151,13 @@
     },
     "expected": {
       "status": "in_progress",
-      "must_not_claim": ["确认按钮", "执行按钮", "提交按钮", "点击确认", "点击.{0,4}(执行|提交)"]
+      "must_not_claim": [
+        "确认按钮",
+        "执行按钮",
+        "提交按钮",
+        "点击确认",
+        "点击.{0,4}(执行|提交)"
+      ]
     },
     "note": "截图：[模拟器操作]页签的「更改位置」区域只有 地图框+站点/节点/坐标单选+站点搜索框(显示 s2-站点2)——没有任何确认/执行按钮，急停/抱闸等同面板控件都是即选即生效。实跑 checker 的 missing_evidence 反复索要「点击确认按钮后的成功提示」→ replan 派 planner 去点不存在的按钮 → 与下拉选择来回死循环 6 轮。正确行为：以状态本身为证据（站点框显示目标值/机器人位置变化），不得要求页面上不存在的确认控件。"
   }

@@ -65,6 +65,29 @@ def test_generic_field_context_does_not_trigger():
     assert _repeated_candidate_click(generic, MS, history) is None
 
 
+# ── 尾部字段 context：「点击候选『X』以选择<字段>」（多选 chip 重点击=取消选中,回归 20260612_205558）──
+
+CLICK_TRAILING = "点击候选列表中的「testgroup」以选择机器人群组"
+
+
+def test_trailing_field_context_triggers():
+    history = [_turn(9, CLICK_TRAILING)]
+    assert _repeated_candidate_click(CLICK_TRAILING, MS, history) == "testgroup"
+
+
+def test_trailing_context_different_field_does_not_trigger():
+    history = [_turn(9, CLICK_TRAILING)]
+    other_field = "点击候选列表中的「testgroup」以选择目标站点"
+    assert _repeated_candidate_click(other_field, MS, history) is None
+
+
+def test_trailing_pure_verb_is_not_context():
+    # 「以完成选定」是纯动词尾巴，不构成字段 context → 仍按泛指处理（不触发）
+    instr = "点击候选列表中的「testgroup」选项以完成选定"
+    history = [_turn(9, instr)]
+    assert _repeated_candidate_click(instr, MS, history) is None
+
+
 def test_retype_same_value_in_different_field_does_not_legitimize_original_repeat():
     history = [_turn(7, CLICK_X), _turn(8, TYPE_SAME_VALUE_OTHER_FIELD)]
     assert _repeated_candidate_click(CLICK_X, MS, history) == X
