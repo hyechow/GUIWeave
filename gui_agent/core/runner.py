@@ -631,33 +631,46 @@ def run_agent_loop(
         _cur_run = None
         _run_idx = 0
         _notes_mark = 0
+        # Verdict-frame carry-forward (orchestrator): when a milestone is accepted on a frame, the
+        # NEXT milestone's first decision runs on that SAME frame, not a re-observe a moment later —
+        # so a transient result hint (检测 toast / fading green ✓) the verdict was based on is still
+        # there for the next step, and we don't burn a redundant screenshot. Set on transition,
+        # consumed (reused) on the next iteration, cleared after any executed action re-mutates the
+        # page. Reads use the same verdict frame via _drive_pending_reads(done_png=...).
+        _carry_obs = None
 
-        def _drive_pending_reads() -> "str | None":
+        def _drive_pending_reads(done_png: "bytes | None" = None) -> "str | None":
             """Pure single-frame READ runs — the inspect primitive. A `read` run is NOT a
-            checker-gated milestone loop: it captures ONE frame of the current screen (the
-            result the prior milestone left), runs structured_read (读不到当没有，never blocks
-            the program), packages the reads, and advances the interpreter — no actions, no
-            acceptance gate. The gate is exactly what broke before: a read milestone re-clicked
-            检测 and the checker read the green ✓ as a gray '?' and stuck (run 20260613_193916),
-            so the answer on screen never made it into the program. Loops over consecutive
-            reads; on the next non-read run it reseeds the supervisor for the turn loop. Returns
-            the final reply if the program ended, else None."""
+            checker-gated milestone loop: it reads the result the prior milestone left, runs
+            structured_read (读不到当没有，never blocks the program), packages the reads, and
+            advances the interpreter — no actions, no acceptance gate.
+
+            Critically, a read consumes the VERDICT FRAME — the exact frame the checker accepted
+            the prior milestone on (passed in as `done_png`) — NOT a fresh capture a turn later.
+            Transient result hints (a 检测-success toast, a green ✓ that fades) are visible on the
+            verdict frame but can be gone by the next observe; re-capturing would read an empty
+            screen and misjudge (user-reported flaw). At setup (no prior milestone) done_png is
+            None → capture one frame here. Consecutive reads share the same screen, so the frame
+            is reused across the loop. Returns the final reply if the program ended, else None."""
             nonlocal _cur_run, _run_idx, _notes_mark
             from gui_agent.core.orchestrator.engine import (
                 package_result, task_type_for, to_milestone,
             )
+            _frame = done_png  # verdict frame the checker just accepted on; reused across reads
             while _cur_run is not None and _cur_run.kind == "read":
                 _reads: dict = {}
                 if _cur_run.returns:
                     from gui_agent.core.orchestrator.structured_read import structured_read
-                    _rp = bundle.make_perception(phone, log_dir / f"screenshot_read_{_run_idx}.png")
-                    _png = _rp.observe().png_bytes
+                    if _frame is None:  # setup leading read: no prior frame → capture once
+                        _frame = bundle.make_perception(
+                            phone, log_dir / f"screenshot_read_{_run_idx}.png"
+                        ).observe().png_bytes
                     _reads = structured_read(
-                        _png, _cur_run.returns,
+                        _frame, _cur_run.returns,
                         read_spec=_cur_run.read_spec,
                         check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                     )
-                    _say(f"  [Orchestrator] 只读一帧 {_cur_run.returns} → {_reads}")
+                    _say(f"  [Orchestrator] 只读验收帧 {_cur_run.returns} → {_reads}")
                 _res = package_result(
                     _cur_run, completed=True,
                     summary=f"读取 {'、'.join(_cur_run.returns) or _cur_run.name}",
@@ -718,9 +731,18 @@ def run_agent_loop(
 
             _say("\n" + TURN_HEADER.format(turn_no=turn_no))
 
-            _status(turn_no, "截图分析中…")
-            perception = bundle.make_perception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
-            observation = perception.observe()
+            if _carry_obs is not None:
+                # Milestone just accepted: reuse its verdict frame for the next milestone's first
+                # decision (no re-observe). Persist it as this turn's screenshot so the report has
+                # a thumbnail; the frame is identical to the prior turn's by design.
+                observation = _carry_obs
+                _carry_obs = None
+                (log_dir / f"screenshot_turn_{turn_no}.png").write_bytes(observation.png_bytes)
+                _say("  (复用上一步的验收帧，未重新截图)")
+            else:
+                _status(turn_no, "截图分析中…")
+                perception = bundle.make_perception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
+                observation = perception.observe()
             # YOLO + OCR run in the background, overlapping the decide below;
             # awaited just before execute (snap) so they add ~no latency.
             prep_future = _PREP_POOL.submit(executor.prepare_frame, observation.png_bytes)
@@ -1035,10 +1057,15 @@ def run_agent_loop(
                     except StopIteration as _e:  # program finished (finish / failure / fell off end)
                         return _orch_result(context, _interp, _e.value or "")
                     _run_idx += 1
-                    _reply = _drive_pending_reads()  # pure read(s) here, then reseed next non-read
+                    # Read off the VERDICT FRAME this milestone was accepted on — not a fresh
+                    # capture a turn later (transient result hints may have faded by then).
+                    _reply = _drive_pending_reads(done_png=observation.png_bytes)
                     if _reply is not None:
                         return _orch_result(context, _interp, _reply)
-                    _say(f"  [Orchestrator] 下一子任务：{_cur_run.name}")
+                    # Carry the verdict frame forward: the next milestone's first supervisor.step
+                    # runs on it (same frame the prior milestone was accepted on), not a re-observe.
+                    _carry_obs = observation
+                    _say(f"  [Orchestrator] 下一子任务：{_cur_run.name}（在验收帧上起步）")
                     continue
                 if sv_step.goal_completed:
                     return _make_result(context, reason, sv_step.collection_summary)
