@@ -29,6 +29,7 @@ from gui_agent.core.output import generate_reply
 from gui_agent.core.reader import ContentReader, annotate_content_note, build_reader_instruction
 from gui_agent.core.temporal import resolve_temporal_expressions
 from gui_agent.core.policies.base import ActionPolicy
+from gui_agent.core.orchestrator.program import Program  # DSL orchestrator mode (program param)
 from gui_agent.core.target_verify import verify_target
 from gui_agent.core.schemas import (
     ActionDecision,
@@ -421,6 +422,21 @@ def _make_result(
     }
 
 
+def _orch_result(context, interp, reply: str) -> dict:
+    """Result dict for orchestrator (DSL) mode: the reply comes from the interpreter
+    (finish / auto-summary) and each milestone's structured RunResult is attached, so the
+    answer reflects the whole program's persisted reads, not just the last loop."""
+    base = _make_result(context, reply)
+    base["result_summary"] = reply
+    base["goal_completed"] = not interp.failed
+    base["orchestrator"] = {
+        "reply": reply,
+        "failed": interp.failed,
+        "run_log": [r.model_dump() for r in interp.run_log],
+    }
+    return base
+
+
 def _print_turn_stats(turn_no: int, started_at: float, llm_calls_before: int) -> None:
     elapsed = time.perf_counter() - started_at
     llm_calls = get_llm_call_count() - llm_calls_before
@@ -455,6 +471,7 @@ def run_agent_loop(
     router: dict | None = None,    # RouterResult dict (chat path); None for bin/runner
     on_session_open: object = None,  # callable(phone) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
+    program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
 ) -> dict:
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
 
@@ -587,6 +604,29 @@ def run_agent_loop(
             if _wb:
                 from gui_agent.core.hud import dock_rect
                 hud.reposition(*dock_rect(*_wb))
+
+        # ── DSL orchestrator mode ──────────────────────────────────────────────────
+        # The interpreter (not the supervisor's walker) sequences milestones. Seed the
+        # supervisor with the first run()'s milestone; the loop drives it, and the stop
+        # block asks the interpreter for the next on milestone-done. program=None → the
+        # DAG path is untouched.
+        _interp = None
+        _gen = None
+        _cur_run = None
+        _run_idx = 0
+        _notes_mark = 0
+        if program is not None:
+            from gui_agent.core.orchestrator import Interpreter
+            from gui_agent.core.orchestrator.engine import task_type_for, to_milestone
+            _interp = Interpreter(program)
+            _gen = _interp.steps()
+            try:
+                _cur_run = next(_gen)
+            except StopIteration as _e:  # program with no run() (just finish / empty)
+                _save_ctx()
+                return _orch_result(context, _interp, _e.value or "")
+            supervisor.reseed(to_milestone(_cur_run, _run_idx), task_type=task_type_for(_cur_run))
+            _notes_mark = len(context.content_notes)
 
         while True:
             turn_no = len(context.turns) + 1
@@ -898,6 +938,28 @@ def run_agent_loop(
                 else:
                     _say(f"\n任务未完成：{reason}")
                 _save_ctx()
+                # ── DSL orchestrator mode: this is a MILESTONE boundary, not the run's end.
+                # Package the finished milestone into a RunResult, advance the interpreter to
+                # the next run() (or finish), reseed the supervisor, and keep looping. The DAG
+                # path below (program is None) is unchanged.
+                if program is not None:
+                    from gui_agent.core.orchestrator.engine import (
+                        package_result, task_type_for, to_milestone,
+                    )
+                    _result = package_result(
+                        _cur_run, completed=sv_step.goal_completed,
+                        summary=sv_step.summary or reason,
+                        notes=context.content_notes[_notes_mark:],
+                    )
+                    try:
+                        _cur_run = _gen.send(_result)
+                    except StopIteration as _e:  # program finished (finish / failure / fell off end)
+                        return _orch_result(context, _interp, _e.value or "")
+                    _run_idx += 1
+                    supervisor.reseed(to_milestone(_cur_run, _run_idx), task_type=task_type_for(_cur_run))
+                    _notes_mark = len(context.content_notes)
+                    _say(f"  [Orchestrator] 下一子任务：{_cur_run.name}")
+                    continue
                 if sv_step.goal_completed:
                     return _make_result(context, reason, sv_step.collection_summary)
                 return _make_result(context, reason)
