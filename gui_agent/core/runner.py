@@ -946,10 +946,23 @@ def run_agent_loop(
                     from gui_agent.core.orchestrator.engine import (
                         package_result, task_type_for, to_milestone,
                     )
+                    # Read milestone: extract its `returns` fields off THIS (done = result)
+                    # frame — single-frame structured read, not the checker-gated loop. The
+                    # interpreter then branches on these structured values. Non-read milestones
+                    # carry no reads.
+                    _reads = None
+                    if _cur_run.kind == "read" and _cur_run.returns and sv_step.goal_completed:
+                        from gui_agent.core.orchestrator.structured_read import structured_read
+                        _reads = structured_read(
+                            observation.png_bytes, _cur_run.returns,
+                            getattr(supervisor, "_check_knowledge", "") or "",
+                        )
+                        _say(f"  [Orchestrator] 读取 {_cur_run.returns} → {_reads}")
                     _result = package_result(
                         _cur_run, completed=sv_step.goal_completed,
                         summary=sv_step.summary or reason,
                         notes=context.content_notes[_notes_mark:],
+                        reads=_reads,
                     )
                     try:
                         _cur_run = _gen.send(_result)

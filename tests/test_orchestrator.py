@@ -188,3 +188,36 @@ def test_supervisor_reseed_single_milestone():
     assert list(p._order) == ["d"] and p._current_id == "d"
     assert p.task_type == "analysis"          # read → analysis（读取门）
     assert p._scroll_counts == {}             # per-milestone 追踪已清
+
+
+# ── #3 structured read: reads 进 RunResult，让 if 真分支 ──────────────────────────
+
+
+def test_package_result_carries_structured_reads():
+    from gui_agent.core.orchestrator.engine import package_result
+    r = package_result(Run(var="d", name="读", kind="read", returns=["连通判定"]),
+                       completed=True, summary="读完", notes=[],
+                       reads={"连通判定": "连通"})
+    assert r.reads == {"连通判定": "连通"} and r.completed
+
+
+def test_structured_read_empty_returns_no_llm():
+    # 无 returns 直接返回 {}，不触 LLM（确定性）。
+    from gui_agent.core.orchestrator.structured_read import structured_read
+    assert structured_read(b"x", [], "线索") == {}
+
+
+def test_if_branches_on_structured_reads_end_to_end():
+    # 串起来：read milestone 拿到结构化 {连通判定:连通} → if 走 then(建单)。
+    prog = Program(statements=[
+        Run(var="d", name="读连通判定", kind="read", returns=["连通判定"]),
+        If(cond=Cond(var="d", field="连通判定", value="连通"),
+           then=[Run(name="建单", kind="action")],
+           otherwise=[Finish(message="不可达")]),
+    ])
+    def _exec(run: Run) -> RunResult:
+        reads = {"连通判定": "连通"} if run.var == "d" else {}
+        return RunResult(completed=True, reads=reads, summary=run.name)
+    res = ProgramRunner(_exec).run(prog)
+    assert any(r.name == "建单" for r in res.run_log)   # 连通 → 建单（结构化 reads 驱动分支）
+    assert res.reply != "不可达"

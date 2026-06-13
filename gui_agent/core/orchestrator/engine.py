@@ -53,15 +53,17 @@ def task_type_for(run: Run) -> Literal["action", "analysis"]:
     return "analysis" if run.kind == "read" else "action"
 
 
-def package_result(run: Run, *, completed: bool, summary: str, notes: list[str]) -> RunResult:
-    """Package a finished milestone's loop state into the RunResult contract.
-
-    `reads` is empty for now (content_notes are unstructured text); structured
-    {field: value} extraction of `run.returns` from the read frame is step #3."""
+def package_result(
+    run: Run, *, completed: bool, summary: str, notes: list[str],
+    reads: dict[str, str] | None = None,
+) -> RunResult:
+    """Package a finished milestone's loop state into the RunResult contract. `reads` is the
+    structured {field: value} extracted from the result frame for a read milestone (see
+    orchestrator.structured_read); other milestones pass none."""
     return RunResult(
         completed=completed,
         failed=not completed,
-        reads={},  # TODO(#3): structured extraction of run.returns
+        reads=dict(reads) if reads else {},
         summary=summary,
         evidence=list(notes),
     )

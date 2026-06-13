@@ -9,6 +9,7 @@ Boundaries:
 """
 
 from .program import Cond, Finish, If, Program, Run, RunResult, Stmt
+from .structured_read import structured_read
 from .runner import (
     Interpreter,
     MilestoneExecutor,
@@ -21,5 +22,5 @@ from .runner import (
 __all__ = [
     "Cond", "Finish", "If", "Program", "Run", "RunResult", "Stmt",
     "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
-    "RunRecord", "drive",
+    "RunRecord", "drive", "structured_read",
 ]
