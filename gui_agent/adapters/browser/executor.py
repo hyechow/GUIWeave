@@ -61,7 +61,15 @@ class BrowserExecutor(VisionExecutor):
         HTML report / runtime visualizer draw the original→snapped correction like YOLO/OCR."""
         sx, sy = px, py
         try:
-            target = _quoted_label(getattr(getattr(self, "_cur_action", None), "description", "") or "")
+            action = getattr(self, "_cur_action", None)
+            # Text-retarget is a TAP-on-labelled-control rescue (the 操作/删除 neighbour miss).
+            # Only pass the quoted label for a genuine tap/click. For a `type` focus-tap the
+            # quoted string in the description is the VALUE being typed, NOT a UI label — and
+            # dom_snap matches inputs by their .value, so it wrongly snaps onto an already-filled
+            # field holding that same value (run 20260613_193023: typing 'admin' into the password
+            # box kept retargeting to the account box whose value was already 'admin' → login stuck).
+            at = getattr(action, "action_type", "")
+            target = _quoted_label(getattr(action, "description", "") or "") if at in ("tap", "click") else ""
             cx, cy, info = self._client().dom_snap(px, py, target_text=target)
             if info is not None and (abs(cx - px) > 1 or abs(cy - py) > 1):
                 print(f"  DOM 吸附: ({px:.0f},{py:.0f}) → ({cx:.0f},{cy:.0f}) [{info}]")

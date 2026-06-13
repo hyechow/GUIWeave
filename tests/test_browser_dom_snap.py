@@ -102,3 +102,18 @@ def test_execute_passes_quoted_label_to_dom_snap():
     assert c.seen_target == "操作"            # 标签传到了 dom_snap
     assert c.clicked == (966.0, 210.0)        # 点击落在重定向后的位置
     assert dec.action.snap is not None and "text" in dec.action.snap["info"]
+
+
+def test_type_focus_tap_does_not_text_retarget():
+    # A `type` focus-tap must NOT pass the quoted value as a label: dom_snap matches inputs by
+    # .value, so typing 'admin' would retarget onto an already-filled account field whose value
+    # is 'admin' (run 20260613_193023: password box never filled → login stuck). Only genuine
+    # tap/click should text-retarget; for type we pass target_text="" → plain elementFromPoint.
+    c = _FakeClient((250.0, 487.0, "text 302x20"), viewport=(1000, 1000))
+    ex = _exec(c)
+    ex._cur_action = BrowserAction(
+        action_type="type", x=248, y=560, text="admin",
+        description="在密码输入框中输入 'admin'",
+    )
+    ex._tap(248, 560)
+    assert c.seen_target == ""                 # 'admin' 没被当标签传给 dom_snap
