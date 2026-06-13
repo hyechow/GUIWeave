@@ -422,17 +422,33 @@ def _make_result(
     }
 
 
-def _orch_result(context, interp, reply: str) -> dict:
-    """Result dict for orchestrator (DSL) mode: the reply comes from the interpreter
-    (finish / auto-summary) and each milestone's structured RunResult is attached, so the
-    answer reflects the whole program's persisted reads, not just the last loop."""
-    base = _make_result(context, reply)
+def _orch_result(context, interp, terminal: str, *, current=None) -> dict:
+    """Result dict for orchestrator (DSL) mode. Compose a COMPREHENSIVE final reply from the
+    whole program's structured state — run_log (completed milestones + their reads), the
+    in-progress milestone if interrupted, and how it ended — i.e. 已完成 / 读取发现 / 未完成 /
+    结论, instead of echoing just the last finish line or loop summary.
+
+    `terminal` is the interpreter's finish/failure reply (program reached a terminal) or the
+    interruption note (e.g. "达到最大轮数 N"). `current` is the in-progress run when interrupted
+    mid-milestone (its name goes into the digest, and the run did NOT complete the goal)."""
+    from gui_agent.core.output import compose_orchestration_reply
+
+    run_log = [r.model_dump() for r in interp.run_log]
+    digest = [
+        {"name": r.name, "completed": r.result.completed, "failed": r.result.failed,
+         "reads": dict(r.result.reads), "summary": r.result.summary}
+        for r in interp.run_log
+    ]
+    reply = compose_orchestration_reply(
+        context.goal, digest,
+        current=(current.name if current is not None else ""),
+        terminal=terminal,
+    )
+    base = _make_result(context, terminal)
     base["result_summary"] = reply
-    base["goal_completed"] = not interp.failed
+    base["goal_completed"] = (current is None) and not interp.failed
     base["orchestrator"] = {
-        "reply": reply,
-        "failed": interp.failed,
-        "run_log": [r.model_dump() for r in interp.run_log],
+        "reply": reply, "failed": interp.failed, "terminal": terminal, "run_log": run_log,
     }
     return base
 
@@ -692,6 +708,8 @@ def run_agent_loop(
                 stitch_acc = None
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
                 _save_ctx()
+                if program is not None:  # orchestrator: summarize the whole program so far
+                    return _orch_result(context, _interp, f"达到最大轮数 {max_turns}（任务未完成）", current=_cur_run)
                 return _make_result(context, f"达到最大轮数 {max_turns}")
 
             turn_started_at = time.perf_counter()
@@ -722,7 +740,10 @@ def run_agent_loop(
                 if loading_streak > MAX_LOADING_FRAMES:
                     _say(f"\n页面持续加载 {loading_streak} 帧仍未稳定，agent-loop 停止")
                     _save_ctx()
-                    return _make_result(context, f"页面持续加载未稳定（>{MAX_LOADING_FRAMES} 帧）")
+                    _term = f"页面持续加载未稳定（>{MAX_LOADING_FRAMES} 帧）"
+                    if program is not None:
+                        return _orch_result(context, _interp, _term, current=_cur_run)
+                    return _make_result(context, _term)
                 _say(f"  [Loading] 等待页面稳定（第 {loading_streak} 帧，不计入轮数）...")
                 time.sleep(LOADING_WAIT_S)
                 continue

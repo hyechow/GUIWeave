@@ -65,6 +65,15 @@ _CHAT_SYSTEM = """\
 重要：当执行上下文显示「仅执行了导航，目标内容已存在」时，说明用户要求的写入/发送操作结果（消息、记录、设置）在本次会话启动前就已存在，智能体本次没有新写入任何内容。此时必须如实告知用户目标内容已存在（例如"发现文件传输助手里已有这条记录"），不能说"已经帮你完成了"或"已经发送了"。
 """
 
+_ORCH_SYSTEM = """\
+你刚帮用户跑完一个 GUI 自动化任务。下面给你按顺序的执行轨迹（每个子任务是否完成、读到的结果）、当前进度和结束原因。用自然口语的中文，简短地告诉用户结果。
+
+要求：
+- **2~3 句话就够**，先说最终结论/关键结果，再补一句没完成的话卡在哪、为什么。
+- 别逐步复述做了哪些操作（「进入页面、设好起点终点…」这种过程不要讲），只讲结果。
+- 实事求是，完成就说完成、没完成就说清楚，别夸大；只依据给到的信息，不编造数值/结果。
+- 别用小标题/列点/markdown 加粗，就是顺口的几句话。"""
+
 
 def generate_reply(
     goal: str,
@@ -97,6 +106,40 @@ def generate_reply(
         messages = _action_messages(goal, result or {})
 
     return _message_text(llm.invoke(messages).content).strip()
+
+
+def compose_orchestration_reply(
+    goal: str,
+    run_log: list[dict],
+    *,
+    current: str = "",
+    terminal: str = "",
+) -> str:
+    """Comprehensive final reply for DSL orchestrator runs: synthesize 已完成 / 读取发现 /
+    未完成 / 结论 from the WHOLE program's structured state, not just the last finish line.
+
+    run_log: ordered milestones [{name, completed, failed, reads:{字段:值}, summary}].
+    current: the in-progress (uncompleted) milestone name when interrupted (max_turns), else "".
+    terminal: how the program ended — the finish/failure reply, or "达到最大轮数 N" etc."""
+    cfg = resolve_llm_config("output")
+    llm = ChatOpenAI(
+        model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+        extra_body={"enable_thinking": False},
+    )
+    lines = []
+    for i, r in enumerate(run_log, 1):
+        mark = "✗ 未完成" if r.get("failed") else ("✓ 完成" if r.get("completed") else "· 进行中")
+        lines.append(f"{i}. {r.get('name', '')} — {mark}")
+        reads = {k: v for k, v in (r.get("reads") or {}).items() if v}
+        if reads:
+            lines.append("   读取：" + "；".join(f"{k}={v}" for k, v in reads.items()))
+    if current:
+        lines.append(f"（当前进行中、尚未完成：{current}）")
+    digest = "\n".join(lines) or "（无已完成步骤）"
+    human = f"用户目标：{goal}\n\n执行轨迹：\n{digest}\n\n结束原因：{terminal or '程序正常结束'}"
+    return _message_text(
+        llm.invoke([SystemMessage(content=_ORCH_SYSTEM), HumanMessage(content=human)]).content
+    ).strip()
 
 
 # ── Message builders ───────────────────────────────────────────────────────
