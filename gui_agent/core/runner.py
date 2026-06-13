@@ -653,13 +653,25 @@ def run_agent_loop(
                     return _e.value or ""
                 _run_idx += 1
             if _cur_run is not None:
-                supervisor.reseed(to_milestone(_cur_run, _run_idx), task_type=task_type_for(_cur_run))
+                _ms = to_milestone(_cur_run, _run_idx)
+                supervisor.reseed(_ms, task_type=task_type_for(_cur_run))
+                # Accumulate the executed milestone so the report's 子目标分解 sidebar names every
+                # run (orchestrator reseeds one at a time; context.milestones is otherwise just the
+                # first). Pure reads have no turns → not here; the 分解 program row shows them.
+                if not any(m.get("id") == _ms.id for m in context.milestones):
+                    context.milestones.append({
+                        "id": _ms.id, "name": _ms.name, "description": _ms.description,
+                        "kind": _ms.kind, "success_condition": _ms.success_condition,
+                    })
                 _notes_mark = len(context.content_notes)
             return None
 
         if program is not None:
             from gui_agent.core.orchestrator import Interpreter
             _interp = Interpreter(program)
+            # Persist the decomposed program so the report renders decompose as its OWN row
+            # (a distinct stage now, not folded into turn 1's supervisor step).
+            context.orchestrator = {"program": program.model_dump(mode="json")}
             _gen = _interp.steps()
             try:
                 _cur_run = next(_gen)
@@ -727,8 +739,9 @@ def run_agent_loop(
                     except Exception:
                         pass
 
-            # Persist milestone decomposition after first step
-            if not context.milestones and hasattr(supervisor, "_milestones"):
+            # Persist milestone decomposition after first step (DAG mode only — orchestrator mode
+            # accumulates milestones per reseed in _drive_pending_reads, so don't overwrite).
+            if program is None and not context.milestones and hasattr(supervisor, "_milestones"):
                 context.milestones = [
                     {"id": m.id, "name": m.name, "description": m.description,
                      "kind": m.kind, "success_condition": m.success_condition}

@@ -461,6 +461,7 @@ class ReportData:
     stats: dict = field(default_factory=dict)
     milestones: list[dict] = field(default_factory=list)
     decompose_summary: str = ""  # First-turn supervisor summary with decomposition info
+    orchestrator: dict = field(default_factory=dict)  # DSL 编排器 {program:{goal,statements}}; {} for DAG runs
     models: dict[str, str] = field(default_factory=dict)  # config_key → model used this run
     raw_input: str = ""  # original human input (title); empty for old logs
     goal: str = ""       # resolved goal that drove the run
@@ -1030,6 +1031,7 @@ class RunnerReportBuilder:
         data.platform = ctx.get("platform") or ""
         data.output = ctx.get("output") or ""
         data.knowledge = ctx.get("knowledge") or {}
+        data.orchestrator = ctx.get("orchestrator") or {}
         data.wall_clock_s = ctx.get("wall_clock_s") or 0.0
         data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
@@ -1913,6 +1915,17 @@ HTML_TEMPLATE = """\
   .stats {{ color: var(--muted); font-size: 12px; }}
   .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
   .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
+  /* ── 分解 (DSL program) row ── */
+  .prog-row {{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; }}
+  .prog-step {{ display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: #fff; border: 1px solid var(--border); border-radius: 14px; }}
+  .prog-n {{ display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 2px; border-radius: 8px; background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 10px; }}
+  .prog-var {{ font-family: monospace; color: #0891b2; font-weight: 600; }}
+  .prog-ret {{ color: #065f46; font-size: 11px; }}
+  .prog-arrow {{ color: #cbd5e1; }}
+  .prog-if {{ display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 3px 9px; background: #fffbeb; border: 1px dashed #fcd34d; border-radius: 14px; }}
+  .prog-kw {{ color: #b45309; font-weight: 700; font-family: monospace; }}
+  .prog-branch {{ display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }}
+  .prog-finish {{ padding: 3px 9px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 14px; color: #065f46; }}
 
   /* Final output / 最终输出 card */
   .result-card {{ max-width: 1080px; margin: 0 auto 20px; padding: 16px 20px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #22c55e; }}
@@ -2009,6 +2022,7 @@ HTML_TEMPLATE = """\
       <h1>{title}{platform_badge}</h1>
       <div class="stats">{stats}</div>
       {provenance_html}
+      {program_html}
       {cost_note_html}
     </div>
 
@@ -2393,6 +2407,66 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
     )
 
 
+_PROG_KIND_BADGE = {
+    "navigation": "milestone-badge-navigation", "filter": "milestone-badge-filter",
+    "action": "milestone-badge-action", "read": "milestone-badge-collection",
+}
+
+
+def _render_program_row(orchestrator: dict | None) -> str:
+    """Orchestrator mode: render the decomposed DSL program as its OWN header row.
+
+    decompose is a distinct stage now (goal → run/if/finish program), not folded into turn 1.
+    Renders the run/if/finish structure inline so the report shows WHAT was decomposed,
+    separate from the per-milestone execution below. Empty (DAG mode) → no row."""
+    if not orchestrator:
+        return ""
+    stmts = (orchestrator.get("program") or {}).get("statements") or []
+    if not stmts:
+        return ""
+
+    counter = [0]
+
+    def _run_chip(s: dict) -> str:
+        counter[0] += 1
+        kind = s.get("kind", "action")
+        badge = _PROG_KIND_BADGE.get(kind, "milestone-badge-default")
+        var = s.get("var")
+        var_html = f'<span class="prog-var">{_safe(var)}=</span>' if var else ""
+        ret = [r for r in (s.get("returns") or []) if r]
+        ret_html = f'<span class="prog-ret">读 {_safe("、".join(ret))}</span>' if (kind == "read" and ret) else ""
+        return (
+            f'<span class="prog-step">'
+            f'<span class="prog-n">{counter[0]}</span>{var_html}{_safe(s.get("name", ""))}'
+            f'<span class="milestone-badge {badge}">{_safe(kind)}</span>{ret_html}'
+            f'</span>'
+        )
+
+    def _walk(items: list) -> list[str]:
+        out = []
+        for s in items:
+            op = s.get("op", "run")
+            if op == "run":
+                out.append(_run_chip(s))
+            elif op == "if":
+                cond = s.get("cond", {})
+                c = (f'{_safe(cond.get("var",""))}[{_safe(cond.get("field",""))}]'
+                     f'{_safe(cond.get("cmp","=="))}{_safe(cond.get("value",""))}')
+                then_html = '<span class="prog-arrow">→</span>'.join(_walk(s.get("then", []))) or "—"
+                else_html = '<span class="prog-arrow">→</span>'.join(_walk(s.get("otherwise", []))) or "—"
+                out.append(
+                    f'<span class="prog-if"><span class="prog-kw">if</span> {c} '
+                    f'<span class="prog-kw">?</span> <span class="prog-branch">{then_html}</span> '
+                    f'<span class="prog-kw">:</span> <span class="prog-branch">{else_html}</span></span>'
+                )
+            elif op == "finish":
+                out.append(f'<span class="prog-finish">finish「{_safe(s.get("message", ""))}」</span>')
+        return out
+
+    body = '<span class="prog-arrow">→</span>'.join(_walk(stmts))
+    return f'<div class="decompose prog-row"><span class="decompose-label">分解</span>{body}</div>'
+
+
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
     llm_s = sum(m.get("total_time", 0) for m in data.milestones)  # Σ LLM-module timings
@@ -2616,6 +2690,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         platform_badge=_render_platform_badge(data.platform),
         stats=stats_str,
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
+        program_html=_render_program_row(data.orchestrator),
         outline_html=outline_html,
         cost_note_html=cost_note_html,
         knowledge_html=_render_knowledge_html(data.knowledge, data.knowledge_sections),

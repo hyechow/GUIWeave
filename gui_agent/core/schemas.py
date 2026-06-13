@@ -466,6 +466,11 @@ class PolicyContext(BaseModel):
         default=None,
         description="本次 run_agent_loop 端到端真实墙钟耗时(秒)；含 LLM、settle、感知/执行/调度等全部。旧 log 无此字段则为 None",
     )
+    orchestrator: Optional[dict] = Field(
+        default=None,
+        description="DSL 编排器模式：{program: {goal, statements:[run/if/finish]}}。decompose 是独立阶段，"
+                    "报告据此渲染单独的「分解」行。program=None 的 DAG 路径为 None",
+    )
 
 
 # --- Back-compat aliases -----------------------------------------------------
