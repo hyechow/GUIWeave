@@ -147,8 +147,15 @@ def _check_assertions(milestones: list, constraints: list[str], assertions: list
                     f"检测验收未使用知识定义的终态标志(高亮/不可达提示): "
                     f"{[(m.name, m.success_condition) for m in detect_ms]}"
                 )
-            if not any("群组" in _milestone_text(m) for m in milestones):
-                details.append("缺少机器人群组选择步(实测必填,不选则静默无结果)")
+            # 「机器人群组」为可选（2026-06-12 用户确认,早前「必填」是误判——回归 20260612_221523:
+            # 分解把群组写进验收必要条件,goal 又没给群组名,planner 编造「目标群组名称」输入过滤,
+            # 候选清空死锁 10 轮）。goal 未指定群组时,验收不得要求群组已选择/填入。
+            group_required = [
+                m.name for m in milestones
+                if re.search(r"(填入|选择|设置|选定).{0,8}群组|群组.{0,10}(已|被)(正确)?(填入|选择|设置|选定)", m.success_condition)
+            ]
+            if group_required:
+                details.append(f"goal 未指定群组,验收却把「选择群组」设为必要条件: {group_required}")
             if not any(
                 any(kw in _milestone_text(m) for kw in ("记录", "读取", "原因"))
                 for m in milestones
