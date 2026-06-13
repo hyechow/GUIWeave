@@ -196,15 +196,17 @@ def test_supervisor_reseed_single_milestone():
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.core.orchestrator.engine import to_milestone, task_type_for
     p = MilestoneSupervisorPolicy()
-    # 先塞点 per-milestone 脏状态，验证 reseed 会清
     p._milestones = {"old": object()}  # type: ignore[dict-item]
     p._order = ["old", "x"]
-    p._scroll_counts = {"old": 5}
+    p._recent_screenshots.append((b"frame", None))  # stuck 检测器帧历史
+    p._scroll_counts = {"old": 5}             # 其余 per-milestone 态
     run = Run(var="d", name="读判定", kind="read", returns=["连通判定"])
     p.reseed(to_milestone(run, 0), task_type=task_type_for(run))
     assert list(p._order) == ["d"] and p._current_id == "d"
     assert p.task_type == "analysis"          # read → analysis（读取门）
-    assert p._scroll_counts == {}             # per-milestone 追踪已清
+    # 与 DAG 的 _advance 对齐：只清 _recent_screenshots，其余跨 milestone 态保留（不再过度清空）。
+    assert list(p._recent_screenshots) == []
+    assert p._scroll_counts == {"old": 5}
 
 
 # ── #3 structured read: reads 进 RunResult，让 if 真分支 ──────────────────────────

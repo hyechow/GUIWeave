@@ -341,27 +341,16 @@ class MilestoneSupervisorPolicy:
         跑到 done 后，_current_id 自然走到 None → 下一次 step() 发 terminal/goal_completed，agent_loop
         据此向解释器要下一个并 reseed。
 
-        清 per-milestone 追踪状态以免跨 milestone 串味；保留应用知识/全局约束（跨 milestone 复用、
-        省重注入）。task_type 控制读取门（读取类 milestone 传 'analysis' 才会真读，见 _ctx/_default_
-        read_instruction 的 task_type 门）。"""
+        与 DAG 模式的 `_advance` 对齐：跨 milestone **只清 `_recent_screenshots`**（stuck 检测器
+        的帧历史，不该跨 milestone 串）；其余 per-milestone 态（page_identity / last_plan /
+        last_replan / dom_state / done_checks / sections_loaded …）一律**保留**，与 `_advance`
+        一致——否则编排器会比 DAG 更狠地清空，造成跨 milestone 上下文断裂。应用知识/全局约束本就
+        保留（跨 milestone 复用）。task_type 控制读取门（读取类 milestone 传 'analysis' 才会真读）。"""
         self._milestones = {milestone.id: milestone}
         self._order = [milestone.id]
         self._current_id = milestone.id
         self.task_type = task_type  # 读取门：read milestone 须为 'analysis' 才读
-        # per-milestone 追踪 → 清（跨 milestone 不该串）
-        self._recent_screenshots.clear()
-        self._scroll_counts.clear()
-        self._progress_values.clear()
-        self._last_page_identity.clear()
-        self._last_check_summary.clear()
-        self._milestone_done_checks.clear()
-        self._last_check = None
-        self._last_plan = None
-        self._last_replan = None
-        self._last_url = None
-        self._last_dom_state = None
-        self._dom_changed = False
-        self._last_sections_loaded = []
+        self._recent_screenshots.clear()  # 唯一要清的，和 _advance 一致
 
     # ── Single-step machine ───────────────────────────────────────────
 
