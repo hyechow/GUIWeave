@@ -23,9 +23,9 @@ from gui_agent.core.policies.base import resize_to_logical_png
 from llm.structured import invoke_structured
 
 _SYSTEM = """\
-你从截图读取【指定字段】的当前值，用于程序判断。对每个字段：
+你从截图读取【指定字段】的当前值，用于程序判断。这是通用读法，具体「读什么、怎么判读」以本次的【读取说明】为准。对每个字段：
 1. 先在 evidence 里写出你在界面上看到的、与该字段相关的具体信号——包括文字，也包括图标/颜色/形状/位置（例：「起点终点输入框之间右侧有一个绿色圆形对勾✓」）。
-2. 再据【判读提示】把该信号判读成 value 的文字值。**图标/颜色信号必须判读成文字写进 value，不能因为它不是文字就留空**（如绿色✓→连通、红字「路径不可达」→不可达、灰色?→未检测）。
+2. 再据【读取说明】（任务级，优先）和【界面信号参考】（应用约定，补充）把该信号判读成 value 的文字值。**图标/颜色信号必须判读成文字写进 value，不能因为它不是文字就留空**（如绿色✓→连通、红字「路径不可达」→不可达、灰色?→未检测）。
 3. 确实读不到（界面没有该信息）才把 value 留空。
 只读被指定的字段，不要补充其他字段、不要编造。
 """
@@ -41,9 +41,15 @@ class _StructuredRead(BaseModel):
     reads: list[_FieldRead] = Field(default_factory=list)
 
 
-def structured_read(png_bytes: bytes, returns: list[str], check_knowledge: str = "") -> dict[str, str]:
+def structured_read(
+    png_bytes: bytes, returns: list[str], read_spec: str = "", check_knowledge: str = "",
+) -> dict[str, str]:
     """Read `returns` fields off the frame -> {field: value} (empty when not readable).
-    `check_knowledge` (the app's _check.md acceptance cues) lets it judge visual signals."""
+
+    `read_spec` is the task-level read instruction the decomposer generated from the user goal
+    (what each field means + how to judge it off the UI) — the PRIMARY judgment guidance, so the
+    extraction semantics live in the program, not in this hardcoded prompt. `check_knowledge`
+    (the app's _check.md signal conventions) is a supplementary reference for icon/colour cues."""
     if not returns:
         return {}
     cfg = resolve_llm_config("reader")
@@ -52,8 +58,10 @@ def structured_read(png_bytes: bytes, returns: list[str], check_knowledge: str =
         extra_body={"enable_thinking": False},
     )
     text = f"读取以下字段的当前值：{'、'.join(returns)}。"
+    if read_spec:
+        text += ("\n【读取说明】（任务定义，按此判读每个字段；优先于下方应用约定）：\n" + read_spec)
     if check_knowledge:
-        text += ("\n判读提示（某字段若以图标/颜色/位置表示，按此判读成文字值）：\n" + check_knowledge)
+        text += ("\n【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge)
     b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
     messages = [
         SystemMessage(content=_SYSTEM),

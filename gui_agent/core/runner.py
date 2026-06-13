@@ -615,9 +615,50 @@ def run_agent_loop(
         _cur_run = None
         _run_idx = 0
         _notes_mark = 0
+
+        def _drive_pending_reads() -> "str | None":
+            """Pure single-frame READ runs — the inspect primitive. A `read` run is NOT a
+            checker-gated milestone loop: it captures ONE frame of the current screen (the
+            result the prior milestone left), runs structured_read (读不到当没有，never blocks
+            the program), packages the reads, and advances the interpreter — no actions, no
+            acceptance gate. The gate is exactly what broke before: a read milestone re-clicked
+            检测 and the checker read the green ✓ as a gray '?' and stuck (run 20260613_193916),
+            so the answer on screen never made it into the program. Loops over consecutive
+            reads; on the next non-read run it reseeds the supervisor for the turn loop. Returns
+            the final reply if the program ended, else None."""
+            nonlocal _cur_run, _run_idx, _notes_mark
+            from gui_agent.core.orchestrator.engine import (
+                package_result, task_type_for, to_milestone,
+            )
+            while _cur_run is not None and _cur_run.kind == "read":
+                _reads: dict = {}
+                if _cur_run.returns:
+                    from gui_agent.core.orchestrator.structured_read import structured_read
+                    _rp = bundle.make_perception(phone, log_dir / f"screenshot_read_{_run_idx}.png")
+                    _png = _rp.observe().png_bytes
+                    _reads = structured_read(
+                        _png, _cur_run.returns,
+                        read_spec=_cur_run.read_spec,
+                        check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                    )
+                    _say(f"  [Orchestrator] 只读一帧 {_cur_run.returns} → {_reads}")
+                _res = package_result(
+                    _cur_run, completed=True,
+                    summary=f"读取 {'、'.join(_cur_run.returns) or _cur_run.name}",
+                    notes=[], reads=_reads,
+                )
+                try:
+                    _cur_run = _gen.send(_res)
+                except StopIteration as _e:  # program finished after the read (finish / off end)
+                    return _e.value or ""
+                _run_idx += 1
+            if _cur_run is not None:
+                supervisor.reseed(to_milestone(_cur_run, _run_idx), task_type=task_type_for(_cur_run))
+                _notes_mark = len(context.content_notes)
+            return None
+
         if program is not None:
             from gui_agent.core.orchestrator import Interpreter
-            from gui_agent.core.orchestrator.engine import task_type_for, to_milestone
             _interp = Interpreter(program)
             _gen = _interp.steps()
             try:
@@ -625,8 +666,10 @@ def run_agent_loop(
             except StopIteration as _e:  # program with no run() (just finish / empty)
                 _save_ctx()
                 return _orch_result(context, _interp, _e.value or "")
-            supervisor.reseed(to_milestone(_cur_run, _run_idx), task_type=task_type_for(_cur_run))
-            _notes_mark = len(context.content_notes)
+            _reply = _drive_pending_reads()  # leading read(s) + reseed the first non-read run
+            if _reply is not None:
+                _save_ctx()
+                return _orch_result(context, _interp, _reply)
 
         while True:
             turn_no = len(context.turns) + 1
@@ -943,34 +986,24 @@ def run_agent_loop(
                 # the next run() (or finish), reseed the supervisor, and keep looping. The DAG
                 # path below (program is None) is unchanged.
                 if program is not None:
-                    from gui_agent.core.orchestrator.engine import (
-                        package_result, task_type_for, to_milestone,
-                    )
-                    # Read milestone: extract its `returns` fields off THIS (done = result)
-                    # frame — single-frame structured read, not the checker-gated loop. The
-                    # interpreter then branches on these structured values. Non-read milestones
-                    # carry no reads.
-                    _reads = None
-                    if _cur_run.kind == "read" and _cur_run.returns and sv_step.goal_completed:
-                        from gui_agent.core.orchestrator.structured_read import structured_read
-                        _reads = structured_read(
-                            observation.png_bytes, _cur_run.returns,
-                            getattr(supervisor, "_check_knowledge", "") or "",
-                        )
-                        _say(f"  [Orchestrator] 读取 {_cur_run.returns} → {_reads}")
+                    from gui_agent.core.orchestrator.engine import package_result
+                    # The just-finished milestone is always a NON-read run: read runs never enter
+                    # the turn loop (they're consumed as pure frames by _drive_pending_reads). So
+                    # package this action/nav/filter result, advance, then drive any read run(s)
+                    # that follow as single-frame reads off the result this milestone just left.
                     _result = package_result(
                         _cur_run, completed=sv_step.goal_completed,
                         summary=sv_step.summary or reason,
                         notes=context.content_notes[_notes_mark:],
-                        reads=_reads,
                     )
                     try:
                         _cur_run = _gen.send(_result)
                     except StopIteration as _e:  # program finished (finish / failure / fell off end)
                         return _orch_result(context, _interp, _e.value or "")
                     _run_idx += 1
-                    supervisor.reseed(to_milestone(_cur_run, _run_idx), task_type=task_type_for(_cur_run))
-                    _notes_mark = len(context.content_notes)
+                    _reply = _drive_pending_reads()  # pure read(s) here, then reseed next non-read
+                    if _reply is not None:
+                        return _orch_result(context, _interp, _reply)
                     _say(f"  [Orchestrator] 下一子任务：{_cur_run.name}")
                     continue
                 if sv_step.goal_completed:

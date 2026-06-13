@@ -42,7 +42,7 @@ class RunResult(BaseModel):
 
 
 class Run(BaseModel):
-    """Drive ONE linear milestone. `var` binds its RunResult; `returns` = read_spec."""
+    """Drive ONE linear milestone. `var` binds its RunResult; `returns` = fields to read."""
 
     op: Literal["run"] = "run"
     var: Optional[str] = None
@@ -50,6 +50,12 @@ class Run(BaseModel):
     success_condition: str = ""
     kind: RunKind = "action"
     returns: list[str] = Field(default_factory=list)
+    # Task-level read instruction, authored by the decomposer from the user goal (not a
+    # hardcoded prompt): for kind="read" it says what each `returns` field means and how to
+    # judge it off the UI (which icon/colour/text carries it, what each value maps to). The
+    # read primitive feeds this to structured_read as the primary judgment guidance; the app's
+    # _check.md is a supplementary signal-convention reference. Empty for non-read runs.
+    read_spec: str = Field(default="")
 
 
 class Cond(BaseModel):
