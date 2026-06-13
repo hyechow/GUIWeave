@@ -97,6 +97,23 @@ def test_failed_run_stops_and_reports():
     assert not any(r.name == "不该执行的后续" for r in res.run_log)
 
 
+def test_confirm_read_after_action_drives_final_answer():
+    # confirm-read 模式：状态变更动作后跟一个 read 结构化确认结果，finish 据它答复——
+    # 成败不再只信动作步被判完成（checker 可能幻觉），而是由 confirm read 的结构化值定。
+    prog = Program(statements=[
+        Run(name="建单 s10→s9", kind="action"),
+        Run(var="c", name="确认订单已创建", kind="read", returns=["建单结果"],
+            read_spec="建单结果：订单列表出现该行或成功提示→成功，否则失败"),
+        Finish(message="建单结果：{c[建单结果]}"),
+    ])
+    def _exec(run: Run) -> RunResult:
+        reads = {"建单结果": "成功"} if run.var == "c" else {}
+        return RunResult(completed=True, reads=reads, summary=run.name)
+    res = ProgramRunner(_exec).run(prog)
+    assert res.reply == "建单结果：成功"          # 答复由 confirm read 的结构化值驱动
+    assert res.env["c"].reads["建单结果"] == "成功"  # confirm 结果进了 env
+
+
 def test_neq_condition():
     prog = Program(statements=[
         Run(var="d", name="读状态", kind="read", returns=["状态"]),
