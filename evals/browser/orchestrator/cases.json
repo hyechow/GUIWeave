@@ -1,0 +1,30 @@
+[
+  {
+    "label": "检测查询-confirm-read 撑腰的 action 应写 dispatch 门（回归 20260615_100753 双判绿✓多烧2帧）",
+    "goal": "在 RoboTeam 中使用路径连通性工具检测站点 s10-站点10 到 s9-站点9 的连通性，并记录检测结果",
+    "expected": {
+      "min_statements": 3,
+      "has_read": true
+    },
+    "assertions": [
+      "key_action_has_confirm_read",
+      "confirm_read_action_uses_dispatch_gate",
+      "read_has_spec"
+    ],
+    "note": "回归 20260615_100753：分解产出 [navigation 进检测页 / action 设起终点并执行检测 / read 读连通状态 / finish]。结构对，但 action 验收抄了旧 prompt 示例的『检测结果（连通标记/不可达提示）已显示』——把结果判读塞回执行期 checker，与紧随其后的 read 双判同一个绿✓：T12 点检测即生效→T13 checker 看到绿✓却不信(『处理中』)→冗余重点击→T14 把同一个绿✓幻觉成『灰色问号』→replan/等待→T15 才 done，比应有多烧 2 帧。两帧截图核验绿✓常驻=非提示消失，是 checker 判读非确定性。根因=分解器 prompt 规则4(action 验收写结果终态)与规则6(confirm-read)对结果双判。修法分两层：L1 改 prompt(规则4加例外+示例改 dispatch 门，软)；L2 engine.normalize_confirm_read_gates 确定性兜底——凡 action 紧跟 read 就把验收改写成 dispatch 门(硬保证，词表无关，覆盖 create/submit/delete/检测全类)。本 case 测 L1 原始产出。"
+  },
+  {
+    "label": "创建-confirm-read 撑腰的 action 应写 dispatch 门（泛化：非连通专用）",
+    "goal": "在 RoboTeam 新建一台虚拟机器人，并确认是否创建成功",
+    "expected": {
+      "min_statements": 3,
+      "has_read": true
+    },
+    "assertions": [
+      "key_action_has_confirm_read",
+      "confirm_read_action_uses_dispatch_gate",
+      "read_has_spec"
+    ],
+    "note": "泛化样本：把同一条不变量(confirm-read 撑腰的 action 验收=dispatch/defer 门，不把结果当终态)放到『创建』这种状态变更动作上，验证修法不是连通专用。期望分解：进虚拟机器人页(navigation)→新建(action，验收写『已提交创建/弹出提示/列表更新，成败由后续 read 判读』而非『创建成功提示已显示』)→确认创建结果(read，returns 含 创建结果，read_spec 写清成功/失败各看什么信号)→finish。断言词表无关：只看 action 验收是否含 dispatch(已点击/已提交/出现响应) 或 defer(成败由后续 read 判读) 信号。"
+  }
+]
