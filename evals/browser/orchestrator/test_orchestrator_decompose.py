@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.orchestrator import Finish, If, Run, decompose
+from gui_agent.core.orchestrator.program import TEMPLATE_RE
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
 
 CASES_FILE = Path(__file__).parent / "cases.json"
@@ -180,6 +181,35 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             ]
             if bad:
                 details.append(f"read 步缺 returns 或 read_spec（判读说明）: {bad}")
+        elif assertion == "action_targets_read_entity":
+            # read-then-reference（规则8，回归 20260615_163258）。不验「出现了某种 {var[字段]} 形态」
+            # （那只是 prompt 样式），而验整条**顺序不变量**：
+            #   action(创建/识别实体) → read(读出该实体的标识，绑定 var) → 之后的 action 用同一 {var[字段]} 引用。
+            # 163258 侥幸做对仅因列表只有一台、planner 从屏幕拿到了名字；有同类兄弟就指错。这里要求三段
+            # 按程序顺序齐备：read 之前有产生该实体的 action、read 之后有 action 用同一 var 引用其 returns 字段。
+            seq = _flatten_runs(program.statements)  # DFS = 程序顺序（本 case 线性，无分支）
+            ok = False
+            for i, rd in enumerate(seq):
+                if rd.kind != "read" or not rd.var:
+                    continue
+                fields = set(rd.returns)
+                prior_action = any(a.kind == "action" for a in seq[:i])
+                later_ref = any(
+                    a.kind == "action" and any(
+                        m.group(1) == rd.var and m.group(2).strip().strip("'\"") in fields
+                        for m in TEMPLATE_RE.finditer(a.name)
+                    )
+                    for a in seq[i + 1:]
+                )
+                if prior_action and later_ref:
+                    ok = True
+                    break
+            if not ok:
+                details.append(
+                    "缺少 read-then-reference 顺序结构：应为 action(创建/识别实体) → read(读出标识,var) → "
+                    "之后的 action 用同一 {var[字段]} 引用（系统生成名称要 read 出再接力，别裸名词/赌列表只有一个）: "
+                    f"{[(r.kind, r.name) for r in seq]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

@@ -332,3 +332,134 @@ def test_if_branches_on_structured_reads_end_to_end():
     res = ProgramRunner(_exec).run(prog)
     assert any(r.name == "建单" for r in res.run_log)   # 连通 → 建单（结构化 reads 驱动分支）
     assert res.reply != "不可达"
+
+
+# ── read-then-reference: a prior read's value serves the NEXT action's target ───────
+
+
+def test_run_text_templated_from_prior_read_reaches_executor_filled():
+    # read-then-reference (规则8/runner._fill, 回归 20260615_163258): an action authored as
+    # 『编辑机器人 {r[实际名称]}』must reach the per-milestone executor ALREADY filled with the
+    # value a prior read captured (编辑机器人 lucas-10003) — so the planner targets the right
+    # entity even when the list holds siblings, not just whatever single row is on screen.
+    prog = Program(statements=[
+        Run(name="按配置新建机器人", kind="action"),
+        Run(var="r", name="读取实际名称", kind="read", returns=["实际名称"],
+            read_spec="读列表新增行名称"),
+        Run(name="编辑机器人 {r[实际名称]}，设预设站点 s10", kind="action",
+            success_condition="{r[实际名称]} 的预设站点已为 s10"),
+    ])
+    seen: list[Run] = []
+    def _exec(run: Run) -> RunResult:
+        seen.append(run)
+        reads = {"实际名称": "lucas-10003"} if run.var == "r" else {}
+        return RunResult(completed=True, reads=reads, summary=run.name)
+    res = ProgramRunner(_exec).run(prog)
+    edit = seen[-1]
+    assert edit.name == "编辑机器人 lucas-10003，设预设站点 s10"   # {r[实际名称]} 已被 env 填好
+    assert edit.success_condition == "lucas-10003 的预设站点已为 s10"
+    assert not any("{r[" in r.name for r in seen)               # 无未解析模板漏到执行器
+    assert any(r.name == "编辑机器人 lucas-10003，设预设站点 s10" for r in res.run_log)
+
+
+def test_run_without_refs_is_not_copied():
+    # 无 {var[字段]} 引用的 run 原样 yield（_fill 早返回，不做无谓 copy）。
+    from gui_agent.core.orchestrator.runner import Interpreter
+    interp = Interpreter(Program(statements=[Run(name="点按钮", kind="action")]))
+    gen = interp.steps()
+    yielded = next(gen)
+    assert yielded.name == "点按钮"
+
+
+def test_run_target_template_empty_value_fails_fast_not_silent_gap():
+    # 目标字段（name）的 {var[字段]} 在运行时读到空（read 读不到=当没有）→ 不能带空指代驱动动作，
+    # 应 fail-fast 诚实报错，而不是把『编辑机器人 ，设…』静默送给 planner。
+    prog = Program(statements=[
+        Run(var="r", name="读实际名称", kind="read", returns=["实际名称"], read_spec="x"),
+        Run(name="编辑机器人 {r[实际名称]}，设预设站点 s10", kind="action"),
+    ])
+    seen: list[str] = []
+    def _exec(run: Run) -> RunResult:
+        seen.append(run.name)
+        reads = {"实际名称": ""} if run.var == "r" else {}   # read 读不到该值
+        return RunResult(completed=True, reads=reads, summary=run.name)
+    res = ProgramRunner(_exec).run(prog)
+    assert res.failed is True                                  # 程序诚实失败
+    assert not any("编辑机器人" in n for n in seen)            # 空指代的 action 没被驱动
+    assert "实际名称" in res.reply                            # 报清是哪个引用空了
+
+
+def test_run_acceptance_gate_template_empty_is_lenient():
+    # 只有验收门（success_condition）的模板空，name 是具体的 → 动作目标没歧义，不该 fail-fast，
+    # 门弱化可接受（与 finish 一样宽松）。
+    prog = Program(statements=[
+        Run(var="r", name="读名称", kind="read", returns=["名称"], read_spec="x"),
+        Run(name="点击保存", kind="action", success_condition="{r[名称]} 已保存"),  # 仅门里有引用
+    ])
+    seen: list[str] = []
+    def _exec(run: Run) -> RunResult:
+        seen.append(run.name)
+        return RunResult(completed=True, reads={"名称": ""} if run.var == "r" else {}, summary=run.name)
+    res = ProgramRunner(_exec).run(prog)
+    assert res.failed is False
+    assert "点击保存" in seen                                  # name 具体 → 照常驱动
+
+
+def test_validate_program_flags_forward_and_cross_branch_refs():
+    # Finding 2：校验是路径敏感的，不是全局符号表——引用必须在「它之前、当前路径上已执行」的 read。
+    from gui_agent.core.orchestrator.decomposer import validate_program
+    # ① forward：先引用、后读取
+    forward = Program(statements=[
+        Run(name="编辑 {r[名称]}", kind="action"),
+        Run(var="r", name="读名称", kind="read", returns=["名称"], read_spec="x"),
+    ])
+    assert any("尚未产生" in i for i in validate_program(forward))
+    # ② cross-branch：一个分支读、另一个分支引用
+    cross = Program(statements=[
+        Run(var="d", name="读判定", kind="read", returns=["判定"], read_spec="x"),
+        If(cond=Cond(var="d", field="判定", value="A"),
+           then=[Run(var="r", name="读名称", kind="read", returns=["名称"], read_spec="x")],
+           otherwise=[Run(name="编辑 {r[名称]}", kind="action")]),
+    ])
+    assert any("尚未产生" in i for i in validate_program(cross))
+    # ③ 两支都产生同一 var/字段 → 汇合后在 if 之后引用合法（dominance join）
+    merged = Program(statements=[
+        Run(var="d", name="读判定", kind="read", returns=["判定"], read_spec="x"),
+        If(cond=Cond(var="d", field="判定", value="A"),
+           then=[Run(var="r", name="读名A", kind="read", returns=["名称"], read_spec="x")],
+           otherwise=[Run(var="r", name="读名B", kind="read", returns=["名称"], read_spec="x")]),
+        Run(name="编辑 {r[名称]}", kind="action", success_condition="完成"),
+    ])
+    assert validate_program(merged) == []
+
+
+def test_validate_program_flags_dangling_run_ref():
+    from gui_agent.core.orchestrator.decomposer import validate_program
+    # action 引用了 r 没 returns 的字段 → 悬空（会填空）
+    bad_field = Program(statements=[
+        Run(var="r", name="读名称", kind="read", returns=["实际名称"], read_spec="x"),
+        Run(name="编辑 {r[不存在字段]}", kind="action"),
+    ])
+    assert any("不存在字段" in i for i in validate_program(bad_field))
+    # 引用了不是任何 read 步 var 的变量 q → 指代落空
+    bad_var = Program(statements=[
+        Run(name="编辑 {q[名称]}", kind="action"),
+        Run(var="r", name="读", kind="read", returns=["名称"], read_spec="x"),
+    ])
+    assert any("q" in i and "落空" in i for i in validate_program(bad_var))
+    # 合法的 read-then-reference 不报悬空
+    good = Program(statements=[
+        Run(var="r", name="读名称", kind="read", returns=["实际名称"], read_spec="x"),
+        Run(name="编辑机器人 {r[实际名称]}", kind="action", success_condition="完成"),
+    ])
+    assert validate_program(good) == []
+
+
+def test_validate_program_flags_dangling_finish_ref():
+    # docstring 一直声称「finish {var[field]} ref must resolve」，现在真校验了。
+    from gui_agent.core.orchestrator.decomposer import validate_program
+    prog = Program(statements=[
+        Run(var="r", name="读", kind="read", returns=["状态"], read_spec="x"),
+        Finish(message="结果：{r[不存在]}"),
+    ])
+    assert any("不存在" in i for i in validate_program(prog))
