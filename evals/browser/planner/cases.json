@@ -248,5 +248,38 @@
       ]
     },
     "note": "截图：终点候选浮层展开（#9 s9-站点9…），终点是搜索文本未选定。候选展开时必须先点候选行提交（下拉收起才算选定），不能直接点【检测】——终点没选定时检测是空操作(no_effect)，实跑因此 6×点检测无效+推倒重来共 21 轮。区别于已有 combobox case（那条守「别去填下个字段」）：这条守「别去点触发按钮(检测)」。"
+  },
+  {
+    "label": "upload-planner 须从约束取真实路径上传，别丢路径/别照抄示例占位（回归 20260615_155232+161159）",
+    "screenshot": "evals/browser/planner/screenshots/roboteam_map_import_upload_dialog.png",
+    "milestone": {
+      "name": "上传指定地图文件",
+      "description": "在「导入地图」弹窗中上传任务指定的本地地图文件",
+      "success_condition": "文件已选择并触发上传（出现上传中/成功提示或列表新增）",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "constraints": [
+      "## 引用文件内容（任务中 @ 引用的文件；其中的字段值须严格按原文使用，不得改动或省略）\n### @/Users/hyde/Downloads/交管测试专用地图_2楼.map_export\n二进制文件（上传/导入的目标）。本地完整路径，上传时原样使用：\n/Users/hyde/Downloads/交管测试专用地图_2楼.map_export"
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "「导入地图」弹窗已打开，显示「点击上传或者拖放」上传区域，但尚未选择文件、未触发上传",
+      "issues": [],
+      "summary": "导入地图弹窗等待选择文件"
+    },
+    "expected": {
+      "must_contain_all": [
+        "/Users/hyde/Downloads/交管测试专用地图_2楼.map_export"
+      ],
+      "must_contain": [
+        "上传",
+        "导入"
+      ],
+      "must_not_contain": [
+        "/Users/x/"
+      ]
+    },
+    "note": "两次回归合一。155232：planner 把上传 milestone 框成『点击上传区域唤起文件选择器』、丢了路径 → action policy 只能 tap → 原生文件框被 _on_file_chooser 拦截取消 → 失败。161159：加了 PLAN_PROMPT 上传指引后 planner 改用 upload 框架了，但①该次 decompose 把 milestone 命名成『上传指定地图文件』(没带路径)，②二进制 @ref 被 resolve_file_refs 跳过、路径没进约束 → planner 无真实路径可用，照抄了 PLAN_PROMPT 示例里的占位路径 /Users/x/map.map_export → 上传了不存在的文件。本 case 复刻 161159 真实态：milestone 泛化无路径、真实路径只在约束里(resolve_file_refs 现在对二进制 @ref 产出『本地完整路径…』段)。判据：planner 指令必须含约束里的真实路径(must_contain_all)、带上传/导入语义、且绝不出现示例占位 /Users/x/。修法=① resolve_file_refs 二进制 @ref 也产出路径段(进约束)；② PLAN_PROMPT 示例改占位符 <真实完整路径> 并明令『绝不照抄占位/示例路径，从约束/子目标取真实路径』。"
   }
 ]

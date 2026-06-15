@@ -126,13 +126,19 @@ def resolve_file_refs(goal: str, base: Optional[Path] = None) -> str:
         except OSError as exc:
             print(f"  [FileRef] 读取失败 {path}：{exc}")
             continue
+        # Binary (NUL byte, or non-UTF-8): an upload TARGET, not config. Don't inject content,
+        # but DO surface the PATH so the planner can hand it to the upload action (the executor
+        # uploads by path; without this the file path is lost and the agent can't upload).
+        def _binary_section() -> str:
+            print(f"  [FileRef] @{cand} 是二进制文件，作为上传/导入目标路径处理（不注入内容）")
+            return f"### @{cand}\n二进制文件（上传/导入的目标）。本地完整路径，上传时原样使用：\n{path}"
         if b"\x00" in _head:
-            print(f"  [FileRef] @{cand} 是二进制文件，按路径引用处理（不注入内容）")
+            sections.append(_binary_section())
             continue
         try:
             text = path.read_text(encoding="utf-8").strip()
         except UnicodeDecodeError:
-            print(f"  [FileRef] @{cand} 非 UTF-8 文本，按路径引用处理（不注入内容）")
+            sections.append(_binary_section())
             continue
         except OSError as exc:
             print(f"  [FileRef] 读取失败 {path}：{exc}")

@@ -40,5 +40,15 @@
     "expected": {
       "action_type": "type"
     }
+  },
+  {
+    "label": "upload-上传指令带路径必须用 upload 动作填 file_path（绝不 tap）（回归 20260615_155232）",
+    "screenshot": "evals/browser/action_policy/screenshots/roboteam_map_import_upload_dialog.png",
+    "instruction": "上传地图文件 /Users/hyde/Downloads/交管测试专用地图_2楼.map_export 到「点击上传或者拖放」上传区域",
+    "expected": {
+      "action_type": "upload",
+      "file_path": "/Users/hyde/Downloads/交管测试专用地图_2楼.map_export"
+    },
+    "note": "回归 20260615_155232：上传任务卡死在文件选择。链路=upload 动作(填 file_path)→device.upload_file 武装 _pending_upload→点击控件→_on_file_chooser 投文件。但 agent 实跑只发了普通 tap→未武装→_on_file_chooser『拦截并取消非预期文件选择弹窗』→零效果→3 次重试失败。本 case 守住 action policy 这一半：指令带『上传文件 X』+路径 → 必须出 upload 动作并把路径填进 file_path，绝不 tap（文件选择框非网页内容，截图看不到、tap 必卡）。实测 action policy 这半是对的(PASS)；真正丢路径的是 planner，见 planner eval 同名 case。"
   }
 ]
