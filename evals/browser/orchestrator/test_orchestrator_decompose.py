@@ -149,28 +149,26 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     f"confirm-read 的 action 验收非 dispatch/defer 门、把结果当终态: {offenders}"
                 )
         elif assertion == "auth_milestone_terminal_state":
-            # 登录/认证类前置应写【登录后即固定存在、与数据无关的认证标志】（用户名/头像/导航/标题），
-            # 已登录则第一帧判 done 跳过。两种坏验收都会让已登录会话永远卡死：
-            #  ① 回归 20260615_153314：「登录表单可见」（账号/密码框）——已登录回不去登录页。
-            #  ② 回归 20260615_162312：「主内容含监控卡片/列表/数据」——数据(地图)还没加载就是空的，
-            #     而加载数据正是被这个登录步堵在后面的步骤，循环依赖、不可达。
+            # 登录/认证类前置回归两次卡死（153314 验收=登录表单、162312 验收=业务数据卡片，已登录会话都
+            # 不可达）。现在生产由【结构标记 run.precondition】兜底：decomposer 标 precondition=true →
+            # engine.normalize_precondition_gates 确定性把验收换成「已处于目标状态」的通用门（详见
+            # tests/test_orchestrator.py），与 confirm-read 的 L2 同构、但检测信号是 flag 不是关键词。
+            # 所以这里测的是【这个结构信号的可靠性】：登录/认证前置 milestone 必须标 precondition=true
+            # （标了兜底才接得住；没标→门写歪就会卡死）。【软信号·有生产兜底】FAIL = decomposer 漏标了
+            # flag（可更可靠），但具体登录态判读由 checker 的 _check.md 兜，且只要标了 flag 门就被通用门
+            # 覆盖。用关键词在【测试侧】定位登录步（生产侧用 flag，不碰字符串）。
+            # 测试侧用关键词定位登录【前置】步：非 read、名字含登录/认证，且排除「查/看登录日志/记录/历史」
+            # 这种操作 login 数据的步（它们不是前置，不该要求标 flag）。生产侧不碰字符串、只看 flag。
             auth_ms = [
                 r for r in runs
-                if any(k in (r.name + r.success_condition) for k in ("登录", "登入", "登陆", "认证"))
+                if r.kind != "read"
+                and any(k in r.name for k in ("登录", "登入", "登陆", "认证"))
+                and not any(k in r.name for k in ("日志", "记录", "历史"))
             ]
-            form_bad = [
-                (r.name, r.success_condition) for r in auth_ms
-                if any(k in r.success_condition for k in ("账号", "密码", "登录按钮", "登录表单", "登录框"))
-            ]
-            data_bad = [
-                (r.name, r.success_condition) for r in auth_ms
-                if any(k in r.success_condition for k in ("卡片", "监控", "订单", "统计", "业务数据"))
-            ]
-            if form_bad:
-                details.append(f"登录验收写成「登录表单可见」（已登录会话不可达，会卡死）: {form_bad}")
-            if data_bad:
+            unflagged = [r.name for r in auth_ms if not getattr(r, "precondition", False)]
+            if auth_ms and unflagged:
                 details.append(
-                    f"登录验收依赖业务数据内容（卡片/列表/数据等，无数据时为空、不可达，且常要等后续步骤才产生）: {data_bad}"
+                    f"登录/认证前置 milestone 没标 precondition=true（L2 兜底靠这个结构标记，没标就接不住、门写歪会卡死）: {unflagged}"
                 )
         elif assertion == "read_has_spec":
             # 只读单帧没判读说明就只能瞎猜（见 structured_read / prompt 规则）。每个 read 都要有
@@ -210,6 +208,96 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "之后的 action 用同一 {var[字段]} 引用（系统生成名称要 read 出再接力，别裸名词/赌列表只有一个）: "
                     f"{[(r.kind, r.name) for r in seq]}"
                 )
+        elif assertion == "connectivity_gates_order_no_robot_creation":
+            # 回归 20260615_194320：分解器 ~1/4 概率把「给现成机器人下移动订单」幻觉成「先新建一台
+            # 机器人 + 编辑设预设站点 + 再下单」，把目标没要求的造实体前置块塞在连通检测之前，整个 run
+            # 耗死在幻觉机器人上、真任务一步没碰（页面本来就有现成 lucas-10003）。两条不变量：
+            #  ① 建订单受连通检测门控：有 read 检测连通 + if 按它分支，建订单 action 在该 if 内（连通分支），
+            #     且顶层不得有无条件的建订单 action。
+            #  ② 连通检测之前不得出现「新建/创建机器人」或「编辑预设站点」这类目标没要求的造实体步骤。
+            seq = _flatten_runs(program.statements)
+
+            def _conn(r):  # 连通检测相关（名字或读取字段含 连通/可达）
+                return ("连通" in r.name or "可达" in r.name
+                        or any("连通" in x or "可达" in x for x in r.returns))
+
+            def _order(r):  # 建移动订单（≠ 造机器人）
+                return r.kind == "action" and any(k in r.name for k in ("订单", "建单", "下单"))
+
+            def _robot_create(r):  # 造机器人幻觉的 action（排除「为机器人创建订单」、也排除只是名字含「新建」的 read）
+                return (r.kind == "action" and "机器人" in r.name and "订单" not in r.name
+                        and any(k in r.name for k in ("新建", "创建", "添加")))
+
+            def _preset(r):  # 编辑预设站点幻觉
+                return "预设站点" in r.name
+
+            conn_vars = {r.var for r in seq if r.kind == "read" and r.var and _conn(r)}
+            gated: list = []
+
+            def _walk_gate(stmts, under):
+                for s in stmts:
+                    if isinstance(s, Run):
+                        if _order(s) and under:
+                            gated.append(s)
+                    elif isinstance(s, If):
+                        deeper = under or s.cond.var in conn_vars
+                        _walk_gate(s.then, deeper)
+                        _walk_gate(s.otherwise, deeper)
+            _walk_gate(program.statements, False)
+            top_orders = [s for s in program.statements if isinstance(s, Run) and _order(s)]
+
+            if not conn_vars:
+                details.append("没有检测连通的 read 步（应先 read 检测连通，再据此 if 分支）")
+            if not gated:
+                details.append("建订单的 action 未被连通检测的 if 门控（应在 if 连通 的分支里）")
+            if top_orders:
+                details.append(
+                    f"顶层出现无条件建订单（未受连通检测门控、连通与否都会下单）: {[r.name for r in top_orders]}"
+                )
+            conn_idx = next((i for i, r in enumerate(seq) if _conn(r)), None)
+            if conn_idx is not None:
+                bad = [r.name for r in seq[:conn_idx] if _robot_create(r) or _preset(r)]
+                if bad:
+                    details.append(
+                        f"连通检测前出现目标没要求的造实体步骤（新建机器人/编辑预设站点幻觉，回归 194320）: {bad}"
+                    )
+        elif assertion == "cross_page_action_navigates_no_list_pick":
+            # 回归 20260615_211634：连通后分支直接 read 机器人列表 + 建单，没导航到机器人/订单页 →
+            # read 落在连通面板上读空、建单 action 也在连通面板上被遗留的连通✓蹭成「空判完成」（静默假
+            # 成功）。两条不变量：
+            #  A1 检测/读取之后、建单 action 之前要有 navigation（先到操作页：屏幕换走，read 读对页、
+            #     action 不被上一步 stale ✓ 误判）。
+            #  A2 不读「*列表」字段去挑实体（集合索引表达不了，规则8 只接力单个实体；要操作的表单能选就在
+            #     action 里选）。
+            seq = _flatten_runs(program.statements)
+
+            def _conn_read(r):  # 连通检测相关步（导航/检测/读取，名字或读取字段含 连通/可达）
+                return ("连通" in r.name or "可达" in r.name
+                        or any("连通" in x or "可达" in x for x in r.returns))
+
+            conn_idx = next((i for i, r in enumerate(seq) if _conn_read(r)), None)
+            order_idx = next(
+                (i for i, r in enumerate(seq)
+                 if r.kind == "action" and any(k in r.name for k in ("订单", "建单", "下单"))),
+                None,
+            )
+            if order_idx is None:
+                details.append(f"没有建单 action（连通则建单）: {[(r.kind, r.name) for r in seq]}")
+            elif conn_idx is None:
+                details.append("没有连通检测 read（无法判断建单前是否换页）")
+            elif not any(r.kind == "navigation" for r in seq[conn_idx + 1:order_idx]):
+                details.append(
+                    "连通检测后、建单 action 前缺 navigation（建单会落在连通面板上读空/被 stale✓ 误判完成，"
+                    f"回归 211634）: {[(r.kind, r.name) for r in seq]}"
+                )
+            list_reads = [
+                (r.name, r.returns) for r in seq
+                if r.kind == "read" and any("列表" in f for f in r.returns)
+            ]
+            if list_reads:
+                details.append(
+                    f"read 了「*列表」字段去挑实体（集合索引表达不了，规则8 只接力单个实体）: {list_reads}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
@@ -244,9 +332,10 @@ def test_orchestrator_decompose() -> None:
 
 def main() -> int:
     print("── Browser Orchestrator-Decompose Eval ──")
-    print("  测的是 decompose() 原始产出 = prompt(L1) 质量。confirm-read 的 dispatch 门在生产里")
-    print("  由 engine.normalize_confirm_read_gates(L2) 确定性兜底保证（见 tests/test_orchestrator.py）；")
-    print("  故这里 FAIL = prompt 可以更好（软信号），不是生产 bug。")
+    print("  测的是 decompose() 原始产出 = prompt(L1) 质量。部分断言有生产兜底，FAIL=prompt 可更好（软信号）非生产 bug：")
+    print("    · confirm-read 的 dispatch 门 → engine.normalize_confirm_read_gates(L2) 确定性兜底；")
+    print("    · 登录前置（auth_milestone_terminal_state）→ per-app _check.md 的登录判据、checker 权威兜底。")
+    print("  连通门控/读了就引用 等无兜底的断言，FAIL 才是真问题。")
     test_orchestrator_decompose()
     print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 1

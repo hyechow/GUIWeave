@@ -304,6 +304,42 @@ def test_normalize_confirm_read_gates_recurses_into_if_branches():
     assert out.statements[1].otherwise[0].message == "不可达"  # otherwise 不受影响
 
 
+def test_normalize_precondition_gates_is_flag_based_not_keyword():
+    # The L2 detection is the STRUCTURAL run.precondition flag, NOT name keywords. A flagged step
+    # (login precondition with the 153314 form antipattern) gets the generic ensure-state gate; a
+    # step that merely MENTIONS 登录 but isn't a precondition (查询登录日志) is left alone — the old
+    # keyword pass would have mis-rewritten it. App-specific markers stay in _check.md.
+    from gui_agent.core.orchestrator.engine import normalize_precondition_gates
+    prog = Program(statements=[
+        Run(name="确保已登录 RoboTeam", kind="navigation", precondition=True,
+            success_condition="页面显示账号、密码输入框及登录按钮"),     # flagged + form antipattern
+        Run(name="查询登录日志", kind="action",
+            success_condition="显示登录日志列表"),                       # 含「登录」但不是前置、未标 flag
+    ])
+    out = normalize_precondition_gates(prog)
+    assert "已处于该前置步要求的目标状态" in out.statements[0].success_condition  # flagged → 通用门
+    assert out.statements[0].success_condition != prog.statements[0].success_condition
+    assert out.statements[1].success_condition == "显示登录日志列表"  # 含「登录」但没标 → 不动（旧关键词版会误改）
+    assert prog.statements[0].success_condition == "页面显示账号、密码输入框及登录按钮"  # 原对象未就地改
+
+
+def test_normalize_precondition_gates_recurses_and_idempotent():
+    from gui_agent.core.orchestrator.engine import normalize_precondition_gates
+    prog = Program(statements=[
+        Run(var="d", name="读判定", kind="read", returns=["x"], read_spec="y"),
+        If(cond=Cond(var="d", field="x", value="1"),
+           then=[Run(name="确保已进入编辑模式", kind="navigation", precondition=True,
+                     success_condition="看到编辑面板")],
+           otherwise=[Run(name="退出编辑", kind="action", success_condition="返回列表")]),
+    ])
+    out = normalize_precondition_gates(prog)
+    assert "已处于该前置步要求的目标状态" in out.statements[1].then[0].success_condition  # if 分支内前置被改写
+    assert out.statements[1].otherwise[0].success_condition == "返回列表"                 # 非前置步不动
+    # 幂等
+    assert normalize_precondition_gates(out).statements[1].then[0].success_condition \
+        == out.statements[1].then[0].success_condition
+
+
 def test_normalize_confirm_read_gates_action_without_following_read_unchanged():
     # 真正「action 后面不是 read」的场景：两个连续 action，第一个不应被改写。
     from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
@@ -463,3 +499,20 @@ def test_validate_program_flags_dangling_finish_ref():
         Finish(message="结果：{r[不存在]}"),
     ])
     assert any("不存在" in i for i in validate_program(prog))
+
+
+def test_validate_program_flags_bare_var_ref():
+    # 回归 20260615_194320：分解器写了裸 {robot_name}（缺 [字段]），既填不进值又逃过模板解析，
+    # 字面量漏给 planner。校验要抓：{var} 里 var 是已知 read 的 var 却缺 [字段] → 坏引用、反馈重试。
+    from gui_agent.core.orchestrator.decomposer import validate_program
+    bad = Program(statements=[
+        Run(var="robot_name", name="读机器人名", kind="read", returns=["机器人名称"], read_spec="x"),
+        Run(name="编辑机器人 {robot_name}", kind="action", success_condition="完成"),
+    ])
+    assert any("裸" in i and "robot_name" in i for i in validate_program(bad))
+    # 正确的 {var[field]} 不被裸校验误报；不是 read var 的 {x} 也不报（只盯已知 read var）
+    ok = Program(statements=[
+        Run(var="r", name="读名", kind="read", returns=["实际名称"], read_spec="x"),
+        Run(name="编辑 {r[实际名称]}，温度 {x} 档", kind="action", success_condition="完成"),
+    ])
+    assert not any("裸" in i for i in validate_program(ok))
