@@ -16,7 +16,7 @@ from typing import Literal
 
 from gui_agent.core.schemas import Milestone
 
-from .program import Run
+from .program import If, Program, Run, Stmt
 from .runner import RunResult
 
 # DSL RunKind -> feat-android (kind, completion_strategy).
@@ -67,3 +67,52 @@ def package_result(
         summary=summary,
         evidence=list(notes),
     )
+
+
+# ── confirm-read structural backstop (L2) ────────────────────────────────────────────
+# An action milestone whose result is confirmed by a following read should be ACCEPTED on
+# "the action fired", never re-adjudicated by the per-milestone checker — that checker is
+# known to thrash on freshly-shown verdicts (20260615_100753: it saw a green ✓, re-clicked
+# 检测, then hallucinated the same ✓ as gray ?, burning 2 frames). The decomposer prompt (L1)
+# *asks* for a dispatch-form success_condition; this pass *guarantees* it. The signal is
+# purely structural — an action Run immediately followed by a read Run is the confirm-read
+# shape (decomposer rule 6) — so we never string-match the gate's meaning. Generic over
+# create / submit / delete / send / detect: any action→read adjacency. See structured_read /
+# the read primitive for who owns the result judgment instead.
+
+_DISPATCH_GATE_TMPL = (
+    "已执行「{name}」：动作已发出且界面给出响应"
+    "（出现提示/结果区/列表更新/页面跳转/进入加载，任一即可）；"
+    "本步不判定结果取值，具体结果由下一步读取判定。"
+)
+
+
+def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
+    out: list[Stmt] = []
+    n = len(stmts)
+    for i, s in enumerate(stmts):
+        if isinstance(s, Run) and s.kind == "action":
+            nxt = stmts[i + 1] if i + 1 < n else None
+            if isinstance(nxt, Run) and nxt.kind == "read":
+                s = s.model_copy(update={"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)})
+            out.append(s)
+        elif isinstance(s, If):
+            out.append(s.model_copy(update={
+                "then": _normalize_stmts(s.then),
+                "otherwise": _normalize_stmts(s.otherwise),
+            }))
+        else:
+            out.append(s)
+    return out
+
+
+def normalize_confirm_read_gates(program: Program) -> Program:
+    """Rewrite every confirm-read-backed action's success_condition to a lenient DISPATCH gate.
+
+    An action Run immediately followed by a read Run (the confirm-read shape) gets its
+    success_condition replaced so the per-milestone checker accepts on "the action fired
+    and the page responded" and never adjudicates the result the read owns. Recurses into
+    if-branches; returns a NEW Program (inputs untouched); idempotent. This is the structural
+    guarantee behind the decomposer's L1 prompt nudge — independent of how the LLM phrased
+    the gate, so it covers create/submit/delete/send/detect uniformly."""
+    return program.model_copy(update={"statements": _normalize_stmts(program.statements)})

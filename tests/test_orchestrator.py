@@ -226,6 +226,65 @@ def test_structured_read_empty_returns_no_llm():
     assert structured_read(b"x", [], read_spec="任务说明", check_knowledge="线索") == {}
 
 
+def test_normalize_confirm_read_gates_rewrites_action_before_read():
+    # L2 backstop: an action immediately followed by a read (confirm-read) gets a lenient
+    # DISPATCH success_condition, so the checker accepts on "fired" not on the result.
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    prog = Program(statements=[
+        Run(name="进页", kind="navigation", success_condition="页面已显示"),
+        Run(name="设起终点并执行检测", kind="action",
+            success_condition="检测结果（连通标记或不可达提示）已显示在界面"),  # result gate
+        Run(var="r", name="读连通", kind="read", returns=["连通状态"], read_spec="看绿✓"),
+        Finish(message="{r[连通状态]}"),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    nav, act, read, fin = out.statements
+    # 触发型 action 的验收被改写成 dispatch 门：不再断言结果，明确让位给 read
+    assert "不判定结果取值" in act.success_condition
+    assert "下一步读取判定" in act.success_condition
+    assert "连通标记" not in act.success_condition  # 结果门措辞已被替换
+    # navigation / read / finish 不动；read 的 returns/read_spec 原样
+    assert nav.success_condition == "页面已显示"
+    assert read.returns == ["连通状态"] and read.read_spec == "看绿✓"
+    # 原 Program 不被就地改（返回新对象）
+    assert prog.statements[1].success_condition == "检测结果（连通标记或不可达提示）已显示在界面"
+
+
+def test_normalize_confirm_read_gates_recurses_into_if_branches():
+    # confirm-read inside an if-branch (建单 action → 确认建单 read) is rewritten too;
+    # the otherwise branch (no action→read pair) is untouched.
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    prog = Program(statements=[
+        Run(var="r", name="读判定", kind="read", returns=["是否可达"], read_spec="x"),
+        If(cond=Cond(var="r", field="是否可达", value="可达"),
+           then=[
+               Run(name="建单", kind="action", success_condition="订单创建成功提示"),  # 后跟 confirm-read
+               Run(var="c", name="确认建单", kind="read", returns=["建单结果"], read_spec="y"),
+               Finish(message="{c[建单结果]}"),
+           ],
+           otherwise=[Finish(message="不可达")]),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    then_action = out.statements[1].then[0]
+    assert "不判定结果取值" in then_action.success_condition
+    assert "订单创建成功" not in then_action.success_condition  # 原结果门措辞被替换
+    assert out.statements[1].otherwise[0].message == "不可达"  # otherwise 不受影响
+
+
+def test_normalize_confirm_read_gates_action_without_following_read_unchanged():
+    # 真正「action 后面不是 read」的场景：两个连续 action，第一个不应被改写。
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    prog = Program(statements=[
+        Run(name="第一步动作", kind="action", success_condition="第一步生效页"),
+        Run(name="第二步动作", kind="action", success_condition="第二步生效页"),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    assert out.statements[0].success_condition == "第一步生效页"
+    assert out.statements[1].success_condition == "第二步生效页"
+    # 幂等：再跑一次不变
+    assert normalize_confirm_read_gates(out).statements[0].success_condition == "第一步生效页"
+
+
 def test_if_branches_on_structured_reads_end_to_end():
     # 串起来：read milestone 拿到结构化 {连通判定:连通} → if 走 then(建单)。
     prog = Program(statements=[

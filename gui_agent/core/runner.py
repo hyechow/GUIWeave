@@ -1275,8 +1275,12 @@ def main() -> None:
         # (default) → the DAG path is unchanged.
         program = None
         if args.orchestrator:
-            from gui_agent.core.orchestrator import decompose
-            program = decompose(goal, knowledge=knowledge.navigation if knowledge else "")
+            from gui_agent.core.orchestrator import decompose, normalize_confirm_read_gates
+            # L2 structural backstop: confirm-read-backed action gates → lenient dispatch
+            # gates, so the checker never re-adjudicates a result the read owns (see engine).
+            program = normalize_confirm_read_gates(
+                decompose(goal, knowledge=knowledge.navigation if knowledge else "")
+            )
             print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
 
         try:
