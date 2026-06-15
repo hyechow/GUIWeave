@@ -19,12 +19,12 @@ from .runner import (
     RunRecord,
     drive,
 )
-from .engine import normalize_confirm_read_gates
+from .engine import normalize_confirm_read_gates, normalize_precondition_gates
 
 __all__ = [
     "Cond", "Finish", "If", "Program", "Run", "RunResult", "Stmt",
     "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
     "RunRecord", "drive", "structured_read",
     "decompose", "to_program", "validate_program",
-    "normalize_confirm_read_gates",
+    "normalize_confirm_read_gates", "normalize_precondition_gates",
 ]

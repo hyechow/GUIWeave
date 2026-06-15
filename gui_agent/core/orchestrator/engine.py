@@ -116,3 +116,53 @@ def normalize_confirm_read_gates(program: Program) -> Program:
     guarantee behind the decomposer's L1 prompt nudge — independent of how the LLM phrased
     the gate, so it covers create/submit/delete/send/detect uniformly."""
     return program.model_copy(update={"statements": _normalize_stmts(program.statements)})
+
+
+# ── precondition gate backstop (L2) ──────────────────────────────────────────────────
+# A precondition step ("确保已登录 / 已进入某模式") ENSURES a state; it must accept on the
+# data-independent target state — NOT on a mid-progress interface that only exists while the
+# precondition is UNMET. Two real stuck regressions, both login: 20260615_153314 gated on the
+# login FORM (an already-logged-in session can't return to it → never met), 162312 gated on
+# business-data content (cards/data empty until LATER steps produce them → circular). The
+# decomposer's rule 7 *asks* for a clean gate but is unreliable (~1/8). This pass *guarantees*
+# it — keyed on the STRUCTURAL `run.precondition` flag the decomposer sets (NOT on milestone-name
+# keywords like 登录/认证, which mis-fire on 认证设备/登录日志查询 and miss other phrasings/langs;
+# the flag is to this pass what action→read adjacency is to confirm-read). The gate is app-AGNOSTIC;
+# the app-specific "what that state looks like" lives in the checker's _check.md, which JUDGES this
+# gate. That split is load-bearing and verified: a generic gate + _check.md → done, but a form gate
+# + _check.md → still stuck, because the milestone's success_condition binds and _check.md
+# (authoritative only over GENERAL checker rules) can't override it — so the gate is fixed here.
+
+_PRECONDITION_GATE_TMPL = (
+    "已处于该前置步要求的目标状态（如已登录、已进入某模式/某页）："
+    "显示对应的稳定标志（功能区/导航就位，与业务数据无关），"
+    "而非只在未完成态才出现的中间界面（如登录表单）；"
+    "初始若已满足则第一帧即判 done、直接跳过。"
+    "具体本应用的标志以验收知识（_check.md）为准。"
+)
+
+
+def _normalize_precondition_stmts(stmts: list[Stmt]) -> list[Stmt]:
+    out: list[Stmt] = []
+    for s in stmts:
+        if isinstance(s, Run) and s.precondition:
+            out.append(s.model_copy(update={"success_condition": _PRECONDITION_GATE_TMPL}))
+        elif isinstance(s, If):
+            out.append(s.model_copy(update={
+                "then": _normalize_precondition_stmts(s.then),
+                "otherwise": _normalize_precondition_stmts(s.otherwise),
+            }))
+        else:
+            out.append(s)
+    return out
+
+
+def normalize_precondition_gates(program: Program) -> Program:
+    """Rewrite every precondition step's success_condition to the generic ensure-state gate.
+
+    Detection is the STRUCTURAL `run.precondition` flag (set by the decomposer), not name keywords —
+    so it's robust to phrasing/language and covers any precondition (login / enter-mode / open-page),
+    not just login. An already-satisfied precondition is then judged done on frame 1 (no form/data
+    antipattern → no stuck). Recurses into if-branches; returns a NEW Program (inputs untouched);
+    idempotent. App-specific markers stay in the checker's _check.md, which judges this gate."""
+    return program.model_copy(update={"statements": _normalize_precondition_stmts(program.statements)})

@@ -21,7 +21,7 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from llm.structured import invoke_structured
 
-from .program import TEMPLATE_RE, Cond, Finish, If, Program, Run, RunKind, Stmt
+from .program import BARE_REF_RE, TEMPLATE_RE, Cond, Finish, If, Program, Run, RunKind, Stmt
 
 _SYSTEM = """\
 你是 GUI 自动化任务的【编排器分解器】。把用户任务分解成一段小程序（DSL steps），由解释器按顺序执行。
@@ -41,14 +41,14 @@ _SYSTEM = """\
 核心原则：
 1. milestone 粒度：「搜关键词并进第一条结果」= 一个 navigation run，别拆成 输入→提交→点结果。
 2. 只在任务真有「读结果 → 据结果决定下一步」时才用 read + if；纯线性任务直接顺序 run，结尾可选 finish。
-3. read 是只读单帧数据提取：它不点任何东西、不做验收（读不到=当没有），只把 returns 字段读出来。**「触发某结果的操作」和「读取该结果」必须分成两步**——先用 action 触发，再用 read 读取。
+3. read 是只读单帧数据提取：它不点任何东西、不做验收（读不到=当没有），只把 returns 字段读出来。**「触发某结果的操作」和「读取该结果」必须分成两步**——先用 action 触发，再用 read 读取。**read 读的是当前那一帧、action 操作的也是当前界面**：要读某页数据 / 操作某页元素前，若上一步停在别的页（尤其刚做完检测/读取、停在结果面板），**先加一个 navigation step 到目标页**，别在结果面板上直接读另一个页的列表、或直接对另一个页建单/操作（否则读空、或动作落在错的页上被误判完成）。
 4. 验收终态且有出处：只用任务、@引用文件或截图里出现的值，不编造系统生成的编号/名称（用特征描述）。
 5. 能一句话答复就用 finish 模板引用 read 值；不写 finish 时解释器会自动汇总各 read 结果。
 6. **关键动作 confirm-read（成败由结构化读取定，别只信动作完成）**：会改变状态的关键动作（创建/提交/删除/发送/设置/检测查询，尤其任务的最终动作），在该 action 之后补一个 read 确认结果——returns 含一个成败/状态字段，read_spec 写清「成功看什么信号、失败看什么信号」；再由 finish（或 if）据这个结构化结果答复/分支。不要只凭动作步自身被判完成就当任务成功。配套地（规则4例外）：该 action 的 success_condition 写「动作已发出」而非「结果已显示/某判定已出现」，结果的具体判读独占给这个 read——验收门去判结果会反复纠结一个刚出现/会消失的小图标（看到却不信→重复触发，或把同一个标志判读漂移），正是 confirm-read 要绕开的。
-7. **前置状态用「终态」建模，别用只在未完成态才出现的中间界面（尤其登录/认证）**：登录、进入某模式等前置，初始往往已满足。**别建模成「打开登录页 → 输账号密码」**——会话常已登录，登录页根本回不去，该步 success_condition「看到账号密码框」永远不成立、卡死。建模成**一步**「确保已登录」，run_kind=navigation，success_condition 用【登录后即固定存在、与页面数据无关的认证标志】：顶栏用户名/头像、导航菜单、页面标题/导航高亮项——这些一登录就在，不依赖任何业务数据。**别拿主内容区的卡片/列表/数据/统计当登录标志**：它们常因业务数据未加载（或要等本任务后续步骤才产生）而为空，拿来验收会永远不成立、卡死（如「首页含机器人/订单监控卡片」在没数据时就是空的）。已登录则第一帧就判 done 直接跳过。通则:任何「确保处于某状态」的前置，success_condition 写**目标终态本身**，不写「只在未完成时才出现、或要等后续步骤才满足的内容」。
-8. **选择器分解时已知→直接写字面量；只有运行时才知道→read 出来用 {变量[字段]} 接力**。绝大多数情况写字面量即可：实体若有分解时可写的稳定选择器（用户给定名、@配置字段值、任务文本里的编号），直接写进 name，别为它多加 read；已在该实体编辑页就继续操作，别每步回列表重选。仅当后续必须重新选中某实体、而它的名称/编号**分解时未知、只能运行时从界面读到**（典型：新建后系统自动分配的编号/自动命名）时，才两步配合：① 一个 read 把该选择器读进 returns 字段并绑定 var；② 后续步骤 name（必要时连 success_condition）用 `{变量[字段]}` 引用它（`打开工单 {t[工单号]}` → 运行时填成 `打开工单 WO-2024-007`，列表里多个同类也不指错）。变量须是在它之前、当前执行路径上已执行的 read（不能引用其后或另一分支的 read），字段须在其 returns 里。（与规则4不冲突：规则4 管创建步自身写不出未来编号；规则8 管后续要精确重选、选择器运行时才知道。）
+7. **前置状态（登录/进入某模式）建模成一步「确保已X」并标 `precondition=true`**：这类前置初始往往已满足（会话常已登录）。建成**一步**「确保已登录/已进入X」、run_kind=navigation、**precondition=true**——解释器会据此**自动**把验收设成「已处于目标状态」的通用门（与业务数据无关、已满足则首帧跳过），你**不必纠结这个门怎么写**。别建成「打开登录页 → 输账号密码」这种多步，success_condition 留空或一句话即可（会被通用门覆盖）。具体某 app 登录后/某模式长什么样由 checker 的应用知识判，不在此写死。
+8. **选择器分解时已知→直接写字面量；只有运行时才知道→read 出来用 {变量[字段]} 接力**。绝大多数情况写字面量即可：实体若有分解时可写的稳定选择器（用户给定名、@配置字段值、任务文本里的编号），直接写进 name，别为它多加 read；已在该实体编辑页就继续操作，别每步回列表重选。仅当后续必须重新选中某实体、而它的名称/编号**分解时未知、只能运行时从界面读到**（典型：新建后系统自动分配的编号/自动命名）时，才两步配合：① 一个 read 把该选择器读进 returns 字段并绑定 var；② 后续步骤 name（必要时连 success_condition）用 `{变量[字段]}` 引用它（`打开工单 {t[工单号]}` → 运行时填成 `打开工单 WO-2024-007`，列表里多个同类也不指错）。变量须是在它之前、当前执行路径上已执行的 read（不能引用其后或另一分支的 read），字段须在其 returns 里。**只对单个实体的标识接力，别读一个「列表」再挑「第 N 个」**（集合索引表达不了，且列表 read 还得先导航到列表页）——要操作的表单本身能选实体时（如建单表单里选机器人），直接在 action 里选，不必 read。（与规则4不冲突：规则4 管创建步自身写不出未来编号；规则8 管后续要精确重选、选择器运行时才知道。）
 
-只输出与任务相关的步骤，不加多余前置（已在工作区就别加「打开网站」）。先在 reasoning 里想清楚：要到哪些页、做什么操作、读什么结果、关键动作做完怎么确认、是否需要分支，再写 steps。
+只输出与任务相关的步骤，不加多余前置（已在工作区就别加「打开网站」）。**忠于目标、别臆造实体**：目标要操作/选择/下单给某实体（机器人/订单/工单…）时默认它已存在——用已知名称或 read 选现有再引用（规则8），别补「新建/创建/配置」前置；只有目标动词本身就是新建/创建/添加时才建 create 步。先在 reasoning 里想清楚：要到哪些页、做什么操作、读什么结果、关键动作做完怎么确认、是否需要分支，再写 steps。
 
 示例（条件任务 + confirm-read）——
 {"reasoning":"先进路线规划页(navigation)，填起终点触发检测(action)，读连通结果(read，字段=是否可达)，据此分支：可达则创建行程、创建后 confirm-read 确认再答复，不可达则直接答复。","goal":"查询 A 到 B 是否可达，可达则创建行程","steps":[
@@ -80,6 +80,12 @@ class _StepDraft(BaseModel):
     name: str = Field(default="", description="op=run：该 milestone 的一句话操作指令")
     success_condition: str = Field(default="", description="op=run：完成后界面应处于的唯一可截图确认终态")
     run_kind: str = Field(default="action", description='op=run：navigation | filter | action | read')
+    precondition: bool = Field(
+        default=False,
+        description="op=run：该步是否为【前置状态保障】（确保已登录 / 已进入某模式或某页，初始往往已满足）。"
+                    "是→true（run_kind 用 navigation）：解释器会据此把验收设成「已处于目标状态」的通用门、"
+                    "已满足则首帧跳过；不是普通去某页/做操作就留 false。",
+    )
     returns: list[str] = Field(default_factory=list, description="op=run 且 run_kind=read：要读取的结果字段名列表")
     read_spec: str = Field(
         default="",
@@ -145,6 +151,7 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     kind=_to_kind(d.run_kind),
                     returns=[r for r in d.returns if r.strip()],
                     read_spec=d.read_spec,
+                    precondition=bool(d.precondition),
                 )
             )
     return out
@@ -169,6 +176,17 @@ def validate_program(program: Program) -> list[str]:
     if not program.statements:
         return ["程序为空：至少要有一个 run 步骤"]
 
+    all_read_vars: set[str] = set()  # every read's var anywhere — to spot botched bare {var} refs
+
+    def _collect_read_vars(stmts: list[Stmt]) -> None:
+        for s in stmts:
+            if isinstance(s, Run) and s.kind == "read" and s.var:
+                all_read_vars.add(s.var)
+            elif isinstance(s, If):
+                _collect_read_vars(s.then)
+                _collect_read_vars(s.otherwise)
+    _collect_read_vars(program.statements)
+
     def _check_refs(text: str, where: str, scope: dict[str, set[str]]) -> None:
         # `scope` = read var -> returns, for reads already executed BEFORE this point on this path.
         for m in TEMPLATE_RE.finditer(text or ""):
@@ -182,6 +200,16 @@ def validate_program(program: Program) -> list[str]:
             elif field not in scope[var]:
                 issues.append(
                     f"{where} 引用的字段「{var}[{field}]」不在该 read 步的 returns 里——模板会填空"
+                )
+        # botched bare {var}: a known read var written without [field] — neither resolves nor
+        # matches the template, so the literal "{var}" leaks to the planner (回归 20260615_194320:
+        # 「编辑机器人 {robot_name}」漏给了 planner). Force the {var[field]} form via repair.
+        for m in BARE_REF_RE.finditer(text or ""):
+            var = m.group(1)
+            if var in all_read_vars:
+                issues.append(
+                    f"{where} 用了裸 {{{var}}} 缺字段——应写成 {{{var}[字段]}}（{var} 这个 read 的某个 returns 字段）；"
+                    f"裸 {{{var}}} 既填不进值、又逃过模板解析，会把字面量漏给执行器"
                 )
 
     def _walk(stmts: list[Stmt], scope: dict[str, set[str]]) -> None:

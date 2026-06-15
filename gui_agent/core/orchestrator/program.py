@@ -29,6 +29,12 @@ from pydantic import BaseModel, Field
 # that every ref resolves to a real read field. Keep both ends on THIS regex.
 TEMPLATE_RE = re.compile(r"\{(\w+)\[([^\]]+)\]\}")
 
+# A bare {var} with no [field] — almost always a botched {var[field]} ref the LLM wrote forgetting
+# our field syntax (e.g. {robot_name} instead of {robot_name[机器人名称]}). It neither resolves
+# (TEMPLATE_RE needs the field) nor matches it, so the literal "{var}" leaks to the planner. The
+# decomposer's validate flags it (when var is a read's var) so the repair pass fixes the form.
+BARE_REF_RE = re.compile(r"\{(\w+)\}")
+
 # The orchestrator's OWN linear-task vocabulary (decoupled from the executor's
 # MilestoneKind). These are the milestone-sized things the linear executor is good
 # at: 到某页 / 填一组表单 / 点一个按钮 / 读取一个结果。 "read" = read-only single-frame
@@ -65,6 +71,14 @@ class Run(BaseModel):
     # read primitive feeds this to structured_read as the primary judgment guidance; the app's
     # _check.md is a supplementary signal-convention reference. Empty for non-read runs.
     read_spec: str = Field(default="")
+    # STRUCTURAL marker for a precondition step ("确保已登录 / 已进入某模式"): a state to ENSURE,
+    # not a fresh action. Set by the decomposer (an easy binary classification — far more reliable
+    # than authoring a perfect gate). The engine rewrites a precondition's success_condition to a
+    # generic "ensure-state" gate keyed on THIS flag (not on milestone-name keywords), so an
+    # already-satisfied precondition (e.g. already logged in) is accepted on frame 1 instead of
+    # stuck on a login-form / business-data gate. App-specific "what that state looks like" stays
+    # in the checker's _check.md. The flag — not a string match — is the detection signal.
+    precondition: bool = False
 
 
 class Cond(BaseModel):

@@ -524,11 +524,23 @@ def run_agent_loop(
     if knowledge is not None:
         context.knowledge = knowledge
 
+    _orch_interp = None  # set in orchestrator mode; _save_ctx mirrors its live run_log into context
+
     def _save_ctx() -> None:
         """Persist context, stamping the run's wall-clock elapsed so far — so the final file
         carries the true end-to-end time (LLM + settle + perception/execution/overhead), not
         just the sum of LLM-module timings."""
         context.wall_clock_s = time.perf_counter() - _run_started
+        # Orchestrator mode: mirror the interpreter's live run_log (each completed run + its
+        # structured reads) into context so the report shows WHAT each read captured and can
+        # resolve {var[field]} action targets — not just the static program structure. A pure
+        # read has no turn/milestone (it reads the verdict frame), so this is the ONLY place its
+        # result reaches the report. Refreshed every save → an interrupted run still shows partial
+        # reads. context.orchestrator otherwise holds {"program": ...} (set when the program lands).
+        if _orch_interp is not None and isinstance(context.orchestrator, dict):
+            context.orchestrator["run_log"] = [
+                r.model_dump(mode="json") for r in _orch_interp.run_log
+            ]
         _save_context(context_path, context)
 
     _save_ctx()
@@ -707,6 +719,7 @@ def run_agent_loop(
         if program is not None:
             from gui_agent.core.orchestrator import Interpreter
             _interp = Interpreter(program)
+            _orch_interp = _interp  # _save_ctx now mirrors its run_log (reads) into context
             # Persist the decomposed program so the report renders decompose as its OWN row
             # (a distinct stage now, not folded into turn 1's supervisor step).
             context.orchestrator = {"program": program.model_dump(mode="json")}
@@ -1341,18 +1354,24 @@ def main() -> None:
         # (default) → the DAG path is unchanged.
         program = None
         if args.orchestrator:
-            from gui_agent.core.orchestrator import decompose, normalize_confirm_read_gates
+            from gui_agent.core.orchestrator import (
+                decompose, normalize_confirm_read_gates, normalize_precondition_gates,
+            )
             from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
             # Resolve @<path> refs once (config field values the goal only points at) and feed
             # them to the decomposer — mirrors the DAG path, which the orchestrator's decompose
             # otherwise skipped (the LLM only saw the literal @token, never the field values).
             file_section = resolve_file_refs(goal)
-            # L2 structural backstop: confirm-read-backed action gates → lenient dispatch
-            # gates, so the checker never re-adjudicates a result the read owns (see engine).
-            program = normalize_confirm_read_gates(
+            # L2 structural backstops (deterministic, keyed on structural signals, not gate wording):
+            #  · confirm-read action gates → lenient dispatch gate (checker doesn't re-judge the
+            #    result the read owns) — signal = action→read adjacency;
+            #  · precondition gates (确保已登录/已进入某模式) → generic ensure-state gate so an
+            #    already-satisfied precondition is done on frame 1 (no form/data stuck; app-specific
+            #    markers live in the checker's _check.md) — signal = the run.precondition flag. See engine.
+            program = normalize_precondition_gates(normalize_confirm_read_gates(
                 decompose(goal, knowledge=knowledge.navigation if knowledge else "",
                           file_section=file_section)
-            )
+            ))
             # The config must ALSO reach the execution-time planner deterministically — the
             # supervisor's constraints flow to every milestone's planner, and reseed never clears
             # them (LLM distillation of config into constraints proved unstable; see DAG path).

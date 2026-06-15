@@ -1931,6 +1931,7 @@ HTML_TEMPLATE = """\
   .prog-name {{ color: var(--text); }}
   .prog-var {{ font-family: monospace; color: #0891b2; font-weight: 600; }}
   .prog-ret {{ color: #047857; font-size: 11px; font-family: monospace; }}
+  .prog-resolved {{ color: #0e7490; font-size: 11px; font-family: monospace; background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 5px; padding: 0 6px; }}
   .prog-empty {{ color: #cbd5e1; }}
   .prog-if {{ display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; margin: 2px 0; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }}
   .prog-cond {{ display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }}
@@ -2438,6 +2439,10 @@ _PROG_KIND_BADGE = {
     "action": "milestone-badge-action", "read": "milestone-badge-collection",
 }
 
+# {var[field]} data-flow template (mirrors the runner's program.TEMPLATE_RE): the report uses it
+# to show what each read captured and to resolve action targets the way the runner did at runtime.
+_PROG_TEMPLATE_RE = re.compile(r"\{(\w+)\[([^\]]+)\]\}")
+
 
 def _render_program_section(orchestrator: dict | None) -> str:
     """Orchestrator mode: render the decomposed DSL program as its OWN section, #0 编排.
@@ -2452,6 +2457,24 @@ def _render_program_section(orchestrator: dict | None) -> str:
     if not stmts:
         return ""
 
+    # var -> {field: value} captured by each completed read (runner mirrors interp.run_log into
+    # context.orchestrator). Lets the report show WHAT a read got and resolve {var[field]} action
+    # targets — a pure read has no turn/milestone, so without this the report only had the static
+    # program structure, never the values it read or where they flowed.
+    env: dict[str, dict] = {}
+    for r in (orchestrator.get("run_log") or []):
+        reads = (r.get("result") or {}).get("reads") or {}
+        if r.get("var") and reads:
+            env[r["var"]] = reads
+
+    def _resolve(text: str) -> str:
+        """Substitute {var[field]} from env (as the runner did at execute time); keep the raw
+        ref when unresolved so the data-flow wiring stays visible."""
+        def _sub(m: "re.Match[str]") -> str:
+            vals = env.get(m.group(1))
+            return vals.get(m.group(2).strip().strip("'\""), m.group(0)) if vals else m.group(0)
+        return _PROG_TEMPLATE_RE.sub(_sub, text or "")
+
     counter = [0]
 
     def _run_row(s: dict) -> str:
@@ -2460,12 +2483,26 @@ def _render_program_section(orchestrator: dict | None) -> str:
         badge = _PROG_KIND_BADGE.get(kind, "milestone-badge-default")
         var = s.get("var")
         var_html = f'<span class="prog-var">{_safe(var)} =</span> ' if var else ""
+        name = s.get("name", "")
+        # show the authored name (template intact = the program), then the runtime-resolved target
+        # next to it when {var[field]} filled (so 编辑 {r[实际名称]} → lucas-10003 is visible)
+        resolved = _resolve(name)
+        resolved_html = (
+            f'<span class="prog-resolved">▸ {_safe(resolved)}</span>' if resolved != name else ""
+        )
         ret = [r for r in (s.get("returns") or []) if r]
-        ret_html = f'<span class="prog-ret">→ 读 {_safe("、".join(ret))}</span>' if (kind == "read" and ret) else ""
+        if kind == "read" and ret:
+            vals = env.get(var or "") or {}
+            shown = "、".join(
+                f"{_safe(f)}={_safe(vals[f])}" if vals.get(f) else _safe(f) for f in ret
+            )
+            ret_html = f'<span class="prog-ret">→ 读 {shown}</span>'
+        else:
+            ret_html = ""
         return (
             f'<div class="prog-step">'
             f'<span class="prog-n">{counter[0]}</span>'
-            f'<span class="prog-name">{var_html}{_safe(s.get("name", ""))}</span>'
+            f'<span class="prog-name">{var_html}{_safe(name)}</span>{resolved_html}'
             f'<span class="milestone-badge {badge}">{_safe(kind)}</span>{ret_html}'
             f'</div>'
         )
