@@ -24,17 +24,14 @@ output didn't know" disappears: the answer comes from the whole program, not the
 
 from __future__ import annotations
 
-import re
 from typing import Callable, Generator, Optional
 
 from pydantic import BaseModel, Field
 
-from .program import Cond, Finish, If, Program, Run, RunResult
+from .program import TEMPLATE_RE, Cond, Finish, If, Program, Run, RunResult
 
 # Drive one milestone (one Run spec) to a terminal state and return its structured result.
 MilestoneExecutor = Callable[[Run], RunResult]
-
-_TEMPLATE_RE = re.compile(r"\{(\w+)\[([^\]]+)\]\}")
 
 
 class RunRecord(BaseModel):
@@ -73,6 +70,19 @@ class Interpreter:
         to the end of the block without terminating."""
         for s in stmts:
             if isinstance(s, Run):
+                s, missing = self._fill(s)  # resolve {var[field]} from env BEFORE the planner sees it
+                if missing:
+                    # The action TARGET (name) references a read value that came back empty —
+                    # driving a gap-named milestone (『编辑机器人 ，设…』) would misfire. Fail fast
+                    # with an honest reply instead of silently sending an empty reference to the
+                    # planner (the decomposer's validate guard prevents *dangling* refs; this catches
+                    # the read-returned-empty case at runtime).
+                    fail = RunResult(
+                        completed=False, failed=True,
+                        summary=f"动作目标引用 {missing} 在运行时为空（前置 read 未读到对应值）",
+                    )
+                    self.run_log.append(RunRecord(name=s.name, var=s.var, result=fail))
+                    return f"子任务「{s.name}」无法执行：{fail.summary}"
                 result = yield s  # engine drives this milestone and send()s back its result
                 self.run_log.append(RunRecord(name=s.name, var=s.var, result=result))
                 if s.var:
@@ -95,13 +105,38 @@ class Interpreter:
         target = cond.value.strip()
         return actual == target if cond.cmp == "==" else actual != target
 
-    def _render(self, template: str) -> str:
-        def _sub(m: "re.Match[str]") -> str:
+    def _fill(self, run: Run) -> tuple[Run, list[str]]:
+        """Resolve {var[field]} refs in a Run's text from env BEFORE it reaches the planner.
+
+        Read-then-reference (rule 8): an action the decomposer authored as『打开工单 {t[工单号]}』
+        becomes『打开工单 WO-2024-007』so it targets the concrete entity a prior read identified —
+        robust even when the list holds siblings, not just the only-row-on-screen. Same templater
+        as finish (_render); env is already populated because the read runs — and send()s its
+        RunResult back — before this Run is yielded.
+
+        Returns (filled_run, missing): `missing` lists refs in the NAME (the action TARGET) that
+        resolved to empty — the caller fails fast on those rather than driving a gap-named
+        milestone. success_condition / read_spec render leniently: a gap in the acceptance gate or
+        read guidance weakens them but doesn't misdirect the action, so it's not worth aborting on.
+        Returns the run unchanged when nothing templated (the common case)."""
+        missing: list[str] = []
+        name = self._render(run.name, missing)              # target → strict (collect empties)
+        sc = self._render(run.success_condition)            # gate → lenient
+        rs = self._render(run.read_spec)                    # read guidance → lenient
+        if name == run.name and sc == run.success_condition and rs == run.read_spec:
+            return run, missing
+        return run.model_copy(update={"name": name, "success_condition": sc, "read_spec": rs}), missing
+
+    def _render(self, template: str, missing: Optional[list[str]] = None) -> str:
+        def _sub(m) -> str:
             var, field = m.group(1), m.group(2).strip().strip("'\"")
             rv = self.env.get(var)
-            return rv.reads.get(field, "") if rv else ""
+            val = rv.reads.get(field, "") if rv else ""
+            if missing is not None and not val:
+                missing.append(f"{var}[{field}]")
+            return val
 
-        return _TEMPLATE_RE.sub(_sub, template)
+        return TEMPLATE_RE.sub(_sub, template)
 
     def _auto_summary(self) -> str:
         """No explicit finish(): summarize from the persisted run results (reads first, else

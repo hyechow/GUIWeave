@@ -16,9 +16,18 @@ Grammar (MVP, no loops):
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
+
+# DSL data-flow template grammar: ``{var[field]}`` pulls a prior read's value out of the
+# variable environment. Used by finish messages (the original site) AND — since the
+# read-then-reference extension — by a run's name/success_condition/read_spec, so a later
+# action authored as『编辑机器人 {r[实际名称]}』targets the concrete entity a read identified.
+# Single source of truth: the runner fills these at execute time, the decomposer validates
+# that every ref resolves to a real read field. Keep both ends on THIS regex.
+TEMPLATE_RE = re.compile(r"\{(\w+)\[([^\]]+)\]\}")
 
 # The orchestrator's OWN linear-task vocabulary (decoupled from the executor's
 # MilestoneKind). These are the milestone-sized things the linear executor is good
