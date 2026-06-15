@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import signal
 import threading
+import time
 from typing import Optional
 
 # Default viewport used to denormalize coordinates and for screenshots when the
@@ -36,6 +37,45 @@ _DEFAULT_VIEWPORT_H = 800
 # Hard wall-clock cap for a single raw-CDP send. A non-responding Chrome would
 # otherwise hang the agent loop forever. Normal round-trips are well under a second.
 _CDP_SEND_TIMEOUT_S = 10.0
+
+# CDP settle (wait_settled): the page is "settled" once it is at least interactive AND both
+# the DOM and the network have been quiet for _SETTLE_QUIET_MS. This reads the page's real
+# load/DOM/network state instead of diffing pixels, so a canvas/requestAnimationFrame render
+# loop (which never touches the DOM or the network) no longer keeps the agent waiting — the
+# thing pure-vision settle can't distinguish from "still loading". Network quiet = no NEW
+# request for the window (tolerates persistent WebSocket/SSE connections that never "finish",
+# which a naive in-flight==0 count would wait on forever). Measured on the live RoboTeam map:
+# ~1.1s vs the vision loop's ~5.7s on the same transition.
+_SETTLE_QUIET_MS = 400.0     # DOM-mutation / network quiet window
+_SETTLE_POLL_S = 0.12        # poll cadence (raw-CDP evaluate is cheap)
+# Hard cap. settle only waits for THIS action's immediate effect to land — it is NOT the
+# mechanism for waiting out a long page load (a big SPA like Feishu can take far longer than any
+# sane cap). That is handled by re-observing each turn: a page still loading reads as in_progress
+# and the next turn sees it further along. So keep the cap short; a page still busy at the cap
+# returns anyway (the log says 仍在加载) and the loop re-checks next turn.
+_SETTLE_CAP_S = 3.0
+# An XHR/Fetch in flight longer than this is treated as streaming / long-poll / an unconsumed
+# body (it may never fire loadingFinished) and excluded from the gate — otherwise such a page
+# would settle at the cap on every action. Kept under _SETTLE_CAP_S so it excludes a stuck
+# request and returns 'settled' BEFORE the cap. A genuinely slow one-shot fetch is waited on up
+# to here; past it the next turn's observe picks up the late data (the same re-observe path that
+# handles long loads).
+_XHR_STALE_S = 2.0
+
+# A MutationObserver storing the time of the last DOM change on window.__q.t (installed once
+# per document, guarded; re-installs after a navigation wipes window.__q). _SETTLE_RESET sets
+# the baseline to now (called on wait_settled entry, so quiet is measured FROM THE ACTION);
+# _SETTLE_PROBE returns [readyState, msSinceLastMutation] in one round-trip.
+_SETTLE_INSTALL = (
+    "if(!window.__q){window.__q={t:performance.now()};"
+    "new MutationObserver(()=>{window.__q.t=performance.now();}).observe(document.documentElement||document,"
+    "{subtree:true,childList:true,attributes:true,characterData:true});}"
+)
+_SETTLE_RESET = "(()=>{" + _SETTLE_INSTALL + "window.__q.t=performance.now();return 1;})()"
+_SETTLE_PROBE = (
+    "(()=>{" + _SETTLE_INSTALL
+    + "return [document.readyState, Math.round(performance.now()-window.__q.t)];})()"
+)
 
 
 class _CDPTimeout(Exception):
@@ -80,6 +120,14 @@ class PlaywrightDevice:
         self._dpr = None  # cached devicePixelRatio (stable; only changes across monitors)
         self._pending_upload = None  # file path armed for the NEXT file chooser (upload action)
         self._upload_result = None   # set by the file-chooser handler so upload_file can report
+        # CDP settle network tracking (armed lazily on the live CDP session, re-armed if it is
+        # rebuilt). Tracks in-flight XHR/Fetch ONLY — the data the page is waiting on — so a slow
+        # post-readyState fetch blocks settle, while persistent Script/blob workers and SSE (which
+        # fire once and never "finish") don't keep us waiting. _xhr_last = monotonic time of the
+        # last XHR/Fetch start-or-finish (network-quiet = 0 in-flight AND quiet for the window).
+        self._net_session = None
+        self._xhr_ids: dict = {}    # requestId -> monotonic start time (in-flight XHR/Fetch)
+        self._xhr_last = 0.0        # last XHR/Fetch start-or-finish (for the quiet window)
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
@@ -273,6 +321,80 @@ class PlaywrightDevice:
             return self._require_page().evaluate("document.readyState") == "loading"
         except Exception:
             return False
+
+    # ----- CDP settle (replaces pixel-diff settle for the browser) ----------
+    def _ensure_net_tracking(self) -> None:
+        """Arm in-flight XHR/Fetch tracking on the live CDP session, re-arming if _cdp_send
+        rebuilt it (the listener is bound to a session object). Only XHR/Fetch count — Script /
+        Document / Image / EventSource don't (workers/SSE fire once and never finish, which would
+        wedge the gate; the initial document load is covered by readyState + DOM-quiet instead).
+        Best-effort; on failure the net gate degrades to 'quiet' and wait_settled leans on
+        DOM/readyState."""
+        if self._cdp is None:
+            try:
+                self._cdp_send("Runtime.evaluate", {"expression": "0", "returnByValue": True})
+            except Exception:
+                return
+        if self._cdp is None or self._net_session is self._cdp:
+            return
+        try:
+            self._cdp.send("Network.enable", {})
+
+            def _on_req(p):
+                if p.get("type") in ("XHR", "Fetch"):
+                    self._xhr_ids[p.get("requestId")] = time.monotonic()
+                    self._xhr_last = time.monotonic()
+
+            def _on_done(p):
+                if self._xhr_ids.pop(p.get("requestId"), None) is not None:
+                    self._xhr_last = time.monotonic()
+
+            self._cdp.on("Network.requestWillBeSent", _on_req)
+            self._cdp.on("Network.loadingFinished", _on_done)
+            self._cdp.on("Network.loadingFailed", _on_done)
+            self._net_session = self._cdp
+        except Exception:
+            self._net_session = None
+
+    def wait_settled(self, action_type: Optional[str] = None) -> tuple[float, bool]:
+        """Wait until the page is settled using CDP signals (not pixel diffing). Returns
+        (seconds_waited, no_effect).
+
+        Settled = readyState != 'loading' AND the DOM has not mutated for _SETTLE_QUIET_MS AND
+        no NEW network request for _SETTLE_QUIET_MS, capped at _SETTLE_CAP_S. Both quiet windows
+        are measured FROM THE ACTION (baselines reset on entry), so a just-fired effect is never
+        mistaken for pre-existing quiet. A canvas/rAF render loop never mutates the DOM or the
+        network, so it can't keep us waiting — the case pure-vision settle can't escape.
+
+        no_effect = the DOM never mutated during the wait (quietMs tracked total elapsed), i.e.
+        the action changed nothing structurally. The supervisor corroborates / corrects this
+        with its url + dom-fingerprint signals. Raises on CDP failure so the caller falls back
+        to the vision settle."""
+        self._ensure_net_tracking()
+        self._cdp_send("Runtime.evaluate", {"expression": _SETTLE_RESET, "returnByValue": True})
+        t0 = time.perf_counter()
+        while True:
+            res = self._cdp_send("Runtime.evaluate", {"expression": _SETTLE_PROBE, "returnByValue": True})
+            val = res.get("result", {}).get("value")
+            rs, q = (val[0], val[1]) if isinstance(val, list) and len(val) == 2 else ("complete", None)
+            # network quiet = no (non-stale) XHR/Fetch in flight AND none started/finished in the
+            # window. Drop requests stuck in flight > _XHR_STALE_S (streaming / unconsumed body).
+            now = time.monotonic()
+            self._xhr_ids = {i: t for i, t in self._xhr_ids.items() if now - t < _XHR_STALE_S}
+            xhr_inflight = len(self._xhr_ids)
+            net_quiet = xhr_inflight == 0 and (now - self._xhr_last) * 1000.0 >= _SETTLE_QUIET_MS
+            elapsed = time.perf_counter() - t0
+            settled = rs != "loading" and (q or 0) >= _SETTLE_QUIET_MS and net_quiet
+            if settled or elapsed >= _SETTLE_CAP_S:
+                # DOM never mutated after entry → quietMs climbed with elapsed (≈ equal).
+                no_effect = q is not None and q >= elapsed * 1000.0 - 150 and xhr_inflight == 0
+                tag = "settled" if settled else "达上限·仍在加载"
+                print(f"  [Settle] {elapsed:.1f}s (CDP {tag}: readyState={rs}, "
+                      f"domQuiet={q}ms, xhr在飞={xhr_inflight}"
+                      + ("，零效果" if no_effect else "") + ")")
+                return elapsed, no_effect
+            self._ensure_net_tracking()  # re-arm if a poll rebuilt the session
+            time.sleep(_SETTLE_POLL_S)
 
     def page_info(self) -> tuple[str, str]:
         """(url, title) of the active page — the browser chrome the vision-only screenshot

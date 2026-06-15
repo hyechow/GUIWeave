@@ -65,6 +65,13 @@ class BrowserSession:
         pop = getattr(self.client, "pop_tab_switched", None)
         return bool(pop()) if pop is not None else False
 
+    def wait_settled(self, action_type=None):
+        """Delegate to PlaywrightDevice's CDP-based settle (readyState + DOM-mutation + network
+        quiet). The runner's _settle_after_action prefers this over pixel-diff when present."""
+        if self.client is None:
+            raise RuntimeError("浏览器尚未连接")
+        return self.client.wait_settled(action_type)
+
 
 
 class BrowserPerception:

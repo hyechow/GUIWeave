@@ -94,7 +94,18 @@ def _settle_after_action(
 
     drag/scroll 只判「停稳」（相邻帧不再变化）、不判「changed」：picker 改动小测不出
     changed 会顶满上限，而固定盲等又会在 fling 没停时截图导致读数滞后、来回震荡。
+
+    浏览器优先走 CDP settle（phone.wait_settled：readyState + DOM 变更静默 + 网络静默）——
+    它读页面真实状态、无视 canvas/rAF 动效，远早于视觉返回。手势（drag/scroll）仍走视觉：
+    平滑滚动是纯视觉转场、不产生 DOM/网络信号，DOM 静默会在滚动途中就触发。CDP 异常则回退视觉。
     """
+    if action_type not in ("drag", "scroll"):
+        _cdp_settle = getattr(phone, "wait_settled", None)
+        if _cdp_settle is not None:
+            try:
+                return _cdp_settle(action_type)
+            except Exception as e:
+                print(f"  [Settle] CDP settle 异常，回退视觉: {e}")
     t0 = time.perf_counter()
     if action_type in ("drag", "scroll"):
         prev: bytes | None = None
