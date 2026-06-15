@@ -1899,6 +1899,11 @@ HTML_TEMPLATE = """\
   .sidebar-knowledge {{ margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }}
   .sk-app {{ padding: 0 18px; font-size: 13px; font-weight: 600; color: #0891b2; }}
   .sk-meta {{ padding: 3px 18px 0; font-size: 10px; color: #94a3b8; font-family: monospace; line-height: 1.6; }}
+  .sk-channels {{ padding: 6px 18px 0; display: flex; flex-wrap: nowrap; gap: 4px; }}
+  .sk-ch {{ position: relative; font-size: 10px; padding: 1px 7px; border-radius: 4px; line-height: 1.6; white-space: nowrap; cursor: default; }}
+  .sk-ch.on {{ background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }}
+  .sk-ch.off {{ background: #f1f5f9; color: #cbd5e1; border: 1px solid #e2e8f0; }}
+  .sk-ch:hover::after {{ content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; background: #1e293b; color: #fff; font-size: 10px; font-family: monospace; white-space: nowrap; padding: 3px 7px; border-radius: 4px; pointer-events: none; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }}
   .sk-sections-label {{ padding: 12px 18px 4px; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }}
   .sk-item {{ padding: 6px 18px 6px 26px; font-size: 12px; color: #0e7490; cursor: pointer; position: relative; line-height: 1.4; transition: background 0.12s; }}
   .sk-item::before {{ content: "📖"; position: absolute; left: 7px; font-size: 10px; }}
@@ -2332,14 +2337,26 @@ def _render_knowledge_html(k: dict, sections: list[dict] | None = None) -> str:
     app = _safe(str(k.get("app_name", "")))
     sc = k.get("section_count", 0)
     nav = k.get("nav_chars", 0)
-    el = k.get("elements_chars", 0)
     _k = lambda n: f"{n / 1000:.1f}k" if n >= 1000 else str(n)  # noqa: E731
     out = [
         '<div class="sidebar-knowledge">',
         '<div class="sidebar-title">知识库</div>',
         f'<div class="sk-app">{app}</div>',
-        f'<div class="sk-meta">{sc} 章节 · 导航 {_k(nav)} / 元素 {_k(el)} 字</div>',
+        f'<div class="sk-meta">{sc} 章节 · 导航 {_k(nav)} 字</div>',
     ]
+    # Hand-maintained overlay channels — loaded (with size) vs absent. Human labels; the file
+    # stem is in the hover title for traceability. Skipped entirely when no overlay exists.
+    overlays = k.get("overlays") or {}
+    if overlays:
+        _CH = [("_check", "验收"), ("_deploy", "部署"), ("_skill", "技能"), ("_update", "更新")]
+        out.append(f'<div class="sk-sections-label">动态知识 · {len(overlays)}</div>')
+        chips = []
+        for stem, label in _CH:
+            if stem in overlays:
+                chips.append(f'<span class="sk-ch on" data-tip="{stem}.md · {_k(overlays[stem])} 字">{label}</span>')
+            else:
+                chips.append(f'<span class="sk-ch off" data-tip="{stem}.md（未加载）">{label}</span>')
+        out.append('<div class="sk-channels">' + "".join(chips) + "</div>")
     sections = sections or []
     if sections:
         out.append(f'<div class="sk-sections-label">已加载章节 · {len(sections)}</div>')

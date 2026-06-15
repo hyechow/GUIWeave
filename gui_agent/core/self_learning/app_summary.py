@@ -90,6 +90,10 @@ class AppKnowledge:
     app_name: str
     sections: dict[str, str] = field(default_factory=dict)  # per-section bodies → progressive load
     check: str = ""  # _check.md content → Checker-only observable completion rules
+    # Hand-maintained overlay channels actually present this run → {"_check"|"_deploy"|"_skill"|
+    # "_update": char_count}. _deploy/_update/_skill are folded into `navigation`; tracked here
+    # purely so the report can show each channel's loaded state. Absent file → key absent.
+    overlays: dict[str, int] = field(default_factory=dict)
 
     def summary(self) -> dict[str, object]:
         """Compact, log-friendly description of what got injected (→ context.json knowledge)."""
@@ -99,6 +103,7 @@ class AppKnowledge:
             "elements_chars": len(self.elements),
             "check_chars": len(self.check),
             "section_count": len(self.sections),
+            "overlays": dict(self.overlays),
         }
 
 
@@ -335,11 +340,13 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
             #   _update.md — current-version updates over the (older) distilled base. On conflict
             #                the agent trusts these and the live UI. Dated, grows as the UI drifts;
             #                folded back into the base when the app is re-distilled from live recon.
+            channels: dict[str, int] = {}  # overlay file stem → char count (for the report)
             overlays = []
             for overlay_name in ("_deploy.md", "_update.md"):
                 overlay_path = d / overlay_name
                 if overlay_path.exists():
                     text = overlay_path.read_text(encoding="utf-8").strip()
+                    channels[overlay_name[:-3]] = len(text)
                     if text:
                         overlays.append(text)
             if overlays:
@@ -351,6 +358,7 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
             skill_path = d / "_skill.md"
             if skill_path.exists():
                 skill = skill_path.read_text(encoding="utf-8").strip()
+                channels["_skill"] = len(skill)
                 if skill:
                     for issue in validate_skill_doc(skill):
                         print(f"  [Skill] ⚠️ {issue}")
@@ -361,9 +369,12 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
             )
             check_path = d / "_check.md"
             check = check_path.read_text(encoding="utf-8").strip() if check_path.exists() else ""
+            if check_path.exists():
+                channels["_check"] = len(check)
             # Per-section page files (excludes _app.md/_elements.md) → progressive-load bodies.
             sections = {stem: body for stem, body in load_page_files(d)}
-            return AppKnowledge(navigation=nav, elements=elements, app_name=d.name, sections=sections, check=check)
+            return AppKnowledge(navigation=nav, elements=elements, app_name=d.name,
+                                sections=sections, check=check, overlays=channels)
         # Directory exists but no knowledge file yet
         print(f"  [Knowledge] 识别到应用「{d.name}」，目录存在但暂无知识文件")
         return AppKnowledge(navigation="", elements="", app_name=d.name)
