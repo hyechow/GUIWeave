@@ -26,5 +26,16 @@
       "read_has_spec"
     ],
     "note": "泛化样本：把同一条不变量(confirm-read 撑腰的 action 验收=dispatch/defer 门，不把结果当终态)放到『创建』这种状态变更动作上，验证修法不是连通专用。期望分解：进虚拟机器人页(navigation)→新建(action，验收写『已提交创建/弹出提示/列表更新，成败由后续 read 判读』而非『创建成功提示已显示』)→确认创建结果(read，returns 含 创建结果，read_spec 写清成功/失败各看什么信号)→finish。断言词表无关：只看 action 验收是否含 dispatch(已点击/已提交/出现响应) 或 defer(成败由后续 read 判读) 信号。"
+  },
+  {
+    "label": "登录前置-已登录会话应判终态而非「打开登录页」（回归 20260615_153314 卡死）",
+    "goal": "在 RoboTeam 中登录并进入地图列表页面",
+    "expected": {
+      "min_statements": 1
+    },
+    "assertions": [
+      "auth_milestone_terminal_state"
+    ],
+    "note": "回归 20260615_153314：分解把登录建模成 [navigation 打开登录页 success=『账号密码框+登录按钮』 / action 输 admin/admin 登录 / read / if]。但 RoboTeam 保持会话=已登录，回不去登录页 → milestone 1 的验收『看到账号密码框』永不成立，agent 瞎点 6 轮、3 次重试后整任务死在第一步。修法=prompt 规则7：登录/认证类前置用『确保已登录』一步建模，success_condition 写【认证后终态】(首页/用户名/头像/导航)，已登录则第一帧判 done 跳过；通则=前置验收写目标终态，别写只在未完成态才出现的中间界面。断言：提到登录/认证的 milestone 验收不得是『登录表单可见』门(账号/密码/登录按钮)。"
   }
 ]

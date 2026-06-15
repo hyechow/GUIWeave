@@ -147,6 +147,23 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     f"confirm-read 的 action 验收非 dispatch/defer 门、把结果当终态: {offenders}"
                 )
+        elif assertion == "auth_milestone_terminal_state":
+            # 回归 20260615_153314：登录被建模成「打开登录页」，success_condition=「账号密码框+登录
+            # 按钮」。但会话常已登录，回不去登录页 → 该步永远卡死、整任务死在第一步。登录/认证类
+            # 前置应写【认证后终态】（首页/用户名/导航），已登录则第一帧判 done 跳过。判据：提到
+            # 登录/认证的 milestone，其验收不得是「登录表单可见」门（账号/密码/登录按钮/登录表单）。
+            auth_ms = [
+                r for r in runs
+                if any(k in (r.name + r.success_condition) for k in ("登录", "登入", "登陆", "认证"))
+            ]
+            offenders = [
+                (r.name, r.success_condition) for r in auth_ms
+                if any(k in r.success_condition for k in ("账号", "密码", "登录按钮", "登录表单", "登录框"))
+            ]
+            if offenders:
+                details.append(
+                    f"登录/认证里程碑验收写成「登录表单可见」（已登录会话不可达，会卡死）: {offenders}"
+                )
         elif assertion == "read_has_spec":
             # 只读单帧没判读说明就只能瞎猜（见 structured_read / prompt 规则）。每个 read 都要有
             # returns + 非空 read_spec。
