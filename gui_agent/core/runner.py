@@ -793,6 +793,29 @@ def run_agent_loop(
 
             if _orch_reply is not None:
                 _drain_pending_read()
+                # The program ended on this hand-off (last actionable milestone done → read /
+                # finish). The merge only DROPS a verdict turn when it folds into a FOLLOWING
+                # action; the terminal milestone has none, so record its verdict turn here —
+                # otherwise the report is missing it and the verdict screenshot (already written
+                # at observe) is orphaned. sv_step is the completed milestone's done verdict.
+                context.turns.append(PolicyTurn(
+                    index=turn_no,
+                    observation_source=observation.source,
+                    supervisor=sv_step,
+                    action_decision=None,
+                    checker=_extract_checker(supervisor),
+                    planner=_extract_plan(supervisor),
+                    replan=_extract_replan(supervisor),
+                    executed=False,
+                    llm_calls=get_llm_call_count() - llm_calls_before,
+                    input_tokens=get_llm_token_usage()[0] - tokens_before[0],
+                    output_tokens=get_llm_token_usage()[1] - tokens_before[1],
+                    timings=getattr(supervisor, "_timings", {}),
+                    token_usage=getattr(supervisor, "_token_usage", {}),
+                    sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
+                ))
+                # Sync the last milestone's done verdict into context (no later turn body runs).
+                _sync_milestone_done_checks(supervisor, context)
                 _save_ctx()
                 return _orch_result(context, _interp, _orch_reply)
 

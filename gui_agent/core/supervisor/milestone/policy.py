@@ -805,6 +805,14 @@ class MilestoneSupervisorPolicy:
     ) -> SupervisorStep:
         done_name = milestone.name
         milestone.status = "done"
+        # Persist this milestone's DONE verdict before _last_check is overwritten by the next
+        # milestone's check (the report's 验收 panel renders it via context.milestones[id].
+        # done_check). Must be here, not only in the nav-skip branch below: the terminal path
+        # (orchestrator single-milestone completion → _next_milestone() is None) and the
+        # non-nav next path both reach the bottom without otherwise saving it, which left the
+        # acceptance panel empty for those milestones.
+        if self._last_check is not None:
+            self._milestone_done_checks[milestone.id] = self._last_check
         self._current_id = self._next_milestone()
         self._recent_screenshots.clear()
         print(f"  子目标「{done_name}」已完成")
@@ -858,9 +866,7 @@ class MilestoneSupervisorPolicy:
         # collection/verification need the checker's read_instruction.
         if next_ms.kind == "navigation":
             print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
-            # Save the done check for the completed milestone before overwriting _last_check.
-            if self._last_check is not None:
-                self._milestone_done_checks[milestone.id] = self._last_check
+            # (done check for the completed milestone already saved at the top of _advance)
             synthetic = _SingleCheckResult(
                 status="in_progress",
                 reason=f"刚进入子目标「{next_ms.name}」，默认未完成",

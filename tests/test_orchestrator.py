@@ -223,6 +223,25 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
 
 
+def test_advance_persists_done_check_on_terminal_completion():
+    # The report's 验收 panel renders context.milestones[id].done_check (sourced from the
+    # supervisor's _milestone_done_checks). A single-milestone (orchestrator) completion hits
+    # _advance's TERMINAL branch — it must still save the done verdict, else the panel is empty
+    # (regression seen in 20260615_113554 after the hand-off merge).
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+    from gui_agent.core.orchestrator.engine import to_milestone
+    from gui_agent.core.schemas import Observation
+    p = MilestoneSupervisorPolicy()
+    ms = to_milestone(Run(name="进首页", kind="navigation"), 0)
+    p.reseed(ms)                                          # single milestone, orchestrator style
+    check = _SingleCheckResult(status="done", reason="已进入首页", summary="首页")
+    p._last_check = check
+    step = p._advance(ms, Observation(png_bytes=b"x", source="test"), [])
+    assert step.goal_completed is True                    # single milestone → terminal step
+    assert p._milestone_done_checks[ms.id] is check       # done 判定已留存（验收面板有数据）
+
+
 # ── #3 structured read: reads 进 RunResult，让 if 真分支 ──────────────────────────
 
 
