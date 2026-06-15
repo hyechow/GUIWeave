@@ -88,7 +88,8 @@ def test_validate_if_references_unknown_var():
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
     issues = validate_program(prog)
-    assert any("不是任何 read 步的 var" in i for i in issues)
+    # 路径敏感：未知/未在路径上产生的 cond var 统一报「尚未产生」（含 X 根本不是任何 read 的 var 这种）
+    assert any("尚未产生" in i for i in issues)
 
 
 def test_validate_if_references_unknown_field():

@@ -21,7 +21,7 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from llm.structured import invoke_structured
 
-from .program import Cond, Finish, If, Program, Run, RunKind, Stmt
+from .program import TEMPLATE_RE, Cond, Finish, If, Program, Run, RunKind, Stmt
 
 _SYSTEM = """\
 你是 GUI 自动化任务的【编排器分解器】。把用户任务分解成一段小程序（DSL steps），由解释器按顺序执行。
@@ -46,6 +46,7 @@ _SYSTEM = """\
 5. 能一句话答复就用 finish 模板引用 read 值；不写 finish 时解释器会自动汇总各 read 结果。
 6. **关键动作 confirm-read（成败由结构化读取定，别只信动作完成）**：会改变状态的关键动作（创建/提交/删除/发送/设置/检测查询，尤其任务的最终动作），在该 action 之后补一个 read 确认结果——returns 含一个成败/状态字段，read_spec 写清「成功看什么信号、失败看什么信号」；再由 finish（或 if）据这个结构化结果答复/分支。不要只凭动作步自身被判完成就当任务成功。配套地（规则4例外）：该 action 的 success_condition 写「动作已发出」而非「结果已显示/某判定已出现」，结果的具体判读独占给这个 read——验收门去判结果会反复纠结一个刚出现/会消失的小图标（看到却不信→重复触发，或把同一个标志判读漂移），正是 confirm-read 要绕开的。
 7. **前置状态用「终态」建模，别用只在未完成态才出现的中间界面（尤其登录/认证）**：登录、进入某模式等前置，初始往往已满足。**别建模成「打开登录页 → 输账号密码」**——会话常已登录，登录页根本回不去，该步 success_condition「看到账号密码框」永远不成立、卡死。建模成**一步**「确保已登录」，run_kind=navigation，success_condition 用【登录后即固定存在、与页面数据无关的认证标志】：顶栏用户名/头像、导航菜单、页面标题/导航高亮项——这些一登录就在，不依赖任何业务数据。**别拿主内容区的卡片/列表/数据/统计当登录标志**：它们常因业务数据未加载（或要等本任务后续步骤才产生）而为空，拿来验收会永远不成立、卡死（如「首页含机器人/订单监控卡片」在没数据时就是空的）。已登录则第一帧就判 done 直接跳过。通则:任何「确保处于某状态」的前置，success_condition 写**目标终态本身**，不写「只在未完成时才出现、或要等后续步骤才满足的内容」。
+8. **选择器分解时已知→直接写字面量；只有运行时才知道→read 出来用 {变量[字段]} 接力**。绝大多数情况写字面量即可：实体若有分解时可写的稳定选择器（用户给定名、@配置字段值、任务文本里的编号），直接写进 name，别为它多加 read；已在该实体编辑页就继续操作，别每步回列表重选。仅当后续必须重新选中某实体、而它的名称/编号**分解时未知、只能运行时从界面读到**（典型：新建后系统自动分配的编号/自动命名）时，才两步配合：① 一个 read 把该选择器读进 returns 字段并绑定 var；② 后续步骤 name（必要时连 success_condition）用 `{变量[字段]}` 引用它（`打开工单 {t[工单号]}` → 运行时填成 `打开工单 WO-2024-007`，列表里多个同类也不指错）。变量须是在它之前、当前执行路径上已执行的 read（不能引用其后或另一分支的 read），字段须在其 returns 里。（与规则4不冲突：规则4 管创建步自身写不出未来编号；规则8 管后续要精确重选、选择器运行时才知道。）
 
 只输出与任务相关的步骤，不加多余前置（已在工作区就别加「打开网站」）。先在 reasoning 里想清楚：要到哪些页、做什么操作、读什么结果、关键动作做完怎么确认、是否需要分支，再写 steps。
 
@@ -61,6 +62,12 @@ _SYSTEM = """\
     {"op":"finish","message":"已为 A 到 B 创建行程：{c[创建结果]}"}
   ],
   "otherwise":[{"op":"finish","message":"A 到 B 不可达：{r[不可达原因]}"}]}]}
+
+示例（运行时选择器接力——新建后再操作系统命名的实体，规则8）——
+{"reasoning":"新建工单后系统会自动分配工单号，分解时写不出，而后续要回列表精确打开这条工单，所以：先 action 新建工单，再 read 读出工单号(var=t)，打开步用 {t[工单号]} 引用——解释器执行前会把它填成真实工单号，精确打开那一条，哪怕列表里有多条也不指错。","goal":"新建一条工单，再把该工单的负责人设为张三","steps":[
+ {"op":"run","run_kind":"action","name":"新建一条工单","success_condition":"已提交新建（列表出现新工单，工单号由后续 read 读取）"},
+ {"op":"run","run_kind":"read","var":"t","name":"读取新建工单的工单号","returns":["工单号"],"read_spec":"工单号：工单列表中刚新增那一行的编号文字（系统自动分配，形如 WO-2024-007），读取该行的编号列。"},
+ {"op":"run","run_kind":"action","name":"打开工单 {t[工单号]}，把负责人设为张三","success_condition":"工单 {t[工单号]} 的负责人已显示为张三"}]}
 """
 
 
@@ -147,49 +154,70 @@ def to_program(draft: _PlanDraft, goal: str) -> Program:
     return Program(goal=draft.goal or goal, statements=_to_stmts(draft.steps))
 
 
-def _read_fields(stmts: list[Stmt]) -> dict[str, set[str]]:
-    """Map each read run's var -> the fields it returns (walks into branches)."""
-    fields: dict[str, set[str]] = {}
-    for s in stmts:
-        if isinstance(s, Run) and s.var and s.kind == "read":
-            fields[s.var] = set(s.returns)
-        elif isinstance(s, If):
-            fields.update(_read_fields(s.then))
-            fields.update(_read_fields(s.otherwise))
-    return fields
-
-
 def validate_program(program: Program) -> list[str]:
-    """Deterministic shape guards — the high-value ones for the conditional read pattern.
+    """Deterministic shape guards — the high-value ones for the read-driven data-flow patterns.
 
-    An if must branch on a field a prior read actually returns (else the cond reads ""),
-    a read must request fields (else it reads nothing), a finish {var[field]} ref must
-    resolve. Returns human-readable issues fed back to the LLM for one repair pass."""
+    A read must request fields + bind a var; an if must branch on a field a read returns; and
+    every {var[field]} template ref (finish message OR — read-then-reference, rule 8 — a run's
+    name/success_condition/read_spec) must resolve to a read field that is ALREADY PRODUCED on
+    the same execution path. The scope check is path-sensitive, not a global symbol table: a ref
+    is valid only if its read precedes it on every path reaching it, so forward refs (引用在前、
+    读取在后) and cross-branch refs (一个分支读、另一个分支引用) are caught — at runtime env would
+    be empty and the template silently fills "". After an if, a var is in scope downstream only
+    if BOTH branches produced it (dominance). Returns human-readable issues for one repair pass."""
     issues: list[str] = []
     if not program.statements:
         return ["程序为空：至少要有一个 run 步骤"]
-    reads = _read_fields(program.statements)
 
-    def _walk(stmts: list[Stmt]) -> None:
+    def _check_refs(text: str, where: str, scope: dict[str, set[str]]) -> None:
+        # `scope` = read var -> returns, for reads already executed BEFORE this point on this path.
+        for m in TEMPLATE_RE.finditer(text or ""):
+            var, field = m.group(1), m.group(2).strip().strip("'\"")
+            if var not in scope:
+                issues.append(
+                    f"{where} 引用的 {{{var}[{field}]}} 中变量「{var}」在此处尚未产生"
+                    f"（不是任何在它之前、且在当前执行路径上的 read 步的 var；引用在前/读取在后/读取在另一分支都算）"
+                    "——运行时 env 为空、指代落空"
+                )
+            elif field not in scope[var]:
+                issues.append(
+                    f"{where} 引用的字段「{var}[{field}]」不在该 read 步的 returns 里——模板会填空"
+                )
+
+    def _walk(stmts: list[Stmt], scope: dict[str, set[str]]) -> None:
+        # Sequential statements mutate `scope` in place; if-branches each get a copy, and only
+        # vars produced on BOTH branches survive past the join (a var read in one branch isn't
+        # guaranteed downstream).
         for s in stmts:
             if isinstance(s, Run):
                 if s.kind == "read" and not s.returns:
                     issues.append(f"read 步「{s.name}」没有 returns 字段——read 必须指定要读取的字段")
                 if s.kind == "read" and not s.var:
                     issues.append(f"read 步「{s.name}」没有绑定 var——读到的结果无法被后续引用")
+                # check this run's refs BEFORE binding its own var (a read can't reference its own
+                # value — env[var] isn't set until the read completes)
+                _check_refs(f"{s.name}\n{s.success_condition}\n{s.read_spec}", f"步骤「{s.name}」", scope)
+                if s.kind == "read" and s.var:
+                    scope[s.var] = set(s.returns)
+            elif isinstance(s, Finish):
+                _check_refs(s.message, "finish 模板", scope)
             elif isinstance(s, If):
-                if s.cond.var not in reads:
+                if s.cond.var not in scope:
                     issues.append(
-                        f"if 条件引用的变量「{s.cond.var}」不是任何 read 步的 var——条件将永远读到空值"
+                        f"if 条件引用的变量「{s.cond.var}」在此处尚未产生"
+                        "（不是任何在它之前、且在当前执行路径上的 read 步的 var）——条件将永远读到空值"
                     )
-                elif s.cond.field not in reads[s.cond.var]:
+                elif s.cond.field not in scope[s.cond.var]:
                     issues.append(
                         f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该 read 步的 returns 里"
                     )
-                _walk(s.then)
-                _walk(s.otherwise)
+                then_scope, else_scope = dict(scope), dict(scope)
+                _walk(s.then, then_scope)
+                _walk(s.otherwise, else_scope)
+                for k in set(then_scope) & set(else_scope):  # join: only both-branch vars survive
+                    scope[k] = then_scope[k] | else_scope[k]
 
-    _walk(program.statements)
+    _walk(program.statements, {})
     return issues
 
 
