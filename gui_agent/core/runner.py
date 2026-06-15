@@ -631,13 +631,6 @@ def run_agent_loop(
         _cur_run = None
         _run_idx = 0
         _notes_mark = 0
-        # Verdict-frame carry-forward (orchestrator): when a milestone is accepted on a frame, the
-        # NEXT milestone's first decision runs on that SAME frame, not a re-observe a moment later —
-        # so a transient result hint (检测 toast / fading green ✓) the verdict was based on is still
-        # there for the next step, and we don't burn a redundant screenshot. Set on transition,
-        # consumed (reused) on the next iteration, cleared after any executed action re-mutates the
-        # page. Reads use the same verdict frame via _drive_pending_reads(done_png=...).
-        _carry_obs = None
 
         def _drive_pending_reads(done_png: "bytes | None" = None) -> "str | None":
             """Pure single-frame READ runs — the inspect primitive. A `read` run is NOT a
@@ -683,7 +676,12 @@ def run_agent_loop(
                 _run_idx += 1
             if _cur_run is not None:
                 _ms = to_milestone(_cur_run, _run_idx)
-                supervisor.reseed(_ms, task_type=task_type_for(_cur_run))
+                # fresh_advance only on a hand-off (a verdict frame was passed) — the leading
+                # setup reseed (done_png=None, first milestone) must NOT skip its check.
+                supervisor.reseed(
+                    _ms, task_type=task_type_for(_cur_run),
+                    fresh_advance=done_png is not None,
+                )
                 # Accumulate the executed milestone so the report's 子目标分解 sidebar names every
                 # run (orchestrator reseeds one at a time; context.milestones is otherwise just the
                 # first). Pure reads have no turns → not here; the 分解 program row shows them.
@@ -731,33 +729,78 @@ def run_agent_loop(
 
             _say("\n" + TURN_HEADER.format(turn_no=turn_no))
 
-            if _carry_obs is not None:
-                # Milestone just accepted: reuse its verdict frame for the next milestone's first
-                # decision (no re-observe). Persist it as this turn's screenshot so the report has
-                # a thumbnail; the frame is identical to the prior turn's by design.
-                observation = _carry_obs
-                _carry_obs = None
-                (log_dir / f"screenshot_turn_{turn_no}.png").write_bytes(observation.png_bytes)
-                _say("  (复用上一步的验收帧，未重新截图)")
-            else:
-                _status(turn_no, "截图分析中…")
-                perception = bundle.make_perception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
-                observation = perception.observe()
+            # Observe a fresh frame each turn. A milestone hand-off (the verdict-frame carry-
+            # forward: deciding the next milestone on the SAME frame the prior one was accepted
+            # on, preserving transient hints + saving a screenshot) is now done WITHIN the turn
+            # by the decision-phase loop below — it no longer crosses a turn boundary.
+            _status(turn_no, "截图分析中…")
+            perception = bundle.make_perception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
+            observation = perception.observe()
             # YOLO + OCR run in the background, overlapping the decide below;
             # awaited just before execute (snap) so they add ~no latency.
             prep_future = _PREP_POOL.submit(executor.prepare_frame, observation.png_bytes)
 
-            _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
-            _say("监督决策中...")
-            sv_step = supervisor.step(observation, context.goal, context.turns)
-            _say(f"监督者: {sv_step.summary}")
-            _status(turn_no, sv_step.summary)
+            # ── Decision phase (orchestrator hand-off merge, DAG _advance parity) ────────
+            # Decide for the current milestone on THIS frame. In orchestrator mode a milestone
+            # that COMPLETES here is a hand-off, not a turn end: package it, advance the
+            # interpreter (driving any read runs off this verdict frame), reseed the next
+            # milestone, and re-decide on the SAME frame — so a pure milestone hand-off never
+            # costs its own action-less turn (the old behavior spent one). Only an action, a
+            # DAG-mode completion, or a stop ends the turn. The next milestone's nav skip-check
+            # is set by the reseed inside _drive_pending_reads (fresh_advance). Behaviorally the
+            # next milestone is decided on the exact frame the prior one was accepted on — same
+            # as the verdict-frame carry-forward, just merged into this turn instead of the next.
+            _orch_reply: "str | None" = None    # set if the program ended during a hand-off
+            _did_loading = False
+            while True:
+                _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
+                _say("监督决策中...")
+                sv_step = supervisor.step(observation, context.goal, context.turns)
+                _say(f"监督者: {sv_step.summary}")
+                _status(turn_no, sv_step.summary)
+
+                if sv_step.is_loading:
+                    _did_loading = True
+                    break
+                if program is None or not sv_step.goal_completed:
+                    break  # actionable / in_progress / DAG-completion / stop → run the turn body
+
+                # Orchestrator milestone completed → hand off to the next milestone, same frame.
+                _done_name = _cur_run.name
+                _drain_pending_read()
+                _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
+                                context, seen_rows, turn_no=turn_no, say=_say)
+                stitch_acc = None
+                from gui_agent.core.orchestrator.engine import package_result
+                _hand = package_result(
+                    _cur_run, completed=True, summary=sv_step.summary or "完成",
+                    notes=context.content_notes[_notes_mark:],
+                )
+                try:
+                    _cur_run = _gen.send(_hand)
+                except StopIteration as _e:          # program finished (finish / off end)
+                    _orch_reply = _e.value or ""
+                    break
+                _run_idx += 1
+                # reads consume THIS verdict frame; reseed the next non-read milestone.
+                _reply = _drive_pending_reads(done_png=observation.png_bytes)
+                if _reply is not None:
+                    _orch_reply = _reply
+                    break
+                _say(f"  [Orchestrator] 子目标「{_done_name}」完成 → 下一子任务："
+                     f"{_cur_run.name}（同一验收帧上决策，不另起 turn）")
+                # loop: re-decide the freshly-reseeded milestone on the same observation.
+
+            if _orch_reply is not None:
+                _drain_pending_read()
+                _save_ctx()
+                return _orch_result(context, _interp, _orch_reply)
 
             # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.turns、不消耗
             # max_turns、不累加 noop_count。加载是 App 渲染延迟、不是 agent 的一步操作。
             # 连续加载设上限，防页面永挂导致死循环（旧行为：loading 帧既占轮数，又会因
             # should_act=False 累加 noop_count，连续 3 帧就误判"连续无动作"终止 agent）。
-            if sv_step.is_loading:
+            if _did_loading:
                 loading_streak += 1
                 if loading_streak > MAX_LOADING_FRAMES:
                     _say(f"\n页面持续加载 {loading_streak} 帧仍未稳定，agent-loop 停止")
@@ -1037,36 +1080,25 @@ def run_agent_loop(
                 else:
                     _say(f"\n任务未完成：{reason}")
                 _save_ctx()
-                # ── DSL orchestrator mode: this is a MILESTONE boundary, not the run's end.
-                # Package the finished milestone into a RunResult, advance the interpreter to
-                # the next run() (or finish), reseed the supervisor, and keep looping. The DAG
-                # path below (program is None) is unchanged.
+                # ── DSL orchestrator mode: a milestone's SUCCESS (goal_completed) hand-off is
+                # merged into this turn by the decision-phase loop above, so reaching here means a
+                # STOP — the milestone gave up / failed. Package it as a failed run; the
+                # interpreter halts the program and we report. The DAG path (program is None) below
+                # is unchanged.
                 if program is not None:
                     from gui_agent.core.orchestrator.engine import package_result
-                    # The just-finished milestone is always a NON-read run: read runs never enter
-                    # the turn loop (they're consumed as pure frames by _drive_pending_reads). So
-                    # package this action/nav/filter result, advance, then drive any read run(s)
-                    # that follow as single-frame reads off the result this milestone just left.
                     _result = package_result(
-                        _cur_run, completed=sv_step.goal_completed,
+                        _cur_run, completed=False,
                         summary=sv_step.summary or reason,
                         notes=context.content_notes[_notes_mark:],
                     )
                     try:
                         _cur_run = _gen.send(_result)
-                    except StopIteration as _e:  # program finished (finish / failure / fell off end)
+                    except StopIteration as _e:  # a failed run always halts the interpreter
                         return _orch_result(context, _interp, _e.value or "")
-                    _run_idx += 1
-                    # Read off the VERDICT FRAME this milestone was accepted on — not a fresh
-                    # capture a turn later (transient result hints may have faded by then).
-                    _reply = _drive_pending_reads(done_png=observation.png_bytes)
-                    if _reply is not None:
-                        return _orch_result(context, _interp, _reply)
-                    # Carry the verdict frame forward: the next milestone's first supervisor.step
-                    # runs on it (same frame the prior milestone was accepted on), not a re-observe.
-                    _carry_obs = observation
-                    _say(f"  [Orchestrator] 下一子任务：{_cur_run.name}（在验收帧上起步）")
-                    continue
+                    # Defensive: a failed run halts the interpreter above; if the contract ever
+                    # changes and it doesn't, summarize what we have rather than fall through.
+                    return _orch_result(context, _interp, sv_step.summary or reason, current=_cur_run)
                 if sv_step.goal_completed:
                     return _make_result(context, reason, sv_step.collection_summary)
                 return _make_result(context, reason)
