@@ -1342,11 +1342,26 @@ def main() -> None:
         program = None
         if args.orchestrator:
             from gui_agent.core.orchestrator import decompose, normalize_confirm_read_gates
+            from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
+            # Resolve @<path> refs once (config field values the goal only points at) and feed
+            # them to the decomposer — mirrors the DAG path, which the orchestrator's decompose
+            # otherwise skipped (the LLM only saw the literal @token, never the field values).
+            file_section = resolve_file_refs(goal)
             # L2 structural backstop: confirm-read-backed action gates → lenient dispatch
             # gates, so the checker never re-adjudicates a result the read owns (see engine).
             program = normalize_confirm_read_gates(
-                decompose(goal, knowledge=knowledge.navigation if knowledge else "")
+                decompose(goal, knowledge=knowledge.navigation if knowledge else "",
+                          file_section=file_section)
             )
+            # The config must ALSO reach the execution-time planner deterministically — the
+            # supervisor's constraints flow to every milestone's planner, and reseed never clears
+            # them (LLM distillation of config into constraints proved unstable; see DAG path).
+            if file_section and hasattr(supervisor, "_global_constraints"):
+                _CAP = 3000
+                supervisor._global_constraints.append(
+                    file_section if len(file_section) <= _CAP
+                    else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
+                )
             print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
 
         try:

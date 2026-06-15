@@ -116,9 +116,25 @@ def resolve_file_refs(goal: str, base: Optional[Path] = None) -> str:
         if str(path) in seen:
             continue
         seen.add(str(path))
+        # An @<path> ref can be a CONFIG file (inject its field values) OR an upload TARGET (a
+        # binary the executor uploads by path — no content to inject). Sniff the head for a NUL
+        # byte: binary → skip quietly (don't alarm, and don't read a large binary fully just to
+        # fail decode). Text that isn't valid UTF-8 falls through to the decode-error skip.
+        try:
+            with path.open("rb") as _fh:
+                _head = _fh.read(8192)
+        except OSError as exc:
+            print(f"  [FileRef] 读取失败 {path}：{exc}")
+            continue
+        if b"\x00" in _head:
+            print(f"  [FileRef] @{cand} 是二进制文件，按路径引用处理（不注入内容）")
+            continue
         try:
             text = path.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError) as exc:
+        except UnicodeDecodeError:
+            print(f"  [FileRef] @{cand} 非 UTF-8 文本，按路径引用处理（不注入内容）")
+            continue
+        except OSError as exc:
             print(f"  [FileRef] 读取失败 {path}：{exc}")
             continue
         if len(text) > _FILE_REF_MAX_CHARS:

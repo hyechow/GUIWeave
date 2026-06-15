@@ -200,12 +200,15 @@ def decompose(
     *,
     png_bytes: bytes | None = None,
     knowledge: str = "",
+    file_section: str = "",
     system_prompt: str = "",
 ) -> Program:
     """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
 
     `png_bytes` (current screen) gives the planner page context; `knowledge` injects app
-    navigation knowledge; `system_prompt` overrides the default DSL prompt (platform tuning).
+    navigation knowledge; `file_section` is the resolved content of any `@<path>` refs in the
+    goal (config field values the spoken goal only points at — see resolve_file_refs);
+    `system_prompt` overrides the default DSL prompt (platform tuning).
     """
     cfg = resolve_llm_config("supervisor.decompose")
     if not cfg.model:
@@ -216,6 +219,8 @@ def decompose(
     )
 
     parts: list[dict] = [{"type": "text", "text": f"用户任务：{goal}"}]
+    if file_section:
+        parts.append({"type": "text", "text": "\n" + file_section})
     if knowledge:
         parts.append({"type": "text", "text": f"\n## 应用导航知识\n{knowledge}"})
     if png_bytes:
