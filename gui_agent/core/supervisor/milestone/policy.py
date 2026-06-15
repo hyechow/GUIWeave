@@ -254,6 +254,9 @@ class MilestoneSupervisorPolicy:
         self._milestones: dict[str, Milestone] = {}
         self._order: list[str] = []
         self._current_id: Optional[str] = None
+        # One-shot: skip the next step()'s initial done-check and plan directly (set by reseed
+        # for a freshly-entered navigation milestone — DAG _advance parity, see reseed).
+        self._skip_initial_check: bool = False
         # Each entry pairs a frame with the action CENTER (normalized 0-1000 x/y, or None)
         # that produced it — the 局部 stuck tier inspects the region the agent touched.
         self._recent_screenshots: list[tuple[bytes, Optional[tuple[float, float]]]] = []
@@ -335,7 +338,12 @@ class MilestoneSupervisorPolicy:
 
         return result
 
-    def reseed(self, milestone: Milestone, task_type: Literal["action", "analysis"] = "action") -> None:
+    def reseed(
+        self,
+        milestone: Milestone,
+        task_type: Literal["action", "analysis"] = "action",
+        fresh_advance: bool = False,
+    ) -> None:
         """单 milestone 模式（DSL orchestrator 用）：把 supervisor 重置成只驱动这一个 milestone，
         绕过内部 decompose（DSL program 已含全部 milestone，由解释器排序）。step() 把这个 milestone
         跑到 done 后，_current_id 自然走到 None → 下一次 step() 发 terminal/goal_completed，agent_loop
@@ -351,6 +359,12 @@ class MilestoneSupervisorPolicy:
         self._current_id = milestone.id
         self.task_type = task_type  # 读取门：read milestone 须为 'analysis' 才读
         self._recent_screenshots.clear()  # 唯一要清的，和 _advance 一致
+        # DAG `_advance` 的 nav 跳 check 镜像：fresh_advance=刚从上一个 milestone 推进过来（同帧），
+        # 此时若新 milestone 是 navigation，它「in_progress by construction」，跳过首次验收直接规划
+        # 第一步导航动作——省掉交接时第 2 次 checker。幂等（重点 nav 目标无害；残留 already-done 由
+        # 下一轮正常 check 兜底）。action/filter/collection 一律保留 check：重跑 action 可能双执行
+        # （re-send/re-submit），collection 需要 checker 的 read_instruction。一次性，step() 消费后清。
+        self._skip_initial_check = fresh_advance and milestone.kind == "navigation"
 
     # ── Single-step machine ───────────────────────────────────────────
 
@@ -371,6 +385,21 @@ class MilestoneSupervisorPolicy:
                 summary="页面加载中（白屏），等待...",
                 **_ctx(milestone, None),
             )
+
+        # Freshly entered navigation milestone (reseed fresh_advance, mirror DAG _advance):
+        # skip the initial done-check and plan the first nav action directly — drops the 2nd
+        # checker call on the milestone hand-off. One-shot.
+        if self._skip_initial_check:
+            self._skip_initial_check = False
+            print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
+            synthetic = _SingleCheckResult(
+                status="in_progress",
+                reason=f"刚进入子目标「{milestone.name}」，默认未完成",
+                summary="",
+            )
+            self._last_check = synthetic
+            self._last_page_identity[milestone.id] = ""
+            return self._plan_single(milestone, synthetic, observation, history)
 
         if history and history[-1].action_decision:
             if history[-1].action_decision.action.action_type == "type":

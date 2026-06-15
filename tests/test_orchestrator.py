@@ -209,6 +209,20 @@ def test_supervisor_reseed_single_milestone():
     assert p._scroll_counts == {"old": 5}
 
 
+def test_reseed_fresh_advance_nav_skips_initial_check():
+    # DAG _advance parity: a freshly-advanced NAVIGATION milestone skips its first done-check
+    # (in_progress by construction); action/filter keep it; a non-fresh reseed never skips.
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.core.orchestrator.engine import to_milestone
+    p = MilestoneSupervisorPolicy()
+    p.reseed(to_milestone(Run(name="进页", kind="navigation"), 0), fresh_advance=True)
+    assert p._skip_initial_check is True                  # nav + 刚推进 → 跳 check
+    p.reseed(to_milestone(Run(name="点按钮", kind="action"), 1), fresh_advance=True)
+    assert p._skip_initial_check is False                 # action → 保留 check（防双执行）
+    p.reseed(to_milestone(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
+    assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
+
+
 # ── #3 structured read: reads 进 RunResult，让 if 真分支 ──────────────────────────
 
 
