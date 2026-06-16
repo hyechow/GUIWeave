@@ -148,84 +148,104 @@ def main() -> int:
 
     action_policy = build_policy("browser_vision")
     supervisor = build_supervisor("milestone")
-    # Bind app knowledge by the task's `sites` tag. The runner discovers knowledge by matching the
-    # app name as a substring of the goal, but a WebArena intent never names its site — so we bind
-    # directly on the site tag, which maps to knowledge/browser/<site>/ when a base exists.
-    from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
-
-    for site in (task.get("sites") or []):
-        knowledge = load_knowledge_for_app(site, "browser")
-        if knowledge and knowledge.navigation and hasattr(supervisor, "set_app_knowledge"):
-            supervisor.set_app_knowledge(
-                knowledge.navigation,
-                app_name=knowledge.app_name,
-                elements=knowledge.elements,
-                sections=knowledge.sections,
-                check=knowledge.check,
-            )
-            s = knowledge.summary()
-            print(f"[webarena] knowledge: bound site={site} "
-                  f"(nav={s['nav_chars']} chars, sections={s['section_count']})")
-            break
-    else:
-        if task.get("sites"):
-            print(f"[webarena] knowledge: none for sites={task.get('sites')} — running bare")
     # Translucent status HUD over the Chrome window (None when --hud absent). The
     # agent loop repositions it onto the exact CDP window rect once connected.
     hud = build_platform().make_status_reporter(args.hud)
     log_dir = create_run_dir("webarena", "browser")
     print(f"[webarena] agent logs: {log_dir}")
 
-    recorder_holder: dict = {}
+    from gui_agent.core.run.io import tee_stdio
 
-    def _prime(phone) -> None:
-        device = phone.client
-        # 1) auth: inject cookies (raw CDP) — no headless ui_login.
-        if args.storage_state:
-            print("[webarena]", device.load_cookies(str(args.storage_state)))
-        # 2) start HAR capture BEFORE navigating, so the start_url load is recorded.
-        recorder_holder["rec"] = HarRecorder(device).start()
-        # 3) land on the task start_url (raw-CDP fallback handles the flaky binding).
-        if start_url:
-            print("[webarena]", device.navigate(start_url))
+    # Tee everything below to log_dir/stdout.log (same as the runner) so a WebArena run leaves an
+    # inspectable log — the knowledge-binding line and every turn included.
+    with tee_stdio(log_dir):
+        # Bind app knowledge by the task's `sites` tag. The runner discovers knowledge by matching
+        # the app name as a substring of the goal, but a WebArena intent never names its site — so
+        # we bind directly on the site tag (site -> knowledge/browser/<site>/ when a base exists).
+        from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
-    try:
-        result = run_agent_loop(
-            intent,
-            action_policy,
-            supervisor,
-            None,                       # input_context_path
-            log_dir,
-            log_dir / "context.json",
-            max_turns=args.max_turns,
-            auto_continue=True,
-            hud=hud,
-            raw_input=intent,
-            router=None,
-            on_session_open=_prime,
-        )
-
-        # ----- post-run artifacts (session already closed; both are offline) -----
-        rec = recorder_holder.get("rec")
-        if rec is not None:
-            print("[webarena]", rec.dump(str(har_path)))
+        knowledge_summary: Optional[dict] = None  # persisted to context.json so the report renders it
+        for site in (task.get("sites") or []):
+            knowledge = load_knowledge_for_app(site, "browser")
+            if knowledge and knowledge.navigation and hasattr(supervisor, "set_app_knowledge"):
+                supervisor.set_app_knowledge(
+                    knowledge.navigation,
+                    app_name=knowledge.app_name,
+                    elements=knowledge.elements,
+                    sections=knowledge.sections,
+                    check=knowledge.check,
+                )
+                knowledge_summary = knowledge.summary()
+                print(f"[webarena] knowledge: bound site={site} "
+                      f"(nav={knowledge_summary['nav_chars']} chars, "
+                      f"sections={knowledge_summary['section_count']})")
+                break
         else:
-            har_path.write_text('{"log":{"version":"1.2","creator":{"name":"gui_agent"},"entries":[]}}')
-            print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
+            if task.get("sites"):
+                print(f"[webarena] knowledge: none for sites={task.get('sites')} — running bare")
+
+        recorder_holder: dict = {}
+
+        def _prime(phone) -> None:
+            device = phone.client
+            # 1) auth: inject cookies (raw CDP) — no headless ui_login.
+            if args.storage_state:
+                print("[webarena]", device.load_cookies(str(args.storage_state)))
+            # 2) start HAR capture BEFORE navigating, so the start_url load is recorded.
+            recorder_holder["rec"] = HarRecorder(device).start()
+            # 3) land on the task start_url (raw-CDP fallback handles the flaky binding).
+            if start_url:
+                print("[webarena]", device.navigate(start_url))
 
         try:
-            resp = _synthesize_response(intent, result or {})
-            resp_path.write_text(json.dumps(resp.model_dump(), indent=2))
-            print(f"[webarena] OK agent_response -> {resp_path}")
-            print(json.dumps(resp.model_dump(), indent=2, ensure_ascii=False))
-        except Exception as exc:  # noqa: BLE001 — still leave a valid response file
-            fallback = {"task_type": result.get("task_type") or "RETRIEVE", "status": "UNKNOWN_ERROR",
-                        "retrieved_data": None, "error_details": f"response synthesis failed: {exc}"}
-            resp_path.write_text(json.dumps(fallback, indent=2))
-            print(f"[webarena] response synthesis failed ({exc}); wrote fallback -> {resp_path}")
-    finally:
-        if hud:
-            hud.close()
+            result = run_agent_loop(
+                intent,
+                action_policy,
+                supervisor,
+                None,                       # input_context_path
+                log_dir,
+                log_dir / "context.json",
+                max_turns=args.max_turns,
+                auto_continue=True,
+                hud=hud,
+                raw_input=intent,
+                router=None,
+                on_session_open=_prime,
+                knowledge=knowledge_summary,
+            )
+
+            # ----- post-run artifacts (session already closed; both are offline) -----
+            rec = recorder_holder.get("rec")
+            if rec is not None:
+                print("[webarena]", rec.dump(str(har_path)))
+            else:
+                har_path.write_text('{"log":{"version":"1.2","creator":{"name":"gui_agent"},"entries":[]}}')
+                print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
+
+            try:
+                resp = _synthesize_response(intent, result or {})
+                resp_path.write_text(json.dumps(resp.model_dump(), indent=2))
+                print(f"[webarena] OK agent_response -> {resp_path}")
+                print(json.dumps(resp.model_dump(), indent=2, ensure_ascii=False))
+            except Exception as exc:  # noqa: BLE001 — still leave a valid response file
+                fallback = {"task_type": result.get("task_type") or "RETRIEVE", "status": "UNKNOWN_ERROR",
+                            "retrieved_data": None, "error_details": f"response synthesis failed: {exc}"}
+                resp_path.write_text(json.dumps(fallback, indent=2))
+                print(f"[webarena] response synthesis failed ({exc}); wrote fallback -> {resp_path}")
+
+            # Auto-generate the HTML run report from context.json (same builder as the runner),
+            # so a WebArena run is as inspectable as a normal agent run.
+            if (log_dir / "context.json").exists():
+                try:
+                    from scripts.report_builder import RunnerReportBuilder, save_report
+                    report_data = RunnerReportBuilder().build(log_dir)
+                    report_path = save_report(report_data, log_dir / "report.html")
+                    print(f"[webarena] OK report -> {report_path}")
+                except Exception as exc:  # noqa: BLE001 — report is best-effort
+                    print(f"[webarena] report generation failed ({exc})")
+        finally:
+            if hud:
+                hud.close()
 
     return 0
 
