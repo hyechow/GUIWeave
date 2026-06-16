@@ -2011,8 +2011,13 @@ HTML_TEMPLATE = """\
   .milestone-header h2 {{ font-size: 14px; font-weight: 600; }}
   .milestone-name {{ font-size: 13px; color: var(--text); }}
   .milestone-desc {{ font-size: 11px; color: var(--muted); width: 100%; }}
-  .milestone-sc {{ font-size: 10px; color: #94a3b8; width: 100%; }}
-  .milestone-checklist {{ width:100%; display:flex; flex-direction:column; gap:4px; margin-top:2px; }}
+  .milestone-sc {{ font-size: 11px; color: #94a3b8; width: 100%; }}
+  .checklist-badge {{ cursor:pointer; font-size:10px; font-weight:600; padding:2px 8px; border-radius:20px; user-select:none; display:inline-flex; align-items:center; gap:4px; }}
+  .checklist-badge-ok {{ background:#dcfce7; color:#166534; }}
+  .checklist-badge-partial {{ background:#e0f2fe; color:#0369a1; }}
+  .checklist-badge:hover {{ filter:brightness(0.96); }}
+  .cl-modal-body {{ margin:0; padding:14px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }}
+  .milestone-checklist {{ width:100%; display:flex; flex-direction:column; gap:4px; margin-top:4px; }}
   .milestone-check {{ display:flex; align-items:flex-start; gap:6px; font-size:11px; line-height:1.35; color:#475569; }}
   .milestone-check-mark {{ display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; font-size:10px; font-weight:700; flex:0 0 auto; margin-top:0; }}
   .milestone-check-text {{ word-break:break-word; }}
@@ -2071,7 +2076,10 @@ HTML_TEMPLATE = """\
   .at-clear_text {{ background: #808080; }} .at-none {{ background: #c0c0c0; }}
 
   .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; justify-content: center; align-items: center; }}
-  .modal.show {{ display: flex; }} .modal img {{ max-width: 90%; max-height: 90%; border-radius: 8px; }}
+  .modal.show {{ display: flex; }}
+  /* Zoom shows the full-resolution raw screenshot for every frame (see zoomImg call sites), so a
+     large cap is consistent and sharp across turns and the verification frame. */
+  .modal img {{ max-width: 92vw; max-height: 90vh; border-radius: 8px; }}
 </style>
 </head>
 <body>
@@ -2106,6 +2114,15 @@ HTML_TEMPLATE = """\
       <span class="sk-modal-x" onclick="document.getElementById('sk-modal').classList.remove('show')">✕</span>
     </div>
     <pre class="sk-modal-body" id="sk-modal-body"></pre>
+  </div>
+</div>
+<div class="modal" id="cl-modal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="sk-modal-card">
+    <div class="sk-modal-head">
+      <span>验收清单</span>
+      <span class="sk-modal-x" onclick="document.getElementById('cl-modal').classList.remove('show')">✕</span>
+    </div>
+    <div class="cl-modal-body" id="cl-modal-body"></div>
   </div>
 </div>
 <script>
@@ -2155,6 +2172,12 @@ function showSection(id, title) {{
   document.getElementById('sk-modal-title').textContent = title;
   document.getElementById('sk-modal-body').textContent = src.textContent;
   document.getElementById('sk-modal').classList.add('show');
+}}
+function showChecklist(id) {{
+  var src = document.getElementById(id);
+  if (!src) return;
+  document.getElementById('cl-modal-body').innerHTML = src.innerHTML;
+  document.getElementById('cl-modal').classList.add('show');
 }}
 </script>
 </body>
@@ -2346,7 +2369,10 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
 
     ss_html = ""
     if step.annotated_before_url:
-        ss_html = f'<div class="detail-ss"><img src="{step.annotated_before_url}" onclick="zoomImg(this.src)" alt="Turn"></div>'
+        # Thumbnail shows the annotated (downscaled) frame; zoom opens the full-res raw screenshot
+        # so every frame — turns and the verification frame — pops up at the same large, sharp size.
+        zoom_src = step.raw_screenshot_url or step.annotated_before_url
+        ss_html = f'<div class="detail-ss"><img src="{step.annotated_before_url}" onclick="zoomImg(\'{zoom_src}\')" alt="Turn"></div>'
 
     # Absolute wall-clock time the action executed (PolicyTurn.timestamp, captured
     # right after dispatch). Show the time-of-day prominently, full ISO on hover.
@@ -2691,10 +2717,11 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
     outline_html = "".join(outline_parts) or '<div class="sidebar-empty">无子目标</div>'
 
-    def _render_checklist(items: list[dict]) -> str:
+    def _render_checklist(items: list[dict], cid: str) -> tuple[str, str]:
         if not items:
-            return ""
+            return "", ""
         marks = {"done": "✓", "pending": "·", "blocked": "!", "skipped": "-"}
+        done_n = sum(1 for it in items if str(it.get("status") or "") == "done")
         rows = []
         for item in items[:10]:
             status = str(item.get("status") or "pending")
@@ -2712,7 +2739,17 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'<span class="milestone-check-text">{_safe(str(item.get("text") or ""))}{evidence_html}</span>'
                 f'</div>'
             )
-        return f'<div class="milestone-checklist">{"".join(rows)}</div>'
+        # A compact status badge that sits beside the kind badge; the rows live in a separate
+        # hidden block (placed at the end of the milestone) cloned into the shared #cl-modal popup
+        # on click (showChecklist). Returns (badge_html, hidden_data_html).
+        all_done = done_n == len(items)
+        badge_cls = "checklist-badge-ok" if all_done else "checklist-badge-partial"
+        badge = (
+            f'<span class="checklist-badge {badge_cls}" onclick="showChecklist(\'{cid}\')">'
+            f'✓ {done_n}/{len(items)} 验收</span>'
+        )
+        data = f'<div id="{cid}" class="checklist-data" style="display:none">{"".join(rows)}</div>'
+        return badge, data
 
     # Per-milestone sections
     pages_html = ""
@@ -2763,9 +2800,14 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             if step.timestamp:
                 prev_ts = step.timestamp
 
-        desc_html = f'<div class="milestone-desc">{_safe(page.milestone_description)}</div>' if page.milestone_description else ""
+        # The decomposer often sets description == name; don't render the title twice.
+        desc_html = (
+            f'<div class="milestone-desc">{_safe(page.milestone_description)}</div>'
+            if page.milestone_description and page.milestone_description.strip() != page.milestone_name.strip()
+            else ""
+        )
         sc_html = f'<div class="milestone-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
-        checklist_html = _render_checklist(page.checklist)
+        checklist_badge, checklist_data = _render_checklist(page.checklist, f"cl-{mid_safe}")
         verify_thumb = ""
         verify_detail = ""
         if page.verify_url:
@@ -2810,14 +2852,15 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             <h2>#{mid_disp}</h2>
             <span class="milestone-name">{_safe(page.milestone_name)}</span>
             <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
+            {checklist_badge}
             <span class="milestone-time">{ms_time:.1f}s · {len(page.steps)} turns{ms_tok_html}</span>
             {desc_html}
             {sc_html}
-            {checklist_html}
           </div>
           <div class="gallery">{thumbs_html}{verify_thumb}</div>
           {details_html}
           {verify_detail}
+          {checklist_data}
         </div>"""
 
     # Model-config box with an inline "参考单价" chip that pops the rate table on hover.
