@@ -296,6 +296,23 @@ def list_known_apps(platform: str = "iphone") -> list[str]:
     return sorted(d.name for d in platform_dir.iterdir() if d.is_dir() and any(d.glob("*.md")))
 
 
+def _read_dir_aliases(d: Path) -> list[str]:
+    """Alternate names / common misspellings for an app, one per line in ``_aliases.md``.
+
+    Lets ``auto_discover_knowledge`` match a goal that refers to the app by a nickname or a typo
+    (e.g. "RebotTeam" for RoboTeam) instead of only its exact dir name. Lines starting with ``#``
+    are comments; blanks ignored. Platform-agnostic (unlike the iPhone-only ``_APP_ALIASES``)."""
+    p = d / "_aliases.md"
+    if not p.exists():
+        return []
+    out: list[str] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            out.append(line)
+    return out
+
+
 def load_app_dir(d: Path) -> AppKnowledge | None:
     """Load an app's knowledge (nav + overlays + sections) from its dir, or None if no _app.md.
 
@@ -378,6 +395,11 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
         for d in platform_dir.iterdir():
             if d.is_dir():
                 candidates[d.name.lower()] = d
+                # Per-app aliases / misspellings (knowledge/<plat>/<app>/_aliases.md) — platform-
+                # agnostic, so a typo'd or nicknamed goal still discovers the knowledge. The exact
+                # dir name (set above) wins; aliases only fill gaps.
+                for alias in _read_dir_aliases(d):
+                    candidates.setdefault(alias.lower(), d)
     if platform == "iphone":
         for alias, target in _APP_ALIASES.items():
             target_dir = platform_dir / target
