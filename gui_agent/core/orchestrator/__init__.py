@@ -11,6 +11,7 @@ Boundaries:
 from .program import Cond, CondCmp, Finish, If, Program, Run, RunResult, Stmt
 from .decomposer import decompose, to_program, validate_program
 from .structured_read import structured_read
+from .budget import estimate_program_turns
 from .runner import (
     Interpreter,
     MilestoneExecutor,
@@ -26,5 +27,6 @@ __all__ = [
     "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
     "RunRecord", "drive", "structured_read",
     "decompose", "to_program", "validate_program",
+    "estimate_program_turns",
     "normalize_confirm_read_gates", "normalize_precondition_gates",
 ]

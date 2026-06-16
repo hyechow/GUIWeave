@@ -722,7 +722,10 @@ def run_agent_loop(
             _orch_interp = _interp  # _save_ctx now mirrors its run_log (reads) into context
             # Persist the decomposed program so the report renders decompose as its OWN row
             # (a distinct stage now, not folded into turn 1's supervisor step).
-            context.orchestrator = {"program": program.model_dump(mode="json")}
+            context.orchestrator = {
+                "program": program.model_dump(mode="json"),
+                "max_turns": max_turns,
+            }
             _gen = _interp.steps()
             try:
                 _cur_run = next(_gen)
@@ -1269,6 +1272,11 @@ def main() -> None:
         help="agent-loop 最大自动执行轮数，防止无限循环",
     )
     parser.add_argument(
+        "--no-dynamic-max-turns",
+        action="store_true",
+        help="DSL 编排器模式下不按 Program 复杂度自动上调 max_turns",
+    )
+    parser.add_argument(
         "--auto-continue",
         action="store_true",
         help="agent-loop 动作执行后自动进入下一轮；默认手动确认",
@@ -1353,9 +1361,11 @@ def main() -> None:
         # interpreter sequences milestones instead of the supervisor's DAG walker. program=None
         # (default) → the DAG path is unchanged.
         program = None
+        run_max_turns = args.max_turns
         if args.orchestrator:
             from gui_agent.core.orchestrator import (
-                decompose, normalize_confirm_read_gates, normalize_precondition_gates,
+                decompose, estimate_program_turns,
+                normalize_confirm_read_gates, normalize_precondition_gates,
             )
             from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
             # Resolve @<path> refs once (config field values the goal only points at) and feed
@@ -1382,6 +1392,13 @@ def main() -> None:
                     else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
                 )
             print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
+            if not args.no_dynamic_max_turns:
+                run_max_turns = estimate_program_turns(program, floor=args.max_turns)
+                if run_max_turns != args.max_turns:
+                    print(
+                        f"Orchestrator: max_turns {args.max_turns} -> {run_max_turns} "
+                        "based on program complexity"
+                    )
 
         try:
             result: dict | None = run_agent_loop(
@@ -1391,7 +1408,7 @@ def main() -> None:
                 input_context_path,
                 log_dir,
                 context_path,
-                max_turns=args.max_turns,
+                max_turns=run_max_turns,
                 auto_continue=args.auto_continue,
                 hud=hud,
                 raw_input=raw_input,
