@@ -287,3 +287,32 @@ def test_report_builder_reads_done_check_from_milestone_states(tmp_path):
     html = generate_html(data)
     assert "milestone-checklist" in html
     assert "页面已打开" in html
+
+
+def test_report_builder_falls_back_to_flat_run_status_for_archived_logs(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "context.json").write_text(
+        """
+{
+  "goal": "goal",
+  "supervisor_policy_name": "milestone",
+  "action_policy_name": "action",
+  "output": "旧回复",
+  "stop_reason": "用户按 ESC 中止 agent-loop（任务未完成）",
+  "run_status": "interrupted",
+  "goal_completed": false,
+  "milestones": [],
+  "turns": []
+}
+""",
+        encoding="utf-8",
+    )
+
+    data = RunnerReportBuilder().build(run_dir)
+    html = generate_html(data)
+
+    assert data.run_status == "interrupted"
+    assert data.stop_reason == "用户按 ESC 中止 agent-loop（任务未完成）"
+    assert "用户中止" in html
+    assert "未完成停止" not in html
