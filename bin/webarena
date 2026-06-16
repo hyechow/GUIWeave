@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# 跑一条 WebArena-Verified 任务(浏览器 agent,知识库按 sites 标签自动注入)。
+# 用法: bin/webarena <task-id> [额外参数...]
+#   例: bin/webarena 11                       # 跑 task 11(默认带状态 HUD)
+#       bin/webarena 15 --max-turns 30        # 透传给 webarena.py
+# 前置: 先 bin/launch_chrome_cdp 起带远程调试的 Chrome,并在弹窗里登录目标站点。
+# 默认 tasks-file=webarena-verified/output/tasks.json;输出到 webarena-verified/output/sa_run/<id>/。
+# 覆盖: TASKS_FILE=<path> bin/webarena <id>
+set -e
+cd "$(dirname "$0")/.."
+
+task_id="${1:-}"
+if [[ -z "$task_id" ]]; then
+  echo "用法: bin/webarena <task-id> [额外参数...]" >&2
+  echo "  例: bin/webarena 11 --hud" >&2
+  exit 1
+fi
+shift  # task-id 已取出,余下透传给 webarena.py
+
+tasks_file="${TASKS_FILE:-webarena-verified/output/tasks.json}"
+out_dir="webarena-verified/output/sa_run/${task_id}"
+
+# --hud 默认开(状态面板叠在 Chrome 窗口上);"$@" 在后,额外参数可覆盖其它默认。
+exec uv run python -m gui_agent.adapters.browser.webarena \
+  --tasks-file "$tasks_file" --task-id "$task_id" \
+  --task-output-dir "$out_dir" --hud "$@"
