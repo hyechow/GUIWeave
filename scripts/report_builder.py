@@ -1028,6 +1028,10 @@ class RunnerReportBuilder:
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
         milestone_states = ctx.get("milestone_states") if isinstance(ctx.get("milestone_states"), dict) else {}
+        milestone_runtime_keys = (
+            "status", "retry_count", "done_check", "checklist", "reads",
+            "last_summary", "last_turn_index", "pre_existing", "collection_summary",
+        )
         # Title is the user's ORIGINAL input; the resolved goal is shown as provenance.
         # Old logs without raw_input fall back to the goal.
         data.raw_input = ctx.get("raw_input") or ""
@@ -1147,24 +1151,13 @@ class RunnerReportBuilder:
         ms_lookup: dict[str, dict] = {}
         for ms in ctx.get("milestones", []):
             mid = ms.get("id", "")
-            state = milestone_states.get(mid) if mid else {}
+            state = milestone_states.get(mid) if mid else None
+            runtime = state if isinstance(state, dict) else ms
             merged = dict(ms)
-            if isinstance(state, dict):
-                for key in (
-                    "status",
-                    "retry_count",
-                    "done_check",
-                    "checklist",
-                    "reads",
-                    "last_summary",
-                    "last_turn_index",
-                    "pre_existing",
-                    "collection_summary",
-                ):
-                    value = state.get(key)
-                    if value not in (None, "", [], {}):
-                        merged[key] = value
-                merged["_state"] = state
+            for key in milestone_runtime_keys:
+                value = runtime.get(key)
+                if value not in (None, "", [], {}):
+                    merged[key] = value
             ms_lookup[mid] = merged
 
 

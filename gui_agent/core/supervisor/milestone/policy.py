@@ -311,6 +311,28 @@ class MilestoneSupervisorPolicy:
         if app_name:
             self._app_name = app_name
 
+    def runtime_state_snapshot(self) -> dict:
+        """Return persisted runtime state without exposing supervisor internals."""
+        return {
+            "milestones": {
+                mid: {
+                    "status": m.status,
+                    "retry_count": m.retry_count,
+                }
+                for mid, m in self._milestones.items()
+            },
+            "done_checks": {
+                mid: check.model_dump(mode="json", exclude_none=True)
+                for mid, check in self._milestone_done_checks.items()
+            },
+            "last_page_identity": dict(self._last_page_identity),
+            "scroll_counts": dict(self._scroll_counts),
+            "progress_values": {
+                mid: list(values)
+                for mid, values in self._progress_values.items()
+            },
+        }
+
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
         self._timings.clear()
         self._timings_order.clear()

@@ -253,10 +253,10 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
 
 
 def test_advance_persists_done_check_on_terminal_completion():
-    # The report's 验收 panel renders context.milestones[id].done_check (sourced from the
-    # supervisor's _milestone_done_checks). A single-milestone (orchestrator) completion hits
-    # _advance's TERMINAL branch — it must still save the done verdict, else the panel is empty
-    # (regression seen in 20260615_113554 after the hand-off merge).
+    # The report's 验收 panel renders context.milestone_states[id].done_check (sourced from the
+    # supervisor runtime snapshot). A single-milestone (orchestrator) completion hits _advance's
+    # TERMINAL branch — it must still save the done verdict, else the panel is empty (regression
+    # seen in 20260615_113554 after the hand-off merge).
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
     from gui_agent.core.orchestrator.engine import to_milestone

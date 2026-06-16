@@ -32,11 +32,11 @@ from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
 from gui_agent.core.factory import build_platform
 from gui_agent.core.runner import (
     _TeeStream,
-    _write_final_run_state,
     build_policy,
     build_supervisor,
     run_agent_loop,
 )
+from gui_agent.core.state import write_final_run_state
 from gui_agent.core.chat_session import (
     RouterResult,
     generate_reply,
@@ -529,7 +529,7 @@ def main() -> None:
         try:
             ctx_path = log_dir / "context.json"
             if ctx_path.exists():
-                _write_final_run_state(ctx_path, result, reply)
+                write_final_run_state(ctx_path, result, reply)
         except Exception:
             pass
 

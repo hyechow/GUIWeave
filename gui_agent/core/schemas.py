@@ -578,21 +578,8 @@ class PolicyContext(BaseModel):
                     self.milestone_states[mid] = state
             if state is None:
                 continue
-            # Back-compat for existing reports and tools that still read runtime
-            # state from context.milestones entries.
-            if state.done_check:
-                ms["done_check"] = state.done_check
-            if state.status:
-                ms["status"] = state.status
-            if state.retry_count:
-                ms["retry_count"] = state.retry_count
-            if state.checklist:
-                ms["checklist"] = [
-                    item.model_dump(mode="json", exclude_none=True)
-                    for item in state.checklist
-                ]
-            if state.reads:
-                ms["reads"] = dict(state.reads)
+            for key in ("status", "retry_count", "done_check", "checklist", "reads"):
+                ms.pop(key, None)
         return self
 
 

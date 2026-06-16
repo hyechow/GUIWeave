@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 
-from gui_agent.core.runner import _sync_milestone_states
 from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn, SupervisorStep
+from gui_agent.core.state import sync_milestone_states
+from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from scripts.report_builder import RunnerReportBuilder, generate_html
 
@@ -36,7 +37,7 @@ def test_policy_context_hydrates_legacy_milestone_runtime_state():
     assert state.status == "done"
     assert state.retry_count == 1
     assert state.done_check["reason"] == "已在目标页"
-    assert ctx.milestones[0]["done_check"]["status"] == "done"
+    assert "done_check" not in ctx.milestones[0]
 
 
 def test_runner_syncs_structured_and_legacy_milestone_state():
@@ -90,7 +91,7 @@ def test_runner_syncs_structured_and_legacy_milestone_state():
         turns=[turn],
     )
 
-    _sync_milestone_states(supervisor, ctx)
+    sync_milestone_states(supervisor, ctx)
 
     state = ctx.milestone_states["m1"]
     assert state.status == "done"
@@ -103,8 +104,8 @@ def test_runner_syncs_structured_and_legacy_milestone_state():
     assert state.pre_existing is True
     assert state.checklist[0].status == "done"
     assert state.checklist[0].text == "页面已打开"
-    assert ctx.milestones[0]["done_check"]["reason"] == "已在目标页"
-    assert ctx.milestones[0]["checklist"][0]["status"] == "done"
+    assert "done_check" not in ctx.milestones[0]
+    assert "checklist" not in ctx.milestones[0]
 
 
 def test_runner_updates_checklist_from_in_progress_checker():
@@ -143,12 +144,44 @@ def test_runner_updates_checklist_from_in_progress_checker():
         ],
     )
 
-    _sync_milestone_states(SimpleNamespace(), ctx)
+    sync_milestone_states(SimpleNamespace(), ctx)
 
     items = {item.text: item for item in ctx.milestone_states["m1"].checklist}
     assert items["名称和站点都已保存"].status == "pending"
     assert items["名称和站点都已保存"].evidence == ["名称 lucas 已显示"]
     assert items["站点未选择 s10"].status == "pending"
+
+
+def test_milestone_supervisor_exposes_runtime_state_snapshot():
+    milestone = Milestone(
+        id="m1",
+        name="打开页面",
+        description="打开页面",
+        kind="navigation",
+        success_condition="页面已打开",
+    )
+    milestone.status = "done"
+    milestone.retry_count = 1
+    check = _SingleCheckResult(
+        status="done",
+        reason="已在目标页",
+        summary="目标页",
+    )
+    policy = MilestoneSupervisorPolicy()
+    policy._milestones = {"m1": milestone}
+    policy._milestone_done_checks = {"m1": check}
+    policy._last_page_identity = {"m1": "目标页"}
+    policy._scroll_counts = {"m1": 2}
+    policy._progress_values = {"m1": ["1", "2"]}
+
+    snapshot = policy.runtime_state_snapshot()
+
+    assert snapshot["milestones"]["m1"]["status"] == "done"
+    assert snapshot["milestones"]["m1"]["retry_count"] == 1
+    assert snapshot["done_checks"]["m1"]["reason"] == "已在目标页"
+    assert snapshot["last_page_identity"]["m1"] == "目标页"
+    assert snapshot["scroll_counts"]["m1"] == 2
+    assert snapshot["progress_values"]["m1"] == ["1", "2"]
 
 
 def test_report_builder_reads_done_check_from_milestone_states(tmp_path):
