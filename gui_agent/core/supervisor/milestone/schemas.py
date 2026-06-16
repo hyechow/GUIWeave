@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from gui_agent.core.schemas import CollectionScope, Milestone
 
@@ -44,6 +44,24 @@ class MilestonePrompts:
     selector: str | None = None
 
 
+def _coerce_str_list(value):
+    """Tolerate an LLM returning a ``list[str]`` field as a bare string (or None).
+
+    DashScope ``json_object`` mode occasionally emits ``{"missing_evidence": "需要…"}``
+    instead of a list. Without this the primary ``model_validate`` raises
+    ``ValidationError`` and ``invoke_structured`` falls back to a slow plain-text
+    reparse (1-2 extra LLM calls — see log 20260616_200258 Turn5/6, checker=10.58s).
+    Wrap a string into a single-element list, stringify non-str list elements, coerce
+    None to []."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return value
+
+
 class _ChecklistVerdict(BaseModel):
     """Per-item verdict for one enumerated acceptance sub-condition."""
     index: int = Field(description="对应「逐项验收」清单里的序号（从 1 开始）")
@@ -78,6 +96,11 @@ class _SingleCheckResult(BaseModel):
     frozen: bool = Field(default=False, description="屏幕是否冻结（相似度≥99%，即使 reader 返回新内容也应停止）")
     loading: bool = Field(default=False, description="页面正在加载（骨架屏/启动屏/转场动画），应等待下一帧而非立即规划动作")
 
+    @field_validator("issues", "visible_evidence", "missing_evidence", mode="before")
+    @classmethod
+    def _coerce_str_list_fields(cls, v):
+        return _coerce_str_list(v)
+
 
 class _SelectorResult(BaseModel):
     """KnowledgeSelector output: which knowledge sections the upcoming planner should read.
@@ -90,6 +113,11 @@ class _SelectorResult(BaseModel):
         description="与当前页面/下一步操作最相关的 1~3 个章节 ID（照抄清单里方括号内的 ID，如 s07）；没有相关章节就返回空列表",
     )
     reason: str = Field(default="", description="选择依据（一句话）")
+
+    @field_validator("section_ids", mode="before")
+    @classmethod
+    def _coerce_section_ids(cls, v):
+        return _coerce_str_list(v)
 
 
 class _LoopFrameResult(BaseModel):
