@@ -1026,6 +1026,7 @@ class RunnerReportBuilder:
             return data
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
+        milestone_states = ctx.get("milestone_states") if isinstance(ctx.get("milestone_states"), dict) else {}
         # Title is the user's ORIGINAL input; the resolved goal is shown as provenance.
         # Old logs without raw_input fall back to the goal.
         data.raw_input = ctx.get("raw_input") or ""
@@ -1144,7 +1145,26 @@ class RunnerReportBuilder:
         # Build milestone lookup from persisted decomposition
         ms_lookup: dict[str, dict] = {}
         for ms in ctx.get("milestones", []):
-            ms_lookup[ms.get("id", "")] = ms
+            mid = ms.get("id", "")
+            state = milestone_states.get(mid) if mid else {}
+            merged = dict(ms)
+            if isinstance(state, dict):
+                for key in (
+                    "status",
+                    "retry_count",
+                    "done_check",
+                    "checklist",
+                    "reads",
+                    "last_summary",
+                    "last_turn_index",
+                    "pre_existing",
+                    "collection_summary",
+                ):
+                    value = state.get(key)
+                    if value not in (None, "", [], {}):
+                        merged[key] = value
+                merged["_state"] = state
+            ms_lookup[mid] = merged
 
 
         # Group steps by milestone
@@ -1186,6 +1206,7 @@ class RunnerReportBuilder:
         # Build milestones summary
         for page in pages:
             ms_steps = page.steps
+            ms_state = ms_lookup.get(page.milestone_id, {})
             ms_timings: dict[str, float] = {}
             ms_in = ms_out = 0
             for s in ms_steps:
@@ -1200,6 +1221,10 @@ class RunnerReportBuilder:
                 "kind": page.milestone_kind,
                 "description": page.milestone_description,
                 "success_condition": page.success_condition,
+                "status": ms_state.get("status", ""),
+                "retry_count": ms_state.get("retry_count", 0),
+                "reads": ms_state.get("reads", {}),
+                "checklist": ms_state.get("checklist", []),
                 "turns": f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}",
                 "total_time": sum(ms_timings.values()),
                 "timings": ms_timings,

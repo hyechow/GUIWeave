@@ -42,6 +42,8 @@ def action_label(action_type: str) -> str:
     return _ACTION_TYPE_LABELS.get(action_type, action_type)
 TaskType = Literal["action", "analysis"]
 RunStatus = Literal["completed", "interrupted", "stopped"]
+MilestoneStatus = Literal["pending", "running", "done", "failed"]
+ChecklistStatus = Literal["pending", "done", "blocked", "skipped"]
 MilestoneKind = Literal["navigation", "filter", "collection", "action", "verification"]
 CompletionStrategy = Literal[
     "visible_once",
@@ -78,6 +80,45 @@ class RunState(BaseModel):
     stop_reason: str = Field(default="", description="本次运行的最终停止原因")
     goal_completed: bool = Field(default=False, description="本次运行是否确认完成用户目标")
     output: Optional[str] = Field(default=None, description="最终输出")
+
+
+class MilestoneChecklistItem(BaseModel):
+    """One persisted milestone-local progress/check item."""
+
+    id: str = Field(description="checklist 项稳定 ID")
+    text: str = Field(description="需要确认的条件或子项")
+    status: ChecklistStatus = Field(default="pending", description="pending | done | blocked | skipped")
+    evidence: list[str] = Field(default_factory=list, description="支持该状态的可见证据")
+    source: str = Field(default="", description="产生/更新该项的来源，如 checker/planner/manual")
+
+
+class MilestoneState(BaseModel):
+    """Runtime state for one milestone, separated from the static decomposition."""
+
+    id: str
+    status: Optional[MilestoneStatus] = Field(
+        default=None,
+        description="该 milestone 当前执行状态",
+    )
+    retry_count: int = Field(default=0, description="该 milestone 已重试次数")
+    done_check: dict = Field(default_factory=dict, description="最终验收 checker 结果")
+    checklist: list[MilestoneChecklistItem] = Field(
+        default_factory=list,
+        description="milestone-local checklist；由 checker/人工状态更新，不作为通用 LLM 待办清单",
+    )
+    reads: dict[str, str] = Field(
+        default_factory=dict,
+        description="编排/读取阶段提取出的结构化字段",
+    )
+    note_hashes: list[str] = Field(default_factory=list, description="该 milestone 采集入库的内容片段哈希")
+    last_summary: str = Field(default="", description="最近一次 supervisor summary")
+    last_turn_index: Optional[int] = Field(default=None, description="最近一次关联 turn 序号")
+    last_page_identity: str = Field(default="", description="checker 最近识别的页面身份")
+    scroll_count: int = Field(default=0, description="该 milestone 已尝试滚动次数")
+    progress_values: list[str] = Field(default_factory=list, description="连续调值类最近观测到的值")
+    pre_existing: bool = Field(default=False, description="是否为会话前已存在状态")
+    collection_summary: Optional[str] = Field(default=None, description="采集完成摘要")
+    collection_scope: Optional[CollectionScope] = Field(default=None, description="最近一次采集范围")
 
 
 class BaseAction(BaseModel):
@@ -472,7 +513,11 @@ class PolicyContext(BaseModel):
     goal_completed: Optional[bool] = Field(default=None, description="本次运行是否确认完成用户目标")
     milestones: list[dict] = Field(
         default_factory=list,
-        description="子目标分解结果 [{id, name, description, kind, success_condition}]",
+        description="静态子目标分解结果 [{id, name, description, kind, success_condition}]",
+    )
+    milestone_states: dict[str, MilestoneState] = Field(
+        default_factory=dict,
+        description="按 milestone_id 索引的运行态；避免把 status/done_check/reads 混进静态分解",
     )
     models: dict[str, str] = Field(
         default_factory=dict,
@@ -494,7 +539,7 @@ class PolicyContext(BaseModel):
 
     @model_validator(mode="after")
     def _sync_run_state_compat(self) -> "PolicyContext":
-        """Keep the structured run state and legacy flat fields in sync."""
+        """Keep structured state and legacy flat fields in sync."""
         if self.output is not None and self.run.output is None:
             self.run.output = self.output
         if self.stop_reason and not self.run.stop_reason:
@@ -508,6 +553,46 @@ class PolicyContext(BaseModel):
         self.stop_reason = self.run.stop_reason or None
         self.run_status = self.run.status
         self.goal_completed = self.run.goal_completed
+
+        for ms in self.milestones:
+            if not isinstance(ms, dict):
+                continue
+            mid = str(ms.get("id") or "")
+            if not mid:
+                continue
+            state = self.milestone_states.get(mid)
+            if state is None:
+                legacy_state: dict = {"id": mid}
+                if ms.get("status") in {"pending", "running", "done", "failed"}:
+                    legacy_state["status"] = ms.get("status")
+                if isinstance(ms.get("retry_count"), int):
+                    legacy_state["retry_count"] = ms.get("retry_count")
+                if isinstance(ms.get("done_check"), dict):
+                    legacy_state["done_check"] = ms.get("done_check")
+                if isinstance(ms.get("checklist"), list):
+                    legacy_state["checklist"] = ms.get("checklist")
+                if isinstance(ms.get("reads"), dict):
+                    legacy_state["reads"] = ms.get("reads")
+                if len(legacy_state) > 1:
+                    state = MilestoneState.model_validate(legacy_state)
+                    self.milestone_states[mid] = state
+            if state is None:
+                continue
+            # Back-compat for existing reports and tools that still read runtime
+            # state from context.milestones entries.
+            if state.done_check:
+                ms["done_check"] = state.done_check
+            if state.status:
+                ms["status"] = state.status
+            if state.retry_count:
+                ms["retry_count"] = state.retry_count
+            if state.checklist:
+                ms["checklist"] = [
+                    item.model_dump(mode="json", exclude_none=True)
+                    for item in state.checklist
+                ]
+            if state.reads:
+                ms["reads"] = dict(state.reads)
         return self
 
 

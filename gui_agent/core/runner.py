@@ -38,6 +38,7 @@ from gui_agent.core.orchestrator.program import Program  # DSL orchestrator mode
 from gui_agent.core.target_verify import verify_target
 from gui_agent.core.schemas import (
     ActionDecision,
+    MilestoneState,
     PolicyContext,
     PolicyTurn,
     RunState,
@@ -359,16 +360,144 @@ def _extract_checker(supervisor: object) -> Optional[dict]:
     return check.model_dump(exclude_none=True)
 
 
-def _sync_milestone_done_checks(supervisor: object, context: "PolicyContext") -> None:
-    """Copy _milestone_done_checks from supervisor into context.milestones dicts."""
-    done_checks: dict = getattr(supervisor, "_milestone_done_checks", {})
-    if not done_checks or not context.milestones:
-        return
+def _milestone_state_for(context: "PolicyContext", milestone_id: str) -> MilestoneState:
+    state = context.milestone_states.get(milestone_id)
+    if state is None:
+        state = MilestoneState(id=milestone_id)
+        context.milestone_states[milestone_id] = state
+    return state
+
+
+def _sync_legacy_milestone_fields(context: "PolicyContext") -> None:
+    """Mirror structured milestone state into legacy milestone dicts."""
     for ms in context.milestones:
-        mid = ms.get("id", "")
-        if mid in done_checks and "done_check" not in ms:
-            check = done_checks[mid]
-            ms["done_check"] = check.model_dump(exclude_none=True) if hasattr(check, "model_dump") else dict(check)
+        mid = str(ms.get("id") or "")
+        if not mid:
+            continue
+        state = context.milestone_states.get(mid)
+        if state is None:
+            continue
+        if state.done_check:
+            ms["done_check"] = state.done_check
+        if state.status:
+            ms["status"] = state.status
+        if state.retry_count:
+            ms["retry_count"] = state.retry_count
+        if state.checklist:
+            ms["checklist"] = [
+                item.model_dump(mode="json", exclude_none=True)
+                for item in state.checklist
+            ]
+        if state.reads:
+            ms["reads"] = dict(state.reads)
+
+
+def _sync_orchestrator_milestone_states(context: "PolicyContext") -> None:
+    orchestrator = context.orchestrator if isinstance(context.orchestrator, dict) else {}
+    run_log = orchestrator.get("run_log") or []
+    if not isinstance(run_log, list):
+        return
+
+    ids_by_name: dict[str, list[str]] = {}
+    for ms in context.milestones:
+        mid = str(ms.get("id") or "")
+        name = str(ms.get("name") or "")
+        if mid and name:
+            ids_by_name.setdefault(name, []).append(mid)
+    seen_by_name: dict[str, int] = {}
+
+    for record in run_log:
+        if not isinstance(record, dict):
+            continue
+        name = str(record.get("name") or "")
+        mid = str(record.get("var") or "")
+        if not mid and name:
+            candidates = ids_by_name.get(name, [])
+            offset = seen_by_name.get(name, 0)
+            if offset < len(candidates):
+                mid = candidates[offset]
+                seen_by_name[name] = offset + 1
+        if not mid:
+            continue
+        result = record.get("result") if isinstance(record.get("result"), dict) else {}
+        state = _milestone_state_for(context, mid)
+        if result.get("failed"):
+            state.status = "failed"
+        elif result.get("completed"):
+            state.status = "done"
+        reads = result.get("reads") if isinstance(result.get("reads"), dict) else {}
+        if reads:
+            state.reads = {str(k): str(v) for k, v in reads.items()}
+        summary = str(result.get("summary") or "")
+        if summary:
+            state.last_summary = summary
+
+
+def _sync_milestone_states(supervisor: object, context: "PolicyContext") -> None:
+    """Persist milestone runtime state in context.milestone_states.
+
+    context.milestones remains the static decomposition list. We still mirror the
+    legacy runtime fields there for old reports/tools until those consumers move.
+    """
+    for ms in context.milestones:
+        mid = str(ms.get("id") or "")
+        if mid:
+            _milestone_state_for(context, mid)
+
+    milestones: dict = getattr(supervisor, "_milestones", {}) or {}
+    for mid, milestone in milestones.items():
+        state = _milestone_state_for(context, str(mid))
+        status = getattr(milestone, "status", None)
+        if status in {"pending", "running", "done", "failed"}:
+            state.status = status
+        retry_count = getattr(milestone, "retry_count", None)
+        if isinstance(retry_count, int):
+            state.retry_count = retry_count
+
+    done_checks: dict = getattr(supervisor, "_milestone_done_checks", {}) or {}
+    for mid, check in done_checks.items():
+        state = _milestone_state_for(context, str(mid))
+        if hasattr(check, "model_dump"):
+            state.done_check = check.model_dump(mode="json", exclude_none=True)
+        elif isinstance(check, dict):
+            state.done_check = dict(check)
+
+    for mid, page_identity in (getattr(supervisor, "_last_page_identity", {}) or {}).items():
+        state = _milestone_state_for(context, str(mid))
+        state.last_page_identity = str(page_identity or "")
+    for mid, count in (getattr(supervisor, "_scroll_counts", {}) or {}).items():
+        state = _milestone_state_for(context, str(mid))
+        if isinstance(count, int):
+            state.scroll_count = count
+    for mid, values in (getattr(supervisor, "_progress_values", {}) or {}).items():
+        state = _milestone_state_for(context, str(mid))
+        if isinstance(values, list):
+            state.progress_values = [str(v) for v in values]
+
+    for turn in context.turns:
+        sv = turn.supervisor
+        mid = sv.milestone_id or ""
+        if not mid:
+            continue
+        state = _milestone_state_for(context, mid)
+        state.last_turn_index = turn.index
+        state.last_summary = sv.summary or state.last_summary
+        if turn.read_note_hash and turn.read_note_hash not in state.note_hashes:
+            state.note_hashes.append(turn.read_note_hash)
+        if sv.pre_existing:
+            state.pre_existing = True
+        if sv.collection_summary:
+            state.collection_summary = sv.collection_summary
+        if sv.collection_scope:
+            state.collection_scope = sv.collection_scope
+
+    _sync_orchestrator_milestone_states(context)
+    _sync_legacy_milestone_fields(context)
+
+
+def _sync_milestone_done_checks(supervisor: object, context: "PolicyContext") -> None:
+    """Back-compat wrapper for older tests/imports."""
+    _sync_milestone_states(supervisor, context)
 
 
 def _extract_plan(supervisor: object) -> Optional[dict]:
@@ -675,6 +804,7 @@ def run_agent_loop(
             context.orchestrator["run_log"] = [
                 r.model_dump(mode="json") for r in _orch_interp.run_log
             ]
+        _sync_milestone_states(supervisor, context)
         _save_context(context_path, context)
 
     def _finish(result: dict) -> dict:
@@ -996,7 +1126,7 @@ def run_agent_loop(
                     sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
                 ))
                 # Sync the last milestone's done verdict into context (no later turn body runs).
-                _sync_milestone_done_checks(supervisor, context)
+                _sync_milestone_states(supervisor, context)
                 return _finish(_orch_result(context, _interp, _orch_reply))
 
             # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.turns、不消耗
@@ -1259,7 +1389,7 @@ def run_agent_loop(
             )
             _print_timings(supervisor)
             context.turns.append(turn)
-            _sync_milestone_done_checks(supervisor, context)
+            _sync_milestone_states(supervisor, context)
             _save_ctx()
             if not silent:
                 _print_turn_stats(turn_no, turn_started_at, llm_calls_before)
