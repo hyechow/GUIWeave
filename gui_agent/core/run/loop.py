@@ -545,6 +545,13 @@ def run_agent_loop(
             # as the verdict-frame carry-forward, just merged into this turn instead of the next.
             _orch_reply: "str | None" = None    # set if the program ended during a hand-off
             _did_loading = False
+            # Same-turn hand-offs call supervisor.step() multiple times; each step() clears its own
+            # _timings, so the completion check that detected the prior milestone done would be lost
+            # from this turn's breakdown. Carry each handed-off step's timings here and merge them
+            # back after the loop, so the report shows the checker call that ran on the hand-off.
+            _carry_timings: dict = {}
+            _carry_order: list = []
+            _carry_token: dict = {}
             while True:
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
@@ -580,9 +587,37 @@ def run_agent_loop(
                 if _reply is not None:
                     _orch_reply = _reply
                     break
+                # Carry this (non-final) step's timings/tokens before the next step() clears them.
+                for _k, _v in (getattr(supervisor, "_timings", {}) or {}).items():
+                    if _k not in _carry_timings:
+                        _carry_order.append(_k)
+                    _carry_timings[_k] = _carry_timings.get(_k, 0) + _v
+                for _k, _u in (getattr(supervisor, "_token_usage", {}) or {}).items():
+                    _ct = _carry_token.setdefault(_k, {"input": 0, "output": 0})
+                    _ct["input"] += (_u or {}).get("input", 0)
+                    _ct["output"] += (_u or {}).get("output", 0)
                 _say(f"  [Orchestrator] 子目标「{_done_name}」完成 → 下一子任务："
                      f"{_cur_run.name}（同一验收帧上决策，不另起 turn）")
                 # loop: re-decide the freshly-reseeded milestone on the same observation.
+
+            # Merge the carried hand-off step timings into the supervisor's (final step's) timings,
+            # so this turn's breakdown includes the checker call that ran on the hand-off. Carried
+            # (earlier-step) keys render first; later writes (e.g. action_policy) still append after.
+            if _carry_timings:
+                _final_t = getattr(supervisor, "_timings", {}) or {}
+                _final_order = getattr(supervisor, "_timings_order", []) or []
+                for _k, _v in _final_t.items():
+                    if _k not in _carry_timings:
+                        _carry_order.append(_k)
+                    _carry_timings[_k] = _carry_timings.get(_k, 0) + _v
+                supervisor._timings = _carry_timings
+                supervisor._timings_order = _carry_order
+                _final_tok = getattr(supervisor, "_token_usage", {}) or {}
+                for _k, _u in _final_tok.items():
+                    _ct = _carry_token.setdefault(_k, {"input": 0, "output": 0})
+                    _ct["input"] += (_u or {}).get("input", 0)
+                    _ct["output"] += (_u or {}).get("output", 0)
+                supervisor._token_usage = _carry_token
 
             if _orch_reply is not None:
                 _drain_pending_read()
