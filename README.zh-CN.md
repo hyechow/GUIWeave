@@ -252,30 +252,22 @@ uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --mode update 
 
 ```text
 gui_agent/
-├── chat_cli.py          # 对话模式主程序
-├── runner.py            # 实验/调试用 Runner
-├── recon_cli.py         # 应用侦察 CLI
-├── executor.py          # 动作执行器（mirror_daemon / Quartz + MCP）
-├── perception.py        # 截图感知层
-├── output.py            # 回复生成
-├── schemas.py           # 核心数据模型
-├── config.yaml          # LLM 配置：基线(qwen35) + profiles(AGENT_MODEL) + 单价
-├── prefs.py             # 用户偏好记忆
-├── supervisor/
-│   └── milestone.py     # Milestone 状态机：分解→执行→验收
-├── policies/
-│   ├── base.py          # ActionPolicy 接口
-│   └── structured_output.py  # 视觉 LLM 动作策略
-├── recon/
-│   ├── page_parser.py   # 截图 → 页面身份 + 交互元素
-│   ├── dfs.py           # DFS 多层应用探索
-│   ├── bfs.py           # BFS 元素探测
-│   ├── back_nav.py      # 从子页面回退
-│   ├── page_identity.py # 页面去重（视觉指纹）
-│   └── cascade_matcher.py  # 级联视觉/语义页面匹配
-└── self_learning/
-    ├── knowledge.py     # 从侦察结果生成知识文件
-    └── app_summary.py   # 自动发现并加载 APP 知识
+├── core/
+│   ├── runner.py        # 稳定 runner 模块入口
+│   ├── run/             # agent loop、CLI、运行 IO/state/result 持久化
+│   ├── runtime/         # 平台契约、执行器基类、平台工厂、trace
+│   ├── vision/          # 帧分析、拼接、落点校验、可视化
+│   ├── llm/             # reader、最终回复、时间表达式解析
+│   ├── chat/            # 对话 CLI、路由、偏好、会话记录
+│   ├── schemas/         # 核心数据模型和侦察数据结构
+│   ├── config/          # LLM 配置和单价 profiles
+│   ├── supervisor/      # Milestone 状态机：分解→执行→验收
+│   ├── policies/        # 平台中性的 policy 接口
+│   └── self_learning/   # 知识发现与加载
+└── adapters/
+    ├── iphone/          # iPhone 设备 IO、感知、侦察、策略
+    ├── browser/         # Browser CDP 设备、感知、执行器、工厂
+    └── android/         # Android adb 设备、感知、执行器、工厂
 
 bin/
 ├── chat                 # 启动对话模式

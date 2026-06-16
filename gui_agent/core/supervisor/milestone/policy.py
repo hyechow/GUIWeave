@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 
 from llm.structured import get_llm_token_usage, invoke_structured
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.frame_analysis import CHANGE_SSIM_DIST_THR, is_loading_frame, region_change
+from gui_agent.core.vision.frame_analysis import CHANGE_SSIM_DIST_THR, is_loading_frame, region_change
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm as _norm_page
 

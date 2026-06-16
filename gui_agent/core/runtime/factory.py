@@ -1,9 +1,9 @@
 """Platform factory: the single seam where core obtains a platform's adapter bundle.
 
-Core orchestration depends on this module + ``gui_agent.core.contracts`` only.
+Core orchestration depends on this module + ``gui_agent.core.runtime.contracts`` only.
 ``build_platform`` NEVER imports ``gui_agent.adapters.*`` at module top -- it
 dispatches by name with a lazy import inside the function body, so importing
-``core.factory`` pulls in no adapter (preserving the leaf invariant) and core
+``core.runtime.factory`` pulls in no adapter (preserving the leaf invariant) and core
 stays adapter-free. The concrete wiring for each platform lives in that
 platform's ``adapters/<plat>/factory.py``.
 """
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from pathlib import Path
 
-    from gui_agent.core.contracts import (
+    from gui_agent.core.runtime.contracts import (
         ActionPolicy,
         ActionVisualizer,
         Perception,
@@ -98,7 +98,7 @@ def build_platform(
 
     Resolution: ``platform`` arg -> env ``AGENT_PLATFORM`` -> ``"iphone"``.
     Adapter modules are imported lazily inside the matched branch so
-    ``core.factory`` itself stays adapter-free.
+    ``core.runtime.factory`` itself stays adapter-free.
     """
     name = (platform or os.environ.get("AGENT_PLATFORM") or "iphone").lower()
     if name == "iphone":

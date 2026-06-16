@@ -57,7 +57,7 @@ class AndroidSession:
         self._serial = serial
 
     def __enter__(self) -> "AndroidSession":
-        # Lazy import keeps the package import-light and core.factory adapter-free.
+        # Lazy import keeps the package import-light and core.runtime.factory adapter-free.
         from gui_agent.adapters.android.device import AndroidDevice
 
         print("连接 Android 设备中 (adb)...")

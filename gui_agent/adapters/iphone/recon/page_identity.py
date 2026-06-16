@@ -45,8 +45,8 @@ def _infer_form_group(png: bytes) -> str | None:
     return None  # unknown — don't filter
 
 
-# IdentityResult moved to gui_agent.core.schema (S3); re-exported here for back-compat.
-from gui_agent.core.schema import IdentityResult
+# IdentityResult moved to gui_agent.core.schemas.recon (S3); re-exported here for back-compat.
+from gui_agent.core.schemas.recon import IdentityResult
 
 
 # Library entry: (embedding, png_bytes, name, fingerprint | None, form_group | None)

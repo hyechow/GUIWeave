@@ -3,7 +3,7 @@
 Unlike the iphone ``ScrollProbe`` (which tries multiple gestures/locations because
 mirror scrolling is unreliable and needs per-app calibration), browser wheel scroll
 is DETERMINISTIC — so the probe just performs the requested scroll once, measures the
-vertical shift via the neutral ``core.stitch.robust_shift``, and reports success iff
+vertical shift via the neutral ``core.vision.stitch.robust_shift``, and reports success iff
 the page advanced. This satisfies the runner's scroll-collect contract:
 
   - ``make_scroll_probe(phone, executor, log_dir)`` -> ``BrowserScrollProbe``
@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass
 
 from gui_agent.core.schemas import Action
-from gui_agent.core.stitch import MIN_PROGRESS, _gray_u8, robust_shift
+from gui_agent.core.vision.stitch import MIN_PROGRESS, _gray_u8, robust_shift
 
 # Browser screenshots (CDP Page.captureScreenshot) are full-page content — no device
 # frame, no iOS status bar — so the stitch content band is the whole frame.

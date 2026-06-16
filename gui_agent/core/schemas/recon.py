@@ -2,7 +2,7 @@
 
 Pure data shapes (dataclasses / a plain exception) with no pixel, model, or
 platform state, lifted out of the iPhone recon adapter (S3) so that
-gui_agent.core.contracts and core orchestration can reference them without a
+gui_agent.core.runtime.contracts and core orchestration can reference them without a
 forward-ref into any adapter. The former adapter locations re-export these for
 backward compatibility.
 """

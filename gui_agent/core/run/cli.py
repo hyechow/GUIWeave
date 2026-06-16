@@ -12,11 +12,11 @@ if __package__ is None or __package__ == "":
 from dotenv import load_dotenv
 load_dotenv()
 
-from gui_agent.core.factory import build_platform
-from gui_agent.core.output import generate_reply
+from gui_agent.core.runtime.factory import build_platform
+from gui_agent.core.llm.output import generate_reply
 from gui_agent.core.run.io import EscStopSignal, create_run_dir, tee_stdio
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
-from gui_agent.core.state import write_final_run_state
+from gui_agent.core.run.state import write_final_run_state
 
 
 def main(
@@ -115,7 +115,7 @@ def main(
     # tasks ("搜索nvidia股价") classify correctly instead of being rejected.
     if not args.context and not args.no_router:
         try:
-            from gui_agent.core.chat_session import route_message
+            from gui_agent.core.chat.session import route_message
             router_result = route_message(raw_input, session=[], prefs_context="", platform=bundle.platform)
         except Exception as exc:
             print(f"Router  : 调用失败，回退原始输入（{exc}）")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 多轮对话 CLI 启动器。第一个参数 = 平台(iphone|browser),其余透传给 chat_cli。
+# 多轮对话 CLI 启动器。第一个参数 = 平台(iphone|browser),其余透传给 chat CLI。
 # chat 是交互式 REPL —— 任务在对话里输入,启动时只需平台。
 #   bin/chat browser
 #   bin/chat iphone
@@ -14,6 +14,6 @@ case "$platform" in
     echo "  例: bin/chat iphone" >&2
     exit 1 ;;
 esac
-shift  # 平台已取出,余下透传给 chat_cli
+shift  # 平台已取出,余下透传给 chat CLI
 
-exec env AGENT_PLATFORM="$platform" uv run python -m gui_agent.core.chat_cli "$@"
+exec env AGENT_PLATFORM="$platform" uv run python -m gui_agent.core.chat.cli "$@"

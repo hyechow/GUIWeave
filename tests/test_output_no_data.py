@@ -15,8 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from gui_agent.core import output as output_mod
-from gui_agent.core.output import _NO_DATA_REPLY, generate_reply
+from gui_agent.core.llm import output as output_mod
+from gui_agent.core.llm.output import _NO_DATA_REPLY, generate_reply
 
 passed = 0
 failed = 0

@@ -1,7 +1,7 @@
 """Android action visualizer: the iphone/browser ``agent_cursor`` blue arrow,
 glided over the scrcpy mirror window at each action's location.
 
-Implements the neutral :class:`gui_agent.core.contracts.ActionVisualizer`. It reuses
+Implements the neutral :class:`gui_agent.core.runtime.contracts.ActionVisualizer`. It reuses
 the SAME ``sck/agent_cursor`` OS overlay that iphone and browser drive — only the
 coordinate mapping differs (here: device-normalized 0-1000 -> the scrcpy window's
 content area on the Mac screen).

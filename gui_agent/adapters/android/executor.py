@@ -1,6 +1,6 @@
 """Android action executor: dispatch one ActionDecision onto the device.
 
-Reuses the shared ``gui_agent.core.executor.VisionExecutor`` (the 7 shared actions +
+Reuses the shared ``gui_agent.core.runtime.executor.VisionExecutor`` (the 7 shared actions +
 denorm + _tap; default _clear_before_type = clear_text suits android). Only android's
 nav keys live here, in ``_dispatch_extra``: home / back / app_switch.
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Optional
 
 from gui_agent.adapters.android.actions import AndroidAction
-from gui_agent.core.executor import VisionExecutor
+from gui_agent.core.runtime.executor import VisionExecutor
 
 
 # Android scroll units per ScrollAmount label for ordinary lists. Picker wheels use

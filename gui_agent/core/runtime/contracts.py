@@ -40,7 +40,7 @@ IMPORT HYGIENE
 create an import cycle, since those depend on core). It imports ONLY the leaf
 ``gui_agent.core.schemas`` module at runtime. Recon return types are forward refs
 under ``TYPE_CHECKING``: the neutral ones (IdentityResult, ScreenMatchDecision)
-from ``gui_agent.core.schema``; the pixel/model-bearing ones (PageKnowledge,
+from ``gui_agent.core.schemas.recon``; the pixel/model-bearing ones (PageKnowledge,
 PageEmbedding) from the iphone adapter -- so no heavy / cyclic import at load.
 """
 
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     # keep `contracts` a pure leaf seam with no cycles.
     from gui_agent.adapters.iphone.recon.cascade_matcher import PageEmbedding
     from gui_agent.adapters.iphone.recon.page_parser import PageKnowledge
-    from gui_agent.core.schema import IdentityResult, ScreenMatchDecision
+    from gui_agent.core.schemas.recon import IdentityResult, ScreenMatchDecision
 
 
 # ===========================================================================

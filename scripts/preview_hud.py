@@ -6,7 +6,7 @@ padding, CJK glyph extents), so the reliable way to tune its look is to launch t
 REAL widget. This shows the two-zone layout — TASK (goal) over DECISION (live status)
 — with sample text, then closes after a few seconds.
 
-Defaults mirror the browser HUD size (``core.hud.dock_rect``), so re-running this
+Defaults mirror the browser HUD size (``core.ui.hud.dock_rect``), so re-running this
 after tweaking the layout/size reflects exactly what an agent run would show.
 
 Usage:
@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from gui_agent.core.hud import AgentHUD, dock_rect
+from gui_agent.core.ui.hud import AgentHUD, dock_rect
 
 # A long decision line on purpose, to check the two-line case isn't clipped.
 DEFAULT_GOAL = "搜索 NVIDIA 在 2026-06-09 的股价"

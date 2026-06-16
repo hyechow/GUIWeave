@@ -1,6 +1,6 @@
 """Browser adapter factory: the one place browser construction is wired together.
 
-Builds a :class:`gui_agent.core.factory.PlatformBundle` whose callables
+Builds a :class:`gui_agent.core.runtime.factory.PlatformBundle` whose callables
 construct the browser session (Chrome over CDP), executor, perception, action
 policy and supervisor. Core orchestration receives the neutral bundle and never
 imports these classes directly. Mirrors ``adapters/iphone/factory.py``.
@@ -11,7 +11,7 @@ The scroll/stitch bundle fields back the runner's scroll-collect / stitching bra
 (reached when the milestone supervisor plans completion_strategy='scroll_until_boundary'
 for information-gathering goals). Browser collection IS implemented:
   - ``make_stitch_accumulator`` / ``robust_shift`` / ``gray_u8`` reuse the NEUTRAL
-    ``gui_agent.core.stitch`` algos with the browser content band (whole frame, no
+    ``gui_agent.core.vision.stitch`` algos with the browser content band (whole frame, no
     device-frame mask).
   - ``make_scroll_probe`` / ``apply_scroll_profile`` use the trivial
     ``adapters/browser/scroll_probe.py`` (browser wheel scroll is deterministic, so
@@ -33,10 +33,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from gui_agent.core.factory import PlatformBundle, SetupCheckResult
+from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
 
 if TYPE_CHECKING:
-    from gui_agent.core.contracts import ActionPolicy, SupervisorPolicy
+    from gui_agent.core.runtime.contracts import ActionPolicy, SupervisorPolicy
 
 
 # Registries (mirror the iphone adapter shape). Browser is vision-only with a
@@ -91,7 +91,7 @@ def _make_scroll_probe(session: object, executor: object, log_dir: object) -> ob
 
 def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
     """Neutral core StitchAccumulator with the browser content band (whole frame)."""
-    from gui_agent.core.stitch import StitchAccumulator
+    from gui_agent.core.vision.stitch import StitchAccumulator
 
     kwargs.setdefault("content_top", _BROWSER_CONTENT_TOP)
     kwargs.setdefault("content_bot", _BROWSER_CONTENT_BOT)
@@ -107,7 +107,7 @@ def _robust_shift(*args: object, **kwargs: object) -> object:
 
 
 def _gray_u8(png_bytes: bytes) -> object:
-    from gui_agent.core.stitch import _gray_u8 as _impl
+    from gui_agent.core.vision.stitch import _gray_u8 as _impl
 
     return _impl(png_bytes)
 
@@ -176,8 +176,8 @@ def _make_browser_hud() -> object:
     It floats over the page but, being an OS overlay, never enters the agent's
     Page.captureScreenshot perception. Positioned best-effort pre-connect via
     CGWindowList; the runner repositions it to the exact CDP window rect once
-    connected (both use core.hud.dock_rect, so the placement matches)."""
-    from gui_agent.core.hud import AgentHUD, dock_rect
+    connected (both use core.ui.hud.dock_rect, so the placement matches)."""
+    from gui_agent.core.ui.hud import AgentHUD, dock_rect
 
     rect = _find_chrome_window()
     hx, hy, hw, hh = dock_rect(*rect) if rect else (140, 600, 600, 150)

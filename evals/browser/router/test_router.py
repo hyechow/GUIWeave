@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env")
 
-from gui_agent.core.chat_session import route_message
+from gui_agent.core.chat.session import route_message
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

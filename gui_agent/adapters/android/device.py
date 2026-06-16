@@ -1,4 +1,4 @@
-"""adbutils I/O backend implementing gui_agent.core.contracts.Device.
+"""adbutils I/O backend implementing gui_agent.core.runtime.contracts.Device.
 
 ``AndroidDevice`` drives a real Android (or HarmonyOS AOSP-compat) phone over adb:
 ``screencap`` for frames, ``input tap/swipe/text/keyevent`` for control. It

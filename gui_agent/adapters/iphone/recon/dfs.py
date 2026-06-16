@@ -14,7 +14,7 @@ from gui_agent.adapters.iphone.recon.back_nav import make_nav_context, manual_re
 from gui_agent.adapters.iphone.recon.planned_back_nav import planned_return_to_initial as return_to_initial
 from gui_agent.adapters.iphone.recon.page_identity import PageIdentity
 from gui_agent.adapters.iphone.recon.utils import ProbeAbortedError
-from gui_agent.core.trace import Tracer
+from gui_agent.core.runtime.trace import Tracer
 
 # Module-level HUD status callback; set by explore_dfs, read by _probe_page_dfs.
 _status_cb: Callable[[str], None] | None = None

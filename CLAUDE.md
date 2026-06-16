@@ -12,9 +12,10 @@
 
 ```
 gui_agent/
-  core/        平台中性:contracts(Protocol 缝)· factory(平台工厂)· schema/schemas
-               · runner/chat_cli(agent loop 编排)· supervisor · policies/base
-               · reader/output/temporal/trace/prefs/... · self_learning
+  core/        平台中性:runtime(contracts/factory/executor/trace)
+               · run(agent loop/CLI/state/result)· vision(frame/stitch/verify)
+               · llm(reader/output/temporal)· chat(route/prefs/recorder)
+               · schemas/config · supervisor · policies/base · self_learning
   adapters/
     iphone/    镜像 I/O · executor · perception(SCK)· recon(YOLO/OCR 像素探测)
                · text_input/ocr · 具体 action policy / supervisor · recon_cli
@@ -23,8 +24,8 @@ gui_agent/
                · AndroidActionPolicy · HUD/AndroidActionVisualizer(叠 scrcpy 窗口)· factory
 ```
 
-- **平台选择**:环境变量 `AGENT_PLATFORM`(`iphone` 默认 / `browser` / `android`)。`core/factory.build_platform()` 惰性装配该平台的 `PlatformBundle`(session/executor/perception/policy/supervisor),core **只依赖 contracts + factory**,不直接 import 任何 adapter。
-- **接新平台**:在 `adapters/<plat>/` 实现 `core/contracts.py` 的 Protocol(Device/Perception/ActionPolicy/SupervisorPolicy)+ 写 `build_<plat>_bundle` 注册进 `build_platform`。
+- **平台选择**:环境变量 `AGENT_PLATFORM`(`iphone` 默认 / `browser` / `android`)。`core/runtime/factory.build_platform()` 惰性装配该平台的 `PlatformBundle`(session/executor/perception/policy/supervisor),core **只依赖 runtime contracts + factory**,不直接 import 任何 adapter。
+- **接新平台**:在 `adapters/<plat>/` 实现 `core/runtime/contracts.py` 的 Protocol(Device/Perception/ActionPolicy/SupervisorPolicy)+ 写 `build_<plat>_bundle` 注册进 `build_platform`。
 
 ## 环境配置
 

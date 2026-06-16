@@ -258,30 +258,22 @@ uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --mode update 
 
 ```text
 gui_agent/
-├── chat_cli.py          # Chat mode entry point
-├── runner.py            # Experimental/debug runner
-├── recon_cli.py         # App reconnaissance CLI
-├── executor.py          # Action executor: mirror_daemon / Quartz + MCP
-├── perception.py        # Screenshot perception layer
-├── output.py            # Final response generation
-├── schemas.py           # Core data models
-├── config.yaml          # LLM config: base (qwen35) + profiles (AGENT_MODEL) + pricing
-├── prefs.py             # User preference memory
-├── supervisor/
-│   └── milestone.py     # Milestone state machine: decompose -> execute -> verify
-├── policies/
-│   ├── base.py          # ActionPolicy interface
-│   └── structured_output.py  # Vision LLM action policy
-├── recon/
-│   ├── page_parser.py   # Screenshot -> page identity + interactive elements
-│   ├── dfs.py           # Multi-depth DFS app exploration
-│   ├── bfs.py           # BFS element probing
-│   ├── back_nav.py      # Return navigation from child pages
-│   ├── page_identity.py # Page deduplication with visual fingerprints
-│   └── cascade_matcher.py  # Cascaded visual/semantic page matching
-└── self_learning/
-    ├── knowledge.py     # Generate knowledge files from recon results
-    └── app_summary.py   # Discover and load app knowledge
+├── core/
+│   ├── runner.py        # Stable runner module entry point
+│   ├── run/             # Agent loop, CLI, run IO/state/result persistence
+│   ├── runtime/         # Platform contracts, executor base, platform factory, trace
+│   ├── vision/          # Frame analysis, stitch, target verify, visualization
+│   ├── llm/             # Reader, final response generation, temporal parsing
+│   ├── chat/            # Conversational CLI, routing, prefs, session recorder
+│   ├── schemas/         # Core data models and recon data shapes
+│   ├── config/          # LLM config and pricing profiles
+│   ├── supervisor/      # Milestone state machine: decompose -> execute -> verify
+│   ├── policies/        # Platform-neutral policy interfaces
+│   └── self_learning/   # Knowledge discovery and loading
+└── adapters/
+    ├── iphone/          # iPhone device IO, perception, recon, policies
+    ├── browser/         # Browser CDP device, perception, executor, factory
+    └── android/         # Android adb device, perception, executor, factory
 
 bin/
 ├── chat                 # Launch chat mode

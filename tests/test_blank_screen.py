@@ -19,7 +19,7 @@ import io
 import pytest
 from PIL import Image, ImageDraw
 
-from gui_agent.core.frame_analysis import is_blank_screen
+from gui_agent.core.vision.frame_analysis import is_blank_screen
 
 W, H = 600, 1300
 

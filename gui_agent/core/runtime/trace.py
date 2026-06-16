@@ -68,7 +68,7 @@ class Tracer:
 
     def record_error(self, page: str, exc: BaseException) -> None:
         """Attach a structured or plain-string error to the last recorded entry for page."""
-        from gui_agent.core.schema import ProbeAbortedError
+        from gui_agent.core.schemas.recon import ProbeAbortedError
         idx = self._page_index.get(page)
         if idx is None:
             return

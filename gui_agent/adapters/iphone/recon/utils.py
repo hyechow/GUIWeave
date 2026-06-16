@@ -15,8 +15,8 @@ from gui_agent.adapters.iphone.recon.page_parser import ParsedPage
 
 # ── Exceptions ────────────────────────────────────────────
 
-# ProbeAbortedError moved to gui_agent.core.schema (S3); re-exported here for back-compat.
-from gui_agent.core.schema import ProbeAbortedError
+# ProbeAbortedError moved to gui_agent.core.schemas.recon (S3); re-exported here for back-compat.
+from gui_agent.core.schemas.recon import ProbeAbortedError
 
 
 # ── Data classes ──────────────────────────────────────────
@@ -88,8 +88,8 @@ SCREEN_MATCH_THRESHOLD = 0.99
 SCREEN_DIFFERENT_THRESHOLD = 0.97
 
 
-# ScreenMatchDecision moved to gui_agent.core.schema (S3); re-exported here for back-compat.
-from gui_agent.core.schema import ScreenMatchDecision
+# ScreenMatchDecision moved to gui_agent.core.schemas.recon (S3); re-exported here for back-compat.
+from gui_agent.core.schemas.recon import ScreenMatchDecision
 
 
 def png_similarity(png1: bytes, png2: bytes, size: int = SCREEN_MATCH_SIZE) -> float:

@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from gui_agent.core.schemas import Action, ActionDecision
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 OUTPUT = ROOT / "logs" / "gui_agent" / "scratch" / "structured_output_result.png"
 
 

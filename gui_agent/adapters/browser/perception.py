@@ -39,7 +39,7 @@ class BrowserSession:
         self._start_url = start_url
 
     def __enter__(self) -> "BrowserSession":
-        # Lazy import keeps the package import-light and core.factory adapter-free.
+        # Lazy import keeps the package import-light and core.runtime.factory adapter-free.
         from gui_agent.adapters.browser.device import PlaywrightDevice
 
         print("连接浏览器中 (Chrome CDP)...")

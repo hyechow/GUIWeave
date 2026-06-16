@@ -23,9 +23,9 @@ from gui_agent.core.run.content import (
     note_hash as _note_hash,
     store_chunk_note as _store_chunk_note,
 )
-from gui_agent.core.factory import build_platform
-from gui_agent.core.frame_analysis import STABLE_MEAN_THR, frame_changed, frame_diff
-from gui_agent.core.reader import ContentReader, build_reader_instruction
+from gui_agent.core.runtime.factory import build_platform
+from gui_agent.core.vision.frame_analysis import STABLE_MEAN_THR, frame_changed, frame_diff
+from gui_agent.core.llm.reader import ContentReader, build_reader_instruction
 from gui_agent.core.run.context import (
     extract_checker as _extract_checker,
     extract_plan as _extract_plan,
@@ -40,29 +40,29 @@ from gui_agent.core.run.result import (
     print_turn_stats as _print_turn_stats,
 )
 from gui_agent.core.supervisor.base import SupervisorPolicy
-from gui_agent.core.temporal import resolve_temporal_expressions
+from gui_agent.core.llm.temporal import resolve_temporal_expressions
 from gui_agent.core.policies.base import ActionPolicy
-from gui_agent.core.target_verify import verify_target
+from gui_agent.core.vision.target_verify import verify_target
 from gui_agent.core.schemas import (
     ActionDecision,
     PolicyContext,
     PolicyTurn,
     action_label,
 )
-from gui_agent.core.state import (
+from gui_agent.core.run.state import (
     sync_context_run_state,
     sync_milestone_states,
 )
-from gui_agent.core.visualize import print_decision
+from gui_agent.core.vision.visualize import print_decision
 
 if TYPE_CHECKING:
     # Adapter types used only in annotations. With `from __future__ import
     # annotations` these stay lazy strings, so importing runner pulls in no
     # adapter at module top.
-    from gui_agent.core.hud import AgentHUD
+    from gui_agent.core.ui.hud import AgentHUD
     from gui_agent.adapters.iphone.scroll_probe import ScrollProfile
     from gui_agent.adapters.iphone.stitch import StitchAccumulator
-    from gui_agent.core.contracts import PerceptionSession
+    from gui_agent.core.runtime.contracts import PerceptionSession
 
 TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 # 动作后自适应等待：轮询截图，等到屏幕「相对动作前帧变过、且相对上一帧停稳」再进入
@@ -392,7 +392,7 @@ def run_agent_loop(
             _client = getattr(phone, "client", None)
             _wb = _client.window_bounds() if hasattr(_client, "window_bounds") else None
             if _wb:
-                from gui_agent.core.hud import dock_rect
+                from gui_agent.core.ui.hud import dock_rect
                 hud.reposition(*dock_rect(*_wb))
 
         # ── DSL orchestrator mode ──────────────────────────────────────────────────

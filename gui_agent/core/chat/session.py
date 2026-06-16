@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.output import generate_reply  # re-exported for callers
-from gui_agent.core.temporal import resolve_temporal_expressions
+from gui_agent.core.llm.output import generate_reply  # re-exported for callers
+from gui_agent.core.llm.temporal import resolve_temporal_expressions
 
 __all__ = ["RouterResult", "generate_reply", "route_message", "format_session_history"]
 

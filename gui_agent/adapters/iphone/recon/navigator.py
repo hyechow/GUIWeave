@@ -1,6 +1,6 @@
 """iPhone ReconNavigator: the platform navigation surface the explore loop needs.
 
-Implements the neutral ``gui_agent.core.contracts.ReconNavigator`` by DELEGATING to
+Implements the neutral ``gui_agent.core.runtime.contracts.ReconNavigator`` by DELEGATING to
 the existing recon nav functions (``back_nav`` / ``planned_back_nav`` / ``popup_nav``)
 — zero behaviour change. This is the Step 5a seam: today dfs/bfs import those
 functions directly; once the explore loop is lifted to core (Step 5b) it will call

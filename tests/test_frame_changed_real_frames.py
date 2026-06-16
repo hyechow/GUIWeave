@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from gui_agent.core.frame_analysis import frame_changed
+from gui_agent.core.vision.frame_analysis import frame_changed
 
 _DIR = Path(__file__).parent / "fixtures" / "frame_analysis"
 _CASES_FILE = _DIR / "cases.json"

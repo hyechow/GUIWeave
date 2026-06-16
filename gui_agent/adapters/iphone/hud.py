@@ -1,12 +1,12 @@
 """iPhone HUD placement: positions the neutral core ``AgentHUD`` below the mirror.
 
-The HUD widget itself is platform-neutral (``gui_agent.core.hud``); this module
+The HUD widget itself is platform-neutral (``gui_agent.core.ui.hud``); this module
 only computes WHERE iPhone wants it (below the 318x701 mirror window) and keeps the
 historical look (opaque, alpha=1.0). ``AgentHUD`` is re-exported so existing
 ``from ...iphone.hud import AgentHUD`` type references keep working.
 """
 
-from gui_agent.core.hud import AgentHUD
+from gui_agent.core.ui.hud import AgentHUD
 
 __all__ = ["AgentHUD", "make_iphone_hud"]
 

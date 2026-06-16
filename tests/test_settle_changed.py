@@ -15,7 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 import pytest
 
-from gui_agent.core.frame_analysis import frame_changed, frame_diff
+from gui_agent.core.vision.frame_analysis import frame_changed, frame_diff
 
 FIXTURES = Path(__file__).parent / "fixtures" / "frame_analysis"
 

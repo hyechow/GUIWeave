@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 
 from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn, SupervisorStep
-from gui_agent.core.state import sync_milestone_states, write_final_run_state
+from gui_agent.core.run.state import sync_milestone_states, write_final_run_state
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from scripts.report_builder import RunnerReportBuilder, generate_html

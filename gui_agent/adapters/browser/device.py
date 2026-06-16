@@ -1,4 +1,4 @@
-"""Playwright/CDP I/O backend implementing gui_agent.core.contracts.Device.
+"""Playwright/CDP I/O backend implementing gui_agent.core.runtime.contracts.Device.
 
 ``PlaywrightDevice`` attaches to a running Chrome for Testing over the Chrome
 DevTools Protocol (CDP) and drives the active page through a desktop pointer +

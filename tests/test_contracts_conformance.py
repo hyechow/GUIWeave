@@ -1,7 +1,7 @@
 """S1 conformance gate for the core+adapter refactor.
 
 Asserts that the existing concrete classes satisfy the platform-neutral
-``gui_agent.core.contracts`` Protocols with ZERO source modifications. This is
+``gui_agent.core.runtime.contracts`` Protocols with ZERO source modifications. This is
 the permanent regression boundary: if a later change drifts a method signature
 or moves a capability, structural conformance breaks and this fails.
 
@@ -10,7 +10,7 @@ method-only / class-attribute Protocols; ``Observation`` is constructed for real
 because its members are Pydantic instance fields.
 """
 
-from gui_agent.core.contracts import (
+from gui_agent.core.runtime.contracts import (
     ActionPolicy,
     ActionVisualizer,
     Device,
@@ -39,7 +39,7 @@ from gui_agent.adapters.iphone.recon.page_parser import PageParser
 from gui_agent.adapters.iphone.recon.page_identity import PageIdentity
 from gui_agent.adapters.iphone.recon.page_compare import PageComparator, EdgeIoUBackend
 from gui_agent.core.schemas import Observation
-from gui_agent.core.schema import IdentityResult, ScreenMatchDecision, ProbeAbortedError
+from gui_agent.core.schemas.recon import IdentityResult, ScreenMatchDecision, ProbeAbortedError
 from gui_agent.adapters.iphone.recon.utils import (
     ScreenMatchDecision as _ShimScreenMatchDecision,
     ProbeAbortedError as _ShimProbeAbortedError,
@@ -208,10 +208,10 @@ def test_contracts_is_a_pure_leaf_import():
     import sys
 
     code = (
-        "import sys, gui_agent.core.contracts; "
+        "import sys, gui_agent.core.runtime.contracts; "
         "leaked = [m for m in sys.modules "
         "if m.startswith('gui_agent.adapters') "
-        "or m in ('gui_agent.core.runner', 'gui_agent.core.chat_cli')]; "
+        "or m in ('gui_agent.core.runner', 'gui_agent.core.chat.cli')]; "
         "assert not leaked, leaked"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -219,7 +219,7 @@ def test_contracts_is_a_pure_leaf_import():
 
 
 # --------------------------------------------------------------------------- #
-# core/schema (S3): neutral data types lifted out of the iphone recon adapter. #
+# core/schemas/recon (S3): neutral data types lifted out of the iphone adapter. #
 # Must stay a pure leaf, and the adapter must re-export the SAME class objects. #
 # --------------------------------------------------------------------------- #
 def test_core_schema_is_a_pure_leaf_import():
@@ -227,7 +227,7 @@ def test_core_schema_is_a_pure_leaf_import():
     import sys
 
     code = (
-        "import sys, gui_agent.core.schema; "
+        "import sys, gui_agent.core.schemas.recon; "
         "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
         "assert not leaked, leaked"
     )
@@ -237,7 +237,7 @@ def test_core_schema_is_a_pure_leaf_import():
 
 def test_adapter_reexports_core_schema_types():
     # The former adapter locations must re-export the exact same class objects, so
-    # isinstance / contract conformance is unaffected by the move to core.schema.
+    # isinstance / contract conformance is unaffected by the move to core.schemas.recon.
     assert _ShimIdentityResult is IdentityResult
     assert _ShimScreenMatchDecision is ScreenMatchDecision
     assert _ShimProbeAbortedError is ProbeAbortedError
@@ -251,7 +251,7 @@ def test_core_schema_types_construct():
 
 
 # --------------------------------------------------------------------------- #
-# core/factory (S3): the platform seam. The neutral dispatcher must stay        #
+# core/runtime/factory (S3): the platform seam. The neutral dispatcher must stay #
 # adapter-free (lazy import); the iphone bundle must be well-formed and the      #
 # dispatcher must reject unknown platforms.                                      #
 # --------------------------------------------------------------------------- #
@@ -260,7 +260,7 @@ def test_core_factory_is_a_pure_leaf_import():
     import sys
 
     code = (
-        "import sys, gui_agent.core.factory; "
+        "import sys, gui_agent.core.runtime.factory; "
         "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
         "assert not leaked, leaked"
     )
@@ -269,7 +269,7 @@ def test_core_factory_is_a_pure_leaf_import():
 
 
 def test_build_platform_returns_iphone_bundle():
-    from gui_agent.core.factory import build_platform, PlatformBundle
+    from gui_agent.core.runtime.factory import build_platform, PlatformBundle
 
     bundle = build_platform("iphone", backend="daemon")
     assert isinstance(bundle, PlatformBundle)
@@ -293,7 +293,7 @@ def test_build_platform_returns_iphone_bundle():
 def test_build_platform_unknown_raises():
     import pytest
 
-    from gui_agent.core.factory import build_platform
+    from gui_agent.core.runtime.factory import build_platform
 
     with pytest.raises(ValueError):
         build_platform("windows")  # not registered
@@ -358,7 +358,7 @@ def test_browser_action_policy_conforms():
 
 
 def test_build_platform_returns_browser_bundle():
-    from gui_agent.core.factory import build_platform, PlatformBundle
+    from gui_agent.core.runtime.factory import build_platform, PlatformBundle
 
     bundle = build_platform("browser")
     assert isinstance(bundle, PlatformBundle)
@@ -403,7 +403,7 @@ def test_build_platform_returns_browser_bundle():
 
 
 def test_browser_scroll_collect_is_implemented():
-    # Browser collection reuses the NEUTRAL core.stitch algos (whole-frame content
+    # Browser collection reuses the NEUTRAL core.vision.stitch algos (whole-frame content
     # band, no device mask) + a trivial deterministic-wheel scroll-probe. The runner's
     # collection branch must receive real working objects (not the old stubs).
     import io
@@ -411,8 +411,8 @@ def test_browser_scroll_collect_is_implemented():
     import numpy as np
     from PIL import Image
 
-    from gui_agent.core.factory import build_platform
-    from gui_agent.core.stitch import StitchAccumulator
+    from gui_agent.core.runtime.factory import build_platform
+    from gui_agent.core.vision.stitch import StitchAccumulator
 
     bundle = build_platform("browser")
     buf = io.BytesIO()
@@ -439,7 +439,7 @@ def test_core_factory_stays_leaf_without_browser_adapter():
     import sys
 
     code = (
-        "import sys, gui_agent.core.factory; "
+        "import sys, gui_agent.core.runtime.factory; "
         "leaked = [m for m in sys.modules "
         "if m.startswith('gui_agent.adapters') "
         "or m == 'playwright' or m.startswith('playwright.')]; "
@@ -495,7 +495,7 @@ def test_android_action_policy_conforms():
 
 
 def test_build_platform_returns_android_bundle():
-    from gui_agent.core.factory import build_platform, PlatformBundle
+    from gui_agent.core.runtime.factory import build_platform, PlatformBundle
 
     bundle = build_platform("android")
     assert isinstance(bundle, PlatformBundle)
@@ -544,7 +544,7 @@ def test_android_scroll_collect_fields_are_stubs():
     # clear NotImplementedError rather than silently returning bad objects.
     import pytest
 
-    from gui_agent.core.factory import build_platform
+    from gui_agent.core.runtime.factory import build_platform
 
     bundle = build_platform("android")
     with pytest.raises(NotImplementedError):
@@ -564,7 +564,7 @@ def test_core_factory_stays_leaf_without_android_adapter():
     import sys
 
     code = (
-        "import sys, gui_agent.core.factory; "
+        "import sys, gui_agent.core.runtime.factory; "
         "leaked = [m for m in sys.modules "
         "if m.startswith('gui_agent.adapters') "
         "or m == 'adbutils' or m.startswith('adbutils.')]; "
@@ -575,8 +575,8 @@ def test_core_factory_stays_leaf_without_android_adapter():
 
 
 # --------------------------------------------------------------------------- #
-# core/factory (S3, Step 4): the orchestration entrypoints must now depend on   #
-# the platform FACTORY, not the iphone adapter. Importing runner / chat_cli      #
+# core/runtime/factory (S3, Step 4): the orchestration entrypoints must now depend on   #
+# the platform FACTORY, not the iphone adapter. Importing runner / chat.cli      #
 # must pull in NO gui_agent.adapters.* module at module top — adapters are      #
 # reached only lazily inside build_platform() when the loop actually runs.        #
 # --------------------------------------------------------------------------- #
@@ -598,7 +598,7 @@ def test_chat_cli_has_no_eager_adapter_import():
     import sys
 
     code = (
-        "import sys, gui_agent.core.chat_cli; "
+        "import sys, gui_agent.core.chat.cli; "
         "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
         "assert not leaked, leaked"
     )

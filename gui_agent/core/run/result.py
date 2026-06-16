@@ -46,7 +46,7 @@ def make_result(
 def orchestration_result(context, interp, terminal: str, *, current=None) -> dict:
     """Build the final result for DSL orchestrator mode."""
 
-    from gui_agent.core.output import compose_orchestration_reply
+    from gui_agent.core.llm.output import compose_orchestration_reply
 
     run_log = [r.model_dump() for r in interp.run_log]
     digest = [

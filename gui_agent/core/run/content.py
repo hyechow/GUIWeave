@@ -6,7 +6,7 @@ import hashlib
 import re
 from collections.abc import Callable
 
-from gui_agent.core.reader import ContentReader, annotate_content_note
+from gui_agent.core.llm.reader import ContentReader, annotate_content_note
 from gui_agent.core.schemas import PolicyContext
 
 STITCH_OVERLAP_PX = 150  # chunk 间重叠像素：防止行被切断；重叠区像素相同 → 行级去重可靠

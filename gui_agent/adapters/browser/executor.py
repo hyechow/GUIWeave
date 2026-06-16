@@ -1,6 +1,6 @@
 """Browser action executor: dispatch one ActionDecision onto the page.
 
-Reuses the shared ``gui_agent.core.executor.VisionExecutor`` (the 7 shared actions +
+Reuses the shared ``gui_agent.core.runtime.executor.VisionExecutor`` (the 7 shared actions +
 denorm + _tap); only the browser-specific bits live here:
   - ``_clear_before_type`` — select-all for plain <input>/<textarea>, but SKIP it on
     contenteditable rich editors (Cmd+A there enters block-node selection and swallows
@@ -15,7 +15,7 @@ import re
 from typing import Optional
 
 from gui_agent.adapters.browser.actions import BrowserAction
-from gui_agent.core.executor import VisionExecutor
+from gui_agent.core.runtime.executor import VisionExecutor
 
 # Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
 _QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,8})[」』\"']")

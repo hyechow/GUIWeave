@@ -1,6 +1,6 @@
 """Android adapter factory: the one place android construction is wired together.
 
-Builds a :class:`gui_agent.core.factory.PlatformBundle` whose callables construct
+Builds a :class:`gui_agent.core.runtime.factory.PlatformBundle` whose callables construct
 the android session (phone over adb), executor, perception, action policy and
 supervisor. Core orchestration receives the neutral bundle and never imports these
 classes directly. Mirrors ``adapters/browser/factory.py``.
@@ -23,10 +23,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from gui_agent.core.factory import PlatformBundle, SetupCheckResult
+from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
 
 if TYPE_CHECKING:
-    from gui_agent.core.contracts import ActionPolicy, SupervisorPolicy
+    from gui_agent.core.runtime.contracts import ActionPolicy, SupervisorPolicy
 
 
 # Registries (mirror the browser adapter shape). Android is vision-only with a
@@ -143,7 +143,7 @@ def _make_android_hud() -> object:
     placement). The neutral core ``AgentHUD`` draws its own OS window, so it never
     enters the agent's adb screenshot. Falls back to a default screen spot when no
     scrcpy window is on screen (agent runs headless of any mirror)."""
-    from gui_agent.core.hud import AgentHUD
+    from gui_agent.core.ui.hud import AgentHUD
     from gui_agent.adapters.android.visualizer import scrcpy_window_rect
 
     rect = scrcpy_window_rect()

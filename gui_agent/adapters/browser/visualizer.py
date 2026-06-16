@@ -1,6 +1,6 @@
 """Browser action visualizer: a live, auto-fading DOM overlay drawn on the page.
 
-Implements the neutral :class:`gui_agent.core.contracts.ActionVisualizer` for the
+Implements the neutral :class:`gui_agent.core.runtime.contracts.ActionVisualizer` for the
 browser platform. Each ``show_action`` injects (idempotently) a small overlay node
 into the page and animates it at the action's location, so a human watching the
 real Chrome sees WHERE / WHAT the agent is doing:

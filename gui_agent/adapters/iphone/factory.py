@@ -1,6 +1,6 @@
 """iPhone adapter factory: the one place iPhone construction is wired together.
 
-Builds a :class:`gui_agent.core.factory.PlatformBundle` whose callables
+Builds a :class:`gui_agent.core.runtime.factory.PlatformBundle` whose callables
 construct the iPhone-mirroring session, executor, perception, action policy,
 supervisor and HUD. This is the only module allowed to know how all the iPhone
 pieces fit together; core orchestration receives the neutral bundle and never
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from gui_agent.core.factory import PlatformBundle, SetupCheckResult
+from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
 
 from gui_agent.adapters.iphone.executor import ActionExecutor
 from gui_agent.adapters.iphone.perception import LivePerception, LivePhoneSession
@@ -22,7 +22,7 @@ from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
-    from gui_agent.core.contracts import ActionPolicy, SupervisorPolicy
+    from gui_agent.core.runtime.contracts import ActionPolicy, SupervisorPolicy
 
 
 # Registries (mirrors of the legacy dicts in runner.py; runner keeps its own copy

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env")
 
-from gui_agent.core.prefs import PreferenceManager, extract_prefs_llm
+from gui_agent.core.chat.prefs import PreferenceManager, extract_prefs_llm
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

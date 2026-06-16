@@ -17,7 +17,7 @@ import io
 import numpy as np
 from PIL import Image
 
-from gui_agent.core.frame_analysis import frame_changed
+from gui_agent.core.vision.frame_analysis import frame_changed
 
 
 def _png(arr: np.ndarray) -> bytes:

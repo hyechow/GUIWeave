@@ -1,6 +1,6 @@
 """iPhone scroll-stitch: thin adapter over the neutral core stitch.
 
-The stitching ALGORITHM is platform-neutral and now lives in ``gui_agent.core.stitch``.
+The stitching ALGORITHM is platform-neutral and now lives in ``gui_agent.core.vision.stitch``.
 This module injects the iPhone-specific bits — the device-frame mask (rounded corners
 / 灵动岛 excluded from ORB feature detection) and the historical content band
 (0.10..0.97, dropping the iOS status bar / bottom chrome) — and re-exports the same
@@ -16,8 +16,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from gui_agent.core import stitch as _core
-from gui_agent.core.stitch import _gray_u8  # neutral passthrough (re-exported)
+from gui_agent.core.vision import stitch as _core
+from gui_agent.core.vision.stitch import _gray_u8  # neutral passthrough (re-exported)
 
 _MASK_PATH = Path(__file__).parent / "assets" / "mcp_frame_mask.png"
 # 与 perception 同约定：0=屏幕内容、255=设备框（圆角/灵动岛/边框）

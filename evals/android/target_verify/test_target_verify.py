@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.target_verify import verify_target
+from gui_agent.core.vision.target_verify import verify_target
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

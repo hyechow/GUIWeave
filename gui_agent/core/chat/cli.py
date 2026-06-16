@@ -16,7 +16,7 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import ANSI
 
 if __package__ is None or __package__ == "":
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -29,23 +29,23 @@ from rich.text import Text
 from rich.tree import Tree
 
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
-from gui_agent.core.factory import build_platform
+from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.run.io import TeeStream as _TeeStream
 from gui_agent.core.runner import (
     build_policy,
     build_supervisor,
     run_agent_loop,
 )
-from gui_agent.core.state import write_final_run_state
-from gui_agent.core.chat_session import (
+from gui_agent.core.run.state import write_final_run_state
+from gui_agent.core.chat.session import (
     RouterResult,
     generate_reply,
     route_message,
 )
-from gui_agent.core.prefs import PreferenceManager
-from gui_agent.core.session_recorder import SessionRecorder
+from gui_agent.core.chat.prefs import PreferenceManager
+from gui_agent.core.chat.recorder import SessionRecorder
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 console = Console()
 
