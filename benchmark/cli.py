@@ -120,11 +120,11 @@ def cmd_list(args) -> None:
 
 def cmd_run(args) -> None:
     """Run one or more tasks."""
+    from gui_agent.core.run_io import create_run_dir
     from gui_agent.core.runner import (
         build_policy,
         build_supervisor,
         run_agent_loop,
-        create_run_dir,
     )
     from gui_agent.core.policies import StructuredOutputPolicy
     from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
