@@ -917,8 +917,10 @@ class ReconReportBuilder:
         if leaf_meta_path.exists():
             leaf_meta = json.loads(leaf_meta_path.read_text(encoding="utf-8"))
 
-        # Load knowledge files for content lookup
-        knowledge_dir = log_dir.parent.parent.parent / "knowledge" / app_name
+        # Load knowledge files for content lookup. Knowledge lives at the repo root under
+        # knowledge/<platform>/<app>/ (recon is iPhone-only today); anchor on this file's repo
+        # root rather than log_dir depth, which varies by report type.
+        knowledge_dir = Path(__file__).resolve().parents[1] / "knowledge" / "iphone" / app_name
         knowledge_files: dict[str, str] = {}  # safe_title → content
         if knowledge_dir.exists():
             for kfile in knowledge_dir.glob("*.md"):
