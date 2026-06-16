@@ -476,7 +476,11 @@ class MilestoneSupervisorPolicy:
         # fast-paths (placed before the checker) would skip verification and replan a
         # milestone the action already completed. See logs/.../android/20260611_085000.
         if check.status == "done":
-            return self._advance(milestone, observation, history)
+            final_read = None
+            if milestone.kind in {"collection", "verification"} and self.task_type != "action":
+                read_inst = check.read_instruction or _default_read_instruction(milestone)
+                final_read = _ctx(milestone, read_inst)
+            return self._advance(milestone, observation, history, final_read=final_read)
 
         # Off-target last action (post-action targeting verify said the tap missed) — and the
         # milestone is NOT done (checked above) → route straight into replan. Catches "screen
