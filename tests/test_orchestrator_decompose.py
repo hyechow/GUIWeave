@@ -99,7 +99,7 @@ def test_validate_if_references_unknown_field():
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
     issues = validate_program(prog)
-    assert any("不在该 read 步的 returns 里" in i for i in issues)
+    assert any("不在该 read 步读取的字段（returns）里" in i for i in issues)
 
 
 def test_validate_read_without_returns_or_var():

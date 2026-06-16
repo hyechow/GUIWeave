@@ -163,14 +163,17 @@ def to_program(draft: _PlanDraft, goal: str) -> Program:
 def validate_program(program: Program) -> list[str]:
     """Deterministic shape guards — the high-value ones for the read-driven data-flow patterns.
 
-    A read must request fields + bind a var; an if must branch on a field a read returns; and
-    every {var[field]} template ref (finish message OR — read-then-reference, rule 8 — a run's
-    name/success_condition/read_spec) must resolve to a read field that is ALREADY PRODUCED on
-    the same execution path. The scope check is path-sensitive, not a global symbol table: a ref
-    is valid only if its read precedes it on every path reaching it, so forward refs (引用在前、
-    读取在后) and cross-branch refs (一个分支读、另一个分支引用) are caught — at runtime env would
-    be empty and the template silently fills "". After an if, a var is in scope downstream only
-    if BOTH branches produced it (dominance). Returns human-readable issues for one repair pass."""
+    A read must request fields + bind a var; an if must branch on a field a read returns; a
+    precondition may only sit on a navigation step (it ensures a state, so on action/read/filter
+    it would be wrongly accepted on frame 1); and every {var[field]} template ref (finish message
+    OR — read-then-reference, rule 8 — a run's name/success_condition/read_spec) must resolve to a
+    read field that is ALREADY PRODUCED on the same execution path. The scope check is path-
+    sensitive, not a global symbol table: a ref is valid only if its read precedes it on every path
+    reaching it, so forward refs (引用在前、读取在后) and cross-branch refs (一个分支读、另一个分支
+    引用) are caught — at runtime env would be empty and the template silently fills "". After an
+    if, a var is in scope downstream only if BOTH branches produced it AND they share a field
+    (field INTERSECTION, not union — a var bound to disjoint fields per branch guarantees nothing).
+    Returns human-readable issues (DSL-author-facing, no runtime internals) for one repair pass."""
     issues: list[str] = []
     if not program.statements:
         return ["程序为空：至少要有一个 run 步骤"]
@@ -194,11 +197,12 @@ def validate_program(program: Program) -> list[str]:
                 issues.append(
                     f"{where} 引用的 {{{var}[{field}]}} 中变量「{var}」在此处尚未产生"
                     f"（不是任何在它之前、且在当前执行路径上的 read 步的 var；引用在前/读取在后/读取在另一分支都算）"
-                    "——运行时 env 为空、指代落空"
+                    f"——指代落空；请先加一个 read 步读出「{var}」并放在引用它之前（同一执行路径上），或删掉这个引用"
                 )
             elif field not in scope[var]:
                 issues.append(
-                    f"{where} 引用的字段「{var}[{field}]」不在该 read 步的 returns 里——模板会填空"
+                    f"{where} 引用的字段「{var}[{field}]」不在该 read 步读取的字段（returns）里"
+                    f"——请改用它 returns 里已有的字段名，或在该 read 的 returns 里补上「{field}」"
                 )
         # botched bare {var}: a known read var written without [field] — neither resolves nor
         # matches the template, so the literal "{var}" leaks to the planner (回归 20260615_194320:
@@ -207,8 +211,8 @@ def validate_program(program: Program) -> list[str]:
             var = m.group(1)
             if var in all_read_vars:
                 issues.append(
-                    f"{where} 用了裸 {{{var}}} 缺字段——应写成 {{{var}[字段]}}（{var} 这个 read 的某个 returns 字段）；"
-                    f"裸 {{{var}}} 既填不进值、又逃过模板解析，会把字面量漏给执行器"
+                    f"{where} 用了裸 {{{var}}} 缺字段——「{var}」是某个 read 步的结果变量，"
+                    f"引用它的某个字段要写成 {{{var}[字段]}}（字段取自该 read 的 returns）；裸 {{{var}}} 不会被填上值"
                 )
 
     def _walk(stmts: list[Stmt], scope: dict[str, set[str]]) -> None:
@@ -217,6 +221,15 @@ def validate_program(program: Program) -> list[str]:
         # guaranteed downstream).
         for s in stmts:
             if isinstance(s, Run):
+                # precondition is a state to ENSURE (确保已到达/已进入某状态) — only meaningful on a
+                # navigation step. On an action/read/filter it would be treated as already-satisfied
+                # and accepted on frame 1, prematurely passing a step that must actually run.
+                if s.precondition and s.kind != "navigation":
+                    issues.append(
+                        f"步骤「{s.name}」标了 precondition=true 但 run_kind={s.kind}——"
+                        "前置状态保障只能是 navigation 步（确保已到达/已进入某状态），"
+                        "不能标在 action/read/filter 上；请改成 navigation，或去掉 precondition"
+                    )
                 if s.kind == "read" and not s.returns:
                     issues.append(f"read 步「{s.name}」没有 returns 字段——read 必须指定要读取的字段")
                 if s.kind == "read" and not s.var:
@@ -232,17 +245,27 @@ def validate_program(program: Program) -> list[str]:
                 if s.cond.var not in scope:
                     issues.append(
                         f"if 条件引用的变量「{s.cond.var}」在此处尚未产生"
-                        "（不是任何在它之前、且在当前执行路径上的 read 步的 var）——条件将永远读到空值"
+                        "（不是任何在它之前、且在当前执行路径上的 read 步的 var）"
+                        f"——请在这个 if 之前（同一执行路径上）加一个 read 步读出「{s.cond.var}」"
                     )
                 elif s.cond.field not in scope[s.cond.var]:
                     issues.append(
-                        f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该 read 步的 returns 里"
+                        f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该 read 步读取的字段（returns）里"
+                        f"——请把 cond_field 改成该 read 的 returns 里已有的字段名，或在该 read 的 returns 里补上「{s.cond.field}」"
                     )
                 then_scope, else_scope = dict(scope), dict(scope)
                 _walk(s.then, then_scope)
                 _walk(s.otherwise, else_scope)
-                for k in set(then_scope) & set(else_scope):  # join: only both-branch vars survive
-                    scope[k] = then_scope[k] | else_scope[k]
+                # join: a var is in scope downstream only if BOTH branches produced it AND they
+                # share a field — fields must INTERSECT, not union. (one branch returns 名称, the
+                # other 编号 → no field is guaranteed on every path → drop the var; a later
+                # {var[名称]} would silently fill "" on the 编号 path. union wrongly let it pass.)
+                for k in set(then_scope) | set(else_scope):
+                    common = then_scope.get(k, set()) & else_scope.get(k, set())
+                    if common:
+                        scope[k] = common
+                    else:
+                        scope.pop(k, None)
 
     _walk(program.statements, {})
     return issues

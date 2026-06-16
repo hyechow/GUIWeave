@@ -516,3 +516,43 @@ def test_validate_program_flags_bare_var_ref():
         Run(name="编辑 {r[实际名称]}，温度 {x} 档", kind="action", success_condition="完成"),
     ])
     assert not any("裸" in i for i in validate_program(ok))
+
+
+def test_validate_program_branch_join_uses_field_intersection():
+    # Finding 5（分支汇合字段交集 bug）：两支都产出同一 var 但 returns 字段不同 → 汇合后只有
+    # 【双支共有字段】才保证存在；引用一支独有的字段必须被抓——旧版用字段【并集】会放过它，运行
+    # 时走到另一分支该字段缺失、模板静默填空（{r[名称]} 在只 returns 编号的那条路上落空）。
+    from gui_agent.core.orchestrator.decomposer import validate_program
+    diverge = Program(statements=[
+        Run(var="d", name="读判定", kind="read", returns=["判定"], read_spec="x"),
+        If(cond=Cond(var="d", field="判定", value="A"),
+           then=[Run(var="r", name="读名称", kind="read", returns=["名称"], read_spec="x")],
+           otherwise=[Run(var="r", name="读编号", kind="read", returns=["编号"], read_spec="x")]),
+        Run(name="编辑 {r[名称]}", kind="action", success_condition="完成"),  # 名称只有 then 支产出
+    ])
+    assert any("名称" in i for i in validate_program(diverge))   # 字段并集会漏报，交集抓住
+    # 双支共有字段（都 returns「标识」）则放过；各自独有的字段不进 scope
+    common = Program(statements=[
+        Run(var="d", name="读判定", kind="read", returns=["判定"], read_spec="x"),
+        If(cond=Cond(var="d", field="判定", value="A"),
+           then=[Run(var="r", name="读A", kind="read", returns=["标识", "名称"], read_spec="x")],
+           otherwise=[Run(var="r", name="读B", kind="read", returns=["标识", "编号"], read_spec="x")]),
+        Run(name="编辑 {r[标识]}", kind="action", success_condition="完成"),  # 标识双支都有 → 合法
+    ])
+    assert validate_program(common) == []
+
+
+def test_validate_program_precondition_only_on_navigation():
+    # Finding 3（precondition 硬校验）：precondition=true 是「确保已处于某状态」，只对 navigation 步
+    # 有意义。误标在 action/read/filter 上会被 L2 当「已满足」首帧判完成 → 该真正执行的步被跳过。
+    from gui_agent.core.orchestrator.decomposer import validate_program
+    bad = Program(statements=[
+        Run(name="提交订单", kind="action", precondition=True, success_condition="已提交"),
+    ])
+    assert any("precondition" in i and "navigation" in i for i in validate_program(bad))
+    # navigation 前置不报；普通 navigation（未标 flag）也不报
+    good = Program(statements=[
+        Run(name="确保已登录", kind="navigation", precondition=True, success_condition=""),
+        Run(name="打开订单页", kind="navigation", success_condition="显示订单列表"),
+    ])
+    assert not any("precondition" in i for i in validate_program(good))
