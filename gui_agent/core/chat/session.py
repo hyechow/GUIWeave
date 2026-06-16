@@ -75,6 +75,28 @@ def format_session_history(history: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _mentioned_known_apps(
+    user_msg: str,
+    session: list[dict],
+    prefs_context: str,
+    known_apps: list[str],
+) -> list[str]:
+    """Known-site names explicitly present in current input, history, or prefs.
+
+    The knowledge list is not a resolver for vague references like "our shop".
+    Those references need conversation history or user preference memory; otherwise
+    showing every known app to the router invites it to guess.
+    """
+    haystack_parts = [user_msg, prefs_context]
+    for entry in session:
+        for key in ("user_msg", "goal", "result_summary", "reply"):
+            value = entry.get(key)
+            if isinstance(value, str):
+                haystack_parts.append(value)
+    haystack = "\n".join(haystack_parts).lower()
+    return [app for app in known_apps if app.lower() in haystack]
+
+
 # ── Router & reply ─────────────────────────────────────────────────────────
 
 
@@ -96,8 +118,9 @@ def route_message(
     if known_apps_rule:
         from gui_agent.core.self_learning.app_summary import list_known_apps
         known_apps = list_known_apps(platform)
-        if known_apps:
-            system += known_apps_rule.format(apps="、".join(known_apps))
+        mentioned_apps = _mentioned_known_apps(user_msg, session, prefs_context, known_apps)
+        if mentioned_apps:
+            system += known_apps_rule.format(apps="、".join(mentioned_apps))
     if prefs_context:
         system += (
             "\n重要规则：以下偏好由用户设定，当用户未指定 APP 时优先使用偏好中的 APP，不要反问。"
@@ -110,5 +133,4 @@ def route_message(
         HumanMessage(content=f"对话历史：\n{history_text}\n\n当前用户指令：{resolved_msg}"),
     ]
     return invoke_structured(llm, messages, RouterResult)
-
 
