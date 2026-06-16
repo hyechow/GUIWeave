@@ -74,8 +74,51 @@
     },
     "assertions": [
       "cross_page_action_navigates_no_list_pick",
+      "order_action_has_confirm_read",
       "read_has_spec"
     ],
     "note": "回归 20260615_211634（幻觉已修后暴露的下一层 bug）。这次分解干净(连通→if 连通→建单，无新建机器人幻觉)、连通也检测对了(是否连通=是)，但建单仍失败：THEN 分支是 read 机器人列表 → action 建单，全程没有『导航到机器人/订单页』。后果①read 落在连通检测面板上读『机器人名称列表』→ 读空；②建单 action 也留在连通面板上，它的 confirm-read 宽松 dispatch 门被上一步遗留的连通绿✓蹭中(『界面给出响应』)→ 未执行任何动作就被空判完成(静默假成功)→ 订单状态=失败。根因=read 读当前帧、action 操作当前帧，分解器漏了换页导航 + 误把规则8 套到集合(读列表挑『第1台』，集合索引表达不了)。修法两条 prompt：规则3 加上下文/导航保真(读某页数据/操作某页元素前先 navigation 到目标页)、规则8 收口(只接力单个实体，别读列表挑第N个)。断言：A1 连通检测之后、建单 action 之前要有 navigation；A2 不得 read『*列表』字段。注：导航保真 ~50% 软信号(decompose 通用可靠性)，没补导航时由 runtime _fill 的 fail-fast 兜底(读空→诚实报错，不再静默假成功)。"
+  },
+  {
+    "label": "条件操作符-empty-错误提示原文为空才继续",
+    "goal": "在 RoboTeam 创建订单后读取「错误提示」原文；如果「错误提示」为空，则读取订单状态并汇报，否则直接汇报这个错误提示",
+    "expected": {
+      "has_read": true,
+      "has_finish": true,
+      "min_statements": 2
+    },
+    "assertions": [
+      "condition_uses_empty",
+      "read_has_spec"
+    ],
+    "note": "条件扩展回归：读取字段本身是原文错误提示，分支语义是『字段为空/非空』，不应只能靠 ==/!=。期望 decompose 生成 read(错误提示) + if cond_cmp=empty；错误提示为空走继续读取订单状态，否则 finish 报错。"
+  },
+  {
+    "label": "条件操作符-contains-toast原文包含创建成功",
+    "goal": "在 RoboTeam 创建订单后读取「页面提示文案」原文；如果「页面提示文案」包含「创建成功」，则汇报创建成功，否则读取错误提示并汇报失败原因",
+    "expected": {
+      "has_read": true,
+      "has_finish": true,
+      "min_statements": 2
+    },
+    "assertions": [
+      "condition_uses_contains",
+      "read_has_spec"
+    ],
+    "note": "条件扩展回归：toast/提示文案常带编号、时间或附加说明，精确 == 过脆。期望 decompose 对原文提示字段使用 cond_cmp=contains、cond_value=创建成功。"
+  },
+  {
+    "label": "条件操作符-in-订单状态多候选视为已创建",
+    "goal": "在 RoboTeam 读取新订单的「订单状态」原文；如果「订单状态」是「待执行」「进行中」「已完成」中的任一值，则汇报订单已创建，否则汇报异常状态",
+    "expected": {
+      "has_read": true,
+      "has_finish": true,
+      "min_statements": 2
+    },
+    "assertions": [
+      "condition_uses_in_values",
+      "read_has_spec"
+    ],
+    "note": "条件扩展回归：一个业务成功态可能对应多个状态枚举。期望 decompose 使用 cond_cmp=in 且 cond_values 包含待执行/进行中/已完成，而不是堆多个 if 或把多个候选塞进单个字符串。"
   }
 ]

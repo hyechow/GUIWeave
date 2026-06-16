@@ -63,6 +63,21 @@ def test_to_program_builds_if_and_finish():
     assert branch.otherwise[0].message == "不可达：{d[不可达原因]}"
 
 
+def test_to_program_maps_extended_condition_values():
+    draft = _PlanDraft(steps=[
+        _StepDraft(op="run", run_kind="read", var="r", name="读订单状态", returns=["状态"]),
+        _StepDraft(
+            op="if", cond_var="r", cond_field="状态", cond_cmp="in",
+            cond_values=["待执行", "进行中"],
+            then=[_StepDraft(op="finish", message="ok")],
+            otherwise=[_StepDraft(op="finish", message="bad")],
+        ),
+    ])
+    branch = to_program(draft, "").statements[-1]
+    assert isinstance(branch, If)
+    assert branch.cond == Cond(var="r", field="状态", cmp="in", values=["待执行", "进行中"])
+
+
 def test_to_program_goal_falls_back_when_draft_goal_empty():
     draft = _PlanDraft(goal="", steps=[_StepDraft(op="run", name="x")])
     assert to_program(draft, "原始目标").goal == "原始目标"
@@ -100,6 +115,22 @@ def test_validate_if_references_unknown_field():
     ])
     issues = validate_program(prog)
     assert any("不在该 read 步读取的字段（returns）里" in i for i in issues)
+
+
+def test_validate_condition_operator_operands():
+    missing_values = Program(statements=[
+        Run(var="r", name="读", kind="read", returns=["状态"]),
+        If(cond=Cond(var="r", field="状态", cmp="in"),
+           then=[Finish(message="a")], otherwise=[Finish(message="b")]),
+    ])
+    assert any("缺少 cond_values" in i for i in validate_program(missing_values))
+
+    missing_value = Program(statements=[
+        Run(var="r", name="读", kind="read", returns=["提示"]),
+        If(cond=Cond(var="r", field="提示", cmp="contains"),
+           then=[Finish(message="a")], otherwise=[Finish(message="b")]),
+    ])
+    assert any("缺少 cond_value" in i for i in validate_program(missing_value))
 
 
 def test_validate_read_without_returns_or_var():

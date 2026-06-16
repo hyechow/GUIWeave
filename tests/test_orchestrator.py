@@ -125,6 +125,35 @@ def test_neq_condition():
     assert res.reply == "异常：告警"
 
 
+def test_extended_condition_operators():
+    def _reply(reads: dict[str, str], cond: Cond) -> str:
+        prog = Program(statements=[
+            Run(var="r", name="读状态", kind="read", returns=["状态", "提示", "订单号", "错误"]),
+            If(cond=cond, then=[Finish(message="then")], otherwise=[Finish(message="else")]),
+        ])
+        res = ProgramRunner(lambda r: RunResult(completed=True, reads=reads)).run(prog)
+        return res.reply
+
+    assert _reply({"订单号": "ORD-001"}, Cond(var="r", field="订单号", cmp="exists")) == "then"
+    assert _reply({"订单号": ""}, Cond(var="r", field="订单号", cmp="empty")) == "then"
+    assert _reply(
+        {"提示": "订单创建成功，编号 ORD-001"},
+        Cond(var="r", field="提示", cmp="contains", value="创建成功"),
+    ) == "then"
+    assert _reply(
+        {"提示": "订单创建成功，编号 ORD-001"},
+        Cond(var="r", field="提示", cmp="not_contains", value="失败"),
+    ) == "then"
+    assert _reply(
+        {"状态": "进行中"},
+        Cond(var="r", field="状态", cmp="in", values=["待执行", "进行中"]),
+    ) == "then"
+    assert _reply(
+        {"状态": "进行中"},
+        Cond(var="r", field="状态", cmp="not_in", values=["失败", "已取消"]),
+    ) == "then"
+
+
 # ── 可步进生成器接口（agent_loop 集成时就这么驱动）──────────────────────────────
 
 

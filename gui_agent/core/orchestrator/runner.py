@@ -103,7 +103,26 @@ class Interpreter:
         rv = self.env.get(cond.var)
         actual = (rv.reads.get(cond.field, "") if rv else "").strip()
         target = cond.value.strip()
-        return actual == target if cond.cmp == "==" else actual != target
+        if cond.cmp == "==":
+            return actual == target
+        if cond.cmp == "!=":
+            return actual != target
+        if cond.cmp == "exists":
+            return bool(actual)
+        if cond.cmp == "empty":
+            return not actual
+        if cond.cmp == "contains":
+            return bool(target) and target in actual
+        if cond.cmp == "not_contains":
+            return bool(target) and target not in actual
+        values = [v.strip() for v in cond.values if v.strip()]
+        if not values and target:
+            values = [target]
+        if cond.cmp == "in":
+            return actual in values
+        if cond.cmp == "not_in":
+            return actual not in values
+        return False
 
     def _fill(self, run: Run) -> tuple[Run, list[str]]:
         """Resolve {var[field]} refs in a Run's text from env BEFORE it reaches the planner.

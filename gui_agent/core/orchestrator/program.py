@@ -41,6 +41,7 @@ BARE_REF_RE = re.compile(r"\{(\w+)\}")
 # result milestone (the inspect concept). A thin adapter maps these to whatever the
 # real per-milestone driver expects when it's wired in.
 RunKind = Literal["navigation", "filter", "action", "read"]
+CondCmp = Literal["==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"]
 
 
 class RunResult(BaseModel):
@@ -86,8 +87,9 @@ class Cond(BaseModel):
 
     var: str
     field: str
-    cmp: Literal["==", "!="] = "=="
-    value: str
+    cmp: CondCmp = "=="
+    value: str = ""
+    values: list[str] = Field(default_factory=list)
 
 
 class If(BaseModel):

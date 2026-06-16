@@ -8,7 +8,7 @@ Boundaries:
   Linear Executor     drive ONE milestone -> RunResult     (injected; real driver TODO)
 """
 
-from .program import Cond, Finish, If, Program, Run, RunResult, Stmt
+from .program import Cond, CondCmp, Finish, If, Program, Run, RunResult, Stmt
 from .decomposer import decompose, to_program, validate_program
 from .structured_read import structured_read
 from .runner import (
@@ -22,7 +22,7 @@ from .runner import (
 from .engine import normalize_confirm_read_gates, normalize_precondition_gates
 
 __all__ = [
-    "Cond", "Finish", "If", "Program", "Run", "RunResult", "Stmt",
+    "Cond", "CondCmp", "Finish", "If", "Program", "Run", "RunResult", "Stmt",
     "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
     "RunRecord", "drive", "structured_read",
     "decompose", "to_program", "validate_program",

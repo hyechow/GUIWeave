@@ -35,7 +35,7 @@ _SYSTEM = """\
     · var：把该步结果绑定到变量，仅当后续 if / finish 要引用它时填（通常只有 read 步需要）。
     · returns：仅 run_kind="read" 填——要从结果界面读取的字段名列表，程序据此判断分支。
     · read_spec：仅 run_kind="read" 填——【本次读取说明】，按任务需求生成：逐个说明每个 returns 字段在结果界面上看哪里、如何把信号（图标/颜色/文字/位置）判读成值、各取值的含义（例：「连通判定：看起点终点输入框之间的图标——绿色✓=连通，灰色?=未检测/未连通；不可达原因：连通时为空，不可达时读取页面上的红色错误提示文字」）。读取是只读单帧，没有这份说明就只能瞎猜，所以必须写清楚。
-- op="if"：按某个 read 步读到的字段值分支。cond_var=那个 read 步的 var；cond_field=该步 returns 里的字段；cond_cmp= "==" 或 "!="；cond_value=期望值；then=成立时执行的步骤；otherwise=不成立时执行的步骤。
+- op="if"：按某个 read 步读到的字段值分支。cond_var=那个 read 步的 var；cond_field=该步 returns 里的字段；cond_cmp 可用 "=="、"!="、"exists"、"empty"、"contains"、"not_contains"、"in"、"not_in"；cond_value 用于等于/包含类比较；cond_values 用于 in/not_in 的候选值列表；then=成立时执行的步骤；otherwise=不成立时执行的步骤。
 - op="finish"：产出最终答复。message 是模板，可用 {变量[字段]} 引用某 read 步读到的值。
 
 核心原则：
@@ -94,8 +94,12 @@ class _StepDraft(BaseModel):
     # --- op=if ---
     cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个 read 步的 var）")
     cond_field: str = Field(default="", description="op=if：读取字段名（该 read 步 returns 里的字段）")
-    cond_cmp: str = Field(default="==", description='op=if："==" 或 "!="')
-    cond_value: str = Field(default="", description="op=if：期望值，与读取到的字段值比较")
+    cond_cmp: str = Field(
+        default="==",
+        description='op=if：条件操作符："==" | "!=" | "exists" | "empty" | "contains" | "not_contains" | "in" | "not_in"',
+    )
+    cond_value: str = Field(default="", description="op=if：单个期望值；用于 ==、!=、contains、not_contains")
+    cond_values: list[str] = Field(default_factory=list, description="op=if：多个候选值；仅用于 in、not_in")
     then: list["_StepDraft"] = Field(default_factory=list, description="op=if：条件成立时执行的步骤")
     otherwise: list["_StepDraft"] = Field(default_factory=list, description="op=if：条件不成立时执行的步骤")
     # --- op=finish ---
@@ -114,11 +118,53 @@ class _PlanDraft(BaseModel):
 _StepDraft.model_rebuild()
 
 _VALID_KINDS = {"navigation", "filter", "action", "read"}
+_VALID_CMPS = {"==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"}
+_CMP_ALIASES = {
+    "=": "==",
+    "eq": "==",
+    "equals": "==",
+    "ne": "!=",
+    "neq": "!=",
+    "not_equals": "!=",
+    "not equals": "!=",
+    "not-empty": "exists",
+    "not_empty": "exists",
+    "not empty": "exists",
+    "is_not_empty": "exists",
+    "is not empty": "exists",
+    "is-empty": "empty",
+    "is_empty": "empty",
+    "is empty": "empty",
+    "not-contains": "not_contains",
+    "not contains": "not_contains",
+    "not-in": "not_in",
+    "not in": "not_in",
+}
 
 
 def _to_kind(raw: str) -> RunKind:
     k = (raw or "").strip().lower()
     return k if k in _VALID_KINDS else "action"  # type: ignore[return-value]
+
+
+def _to_cmp(raw: str):
+    k = (raw or "").strip().lower()
+    k = _CMP_ALIASES.get(k, k)
+    return k if k in _VALID_CMPS else "=="  # type: ignore[return-value]
+
+
+def _split_cond_values(raw: str) -> list[str]:
+    text = raw or ""
+    for sep in ("|", "、", "，", ";", "；", "\n"):
+        text = text.replace(sep, ",")
+    return [p.strip() for p in text.split(",") if p.strip()]
+
+
+def _to_cond_values(cmp: str, values: list[str], value: str) -> list[str]:
+    out = [v.strip() for v in values if v.strip()]
+    if not out and cmp in {"in", "not_in"} and value.strip():
+        out = _split_cond_values(value)
+    return out
 
 
 def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
@@ -129,13 +175,15 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
         if op == "finish":
             out.append(Finish(message=d.message))
         elif op == "if":
+            cmp = _to_cmp(d.cond_cmp)
             out.append(
                 If(
                     cond=Cond(
                         var=d.cond_var,
                         field=d.cond_field,
-                        cmp="!=" if d.cond_cmp.strip() == "!=" else "==",
+                        cmp=cmp,
                         value=d.cond_value,
+                        values=_to_cond_values(cmp, d.cond_values, d.cond_value),
                     ),
                     then=_to_stmts(d.then),
                     otherwise=_to_stmts(d.otherwise),
@@ -252,6 +300,16 @@ def validate_program(program: Program) -> list[str]:
                     issues.append(
                         f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该 read 步读取的字段（returns）里"
                         f"——请把 cond_field 改成该 read 的 returns 里已有的字段名，或在该 read 的 returns 里补上「{s.cond.field}」"
+                    )
+                if s.cond.cmp in {"contains", "not_contains"} and not s.cond.value.strip():
+                    issues.append(
+                        f"if 条件「{s.cond.var}[{s.cond.field}] {s.cond.cmp}」缺少 cond_value——"
+                        "contains/not_contains 必须给出要匹配的文字"
+                    )
+                if s.cond.cmp in {"in", "not_in"} and not [v for v in s.cond.values if v.strip()]:
+                    issues.append(
+                        f"if 条件「{s.cond.var}[{s.cond.field}] {s.cond.cmp}」缺少 cond_values——"
+                        "in/not_in 必须给出一个或多个候选值"
                     )
                 then_scope, else_scope = dict(scope), dict(scope)
                 _walk(s.then, then_scope)

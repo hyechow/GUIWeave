@@ -77,6 +77,16 @@ def _has_finish(stmts: list) -> bool:
     return False
 
 
+def _flatten_ifs(stmts: list) -> list[If]:
+    out: list[If] = []
+    for s in stmts:
+        if isinstance(s, If):
+            out.append(s)
+            out.extend(_flatten_ifs(s.then))
+            out.extend(_flatten_ifs(s.otherwise))
+    return out
+
+
 def _confirm_read_actions(stmts: list) -> list[Run]:
     """Action Runs immediately followed by a read Run — the confirm-read shape (rule 6).
     Adjacency is checked WITHIN each statement list, recursing into if-branches (same
@@ -298,6 +308,50 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     f"read 了「*列表」字段去挑实体（集合索引表达不了，规则8 只接力单个实体）: {list_reads}"
                 )
+        elif assertion == "order_action_has_confirm_read":
+            # 当前 Hard+ 任务（20260616_092555）已证明：连通后建单是一个长表单 action，
+            # 但提交后的成败仍必须由紧跟的 read 读取结构化结果，不能只信 action 完成。
+            # 判据保持结构化：订单/建单/下单 action 后面紧跟 read。
+            ok = False
+
+            def _walk(stmts):
+                nonlocal ok
+                for i, s in enumerate(stmts):
+                    if isinstance(s, Run):
+                        nxt = stmts[i + 1] if i + 1 < len(stmts) else None
+                        if (
+                            s.kind == "action"
+                            and any(k in s.name for k in ("订单", "建单", "下单"))
+                            and isinstance(nxt, Run)
+                            and nxt.kind == "read"
+                        ):
+                            ok = True
+                    elif isinstance(s, If):
+                        _walk(s.then)
+                        _walk(s.otherwise)
+            _walk(program.statements)
+            if not ok:
+                details.append(
+                    "建单/订单 action 后缺少紧跟的 read 确认结果（应 action 提交，read 读取订单状态/创建结果）"
+                )
+        elif assertion == "condition_uses_empty":
+            if not any(s.cond.cmp == "empty" for s in _flatten_ifs(program.statements)):
+                details.append(
+                    f"未使用 empty 条件判断空字段: "
+                    f"{[(s.cond.var, s.cond.field, s.cond.cmp, s.cond.value, s.cond.values) for s in _flatten_ifs(program.statements)]}"
+                )
+        elif assertion == "condition_uses_contains":
+            if not any(s.cond.cmp == "contains" and s.cond.value.strip() for s in _flatten_ifs(program.statements)):
+                details.append(
+                    f"未使用 contains 条件判断子串: "
+                    f"{[(s.cond.var, s.cond.field, s.cond.cmp, s.cond.value, s.cond.values) for s in _flatten_ifs(program.statements)]}"
+                )
+        elif assertion == "condition_uses_in_values":
+            if not any(s.cond.cmp == "in" and s.cond.values for s in _flatten_ifs(program.statements)):
+                details.append(
+                    f"未使用 in + cond_values 多候选条件: "
+                    f"{[(s.cond.var, s.cond.field, s.cond.cmp, s.cond.value, s.cond.values) for s in _flatten_ifs(program.statements)]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
@@ -322,7 +376,10 @@ def test_orchestrator_decompose() -> None:
                 if isinstance(s, Run):
                     print(f"       [{s.kind}] {s.name}: {s.success_condition}")
                 elif isinstance(s, If):
-                    print(f"       [if] {s.cond.var}[{s.cond.field}] {s.cond.cmp} {s.cond.value!r}")
+                    print(
+                        f"       [if] {s.cond.var}[{s.cond.field}] {s.cond.cmp} "
+                        f"{s.cond.value!r} values={s.cond.values!r}"
+                    )
                     for b in (*s.then, *s.otherwise):
                         nm = getattr(b, "name", None) or getattr(b, "message", "")
                         print(f"          └ [{getattr(b, 'kind', b.op)}] {nm}")
