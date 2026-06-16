@@ -1032,10 +1032,11 @@ class RunnerReportBuilder:
         data.goal = ctx.get("goal", "")
         data.router = ctx.get("router") or {}
         data.platform = ctx.get("platform") or ""
-        data.output = ctx.get("output") or ""
-        data.stop_reason = ctx.get("stop_reason") or ""
-        data.run_status = ctx.get("run_status") or ""
-        data.goal_completed = bool(ctx.get("goal_completed", False))
+        run_state = ctx.get("run") or {}
+        data.output = run_state.get("output") or ctx.get("output") or ""
+        data.stop_reason = run_state.get("stop_reason") or ctx.get("stop_reason") or ""
+        data.run_status = run_state.get("status") or ctx.get("run_status") or ""
+        data.goal_completed = bool(run_state.get("goal_completed", ctx.get("goal_completed", False)))
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
         data.wall_clock_s = ctx.get("wall_clock_s") or 0.0

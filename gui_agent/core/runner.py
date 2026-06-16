@@ -40,6 +40,7 @@ from gui_agent.core.schemas import (
     ActionDecision,
     PolicyContext,
     PolicyTurn,
+    RunState,
     action_label,
 )
 from gui_agent.core.visualize import print_decision
@@ -517,6 +518,51 @@ def _classify_run_status(result: dict) -> str:
     return "stopped"
 
 
+def _run_state_from_result(result: dict, output: str | None = None) -> RunState:
+    return RunState(
+        status=_classify_run_status(result),
+        stop_reason=str(result.get("stop_reason") or ""),
+        goal_completed=bool(result.get("goal_completed", False)),
+        output=output,
+    )
+
+
+def _sync_context_run_state(
+    context: PolicyContext,
+    result: dict,
+    output: str | None = None,
+) -> None:
+    run_state = _run_state_from_result(result, output=output)
+    context.run = run_state
+    context.output = run_state.output
+    context.stop_reason = run_state.stop_reason or None
+    context.run_status = run_state.status
+    context.goal_completed = run_state.goal_completed
+
+
+def _write_final_run_state(context_path: Path, result: dict, output: str) -> None:
+    """Patch final run state without reloading PolicyContext.
+
+    PolicyContext round-tripping can fail on platform-specific action subclasses in
+    old turn records. Keep this as the only raw JSON patch site for final run state.
+    """
+    raw = json.loads(context_path.read_text(encoding="utf-8"))
+    run_state = _run_state_from_result(result, output)
+    existing_run = raw.get("run") if isinstance(raw.get("run"), dict) else {}
+    raw["run"] = {
+        **existing_run,
+        **run_state.model_dump(mode="json"),
+    }
+    # Back-compat for existing report/output consumers and older tooling.
+    raw["output"] = run_state.output
+    raw["stop_reason"] = run_state.stop_reason
+    raw["run_status"] = run_state.status
+    raw["goal_completed"] = run_state.goal_completed
+    context_path.write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def _orch_result(context, interp, terminal: str, *, current=None) -> dict:
     """Result dict for orchestrator (DSL) mode. Compose a COMPREHENSIVE final reply from the
     whole program's structured state — run_log (completed milestones + their reads), the
@@ -631,6 +677,11 @@ def run_agent_loop(
             ]
         _save_context(context_path, context)
 
+    def _finish(result: dict) -> dict:
+        _sync_context_run_state(context, result)
+        _save_ctx()
+        return result
+
     _save_ctx()
     _say(f"Goal    : {context.goal}")
     _say(f"Turns   : {len(context.turns)}")
@@ -694,7 +745,7 @@ def run_agent_loop(
         _say(_line)
     if not setup.ok:
         _say(f"\n环境检查未通过：{setup.summary}")
-        return _make_result(context, f"环境检查未通过：{setup.summary}")
+        return _finish(_make_result(context, f"环境检查未通过：{setup.summary}"))
 
     with bundle.open_session() as phone:
         executor = bundle.make_executor(phone)
@@ -752,11 +803,10 @@ def run_agent_loop(
                             context, seen_rows, turn_no=turn_no, say=_say)
             stitch_acc = None
             _say("\n收到 ESC：当前 turn 已收尾，agent-loop 安全停止")
-            _save_ctx()
             reason = "用户按 ESC 中止 agent-loop"
             if program is not None:
-                return _orch_result(context, _interp, f"{reason}（任务未完成）", current=_cur_run)
-            return _make_result(context, reason)
+                return _finish(_orch_result(context, _interp, f"{reason}（任务未完成）", current=_cur_run))
+            return _finish(_make_result(context, reason))
 
         def _drive_pending_reads(done_png: "bytes | None" = None) -> "str | None":
             """Pure single-frame READ runs — the inspect primitive. A `read` run is NOT a
@@ -833,12 +883,10 @@ def run_agent_loop(
             try:
                 _cur_run = next(_gen)
             except StopIteration as _e:  # program with no run() (just finish / empty)
-                _save_ctx()
-                return _orch_result(context, _interp, _e.value or "")
+                return _finish(_orch_result(context, _interp, _e.value or ""))
             _reply = _drive_pending_reads()  # leading read(s) + reseed the first non-read run
             if _reply is not None:
-                _save_ctx()
-                return _orch_result(context, _interp, _reply)
+                return _finish(_orch_result(context, _interp, _reply))
 
         while True:
             interrupted = _stop_after_esc(len(context.turns))
@@ -852,10 +900,9 @@ def run_agent_loop(
                                 context, seen_rows, turn_no=turn_no - 1, say=_say)
                 stitch_acc = None
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
-                _save_ctx()
                 if program is not None:  # orchestrator: summarize the whole program so far
-                    return _orch_result(context, _interp, f"达到最大轮数 {max_turns}（任务未完成）", current=_cur_run)
-                return _make_result(context, f"达到最大轮数 {max_turns}")
+                    return _finish(_orch_result(context, _interp, f"达到最大轮数 {max_turns}（任务未完成）", current=_cur_run))
+                return _finish(_make_result(context, f"达到最大轮数 {max_turns}"))
 
             turn_started_at = time.perf_counter()
             llm_calls_before = get_llm_call_count()
@@ -950,8 +997,7 @@ def run_agent_loop(
                 ))
                 # Sync the last milestone's done verdict into context (no later turn body runs).
                 _sync_milestone_done_checks(supervisor, context)
-                _save_ctx()
-                return _orch_result(context, _interp, _orch_reply)
+                return _finish(_orch_result(context, _interp, _orch_reply))
 
             # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.turns、不消耗
             # max_turns、不累加 noop_count。加载是 App 渲染延迟、不是 agent 的一步操作。
@@ -961,11 +1007,10 @@ def run_agent_loop(
                 loading_streak += 1
                 if loading_streak > MAX_LOADING_FRAMES:
                     _say(f"\n页面持续加载 {loading_streak} 帧仍未稳定，agent-loop 停止")
-                    _save_ctx()
                     _term = f"页面持续加载未稳定（>{MAX_LOADING_FRAMES} 帧）"
                     if program is not None:
-                        return _orch_result(context, _interp, _term, current=_cur_run)
-                    return _make_result(context, _term)
+                        return _finish(_orch_result(context, _interp, _term, current=_cur_run))
+                    return _finish(_make_result(context, _term))
                 _say(f"  [Loading] 等待页面稳定（第 {loading_streak} 帧，不计入轮数）...")
                 time.sleep(LOADING_WAIT_S)
                 interrupted = _stop_after_esc(turn_no)
@@ -1239,7 +1284,6 @@ def run_agent_loop(
                     _say(f"\n目标已达成：{reason}")
                 else:
                     _say(f"\n任务未完成：{reason}")
-                _save_ctx()
                 # ── DSL orchestrator mode: a milestone's SUCCESS (goal_completed) hand-off is
                 # merged into this turn by the decision-phase loop above, so reaching here means a
                 # STOP — the milestone gave up / failed. Package it as a failed run; the
@@ -1255,13 +1299,13 @@ def run_agent_loop(
                     try:
                         _cur_run = _gen.send(_result)
                     except StopIteration as _e:  # a failed run always halts the interpreter
-                        return _orch_result(context, _interp, _e.value or "")
+                        return _finish(_orch_result(context, _interp, _e.value or ""))
                     # Defensive: a failed run halts the interpreter above; if the contract ever
                     # changes and it doesn't, summarize what we have rather than fall through.
-                    return _orch_result(context, _interp, sv_step.summary or reason, current=_cur_run)
+                    return _finish(_orch_result(context, _interp, sv_step.summary or reason, current=_cur_run))
                 if sv_step.goal_completed:
-                    return _make_result(context, reason, sv_step.collection_summary)
-                return _make_result(context, reason)
+                    return _finish(_make_result(context, reason, sv_step.collection_summary))
+                return _finish(_make_result(context, reason))
 
             if not (executed and auto_continue):
                 interrupted = _stop_after_esc(turn_no)
@@ -1273,19 +1317,16 @@ def run_agent_loop(
                     noop_count += 1
                     if noop_count >= 3:
                         _say(f"\n连续 {noop_count} 轮滚动探测失败，agent-loop 停止")
-                        _save_ctx()
-                        return _make_result(context, f"连续 {noop_count} 轮滚动探测失败")
+                        return _finish(_make_result(context, f"连续 {noop_count} 轮滚动探测失败"))
                     _say("滚动探测失败，进入下一轮重新规划")
                     continue
                 if action_decision and action_decision.not_found_reason:
                     noop_count += 1
                     if noop_count >= 3:
                         _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                        _save_ctx()
-                        return _make_result(context, f"连续 {noop_count} 轮无动作")
+                        return _finish(_make_result(context, f"连续 {noop_count} 轮无动作"))
                     continue
-                _save_ctx()
-                return _make_result(context, "动作未执行，agent-loop 停止")
+                return _finish(_make_result(context, "动作未执行，agent-loop 停止"))
 
             if sv_step.milestone_id != prev_milestone_id:
                 noop_count = 0
@@ -1295,8 +1336,7 @@ def run_agent_loop(
                 noop_count += 1
                 if noop_count >= 3:
                     _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                    _save_ctx()
-                    return _make_result(context, f"连续 {noop_count} 轮无动作")
+                    return _finish(_make_result(context, f"连续 {noop_count} 轮无动作"))
                 continue
 
             noop_count = 0
@@ -1347,8 +1387,7 @@ def run_agent_loop(
             except EOFError:
                 answer = ""
             if answer in {"q", "quit", "exit"}:
-                _save_ctx()
-                return _make_result(context, "用户退出 agent-loop")
+                return _finish(_make_result(context, "用户退出 agent-loop"))
 
 
 
@@ -1569,21 +1608,9 @@ def main() -> None:
                 print("=" * 50)
                 print(output.rstrip())
                 print("=" * 50)
-                # Persist the final reply so the HTML report can render it. Patch the raw JSON
-                # dict directly instead of round-tripping through PolicyContext.model_validate:
-                # the round-trip rejects platform-only action types (e.g. browser `navigate`)
-                # because the neutral BaseAction literal can't deserialize them (SerializeAsAny
-                # covers dump, not load). The on-disk JSON already holds everything from the last
-                # _save_context; we only add the output field.
+                # Persist the final reply and structured run state so the HTML report can render it.
                 try:
-                    raw = json.loads(context_path.read_text(encoding="utf-8"))
-                    raw["output"] = output
-                    raw["stop_reason"] = result.get("stop_reason", "")
-                    raw["run_status"] = _classify_run_status(result)
-                    raw["goal_completed"] = bool(result.get("goal_completed", False))
-                    context_path.write_text(
-                        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
-                    )
+                    _write_final_run_state(context_path, result, output)
                 except Exception as exc:
                     print(f"（输出未写入 context: {exc}）")
 

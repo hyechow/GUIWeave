@@ -30,7 +30,13 @@ from rich.tree import Tree
 
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
 from gui_agent.core.factory import build_platform
-from gui_agent.core.runner import _TeeStream, build_policy, build_supervisor, run_agent_loop
+from gui_agent.core.runner import (
+    _TeeStream,
+    _write_final_run_state,
+    build_policy,
+    build_supervisor,
+    run_agent_loop,
+)
 from gui_agent.core.chat_session import (
     RouterResult,
     generate_reply,
@@ -523,11 +529,7 @@ def main() -> None:
         try:
             ctx_path = log_dir / "context.json"
             if ctx_path.exists():
-                ctx_data = json.loads(ctx_path.read_text(encoding="utf-8"))
-                ctx_data["output"] = reply
-                ctx_path.write_text(
-                    json.dumps(ctx_data, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
+                _write_final_run_state(ctx_path, result, reply)
         except Exception:
             pass
 

@@ -41,6 +41,7 @@ _ACTION_TYPE_LABELS: dict[str, str] = {
 def action_label(action_type: str) -> str:
     return _ACTION_TYPE_LABELS.get(action_type, action_type)
 TaskType = Literal["action", "analysis"]
+RunStatus = Literal["completed", "interrupted", "stopped"]
 MilestoneKind = Literal["navigation", "filter", "collection", "action", "verification"]
 CompletionStrategy = Literal[
     "visible_once",
@@ -65,6 +66,18 @@ class CollectionScope(BaseModel):
     start: Optional[str] = Field(default=None, description="范围开始值；不可确定则为空")
     end: Optional[str] = Field(default=None, description="范围结束值；不可确定则为空")
     evidence: list[str] = Field(default_factory=list, description="截图中支持该范围的可见证据")
+
+
+class RunState(BaseModel):
+    """Run-level terminal state persisted with the context."""
+
+    status: Optional[RunStatus] = Field(
+        default=None,
+        description="本次运行的最终状态：completed=目标完成，interrupted=用户中止，stopped=未完成停止",
+    )
+    stop_reason: str = Field(default="", description="本次运行的最终停止原因")
+    goal_completed: bool = Field(default=False, description="本次运行是否确认完成用户目标")
+    output: Optional[str] = Field(default=None, description="最终输出")
 
 
 class BaseAction(BaseModel):
@@ -449,9 +462,10 @@ class PolicyContext(BaseModel):
     collection_scope: Optional[CollectionScope] = None
     content_notes: list[str] = Field(default_factory=list)
     content_note_hashes: list[str] = Field(default_factory=list)
+    run: RunState = Field(default_factory=RunState, description="本次运行的结构化状态")
     output: Optional[str] = None
     stop_reason: Optional[str] = Field(default=None, description="本次运行的最终停止原因")
-    run_status: Optional[Literal["completed", "interrupted", "stopped"]] = Field(
+    run_status: Optional[RunStatus] = Field(
         default=None,
         description="本次运行的最终状态：completed=目标完成，interrupted=用户中止，stopped=未完成停止",
     )
@@ -477,6 +491,24 @@ class PolicyContext(BaseModel):
         description="DSL 编排器模式：{program: {goal, statements:[run/if/finish]}}。decompose 是独立阶段，"
                     "报告据此渲染单独的「分解」行。program=None 的 DAG 路径为 None",
     )
+
+    @model_validator(mode="after")
+    def _sync_run_state_compat(self) -> "PolicyContext":
+        """Keep the structured run state and legacy flat fields in sync."""
+        if self.output is not None and self.run.output is None:
+            self.run.output = self.output
+        if self.stop_reason and not self.run.stop_reason:
+            self.run.stop_reason = self.stop_reason
+        if self.run_status and self.run.status is None:
+            self.run.status = self.run_status
+        if self.goal_completed is not None and not self.run.goal_completed:
+            self.run.goal_completed = self.goal_completed
+
+        self.output = self.run.output
+        self.stop_reason = self.run.stop_reason or None
+        self.run_status = self.run.status
+        self.goal_completed = self.run.goal_completed
+        return self
 
 
 # --- Back-compat aliases -----------------------------------------------------
