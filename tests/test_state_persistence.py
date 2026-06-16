@@ -148,6 +148,8 @@ def test_runner_updates_checklist_from_in_progress_checker():
     items = {item.text: item for item in ctx.milestone_states["m1"].checklist}
     assert items["名称和站点都已保存"].status == "pending"
     assert items["名称和站点都已保存"].evidence == ["名称 lucas 已显示"]
+    # missing_evidence becomes a checklist row at its true status (in_progress → pending),
+    # never force-marked done.
     assert items["站点未选择 s10"].status == "pending"
 
 

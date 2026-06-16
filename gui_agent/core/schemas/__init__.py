@@ -1,5 +1,6 @@
 """Shared schemas for policy experiments."""
 
+import re
 from datetime import datetime
 from typing import Literal, Optional
 
@@ -90,6 +91,18 @@ class MilestoneChecklistItem(BaseModel):
     status: ChecklistStatus = Field(default="pending", description="pending | done | blocked | skipped")
     evidence: list[str] = Field(default_factory=list, description="支持该状态的可见证据")
     source: str = Field(default="", description="产生/更新该项的来源，如 checker/planner/manual")
+
+
+def split_acceptance_items(success_condition: str, fallback: str = "") -> list[str]:
+    """Split a milestone success_condition into individual acceptance items.
+
+    Shared by the checker (to enumerate items for per-item judgement) and the state derivation
+    (to map per-item verdicts back) so the two agree on item identity and ordering. Splits on
+    newlines and ; / ；, trims bullet markers, caps at 8 items, never returns empty."""
+    source = (success_condition or fallback or "完成当前子目标").strip()
+    parts = [p.strip(" \t\r\n-•*") for p in re.split(r"[\n;；]+", source)]
+    parts = [p for p in parts if p]
+    return parts[:8] or [source]
 
 
 class MilestoneState(BaseModel):

@@ -44,6 +44,13 @@ class MilestonePrompts:
     selector: str | None = None
 
 
+class _ChecklistVerdict(BaseModel):
+    """Per-item verdict for one enumerated acceptance sub-condition."""
+    index: int = Field(description="对应「逐项验收」清单里的序号（从 1 开始）")
+    met: bool = Field(description="该子项是否已满足")
+    evidence: str = Field(default="", description="支持该判定的一句可见证据")
+
+
 class _SingleCheckResult(BaseModel):
     """Checker output for single-step milestones (navigation/filter/action/verification/read_once).
 
@@ -54,6 +61,10 @@ class _SingleCheckResult(BaseModel):
         description="判断状态：done（验收通过）或 in_progress（未完成）。禁止填 'loading'——页面加载状态用独立的 loading 布尔字段表示"
     )
     reason: str = Field(description="判断理由")
+    item_verdicts: list[_ChecklistVerdict] = Field(
+        default_factory=list,
+        description="逐项验收：对 prompt「逐项验收」段里每个编号子项独立判 met+证据；整体 status 仍按综合判断填。无该段时留空。",
+    )
     stuck_reason: str = Field(default="", description="额外未达成原因；一般验收判断留空")
     issues: list[str] = Field(default_factory=list)
     visible_evidence: list[str] = Field(default_factory=list, description="截图中支持 done 的可见证据")

@@ -12,6 +12,7 @@ from gui_agent.core.schemas import (
     MilestoneState,
     PolicyContext,
     RunState,
+    split_acceptance_items,
 )
 
 _RUNTIME_MILESTONE_KEYS = {
@@ -94,10 +95,9 @@ def _checklist_item_id(prefix: str, text: str) -> str:
 
 
 def _success_checklist_texts(success_condition: str, fallback: str = "") -> list[str]:
-    source = (success_condition or fallback or "完成当前子目标").strip()
-    parts = [p.strip(" \t\r\n-•*") for p in re.split(r"[\n;；]+", source)]
-    parts = [p for p in parts if p]
-    return parts[:8] or [source]
+    # Shared with the checker (helpers._single_check enumerates the same items), so item index
+    # in item_verdicts lines up with this ordering.
+    return split_acceptance_items(success_condition, fallback)
 
 
 def _upsert_checklist_item(
@@ -138,7 +138,15 @@ def _update_checklist_from_checker(
     fallback: str,
     checker: dict,
 ) -> None:
-    """Derive milestone checklist state from the checker contract."""
+    """Derive milestone checklist state from the checker contract.
+
+    Two kinds of items:
+    - Acceptance items (success_condition split), each judged independently via
+      ``checker.item_verdicts`` (own status + evidence); without verdicts they fall back to the
+      shared whole-milestone verdict.
+    - The checker's per-turn ``missing_evidence`` (what's still missing), accumulated across turns
+      as an audit trail. Kept at their TRUE status (pending/blocked) — NOT force-marked done on
+      completion (that read as misleading "✓ 未选择文件")."""
     status = str(checker.get("status") or "")
     reason = str(checker.get("reason") or "")
     visible = [str(v) for v in (checker.get("visible_evidence") or []) if str(v)]
@@ -152,16 +160,34 @@ def _update_checklist_from_checker(
         item_status = "pending"
 
     evidence = visible or ([reason] if reason else [])
-    for text in _success_checklist_texts(success_condition, fallback):
+    # Per-item verdicts (checker.item_verdicts) give each acceptance item its OWN status + evidence.
+    # When absent (loop/synthetic checks, older runs) fall back to the shared whole-milestone verdict.
+    verdicts: dict[int, dict] = {}
+    for v in (checker.get("item_verdicts") or []):
+        if isinstance(v, dict) and isinstance(v.get("index"), int):
+            verdicts[v["index"]] = v
+    for idx, text in enumerate(_success_checklist_texts(success_condition, fallback), 1):
+        v = verdicts.get(idx)
+        if v is not None:
+            met = bool(v.get("met"))
+            item_status_i = "done" if met else ("blocked" if status == "stuck" else "pending")
+            ev = str(v.get("evidence") or "").strip()
+            item_evidence_i = [ev] if ev else (evidence if not met else [])
+            source_i = "checker:item_verdict"
+        else:
+            item_status_i = item_status
+            item_evidence_i = evidence
+            source_i = "checker:success_condition"
         _upsert_checklist_item(
             state,
             item_id=_checklist_item_id("accept", text),
             text=text,
-            status=item_status,
-            evidence=evidence,
-            source="checker:success_condition",
+            status=item_status_i,
+            evidence=item_evidence_i,
+            source=source_i,
         )
 
+    # Per-turn missing_evidence → checklist rows, kept at their true status (no force-✓ on done).
     missing_status = "blocked" if status == "stuck" else "pending"
     for text in missing[:8]:
         _upsert_checklist_item(
@@ -172,13 +198,6 @@ def _update_checklist_from_checker(
             evidence=[reason] if reason else [],
             source="checker:missing_evidence",
         )
-
-    if status == "done":
-        for item in state.checklist:
-            if item.source == "checker:missing_evidence" and item.status != "done":
-                item.status = "done"
-                if reason:
-                    item.evidence = [reason]
 
 
 def _sync_orchestrator_milestone_states(context: PolicyContext) -> None:

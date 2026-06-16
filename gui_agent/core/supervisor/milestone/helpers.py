@@ -13,7 +13,12 @@ from langchain_openai import ChatOpenAI
 from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
+from gui_agent.core.schemas import (
+    Milestone,
+    Observation,
+    PolicyTurn,
+    split_acceptance_items,
+)
 
 from .schemas import (
     MilestonePrompts,
@@ -447,6 +452,18 @@ def run_checker(
         prompt += (
             "\n\n## 附加页面标题（不在截图里，仅作页面身份辅助信号；仍需结合可见内容判断）\n"
             f"- 当前页面标题：{title}"
+        )
+    # Per-item checklist: enumerate the acceptance sub-conditions and ask the checker to judge each
+    # independently (met + evidence) into item_verdicts. Drives the checklist's per-item status; the
+    # overall `status` (which gates advance/replan) is unchanged.
+    accept_items = split_acceptance_items(milestone.success_condition, milestone.name)
+    if accept_items:
+        enumerated = "\n".join(f"{i}) {t}" for i, t in enumerate(accept_items, 1))
+        prompt += (
+            "\n\n## 逐项验收（填入 item_verdicts）\n"
+            "对下列每个验收子项独立判定：met（是否满足）+ 一句可见证据，按对应 index 填入 item_verdicts。"
+            "逐项判定不改变你对整体 status 的综合判断。\n"
+            f"{enumerated}"
         )
     result = invoke_structured(
         _make_llm(),
