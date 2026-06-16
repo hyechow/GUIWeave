@@ -70,7 +70,50 @@ def _load_task(tasks_file: Path, task_id: int) -> dict:
     raise ValueError(f"task {task_id} not in {tasks_file} (have {ids})")
 
 
-def _synthesize_response(intent: str, result: dict) -> WAResponse:
+def _run_evidence_text(context_path: Path | None) -> str:
+    """Small, lower-confidence trace for response synthesis diagnostics.
+
+    Collected notes remain the primary data source. This trace mainly prevents a
+    silent NOT_FOUND when the loop visibly reached a final read state but the
+    note bridge failed, and makes those failures easier to inspect.
+    """
+    if context_path is None or not context_path.exists():
+        return "(unavailable)"
+    try:
+        data = json.loads(context_path.read_text())
+    except Exception as exc:  # noqa: BLE001 - best-effort diagnostic context
+        return f"(unavailable: {exc})"
+
+    lines: list[str] = []
+    for turn in (data.get("turns") or [])[-6:]:
+        supervisor = turn.get("supervisor") or {}
+        checker = turn.get("checker") or {}
+        parts = [
+            f"turn={turn.get('index')}",
+            "milestone="
+            f"{supervisor.get('milestone_id') or '?'}:"
+            f"{supervisor.get('milestone_kind') or '?'}"
+            f"/{supervisor.get('completion_strategy') or '?'}",
+        ]
+        if supervisor.get("summary"):
+            parts.append(f"supervisor_summary={supervisor.get('summary')}")
+        if checker:
+            parts.append(
+                "checker="
+                f"{checker.get('status')}: "
+                f"{checker.get('summary') or checker.get('reason') or ''}"
+            )
+            evidence = checker.get("visible_evidence") or []
+            if evidence:
+                parts.append("visible_evidence=" + "; ".join(map(str, evidence[:4])))
+            missing = checker.get("missing_evidence") or []
+            if missing:
+                parts.append("missing_evidence=" + "; ".join(map(str, missing[:4])))
+        lines.append(" | ".join(parts))
+    return "\n".join(lines) if lines else "(none)"
+
+
+def _synthesize_response(intent: str, result: dict, context_path: Path | None = None) -> WAResponse:
     """Map the agent loop's result dict into WebArena's agent_response via one LLM
     structured call — the intent carries the required output format (e.g. an object
     with keys min/max), so the model emits retrieved_data in exactly that shape
@@ -83,6 +126,7 @@ def _synthesize_response(intent: str, result: dict) -> WAResponse:
 
     notes = result.get("content_notes") or []
     notes_text = "\n".join(f"- {n}" for n in notes) if notes else "(none collected)"
+    evidence_text = _run_evidence_text(context_path)
     sys_msg = (
         "You convert a web agent's run result into WebArena-Verified's required "
         "agent_response JSON. Output exactly: task_type (one of "
@@ -92,6 +136,9 @@ def _synthesize_response(intent: str, result: dict) -> WAResponse:
         "- For RETRIEVE, retrieved_data must be a list. Use a list of OBJECTS only "
         "when the intent asks for keyed fields (e.g. {\"min\":..,\"max\":..}); "
         "otherwise a list of scalar values. Emit numbers as numbers, not strings.\n"
+        "- Prefer Collected notes for RETRIEVE answers. Auxiliary run evidence is "
+        "lower-confidence; use it only when it explicitly contains the requested "
+        "answer and is consistent with the task.\n"
         "- If the agent did not actually obtain the answer, set status to the best-"
         "fitting error and retrieved_data to null. Do not invent data."
     )
@@ -102,6 +149,7 @@ def _synthesize_response(intent: str, result: dict) -> WAResponse:
         f"Stop reason: {result.get('stop_reason')}\n"
         f"Run summary: {result.get('result_summary')}\n\n"
         f"Collected notes:\n{notes_text}\n\n"
+        f"Auxiliary run evidence:\n{evidence_text}\n\n"
         "Produce the agent_response JSON."
     )
     cfg = resolve_llm_config("output")
@@ -223,7 +271,7 @@ def main() -> int:
                 print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
 
             try:
-                resp = _synthesize_response(intent, result or {})
+                resp = _synthesize_response(intent, result or {}, log_dir / "context.json")
                 resp_path.write_text(json.dumps(resp.model_dump(), indent=2))
                 print(f"[webarena] OK agent_response -> {resp_path}")
                 print(json.dumps(resp.model_dump(), indent=2, ensure_ascii=False))
