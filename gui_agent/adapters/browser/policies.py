@@ -16,6 +16,7 @@ NOT used. No iPhone picker, no home-screen / springboard concepts, no DOM.
 from __future__ import annotations
 
 import io
+import re
 
 from dotenv import load_dotenv
 
@@ -100,6 +101,17 @@ def _prepare_browser_png(png_bytes: bytes) -> bytes:
         return png_bytes
 
 
+# 上传控件特征词：instruction 命中说明指向一个会弹原生文件框的 dropzone / file-input，
+# 而非普通按钮（普通「导入 X」按钮点开的是页面弹窗，不含这些词）。Vision LLM 偶尔对这类
+# 控件误发 tap —— 原生框必然被 device 的 file-chooser 拦截取消（浪费一 turn），必须走 upload。
+_UPLOAD_CONTROL_RE = re.compile(
+    r"上传区域|点击上传|拖放|选择文件|文件选择器|drop\s*zone",
+    re.IGNORECASE,
+)
+# instruction 里出现的本地文件绝对路径（supervisor 规则要求把真实路径原样带进 instruction）。
+_FILE_PATH_RE = re.compile(r"(?:/[\w./+~-]+|~/[\w./+~-]+)")
+
+
 class BrowserActionPolicy(BaseActionPolicy):
     """Vision-based browser action policy."""
 
@@ -109,3 +121,26 @@ class BrowserActionPolicy(BaseActionPolicy):
 
     def _prepare_png(self, png_bytes: bytes) -> bytes:
         return _prepare_browser_png(png_bytes)
+
+    def _postprocess(
+        self, decision, instruction, *, direction=None, drag_column=None, drag_steps=None
+    ):
+        """Hard-guard: a tap aimed at a file-upload control is a no-op — the native
+        chooser it opens is outside the page and gets cancelled by the device's
+        file-chooser interceptor (see device._on_file_chooser). Rewrite such a tap to
+        ``upload`` with the path the supervisor carried in the instruction, so the file
+        is injected via the chooser instead. Fires ONLY when a real path is present —
+        never fabricates one (per SYSTEM_PROMPT: 路径来自任务，不要自己编造)."""
+        action = decision.action
+        if (
+            getattr(action, "action_type", None) == "tap"
+            and _UPLOAD_CONTROL_RE.search(instruction or "")
+        ):
+            paths = _FILE_PATH_RE.findall(instruction or "")
+            path = max(paths, key=len) if paths else None  # longest → real file path
+            if path:
+                action = action.model_copy(
+                    update={"action_type": "upload", "file_path": path}
+                )
+                decision = decision.model_copy(update={"action": action})
+        return decision

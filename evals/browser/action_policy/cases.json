@@ -50,5 +50,15 @@
       "file_path": "/Users/hyde/Downloads/交管测试专用地图_2楼.map_export"
     },
     "note": "回归 20260615_155232：上传任务卡死在文件选择。链路=upload 动作(填 file_path)→device.upload_file 武装 _pending_upload→点击控件→_on_file_chooser 投文件。但 agent 实跑只发了普通 tap→未武装→_on_file_chooser『拦截并取消非预期文件选择弹窗』→零效果→3 次重试失败。本 case 守住 action policy 这一半：指令带『上传文件 X』+路径 → 必须出 upload 动作并把路径填进 file_path，绝不 tap（文件选择框非网页内容，截图看不到、tap 必卡）。实测 action policy 这半是对的(PASS)；真正丢路径的是 planner，见 planner eval 同名 case。"
+  },
+  {
+    "label": "upload-tap-framed 上传指令也必须输出 upload（_postprocess guard 兜底）（回归 20260616_200258 Turn5）",
+    "screenshot": "evals/browser/action_policy/screenshots/roboteam_map_import_upload_dialog.png",
+    "instruction": "点击弹窗中显示「点击上传或者拖放」的上传区域以唤起系统文件选择器，文件路径 /Users/hyde/Downloads/交管测试专用地图_2楼.map_export",
+    "expected": {
+      "action_type": "upload",
+      "file_path": "/Users/hyde/Downloads/交管测试专用地图_2楼.map_export"
+    },
+    "note": "回归 20260616_200258 Turn5：replanner 把上传子目标错翻成『点击上传区域以唤起系统文件选择器』这种 tap 指令（丢了 upload 语义，真实路径只在句尾）。若 action policy 忠实输出 tap→点上传控件→弹原生文件框→device._on_file_chooser 拦截取消→浪费一 turn（本次实测 Turn5 空转，靠 Turn6 replan 才发对 upload）。本 case 守住 BrowserActionPolicy._postprocess guard：instruction 命中上传控件特征词（上传区域/点击上传/拖放/文件选择器）且含真实路径时，无论 LLM 输出 tap 还是 upload，经 guard 后必为 upload + file_path（路径从 instruction 提取、绝不编造）。确定性单测见 tests/test_browser_upload_guard.py。区别于上方 155232 case：那条 instruction 是正面 upload framing（『上传文件X到上传区域』），测 LLM 直接出 upload；本条是 tap framing，测 guard 纠偏。"
   }
 ]
