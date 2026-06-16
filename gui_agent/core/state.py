@@ -6,7 +6,6 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 from gui_agent.core.schemas import (
     MilestoneChecklistItem,
@@ -24,7 +23,7 @@ _RUNTIME_MILESTONE_KEYS = {
 }
 
 
-def strip_legacy_milestone_runtime_fields(milestones: list[dict]) -> None:
+def strip_milestone_runtime_fields(milestones: list[dict]) -> None:
     """Keep context.milestones as the static decomposition shape."""
     for ms in milestones:
         if isinstance(ms, dict):
@@ -58,10 +57,6 @@ def sync_context_run_state(
 ) -> None:
     run_state = run_state_from_result(result, output=output)
     context.run = run_state
-    context.output = run_state.output
-    context.stop_reason = run_state.stop_reason or None
-    context.run_status = run_state.status
-    context.goal_completed = run_state.goal_completed
 
 
 def write_final_run_state(context_path: Path, result: dict, output: str) -> None:
@@ -77,11 +72,8 @@ def write_final_run_state(context_path: Path, result: dict, output: str) -> None
         **existing_run,
         **run_state.model_dump(mode="json"),
     }
-    # Back-compat for existing report/output consumers and older tooling.
-    raw["output"] = run_state.output
-    raw["stop_reason"] = run_state.stop_reason
-    raw["run_status"] = run_state.status
-    raw["goal_completed"] = run_state.goal_completed
+    for key in ("output", "stop_reason", "run_status", "goal_completed"):
+        raw.pop(key, None)
     context_path.write_text(
         json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -189,33 +181,6 @@ def _update_checklist_from_checker(
                     item.evidence = [reason]
 
 
-def _snapshot_from_supervisor(supervisor: object) -> dict:
-    snapshot = getattr(supervisor, "runtime_state_snapshot", None)
-    if callable(snapshot):
-        data = snapshot()
-        return data if isinstance(data, dict) else {}
-
-    milestones: dict[str, dict[str, Any]] = {}
-    for mid, milestone in (getattr(supervisor, "_milestones", {}) or {}).items():
-        milestones[str(mid)] = {
-            "status": getattr(milestone, "status", None),
-            "retry_count": getattr(milestone, "retry_count", None),
-        }
-    done_checks: dict[str, dict] = {}
-    for mid, check in (getattr(supervisor, "_milestone_done_checks", {}) or {}).items():
-        if hasattr(check, "model_dump"):
-            done_checks[str(mid)] = check.model_dump(mode="json", exclude_none=True)
-        elif isinstance(check, dict):
-            done_checks[str(mid)] = dict(check)
-    return {
-        "milestones": milestones,
-        "done_checks": done_checks,
-        "last_page_identity": dict(getattr(supervisor, "_last_page_identity", {}) or {}),
-        "scroll_counts": dict(getattr(supervisor, "_scroll_counts", {}) or {}),
-        "progress_values": dict(getattr(supervisor, "_progress_values", {}) or {}),
-    }
-
-
 def _sync_orchestrator_milestone_states(context: PolicyContext) -> None:
     orchestrator = context.orchestrator if isinstance(context.orchestrator, dict) else {}
     run_log = orchestrator.get("run_log") or []
@@ -266,7 +231,9 @@ def sync_milestone_states(supervisor: object, context: PolicyContext) -> None:
             static_by_id[mid] = ms
             _milestone_state_for(context, mid)
 
-    snapshot = _snapshot_from_supervisor(supervisor)
+    snapshot = supervisor.runtime_state_snapshot()
+    if not isinstance(snapshot, dict):
+        snapshot = {}
     for mid, milestone_state in (snapshot.get("milestones") or {}).items():
         state = _milestone_state_for(context, str(mid))
         status = milestone_state.get("status") if isinstance(milestone_state, dict) else None
@@ -327,4 +294,4 @@ def sync_milestone_states(supervisor: object, context: PolicyContext) -> None:
             state.collection_scope = sv.collection_scope
 
     _sync_orchestrator_milestone_states(context)
-    strip_legacy_milestone_runtime_fields(context.milestones)
+    strip_milestone_runtime_fields(context.milestones)

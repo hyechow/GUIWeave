@@ -1028,10 +1028,6 @@ class RunnerReportBuilder:
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
         milestone_states = ctx.get("milestone_states") if isinstance(ctx.get("milestone_states"), dict) else {}
-        milestone_runtime_keys = (
-            "status", "retry_count", "done_check", "checklist", "reads",
-            "last_summary", "last_turn_index", "pre_existing", "collection_summary",
-        )
         # Title is the user's ORIGINAL input; the resolved goal is shown as provenance.
         # Old logs without raw_input fall back to the goal.
         data.raw_input = ctx.get("raw_input") or ""
@@ -1039,10 +1035,10 @@ class RunnerReportBuilder:
         data.router = ctx.get("router") or {}
         data.platform = ctx.get("platform") or ""
         run_state = ctx.get("run") or {}
-        data.output = run_state.get("output") or ctx.get("output") or ""
-        data.stop_reason = run_state.get("stop_reason") or ctx.get("stop_reason") or ""
-        data.run_status = run_state.get("status") or ctx.get("run_status") or ""
-        data.goal_completed = bool(run_state.get("goal_completed", ctx.get("goal_completed", False)))
+        data.output = run_state.get("output") or ""
+        data.stop_reason = run_state.get("stop_reason") or ""
+        data.run_status = run_state.get("status") or ""
+        data.goal_completed = bool(run_state.get("goal_completed", False))
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
         data.wall_clock_s = ctx.get("wall_clock_s") or 0.0
@@ -1152,12 +1148,15 @@ class RunnerReportBuilder:
         for ms in ctx.get("milestones", []):
             mid = ms.get("id", "")
             state = milestone_states.get(mid) if mid else None
-            runtime = state if isinstance(state, dict) else ms
             merged = dict(ms)
-            for key in milestone_runtime_keys:
-                value = runtime.get(key)
-                if value not in (None, "", [], {}):
-                    merged[key] = value
+            if isinstance(state, dict):
+                for key in (
+                    "status", "retry_count", "done_check", "checklist", "reads",
+                    "last_summary", "last_turn_index", "pre_existing", "collection_summary",
+                ):
+                    value = state.get(key)
+                    if value not in (None, "", [], {}):
+                        merged[key] = value
             ms_lookup[mid] = merged
 
 

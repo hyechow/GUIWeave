@@ -48,6 +48,9 @@ class SimpleSupervisorPolicy:
 
     name = "simple"
 
+    def runtime_state_snapshot(self) -> dict:
+        return {}
+
     def step(
         self,
         observation: Observation,

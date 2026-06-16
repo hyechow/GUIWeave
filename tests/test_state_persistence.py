@@ -1,7 +1,8 @@
+import json
 from types import SimpleNamespace
 
 from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn, SupervisorStep
-from gui_agent.core.state import sync_milestone_states
+from gui_agent.core.state import sync_milestone_states, write_final_run_state
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from scripts.report_builder import RunnerReportBuilder, generate_html
@@ -17,7 +18,7 @@ def _context(**extra) -> PolicyContext:
     return PolicyContext.model_validate(data)
 
 
-def test_policy_context_hydrates_legacy_milestone_runtime_state():
+def test_policy_context_strips_runtime_fields_from_static_milestones():
     ctx = _context(
         milestones=[
             {
@@ -33,14 +34,12 @@ def test_policy_context_hydrates_legacy_milestone_runtime_state():
         ],
     )
 
-    state = ctx.milestone_states["m1"]
-    assert state.status == "done"
-    assert state.retry_count == 1
-    assert state.done_check["reason"] == "已在目标页"
     assert "done_check" not in ctx.milestones[0]
+    assert "status" not in ctx.milestones[0]
+    assert "retry_count" not in ctx.milestones[0]
 
 
-def test_runner_syncs_structured_and_legacy_milestone_state():
+def test_runner_syncs_milestone_state_from_supervisor_snapshot():
     milestone = Milestone(
         id="m1",
         name="打开页面",
@@ -55,13 +54,13 @@ def test_runner_syncs_structured_and_legacy_milestone_state():
         reason="已在目标页",
         summary="目标页",
     )
-    supervisor = SimpleNamespace(
-        _milestones={"m1": milestone},
-        _milestone_done_checks={"m1": check},
-        _last_page_identity={"m1": "目标页"},
-        _scroll_counts={"m1": 3},
-        _progress_values={"m1": ["1", "2"]},
-    )
+    supervisor = SimpleNamespace(runtime_state_snapshot=lambda: {
+        "milestones": {"m1": {"status": milestone.status, "retry_count": milestone.retry_count}},
+        "done_checks": {"m1": check.model_dump(mode="json", exclude_none=True)},
+        "last_page_identity": {"m1": "目标页"},
+        "scroll_counts": {"m1": 3},
+        "progress_values": {"m1": ["1", "2"]},
+    })
     turn = PolicyTurn(
         index=1,
         observation_source="screen",
@@ -144,12 +143,49 @@ def test_runner_updates_checklist_from_in_progress_checker():
         ],
     )
 
-    sync_milestone_states(SimpleNamespace(), ctx)
+    sync_milestone_states(SimpleNamespace(runtime_state_snapshot=lambda: {}), ctx)
 
     items = {item.text: item for item in ctx.milestone_states["m1"].checklist}
     assert items["名称和站点都已保存"].status == "pending"
     assert items["名称和站点都已保存"].evidence == ["名称 lucas 已显示"]
     assert items["站点未选择 s10"].status == "pending"
+
+
+def test_write_final_run_state_writes_only_structured_run(tmp_path):
+    path = tmp_path / "context.json"
+    path.write_text(
+        json.dumps(
+            {
+                "goal": "goal",
+                "supervisor_policy_name": "milestone",
+                "action_policy_name": "action",
+                "turns": [],
+                "output": "old",
+                "stop_reason": "old",
+                "run_status": "stopped",
+                "goal_completed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    write_final_run_state(
+        path,
+        {"stop_reason": "用户按 ESC 中止 agent-loop", "goal_completed": False},
+        "已中止",
+    )
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["run"] == {
+        "status": "interrupted",
+        "stop_reason": "用户按 ESC 中止 agent-loop",
+        "goal_completed": False,
+        "output": "已中止",
+    }
+    assert "output" not in data
+    assert "stop_reason" not in data
+    assert "run_status" not in data
+    assert "goal_completed" not in data
 
 
 def test_milestone_supervisor_exposes_runtime_state_snapshot():

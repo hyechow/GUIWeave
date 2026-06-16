@@ -17,3 +17,7 @@ class SupervisorPolicy(Protocol):
         history: list[PolicyTurn],
     ) -> SupervisorStep:
         """Given current screen, goal, and full history, decide what to do next."""
+
+    def runtime_state_snapshot(self) -> dict:
+        """Return supervisor-owned runtime state for persistence."""
+        ...

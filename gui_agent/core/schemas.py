@@ -504,13 +504,6 @@ class PolicyContext(BaseModel):
     content_notes: list[str] = Field(default_factory=list)
     content_note_hashes: list[str] = Field(default_factory=list)
     run: RunState = Field(default_factory=RunState, description="本次运行的结构化状态")
-    output: Optional[str] = None
-    stop_reason: Optional[str] = Field(default=None, description="本次运行的最终停止原因")
-    run_status: Optional[RunStatus] = Field(
-        default=None,
-        description="本次运行的最终状态：completed=目标完成，interrupted=用户中止，stopped=未完成停止",
-    )
-    goal_completed: Optional[bool] = Field(default=None, description="本次运行是否确认完成用户目标")
     milestones: list[dict] = Field(
         default_factory=list,
         description="静态子目标分解结果 [{id, name, description, kind, success_condition}]",
@@ -538,45 +531,10 @@ class PolicyContext(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _sync_run_state_compat(self) -> "PolicyContext":
-        """Keep structured state and legacy flat fields in sync."""
-        if self.output is not None and self.run.output is None:
-            self.run.output = self.output
-        if self.stop_reason and not self.run.stop_reason:
-            self.run.stop_reason = self.stop_reason
-        if self.run_status and self.run.status is None:
-            self.run.status = self.run_status
-        if self.goal_completed is not None and not self.run.goal_completed:
-            self.run.goal_completed = self.goal_completed
-
-        self.output = self.run.output
-        self.stop_reason = self.run.stop_reason or None
-        self.run_status = self.run.status
-        self.goal_completed = self.run.goal_completed
-
+    def _strip_runtime_fields_from_milestones(self) -> "PolicyContext":
+        """Keep static decomposition separate from runtime milestone state."""
         for ms in self.milestones:
             if not isinstance(ms, dict):
-                continue
-            mid = str(ms.get("id") or "")
-            if not mid:
-                continue
-            state = self.milestone_states.get(mid)
-            if state is None:
-                legacy_state: dict = {"id": mid}
-                if ms.get("status") in {"pending", "running", "done", "failed"}:
-                    legacy_state["status"] = ms.get("status")
-                if isinstance(ms.get("retry_count"), int):
-                    legacy_state["retry_count"] = ms.get("retry_count")
-                if isinstance(ms.get("done_check"), dict):
-                    legacy_state["done_check"] = ms.get("done_check")
-                if isinstance(ms.get("checklist"), list):
-                    legacy_state["checklist"] = ms.get("checklist")
-                if isinstance(ms.get("reads"), dict):
-                    legacy_state["reads"] = ms.get("reads")
-                if len(legacy_state) > 1:
-                    state = MilestoneState.model_validate(legacy_state)
-                    self.milestone_states[mid] = state
-            if state is None:
                 continue
             for key in ("status", "retry_count", "done_check", "checklist", "reads"):
                 ms.pop(key, None)

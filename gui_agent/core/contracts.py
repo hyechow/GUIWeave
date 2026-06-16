@@ -299,18 +299,10 @@ class ActionPolicy(Protocol):
 class SupervisorPolicy(Protocol):
     """Supervises task execution: observe history, decide whether/what to do next.
 
-    Platform-neutral. The single core-required surface is ``step()``; ``name``
-    is a class attribute used for the registry / logging. Both
-    ``SimpleSupervisorPolicy`` and ``MilestoneSupervisorPolicy`` satisfy this
-    structurally with zero changes (this is exactly the shape already in
-    supervisor/base.py).
-
-    Deliberately EXCLUDED so ``SimpleSupervisorPolicy`` still conforms (core
-    only touches these behind ``hasattr`` / ``getattr``):
-    ``set_app_knowledge()`` and the ``task_type`` attribute (MilestoneSupervisor
-    only), plus every private field core reads for logging
-    (``_last_check`` / ``_last_plan`` / ``_milestones`` / ``_timings`` / ...).
-    See ``KnowledgeAwareSupervisor`` for the optional extension.
+    Platform-neutral. ``name`` is a class attribute used for the registry/logging;
+    ``step()`` drives decisions; ``runtime_state_snapshot()`` is the public
+    persistence surface for supervisor-owned runtime state. Optional richer
+    integrations stay in separate protocols such as ``KnowledgeAwareSupervisor``.
     """
 
     name: str
@@ -322,6 +314,10 @@ class SupervisorPolicy(Protocol):
         history: list[PolicyTurn],
     ) -> SupervisorStep:
         """Given current screen, goal, and full history, decide what to do next."""
+        ...
+
+    def runtime_state_snapshot(self) -> dict:
+        """Return supervisor-owned runtime state for persistence."""
         ...
 
 
