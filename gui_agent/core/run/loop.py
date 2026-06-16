@@ -973,6 +973,20 @@ def run_agent_loop(
                         _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
                         return _finish(_make_result(context, f"连续 {noop_count} 轮无动作"))
                     continue
+                # An action was produced but its execution failed — e.g. upload clicked a
+                # control that doesn't open a file chooser (log 20260616_220712 Turn4: the
+                # upload landed on the 导入地图文件 button, which opens a page modal, not the
+                # native chooser; device.upload_file then timed out waiting for one). This is
+                # the same "tried but didn't land" class as a tap's no-effect, so replan
+                # instead of halting. Only a genuinely empty action halts outright. Bounded by
+                # the noop_count>=3 stop below + max_turns, so it can't loop forever.
+                if action_decision is not None and getattr(action_decision, "action", None) is not None:
+                    noop_count += 1
+                    if noop_count >= 3:
+                        _say(f"\n连续 {noop_count} 轮动作执行失败，agent-loop 停止")
+                        return _finish(_make_result(context, f"连续 {noop_count} 轮动作执行失败"))
+                    _say("动作执行失败，进入下一轮重新规划")
+                    continue
                 return _finish(_make_result(context, "动作未执行，agent-loop 停止"))
 
             if sv_step.milestone_id != prev_milestone_id:
