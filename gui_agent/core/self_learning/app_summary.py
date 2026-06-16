@@ -296,6 +296,65 @@ def list_known_apps(platform: str = "iphone") -> list[str]:
     return sorted(d.name for d in platform_dir.iterdir() if d.is_dir() and any(d.glob("*.md")))
 
 
+def load_app_dir(d: Path) -> AppKnowledge | None:
+    """Load an app's knowledge (nav + overlays + sections) from its dir, or None if no _app.md.
+
+    Shared by goal-substring discovery (``auto_discover_knowledge``) and exact-name binding
+    (``load_knowledge_for_app``, used by the WebArena entry where the intent never names the
+    site). Pins the hand-maintained _-prefixed overlays ABOVE the distilled nav (they survive
+    re-ingest and aren't loaded as retrievable sections):
+      _deploy.md — environment/access facts (entry URL, host, creds): where/how to reach this
+                   instance. Per-instance config; overrides nothing.
+      _update.md — current-version updates over the (older) distilled base. On conflict the agent
+                   trusts these and the live UI. Folded back into the base on re-distill.
+    """
+    nav_path = d / "_app.md"
+    if not nav_path.exists():
+        return None
+    nav = nav_path.read_text(encoding="utf-8").strip()
+    channels: dict[str, int] = {}  # overlay file stem → char count (for the report)
+    overlays = []
+    for overlay_name in ("_deploy.md", "_update.md"):
+        overlay_path = d / overlay_name
+        if overlay_path.exists():
+            text = overlay_path.read_text(encoding="utf-8").strip()
+            channels[overlay_name[:-3]] = len(text)
+            if text:
+                overlays.append(text)
+    if overlays:
+        nav = "\n\n".join(overlays + [nav])
+    # Reusable multi-step orchestrations (skills): appended after the nav so the decomposer sees
+    # both the layout and the workflows. Hand-maintained, _-prefixed (not a retrievable section).
+    skill_path = d / "_skill.md"
+    if skill_path.exists():
+        skill = skill_path.read_text(encoding="utf-8").strip()
+        channels["_skill"] = len(skill)
+        if skill:
+            for issue in validate_skill_doc(skill):
+                print(f"  [Skill] ⚠️ {issue}")
+            nav = f"{nav}\n\n{skill}"
+    elements_path = d / "_elements.md"
+    elements = elements_path.read_text(encoding="utf-8").strip() if elements_path.exists() else ""
+    check_path = d / "_check.md"
+    check = check_path.read_text(encoding="utf-8").strip() if check_path.exists() else ""
+    if check_path.exists():
+        channels["_check"] = len(check)
+    # Per-section page files (excludes _app.md/_elements.md) → progressive-load bodies.
+    sections = {stem: body for stem, body in load_page_files(d)}
+    return AppKnowledge(navigation=nav, elements=elements, app_name=d.name,
+                        sections=sections, check=check, overlays=channels)
+
+
+def load_knowledge_for_app(app: str, platform: str = "browser") -> AppKnowledge | None:
+    """Load knowledge by EXACT app/dir name (no goal-substring match).
+
+    The WebArena entry binds knowledge by the task's ``sites`` tag — the intent never names the
+    site — so it needs a direct loader keyed on ``knowledge/<platform>/<app>/`` rather than
+    ``auto_discover_knowledge``'s substring match against the goal text."""
+    d = KNOWLEDGE_DIR / platform / app
+    return load_app_dir(d) if d.is_dir() else None
+
+
 def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge | None:
     """Match goal against knowledge/<platform>/<app>/ dir names and load both layers.
 
@@ -338,52 +397,9 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
             canonical = _APP_ALIASES.get(name, name)
             print(f"  [Knowledge] 识别到应用「{canonical}」，但暂无知识库")
             return AppKnowledge(navigation="", elements="", app_name=canonical)
-        nav_path = d / "_app.md"
-        elements_path = d / "_elements.md"
-        if nav_path.exists():
-            nav = nav_path.read_text(encoding="utf-8").strip()
-            # Hand-maintained _-prefixed overlays pinned ABOVE the distilled nav (they survive
-            # re-ingest and aren't loaded as retrievable sections):
-            #   _deploy.md — environment/access facts (entry URL, host, creds): where/how to reach
-            #                this instance. Per-instance config; overrides nothing.
-            #   _update.md — current-version updates over the (older) distilled base. On conflict
-            #                the agent trusts these and the live UI. Dated, grows as the UI drifts;
-            #                folded back into the base when the app is re-distilled from live recon.
-            channels: dict[str, int] = {}  # overlay file stem → char count (for the report)
-            overlays = []
-            for overlay_name in ("_deploy.md", "_update.md"):
-                overlay_path = d / overlay_name
-                if overlay_path.exists():
-                    text = overlay_path.read_text(encoding="utf-8").strip()
-                    channels[overlay_name[:-3]] = len(text)
-                    if text:
-                        overlays.append(text)
-            if overlays:
-                nav = "\n\n".join(overlays + [nav])
-            # Reusable multi-step orchestrations (skills): when the goal matches a registered
-            # skill the decomposer follows its ordered steps. Hand-maintained, _-prefixed (so it
-            # survives re-ingest and isn't loaded as a retrievable section), appended after the
-            # nav structure so the decomposer sees both the layout and the workflows.
-            skill_path = d / "_skill.md"
-            if skill_path.exists():
-                skill = skill_path.read_text(encoding="utf-8").strip()
-                channels["_skill"] = len(skill)
-                if skill:
-                    for issue in validate_skill_doc(skill):
-                        print(f"  [Skill] ⚠️ {issue}")
-                    nav = f"{nav}\n\n{skill}"
-            elements = (
-                elements_path.read_text(encoding="utf-8").strip()
-                if elements_path.exists() else ""
-            )
-            check_path = d / "_check.md"
-            check = check_path.read_text(encoding="utf-8").strip() if check_path.exists() else ""
-            if check_path.exists():
-                channels["_check"] = len(check)
-            # Per-section page files (excludes _app.md/_elements.md) → progressive-load bodies.
-            sections = {stem: body for stem, body in load_page_files(d)}
-            return AppKnowledge(navigation=nav, elements=elements, app_name=d.name,
-                                sections=sections, check=check, overlays=channels)
+        knowledge = load_app_dir(d)
+        if knowledge is not None:
+            return knowledge
         # Directory exists but no knowledge file yet
         print(f"  [Knowledge] 识别到应用「{d.name}」，目录存在但暂无知识文件")
         return AppKnowledge(navigation="", elements="", app_name=d.name)

@@ -148,6 +148,28 @@ def main() -> int:
 
     action_policy = build_policy("browser_vision")
     supervisor = build_supervisor("milestone")
+    # Bind app knowledge by the task's `sites` tag. The runner discovers knowledge by matching the
+    # app name as a substring of the goal, but a WebArena intent never names its site — so we bind
+    # directly on the site tag, which maps to knowledge/browser/<site>/ when a base exists.
+    from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
+
+    for site in (task.get("sites") or []):
+        knowledge = load_knowledge_for_app(site, "browser")
+        if knowledge and knowledge.navigation and hasattr(supervisor, "set_app_knowledge"):
+            supervisor.set_app_knowledge(
+                knowledge.navigation,
+                app_name=knowledge.app_name,
+                elements=knowledge.elements,
+                sections=knowledge.sections,
+                check=knowledge.check,
+            )
+            s = knowledge.summary()
+            print(f"[webarena] knowledge: bound site={site} "
+                  f"(nav={s['nav_chars']} chars, sections={s['section_count']})")
+            break
+    else:
+        if task.get("sites"):
+            print(f"[webarena] knowledge: none for sites={task.get('sites')} — running bare")
     # Translucent status HUD over the Chrome window (None when --hud absent). The
     # agent loop repositions it onto the exact CDP window rect once connected.
     hud = build_platform().make_status_reporter(args.hud)
