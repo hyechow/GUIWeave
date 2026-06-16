@@ -38,6 +38,7 @@ from gui_agent.core.orchestrator.program import Program  # DSL orchestrator mode
 from gui_agent.core.target_verify import verify_target
 from gui_agent.core.schemas import (
     ActionDecision,
+    MilestoneChecklistItem,
     MilestoneState,
     PolicyContext,
     PolicyTurn,
@@ -392,6 +393,104 @@ def _sync_legacy_milestone_fields(context: "PolicyContext") -> None:
             ms["reads"] = dict(state.reads)
 
 
+def _checklist_item_id(prefix: str, text: str) -> str:
+    normalized = re.sub(r"\s+", "", text.strip().lower())
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:10]
+    return f"{prefix}-{digest}"
+
+
+def _success_checklist_texts(success_condition: str, fallback: str = "") -> list[str]:
+    source = (success_condition or fallback or "完成当前子目标").strip()
+    parts = [p.strip(" \t\r\n-•*") for p in re.split(r"[\n;；]+", source)]
+    parts = [p for p in parts if p]
+    return parts[:8] or [source]
+
+
+def _upsert_checklist_item(
+    state: MilestoneState,
+    *,
+    item_id: str,
+    text: str,
+    status: str,
+    evidence: list[str] | None = None,
+    source: str,
+) -> None:
+    item = next((i for i in state.checklist if i.id == item_id), None)
+    clean_evidence = [e for e in (evidence or []) if e]
+    if item is None:
+        state.checklist.append(
+            MilestoneChecklistItem(
+                id=item_id,
+                text=text,
+                status=status,  # type: ignore[arg-type]
+                evidence=clean_evidence,
+                source=source,
+            )
+        )
+        return
+    item.text = text
+    if item.status == "done" and status != "done":
+        status = "done"
+    item.status = status  # type: ignore[assignment]
+    if clean_evidence:
+        item.evidence = clean_evidence
+    item.source = source
+
+
+def _update_checklist_from_checker(
+    state: MilestoneState,
+    *,
+    success_condition: str,
+    fallback: str,
+    checker: dict,
+) -> None:
+    """Derive milestone checklist state from the checker contract.
+
+    The checker already owns acceptance judgment through status/reason/evidence.
+    Keeping checklist derivation here avoids expanding the LLM output contract.
+    """
+    status = str(checker.get("status") or "")
+    reason = str(checker.get("reason") or "")
+    visible = [str(v) for v in (checker.get("visible_evidence") or []) if str(v)]
+    missing = [str(v) for v in (checker.get("missing_evidence") or []) if str(v)]
+
+    if status == "done":
+        item_status = "done"
+    elif status == "stuck":
+        item_status = "blocked"
+    else:
+        item_status = "pending"
+
+    evidence = visible or ([reason] if reason else [])
+    for text in _success_checklist_texts(success_condition, fallback):
+        _upsert_checklist_item(
+            state,
+            item_id=_checklist_item_id("accept", text),
+            text=text,
+            status=item_status,
+            evidence=evidence,
+            source="checker:success_condition",
+        )
+
+    missing_status = "blocked" if status == "stuck" else "pending"
+    for text in missing[:8]:
+        _upsert_checklist_item(
+            state,
+            item_id=_checklist_item_id("missing", text),
+            text=text,
+            status=missing_status,
+            evidence=[reason] if reason else [],
+            source="checker:missing_evidence",
+        )
+
+    if status == "done":
+        for item in state.checklist:
+            if item.source == "checker:missing_evidence" and item.status != "done":
+                item.status = "done"
+                if reason:
+                    item.evidence = [reason]
+
+
 def _sync_orchestrator_milestone_states(context: "PolicyContext") -> None:
     orchestrator = context.orchestrator if isinstance(context.orchestrator, dict) else {}
     run_log = orchestrator.get("run_log") or []
@@ -439,9 +538,11 @@ def _sync_milestone_states(supervisor: object, context: "PolicyContext") -> None
     context.milestones remains the static decomposition list. We still mirror the
     legacy runtime fields there for old reports/tools until those consumers move.
     """
+    static_by_id: dict[str, dict] = {}
     for ms in context.milestones:
         mid = str(ms.get("id") or "")
         if mid:
+            static_by_id[mid] = ms
             _milestone_state_for(context, mid)
 
     milestones: dict = getattr(supervisor, "_milestones", {}) or {}
@@ -461,6 +562,14 @@ def _sync_milestone_states(supervisor: object, context: "PolicyContext") -> None
             state.done_check = check.model_dump(mode="json", exclude_none=True)
         elif isinstance(check, dict):
             state.done_check = dict(check)
+        ms = static_by_id.get(str(mid), {})
+        if state.done_check:
+            _update_checklist_from_checker(
+                state,
+                success_condition=str(ms.get("success_condition") or ""),
+                fallback=str(ms.get("name") or mid),
+                checker=state.done_check,
+            )
 
     for mid, page_identity in (getattr(supervisor, "_last_page_identity", {}) or {}).items():
         state = _milestone_state_for(context, str(mid))
@@ -484,6 +593,14 @@ def _sync_milestone_states(supervisor: object, context: "PolicyContext") -> None
         state.last_summary = sv.summary or state.last_summary
         if turn.read_note_hash and turn.read_note_hash not in state.note_hashes:
             state.note_hashes.append(turn.read_note_hash)
+        ms = static_by_id.get(mid, {})
+        if turn.checker:
+            _update_checklist_from_checker(
+                state,
+                success_condition=str(ms.get("success_condition") or ""),
+                fallback=str(ms.get("name") or mid),
+                checker=turn.checker,
+            )
         if sv.pre_existing:
             state.pre_existing = True
         if sv.collection_summary:

@@ -450,6 +450,7 @@ class ReportPage:
     milestone_name: str = ""
     milestone_description: str = ""
     success_condition: str = ""
+    checklist: list[dict] = field(default_factory=list)
     verify_url: str = ""  # verification screenshot (first turn of next milestone)
     verify_checker: dict = field(default_factory=dict)  # checker result from the last turn (done/in_progress)
 
@@ -1186,6 +1187,7 @@ class RunnerReportBuilder:
                         milestone_name=ms_meta.get("name", ""),
                         milestone_description=ms_meta.get("description", ""),
                         success_condition=ms_meta.get("success_condition", ""),
+                        checklist=ms_meta.get("checklist", []) or [],
                     ))
                 current_mid = mid
                 current_page_steps = []
@@ -1201,6 +1203,7 @@ class RunnerReportBuilder:
                 milestone_name=ms_meta.get("name", ""),
                 milestone_description=ms_meta.get("description", ""),
                 success_condition=ms_meta.get("success_condition", ""),
+                checklist=ms_meta.get("checklist", []) or [],
             ))
 
         # Build milestones summary
@@ -2015,6 +2018,15 @@ HTML_TEMPLATE = """\
   .milestone-name {{ font-size: 13px; color: var(--text); }}
   .milestone-desc {{ font-size: 11px; color: var(--muted); width: 100%; }}
   .milestone-sc {{ font-size: 10px; color: #94a3b8; width: 100%; }}
+  .milestone-checklist {{ width:100%; display:flex; flex-direction:column; gap:4px; margin-top:2px; }}
+  .milestone-check {{ display:flex; align-items:flex-start; gap:6px; font-size:11px; line-height:1.35; color:#475569; }}
+  .milestone-check-mark {{ display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; font-size:10px; font-weight:700; flex:0 0 auto; margin-top:0; }}
+  .milestone-check-text {{ word-break:break-word; }}
+  .milestone-check-evidence {{ color:#94a3b8; margin-left:6px; }}
+  .milestone-check-done .milestone-check-mark {{ background:#dcfce7; color:#166534; }}
+  .milestone-check-pending .milestone-check-mark {{ background:#e0f2fe; color:#0369a1; }}
+  .milestone-check-blocked .milestone-check-mark {{ background:#fee2e2; color:#991b1b; }}
+  .milestone-check-skipped .milestone-check-mark {{ background:#f1f5f9; color:#64748b; }}
   .milestone-badge {{ font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 500; }}
   .milestone-badge-navigation {{ background: #dbeafe; color: #1d4ed8; }}
   .milestone-badge-action {{ background: #fef3c7; color: #92400e; }}
@@ -2685,6 +2697,29 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
     outline_html = "".join(outline_parts) or '<div class="sidebar-empty">无子目标</div>'
 
+    def _render_checklist(items: list[dict]) -> str:
+        if not items:
+            return ""
+        marks = {"done": "✓", "pending": "·", "blocked": "!", "skipped": "-"}
+        rows = []
+        for item in items[:10]:
+            status = str(item.get("status") or "pending")
+            if status not in marks:
+                status = "pending"
+            evidence = item.get("evidence") or []
+            evidence_text = str(evidence[0]) if evidence else ""
+            evidence_html = (
+                f'<span class="milestone-check-evidence">{_safe(evidence_text)}</span>'
+                if evidence_text else ""
+            )
+            rows.append(
+                f'<div class="milestone-check milestone-check-{status}">'
+                f'<span class="milestone-check-mark">{marks[status]}</span>'
+                f'<span class="milestone-check-text">{_safe(str(item.get("text") or ""))}{evidence_html}</span>'
+                f'</div>'
+            )
+        return f'<div class="milestone-checklist">{"".join(rows)}</div>'
+
     # Per-milestone sections
     pages_html = ""
     prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
@@ -2736,6 +2771,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
 
         desc_html = f'<div class="milestone-desc">{_safe(page.milestone_description)}</div>' if page.milestone_description else ""
         sc_html = f'<div class="milestone-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
+        checklist_html = _render_checklist(page.checklist)
         verify_thumb = ""
         verify_detail = ""
         if page.verify_url:
@@ -2783,6 +2819,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             <span class="milestone-time">{ms_time:.1f}s · {len(page.steps)} turns{ms_tok_html}</span>
             {desc_html}
             {sc_html}
+            {checklist_html}
           </div>
           <div class="gallery">{thumbs_html}{verify_thumb}</div>
           {details_html}
