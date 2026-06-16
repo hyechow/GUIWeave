@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import unicodedata
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,46 @@ from gui_agent.core.self_learning.app_summary import (
     AppKnowledge,
     generate_summary,
 )
+
+_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+
+def split_markdown_sections(text: str) -> list[tuple[str, str]]:
+    """Split a markdown manual into (title, body) sections at its shallowest recurring heading.
+
+    A textual manual is ONE blob, but the runtime wants per-section page files (like the PDF path
+    and RoboTeam) so KnowledgeSelector can progressively load only the relevant section. We split
+    at the **shallowest heading level that occurs ≥2 times**: a single-H1-title + H2-chapters manual
+    splits on H2; a concatenation of docs each owning an H1 splits on H1. Content before the first
+    boundary heading is the manual's title/intro (not a retrievable section) and is dropped. Empty
+    sections are dropped. No headings at all → the whole text becomes one section.
+    """
+    lines = text.splitlines()
+    counts: dict[int, int] = {}
+    for ln in lines:
+        m = _HEADING.match(ln)
+        if m:
+            counts[len(m.group(1))] = counts.get(len(m.group(1)), 0) + 1
+    if not counts:
+        return [("manual", text.strip())] if text.strip() else []
+    recurring = [lvl for lvl in sorted(counts) if counts[lvl] >= 2]
+    split_lvl = recurring[0] if recurring else sorted(counts)[0]
+
+    sections: list[tuple[str, str]] = []
+    title: Optional[str] = None
+    body: list[str] = []
+    for ln in lines:
+        m = _HEADING.match(ln)
+        if m and len(m.group(1)) == split_lvl:
+            if title is not None:
+                sections.append((title, "\n".join(body).strip()))
+            title, body = m.group(2).strip(), []
+        elif title is not None:
+            body.append(ln)
+        # else: preamble before the first boundary heading → dropped
+    if title is not None:
+        sections.append((title, "\n".join(body).strip()))
+    return [(t, b) for t, b in sections if b]
 
 
 def load_manual_text(path: Path) -> str:
@@ -99,23 +140,41 @@ def ingest_manual(
         if n == 0:
             raise ValueError(f"未从 {manual_path.name} 解析出任何编号小节(检查手册是否带 N.N 编号大纲)")
         print(f"  得到 {n} 个小节页知识 → {app_dir}")
-
-        # 顺产检索描述:每节生成一行 when:(何时查阅)frontmatter,供 KnowledgeSelector 清单
-        # 做同物异名桥接(标题字面与任务用词不一致时,纯标题清单会选错章节)。
-        from gui_agent.core.self_learning.gen_when import generate_for_app
-
-        generate_for_app(app, platform)
     elif suffix in (".md", ".markdown", ".txt"):
+        # Markdown/txt manuals are split into per-section page files (heading-delimited) so they
+        # feed the same per-section progressive-load path as the PDF flow and RoboTeam — NOT a
+        # single monolithic blob (which would defeat KnowledgeSelector).
+        from gui_agent.core.self_learning.manual_pdf import _safe_name
+
         text = load_manual_text(manual_path)
         if not text:
             raise ValueError(f"未能从 {manual_path.name} 读到文字")
-        (app_dir / "manual.md").write_text(text, encoding="utf-8")
-        print(f"文本手册 {manual_path.name} ({len(text)} 字) → manual.md")
+        sections = split_markdown_sections(text)
+        if not sections:
+            raise ValueError(f"未从 {manual_path.name} 切出任何章节(检查手册是否有 Markdown 标题)")
+        used: set[str] = set()
+        for title, body in sections:
+            name = _safe_name(title)
+            if name in used:  # 重名兜底(标题撞名),加序号区分
+                k = 2
+                while f"{name}_{k}" in used:
+                    k += 1
+                name = f"{name}_{k}"
+            used.add(name)
+            (app_dir / f"{name}.md").write_text(f"# {title}\n\n{body}", encoding="utf-8")
+        print(f"文本手册 {manual_path.name} ({len(text)} 字) → {len(sections)} 个章节页知识 → {app_dir}")
     else:
         raise ValueError(f"不支持的手册格式: {suffix}(支持 .pdf / .md / .txt)")
 
-    # 复用既有归约:每页知识 → _app.md(导航层)+ _elements.md(元素层)
-    return generate_summary(app, platform)
+    # 顺产检索描述:每节生成一行 when:(何时查阅)frontmatter,供 KnowledgeSelector 清单做同物异名
+    # 桥接(标题字面与任务用词不一致时,纯标题清单会选错章节)。两条路径都产章节,统一在此生成。
+    from gui_agent.core.self_learning.gen_when import generate_for_app
+
+    generate_for_app(app, platform)
+
+    # 复用既有归约:每页知识 → _app.md(导航层)。章节文件已是 progressive 检索的主体,_elements.md
+    # 仅作无章节时的回退,手册摄入恒产章节,故跳过(省一次 LLM 归约,且与 RoboTeam 形态一致)。
+    return generate_summary(app, platform, make_elements=False)
 
 
 def main() -> None:

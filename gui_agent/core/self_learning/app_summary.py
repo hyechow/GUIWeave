@@ -233,8 +233,14 @@ def build_elements_summary(app: str, pages: list[tuple[str, str]]) -> str:
     )
 
 
-def generate_summary(app: str, platform: str = "iphone") -> AppKnowledge:
-    """Generate _app.md and _elements.md for the given app (under knowledge/<platform>/)."""
+def generate_summary(app: str, platform: str = "iphone", make_elements: bool = True) -> AppKnowledge:
+    """Generate _app.md (+ optionally _elements.md) for the given app (under knowledge/<platform>/).
+
+    ``_elements.md`` is the Planner's element-detail blob, used ONLY as a fallback when no
+    per-section page files exist (the runtime prefers progressive per-section selection — see
+    ``policy.set_app_knowledge``). Manual ingestion always produces per-section files, so it passes
+    ``make_elements=False`` to skip the now-vestigial reduce (one fewer LLM call; mirrors RoboTeam,
+    which carries sections + _app.md and no _elements.md)."""
     app_dir = KNOWLEDGE_DIR / platform / app
     if not app_dir.is_dir():
         raise FileNotFoundError(f"Knowledge directory not found: {app_dir}")
@@ -243,19 +249,22 @@ def generate_summary(app: str, platform: str = "iphone") -> AppKnowledge:
     if not pages:
         raise ValueError(f"No page knowledge files found in {app_dir}")
 
-    print(f"  归约 {len(pages)} 个页知识 → 两层概览", flush=True)
+    steps = 2 if make_elements else 1
+    print(f"  归约 {len(pages)} 个页知识 → {'两层概览' if make_elements else '导航概览'}", flush=True)
 
-    print("  [1/2] 归约导航层 _app.md …", flush=True)
+    print(f"  [1/{steps}] 归约导航层 _app.md …", flush=True)
     nav = build_navigation_summary(app, pages)
     nav_path = app_dir / "_app.md"
     nav_path.write_text(nav, encoding="utf-8")
     print(f"        ✓ {nav_path.name} ({len(nav)} 字)", flush=True)
 
-    print("  [2/2] 归约元素层 _elements.md …", flush=True)
-    elements = build_elements_summary(app, pages)
-    elements_path = app_dir / "_elements.md"
-    elements_path.write_text(elements, encoding="utf-8")
-    print(f"        ✓ {elements_path.name} ({len(elements)} 字)", flush=True)
+    elements = ""
+    if make_elements:
+        print(f"  [2/{steps}] 归约元素层 _elements.md …", flush=True)
+        elements = build_elements_summary(app, pages)
+        elements_path = app_dir / "_elements.md"
+        elements_path.write_text(elements, encoding="utf-8")
+        print(f"        ✓ {elements_path.name} ({len(elements)} 字)", flush=True)
 
     return AppKnowledge(navigation=nav, elements=elements, app_name=app)
 
