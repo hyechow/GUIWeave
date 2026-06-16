@@ -138,8 +138,12 @@ _PRECONDITION_GATE_TMPL = (
     "显示对应的稳定标志（功能区/导航就位，与业务数据无关），"
     "而非只在未完成态才出现的中间界面（如登录表单）；"
     "初始若已满足则第一帧即判 done、直接跳过。"
-    "具体本应用的标志以验收知识（_check.md）为准。"
 )
+# NOTE: do not name `_check.md` (or any internal knowledge-overlay filename) in this
+# template — it is injected into the checker/supervisor prompt via milestone.success_condition,
+# so a literal filename leaks an internal concept into the LLM context for zero benefit (the LLM
+# can't open the file). The app-specific "what done looks like" content is delivered through the
+# separate checker-only channel (supervisor._check_knowledge), independent of this string.
 
 
 def _normalize_precondition_stmts(stmts: list[Stmt]) -> list[Stmt]:
