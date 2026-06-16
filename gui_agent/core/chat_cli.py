@@ -30,7 +30,7 @@ from rich.tree import Tree
 
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
 from gui_agent.core.factory import build_platform
-from gui_agent.core.run_io import TeeStream as _TeeStream
+from gui_agent.core.run.io import TeeStream as _TeeStream
 from gui_agent.core.runner import (
     build_policy,
     build_supervisor,

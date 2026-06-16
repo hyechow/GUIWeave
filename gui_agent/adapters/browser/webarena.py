@@ -129,7 +129,7 @@ def main() -> int:
     load_dotenv()
 
     from gui_agent.core.factory import build_platform
-    from gui_agent.core.run_io import create_run_dir
+    from gui_agent.core.run.io import create_run_dir
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
     from gui_agent.adapters.browser.har_recorder import HarRecorder
 

@@ -83,7 +83,7 @@ def run_app(app: str, depth: int = 0, sample: int = 0,
     app_log_dir = LOG_ROOT / app
     app_log_dir.mkdir(parents=True, exist_ok=True)
 
-    from gui_agent.core.run_io import tee_stdio
+    from gui_agent.core.run.io import tee_stdio
     with tee_stdio(app_log_dir):
         if hud:
             hud.update(f"侦察 {app}: 预加载模型…")

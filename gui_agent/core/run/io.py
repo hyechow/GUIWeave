@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO, Iterator
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 POLICY_LOG_ROOT = ROOT / "logs" / "gui_agent"
 
 
