@@ -96,15 +96,17 @@ def _font(size: int = FONT_SIZE):
 _REPORT_MAX_W = 640  # resize annotated images to this width before saving
 
 
-def _save_report_img(src: "Image.Image | bytes", path: Path, quality: int = 75) -> None:
-    """Save an image as JPEG to disk, resizing to _REPORT_MAX_W if wider."""
+def _save_report_img(src: "Image.Image | bytes", path: Path, quality: int = 75, max_w: int | None = _REPORT_MAX_W) -> None:
+    """Save an image as JPEG to disk, resizing to ``max_w`` if wider. ``max_w=None`` keeps full
+    resolution (used for zoom-grade annotated frames: the thumbnail stays downscaled, but the
+    click-to-zoom large image keeps BOTH full resolution AND the action annotation)."""
     if isinstance(src, bytes):
         img = Image.open(io.BytesIO(src)).convert("RGB")
     else:
         img = src.convert("RGB")
     w, h = img.size
-    if w > _REPORT_MAX_W:
-        img = img.resize((_REPORT_MAX_W, round(h * _REPORT_MAX_W / w)), Image.Resampling.LANCZOS)
+    if max_w and w > max_w:
+        img = img.resize((max_w, round(h * max_w / w)), Image.Resampling.LANCZOS)
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(path, format="JPEG", quality=quality, optimize=True)
 
@@ -150,6 +152,7 @@ _ACTION_COLORS_FULL: dict[str, tuple[int, int, int]] = {
     "home": (50, 120, 220),
     "press_enter": (220, 160, 0),
     "clear_text": (128, 128, 128),
+    "upload": (236, 72, 153),  # pink — distinct from tap(red)/type(violet) on the annotation
 }
 
 
@@ -420,7 +423,8 @@ class ReportStep:
     x: float | None   # 0-1000 normalized
     y: float | None
     description: str
-    annotated_before_url: str  # path to annotated screenshot
+    annotated_before_url: str  # path to annotated screenshot (downscaled thumbnail)
+    annotated_full_url: str = ""  # full-resolution annotated frame for click-to-zoom
     raw_screenshot_url: str = ""  # path to raw screenshot (no annotations)
     after_url: str | None = None      # screenshot after action
     status: str = ""  # ✓ ✗ ↩ ""
@@ -1107,10 +1111,18 @@ class RunnerReportBuilder:
                 ann_path = run_dir / f"screenshot_turn_{idx}_ann.jpg"
                 _save_report_img(annotated_img, ann_path)
                 annotated_url = ann_path.name
+                # Full-resolution annotated frame for click-to-zoom: the thumbnail uses the
+                # downscaled ann.jpg, but zoom shows the action marker at full size (previously
+                # zoom fell back to the raw screenshot and dropped the annotation).
+                full_ann_path = run_dir / f"screenshot_turn_{idx}_ann_full.jpg"
+                _save_report_img(annotated_img, full_ann_path, max_w=None)
+                annotated_full_url = full_ann_path.name
             elif ss_path.exists():
                 annotated_url = ss_path.name
+                annotated_full_url = ss_path.name  # no action coordinate → raw, unannotated
             else:
                 annotated_url = ""
+                annotated_full_url = ""
 
             raw_url = ss_path.name if ss_path.exists() else ""
 
@@ -1125,6 +1137,7 @@ class RunnerReportBuilder:
                 y=y,
                 description=desc or summary,
                 annotated_before_url=annotated_url,
+                annotated_full_url=annotated_full_url,
                 raw_screenshot_url=raw_url,
                 after_url=None,
                 status=status,
@@ -2074,6 +2087,9 @@ HTML_TEMPLATE = """\
   .at-scroll {{ background: #32b432; }} .at-drag {{ background: #3296dc; }}
   .at-home {{ background: #3278dc; }} .at-press_enter {{ background: #dca000; }}
   .at-clear_text {{ background: #808080; }} .at-none {{ background: #c0c0c0; }}
+  .at-upload {{ background: #ec4899; }} .at-navigate {{ background: #3b82f6; }}
+  .at-back {{ background: #6366f1; }} .at-new_tab {{ background: #14b8a6; }}
+  .at-select_tab {{ background: #f59e0b; }} .at-close_tab {{ background: #64748b; }}
 
   .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; justify-content: center; align-items: center; }}
   .modal.show {{ display: flex; }}
@@ -2205,6 +2221,10 @@ KIND_BADGE = {
 AT_LABELS = {
     "tap": "点击", "type": "输入", "scroll": "滚动", "drag": "拖动",
     "home": "主屏", "press_enter": "回车", "clear_text": "清空", "none": "跳过",
+    # browser-only actions — missing these left upload/nav/etc. thumbnails with empty
+    # labels (T4 · "") since the badge lookup falls back to "" (log 20260616_222207).
+    "upload": "上传", "navigate": "导航", "back": "后退",
+    "new_tab": "新标签页", "select_tab": "切标签页", "close_tab": "关标签页",
 }
 
 
@@ -2369,9 +2389,10 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
 
     ss_html = ""
     if step.annotated_before_url:
-        # Thumbnail shows the annotated (downscaled) frame; zoom opens the full-res raw screenshot
-        # so every frame — turns and the verification frame — pops up at the same large, sharp size.
-        zoom_src = step.raw_screenshot_url or step.annotated_before_url
+        # Thumbnail shows the annotated (downscaled) frame; zoom opens the FULL-RES ANNOTATED frame
+        # so the action marker stays visible at full size (previously zoom fell back to the raw
+        # screenshot and dropped the annotation — log 20260616_222207).
+        zoom_src = step.annotated_full_url or step.raw_screenshot_url or step.annotated_before_url
         ss_html = f'<div class="detail-ss"><img src="{step.annotated_before_url}" onclick="zoomImg(\'{zoom_src}\')" alt="Turn"></div>'
 
     # Absolute wall-clock time the action executed (PolicyTurn.timestamp, captured
