@@ -467,6 +467,9 @@ class ReportData:
     goal: str = ""       # resolved goal that drove the run
     router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
     output: str = ""     # final reply / 最终输出 of the run
+    stop_reason: str = ""  # run-level terminal reason from context.json
+    run_status: str = ""   # completed / interrupted / stopped
+    goal_completed: bool = False
     platform: str = ""   # run platform (iphone/browser); empty for old logs
     wall_clock_s: float = 0.0    # true end-to-end runner elapsed (context.wall_clock_s); 0 for old logs
     settle_s_total: float = 0.0  # Σ per-turn settle waits (post-action screen-settle)
@@ -1030,6 +1033,9 @@ class RunnerReportBuilder:
         data.router = ctx.get("router") or {}
         data.platform = ctx.get("platform") or ""
         data.output = ctx.get("output") or ""
+        data.stop_reason = ctx.get("stop_reason") or ""
+        data.run_status = ctx.get("run_status") or ""
+        data.goal_completed = bool(ctx.get("goal_completed", False))
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
         data.wall_clock_s = ctx.get("wall_clock_s") or 0.0
@@ -1942,9 +1948,21 @@ HTML_TEMPLATE = """\
   .prog-branch-else {{ border-left-color: #f87171; }}
   .prog-finish {{ align-self: flex-start; padding: 2px 9px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; color: #065f46; }}
 
+  /* Run status badge */
+  .run-status-badge {{ position:relative; display:inline-block; margin-left:8px; padding:2px 10px; border-radius:11px; font-size:13px; font-weight:700; vertical-align:middle; cursor:default; }}
+  .run-status-badge-completed {{ background:#16a34a; color:#fff; }}
+  .run-status-badge-interrupted {{ background:#d97706; color:#fff; }}
+  .run-status-badge-stopped {{ background:#dc2626; color:#fff; }}
+  .run-status-badge:hover::after {{ content: attr(data-tip); position:absolute; left:0; top:calc(100% + 7px); z-index:100; width:max-content; max-width:520px; white-space:normal; line-height:1.45; padding:8px 10px; border-radius:7px; background:#111827; color:#fff; font-size:12px; font-weight:500; box-shadow:0 8px 24px rgba(15,23,42,0.22); }}
+  .run-status-badge:hover::before {{ content:""; position:absolute; left:16px; top:calc(100% + 2px); z-index:101; border:5px solid transparent; border-bottom-color:#111827; }}
+
   /* Final output / 最终输出 card */
   .result-card {{ max-width: 1080px; margin: 0 auto 20px; padding: 16px 20px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #22c55e; }}
+  .result-card-interrupted {{ border-left-color: #d97706; }}
+  .result-card-stopped {{ border-left-color: #dc2626; }}
   .result-label {{ font-size: 11px; font-weight: 700; color: #16a34a; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }}
+  .result-card-interrupted .result-label {{ color: #d97706; }}
+  .result-card-stopped .result-label {{ color: #dc2626; }}
   .result-body {{ font-size: 14px; color: var(--text); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }}
 
   /* Router / input-resolution row (shares the 模型配置 box style) */
@@ -2034,7 +2052,7 @@ HTML_TEMPLATE = """\
   </nav>
   <main class="main">
     <div class="header">
-      <h1>{title}{platform_badge}</h1>
+      <h1>{title}{platform_badge}{run_status_badge}</h1>
       <div class="stats">{stats}</div>
       {provenance_html}
       {cost_note_html}
@@ -2390,6 +2408,28 @@ def _render_platform_badge(platform: str) -> str:
         "padding:2px 11px;border-radius:11px;background:#2f81f7;color:#fff;"
         'font-size:13px;font-weight:600;vertical-align:middle;">'
         f"{icon} {label}</span>"
+    )
+
+
+def _run_status_meta(data: ReportData) -> tuple[str, str, str]:
+    status = (data.run_status or "").strip()
+    if not status:
+        status = "completed" if data.goal_completed else "stopped"
+    if status == "completed":
+        return "completed", "正常完成", "目标已确认完成"
+    if status == "interrupted":
+        return "interrupted", "用户中止", "按 ESC 或手动退出后，当前 turn 已安全收尾"
+    return "stopped", "未完成停止", "任务未确认完成"
+
+
+def _render_run_status_badge(data: ReportData) -> str:
+    cls, label, detail = _run_status_meta(data)
+    reason = data.stop_reason.strip()
+    tip = f"停止原因：{reason}" if reason else detail
+    tip_attr = _safe(tip).replace('"', "&quot;")
+    return (
+        f'<span class="run-status-badge run-status-badge-{cls}" '
+        f'data-tip="{tip_attr}">{_safe(label)}</span>'
     )
 
 
@@ -2770,8 +2810,10 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
 
     result_html = ""
     if data.output:
+        status_cls, _, _ = _run_status_meta(data)
+        result_class = "result-card" if status_cls == "completed" else f"result-card result-card-{status_cls}"
         result_html = (
-            f'<div class="result-card">'
+            f'<div class="{result_class}">'
             f'<div class="result-label">最终输出</div>'
             f'<div class="result-body">{_safe(data.output)}</div>'
             f'</div>'
@@ -2783,6 +2825,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         stats=stats_str,
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
         program_html=_render_program_section(data.orchestrator),
+        run_status_badge=_render_run_status_badge(data),
         outline_title=("任务编排" if (data.orchestrator.get("program") or {}).get("statements") else "子目标分解"),
         outline_html=outline_html,
         cost_note_html=cost_note_html,

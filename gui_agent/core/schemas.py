@@ -450,6 +450,12 @@ class PolicyContext(BaseModel):
     content_notes: list[str] = Field(default_factory=list)
     content_note_hashes: list[str] = Field(default_factory=list)
     output: Optional[str] = None
+    stop_reason: Optional[str] = Field(default=None, description="本次运行的最终停止原因")
+    run_status: Optional[Literal["completed", "interrupted", "stopped"]] = Field(
+        default=None,
+        description="本次运行的最终状态：completed=目标完成，interrupted=用户中止，stopped=未完成停止",
+    )
+    goal_completed: Optional[bool] = Field(default=None, description="本次运行是否确认完成用户目标")
     milestones: list[dict] = Field(
         default_factory=list,
         description="子目标分解结果 [{id, name, description, kind, success_condition}]",

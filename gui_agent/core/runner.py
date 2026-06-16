@@ -5,10 +5,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import select
 import sys
+import termios
+import threading
 import time
 import traceback
+import tty
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
@@ -262,6 +267,75 @@ def _tee_stdio(log_dir: Path) -> Iterator[None]:
             raise SystemExit(1) from None
 
 
+class _EscStopSignal:
+    """Capture Esc in auto-run mode and let the main loop stop after the turn."""
+
+    def __init__(self, enabled: bool = True) -> None:
+        self._want_enabled = enabled
+        self._enabled = False
+        self._fd: int | None = None
+        self._old_attrs: list | None = None
+        self._running = False
+        self._requested = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def requested(self) -> bool:
+        return self._requested.is_set()
+
+    def __enter__(self) -> "_EscStopSignal":
+        if not self._want_enabled or not sys.stdin.isatty():
+            return self
+        try:
+            fd = sys.stdin.fileno()
+            old_attrs = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+        except (OSError, termios.error):
+            return self
+        self._fd = fd
+        self._old_attrs = old_attrs
+        self._running = True
+        self._enabled = True
+        self._thread = threading.Thread(
+            target=self._watch,
+            name="esc-stop",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._running = False
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=0.2)
+        if self._fd is not None and self._old_attrs is not None:
+            try:
+                termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_attrs)
+            except termios.error:
+                pass
+
+    def _watch(self) -> None:
+        assert self._fd is not None
+        while self._running and not self._requested.is_set():
+            try:
+                readable, _, _ = select.select([self._fd], [], [], 0.1)
+            except (OSError, ValueError):
+                return
+            if not readable:
+                continue
+            try:
+                ch = os.read(self._fd, 1)
+            except OSError:
+                return
+            if not ch:
+                return
+            if ch == b"\x1b":
+                self._requested.set()
+
+
 def build_policy(name: str) -> "ActionPolicy":
     # Selection routes through the platform bundle; the factory raises ValueError
     # with the available choices on an unknown name (same behavior as before).
@@ -433,6 +507,16 @@ def _make_result(
     }
 
 
+def _classify_run_status(result: dict) -> str:
+    """Classify a finished run for reports without relying on LLM wording."""
+    if result.get("goal_completed"):
+        return "completed"
+    stop_reason = str(result.get("stop_reason") or "")
+    if "ESC" in stop_reason or "用户退出" in stop_reason or "用户按" in stop_reason:
+        return "interrupted"
+    return "stopped"
+
+
 def _orch_result(context, interp, terminal: str, *, current=None) -> dict:
     """Result dict for orchestrator (DSL) mode. Compose a COMPREHENSIVE final reply from the
     whole program's structured state — run_log (completed milestones + their reads), the
@@ -499,6 +583,7 @@ def run_agent_loop(
     on_session_open: object = None,  # callable(phone) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
     program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
+    stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
 ) -> dict:
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
 
@@ -511,6 +596,9 @@ def run_agent_loop(
             hud.update(f"Turn {turn_no} — {msg}")
         if live_state:
             live_state["current"] = msg
+
+    def _stop_requested() -> bool:
+        return bool(stop_requested and callable(stop_requested) and stop_requested())
 
     context = _load_context(
         input_context_path or context_path,
@@ -655,6 +743,21 @@ def run_agent_loop(
         _run_idx = 0
         _notes_mark = 0
 
+        def _stop_after_esc(turn_no: int) -> dict | None:
+            nonlocal stitch_acc
+            if not _stop_requested():
+                return None
+            _drain_pending_read()
+            _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
+                            context, seen_rows, turn_no=turn_no, say=_say)
+            stitch_acc = None
+            _say("\n收到 ESC：当前 turn 已收尾，agent-loop 安全停止")
+            _save_ctx()
+            reason = "用户按 ESC 中止 agent-loop"
+            if program is not None:
+                return _orch_result(context, _interp, f"{reason}（任务未完成）", current=_cur_run)
+            return _make_result(context, reason)
+
         def _drive_pending_reads(done_png: "bytes | None" = None) -> "str | None":
             """Pure single-frame READ runs — the inspect primitive. A `read` run is NOT a
             checker-gated milestone loop: it reads the result the prior milestone left, runs
@@ -738,6 +841,10 @@ def run_agent_loop(
                 return _orch_result(context, _interp, _reply)
 
         while True:
+            interrupted = _stop_after_esc(len(context.turns))
+            if interrupted is not None:
+                return interrupted
+
             turn_no = len(context.turns) + 1
             if turn_no > max_turns:
                 _drain_pending_read()
@@ -861,6 +968,9 @@ def run_agent_loop(
                     return _make_result(context, _term)
                 _say(f"  [Loading] 等待页面稳定（第 {loading_streak} 帧，不计入轮数）...")
                 time.sleep(LOADING_WAIT_S)
+                interrupted = _stop_after_esc(turn_no)
+                if interrupted is not None:
+                    return interrupted
                 continue
             loading_streak = 0
 
@@ -1153,6 +1263,11 @@ def run_agent_loop(
                     return _make_result(context, reason, sv_step.collection_summary)
                 return _make_result(context, reason)
 
+            if not (executed and auto_continue):
+                interrupted = _stop_after_esc(turn_no)
+                if interrupted is not None:
+                    return interrupted
+
             if not executed and sv_step.should_act:
                 if probe_failed:
                     noop_count += 1
@@ -1222,6 +1337,9 @@ def run_agent_loop(
                     except Exception as e:
                         _say(f"  [TargetVerify] 校验失败（忽略）：{e}")
                 _save_ctx()  # 落盘 settle_s（+ target_verify）
+                interrupted = _stop_after_esc(turn_no)
+                if interrupted is not None:
+                    return interrupted
                 continue
 
             try:
@@ -1280,6 +1398,11 @@ def main() -> None:
         "--auto-continue",
         action="store_true",
         help="agent-loop 动作执行后自动进入下一轮；默认手动确认",
+    )
+    parser.add_argument(
+        "--stop-on-esc",
+        action="store_true",
+        help="auto-continue 模式下监听 ESC，并在当前 turn 收尾后安全停止",
     )
     parser.add_argument(
         "--hud",
@@ -1401,21 +1524,31 @@ def main() -> None:
                     )
 
         try:
-            result: dict | None = run_agent_loop(
-                goal,
-                action_policy,
-                supervisor,
-                input_context_path,
-                log_dir,
-                context_path,
-                max_turns=run_max_turns,
-                auto_continue=args.auto_continue,
-                hud=hud,
-                raw_input=raw_input,
-                router=router_result.model_dump() if router_result else None,
-                knowledge=knowledge_summary,
-                program=program,
-            )
+            stop_on_esc = args.stop_on_esc and args.auto_continue
+            if args.stop_on_esc and not args.auto_continue:
+                print("Interrupt: --stop-on-esc 仅在 --auto-continue 模式下启用")
+            with _EscStopSignal(enabled=stop_on_esc) as esc_stop:
+                if args.stop_on_esc:
+                    if esc_stop.enabled:
+                        print("Interrupt: 按 ESC 将在当前 turn 收尾后停止")
+                    elif stop_on_esc:
+                        print("Interrupt: stdin 不是 TTY，ESC 停止未启用")
+                result: dict | None = run_agent_loop(
+                    goal,
+                    action_policy,
+                    supervisor,
+                    input_context_path,
+                    log_dir,
+                    context_path,
+                    max_turns=run_max_turns,
+                    auto_continue=args.auto_continue,
+                    hud=hud,
+                    raw_input=raw_input,
+                    router=router_result.model_dump() if router_result else None,
+                    knowledge=knowledge_summary,
+                    program=program,
+                    stop_requested=esc_stop.requested if esc_stop.enabled else None,
+                )
             if result:
                 if program is not None:
                     # Orchestrator mode: the answer is the interpreter's reply (finish /
@@ -1445,6 +1578,9 @@ def main() -> None:
                 try:
                     raw = json.loads(context_path.read_text(encoding="utf-8"))
                     raw["output"] = output
+                    raw["stop_reason"] = result.get("stop_reason", "")
+                    raw["run_status"] = _classify_run_status(result)
+                    raw["goal_completed"] = bool(result.get("goal_completed", False))
                     context_path.write_text(
                         json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
                     )
