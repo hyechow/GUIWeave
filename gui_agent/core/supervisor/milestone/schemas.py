@@ -42,6 +42,10 @@ class MilestonePrompts:
     # platform-neutral, so the core default in helpers.py fits all platforms; override
     # only if a platform needs different selection guidance.
     selector: str | None = None
+    # Platform-owned page_identity markers that mean "system home/launcher screen".
+    # Core only applies the configured markers; it does not know iOS/Android/browser
+    # home-screen vocabulary itself.
+    home_identity_markers: tuple[str, ...] = ()
 
 
 def _coerce_str_list(value):
@@ -87,7 +91,7 @@ class _SingleCheckResult(BaseModel):
     issues: list[str] = Field(default_factory=list)
     visible_evidence: list[str] = Field(default_factory=list, description="截图中支持 done 的可见证据")
     missing_evidence: list[str] = Field(default_factory=list, description="缺失的验收证据")
-    page_identity: str = Field(default="", description="当前页面的身份识别（如：订单列表、发票管理、个人中心）")
+    page_identity: str = Field(default="", description="当前页面/视图的身份识别（如：列表页、详情页、设置页）")
     summary: str = Field(description="当前屏幕状态一句话描述")
     read_instruction: Optional[str] = Field(
         default=None,

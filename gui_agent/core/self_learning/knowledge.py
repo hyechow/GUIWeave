@@ -132,7 +132,7 @@ EXPORT_PROMPT_ENHANCED = _EXPORT_COMMON + """\
 示例（错误 → 正确）：
 - ✗ [Mythos 限] 实测→「…」 → ✓ [文章行]，function：进入文章详情页
 - ✗ [长安网咖] 实测→「…」 → ✓ [店铺行]，function：进入店铺详情页
-- ✗ [搜索图标] 未探测 → ✓ [搜索栏]，function：进入搜索页面
+- ✗ [入口图标] 未探测 → ✓ [功能入口]，function：进入对应功能页面
 """
 
 _EXPORT_LEAF = _EXPORT_COMMON + """\

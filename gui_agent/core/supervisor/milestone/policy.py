@@ -255,11 +255,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             check = check.model_copy(update={
                 "status": "in_progress",
                 "reason": (
-                    "最近一步只是输入搜索/筛选关键词，尚未看到 Search/Apply/Filter/Submit "
+                    "最近一步只是输入搜索/筛选关键词，尚未看到提交/应用筛选/确认搜索"
                     "或回车提交；当前列表/计数可能仍是提交前旧状态。"
                 ),
                 "summary": "搜索/筛选条件已填写，但还需要提交/应用。",
-                "missing_evidence": ["需要点击 Search/Apply/Filter/Submit，或按回车提交搜索/筛选。"],
+                "missing_evidence": ["需要点击页面上的提交/搜索/应用筛选控件，或按回车提交搜索/筛选。"],
             })
             self._last_check = check
 
@@ -489,7 +489,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             direction=plan.direction,
             drag_column=getattr(plan, "drag_column", None),
             drag_steps=drag_steps,
-            is_home_screen=_is_home_identity(check.page_identity),
+            is_home_screen=_is_home_identity(check.page_identity, self._prompts.home_identity_markers),
             **_ctx(milestone, check.read_instruction),
         )
 
@@ -772,14 +772,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             return self._fail(milestone, check, read_inst)
 
         print(f"  [Replan] 第 {milestone.retry_count} 次重试...")
-        # 连续调值类停滞时的纠偏方向：继续用拖动（picker 本就只能拖），换一种连续策略——
-        # 加大拖动幅度 / 换调整的列 / 调整顺序（如先把"日"调到合法范围再调"月"，破非法日期回弹死锁）。
-        # 绝不退化成点击 picker 滚轮数值（iOS 滚轮不认点击），也不要判"组件不支持拖拽"。
+        # 连续调值类停滞时的纠偏方向：继续使用该平台的连续调整动作，换一种连续策略——
+        # 加大幅度 / 换调整的列或轴 / 调整顺序。不要因为一轮未生效就退化成离散点击。
         iter_extra = (
-            "⚠️ 当前子目标是连续调值类（靠滚轮/步进器反复拖动逼近目标值）。停滞≠不支持拖拽。"
-            "必须继续用拖动，换一种连续策略：加大拖动幅度、或换要调整的列、或调整顺序"
-            "（如把'日'先调到目标月份的合法范围内、再调'月'，以破解非法日期被回弹的死锁）。"
-            "禁止改用点击 picker 滚轮上的具体数值（iOS 滚轮不响应点击），禁止判定'组件不支持滚动/拖拽'。"
+            "⚠️ 当前子目标是连续调值类（需要多次滚动/拖动/步进来逼近目标值）。停滞≠不支持该控件。"
+            "必须继续使用当前平台适合该控件的连续调整动作，换一种策略：加大幅度、换调整列/轴、或调整顺序。"
+            "禁止直接改成点击某个可见刻度/候选值来替代连续调整；禁止仅因本轮无明显变化就判定控件不支持调整。"
         ) if milestone.is_iterative else ""
         with _Timer(self._timings, self._timings_order, "replanner", self._token_usage):
             replan = self._invoke_replanner(milestone, check, observation, history, extra=iter_extra)
@@ -821,7 +819,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             stop=False,
             goal_completed=False,
             summary=f"子目标「{milestone.name}」尚未达成，第 {milestone.retry_count} 次调整策略。{replan.diagnosis}",
-            is_home_screen=_is_home_identity(self._last_check.page_identity) if self._last_check else False,
+            is_home_screen=(
+                _is_home_identity(self._last_check.page_identity, self._prompts.home_identity_markers)
+                if self._last_check else False
+            ),
             **_ctx(milestone, read_inst),
         )
 
@@ -905,8 +906,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         reason = check.stuck_reason or check.reason
         if "planner 陷入重复" in reason or "连续给出相似指令" in reason:
             return
-        # 连续调值类不记「禁止重复此指令」：会把唯一可靠的拖动操作拉黑，逼系统退化成点击 picker
-        # （iOS 滚轮不认点击）。停滞时的纠偏靠 replan 换连续策略（换列/加大步长/调顺序），而非禁操作。
+        # 连续调值类不记「禁止重复此指令」：会把可靠的连续调整动作拉黑，逼系统退化成离散点击。
+        # 停滞时的纠偏靠 replan 换连续策略（换列/轴、加大步长、调顺序），而非禁操作。
         if milestone.is_iterative:
             return
         last_action = next(

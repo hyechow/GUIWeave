@@ -268,7 +268,7 @@ class Observation(BaseModel):
     tables: Optional[list[dict[str, Any]]] = Field(
         default=None,
         description=(
-            "平台感知层提供的当前页面表格/网格结构快照（如浏览器 DOM table/grid）。"
+            "平台感知层提供的当前页面表格/网格结构快照。"
             "用于表格类 read 任务优先按行列读取，避免靠视觉滚动/OCR 对齐。None=该平台不提供或当前页无表格。"
         ),
     )
@@ -359,10 +359,10 @@ class SupervisorStep(BaseModel):
         default=None,
         description="picker drag 目标列当前值与目标值相差的格数（绝对值）hint，用于按距离放大拖动幅度",
     )
-    # 由 checker 的 page_identity 在代码中派生（见 _is_home_identity），非 LLM 填写。
+    # 由 checker 的 page_identity 和平台配置的 home markers 派生，非 LLM 填写。
     is_home_screen: bool = Field(
         default=False,
-        description="当前是否为 iOS 主屏幕（springboard）",
+        description="当前是否为该平台的系统主屏/启动器界面",
     )
     # 页面未稳定（白屏/加载中）的等待帧：runner 据此跳过本帧、不计入 max_turns、不累加 noop。
     is_loading: bool = Field(

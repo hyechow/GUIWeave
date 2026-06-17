@@ -140,7 +140,9 @@ def _ctx(milestone: Milestone, read_instruction: Optional[str], collection_scope
     }
 
 
-def _is_home_identity(page_identity: str) -> bool:
-    """Derive 'on the iOS home screen' from the checker's free-text page_identity."""
-    pid = (page_identity or "").lower()
-    return "主屏" in (page_identity or "") or "home screen" in pid or "springboard" in pid
+def _is_home_identity(page_identity: str, markers: tuple[str, ...] = ()) -> bool:
+    """Derive "system home/launcher" from platform-provided page_identity markers."""
+    if not page_identity or not markers:
+        return False
+    pid = page_identity.lower()
+    return any(marker and marker.lower() in pid for marker in markers)

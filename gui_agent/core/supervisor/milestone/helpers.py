@@ -199,7 +199,7 @@ def _inject_knowledge(
 
 
 def _format_form_controls(form_controls: list[dict] | None) -> str:
-    """Compact DOM form-control inventory for browser planning/checking."""
+    """Compact structured form-control inventory supplied by a platform adapter."""
     if not form_controls:
         return ""
     lines: list[str] = []
@@ -232,10 +232,10 @@ def _format_form_controls(form_controls: list[dict] | None) -> str:
     if not lines:
         return ""
     return (
-        "## 浏览器 DOM 表单控件（结构化感知，不是截图文本）\n"
-        "这些控件来自当前页面 DOM，只包含可见 input/select/textarea/combobox 的类型、当前值和候选项。"
-        "native_select 的选项弹层通常不出现在截图中；若需要设置它的值，应规划为“选择/设置 <字段> 为 <选项>”，"
-        "不要规划为“点击展开后等待选项可见”。\n"
+        "## 结构化表单控件（适配器感知，不是截图文本）\n"
+        "这些控件由当前平台适配器提供，只包含可见可编辑控件的类型、当前值和候选项。"
+        "若某控件可由适配器直接设置候选值，应规划为“选择/设置 <字段> 为 <选项>”，"
+        "不要强行规划成“点击展开后等待选项可见”。\n"
         + "\n".join(lines)
     )
 
@@ -366,7 +366,7 @@ _TRAILING_FIELD_RE = re.compile(r"(?:以|来)(?:选择|确认|选定|设置|完�
 
 def _trailing_field_context(instruction: str, start: int) -> str:
     """「点击候选…『X』以选择<字段>」式指令把字段名放在尾部——前置 context 缺失时从尾部提取，
-    让同字段的重复点击能被守卫识别（多选 chip 场景重点击=取消选中，回归 20260612_205558）。
+    让同字段的重复点击能被守卫识别（多选项重点击可能取消选中，回归 20260612_205558）。
     纯动词尾巴（「以完成选定」）不算字段名。"""
     m = _TRAILING_FIELD_RE.search(instruction[start:] if start < len(instruction) else "")
     if not m:
@@ -783,11 +783,10 @@ def run_planner(
     plan = invoke_structured(_make_llm(), msgs, plan_schema)
     plan = _guard_native_select_plan(plan, milestone, check, observation)
     plan = _guard_exact_dropdown_target(plan, milestone)
-    # Dropdown re-selection loop breaker: clicking an already-clicked candidate again
-    # (without re-typing in between) usually means the checker misread the closed,
-    # filled combobox as "not selected" and the planner is about to reopen the list,
-    # confirming the misjudgment for another round. Re-invoke once with corrective
-    # context; `extra` doubles as the recursion brake (a corrective call won't re-fire).
+    # Selection re-entry loop breaker: clicking an already-clicked candidate again
+    # (without re-typing/searching in between) often means the checker misread an
+    # already-selected field as incomplete. Re-invoke once with corrective context;
+    # `extra` doubles as the recursion brake (a corrective call won't re-fire).
     if not extra:
         repeated = _repeated_candidate_click(plan.instruction, milestone.id, history)
         if repeated:
@@ -796,15 +795,12 @@ def run_planner(
                 milestone, check, observation, history,
                 constraints=constraints,
                 extra=(
-                    f"你计划点击的候选「{repeated}」在之前轮次已经点击执行过。注意：点击候选后列表会收起、"
-                    "输入框保留所选文本（仍带搜索图标）——这就是已选定状态，checker 可能把它误判为未选定。"
-                    "请重新只看当前截图：只有该字段下方真的有候选浮层（无字段标签的选项行，会遮住下一个字段"
-                    "的标签）时才再次点击候选；若无浮层且输入框已显示完整目标文本，该字段**已完成**——"
-                    "禁止对它做任何操作（点击该输入框本身会把候选列表重新打开，没有「点击以确认/关闭」"
-                    "这种操作），直接处理其他未完成字段。"
-                    "若这是**多选/标签型**下拉（框内已出现该项的标签/chip、候选行带勾选）：该项**已选中**，"
-                    "再点击会**取消选中**；多选的列表保持展开是正常态、不需要关闭——直接做下一步"
-                    "（本步骤的执行类按钮或其他未完成字段）。"
+                    f"你计划点击的候选/选项「{repeated}」在之前轮次已经点击执行过。"
+                    "请重新只看当前截图：只有当前仍明确显示可选候选列表、且该候选尚未呈现已选状态时，才再次点击。"
+                    "若对应字段/控件已经显示目标值、已选标记或完整选择结果，该字段通常已完成；"
+                    "不要为了确认已选项而重新打开或重复点击它，直接处理其他真正未完成字段。"
+                    "若该控件允许多选，重复点击已选项可能会取消选中；看到已选标记时应继续下一步，"
+                    "除非任务明确要求取消该项。"
                 ),
                 app_knowledge=app_knowledge,
                 elements_knowledge=elements_knowledge,
@@ -818,9 +814,9 @@ def run_planner(
                 milestone, check, observation, history,
                 constraints=constraints,
                 extra=(
-                    f"你计划点击字段「{context}」以展开/确认候选，但该字段此前已经点击候选「{value}」执行过。"
-                    "请重新只看当前截图：若该字段附近没有候选浮层、且输入框已显示目标值，它通常就是已选定状态。"
-                    "不要为了确认已选项而重新点击输入框/搜索框来展开候选列表；这会把已完成字段重新置为编辑态。"
+                    f"你计划点击字段/控件「{context}」以展开或确认候选，但它此前已经点击候选「{value}」执行过。"
+                    "请重新只看当前截图：若该控件附近没有候选列表、且控件已显示目标值或已选状态，它通常已经完成。"
+                    "不要为了确认已选项而重新打开该控件；这可能把已完成字段重新置为编辑态。"
                     "请直接处理当前截图中其他真正未完成的字段。"
                 ),
                 app_knowledge=app_knowledge,
