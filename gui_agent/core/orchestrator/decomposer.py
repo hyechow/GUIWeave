@@ -30,24 +30,25 @@ _SYSTEM = """\
 - op="run"：驱动一个 milestone（一个线性 GUI 子任务）。
     · 粒度 = 到达某页 / 填一组表单 / 点一个按钮 / 读取一个结果——**不是整个任务，也不是单次点击**；多步导航合并成一个 run。
     · name：该 milestone 的一句话操作指令。
-    · run_kind：navigation（到达/打开某页面，或在当前页滚动/切换 tab/展开区域以定位目标，不改状态）| filter（设搜索/筛选条件）| action（执行一次改变状态的操作：提交/发送/创建/删除/设置）| read（只读取结果，不做任何操作）。
-    · success_condition：完成后界面应处于的【唯一可截图确认】终态——写终态不写增量；action 类写操作生效后的可见结果（成功提示/结果页），不是「按钮可见」「已聚焦」。**例外：若该 action 后面紧跟一个 read 来判结果（见规则7），它只写「动作已发出」（按钮已点、表单已提交、出现响应/进入计算·加载，且明确不判结果的具体取值）——结果的具体判读交给那个 read 步，这一步不要重复判同一个结果。**
-    · var：把该步结果绑定到变量，仅当后续 if / finish 要引用它时填（通常只有 read 步需要）。
+    · run_kind：navigation（到达/打开某页面，或在当前页滚动/切换 tab/展开区域以定位目标，不改状态）| filter（设搜索/筛选条件）| action（执行一次改变状态的操作：提交/发送/创建/删除/设置）| read（只从当前截图读取结果，不做任何操作）| data_query（非 UI 数据处理：对当前已采集/已渲染的结构化表格执行只读 SQL）。
+    · success_condition：完成后界面应处于的【唯一可截图确认】终态——写终态不写增量；action 类写操作生效后的可见结果（成功提示/结果页），不是「按钮可见」「已聚焦」。**例外：若该 action 后面紧跟一个 read/data_query 来判结果（见规则7），它只写「动作已发出」（按钮已点、表单已提交、出现响应/进入计算·加载，且明确不判结果的具体取值）——结果的具体判读交给那个 read/data_query 步，这一步不要重复判同一个结果。**
+    · var：把该步结果绑定到变量，仅当后续 if / finish 要引用它时填（通常只有 read/data_query 步需要）。
     · returns：仅 run_kind="read" 填——要从结果界面读取的字段名列表，程序据此判断分支。
     · read_spec：仅 run_kind="read" 填——【本次读取说明】，按任务需求生成：逐个说明每个 returns 字段在结果界面上看哪里、如何把信号（图标/颜色/文字/位置）判读成值、各取值的含义（例：「连通判定：看起点终点输入框之间的图标——绿色✓=连通，灰色?=未检测/未连通；不可达原因：连通时为空，不可达时读取页面上的红色错误提示文字」）。读取是只读单帧，没有这份说明就只能瞎猜，所以必须写清楚。
-- op="if"：按某个 read 步读到的字段值分支。cond_var=那个 read 步的 var；cond_field=该步 returns 里的字段；cond_cmp 可用 "=="、"!="、"exists"、"empty"、"contains"、"not_contains"、"in"、"not_in"；cond_value 用于等于/包含类比较；cond_values 用于 in/not_in 的候选值列表；then=成立时执行的步骤；otherwise=不成立时执行的步骤。
-- op="finish"：产出最终答复。message 是模板，可用 {变量[字段]} 引用某 read 步读到的值。
+    · data_query：仅用于表格/列表的筛选、计数、排序、group by、top N、去重等数据处理；必须填 var、returns、sql。SQL 只能是 SELECT 或 WITH ... SELECT。默认表名 data；列名按表头转 snake_case（如 Customer Email→customer_email，Order Status→order_status）。不要把表格行塞进 read；需要聚合时用 data_query。data_scope 默认 complete（要求完整数据，partial 表格会失败）；只有任务明确说“当前页面/当前可见/当前已渲染行”时才设 current。
+- op="if"：按某个 read/data_query 步返回的字段值分支。cond_var=那个 read/data_query 步的 var；cond_field=该步 returns 里的字段；cond_cmp 可用 "=="、"!="、"exists"、"empty"、"contains"、"not_contains"、"in"、"not_in"；cond_value 用于等于/包含类比较；cond_values 用于 in/not_in 的候选值列表；then=成立时执行的步骤；otherwise=不成立时执行的步骤。
+- op="finish"：产出最终答复。message 是模板，可用 {变量[字段]} 引用某 read/data_query 步返回的值。
 
 核心原则：
 1. milestone 粒度：「搜关键词并进第一条结果」= 一个 navigation run，别拆成 输入→提交→点结果。
-2. 只在任务真有「读结果 → 据结果决定下一步」时才用 read + if；纯线性任务直接顺序 run，结尾可选 finish。
-3. read 是只读单帧数据提取：它不点任何东西、不滚动、不展开、不做验收（读不到=当没有），只把 returns 字段读出来。**「触发某结果的操作」和「读取该结果」必须分成两步**——先用 action 触发，再用 read 读取。**每个 step 只面向「当前界面/当前视口已定位的区域」操作或读取**：read 读的是当前那一帧、action 操作的也是当前可见界面。若某步要读/操作的目标不在当前界面、而在另一个页面或视图上（例如上一步停在某结果页，而这步要读/操作的是另一张列表或另一个表单），**先加一个 navigation step 到目标页**，再读/操作；不要跨界面直接读另一处的数据、或对另一处的元素动作（否则读到空、或动作落在错误界面上）。若目标按知识库应在当前页面，但当前截图/视口没有看到目标标题、表格或字段，**不要裸 read**；先加一个 navigation step 做页内定位（滚动到目标区、切换目标 tab、展开目标面板），success_condition 写「目标区标题/表格/字段已可见」，再 read。**首页/仪表盘上的汇总小部件（如 Last Search Terms、Bestsellers…）是摘要片段，必须按任务口径精确匹配**：若知识库/截图中存在与任务同名或同口径的区块（如 Top Search Terms），优先定位到这个精确区块；别把另一个摘要区（如 Last=按时间/最近）当成 Top=按热度/前 N。若改用列表/报表页回答「前 N 个 / 排名 / 热门」类问题，必须先确认或设置按目标指标列降序排序（如 Uses/Count/Sales），再 read；**不要假设报表默认前几行就是 Top**。**例外**：若任务明确要的就是当前可见首页摘要口径（如『首页显示的今日销售额』），且目标区已经可见，才可直接 read。
+2. 只在任务真有「读/查结果 → 据结果决定下一步」时才用 read/data_query + if；纯线性任务直接顺序 run，结尾可选 finish。
+3. read 是只读单帧数据提取：它不点任何东西、不滚动、不展开、不做验收（读不到=当没有），只把 returns 字段读出来。data_query 也是非 UI primitive，但它只处理结构化表格数据，适合聚合/排序/计数，不能替代导航、筛选或分页采集。**「触发某结果的操作」和「读取/查询该结果」必须分成两步**——先用 action/filter 触发，再用 read 或 data_query 获取结果。**每个 step 只面向「当前界面/当前视口已定位/已采集的数据」操作或读取**：read 读的是当前那一帧；data_query 查的是当前结构化表格快照。若目标按知识库应在当前页面，但当前截图/视口没有看到目标标题、表格或字段，**不要裸 read/data_query**；先加一个 navigation step 做页内定位（滚动到目标区、切换目标 tab、展开目标面板），success_condition 写「目标区标题/表格/字段已可见」，再 read/data_query。**首页/仪表盘上的汇总小部件（如 Last Search Terms、Bestsellers…）是摘要片段，必须按任务口径精确匹配**：若知识库/截图中存在与任务同名或同口径的区块（如 Top Search Terms），优先定位到这个精确区块；别把另一个摘要区（如 Last=按时间/最近）当成 Top=按热度/前 N。若改用列表/报表页回答「前 N 个 / 排名 / 热门」类问题，必须先确认或设置按目标指标列降序排序（如 Uses/Count/Sales），再 read/data_query；**不要假设报表默认前几行就是 Top**。**例外**：若任务明确要的就是当前可见首页摘要口径（如『首页显示的今日销售额』），且目标区已经可见，才可直接 read。
 4. 验收终态且有出处：只用任务、@引用文件或截图里出现的值，不编造系统生成的编号/名称（用特征描述）。
-5. read 的 returns / read_spec 只提取用户最终需要的字段；排序/定位可借助辅助列（如 Uses、Count、Price），但用户没要求这些辅助值时，不要把它们放进返回值或最终答案。例如任务只问「top 2 search terms」，返回两个 search term 文本，不返回 `{term, uses}` 对象。
+5. read/data_query 的 returns 只提取用户最终需要的字段；排序/定位可借助辅助列（如 Uses、Count、Price），但用户没要求这些辅助值时，不要把它们放进返回值或最终答案。例如任务只问「top 2 search terms」，返回两个 search term 文本，不返回 `{term, uses}` 对象。
 6. 能一句话答复就用 finish 模板引用 read 值；否则可不写 finish。
-7. **关键动作后补一个 read 确认结果（成败由结构化读取定，别只信动作完成）**：会改变状态的关键动作（创建/提交/删除/发送/设置/检测查询，尤其任务的最终动作），在该 action 之后补一个 read 确认结果——returns 含一个成败/状态字段，read_spec 写清「成功看什么信号、失败看什么信号」；再由 finish（或 if）据这个结构化结果答复/分支。不要只凭动作步自身完成就当任务成功。配套地（规则4例外）：该 action 的 success_condition 写「动作已发出」而非「结果已显示/某判定已出现」，把结果的具体判读独占给这个 read，两步不要判同一个结果。
+7. **关键动作后补一个 read 或 data_query 确认结果（成败由结构化读取/查询定，别只信动作完成）**：会改变状态的关键动作（创建/提交/删除/发送/设置/检测查询，尤其任务的最终动作），在该 action 之后补一个 read 确认界面结果，或补一个 data_query 统计表格结果；再由 finish（或 if）据这个结构化结果答复/分支。不要只凭动作步自身完成就当任务成功。配套地（规则4例外）：该 action 的 success_condition 写「动作已发出」而非「结果已显示/某判定已出现」，把结果的具体判读独占给后续 read/data_query，两步不要判同一个结果。
 8. **前置状态（登录/进入某模式）建模成一步「确保已X」并标 `precondition=true`**：这类前置初始往往已满足（会话常已登录）。建成**一步**「确保已登录/已进入X」、run_kind=navigation、**precondition=true**；别拆成「打开登录页 → 输账号密码」这种多步，success_condition 留空或一句话即可（不必纠结这个门怎么写）。
-9. **选择器分解时已知→直接写字面量；只有运行时才知道→read 出来用 {变量[字段]} 接力**。绝大多数情况写字面量即可：实体若有分解时可写的稳定选择器（用户给定名、@配置字段值、任务文本里的编号），直接写进 name，别为它多加 read；已在该实体编辑页就继续操作，别每步回列表重选。仅当后续必须重新选中某实体、而它的名称/编号**分解时未知、只能运行时从界面读到**（典型：新建后系统自动分配的编号/自动命名）时，才两步配合：① 一个 read 把该选择器读进 returns 字段并绑定 var；② 后续步骤 name（必要时连 success_condition）用 `{变量[字段]}` 引用它（`打开工单 {t[工单号]}` → 运行时填成 `打开工单 WO-2024-007`，列表里多个同类也不指错）。变量须是在它之前、当前执行路径上已执行的 read（不能引用其后或另一分支的 read），字段须在其 returns 里。**只对单个实体的标识接力，别读一个「列表」再挑「第 N 个」**（集合索引表达不了，且列表 read 还得先导航到列表页）——要操作的表单本身能选实体时（如表单里直接选某条目），直接在 action 里选，不必 read。（与规则4不冲突：规则4 管创建步自身写不出未来编号；规则9 管后续要精确重选、选择器运行时才知道。）
+9. **选择器分解时已知→直接写字面量；只有运行时才知道→read 出来用 {变量[字段]} 接力**。绝大多数情况写字面量即可：实体若有分解时可写的稳定选择器（用户给定名、@配置字段值、任务文本里的编号），直接写进 name，别为它多加 read；已在该实体编辑页就继续操作，别每步回列表重选。仅当后续必须重新选中某实体、而它的名称/编号**分解时未知、只能运行时从界面读到**（典型：新建后系统自动分配的编号/自动命名）时，才两步配合：① 一个 read 把该选择器读进 returns 字段并绑定 var；② 后续步骤 name（必要时连 success_condition）用 `{变量[字段]}` 引用它（`打开工单 {t[工单号]}` → 运行时填成 `打开工单 WO-2024-007`，列表里多个同类也不指错）。变量须是在它之前、当前执行路径上已执行的 read/data_query（不能引用其后或另一分支的结果），字段须在其 returns 里。**只对单个实体的标识接力，别读一个「列表」再挑「第 N 个」**（集合索引表达不了，且列表 read 还得先导航到列表页）——要操作的表单本身能选实体时（如表单里直接选某条目），直接在 action 里选，不必 read。（与规则4不冲突：规则4 管创建步自身写不出未来编号；规则9 管后续要精确重选、选择器运行时才知道。）
 
 只输出与任务相关的步骤，不加多余前置（已在工作区就别加「打开网站」）。**忠于目标、别臆造实体**：目标要操作/选择/处理某实体（某条记录/对象/条目…）时默认它已存在——用已知名称或 read 选现有再引用（规则9），别补「新建/创建/配置」前置；只有目标动词本身就是新建/创建/添加时才建 create 步。先在 reasoning 里想清楚：要到哪些页、做什么操作、读什么结果、关键动作做完怎么确认、是否需要分支，再写 steps。
 
@@ -77,24 +78,32 @@ class _StepDraft(BaseModel):
 
     op: str = Field(default="run", description='"run" | "if" | "finish"')
     # --- op=run ---
-    var: str = Field(default="", description="把该步结果绑定到的变量名；仅 read 或后续要引用时填，否则留空")
+    var: str = Field(default="", description="把该步结果绑定到的变量名；仅 read/data_query 或后续要引用时填，否则留空")
     name: str = Field(default="", description="op=run：该 milestone 的一句话操作指令")
     success_condition: str = Field(default="", description="op=run：完成后界面应处于的唯一可截图确认终态")
-    run_kind: str = Field(default="action", description='op=run：navigation | filter | action | read')
+    run_kind: str = Field(default="action", description='op=run：navigation | filter | action | read | data_query')
     precondition: bool = Field(
         default=False,
         description="op=run：该步是否为【前置状态保障】（确保已登录 / 已进入某模式或某页，初始往往已满足）。"
                     "是→true 且 run_kind 用 navigation；普通去某页/做某操作就留 false。",
     )
-    returns: list[str] = Field(default_factory=list, description="op=run 且 run_kind=read：要读取的结果字段名列表")
+    returns: list[str] = Field(default_factory=list, description="op=run 且 run_kind=read/data_query：要返回的结果字段名列表")
     read_spec: str = Field(
         default="",
         description="op=run 且 run_kind=read：本次读取说明——逐个说明每个 returns 字段在界面上看什么、"
                     "如何把信号(图标/颜色/文字/位置)判读成值、各取值含义；让纯只读能据此判读。",
     )
+    sql: str = Field(
+        default="",
+        description="op=run 且 run_kind=data_query：只读 SQL。只能 SELECT/WITH SELECT；默认表名 data，列名为表头 snake_case。",
+    )
+    data_scope: str = Field(
+        default="complete",
+        description='op=run 且 run_kind=data_query：complete | current。complete=要求完整数据；current=只分析当前页面/当前可见/当前已渲染行。',
+    )
     # --- op=if ---
-    cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个 read 步的 var）")
-    cond_field: str = Field(default="", description="op=if：读取字段名（该 read 步 returns 里的字段）")
+    cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个 read/data_query 步的 var）")
+    cond_field: str = Field(default="", description="op=if：读取字段名（该 read/data_query 步 returns 里的字段）")
     cond_cmp: str = Field(
         default="==",
         description='op=if：条件操作符："==" | "!=" | "exists" | "empty" | "contains" | "not_contains" | "in" | "not_in"',
@@ -118,7 +127,7 @@ class _PlanDraft(BaseModel):
 
 _StepDraft.model_rebuild()
 
-_VALID_KINDS = {"navigation", "filter", "action", "read"}
+_VALID_KINDS = {"navigation", "filter", "action", "read", "data_query"}
 _VALID_CMPS = {"==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"}
 _CMP_ALIASES = {
     "=": "==",
@@ -199,6 +208,8 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     kind=_to_kind(d.run_kind),
                     returns=[r for r in d.returns if r.strip()],
                     read_spec=d.read_spec,
+                    sql=d.sql,
+                    data_scope="current" if (d.data_scope or "").strip().lower() == "current" else "complete",
                     precondition=bool(d.precondition),
                 )
             )
@@ -212,7 +223,7 @@ def to_program(draft: _PlanDraft, goal: str) -> Program:
 def validate_program(program: Program) -> list[str]:
     """Deterministic shape guards — the high-value ones for the read-driven data-flow patterns.
 
-    A read must request fields + bind a var; an if must branch on a field a read returns; a
+    A read/data_query must request fields + bind a var; an if must branch on a field a prior non-UI result returns; a
     precondition may only sit on a navigation step (it ensures a state, so on action/read/filter
     it would be wrongly accepted on frame 1); and every {var[field]} template ref (finish message
     OR — read-then-reference, rule 9 — a run's name/success_condition/read_spec) must resolve to a
@@ -227,16 +238,16 @@ def validate_program(program: Program) -> list[str]:
     if not program.statements:
         return ["程序为空：至少要有一个 run 步骤"]
 
-    all_read_vars: set[str] = set()  # every read's var anywhere — to spot botched bare {var} refs
+    all_result_vars: set[str] = set()  # every non-UI result var anywhere — to spot botched bare refs
 
-    def _collect_read_vars(stmts: list[Stmt]) -> None:
+    def _collect_result_vars(stmts: list[Stmt]) -> None:
         for s in stmts:
-            if isinstance(s, Run) and s.kind == "read" and s.var:
-                all_read_vars.add(s.var)
+            if isinstance(s, Run) and s.kind in {"read", "data_query"} and s.var:
+                all_result_vars.add(s.var)
             elif isinstance(s, If):
-                _collect_read_vars(s.then)
-                _collect_read_vars(s.otherwise)
-    _collect_read_vars(program.statements)
+                _collect_result_vars(s.then)
+                _collect_result_vars(s.otherwise)
+    _collect_result_vars(program.statements)
 
     def _check_refs(text: str, where: str, scope: dict[str, set[str]]) -> None:
         # `scope` = read var -> returns, for reads already executed BEFORE this point on this path.
@@ -245,23 +256,23 @@ def validate_program(program: Program) -> list[str]:
             if var not in scope:
                 issues.append(
                     f"{where} 引用的 {{{var}[{field}]}} 中变量「{var}」在此处尚未产生"
-                    f"（不是任何在它之前、且在当前执行路径上的 read 步的 var；引用在前/读取在后/读取在另一分支都算）"
-                    f"——指代落空；请先加一个 read 步读出「{var}」并放在引用它之前（同一执行路径上），或删掉这个引用"
+                    f"（不是任何在它之前、且在当前执行路径上的 read/data_query 步的 var；引用在前/读取在后/读取在另一分支都算）"
+                    f"——指代落空；请先加一个 read 或 data_query 步产生「{var}」并放在引用它之前（同一执行路径上），或删掉这个引用"
                 )
             elif field not in scope[var]:
                 issues.append(
-                    f"{where} 引用的字段「{var}[{field}]」不在该 read 步读取的字段（returns）里"
-                    f"——请改用它 returns 里已有的字段名，或在该 read 的 returns 里补上「{field}」"
+                    f"{where} 引用的字段「{var}[{field}]」不在该 read/data_query 步返回的字段（returns）里"
+                    f"——请改用它 returns 里已有的字段名，或在该步 returns 里补上「{field}」"
                 )
         # botched bare {var}: a known read var written without [field] — neither resolves nor
         # matches the template, so the literal "{var}" leaks to the planner (回归 20260615_194320:
         # 「编辑机器人 {robot_name}」漏给了 planner). Force the {var[field]} form via repair.
         for m in BARE_REF_RE.finditer(text or ""):
             var = m.group(1)
-            if var in all_read_vars:
+            if var in all_result_vars:
                 issues.append(
-                    f"{where} 用了裸 {{{var}}} 缺字段——「{var}」是某个 read 步的结果变量，"
-                    f"引用它的某个字段要写成 {{{var}[字段]}}（字段取自该 read 的 returns）；裸 {{{var}}} 不会被填上值"
+                    f"{where} 用了裸 {{{var}}} 缺字段——「{var}」是某个 read/data_query 步的结果变量，"
+                    f"引用它的某个字段要写成 {{{var}[字段]}}（字段取自该步 returns）；裸 {{{var}}} 不会被填上值"
                 )
 
     def _walk(stmts: list[Stmt], scope: dict[str, set[str]]) -> None:
@@ -277,16 +288,22 @@ def validate_program(program: Program) -> list[str]:
                     issues.append(
                         f"步骤「{s.name}」标了 precondition=true 但 run_kind={s.kind}——"
                         "前置状态保障只能是 navigation 步（确保已到达/已进入某状态），"
-                        "不能标在 action/read/filter 上；请改成 navigation，或去掉 precondition"
+                        "不能标在 action/read/filter/data_query 上；请改成 navigation，或去掉 precondition"
                     )
                 if s.kind == "read" and not s.returns:
                     issues.append(f"read 步「{s.name}」没有 returns 字段——read 必须指定要读取的字段")
                 if s.kind == "read" and not s.var:
                     issues.append(f"read 步「{s.name}」没有绑定 var——读到的结果无法被后续引用")
+                if s.kind == "data_query" and not s.returns:
+                    issues.append(f"data_query 步「{s.name}」没有 returns 字段——data_query 必须指定要返回的字段")
+                if s.kind == "data_query" and not s.var:
+                    issues.append(f"data_query 步「{s.name}」没有绑定 var——查询结果无法被后续引用")
+                if s.kind == "data_query" and not s.sql.strip():
+                    issues.append(f"data_query 步「{s.name}」没有 sql——必须提供只读 SELECT/WITH SELECT")
                 # check this run's refs BEFORE binding its own var (a read can't reference its own
                 # value — env[var] isn't set until the read completes)
                 _check_refs(f"{s.name}\n{s.success_condition}\n{s.read_spec}", f"步骤「{s.name}」", scope)
-                if s.kind == "read" and s.var:
+                if s.kind in {"read", "data_query"} and s.var:
                     scope[s.var] = set(s.returns)
             elif isinstance(s, Finish):
                 _check_refs(s.message, "finish 模板", scope)
@@ -294,13 +311,13 @@ def validate_program(program: Program) -> list[str]:
                 if s.cond.var not in scope:
                     issues.append(
                         f"if 条件引用的变量「{s.cond.var}」在此处尚未产生"
-                        "（不是任何在它之前、且在当前执行路径上的 read 步的 var）"
-                        f"——请在这个 if 之前（同一执行路径上）加一个 read 步读出「{s.cond.var}」"
+                        "（不是任何在它之前、且在当前执行路径上的 read/data_query 步的 var）"
+                        f"——请在这个 if 之前（同一执行路径上）加一个 read 或 data_query 步产生「{s.cond.var}」"
                     )
                 elif s.cond.field not in scope[s.cond.var]:
                     issues.append(
-                        f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该 read 步读取的字段（returns）里"
-                        f"——请把 cond_field 改成该 read 的 returns 里已有的字段名，或在该 read 的 returns 里补上「{s.cond.field}」"
+                        f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该 read/data_query 步返回的字段（returns）里"
+                        f"——请把 cond_field 改成该步 returns 里已有的字段名，或在该步 returns 里补上「{s.cond.field}」"
                     )
                 if s.cond.cmp in {"contains", "not_contains"} and not s.cond.value.strip():
                     issues.append(

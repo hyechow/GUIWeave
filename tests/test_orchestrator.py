@@ -205,11 +205,15 @@ def test_to_milestone_maps_runkind():
     assert rd.kind == "collection" and rd.completion_strategy == "read_once"
     assert rd.id == "d"                              # var → milestone id
     assert "连通判定" in rd.description and "原因" in rd.description  # returns 折进 description
+    dq = to_milestone(Run(var="q", name="统计订单", kind="data_query", returns=["emails"], sql="SELECT 1"), 4)
+    assert dq.kind == "collection" and dq.completion_strategy == "read_once"
+    assert dq.id == "q"
 
 
-def test_task_type_for_read_is_analysis():
+def test_task_type_for_non_ui_is_analysis():
     from gui_agent.core.orchestrator.engine import task_type_for
     assert task_type_for(Run(name="读", kind="read", returns=["x"])) == "analysis"
+    assert task_type_for(Run(name="查", kind="data_query", returns=["x"], sql="SELECT 1")) == "analysis"
     assert task_type_for(Run(name="点", kind="action")) == "action"
 
 
@@ -351,6 +355,20 @@ def test_normalize_confirm_read_converts_filter_before_read_to_action():
     assert "列表只显示" not in trigger.success_condition
     assert read.kind == "read" and read.returns == ["总数"]
     assert prog.statements[0].kind == "filter"  # 原 Program 不就地改
+
+
+def test_normalize_confirm_read_converts_filter_before_data_query_to_action():
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    prog = Program(statements=[
+        Run(name="提交订单筛选", kind="filter", success_condition="列表只显示匹配订单"),
+        Run(var="q", name="统计邮箱", kind="data_query", returns=["emails"],
+            sql="SELECT customer_email FROM data"),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    trigger, query = out.statements
+    assert trigger.kind == "action"
+    assert "不判定结果取值" in trigger.success_condition
+    assert query.kind == "data_query" and query.returns == ["emails"]
 
 
 def test_normalize_confirm_read_converts_filter_inside_if_branch():

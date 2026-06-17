@@ -78,6 +78,30 @@ def test_to_program_maps_extended_condition_values():
     assert branch.cond == Cond(var="r", field="状态", cmp="in", values=["待执行", "进行中"])
 
 
+def test_to_program_maps_data_query_sql():
+    draft = _PlanDraft(steps=[
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="统计订单邮箱",
+            returns=["emails"],
+            sql="SELECT customer_email FROM data GROUP BY customer_email HAVING COUNT(*) = 2",
+            data_scope="current",
+        ),
+        _StepDraft(op="finish", message="{q[emails]}"),
+    ])
+    prog = to_program(draft, "")
+    query = prog.statements[0]
+    assert isinstance(query, Run)
+    assert query.kind == "data_query"
+    assert query.var == "q"
+    assert query.returns == ["emails"]
+    assert "GROUP BY" in query.sql
+    assert query.data_scope == "current"
+    assert validate_program(prog) == []
+
+
 def test_to_program_goal_falls_back_when_draft_goal_empty():
     draft = _PlanDraft(goal="", steps=[_StepDraft(op="run", name="x")])
     assert to_program(draft, "原始目标").goal == "原始目标"
@@ -114,7 +138,7 @@ def test_validate_if_references_unknown_field():
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
     issues = validate_program(prog)
-    assert any("不在该 read 步读取的字段（returns）里" in i for i in issues)
+    assert any("不在该 read/data_query 步返回的字段（returns）里" in i for i in issues)
 
 
 def test_validate_condition_operator_operands():
@@ -138,6 +162,15 @@ def test_validate_read_without_returns_or_var():
     assert any("没有 returns 字段" in i for i in validate_program(no_returns))
     no_var = Program(statements=[Run(name="读", kind="read", returns=["x"])])
     assert any("没有绑定 var" in i for i in validate_program(no_var))
+
+
+def test_validate_data_query_requires_var_returns_and_sql():
+    no_returns = Program(statements=[Run(var="q", name="查", kind="data_query", sql="SELECT 1")])
+    assert any("data_query" in i and "returns" in i for i in validate_program(no_returns))
+    no_var = Program(statements=[Run(name="查", kind="data_query", returns=["x"], sql="SELECT 1")])
+    assert any("data_query" in i and "绑定 var" in i for i in validate_program(no_var))
+    no_sql = Program(statements=[Run(var="q", name="查", kind="data_query", returns=["x"])])
+    assert any("data_query" in i and "没有 sql" in i for i in validate_program(no_sql))
 
 
 def test_validate_walks_into_branches():

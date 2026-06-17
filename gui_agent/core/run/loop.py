@@ -427,59 +427,88 @@ def run_agent_loop(
                 return _finish(_orch_result(context, _interp, f"{reason}（任务未完成）", current=_cur_run))
             return _finish(_make_result(context, reason))
 
-        def _drive_pending_reads(done_png: "bytes | None" = None) -> "str | None":
-            """Pure single-frame READ runs — the inspect primitive. A `read` run is NOT a
-            checker-gated milestone loop: it reads the result the prior milestone left, runs
-            structured_read (读不到当没有，never blocks the program), packages the reads, and
-            advances the interpreter — no actions, no acceptance gate.
+        def _drive_pending_non_ui(done_observation=None) -> "str | None":
+            """Pure non-UI runs — inspect/data primitives. A `read` or `data_query` run is NOT a
+            checker-gated milestone loop: it consumes the result the prior milestone left, runs
+            the appropriate read/query primitive, packages the reads, and advances the
+            interpreter — no actions, no acceptance gate.
 
-            Critically, a read consumes the VERDICT FRAME — the exact frame the checker accepted
-            the prior milestone on (passed in as `done_png`) — NOT a fresh capture a turn later.
+            Critically, a non-UI step consumes the VERDICT OBSERVATION — the exact frame/table
+            snapshot the checker accepted the prior milestone on — NOT a fresh capture a turn later.
             Transient result hints (a 检测-success toast, a green ✓ that fades) are visible on the
             verdict frame but can be gone by the next observe; re-capturing would read an empty
-            screen and misjudge (user-reported flaw). At setup (no prior milestone) done_png is
-            None → capture one frame here. Consecutive reads share the same screen, so the frame
-            is reused across the loop. Returns the final reply if the program ended, else None."""
+            screen and misjudge. At setup (no prior milestone) done_observation is None → capture
+            one observation here. Consecutive non-UI steps share that observation. Returns the
+            final reply if the program ended, else None."""
             nonlocal _cur_run, _run_idx, _notes_mark
             from gui_agent.core.orchestrator.engine import (
                 package_result, task_type_for, to_milestone,
             )
-            _frame = done_png  # verdict frame the checker just accepted on; reused across reads
-            while _cur_run is not None and _cur_run.kind == "read":
+            _obs = done_observation
+            _frame = getattr(_obs, "png_bytes", None) if _obs is not None else None
+            _tables = getattr(_obs, "tables", None) if _obs is not None else None
+
+            def _ensure_observation():
+                nonlocal _obs, _frame, _tables
+                if _obs is None:
+                    _obs = bundle.make_perception(
+                        phone, log_dir / f"screenshot_read_{_run_idx}.png"
+                    ).observe()
+                    _frame = getattr(_obs, "png_bytes", None)
+                    _tables = getattr(_obs, "tables", None)
+                return _obs
+
+            while _cur_run is not None and _cur_run.kind in {"read", "data_query"}:
                 _reads: dict = {}
-                if _cur_run.returns:
+                _completed = True
+                _summary = f"读取 {'、'.join(_cur_run.returns) or _cur_run.name}"
+                if _cur_run.kind == "read" and _cur_run.returns:
                     from gui_agent.core.orchestrator.structured_read import structured_read
                     if _frame is None:  # setup leading read: no prior frame → capture once
-                        _frame = bundle.make_perception(
-                            phone, log_dir / f"screenshot_read_{_run_idx}.png"
-                        ).observe().png_bytes
+                        _ensure_observation()
                     _reads = structured_read(
                         _frame, _cur_run.returns,
                         read_spec=_cur_run.read_spec,
                         check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                     )
                     _say(f"  [Orchestrator] 只读验收帧 {_cur_run.returns} → {_reads}")
+                elif _cur_run.kind == "data_query":
+                    from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
+                    _ensure_observation()
+                    try:
+                        _reads = execute_data_query(
+                            _tables,
+                            _cur_run.sql,
+                            _cur_run.returns,
+                            require_complete=getattr(_cur_run, "data_scope", "complete") != "current",
+                        )
+                        _summary = f"数据查询 {'、'.join(_cur_run.returns) or _cur_run.name}"
+                        _say(f"  [Orchestrator] 数据查询 {_cur_run.returns} → {_reads}")
+                    except DataQueryError as exc:
+                        _completed = False
+                        _summary = str(exc)
+                        _say(f"  [Orchestrator] 数据查询失败：{exc}")
                 _res = package_result(
-                    _cur_run, completed=True,
-                    summary=f"读取 {'、'.join(_cur_run.returns) or _cur_run.name}",
+                    _cur_run, completed=_completed,
+                    summary=_summary,
                     notes=[], reads=_reads,
                 )
                 try:
                     _cur_run = _gen.send(_res)
-                except StopIteration as _e:  # program finished after the read (finish / off end)
+                except StopIteration as _e:  # program finished after the non-UI step (finish / off end)
                     return _e.value or ""
                 _run_idx += 1
             if _cur_run is not None:
                 _ms = to_milestone(_cur_run, _run_idx)
                 # fresh_advance only on a hand-off (a verdict frame was passed) — the leading
-                # setup reseed (done_png=None, first milestone) must NOT skip its check.
+                # setup reseed (done_observation=None, first milestone) must NOT skip its check.
                 supervisor.reseed(
                     _ms, task_type=task_type_for(_cur_run),
-                    fresh_advance=done_png is not None,
+                    fresh_advance=done_observation is not None,
                 )
                 # Accumulate the executed milestone so the report's 子目标分解 sidebar names every
                 # run (orchestrator reseeds one at a time; context.milestones is otherwise just the
-                # first). Pure reads have no turns → not here; the 分解 program row shows them.
+                # first). Pure non-UI steps have no turns → not here; the 分解 program row shows them.
                 if not any(m.get("id") == _ms.id for m in context.milestones):
                     context.milestones.append({
                         "id": _ms.id, "name": _ms.name, "description": _ms.description,
@@ -503,7 +532,7 @@ def run_agent_loop(
                 _cur_run = next(_gen)
             except StopIteration as _e:  # program with no run() (just finish / empty)
                 return _finish(_orch_result(context, _interp, _e.value or ""))
-            _reply = _drive_pending_reads()  # leading read(s) + reseed the first non-read run
+            _reply = _drive_pending_non_ui()  # leading non-UI step(s) + reseed the first UI run
             if _reply is not None:
                 return _finish(_orch_result(context, _interp, _reply))
 
@@ -547,7 +576,7 @@ def run_agent_loop(
             # milestone, and re-decide on the SAME frame — so a pure milestone hand-off never
             # costs its own action-less turn (the old behavior spent one). Only an action, a
             # DAG-mode completion, or a stop ends the turn. The next milestone's nav skip-check
-            # is set by the reseed inside _drive_pending_reads (fresh_advance). Behaviorally the
+            # is set by the reseed inside _drive_pending_non_ui (fresh_advance). Behaviorally the
             # next milestone is decided on the exact frame the prior one was accepted on — same
             # as the verdict-frame carry-forward, just merged into this turn instead of the next.
             _orch_reply: "str | None" = None    # set if the program ended during a hand-off
@@ -589,8 +618,8 @@ def run_agent_loop(
                     _orch_reply = _e.value or ""
                     break
                 _run_idx += 1
-                # reads consume THIS verdict frame; reseed the next non-read milestone.
-                _reply = _drive_pending_reads(done_png=observation.png_bytes)
+                # non-UI steps consume THIS verdict observation; reseed the next UI milestone.
+                _reply = _drive_pending_non_ui(done_observation=observation)
                 if _reply is not None:
                     _orch_reply = _reply
                     break
@@ -685,7 +714,7 @@ def run_agent_loop(
                         pass
 
             # Persist milestone decomposition after first step (DAG mode only — orchestrator mode
-            # accumulates milestones per reseed in _drive_pending_reads, so don't overwrite).
+            # accumulates milestones per reseed in _drive_pending_non_ui, so don't overwrite).
             if program is None and not context.milestones and hasattr(supervisor, "_milestones"):
                 context.milestones = [
                     {"id": m.id, "name": m.name, "description": m.description,

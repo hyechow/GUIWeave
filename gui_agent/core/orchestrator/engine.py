@@ -25,6 +25,7 @@ _KIND_MAP: dict[str, tuple[str, str]] = {
     "filter": ("filter", "visible_once"),
     "action": ("action", "visible_once"),
     "read": ("collection", "read_once"),
+    "data_query": ("collection", "read_once"),
 }
 
 
@@ -50,7 +51,7 @@ def to_milestone(run: Run, index: int) -> Milestone:
 def task_type_for(run: Run) -> Literal["action", "analysis"]:
     """A read Run -> 'analysis' so the supervisor's task_type-gated reader actually reads
     (feat-android gates reading on task_type; see policy._ctx / _default_read_instruction)."""
-    return "analysis" if run.kind == "read" else "action"
+    return "analysis" if run.kind in {"read", "data_query"} else "action"
 
 
 def package_result(
@@ -89,6 +90,7 @@ _DISPATCH_GATE_TMPL = (
 
 
 _CONFIRM_READ_TRIGGER_KINDS = {"action", "filter"}
+_CONFIRM_READ_TARGET_KINDS = {"read", "data_query"}
 
 
 def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
@@ -97,7 +99,7 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
     for i, s in enumerate(stmts):
         if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
             nxt = stmts[i + 1] if i + 1 < n else None
-            if isinstance(nxt, Run) and nxt.kind == "read":
+            if isinstance(nxt, Run) and nxt.kind in _CONFIRM_READ_TARGET_KINDS:
                 update = {"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)}
                 if s.kind == "filter":
                     # A filter that is immediately read is a trigger, not a final acceptance

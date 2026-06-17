@@ -10,6 +10,7 @@ final output didn't know" disappears: every milestone's reads live in the env.
 
 Grammar (MVP, no loops):
     var = run("<milestone>", returns=[...])      # returns = read_spec 字段
+    var = run("<data query>", kind="data_query", sql="SELECT ...", returns=[...])
     if var["field"] == "value": <stmts> else: <stmts>
     finish("<message with {var[field]} refs>")
 """
@@ -37,10 +38,9 @@ BARE_REF_RE = re.compile(r"\{(\w+)\}")
 
 # The orchestrator's OWN linear-task vocabulary (decoupled from the executor's
 # MilestoneKind). These are the milestone-sized things the linear executor is good
-# at: 到某页 / 填一组表单 / 点一个按钮 / 读取一个结果。 "read" = read-only single-frame
-# result milestone (the inspect concept). A thin adapter maps these to whatever the
-# real per-milestone driver expects when it's wired in.
-RunKind = Literal["navigation", "filter", "action", "read"]
+# at: 到某页 / 填一组表单 / 点一个按钮 / 读取一个结果 / 对结构化数据做只读查询。
+# "read" and "data_query" are non-UI primitives consumed directly by the orchestrator.
+RunKind = Literal["navigation", "filter", "action", "read", "data_query"]
 CondCmp = Literal["==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"]
 
 
@@ -72,6 +72,12 @@ class Run(BaseModel):
     # read primitive feeds this to structured_read as the primary judgment guidance; the app's
     # _check.md is a supplementary signal-convention reference. Empty for non-read runs.
     read_spec: str = Field(default="")
+    # Restricted SQL for kind="data_query". It runs against the current structured table snapshot
+    # in an in-memory sqlite database. Only SELECT / WITH ... SELECT is accepted.
+    sql: str = Field(default="")
+    # complete: reject partial table snapshots; current: explicitly query only currently
+    # rendered rows. The default protects "entire history" / full-dataset tasks.
+    data_scope: Literal["complete", "current"] = "complete"
     # STRUCTURAL marker for a precondition step ("确保已登录 / 已进入某模式"): a state to ENSURE,
     # not a fresh action. Set by the decomposer (an easy binary classification — far more reliable
     # than authoring a perfect gate). The engine rewrites a precondition's success_condition to a
