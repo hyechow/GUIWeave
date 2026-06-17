@@ -40,6 +40,11 @@ from gui_agent.core.run.result import (
     print_timings as _print_timings,
     print_turn_stats as _print_turn_stats,
 )
+from gui_agent.core.run.non_ui import drive_pending_non_ui
+from gui_agent.core.run.turns import (
+    interactive_turn_count as _interactive_turn_count,
+    make_interactive_turn,
+)
 from gui_agent.core.supervisor.base import SupervisorPolicy
 from gui_agent.core.llm.temporal import resolve_temporal_expressions
 from gui_agent.core.policies.base import ActionPolicy
@@ -47,8 +52,6 @@ from gui_agent.core.vision.target_verify import verify_target
 from gui_agent.core.schemas import (
     ActionDecision,
     PolicyContext,
-    PolicyTurn,
-    SupervisorStep,
     action_label,
 )
 from gui_agent.core.run.state import (
@@ -92,15 +95,6 @@ MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
-
-
-def _interactive_turn_count(context: PolicyContext) -> int:
-    """Count UI decision/action turns; non-UI primitives should not consume UI budget."""
-    return sum(
-        1
-        for turn in context.turns
-        if getattr(turn, "operation_mode", "interactive") != "non_interactive"
-    )
 
 
 def _settle_after_action(
@@ -438,147 +432,27 @@ def run_agent_loop(
             return _finish(_make_result(context, reason))
 
         def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
-            """Pure non-UI runs — inspect/data primitives. A `read` or `data_query` run is NOT a
-            checker-gated milestone loop: it consumes the result the prior milestone left, runs
-            the appropriate read/query primitive, packages the reads, and advances the
-            interpreter — no actions, no acceptance gate.
-
-            Critically, a non-UI step consumes the VERDICT OBSERVATION — the exact frame/table
-            snapshot the checker accepted the prior milestone on — NOT a fresh capture a turn later.
-            Transient result hints (a 检测-success toast, a green ✓ that fades) are visible on the
-            verdict frame but can be gone by the next observe; re-capturing would read an empty
-            screen and misjudge. At setup (no prior milestone) done_observation is None → capture
-            one observation here. Consecutive non-UI steps share that observation. Returns the
-            final reply if the program ended, else None."""
+            """Drive pending non-UI primitives and sync the local interpreter cursor."""
             nonlocal _cur_run, _run_idx, _notes_mark
-            from gui_agent.core.orchestrator.engine import (
-                package_result, task_type_for, to_milestone,
+            result = drive_pending_non_ui(
+                current_run=_cur_run,
+                run_index=_run_idx,
+                notes_mark=_notes_mark,
+                interpreter_steps=_gen,
+                bundle=bundle,
+                phone=phone,
+                log_dir=log_dir,
+                supervisor=supervisor,
+                context=context,
+                save_context=_save_ctx,
+                say=_say,
+                done_observation=done_observation,
+                observation_url=observation_url,
             )
-            _obs = done_observation
-            _frame = getattr(_obs, "png_bytes", None) if _obs is not None else None
-            _tables = getattr(_obs, "tables", None) if _obs is not None else None
-            _observation_url = observation_url
-
-            def _ensure_observation():
-                nonlocal _obs, _frame, _tables, _observation_url
-                if _obs is None:
-                    _observation_url = f"screenshot_read_{_run_idx}.png"
-                    _obs = bundle.make_perception(
-                        phone, log_dir / _observation_url
-                    ).observe()
-                    _frame = getattr(_obs, "png_bytes", None)
-                    _tables = getattr(_obs, "tables", None)
-                return _obs
-
-            while _cur_run is not None and _cur_run.kind in {"read", "data_query"}:
-                _run_for_turn = _cur_run
-                _turn_started = time.perf_counter()
-                _calls_before = get_llm_call_count()
-                _tokens_before = get_llm_token_usage()
-                _reads: dict = {}
-                _completed = True
-                _summary = f"读取 {'、'.join(_cur_run.returns) or _cur_run.name}"
-                if _cur_run.kind == "read" and _cur_run.returns:
-                    from gui_agent.core.orchestrator.structured_read import structured_read
-                    if _frame is None:  # setup leading read: no prior frame → capture once
-                        _ensure_observation()
-                    _reads = structured_read(
-                        _frame, _cur_run.returns,
-                        read_spec=_cur_run.read_spec,
-                        check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
-                    )
-                    _say(f"  [Orchestrator] 只读验收帧 {_cur_run.returns} → {_reads}")
-                elif _cur_run.kind == "data_query":
-                    from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
-                    _ensure_observation()
-                    try:
-                        _reads = execute_data_query(
-                            _tables,
-                            _cur_run.sql,
-                            _cur_run.returns,
-                            require_complete=getattr(_cur_run, "data_scope", "complete") != "current",
-                        )
-                        _summary = f"数据查询 {'、'.join(_cur_run.returns) or _cur_run.name}"
-                        _say(f"  [Orchestrator] 数据查询 {_cur_run.returns} → {_reads}")
-                    except DataQueryError as exc:
-                        _completed = False
-                        _summary = str(exc)
-                        _say(f"  [Orchestrator] 数据查询失败：{exc}")
-                _res = package_result(
-                    _run_for_turn, completed=_completed,
-                    summary=_summary,
-                    notes=[], reads=_reads,
-                )
-                _mid = _run_for_turn.var or f"m{_run_idx}_{_run_for_turn.kind}"
-                if not any(m.get("id") == _mid for m in context.milestones):
-                    context.milestones.append({
-                        "id": _mid,
-                        "name": _run_for_turn.name,
-                        "description": _run_for_turn.name,
-                        "kind": _run_for_turn.kind,
-                        "success_condition": _summary,
-                    })
-                context.turns.append(PolicyTurn(
-                    index=len(context.turns) + 1,
-                    operation_mode="non_interactive",
-                    observation_source=getattr(_obs, "source", "non_ui") if _obs is not None else "non_ui",
-                    supervisor=SupervisorStep(
-                        should_act=False,
-                        instruction=None,
-                        stop=False,
-                        goal_completed=False,
-                        summary=_summary,
-                        milestone_id=_mid,
-                        milestone_kind="collection",
-                        completion_strategy="read_once",
-                    ),
-                    action_decision=None,
-                    non_ui={
-                        "kind": _run_for_turn.kind,
-                        "name": _run_for_turn.name,
-                        "var": _run_for_turn.var or "",
-                        "returns": list(_run_for_turn.returns),
-                        "read_spec": _run_for_turn.read_spec,
-                        "sql": _run_for_turn.sql,
-                        "data_scope": getattr(_run_for_turn, "data_scope", "complete"),
-                        "reads": dict(_reads),
-                        "summary": _summary,
-                        "completed": _completed,
-                        "failed": not _completed,
-                        "observation_url": _observation_url or "",
-                    },
-                    executed=_completed,
-                    llm_calls=get_llm_call_count() - _calls_before,
-                    input_tokens=get_llm_token_usage()[0] - _tokens_before[0],
-                    output_tokens=get_llm_token_usage()[1] - _tokens_before[1],
-                    timings={
-                        _run_for_turn.kind: max(0.0, time.perf_counter() - _turn_started),
-                    },
-                ))
-                try:
-                    _cur_run = _gen.send(_res)
-                except StopIteration as _e:  # program finished after the non-UI step (finish / off end)
-                    return _e.value or ""
-                _run_idx += 1
-                _save_ctx()
-            if _cur_run is not None:
-                _ms = to_milestone(_cur_run, _run_idx)
-                # fresh_advance only on a hand-off (a verdict frame was passed) — the leading
-                # setup reseed (done_observation=None, first milestone) must NOT skip its check.
-                supervisor.reseed(
-                    _ms, task_type=task_type_for(_cur_run),
-                    fresh_advance=done_observation is not None,
-                )
-                # Accumulate the executed milestone so the report's 子目标分解 sidebar names every
-                # run (orchestrator reseeds one at a time; context.milestones is otherwise just the
-                # first). Non-UI steps are recorded above as non_interactive turns.
-                if not any(m.get("id") == _ms.id for m in context.milestones):
-                    context.milestones.append({
-                        "id": _ms.id, "name": _ms.name, "description": _ms.description,
-                        "kind": _ms.kind, "success_condition": _ms.success_condition,
-                    })
-                _notes_mark = len(context.content_notes)
-            return None
+            _cur_run = result.current_run
+            _run_idx = result.run_index
+            _notes_mark = result.notes_mark
+            return result.reply
 
         if program is not None:
             from gui_agent.core.orchestrator import Interpreter
@@ -683,10 +557,10 @@ def run_agent_loop(
                     break
                 _run_idx += 1
                 if _cur_run is not None and _cur_run.kind in {"read", "data_query"}:
-                    context.turns.append(PolicyTurn(
+                    context.turns.append(make_interactive_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,
-                        supervisor=sv_step,
+                        supervisor_step=sv_step,
                         action_decision=None,
                         checker=_extract_checker(supervisor),
                         planner=_extract_plan(supervisor),
@@ -748,10 +622,10 @@ def run_agent_loop(
                 # otherwise the report is missing it and the verdict screenshot (already written
                 # at observe) is orphaned. sv_step is the completed milestone's done verdict.
                 if not _terminal_verdict_recorded:
-                    context.turns.append(PolicyTurn(
+                    context.turns.append(make_interactive_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,
-                        supervisor=sv_step,
+                        supervisor_step=sv_step,
                         action_decision=None,
                         checker=_extract_checker(supervisor),
                         planner=_extract_plan(supervisor),
@@ -1008,10 +882,10 @@ def run_agent_loop(
                     verify_point[0], verify_point[1], sv_step.instruction,
                 )
 
-            turn = PolicyTurn(
+            turn = make_interactive_turn(
                 index=turn_no,
                 observation_source=observation.source,
-                supervisor=sv_step,
+                supervisor_step=sv_step,
                 action_decision=action_decision,
                 checker=_extract_checker(supervisor),
                 planner=_extract_plan(supervisor),
