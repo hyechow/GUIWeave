@@ -333,6 +333,44 @@ def test_normalize_confirm_read_gates_recurses_into_if_branches():
     assert out.statements[1].otherwise[0].message == "不可达"  # otherwise 不受影响
 
 
+def test_normalize_confirm_read_converts_filter_before_read_to_action():
+    # A filter whose only purpose is to produce a value for the next read is a trigger, not
+    # the final acceptance target. Convert it to action so the filter checker doesn't
+    # re-judge rows/counts that the read owns (WebArena admin grid count tasks).
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    prog = Program(statements=[
+        Run(name="提交 Review 列关键词 best 的筛选", kind="filter",
+            success_condition="列表只显示 Review 包含 best 的记录"),
+        Run(var="r", name="读取评论总数", kind="read", returns=["总数"],
+            read_spec="总数：读取 grid 顶部 N records found 中的 N"),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    trigger, read = out.statements
+    assert trigger.kind == "action"
+    assert "不判定结果取值" in trigger.success_condition
+    assert "列表只显示" not in trigger.success_condition
+    assert read.kind == "read" and read.returns == ["总数"]
+    assert prog.statements[0].kind == "filter"  # 原 Program 不就地改
+
+
+def test_normalize_confirm_read_converts_filter_inside_if_branch():
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    prog = Program(statements=[
+        Run(var="d", name="读判定", kind="read", returns=["需要查询"], read_spec="x"),
+        If(cond=Cond(var="d", field="需要查询", value="是"),
+           then=[
+               Run(name="提交搜索条件", kind="filter", success_condition="搜索结果均匹配条件"),
+               Run(var="r", name="读取结果数", kind="read", returns=["结果数"], read_spec="读 records found"),
+           ],
+           otherwise=[Finish(message="无需查询")]),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    then_filter = out.statements[1].then[0]
+    assert then_filter.kind == "action"
+    assert "不判定结果取值" in then_filter.success_condition
+    assert out.statements[1].otherwise[0].message == "无需查询"
+
+
 def test_normalize_precondition_gates_is_flag_based_not_keyword():
     # The L2 detection is the STRUCTURAL run.precondition flag, NOT name keywords. A flagged step
     # (login precondition with the 153314 form antipattern) gets the generic ensure-state gate; a

@@ -7,19 +7,23 @@ the DAG decomposer in `evals/browser/decomposer/` (that one drives
 of run/if/finish statements).
 
 Production-faithful:
-  * knowledge auto-discovery on the goal (same as runner.py), and
-  * screenshot-less — the orchestrator decomposes the goal BEFORE turn 1, so production
-    calls `decompose(goal, knowledge=knowledge.navigation)` with no png (runner.py:1279).
+  * knowledge auto-discovery on the goal (same as runner.py), unless a case pins a site
+    name for WebArena-style tasks whose intent text does not mention the site, and
+  * screenshot-less by default — browser runner.py decomposes the goal before turn 1,
+    while WebArena can pass front-tab metadata / screenshot explicitly.
 
 Because there's no screenshot input, this eval needs no image fixtures (clean re: the
 no-images-in-git rule). It calls the real LLM, so it's an on-demand eval (non-deterministic;
 run it a few times when judging a prompt change).
 
-Run:  uv run python evals/browser/orchestrator/test_orchestrator_decompose.py
+Run:
+  uv run python evals/browser/orchestrator/test_orchestrator_decompose.py
+  uv run python evals/browser/orchestrator/test_orchestrator_decompose.py --label WebArena --show-program
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -34,8 +38,9 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.orchestrator import Finish, If, Run, decompose
+from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates, normalize_precondition_gates
 from gui_agent.core.orchestrator.program import TEMPLATE_RE
-from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
+from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
@@ -100,6 +105,20 @@ def _confirm_read_actions(stmts: list) -> list[Run]:
         elif isinstance(s, If):
             out.extend(_confirm_read_actions(s.then))
             out.extend(_confirm_read_actions(s.otherwise))
+    return out
+
+
+def _adjacent_run_pairs(stmts: list) -> list[tuple[Run, Run]]:
+    """Adjacent Run pairs within each statement list, recursing into if branches."""
+    out: list[tuple[Run, Run]] = []
+    for i, s in enumerate(stmts):
+        if isinstance(s, Run):
+            nxt = stmts[i + 1] if i + 1 < len(stmts) else None
+            if isinstance(nxt, Run):
+                out.append((s, nxt))
+        elif isinstance(s, If):
+            out.extend(_adjacent_run_pairs(s.then))
+            out.extend(_adjacent_run_pairs(s.otherwise))
     return out
 
 
@@ -189,6 +208,55 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             ]
             if bad:
                 details.append(f"read 步缺 returns 或 read_spec（判读说明）: {bad}")
+        elif assertion == "shopping_admin_review_count_uses_action_read":
+            # WebArena shopping_admin #15/#11 style: query a Magento admin grid, then report the
+            # authoritative count. Applying a Review/search filter is only a trigger; the count
+            # must be read from the grid summary such as "N records found". In production this
+            # case runs after normalize_confirm_read_gates(), so a filter immediately followed by
+            # read should have become action→read with a dispatch/defer gate.
+            def _looks_like_count_read(r: Run) -> bool:
+                text = " ".join([r.name, r.read_spec, *r.returns]).lower()
+                return any(
+                    marker in text
+                    for marker in (
+                        "record", "records found", "count", "total", "review",
+                        "评论", "评价", "记录数", "数量", "总数",
+                    )
+                )
+
+            count_pairs = [
+                (a, b) for a, b in _adjacent_run_pairs(program.statements)
+                if b.kind == "read" and _looks_like_count_read(b)
+            ]
+            action_pairs = [(a, b) for a, b in count_pairs if a.kind == "action"]
+            filter_pairs = [(a, b) for a, b in count_pairs if a.kind == "filter"]
+            if not count_pairs:
+                details.append(
+                    "没有找到紧邻触发步骤的计数 read（应先筛选/搜索，再 read 读取 N records found/评论总数）"
+                )
+            elif not action_pairs:
+                details.append(
+                    f"计数 read 前一跳不是 action 触发器（生产 normalizer 后应为 action→read）: "
+                    f"{[(a.kind, a.name, b.name) for a, b in count_pairs]}"
+                )
+            if filter_pairs:
+                details.append(
+                    f"计数 read 前仍是 filter→read，说明筛选结果还会被 filter checker 重判: "
+                    f"{[(a.name, b.name) for a, b in filter_pairs]}"
+                )
+            bad_gates = [
+                (a.name, a.success_condition) for a, _ in action_pairs
+                if not any(m in a.success_condition for m in _DISPATCH_DEFER_MARKERS)
+            ]
+            if bad_gates:
+                details.append(
+                    f"计数 read 前的 action 不是 dispatch/defer 门（筛选成败应由 read 判定）: {bad_gates}"
+                )
+            action_text = " ".join(a.name.lower() for a, _ in action_pairs)
+            if action_pairs and not any(k in action_text for k in ("best", "review", "评论", "评价", "筛选", "搜索", "filter", "search")):
+                details.append(
+                    f"计数 read 前的 action 看不出是在按 review/best 搜索筛选: {[a.name for a, _ in action_pairs]}"
+                )
         elif assertion == "action_targets_read_entity":
             # read-then-reference（规则8，回归 20260615_163258）。不验「出现了某种 {var[字段]} 形态」
             # （那只是 prompt 样式），而验整条**顺序不变量**：
@@ -357,12 +425,58 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
     return details
 
 
-def test_orchestrator_decompose() -> None:
+def _load_case_knowledge(case: dict):
+    platform = case.get("platform", "browser")
+    app = case.get("knowledge_app") or case.get("site")
+    if app:
+        return load_knowledge_for_app(app, platform)
+    return auto_discover_knowledge(case["goal"], platform)
+
+
+def _case_program(case: dict):
+    k = _load_case_knowledge(case)
+    screenshot_path = case.get("screenshot")
+    png_bytes = None
+    if screenshot_path:
+        png_bytes = (PROJECT_ROOT / screenshot_path).read_bytes()
+    program = decompose(
+        case["goal"],
+        png_bytes=png_bytes,
+        knowledge=k.navigation if k else "",
+        current_url=case.get("current_url", ""),
+        current_title=case.get("current_title", ""),
+        current_site=case.get("current_site") or (k.app_name if k and case.get("use_knowledge_app_as_current_site") else ""),
+    )
+    if case.get("normalize"):
+        program = normalize_precondition_gates(normalize_confirm_read_gates(program))
+    return program
+
+
+def _dump_program(program) -> None:
+    for s in program.statements:
+        if isinstance(s, Run):
+            fields = f" returns={s.returns!r}" if s.returns else ""
+            spec = f" read_spec={s.read_spec!r}" if s.read_spec else ""
+            print(f"       [{s.kind}] {s.name}: {s.success_condition}{fields}{spec}")
+        elif isinstance(s, If):
+            print(
+                f"       [if] {s.cond.var}[{s.cond.field}] {s.cond.cmp} "
+                f"{s.cond.value!r} values={s.cond.values!r}"
+            )
+            for b in (*s.then, *s.otherwise):
+                nm = getattr(b, "name", None) or getattr(b, "message", "")
+                print(f"          └ [{getattr(b, 'kind', b.op)}] {nm}")
+        elif isinstance(s, Finish):
+            print(f"       [finish] {s.message}")
+
+
+def run_orchestrator_decompose_eval(label_filter: str = "", show_program: bool = False) -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     for c in cases:
+        if label_filter and label_filter.lower() not in c["label"].lower():
+            continue
         try:
-            k = auto_discover_knowledge(c["goal"], "browser")
-            program = decompose(c["goal"], knowledge=k.navigation if k else "")
+            program = _case_program(c)
         except Exception as e:  # noqa: BLE001
             _report(c["label"], False, f"exception: {e}")
             continue
@@ -371,29 +485,27 @@ def test_orchestrator_decompose() -> None:
         details.extend(_check_assertions(program, c.get("assertions", [])))
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
-        if not ok:
-            for s in program.statements:
-                if isinstance(s, Run):
-                    print(f"       [{s.kind}] {s.name}: {s.success_condition}")
-                elif isinstance(s, If):
-                    print(
-                        f"       [if] {s.cond.var}[{s.cond.field}] {s.cond.cmp} "
-                        f"{s.cond.value!r} values={s.cond.values!r}"
-                    )
-                    for b in (*s.then, *s.otherwise):
-                        nm = getattr(b, "name", None) or getattr(b, "message", "")
-                        print(f"          └ [{getattr(b, 'kind', b.op)}] {nm}")
-                elif isinstance(s, Finish):
-                    print(f"       [finish] {s.message}")
+        if show_program or not ok:
+            _dump_program(program)
+
+
+def test_orchestrator_decompose() -> None:
+    run_orchestrator_decompose_eval()
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--label", default="", help="Only run cases whose label contains this text.")
+    parser.add_argument("--show-program", action="store_true", help="Print each generated Program.")
+    args = parser.parse_args()
+
     print("── Browser Orchestrator-Decompose Eval ──")
     print("  测的是 decompose() 原始产出 = prompt(L1) 质量。部分断言有生产兜底，FAIL=prompt 可更好（软信号）非生产 bug：")
     print("    · confirm-read 的 dispatch 门 → engine.normalize_confirm_read_gates(L2) 确定性兜底；")
     print("    · 登录前置（auth_milestone_terminal_state）→ per-app _check.md 的登录判据、checker 权威兜底。")
+    print("  若 case 设置 normalize=true，则额外验证生产 normalizer 后的可执行形态。")
     print("  连通门控/读了就引用 等无兜底的断言，FAIL 才是真问题。")
-    test_orchestrator_decompose()
+    run_orchestrator_decompose_eval(label_filter=args.label, show_program=args.show_program)
     print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 1
 

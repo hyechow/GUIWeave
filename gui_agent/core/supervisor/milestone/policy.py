@@ -78,6 +78,46 @@ _VALUE_DOMAIN_WORDS = (
     "日",
 )
 
+_SEARCH_FILTER_MILESTONE_MARKERS = (
+    "搜索",
+    "筛选",
+    "过滤",
+    "查询",
+    "search",
+    "filter",
+)
+_SUBMIT_BY_TYPING_MARKERS = ("回车", "enter")
+
+
+def _type_only_search_filter_pending_submit(milestone: Milestone, history: list[PolicyTurn]) -> bool:
+    """True when a search/filter milestone was just filled but not submitted.
+
+    Some grids keep their old rows/count visible after typing into a filter input until the user
+    clicks Search/Apply or presses Enter. Vision-only checking can mistake that stale count for a
+    refreshed result. Keep this guard structural and narrow: it only fires for search/filter-shaped
+    milestones whose latest executed action in the same milestone is a plain `type`.
+    """
+    text = f"{milestone.name} {milestone.description} {milestone.success_condition}".lower()
+    if not any(marker in text for marker in _SEARCH_FILTER_MILESTONE_MARKERS):
+        return False
+    same_ms = [
+        t for t in history
+        if (
+            t.executed
+            and t.supervisor
+            and t.supervisor.milestone_id == milestone.id
+            and t.action_decision
+        )
+    ]
+    if not same_ms:
+        return False
+    last = same_ms[-1]
+    action = last.action_decision.action
+    if action.action_type != "type":
+        return False
+    action_text = f"{last.supervisor.instruction or ''} {action.description or ''}".lower()
+    return not any(marker in action_text for marker in _SUBMIT_BY_TYPING_MARKERS)
+
 _AM_WORDS = ("上午", "早上", "早晨", "清晨")
 _PM_WORDS = ("下午", "晚上", "傍晚", "夜晚")
 _TIME_ENTITY_WORDS = ("闹钟", "提醒", "日程", "会议", "预约", "时间", "alarm", "reminder", "schedule", "meeting")
@@ -441,6 +481,19 @@ class MilestoneSupervisorPolicy:
                 goal_completed=False, is_loading=True, summary="页面加载中，等待...",
                 **_ctx(milestone, None),
             )
+
+        if check.status == "done" and _type_only_search_filter_pending_submit(milestone, history):
+            print("  [SubmitPending] 搜索/筛选只输入未提交，覆盖 done → in_progress")
+            check = check.model_copy(update={
+                "status": "in_progress",
+                "reason": (
+                    "最近一步只是输入搜索/筛选关键词，尚未看到 Search/Apply/Filter/Submit "
+                    "或回车提交；当前列表/计数可能仍是提交前旧状态。"
+                ),
+                "summary": "搜索/筛选条件已填写，但还需要提交/应用。",
+                "missing_evidence": ["需要点击 Search/Apply/Filter/Submit，或按回车提交搜索/筛选。"],
+            })
+            self._last_check = check
 
         current_page_id = check.page_identity or ""
         self._last_page_identity[milestone.id] = current_page_id

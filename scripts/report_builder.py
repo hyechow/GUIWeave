@@ -480,6 +480,7 @@ class ReportData:
     settle_s_total: float = 0.0  # Σ per-turn settle waits (post-action screen-settle)
     knowledge: dict = field(default_factory=dict)  # injected app-knowledge summary {app_name, nav_chars, elements_chars, section_count}
     knowledge_sections: list[dict] = field(default_factory=list)  # sections injected ≥1 turn: {stem, title, body} (body read from knowledge dir for the click-to-view modal)
+    webarena: dict = field(default_factory=dict)  # WebArena artifact summary + agent_response.json payload
 
 
 # ── Recon data classes ─────────────────────────────────────────
@@ -1047,6 +1048,7 @@ class RunnerReportBuilder:
         data.goal_completed = bool(run_state.get("goal_completed", ctx.get("goal_completed", False)))
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
+        data.webarena = ctx.get("webarena") or {}
         data.wall_clock_s = ctx.get("wall_clock_s") or 0.0
         data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
@@ -2001,6 +2003,19 @@ HTML_TEMPLATE = """\
   .result-card-stopped .result-label {{ color: #dc2626; }}
   .result-body {{ font-size: 14px; color: var(--text); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }}
 
+  /* WebArena final response */
+  .wa-card {{ max-width:1080px; margin:0 auto 20px; padding:16px 20px; background:var(--card); border-radius:var(--radius); box-shadow:0 1px 3px rgba(0,0,0,0.08); border-left:4px solid #22c55e; }}
+  .wa-card-error {{ border-left-color:#dc2626; }}
+  .wa-head {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }}
+  .wa-label {{ font-size:11px; font-weight:700; color:#047857; text-transform:uppercase; letter-spacing:0.06em; }}
+  .wa-card-error .wa-label {{ color:#dc2626; }}
+  .wa-chip {{ font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }}
+  .wa-chip-error {{ background:#fef2f2; color:#b91c1c; border-color:#fecaca; }}
+  .wa-meta {{ font-size:11px; color:#94a3b8; font-family:monospace; margin-left:auto; }}
+  .wa-grid {{ display:grid; grid-template-columns:120px 1fr; gap:6px 12px; font-size:13px; line-height:1.5; }}
+  .wa-k {{ color:#64748b; font-weight:600; }}
+  .wa-v {{ color:#1e293b; white-space:pre-wrap; word-break:break-word; }}
+
   /* Router / input-resolution row (shares the 模型配置 box style) */
   .prov-arrow {{ color: #94a3b8; margin: 0 6px; }}
   .prov-goal {{ color: #1e293b; font-weight: 500; }}
@@ -2117,6 +2132,7 @@ HTML_TEMPLATE = """\
     {program_html}
     {pages_html}
     {result_html}
+    {webarena_html}
   </main>
 </div>
 
@@ -2509,6 +2525,60 @@ def _render_run_status_badge(data: ReportData) -> str:
     return (
         f'<span class="run-status-badge run-status-badge-{cls}" '
         f'data-tip="{tip_attr}">{_safe(label)}</span>'
+    )
+
+
+def _render_webarena_result(webarena: dict) -> str:
+    """Render the WebArena grading result plus the task context that produced it."""
+    if not webarena:
+        return ""
+    response = webarena.get("agent_response") or {}
+    if not isinstance(response, dict) or not response:
+        return ""
+
+    status = str(response.get("status") or "")
+    ok = status.upper() == "SUCCESS"
+    task_type = str(response.get("task_type") or "")
+    retrieved = response.get("retrieved_data")
+    error = response.get("error_details")
+    task_id = webarena.get("task_id")
+    sites = webarena.get("sites") or []
+    sites_text = ", ".join(map(str, sites)) if isinstance(sites, list) else str(sites)
+    start_url = str(webarena.get("start_url") or "")
+    output_dir = str(webarena.get("task_output_dir") or "")
+
+    def _json_inline(value) -> str:
+        return _safe(json.dumps(value, ensure_ascii=False)) if value is not None else "null"
+
+    status_chip_cls = "wa-chip" if ok else "wa-chip wa-chip-error"
+    card_cls = "wa-card" if ok else "wa-card wa-card-error"
+    meta_bits = []
+    if task_id not in (None, ""):
+        meta_bits.append(f"task {task_id}")
+    if sites_text:
+        meta_bits.append(sites_text)
+    meta_html = f'<span class="wa-meta">{_safe(" · ".join(meta_bits))}</span>' if meta_bits else ""
+
+    task_rows = ""
+    if start_url:
+        task_rows += f'<div class="wa-k">起始 URL</div><div class="wa-v">{_safe(start_url)}</div>'
+    if output_dir:
+        task_rows += f'<div class="wa-k">输出目录</div><div class="wa-v">{_safe(output_dir)}</div>'
+
+    return (
+        f'<div class="{card_cls}">'
+        f'<div class="wa-head">'
+        f'<span class="wa-label">WebArena 最终输出</span>'
+        f'<span class="{status_chip_cls}">{_safe(status or "UNKNOWN")}</span>'
+        f'{meta_html}'
+        f'</div>'
+        f'<div class="wa-grid">'
+        f'<div class="wa-k">task_type</div><div class="wa-v">{_safe(task_type or "—")}</div>'
+        f'<div class="wa-k">retrieved_data</div><div class="wa-v">{_json_inline(retrieved)}</div>'
+        f'<div class="wa-k">error_details</div><div class="wa-v">{_safe(str(error)) if error is not None else "null"}</div>'
+        f'{task_rows}'
+        f'</div>'
+        f'</div>'
     )
 
 
@@ -2945,6 +3015,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         platform_badge=_render_platform_badge(data.platform),
         stats=stats_str,
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
+        webarena_html=_render_webarena_result(data.webarena),
         program_html=_render_program_section(data.orchestrator),
         run_status_badge=_render_run_status_badge(data),
         outline_title=("任务编排" if (data.orchestrator.get("program") or {}).get("statements") else "子目标分解"),

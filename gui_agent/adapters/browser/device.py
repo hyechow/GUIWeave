@@ -324,7 +324,11 @@ class PlaywrightDevice:
         means the page is truly not yet actionable.  False on any failure.
         """
         try:
-            return self._require_page().evaluate("document.readyState") == "loading"
+            res = self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": "document.readyState", "returnByValue": True},
+            )
+            return (res.get("result", {}) or {}).get("value") == "loading"
         except Exception:
             return False
 
@@ -825,7 +829,7 @@ class PlaywrightDevice:
     # ----- browser-only extras --------------------------------------------
     def navigate(self, url: str) -> str:
         try:
-            self._require_page().goto(url)
+            self._cdp_send("Page.navigate", {"url": url})
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return f"OK navigate {url}"

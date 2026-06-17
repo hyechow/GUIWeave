@@ -9,7 +9,8 @@ real browser agent (perception + milestone supervisor + executor + visualizer) v
 
   pre-run  : inject auth cookies (raw CDP) + start HAR capture + navigate start_url
              — all in the ``on_session_open`` hook, on the just-connected session.
-  run      : run_agent_loop(intent)  — unchanged, fully reused.
+  run      : decompose intent into the DSL orchestrator program, then run_agent_loop
+             drives each linear milestone; --no-orchestrator keeps the legacy DAG path.
   post-run : dump network.har + synthesize agent_response.json from the run result.
 
 No headless browser anywhere: auth is CDP cookie injection (see device.load_cookies),
@@ -157,6 +158,34 @@ def _synthesize_response(intent: str, result: dict, context_path: Path | None = 
     return invoke_structured(llm, [SystemMessage(content=sys_msg), HumanMessage(content=human)], WAResponse)
 
 
+def _write_webarena_report_context(
+    context_path: Path,
+    *,
+    task: dict,
+    task_id: int,
+    start_url: str | None,
+    out_dir: Path,
+    har_path: Path,
+    resp_path: Path,
+    response_payload: dict,
+) -> None:
+    """Patch context.json with the exact WebArena response shown in report.html."""
+    if not context_path.exists():
+        return
+    raw = json.loads(context_path.read_text(encoding="utf-8"))
+    raw["webarena"] = {
+        "task_id": task_id,
+        "sites": task.get("sites") or [],
+        "intent": task.get("intent") or "",
+        "start_url": start_url or "",
+        "task_output_dir": str(out_dir),
+        "har_path": str(har_path),
+        "agent_response_path": str(resp_path),
+        "agent_response": response_payload,
+    }
+    context_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a WebArena-Verified task on the browser agent")
     parser.add_argument("--tasks-file", type=Path, required=True, help="agent-input-get output JSON")
@@ -165,6 +194,8 @@ def main() -> int:
     parser.add_argument("--storage-state", type=Path, default=None, help="Playwright storage_state JSON for auth cookies (optional)")
     parser.add_argument("--cdp-url", type=str, default=None, help="Chrome CDP url (default env CHROME_CDP_URL or :9222)")
     parser.add_argument("--max-turns", type=int, default=25)
+    parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
+    parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
     parser.add_argument("--hud", action="store_true", help="show the translucent status HUD over the Chrome window (macOS)")
     args = parser.parse_args()
 
@@ -212,6 +243,7 @@ def main() -> int:
         # we bind directly on the site tag (site -> knowledge/browser/<site>/ when a base exists).
         from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
+        knowledge = None
         knowledge_summary: Optional[dict] = None  # persisted to context.json so the report renders it
         for site in (task.get("sites") or []):
             knowledge = load_knowledge_for_app(site, "browser")
@@ -246,23 +278,105 @@ def main() -> int:
                 print("[webarena]", device.navigate(start_url))
 
         try:
-            result = run_agent_loop(
-                intent,
-                action_policy,
-                supervisor,
-                None,                       # input_context_path
-                log_dir,
-                log_dir / "context.json",
-                max_turns=args.max_turns,
-                auto_continue=True,
-                hud=hud,
-                raw_input=intent,
-                router=None,
-                on_session_open=_prime,
-                knowledge=knowledge_summary,
-            )
+            bundle = build_platform()
+            setup = bundle.setup_check()
+            for line in setup.lines:
+                print(line)
+            if not setup.ok:
+                result = {
+                    "task_type": "RETRIEVE",
+                    "goal_completed": False,
+                    "stop_reason": f"环境检查未通过：{setup.summary}",
+                    "result_summary": f"环境检查未通过：{setup.summary}",
+                    "content_notes": None,
+                }
+            else:
+                program = None
+                run_max_turns = args.max_turns
+                with bundle.open_session() as phone:
+                    _prime(phone)
+                    device = getattr(phone, "client", None)
+                    if device is not None and hasattr(device, "wait_settled"):
+                        try:
+                            device.wait_settled("navigate")
+                        except Exception as exc:  # noqa: BLE001 - best-effort start-url settle
+                            print(f"[webarena] start_url settle skipped ({exc})")
 
-            # ----- post-run artifacts (session already closed; both are offline) -----
+                    if not args.no_orchestrator:
+                        cur_url = ""
+                        cur_title = ""
+                        cur_site = knowledge.app_name if knowledge is not None else ""
+                        initial_png = None
+                        try:
+                            initial_obs = bundle.make_perception(
+                                phone, log_dir / "screenshot_initial.png"
+                            ).observe()
+                            cur_url = initial_obs.url or ""
+                            cur_title = initial_obs.title or ""
+                            initial_png = initial_obs.png_bytes
+                            if not cur_site and cur_url:
+                                from gui_agent.core.self_learning.app_summary import match_app_by_url
+                                cur_site = match_app_by_url(cur_url, "browser") or ""
+                            if cur_url or cur_site:
+                                shown = cur_site or cur_url
+                                print(f"[webarena] current page: {shown}" + (f" ({cur_title})" if cur_title else ""))
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"[webarena] initial observe failed; orchestrator decompose without screenshot ({exc})")
+
+                        from gui_agent.core.orchestrator import (
+                            decompose,
+                            estimate_program_turns,
+                            normalize_confirm_read_gates,
+                            normalize_precondition_gates,
+                        )
+                        from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
+
+                        file_section = resolve_file_refs(intent)
+                        program = normalize_precondition_gates(
+                            normalize_confirm_read_gates(
+                                decompose(
+                                    intent,
+                                    knowledge=knowledge.navigation if knowledge else "",
+                                    file_section=file_section,
+                                    current_url=cur_url,
+                                    current_title=cur_title,
+                                    current_site=cur_site,
+                                    png_bytes=initial_png,
+                                )
+                            )
+                        )
+                        if file_section and hasattr(supervisor, "_global_constraints"):
+                            cap = 3000
+                            supervisor._global_constraints.append(
+                                file_section if len(file_section) <= cap
+                                else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
+                            )
+                        print(f"[webarena] orchestrator: {len(program.statements)} statements")
+                        if not args.no_dynamic_max_turns:
+                            run_max_turns = estimate_program_turns(program, floor=args.max_turns)
+                            if run_max_turns != args.max_turns:
+                                print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
+                    else:
+                        print("[webarena] orchestrator: disabled; using legacy milestone DAG")
+
+                    result = run_agent_loop(
+                        intent,
+                        action_policy,
+                        supervisor,
+                        None,                       # input_context_path
+                        log_dir,
+                        log_dir / "context.json",
+                        max_turns=run_max_turns,
+                        auto_continue=True,
+                        hud=hud,
+                        raw_input=intent,
+                        router=None,
+                        knowledge=knowledge_summary,
+                        program=program,
+                        phone=phone,
+                    )
+
+            # ----- post-run artifacts -----
             rec = recorder_holder.get("rec")
             if rec is not None:
                 print("[webarena]", rec.dump(str(har_path)))
@@ -272,13 +386,34 @@ def main() -> int:
 
             try:
                 resp = _synthesize_response(intent, result or {}, log_dir / "context.json")
-                resp_path.write_text(json.dumps(resp.model_dump(), indent=2))
+                response_payload = resp.model_dump()
+                resp_path.write_text(json.dumps(response_payload, indent=2))
+                _write_webarena_report_context(
+                    log_dir / "context.json",
+                    task=task,
+                    task_id=args.task_id,
+                    start_url=start_url,
+                    out_dir=out_dir,
+                    har_path=har_path,
+                    resp_path=resp_path,
+                    response_payload=response_payload,
+                )
                 print(f"[webarena] OK agent_response -> {resp_path}")
-                print(json.dumps(resp.model_dump(), indent=2, ensure_ascii=False))
+                print(json.dumps(response_payload, indent=2, ensure_ascii=False))
             except Exception as exc:  # noqa: BLE001 — still leave a valid response file
                 fallback = {"task_type": result.get("task_type") or "RETRIEVE", "status": "UNKNOWN_ERROR",
                             "retrieved_data": None, "error_details": f"response synthesis failed: {exc}"}
                 resp_path.write_text(json.dumps(fallback, indent=2))
+                _write_webarena_report_context(
+                    log_dir / "context.json",
+                    task=task,
+                    task_id=args.task_id,
+                    start_url=start_url,
+                    out_dir=out_dir,
+                    har_path=har_path,
+                    resp_path=resp_path,
+                    response_payload=fallback,
+                )
                 print(f"[webarena] response synthesis failed ({exc}); wrote fallback -> {resp_path}")
 
             # Auto-generate the HTML run report from context.json (same builder as the runner),

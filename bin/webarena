@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# 跑一条 WebArena-Verified 任务(浏览器 agent,知识库按 sites 标签自动注入)。
+# 跑一条 WebArena-Verified 任务(浏览器 agent,知识库按 sites 标签自动注入，默认走 DSL orchestrator)。
 # 用法: bin/webarena <task-id> [额外参数...]
 #   例: bin/webarena 11                       # 跑 task 11(默认带状态 HUD)
 #       bin/webarena 15 --max-turns 30        # 透传给 webarena.py
+#       bin/webarena 15 --no-orchestrator     # 回退旧 milestone DAG 路径
 # 前置: 先 bin/launch_chrome_cdp 起带远程调试的 Chrome,并在弹窗里登录目标站点。
 # 默认 tasks-file=webarena-verified/output/shopping_admin_hard_tasks.json;输出目录按 task.sites 自动选择。
 #   shopping_admin -> webarena-verified/output/sa_run/<id>/

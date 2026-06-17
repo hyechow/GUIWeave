@@ -434,12 +434,6 @@ def run_checker(
         app_name_context=app_name_context,
         kind_section=kind_section,
     )
-    if check_knowledge:
-        prompt += (
-            "\n\n## 应用验收观察规则（来自知识库，描述该应用界面的实际显示形态与完成标志；"
-            "与上面通用规则冲突时以此为准）\n"
-            f"{check_knowledge}"
-        )
     if extra:
         prompt += f"\n\n## 输出修正要求\n{extra}"
     # Inject the tab TITLE (the viewport-language page name the screenshot doesn't show) as
@@ -464,6 +458,12 @@ def run_checker(
             "对下列每个验收子项独立判定：met（是否满足）+ 一句可见证据，按对应 index 填入 item_verdicts。"
             "逐项判定不改变你对整体 status 的综合判断。\n"
             f"{enumerated}"
+        )
+    if check_knowledge:
+        prompt += (
+            "\n\n## 应用验收观察规则（来自知识库，描述该应用界面的实际显示形态与完成标志；"
+            "这是最终解释规则；若它与通用规则或逐项验收的字面理解冲突，以本节对界面事实的解释为准）\n"
+            f"{check_knowledge}"
         )
     result = invoke_structured(
         _make_llm(),

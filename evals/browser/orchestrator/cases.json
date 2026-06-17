@@ -120,5 +120,24 @@
       "read_has_spec"
     ],
     "note": "条件扩展回归：一个业务成功态可能对应多个状态枚举。期望 decompose 使用 cond_cmp=in 且 cond_values 包含待执行/进行中/已完成，而不是堆多个 if 或把多个候选塞进单个字符串。"
+  },
+  {
+    "label": "WebArena shopping_admin review count-筛选只是触发器，计数由 read 读取（回归 task 15）",
+    "goal": "Get the total number of reviews that our store received so far that mention term \"best\"",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://localhost:7780/admin/",
+    "current_title": "Magento Admin",
+    "normalize": true,
+    "expected": {
+      "has_read": true,
+      "min_statements": 2
+    },
+    "assertions": [
+      "shopping_admin_review_count_uses_action_read",
+      "read_has_spec"
+    ],
+    "note": "回归 WebArena task 15：目标是统计 Review 含 best 的评论总数。Magento Admin 的 grid 在筛选后会显示 N records found，这个计数才是权威输出；行标题/摘要不一定包含 best，不能让 filter checker 用可见行内容重判筛选成败。本 case 按 WebArena 生产链路固定注入 shopping_admin 知识和当前站点元信息，并启用 normalize=true，期望形态为：导航/确保进入 Reviews 页 → action 执行 Review 搜索/筛选 best（dispatch/defer 门）→ read 从 grid summary 读取记录数 → finish/汇报。若 raw decompose 生成 filter→read，normalize_confirm_read_gates 应把它转成 action→read。"
   }
 ]
