@@ -249,6 +249,61 @@ def _run_official_eval(
     return eval_path, payload
 
 
+def _official_eval_summary(eval_payload: dict | None, response_payload: dict) -> dict | None:
+    """Compact terminal summary of the official evaluator result.
+
+    The full `agent_response.json` is only the submitted response; the official evaluator is the
+    benchmark verdict. Print this summary after the response so the terminal's final WebArena
+    signal matches the report.
+    """
+    if not eval_payload:
+        return None
+    evaluators = [
+        item for item in (eval_payload.get("evaluators_results") or [])
+        if isinstance(item, dict)
+    ]
+    first = evaluators[0] if evaluators else {}
+    expected = first.get("expected") if isinstance(first.get("expected"), dict) else {}
+    actual = first.get("actual_normalized") if isinstance(first.get("actual_normalized"), dict) else {}
+    assertions = []
+    for item in evaluators:
+        for assertion in item.get("assertions") or []:
+            if isinstance(assertion, dict):
+                assertions.append({
+                    "name": assertion.get("assertion_name"),
+                    "status": assertion.get("status"),
+                    "messages": assertion.get("assertion_msgs") or [],
+                })
+    return {
+        "status": eval_payload.get("status"),
+        "score": eval_payload.get("score"),
+        "evaluator_name": [item.get("evaluator_name") for item in evaluators],
+        "task_type": response_payload.get("task_type"),
+        "answer": expected.get("retrieved_data"),
+        "response": (
+            actual.get("retrieved_data")
+            if "retrieved_data" in actual
+            else response_payload.get("retrieved_data")
+        ),
+        "assertions": assertions or None,
+    }
+
+
+def _print_webarena_outputs(
+    *,
+    resp_path: Path,
+    response_payload: dict,
+    eval_path: Path | None,
+    eval_payload: dict | None,
+) -> None:
+    print(f"[webarena] OK agent_response (submission) -> {resp_path}")
+    print(json.dumps(response_payload, indent=2, ensure_ascii=False))
+    summary = _official_eval_summary(eval_payload, response_payload)
+    if summary is not None:
+        print(f"[webarena] OFFICIAL_EVAL -> {eval_path}")
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a WebArena-Verified task on the browser agent")
     parser.add_argument("--tasks-file", type=Path, required=True, help="agent-input-get output JSON")
@@ -463,7 +518,7 @@ def main() -> int:
                         har_path=har_path,
                     )
                     print(
-                        "[webarena] OK eval_result -> "
+                        "[webarena] OK eval_result (official) -> "
                         f"{eval_path} "
                         f"(status={eval_payload.get('status')}, score={eval_payload.get('score')})"
                     )
@@ -481,8 +536,12 @@ def main() -> int:
                     eval_result_path=eval_path,
                     eval_result_payload=eval_payload,
                 )
-                print(f"[webarena] OK agent_response -> {resp_path}")
-                print(json.dumps(response_payload, indent=2, ensure_ascii=False))
+                _print_webarena_outputs(
+                    resp_path=resp_path,
+                    response_payload=response_payload,
+                    eval_path=eval_path,
+                    eval_payload=eval_payload,
+                )
             except Exception as exc:  # noqa: BLE001 — still leave a valid response file
                 fallback = {"task_type": result.get("task_type") or "RETRIEVE", "status": "UNKNOWN_ERROR",
                             "retrieved_data": None, "error_details": f"response synthesis failed: {exc}"}
@@ -497,7 +556,7 @@ def main() -> int:
                         har_path=har_path,
                     )
                     print(
-                        "[webarena] OK eval_result -> "
+                        "[webarena] OK eval_result (official) -> "
                         f"{eval_path} "
                         f"(status={eval_payload.get('status')}, score={eval_payload.get('score')})"
                     )
@@ -516,6 +575,12 @@ def main() -> int:
                     eval_result_payload=eval_payload,
                 )
                 print(f"[webarena] response synthesis failed ({exc}); wrote fallback -> {resp_path}")
+                _print_webarena_outputs(
+                    resp_path=resp_path,
+                    response_payload=fallback,
+                    eval_path=eval_path,
+                    eval_payload=eval_payload,
+                )
 
             # Auto-generate the HTML run report from context.json (same builder as the runner),
             # so a WebArena run is as inspectable as a normal agent run.

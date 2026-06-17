@@ -2586,6 +2586,8 @@ def _render_webarena_result(webarena: dict) -> str:
         meta_bits.append(f"task {task_id}")
     if sites_text:
         meta_bits.append(sites_text)
+    if eval_result and eval_score is not None:
+        meta_bits.append(f"score {eval_score}")
     meta_html = f'<span class="wa-meta">{_safe(" · ".join(meta_bits))}</span>' if meta_bits else ""
 
     rows = ""
@@ -2596,10 +2598,8 @@ def _render_webarena_result(webarena: dict) -> str:
         ]
         rows += f'<div class="wa-k">evaluator_name</div><div class="wa-v">{_safe(", ".join(evaluator_names) or "—")}</div>'
         rows += f'<div class="wa-k">task_type</div><div class="wa-v">{_safe(task_type or "—")}</div>'
-        rows += (
-            f'<div class="wa-k">Answer / Response</div>'
-            f'<div class="wa-v">answer: {_json_inline(gt_value)}<br>response: {_json_inline(ours_value)}</div>'
-        )
+        rows += f'<div class="wa-k">Answer</div><div class="wa-v">{_json_inline(gt_value)}</div>'
+        rows += f'<div class="wa-k">Response</div><div class="wa-v">{_json_inline(ours_value)}</div>'
         assertion_bits: list[str] = []
         for item in evaluator_items:
             assertions = item.get("assertions") or []
@@ -2610,7 +2610,7 @@ def _render_webarena_result(webarena: dict) -> str:
                         msg = "; ".join(map(str, msgs)) if isinstance(msgs, list) else str(msgs)
                         assertion_bits.append(f'{assertion.get("assertion_name") or "assertion"}: {msg}')
         if assertion_bits:
-            rows += f'<div class="wa-k">断言</div><div class="wa-v wa-assert">{_safe("；".join(assertion_bits))}</div>'
+            rows += f'<div class="wa-k">Assertions</div><div class="wa-v wa-assert">{_safe("; ".join(assertion_bits))}</div>'
     else:
         rows += (
             f'<div class="wa-k">提交状态</div><div class="wa-v">{_safe(status or "UNKNOWN")}</div>'
@@ -2625,16 +2625,11 @@ def _render_webarena_result(webarena: dict) -> str:
 
     label = "WebArena" if eval_result else "WebArena 最终输出"
     primary_status = eval_status if eval_result else status
-    score_chip_html = ""
-    if eval_result and eval_score is not None:
-        score_chip_html = f'<span class="wa-chip">score {_safe(str(eval_score))}</span>'
-
     return (
         f'<div class="{card_cls}">'
         f'<div class="wa-head">'
         f'<span class="wa-label">{_safe(label)}</span>'
         f'<span class="{primary_chip_cls}">{_safe(primary_status or "UNKNOWN")}</span>'
-        f'{score_chip_html}'
         f'{meta_html}'
         f'</div>'
         f'<div class="wa-grid">'

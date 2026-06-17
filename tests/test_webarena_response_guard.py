@@ -5,6 +5,7 @@ from gui_agent.adapters.browser.webarena import (
     WAResponse,
     _finalize_response,
     _run_official_eval,
+    _official_eval_summary,
     _write_webarena_report_context,
 )
 
@@ -143,3 +144,51 @@ def test_run_official_eval_writes_eval_result(monkeypatch, tmp_path):
     assert eval_path == tmp_path / "eval_result.json"
     assert payload == {"status": "success", "score": 1.0}
     assert '"score": 1.0' in eval_path.read_text(encoding="utf-8")
+
+
+def test_official_eval_summary_shows_benchmark_verdict():
+    summary = _official_eval_summary(
+        {
+            "status": "failure",
+            "score": 0.0,
+            "evaluators_results": [
+                {
+                    "evaluator_name": "AgentResponseEvaluator",
+                    "actual_normalized": {
+                        "task_type": "retrieve",
+                        "status": "success",
+                        "retrieved_data": ["tanks", "nike"],
+                    },
+                    "expected": {
+                        "task_type": "retrieve",
+                        "status": "success",
+                        "retrieved_data": ["hollister", "Joust Bag"],
+                    },
+                    "assertions": [
+                        {
+                            "assertion_name": "retrieved_data_ordered_mismatch",
+                            "status": "failure",
+                            "assertion_msgs": ["Expected hollister, got tanks"],
+                        }
+                    ],
+                }
+            ],
+        },
+        {"task_type": "RETRIEVE", "status": "SUCCESS", "retrieved_data": ["tanks", "nike"]},
+    )
+
+    assert summary == {
+        "status": "failure",
+        "score": 0.0,
+        "evaluator_name": ["AgentResponseEvaluator"],
+        "task_type": "RETRIEVE",
+        "answer": ["hollister", "Joust Bag"],
+        "response": ["tanks", "nike"],
+        "assertions": [
+            {
+                "name": "retrieved_data_ordered_mismatch",
+                "status": "failure",
+                "messages": ["Expected hollister, got tanks"],
+            }
+        ],
+    }
