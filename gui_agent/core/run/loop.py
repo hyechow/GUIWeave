@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 from contextlib import nullcontext
@@ -34,6 +33,7 @@ from gui_agent.core.run.result import (
     print_turn_stats as _print_turn_stats,
 )
 from gui_agent.core.run.action_exec import ActionExecutionState
+from gui_agent.core.run.metadata import sync_turn_metadata
 from gui_agent.core.run.non_ui import drive_pending_non_ui
 from gui_agent.core.run.post_action import (
     finalize_auto_continue_turn,
@@ -500,35 +500,13 @@ def run_agent_loop(
                 continue
             loading_streak = 0
 
-            # Record which model each LLM config key actually used (once, self-describing
-            # for cost — the report prefers this over re-resolving the active config later).
-            if not context.models:
-                from gui_agent.core.config import resolve_llm_config
-                for _key in ("supervisor", "supervisor.decompose", "action_policy",
-                             "reader", "output", "router", "back_nav"):
-                    try:
-                        context.models[_key] = resolve_llm_config(_key).model or ""
-                    except Exception:
-                        pass
-
-            # Persist milestone decomposition after first step (DAG mode only — orchestrator mode
-            # accumulates milestones per reseed in _drive_pending_non_ui, so don't overwrite).
-            if program is None and not context.milestones and hasattr(supervisor, "_milestones"):
-                context.milestones = [
-                    {"id": m.id, "name": m.name, "description": m.description,
-                     "kind": m.kind, "success_condition": m.success_condition}
-                    for m in supervisor._milestones.values()
-                ]
-
-            if hasattr(supervisor, "task_type") and context.task_type is None:
-                context.task_type = supervisor.task_type
-                _say(f"任务类型: {context.task_type}")
-            if sv_step.collection_scope and sv_step.collection_scope != context.collection_scope:
-                context.collection_scope = sv_step.collection_scope
-                _say(
-                    "采集范围: "
-                    + json.dumps(context.collection_scope.model_dump(exclude_none=True), ensure_ascii=False)
-                )
+            sync_turn_metadata(
+                context=context,
+                supervisor=supervisor,
+                sv_step=sv_step,
+                program=program,
+                say=_say,
+            )
 
             read_result = read_state.process_turn(
                 original_goal=original_goal,
