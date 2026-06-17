@@ -104,6 +104,9 @@ page_identity **必填、绝不能留空**——它用于保持页面识别一�
   reason/summary 也**不得**把「未见/缺少确认提交执行按钮」当作问题——只写真正缺失的可观察状态。
   输出前自检：除非截图中确实存在该按钮且子目标要求点击它，否则 reason/summary/missing_evidence
   里不得出现「确认按钮」「提交按钮」「执行按钮」字样
+- ⚠️ 若附加的「浏览器 DOM 表单控件」显示某字段是 `native_select`，它的 option 弹层通常不在截图里。
+  验收该字段是否设置时优先看 DOM 摘要里的 current/selected_text；不要因为截图没有展开的选项列表就判定
+  “需要看到选项列表”。若 current 已等于目标值，字段本身已设置；若还需 Apply/Search，则只要求提交筛选。
 - 只看可观测事实，不要凭感觉判断
 - done 时：reason 必须写清直接支持验收条件的具体依据（若有则可引用页面标题，并含页内页头/关键可见内容）；missing_evidence 必须为空。visible_evidence 可选
 - 存在任何 missing_evidence 不能返回 done
@@ -239,6 +242,11 @@ PLAN_PROMPT = """\
 - ⚠️ 需要提交搜索/确认输入时，优先指令「按回车键提交」
 - ⚠️ 输入框无论有无旧内容，直接生成输入文字指令即可；输入文字表示聚焦该输入框并替换为指定内容，无需先清空
 - 看到输入框且下一步目标是填写文字时，直接生成输入指令，不需先单独「点击输入框」
+- ⚠️ 若附加的「浏览器 DOM 表单控件」显示目标字段是 `native_select`，并且子目标/验收/缺失证据给出了目标选项值：
+  下一步必须写成「在 <字段> 下拉框选择 <目标值>」或「设置 <字段> 为 <目标值>」。
+  不要写「点击 <字段> 下拉框以展开选项列表」；native select 的弹层通常不在截图中，后续会走专门的
+  select_option primitive 直接设置值。例如目标是 Status = Complete，DOM 摘要显示 `Status: native_select`
+  且 options 含 Complete，则输出「在 Status 下拉框选择 Complete」。
 - ⚠️ 搜索式下拉框（带搜索框、点开弹出候选列表）按【当前截图】的展开状态处理；checker 的
   reason/missing_evidence 可能描述过时状态，候选浮层有无以截图为准。浮层展开时先解决这个下拉框，
   不要跳去操作其他字段：

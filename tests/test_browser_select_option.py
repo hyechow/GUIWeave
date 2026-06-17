@@ -99,6 +99,23 @@ def test_select_instruction_rewrites_tap_to_select_option():
     assert result.action.y == 504
 
 
+def test_select_instruction_rewrites_unquoted_option_text():
+    policy = BrowserActionPolicy()
+    decision = BrowserActionDecision(
+        action=BrowserAction(
+            action_type="tap",
+            x=850,
+            y=504,
+            description="点击 Status 下拉框",
+        )
+    )
+
+    result = policy._postprocess(decision, "在 Status 下拉框选择 Complete")
+
+    assert result.action.action_type == "select_option"
+    assert result.action.text == "Complete"
+
+
 def test_filter_button_tap_is_not_rewritten_to_select_option():
     policy = BrowserActionPolicy()
     decision = BrowserActionDecision(

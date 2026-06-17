@@ -198,6 +198,117 @@ def _inject_knowledge(
         msgs[1].content = parts + msgs[1].content
 
 
+def _format_form_controls(form_controls: list[dict] | None) -> str:
+    """Compact DOM form-control inventory for browser planning/checking."""
+    if not form_controls:
+        return ""
+    lines: list[str] = []
+    for item in form_controls[:25]:
+        if not isinstance(item, dict):
+            continue
+        label = str(
+            item.get("label")
+            or item.get("name")
+            or item.get("id")
+            or item.get("placeholder")
+            or "未命名控件"
+        ).strip()
+        kind = str(item.get("kind") or "control").strip()
+        current = str(item.get("selected_text") or item.get("value") or "").strip()
+        bits = [f"{label}: {kind}"]
+        if current or kind == "native_select":
+            bits.append(f'current="{current}"')
+        if item.get("focused") is True:
+            bits.append("focused=true")
+        options = item.get("options")
+        if isinstance(options, list) and options:
+            shown = [str(opt) for opt in options[:20]]
+            suffix = ", ..." if len(options) > len(shown) else ""
+            bits.append("options=[" + ", ".join(shown) + suffix + "]")
+        rect = item.get("rect")
+        if isinstance(rect, dict) and isinstance(rect.get("x"), int) and isinstance(rect.get("y"), int):
+            bits.append(f"center=({rect['x']},{rect['y']})")
+        lines.append("- " + "; ".join(bits))
+    if not lines:
+        return ""
+    return (
+        "## 浏览器 DOM 表单控件（结构化感知，不是截图文本）\n"
+        "这些控件来自当前页面 DOM，只包含可见 input/select/textarea/combobox 的类型、当前值和候选项。"
+        "native_select 的选项弹层通常不出现在截图中；若需要设置它的值，应规划为“选择/设置 <字段> 为 <选项>”，"
+        "不要规划为“点击展开后等待选项可见”。\n"
+        + "\n".join(lines)
+    )
+
+
+def _inject_observation_context(msgs: list, observation: Observation) -> None:
+    parts: list[dict] = []
+    form_text = _format_form_controls(getattr(observation, "form_controls", None))
+    if form_text:
+        parts.append({"type": "text", "text": f"{form_text}\n\n"})
+    if parts:
+        msgs[1].content = parts + msgs[1].content
+
+
+_OPEN_SELECT_RE = re.compile(r"点击|打开|展开|激活|下拉箭头|选项列表")
+
+
+def _guard_native_select_plan(
+    plan: _PlanResult,
+    milestone: Milestone,
+    check: _SingleCheckResult,
+    observation: Observation,
+) -> _PlanResult:
+    """Rewrite native-select open-click plans into value-selection instructions."""
+    instruction = plan.instruction or ""
+    form_controls = getattr(observation, "form_controls", None)
+    if not instruction or not form_controls or not _OPEN_SELECT_RE.search(instruction):
+        return plan
+    context = " ".join([
+        milestone.name or "",
+        milestone.description or "",
+        milestone.success_condition or "",
+        check.reason or "",
+        check.summary or "",
+        " ".join(check.issues or []),
+        " ".join(check.missing_evidence or []),
+    ])
+    context_norm = _norm_text(context)
+    instruction_norm = _norm_text(instruction)
+    for item in form_controls:
+        if not isinstance(item, dict) or item.get("kind") != "native_select":
+            continue
+        label = str(item.get("label") or item.get("name") or item.get("id") or "").strip()
+        if not label or _norm_text(label) not in instruction_norm:
+            continue
+        options = item.get("options")
+        if not isinstance(options, list):
+            continue
+        target = ""
+        for opt in sorted((str(o).strip() for o in options if str(o).strip()), key=len, reverse=True):
+            opt_norm = _norm_text(opt)
+            if opt_norm and opt_norm in context_norm:
+                target = opt
+                break
+        if not target:
+            continue
+        target_norm = _norm_text(target)
+        if target_norm in instruction_norm and re.search(r"选择|选中|设置|设为", instruction):
+            return plan
+        return plan.model_copy(update={
+            "instruction": f"在 {label} 下拉框选择 {target}",
+            "summary": (
+                f"{plan.summary}；DOM 表明 {label} 是 native select，直接选择目标值 {target}。"
+                if plan.summary else
+                f"DOM 表明 {label} 是 native select，直接选择目标值 {target}。"
+            ),
+        })
+    return plan
+
+
+def _norm_text(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip()).lower()
+
+
 def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
     """Make structured picker direction consistent with current/target values.
 
@@ -465,11 +576,9 @@ def run_checker(
             "这是最终解释规则；若它与通用规则或逐项验收的字面理解冲突，以本节对界面事实的解释为准）\n"
             f"{check_knowledge}"
         )
-    result = invoke_structured(
-        _make_llm(),
-        _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize),
-        _SingleCheckResult,
-    )
+    msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
+    _inject_observation_context(msgs, observation)
+    result = invoke_structured(_make_llm(), msgs, _SingleCheckResult)
 
     def _strip_progress_evidence(r: _SingleCheckResult) -> None:
         # 连续调值类(is_converge)的 checker section 要求把「当前值=/目标值=」写进 missing_evidence
@@ -669,8 +778,10 @@ def run_planner(
         prompt += f"\n\n## 输出修正要求\n{extra}"
     msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
     _inject_knowledge(msgs, app_knowledge, elements_knowledge)
+    _inject_observation_context(msgs, observation)
     plan_schema = prompts.plan_result_schema or _PlanResult
     plan = invoke_structured(_make_llm(), msgs, plan_schema)
+    plan = _guard_native_select_plan(plan, milestone, check, observation)
     plan = _guard_exact_dropdown_target(plan, milestone)
     # Dropdown re-selection loop breaker: clicking an already-clicked candidate again
     # (without re-typing in between) usually means the checker misread the closed,

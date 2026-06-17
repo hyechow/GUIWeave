@@ -26,6 +26,10 @@ _INLINE_EN_LABEL_RE = re.compile(
 )
 _OPTION_QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,40})[」』\"']")
 _OPTION_VALUE_RE = re.compile(r"(?:=|为|to)\s*([A-Za-z][\w ._/-]{0,39})", re.IGNORECASE)
+_OPTION_AFTER_SELECT_RE = re.compile(
+    r"(?:选择|选中|select)\s*([A-Za-z][\w ._/-]{0,39})",
+    re.IGNORECASE,
+)
 _SELECT_INTENT_RE = re.compile(r"选择|选中|设为|设置|下拉.*选项|select\s+option", re.IGNORECASE)
 
 
@@ -72,6 +76,10 @@ def _select_option_label(description: str) -> str:
     match = _OPTION_VALUE_RE.search(text)
     if match:
         return match.group(1).strip(" .,;，。；")
+    match = _OPTION_AFTER_SELECT_RE.search(text)
+    if match:
+        value = match.group(1).strip(" .,;，。；")
+        return "" if value.lower() in {"option", "options"} else value
     return ""
 
 

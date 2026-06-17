@@ -126,6 +126,10 @@ _OPTION_AFTER_EQUALS_RE = re.compile(
     r"(?:=|为|to)\s*([A-Za-z][\w ._/-]{0,39})",
     re.IGNORECASE,
 )
+_OPTION_AFTER_SELECT_RE = re.compile(
+    r"(?:选择|选中|select)\s*([A-Za-z][\w ._/-]{0,39})",
+    re.IGNORECASE,
+)
 
 
 def _option_text_from_instruction(instruction: str) -> str:
@@ -138,6 +142,10 @@ def _option_text_from_instruction(instruction: str) -> str:
     match = _OPTION_AFTER_EQUALS_RE.search(text)
     if match:
         return match.group(1).strip(" .,;，。；")
+    match = _OPTION_AFTER_SELECT_RE.search(text)
+    if match:
+        value = match.group(1).strip(" .,;，。；")
+        return "" if value.lower() in {"option", "options"} else value
     return ""
 
 
