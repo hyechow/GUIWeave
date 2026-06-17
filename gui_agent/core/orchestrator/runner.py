@@ -43,6 +43,12 @@ class RunRecord(BaseModel):
 class OrchestratorResult(BaseModel):
     reply: str
     failed: bool = False
+    # True when the program reached a `finish` whose template referenced a read whose
+    # RunResult.reads came back ENTIRELY empty (every field blank) — i.e. the finish
+    # answered on a read that read nothing. Such a run reached the end but produced no
+    # real answer, so callers must NOT treat it as goal_completed (see result.py). False
+    # for programs that never hit finish (auto-summary) or whose cited reads had data.
+    finish_incomplete: bool = False
     env: dict[str, RunResult] = Field(default_factory=dict)
     run_log: list[RunRecord] = Field(default_factory=list)
 
@@ -56,6 +62,9 @@ class Interpreter:
         self._program = program
         self.env: dict[str, RunResult] = {}
         self.run_log: list[RunRecord] = []
+        # Set True by the Finish branch when the reached finish cites a read whose reads
+        # were entirely empty — the run finished but its answer is hollow. See OrchestratorResult.
+        self.finish_incomplete: bool = False
 
     @property
     def failed(self) -> bool:
@@ -96,7 +105,23 @@ class Interpreter:
                 if reply is not None:
                     return reply
             elif isinstance(s, Finish):
-                return self._render(s.message)
+                rendered = self._render(s.message)
+                # Empty-read guard: if this finish cites a read variable whose RunResult.reads
+                # is ENTIRELY blank (every requested field came back ""), the finish is answering
+                # on a read that read nothing — e.g. WebArena "top 2 search terms" where the
+                # target table was off-screen / wrong page → structured_read returned "". Mark the
+                # program finish_incomplete so goal_completed stays False (result.py). Rule is
+                # whole-read, not per-ref: a multi-field read like {连通判定, 不可达原因} where only
+                # 不可达原因 is blank (合法: 可达时为空) still has 连通判定 set → NOT flagged — so a
+                # legitimate otherwise-branch finish "不可达原因：{d[不可达原因]}" is not mis-killed.
+                cited_vars = {var for var, _field in TEMPLATE_RE.findall(s.message)}
+                if cited_vars and any(
+                    (rv := self.env.get(v)) is not None
+                    and not any((val or "").strip() for val in rv.reads.values())
+                    for v in cited_vars
+                ):
+                    self.finish_incomplete = True
+                return rendered
         return None
 
     def _eval(self, cond: Cond) -> bool:
@@ -127,7 +152,7 @@ class Interpreter:
     def _fill(self, run: Run) -> tuple[Run, list[str]]:
         """Resolve {var[field]} refs in a Run's text from env BEFORE it reaches the planner.
 
-        Read-then-reference (rule 8): an action the decomposer authored as『打开工单 {t[工单号]}』
+        Read-then-reference (rule 9): an action the decomposer authored as『打开工单 {t[工单号]}』
         becomes『打开工单 WO-2024-007』so it targets the concrete entity a prior read identified —
         robust even when the list holds siblings, not just the only-row-on-screen. Same templater
         as finish (_render); env is already populated because the read runs — and send()s its
@@ -201,6 +226,7 @@ class ProgramRunner:
         return OrchestratorResult(
             reply=reply,
             failed=interp.failed,
+            finish_incomplete=interp.finish_incomplete,
             env=dict(interp.env),
             run_log=list(interp.run_log),
         )

@@ -136,7 +136,7 @@ def normalize_confirm_read_gates(program: Program) -> Program:
 # precondition is UNMET. Two real stuck regressions, both login: 20260615_153314 gated on the
 # login FORM (an already-logged-in session can't return to it → never met), 162312 gated on
 # business-data content (cards/data empty until LATER steps produce them → circular). The
-# decomposer's rule 7 *asks* for a clean gate but is unreliable (~1/8). This pass *guarantees*
+# decomposer's rule 8 *asks* for a clean gate but is unreliable (~1/8). This pass *guarantees*
 # it — keyed on the STRUCTURAL `run.precondition` flag the decomposer sets (NOT on milestone-name
 # keywords like 登录/认证, which mis-fire on 认证设备/登录日志查询 and miss other phrasings/langs;
 # the flag is to this pass what action→read adjacency is to confirm-read). The gate is app-AGNOSTIC;

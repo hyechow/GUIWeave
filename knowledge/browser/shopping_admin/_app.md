@@ -6,7 +6,7 @@
 ## 2. 页面列表
 
 ### 首页与入口
-*   **Admin Dashboard (home)**: 展示实时销售概览、订单趋势图表及关键业务指标快照。
+*   **Admin Dashboard (home)**: 展示实时销售概览、订单趋势图表及关键业务指标快照；快照区包含 Lifetime Sales、Average Order、Last Orders、Last Search Terms（最近搜索词）和 Top Search Terms（最常用搜索词）。这些快照区可能位于页面下方，需要在 Dashboard 内滚动定位后读取。查询 top/most-used search terms 时，应读取 Dashboard 的 **Top Search Terms** 区块，不要把 **Last Search Terms**（最近搜索词）当成 top 口径。
 *   **Admin Sidebar (navigation hub)**: 左侧主菜单，作为所有功能模块的导航枢纽。
 
 ### 商品与目录管理 (Catalog)

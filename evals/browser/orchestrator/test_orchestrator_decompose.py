@@ -93,7 +93,7 @@ def _flatten_ifs(stmts: list) -> list[If]:
 
 
 def _confirm_read_actions(stmts: list) -> list[Run]:
-    """Action Runs immediately followed by a read Run — the confirm-read shape (rule 6).
+    """Action Runs immediately followed by a read Run — the confirm-read shape (rule 7).
     Adjacency is checked WITHIN each statement list, recursing into if-branches (same
     structural rule the engine's normalize_confirm_read_gates uses)."""
     out: list[Run] = []
@@ -156,7 +156,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
 
     for assertion in assertions:
         if assertion == "key_action_has_confirm_read":
-            # 规则6：会改状态/出结果的关键动作后要补一个 read 确认结果。判据=存在「action 紧跟
+            # 规则7：会改状态/出结果的关键动作后要补一个 read 确认结果。判据=存在「action 紧跟
             # read」的 confirm-read 对（否则结果只能靠会幻觉的 checker 判，正是要避免的）。
             if not cr_actions:
                 details.append(
@@ -198,6 +198,24 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             if auth_ms and unflagged:
                 details.append(
                     f"登录/认证前置 milestone 没标 precondition=true（L2 兜底靠这个结构标记，没标就接不住、门写歪会卡死）: {unflagged}"
+                )
+        elif assertion == "current_context_no_login_action":
+            # Production-like path: router/decompose already knows the current browser tab is
+            # inside the target app. In that context, "登录" should be an ensure-state
+            # precondition or skipped if already on the target page, not a fresh credential
+            # submission action. This catches variants that avoid the word 登录 but still say
+            # 输入账号/密码/admin.
+            offenders = []
+            for r in runs:
+                if r.kind != "action":
+                    continue
+                text = f"{r.name} {r.success_condition}".lower()
+                if any(k in text for k in ("登录", "登入", "登陆", "认证", "账号", "密码", "admin", "password")):
+                    offenders.append((r.name, r.success_condition))
+            if offenders:
+                details.append(
+                    "已知当前站点/页面上下文时不应重新执行登录 action，应使用 precondition 或直接进入目标页: "
+                    f"{offenders}"
                 )
         elif assertion == "read_has_spec":
             # 只读单帧没判读说明就只能瞎猜（见 structured_read / prompt 规则）。每个 read 都要有
@@ -345,7 +363,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # 成功）。两条不变量：
             #  A1 检测/读取之后、建单 action 之前要有 navigation（先到操作页：屏幕换走，read 读对页、
             #     action 不被上一步 stale ✓ 误判）。
-            #  A2 不读「*列表」字段去挑实体（集合索引表达不了，规则8 只接力单个实体；要操作的表单能选就在
+            #  A2 不读「*列表」字段去挑实体（集合索引表达不了，规则9 只接力单个实体；要操作的表单能选就在
             #     action 里选）。
             seq = _flatten_runs(program.statements)
 
@@ -420,6 +438,64 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     f"未使用 in + cond_values 多候选条件: "
                     f"{[(s.cond.var, s.cond.field, s.cond.cmp, s.cond.value, s.cond.values) for s in _flatten_ifs(program.statements)]}"
                 )
+        elif assertion == "shopping_admin_top_terms_locates_before_read":
+            # 回归 WebArena task 42：带 dashboard 截图时，decomposer 曾被页面上可见的
+            # 'Last Search Terms' 摘要小部件误导成裸 read（无前置 navigation）→ 读到按时间的 widget
+            # （≠ 任务要的按热度 Top）。read 是单帧读取，不负责滚动/找目标；若目标在当前页但
+            # 当前视口未见，应先 navigation=滚动/定位到 Top Search Terms 区块；若目标在完整报表页，
+            # 应先 navigation 到 Search Terms Report。两种都接受，但裸 read 不接受。
+            seq = _flatten_runs(program.statements)
+            first_read = next((i for i, r in enumerate(seq) if r.kind == "read"), None)
+            if first_read is None:
+                details.append("没有 read 步（应读取前 2 个搜索词）")
+            elif not any(r.kind == "navigation" for r in seq[:first_read]):
+                details.append(
+                    "read 前缺 navigation：目标若在当前页下方，必须先滚动/定位到 Top Search Terms；"
+                    "若使用完整数据源，必须先进入 Search Terms Report。run_kinds="
+                    f"{[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "shopping_admin_top_terms_does_not_read_last_terms":
+            seq = _flatten_runs(program.statements)
+            bad_reads = []
+            for r in seq:
+                if r.kind != "read":
+                    continue
+                text = " ".join([r.name, r.read_spec, *r.returns]).lower()
+                if "last search terms" in text:
+                    bad_reads.append((r.name, r.returns, r.read_spec))
+            if bad_reads:
+                details.append(
+                    "读取目标指向了 Last Search Terms（按时间/最近），但任务要 Top Search Terms（按热度/前 N）: "
+                    f"{bad_reads}"
+                )
+        elif assertion == "shopping_admin_top_terms_not_unsorted_report":
+            seq = _flatten_runs(program.statements)
+            first_read = next((i for i, r in enumerate(seq) if r.kind == "read"), None)
+            if first_read is not None:
+                read = seq[first_read]
+                read_text = " ".join([read.name, read.read_spec, *read.returns]).lower()
+                prior_text = " ".join(
+                    f"{r.kind} {r.name} {r.success_condition}".lower()
+                    for r in seq[:first_read]
+                )
+                uses_metric = any(m in prior_text + " " + read_text for m in (
+                    "uses", "count", "使用", "用量", "次数", "热度",
+                ))
+                explicit_sort = any(m in prior_text for m in (
+                    "sort", "sorted", "descending", "desc", "排序", "降序", "从高到低",
+                ))
+                exact_dashboard_top = "top search terms" in prior_text + " " + read_text
+                reads_report_rows = (
+                    "search terms report" in read_text
+                    or ("report" in read_text and "search term" in read_text)
+                    or ("报表" in read_text and "搜索词" in read_text)
+                )
+                if reads_report_rows and not exact_dashboard_top and not (uses_metric and explicit_sort):
+                    details.append(
+                        "使用 Search Terms Report 回答 Top/前 N 时，缺少按 Uses/Count 降序排序的前置步骤；"
+                        "不能读取报表默认前两行当作 Top。"
+                        f" seq={[(r.kind, r.name, r.success_condition) for r in seq]}"
+                    )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
@@ -474,6 +550,15 @@ def run_orchestrator_decompose_eval(label_filter: str = "", show_program: bool =
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     for c in cases:
         if label_filter and label_filter.lower() not in c["label"].lower():
+            continue
+        # A case may pin a screenshot fixture (e.g. WebArena #42's dashboard, whose visible
+        # "Last Search Terms" widget is the bug trigger). Screenshots are gitignored
+        # (evals/**/*.png), so on a fresh checkout the fixture is absent — SKIP such a case
+        # (don't crash) instead of FAILing on a FileNotFoundError. Locally place the png to run it.
+        shot = c.get("screenshot")
+        if shot and not (PROJECT_ROOT / shot).exists():
+            print(f"  [SKIP] {c['label']}")
+            print(f"         截图缺失: {shot}（该 case 需本地放置截图；evals/**/*.png 被 gitignore 不入库）")
             continue
         try:
             program = _case_program(c)

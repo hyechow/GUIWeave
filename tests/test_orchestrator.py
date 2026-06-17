@@ -441,7 +441,7 @@ def test_if_branches_on_structured_reads_end_to_end():
 
 
 def test_run_text_templated_from_prior_read_reaches_executor_filled():
-    # read-then-reference (规则8/runner._fill, 回归 20260615_163258): an action authored as
+    # read-then-reference (规则9/runner._fill, 回归 20260615_163258): an action authored as
     # 『编辑机器人 {r[实际名称]}』must reach the per-milestone executor ALREADY filled with the
     # value a prior read captured (编辑机器人 lucas-10003) — so the planner targets the right
     # entity even when the list holds siblings, not just whatever single row is on screen.
@@ -623,3 +623,50 @@ def test_validate_program_precondition_only_on_navigation():
         Run(name="打开订单页", kind="navigation", success_condition="显示订单列表"),
     ])
     assert not any("precondition" in i for i in validate_program(good))
+
+
+# ── empty-read guard: a finish answered on an entirely-empty read is incomplete ───
+
+
+def test_finish_on_entirely_empty_read_is_incomplete():
+    # WebArena #42 shape: a single read whose only field came back "" (target table was
+    # off-screen / wrong page) feeds a finish. The program reached the end, but its answer
+    # is hollow → finish_incomplete must be True so goal_completed stays False (result.py).
+    prog = Program(statements=[
+        Run(var="r", name="读取前2个搜索词", kind="read", returns=["Top Search Terms"],
+            read_spec="读 Last Search Terms 表格前两行"),
+        Finish(message="商店的前 2 个搜索词是：{r[Top Search Terms]}"),
+    ])
+    def _exec(run: Run) -> RunResult:
+        reads = {"Top Search Terms": ""} if run.var == "r" else {}   # 读不到 → 空
+        return RunResult(completed=True, reads=reads, summary=run.name)
+    res = ProgramRunner(_exec).run(prog)
+    assert res.finish_incomplete is True          # 整条 read 全空 → 不算答出
+    assert res.failed is False                    # 但程序确实跑完了（区别于 milestone 失败）
+
+
+def test_finish_citing_blank_field_of_nonempty_read_not_incomplete():
+    # Guard is WHOLE-read, not per-ref: a multi-field read where only ONE field is blank
+    # (合法: 如 连通判定=可达 时 不可达原因 留空) is NOT entirely empty → a finish citing that
+    # blank field must NOT be flagged. This protects the otherwise-branch finish
+    # "不可达原因：{d[不可达原因]}" from a per-ref rule that would mis-kill it.
+    prog = Program(statements=[
+        Run(var="d", name="读连通判定", kind="read", returns=["连通判定", "不可达原因"],
+            read_spec="连通判定看图标；不可达原因可达时留空"),
+        Finish(message="不可达原因：{d[不可达原因]}"),   # 引用的恰好是空字段，但另一字段非空
+    ])
+    def _exec(run: Run) -> RunResult:
+        reads = ({"连通判定": "可达", "不可达原因": ""} if run.var == "d" else {})
+        return RunResult(completed=True, reads=reads, summary=run.name)
+    res = ProgramRunner(_exec).run(prog)
+    assert res.finish_incomplete is False         # 整条非全空 → 合法答复
+
+
+def test_finish_with_no_refs_is_not_incomplete():
+    # A plain-text finish (no {var[field]}) can't be hollowed by an empty read → never flagged.
+    prog = Program(statements=[
+        Run(var="r", name="读", kind="read", returns=["x"], read_spec="y"),
+        Finish(message="任务已完成"),   # 不引用任何 read
+    ])
+    res = ProgramRunner(lambda run: RunResult(completed=True, reads={"x": ""})).run(prog)
+    assert res.finish_incomplete is False

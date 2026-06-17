@@ -66,7 +66,10 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
     )
     base = make_result(context, terminal)
     base["result_summary"] = reply
-    base["goal_completed"] = (current is None) and not interp.failed
+    # A program that reached finish but answered on an entirely-empty read produced no real
+    # answer (the read found nothing on the frame) — do not let it masquerade as success.
+    finish_incomplete = getattr(interp, "finish_incomplete", False)
+    base["goal_completed"] = (current is None) and not interp.failed and not finish_incomplete
     base["orchestrator"] = {
         "reply": reply,
         "failed": interp.failed,

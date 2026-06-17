@@ -90,6 +90,45 @@ def test_retrieve_goal_completed_with_list_stays_success():
     assert resp.retrieved_data == ["tanks", "joust"]
 
 
+def test_search_term_rows_are_scalarized_when_intent_asks_terms_only():
+    resp = _finalize_response(
+        WAResponse(
+            task_type="RETRIEVE",
+            status="SUCCESS",
+            retrieved_data=[
+                {"term": "hollister", "uses": 19},
+                {"term": "Joust Bag", "uses": 4},
+            ],
+            error_details=None,
+        ),
+        goal_completed=True,
+        intent="Get the top 2 search term(s) in my store",
+    )
+
+    assert resp.status == "SUCCESS"
+    assert resp.retrieved_data == ["hollister", "Joust Bag"]
+
+
+def test_search_term_rows_keep_objects_when_intent_asks_metric():
+    rows = [
+        {"term": "hollister", "uses": 19},
+        {"term": "Joust Bag", "uses": 4},
+    ]
+    resp = _finalize_response(
+        WAResponse(
+            task_type="RETRIEVE",
+            status="SUCCESS",
+            retrieved_data=rows,
+            error_details=None,
+        ),
+        goal_completed=True,
+        intent="Get the top 2 search terms and their uses in my store",
+    )
+
+    assert resp.status == "SUCCESS"
+    assert resp.retrieved_data == rows
+
+
 def test_report_context_includes_official_eval(tmp_path):
     context_path = tmp_path / "context.json"
     context_path.write_text('{"goal":"x"}', encoding="utf-8")
