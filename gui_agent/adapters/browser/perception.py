@@ -80,6 +80,13 @@ class BrowserSession:
         read = getattr(self.client, "read_tables", None)
         return read() if read is not None else []
 
+    def read_complete_tables(self) -> list[dict]:
+        """Delegate to the browser's complete read-only table snapshot sensor."""
+        if self.client is None:
+            return []
+        read = getattr(self.client, "read_complete_tables", None)
+        return read() if read is not None else self.read_tables()
+
 
 
 class BrowserPerception:

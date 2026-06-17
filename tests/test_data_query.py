@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from gui_agent.core.orchestrator import Finish, Interpreter, Program, Run
 from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
+from gui_agent.core.run.non_ui import drive_pending_non_ui
+from gui_agent.core.schemas import Observation, PolicyContext
 
 
 def _orders_table(*, partial: bool = False):
@@ -122,3 +125,63 @@ def test_execute_data_query_rejects_mutating_sql():
 def test_execute_data_query_rejects_partial_tables_by_default():
     with pytest.raises(DataQueryError, match="表格快照不完整"):
         execute_data_query(_orders_table(partial=True), "SELECT COUNT(*) AS n FROM data", ["n"])
+
+
+def test_non_ui_complete_data_query_uses_platform_complete_tables(tmp_path):
+    class _Platform:
+        def __init__(self) -> None:
+            self.called = False
+
+        def read_complete_tables(self):
+            self.called = True
+            return _orders_table(partial=False)
+
+    prog = Program(
+        statements=[
+            Run(
+                var="q",
+                name="查询邮箱",
+                kind="data_query",
+                returns=["emails"],
+                sql="SELECT customer_email FROM data WHERE lower(status) = 'complete' ORDER BY customer_email",
+            ),
+            Finish(message="{q[emails]}"),
+        ]
+    )
+    interp = Interpreter(prog)
+    steps = interp.steps()
+    current_run = next(steps)
+    platform = _Platform()
+    context = PolicyContext(
+        goal="goal",
+        supervisor_policy_name="milestone",
+        action_policy_name="action",
+    )
+
+    result = drive_pending_non_ui(
+        current_run=current_run,
+        run_index=0,
+        notes_mark=0,
+        interpreter_steps=steps,
+        bundle=None,
+        platform=platform,
+        log_dir=tmp_path,
+        supervisor=None,
+        context=context,
+        save_context=lambda: None,
+        say=lambda _msg: None,
+        done_observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=_orders_table(partial=True),
+        ),
+        observation_url="screenshot_turn_1.png",
+    )
+
+    assert platform.called is True
+    assert result.current_run is None
+    assert result.reply == '["a@example.com", "b@example.com", "c@example.com"]'
+    assert context.turns[-1].executed is True
+    assert context.turns[-1].non_ui["reads"] == {
+        "emails": '["a@example.com", "b@example.com", "c@example.com"]'
+    }

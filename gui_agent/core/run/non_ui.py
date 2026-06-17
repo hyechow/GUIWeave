@@ -86,9 +86,17 @@ def drive_pending_non_ui(
             from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
 
             ensure_observation()
+            query_tables = tables
+            if getattr(cur_run, "data_scope", "complete") != "current":
+                read_complete = getattr(platform, "read_complete_tables", None)
+                if read_complete is not None:
+                    try:
+                        query_tables = read_complete() or query_tables
+                    except Exception:
+                        query_tables = tables
             try:
                 reads = execute_data_query(
-                    tables,
+                    query_tables,
                     cur_run.sql,
                     cur_run.returns,
                     require_complete=getattr(cur_run, "data_scope", "complete") != "current",
