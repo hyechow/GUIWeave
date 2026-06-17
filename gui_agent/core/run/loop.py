@@ -28,6 +28,7 @@ from gui_agent.core.run.result import (
     orchestration_result as _orch_result,
 )
 from gui_agent.core.run.action_exec import ActionExecutionState
+from gui_agent.core.run.loading import handle_loading_frame
 from gui_agent.core.run.metadata import sync_turn_metadata
 from gui_agent.core.run.non_ui import drive_pending_non_ui
 from gui_agent.core.run.post_action import (
@@ -447,19 +448,17 @@ def run_agent_loop(
             # 连续加载设上限，防页面永挂导致死循环（旧行为：loading 帧既占轮数，又会因
             # should_act=False 累加 noop_count，连续 3 帧就误判"连续无动作"终止 agent）。
             if _did_loading:
-                loading_streak += 1
-                if loading_streak > MAX_LOADING_FRAMES:
-                    _say(f"\n页面持续加载 {loading_streak} 帧仍未稳定，agent-loop 停止")
-                    _term = f"页面持续加载未稳定（>{MAX_LOADING_FRAMES} 帧）"
-                    if program is not None:
-                        return _finish(_orch_result(context, _interp, _term, current=_cur_run))
-                    return _finish(_make_result(context, _term))
-                _say(f"  [Loading] 等待页面稳定（第 {loading_streak} 帧，不计入轮数）...")
-                time.sleep(LOADING_WAIT_S)
-                interrupted = _stop_after_esc(turn_no)
-                if interrupted is not None:
-                    return interrupted
-                continue
+                loading = handle_loading_frame(
+                    loading_streak=loading_streak, max_loading_frames=MAX_LOADING_FRAMES,
+                    wait_s=LOADING_WAIT_S, turn_no=turn_no, program=program,
+                    current_run=_cur_run, context=context, interpreter=_interp,
+                    finish=_finish, stop_after_esc=_stop_after_esc, say=_say,
+                )
+                loading_streak = loading.streak
+                if loading.terminal_result is not None:
+                    return loading.terminal_result
+                if loading.continue_loop:
+                    continue
             loading_streak = 0
 
             sync_turn_metadata(
