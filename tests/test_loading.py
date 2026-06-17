@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gui_agent.core.run import loading
+from gui_agent.core.run import flow
 from gui_agent.core.schemas import PolicyContext
 
 
@@ -15,9 +15,9 @@ def _context() -> PolicyContext:
 def test_handle_loading_frame_waits_and_continues(monkeypatch):
     sleeps = []
     messages = []
-    monkeypatch.setattr(loading.time, "sleep", sleeps.append)
+    monkeypatch.setattr(flow.time, "sleep", sleeps.append)
 
-    result = loading.handle_loading_frame(
+    result = flow.handle_loading_frame(
         loading_streak=0,
         max_loading_frames=12,
         wait_s=0.6,
@@ -39,9 +39,9 @@ def test_handle_loading_frame_waits_and_continues(monkeypatch):
 
 
 def test_handle_loading_frame_returns_esc_interrupt(monkeypatch):
-    monkeypatch.setattr(loading.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
 
-    result = loading.handle_loading_frame(
+    result = flow.handle_loading_frame(
         loading_streak=1,
         max_loading_frames=12,
         wait_s=0.6,
@@ -63,7 +63,7 @@ def test_handle_loading_frame_returns_esc_interrupt(monkeypatch):
 def test_handle_loading_frame_stops_after_limit():
     messages = []
 
-    result = loading.handle_loading_frame(
+    result = flow.handle_loading_frame(
         loading_streak=12,
         max_loading_frames=12,
         wait_s=0.6,

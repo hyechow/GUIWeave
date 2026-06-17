@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gui_agent.core.run.terminal import finish_terminal_step
+from gui_agent.core.run.flow import finish_terminal_step
 from gui_agent.core.schemas import PolicyContext, PolicyTurn, SupervisorStep
 
 

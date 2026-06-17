@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from gui_agent.core.run.progress import evaluate_turn_progress
+from gui_agent.core.run.flow import evaluate_turn_progress
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, SupervisorStep
 
 

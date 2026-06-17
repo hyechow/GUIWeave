@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from gui_agent.core.run import record
+from gui_agent.core.run import turns
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, PolicyContext, SupervisorStep
 
 
@@ -33,10 +33,10 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
     decision = BaseActionDecision(action=action)
     saves = []
     callbacks = []
-    monkeypatch.setattr(record, "get_llm_call_count", lambda: 5)
-    monkeypatch.setattr(record, "get_llm_token_usage", lambda: (100, 50))
+    monkeypatch.setattr(turns, "get_llm_call_count", lambda: 5)
+    monkeypatch.setattr(turns, "get_llm_token_usage", lambda: (100, 50))
 
-    turn = record.record_interactive_turn(
+    turn = turns.record_interactive_turn(
         context=ctx,
         observation_source="screen.png",
         supervisor_step=step,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from gui_agent.core.run import metadata
+from gui_agent.core.run import turns
 from gui_agent.core.schemas import CollectionScope, PolicyContext, SupervisorStep
 
 
@@ -39,13 +39,13 @@ def test_sync_turn_metadata_records_models_milestones_and_task_type(monkeypatch)
         },
     )
     monkeypatch.setattr(
-        metadata,
+        turns,
         "resolve_llm_config",
         lambda key: SimpleNamespace(model=f"model:{key}"),
     )
     messages = []
 
-    metadata.sync_turn_metadata(
+    turns.sync_turn_metadata(
         context=ctx,
         supervisor=supervisor,
         sv_step=_step(),
@@ -68,11 +68,11 @@ def test_sync_turn_metadata_records_models_milestones_and_task_type(monkeypatch)
 
 def test_sync_turn_metadata_updates_collection_scope(monkeypatch):
     ctx = _context()
-    monkeypatch.setattr(metadata, "resolve_llm_config", lambda key: SimpleNamespace(model="m"))
+    monkeypatch.setattr(turns, "resolve_llm_config", lambda key: SimpleNamespace(model="m"))
     scope = CollectionScope(label="订单日期", start="01/01/2022", end="12/31/2023")
     messages = []
 
-    metadata.sync_turn_metadata(
+    turns.sync_turn_metadata(
         context=ctx,
         supervisor=SimpleNamespace(),
         sv_step=_step(scope),

@@ -7,11 +7,27 @@ paths stay consistent without making loop.py carry every field detail.
 
 from __future__ import annotations
 
+import json
 import time
-from typing import Any
+from typing import Any, Callable
 
+from llm.structured import get_llm_call_count, get_llm_token_usage
+
+from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.run.context import extract_checker, extract_plan, extract_replan
+from gui_agent.core.run.result import print_timings, print_turn_stats
+from gui_agent.core.run.state import sync_milestone_states
 from gui_agent.core.schemas import PolicyContext, PolicyTurn, SupervisorStep
+
+MODEL_KEYS = (
+    "supervisor",
+    "supervisor.decompose",
+    "action_policy",
+    "reader",
+    "output",
+    "router",
+    "back_nav",
+)
 
 
 def interactive_turn_count(context: PolicyContext) -> int:
@@ -130,6 +146,109 @@ class SupervisorTimingCarry:
             current = self.token_usage.setdefault(key, {"input": 0, "output": 0})
             current["input"] += (usage or {}).get("input", 0)
             current["output"] += (usage or {}).get("output", 0)
+
+
+def sync_turn_metadata(
+    *,
+    context: PolicyContext,
+    supervisor,
+    sv_step: SupervisorStep,
+    program,
+    say: Callable[[str], None],
+) -> None:
+    """Persist model, milestone, task type, and collection-scope metadata."""
+    if not context.models:
+        for key in MODEL_KEYS:
+            try:
+                context.models[key] = resolve_llm_config(key).model or ""
+            except Exception:
+                pass
+
+    if program is None and not context.milestones and hasattr(supervisor, "_milestones"):
+        context.milestones = [
+            {
+                "id": milestone.id,
+                "name": milestone.name,
+                "description": milestone.description,
+                "kind": milestone.kind,
+                "success_condition": milestone.success_condition,
+            }
+            for milestone in supervisor._milestones.values()
+        ]
+
+    if hasattr(supervisor, "task_type") and context.task_type is None:
+        context.task_type = supervisor.task_type
+        say(f"任务类型: {context.task_type}")
+
+    if sv_step.collection_scope and sv_step.collection_scope != context.collection_scope:
+        context.collection_scope = sv_step.collection_scope
+        scope = json.dumps(context.collection_scope.model_dump(exclude_none=True), ensure_ascii=False)
+        say("采集范围: " + scope)
+
+
+def record_interactive_turn(
+    *,
+    context: PolicyContext,
+    observation_source: str,
+    supervisor_step: SupervisorStep,
+    supervisor: Any,
+    action_decision: Any,
+    executed: bool,
+    llm_calls_before: int,
+    tokens_before: tuple[int, int],
+    turn_started_at: float,
+    read_added_content: bool,
+    read_note_hash: str | None,
+    save_context: Callable[[], None],
+    silent: bool,
+    on_turn: Any = None,
+) -> PolicyTurn:
+    """Append the UI turn, sync persisted state, and notify the optional callback."""
+    tokens_after = get_llm_token_usage()
+    turn = make_interactive_turn(
+        index=len(context.turns) + 1,
+        observation_source=observation_source,
+        supervisor_step=supervisor_step,
+        action_decision=action_decision,
+        checker=extract_checker(supervisor),
+        planner=extract_plan(supervisor),
+        replan=extract_replan(supervisor),
+        executed=executed,
+        llm_calls=get_llm_call_count() - llm_calls_before,
+        input_tokens=tokens_after[0] - tokens_before[0],
+        output_tokens=tokens_after[1] - tokens_before[1],
+        read_added_content=read_added_content,
+        read_note_hash=read_note_hash,
+        timings=getattr(supervisor, "_timings", {}),
+        token_usage=getattr(supervisor, "_token_usage", {}),
+        sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
+    )
+    print_timings(supervisor)
+    context.turns.append(turn)
+    sync_milestone_states(supervisor, context)
+    save_context()
+    if not silent:
+        print_turn_stats(turn.index, turn_started_at, llm_calls_before)
+    if on_turn and callable(on_turn):
+        on_turn(turn_callback_entry(turn, supervisor_step, action_decision, executed))
+    return turn
+
+
+def turn_callback_entry(
+    turn,
+    supervisor_step: SupervisorStep,
+    action_decision: Any,
+    executed: bool,
+) -> dict:
+    """Build the compact callback payload emitted after a turn is recorded."""
+    entry: dict = {"no": turn.index, "summary": supervisor_step.summary, "executed": executed}
+    if action_decision:
+        action = action_decision.action
+        entry["action_type"] = action.action_type
+        entry["action_desc"] = action.description
+        if action_decision.not_found_reason:
+            entry["not_found"] = action_decision.not_found_reason
+    return entry
 
 
 def make_non_ui_turn(
