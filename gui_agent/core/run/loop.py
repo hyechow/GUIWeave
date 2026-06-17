@@ -20,17 +20,12 @@ from gui_agent.core.run.content import ensure_note_hashes as _ensure_note_hashes
 from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.llm.reader import ContentReader
 from gui_agent.core.run.context import (
-    extract_checker as _extract_checker,
-    extract_plan as _extract_plan,
-    extract_replan as _extract_replan,
     load_context as _load_context,
     save_context as _save_context,
 )
 from gui_agent.core.run.result import (
     make_result as _make_result,
     orchestration_result as _orch_result,
-    print_timings as _print_timings,
-    print_turn_stats as _print_turn_stats,
 )
 from gui_agent.core.run.action_exec import ActionExecutionState
 from gui_agent.core.run.metadata import sync_turn_metadata
@@ -41,11 +36,11 @@ from gui_agent.core.run.post_action import (
 )
 from gui_agent.core.run.progress import evaluate_turn_progress
 from gui_agent.core.run.read_state import ReadState
+from gui_agent.core.run.record import record_interactive_turn
 from gui_agent.core.run.terminal import finish_terminal_step
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
-    make_interactive_turn,
     make_verdict_turn,
 )
 from gui_agent.core.supervisor.base import SupervisorPolicy
@@ -517,39 +512,22 @@ def run_agent_loop(
                 pool=_VERIFY_POOL,
             )
 
-            turn = make_interactive_turn(
-                index=turn_no,
+            turn = record_interactive_turn(
+                context=context,
                 observation_source=observation.source,
                 supervisor_step=sv_step,
+                supervisor=supervisor,
                 action_decision=action_decision,
-                checker=_extract_checker(supervisor),
-                planner=_extract_plan(supervisor),
-                replan=_extract_replan(supervisor),
                 executed=executed,
-                llm_calls=get_llm_call_count() - llm_calls_before,
-                input_tokens=get_llm_token_usage()[0] - tokens_before[0],
-                output_tokens=get_llm_token_usage()[1] - tokens_before[1],
+                llm_calls_before=llm_calls_before,
+                tokens_before=tokens_before,
+                turn_started_at=turn_started_at,
                 read_added_content=read_added_content,
                 read_note_hash=read_note_hash,
-                timings=getattr(supervisor, "_timings", {}),
-                token_usage=getattr(supervisor, "_token_usage", {}),
-                sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
+                save_context=_save_ctx,
+                silent=silent,
+                on_turn=on_turn,
             )
-            _print_timings(supervisor)
-            context.turns.append(turn)
-            sync_milestone_states(supervisor, context)
-            _save_ctx()
-            if not silent:
-                _print_turn_stats(turn_no, turn_started_at, llm_calls_before)
-            if on_turn and callable(on_turn):
-                _entry: dict = {"no": turn.index, "summary": sv_step.summary, "executed": executed}
-                if action_decision:
-                    a = action_decision.action
-                    _entry["action_type"] = a.action_type
-                    _entry["action_desc"] = a.description
-                    if action_decision.not_found_reason:
-                        _entry["not_found"] = action_decision.not_found_reason
-                on_turn(_entry)
 
             if sv_step.stop or sv_step.goal_completed:
                 return finish_terminal_step(
