@@ -33,6 +33,7 @@ from gui_agent.core.run.result import (
     print_timings as _print_timings,
     print_turn_stats as _print_turn_stats,
 )
+from gui_agent.core.run.action_exec import ActionExecutionState
 from gui_agent.core.run.non_ui import drive_pending_non_ui
 from gui_agent.core.run.read_state import ReadState
 from gui_agent.core.run.settle import (
@@ -47,23 +48,17 @@ from gui_agent.core.supervisor.base import SupervisorPolicy
 from gui_agent.core.llm.temporal import resolve_temporal_expressions
 from gui_agent.core.policies.base import ActionPolicy
 from gui_agent.core.vision.target_verify import verify_target
-from gui_agent.core.schemas import (
-    ActionDecision,
-    PolicyContext,
-    action_label,
-)
+from gui_agent.core.schemas import PolicyContext
 from gui_agent.core.run.state import (
     sync_context_run_state,
     sync_milestone_states,
 )
-from gui_agent.core.vision.visualize import print_decision
 
 if TYPE_CHECKING:
     # Adapter types used only in annotations. With `from __future__ import
     # annotations` these stay lazy strings, so importing runner pulls in no
     # adapter at module top.
     from gui_agent.core.ui.hud import AgentHUD
-    from gui_agent.adapters.iphone.scroll_probe import ScrollProfile
 
 TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 
@@ -188,12 +183,11 @@ def run_agent_loop(
 
     reader = ContentReader()
     read_state = ReadState(context=context, reader=reader, pool=_READER_POOL)
+    action_state = ActionExecutionState()
     original_goal = context.goal
     noop_count = 0
     loading_streak = 0
     prev_milestone_id: str | None = None
-    scroll_profiles: dict[str, ScrollProfile] = {}
-    scroll_probe_failures: dict[str, str] = {}
 
     # The platform bundle is the single seam through which the agent loop obtains
     # the session, executor, perception and scroll/stitch helpers — no adapter
@@ -548,125 +542,25 @@ def run_agent_loop(
             read_added_content = read_result.added_content
             read_note_hash = read_result.note_hash
 
-            action_decision = None
-            executed = False
-            probe_failed = False
-            branch_settle_s: float | None = None  # 缓存滚动已在分支内 settle → 轮末跳过重复
-
-            if sv_step.should_act:
-                _say(f"动作指令: {sv_step.instruction}")
-                if sv_step.preformed_action:
-                    _say("使用预生成动作，跳过 Action Policy")
-                    action_decision = sv_step.preformed_action
-                else:
-                    _status(turn_no, "动作决策中…")
-                    _say("动作决策中...")
-                    instruction_for_action = sv_step.instruction
-                    profile_key = sv_step.milestone_id or "_global"
-                    if (
-                        sv_step.completion_strategy == "scroll_until_boundary"
-                        and profile_key in scroll_probe_failures
-                    ):
-                        instruction_for_action = (
-                            f"{instruction_for_action}\n\n"
-                            "⚠️ 滚动探测反馈："
-                            f"{scroll_probe_failures[profile_key]}。"
-                            "请避免重复这些无效滚动落点/幅度，选择当前屏幕上更可能作用于主内容的滚动方式。"
-                        )
-                    _ap_t0 = time.perf_counter()
-                    _ap_tok0 = get_llm_token_usage()
-                    action_decision = action_policy.decide(
-                        observation, instruction_for_action,
-                        direction=sv_step.direction,
-                        drag_column=sv_step.drag_column,
-                        drag_steps=sv_step.drag_steps,
-                    )
-                    if hasattr(supervisor, "_timings"):
-                        supervisor._timings["action_policy"] = time.perf_counter() - _ap_t0
-                        supervisor._timings_order.append("action_policy")
-                    if hasattr(supervisor, "_token_usage"):
-                        _ap_in, _ap_out = get_llm_token_usage()
-                        supervisor._token_usage["action_policy"] = {
-                            "input": _ap_in - _ap_tok0[0], "output": _ap_out - _ap_tok0[1],
-                        }
-                    print_decision(
-                        action_decision,
-                        observation.png_bytes,
-                        log_dir / f"structured_output_result_turn_{turn_no}.png",
-                    )
-                # Ensure YOLO/OCR prep finished before any execute/snap (covers
-                # both the preformed-action and action-policy paths). Started
-                # after screenshot, overlapped the decide → normally done already.
-                prep_future.result()
-                if action_decision.not_found_reason:
-                    _say(f"  [NotFound] {action_decision.not_found_reason}")
-                    _status(turn_no, "未找到目标元素")
-                    executed = False
-                else:
-                    if action_decision.action:
-                        _status(turn_no, f"[{action_label(action_decision.action.action_type)}] {action_decision.action.description}")
-                    action = action_decision.action
-                    profile_key = sv_step.milestone_id or "_global"
-                    should_probe_scroll = (
-                        action.action_type == "scroll"
-                        and sv_step.completion_strategy == "scroll_until_boundary"
-                    )
-                    if should_probe_scroll and profile_key in scroll_profiles:
-                        profile = scroll_profiles[profile_key]
-                        cached = bundle.apply_scroll_profile(action, profile)
-                        _say(
-                            "  [ScrollProbe] 使用缓存滚动点: "
-                            f"method={profile.method}, x={profile.x:.0f}, y={profile.y:.0f}, "
-                            f"ticks={profile.ticks}, delta={profile.delta_px}"
-                        )
-                        _flash(cached)
-                        if cached.action_type == "scroll":
-                            print(f"\n动作: [{cached.action_type}] {cached.description}")
-                            executor.execute_scroll(cached, ticks=profile.ticks, delta_px=profile.delta_px)
-                        else:
-                            executor.execute(ActionDecision(action=cached), app_name=sv_step.app_name or "")
-                        # 验证缓存滚动是否真的动了：真机同一手势(尤其 MCP drag)会偶发不生效，
-                        # turn1 滚了 turn2 没滚（20260530_155828）。不验证就会被下一轮 SimStuck
-                        # 「冻结→边界」误判成到底、采集截断。**必须先 settle 再测**：滚动有延迟/
-                        # 惯性，execute 后立刻截图屏幕还没动，会把每次缓存都误判成 0 位移而每轮空
-                        # 重探（20260530_161048）。settle 等画面稳后再比，真滚→保留缓存、真没滚→重探。
-                        branch_settle_s, _ = _settle_after_action(
-                            phone, observation.png_bytes, cached.action_type
-                        )
-                        after_png = phone.screenshot()
-                        cshift, _ = bundle.robust_shift(
-                            bundle.gray_u8(observation.png_bytes), bundle.gray_u8(after_png)
-                        )
-                        if cshift != 0:
-                            action = cached
-                            action_decision = action_decision.model_copy(update={"action": action})
-                            executed = True
-                        else:
-                            _say("  [ScrollProbe] 缓存滚动点 settle 后仍 0 位移 → 废弃缓存，重新探测")
-                            scroll_profiles.pop(profile_key, None)
-                            branch_settle_s = None  # 改走重探+轮末 settle
-                    if should_probe_scroll and not executed and not probe_failed:
-                        _flash(action)
-                        probe = bundle.make_scroll_probe(phone, executor, log_dir)
-                        result = probe.probe(observation.png_bytes, action, turn_no=turn_no)
-                        if result.success and result.profile:
-                            scroll_profiles[profile_key] = result.profile
-                            scroll_probe_failures.pop(profile_key, None)
-                            action = bundle.apply_scroll_profile(action, result.profile)
-                            action_decision = action_decision.model_copy(update={"action": action})
-                            executed = True
-                        else:
-                            probe_failed = True
-                            scroll_probe_failures[profile_key] = result.reason
-                            _say(
-                                "  [ScrollProbe] 未找到可靠滚动点，停止本轮动作: "
-                                f"{result.reason}"
-                            )
-                            executed = False
-                    elif not should_probe_scroll:
-                        # Flash where/what we're about to do (best-effort; cosmetic).
-                        _flash(action)
-                        executed = executor.execute(action_decision, app_name=sv_step.app_name or "", png_bytes=observation.png_bytes, is_home_screen=sv_step.is_home_screen)
+            action_result = action_state.run(
+                sv_step=sv_step,
+                observation=observation,
+                action_policy=action_policy,
+                supervisor=supervisor,
+                executor=executor,
+                bundle=bundle,
+                phone=phone,
+                prep_future=prep_future,
+                log_dir=log_dir,
+                turn_no=turn_no,
+                flash=_flash,
+                status=_status,
+                say=_say,
+            )
+            action_decision = action_result.action_decision
+            executed = action_result.executed
+            probe_failed = action_result.probe_failed
+            branch_settle_s = action_result.branch_settle_s
 
             # Post-action targeting verify: did the snapped tap land on target?
             # Submit now so it runs concurrently with the settle below; resolved
