@@ -218,7 +218,7 @@ def cmd_run(args) -> None:
 
             # Auto-generate HTML report
             try:
-                from scripts.report_builder import RunnerReportBuilder, save_report
+                from gui_agent.reports import RunnerReportBuilder, save_report
                 report_data = RunnerReportBuilder().build(log_dir)
                 report_path = save_report(report_data, log_dir / "report.html")
                 console.print(f"  [dim]Report: {report_path}[/dim]")

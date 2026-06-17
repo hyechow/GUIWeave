@@ -5,7 +5,8 @@ from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn, Supervi
 from gui_agent.core.run.state import sync_milestone_states, write_final_run_state
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
-from scripts.report_builder import RunnerReportBuilder, generate_html
+from gui_agent.reports.builder import RunnerReportBuilder
+from gui_agent.reports.runner_html import generate_html
 
 
 def _context(**extra) -> PolicyContext:

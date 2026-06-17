@@ -633,7 +633,7 @@ def main() -> int:
             # so a WebArena run is as inspectable as a normal agent run.
             if (log_dir / "context.json").exists():
                 try:
-                    from scripts.report_builder import RunnerReportBuilder, save_report
+                    from gui_agent.reports import RunnerReportBuilder, save_report
                     report_data = RunnerReportBuilder().build(log_dir)
                     report_path = save_report(report_data, log_dir / "report.html")
                     print(f"[webarena] OK report -> {report_path}")

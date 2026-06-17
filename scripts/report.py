@@ -25,7 +25,7 @@ def main():
 
     args = parser.parse_args()
 
-    from scripts.report_builder import (
+    from gui_agent.reports import (
         ReconReportBuilder,
         RunnerReportBuilder,
         save_recon_report,

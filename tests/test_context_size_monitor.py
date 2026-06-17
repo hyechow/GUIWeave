@@ -5,7 +5,8 @@ monitor — a big prompt (e.g. the full elements blob in decompose) shows a high
 
 from __future__ import annotations
 
-from scripts.report_builder import CONTEXT_WINDOW, _ctx_color, _ctx_pct_tag
+from gui_agent.reports.metrics import CONTEXT_WINDOW, _ctx_color
+from gui_agent.reports.runner_html import _ctx_pct_tag
 
 
 def test_ctx_color_thresholds():
