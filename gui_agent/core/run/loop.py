@@ -41,8 +41,10 @@ from gui_agent.core.run.post_action import (
 )
 from gui_agent.core.run.read_state import ReadState
 from gui_agent.core.run.turns import (
+    SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
     make_interactive_turn,
+    make_verdict_turn,
 )
 from gui_agent.core.supervisor.base import SupervisorPolicy
 from gui_agent.core.llm.temporal import resolve_temporal_expressions
@@ -363,9 +365,7 @@ def run_agent_loop(
             # _timings, so the completion check that detected the prior milestone done would be lost
             # from this turn's breakdown. Carry each handed-off step's timings here and merge them
             # back after the loop, so the report shows the checker call that ran on the hand-off.
-            _carry_timings: dict = {}
-            _carry_order: list = []
-            _carry_token: dict = {}
+            _carry = SupervisorTimingCarry()
             while True:
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
@@ -395,21 +395,14 @@ def run_agent_loop(
                     break
                 _run_idx += 1
                 if _cur_run is not None and _cur_run.kind in {"read", "data_query"}:
-                    context.turns.append(make_interactive_turn(
+                    context.turns.append(make_verdict_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,
                         supervisor_step=sv_step,
-                        action_decision=None,
-                        checker=_extract_checker(supervisor),
-                        planner=_extract_plan(supervisor),
-                        replan=_extract_replan(supervisor),
-                        executed=False,
+                        supervisor=supervisor,
                         llm_calls=get_llm_call_count() - llm_calls_before,
                         input_tokens=get_llm_token_usage()[0] - tokens_before[0],
                         output_tokens=get_llm_token_usage()[1] - tokens_before[1],
-                        timings=getattr(supervisor, "_timings", {}),
-                        token_usage=getattr(supervisor, "_token_usage", {}),
-                        sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
                     ))
                     _terminal_verdict_recorded = True
                 # non-UI steps consume THIS verdict observation; reseed the next UI milestone.
@@ -421,14 +414,7 @@ def run_agent_loop(
                     _orch_reply = _reply
                     break
                 # Carry this (non-final) step's timings/tokens before the next step() clears them.
-                for _k, _v in (getattr(supervisor, "_timings", {}) or {}).items():
-                    if _k not in _carry_timings:
-                        _carry_order.append(_k)
-                    _carry_timings[_k] = _carry_timings.get(_k, 0) + _v
-                for _k, _u in (getattr(supervisor, "_token_usage", {}) or {}).items():
-                    _ct = _carry_token.setdefault(_k, {"input": 0, "output": 0})
-                    _ct["input"] += (_u or {}).get("input", 0)
-                    _ct["output"] += (_u or {}).get("output", 0)
+                _carry.collect(supervisor)
                 _say(f"  [Orchestrator] 子目标「{_done_name}」完成 → 下一子任务："
                      f"{_cur_run.name}（同一验收帧上决策，不另起 turn）")
                 # loop: re-decide the freshly-reseeded milestone on the same observation.
@@ -436,21 +422,7 @@ def run_agent_loop(
             # Merge the carried hand-off step timings into the supervisor's (final step's) timings,
             # so this turn's breakdown includes the checker call that ran on the hand-off. Carried
             # (earlier-step) keys render first; later writes (e.g. action_policy) still append after.
-            if _carry_timings:
-                _final_t = getattr(supervisor, "_timings", {}) or {}
-                _final_order = getattr(supervisor, "_timings_order", []) or []
-                for _k, _v in _final_t.items():
-                    if _k not in _carry_timings:
-                        _carry_order.append(_k)
-                    _carry_timings[_k] = _carry_timings.get(_k, 0) + _v
-                supervisor._timings = _carry_timings
-                supervisor._timings_order = _carry_order
-                _final_tok = getattr(supervisor, "_token_usage", {}) or {}
-                for _k, _u in _final_tok.items():
-                    _ct = _carry_token.setdefault(_k, {"input": 0, "output": 0})
-                    _ct["input"] += (_u or {}).get("input", 0)
-                    _ct["output"] += (_u or {}).get("output", 0)
-                supervisor._token_usage = _carry_token
+            _carry.merge_into(supervisor)
 
             if _orch_reply is not None:
                 read_state.drain_pending(say=_say)
@@ -460,21 +432,14 @@ def run_agent_loop(
                 # otherwise the report is missing it and the verdict screenshot (already written
                 # at observe) is orphaned. sv_step is the completed milestone's done verdict.
                 if not _terminal_verdict_recorded:
-                    context.turns.append(make_interactive_turn(
+                    context.turns.append(make_verdict_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,
                         supervisor_step=sv_step,
-                        action_decision=None,
-                        checker=_extract_checker(supervisor),
-                        planner=_extract_plan(supervisor),
-                        replan=_extract_replan(supervisor),
-                        executed=False,
+                        supervisor=supervisor,
                         llm_calls=get_llm_call_count() - llm_calls_before,
                         input_tokens=get_llm_token_usage()[0] - tokens_before[0],
                         output_tokens=get_llm_token_usage()[1] - tokens_before[1],
-                        timings=getattr(supervisor, "_timings", {}),
-                        token_usage=getattr(supervisor, "_token_usage", {}),
-                        sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
                     ))
                 # Sync the last milestone's done verdict into context (no later turn body runs).
                 sync_milestone_states(supervisor, context)
