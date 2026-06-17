@@ -318,3 +318,66 @@ def test_report_builder_falls_back_to_flat_run_status_for_archived_logs(tmp_path
     assert data.stop_reason == "用户按 ESC 中止 agent-loop（任务未完成）"
     assert "用户中止" in html
     assert "未完成停止" not in html
+
+
+def test_report_builder_renders_non_ui_data_query_run_log(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "screenshot_read_0.png").write_bytes(b"not-a-real-png")
+    (run_dir / "context.json").write_text(
+        """
+{
+  "goal": "Get the top 2 search term(s) in my store",
+  "supervisor_policy_name": "milestone",
+  "action_policy_name": "browser_vision",
+  "platform": "browser",
+  "turns": [],
+  "run": {
+    "status": "completed",
+    "stop_reason": "[\\"hollister\\", \\"Joust Bag\\"]",
+    "goal_completed": true
+  },
+  "orchestrator": {
+    "program": {
+      "goal": "Get the top 2 search term(s) in my store",
+      "statements": [
+        {
+          "op": "run",
+          "var": "q",
+          "name": "查询 Top Search Terms 表格的前 2 个搜索词",
+          "kind": "data_query",
+          "returns": ["top_search_terms"],
+          "sql": "SELECT search_term FROM top_search_terms ORDER BY CAST(uses AS INTEGER) DESC LIMIT 2",
+          "data_scope": "complete"
+        },
+        {"op": "finish", "message": "{q[top_search_terms]}"}
+      ]
+    },
+    "run_log": [
+      {
+        "name": "查询 Top Search Terms 表格的前 2 个搜索词",
+        "var": "q",
+        "result": {
+          "completed": true,
+          "failed": false,
+          "reads": {"top_search_terms": "[\\"hollister\\", \\"Joust Bag\\"]"},
+          "summary": "数据查询 top_search_terms"
+        }
+      }
+    ]
+  }
+}
+""",
+        encoding="utf-8",
+    )
+
+    data = RunnerReportBuilder().build(run_dir)
+    html = generate_html(data)
+
+    assert data.stats["turns"] == 1
+    assert data.pages[0].steps[0].operation_mode == "non_interactive"
+    assert data.pages[0].steps[0].action_type == "data_query"
+    assert "非交互 · data_query" in html
+    assert "SELECT search_term FROM top_search_terms" in html
+    assert "hollister" in html
+    assert "screenshot_read_0.png" in html

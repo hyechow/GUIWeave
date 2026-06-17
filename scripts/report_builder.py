@@ -443,6 +443,8 @@ class ReportStep:
     snap: dict | None = None
     sections_loaded: list[str] = field(default_factory=list)    # progressive knowledge injected into the planner this turn
     relevant_sections: list[str] = field(default_factory=list)  # sections the checker flagged relevant (requested)
+    operation_mode: str = "interactive"  # interactive | non_interactive
+    non_ui: dict | None = None
 
 
 @dataclass
@@ -1048,6 +1050,7 @@ class RunnerReportBuilder:
         data.goal_completed = bool(run_state.get("goal_completed", ctx.get("goal_completed", False)))
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
+        _attach_non_ui_screenshots(data.orchestrator, run_dir)
         data.webarena = ctx.get("webarena") or {}
         if data.webarena and not data.webarena.get("eval_result"):
             output_dir = str(data.webarena.get("task_output_dir") or "")
@@ -1095,21 +1098,24 @@ class RunnerReportBuilder:
 
         for turn in turns:
             idx = turn.get("index", 0)
+            operation_mode = str(turn.get("operation_mode") or "interactive")
+            non_ui = turn.get("non_ui") if isinstance(turn.get("non_ui"), dict) else None
             ad = turn.get("action_decision") or {}
             action = ad.get("action") or {}
-            atype = action.get("action_type", "none")
+            atype = (non_ui.get("kind") if non_ui else action.get("action_type")) or "none"
             x = action.get("x")
             y = action.get("y")
-            desc = action.get("description", "")
+            desc = (non_ui.get("name") if non_ui else action.get("description")) or ""
             sup = turn.get("supervisor") or {}
-            summary = sup.get("summary", "")
-            executed = turn.get("executed", False)
+            summary = (non_ui.get("summary") if non_ui else sup.get("summary")) or ""
+            executed = bool(turn.get("executed", False))
 
             total_actions += 1
             if executed:
                 total_executed += 1
 
-            ss_path = run_dir / f"screenshot_turn_{idx}.png"
+            ss_name = str((non_ui or {}).get("observation_url") or f"screenshot_turn_{idx}.png")
+            ss_path = run_dir / ss_name
             if ss_path.exists() and x is not None and y is not None:
                 img = _load_img(ss_path)
                 annotated_img = annotate_action(
@@ -1139,6 +1145,8 @@ class RunnerReportBuilder:
             raw_url = ss_path.name if ss_path.exists() else ""
 
             status = "✓" if executed else "✗"
+            if operation_mode == "non_interactive":
+                status = "✓ non-UI" if executed else "✗ non-UI"
             if atype == "none":
                 status = "— skip"
 
@@ -1168,7 +1176,23 @@ class RunnerReportBuilder:
                 snap=action.get("snap"),
                 sections_loaded=turn.get("sections_loaded") or [],
                 relevant_sections=(turn.get("checker") or {}).get("relevant_sections") or [],
+                operation_mode=operation_mode,
+                non_ui=non_ui,
             ))
+
+        existing_non_ui: set[tuple[str, str]] = set()
+        for step in all_steps:
+            if step.operation_mode == "non_interactive" and isinstance(step.non_ui, dict):
+                existing_non_ui.add((str(step.non_ui.get("var") or ""), str(step.non_ui.get("name") or step.description)))
+        synthetic_non_ui = _synthetic_non_ui_steps(
+            data.orchestrator,
+            run_dir,
+            start_index=len(all_steps) + 1,
+            existing=existing_non_ui,
+        )
+        all_steps.extend(synthetic_non_ui)
+        total_actions += len(synthetic_non_ui)
+        total_executed += sum(1 for step in synthetic_non_ui if "✓" in step.status)
 
         # Build milestone lookup from persisted decomposition
         ms_lookup: dict[str, dict] = {}
@@ -1202,9 +1226,9 @@ class RunnerReportBuilder:
                         title=ms_meta.get("name", f"Milestone {current_mid}"),
                         steps=current_page_steps,
                         milestone_id=current_mid,
-                        milestone_kind=current_page_steps[0].milestone_kind,
-                        milestone_name=ms_meta.get("name", ""),
-                        milestone_description=ms_meta.get("description", ""),
+                        milestone_kind=ms_meta.get("kind", "") or current_page_steps[0].milestone_kind,
+                        milestone_name=ms_meta.get("name", "") or current_page_steps[0].description,
+                        milestone_description=ms_meta.get("description", "") or current_page_steps[0].summary,
                         success_condition=ms_meta.get("success_condition", ""),
                         checklist=ms_meta.get("checklist", []) or [],
                     ))
@@ -1218,9 +1242,9 @@ class RunnerReportBuilder:
                 title=ms_meta.get("name", f"Milestone {current_mid}"),
                 steps=current_page_steps,
                 milestone_id=current_mid,
-                milestone_kind=current_page_steps[0].milestone_kind,
-                milestone_name=ms_meta.get("name", ""),
-                milestone_description=ms_meta.get("description", ""),
+                milestone_kind=ms_meta.get("kind", "") or current_page_steps[0].milestone_kind,
+                milestone_name=ms_meta.get("name", "") or current_page_steps[0].description,
+                milestone_description=ms_meta.get("description", "") or current_page_steps[0].summary,
                 success_condition=ms_meta.get("success_condition", ""),
                 checklist=ms_meta.get("checklist", []) or [],
             ))
@@ -1272,7 +1296,7 @@ class RunnerReportBuilder:
             ms_parts.append(f"#{ms['id']} {ms['name']}（{ms['kind']}）")
         data.decompose_summary = " → ".join(ms_parts) if ms_parts else ""
         data.stats = {
-            "turns": len(turns),
+            "turns": len(all_steps),
             "executed": total_executed,
         }
         return data
@@ -1993,6 +2017,26 @@ HTML_TEMPLATE = """\
   .prog-condvar {{ font-family: monospace; color: #0891b2; }}
   .prog-condval {{ font-weight: 600; color: #92400e; }}
   .prog-branch {{ display: flex; flex-direction: column; gap: 5px; margin-left: 8px; padding-left: 12px; border-left: 2px solid #34d399; }}
+  .nonui-log {{ margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); display:flex; flex-direction:column; gap:8px; }}
+  .nonui-title {{ font-size: 11px; font-weight: 700; color: #0f766e; text-transform: uppercase; letter-spacing: .04em; }}
+  .nonui-row {{ border: 1px solid #d1fae5; background: #f0fdfa; border-radius: 8px; padding: 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }}
+  .nonui-detail {{ border: 1px solid #d1fae5; background: #f0fdfa; border-radius: 8px; padding: 10px; display:flex; flex-direction:column; gap:8px; }}
+  .nonui-main {{ min-width: 0; display:flex; flex-direction:column; gap:6px; }}
+  .nonui-head {{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }}
+  .nonui-n {{ font-family: monospace; font-size: 11px; font-weight: 700; color:#0f766e; }}
+  .nonui-name {{ font-size: 13px; font-weight: 600; color:#134e4a; }}
+  .nonui-status {{ font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px; }}
+  .nonui-ok {{ background:#dcfce7; color:#166534; }}
+  .nonui-fail {{ background:#fee2e2; color:#991b1b; }}
+  .nonui-summary {{ color:#475569; font-size:12px; }}
+  .nonui-sql {{ display:grid; grid-template-columns: 42px minmax(0, 1fr); gap:8px; align-items:start; }}
+  .nonui-label {{ color:#0f766e; font-size:10px; font-weight:700; text-transform:uppercase; padding-top:2px; }}
+  .nonui-code {{ margin:0; background:#ffffff; border:1px solid #ccfbf1; border-radius:6px; padding:7px 8px; color:#334155; font-size:11px; line-height:1.45; white-space:pre-wrap; word-break:break-word; font-family:ui-monospace, SFMono-Regular, monospace; }}
+  .nonui-reads {{ display:flex; flex-direction:column; gap:4px; }}
+  .nonui-read {{ display:grid; grid-template-columns: 140px minmax(0, 1fr); gap:8px; align-items:start; font-size:12px; }}
+  .nonui-key {{ color:#0f766e; font-weight:600; word-break:break-word; }}
+  .nonui-val {{ margin:0; color:#1e293b; font-family:ui-monospace, SFMono-Regular, monospace; white-space:pre-wrap; word-break:break-word; }}
+  .nonui-shot img {{ width: 150px; max-height: 96px; object-fit: cover; border-radius: 7px; border: 1px solid #99f6e4; cursor: zoom-in; display:block; }}
   .prog-branch-else {{ border-left-color: #f87171; }}
   .prog-finish {{ align-self: flex-start; padding: 2px 9px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; color: #065f46; }}
 
@@ -2243,6 +2287,8 @@ KIND_BADGE = {
     "action": "milestone-badge-action",
     "filter": "milestone-badge-filter",
     "collection": "milestone-badge-collection",
+    "read": "milestone-badge-collection",
+    "data_query": "milestone-badge-collection",
 }
 
 AT_LABELS = {
@@ -2252,6 +2298,7 @@ AT_LABELS = {
     # labels (T4 · "") since the badge lookup falls back to "" (log 20260616_222207).
     "upload": "上传", "navigate": "导航", "back": "后退",
     "new_tab": "新标签页", "select_tab": "切标签页", "close_tab": "关标签页",
+    "read": "只读", "data_query": "数据查询", "non_ui": "非交互",
 }
 
 
@@ -2371,6 +2418,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
     summary_html = ""
     if step.summary and step.summary != step.description:
         summary_html = f'<div class="detail-summary">{_safe(step.summary)}</div>'
+    non_ui_html = _render_non_ui_detail(step.non_ui) if step.non_ui else ""
 
     snap_html = ""
     if step.snap and step.snap.get("original"):
@@ -2447,6 +2495,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         {snap_html}
         {sections_html}
         {summary_html}
+        {non_ui_html}
         {_render_timing_html(step.timings)}
         {_render_token_html(step.token_usage)}
       </div>
@@ -2683,11 +2732,250 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
 _PROG_KIND_BADGE = {
     "navigation": "milestone-badge-navigation", "filter": "milestone-badge-filter",
     "action": "milestone-badge-action", "read": "milestone-badge-collection",
+    "data_query": "milestone-badge-collection",
 }
 
 # {var[field]} data-flow template (mirrors the runner's program.TEMPLATE_RE): the report uses it
 # to show what each read captured and to resolve action targets the way the runner did at runtime.
 _PROG_TEMPLATE_RE = re.compile(r"\{(\w+)\[([^\]]+)\]\}")
+
+
+def _program_run_items(stmts: list) -> list[dict]:
+    """Flatten run statements from a DSL program, preserving source order."""
+    out: list[dict] = []
+    for s in stmts or []:
+        if not isinstance(s, dict):
+            continue
+        op = s.get("op", "run")
+        if op == "run":
+            out.append(s)
+        elif op == "if":
+            out.extend(_program_run_items(s.get("then", [])))
+            out.extend(_program_run_items(s.get("otherwise", [])))
+    return out
+
+
+def _program_run_meta(record: dict, run_items: list[dict]) -> dict:
+    var = str(record.get("var") or "")
+    name = str(record.get("name") or "")
+    if var:
+        for item in run_items:
+            if str(item.get("var") or "") == var:
+                return item
+    if name:
+        for item in run_items:
+            if str(item.get("name") or "") == name:
+                return item
+    return {}
+
+
+def _attach_non_ui_screenshots(orchestrator: dict | None, run_dir: Path) -> None:
+    """Attach screenshot_read_N files to non-UI run_log rows for report rendering."""
+    if not isinstance(orchestrator, dict):
+        return
+    run_log = orchestrator.get("run_log")
+    if not isinstance(run_log, list):
+        return
+    run_items = _program_run_items((orchestrator.get("program") or {}).get("statements") or [])
+
+    def _shot_index(path: Path) -> int:
+        m = re.search(r"screenshot_read_(\d+)\.png$", path.name)
+        return int(m.group(1)) if m else 10**9
+
+    shots = sorted(run_dir.glob("screenshot_read_*.png"), key=_shot_index)
+    shot_i = 0
+    for record in run_log:
+        if not isinstance(record, dict):
+            continue
+        meta = _program_run_meta(record, run_items)
+        if meta.get("kind") not in {"read", "data_query"}:
+            continue
+        if record.get("observation_url"):
+            continue
+        if shot_i < len(shots):
+            record["observation_url"] = shots[shot_i].name
+            shot_i += 1
+
+
+def _synthetic_non_ui_steps(
+    orchestrator: dict | None,
+    run_dir: Path,
+    *,
+    start_index: int,
+    existing: set[tuple[str, str]],
+) -> list[ReportStep]:
+    """Build turn-like report rows for archived logs where non-UI primitives predate turn persistence."""
+    if not isinstance(orchestrator, dict):
+        return []
+    run_log = orchestrator.get("run_log")
+    if not isinstance(run_log, list):
+        return []
+    run_items = _program_run_items((orchestrator.get("program") or {}).get("statements") or [])
+    steps: list[ReportStep] = []
+    next_index = start_index
+    for record in run_log:
+        if not isinstance(record, dict):
+            continue
+        meta = _program_run_meta(record, run_items)
+        kind = str(meta.get("kind") or "")
+        if kind not in {"read", "data_query"}:
+            continue
+        result = record.get("result") if isinstance(record.get("result"), dict) else {}
+        name = str(record.get("name") or meta.get("name") or "")
+        var = str(record.get("var") or meta.get("var") or "")
+        key = (var, name)
+        if key in existing:
+            continue
+        reads = result.get("reads") if isinstance(result.get("reads"), dict) else {}
+        non_ui = {
+            "kind": kind,
+            "name": name,
+            "var": var,
+            "returns": meta.get("returns") or list(reads.keys()),
+            "read_spec": meta.get("read_spec") or "",
+            "sql": meta.get("sql") or "",
+            "data_scope": meta.get("data_scope") or "",
+            "reads": reads,
+            "summary": result.get("summary") or "",
+            "completed": bool(result.get("completed")) and not bool(result.get("failed")),
+            "failed": bool(result.get("failed")),
+            "observation_url": record.get("observation_url") or "",
+        }
+        shot_name = str(non_ui.get("observation_url") or "")
+        shot_path = run_dir / shot_name if shot_name else None
+        shot_url = shot_path.name if shot_path and shot_path.exists() else ""
+        completed = bool(non_ui["completed"])
+        steps.append(
+            ReportStep(
+                label=f"Turn {next_index}",
+                action_type=kind,
+                x=None,
+                y=None,
+                description=name,
+                annotated_before_url=shot_url,
+                annotated_full_url=shot_url,
+                raw_screenshot_url=shot_url,
+                status="✓ non-UI" if completed else "✗ non-UI",
+                milestone_id=var or f"non_ui_{next_index}",
+                milestone_kind=kind,
+                instruction="",
+                summary=str(non_ui.get("summary") or ""),
+                operation_mode="non_interactive",
+                non_ui=non_ui,
+            )
+        )
+        next_index += 1
+    return steps
+
+
+def _pretty_non_ui_value(value: object) -> str:
+    text = str(value if value is not None else "")
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return text
+    return json.dumps(parsed, ensure_ascii=False, indent=2)
+
+
+def _render_non_ui_detail(non_ui: dict) -> str:
+    kind = str(non_ui.get("kind") or "non_ui")
+    mode = "非交互"
+    sql = str(non_ui.get("sql") or "")
+    scope = str(non_ui.get("data_scope") or "")
+    read_spec = str(non_ui.get("read_spec") or "")
+    reads = non_ui.get("reads") if isinstance(non_ui.get("reads"), dict) else {}
+    returns = [str(v) for v in (non_ui.get("returns") or []) if str(v)]
+    fields = returns or list(reads.keys())
+    sql_html = ""
+    if sql:
+        scope_html = f' <span style="color:#94a3b8">scope={_safe(scope)}</span>' if scope else ""
+        sql_html = (
+            f'<div class="nonui-sql"><span class="nonui-label">SQL{scope_html}</span>'
+            f'<pre class="nonui-code">{_safe(sql)}</pre></div>'
+        )
+    spec_html = (
+        f'<div class="nonui-sql"><span class="nonui-label">SPEC</span>'
+        f'<pre class="nonui-code">{_safe(read_spec)}</pre></div>'
+        if read_spec else ""
+    )
+    read_rows = []
+    for field in fields:
+        read_rows.append(
+            f'<div class="nonui-read"><span class="nonui-key">{_safe(field)}</span>'
+            f'<pre class="nonui-val">{_safe(_pretty_non_ui_value(reads.get(field, "")))}</pre></div>'
+        )
+    reads_html = f'<div class="nonui-reads">{"".join(read_rows)}</div>' if read_rows else ""
+    return (
+        f'<div class="nonui-detail">'
+        f'<div class="nonui-title">{mode} · {_safe(kind)}</div>'
+        f'{sql_html}{spec_html}{reads_html}'
+        f'</div>'
+    )
+
+
+def _render_non_ui_log(orchestrator: dict, run_items: list[dict]) -> str:
+    rows: list[str] = []
+    for idx, record in enumerate(orchestrator.get("run_log") or [], start=1):
+        if not isinstance(record, dict):
+            continue
+        meta = _program_run_meta(record, run_items)
+        kind = str(meta.get("kind") or "")
+        if kind not in {"read", "data_query"}:
+            continue
+        result = record.get("result") if isinstance(record.get("result"), dict) else {}
+        completed = bool(result.get("completed")) and not bool(result.get("failed"))
+        status_cls = "nonui-ok" if completed else "nonui-fail"
+        status_text = "completed" if completed else "failed"
+        badge = _PROG_KIND_BADGE.get(kind, "milestone-badge-default")
+        name = str(record.get("name") or meta.get("name") or "")
+        var = str(record.get("var") or meta.get("var") or "")
+        var_html = f'<span class="prog-var">{_safe(var)} =</span> ' if var else ""
+        summary = str((result or {}).get("summary") or "")
+        summary_html = f'<div class="nonui-summary">{_safe(summary)}</div>' if summary else ""
+        sql = str(meta.get("sql") or "")
+        scope = str(meta.get("data_scope") or "")
+        sql_html = ""
+        if kind == "data_query" and sql:
+            scope_html = f' <span style="color:#94a3b8">scope={_safe(scope)}</span>' if scope else ""
+            sql_html = (
+                f'<div class="nonui-sql"><span class="nonui-label">SQL{scope_html}</span>'
+                f'<pre class="nonui-code">{_safe(sql)}</pre></div>'
+            )
+        reads = result.get("reads") if isinstance(result.get("reads"), dict) else {}
+        read_rows = []
+        for field in (meta.get("returns") or list(reads.keys()) or []):
+            val = reads.get(field, "")
+            read_rows.append(
+                f'<div class="nonui-read"><span class="nonui-key">{_safe(str(field))}</span>'
+                f'<pre class="nonui-val">{_safe(_pretty_non_ui_value(val))}</pre></div>'
+            )
+        reads_html = f'<div class="nonui-reads">{"".join(read_rows)}</div>' if read_rows else ""
+        obs = str(record.get("observation_url") or "")
+        shot_html = (
+            f'<div class="nonui-shot"><img src="{_safe(obs)}" onclick="zoomImg(\'{_safe(obs)}\')" '
+            f'alt="非 UI 读取帧"></div>'
+            if obs else ""
+        )
+        rows.append(
+            f'<div class="nonui-row">'
+            f'<div class="nonui-main">'
+            f'<div class="nonui-head">'
+            f'<span class="nonui-n">#{idx}</span>'
+            f'<span class="nonui-name">{var_html}{_safe(name)}</span>'
+            f'<span class="milestone-badge {badge}">{_safe(kind)}</span>'
+            f'<span class="nonui-status {status_cls}">{status_text}</span>'
+            f'</div>'
+            f'{summary_html}{sql_html}{reads_html}'
+            f'</div>{shot_html}</div>'
+        )
+    if not rows:
+        return ""
+    return (
+        f'<div class="nonui-log">'
+        f'<div class="nonui-title">非 UI 执行记录</div>'
+        f'{"".join(rows)}'
+        f'</div>'
+    )
 
 
 def _render_program_section(orchestrator: dict | None) -> str:
@@ -2702,6 +2990,7 @@ def _render_program_section(orchestrator: dict | None) -> str:
     stmts = (orchestrator.get("program") or {}).get("statements") or []
     if not stmts:
         return ""
+    run_items = _program_run_items(stmts)
 
     # var -> {field: value} captured by each completed read (runner mirrors interp.run_log into
     # context.orchestrator). Lets the report show WHAT a read got and resolve {var[field]} action
@@ -2737,12 +3026,13 @@ def _render_program_section(orchestrator: dict | None) -> str:
             f'<span class="prog-resolved">▸ {_safe(resolved)}</span>' if resolved != name else ""
         )
         ret = [r for r in (s.get("returns") or []) if r]
-        if kind == "read" and ret:
+        if kind in {"read", "data_query"} and ret:
             vals = env.get(var or "") or {}
+            verb = "查" if kind == "data_query" else "读"
             shown = "、".join(
                 f"{_safe(f)}={_safe(vals[f])}" if vals.get(f) else _safe(f) for f in ret
             )
-            ret_html = f'<span class="prog-ret">→ 读 {shown}</span>'
+            ret_html = f'<span class="prog-ret">→ {verb} {shown}</span>'
         else:
             ret_html = ""
         return (

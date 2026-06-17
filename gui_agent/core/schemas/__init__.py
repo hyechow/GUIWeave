@@ -477,9 +477,17 @@ class PolicyTurn(BaseModel):
 
     index: int
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    operation_mode: Literal["interactive", "non_interactive"] = Field(
+        default="interactive",
+        description="本轮是 UI 交互执行，还是非 UI primitive（如 structured read / data_query）",
+    )
     observation_source: str
     supervisor: SupervisorStep
     action_decision: Optional[BaseActionDecision] = None
+    non_ui: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="非 UI primitive 执行明细：kind/sql/returns/reads/completed 等；interactive turn 留空",
+    )
     checker: Optional[dict] = Field(default=None, description="Checker 原始结果：status, reason, summary, missing_evidence 等")
     planner: Optional[dict] = Field(default=None, description="Planner 原始结果：instruction, summary, direction, drag_column")
     replan: Optional[dict] = Field(default=None, description="Replan 原始结果：diagnosis, strategy, instruction")
