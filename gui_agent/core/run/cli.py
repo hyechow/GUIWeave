@@ -127,6 +127,7 @@ def main(
         cur_url = ""
         cur_title = ""
         initial_png = None
+        initial_tables = None
         cur_site = ""  # init OUTSIDE the try: an observe() failure must not leave it unbound
         try:
             initial_obs = bundle.make_perception(
@@ -135,6 +136,7 @@ def main(
             cur_url = initial_obs.url or ""
             cur_title = initial_obs.title or ""
             initial_png = initial_obs.png_bytes
+            initial_tables = getattr(initial_obs, "tables", None)
             # Map the url's host to a known app name (semantic site) — the IP itself is opaque
             # to router/decompose, but "RoboTeam" / "shopping_admin" carries meaning.
             if cur_url:
@@ -225,7 +227,8 @@ def main(
                     decompose(goal, knowledge=knowledge.navigation if knowledge else "",
                               file_section=file_section,
                               current_url=cur_url, current_title=cur_title,
-                              current_site=cur_site, png_bytes=initial_png)
+                              current_site=cur_site, table_summaries=initial_tables,
+                              png_bytes=initial_png)
                 ))
                 # The config must ALSO reach the execution-time planner deterministically — the
                 # supervisor's constraints flow to every milestone's planner, and reseed never clears

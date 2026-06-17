@@ -12,6 +12,7 @@ the cheap deterministic backstop pattern, not a string-match band-aid.
 from __future__ import annotations
 
 import base64
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -35,14 +36,14 @@ _SYSTEM = """\
     · var：把该步结果绑定到变量，仅当后续 if / finish 要引用它时填（通常只有 read/data_query 步需要）。
     · returns：仅 run_kind="read" 填——要从结果界面读取的字段名列表，程序据此判断分支。
     · read_spec：仅 run_kind="read" 填——【本次读取说明】，按任务需求生成：逐个说明每个 returns 字段在结果界面上看哪里、如何把信号（图标/颜色/文字/位置）判读成值、各取值的含义（例：「连通判定：看起点终点输入框之间的图标——绿色✓=连通，灰色?=未检测/未连通；不可达原因：连通时为空，不可达时读取页面上的红色错误提示文字」）。读取是只读单帧，没有这份说明就只能瞎猜，所以必须写清楚。
-    · data_query：仅用于表格/列表的筛选、计数、排序、group by、top N、去重等数据处理；必须填 var、returns、sql。SQL 只能是 SELECT 或 WITH ... SELECT。默认表名 data；列名按表头转 snake_case（如 Customer Email→customer_email，Order Status→order_status）。不要把表格行塞进 read；需要聚合时用 data_query。data_scope 默认 complete（要求完整数据，partial 表格会失败）；只有任务明确说“当前页面/当前可见/当前已渲染行”时才设 current。
+    · data_query：仅用于表格/列表的筛选、计数、排序、group by、top N、去重等数据处理；必须填 var、returns、sql。SQL 只能是 SELECT 或 WITH ... SELECT。默认表名 data；每张表也可用 table_1/table_2，若表格区块有标题/caption，还可用其 snake_case 别名（如 Top Search Terms→top_search_terms）。列名按表头转 snake_case（如 Customer Email→customer_email，Search Term→search_term）。不要把表格行塞进 read；表格类 top/most/count/sort/group by 任务优先用 data_query，不用视觉 read。data_scope 默认 complete（要求完整数据，partial 表格会失败）；只有任务明确说“当前页面/当前可见/当前已渲染行”时才设 current。
 - op="if"：按某个 read/data_query 步返回的字段值分支。cond_var=那个 read/data_query 步的 var；cond_field=该步 returns 里的字段；cond_cmp 可用 "=="、"!="、"exists"、"empty"、"contains"、"not_contains"、"in"、"not_in"；cond_value 用于等于/包含类比较；cond_values 用于 in/not_in 的候选值列表；then=成立时执行的步骤；otherwise=不成立时执行的步骤。
 - op="finish"：产出最终答复。message 是模板，可用 {变量[字段]} 引用某 read/data_query 步返回的值。
 
 核心原则：
 1. milestone 粒度：「搜关键词并进第一条结果」= 一个 navigation run，别拆成 输入→提交→点结果。
 2. 只在任务真有「读/查结果 → 据结果决定下一步」时才用 read/data_query + if；纯线性任务直接顺序 run，结尾可选 finish。
-3. read 是只读单帧数据提取：它不点任何东西、不滚动、不展开、不做验收（读不到=当没有），只把 returns 字段读出来。data_query 也是非 UI primitive，但它只处理结构化表格数据，适合聚合/排序/计数，不能替代导航、筛选或分页采集。**「触发某结果的操作」和「读取/查询该结果」必须分成两步**——先用 action/filter 触发，再用 read 或 data_query 获取结果。**每个 step 只面向「当前界面/当前视口已定位/已采集的数据」操作或读取**：read 读的是当前那一帧；data_query 查的是当前结构化表格快照。若目标按知识库应在当前页面，但当前截图/视口没有看到目标标题、表格或字段，**不要裸 read/data_query**；先加一个 navigation step 做页内定位（滚动到目标区、切换目标 tab、展开目标面板），success_condition 写「目标区标题/表格/字段已可见」，再 read/data_query。**首页/仪表盘上的汇总小部件（如 Last Search Terms、Bestsellers…）是摘要片段，必须按任务口径精确匹配**：若知识库/截图中存在与任务同名或同口径的区块（如 Top Search Terms），优先定位到这个精确区块；别把另一个摘要区（如 Last=按时间/最近）当成 Top=按热度/前 N。若改用列表/报表页回答「前 N 个 / 排名 / 热门」类问题，必须先确认或设置按目标指标列降序排序（如 Uses/Count/Sales），再 read/data_query；**不要假设报表默认前几行就是 Top**。**例外**：若任务明确要的就是当前可见首页摘要口径（如『首页显示的今日销售额』），且目标区已经可见，才可直接 read。
+3. read 是只读单帧数据提取：它不点任何东西、不滚动、不展开、不做验收（读不到=当没有），只把 returns 字段读出来。data_query 也是非 UI primitive，但它只处理结构化表格数据，适合聚合/排序/计数，不能替代导航、筛选或分页采集。**「触发某结果的操作」和「读取/查询该结果」必须分成两步**——先用 action/filter 触发，再用 read 或 data_query 获取结果。**每个 step 只面向「当前界面/当前视口已定位/已采集的数据」操作或读取**：read 读的是当前那一帧；data_query 查的是当前结构化表格快照。若目标按知识库应在当前页面，但当前截图/视口没有看到目标标题、表格或字段，**不要裸 read/data_query**；先加一个 navigation step 做页内定位（滚动到目标区、切换目标 tab、展开目标面板），success_condition 写「目标区标题/表格/字段已可见」，再 read/data_query。**首页/仪表盘上的汇总小部件（如 Last Search Terms、Bestsellers…）是摘要片段，必须按任务口径精确匹配**：若知识库/截图中存在与任务同名或同口径的区块（如 Top Search Terms），优先定位到这个精确区块；别把另一个摘要区（如 Last=按时间/最近）当成 Top=按热度/前 N。目标是表格里的 top/most/count/sort/group by 时，定位后优先写 data_query；若区块标题可见，用标题的 snake_case 作为表别名（如 top_search_terms），并用指标列排序（如 Uses→uses）。若改用列表/报表页回答「前 N 个 / 排名 / 热门」类问题，必须先确认或设置按目标指标列降序排序（如 Uses/Count/Sales），再 data_query；**不要假设报表默认前几行就是 Top**。**例外**：若任务明确要的就是非表格的当前可见首页文本/KPI（如『首页显示的今日销售额』），才直接 read。
 4. 验收终态且有出处：只用任务、@引用文件或截图里出现的值，不编造系统生成的编号/名称（用特征描述）。
 5. read/data_query 的 returns 只提取用户最终需要的字段；排序/定位可借助辅助列（如 Uses、Count、Price），但用户没要求这些辅助值时，不要把它们放进返回值或最终答案。例如任务只问「top 2 search terms」，返回两个 search term 文本，不返回 `{term, uses}` 对象。
 6. 能一句话答复就用 finish 模板引用 read 值；否则可不写 finish。
@@ -70,6 +71,12 @@ _SYSTEM = """\
  {"op":"run","run_kind":"action","name":"新建一条工单","success_condition":"已提交新建（列表出现新工单，工单号由后续 read 读取）"},
  {"op":"run","run_kind":"read","var":"t","name":"读取新建工单的工单号","returns":["工单号"],"read_spec":"工单号：工单列表中刚新增那一行的编号文字（系统自动分配，形如 WO-2024-007），读取该行的编号列。"},
  {"op":"run","run_kind":"action","name":"打开工单 {t[工单号]}，把负责人设为张三","success_condition":"工单 {t[工单号]} 的负责人已显示为张三"}]}
+
+示例（表格 Top-N 用 data_query，不用 read）——
+{"reasoning":"目标问表格区块里的 top 2 search terms。先定位 Dashboard 的 Top Search Terms 区块；该区块是结构化表格，标题会作为 SQL 表别名 top_search_terms，按 Uses 列降序取 Search Term 前两项。","goal":"Get the top 2 search term(s) in my store","steps":[
+ {"op":"run","run_kind":"navigation","name":"在 Dashboard 页面内定位 Top Search Terms 区块","success_condition":"页面显示 Top Search Terms 标题及 Search Term/Results/Uses 表格"},
+ {"op":"run","run_kind":"data_query","var":"q","name":"查询 Top Search Terms 表格前2个搜索词","returns":["top_search_terms"],"sql":"SELECT search_term FROM top_search_terms ORDER BY CAST(uses AS INTEGER) DESC, search_term LIMIT 2"},
+ {"op":"finish","message":"{q[top_search_terms]}"}]}
 """
 
 
@@ -360,6 +367,7 @@ def decompose(
     current_url: str = "",
     current_title: str = "",
     current_site: str = "",
+    table_summaries: list[dict] | None = None,
 ) -> Program:
     """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
 
@@ -395,9 +403,13 @@ def decompose(
         page = "\n## 当前前台页面（以此为准，截图看不到地址栏）：" + " · ".join(_parts)
         page += (
             "\n若当前已在任务目标站点，可省略『打开该站点』这类重复 milestone；"
-            "但不要省略页内定位/滚动/切换 tab/打开目标页面。读取前必须先让目标区域处于当前可见终态。"
+            "但不要省略必要的页内定位/切换 tab/打开目标页面。视觉 read 前必须先让目标区域处于当前可见终态；"
+            "若目标表格已出现在『当前结构化表格』列表中，data_query 可直接查询该 DOM 表格，不必为了肉眼可见而滚动。"
         )
         parts.append({"type": "text", "text": page})
+    table_hint = _table_schema_prompt(table_summaries)
+    if table_hint:
+        parts.append({"type": "text", "text": table_hint})
     if png_bytes:
         b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
         parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
@@ -423,3 +435,62 @@ def decompose(
             for i in issues:
                 print(f"  [Orchestrator]   {i}")
     return program
+
+
+def _table_schema_prompt(tables: list[dict] | None) -> str:
+    """Compact table inventory for planning SQL, without row/cell values."""
+    if not tables:
+        return ""
+    lines: list[str] = []
+    used_aliases: set[str] = set()
+    for idx, table in enumerate(tables[:12], start=1):
+        if not isinstance(table, dict):
+            continue
+        headers = table.get("headers") if isinstance(table.get("headers"), list) else []
+        aliases = [f"table_{idx}"]
+        used_aliases.add(f"table_{idx}")
+        if idx == 1:
+            aliases.append("data")
+            used_aliases.add("data")
+        caption = str(table.get("caption") or "").strip()
+        caption_alias = _sql_identifier(caption)
+        if caption_alias and caption_alias not in used_aliases:
+            aliases.append(caption_alias)
+            used_aliases.add(caption_alias)
+        columns = []
+        for header in headers[:24]:
+            label = str(header or "").strip()
+            column = _sql_identifier(label)
+            if not column:
+                continue
+            columns.append(f"{label}->{column}" if label != column else column)
+        row_count = table.get("row_count")
+        try:
+            row_text = str(int(str(row_count).replace(",", ""))) if row_count is not None else "?"
+        except ValueError:
+            row_text = "?"
+        completeness = "partial" if table.get("partial") else "complete"
+        caption_text = f' caption="{caption}";' if caption else ""
+        column_text = ", ".join(columns) if columns else "(no headers)"
+        lines.append(
+            f"- {'/'.join(aliases)};{caption_text} columns: {column_text}; rows: {row_text}; {completeness}"
+        )
+    if not lines:
+        return ""
+    return (
+        "\n## 当前结构化表格（仅 schema，不含行数据）\n"
+        "这些表格来自当前 DOM table/grid 快照；用于规划 data_query 的表名和列名。"
+        "这里故意不提供行数据，实际查询由受限 SQLite primitive 在运行时读取。\n"
+        + "\n".join(lines)
+        + "\n若目标可由这些表格回答，优先生成 data_query；caption 别名和列名按上面的 snake_case 使用。"
+    )
+
+
+def _sql_identifier(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", text).strip("_")
+    if not text:
+        return ""
+    if text[0].isdigit():
+        text = "c_" + text
+    return text

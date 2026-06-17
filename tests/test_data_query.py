@@ -86,6 +86,34 @@ def test_execute_data_query_supports_window_functions_for_ranked_counts():
     assert reads == {"second_most": "c@example.com"}
 
 
+def test_execute_data_query_exposes_caption_alias():
+    reads = execute_data_query(
+        [
+            {
+                "index": 1,
+                "caption": "Top Search Terms",
+                "headers": ["Search Term", "Results", "Uses"],
+                "rows": [
+                    {"Search Term": "hollister", "Results": "1", "Uses": "19"},
+                    {"Search Term": "Joust Bag", "Results": "10", "Uses": "4"},
+                    {"Search Term": "tanks", "Results": "23", "Uses": "1"},
+                ],
+                "row_count": 3,
+                "partial": False,
+            }
+        ],
+        """
+        SELECT search_term
+        FROM top_search_terms
+        ORDER BY CAST(uses AS INTEGER) DESC
+        LIMIT 2
+        """,
+        ["top_terms"],
+    )
+
+    assert reads == {"top_terms": '["hollister", "Joust Bag"]'}
+
+
 def test_execute_data_query_rejects_mutating_sql():
     with pytest.raises(DataQueryError, match="只允许 SELECT|禁止关键字"):
         execute_data_query(_orders_table(), "DROP TABLE data", ["result"])

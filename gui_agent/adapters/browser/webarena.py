@@ -469,6 +469,7 @@ def main() -> int:
                         cur_title = ""
                         cur_site = knowledge.app_name if knowledge is not None else ""
                         initial_png = None
+                        initial_tables = None
                         try:
                             initial_obs = bundle.make_perception(
                                 phone, log_dir / "screenshot_initial.png"
@@ -476,6 +477,7 @@ def main() -> int:
                             cur_url = initial_obs.url or ""
                             cur_title = initial_obs.title or ""
                             initial_png = initial_obs.png_bytes
+                            initial_tables = getattr(initial_obs, "tables", None)
                             if not cur_site and cur_url:
                                 from gui_agent.core.self_learning.app_summary import match_app_by_url
                                 cur_site = match_app_by_url(cur_url, "browser") or ""
@@ -503,6 +505,7 @@ def main() -> int:
                                     current_url=cur_url,
                                     current_title=cur_title,
                                     current_site=cur_site,
+                                    table_summaries=initial_tables,
                                     png_bytes=initial_png,
                                 )
                             )

@@ -31,6 +31,47 @@ def table_snapshot_js() -> str:
   }};
   const cellsOf = (row, selector) => Array.from(row.querySelectorAll(selector))
     .filter(visible).slice(0, MAX_CELLS).map(text);
+  const titleSelectors = [
+    ".dashboard-item-title",
+    ".admin__page-section-title",
+    ".page-title",
+    ".panel-title",
+    ".box-title",
+    ".block-title",
+    ".title",
+    "[data-role='title']",
+    "[role='heading']",
+    "legend",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+  ].join(",");
+  const labelledTitle = (el) => {{
+    const id = norm(el && el.getAttribute && el.getAttribute("aria-labelledby"));
+    if (!id) return "";
+    const labelled = document.getElementById(id);
+    return labelled && visible(labelled) ? text(labelled) : "";
+  }};
+  const titleFromContainer = (container, target) => {{
+    if (!container) return "";
+    const explicit = norm(container.getAttribute("aria-label") || container.getAttribute("data-title") || "");
+    if (explicit) return explicit;
+    const labelled = labelledTitle(container);
+    if (labelled) return labelled;
+    const candidates = Array.from(container.querySelectorAll(titleSelectors)).filter((cand) => (
+      visible(cand) && cand !== target && !target.contains(cand) && !cand.contains(target)
+    ));
+    for (const cand of candidates) {{
+      if (cand.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) {{
+        const s = text(cand);
+        if (s) return s;
+      }}
+    }}
+    return "";
+  }};
   const uniquePath = (el) => {{
     const parts = [];
     let n = el;
@@ -49,16 +90,18 @@ def table_snapshot_js() -> str:
   const nearbyTitle = (el) => {{
     const label = norm(el.getAttribute("aria-label") || el.getAttribute("data-title") || "");
     if (label) return label;
+    const labelled = labelledTitle(el);
+    if (labelled) return labelled;
     const caption = el.querySelector("caption");
     if (caption && text(caption)) return text(caption);
     let prev = el.previousElementSibling;
     for (let i = 0; prev && i < 4; i++, prev = prev.previousElementSibling) {{
-      if (/^H[1-6]$/.test(prev.tagName) && text(prev)) return text(prev);
+      if (prev.matches && prev.matches(titleSelectors) && text(prev)) return text(prev);
     }}
     let parent = el.parentElement;
-    for (let depth = 0; parent && depth < 4; depth++, parent = parent.parentElement) {{
-      const heading = parent.querySelector("h1,h2,h3,h4,h5,h6,.admin__page-section-title,.page-title");
-      if (heading && text(heading)) return text(heading);
+    for (let depth = 0; parent && depth < 6; depth++, parent = parent.parentElement) {{
+      const local = titleFromContainer(parent, el);
+      if (local) return local;
     }}
     return "";
   }};

@@ -12,6 +12,8 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "JSON.stringify" in js
     assert "role=\"grid\"" in js
     assert "records?" in js
+    assert ".dashboard-item-title" in js
+    assert "aria-labelledby" in js
 
 
 def test_normalize_table_snapshots_maps_rows_to_headers():

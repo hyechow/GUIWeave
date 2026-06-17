@@ -19,7 +19,7 @@ from gui_agent.core.orchestrator import (
     to_program,
     validate_program,
 )
-from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft
+from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, _table_schema_prompt
 
 
 def _connectivity_draft() -> _PlanDraft:
@@ -100,6 +100,28 @@ def test_to_program_maps_data_query_sql():
     assert "GROUP BY" in query.sql
     assert query.data_scope == "current"
     assert validate_program(prog) == []
+
+
+def test_table_schema_prompt_omits_row_values_and_shows_sql_names():
+    hint = _table_schema_prompt(
+        [
+            {
+                "index": 1,
+                "caption": "Top Search Terms",
+                "headers": ["Search Term", "Results", "Uses"],
+                "rows": [
+                    {"Search Term": "hollister", "Results": "1", "Uses": "19"},
+                ],
+                "row_count": 1,
+                "partial": False,
+            }
+        ]
+    )
+
+    assert "top_search_terms" in hint
+    assert "Search Term->search_term" in hint
+    assert "hollister" not in hint
+    assert "19" not in hint
 
 
 def test_to_program_goal_falls_back_when_draft_goal_empty():
