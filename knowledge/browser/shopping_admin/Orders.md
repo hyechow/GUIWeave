@@ -11,6 +11,26 @@ Usually, orders are created when customers complete the checkout process from th
 
 The Orders workspace lists all current orders, and gives you the ability to edit existing orders and create orders. Each row in the grid represents a customer order, and each column represents an attribute, or data field. Use the standard controls to sort and filter the list, find orders, and apply actions to selected orders. Use the tabs above the pagination controls to filter the list, change the default view, change and rearrange columns, and export data.
 
+For WebArena tasks that ask for customer email(s) by total order count across the
+entire history, the Orders grid is the most reliable source of raw order rows:
+show or export `Customer Email`, `Customer Name`, and `Status`, then count rows
+per email yourself. The Orders grid does not provide built-in aggregation/group
+by/customer-count controls; it only supports filtering, sorting, pagination,
+column selection, and export. For "completed" order-count tasks, filter
+`Status = Complete`; for "any state" tasks, do not apply a status filter. Do not
+assume the Customers grid exposes a reliable `Total Orders` column.
+
+If downloads/exports are not allowed, collect the raw rows by combining grid
+pagination with within-page vertical scrolling. This is not infinite-scroll
+loading: the pager still controls which result page is loaded, but a visual agent
+can only see the rows currently in the viewport, so it must scroll within each
+loaded page and read rows in chunks. Use a page size that the agent can reliably
+scan (`20`, `30`, or `50` can be safer for visual collection than `200`), collect
+every visible chunk on each page, then use the pager's next page control until
+all `totalRecords` have been covered. WebArena's seeded Orders grid has more rows
+than one viewport/page chunk, so order-count tasks require multi-chunk collection
+before counting by `Customer Email`.
+
 ### Grid layout
 
 The selection of columns and their order in the grid can be changed according to your preference. The new layout can be saved as a grid _view_. By default, only nine of 20 available columns are included in the grid.

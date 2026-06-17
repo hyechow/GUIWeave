@@ -5,6 +5,25 @@ when: 当需要查看指定时间范围内的客户活动、订单总额或订�
 
 Customer reports provide insight into customer activity during a specified time period or date range.
 
+## WebArena seeded data range
+
+In WebArena shopping_admin, customer reports can show **No records found** before a date
+range is applied. For "entire history" customer order reports, set:
+
+- **From**: `01/01/2022`
+- **To**: `12/31/2023`
+
+Then click **Refresh**. Treat an empty report before setting this range as "filters not
+applied yet", not as evidence that the backend has no customer/order data.
+
+There is no separate "aggregate" button on these report pages. The report is
+aggregated automatically only after **Refresh**, and `Show By` controls the time
+bucket (`Day` / `Month` / `Year`). Result rows are grouped by **Interval +
+Customer**, so a customer can appear in multiple rows when the range spans
+multiple intervals. For true "entire history per customer" counts, sum the rows
+per customer/email yourself or use the Orders grid/export and count rows per
+`Customer Email`.
+
 ## Order Total Report
 
 The Order Total Report shows customer orders for a specified time interval or date range. The report includes the number of orders per customer, average order amount, and total amount.
