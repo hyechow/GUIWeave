@@ -62,6 +62,37 @@ class WAResponse(BaseModel):
     error_details: Optional[str] = None
 
 
+def _finalize_response(resp: WAResponse, *, goal_completed: bool = True) -> WAResponse:
+    """Apply deterministic WebArena response invariants after LLM synthesis.
+
+    A RETRIEVE task counts as success only when the run BOTH reached goal_completed AND
+    produced a list answer. ``goal_completed`` is the orchestrator's honest signal — it is
+    False when, e.g., a ``finish`` cited a read whose ``reads`` came back entirely empty
+    (the target data was off-screen / on the wrong page). ``retrieved_data`` must be a list
+    per WebArena's retrieve contract. If either fails, demote any SUCCESS the model emitted
+    to NOT_FOUND_ERROR — do not trust a success claimed on an empty or incomplete read.
+    """
+    task_type = (resp.task_type or "").upper()
+    status = (resp.status or "").upper()
+    updates: dict[str, object] = {"task_type": task_type, "status": status}
+
+    retrieve_invalid = task_type == "RETRIEVE" and (
+        not goal_completed or not isinstance(resp.retrieved_data, list)
+    )
+    if retrieve_invalid and status == "SUCCESS":
+        updates.update({
+            "status": "NOT_FOUND_ERROR",
+            "retrieved_data": None,
+            "error_details": (
+                resp.error_details
+                or ("Run did not reach goal_completed." if not goal_completed
+                    else "No retrieved_data list was produced for this RETRIEVE task.")
+            ),
+        })
+
+    return resp.model_copy(update=updates)
+
+
 def _load_task(tasks_file: Path, task_id: int) -> dict:
     tasks = json.loads(tasks_file.read_text())
     for t in tasks:
@@ -168,6 +199,8 @@ def _write_webarena_report_context(
     har_path: Path,
     resp_path: Path,
     response_payload: dict,
+    eval_result_path: Path | None = None,
+    eval_result_payload: dict | None = None,
 ) -> None:
     """Patch context.json with the exact WebArena response shown in report.html."""
     if not context_path.exists():
@@ -183,7 +216,37 @@ def _write_webarena_report_context(
         "agent_response_path": str(resp_path),
         "agent_response": response_payload,
     }
+    if eval_result_path is not None:
+        raw["webarena"]["eval_result_path"] = str(eval_result_path)
+    if eval_result_payload is not None:
+        raw["webarena"]["eval_result"] = eval_result_payload
     context_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _run_official_eval(
+    *,
+    task_id: int,
+    out_dir: Path,
+    resp_path: Path,
+    har_path: Path,
+) -> tuple[Path, dict]:
+    """Run WebArena-Verified's official evaluator and write eval_result.json.
+
+    Kept separate from response synthesis so failures can be treated as best-effort:
+    `agent_response.json` and `network.har` are still the primary submission artifacts.
+    """
+    from webarena_verified import WebArenaVerified
+
+    evaluator = WebArenaVerified()
+    result = evaluator.evaluate_task(
+        task_id=task_id,
+        agent_response=resp_path,
+        network_trace=har_path,
+    )
+    payload = result.model_dump(mode="json", exclude_none=True)
+    eval_path = out_dir / "eval_result.json"
+    eval_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return eval_path, payload
 
 
 def main() -> int:
@@ -386,8 +449,26 @@ def main() -> int:
 
             try:
                 resp = _synthesize_response(intent, result or {}, log_dir / "context.json")
-                response_payload = resp.model_dump()
+                response_payload = _finalize_response(
+                    resp, goal_completed=bool(result.get("goal_completed"))
+                ).model_dump()
                 resp_path.write_text(json.dumps(response_payload, indent=2))
+                eval_path = None
+                eval_payload = None
+                try:
+                    eval_path, eval_payload = _run_official_eval(
+                        task_id=args.task_id,
+                        out_dir=out_dir,
+                        resp_path=resp_path,
+                        har_path=har_path,
+                    )
+                    print(
+                        "[webarena] OK eval_result -> "
+                        f"{eval_path} "
+                        f"(status={eval_payload.get('status')}, score={eval_payload.get('score')})"
+                    )
+                except Exception as eval_exc:  # noqa: BLE001 - official eval is best-effort
+                    print(f"[webarena] official eval skipped/failed ({eval_exc})")
                 _write_webarena_report_context(
                     log_dir / "context.json",
                     task=task,
@@ -397,6 +478,8 @@ def main() -> int:
                     har_path=har_path,
                     resp_path=resp_path,
                     response_payload=response_payload,
+                    eval_result_path=eval_path,
+                    eval_result_payload=eval_payload,
                 )
                 print(f"[webarena] OK agent_response -> {resp_path}")
                 print(json.dumps(response_payload, indent=2, ensure_ascii=False))
@@ -404,6 +487,22 @@ def main() -> int:
                 fallback = {"task_type": result.get("task_type") or "RETRIEVE", "status": "UNKNOWN_ERROR",
                             "retrieved_data": None, "error_details": f"response synthesis failed: {exc}"}
                 resp_path.write_text(json.dumps(fallback, indent=2))
+                eval_path = None
+                eval_payload = None
+                try:
+                    eval_path, eval_payload = _run_official_eval(
+                        task_id=args.task_id,
+                        out_dir=out_dir,
+                        resp_path=resp_path,
+                        har_path=har_path,
+                    )
+                    print(
+                        "[webarena] OK eval_result -> "
+                        f"{eval_path} "
+                        f"(status={eval_payload.get('status')}, score={eval_payload.get('score')})"
+                    )
+                except Exception as eval_exc:  # noqa: BLE001 - official eval is best-effort
+                    print(f"[webarena] official eval skipped/failed ({eval_exc})")
                 _write_webarena_report_context(
                     log_dir / "context.json",
                     task=task,
@@ -413,6 +512,8 @@ def main() -> int:
                     har_path=har_path,
                     resp_path=resp_path,
                     response_payload=fallback,
+                    eval_result_path=eval_path,
+                    eval_result_payload=eval_payload,
                 )
                 print(f"[webarena] response synthesis failed ({exc}); wrote fallback -> {resp_path}")
 

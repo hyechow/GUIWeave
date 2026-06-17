@@ -1049,6 +1049,16 @@ class RunnerReportBuilder:
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
         data.webarena = ctx.get("webarena") or {}
+        if data.webarena and not data.webarena.get("eval_result"):
+            output_dir = str(data.webarena.get("task_output_dir") or "")
+            if output_dir:
+                eval_path = Path(output_dir) / "eval_result.json"
+                if eval_path.exists():
+                    try:
+                        data.webarena["eval_result_path"] = str(eval_path)
+                        data.webarena["eval_result"] = json.loads(eval_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
         data.wall_clock_s = ctx.get("wall_clock_s") or 0.0
         data.title = data.raw_input or ctx.get("goal", run_dir.name)
 
@@ -2015,6 +2025,7 @@ HTML_TEMPLATE = """\
   .wa-grid {{ display:grid; grid-template-columns:120px 1fr; gap:6px 12px; font-size:13px; line-height:1.5; }}
   .wa-k {{ color:#64748b; font-weight:600; }}
   .wa-v {{ color:#1e293b; white-space:pre-wrap; word-break:break-word; }}
+  .wa-assert {{ margin-top:4px; color:#b91c1c; }}
 
   /* Router / input-resolution row (shares the 模型配置 box style) */
   .prov-arrow {{ color: #94a3b8; margin: 0 6px; }}
@@ -2546,12 +2557,30 @@ def _render_webarena_result(webarena: dict) -> str:
     sites_text = ", ".join(map(str, sites)) if isinstance(sites, list) else str(sites)
     start_url = str(webarena.get("start_url") or "")
     output_dir = str(webarena.get("task_output_dir") or "")
+    eval_result = webarena.get("eval_result") if isinstance(webarena.get("eval_result"), dict) else {}
+    eval_status = str(eval_result.get("status") or "")
+    eval_score = eval_result.get("score")
+    official_ok = eval_status.lower() == "success" if eval_status else ok
+    evaluator_items = [item for item in (eval_result.get("evaluators_results") or []) if isinstance(item, dict)]
+    primary_eval = evaluator_items[0] if evaluator_items else {}
+    gt_value = None
+    ours_value = retrieved
+    expected = primary_eval.get("expected") if isinstance(primary_eval.get("expected"), dict) else {}
+    actual_normalized = (
+        primary_eval.get("actual_normalized")
+        if isinstance(primary_eval.get("actual_normalized"), dict)
+        else {}
+    )
+    if expected:
+        gt_value = expected.get("retrieved_data")
+    if actual_normalized and "retrieved_data" in actual_normalized:
+        ours_value = actual_normalized.get("retrieved_data")
 
     def _json_inline(value) -> str:
         return _safe(json.dumps(value, ensure_ascii=False)) if value is not None else "null"
 
-    status_chip_cls = "wa-chip" if ok else "wa-chip wa-chip-error"
-    card_cls = "wa-card" if ok else "wa-card wa-card-error"
+    primary_chip_cls = "wa-chip" if official_ok else "wa-chip wa-chip-error"
+    card_cls = "wa-card" if official_ok else "wa-card wa-card-error"
     meta_bits = []
     if task_id not in (None, ""):
         meta_bits.append(f"task {task_id}")
@@ -2559,24 +2588,57 @@ def _render_webarena_result(webarena: dict) -> str:
         meta_bits.append(sites_text)
     meta_html = f'<span class="wa-meta">{_safe(" · ".join(meta_bits))}</span>' if meta_bits else ""
 
-    task_rows = ""
+    rows = ""
+    if eval_result:
+        evaluator_names = [
+            str(item.get("evaluator_name") or "Evaluator")
+            for item in evaluator_items
+        ]
+        rows += f'<div class="wa-k">evaluator_name</div><div class="wa-v">{_safe(", ".join(evaluator_names) or "—")}</div>'
+        rows += f'<div class="wa-k">task_type</div><div class="wa-v">{_safe(task_type or "—")}</div>'
+        rows += (
+            f'<div class="wa-k">Answer / Response</div>'
+            f'<div class="wa-v">answer: {_json_inline(gt_value)}<br>response: {_json_inline(ours_value)}</div>'
+        )
+        assertion_bits: list[str] = []
+        for item in evaluator_items:
+            assertions = item.get("assertions") or []
+            if assertions:
+                for assertion in assertions[:3]:
+                    if isinstance(assertion, dict):
+                        msgs = assertion.get("assertion_msgs") or []
+                        msg = "; ".join(map(str, msgs)) if isinstance(msgs, list) else str(msgs)
+                        assertion_bits.append(f'{assertion.get("assertion_name") or "assertion"}: {msg}')
+        if assertion_bits:
+            rows += f'<div class="wa-k">断言</div><div class="wa-v wa-assert">{_safe("；".join(assertion_bits))}</div>'
+    else:
+        rows += (
+            f'<div class="wa-k">提交状态</div><div class="wa-v">{_safe(status or "UNKNOWN")}</div>'
+            f'<div class="wa-k">task_type</div><div class="wa-v">{_safe(task_type or "—")}</div>'
+            f'<div class="wa-k">retrieved_data</div><div class="wa-v">{_json_inline(retrieved)}</div>'
+            f'<div class="wa-k">error_details</div><div class="wa-v">{_safe(str(error)) if error is not None else "null"}</div>'
+    )
     if start_url:
-        task_rows += f'<div class="wa-k">起始 URL</div><div class="wa-v">{_safe(start_url)}</div>'
+        rows += f'<div class="wa-k">Start URL</div><div class="wa-v">{_safe(start_url)}</div>'
     if output_dir:
-        task_rows += f'<div class="wa-k">输出目录</div><div class="wa-v">{_safe(output_dir)}</div>'
+        rows += f'<div class="wa-k">Output Dir</div><div class="wa-v">{_safe(output_dir)}</div>'
+
+    label = "WebArena" if eval_result else "WebArena 最终输出"
+    primary_status = eval_status if eval_result else status
+    score_chip_html = ""
+    if eval_result and eval_score is not None:
+        score_chip_html = f'<span class="wa-chip">score {_safe(str(eval_score))}</span>'
 
     return (
         f'<div class="{card_cls}">'
         f'<div class="wa-head">'
-        f'<span class="wa-label">WebArena 最终输出</span>'
-        f'<span class="{status_chip_cls}">{_safe(status or "UNKNOWN")}</span>'
+        f'<span class="wa-label">{_safe(label)}</span>'
+        f'<span class="{primary_chip_cls}">{_safe(primary_status or "UNKNOWN")}</span>'
+        f'{score_chip_html}'
         f'{meta_html}'
         f'</div>'
         f'<div class="wa-grid">'
-        f'<div class="wa-k">task_type</div><div class="wa-v">{_safe(task_type or "—")}</div>'
-        f'<div class="wa-k">retrieved_data</div><div class="wa-v">{_json_inline(retrieved)}</div>'
-        f'<div class="wa-k">error_details</div><div class="wa-v">{_safe(str(error)) if error is not None else "null"}</div>'
-        f'{task_rows}'
+        f'{rows}'
         f'</div>'
         f'</div>'
     )
