@@ -26,7 +26,7 @@ MODEL_KEYS = (
     "reader",
     "output",
     "router",
-    "back_nav",
+    "recon.navigator",
 )
 
 

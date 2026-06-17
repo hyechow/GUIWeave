@@ -173,7 +173,7 @@ def test_core_milestone_is_leaf_without_iphone_prompts():
 
 
 def test_recon_navigator_conforms():
-    # Step 5a: the iphone navigator (thin delegation to back_nav/popup_nav) satisfies
+    # Step 5a: the iphone navigator satisfies
     # the neutral ReconNavigator seam the explore loop will route through in 5b.
     from gui_agent.adapters.iphone.recon.navigator import IPhoneReconNavigator
 

@@ -222,7 +222,7 @@ def infer_back_action(before_png: bytes, after_png: bytes | None, nav_context: s
     if not after_png:
         return None
 
-    cfg = resolve_llm_config("back_nav")
+    cfg = resolve_llm_config("recon.navigator")
     llm = ChatOpenAI(
         model=cfg.model,
         api_key=cfg.api_key,

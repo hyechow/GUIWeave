@@ -479,8 +479,7 @@ class ReconNavigator(Protocol):
     dismiss popups that block exploration, describe an element for back-context, and
     escalate to manual recovery when automatic back fails. All of that is
     platform-specific:
-      - iphone : back-arrow / close-button taps + edge gestures
-                 (recon/back_nav · planned_back_nav · popup_nav).
+      - iphone : adapter-provided back-arrow / close-button taps + edge gestures.
       - browser: browser back / history + modal dismissal (future).
 
     Satisfied structurally by the iphone adapter's

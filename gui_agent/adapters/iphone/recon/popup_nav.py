@@ -33,7 +33,7 @@ class _PopupClose(BaseModel):
 
 def llm_locate_close(png: bytes) -> tuple[float, float] | None:
     """Call LLM to locate the close button. Returns (x, y) in 0-1000 coords or None."""
-    cfg = resolve_llm_config("back_nav")
+    cfg = resolve_llm_config("recon.navigator")
     llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key,
                      base_url=cfg.base_url, temperature=0)
     b64 = base64.b64encode(resize_to_logical_png(png)).decode()

@@ -54,7 +54,7 @@ def test_sync_turn_metadata_records_models_milestones_and_task_type(monkeypatch)
     )
 
     assert ctx.models["supervisor"] == "model:supervisor"
-    assert ctx.models["back_nav"] == "model:back_nav"
+    assert ctx.models["recon.navigator"] == "model:recon.navigator"
     assert ctx.milestones == [{
         "id": "m1",
         "name": "打开订单",

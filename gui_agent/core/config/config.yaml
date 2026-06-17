@@ -6,9 +6,10 @@ llm:
   action_policy:
     provider: dashscope
     model: qwen3.5-35b-a3b
-  back_nav:
-    provider: dashscope
-    model: qwen3.5-35b-a3b
+  recon:
+    navigator:
+      provider: dashscope
+      model: qwen3.5-35b-a3b
   supervisor:
     provider: dashscope
     model: qwen3.5-35b-a3b
@@ -34,7 +35,8 @@ llm:
 profiles:
   qwen36:   # 更快但 token 成本 ~3-4.5×，仅用于 3.5 vs 3.6 对比跑
     action_policy: {model: qwen3.6-35b-a3b}
-    back_nav:      {model: qwen3.6-35b-a3b}
+    recon:
+      navigator: {model: qwen3.6-35b-a3b}
     supervisor:
       model: qwen3.6-35b-a3b
       decompose: {model: qwen3.6-35b-a3b}

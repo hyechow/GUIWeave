@@ -16,6 +16,10 @@ from llm.provider_config import ChatProviderConfig, resolve_chat_provider_config
 CONFIG_PATH = Path(__file__).with_name("config.yaml")
 _DEFAULT_PROFILE = "qwen35"
 _active_profile: str = os.environ.get("AGENT_MODEL", _DEFAULT_PROFILE)
+_LLM_CONFIG_ALIASES = {
+    "recon.navigator": ("back_nav",),
+    "back_nav": ("recon.navigator",),
+}
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -78,18 +82,29 @@ def resolve_llm_config(name: str) -> ChatProviderConfig:
     if not isinstance(llm_config, dict):
         raise ValueError("gui_agent config 'llm' must be a mapping")
 
-    section = llm_config
-    for key in name.split("."):
-        if not isinstance(section, dict):
-            raise ValueError(f"gui_agent config llm.{name} must be a mapping")
-        section = section.get(key, {})
+    section: dict[str, Any] = {}
+    for candidate in (name, *_LLM_CONFIG_ALIASES.get(name, ())):
+        found, section = _lookup_llm_section(llm_config, candidate)
+        if found:
+            break
 
-    if not isinstance(section, dict):
-        raise ValueError(f"gui_agent config llm.{name} must be a mapping")
     return resolve_chat_provider_config(
         provider=_optional_str(section.get("provider")),
         model=_optional_str(section.get("model")),
     )
+
+
+def _lookup_llm_section(llm_config: dict[str, Any], name: str) -> tuple[bool, dict[str, Any]]:
+    section: Any = llm_config
+    for key in name.split("."):
+        if not isinstance(section, dict):
+            raise ValueError(f"gui_agent config llm.{name} must be a mapping")
+        if key not in section:
+            return False, {}
+        section = section[key]
+    if not isinstance(section, dict):
+        raise ValueError(f"gui_agent config llm.{name} must be a mapping")
+    return True, section
 
 
 def _optional_str(value: Any) -> str | None:
