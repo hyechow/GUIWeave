@@ -38,7 +38,7 @@ from gui_agent.core.schemas import Action
 
 # Action types that have a screen location worth visualizing. press_enter / home /
 # stop / clear_text are non-spatial and are skipped (no misleading center flash).
-_SPATIAL = {"tap", "click", "type", "scroll", "drag"}
+_SPATIAL = {"tap", "click", "type", "scroll", "drag", "select_option"}
 
 
 # A JS function (called as an IIFE with one object arg) that injects the keyframes +
@@ -137,6 +137,9 @@ def _label_for(action: Action) -> str | None:
         return "⌨ " + (text if len(text) <= 18 else text[:17] + "…")
     if action.action_type == "scroll":
         return "scroll " + (action.direction or "")
+    if action.action_type == "select_option":
+        text = (action.text or "").strip()
+        return "select " + (text if len(text) <= 18 else text[:17] + "…")
     return None
 
 

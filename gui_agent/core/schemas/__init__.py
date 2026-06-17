@@ -35,6 +35,7 @@ _ACTION_TYPE_LABELS: dict[str, str] = {
     "home": "主屏",
     "back": "返回",
     "app_switch": "切换应用",
+    "select_option": "选择选项",
     "stop": "停止",
 }
 
@@ -162,7 +163,9 @@ class BaseAction(BaseModel):
             if not data.get("description"):
                 action_type = data.get("action_type") or "操作"
                 text = data.get("text")
-                if text:
+                if action_type == "select_option" and text:
+                    data["description"] = f"选择下拉选项 {text}"
+                elif text:
                     data["description"] = f"执行{action_type}并输入{text}"
                 else:
                     data["description"] = f"执行{action_type}操作"

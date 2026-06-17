@@ -41,6 +41,7 @@ def test_browser_vocabulary():
     assert "navigate" in v and "back" in v   # back = history back (shared with android)
     assert {"new_tab", "select_tab", "close_tab"} <= v   # tab management
     assert "upload" in v                     # file upload via file chooser
+    assert "select_option" in v              # native/browser dropdown option selection
     assert "home" not in v
     assert "app_switch" not in v
 
@@ -60,6 +61,7 @@ def test_positive_construction():
     BrowserAction(action_type="select_tab", tab_match="飞书", description="切到飞书标签页")
     BrowserAction(action_type="close_tab", description="关当前标签页")
     BrowserAction(action_type="upload", x=500, y=500, file_path="~/Downloads/m.map_export", description="上传地图文件")
+    BrowserAction(action_type="select_option", x=500, y=500, text="Complete", description="选择状态")
     AndroidAction(action_type="back", description="返回")
     AndroidAction(action_type="app_switch", description="切换应用")
 
@@ -74,6 +76,11 @@ def test_browser_upload_requires_file_path():
         BrowserAction(action_type="upload", x=1, y=1, description="x")  # no file_path
 
 
+def test_browser_select_option_requires_text():
+    with pytest.raises(Exception):
+        BrowserAction(action_type="select_option", x=1, y=1, description="x")  # no option text
+
+
 @pytest.mark.parametrize(
     "cls,bad",
     [
@@ -84,6 +91,8 @@ def test_browser_upload_requires_file_path():
         (AndroidAction, "navigate"),
         (IPhoneAction, "upload"),
         (AndroidAction, "upload"),
+        (IPhoneAction, "select_option"),
+        (AndroidAction, "select_option"),
     ],
 )
 def test_rejects_foreign_action_type(cls, bad):

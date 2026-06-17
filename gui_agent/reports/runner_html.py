@@ -237,6 +237,7 @@ HTML_TEMPLATE = """\
   .at-upload {{ background: #ec4899; }} .at-navigate {{ background: #3b82f6; }}
   .at-back {{ background: #6366f1; }} .at-new_tab {{ background: #14b8a6; }}
   .at-select_tab {{ background: #f59e0b; }} .at-close_tab {{ background: #64748b; }}
+  .at-select_option {{ background: #0ea5e9; }}
 
   .modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; justify-content: center; align-items: center; }}
   .modal.show {{ display: flex; }}
@@ -375,6 +376,7 @@ AT_LABELS = {
     # labels (T4 · "") since the badge lookup falls back to "" (log 20260616_222207).
     "upload": "上传", "navigate": "导航", "back": "后退",
     "new_tab": "新标签页", "select_tab": "切标签页", "close_tab": "关标签页",
+    "select_option": "选项",
     "read": "只读", "data_query": "数据查询", "non_ui": "非交互",
 }
 

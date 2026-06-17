@@ -548,6 +548,113 @@ class PlaywrightDevice:
             return f"failed: {exc}"
         return f"OK tap ({x:.0f},{y:.0f})"
 
+    def select_option(self, x: Optional[float], y: Optional[float], option_text: str) -> str:
+        """Select an option from a native ``<select>`` or visible ARIA/listbox control.
+
+        Native browser dropdown popups are outside the page rendering tree, so screenshots
+        often cannot see their open option list. This primitive sets the page control
+        directly and dispatches the same input/change events the page listens for.
+        """
+        self._follow_active_tab()
+        try:
+            page = self._require_page()
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            result = page.evaluate(
+                """({x, y, target}) => {
+                    const norm = (v) => String(v ?? '')
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .toLowerCase();
+                    const wanted = norm(target);
+                    const labelOf = (el) => String(
+                        el?.innerText || el?.textContent || el?.value || ''
+                    ).replace(/\s+/g, ' ').trim();
+                    const byPoint = (
+                        Number.isFinite(x) && Number.isFinite(y)
+                    ) ? document.elementFromPoint(x, y) : null;
+
+                    function selectAtPointOrFocus() {
+                        let el = byPoint;
+                        if (el && el.tagName === 'OPTION') el = el.parentElement;
+                        if (el?.closest) {
+                            const direct = el.closest('select');
+                            if (direct) return direct;
+                        }
+                        const active = document.activeElement;
+                        if (active?.tagName === 'SELECT') return active;
+                        return null;
+                    }
+
+                    const select = selectAtPointOrFocus();
+                    if (select) {
+                        const options = Array.from(select.options || []);
+                        const option = options.find((opt) => {
+                            return norm(opt.textContent) === wanted || norm(opt.value) === wanted;
+                        }) || options.find((opt) => {
+                            return norm(opt.textContent).includes(wanted) || norm(opt.value).includes(wanted);
+                        });
+                        if (!option) {
+                            return {
+                                ok: false,
+                                reason: `option not found: ${target}`,
+                                options: options.map((opt) => labelOf(opt)).filter(Boolean).slice(0, 20),
+                            };
+                        }
+                        select.value = option.value;
+                        option.selected = true;
+                        select.dispatchEvent(new Event('input', {bubbles: true}));
+                        select.dispatchEvent(new Event('change', {bubbles: true}));
+                        return {
+                            ok: true,
+                            kind: 'select',
+                            label: labelOf(option),
+                            value: option.value,
+                        };
+                    }
+
+                    const candidates = Array.from(document.querySelectorAll(
+                        '[role=option], [role=menuitem], [role=listbox] li, .admin__action-dropdown-menu li, .selectmenu li, li, option'
+                    )).filter((el) => {
+                        if (el.closest('select')) return false;
+                        const r = el.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0;
+                    });
+                    const option = candidates.find((el) => norm(labelOf(el)) === wanted)
+                        || candidates.find((el) => norm(labelOf(el)).includes(wanted));
+                    if (option) {
+                        const clickable = option.closest(
+                            '[role=option], [role=menuitem], button, a, li, div'
+                        ) || option;
+                        clickable.click();
+                        return {ok: true, kind: 'dom-option', label: labelOf(option)};
+                    }
+
+                    return {
+                        ok: false,
+                        reason: 'no select at point/focus and no visible matching option',
+                    };
+                }""",
+                {"x": x, "y": y, "target": option_text},
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"failed: {exc}"
+        if not isinstance(result, dict):
+            return f"failed: unexpected result {result!r}"
+        if not result.get("ok"):
+            detail = result.get("reason") or "unknown"
+            options = result.get("options")
+            if options:
+                detail = f"{detail}; options={options}"
+            return f"failed: {detail}"
+        label = result.get("label") or option_text
+        kind = result.get("kind") or "select"
+        value = result.get("value")
+        suffix = f" value={value!r}" if value is not None else ""
+        return f"OK select_option {label!r} ({kind}){suffix}"
+
     def dom_snap(
         self, x: float, y: float, target_text: str = ""
     ) -> "tuple[float, float, Optional[str]]":

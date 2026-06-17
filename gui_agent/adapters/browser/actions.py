@@ -15,7 +15,8 @@ from gui_agent.core.schemas import BaseAction, BaseActionDecision
 
 BrowserActionType = Literal[
     "tap", "type", "clear_text", "press_enter", "scroll", "drag",
-    "navigate", "back", "new_tab", "select_tab", "close_tab", "upload", "stop",
+    "navigate", "back", "new_tab", "select_tab", "close_tab", "upload",
+    "select_option", "stop",
 ]
 
 
@@ -26,7 +27,7 @@ class BrowserAction(BaseAction):
     action_type: BrowserActionType = Field(
         description=(
             "浏览器动作类型：tap/type/clear_text/press_enter/scroll/drag/navigate/"
-            "back/new_tab/select_tab/close_tab/upload/stop"
+            "back/new_tab/select_tab/close_tab/upload/select_option/stop"
         )
     )  # type: ignore[assignment]
     direction: Optional[str] = Field(
@@ -69,6 +70,8 @@ class BrowserAction(BaseAction):
             raise ValueError("select_tab 动作必须填写 tab_match（标题或网址子串）")
         if self.action_type == "upload" and not self.file_path:
             raise ValueError("upload 动作必须填写 file_path（要上传的本地文件路径）")
+        if self.action_type == "select_option" and not self.text:
+            raise ValueError("select_option 动作必须填写 text（要选择的选项文本）")
         return self
 
 

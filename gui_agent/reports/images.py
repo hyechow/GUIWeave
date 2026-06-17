@@ -94,6 +94,7 @@ _ACTION_COLORS_FULL: dict[str, tuple[int, int, int]] = {
     "press_enter": (220, 160, 0),
     "clear_text": (128, 128, 128),
     "upload": (236, 72, 153),  # pink — distinct from tap(red)/type(violet) on the annotation
+    "select_option": (14, 165, 233),
 }
 
 

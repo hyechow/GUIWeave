@@ -6,7 +6,7 @@ call via ``llm.structured.invoke_structured`` into an ``ActionDecision``, same
 ``BaseActionPolicy`` base — but with a BROWSER system prompt: operate a web page
 with a desktop pointer, output ONE action within the neutral action vocabulary
 (tap / type / clear_text / press_enter / scroll / drag / navigate / back /
-new_tab / select_tab / close_tab / stop).
+new_tab / select_tab / close_tab / select_option / stop).
 
 VISION-ONLY: the screenshot is sent as-is (optionally downscaled if very large) —
 it is NOT the iphone 2x retina image, so ``resize_to_logical_png`` is deliberately
@@ -54,6 +54,9 @@ SYSTEM_PROMPT = """\
   拖放区/导入按钮）中心的 x/y，并把文件路径填进 file_path。**绝不要对「选择文件/点击上传/导入」这类控件用普通
   tap**；文件选择框不属于网页内容，后续无法通过网页截图判断。file_path
   只能用指令/任务里给出的路径，不要自己编造；指令没给路径就不要用 upload。
+- select_option：在网页下拉框/选择框中选择指定选项。用于「选择/设置下拉框为 X」「在 Status 下拉框选择 Complete」
+  这类指令；填写下拉控件中心 x/y，并把要选择的选项文本填进 text。浏览器原生 select 的弹出选项通常不会出现在
+  页面截图里，因此不要先用 tap 展开再等待截图里的选项；直接用 select_option。
 - stop：当指令含义是「停止」「无需操作」「目标已完成」，或目标元素确实不在当前截图中时使用，无需坐标。
 
 约束：
@@ -110,6 +113,32 @@ _UPLOAD_CONTROL_RE = re.compile(
 )
 # instruction 里出现的本地文件绝对路径（supervisor 规则要求把真实路径原样带进 instruction）。
 _FILE_PATH_RE = re.compile(r"(?:/[\w./+~-]+|~/[\w./+~-]+)")
+_QUOTED_OPTION_RE = re.compile(r"[「『\"']([^「」『』\"']{1,40})[」』\"']")
+_SELECT_OPTION_INTENT_RE = re.compile(
+    r"选择|选中|设为|设置|筛选.*=|下拉.*选项|select\s+option",
+    re.IGNORECASE,
+)
+_SELECT_CONTROL_CUE_RE = re.compile(
+    r"下拉|选择框|筛选框|选项|option|select",
+    re.IGNORECASE,
+)
+_OPTION_AFTER_EQUALS_RE = re.compile(
+    r"(?:=|为|to)\s*([A-Za-z][\w ._/-]{0,39})",
+    re.IGNORECASE,
+)
+
+
+def _option_text_from_instruction(instruction: str) -> str:
+    text = (instruction or "").strip()
+    if not text or not _SELECT_OPTION_INTENT_RE.search(text):
+        return ""
+    quoted = _QUOTED_OPTION_RE.findall(text)
+    if quoted:
+        return quoted[-1].strip()
+    match = _OPTION_AFTER_EQUALS_RE.search(text)
+    if match:
+        return match.group(1).strip(" .,;，。；")
+    return ""
 
 
 class BrowserActionPolicy(BaseActionPolicy):
@@ -141,6 +170,18 @@ class BrowserActionPolicy(BaseActionPolicy):
             if path:
                 action = action.model_copy(
                     update={"action_type": "upload", "file_path": path}
+                )
+                decision = decision.model_copy(update={"action": action})
+        if (
+            getattr(action, "action_type", None) == "tap"
+            and _SELECT_CONTROL_CUE_RE.search(getattr(action, "description", "") or "")
+        ):
+            option_text = _option_text_from_instruction(
+                f"{instruction or ''}\n{getattr(action, 'description', '') or ''}"
+            )
+            if option_text:
+                action = action.model_copy(
+                    update={"action_type": "select_option", "text": option_text}
                 )
                 decision = decision.model_copy(update={"action": action})
         return decision

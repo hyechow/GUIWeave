@@ -19,6 +19,9 @@ from gui_agent.core.runtime.executor import VisionExecutor
 
 # Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
 _QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,8})[」』\"']")
+_OPTION_QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,40})[」』\"']")
+_OPTION_VALUE_RE = re.compile(r"(?:=|为|to)\s*([A-Za-z][\w ._/-]{0,39})", re.IGNORECASE)
+_SELECT_INTENT_RE = re.compile(r"选择|选中|设为|设置|下拉.*选项|select\s+option", re.IGNORECASE)
 
 
 def _quoted_label(description: str) -> str:
@@ -28,6 +31,25 @@ def _quoted_label(description: str) -> str:
     point anyway, while short labels (操作/删除/确定/取消) are the ambiguous ones."""
     matches = _QUOTE_RE.findall(description or "")
     return matches[-1] if matches else ""
+
+
+def _select_option_label(description: str) -> str:
+    """Option text for a native select rescue.
+
+    Unlike _quoted_label(), option values can be longer than short UI labels. Keep this
+    extraction gated by select intent so a plain "click Status" tap never tries to set
+    the select value to "Status".
+    """
+    text = description or ""
+    if not _SELECT_INTENT_RE.search(text):
+        return ""
+    matches = _OPTION_QUOTE_RE.findall(text)
+    if matches:
+        return matches[-1].strip()
+    match = _OPTION_VALUE_RE.search(text)
+    if match:
+        return match.group(1).strip(" .,;，。；")
+    return ""
 
 
 class BrowserExecutor(VisionExecutor):
@@ -75,6 +97,12 @@ class BrowserExecutor(VisionExecutor):
                 print(f"  DOM 吸附: ({px:.0f},{py:.0f}) → ({cx:.0f},{cy:.0f}) [{info}]")
                 sx, sy = cx, cy
                 self._record_snap(px, py, sx, sy, info)
+            option_text = _select_option_label(getattr(action, "description", "") or "")
+            if at in ("tap", "click") and option_text and (info or "").startswith("select "):
+                print(f"  原生下拉选择: {option_text!r}")
+                result = self._client().select_option(sx, sy, option_text)
+                print(f"  结果: {result}")
+                return "failed" not in result.lower()
         except Exception:  # noqa: BLE001 — never block a click on a snap failure
             pass
         return super()._tap(sx, sy)
@@ -144,6 +172,19 @@ class BrowserExecutor(VisionExecutor):
             px, py = self._denorm(action.x, action.y)
             print(f"上传文件 {action.file_path} → 点击上传控件 ({px:.0f},{py:.0f})，经 file chooser 送文件")
             result = client.upload_file(px, py, action.file_path)
+            print(f"  结果: {result}")
+            return "failed" not in result.lower()
+        if at == "select_option":
+            if not action.text:
+                print("选择下拉选项失败：缺少 text")
+                return False
+            px = py = None
+            if action.x is not None and action.y is not None:
+                px, py = self._denorm(action.x, action.y)
+                print(f"选择下拉选项 {action.text!r} @({px:.0f},{py:.0f})")
+            else:
+                print(f"选择当前聚焦下拉选项 {action.text!r}")
+            result = client.select_option(px, py, action.text)
             print(f"  结果: {result}")
             return "failed" not in result.lower()
         return None
