@@ -23,6 +23,13 @@ because Magento Admin can retain the last grid filter across tasks/browser
 sessions. Do not assume the Customers grid exposes a reliable `Total Orders`
 column.
 
+For completed order-count tasks, the plan must make the completed-status
+constraint explicit. It is not enough to name a step "completed orders": either
+add a UI filter/action step for `Status = Complete` before collecting rows, or put
+an explicit SQL predicate such as `WHERE lower(status) = 'complete'` in the
+`data_query`. Without that explicit predicate, any-state and completed counts are
+ambiguous and should be treated as incorrectly modeled.
+
 For tasks phrased as "customer email(s) who completed the most/second/fifth
 number of orders" or "customer email(s) who have N orders", use this Orders grid
 as the primary UI source, not Customers grid and not Customer Reports. The reason
