@@ -1,13 +1,17 @@
 from .helpers import run_checker, run_loop_check, run_planner
 from .policy import (
+    MilestoneSupervisorPolicy,
+)
+from .runtime import (
     MAX_RETRIES,
     MAX_SCROLL_PER_MILESTONE,
+)
+from .stuck import (
     STUCK_REPEAT_WORD_OVERLAP,
     STUCK_SCREEN_FROZEN,
     STUCK_SCREEN_SIMILARITY,
     STUCK_SCREEN_WINDOW,
     STUCK_REPEAT_WINDOW,
-    MilestoneSupervisorPolicy,
 )
 from .schemas import (
     MilestonePrompts,
