@@ -272,6 +272,14 @@ class Observation(BaseModel):
             "用于表格类 read 任务优先按行列读取，避免靠视觉滚动/OCR 对齐。None=该平台不提供或当前页无表格。"
         ),
     )
+    form_controls: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "平台感知层提供的当前可见表单控件结构摘要（如浏览器 input/select/textarea 的 label、"
+            "类型、当前值和可选项）。用于让规划器区分 native select 等截图不可见弹层；"
+            "不包含表格行数据。None=该平台不提供或当前页无表单控件。"
+        ),
+    )
 
 
 class BaseActionDecision(BaseModel):

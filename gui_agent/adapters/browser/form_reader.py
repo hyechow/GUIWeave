@@ -1,0 +1,193 @@
+"""Read-only DOM form-control snapshots for browser perception."""
+
+from __future__ import annotations
+
+from typing import Any
+
+MAX_CONTROLS = 25
+MAX_OPTIONS = 30
+MAX_TEXT = 80
+
+
+def form_controls_js() -> str:
+    """Return a self-contained JS expression that serializes visible form controls."""
+    return r"""
+(() => {
+  const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+  const cut = (s, n = 120) => {
+    s = clean(s);
+    return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  };
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    const st = getComputedStyle(el);
+    return r.width > 0 && r.height > 0
+      && r.bottom >= 0 && r.right >= 0
+      && r.top <= (innerHeight || document.documentElement.clientHeight)
+      && r.left <= (innerWidth || document.documentElement.clientWidth)
+      && st.visibility !== 'hidden' && st.display !== 'none';
+  };
+  const labelFromContainer = (el) => {
+    const boxes = [
+      el.closest('.admin__field'),
+      el.closest('.field'),
+      el.closest('[class*=field]'),
+      el.parentElement,
+      el.parentElement && el.parentElement.parentElement,
+    ].filter(Boolean);
+    for (const box of boxes) {
+      const lbl = box.querySelector('label,.admin__field-label,.label,[data-label]');
+      const text = clean(lbl && (lbl.innerText || lbl.textContent || lbl.getAttribute('data-label')));
+      if (text) return text;
+    }
+    return '';
+  };
+  const labelOf = (el) => {
+    const direct = clean(el.getAttribute('aria-label') || el.getAttribute('title'));
+    if (direct) return direct;
+    if (el.labels && el.labels.length) {
+      const text = clean(Array.from(el.labels).map(l => l.innerText || l.textContent).join(' '));
+      if (text) return text;
+    }
+    if (el.id) {
+      const css = window.CSS && CSS.escape ? CSS.escape(el.id) : el.id.replace(/"/g, '\\"');
+      const lbl = document.querySelector(`label[for="${css}"]`);
+      const text = clean(lbl && (lbl.innerText || lbl.textContent));
+      if (text) return text;
+    }
+    const container = labelFromContainer(el);
+    if (container) return container;
+    const prev = el.previousElementSibling || (el.parentElement && el.parentElement.previousElementSibling);
+    const prevText = clean(prev && (prev.innerText || prev.textContent));
+    if (prevText && prevText.length <= 80) return prevText;
+    return clean(el.getAttribute('placeholder') || el.name || el.id);
+  };
+  const kindOf = (el) => {
+    const tag = el.tagName;
+    const role = clean(el.getAttribute('role')).toLowerCase();
+    if (tag === 'SELECT') return 'native_select';
+    if (tag === 'TEXTAREA') return 'textarea';
+    if (role === 'combobox') return 'aria_combobox';
+    if (role === 'listbox') return 'aria_listbox';
+    if (tag === 'INPUT') return (el.type || 'text').toLowerCase() + '_input';
+    return role || tag.toLowerCase();
+  };
+  const rectOf = (el) => {
+    const r = el.getBoundingClientRect();
+    const w = innerWidth || document.documentElement.clientWidth || 1;
+    const h = innerHeight || document.documentElement.clientHeight || 1;
+    return {
+      x: Math.round((r.left + r.width / 2) / w * 1000),
+      y: Math.round((r.top + r.height / 2) / h * 1000),
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+    };
+  };
+  const controls = [];
+  const seen = new Set();
+  const selector = 'input,select,textarea,[role=combobox],[role=listbox]';
+  for (const el of Array.from(document.querySelectorAll(selector))) {
+    if (seen.has(el) || !visible(el)) continue;
+    seen.add(el);
+    if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'hidden') continue;
+    const kind = kindOf(el);
+    const item = {
+      label: cut(labelOf(el), 80),
+      kind,
+      name: cut(el.getAttribute('name') || '', 80),
+      id: cut(el.id || '', 80),
+      placeholder: cut(el.getAttribute('placeholder') || '', 80),
+      value: '',
+      selected_text: '',
+      focused: el === document.activeElement,
+      rect: rectOf(el),
+    };
+    if (el.tagName === 'SELECT') {
+      const opts = Array.from(el.options || []);
+      const sel = el.selectedOptions && el.selectedOptions[0];
+      item.value = cut(el.value, 80);
+      item.selected_text = cut(sel ? (sel.textContent || sel.label || sel.value) : '', 80);
+      item.options = opts.map(o => cut(o.textContent || o.label || o.value, 80)).filter(Boolean).slice(0, 60);
+    } else if ((el.type || '').toLowerCase() === 'password') {
+      item.value = el.value ? '(password set)' : '';
+    } else {
+      item.value = cut(el.value || el.textContent || '', 80);
+    }
+    controls.push(item);
+    if (controls.length >= 40) break;
+  }
+  return JSON.stringify({controls});
+})()
+"""
+
+
+def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
+    """Normalize raw JS form-control snapshots into compact dictionaries."""
+    controls = raw.get("controls") if isinstance(raw, dict) else raw
+    if not isinstance(controls, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in controls[:MAX_CONTROLS]:
+        if not isinstance(item, dict):
+            continue
+        kind = _text(item.get("kind"), 40)
+        label = _text(item.get("label"), MAX_TEXT)
+        name = _text(item.get("name"), MAX_TEXT)
+        control_id = _text(item.get("id"), MAX_TEXT)
+        placeholder = _text(item.get("placeholder"), MAX_TEXT)
+        value = _text(item.get("value"), MAX_TEXT)
+        selected_text = _text(item.get("selected_text"), MAX_TEXT)
+        options = _string_list(item.get("options"))
+        if not any([kind, label, name, control_id, placeholder, value, selected_text, options]):
+            continue
+        norm: dict[str, Any] = {"kind": kind or "control"}
+        if label:
+            norm["label"] = label
+        if name:
+            norm["name"] = name
+        if control_id:
+            norm["id"] = control_id
+        if placeholder:
+            norm["placeholder"] = placeholder
+        if value:
+            norm["value"] = value
+        if selected_text:
+            norm["selected_text"] = selected_text
+        if options:
+            norm["options"] = options
+        if item.get("focused") is True:
+            norm["focused"] = True
+        rect = item.get("rect")
+        if isinstance(rect, dict):
+            norm["rect"] = {
+                key: int(rect[key])
+                for key in ("x", "y", "w", "h")
+                if isinstance(rect.get(key), (int, float))
+            }
+        out.append(norm)
+    return out
+
+
+def _text(value: Any, limit: int) -> str:
+    if value is None:
+        return ""
+    text = " ".join(str(value).split())
+    if len(text) > limit:
+        text = text[: limit - 1] + "…"
+    return text
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _text(item, MAX_TEXT)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= MAX_OPTIONS:
+            break
+    return out

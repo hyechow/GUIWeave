@@ -87,6 +87,13 @@ class BrowserSession:
         read = getattr(self.client, "read_complete_tables", None)
         return read() if read is not None else self.read_tables()
 
+    def read_form_controls(self) -> list[dict]:
+        """Delegate to the browser's read-only DOM form-control sensor."""
+        if self.client is None:
+            return []
+        read = getattr(self.client, "read_form_controls", None)
+        return read() if read is not None else []
+
 
 
 class BrowserPerception:
@@ -122,8 +129,12 @@ class BrowserPerception:
         tables = []
         if client is not None and hasattr(client, "read_tables"):
             tables = client.read_tables()
+        form_controls = []
+        if client is not None and hasattr(client, "read_form_controls"):
+            form_controls = client.read_form_controls()
         return Observation(
             png_bytes=png_bytes, source="browser", loading=loading,
             url=url or None, title=title or None, dom_state=dom_state,
             tables=tables or None,
+            form_controls=form_controls or None,
         )

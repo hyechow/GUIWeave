@@ -515,6 +515,25 @@ class PlaywrightDevice:
         except Exception:
             return self.read_tables()
 
+    def read_form_controls(self) -> list[dict]:
+        """Return visible form controls with DOM type/value/option metadata."""
+        from gui_agent.adapters.browser.form_reader import (
+            form_controls_js,
+            normalize_form_controls,
+        )
+
+        try:
+            self._follow_active_tab()
+            res = self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": form_controls_js(), "returnByValue": True},
+            )
+            val = (res.get("result", {}) or {}).get("value")
+            raw = json.loads(val) if isinstance(val, str) else val
+            return normalize_form_controls(raw)
+        except Exception:
+            return []
+
     def eval_js(self, expression: str) -> object:
         """Best-effort JS eval via page.evaluate(). Used by the action visualizer.
         Returns None on any failure; never raises."""
