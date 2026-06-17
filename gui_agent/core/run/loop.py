@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
-from gui_agent.core.run.content import ensure_note_hashes as _ensure_note_hashes
+from gui_agent.core.run.content import ReadState, ensure_note_hashes as _ensure_note_hashes
 from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.llm.reader import ContentReader
 from gui_agent.core.run.context import (
@@ -38,7 +38,6 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.non_ui import drive_pending_non_ui
-from gui_agent.core.run.read_state import ReadState
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
