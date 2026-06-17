@@ -25,7 +25,6 @@ from gui_agent.core.run.content import (
     store_chunk_note as _store_chunk_note,
 )
 from gui_agent.core.runtime.factory import build_platform
-from gui_agent.core.vision.frame_analysis import STABLE_MEAN_THR, frame_changed, frame_diff
 from gui_agent.core.llm.reader import ContentReader, build_reader_instruction
 from gui_agent.core.run.context import (
     extract_checker as _extract_checker,
@@ -41,6 +40,10 @@ from gui_agent.core.run.result import (
     print_turn_stats as _print_turn_stats,
 )
 from gui_agent.core.run.non_ui import drive_pending_non_ui
+from gui_agent.core.run.settle import (
+    settle_after_action as _settle_after_action,
+    snapped_point as _snapped_point,
+)
 from gui_agent.core.run.turns import (
     interactive_turn_count as _interactive_turn_count,
     make_interactive_turn,
@@ -67,25 +70,8 @@ if TYPE_CHECKING:
     from gui_agent.core.ui.hud import AgentHUD
     from gui_agent.adapters.iphone.scroll_probe import ScrollProfile
     from gui_agent.adapters.iphone.stitch import StitchAccumulator
-    from gui_agent.core.runtime.contracts import PerceptionSession
 
 TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
-# 动作后自适应等待：轮询截图，等到屏幕「相对动作前帧变过、且相对上一帧停稳」再进入
-# 下一轮决策。首帧间隔较长（SETTLE_FIRST_S），让 App 启动 zoom、页面横滑等转场动画
-# 先跑完，避免在动画中途采样导致相邻两帧「碰巧相似」被误判停稳；之后用 SETTLE_UNIT_S
-# 细粒度轮询。tap 冷启动会续等到效果出现，scroll 续等惯性停止，no-op 等到上限兜底。
-SETTLE_FIRST_S = 1.0      # 首帧等待：覆盖大多数转场动画（zoom/横滑 ~0.3-0.5s）
-SETTLE_UNIT_S = 0.5       # 后续轮询间隔
-SETTLE_MAX_UNITS = 6
-# 帧级视觉判定与其阈值（frame_diff 稳定性 / frame_changed 生效 / STABLE_MEAN_THR）都在
-# core/frame_analysis.py，不再散落在 runner。
-# drag/scroll 是页内操作，不触发页面加载/转场，但改动常局限一小块（如 picker 滚轮带），
-# 全屏均值差测不出「changed」（实测 picker 拖动仅 0.1-0.25 << CHANGE_THR=8.0），用原
-# 「变过且停稳」逻辑会每次顶满上限白等 ~4s。但也不能盲等固定时长：fling 惯性时长不定
-# （轻拨 ~0.3s，重拨 1-2s），固定值太短会在滚轮没停稳时就截图，checker 读到滞后的标签
-# 值（轮子已滑过、标签未更新），导致位移误算、来回震荡。故对 drag/scroll 只判「停稳」
-# （相邻帧不再变化）、不判「changed」：轻拨很快返回，重拨等到真停，且保证读数准。
-SETTLE_GESTURE_FIRST_S = 0.3  # drag/scroll 首帧：让惯性先跑起来，避免抬手瞬间误判停稳
 
 # 页面未稳定（白屏/加载中）的等待帧：不计入 max_turns、不累加 noop，只重新观察。
 # 加载是 App 渲染延迟、不是 agent 的一步操作，不该消耗轮数预算；但要设上限防页面永挂死循环。
@@ -95,94 +81,6 @@ MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
-
-
-def _settle_after_action(
-    phone: "PerceptionSession", pre_frame: bytes | None, action_type: str | None = None,
-    focus_y: float | None = None, center: tuple[float, float] | None = None,
-) -> tuple[float, bool]:
-    """等到屏幕相对动作前帧「变过且停稳」，或达到上限。返回 (等待秒数, no_effect)。
-
-    必须对照动作前帧：否则冷启动那 ~1s 静止旧画面会被误判为已就绪。
-
-    no_effect=True 仅用于 tap 类动作：跑满上限且**全程相对动作前帧从未 changed**——
-    即这一击对屏幕零效果（如重点已高亮的 tab、点到惰性元素）。drag/scroll 改动可能很
-    小、不押 changed，故恒为 False；无动作前帧时也无从判断，False。
-
-    drag/scroll 只判「停稳」（相邻帧不再变化）、不判「changed」：picker 改动小测不出
-    changed 会顶满上限，而固定盲等又会在 fling 没停时截图导致读数滞后、来回震荡。
-
-    浏览器优先走 CDP settle（phone.wait_settled：readyState + DOM 变更静默 + 网络静默）——
-    它读页面真实状态、无视 canvas/rAF 动效，远早于视觉返回。手势（drag/scroll）仍走视觉：
-    平滑滚动是纯视觉转场、不产生 DOM/网络信号，DOM 静默会在滚动途中就触发。CDP 异常则回退视觉。
-    """
-    if action_type not in ("drag", "scroll"):
-        _cdp_settle = getattr(phone, "wait_settled", None)
-        if _cdp_settle is not None:
-            try:
-                return _cdp_settle(action_type)
-            except Exception as e:
-                print(f"  [Settle] CDP settle 异常，回退视觉: {e}")
-    t0 = time.perf_counter()
-    if action_type in ("drag", "scroll"):
-        prev: bytes | None = None
-        for i in range(1, SETTLE_MAX_UNITS + 1):
-            time.sleep(SETTLE_GESTURE_FIRST_S if i == 1 else SETTLE_UNIT_S)
-            try:
-                cur = phone.screenshot()
-            except Exception:
-                dur = time.perf_counter() - t0
-                print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
-                return dur, False
-            if prev is not None and frame_diff(prev, cur) < STABLE_MEAN_THR:
-                dur = time.perf_counter() - t0
-                print(f"  [Settle] {dur:.1f}s ({i} 轮，停稳: {action_type})")
-                return dur, False
-            prev = cur
-        dur = time.perf_counter() - t0
-        print(f"  [Settle] {dur:.1f}s ({SETTLE_MAX_UNITS} 轮，达上限: {action_type})")
-        return dur, False
-    if pre_frame is None:
-        time.sleep(SETTLE_FIRST_S)
-        dur = time.perf_counter() - t0
-        print(f"  [Settle] {dur:.1f}s (无动作前帧)")
-        return dur, False
-    prev: bytes | None = None
-    ever_changed = False
-    # Browser tab-switch detector (optional: only present on browser session).
-    _pop_tab = getattr(phone, "pop_tab_switched", None)
-    for i in range(1, SETTLE_MAX_UNITS + 1):
-        # 首帧等久一点让转场动画跑完，再用细粒度轮询。
-        time.sleep(SETTLE_FIRST_S if i == 1 else SETTLE_UNIT_S)
-        try:
-            cur = phone.screenshot()
-        except Exception:
-            dur = time.perf_counter() - t0
-            print(f"  [Settle] {dur:.1f}s ({i} 轮，截图异常提前返回)")
-            return dur, False
-        # Browser: a tab switch is always "effect" even when pixel diff < threshold
-        # (new tab may look visually similar to the old one at 160x320 resolution).
-        tab_just_switched = bool(_pop_tab and _pop_tab())
-        if tab_just_switched:
-            ever_changed = True
-            print(f"  [Settle] {time.perf_counter() - t0:.1f}s ({i} 轮，tab切换→有效果)")
-        # 「是否生效」用结构+颜色信号判（见 frame_analysis.frame_changed），不靠全屏灰度均值——
-        # 后者会把 tab 切换这种明显变页(ssim_dist 0.167、但 mean 仅 6.1)误判成零效果。type 传
-        # focus_y 只看输入行带；tap 传 center 只看点击点周围 box——否则菜单展开/下拉这种局部改动
-        # 会被整帧稀释成「零效果」(实测点订单菜单整帧 ssim_dist 0.026<0.08，点击点 box 内达 0.29)。
-        changed = frame_changed(pre_frame, cur, focus_y, center=center)
-        ever_changed = ever_changed or changed
-        stable = prev is not None and frame_diff(prev, cur, focus_y) < STABLE_MEAN_THR
-        if (changed or tab_just_switched) and stable:
-            dur = time.perf_counter() - t0
-            print(f"  [Settle] {dur:.1f}s ({i} 轮，变过且停稳)")
-            return dur, False
-        prev = cur
-    dur = time.perf_counter() - t0
-    no_effect = not ever_changed
-    tag = "达上限·零效果" if no_effect else "达上限"
-    print(f"  [Settle] {dur:.1f}s ({SETTLE_MAX_UNITS} 轮，{tag})")
-    return dur, no_effect
 
 
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
@@ -200,20 +98,6 @@ _PREP_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="prep")
 # content_notes ordering. Stitch feed (robust_shift, ~25ms) stays inline: it
 # produces read_added_content which the turn record needs synchronously.
 _READER_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reader")
-
-
-def _snapped_point(action_decision: ActionDecision | None) -> tuple[float, float] | None:
-    """The actual tap location (snapped if snapping fired, else raw) for tap/click."""
-    if action_decision is None:
-        return None
-    a = action_decision.action
-    if a.action_type not in ("tap", "click") or a.x is None or a.y is None:
-        return None
-    snap = a.snap
-    if snap and snap.get("snapped"):
-        sx, sy = snap["snapped"]
-        return float(sx), float(sy)
-    return float(a.x), float(a.y)
 
 
 def build_policy(name: str) -> "ActionPolicy":
