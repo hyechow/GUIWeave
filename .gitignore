@@ -19,6 +19,7 @@ tests/**/*.jpg
 tests/**/*.jpeg
 tests/**/*.webp
 *.mov
+*.pdf
 videos
 
 # Swift sources for bin/mirror_daemon; built out of tree.

@@ -28,7 +28,11 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.tree import Tree
 
-from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
+from gui_agent.core.self_learning.app_summary import (
+    auto_discover_knowledge,
+    load_knowledge_for_app,
+    match_app_by_url,
+)
 from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.run.io import TeeStream as _TeeStream
 from gui_agent.core.runner import (
@@ -127,6 +131,66 @@ def run_chat_turn(
             router=router,
             knowledge=knowledge,
         )
+
+
+_BROWSER_PAGE_CONTEXT_HINTS = (
+    "当前", "这里", "本页", "此页", "这个页面", "该页面", "当前页面", "当前页",
+    "当前站点", "当前网站", "这个站点", "这个网站", "本网站", "前台",
+)
+
+_BROWSER_TASK_HINTS = (
+    "打开", "进入", "点击", "搜索", "查", "查看", "查询", "创建", "新建", "新增",
+    "编辑", "修改", "删除", "上传", "下载", "登录", "退出", "筛选", "过滤",
+    "导出", "提交", "保存", "填写", "输入", "选择", "下单", "订单", "页面",
+    "站点", "网站", "后台", "列表", "表单", "评论", "review",
+)
+
+
+def _should_probe_browser_page(text: str, *, from_clarification: bool = False) -> bool:
+    """Cheap pre-router gate for browser page context.
+
+    Avoid reconnecting/screenshotting the browser for casual chat. Probe only when
+    the user refers to the current page/site or the utterance looks like a browser
+    operation/retrieval task. Clarification answers are probed because they often
+    complete a previously routed browser request.
+    """
+    s = (text or "").strip().lower()
+    if not s:
+        return False
+    if from_clarification:
+        return True
+    return any(h in s for h in _BROWSER_PAGE_CONTEXT_HINTS) or any(h in s for h in _BROWSER_TASK_HINTS)
+
+
+def _probe_current_browser_page(bundle) -> tuple[str, str, str]:
+    """Best-effort browser front-tab identity for chat routing.
+
+    Keep this intentionally light: read Chrome CDP's /json/list active page target
+    directly. Do not connect Playwright or take a screenshot here; chat routing is
+    on the critical path and many messages do not need browser state at all.
+    """
+    if bundle.platform != "browser":
+        return "", "", ""
+    try:
+        import json
+        from urllib.request import urlopen
+
+        cdp_url = os.environ.get("CHROME_CDP_URL") or "http://localhost:9222"
+        raw = urlopen(cdp_url.rstrip("/") + "/json/list", timeout=0.8).read()
+        targets = json.loads(raw.decode("utf-8"))
+        # Pick the active target the SAME way PlaywrightDevice._active_page_from_json_list
+        # does (first type==page with an id) so chat routing and the device bind agree on
+        # which tab is "active". A blank active tab then yields url="" (no context) rather
+        # than reaching past it for some other tab's url.
+        active = next((t for t in targets if t.get("type") == "page" and t.get("id")), None)
+        if not active:
+            return "", "", ""
+        url = active.get("url") or ""
+        title = active.get("title") or ""
+        site = match_app_by_url(url, bundle.platform) if url else ""
+        return url, title, site or ""
+    except Exception:
+        return "", "", ""
 
 
 _ACTION_STYLE = {
@@ -394,9 +458,20 @@ def main() -> None:
             _pending_clarification_msg = None
             from_clarification = True
 
+        cur_url = cur_title = cur_site = ""
+        if _should_probe_browser_page(route_msg, from_clarification=from_clarification):
+            cur_url, cur_title, cur_site = _probe_current_browser_page(bundle)
         try:
             prefs_context = prefs.format_prefs_for_prompt()
-            router_result = route_message(route_msg, session, prefs_context=prefs_context, platform=bundle.platform)
+            router_result = route_message(
+                route_msg,
+                session,
+                prefs_context=prefs_context,
+                platform=bundle.platform,
+                current_url=cur_url,
+                current_title=cur_title,
+                current_site=cur_site,
+            )
         except Exception:
             router_result = RouterResult(goal=route_msg)
 
@@ -456,6 +531,8 @@ def main() -> None:
         turn_supervisor = build_supervisor(supervisor.name)
 
         knowledge = auto_discover_knowledge(goal, bundle.platform)
+        if knowledge is None and cur_site:
+            knowledge = load_knowledge_for_app(cur_site, bundle.platform)
         knowledge_summary: dict | None = None
         if knowledge and hasattr(turn_supervisor, "set_app_knowledge"):
             turn_supervisor.set_app_knowledge(

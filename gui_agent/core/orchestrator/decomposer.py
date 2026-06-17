@@ -339,6 +339,9 @@ def decompose(
     knowledge: str = "",
     file_section: str = "",
     system_prompt: str = "",
+    current_url: str = "",
+    current_title: str = "",
+    current_site: str = "",
 ) -> Program:
     """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
 
@@ -360,6 +363,20 @@ def decompose(
         parts.append({"type": "text", "text": "\n" + file_section})
     if knowledge:
         parts.append({"type": "text", "text": f"\n## 应用导航知识\n{knowledge}"})
+    if current_url or current_site:
+        # Ground-truth front-tab identity (the screenshot omits the omnibox). Lead with a
+        # semantic site name + page title; the raw url (often an IP) is a tail. Lets the
+        # decomposer skip a navigation milestone when already on the target site.
+        _parts = []
+        if current_site:
+            _parts.append(f"站点：{current_site}（已知应用）")
+        if current_title:
+            _parts.append(f"页面：{current_title}")
+        if current_url:
+            _parts.append(f"url：{current_url}")
+        page = "\n## 当前前台页面（以此为准，截图看不到地址栏）：" + " · ".join(_parts)
+        page += "\n若当前已在任务目标站点，可直接在当前页操作/采集，无需重复加导航到该站的 milestone。"
+        parts.append({"type": "text", "text": page})
     if png_bytes:
         b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
         parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})

@@ -1490,6 +1490,23 @@ class MilestoneSupervisorPolicy:
         user_parts: list[dict] = [{"type": "text", "text": f"用户任务：{goal}"}]
         if file_section:
             user_parts.append({"type": "text", "text": f"\n{file_section}"})
+        if observation.url:
+            # Ground-truth front-tab identity (screenshot omits the omnibox). Prefer a
+            # semantic site name when the URL maps to a known browser knowledge dir; raw IPs
+            # like 192.168.* are much less useful to the decomposer.
+            site = ""
+            try:
+                from gui_agent.core.self_learning.app_summary import match_app_by_url
+                site = match_app_by_url(observation.url, observation.source) or ""
+            except Exception:
+                site = ""
+            page = "\n## 当前前台页面（以此为准，截图看不到地址栏）"
+            if site:
+                page += f"\n站点：{site}（已知应用）"
+            page += f"\nurl：{observation.url}"
+            if observation.title:
+                page += f"\n页面：{observation.title}"
+            user_parts.append({"type": "text", "text": page})
         if self._app_knowledge:
             user_parts.append({"type": "text", "text": f"\n## 应用导航知识\n{self._app_knowledge}"})
         # Decomposition needs page/flow structure (navigation: _app + _deploy + _skill), not the

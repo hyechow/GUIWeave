@@ -142,12 +142,14 @@ class PlaywrightDevice:
         self._browser = self._pw.chromium.connect_over_cdp(self.cdp_url)
         contexts = self._browser.contexts
         self._context = contexts[0] if contexts else self._browser.new_context()
-        pages = self._context.pages
-        # Initial bind; _follow_active_tab() re-points this at any tab a click later
-        # spawns (see there). Reset the new-tab snapshot for a fresh connection.
-        self.page = pages[0] if pages else self._context.new_page()
+        pages = self._all_pages()
+        # Initial bind: prefer Chrome CDP's /json/list front page. Playwright's
+        # context.pages order is not the Chrome tab selection order, so pages[0] can
+        # be a stale background tab.
+        self.page = self._active_page_from_json_list(pages) or (pages[0] if pages else self._context.new_page())
+        self._context = self.page.context
         self._arm_file_chooser(self.page)
-        self._prev_pages = None
+        self._prev_pages = pages if pages else [self.page]
         self._tab_switched = False
         self._last_viewport = None
         self._dpr = None
@@ -292,15 +294,19 @@ class PlaywrightDevice:
         ``_CDPTimeout`` instead of blocking ``selector.select`` forever. MAIN THREAD
         ONLY (SIGALRM); off it (or where SIGALRM is absent) it sends uncapped. The
         normal path adds only a setitimer arm/disarm — microseconds."""
+        return self._timed_cdp_send(self._cdp, method, params)
+
+    def _timed_cdp_send(self, session, method: str, params: dict) -> dict:
+        """Send on a CDP session with the same SIGALRM cap used by _cdp_send."""
         if (
             threading.current_thread() is not threading.main_thread()
             or not hasattr(signal, "SIGALRM")
         ):
-            return self._cdp.send(method, params)
+            return session.send(method, params)
         prev = signal.signal(signal.SIGALRM, _cdp_alarm)
         signal.setitimer(signal.ITIMER_REAL, _CDP_SEND_TIMEOUT_S)
         try:
-            return self._cdp.send(method, params)
+            return session.send(method, params)
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, prev)
@@ -845,6 +851,64 @@ class PlaywrightDevice:
         except Exception:
             pass
         return pages
+
+    def _active_page_from_json_list(self, pages: list):
+        """Best-effort selected tab using Chrome's HTTP CDP target list.
+
+        Empirically, ``/json/list`` keeps the active page target at the front when
+        Page.bringToFront or a user tab switch occurs. CDP Runtime visibility/focus
+        probes are not reliable here: attaching/evaluating through some CDP paths can
+        make multiple tabs report visible/focused. So use the target-list ordering as
+        the active-tab signal, then map it back to Playwright's page object by
+        targetId (with URL only as a fallback).
+        """
+        try:
+            import json
+            from urllib.request import urlopen
+
+            raw = urlopen(self.cdp_url.rstrip("/") + "/json/list", timeout=1.0).read()
+            targets = json.loads(raw.decode("utf-8"))
+        except Exception:
+            return None
+        active = next(
+            (t for t in targets if t.get("type") == "page" and t.get("id")),
+            None,
+        )
+        if not active:
+            return None
+        active_id = active.get("id") or ""
+        active_url = active.get("url") or ""
+        for page in pages:
+            if _page_closed(page):
+                continue
+            try:
+                info = self._page_target_info(page)
+                if info.get("targetId") == active_id:
+                    return page
+                if active_url and info.get("url") == active_url:
+                    return page
+            except Exception:
+                continue
+        return None
+
+    def _page_target_info(self, page) -> dict:
+        """CDP Target.getTargetInfo for a Playwright page.
+
+        Playwright's high-level ``page.url`` can be empty over connect_over_cdp in
+        this environment, but the per-page CDP target info still exposes the real
+        targetId/url/title. This is how we map /json/list's active target back to
+        the page object used for screenshot/input.
+        """
+        session = None
+        try:
+            session = page.context.new_cdp_session(page)
+            return (self._timed_cdp_send(session, "Target.getTargetInfo", {}).get("targetInfo") or {})
+        finally:
+            if session is not None:
+                try:
+                    session.detach()
+                except Exception:
+                    pass
 
     def _target_meta(self) -> dict:
         """url -> title for page targets via raw CDP ``Target.getTargets`` (reliable

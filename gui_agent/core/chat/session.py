@@ -105,6 +105,9 @@ def route_message(
     session: list[dict],
     prefs_context: str = "",
     platform: str = "iphone",
+    current_url: str = "",
+    current_title: str = "",
+    current_site: str = "",
 ) -> RouterResult:
     llm = _get_llm()
     system, known_apps_rule = _router_system_for(platform)
@@ -128,9 +131,22 @@ def route_message(
             + prefs_context + "\n"
         )
     history_text = format_session_history(session) if session else "（无历史）"
+    page_ctx = ""
+    if current_url or current_site:
+        # The front-tab identity the vision-only screenshot can't show (browser omnibox). Lead
+        # with a semantic site name (matched from the url) + page title; the raw url (often an
+        # IP like 192.168.31.57:22000) is opaque to the model, so it stays a ground-truth tail.
+        _parts = []
+        if current_site:
+            _parts.append(f"站点：{current_site}（已知应用）")
+        if current_title:
+            _parts.append(f"页面：{current_title}")
+        if current_url:
+            _parts.append(f"url：{current_url}")
+        page_ctx = "\n\n当前前台页面（ground truth，截图看不到地址栏）：" + " · ".join(_parts)
     messages = [
         SystemMessage(content=system),
-        HumanMessage(content=f"对话历史：\n{history_text}\n\n当前用户指令：{resolved_msg}"),
+        HumanMessage(content=f"对话历史：\n{history_text}\n\n当前用户指令：{resolved_msg}{page_ctx}"),
     ]
     return invoke_structured(llm, messages, RouterResult)
 

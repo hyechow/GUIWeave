@@ -15,7 +15,11 @@ load_dotenv()
 from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.llm.output import generate_reply
 from gui_agent.core.run.io import EscStopSignal, create_run_dir, tee_stdio
-from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
+from gui_agent.core.self_learning.app_summary import (
+    auto_discover_knowledge,
+    load_knowledge_for_app,
+    match_app_by_url,
+)
 from gui_agent.core.run.state import write_final_run_state
 
 
@@ -104,165 +108,205 @@ def main(
     action_policy = policy_builder(args.policy)
     supervisor = supervisor_builder(args.supervisor)
 
-    # Route the raw input through the LLM router (same path as chat mode) so the
-    # goal is intent-classified and normalized consistently. Skipped when resuming
-    # a saved context (--context, goal comes from the file) or with --no-router.
-    raw_input = args.prompt
-    router_result = None
-    goal = args.prompt
-    # Router (route_message) is platform-aware: each platform injects its own prompt
-    # (iphone: 操控手机/APP; browser: 网页任务). Passing bundle.platform makes browser
-    # tasks ("搜索nvidia股价") classify correctly instead of being rejected.
-    if not args.context and not args.no_router:
-        try:
-            from gui_agent.core.chat.session import route_message
-            router_result = route_message(raw_input, session=[], prefs_context="", platform=bundle.platform)
-        except Exception as exc:
-            print(f"Router  : 调用失败，回退原始输入（{exc}）")
-        if router_result is not None:
-            if not router_result.goal:
-                if router_result.needs_clarification:
-                    print(f"Router  : 需要补充信息 — {router_result.clarification}")
-                else:
-                    print("Router  : 非任务（闲聊/问答），已跳过")
-                return
-            goal = router_result.goal
-            print(f"Router  : {raw_input!r} → {goal!r}")
-
     input_context_path = args.context
     log_dir = create_run_dir("agent-loop", bundle.platform)
     context_path = log_dir / "context.json"
-    hud = bundle.make_status_reporter(args.hud)
-    with tee_stdio(log_dir):
-        print(f"Platform: {bundle.platform}")
-        print(f"Log Dir : {log_dir}")
-        print(f"Context : {input_context_path if input_context_path else None}")
+    hud = None
 
-        # Auto-discover app knowledge from the resolved goal. Done INSIDE the tee so the
-        # match / load lines land in stdout.log (they used to print before the tee and vanish);
-        # the summary is also persisted to context.json (context.knowledge) for offline analysis.
-        knowledge_summary: dict | None = None
-        knowledge = auto_discover_knowledge(goal, bundle.platform)
-        if knowledge and hasattr(supervisor, "set_app_knowledge"):
-            supervisor.set_app_knowledge(
-                knowledge.navigation,
-                app_name=knowledge.app_name,
-                elements=knowledge.elements,
-                sections=knowledge.sections,
-                check=knowledge.check,
-            )
-            knowledge_summary = knowledge.summary()
-            print(
-                f"Knowledge: auto-loaded app={knowledge_summary['app_name']} "
-                f"(nav={knowledge_summary['nav_chars']} chars, "
-                f"elements={knowledge_summary['elements_chars']} chars, "
-                f"sections={knowledge_summary['section_count']})"
-            )
+    # ── 启动初始化:先 setup_check + 连接 device,observe 一次拿当前前台 tab 的 url/title ──
+    # router 和 decompose 过去都在 device 连接前跑(router_prompt.py 自己都写「默认在当前已打开
+    # 的页面」却根本不知是哪个),连截图都没有(DSL decompose 在 cli、连接在 loop)。现在提前连接、
+    # observe 一次,把 url 注入 router/decompose(截图看不到地址栏,以此 url 为 ground truth),再把
+    # 已开的 session 传给 run_agent_loop 复用(loop 见 phone 非空就跳过自己的 setup_check/open_session)。
+    setup = bundle.setup_check()
+    if not setup.ok:
+        print(f"环境检查未通过：{setup.summary}")
+        return
 
-        # DSL orchestrator mode (opt-in): decompose the goal into a run/if/finish program; the
-        # interpreter sequences milestones instead of the supervisor's DAG walker. program=None
-        # (default) → the DAG path is unchanged.
-        program = None
-        run_max_turns = args.max_turns
-        if args.orchestrator:
-            from gui_agent.core.orchestrator import (
-                decompose, estimate_program_turns,
-                normalize_confirm_read_gates, normalize_precondition_gates,
-            )
-            from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
-            # Resolve @<path> refs once (config field values the goal only points at) and feed
-            # them to the decomposer — mirrors the DAG path, which the orchestrator's decompose
-            # otherwise skipped (the LLM only saw the literal @token, never the field values).
-            file_section = resolve_file_refs(goal)
-            # L2 structural backstops (deterministic, keyed on structural signals, not gate wording):
-            #  · confirm-read action gates → lenient dispatch gate (checker doesn't re-judge the
-            #    result the read owns) — signal = action→read adjacency;
-            #  · precondition gates (确保已登录/已进入某模式) → generic ensure-state gate so an
-            #    already-satisfied precondition is done on frame 1 (no form/data stuck; app-specific
-            #    markers live in the checker's _check.md) — signal = the run.precondition flag. See engine.
-            program = normalize_precondition_gates(normalize_confirm_read_gates(
-                decompose(goal, knowledge=knowledge.navigation if knowledge else "",
-                          file_section=file_section)
-            ))
-            # The config must ALSO reach the execution-time planner deterministically — the
-            # supervisor's constraints flow to every milestone's planner, and reseed never clears
-            # them (LLM distillation of config into constraints proved unstable; see DAG path).
-            if file_section and hasattr(supervisor, "_global_constraints"):
-                _CAP = 3000
-                supervisor._global_constraints.append(
-                    file_section if len(file_section) <= _CAP
-                    else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
-                )
-            print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
-            if not args.no_dynamic_max_turns:
-                run_max_turns = estimate_program_turns(program, floor=args.max_turns)
-                if run_max_turns != args.max_turns:
-                    print(
-                        f"Orchestrator: max_turns {args.max_turns} -> {run_max_turns} "
-                        "based on program complexity"
-                    )
-
+    with bundle.open_session() as phone:
+        cur_url = ""
+        cur_title = ""
+        initial_png = None
+        cur_site = ""  # init OUTSIDE the try: an observe() failure must not leave it unbound
         try:
-            stop_on_esc = args.stop_on_esc and args.auto_continue
-            if args.stop_on_esc and not args.auto_continue:
-                print("Interrupt: --stop-on-esc 仅在 --auto-continue 模式下启用")
-            with EscStopSignal(enabled=stop_on_esc) as esc_stop:
-                if args.stop_on_esc:
-                    if esc_stop.enabled:
-                        print("Interrupt: 按 ESC 将在当前 turn 收尾后停止")
-                    elif stop_on_esc:
-                        print("Interrupt: stdin 不是 TTY，ESC 停止未启用")
-                result: dict | None = run_loop(
-                    goal,
-                    action_policy,
-                    supervisor,
-                    input_context_path,
-                    log_dir,
-                    context_path,
-                    max_turns=run_max_turns,
-                    auto_continue=args.auto_continue,
-                    hud=hud,
-                    raw_input=raw_input,
-                    router=router_result.model_dump() if router_result else None,
-                    knowledge=knowledge_summary,
-                    program=program,
-                    stop_requested=esc_stop.requested if esc_stop.enabled else None,
-                )
-            if result:
-                if program is not None:
-                    # Orchestrator mode: the answer is the interpreter's reply (finish /
-                    # auto-summary from the program's persisted reads), not a re-derivation
-                    # from content_notes — that's the whole point of the structured program.
-                    output = result.get("result_summary") or "（编排器未产生答复）"
-                else:
-                    # Reply to the user's ORIGINAL input (parity with chat, which
-                    # passes user_msg) rather than the router-rewritten goal.
-                    output = generate_reply(
-                        raw_input,
-                        result,
-                        content_notes=result.get("content_notes"),
-                        collection_context=result.get("collection_context"),
-                    )
-                print("\n" + "=" * 50)
-                print("最终输出")
-                print("=" * 50)
-                print(output.rstrip())
-                print("=" * 50)
-                # Persist the final reply and structured run state so the HTML report can render it.
-                try:
-                    write_final_run_state(context_path, result, output)
-                except Exception as exc:
-                    print(f"（输出未写入 context: {exc}）")
+            initial_obs = bundle.make_perception(
+                phone, log_dir / "screenshot_initial.png"
+            ).observe()
+            cur_url = initial_obs.url or ""
+            cur_title = initial_obs.title or ""
+            initial_png = initial_obs.png_bytes
+            # Map the url's host to a known app name (semantic site) — the IP itself is opaque
+            # to router/decompose, but "RoboTeam" / "shopping_admin" carries meaning.
+            if cur_url:
+                cur_site = match_app_by_url(cur_url, bundle.platform) or ""
+            if cur_url or cur_site:
+                _shown = cur_site or cur_url
+                print(f"当前前台页面：{_shown}" + (f"（{cur_title}）" if cur_title else ""))
+        except Exception as exc:  # noqa: BLE001 — never block the run on a page-info probe
+            print(f"（初始页面探测失败，router/decompose 将不感知当前站点：{exc}）")
 
-            # Auto-generate HTML report
-            if (log_dir / "context.json").exists():
-                try:
-                    from scripts.report_builder import RunnerReportBuilder, save_report
-                    report_data = RunnerReportBuilder().build(log_dir)
-                    report_path = save_report(report_data, log_dir / "report.html")
-                    print(f"\nReport  : {report_path}")
-                except Exception as exc:
-                    print(f"\nReport  : 生成失败 ({exc})")
-        finally:
-            if hud:
-                hud.close()
+        # Route the raw input through the LLM router (now with the current front-tab url so
+        # it can resolve "当前页面/这里" to a concrete site). Skipped on --context / --no-router.
+        raw_input = args.prompt
+        router_result = None
+        goal = args.prompt
+        if not args.context and not args.no_router:
+            try:
+                from gui_agent.core.chat.session import route_message
+                router_result = route_message(
+                    raw_input, session=[], prefs_context="", platform=bundle.platform,
+                    current_url=cur_url, current_title=cur_title, current_site=cur_site,
+                )
+            except Exception as exc:
+                print(f"Router  : 调用失败，回退原始输入（{exc}）")
+            if router_result is not None:
+                if not router_result.goal:
+                    if router_result.needs_clarification:
+                        print(f"Router  : 需要补充信息 — {router_result.clarification}")
+                    else:
+                        print("Router  : 非任务（闲聊/问答），已跳过")
+                    return
+                goal = router_result.goal
+                print(f"Router  : {raw_input!r} → {goal!r}")
+
+        hud = bundle.make_status_reporter(args.hud)
+        with tee_stdio(log_dir):
+            for _line in setup.lines:
+                print(_line)
+            print(f"Platform: {bundle.platform}")
+            print(f"Log Dir : {log_dir}")
+            print(f"Context : {input_context_path if input_context_path else None}")
+
+            # Auto-discover app knowledge from the resolved goal. Done INSIDE the tee so the
+            # match / load lines land in stdout.log (they used to print before the tee and vanish);
+            # the summary is also persisted to context.json (context.knowledge) for offline analysis.
+            knowledge_summary: dict | None = None
+            knowledge = auto_discover_knowledge(goal, bundle.platform)
+            if knowledge is None and cur_site:
+                knowledge = load_knowledge_for_app(cur_site, bundle.platform)
+            if knowledge and hasattr(supervisor, "set_app_knowledge"):
+                supervisor.set_app_knowledge(
+                    knowledge.navigation,
+                    app_name=knowledge.app_name,
+                    elements=knowledge.elements,
+                    sections=knowledge.sections,
+                    check=knowledge.check,
+                )
+                knowledge_summary = knowledge.summary()
+                print(
+                    f"Knowledge: auto-loaded app={knowledge_summary['app_name']} "
+                    f"(nav={knowledge_summary['nav_chars']} chars, "
+                    f"elements={knowledge_summary['elements_chars']} chars, "
+                    f"sections={knowledge_summary['section_count']})"
+                )
+
+            # DSL orchestrator mode (opt-in): decompose the goal into a run/if/finish program; the
+            # interpreter sequences milestones instead of the supervisor's DAG walker. program=None
+            # (default) → the DAG path is unchanged.
+            program = None
+            run_max_turns = args.max_turns
+            if args.orchestrator:
+                from gui_agent.core.orchestrator import (
+                    decompose, estimate_program_turns,
+                    normalize_confirm_read_gates, normalize_precondition_gates,
+                )
+                from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
+                # Resolve @<path> refs once (config field values the goal only points at) and feed
+                # them to the decomposer — mirrors the DAG path, which the orchestrator's decompose
+                # otherwise skipped (the LLM only saw the literal @token, never the field values).
+                file_section = resolve_file_refs(goal)
+                # L2 structural backstops (deterministic, keyed on structural signals, not gate wording):
+                #  · confirm-read action gates → lenient dispatch gate (checker doesn't re-judge the
+                #    result the read owns) — signal = action→read adjacency;
+                #  · precondition gates (确保已登录/已进入某模式) → generic ensure-state gate so an
+                #    already-satisfied precondition is done on frame 1 (no form/data stuck; app-specific
+                #    markers live in the checker's _check.md) — signal = the run.precondition flag. See engine.
+                program = normalize_precondition_gates(normalize_confirm_read_gates(
+                    decompose(goal, knowledge=knowledge.navigation if knowledge else "",
+                              file_section=file_section,
+                              current_url=cur_url, current_title=cur_title,
+                              current_site=cur_site, png_bytes=initial_png)
+                ))
+                # The config must ALSO reach the execution-time planner deterministically — the
+                # supervisor's constraints flow to every milestone's planner, and reseed never clears
+                # them (LLM distillation of config into constraints proved unstable; see DAG path).
+                if file_section and hasattr(supervisor, "_global_constraints"):
+                    _CAP = 3000
+                    supervisor._global_constraints.append(
+                        file_section if len(file_section) <= _CAP
+                        else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
+                    )
+                print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
+                if not args.no_dynamic_max_turns:
+                    run_max_turns = estimate_program_turns(program, floor=args.max_turns)
+                    if run_max_turns != args.max_turns:
+                        print(
+                            f"Orchestrator: max_turns {args.max_turns} -> {run_max_turns} "
+                            "based on program complexity"
+                        )
+
+            try:
+                stop_on_esc = args.stop_on_esc and args.auto_continue
+                if args.stop_on_esc and not args.auto_continue:
+                    print("Interrupt: --stop-on-esc 仅在 --auto-continue 模式下启用")
+                with EscStopSignal(enabled=stop_on_esc) as esc_stop:
+                    if args.stop_on_esc:
+                        if esc_stop.enabled:
+                            print("Interrupt: 按 ESC 将在当前 turn 收尾后停止")
+                        elif stop_on_esc:
+                            print("Interrupt: stdin 不是 TTY，ESC 停止未启用")
+                    result: dict | None = run_loop(
+                        goal,
+                        action_policy,
+                        supervisor,
+                        input_context_path,
+                        log_dir,
+                        context_path,
+                        max_turns=run_max_turns,
+                        auto_continue=args.auto_continue,
+                        hud=hud,
+                        raw_input=raw_input,
+                        router=router_result.model_dump() if router_result else None,
+                        knowledge=knowledge_summary,
+                        program=program,
+                        stop_requested=esc_stop.requested if esc_stop.enabled else None,
+                        phone=phone,
+                    )
+                if result:
+                    if program is not None:
+                        # Orchestrator mode: the answer is the interpreter's reply (finish /
+                        # auto-summary from the program's persisted reads), not a re-derivation
+                        # from content_notes — that's the whole point of the structured program.
+                        output = result.get("result_summary") or "（编排器未产生答复）"
+                    else:
+                        # Reply to the user's ORIGINAL input (parity with chat, which
+                        # passes user_msg) rather than the router-rewritten goal.
+                        output = generate_reply(
+                            raw_input,
+                            result,
+                            content_notes=result.get("content_notes"),
+                            collection_context=result.get("collection_context"),
+                        )
+                    print("\n" + "=" * 50)
+                    print("最终输出")
+                    print("=" * 50)
+                    print(output.rstrip())
+                    print("=" * 50)
+                    # Persist the final reply and structured run state so the HTML report can render it.
+                    try:
+                        write_final_run_state(context_path, result, output)
+                    except Exception as exc:
+                        print(f"（输出未写入 context: {exc}）")
+
+                # Auto-generate HTML report
+                if (log_dir / "context.json").exists():
+                    try:
+                        from scripts.report_builder import RunnerReportBuilder, save_report
+                        report_data = RunnerReportBuilder().build(log_dir)
+                        report_path = save_report(report_data, log_dir / "report.html")
+                        print(f"\nReport  : {report_path}")
+                    except Exception as exc:
+                        print(f"\nReport  : 生成失败 ({exc})")
+            finally:
+                if hud:
+                    hud.close()

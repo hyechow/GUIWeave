@@ -283,6 +283,61 @@ _KNOWN_APP_NAMES: list[str] = [
 ]
 
 
+def match_app_by_url(url: str, platform: str = "iphone") -> str | None:
+    """Match a front-tab URL to a known app by the entry-URL host in its _deploy.md.
+
+    The IP:port in a browser URL (e.g. http://192.168.31.57:22000/map/list) is opaque to an
+    LLM; this maps it to the app's directory name (e.g. 'RoboTeam') by exact host+port first,
+    then by a unique port fallback for Docker redirects such as localhost:7780. Returns None
+    when the URL doesn't match any known app (e.g. a Google new-tab page), the port is
+    ambiguous, or the platform has no url-keyed knowledge (iphone/android). Gives
+    router/decompose a semantic site name instead of a bare IP.
+    """
+    from urllib.parse import urlparse
+
+    if not url:
+        return None
+    try:
+        cur = urlparse(url)
+        cur_host = (cur.netloc or "").lower()
+        cur_name = (cur.hostname or "").lower()
+        cur_port = cur.port
+    except Exception:
+        return None
+    if not cur_host:
+        return None
+    platform_dir = KNOWLEDGE_DIR / platform
+    if not platform_dir.is_dir():
+        return None
+    port_matches: list[str] = []
+    for d in sorted(platform_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        deploy = d / "_deploy.md"
+        if not deploy.is_file():
+            continue
+        try:
+            text = deploy.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for m in re.finditer(r"https?://[^\s）)、,，。；;]+", text):
+            parsed = urlparse(m.group(0))
+            entry_host = (parsed.netloc or "").lower()
+            if entry_host and entry_host == cur_host:
+                return d.name
+            try:
+                entry_port = parsed.port
+            except ValueError:
+                entry_port = None
+            if (
+                cur_port is not None
+                and cur_name in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+                and entry_port == cur_port
+            ):
+                port_matches.append(d.name)
+    return port_matches[0] if len(set(port_matches)) == 1 else None
+
+
 def list_known_apps(platform: str = "iphone") -> list[str]:
     """App names with a knowledge dir under knowledge/<platform>/.
 

@@ -18,7 +18,7 @@ the browser is the user's CDP-attached Chrome (bin/launch_chrome_cdp).
 Usage:
   AGENT_PLATFORM is forced to "browser" here.
   uv run python -m gui_agent.adapters.browser.webarena \
-      --tasks-file output/tasks.json --task-id 124 \
+      --tasks-file webarena-verified/output/shopping_hard_tasks.json --task-id 124 \
       --task-output-dir webarena-verified/output/shopping_run/124 \
       --storage-state webarena-verified/output/shopping_run/124/.storage_state.json
 

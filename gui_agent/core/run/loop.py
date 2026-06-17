@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from contextlib import nullcontext
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -241,6 +242,7 @@ def run_agent_loop(
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
     program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
+    phone: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
 ) -> dict:
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
 
@@ -349,17 +351,22 @@ def run_agent_loop(
         _save_ctx()
 
     # Pre-session environment check (mirror open / CDP up / adb+ADBKeyboard ready). Runs
-    # ONCE here, before the session opens, so a blocking precondition aborts with a clear
-    # message instead of crashing deep inside connect. Any one-time setup a platform needs
-    # (android switching the IME to ADBKeyboard) happens inside the check.
-    setup = bundle.setup_check()
-    for _line in setup.lines:
-        _say(_line)
-    if not setup.ok:
-        _say(f"\n环境检查未通过：{setup.summary}")
-        return _finish(_make_result(context, f"环境检查未通过：{setup.summary}"))
+    # ONCE here before the session opens — UNLESS the caller already opened `phone` (the
+    # runner pre-opens it so router/decompose can see the current front-tab url; see cli.py).
+    # Any one-time setup a platform needs (android switching the IME to ADBKeyboard) happens
+    # inside the check.
+    if phone is None:
+        setup = bundle.setup_check()
+        for _line in setup.lines:
+            _say(_line)
+        if not setup.ok:
+            _say(f"\n环境检查未通过：{setup.summary}")
+            return _finish(_make_result(context, f"环境检查未通过：{setup.summary}"))
+        session_cm = bundle.open_session()
+    else:
+        session_cm = nullcontext(phone)
 
-    with bundle.open_session() as phone:
+    with session_cm as phone:
         executor = bundle.make_executor(phone)
         # Optional action visualizer (cursor/overlay). None when the platform has
         # none (iphone today); show_action is called best-effort before each
