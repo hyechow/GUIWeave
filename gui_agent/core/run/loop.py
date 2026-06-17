@@ -115,11 +115,11 @@ def run_agent_loop(
     on_turn: object = None,  # callable(entry: dict) called after each turn
     raw_input: str | None = None,  # original human input; defaults to `prompt` (bin/runner)
     router: dict | None = None,    # RouterResult dict (chat path); None for bin/runner
-    on_session_open: object = None,  # callable(phone) run once after session open, before the loop
+    on_session_open: object = None,  # callable(platform) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
     program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
-    phone: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
+    platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
 ) -> dict:
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
 
@@ -201,11 +201,11 @@ def run_agent_loop(
         _save_ctx()
 
     # Pre-session environment check (mirror open / CDP up / adb+ADBKeyboard ready). Runs
-    # ONCE here before the session opens — UNLESS the caller already opened `phone` (the
+    # ONCE here before the session opens — UNLESS the caller already opened `platform` (the
     # runner pre-opens it so router/decompose can see the current front-tab url; see cli.py).
     # Any one-time setup a platform needs (android switching the IME to ADBKeyboard) happens
     # inside the check.
-    if phone is None:
+    if platform is None:
         setup = bundle.setup_check()
         for _line in setup.lines:
             _say(_line)
@@ -214,14 +214,14 @@ def run_agent_loop(
             return _finish(_make_result(context, f"环境检查未通过：{setup.summary}"))
         session_cm = bundle.open_session()
     else:
-        session_cm = nullcontext(phone)
+        session_cm = nullcontext(platform)
 
-    with session_cm as phone:
-        executor = bundle.make_executor(phone)
+    with session_cm as platform:
+        executor = bundle.make_executor(platform)
         # Optional action visualizer (cursor/overlay). None when the platform has
         # none (iphone today); show_action is called best-effort before each
         # execute and must never raise into the loop.
-        visualizer = bundle.make_action_visualizer(phone)
+        visualizer = bundle.make_action_visualizer(platform)
 
         def _flash(a) -> None:
             # Best-effort cursor/overlay flash before executing `a`; never raises into
@@ -235,18 +235,18 @@ def run_agent_loop(
         # One-shot post-open hook (before the first observe): lets a caller prime
         # the just-connected session — e.g. the WebArena entry injects auth cookies,
         # starts HAR capture and navigates to the task start_url. Runs on the neutral
-        # `phone` (device at phone.client); default None keeps iphone/chat untouched.
+        # `platform` (device at platform.client); default None keeps iphone/chat untouched.
         # NOT wrapped in try: an opt-in caller wants a failed prime (bad cookies /
         # unreachable start_url) to surface, not run the task in a wrong state.
         if on_session_open is not None and callable(on_session_open):
-            on_session_open(phone)
+            on_session_open(platform)
 
         # If the device exposes its exact window rect (browser via CDP), pin the HUD
         # into that window now that we are connected — the pre-connect CGWindowList
         # guess can pick the wrong same-named Chrome window. Same placement helper as
         # the factory (centered, ≈ iOS dock height), so the position is consistent.
         if hud is not None and hasattr(hud, "reposition"):
-            _client = getattr(phone, "client", None)
+            _client = getattr(platform, "client", None)
             _wb = _client.window_bounds() if hasattr(_client, "window_bounds") else None
             if _wb:
                 from gui_agent.core.ui.hud import dock_rect
@@ -283,7 +283,7 @@ def run_agent_loop(
                 notes_mark=_notes_mark,
                 interpreter_steps=_gen,
                 bundle=bundle,
-                phone=phone,
+                platform=platform,
                 log_dir=log_dir,
                 supervisor=supervisor,
                 context=context,
@@ -341,7 +341,7 @@ def run_agent_loop(
             # on, preserving transient hints + saving a screenshot) is now done WITHIN the turn
             # by the decision-phase loop below — it no longer crosses a turn boundary.
             _status(turn_no, "截图分析中…")
-            perception = bundle.make_perception(phone, log_dir / f"screenshot_turn_{turn_no}.png")
+            perception = bundle.make_perception(platform, log_dir / f"screenshot_turn_{turn_no}.png")
             observation = perception.observe()
             # YOLO + OCR run in the background, overlapping the decide below;
             # awaited just before execute (snap) so they add ~no latency.
@@ -488,7 +488,7 @@ def run_agent_loop(
                 supervisor=supervisor,
                 executor=executor,
                 bundle=bundle,
-                phone=phone,
+                platform=platform,
                 prep_future=prep_future,
                 log_dir=log_dir,
                 turn_no=turn_no,
@@ -573,7 +573,7 @@ def run_agent_loop(
                     turn=turn,
                     branch_settle_s=branch_settle_s,
                     action_decision=action_decision,
-                    phone=phone,
+                    platform=platform,
                     observation_png=observation.png_bytes,
                     verify_future=verify_future,
                     say=_say,

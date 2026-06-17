@@ -168,7 +168,7 @@ class BaseAction(BaseModel):
                     data["description"] = f"执行{action_type}操作"
             # NOTE: the iPhone status-bar / home-indicator dead-zone clamp that
             # used to live here moved into the iphone executor (S3) — it is a
-            # phone-screen concern and must NOT apply to other platforms (it was
+            # device-screen concern and must NOT apply to other platforms (it was
             # mis-clicking the top/bottom of web pages on the browser adapter).
         return data
 

@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 
 
 # ===========================================================================
-# Device — platform-neutral I/O backend (phone.client)
+# Device — platform-neutral I/O backend (platform.client)
 # ===========================================================================
 @runtime_checkable
 class Device(Protocol):
@@ -172,7 +172,7 @@ class ZeroPreemptDevice(Protocol):
 @runtime_checkable
 class PerceptionSession(Protocol):
     """The neutral perception/lifecycle surface core orchestration holds as
-    ``phone``.
+    the platform session.
 
     Satisfied structurally (zero changes) by
     ``gui_agent/perception.py:LivePhoneSession``, which already provides

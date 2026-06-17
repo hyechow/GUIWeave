@@ -37,7 +37,7 @@ def drive_pending_non_ui(
     notes_mark: int,
     interpreter_steps: Any,
     bundle: Any,
-    phone: Any,
+    platform: Any,
     log_dir: Path,
     supervisor: Any,
     context: PolicyContext,
@@ -57,7 +57,7 @@ def drive_pending_non_ui(
         nonlocal obs, frame, tables, obs_url
         if obs is None:
             obs_url = f"screenshot_read_{run_index}.png"
-            obs = bundle.make_perception(phone, log_dir / obs_url).observe()
+            obs = bundle.make_perception(platform, log_dir / obs_url).observe()
             frame = getattr(obs, "png_bytes", None)
             tables = getattr(obs, "tables", None)
         return obs

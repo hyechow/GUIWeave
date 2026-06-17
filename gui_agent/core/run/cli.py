@@ -117,13 +117,13 @@ def main(
     # router 和 decompose 过去都在 device 连接前跑(router_prompt.py 自己都写「默认在当前已打开
     # 的页面」却根本不知是哪个),连截图都没有(DSL decompose 在 cli、连接在 loop)。现在提前连接、
     # observe 一次,把 url 注入 router/decompose(截图看不到地址栏,以此 url 为 ground truth),再把
-    # 已开的 session 传给 run_agent_loop 复用(loop 见 phone 非空就跳过自己的 setup_check/open_session)。
+    # 已开的 session 传给 run_agent_loop 复用(loop 见 platform 非空就跳过自己的 setup_check/open_session)。
     setup = bundle.setup_check()
     if not setup.ok:
         print(f"环境检查未通过：{setup.summary}")
         return
 
-    with bundle.open_session() as phone:
+    with bundle.open_session() as platform:
         cur_url = ""
         cur_title = ""
         initial_png = None
@@ -131,7 +131,7 @@ def main(
         cur_site = ""  # init OUTSIDE the try: an observe() failure must not leave it unbound
         try:
             initial_obs = bundle.make_perception(
-                phone, log_dir / "screenshot_initial.png"
+                platform, log_dir / "screenshot_initial.png"
             ).observe()
             cur_url = initial_obs.url or ""
             cur_title = initial_obs.title or ""
@@ -273,7 +273,7 @@ def main(
                         knowledge=knowledge_summary,
                         program=program,
                         stop_requested=esc_stop.requested if esc_stop.enabled else None,
-                        phone=phone,
+                        platform=platform,
                     )
                 if result:
                     if program is not None:

@@ -428,8 +428,8 @@ def main() -> int:
 
         recorder_holder: dict = {}
 
-        def _prime(phone) -> None:
-            device = phone.client
+        def _prime(platform) -> None:
+            device = platform.client
             # 1) auth: inject cookies (raw CDP) — no headless ui_login.
             if args.storage_state:
                 print("[webarena]", device.load_cookies(str(args.storage_state)))
@@ -455,9 +455,9 @@ def main() -> int:
             else:
                 program = None
                 run_max_turns = args.max_turns
-                with bundle.open_session() as phone:
-                    _prime(phone)
-                    device = getattr(phone, "client", None)
+                with bundle.open_session() as platform:
+                    _prime(platform)
+                    device = getattr(platform, "client", None)
                     if device is not None and hasattr(device, "wait_settled"):
                         try:
                             device.wait_settled("navigate")
@@ -472,7 +472,7 @@ def main() -> int:
                         initial_tables = None
                         try:
                             initial_obs = bundle.make_perception(
-                                phone, log_dir / "screenshot_initial.png"
+                                platform, log_dir / "screenshot_initial.png"
                             ).observe()
                             cur_url = initial_obs.url or ""
                             cur_title = initial_obs.title or ""
@@ -538,7 +538,7 @@ def main() -> int:
                         router=None,
                         knowledge=knowledge_summary,
                         program=program,
-                        phone=phone,
+                        platform=platform,
                     )
 
             # ----- post-run artifacts -----

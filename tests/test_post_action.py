@@ -70,7 +70,7 @@ def test_finalize_auto_continue_turn_reuses_branch_settle():
         turn=turn,
         branch_settle_s=0.4,
         action_decision=None,
-        phone=object(),
+        platform=object(),
         observation_png=b"png",
         verify_future=future,
         say=messages.append,
@@ -89,9 +89,9 @@ def test_finalize_auto_continue_turn_passes_tap_center(monkeypatch):
     decision = BaseActionDecision(action=action)
     captured = {}
 
-    def fake_settle(phone, png, action_type, focus_y=None, *, center=None):
+    def fake_settle(platform, png, action_type, focus_y=None, *, center=None):
         captured.update({
-            "phone": phone,
+            "platform": platform,
             "png": png,
             "action_type": action_type,
             "focus_y": focus_y,
@@ -100,20 +100,20 @@ def test_finalize_auto_continue_turn_passes_tap_center(monkeypatch):
         return 1.2, True
 
     monkeypatch.setattr(action_exec, "settle_after_action", fake_settle)
-    phone = object()
+    platform = object()
 
     action_exec.finalize_auto_continue_turn(
         turn=turn,
         branch_settle_s=None,
         action_decision=decision,
-        phone=phone,
+        platform=platform,
         observation_png=b"png",
         verify_future=None,
         say=lambda _message: None,
     )
 
     assert captured == {
-        "phone": phone,
+        "platform": platform,
         "png": b"png",
         "action_type": "tap",
         "focus_y": None,

@@ -23,7 +23,7 @@ SETTLE_GESTURE_FIRST_S = 0.3
 
 
 def settle_after_action(
-    phone: object,
+    platform: object,
     pre_frame: bytes | None,
     action_type: str | None = None,
     focus_y: float | None = None,
@@ -31,7 +31,7 @@ def settle_after_action(
 ) -> tuple[float, bool]:
     """Wait until the screen changed and settled, or hit the cap."""
     if action_type not in ("drag", "scroll"):
-        cdp_settle = getattr(phone, "wait_settled", None)
+        cdp_settle = getattr(platform, "wait_settled", None)
         if cdp_settle is not None:
             try:
                 return cdp_settle(action_type)
@@ -43,7 +43,7 @@ def settle_after_action(
         for i in range(1, SETTLE_MAX_UNITS + 1):
             time.sleep(SETTLE_GESTURE_FIRST_S if i == 1 else SETTLE_UNIT_S)
             try:
-                cur = phone.screenshot()
+                cur = platform.screenshot()
             except Exception:
                 elapsed = time.perf_counter() - started
                 print(f"  [Settle] {elapsed:.1f}s ({i} 轮，截图异常提前返回)")
@@ -63,11 +63,11 @@ def settle_after_action(
         return elapsed, False
     prev: bytes | None = None
     ever_changed = False
-    pop_tab = getattr(phone, "pop_tab_switched", None)
+    pop_tab = getattr(platform, "pop_tab_switched", None)
     for i in range(1, SETTLE_MAX_UNITS + 1):
         time.sleep(SETTLE_FIRST_S if i == 1 else SETTLE_UNIT_S)
         try:
-            cur = phone.screenshot()
+            cur = platform.screenshot()
         except Exception:
             elapsed = time.perf_counter() - started
             print(f"  [Settle] {elapsed:.1f}s ({i} 轮，截图异常提前返回)")
@@ -129,7 +129,7 @@ class ActionExecutionState:
         supervisor,
         executor,
         bundle,
-        phone,
+        platform,
         prep_future: Future,
         log_dir: Path,
         turn_no: int,
@@ -186,7 +186,7 @@ class ActionExecutionState:
                 observation=observation,
                 executor=executor,
                 bundle=bundle,
-                phone=phone,
+                platform=platform,
                 flash=flash,
                 say=say,
             )
@@ -202,7 +202,7 @@ class ActionExecutionState:
                 observation=observation,
                 executor=executor,
                 bundle=bundle,
-                phone=phone,
+                platform=platform,
                 log_dir=log_dir,
                 turn_no=turn_no,
                 flash=flash,
@@ -280,7 +280,7 @@ class ActionExecutionState:
         observation: Observation,
         executor,
         bundle,
-        phone,
+        platform,
         flash: Callable[[Any], None],
         say: Callable[[str], None],
     ) -> None:
@@ -299,11 +299,11 @@ class ActionExecutionState:
             executor.execute(ActionDecision(action=cached), app_name=sv_step.app_name or "")
 
         result.branch_settle_s, _ = settle_after_action(
-            phone,
+            platform,
             observation.png_bytes,
             cached.action_type,
         )
-        after_png = phone.screenshot()
+        after_png = platform.screenshot()
         cshift, _ = bundle.robust_shift(
             bundle.gray_u8(observation.png_bytes),
             bundle.gray_u8(after_png),
@@ -328,14 +328,14 @@ class ActionExecutionState:
         observation: Observation,
         executor,
         bundle,
-        phone,
+        platform,
         log_dir: Path,
         turn_no: int,
         flash: Callable[[Any], None],
         say: Callable[[str], None],
     ) -> None:
         flash(action)
-        probe = bundle.make_scroll_probe(phone, executor, log_dir)
+        probe = bundle.make_scroll_probe(platform, executor, log_dir)
         probe_result = probe.probe(observation.png_bytes, action, turn_no=turn_no)
         if probe_result.success and probe_result.profile:
             self.scroll_profiles[profile_key] = probe_result.profile
@@ -379,7 +379,7 @@ def finalize_auto_continue_turn(
     turn,
     branch_settle_s: float | None,
     action_decision: Any,
-    phone,
+    platform,
     observation_png: bytes,
     verify_future: Future | None,
     say: Callable[[str], None],
@@ -407,7 +407,7 @@ def finalize_auto_continue_turn(
             else None
         )
         turn.settle_s, turn.no_effect = settle_after_action(
-            phone,
+            platform,
             observation_png,
             settle_action_type,
             settle_focus_y,
