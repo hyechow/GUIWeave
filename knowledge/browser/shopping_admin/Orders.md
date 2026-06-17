@@ -17,8 +17,11 @@ show or export `Customer Email`, `Customer Name`, and `Status`, then count rows
 per email yourself. The Orders grid does not provide built-in aggregation/group
 by/customer-count controls; it only supports filtering, sorting, pagination,
 column selection, and export. For "completed" order-count tasks, filter
-`Status = Complete`; for "any state" tasks, do not apply a status filter. Do not
-assume the Customers grid exposes a reliable `Total Orders` column.
+`Status = Complete`; for "any state" tasks, do not apply a status filter and
+clear any existing `Active filters` first (click `Clear all` if it is visible),
+because Magento Admin can retain the last grid filter across tasks/browser
+sessions. Do not assume the Customers grid exposes a reliable `Total Orders`
+column.
 
 For tasks phrased as "customer email(s) who completed the most/second/fifth
 number of orders" or "customer email(s) who have N orders", use this Orders grid
@@ -30,7 +33,10 @@ does not reliably expose total order counts. After the complete raw rows are
 available, use a data query or deterministic local aggregation: group by
 `Customer Email`, count rows, rank the distinct counts when the task says most /
 second / fifth, and return all emails tied at the requested rank. For "have N
-orders", return emails whose count is exactly N, not greater-than-or-equal N.
+orders", return emails whose count is exactly N, not greater-than-or-equal N. If
+the task says "any state", the Orders grid must have no active status filter
+before counting; a visible `Status: Complete` active filter means the data source
+is wrong until `Clear all` is clicked.
 
 If downloads/exports are not allowed, collect the raw rows by combining grid
 pagination with within-page vertical scrolling. This is not infinite-scroll

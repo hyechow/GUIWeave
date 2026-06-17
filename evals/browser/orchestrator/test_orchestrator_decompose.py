@@ -568,6 +568,42 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "any-state order-count 任务不应筛选 Status = Complete，应统计所有状态订单，"
                     f"当前出现 complete status 过滤: {[(r.kind, r.name) for r in seq]}"
                 )
+        elif assertion == "shopping_admin_any_state_order_count_clears_active_filters":
+            seq = _flatten_runs(program.statements)
+            clear_step = False
+            for r in seq:
+                text = f"{r.kind} {r.name} {r.success_condition} {r.read_spec}".lower()
+                if not any(marker in text for marker in (
+                    "active filter",
+                    "active filters",
+                    "clear all",
+                    "clear filters",
+                    "清除",
+                    "清空",
+                    "筛选",
+                    "过滤",
+                )):
+                    continue
+                clears = any(marker in text for marker in (
+                    "clear all",
+                    "clear filters",
+                    "no active filters",
+                    "没有 active filters",
+                    "无 active filters",
+                    "没有筛选",
+                    "无筛选",
+                    "清除",
+                    "清空",
+                ))
+                if clears:
+                    clear_step = True
+                    break
+            if not clear_step:
+                details.append(
+                    "any-state order-count 任务必须先确保 Orders grid 没有继承的 Active filters"
+                    "（例如上一任务留下的 Status: Complete）；应有 Clear all/清除筛选步骤。"
+                    f" seq={[(r.kind, r.name, r.success_condition) for r in seq]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

@@ -213,8 +213,9 @@
     "assertions": [
       "shopping_admin_order_count_uses_orders_grid_source",
       "shopping_admin_order_count_uses_data_query",
-      "shopping_admin_any_state_order_count_no_complete_filter"
+      "shopping_admin_any_state_order_count_no_complete_filter",
+      "shopping_admin_any_state_order_count_clears_active_filters"
     ],
-    "note": "回归 WebArena task 64 / logs/gui_agent/webarena/browser/20260617_145751：失败分解选择 Customers grid，并尝试依赖不可靠的 Total Orders 列。期望使用 Sales > Orders / Orders grid 作为原始订单行数据源，不加 Status = Complete 过滤，采集或导出完整行后 data_query 按 Customer Email 计数，返回 count exactly 2 的全部邮箱。"
+    "note": "回归 WebArena task 64 / logs/gui_agent/webarena/browser/20260617_145751：失败分解选择 Customers grid，并尝试依赖不可靠的 Total Orders 列。二次回归 logs/gui_agent/webarena/browser/20260617_211252：分解已用 Orders grid + data_query，但浏览器会话继承了 task 63 的 Active filters: Status Complete，导致 any-state 统计仍只数 completed orders。期望使用 Sales > Orders / Orders grid 作为原始订单行数据源，不加 Status = Complete 过滤，并先确保清掉已有 Active filters（如点击 Clear all），采集或导出完整行后 data_query 按 Customer Email 计数，返回 count exactly 2 的全部邮箱。"
   }
 ]

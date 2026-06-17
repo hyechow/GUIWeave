@@ -44,7 +44,7 @@ _SYSTEM = """\
 1. milestone 粒度：「搜关键词并进第一条结果」= 一个 navigation run，别拆成 输入→提交→点结果。
 2. 只在任务真有「读/查结果 → 据结果决定下一步」时才用 read/data_query + if；纯线性任务直接顺序 run，结尾可选 finish。
 3. read 是只读单帧数据提取：它不点任何东西、不滚动、不展开、不做验收（读不到=当没有），只把 returns 字段读出来。data_query 也是非 UI primitive，但它只处理结构化表格数据，适合聚合/排序/计数，不能替代导航、筛选或分页采集。**「触发某结果的操作」和「读取/查询该结果」必须分成两步**——先用 action/filter 触发，再用 read 或 data_query 获取结果。**每个 step 只面向「当前界面/当前视口已定位/已采集的数据」操作或读取**：read 读的是当前那一帧；data_query 查的是当前结构化表格快照。若目标按知识库应在当前页面，但当前截图/视口没有看到目标标题、表格或字段，**不要裸 read/data_query**；先加一个 navigation step 做页内定位（滚动到目标区、切换目标 tab、展开目标面板），success_condition 写「目标区标题/表格/字段已可见」，再 read/data_query。**首页/仪表盘上的汇总小部件（如 Last Search Terms、Bestsellers…）是摘要片段，必须按任务口径精确匹配**：若知识库/截图中存在与任务同名或同口径的区块（如 Top Search Terms），优先定位到这个精确区块；别把另一个摘要区（如 Last=按时间/最近）当成 Top=按热度/前 N。目标是表格里的 top/most/count/sort/group by 时，定位后优先写 data_query；若区块标题可见，用标题的 snake_case 作为表别名（如 top_search_terms），并用指标列排序（如 Uses→uses）。若改用列表/报表页回答「前 N 个 / 排名 / 热门」类问题，必须先确认或设置按目标指标列降序排序（如 Uses/Count/Sales），再 data_query；**不要假设报表默认前几行就是 Top**。**例外**：若任务明确要的就是非表格的当前可见首页文本/KPI（如『首页显示的今日销售额』），才直接 read。
-4. **聚合检索先选权威原始数据源**：遇到 count/sum/average/top/most/least/rank/second/fifth/have N/monthly/last N 等聚合或排名任务，先确认哪个页面/表格同时包含【过滤字段】【分组字段】【最终输出字段】。优先用包含完整原始行和最终输出字段的数据源（如订单行里同时有 Status 与 Customer Email），再 collection/export/分页采集完整行，最后 data_query 聚合。不要为了看起来有现成汇总就选缺最终字段的摘要报表或详情页；例如任务要 email(s)，而某报表只显示 customer name/count，就不能把它当主源，除非后续明确规划用可靠唯一键补齐 email。排名口径默认按【不同聚合值】排名并返回所有并列项：second most = count 排第二档的所有 email，不是排序后第二行。
+4. **聚合检索先选权威原始数据源**：遇到 count/sum/average/top/most/least/rank/second/fifth/have N/monthly/last N 等聚合或排名任务，先确认哪个页面/表格同时包含【过滤字段】【分组字段】【最终输出字段】。优先用包含完整原始行和最终输出字段的数据源（如订单行里同时有 Status 与 Customer Email），再 collection/export/分页采集完整行，最后 data_query 聚合。不要为了看起来有现成汇总就选缺最终字段的摘要报表或详情页；例如任务要 email(s)，而某报表只显示 customer name/count，就不能把它当主源，除非后续明确规划用可靠唯一键补齐 email。若任务口径是“any state / all states / 不限状态”，除了不新增状态筛选，还要先清掉页面已有的 Active filters（如点 Clear all），避免继承上一次会话的 Status=Complete 等过滤。排名口径默认按【不同聚合值】排名并返回所有并列项：second most = count 排第二档的所有 email，不是排序后第二行。
 5. 验收终态且有出处：只用任务、@引用文件或截图里出现的值，不编造系统生成的编号/名称（用特征描述）。
 6. read/data_query 的 returns 只提取用户最终需要的字段；排序/定位可借助辅助列（如 Uses、Count、Price），但用户没要求这些辅助值时，不要把它们放进返回值或最终答案。例如任务只问「top 2 search terms」，返回两个 search term 文本，不返回 `{term, uses}` 对象。
 7. 能一句话答复就用 finish 模板引用 read 值；否则可不写 finish。
@@ -84,6 +84,13 @@ _SYSTEM = """\
  {"op":"run","run_kind":"navigation","name":"进入 Sales > Orders 列表页","success_condition":"页面显示 Orders 列表"},
  {"op":"run","run_kind":"action","name":"设置筛选条件 Status = Complete","success_condition":"已提交 Status = Complete 筛选（具体统计由后续 data_query 判读）"},
  {"op":"run","run_kind":"data_query","var":"q","name":"查询完成订单数第二多的客户邮箱","returns":["customer_email"],"sql":"WITH counts AS (SELECT customer_email, COUNT(*) AS cnt FROM data WHERE lower(status) = 'complete' GROUP BY customer_email), ranked AS (SELECT customer_email, cnt, DENSE_RANK() OVER (ORDER BY cnt DESC) AS rnk FROM counts) SELECT customer_email FROM ranked WHERE rnk = 2 ORDER BY customer_email"},
+ {"op":"finish","message":"{q[customer_email]}"}]}
+
+示例（any-state 订单数，必须清掉已有筛选）——
+{"reasoning":"目标问 any state 中总订单数恰好为 2 的 customer email。进入 Orders 后可能继承上次任务的 Active filters（例如 Status: Complete），所以先确保无 Active filters：若看到 Clear all 就点击清除；若没有 Active filters 则该步已满足。随后对完整 Orders 行按 customer_email 计数，HAVING count=2。","goal":"Get customer email(s) who have 2 orders in any state in the entire history","steps":[
+ {"op":"run","run_kind":"navigation","name":"进入 Sales > Orders 列表页","success_condition":"页面显示 Orders 列表"},
+ {"op":"run","run_kind":"action","name":"清除 Orders 列表的 Active filters（如有）","success_condition":"Orders 列表没有 Active filters；若原先有筛选，已点击 Clear all 清除"},
+ {"op":"run","run_kind":"data_query","var":"q","name":"查询总订单数恰好为2的客户邮箱","returns":["customer_email"],"sql":"SELECT customer_email FROM data GROUP BY customer_email HAVING COUNT(*) = 2 ORDER BY customer_email"},
  {"op":"finish","message":"{q[customer_email]}"}]}
 """
 
