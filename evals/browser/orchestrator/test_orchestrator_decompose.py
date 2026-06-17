@@ -93,7 +93,7 @@ def _flatten_ifs(stmts: list) -> list[If]:
 
 
 def _confirm_read_actions(stmts: list) -> list[Run]:
-    """Action Runs immediately followed by a read Run — the confirm-read shape (rule 7).
+    """Action Runs immediately followed by a read Run — the confirm-read shape (rule 8).
     Adjacency is checked WITHIN each statement list, recursing into if-branches (same
     structural rule the engine's normalize_confirm_read_gates uses)."""
     out: list[Run] = []
@@ -156,7 +156,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
 
     for assertion in assertions:
         if assertion == "key_action_has_confirm_read":
-            # 规则7：会改状态/出结果的关键动作后要补一个 read 确认结果。判据=存在「action 紧跟
+            # 规则8：会改状态/出结果的关键动作后要补一个 read 确认结果。判据=存在「action 紧跟
             # read」的 confirm-read 对（否则结果只能靠会幻觉的 checker 判，正是要避免的）。
             if not cr_actions:
                 details.append(
@@ -276,7 +276,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     f"计数 read 前的 action 看不出是在按 review/best 搜索筛选: {[a.name for a, _ in action_pairs]}"
                 )
         elif assertion == "action_targets_read_entity":
-            # read-then-reference（规则8，回归 20260615_163258）。不验「出现了某种 {var[字段]} 形态」
+            # read-then-reference（规则10，回归 20260615_163258）。不验「出现了某种 {var[字段]} 形态」
             # （那只是 prompt 样式），而验整条**顺序不变量**：
             #   action(创建/识别实体) → read(读出该实体的标识，绑定 var) → 之后的 action 用同一 {var[字段]} 引用。
             # 163258 侥幸做对仅因列表只有一台、planner 从屏幕拿到了名字；有同类兄弟就指错。这里要求三段
@@ -363,7 +363,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # 成功）。两条不变量：
             #  A1 检测/读取之后、建单 action 之前要有 navigation（先到操作页：屏幕换走，read 读对页、
             #     action 不被上一步 stale ✓ 误判）。
-            #  A2 不读「*列表」字段去挑实体（集合索引表达不了，规则9 只接力单个实体；要操作的表单能选就在
+            #  A2 不读「*列表」字段去挑实体（集合索引表达不了，规则10 只接力单个实体；要操作的表单能选就在
             #     action 里选）。
             seq = _flatten_runs(program.statements)
 
@@ -392,7 +392,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             ]
             if list_reads:
                 details.append(
-                    f"read 了「*列表」字段去挑实体（集合索引表达不了，规则8 只接力单个实体）: {list_reads}"
+                    f"read 了「*列表」字段去挑实体（集合索引表达不了，规则10 只接力单个实体）: {list_reads}"
                 )
         elif assertion == "order_action_has_confirm_read":
             # 当前 Hard+ 任务（20260616_092555）已证明：连通后建单是一个长表单 action，
@@ -496,6 +496,78 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                         "不能读取报表默认前两行当作 Top。"
                         f" seq={[(r.kind, r.name, r.success_condition) for r in seq]}"
                     )
+        elif assertion == "shopping_admin_order_count_uses_orders_grid_source":
+            # WebArena shopping_admin order-count email tasks (#62/#63/#64): the source must
+            # be raw order rows, because the final output is Customer Email and the filter may
+            # be order Status. Customer Reports lack email, and Customers grid cannot be assumed
+            # to expose a reliable Total Orders column.
+            seq = _flatten_runs(program.statements)
+            text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} {getattr(r, 'sql', '')}"
+                for r in seq
+            ).lower()
+            orders_source = any(marker in text for marker in (
+                "sales > orders",
+                "sales -> orders",
+                "sales/orders",
+                "orders grid",
+                "orders list",
+                "orders 页面",
+                "订单列表",
+                "销售订单",
+            ))
+            if not orders_source:
+                details.append(
+                    "订单数聚合取 customer email(s) 应以 Sales > Orders / Orders grid 原始订单行为主源，"
+                    f"当前未看到 Orders grid 源: {[(r.kind, r.name) for r in seq]}"
+                )
+            bad_source = any(marker in text for marker in (
+                "order count report",
+                "order total report",
+                "customer reports",
+                "reports > customers",
+                "customer_reports",
+                "客户报表",
+                "total orders column",
+                "all customers",
+                "customers grid",
+                "客户列表",
+            ))
+            if bad_source:
+                details.append(
+                    "订单数聚合不应把 Customer Reports 或 Customers grid/Total Orders 当主源；"
+                    "这些源缺 Customer Email 或总订单数不可靠。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "shopping_admin_order_count_uses_data_query":
+            seq = _flatten_runs(program.statements)
+            if not any(r.kind == "data_query" for r in seq):
+                details.append(
+                    "订单数聚合应在采集/导出完整 Orders rows 后用 data_query 做 group/count/rank/tie，"
+                    f"当前没有 data_query: {[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "shopping_admin_completed_order_count_filters_complete":
+            seq = _flatten_runs(program.statements)
+            text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} {getattr(r, 'sql', '')}"
+                for r in seq
+            ).lower()
+            if "status" not in text or "complete" not in text:
+                details.append(
+                    "completed order-count 任务必须筛选/查询 Status = Complete 后再统计，"
+                    f"当前未看到 complete status 过滤: {[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "shopping_admin_any_state_order_count_no_complete_filter":
+            seq = _flatten_runs(program.statements)
+            text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} {getattr(r, 'sql', '')}"
+                for r in seq
+            ).lower()
+            if "status = complete" in text or "status='complete'" in text or "status=\"complete\"" in text:
+                details.append(
+                    "any-state order-count 任务不应筛选 Status = Complete，应统计所有状态订单，"
+                    f"当前出现 complete status 过滤: {[(r.kind, r.name) for r in seq]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

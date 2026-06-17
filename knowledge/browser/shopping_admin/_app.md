@@ -19,7 +19,7 @@
 *   **Product Reviews (list)**: 查看所有已发布或历史的产品评论记录。
 
 ### 销售与订单处理 (Sales)
-*   **Orders List (list)**: 所有销售订单的主列表，按状态追踪订单进度。
+*   **Orders List (list)**: 所有销售订单的主列表，按状态追踪订单进度。对于按订单历史统计 customer email(s) 的聚合任务（如 completed/any-state orders、most/second/fifth number of orders、have N orders），这是权威 UI 数据源：进入 **Sales > Orders**，按需筛选 `Status = Complete`，收集/导出完整订单行中的 `Customer Email`/`Status`，再用 data_query 做 group/count/rank/tie。不要优先走 Customer Reports 或 Customers grid 的 `Total Orders` 列。
 *   **Order Detail (detail/form)**: 单个订单的详情页，包含信息、发票、退款、发货及评论历史标签页。
 *   **Invoices List (list)**: 所有已生成的发票列表。
 *   **Invoice Detail (detail/form)**: 单个发票的编辑与打印详情页。

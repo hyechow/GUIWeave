@@ -5,6 +5,13 @@ when: 当需要查看指定时间范围内的客户活动、订单总额或订�
 
 Customer reports provide insight into customer activity during a specified time period or date range.
 
+Do not use Customer Reports as the primary source for WebArena tasks that ask for
+`customer email(s)` by total order count across the entire history, such as "most
+number of orders", "second most number of orders", or "have N orders". These
+tasks need the final output field `Customer Email` and often need exact
+group/count/rank/tie handling. Prefer **Sales > Orders** and aggregate complete
+Orders grid/export rows by `Customer Email`.
+
 ## WebArena seeded data range
 
 In WebArena shopping_admin, customer reports can show **No records found** before a date

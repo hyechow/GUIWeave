@@ -1,5 +1,5 @@
 ---
-when: 当需要查看、创建或编辑订单，以及管理 Orders 网格布局和视图时查阅本节
+when: 当需要查看、创建或编辑订单，管理 Orders 网格布局和视图，或按订单历史统计 customer email(s)、completed/any-state orders、most/second/fifth number of orders、have N orders 等订单数聚合任务时查阅本节
 ---
 # Orders
 
@@ -19,6 +19,18 @@ by/customer-count controls; it only supports filtering, sorting, pagination,
 column selection, and export. For "completed" order-count tasks, filter
 `Status = Complete`; for "any state" tasks, do not apply a status filter. Do not
 assume the Customers grid exposes a reliable `Total Orders` column.
+
+For tasks phrased as "customer email(s) who completed the most/second/fifth
+number of orders" or "customer email(s) who have N orders", use this Orders grid
+as the primary UI source, not Customers grid and not Customer Reports. The reason
+is field coverage: Orders grid/export can provide both the filter field
+(`Status`) and the final grouping/output field (`Customer Email`), while Customer
+Reports usually show customer names and interval aggregates, and Customers grid
+does not reliably expose total order counts. After the complete raw rows are
+available, use a data query or deterministic local aggregation: group by
+`Customer Email`, count rows, rank the distinct counts when the task says most /
+second / fifth, and return all emails tied at the requested rank. For "have N
+orders", return emails whose count is exactly N, not greater-than-or-equal N.
 
 If downloads/exports are not allowed, collect the raw rows by combining grid
 pagination with within-page vertical scrolling. This is not infinite-scroll

@@ -11,7 +11,7 @@
       "confirm_read_action_uses_dispatch_gate",
       "read_has_spec"
     ],
-    "note": "回归 20260615_100753：分解产出 [navigation 进检测页 / action 设起终点并执行检测 / read 读连通状态 / finish]。结构对，但 action 验收抄了旧 prompt 示例的『检测结果（连通标记/不可达提示）已显示』——把结果判读塞回执行期 checker，与紧随其后的 read 双判同一个绿✓：T12 点检测即生效→T13 checker 看到绿✓却不信(『处理中』)→冗余重点击→T14 把同一个绿✓幻觉成『灰色问号』→replan/等待→T15 才 done，比应有多烧 2 帧。两帧截图核验绿✓常驻=非提示消失，是 checker 判读非确定性。根因=分解器 prompt 规则4(action 验收写结果终态)与规则7(confirm-read)对结果双判。修法分两层：L1 改 prompt(规则4加例外+示例改 dispatch 门，软)；L2 engine.normalize_confirm_read_gates 确定性兜底——凡 action 紧跟 read 就把验收改写成 dispatch 门(硬保证，词表无关，覆盖 create/submit/delete/检测全类)。本 case 测 L1 原始产出。"
+    "note": "回归 20260615_100753：分解产出 [navigation 进检测页 / action 设起终点并执行检测 / read 读连通状态 / finish]。结构对，但 action 验收抄了旧 prompt 示例的『检测结果（连通标记/不可达提示）已显示』——把结果判读塞回执行期 checker，与紧随其后的 read 双判同一个绿✓：T12 点检测即生效→T13 checker 看到绿✓却不信(『处理中』)→冗余重点击→T14 把同一个绿✓幻觉成『灰色问号』→replan/等待→T15 才 done，比应有多烧 2 帧。两帧截图核验绿✓常驻=非提示消失，是 checker 判读非确定性。根因=action success_condition 把结果写成终态，与规则8(confirm-read)对结果双判。修法分两层：L1 改 prompt(success_condition 加例外+示例改 dispatch 门，软)；L2 engine.normalize_confirm_read_gates 确定性兜底——凡 action 紧跟 read 就把验收改写成 dispatch 门(硬保证，词表无关，覆盖 create/submit/delete/检测全类)。本 case 测 L1 原始产出。"
   },
   {
     "label": "创建-confirm-read 撑腰的 action 应写 dispatch 门（泛化：非连通专用）",
@@ -36,7 +36,7 @@
     "assertions": [
       "auth_milestone_terminal_state"
     ],
-    "note": "两次登录卡死回归合一。①153314：登录建成『打开登录页』，验收=账号密码框——已登录回不去登录页，永不成立、死第一步。②162312：登录建成终态步了，但验收写成『首页主内容含机器人/订单监控卡片』——卡片要等地图上传(后面的步骤)才有，没数据时为空，循环依赖、仍不可达。【软信号·有生产兜底】「登录后长什么样」是 app 特定事实，已下放 per-app 知识库：RoboTeam _check.md 加了登录判据(看到左侧导航/功能页标题=已登录、无业务数据也算、且明确『验收门写成登录页/业务数据但已显示导航就判 done』)，checker 权威能盖过写错的登录门→生产不会卡死。decomposer 的 rule 8 已缩成通用原则(别写登录表单、别拿业务数据当标志，具体标志以应用知识为准)，不再枚举 app 特定标志。故本断言 FAIL = decompose 门可更干净(软)，不是生产 bug(同 confirm-read 由 L2 兜底)。断言仍查：登录 milestone 验收不得含 账号/密码/登录按钮，也不得含 卡片/监控/订单/统计。"
+    "note": "两次登录卡死回归合一。①153314：登录建成『打开登录页』，验收=账号密码框——已登录回不去登录页，永不成立、死第一步。②162312：登录建成终态步了，但验收写成『首页主内容含机器人/订单监控卡片』——卡片要等地图上传(后面的步骤)才有，没数据时为空，循环依赖、仍不可达。【软信号·有生产兜底】「登录后长什么样」是 app 特定事实，已下放 per-app 知识库：RoboTeam _check.md 加了登录判据(看到左侧导航/功能页标题=已登录、无业务数据也算、且明确『验收门写成登录页/业务数据但已显示导航就判 done』)，checker 权威能盖过写错的登录门→生产不会卡死。decomposer 的 rule 9 已缩成通用原则(别写登录表单、别拿业务数据当标志，具体标志以应用知识为准)，不再枚举 app 特定标志。故本断言 FAIL = decompose 门可更干净(软)，不是生产 bug(同 confirm-read 由 L2 兜底)。断言仍查：登录 milestone 验收不得含 账号/密码/登录按钮，也不得含 卡片/监控/订单/统计。"
   },
   {
     "label": "登录前置-已知当前站点和首页时应作为 precondition 而非重新登录（生产形态）",
@@ -67,7 +67,7 @@
       "read_has_spec",
       "action_targets_read_entity"
     ],
-    "note": "回归 20260615_163258 的数据流缺口。该 run 分解=[nav / action 新建+启用 / read 读实际名称(var=r,returns=[实际名称]) / action 编辑设站点 / read 确认]。read 确实把『实际名称=lucas-10003』读进了 env，但『编辑机器人…』那步是裸名词、没用 {r[实际名称]} 引用——planner 是从屏幕上拿到的名字(列表当时只有这一台)，不是从 m2 的 read 接力来的。所以数据流到了 if/finish/answer，却没到『下一步动作的目标选取』；列表里有同类兄弟就会指错，这次只是侥幸。修法=规则9『读了就引用』：后续 action 操作前面 read 识别出的系统生成实体时，name 用 {var[字段]} 引用，解释器(runner._fill)执行前用 env 真实值填好(『编辑机器人 {r[实际名称]}』→『编辑机器人 lucas-10003』)，精确指向该行。断言 action_targets_read_entity=存在某 action 的 name 含一个解析得到真实 read 字段的 {var[字段]} 引用。"
+    "note": "回归 20260615_163258 的数据流缺口。该 run 分解=[nav / action 新建+启用 / read 读实际名称(var=r,returns=[实际名称]) / action 编辑设站点 / read 确认]。read 确实把『实际名称=lucas-10003』读进了 env，但『编辑机器人…』那步是裸名词、没用 {r[实际名称]} 引用——planner 是从屏幕上拿到的名字(列表当时只有这一台)，不是从 m2 的 read 接力来的。所以数据流到了 if/finish/answer，却没到『下一步动作的目标选取』；列表里有同类兄弟就会指错，这次只是侥幸。修法=规则10『读了就引用』：后续 action 操作前面 read 识别出的系统生成实体时，name 用 {var[字段]} 引用，解释器(runner._fill)执行前用 env 真实值填好(『编辑机器人 {r[实际名称]}』→『编辑机器人 lucas-10003』)，精确指向该行。断言 action_targets_read_entity=存在某 action 的 name 含一个解析得到真实 read 字段的 {var[字段]} 引用。"
   },
   {
     "label": "连通检测门控建单-禁止幻觉新建机器人/编辑预设站点（回归 20260615_194320 幻觉造实体葬送整 run）",
@@ -94,7 +94,7 @@
       "order_action_has_confirm_read",
       "read_has_spec"
     ],
-    "note": "回归 20260615_211634（幻觉已修后暴露的下一层 bug）。这次分解干净(连通→if 连通→建单，无新建机器人幻觉)、连通也检测对了(是否连通=是)，但建单仍失败：THEN 分支是 read 机器人列表 → action 建单，全程没有『导航到机器人/订单页』。后果①read 落在连通检测面板上读『机器人名称列表』→ 读空；②建单 action 也留在连通面板上，它的 confirm-read 宽松 dispatch 门被上一步遗留的连通绿✓蹭中(『界面给出响应』)→ 未执行任何动作就被空判完成(静默假成功)→ 订单状态=失败。根因=read 读当前帧、action 操作当前帧，分解器漏了换页导航 + 误把规则9 套到集合(读列表挑『第1台』，集合索引表达不了)。修法两条 prompt：规则3 加上下文/导航保真(读某页数据/操作某页元素前先 navigation 到目标页)、规则9 收口(只接力单个实体，别读列表挑第N个)。断言：A1 连通检测之后、建单 action 之前要有 navigation；A2 不得 read『*列表』字段。注：导航保真 ~50% 软信号(decompose 通用可靠性)，没补导航时由 runtime _fill 的 fail-fast 兜底(读空→诚实报错，不再静默假成功)。"
+    "note": "回归 20260615_211634（幻觉已修后暴露的下一层 bug）。这次分解干净(连通→if 连通→建单，无新建机器人幻觉)、连通也检测对了(是否连通=是)，但建单仍失败：THEN 分支是 read 机器人列表 → action 建单，全程没有『导航到机器人/订单页』。后果①read 落在连通检测面板上读『机器人名称列表』→ 读空；②建单 action 也留在连通面板上，它的 confirm-read 宽松 dispatch 门被上一步遗留的连通绿✓蹭中(『界面给出响应』)→ 未执行任何动作就被空判完成(静默假成功)→ 订单状态=失败。根因=read 读当前帧、action 操作当前帧，分解器漏了换页导航 + 误把规则10 套到集合(读列表挑『第1台』，集合索引表达不了)。修法两条 prompt：规则3 加上下文/导航保真(读某页数据/操作某页元素前先 navigation 到目标页)、规则10 收口(只接力单个实体，别读列表挑第N个)。断言：A1 连通检测之后、建单 action 之前要有 navigation；A2 不得 read『*列表』字段。注：导航保真 ~50% 软信号(decompose 通用可靠性)，没补导航时由 runtime _fill 的 fail-fast 兜底(读空→诚实报错，不再静默假成功)。"
   },
   {
     "label": "条件操作符-empty-错误提示原文为空才继续",
@@ -178,5 +178,43 @@
       "read_has_spec"
     ],
     "note": "回归 WebArena task 42：目标是商店前 2 个搜索词（按热度 Top）。失败 run（20260617_134651/140640）的 decompose 被 dashboard 截图和知识库中的 Dashboard snapshot 描述误导，把当前视口里的 'Last Search Terms' 摘要小部件（按时间/最近）当成目标，产了裸 read（无前置 navigation/定位）→ 提交 ['tanks','nike']，官方 GT 为 ['hollister','joust bag']。后续 run（20260617_143128）已导航到 Search Terms Report，但直接读默认前两行，仍得到 ['tanks','nike']，说明报表默认顺序不能假定为 Top。期望形态：read 前必须先有 navigation，用于在当前 Dashboard 中滚动/定位到同口径的 Top Search Terms 区块；若使用 Search Terms Report，则必须先按 Uses/Count 降序排序再 read。read_spec 不得指向 Last Search Terms。截图 gitignore 不入库，缺失时 eval 自动 SKIP。"
+  },
+  {
+    "label": "WebArena shopping_admin order-count emails- completed second most uses Orders grid source (task 63)",
+    "goal": "Get customer email(s) who completed the second most number of orders in the entire history",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 2
+    },
+    "assertions": [
+      "shopping_admin_order_count_uses_orders_grid_source",
+      "shopping_admin_order_count_uses_data_query",
+      "shopping_admin_completed_order_count_filters_complete"
+    ],
+    "note": "回归 WebArena task 63 / logs/gui_agent/webarena/browser/20260617_145312：失败分解把 customer email(s) by completed order count 走成 Reports > Customers > Order Count，报表缺 Customer Email 且可能空，后续 data_query 只能在错误源上聚合。期望先进入 Sales > Orders / Orders grid，筛选 Status = Complete，采集或导出完整原始订单行，再用 data_query 按 Customer Email group/count，并按 distinct count 取 second-most，包含并列邮箱。"
+  },
+  {
+    "label": "WebArena shopping_admin order-count emails- any-state exact N uses Orders grid source (task 64)",
+    "goal": "Get customer email(s) who have 2 orders in any state in the entire history",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 2
+    },
+    "assertions": [
+      "shopping_admin_order_count_uses_orders_grid_source",
+      "shopping_admin_order_count_uses_data_query",
+      "shopping_admin_any_state_order_count_no_complete_filter"
+    ],
+    "note": "回归 WebArena task 64 / logs/gui_agent/webarena/browser/20260617_145751：失败分解选择 Customers grid，并尝试依赖不可靠的 Total Orders 列。期望使用 Sales > Orders / Orders grid 作为原始订单行数据源，不加 Status = Complete 过滤，采集或导出完整行后 data_query 按 Customer Email 计数，返回 count exactly 2 的全部邮箱。"
   }
 ]

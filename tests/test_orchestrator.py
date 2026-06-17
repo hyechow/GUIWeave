@@ -459,7 +459,7 @@ def test_if_branches_on_structured_reads_end_to_end():
 
 
 def test_run_text_templated_from_prior_read_reaches_executor_filled():
-    # read-then-reference (规则9/runner._fill, 回归 20260615_163258): an action authored as
+    # read-then-reference (规则10/runner._fill, 回归 20260615_163258): an action authored as
     # 『编辑机器人 {r[实际名称]}』must reach the per-milestone executor ALREADY filled with the
     # value a prior read captured (编辑机器人 lucas-10003) — so the planner targets the right
     # entity even when the list holds siblings, not just whatever single row is on screen.

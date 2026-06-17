@@ -152,7 +152,7 @@ class Interpreter:
     def _fill(self, run: Run) -> tuple[Run, list[str]]:
         """Resolve {var[field]} refs in a Run's text from env BEFORE it reaches the planner.
 
-        Read-then-reference (rule 9): an action the decomposer authored as『打开工单 {t[工单号]}』
+        Read-then-reference (rule 10): an action the decomposer authored as『打开工单 {t[工单号]}』
         becomes『打开工单 WO-2024-007』so it targets the concrete entity a prior read identified —
         robust even when the list holds siblings, not just the only-row-on-screen. Same templater
         as finish (_render); env is already populated because the read runs — and send()s its

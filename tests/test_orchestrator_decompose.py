@@ -195,6 +195,45 @@ def test_validate_data_query_requires_var_returns_and_sql():
     assert any("data_query" in i and "没有 sql" in i for i in validate_program(no_sql))
 
 
+def test_validate_ranked_data_query_rejects_limit_offset_tie_drop():
+    bad = Program(
+        goal="Get customer email(s) who completed the second most number of orders",
+        statements=[
+            Run(
+                var="q",
+                name="查询完成订单数第二多的客户邮箱",
+                kind="data_query",
+                returns=["customer_email"],
+                sql=(
+                    "SELECT customer_email FROM data WHERE status = 'Complete' "
+                    "GROUP BY customer_email ORDER BY COUNT(*) DESC LIMIT 1 OFFSET 1"
+                ),
+            )
+        ],
+    )
+    issues = validate_program(bad)
+    assert any("DENSE_RANK" in i and "并列" in i for i in issues)
+
+    good = Program(
+        goal=bad.goal,
+        statements=[
+            Run(
+                var="q",
+                name="查询完成订单数第二多的客户邮箱",
+                kind="data_query",
+                returns=["customer_email"],
+                sql=(
+                    "WITH counts AS (SELECT customer_email, COUNT(*) AS cnt FROM data "
+                    "WHERE lower(status) = 'complete' GROUP BY customer_email), "
+                    "ranked AS (SELECT customer_email, DENSE_RANK() OVER (ORDER BY cnt DESC) AS rnk FROM counts) "
+                    "SELECT customer_email FROM ranked WHERE rnk = 2 ORDER BY customer_email"
+                ),
+            )
+        ],
+    )
+    assert validate_program(good) == []
+
+
 def test_validate_walks_into_branches():
     # read 嵌在 then 分支里也能被识别为 cond 来源
     prog = Program(statements=[
