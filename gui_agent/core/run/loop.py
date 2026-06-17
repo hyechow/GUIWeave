@@ -39,6 +39,7 @@ from gui_agent.core.run.post_action import (
     finalize_auto_continue_turn,
     submit_target_verify,
 )
+from gui_agent.core.run.progress import evaluate_turn_progress
 from gui_agent.core.run.read_state import ReadState
 from gui_agent.core.run.terminal import finish_terminal_step
 from gui_agent.core.run.turns import (
@@ -570,48 +571,24 @@ def run_agent_loop(
                 if interrupted is not None:
                     return interrupted
 
-            if not executed and sv_step.should_act:
-                if probe_failed:
-                    noop_count += 1
-                    if noop_count >= 3:
-                        _say(f"\n连续 {noop_count} 轮滚动探测失败，agent-loop 停止")
-                        return _finish(_make_result(context, f"连续 {noop_count} 轮滚动探测失败"))
-                    _say("滚动探测失败，进入下一轮重新规划")
-                    continue
-                if action_decision and action_decision.not_found_reason:
-                    noop_count += 1
-                    if noop_count >= 3:
-                        _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                        return _finish(_make_result(context, f"连续 {noop_count} 轮无动作"))
-                    continue
-                # An action was produced but its execution failed — e.g. upload clicked a
-                # control that doesn't open a file chooser (log 20260616_220712 Turn4: the
-                # upload landed on the 导入地图文件 button, which opens a page modal, not the
-                # native chooser; device.upload_file then timed out waiting for one). This is
-                # the same "tried but didn't land" class as a tap's no-effect, so replan
-                # instead of halting. Only a genuinely empty action halts outright. Bounded by
-                # the noop_count>=3 stop below + max_turns, so it can't loop forever.
-                if action_decision is not None and getattr(action_decision, "action", None) is not None:
-                    noop_count += 1
-                    if noop_count >= 3:
-                        _say(f"\n连续 {noop_count} 轮动作执行失败，agent-loop 停止")
-                        return _finish(_make_result(context, f"连续 {noop_count} 轮动作执行失败"))
-                    _say("动作执行失败，进入下一轮重新规划")
-                    continue
-                return _finish(_make_result(context, "动作未执行，agent-loop 停止"))
-
-            if sv_step.milestone_id != prev_milestone_id:
-                noop_count = 0
-            prev_milestone_id = sv_step.milestone_id
-
-            if not sv_step.should_act:
-                noop_count += 1
-                if noop_count >= 3:
-                    _say(f"\n连续 {noop_count} 轮无动作，agent-loop 停止")
-                    return _finish(_make_result(context, f"连续 {noop_count} 轮无动作"))
+            progress = evaluate_turn_progress(
+                noop_count=noop_count,
+                prev_milestone_id=prev_milestone_id,
+                sv_step=sv_step,
+                executed=executed,
+                action_decision=action_decision,
+                probe_failed=probe_failed,
+            )
+            noop_count = progress.noop_count
+            prev_milestone_id = progress.prev_milestone_id
+            if progress.stop_reason:
+                if progress.stop_message:
+                    _say(progress.stop_message)
+                return _finish(_make_result(context, progress.stop_reason))
+            if progress.message:
+                _say(progress.message)
+            if progress.continue_loop:
                 continue
-
-            noop_count = 0
 
             if auto_continue:
                 finalize_auto_continue_turn(
