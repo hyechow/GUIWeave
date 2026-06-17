@@ -40,6 +40,7 @@ from gui_agent.core.run.post_action import (
     submit_target_verify,
 )
 from gui_agent.core.run.read_state import ReadState
+from gui_agent.core.run.terminal import finish_terminal_step
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
@@ -550,36 +551,19 @@ def run_agent_loop(
                 on_turn(_entry)
 
             if sv_step.stop or sv_step.goal_completed:
-                reason = sv_step.stop_reason or ("目标已达成" if sv_step.goal_completed else "agent-loop 停止")
-                # 收尾：先 drain 本轮后台读，再读出累积器剩余不足一屏的内容，避免末尾几行丢失。
-                read_state.drain_pending(say=_say)
-                read_state.flush(turn_no=turn_no, say=_say)
-                if sv_step.goal_completed:
-                    _say(f"\n目标已达成：{reason}")
-                else:
-                    _say(f"\n任务未完成：{reason}")
-                # ── DSL orchestrator mode: a milestone's SUCCESS (goal_completed) hand-off is
-                # merged into this turn by the decision-phase loop above, so reaching here means a
-                # STOP — the milestone gave up / failed. Package it as a failed run; the
-                # interpreter halts the program and we report. The DAG path (program is None) below
-                # is unchanged.
-                if program is not None:
-                    from gui_agent.core.orchestrator.engine import package_result
-                    _result = package_result(
-                        _cur_run, completed=False,
-                        summary=sv_step.summary or reason,
-                        notes=context.content_notes[_notes_mark:],
-                    )
-                    try:
-                        _cur_run = _gen.send(_result)
-                    except StopIteration as _e:  # a failed run always halts the interpreter
-                        return _finish(_orch_result(context, _interp, _e.value or ""))
-                    # Defensive: a failed run halts the interpreter above; if the contract ever
-                    # changes and it doesn't, summarize what we have rather than fall through.
-                    return _finish(_orch_result(context, _interp, sv_step.summary or reason, current=_cur_run))
-                if sv_step.goal_completed:
-                    return _finish(_make_result(context, reason, sv_step.collection_summary))
-                return _finish(_make_result(context, reason))
+                return finish_terminal_step(
+                    sv_step=sv_step,
+                    read_state=read_state,
+                    turn_no=turn_no,
+                    program=program,
+                    current_run=_cur_run,
+                    interpreter_steps=_gen,
+                    interpreter=_interp,
+                    context=context,
+                    notes_mark=_notes_mark,
+                    finish=_finish,
+                    say=_say,
+                )
 
             if not (executed and auto_continue):
                 interrupted = _stop_after_esc(turn_no)
