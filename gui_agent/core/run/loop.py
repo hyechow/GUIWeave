@@ -17,15 +17,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
-from gui_agent.core.run.content import (
-    STITCH_OVERLAP_PX,
-    ensure_note_hashes as _ensure_note_hashes,
-    flush_and_read as _flush_and_read,
-    note_hash as _note_hash,
-    store_chunk_note as _store_chunk_note,
-)
+from gui_agent.core.run.content import ensure_note_hashes as _ensure_note_hashes
 from gui_agent.core.runtime.factory import build_platform
-from gui_agent.core.llm.reader import ContentReader, build_reader_instruction
+from gui_agent.core.llm.reader import ContentReader
 from gui_agent.core.run.context import (
     extract_checker as _extract_checker,
     extract_plan as _extract_plan,
@@ -40,6 +34,7 @@ from gui_agent.core.run.result import (
     print_turn_stats as _print_turn_stats,
 )
 from gui_agent.core.run.non_ui import drive_pending_non_ui
+from gui_agent.core.run.read_state import ReadState
 from gui_agent.core.run.settle import (
     settle_after_action as _settle_after_action,
     snapped_point as _snapped_point,
@@ -69,7 +64,6 @@ if TYPE_CHECKING:
     # adapter at module top.
     from gui_agent.core.ui.hud import AgentHUD
     from gui_agent.adapters.iphone.scroll_probe import ScrollProfile
-    from gui_agent.adapters.iphone.stitch import StitchAccumulator
 
 TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 
@@ -193,39 +187,13 @@ def run_agent_loop(
         hud.set_goal(context.goal)
 
     reader = ContentReader()
+    read_state = ReadState(context=context, reader=reader, pool=_READER_POOL)
     original_goal = context.goal
     noop_count = 0
     loading_streak = 0
     prev_milestone_id: str | None = None
     scroll_profiles: dict[str, ScrollProfile] = {}
     scroll_probe_failures: dict[str, str] = {}
-    # 拼接采集状态：同一时刻只有一个采集子目标，故单个「当前累积器」即可。
-    stitch_acc: StitchAccumulator | None = None
-    stitch_acc_mid: str | None = None
-    stitch_acc_instr: str = ""
-    stitch_acc_sv = None
-    # 已采集行的精确哈希集合（跨 chunk + resume 去重）。resume 时从既有内容按行重建。
-    seen_rows: set[str] = set()
-    for _n in context.content_notes:
-        for _ln in _n.splitlines():
-            _s = _ln.strip()
-            if _s:
-                seen_rows.add(_note_hash(_s))
-
-    # 后台 reader 读取的待入库结果：(future→list[note], turn_no, sv_step)。在下一轮 read 块
-    # 开头 drain（此时它早已与动作/settle/下一轮 loop_check 重叠完成）。文本去重+入库都在主
-    # 线程做（仅 reader.read 的网络 I/O 在后台），避免 content_notes/seen_rows 并发写。
-    pending_read: tuple[Future, int, object] | None = None
-
-    def _drain_pending_read() -> None:
-        nonlocal pending_read
-        if pending_read is None:
-            return
-        fut, tno, sv = pending_read
-        pending_read = None
-        for note in fut.result():
-            if _store_chunk_note(note, context, seen_rows, turn_no=tno, sv_step=sv):
-                _say(f"内容摘要(块): {context.content_notes[-1][:80]}...")
 
     # The platform bundle is the single seam through which the agent loop obtains
     # the session, executor, perception and scroll/stitch helpers — no adapter
@@ -302,13 +270,10 @@ def run_agent_loop(
         _notes_mark = 0
 
         def _stop_after_esc(turn_no: int) -> dict | None:
-            nonlocal stitch_acc
             if not _stop_requested():
                 return None
-            _drain_pending_read()
-            _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
-                            context, seen_rows, turn_no=turn_no, say=_say)
-            stitch_acc = None
+            read_state.drain_pending(say=_say)
+            read_state.flush(turn_no=turn_no, say=_say)
             _say("\n收到 ESC：当前 turn 已收尾，agent-loop 安全停止")
             reason = "用户按 ESC 中止 agent-loop"
             if program is not None:
@@ -364,10 +329,8 @@ def run_agent_loop(
 
             turn_no = len(context.turns) + 1
             if _interactive_turn_count(context) + 1 > max_turns:
-                _drain_pending_read()
-                _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
-                                context, seen_rows, turn_no=turn_no - 1, say=_say)
-                stitch_acc = None
+                read_state.drain_pending(say=_say)
+                read_state.flush(turn_no=turn_no - 1, say=_say)
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
                 if program is not None:  # orchestrator: summarize the whole program so far
                     return _finish(_orch_result(context, _interp, f"达到最大轮数 {max_turns}（任务未完成）", current=_cur_run))
@@ -425,10 +388,8 @@ def run_agent_loop(
 
                 # Orchestrator milestone completed → hand off to the next milestone, same frame.
                 _done_name = _cur_run.name
-                _drain_pending_read()
-                _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
-                                context, seen_rows, turn_no=turn_no, say=_say)
-                stitch_acc = None
+                read_state.drain_pending(say=_say)
+                read_state.flush(turn_no=turn_no, say=_say)
                 from gui_agent.core.orchestrator.engine import package_result
                 _hand = package_result(
                     _cur_run, completed=True, summary=sv_step.summary or "完成",
@@ -499,7 +460,7 @@ def run_agent_loop(
                 supervisor._token_usage = _carry_token
 
             if _orch_reply is not None:
-                _drain_pending_read()
+                read_state.drain_pending(say=_say)
                 # The program ended on this hand-off (last actionable milestone done → read /
                 # finish). The merge only DROPS a verdict turn when it folds into a FOLLOWING
                 # action; the terminal milestone has none, so record its verdict turn here —
@@ -576,64 +537,16 @@ def run_agent_loop(
                     + json.dumps(context.collection_scope.model_dump(exclude_none=True), ensure_ascii=False)
                 )
 
-            read_added_content = False
-            read_note_hash = None
-
-            # 先把上一轮后台 reader 读好的内容入库（此时已与上一轮动作/settle + 本轮截图/
-            # loop_check 重叠完成，drain 几乎不等待 → 出块轮的 ~1.8s reader 被完全藏起）。
-            _drain_pending_read()
-
-            # 采集子目标切换 → 先 flush 上一个累积器的尾段（哪怕新子目标不采集，也别丢残留）。
-            cur_mid = sv_step.milestone_id or "_global"
-            if stitch_acc is not None and stitch_acc_mid != cur_mid:
-                _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
-                                context, seen_rows, turn_no=turn_no, say=_say)
-                stitch_acc = None
-                stitch_acc_mid = None
-
-            if sv_step.read_instruction and not sv_step.allow_read:
-                _say(
-                    "跳过读取入库: 当前阶段不允许采集 "
-                    f"({sv_step.milestone_kind}/{sv_step.completion_strategy})"
-                )
-            elif sv_step.read_instruction:
-                reader_instruction = build_reader_instruction(original_goal, sv_step)
-                if sv_step.completion_strategy == "scroll_until_boundary":
-                    # 多帧滚动采集：逐帧喂累积器拼接，几何去重；攒满约一屏才真正 reader 读，
-                    # chunk 间留 overlap 防切行。read_added_content=拼接是否推进，供边界判定。
-                    if stitch_acc is None:
-                        stitch_acc = bundle.make_stitch_accumulator(overlap_px=STITCH_OVERLAP_PX)
-                        stitch_acc_mid = cur_mid
-                    stitch_acc_instr = reader_instruction
-                    stitch_acc_sv = sv_step
-                    chunks, advanced = stitch_acc.feed(observation.png_bytes)  # ~25ms，内联
-                    read_added_content = advanced
-                    if chunks:
-                        # 后台读这些块（与动作/settle/下一轮 loop_check 重叠），下一轮 drain 入库。
-                        _say(f"读取内容: {reader_instruction}（{len(chunks)} 拼接块后台读, "
-                             f"待读 {stitch_acc.pending_px}px）")
-                        pending_read = (
-                            _READER_POOL.submit(
-                                lambda cs=chunks, ins=reader_instruction:
-                                    [reader.read(c, ins) for c in cs]
-                            ),
-                            turn_no, sv_step,
-                        )
-                    elif advanced:
-                        _say(f"拼接累积中（{stitch_acc.pending_px}px，未满一屏，暂不读）")
-                    else:
-                        _say("列表未推进（滚动无效/到底），不追加")
-                else:
-                    # 单帧读取（read_once / 普通 analysis，无滚动重叠问题）→ 立即读。
-                    _say(f"读取内容: {reader_instruction}")
-                    note = reader.read(observation.png_bytes, reader_instruction)
-                    if _store_chunk_note(note, context, seen_rows,
-                                         turn_no=turn_no, sv_step=sv_step):
-                        read_added_content = True
-                        read_note_hash = _note_hash(context.content_notes[-1])
-                        _say(f"内容摘要: {context.content_notes[-1][:80]}...")
-                    else:
-                        _say("内容摘要: 无新增/与已采集重复，未入库")
+            read_result = read_state.process_turn(
+                original_goal=original_goal,
+                sv_step=sv_step,
+                observation_png=observation.png_bytes,
+                bundle=bundle,
+                turn_no=turn_no,
+                say=_say,
+            )
+            read_added_content = read_result.added_content
+            read_note_hash = read_result.note_hash
 
             action_decision = None
             executed = False
@@ -803,10 +716,8 @@ def run_agent_loop(
             if sv_step.stop or sv_step.goal_completed:
                 reason = sv_step.stop_reason or ("目标已达成" if sv_step.goal_completed else "agent-loop 停止")
                 # 收尾：先 drain 本轮后台读，再读出累积器剩余不足一屏的内容，避免末尾几行丢失。
-                _drain_pending_read()
-                _flush_and_read(stitch_acc, stitch_acc_instr, stitch_acc_sv, reader,
-                                context, seen_rows, turn_no=turn_no, say=_say)
-                stitch_acc = None
+                read_state.drain_pending(say=_say)
+                read_state.flush(turn_no=turn_no, say=_say)
                 if sv_step.goal_completed:
                     _say(f"\n目标已达成：{reason}")
                 else:
