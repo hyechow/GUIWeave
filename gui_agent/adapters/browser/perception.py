@@ -6,8 +6,9 @@
 and detaches on ``__exit__`` (without closing the user's Chrome).
 
 ``BrowserPerception`` wraps the session's screenshot in an ``Observation`` with
-``source='browser'`` (satisfies ``Perception``). VISION-ONLY: pixels only, no
-element_tree / page_key — exactly like ``LivePerception``.
+``source='browser'`` (satisfies ``Perception``). The primary observation remains
+the screenshot; browser-only structural sensors add URL/title/form/table metadata
+when CDP can read them.
 """
 
 from __future__ import annotations
@@ -72,6 +73,13 @@ class BrowserSession:
             raise RuntimeError("浏览器尚未连接")
         return self.client.wait_settled(action_type)
 
+    def read_tables(self) -> list[dict]:
+        """Delegate to the browser's read-only DOM table snapshot sensor."""
+        if self.client is None:
+            return []
+        read = getattr(self.client, "read_tables", None)
+        return read() if read is not None else []
+
 
 
 class BrowserPerception:
@@ -104,7 +112,11 @@ class BrowserPerception:
         dom_state = None
         if client is not None and hasattr(client, "form_state_fingerprint"):
             dom_state = client.form_state_fingerprint()
+        tables = []
+        if client is not None and hasattr(client, "read_tables"):
+            tables = client.read_tables()
         return Observation(
             png_bytes=png_bytes, source="browser", loading=loading,
             url=url or None, title=title or None, dom_state=dom_state,
+            tables=tables or None,
         )

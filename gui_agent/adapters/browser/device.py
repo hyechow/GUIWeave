@@ -22,6 +22,7 @@ closing the user's browser.
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import threading
@@ -92,7 +93,7 @@ _SCROLL_PX_PER_AMOUNT = 120
 
 
 class PlaywrightDevice:
-    """Desktop-pointer web device over CDP. Vision-only; no DOM access here."""
+    """Desktop-pointer web device over CDP with optional read-only DOM sensors."""
 
     # Capability markers probed by core via hasattr/getattr (see contracts).
     # Browser scroll is real pointer-wheel; it is NOT zero-preempt (it drives the
@@ -455,6 +456,33 @@ class PlaywrightDevice:
         import hashlib
 
         return hashlib.md5(val.encode("utf-8")).hexdigest()[:16]
+
+    def read_tables(self) -> list[dict]:
+        """Return structured DOM table/grid snapshots from the current page.
+
+        This is a read-only perception sensor. It does not click, scroll, export,
+        or download; it only serializes rows already present in the live DOM.
+        """
+        from gui_agent.adapters.browser.table_reader import (
+            normalize_table_snapshots,
+            table_snapshot_js,
+        )
+
+        try:
+            self._follow_active_tab()
+            res = self._cdp_send(
+                "Runtime.evaluate",
+                {
+                    "expression": table_snapshot_js(),
+                    "returnByValue": True,
+                    "awaitPromise": True,
+                },
+            )
+            val = (res.get("result", {}) or {}).get("value")
+            raw = json.loads(val) if isinstance(val, str) else val
+            return normalize_table_snapshots(raw)
+        except Exception:
+            return []
 
     def eval_js(self, expression: str) -> object:
         """Best-effort JS eval via page.evaluate(). Used by the action visualizer.

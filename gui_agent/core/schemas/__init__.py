@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
@@ -260,6 +260,13 @@ class Observation(BaseModel):
             "平台感知层提供的页面交互状态指纹（如浏览器表单控件值+焦点的哈希）。"
             "逐字段填表时像素几乎不变、指令文本高度相似，但该指纹每轮都变——"
             "作为确定性进展信号抑制 stuck/重复误判（与 url 同模式）。None=该平台不提供。"
+        ),
+    )
+    tables: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "平台感知层提供的当前页面表格/网格结构快照（如浏览器 DOM table/grid）。"
+            "用于表格类 read 任务优先按行列读取，避免靠视觉滚动/OCR 对齐。None=该平台不提供或当前页无表格。"
         ),
     )
 
