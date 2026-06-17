@@ -6,7 +6,7 @@ import json
 import sys
 import time
 from contextlib import nullcontext
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,11 +35,11 @@ from gui_agent.core.run.result import (
 )
 from gui_agent.core.run.action_exec import ActionExecutionState
 from gui_agent.core.run.non_ui import drive_pending_non_ui
-from gui_agent.core.run.read_state import ReadState
-from gui_agent.core.run.settle import (
-    settle_after_action as _settle_after_action,
-    snapped_point as _snapped_point,
+from gui_agent.core.run.post_action import (
+    finalize_auto_continue_turn,
+    submit_target_verify,
 )
+from gui_agent.core.run.read_state import ReadState
 from gui_agent.core.run.turns import (
     interactive_turn_count as _interactive_turn_count,
     make_interactive_turn,
@@ -47,7 +47,6 @@ from gui_agent.core.run.turns import (
 from gui_agent.core.supervisor.base import SupervisorPolicy
 from gui_agent.core.llm.temporal import resolve_temporal_expressions
 from gui_agent.core.policies.base import ActionPolicy
-from gui_agent.core.vision.target_verify import verify_target
 from gui_agent.core.schemas import PolicyContext
 from gui_agent.core.run.state import (
     sync_context_run_state,
@@ -565,13 +564,13 @@ def run_agent_loop(
             # Post-action targeting verify: did the snapped tap land on target?
             # Submit now so it runs concurrently with the settle below; resolved
             # there and stored on the turn for the next turn's off_target check.
-            verify_future: Future | None = None
-            verify_point = _snapped_point(action_decision) if executed else None
-            if verify_point is not None and sv_step.instruction:
-                verify_future = _VERIFY_POOL.submit(
-                    verify_target, observation.png_bytes,
-                    verify_point[0], verify_point[1], sv_step.instruction,
-                )
+            verify_future = submit_target_verify(
+                action_decision=action_decision,
+                executed=executed,
+                sv_step=sv_step,
+                observation_png=observation.png_bytes,
+                pool=_VERIFY_POOL,
+            )
 
             turn = make_interactive_turn(
                 index=turn_no,
@@ -688,40 +687,15 @@ def run_agent_loop(
             noop_count = 0
 
             if auto_continue:
-                if branch_settle_s is not None:
-                    # 缓存滚动已在分支内 settle 过（为验证位移），不重复等待。
-                    turn.settle_s = branch_settle_s
-                else:
-                    _settle_act = action_decision.action if action_decision else None
-                    settle_action_type = _settle_act.action_type if _settle_act else None
-                    # type 是局部改动：把输入坐标的 y 传给 settle，只比输入行带、不被整帧稀释。
-                    settle_focus_y = (
-                        _settle_act.y
-                        if (_settle_act and settle_action_type == "type" and _settle_act.y is not None)
-                        else None
-                    )
-                    # tap 触发局部 UI 改动(菜单展开/下拉/勾选)：把点击点传给 settle，只看点击点附近
-                    # box，避免局部变化被整帧稀释成「零效果」而误触发 replan。
-                    settle_center = (
-                        (_settle_act.x, _settle_act.y)
-                        if (
-                            _settle_act and settle_action_type == "tap"
-                            and _settle_act.x is not None and _settle_act.y is not None
-                        )
-                        else None
-                    )
-                    turn.settle_s, turn.no_effect = _settle_after_action(
-                        phone, observation.png_bytes, settle_action_type, settle_focus_y,
-                        center=settle_center,
-                    )
-                if verify_future is not None:
-                    try:
-                        turn.target_verify = verify_future.result(timeout=8)
-                        tv = turn.target_verify
-                        if tv is not None and not tv.on_target:
-                            _say(f"  [TargetVerify] off_target：标记落在「{tv.actual_element}」")
-                    except Exception as e:
-                        _say(f"  [TargetVerify] 校验失败（忽略）：{e}")
+                finalize_auto_continue_turn(
+                    turn=turn,
+                    branch_settle_s=branch_settle_s,
+                    action_decision=action_decision,
+                    phone=phone,
+                    observation_png=observation.png_bytes,
+                    verify_future=verify_future,
+                    say=_say,
+                )
                 _save_ctx()  # 落盘 settle_s（+ target_verify）
                 interrupted = _stop_after_esc(turn_no)
                 if interrupted is not None:
