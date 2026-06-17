@@ -44,6 +44,31 @@ def test_execute_data_query_group_by_with_sanitized_columns():
     assert reads == {"emails": '["a@example.com", "b@example.com"]'}
 
 
+def test_execute_data_query_rewrites_quoted_source_labels():
+    reads = execute_data_query(
+        _orders_table(),
+        """
+        WITH order_counts AS (
+          SELECT "Customer Email" AS customer_email, COUNT(*) AS cnt
+          FROM data
+          WHERE "Status" != 'missing'
+          GROUP BY "Customer Email"
+        ),
+        ranked AS (
+          SELECT customer_email, cnt, DENSE_RANK() OVER (ORDER BY cnt DESC) AS rnk
+          FROM order_counts
+        )
+        SELECT customer_email
+        FROM ranked
+        WHERE rnk = 2
+        ORDER BY customer_email
+        """,
+        ["second_most"],
+    )
+
+    assert reads == {"second_most": "c@example.com"}
+
+
 def test_execute_data_query_supports_with_select():
     reads = execute_data_query(
         _orders_table(),

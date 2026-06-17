@@ -119,7 +119,9 @@ def test_table_schema_prompt_omits_row_values_and_shows_sql_names():
     )
 
     assert "top_search_terms" in hint
-    assert "Search Term->search_term" in hint
+    assert "sql columns: search_term, results, uses" in hint
+    assert 'search_term from "Search Term"' in hint
+    assert "Search Term->search_term" not in hint
     assert "hollister" not in hint
     assert "19" not in hint
 
@@ -193,6 +195,66 @@ def test_validate_data_query_requires_var_returns_and_sql():
     assert any("data_query" in i and "绑定 var" in i for i in validate_program(no_var))
     no_sql = Program(statements=[Run(var="q", name="查", kind="data_query", returns=["x"])])
     assert any("data_query" in i and "没有 sql" in i for i in validate_program(no_sql))
+
+
+def test_validate_data_query_rejects_schema_mapping_text_in_sql():
+    bad = Program(
+        goal="Find grouped records",
+        statements=[
+            Run(
+                var="q",
+                name="查询分组结果",
+                kind="data_query",
+                returns=["result"],
+                sql=(
+                    "WITH counts AS (SELECT Customer->customer AS customer_email, COUNT(*) AS cnt "
+                    "FROM data WHERE Status->status = 'Complete' GROUP BY Customer->customer) "
+                    "SELECT customer_email FROM counts"
+                ),
+            )
+        ],
+    )
+    issues = validate_program(bad)
+    assert any("Header->column" in i or "schema 显示映射文本" in i for i in issues)
+
+    good = Program(
+        goal=bad.goal,
+        statements=[
+            Run(
+                var="q",
+                name="查询分组结果",
+                kind="data_query",
+                returns=["result"],
+                sql=(
+                    "WITH counts AS (SELECT customer_email, COUNT(*) AS cnt "
+                    "FROM data WHERE lower(status) = 'complete' GROUP BY customer_email) "
+                    "SELECT customer_email FROM counts"
+                ),
+            )
+        ],
+    )
+    assert validate_program(good) == []
+
+
+def test_validate_data_query_rejects_quoted_display_labels_in_sql():
+    bad = Program(
+        goal="Find grouped records",
+        statements=[
+            Run(
+                var="q",
+                name="查询分组结果",
+                kind="data_query",
+                returns=["result"],
+                sql=(
+                    'WITH counts AS (SELECT "Customer Email", COUNT(*) AS cnt '
+                    'FROM data WHERE "Status" = \'Complete\' GROUP BY "Customer Email") '
+                    'SELECT "Customer Email" FROM counts'
+                ),
+            )
+        ],
+    )
+    issues = validate_program(bad)
+    assert any("quoted display label" in i or "UI 表头/标签" in i for i in issues)
 
 
 def test_validate_ranked_data_query_rejects_limit_offset_tie_drop():

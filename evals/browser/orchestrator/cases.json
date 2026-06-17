@@ -194,9 +194,10 @@
     "assertions": [
       "shopping_admin_order_count_uses_orders_grid_source",
       "shopping_admin_order_count_uses_data_query",
+      "data_query_sql_no_schema_mapping_text",
       "shopping_admin_completed_order_count_filters_complete"
     ],
-    "note": "回归 WebArena task 63 / logs/gui_agent/webarena/browser/20260617_145312：失败分解把 customer email(s) by completed order count 走成 Reports > Customers > Order Count，报表缺 Customer Email 且可能空，后续 data_query 只能在错误源上聚合。期望先进入 Sales > Orders / Orders grid，筛选 Status = Complete，采集或导出完整原始订单行，再用 data_query 按 Customer Email group/count，并按 distinct count 取 second-most，包含并列邮箱。"
+    "note": "回归 WebArena task 63 / logs/gui_agent/webarena/browser/20260617_145312：失败分解把 customer email(s) by completed order count 走成 Reports > Customers > Order Count，报表缺 Customer Email 且可能空，后续 data_query 只能在错误源上聚合。二次回归 logs/gui_agent/webarena/browser/20260617_224236：UI 已成功筛到 Status=Complete，但 data_query SQL 把 schema 展示里的 Customer->customer / Status->status 映射文本当成 SQL，报 no such column: Customer。三次回归 logs/gui_agent/webarena/browser/20260617_230650：UI 已进入 Orders 并清筛，但 SQL 使用 \"Customer Email\" / \"Status\" 这类 quoted UI 表头，SQLite 宽松处理后返回空。期望先进入 Sales > Orders / Orders grid，筛选 Status = Complete，采集或导出完整原始订单行，再用 data_query 按实际 normalized column identifiers 做 group/count/rank/tie，不能把 Header->column 映射文本或 quoted UI 表头写进 SQL。"
   },
   {
     "label": "WebArena shopping_admin order-count emails- any-state exact N uses Orders grid source (task 64)",

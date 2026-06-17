@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -90,6 +91,25 @@ def _flatten_ifs(stmts: list) -> list[If]:
             out.extend(_flatten_ifs(s.then))
             out.extend(_flatten_ifs(s.otherwise))
     return out
+
+
+def _sql_identifier(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", text).strip("_")
+    if not text:
+        return ""
+    if text[0].isdigit():
+        text = "c_" + text
+    return text
+
+
+def _sql_has_quoted_display_identifier(sql: str) -> bool:
+    for pattern in (r'"([^"]+)"', r"`([^`]+)`", r"\[([^\]]+)\]"):
+        for raw in re.findall(pattern, sql or ""):
+            text = str(raw or "").strip()
+            if text and _sql_identifier(text) != text:
+                return True
+    return False
 
 
 def _confirm_read_actions(stmts: list) -> list[Run]:
@@ -545,6 +565,21 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     "订单数聚合应在采集/导出完整 Orders rows 后用 data_query 做 group/count/rank/tie，"
                     f"当前没有 data_query: {[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "data_query_sql_no_schema_mapping_text":
+            seq = _flatten_runs(program.statements)
+            offenders = [
+                (r.name, r.sql) for r in seq
+                if r.kind == "data_query" and (
+                    "->" in (r.sql or "")
+                    or _sql_has_quoted_display_identifier(r.sql or "")
+                )
+            ]
+            if offenders:
+                details.append(
+                    "data_query SQL 只能使用实际 normalized column identifiers，"
+                    "不能把 schema 展示里的 Header->column 映射文本或带空格/标点的 quoted UI 表头写进 SQL: "
+                    f"{offenders}"
                 )
         elif assertion == "shopping_admin_completed_order_count_filters_complete":
             seq = _flatten_runs(program.statements)

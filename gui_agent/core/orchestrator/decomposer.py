@@ -36,17 +36,17 @@ _SYSTEM = """\
     · var：把该步结果绑定到变量，仅当后续 if / finish 要引用它时填（通常只有 read/data_query 步需要）。
     · returns：仅 run_kind="read" 填——要从结果界面读取的字段名列表，程序据此判断分支。
     · read_spec：仅 run_kind="read" 填——【本次读取说明】，按任务需求生成：逐个说明每个 returns 字段在结果界面上看哪里、如何把信号（图标/颜色/文字/位置）判读成值、各取值的含义（例：「连通判定：看起点终点输入框之间的图标——绿色✓=连通，灰色?=未检测/未连通；不可达原因：连通时为空，不可达时读取页面上的红色错误提示文字」）。读取是只读单帧，没有这份说明就只能瞎猜，所以必须写清楚。
-    · data_query：仅用于表格/列表的筛选、计数、排序、group by、top N、去重等数据处理；必须填 var、returns、sql。SQL 只能是 SELECT 或 WITH ... SELECT。默认表名 data；每张表也可用 table_1/table_2，若表格区块有标题/caption，还可用其 snake_case 别名（如 Top Search Terms→top_search_terms）。列名按表头转 snake_case（如 Customer Email→customer_email，Search Term→search_term）。不要把表格行塞进 read；表格类 top/most/count/sort/group by 任务优先用 data_query，不用视觉 read。data_scope 默认 complete（要求完整数据，partial 表格会失败；浏览器平台会尽量用只读 grid provider 采完整分页）；只有任务明确说“当前页面/当前可见/当前已渲染行”时才设 current。对 most/second/fifth/rank/have N 这类按聚合 count 排名的任务，必须处理并列：用 GROUP BY 先算 count，再用 DENSE_RANK() / HAVING count 返回该名次的所有行；不要用 LIMIT 1 OFFSET N 来代表“第 N 多”，因为它会丢掉并列项。
+    · data_query：仅用于结构化表格/列表快照的筛选、计数、排序、group by、top N、去重等数据处理；必须填 var、returns、sql。SQL 只能是 SELECT 或 WITH ... SELECT。默认表名 data；每张表也可用 table_1/table_2，若表格区块有标题/caption，还可用其标题的 snake_case 作为别名。SQL 里只能使用 schema 明确列出的 normalized column identifiers；表头/标签说明不是 SQL 语法，禁止把 `Header->column`、`原表头->列名` 这类映射文本写进 SQL。不要把表格行塞进 read；表格类 top/most/count/sort/group by 任务优先用 data_query，不用视觉 read。data_scope 默认 complete（要求完整数据，partial 表格会失败；运行时会尽量采集完整分页）；只有任务明确说“当前页面/当前可见/当前已渲染行”时才设 current。对 most/second/fifth/rank/have N 这类按聚合 count 排名的任务，必须处理并列：用 GROUP BY 先算 count，再用 DENSE_RANK() / HAVING count 返回该名次的所有行；不要用 LIMIT 1 OFFSET N 来代表“第 N 多”，因为它会丢掉并列项。
 - op="if"：按某个 read/data_query 步返回的字段值分支。cond_var=那个 read/data_query 步的 var；cond_field=该步 returns 里的字段；cond_cmp 可用 "=="、"!="、"exists"、"empty"、"contains"、"not_contains"、"in"、"not_in"；cond_value 用于等于/包含类比较；cond_values 用于 in/not_in 的候选值列表；then=成立时执行的步骤；otherwise=不成立时执行的步骤。
 - op="finish"：产出最终答复。message 是模板，可用 {变量[字段]} 引用某 read/data_query 步返回的值。
 
 核心原则：
 1. milestone 粒度：「搜关键词并进第一条结果」= 一个 navigation run，别拆成 输入→提交→点结果。
 2. 只在任务真有「读/查结果 → 据结果决定下一步」时才用 read/data_query + if；纯线性任务直接顺序 run，结尾可选 finish。
-3. read 是只读单帧数据提取：它不点任何东西、不滚动、不展开、不做验收（读不到=当没有），只把 returns 字段读出来。data_query 也是非 UI primitive，但它只处理结构化表格数据，适合聚合/排序/计数，不能替代导航、筛选或分页采集。**「触发某结果的操作」和「读取/查询该结果」必须分成两步**——先用 action/filter 触发，再用 read 或 data_query 获取结果。**每个 step 只面向「当前界面/当前视口已定位/已采集的数据」操作或读取**：read 读的是当前那一帧；data_query 查的是当前结构化表格快照。若目标按知识库应在当前页面，但当前截图/视口没有看到目标标题、表格或字段，**不要裸 read/data_query**；先加一个 navigation step 做页内定位（滚动到目标区、切换目标 tab、展开目标面板），success_condition 写「目标区标题/表格/字段已可见」，再 read/data_query。**首页/仪表盘上的汇总小部件（如 Last Search Terms、Bestsellers…）是摘要片段，必须按任务口径精确匹配**：若知识库/截图中存在与任务同名或同口径的区块（如 Top Search Terms），优先定位到这个精确区块；别把另一个摘要区（如 Last=按时间/最近）当成 Top=按热度/前 N。目标是表格里的 top/most/count/sort/group by 时，定位后优先写 data_query；若区块标题可见，用标题的 snake_case 作为表别名（如 top_search_terms），并用指标列排序（如 Uses→uses）。若改用列表/报表页回答「前 N 个 / 排名 / 热门」类问题，必须先确认或设置按目标指标列降序排序（如 Uses/Count/Sales），再 data_query；**不要假设报表默认前几行就是 Top**。**例外**：若任务明确要的就是非表格的当前可见首页文本/KPI（如『首页显示的今日销售额』），才直接 read。
-4. **聚合检索先选权威原始数据源**：遇到 count/sum/average/top/most/least/rank/second/fifth/have N/monthly/last N 等聚合或排名任务，先确认哪个页面/表格同时包含【过滤字段】【分组字段】【最终输出字段】。优先用包含完整原始行和最终输出字段的数据源（如订单行里同时有 Status 与 Customer Email），再 collection/export/分页采集完整行，最后 data_query 聚合。不要为了看起来有现成汇总就选缺最终字段的摘要报表或详情页；例如任务要 email(s)，而某报表只显示 customer name/count，就不能把它当主源，除非后续明确规划用可靠唯一键补齐 email。若任务口径是“any state / all states / 不限状态”，除了不新增状态筛选，还要先清掉页面已有的 Active filters（如点 Clear all），避免继承上一次会话的 Status=Complete 等过滤。排名口径默认按【不同聚合值】排名并返回所有并列项：second most = count 排第二档的所有 email，不是排序后第二行。
+3. read 是只读单帧数据提取：它不点任何东西、不滚动、不展开、不做验收（读不到=当没有），只把 returns 字段读出来。data_query 也是非 UI primitive，但它只处理结构化表格数据，适合聚合/排序/计数，不能替代导航、筛选或分页采集。**「触发某结果的操作」和「读取/查询该结果」必须分成两步**——先用 action/filter 触发，再用 read 或 data_query 获取结果。**每个 step 只面向「当前界面/当前视口已定位/已采集的数据」操作或读取**：read 读的是当前那一帧；data_query 查的是当前结构化表格快照。若目标按知识库应在当前页面，但当前截图/视口没有看到目标标题、表格或字段，**不要裸 read/data_query**；先加一个 navigation step 做页内定位（滚动到目标区、切换目标 tab、展开目标面板），success_condition 写「目标区标题/表格/字段已可见」，再 read/data_query。**首页/概览页上的汇总小部件常是摘要片段，必须按任务口径精确匹配**：注意区分同名或邻近、但口径不同的摘要区——例如「最近 N 个」（按时间）≠「最常用 N 个 / 前 N」（按数量/热度），别把按时间的摘要当成排名 Top；优先定位到与任务同口径的区块，具体口径以应用知识库为准。目标是表格里的 top/most/count/sort/group by 时，定位后优先写 data_query。若改用列表/报表页回答「前 N 个 / 排名 / 热门」类问题，必须先确认或设置按目标指标列降序排序，再 data_query；**不要假设报表默认前几行就是 Top**。**例外**：若任务明确要的就是非表格的当前可见首页文本/KPI（如『首页显示的今日销售额』），才直接 read。
+4. **聚合检索先选权威原始数据源**：遇到 count/sum/average/top/most/least/rank/second/fifth/have N/monthly/last N 等聚合或排名任务，先确认哪个页面/表格同时包含【过滤字段】【分组字段】【最终输出字段】。优先用包含完整原始行和最终输出字段的数据源（如原始行里同时有筛选维度与最终要输出的字段），再通过该平台可用的导出、分页或连续采集拿到完整行，最后 data_query 聚合。不要为了看起来有现成汇总就选缺最终字段的摘要报表或详情页；例如任务要某个最终字段，而某报表只显示聚合计数或名称、缺该字段，就不能把它当主源，除非后续明确规划用可靠唯一键补齐该字段。若任务口径是“any / all / 不限某维度”，不要新增该维度筛选；只有当前数据源明确存在可继承的旧筛选状态时，才规划一个平台合适的步骤把相关筛选恢复为不限。排名口径默认按【不同聚合值】排名并返回所有并列项：second most = count 排第二档的所有项，不是排序后第二行。
 5. 验收终态且有出处：只用任务、@引用文件或截图里出现的值，不编造系统生成的编号/名称（用特征描述）。
-6. read/data_query 的 returns 只提取用户最终需要的字段；排序/定位可借助辅助列（如 Uses、Count、Price），但用户没要求这些辅助值时，不要把它们放进返回值或最终答案。例如任务只问「top 2 search terms」，返回两个 search term 文本，不返回 `{term, uses}` 对象。
+6. read/data_query 的 returns 只提取用户最终需要的字段；排序/定位可借助辅助列（如数量、计数、价格、时间），但用户没要求这些辅助值时，不要把它们放进返回值或最终答案。例如任务只问「前 N 个某项」，返回这 N 个项本身，不返回带辅助计数/排序值的对象。
 7. 能一句话答复就用 finish 模板引用 read 值；否则可不写 finish。
 8. **关键动作后补一个 read 或 data_query 确认结果（成败由结构化读取/查询定，别只信动作完成）**：会改变状态的关键动作（创建/提交/删除/发送/设置/检测查询，尤其任务的最终动作），在该 action 之后补一个 read 确认界面结果，或补一个 data_query 统计表格结果；再由 finish（或 if）据这个结构化结果答复/分支。不要只凭动作步自身完成就当任务成功。配套地（success_condition 例外）：该 action 的 success_condition 写「动作已发出」而非「结果已显示/某判定已出现」，把结果的具体判读独占给后续 read/data_query，两步不要判同一个结果。
 9. **前置状态（登录/进入某模式）建模成一步「确保已X」并标 `precondition=true`**：这类前置初始往往已满足（会话常已登录）。建成**一步**「确保已登录/已进入X」、run_kind=navigation、**precondition=true**；别拆成「打开登录页 → 输账号密码」这种多步，success_condition 留空或一句话即可（不必纠结这个门怎么写）。
@@ -73,25 +73,11 @@ _SYSTEM = """\
  {"op":"run","run_kind":"read","var":"t","name":"读取新建工单的工单号","returns":["工单号"],"read_spec":"工单号：工单列表中刚新增那一行的编号文字（系统自动分配，形如 WO-2024-007），读取该行的编号列。"},
  {"op":"run","run_kind":"action","name":"打开工单 {t[工单号]}，把负责人设为张三","success_condition":"工单 {t[工单号]} 的负责人已显示为张三"}]}
 
-示例（表格 Top-N 用 data_query，不用 read）——
-{"reasoning":"目标问表格区块里的 top 2 search terms。先定位 Dashboard 的 Top Search Terms 区块；该区块是结构化表格，标题会作为 SQL 表别名 top_search_terms，按 Uses 列降序取 Search Term 前两项。","goal":"Get the top 2 search term(s) in my store","steps":[
- {"op":"run","run_kind":"navigation","name":"在 Dashboard 页面内定位 Top Search Terms 区块","success_condition":"页面显示 Top Search Terms 标题及 Search Term/Results/Uses 表格"},
- {"op":"run","run_kind":"data_query","var":"q","name":"查询 Top Search Terms 表格前2个搜索词","returns":["top_search_terms"],"sql":"SELECT search_term FROM top_search_terms ORDER BY CAST(uses AS INTEGER) DESC, search_term LIMIT 2"},
- {"op":"finish","message":"{q[top_search_terms]}"}]}
-
-示例（按订单数排名，必须处理并列）——
-{"reasoning":"目标问完成订单数第二多的 customer email。先进入 Orders，确保 Status=Complete；完整表格数据由 data_query 的 complete scope 读取，然后用 DENSE_RANK 按 count 排名，返回第二档所有并列 email。","goal":"Get customer email(s) who completed the second most number of orders","steps":[
- {"op":"run","run_kind":"navigation","name":"进入 Sales > Orders 列表页","success_condition":"页面显示 Orders 列表"},
- {"op":"run","run_kind":"action","name":"设置筛选条件 Status = Complete","success_condition":"已提交 Status = Complete 筛选（具体统计由后续 data_query 判读）"},
- {"op":"run","run_kind":"data_query","var":"q","name":"查询完成订单数第二多的客户邮箱","returns":["customer_email"],"sql":"WITH counts AS (SELECT customer_email, COUNT(*) AS cnt FROM data WHERE lower(status) = 'complete' GROUP BY customer_email), ranked AS (SELECT customer_email, cnt, DENSE_RANK() OVER (ORDER BY cnt DESC) AS rnk FROM counts) SELECT customer_email FROM ranked WHERE rnk = 2 ORDER BY customer_email"},
- {"op":"finish","message":"{q[customer_email]}"}]}
-
-示例（any-state 订单数，必须清掉已有筛选）——
-{"reasoning":"目标问 any state 中总订单数恰好为 2 的 customer email。进入 Orders 后可能继承上次任务的 Active filters（例如 Status: Complete），所以先确保无 Active filters：若看到 Clear all 就点击清除；若没有 Active filters 则该步已满足。随后对完整 Orders 行按 customer_email 计数，HAVING count=2。","goal":"Get customer email(s) who have 2 orders in any state in the entire history","steps":[
- {"op":"run","run_kind":"navigation","name":"进入 Sales > Orders 列表页","success_condition":"页面显示 Orders 列表"},
- {"op":"run","run_kind":"action","name":"清除 Orders 列表的 Active filters（如有）","success_condition":"Orders 列表没有 Active filters；若原先有筛选，已点击 Clear all 清除"},
- {"op":"run","run_kind":"data_query","var":"q","name":"查询总订单数恰好为2的客户邮箱","returns":["customer_email"],"sql":"SELECT customer_email FROM data GROUP BY customer_email HAVING COUNT(*) = 2 ORDER BY customer_email"},
- {"op":"finish","message":"{q[customer_email]}"}]}
+示例（表格聚合排名用 data_query，必须处理并列）——
+{"reasoning":"目标问某类记录里出现次数排名第二的项。先导航到含完整原始行的列表/表格（若口径是不限某维度，先清掉页面已有的无关筛选）；该表是结构化表格，用 data_query 按该项 group/count，再用 DENSE_RANK 取第二档所有并列项。","goal":"找出列表里出现次数第二多的项","steps":[
+ {"op":"run","run_kind":"navigation","name":"导航到包含完整记录的列表/表格页","success_condition":"页面显示目标记录列表/表格"},
+ {"op":"run","run_kind":"data_query","var":"q","name":"查询出现次数第二多的项","returns":["label"],"sql":"WITH counts AS (SELECT label, COUNT(*) AS cnt FROM data GROUP BY label), ranked AS (SELECT label, cnt, DENSE_RANK() OVER (ORDER BY cnt DESC) AS rnk FROM counts) SELECT label FROM ranked WHERE rnk = 2 ORDER BY label"},
+ {"op":"finish","message":"出现次数第二多的项：{q[label]}"}]}
 """
 
 
@@ -323,6 +309,17 @@ def validate_program(program: Program) -> list[str]:
                     issues.append(f"data_query 步「{s.name}」没有绑定 var——查询结果无法被后续引用")
                 if s.kind == "data_query" and not s.sql.strip():
                     issues.append(f"data_query 步「{s.name}」没有 sql——必须提供只读 SELECT/WITH SELECT")
+                if s.kind == "data_query" and _sql_uses_schema_mapping_text(s.sql):
+                    issues.append(
+                        f"data_query 步「{s.name}」的 SQL 使用了 schema 显示映射文本（如 Header->column）。"
+                        "SQL 只能写实际 normalized column identifiers，例如写 column，不要写 Header->column。"
+                    )
+                if s.kind == "data_query" and _sql_uses_quoted_display_identifier(s.sql):
+                    issues.append(
+                        f"data_query 步「{s.name}」的 SQL 使用了带空格/标点的 quoted display label。"
+                        "data_query 表格列已经归一化为 snake_case 标识符；SQL 应写 normalized column identifiers，"
+                        "不要写 UI 表头/标签的双引号形式。"
+                    )
                 if s.kind == "data_query" and _rank_query_drops_ties(rank_goal_text, s):
                     issues.append(
                         f"data_query 步「{s.name}」像是在回答聚合排名/第N多，但 SQL 使用 LIMIT/OFFSET 单行截断，"
@@ -385,6 +382,21 @@ def _rank_query_drops_ties(goal_text: str, run: Run) -> bool:
     return bool(re.search(r"\blimit\s+1\b", sql) or re.search(r"\boffset\s+\d+\b", sql))
 
 
+def _sql_uses_schema_mapping_text(sql: str) -> bool:
+    """Reject copied schema display forms such as `Header->column` in SQL."""
+    return bool(re.search(r"\b[a-zA-Z_][\w .\"'`-]*\s*->\s*[a-zA-Z_]\w*\b", sql or ""))
+
+
+def _sql_uses_quoted_display_identifier(sql: str) -> bool:
+    """Reject quoted UI labels such as `"Item Name"`; data_query columns are snake_case."""
+    for pattern in (r'"([^"]+)"', r"`([^`]+)`", r"\[([^\]]+)\]"):
+        for raw in re.findall(pattern, sql or ""):
+            text = str(raw or "").strip()
+            if text and _sql_identifier(text) != text:
+                return True
+    return False
+
+
 _MAX_RETRIES = 2
 
 
@@ -435,7 +447,7 @@ def decompose(
         page += (
             "\n若当前已在任务目标站点，可省略『打开该站点』这类重复 milestone；"
             "但不要省略必要的页内定位/切换 tab/打开目标页面。视觉 read 前必须先让目标区域处于当前可见终态；"
-            "若目标表格已出现在『当前结构化表格』列表中，data_query 可直接查询该 DOM 表格，不必为了肉眼可见而滚动。"
+            "若目标表格已出现在『当前结构化表格』列表中，data_query 可直接查询该表格，不必为了肉眼可见而滚动。"
         )
         parts.append({"type": "text", "text": page})
     table_hint = _table_schema_prompt(table_summaries)
@@ -488,13 +500,16 @@ def _table_schema_prompt(tables: list[dict] | None) -> str:
         if caption_alias and caption_alias not in used_aliases:
             aliases.append(caption_alias)
             used_aliases.add(caption_alias)
-        columns = []
+        sql_columns = []
+        labels = []
         for header in headers[:24]:
             label = str(header or "").strip()
             column = _sql_identifier(label)
             if not column:
                 continue
-            columns.append(f"{label}->{column}" if label != column else column)
+            sql_columns.append(column)
+            if label and label != column:
+                labels.append(f'{column} from "{label}"')
         row_count = table.get("row_count")
         try:
             row_text = str(int(str(row_count).replace(",", ""))) if row_count is not None else "?"
@@ -502,18 +517,19 @@ def _table_schema_prompt(tables: list[dict] | None) -> str:
             row_text = "?"
         completeness = "partial" if table.get("partial") else "complete"
         caption_text = f' caption="{caption}";' if caption else ""
-        column_text = ", ".join(columns) if columns else "(no headers)"
+        column_text = ", ".join(sql_columns) if sql_columns else "(no headers)"
+        labels_text = f"; source labels: {', '.join(labels)}" if labels else ""
         lines.append(
-            f"- {'/'.join(aliases)};{caption_text} columns: {column_text}; rows: {row_text}; {completeness}"
+            f"- {'/'.join(aliases)};{caption_text} sql columns: {column_text}{labels_text}; rows: {row_text}; {completeness}"
         )
     if not lines:
         return ""
     return (
         "\n## 当前结构化表格（仅 schema，不含行数据）\n"
-        "这些表格来自当前 DOM table/grid 快照；用于规划 data_query 的表名和列名。"
+        "这些表格来自当前界面已采集的表格快照；用于规划 data_query 的表名和列名。"
         "这里故意不提供行数据，实际查询由受限 SQLite primitive 在运行时读取。\n"
         + "\n".join(lines)
-        + "\n若目标可由这些表格回答，优先生成 data_query；caption 别名和列名按上面的 snake_case 使用。"
+        + "\n若目标可由这些表格回答，优先生成 data_query；SQL 只能使用表名和 sql columns 中列出的 snake_case 标识符。source labels 只是人类可读说明，不是 SQL 语法。"
     )
 
 
