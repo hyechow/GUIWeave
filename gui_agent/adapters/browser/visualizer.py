@@ -41,6 +41,19 @@ from gui_agent.core.schemas import Action
 _SPATIAL = {"tap", "click", "type", "scroll", "drag", "select_option"}
 
 
+def _visual_point(action: Action) -> tuple[float | None, float | None]:
+    """Return the point to visualize, preferring executor-recorded snap output."""
+    snap = getattr(action, "snap", None)
+    if isinstance(snap, dict):
+        snapped = snap.get("snapped")
+        if isinstance(snapped, (list, tuple)) and len(snapped) >= 2:
+            try:
+                return float(snapped[0]), float(snapped[1])
+            except (TypeError, ValueError):
+                pass
+    return action.x, action.y
+
+
 # A JS function (called as an IIFE with one object arg) that injects the keyframes +
 # overlay layer once, then draws the mark for this action.
 _OVERLAY_FN = r"""
@@ -159,16 +172,17 @@ class BrowserActionVisualizer:
         action_type = getattr(action, "action_type", None)
         if action_type not in _SPATIAL:
             return
+        x, y = _visual_point(action)
         # A type into the already-focused field (no coords) has no point to flash.
-        if action_type == "type" and (action.x is None or action.y is None):
+        if action_type == "type" and (x is None or y is None):
             return
         client = self._client()
         if client is None or not hasattr(client, "eval_js"):
             return
         arg = {
             "type": "tap" if action_type == "click" else action_type,
-            "x": action.x,
-            "y": action.y,
+            "x": x,
+            "y": y,
             "toX": action.to_x,
             "toY": action.to_y,
             "label": _label_for(action),
@@ -276,14 +290,15 @@ class BrowserCursorVisualizer:
         action_type = getattr(action, "action_type", None)
         if action_type not in _SPATIAL:
             return
-        if action_type == "type" and (action.x is None or action.y is None):
+        x, y = _visual_point(action)
+        if action_type == "type" and (x is None or y is None):
             return
         self._ensure_cursor()
         if self._cursor is None:
             return
         # scroll/drag may omit coords -> anchor at viewport center.
-        nx = action.x if action.x is not None else 500
-        ny = action.y if action.y is not None else 500
+        nx = x if x is not None else 500
+        ny = y if y is not None else 500
         pt = self._screen_point(nx, ny)
         if pt is None:
             return

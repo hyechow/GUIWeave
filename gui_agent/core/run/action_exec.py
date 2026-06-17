@@ -105,6 +105,17 @@ def snapped_point(action_decision: ActionDecision | None) -> tuple[float, float]
     return float(action.x), float(action.y)
 
 
+def has_snapped_point(action_decision: ActionDecision | None) -> bool:
+    """Return true when the executor recorded a corrected action point."""
+    if action_decision is None:
+        return False
+    snap = getattr(action_decision.action, "snap", None)
+    if not isinstance(snap, dict):
+        return False
+    snapped = snap.get("snapped")
+    return isinstance(snapped, (list, tuple)) and len(snapped) >= 2
+
+
 @dataclass
 class ActionRunResult:
     action_decision: Any = None
@@ -216,6 +227,8 @@ class ActionExecutionState:
                 png_bytes=observation.png_bytes,
                 is_home_screen=sv_step.is_home_screen,
             )
+            if result.executed and has_snapped_point(action_decision):
+                flash(action)
         return result
 
     def _decide_action(

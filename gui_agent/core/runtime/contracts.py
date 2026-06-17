@@ -364,9 +364,11 @@ class ActionVisualizer(Protocol):
     ``None`` when a platform has no RUNNER-DRIVEN visualizer (the loop skips the hook).
 
     LIFECYCLE: the agent loop calls ``show_action`` immediately before the executor
-    runs each action, and ``clear`` at teardown. BOTH must be best-effort and MUST
-    NOT raise into the loop — visualization is cosmetic, so a render failure
-    (restricted page, detached client, mid-navigation) must never abort a turn.
+    runs each action; if the executor records a snapped point on the action, the loop
+    calls it once more so the live cursor/overlay follows the actual click target.
+    ``clear`` runs at teardown. BOTH must be best-effort and MUST NOT raise into the
+    loop — visualization is cosmetic, so a render failure (restricted page, detached
+    client, mid-navigation) must never abort a turn.
     """
 
     def show_action(self, action: Action) -> None:

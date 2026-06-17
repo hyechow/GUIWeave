@@ -26,6 +26,22 @@ class _Executor:
         return True
 
 
+class _SnappingExecutor(_Executor):
+    def execute(self, action_decision, *, app_name="", png_bytes=None, is_home_screen=False):
+        ok = super().execute(
+            action_decision,
+            app_name=app_name,
+            png_bytes=png_bytes,
+            is_home_screen=is_home_screen,
+        )
+        action_decision.action.snap = {
+            "method": "dom",
+            "original": [10, 20],
+            "snapped": [30, 40],
+        }
+        return ok
+
+
 def _step(decision: BaseActionDecision) -> SupervisorStep:
     return SupervisorStep(
         should_act=True,
@@ -75,6 +91,39 @@ def test_preformed_action_waits_for_prep_and_executes(tmp_path):
         "png_bytes": b"png",
         "is_home_screen": True,
     }]
+
+
+def test_preformed_action_reflashes_after_executor_snap(tmp_path):
+    action = BaseAction(action_type="tap", x=10, y=20, description="点击确认")
+    decision = BaseActionDecision(action=action)
+    future = _Future()
+    executor = _SnappingExecutor()
+    flashes = []
+
+    def _flash(a):
+        flashes.append((a.x, a.y, a.snap.copy() if a.snap else None))
+
+    result = ActionExecutionState().run(
+        sv_step=_step(decision),
+        observation=Observation(png_bytes=b"png", source="test"),
+        action_policy=object(),
+        supervisor=object(),
+        executor=executor,
+        bundle=object(),
+        platform=object(),
+        prep_future=future,
+        log_dir=tmp_path,
+        turn_no=3,
+        flash=_flash,
+        status=lambda _turn_no, _message: None,
+        say=lambda _message: None,
+    )
+
+    assert result.executed is True
+    assert flashes == [
+        (10, 20, None),
+        (10, 20, {"method": "dom", "original": [10, 20], "snapped": [30, 40]}),
+    ]
 
 
 def test_not_found_waits_for_prep_and_skips_execute(tmp_path):

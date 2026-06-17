@@ -219,13 +219,13 @@ def run_agent_loop(
     with session_cm as platform:
         executor = bundle.make_executor(platform)
         # Optional action visualizer (cursor/overlay). None when the platform has
-        # none (iphone today); show_action is called best-effort before each
-        # execute and must never raise into the loop.
+        # none (iphone today); show_action is best-effort before execute and may
+        # be called again after executor snap updates the action point.
         visualizer = bundle.make_action_visualizer(platform)
 
         def _flash(a) -> None:
-            # Best-effort cursor/overlay flash before executing `a`; never raises into
-            # the loop. No-op when the platform has no visualizer (iphone).
+            # Best-effort cursor/overlay flash; never raises into the loop.
+            # No-op when the platform has no visualizer (iphone).
             if visualizer is not None and a is not None:
                 try:
                     visualizer.show_action(a)
