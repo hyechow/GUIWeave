@@ -19,6 +19,11 @@ from gui_agent.core.runtime.executor import VisionExecutor
 
 # Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
 _QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,8})[」』\"']")
+_INLINE_EN_LABEL_RE = re.compile(
+    r"(?:菜单下的|子菜单中的|下的|中的)\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*"
+    r"(?:选项|菜单项|菜单|按钮|链接)"
+    r"|点击\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*(?:选项|菜单项|菜单|按钮|链接)"
+)
 _OPTION_QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,40})[」』\"']")
 _OPTION_VALUE_RE = re.compile(r"(?:=|为|to)\s*([A-Za-z][\w ._/-]{0,39})", re.IGNORECASE)
 _SELECT_INTENT_RE = re.compile(r"选择|选中|设为|设置|下拉.*选项|select\s+option", re.IGNORECASE)
@@ -31,6 +36,24 @@ def _quoted_label(description: str) -> str:
     point anyway, while short labels (操作/删除/确定/取消) are the ambiguous ones."""
     matches = _QUOTE_RE.findall(description or "")
     return matches[-1] if matches else ""
+
+
+def _target_label(description: str) -> str:
+    """Best-effort clickable label for DOM text retarget.
+
+    Prefer explicit quotes. As a browser-specific fallback, extract short English admin UI
+    labels from common Chinese action phrasing, e.g. "Sales 菜单下的 Orders 选项" or
+    "点击 Filters 按钮". This rescues visible menu-row misses without treating arbitrary
+    long Chinese instruction text as a label.
+    """
+    quoted = _quoted_label(description)
+    if quoted:
+        return quoted
+    match = _INLINE_EN_LABEL_RE.search(description or "")
+    if not match:
+        return ""
+    label = next((g for g in match.groups() if g), "")
+    return label.strip()[:40]
 
 
 def _select_option_label(description: str) -> str:
@@ -91,7 +114,7 @@ class BrowserExecutor(VisionExecutor):
             # field holding that same value (run 20260613_193023: typing 'admin' into the password
             # box kept retargeting to the account box whose value was already 'admin' → login stuck).
             at = getattr(action, "action_type", "")
-            target = _quoted_label(getattr(action, "description", "") or "") if at in ("tap", "click") else ""
+            target = _target_label(getattr(action, "description", "") or "") if at in ("tap", "click") else ""
             cx, cy, info = self._client().dom_snap(px, py, target_text=target)
             if info is not None and (abs(cx - px) > 1 or abs(cy - py) > 1):
                 print(f"  DOM 吸附: ({px:.0f},{py:.0f}) → ({cx:.0f},{cy:.0f}) [{info}]")

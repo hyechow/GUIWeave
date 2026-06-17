@@ -34,6 +34,7 @@ from typing import Optional
 # None for the user's existing tab). Typical laptop content size.
 _DEFAULT_VIEWPORT_W = 1280
 _DEFAULT_VIEWPORT_H = 800
+TEXT_RETARGET_RADIUS_PX = 220
 
 # Hard wall-clock cap for a single raw-CDP send. A non-responding Chrome would
 # otherwise hang the agent loop forever. Normal round-trips are well under a second.
@@ -663,11 +664,13 @@ class PlaywrightDevice:
 
         TEXT RETARGET (the OCR-snap analogue): when ``target_text`` is given (the label quoted
         in the action description, e.g. 「操作」) and the element under the point carries a
-        DIFFERENT label, search nearby (≤80px) for a clickable whose exact trimmed text equals
+        DIFFERENT label, search nearby for a clickable whose exact trimmed text equals
         the target and snap there instead. This rescues the adjacent-menu-item failure mode:
         two 28px-high items (操作/删除), the vision model's y is one row off, and the click
         lands on the DESTRUCTIVE neighbour (run 20260612_114219: 3× clicked 删除 aiming 操作).
-        The radius keeps same-label elements elsewhere on the page (e.g. a table header) out.
+        The radius also covers tall browser side menus where the model can be several rows
+        off (WebArena task 64: aiming Orders, hitting Credit Memos). It still keeps same-label
+        elements elsewhere on the page (e.g. a table header) out.
 
         CONSERVATIVE otherwise: only snaps to a reasonably-sized clickable element (button /
         link / list row / menu item / checkbox …). Returns the point UNCHANGED for canvas /
@@ -680,6 +683,7 @@ class PlaywrightDevice:
         target_js = json.dumps(target_text or "")
         js = (
             "(()=>{const x=%d,y=%d,target=%s;"
+            "const R=%d;"
             "const CLICK='a,button,input,select,textarea,label,[role=button],"
             "[role=option],[role=menuitem],[role=tab],[role=checkbox],[role=radio],[onclick],.cursor-pointer,li';"
             "const txt=e=>((e.innerText||e.value||'')+'').trim();"
@@ -694,7 +698,7 @@ class PlaywrightDevice:
             "    const cx=r.x+r.width/2,cy=r.y+r.height/2,dd=Math.hypot(cx-x,cy-y);"
             "    if(dd<bd){bd=dd;best={cx:Math.round(cx),cy:Math.round(cy),"
             "      w:Math.round(r.width),h:Math.round(r.height)};}}"
-            "  if(best&&bd<=80)return JSON.stringify({...best,tag:'text'});"
+            "  if(best&&bd<=R)return JSON.stringify({...best,tag:'text'});"
             "}"
             "if(!n)return '';const tag=n.tagName.toLowerCase();"
             "const role=(n.getAttribute&&n.getAttribute('role'))||'';"
@@ -705,7 +709,7 @@ class PlaywrightDevice:
             "if(r.width<=0||r.height<=0||r.width>vw*0.9||r.height>vh*0.6)return '';"
             "return JSON.stringify({cx:Math.round(r.x+r.width/2),cy:Math.round(r.y+r.height/2),"
             "tag,w:Math.round(r.width),h:Math.round(r.height)});})()"
-            % (int(round(x)), int(round(y)), target_js)
+            % (int(round(x)), int(round(y)), target_js, TEXT_RETARGET_RADIUS_PX)
         )
         try:
             res = self._cdp_send("Runtime.evaluate", {"expression": js, "returnByValue": True})

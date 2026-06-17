@@ -92,6 +92,16 @@ def test_quoted_label_extraction():
     assert _quoted_label("没有引号的指令") == ""
 
 
+def test_target_label_extracts_unquoted_browser_menu_labels():
+    from gui_agent.adapters.browser.executor import _target_label
+
+    assert _target_label("点击左侧导航栏 Sales 菜单下的 Orders 选项") == "Orders"
+    assert _target_label("点击左侧导航栏中的 Sales 菜单") == "Sales"
+    assert _target_label("点击 Filters 按钮以展开筛选条件区域") == "Filters"
+    assert _target_label("点击弹窗中的「取消」按钮") == "取消"
+    assert _target_label("点击左侧导航栏的销售菜单") == ""
+
+
 def test_execute_passes_quoted_label_to_dom_snap():
     c = _FakeClient((966.0, 210.0, "text 44x28"), viewport=(1000, 1000))
     dec = BrowserActionDecision(action=BrowserAction(
@@ -102,6 +112,27 @@ def test_execute_passes_quoted_label_to_dom_snap():
     assert c.seen_target == "操作"            # 标签传到了 dom_snap
     assert c.clicked == (966.0, 210.0)        # 点击落在重定向后的位置
     assert dec.action.snap is not None and "text" in dec.action.snap["info"]
+
+
+def test_execute_passes_unquoted_menu_label_to_dom_snap():
+    c = _FakeClient((222.0, 114.0, "text 238x44"), viewport=(1000, 1000))
+    dec = BrowserActionDecision(action=BrowserAction(
+        action_type="tap", x=175, y=260,
+        description="点击左侧导航栏 Sales 菜单下的 Orders 选项",
+    ))
+    _exec(c).execute(dec)
+    assert c.seen_target == "Orders"
+    assert c.clicked == (222.0, 114.0)
+
+
+def test_text_retarget_radius_covers_sidebar_menu_row_misses():
+    from gui_agent.adapters.browser.device import TEXT_RETARGET_RADIUS_PX
+
+    # WebArena task 64: the vision model aimed for Sales > Orders but landed several rows
+    # lower on Credit Memos/Shipments. The exact quoted label retarget must cover that
+    # vertical menu distance; the old 80px radius was too small.
+    assert TEXT_RETARGET_RADIUS_PX >= 160
+    assert TEXT_RETARGET_RADIUS_PX <= 260
 
 
 def test_type_focus_tap_does_not_text_retarget():
