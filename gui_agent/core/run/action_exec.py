@@ -147,12 +147,20 @@ class ActionExecutionState:
         flash: Callable[[Any], None],
         status: Callable[[int, str], None],
         say: Callable[[str], None],
+        stop_requested: Callable[[], bool] | None = None,
     ) -> ActionRunResult:
         result = ActionRunResult()
         if not sv_step.should_act:
             return result
 
+        def interrupted() -> bool:
+            return bool(stop_requested and stop_requested())
+
         say(f"动作指令: {sv_step.instruction}")
+        if interrupted():
+            say("  [Interrupt] 收到 ESC，跳过本轮动作执行")
+            status(turn_no, "收到 ESC，跳过动作执行")
+            return result
         if sv_step.preformed_action:
             say("使用预生成动作，跳过 Action Policy")
             result.action_decision = sv_step.preformed_action
@@ -168,10 +176,19 @@ class ActionExecutionState:
                 say=say,
             )
 
+        if interrupted():
+            say("  [Interrupt] 收到 ESC，跳过本轮动作执行")
+            status(turn_no, "收到 ESC，跳过动作执行")
+            return result
+
         # Ensure YOLO/OCR prep finished before any execute/snap (covers both the
         # preformed-action and action-policy paths). Started after screenshot,
         # overlapped the decide, and is normally done already.
         prep_future.result()
+        if interrupted():
+            say("  [Interrupt] 收到 ESC，跳过本轮动作执行")
+            status(turn_no, "收到 ESC，跳过动作执行")
+            return result
         action_decision = result.action_decision
         if action_decision.not_found_reason:
             say(f"  [NotFound] {action_decision.not_found_reason}")

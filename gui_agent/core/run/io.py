@@ -16,6 +16,7 @@ from typing import IO, Iterator
 
 ROOT = Path(__file__).resolve().parents[3]
 POLICY_LOG_ROOT = ROOT / "logs" / "gui_agent"
+ESC_SEQUENCE_WINDOW_S = 0.04
 
 
 def create_run_dir(mode: str, platform: str = "") -> Path:
@@ -146,5 +147,20 @@ class EscStopSignal:
                 return
             if not ch:
                 return
-            if ch == b"\x1b":
+            if ch == b"\x1b" and _is_standalone_escape(self._fd):
                 self._requested.set()
+
+
+def _is_standalone_escape(fd: int, *, sequence_window_s: float = ESC_SEQUENCE_WINDOW_S) -> bool:
+    """Return true for a lone Esc key, false for escape sequences like arrows/Alt keys."""
+    try:
+        readable, _, _ = select.select([fd], [], [], max(sequence_window_s, 0.0))
+    except (OSError, ValueError):
+        return True
+    if not readable:
+        return True
+    try:
+        extra = os.read(fd, 32)
+    except OSError:
+        return True
+    return not extra

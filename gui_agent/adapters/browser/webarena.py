@@ -370,7 +370,7 @@ def main() -> int:
     load_dotenv()
 
     from gui_agent.core.runtime.factory import build_platform
-    from gui_agent.core.run.io import create_run_dir
+    from gui_agent.core.run.io import EscStopSignal, create_run_dir
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
     from gui_agent.adapters.browser.har_recorder import HarRecorder
 
@@ -524,22 +524,28 @@ def main() -> int:
                     else:
                         print("[webarena] orchestrator: disabled; using legacy milestone DAG")
 
-                    result = run_agent_loop(
-                        intent,
-                        action_policy,
-                        supervisor,
-                        None,                       # input_context_path
-                        log_dir,
-                        log_dir / "context.json",
-                        max_turns=run_max_turns,
-                        auto_continue=True,
-                        hud=hud,
-                        raw_input=intent,
-                        router=None,
-                        knowledge=knowledge_summary,
-                        program=program,
-                        platform=platform,
-                    )
+                    with EscStopSignal(enabled=True) as esc_stop:
+                        if esc_stop.enabled:
+                            print("[webarena] Interrupt: 按 ESC 将在当前 turn 收尾后停止")
+                        else:
+                            print("[webarena] Interrupt: stdin 不是 TTY，ESC 停止未启用")
+                        result = run_agent_loop(
+                            intent,
+                            action_policy,
+                            supervisor,
+                            None,                       # input_context_path
+                            log_dir,
+                            log_dir / "context.json",
+                            max_turns=run_max_turns,
+                            auto_continue=True,
+                            hud=hud,
+                            raw_input=intent,
+                            router=None,
+                            knowledge=knowledge_summary,
+                            program=program,
+                            stop_requested=esc_stop.requested if esc_stop.enabled else None,
+                            platform=platform,
+                        )
 
             # ----- post-run artifacts -----
             rec = recorder_holder.get("rec")

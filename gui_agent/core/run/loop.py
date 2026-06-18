@@ -462,6 +462,10 @@ def run_agent_loop(
                     continue
             loading_streak = 0
 
+            interrupted = _stop_after_esc(turn_no)
+            if interrupted is not None:
+                return interrupted
+
             sync_turn_metadata(
                 context=context,
                 supervisor=supervisor,
@@ -495,6 +499,7 @@ def run_agent_loop(
                 flash=_flash,
                 status=_status,
                 say=_say,
+                stop_requested=_stop_requested,
             )
             action_decision = action_result.action_decision
             executed = action_result.executed
