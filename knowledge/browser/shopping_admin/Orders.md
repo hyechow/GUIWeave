@@ -11,17 +11,29 @@ Usually, orders are created when customers complete the checkout process from th
 
 The Orders workspace lists all current orders, and gives you the ability to edit existing orders and create orders. Each row in the grid represents a customer order, and each column represents an attribute, or data field. Use the standard controls to sort and filter the list, find orders, and apply actions to selected orders. Use the tabs above the pagination controls to filter the list, change the default view, change and rearrange columns, and export data.
 
+Planning note for Orders date filters: when a task requires filtering by
+`Purchase Date`, write the page filter step with slash-form UI dates
+(`MM/DD/YYYY` or `M/D/YYYY`). Never write ISO `YYYY-MM-DD` values in the visible
+Orders filter step; ISO is only the provider/storage date shape after rows are
+read. For example, January 1, 2023 should be written as `01/01/2023` (or
+`1/1/2023`), and May 31, 2023 should be written as `05/31/2023` (or
+`5/31/2023`).
+
 For WebArena tasks that ask for customer email(s) by total order count across the
 entire history, the Orders grid is the most reliable source of raw order rows:
 show or export `Customer Email`, `Customer Name`, and `Status`, then count rows
 per email yourself. The Orders grid does not provide built-in aggregation/group
 by/customer-count controls; it only supports filtering, sorting, pagination,
 column selection, and export. For "completed" order-count tasks, filter
-`Status = Complete`; for "any state" tasks, do not apply a status filter and
-clear any existing `Active filters` first (click `Clear all` if it is visible),
-because Magento Admin can retain the last grid filter across tasks/browser
-sessions. Do not assume the Customers grid exposes a reliable `Total Orders`
-column.
+`Status = Complete`; if the task says "entire history", first clear inherited
+unrequested `Active filters` and then leave only `Status: Complete` applied
+(a lingering `Purchase Date` range means the source is no longer entire history).
+Write the filter milestone's visible success condition to require `Active filters`
+show only `Status: Complete` and no `Purchase Date`/date range/search filter.
+For "any state" tasks, do not apply a status filter and clear any existing
+`Active filters` first (click `Clear all` if it is visible), because Magento
+Admin can retain the last grid filter across tasks/browser sessions. Do not
+assume the Customers grid exposes a reliable `Total Orders` column.
 
 For completed order-count tasks, the plan must make the completed-status
 constraint explicit. It is not enough to name a step "completed orders": either
@@ -29,6 +41,30 @@ add a UI filter/action step for `Status = Complete` before collecting rows, or p
 an explicit SQL predicate such as `WHERE lower(status) = 'complete'` in the
 `data_query`. Without that explicit predicate, any-state and completed counts are
 ambiguous and should be treated as incorrectly modeled.
+
+For monthly completed-order counts over a `Purchase Date` range, prefer the page
+filters before reading rows: in **Sales > Orders**, open **Filters**, set
+`Status = Complete`, set `Purchase Date` **from** and **to**, then click
+**Apply Filters**. The date filter accepts US-style dates such as `01/01/2023`
+or `1/1/2023`; do not use ISO input such as `2023-01-01` in the filter fields.
+Convert task dates into that UI format in the page filter step; for example,
+`2023-01-01` should be written as `01/01/2023`, and `2023-05-31` as
+`05/31/2023`. ISO values like `2023-01-01` are suitable for storage/provider
+data, not for the visible Admin date filter inputs.
+After the filter is applied, read the complete Orders grid and aggregate by
+month. The complete Magento grid provider exposes `created_at` as
+`YYYY-MM-DD HH:MM:SS` and `status` as lowercase values such as `complete`, while
+the visible DOM column is labeled `Purchase Date` and displays values like
+`Feb 3, 2023 6:08:03 PM`. For a final answer that must be a JSON list of objects
+with keys like `month` and `count`, make the `data_query` return a single
+`result` field whose SQL rows are aliased as `month` and `count`; `month` must be
+the requested month name such as `January`, not `01` or `2023-01`. Do not split
+the list into separate `{q[month]}` and `{q[count]}` placeholders. After the page
+filter has already applied `Status = Complete` and `Purchase Date` from/to, the
+SQL should not repeat those predicates; it should only group/count/project the
+already-filtered rows. Repeating `WHERE status = 'Complete'` is wrong because the
+provider stores status as lowercase `complete`, and repeating UI dates risks
+mixing UI input format with provider storage format.
 
 For tasks phrased as "customer email(s) who completed the most/second/fifth
 number of orders" or "customer email(s) who have N orders", use this Orders grid
@@ -44,6 +80,11 @@ orders", return emails whose count is exactly N, not greater-than-or-equal N. If
 the task says "any state", the Orders grid must have no active status filter
 before counting; a visible `Status: Complete` active filter means the data source
 is wrong until `Clear all` is clicked.
+If the task says completed orders across the entire history, the Orders grid
+should show `Status: Complete` as the only active task filter before counting; a
+visible `Purchase Date` active filter or date range from a previous task means
+the data source is wrong until filters are cleared and `Status: Complete` is
+applied again.
 
 If downloads/exports are not allowed, collect the raw rows by combining grid
 pagination with within-page vertical scrolling. This is not infinite-scroll

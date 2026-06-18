@@ -592,6 +592,45 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "completed order-count 任务必须筛选/查询 Status = Complete 后再统计，"
                     f"当前未看到 complete status 过滤: {[(r.kind, r.name) for r in seq]}"
                 )
+        elif assertion == "shopping_admin_completed_order_count_clears_unrequested_filters":
+            seq = _flatten_runs(program.statements)
+            first_data_query = next((i for i, r in enumerate(seq) if r.kind == "data_query"), len(seq))
+            prior = seq[:first_data_query]
+            clear_step = False
+            status_step = False
+            for r in prior:
+                text = f"{r.kind} {r.name} {r.success_condition} {r.read_spec}".lower()
+                if "status" in text and "complete" in text:
+                    status_step = True
+                mentions_filters = any(marker in text for marker in (
+                    "active filter",
+                    "active filters",
+                    "filter",
+                    "filters",
+                    "筛选",
+                    "过滤",
+                ))
+                clears = any(marker in text for marker in (
+                    "clear all",
+                    "clear filters",
+                    "clear existing",
+                    "clear inherited",
+                    "no unrequested",
+                    "only status",
+                    "只保留",
+                    "清除",
+                    "清空",
+                    "无关筛选",
+                    "旧筛选",
+                ))
+                if mentions_filters and clears:
+                    clear_step = True
+            if not (clear_step and status_step):
+                details.append(
+                    "completed entire-history order-count 任务必须先清除继承的无关 Active filters，"
+                    "再只应用 Status=Complete；否则可能沿用上一任务的 Purchase Date 范围。"
+                    f" seq={[(r.kind, r.name, r.success_condition) for r in prior]}"
+                )
         elif assertion == "shopping_admin_any_state_order_count_no_complete_filter":
             seq = _flatten_runs(program.statements)
             text = " ".join(
@@ -638,6 +677,77 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "any-state order-count 任务必须先确保 Orders grid 没有继承的 Active filters"
                     "（例如上一任务留下的 Status: Complete）；应有 Clear all/清除筛选步骤。"
                     f" seq={[(r.kind, r.name, r.success_condition) for r in seq]}"
+                )
+        elif assertion == "shopping_admin_monthly_orders_filters_page_first":
+            seq = _flatten_runs(program.statements)
+            first_data_query = next((i for i, r in enumerate(seq) if r.kind == "data_query"), None)
+            if first_data_query is None:
+                details.append(
+                    "monthly completed-order count 应先筛选 Orders grid，再用 data_query 按月聚合；当前无 data_query。"
+                )
+                continue
+            prior = seq[:first_data_query]
+            filter_text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec}".lower()
+                for r in prior
+                if r.kind in {"filter", "action"}
+            )
+            has_complete = "status" in filter_text and "complete" in filter_text
+            has_purchase_date = (
+                ("purchase date" in filter_text or "created_at" in filter_text or "date" in filter_text or "日期" in filter_text)
+                and any(marker in filter_text for marker in ("from", "to", "range", "范围", "起", "止", "到", "至"))
+            )
+            has_us_dates = any(marker in filter_text for marker in (
+                "01/01/2023", "1/1/2023", "05/31/2023", "5/31/2023",
+            ))
+            if not (has_complete and has_purchase_date and has_us_dates):
+                details.append(
+                    "monthly completed-order count 必须在 data_query 前通过页面 Filters 应用 "
+                    "Status=Complete 和 Purchase Date 01/01/2023-05/31/2023；"
+                    f"当前前置筛选不足: {[(r.kind, r.name, r.success_condition) for r in prior]}"
+                )
+        elif assertion == "shopping_admin_monthly_orders_returns_result_objects":
+            seq = _flatten_runs(program.statements)
+            data_queries = [r for r in seq if r.kind == "data_query"]
+            if not data_queries:
+                details.append("monthly completed-order count 缺少 data_query 聚合步骤。")
+                continue
+            offenders = []
+            for r in data_queries:
+                sql = (r.sql or "").lower()
+                returns = [x.lower() for x in (r.returns or [])]
+                has_month_alias = bool(re.search(r"\bas\s+month\b", sql))
+                has_count_alias = bool(re.search(r"\bas\s+count\b", sql))
+                has_month_names = all(name in sql for name in ("january", "february", "march", "april", "may"))
+                if returns != ["result"] or not has_month_alias or not has_count_alias or not has_month_names:
+                    offenders.append((r.name, r.returns, r.sql))
+            if offenders:
+                details.append(
+                    "最终要求 JSON 对象数组时，data_query 应 SELECT month/count 列并用 returns=['result']；"
+                    "month 列必须输出 January/February/... 月名，不能输出 month_num/月份数字。"
+                    "finish 直接引用 {q[result]}；不要拆成 {q[month]}/{q[count]}。"
+                    f" offenders={offenders}"
+                )
+        elif assertion == "shopping_admin_monthly_orders_query_uses_filtered_rows":
+            seq = _flatten_runs(program.statements)
+            offenders = []
+            for r in seq:
+                if r.kind != "data_query":
+                    continue
+                sql = (r.sql or "").lower()
+                repeats_page_filter = (
+                    re.search(r"\bwhere\b.*\bstatus\b", sql, flags=re.DOTALL)
+                    or "created_at >=" in sql
+                    or "created_at <=" in sql
+                    or "between" in sql and "created_at" in sql
+                )
+                if repeats_page_filter:
+                    offenders.append((r.name, r.sql))
+            if offenders:
+                details.append(
+                    "页面 Filters 已经应用 Status=Complete 和 Purchase Date 范围后，data_query 应只对已筛选行做"
+                    "按月 group/count，不要再重复 status/date WHERE；否则容易把 UI 大小写/日期格式误用于 provider 字段。"
+                    f" offenders={offenders}"
                 )
         else:
             details.append(f"unknown assertion: {assertion}")

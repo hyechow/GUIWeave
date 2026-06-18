@@ -30,6 +30,14 @@ class NonUiDriveResult:
     reply: str | None = None
 
 
+@dataclass
+class _RepairAttempt:
+    reads: dict[str, str] | None
+    sql: str
+    reason: str
+    source_issue: str = ""
+
+
 def drive_pending_non_ui(
     *,
     current_run: Run | None,
@@ -70,6 +78,7 @@ def drive_pending_non_ui(
         reads: dict[str, str] = {}
         completed = True
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
+        executed_sql = cur_run.sql
         if cur_run.kind == "read" and cur_run.returns:
             from gui_agent.core.orchestrator.structured_read import structured_read
 
@@ -84,6 +93,7 @@ def drive_pending_non_ui(
             say(f"  [Orchestrator] 只读验收帧 {cur_run.returns} → {reads}")
         elif cur_run.kind == "data_query":
             from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
+            from gui_agent.core.orchestrator.data_query_repair import repair_data_query_sql
 
             ensure_observation()
             query_tables = tables
@@ -94,6 +104,39 @@ def drive_pending_non_ui(
                         query_tables = read_complete() or query_tables
                     except Exception:
                         query_tables = tables
+
+            def _try_repair(reason: str) -> _RepairAttempt | None:
+                repair = repair_data_query_sql(
+                    goal=context.goal or "",
+                    run_name=cur_run.name,
+                    requested_returns=list(cur_run.returns),
+                    original_sql=cur_run.sql,
+                    tables=query_tables,
+                    failure=reason,
+                    recent_ui_context=_recent_ui_context(context),
+                )
+                if repair is None:
+                    return None
+                if not getattr(repair, "source_ok", True):
+                    issue = getattr(repair, "source_issue", "") or getattr(repair, "reason", "")
+                    return _RepairAttempt(
+                        reads=None,
+                        sql="",
+                        reason=getattr(repair, "reason", "") or issue,
+                        source_issue=issue or "当前已采集表格与任务要求的数据源口径不一致，需要回到界面修正后再查询",
+                    )
+                repaired_reads = execute_data_query(
+                    query_tables,
+                    repair.sql,
+                    cur_run.returns,
+                    require_complete=getattr(cur_run, "data_scope", "complete") != "current",
+                )
+                return _RepairAttempt(
+                    reads=repaired_reads,
+                    sql=repair.sql,
+                    reason=repair.reason,
+                )
+
             try:
                 reads = execute_data_query(
                     query_tables,
@@ -101,12 +144,52 @@ def drive_pending_non_ui(
                     cur_run.returns,
                     require_complete=getattr(cur_run, "data_scope", "complete") != "current",
                 )
-                summary = f"数据查询 {'、'.join(cur_run.returns) or cur_run.name}"
-                say(f"  [Orchestrator] 数据查询 {cur_run.returns} → {reads}")
+                if _empty_query_result(reads, cur_run.returns) and _has_query_rows(query_tables):
+                    repair_result = _try_repair(f"原 SQL 在非空表格上返回空结果: {reads}")
+                    if repair_result is not None:
+                        if repair_result.source_issue:
+                            completed = False
+                            summary = f"数据源与任务意图不一致: {repair_result.source_issue}"
+                            say(f"  [Orchestrator] 数据查询失败：{summary}")
+                        elif repair_result.reads is not None and not _empty_query_result(repair_result.reads, cur_run.returns):
+                            reads = repair_result.reads
+                            executed_sql = repair_result.sql
+                            say(f"  [Orchestrator] 数据查询运行时修复：{repair_result.reason}")
+                if completed:
+                    summary = f"数据查询 {'、'.join(cur_run.returns) or cur_run.name}"
+                    say(f"  [Orchestrator] 数据查询 {cur_run.returns} → {reads}")
             except DataQueryError as exc:
-                completed = False
-                summary = str(exc)
-                say(f"  [Orchestrator] 数据查询失败：{exc}")
+                repair_result = None
+                repair_error: str | None = None
+                if _has_query_rows(query_tables):
+                    try:
+                        repair_result = _try_repair(str(exc))
+                    except DataQueryError as repair_exc:
+                        repair_error = str(repair_exc)
+                        repair_result = None
+                if repair_result is not None and repair_result.source_issue:
+                    completed = False
+                    summary = f"数据源与任务意图不一致: {repair_result.source_issue}"
+                    say(f"  [Orchestrator] 数据查询失败：{summary}")
+                elif (
+                    repair_result is not None
+                    and repair_result.reads is not None
+                    and not _empty_query_result(repair_result.reads, cur_run.returns)
+                ):
+                    reads = repair_result.reads
+                    executed_sql = repair_result.sql
+                    summary = f"数据查询 {'、'.join(cur_run.returns) or cur_run.name}"
+                    say(f"  [Orchestrator] 数据查询运行时修复：{repair_result.reason}")
+                    say(f"  [Orchestrator] 数据查询 {cur_run.returns} → {reads}")
+                else:
+                    completed = False
+                    if repair_result is not None and repair_result.reads is not None:
+                        summary = f"SQL 修复后仍返回空结果: {repair_result.reads}"
+                    elif repair_error:
+                        summary = f"{exc}; SQL 修复也失败: {repair_error}"
+                    else:
+                        summary = str(exc)
+                    say(f"  [Orchestrator] 数据查询失败：{exc}")
         result = package_result(
             run_for_turn,
             completed=completed,
@@ -136,7 +219,7 @@ def drive_pending_non_ui(
                 var=run_for_turn.var or "",
                 returns=list(run_for_turn.returns),
                 read_spec=run_for_turn.read_spec,
-                sql=run_for_turn.sql,
+                sql=executed_sql,
                 data_scope=getattr(run_for_turn, "data_scope", "complete"),
                 reads=dict(reads),
                 completed=completed,
@@ -183,3 +266,37 @@ def drive_pending_non_ui(
         notes_mark=notes_mark,
         reply=None,
     )
+
+
+def _empty_query_result(reads: dict[str, str], returns: list[str]) -> bool:
+    if not reads:
+        return True
+    fields = returns or list(reads)
+    values = [str(reads.get(field, "")).strip().lower() for field in fields]
+    return bool(values) and all(value in {"", "[]", "{}", "null", "none"} for value in values)
+
+
+def _has_query_rows(tables: list[dict[str, Any]] | None) -> bool:
+    for table in tables or []:
+        if isinstance(table, dict) and table.get("rows"):
+            return True
+    return False
+
+
+def _recent_ui_context(context: PolicyContext, *, limit: int = 6) -> str:
+    lines: list[str] = []
+    for turn in (context.turns or [])[-limit:]:
+        supervisor = getattr(turn, "supervisor", None)
+        if supervisor is not None:
+            summary = getattr(supervisor, "summary", "") or ""
+            if summary:
+                lines.append(summary)
+        checker = getattr(turn, "checker", None)
+        if checker is not None:
+            reason = getattr(checker, "reason", "") or ""
+            summary = getattr(checker, "summary", "") or ""
+            if reason:
+                lines.append(reason)
+            elif summary:
+                lines.append(summary)
+    return "\n".join(lines[-limit:])

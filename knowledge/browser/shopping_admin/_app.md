@@ -19,7 +19,7 @@
 *   **Product Reviews (list)**: 查看所有已发布或历史的产品评论记录。
 
 ### 销售与订单处理 (Sales)
-*   **Orders List (list)**: 所有销售订单的主列表，按状态追踪订单进度。对于按订单历史统计 customer email(s) 的聚合任务（如 completed/any-state orders、most/second/fifth number of orders、have N orders），这是权威 UI 数据源：进入 **Sales > Orders**；completed 口径必须显式筛选/查询 `Status = Complete`（不能只在步骤名写“完成订单”）；any-state 口径必须先确保没有 `Active filters`（若看到 `Clear all` 就点击清除，避免继承上次任务的 `Status: Complete`）。收集/导出完整订单行中的 `Customer Email`/`Status`，再用 data_query 做 group/count/rank/tie。不要优先走 Customer Reports 或 Customers grid 的 `Total Orders` 列。
+*   **Orders List (list)**: 所有销售订单的主列表，按状态追踪订单进度。对于按订单历史统计 customer email(s) 的聚合任务（如 completed/any-state orders、most/second/fifth number of orders、have N orders），这是权威 UI 数据源：进入 **Sales > Orders**；entire history 的 completed 口径必须先清除继承的无关 `Active filters`，再只应用 `Status = Complete`（不能留下 `Purchase Date` 等任务未要求的范围筛选，也不能只在步骤名写“完成订单”）；any-state 口径必须先确保没有 `Active filters`（若看到 `Clear all` 就点击清除，避免继承上次任务的 `Status: Complete`）。收集/导出完整订单行中的 `Customer Email`/`Status`，再用 data_query 做 group/count/rank/tie。不要优先走 Customer Reports 或 Customers grid 的 `Total Orders` 列。对于按月统计 completed orders 且带 `Purchase Date` 范围的任务，也先用 Orders 页面 Filters：`Status = Complete`，`Purchase Date from <start as MM/DD/YYYY> to <end as MM/DD/YYYY>`（例如 `2023-01-01` 要写成 `01/01/2023`，`2023-05-31` 要写成 `05/31/2023`；不要在页面筛选步写 ISO `YYYY-MM-DD`），Apply Filters 后读完整 Orders grid；data_query 只对已筛选的 provider 字段 `created_at` 按月 group/count，不要再写 `WHERE status = 'Complete'` 或重复日期范围；最终 JSON 对象数组用单个 `result` 返回，SQL 列 alias 为 `month` 和 `count`，`month` 值必须是 January/February/... 的英文月名。
 *   **Order Detail (detail/form)**: 单个订单的详情页，包含信息、发票、退款、发货及评论历史标签页。
 *   **Invoices List (list)**: 所有已生成的发票列表。
 *   **Invoice Detail (detail/form)**: 单个发票的编辑与打印详情页。

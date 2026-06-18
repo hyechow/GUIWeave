@@ -81,6 +81,9 @@ def package_result(
 # by a read Run is the confirm-read shape — so we never string-match the gate's meaning.
 # Generic over create / submit / delete / send / detect / apply-filter: any trigger→read
 # adjacency. See structured_read / the read primitive for who owns the result judgment instead.
+# `data_query` is deliberately excluded: it analyzes the current structured table snapshot, so
+# the preceding UI milestone must still verify the page data source is in the intended
+# filter/search/sort/scope state before SQL runs.
 
 _DISPATCH_GATE_TMPL = (
     "已执行「{name}」：动作已发出且界面给出响应"
@@ -90,7 +93,7 @@ _DISPATCH_GATE_TMPL = (
 
 
 _CONFIRM_READ_TRIGGER_KINDS = {"action", "filter"}
-_CONFIRM_READ_TARGET_KINDS = {"read", "data_query"}
+_CONFIRM_READ_TARGET_KINDS = {"read"}
 
 
 def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
@@ -104,7 +107,7 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
                 if s.kind == "filter":
                     # A filter that is immediately read is a trigger, not a final acceptance
                     # target. Convert it to action so the filter checker doesn't re-judge the
-                    # eventual rows/count; the following read owns that result.
+                    # eventual visible value/count; the following read owns that result.
                     update["kind"] = "action"
                 s = s.model_copy(update=update)
             out.append(s)
@@ -124,8 +127,9 @@ def normalize_confirm_read_gates(program: Program) -> Program:
     An action/filter Run immediately followed by a read Run (the confirm-read shape) gets its
     success_condition replaced so the per-milestone checker accepts on "the action fired
     and the page responded" and never adjudicates the result the read owns. A filter in this
-    shape is converted to action for execution, because the following read owns the filtered
-    state/value. Recurses into
+    shape is converted to action for execution, because the following read owns the visible
+    state/value. A following data_query is not treated as confirm-read; the preceding UI step
+    must still verify the data source state before SQL analyzes it. Recurses into
     if-branches; returns a NEW Program (inputs untouched); idempotent. This is the structural
     guarantee behind the decomposer's L1 prompt nudge — independent of how the LLM phrased
     the gate, so it covers create/submit/delete/send/detect/apply-filter uniformly."""

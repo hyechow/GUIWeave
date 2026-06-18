@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from gui_agent.core.orchestrator import Finish, Interpreter, Program, Run
@@ -142,6 +144,54 @@ def test_execute_data_query_exposes_caption_alias():
     assert reads == {"top_terms": '["hollister", "Joust Bag"]'}
 
 
+def test_execute_data_query_returns_object_rows_as_single_result():
+    reads = execute_data_query(
+        [
+            {
+                "index": 1,
+                "caption": "Orders",
+                "headers": ["created_at", "status"],
+                "rows": [
+                    {"created_at": "2023-01-03 12:00:00", "status": "complete"},
+                    {"created_at": "2023-01-17 09:00:00", "status": "complete"},
+                    {"created_at": "2023-02-01 08:00:00", "status": "complete"},
+                ],
+                "row_count": 3,
+                "partial": False,
+            }
+        ],
+        """
+        SELECT
+          CASE strftime('%m', created_at)
+            WHEN '01' THEN 'January'
+            WHEN '02' THEN 'February'
+          END AS month,
+          COUNT(*) AS count
+        FROM data
+        GROUP BY strftime('%m', created_at)
+        ORDER BY strftime('%m', created_at)
+        """,
+        ["result"],
+    )
+
+    assert reads == {
+        "result": '[{"month": "January", "count": 2}, {"month": "February", "count": 1}]'
+    }
+
+
+def test_execute_data_query_rejects_missing_multi_return_aliases():
+    with pytest.raises(DataQueryError, match="缺少 returns 字段: month, count"):
+        execute_data_query(
+            _orders_table(),
+            """
+            SELECT status AS month_key, COUNT(*) AS cnt
+            FROM data
+            GROUP BY status
+            """,
+            ["month", "count"],
+        )
+
+
 def test_execute_data_query_rejects_mutating_sql():
     with pytest.raises(DataQueryError, match="只允许 SELECT|禁止关键字"):
         execute_data_query(_orders_table(), "DROP TABLE data", ["result"])
@@ -210,3 +260,254 @@ def test_non_ui_complete_data_query_uses_platform_complete_tables(tmp_path):
     assert context.turns[-1].non_ui["reads"] == {
         "emails": '["a@example.com", "b@example.com", "c@example.com"]'
     }
+
+
+def test_non_ui_repairs_empty_data_query_with_actual_table_snapshot(tmp_path, monkeypatch):
+    table = [
+        {
+            "index": 1,
+            "caption": "sales_order_grid",
+            "headers": ["created_at", "status"],
+            "rows": [
+                {"created_at": "2023-01-03 12:00:00", "status": "complete"},
+                {"created_at": "2023-01-17 09:00:00", "status": "complete"},
+                {"created_at": "2023-02-01 08:00:00", "status": "complete"},
+            ],
+            "row_count": 3,
+            "partial": False,
+        }
+    ]
+
+    class _Platform:
+        def read_complete_tables(self):
+            return table
+
+    def _fake_repair(**kwargs):
+        assert "非空表格上返回空结果" in kwargs["failure"]
+        assert kwargs["requested_returns"] == ["result"]
+        return SimpleNamespace(
+            reason="use already-filtered rows and project month names",
+            sql="""
+            SELECT
+              CASE strftime('%m', created_at)
+                WHEN '01' THEN 'January'
+                WHEN '02' THEN 'February'
+              END AS month,
+              COUNT(*) AS count
+            FROM data
+            GROUP BY strftime('%m', created_at)
+            ORDER BY strftime('%m', created_at)
+            """,
+        )
+
+    monkeypatch.setattr(
+        "gui_agent.core.orchestrator.data_query_repair.repair_data_query_sql",
+        _fake_repair,
+    )
+
+    prog = Program(
+        statements=[
+            Run(
+                var="q",
+                name="统计月度订单数",
+                kind="data_query",
+                returns=["result"],
+                sql="""
+                SELECT strftime('%m', created_at) AS month_num, COUNT(*) AS count
+                FROM data
+                WHERE status = 'Complete'
+                GROUP BY strftime('%m', created_at)
+                ORDER BY month_num
+                """,
+            ),
+            Finish(message="{q[result]}"),
+        ]
+    )
+    interp = Interpreter(prog)
+    steps = interp.steps()
+    current_run = next(steps)
+    context = PolicyContext(
+        goal="Get monthly count of completed orders",
+        supervisor_policy_name="milestone",
+        action_policy_name="action",
+    )
+
+    result = drive_pending_non_ui(
+        current_run=current_run,
+        run_index=0,
+        notes_mark=0,
+        interpreter_steps=steps,
+        bundle=None,
+        platform=_Platform(),
+        log_dir=tmp_path,
+        supervisor=None,
+        context=context,
+        save_context=lambda: None,
+        say=lambda _msg: None,
+        done_observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=table,
+        ),
+        observation_url="screenshot_turn_1.png",
+    )
+
+    assert result.reply == '[{"month": "January", "count": 2}, {"month": "February", "count": 1}]'
+    assert context.turns[-1].executed is True
+    assert "status = 'Complete'" not in context.turns[-1].non_ui["sql"]
+    assert context.turns[-1].non_ui["reads"] == {
+        "result": '[{"month": "January", "count": 2}, {"month": "February", "count": 1}]'
+    }
+
+
+def test_non_ui_repair_blocks_when_collected_source_conflicts_with_goal(tmp_path, monkeypatch):
+    table = [
+        {
+            "index": 1,
+            "caption": "Records",
+            "headers": ["owner", "count"],
+            "rows": [{"owner": "a@example.com", "count": "1"}],
+            "row_count": 1,
+            "partial": False,
+        }
+    ]
+
+    class _Platform:
+        def read_complete_tables(self):
+            return table
+
+    def _fake_repair(**_kwargs):
+        return SimpleNamespace(
+            source_ok=False,
+            source_issue="当前表格仍是未请求的日期范围筛选结果，需要回到界面清除该筛选",
+            reason="wrong source scope",
+            sql="",
+        )
+
+    monkeypatch.setattr(
+        "gui_agent.core.orchestrator.data_query_repair.repair_data_query_sql",
+        _fake_repair,
+    )
+
+    prog = Program(
+        statements=[
+            Run(
+                var="q",
+                name="统计全量历史记录",
+                kind="data_query",
+                returns=["result"],
+                sql="SELECT missing_column FROM data",
+            ),
+            Finish(message="{q[result]}"),
+        ]
+    )
+    interp = Interpreter(prog)
+    steps = interp.steps()
+    current_run = next(steps)
+    context = PolicyContext(
+        goal="Get the ranking across the entire history",
+        supervisor_policy_name="milestone",
+        action_policy_name="action",
+    )
+
+    result = drive_pending_non_ui(
+        current_run=current_run,
+        run_index=0,
+        notes_mark=0,
+        interpreter_steps=steps,
+        bundle=None,
+        platform=_Platform(),
+        log_dir=tmp_path,
+        supervisor=None,
+        context=context,
+        save_context=lambda: None,
+        say=lambda _msg: None,
+        done_observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=table,
+        ),
+        observation_url="screenshot_turn_1.png",
+    )
+
+    assert result.reply is not None
+    assert "数据源与任务意图不一致" in result.reply
+    assert "清除该筛选" in result.reply
+    assert context.turns[-1].executed is False
+    assert context.turns[-1].non_ui["failed"] is True
+    assert context.turns[-1].non_ui["reads"] == {}
+
+
+def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkeypatch):
+    table = [
+        {
+            "index": 1,
+            "caption": "Records",
+            "headers": ["owner"],
+            "rows": [{"owner": "a@example.com"}],
+            "row_count": 1,
+            "partial": False,
+        }
+    ]
+
+    class _Platform:
+        def read_complete_tables(self):
+            return table
+
+    def _fake_repair(**_kwargs):
+        return SimpleNamespace(
+            source_ok=True,
+            reason="repair column name but no matching rows",
+            sql="SELECT owner AS result FROM data WHERE owner = 'nobody@example.com'",
+        )
+
+    monkeypatch.setattr(
+        "gui_agent.core.orchestrator.data_query_repair.repair_data_query_sql",
+        _fake_repair,
+    )
+
+    prog = Program(
+        statements=[
+            Run(
+                var="q",
+                name="查询匹配记录",
+                kind="data_query",
+                returns=["result"],
+                sql="SELECT missing_column FROM data",
+            ),
+            Finish(message="{q[result]}"),
+        ]
+    )
+    interp = Interpreter(prog)
+    steps = interp.steps()
+    current_run = next(steps)
+    context = PolicyContext(
+        goal="Get matching records",
+        supervisor_policy_name="milestone",
+        action_policy_name="action",
+    )
+
+    result = drive_pending_non_ui(
+        current_run=current_run,
+        run_index=0,
+        notes_mark=0,
+        interpreter_steps=steps,
+        bundle=None,
+        platform=_Platform(),
+        log_dir=tmp_path,
+        supervisor=None,
+        context=context,
+        save_context=lambda: None,
+        say=lambda _msg: None,
+        done_observation=Observation(
+            png_bytes=b"png",
+            source="browser",
+            tables=table,
+        ),
+        observation_url="screenshot_turn_1.png",
+    )
+
+    assert result.reply is not None
+    assert "SQL 修复后仍返回空结果" in result.reply
+    assert context.turns[-1].executed is False
+    assert context.turns[-1].non_ui["failed"] is True

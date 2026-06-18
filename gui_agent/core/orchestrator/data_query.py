@@ -264,7 +264,7 @@ def _reads_from_rows(
     *,
     truncated: bool,
 ) -> dict[str, str]:
-    result_rows = [{col: _stringify(row[col]) for col in columns} for row in rows]
+    result_rows = [{col: row[col] for col in columns} for row in rows]
     payload = _compact_payload(result_rows, columns)
     if truncated:
         payload = {"rows": result_rows, "truncated": True}
@@ -276,16 +276,32 @@ def _reads_from_rows(
     if len(returns) == 1:
         reads[returns[0]] = text_payload
         return reads
+    missing = [
+        field for field in returns
+        if field.lower() not in {"result", "结果"} and _return_column(field, columns) is None
+    ]
+    if missing:
+        raise DataQueryError(
+            "SQL 查询结果缺少 returns 字段: "
+            + ", ".join(missing)
+            + "；请把 SELECT 输出列 alias 成这些字段，或用单个 result 返回完整结果。"
+            + f" 当前输出列: {', '.join(columns) if columns else '(none)'}"
+        )
     for field in returns:
-        key = _identifier(field)
-        if key in columns:
-            values = [r.get(key, "") for r in result_rows]
+        col = _return_column(field, columns)
+        if col is not None:
+            values = [_stringify(r.get(col, "")) for r in result_rows]
             reads[field] = values[0] if len(values) == 1 else json.dumps(values, ensure_ascii=False)
         elif field.lower() in {"result", "结果"}:
             reads[field] = text_payload
-        else:
-            reads[field] = ""
     return reads
+
+
+def _return_column(field: str, columns: list[str]) -> str | None:
+    if field in columns:
+        return field
+    key = _identifier(field)
+    return key if key in columns else None
 
 
 def _compact_payload(rows: list[dict[str, str]], columns: list[str]) -> Any:

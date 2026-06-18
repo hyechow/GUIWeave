@@ -357,7 +357,7 @@ def test_normalize_confirm_read_converts_filter_before_read_to_action():
     assert prog.statements[0].kind == "filter"  # 原 Program 不就地改
 
 
-def test_normalize_confirm_read_converts_filter_before_data_query_to_action():
+def test_normalize_confirm_read_leaves_filter_before_data_query_strict():
     from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="提交订单筛选", kind="filter", success_condition="列表只显示匹配订单"),
@@ -366,8 +366,8 @@ def test_normalize_confirm_read_converts_filter_before_data_query_to_action():
     ])
     out = normalize_confirm_read_gates(prog)
     trigger, query = out.statements
-    assert trigger.kind == "action"
-    assert "不判定结果取值" in trigger.success_condition
+    assert trigger.kind == "filter"
+    assert trigger.success_condition == "列表只显示匹配订单"
     assert query.kind == "data_query" and query.returns == ["emails"]
 
 
