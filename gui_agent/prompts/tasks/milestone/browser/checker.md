@@ -1,5 +1,6 @@
 ---
 id: task.milestone.browser.checker
+rendered: true
 source_type: task_template
 platform: browser
 scope:

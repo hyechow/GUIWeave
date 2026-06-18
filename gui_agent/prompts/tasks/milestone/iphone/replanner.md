@@ -1,5 +1,6 @@
 ---
 id: task.milestone.iphone.replanner
+rendered: true
 source_type: task_template
 platform: iphone
 scope:

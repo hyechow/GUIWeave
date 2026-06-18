@@ -1,5 +1,6 @@
 ---
 id: task.milestone.android.loop_frame
+rendered: true
 source_type: task_template
 platform: android
 scope:

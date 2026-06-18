@@ -1,5 +1,6 @@
 ---
 id: task.milestone.browser.loop_scroll
+rendered: true
 source_type: task_template
 platform: browser
 scope:

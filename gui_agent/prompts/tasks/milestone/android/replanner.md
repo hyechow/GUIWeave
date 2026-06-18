@@ -1,5 +1,6 @@
 ---
 id: task.milestone.android.replanner
+rendered: true
 source_type: task_template
 platform: android
 scope:

@@ -118,9 +118,9 @@ def test_milestone_prompts_injected_from_adapter():
 
 
 def test_milestone_prompt_sets_format_cleanly():
-    # Both the iphone and browser MilestonePrompts sets must .format() with EXACTLY
-    # the kwargs helpers.py / policy.py pass — a stray/missing placeholder in a prompt
-    # would be a runtime KeyError. Pins the format wiring for both platforms.
+    # All three platform MilestonePrompts sets must .format() with EXACTLY the kwargs
+    # helpers.py / policy.py pass — a stray/missing placeholder in a prompt would be a
+    # runtime KeyError. Pins the format wiring (the call-site contract) for every platform.
     import string
 
     from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
@@ -149,7 +149,7 @@ def test_milestone_prompt_sets_format_cleanly():
             history_text="", tried_instructions="",
         ),
     }
-    for prompts in (IPHONE_MILESTONE_PROMPTS, BROWSER_MILESTONE_PROMPTS):
+    for prompts in (IPHONE_MILESTONE_PROMPTS, BROWSER_MILESTONE_PROMPTS, ANDROID_MILESTONE_PROMPTS):
         for field, kw in kwargs.items():
             template = getattr(prompts, field)
             template.format(**kw)  # raises KeyError on an unexpected placeholder

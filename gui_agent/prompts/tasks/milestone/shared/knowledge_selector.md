@@ -1,5 +1,6 @@
 ---
 id: task.milestone.knowledge_selector
+rendered: true
 source_type: task_template
 platform: shared
 scope:

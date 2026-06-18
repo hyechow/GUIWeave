@@ -34,24 +34,30 @@ class PromptTemplate:
     schema: str = ""
     eval_suites: tuple[str, ...] = ()
     version: int = 1
+    # Authoritative classification (frontmatter `rendered: true`): is this prompt consumed via
+    # str.format() with kwargs, or sent to the model verbatim? RAW prompts may contain literal
+    # JSON examples ({...}) that are NOT placeholders; only RENDERED prompts are brace-scanned /
+    # format-validated. Without this the scanner misreads JSON in raw prompts as placeholders.
+    rendered: bool = False
     metadata: dict[str, Any] | None = None
 
     @property
     def placeholders(self) -> tuple[str, ...]:
-        names: list[str] = []
-        try:
-            parsed = Formatter().parse(self.body)
-            for _, field_name, _, _ in parsed:
-                if field_name and field_name not in names:
-                    names.append(field_name)
-        except ValueError:
-            # Some system prompts contain literal JSON examples and are never
-            # rendered via str.format. Keep metadata inspection total-order safe.
+        """Format placeholder names — only meaningful for RENDERED prompts. Raw prompts return
+        () (their braces are literal, e.g. JSON examples). Rendered prompts are guaranteed to
+        parse cleanly by the registry conformance test, so no error-swallowing here."""
+        if not self.rendered:
             return ()
+        names: list[str] = []
+        for _, field_name, _, _ in Formatter().parse(self.body):
+            if field_name and field_name not in names:
+                names.append(field_name)
         return tuple(names)
 
     def render(self, **values: object) -> str:
-        """Render with Python's existing ``str.format`` semantics."""
+        """Render a RENDERED prompt with Python's str.format semantics."""
+        if not self.rendered:
+            raise PromptRegistryError(f"{self.id} is a raw prompt; use load_prompt_text(), not render()")
         return self.body.format(**values)
 
 
@@ -94,6 +100,7 @@ def _registry() -> dict[str, PromptTemplate]:
             schema=str(meta.get("schema") or "").strip(),
             eval_suites=_as_tuple(meta.get("eval_suites")),
             version=_as_int(meta.get("version"), default=1),
+            rendered=bool(meta.get("rendered")),
             body=body,
             path=path,
             metadata=meta,

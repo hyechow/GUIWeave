@@ -24,6 +24,40 @@ def test_prompt_registry_loads_all_assets():
         assert prompt.body.strip()
 
 
+def test_rendered_flag_governs_brace_scanning():
+    # The rendered/raw split is authoritative (frontmatter `rendered: true`), not inferred by
+    # auto-scanning braces — that misread JSON examples in raw prompts. Contract:
+    #   - raw prompts are never brace-scanned (.placeholders == ()), so JSON {...} is safe;
+    #   - rendered prompts are consumed via str.format(), so their braces must all be valid
+    #     NAMED placeholders (balanced, escaped JSON, no positional {}), else .format() raises.
+    import string
+
+    for p in iter_prompt_templates():
+        if not p.rendered:
+            assert p.placeholders == (), f"raw prompt {p.id} should not expose placeholders"
+            continue
+        try:
+            fields = [fn for _, fn, _, _ in string.Formatter().parse(p.body)]
+        except ValueError as exc:
+            raise AssertionError(f"rendered prompt {p.id} has malformed/unescaped braces: {exc}")
+        assert "" not in fields, f"rendered prompt {p.id} has a positional/empty {{}} placeholder"
+        assert p.placeholders, f"rendered prompt {p.id} is marked rendered but has no placeholders"
+
+
+def test_render_rejects_raw_prompts():
+    from gui_agent.prompts import load_prompt
+    from gui_agent.prompts.loader import PromptRegistryError
+
+    raw = load_prompt("task.orchestrator.decomposer")   # consumed verbatim, not via .format
+    assert raw.rendered is False
+    try:
+        raw.render(anything="x")
+    except PromptRegistryError:
+        pass
+    else:
+        raise AssertionError("render() must refuse a raw prompt")
+
+
 def test_prompt_eval_suites_point_to_existing_paths():
     for prompt in iter_prompt_templates():
         for suite in prompt.eval_suites:
