@@ -59,10 +59,18 @@ def assemble_messages(
         print(f"  [ContextBudget] ⚠️ {label} 必留块已达 {result.kept_chars} 字 / 上限 {budgeter.max_chars} 字")
 
     kept = {id(b) for b in result.kept}
-    sys_text = render_context_blocks([b for b in sys_live if id(b) in kept], include_headers=True)
-    hum_text = render_context_blocks([b for b in hum_live if id(b) in kept], include_headers=True)
+    # Provenance ([context: id | type=… | source=… | ttl=…]) is for the trace/report only —
+    # to_report(...) above carries it. The MODEL sees just the block bodies (each already
+    # carries its own "## 标题" markdown header), so render headerless: no machine-tag token
+    # tax / salience dilution in the prompt.
+    sys_text = render_context_blocks([b for b in sys_live if id(b) in kept], include_headers=False)
+    hum_text = render_context_blocks([b for b in hum_live if id(b) in kept], include_headers=False)
 
-    system = task_prompt + (f"\n\n{sys_text}" if sys_text else "") + f"\n\n{current_date_block().render()}"
+    system = (
+        task_prompt
+        + (f"\n\n{sys_text}" if sys_text else "")
+        + f"\n\n{current_date_block().render(include_header=False)}"
+    )
     human_content: list = []
     if hum_text:
         human_content.append({"type": "text", "text": f"{hum_text}\n\n"})

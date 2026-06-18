@@ -27,9 +27,12 @@ def test_placement_matches_legacy_layout():
         label="checker",
     )
     system = msgs[0].content
-    # system prompt tail: TASK_PROMPT, then the system block, then the date line (order preserved)
+    # system prompt tail: TASK_PROMPT, then the system block body, then the date line (order
+    # preserved). Blocks render headerless for the model (no [context:...] machine tag), so we
+    # assert on the block's own markdown header.
     assert system.startswith("TASK_PROMPT")
-    assert system.index("TASK_PROMPT") < system.index("runtime.acceptance.checklist") < system.index("当前日期")
+    assert "[context:" not in system            # provenance tags are report-only, not in the prompt
+    assert system.index("TASK_PROMPT") < system.index("逐项验收") < system.index("当前日期")
 
     human = msgs[1].content
     # human head: the form-controls block first, then the fixed decision text, then the image
