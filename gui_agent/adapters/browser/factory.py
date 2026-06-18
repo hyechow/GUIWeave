@@ -275,5 +275,11 @@ def _resolve_headless(headless: bool | None) -> bool:
         return headless
     import os
 
-    raw = os.environ.get("BROWSER_HEADLESS") or os.environ.get("WEB_ARENA_HEADLESS")
+    # AGENT_HEADLESS is the unified cross-platform switch (set by --headless / bin/runner);
+    # BROWSER_HEADLESS / WEB_ARENA_HEADLESS remain as browser-specific aliases (bin/webarena).
+    raw = (
+        os.environ.get("AGENT_HEADLESS")
+        or os.environ.get("BROWSER_HEADLESS")
+        or os.environ.get("WEB_ARENA_HEADLESS")
+    )
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}

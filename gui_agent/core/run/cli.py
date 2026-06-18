@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -90,7 +91,13 @@ def main(
     parser.add_argument(
         "--hud",
         action="store_true",
-        help="在 iPhone 镜像窗口下方显示实时动作状态面板",
+        help="显示实时动作状态 HUD 面板（headless 模式下被强制关闭）",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="全后台模式：屏蔽 HUD 与动作可视化（光标/覆盖层），三平台统一；"
+             "browser 还会以 headless Chromium 运行。也可用环境变量 AGENT_HEADLESS=1 开启",
     )
     parser.add_argument(
         "--no-router",
@@ -104,6 +111,16 @@ def main(
              "（默认走 DAG 路径）",
     )
     args = parser.parse_args()
+
+    # Unified headless switch (--headless flag OR env AGENT_HEADLESS): suppress the HUD and the
+    # action visualizer on ALL platforms. Exported back to the env so the lazily-resolved browser
+    # bundle (setup_check / open_session / visualizer all read env at call time) also runs headless
+    # Chromium and skips its DOM/cursor overlay — one switch, three platforms.
+    headless = args.headless or str(os.environ.get("AGENT_HEADLESS") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if headless:
+        os.environ["AGENT_HEADLESS"] = "1"
 
     action_policy = policy_builder(args.policy)
     supervisor = supervisor_builder(args.supervisor)
@@ -171,7 +188,7 @@ def main(
                 goal = router_result.goal
                 print(f"Router  : {raw_input!r} → {goal!r}")
 
-        hud = bundle.make_status_reporter(args.hud)
+        hud = bundle.make_status_reporter(args.hud and not headless)
         with tee_stdio(log_dir):
             for _line in setup.lines:
                 print(_line)
@@ -278,6 +295,7 @@ def main(
                         orchestrator_context_reports=orchestrator_context_reports,
                         stop_requested=esc_stop.requested if esc_stop.enabled else None,
                         platform=platform,
+                        headless=headless,
                     )
                 if result:
                     if program is not None:

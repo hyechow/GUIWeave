@@ -18,8 +18,17 @@ if [[ -z "$task" ]]; then
 fi
 shift 2  # 平台 + 任务已取出,余下透传给 runner
 
+# 统一 headless 开关(三平台一致):HEADLESS=1（或 AGENT_HEADLESS=1）→ 全后台,屏蔽 HUD + 动作可视化
+# (光标/覆盖层);browser 还会以 headless Chromium 运行。默认(不设)= 带 HUD 的交互模式。
+#   例: HEADLESS=1 ANDROID_SERIAL=192.168.31.240:5555 bin/runner android "打开设置"
+headless_raw="${HEADLESS:-${AGENT_HEADLESS:-}}"
+case "$(printf '%s' "$headless_raw" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on) vis_flag="--headless"; export AGENT_HEADLESS=1 ;;
+  *)             vis_flag="--hud" ;;
+esac
+
 # 默认放前、"$@" 放后 → 额外参数能覆盖默认(argparse 后者胜),如 --max-turns 5 生效。
 exec env AGENT_PLATFORM="$platform" \
          AGENT_MODE="${AGENT_MODE:-daemon}" \
          AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
-         uv run python -m gui_agent.core.runner "$task" --auto-continue --stop-on-esc --hud --supervisor milestone --max-turns 20 "$@"
+         uv run python -m gui_agent.core.runner "$task" --auto-continue --stop-on-esc "$vis_flag" --supervisor milestone --max-turns 20 "$@"

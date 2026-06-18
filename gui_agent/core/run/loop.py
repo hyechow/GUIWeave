@@ -121,6 +121,7 @@ def run_agent_loop(
     orchestrator_context_reports: list[dict] | None = None,
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
+    headless: bool = False,  # suppress the action visualizer (cursor/overlay) on every platform; HUD is gated by the caller
 ) -> dict:
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
 
@@ -220,9 +221,10 @@ def run_agent_loop(
     with session_cm as platform:
         executor = bundle.make_executor(platform)
         # Optional action visualizer (cursor/overlay). None when the platform has
-        # none (iphone today); show_action is best-effort before execute and may
-        # be called again after executor snap updates the action point.
-        visualizer = bundle.make_action_visualizer(platform)
+        # none (iphone today) OR in headless mode (unified switch — no overlay on any
+        # platform); show_action is best-effort before execute and may be called again
+        # after executor snap updates the action point.
+        visualizer = None if headless else bundle.make_action_visualizer(platform)
 
         def _flash(a) -> None:
             # Best-effort cursor/overlay flash; never raises into the loop.
