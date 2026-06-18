@@ -187,12 +187,15 @@ def _inject_knowledge(
     msgs: list,
     app_knowledge: str | None,
     elements_knowledge: str | None,
+    *,
+    context_reports: list[dict] | None = None,
+    label: str = "planner.knowledge",
 ) -> None:
     """Inject navigation and elements knowledge into the user message."""
     text = render_prompt_context([
         knowledge_block("app_navigation", app_knowledge),
         knowledge_block("page_elements", elements_knowledge),
-    ])
+    ], label=label, report_sink=context_reports)
     if text:
         msgs[1].content = [{"type": "text", "text": f"{text}\n\n"}] + msgs[1].content
 
@@ -201,10 +204,16 @@ def _format_form_controls(form_controls: list[dict] | None) -> str:
     return format_form_controls_text(form_controls)
 
 
-def _inject_observation_context(msgs: list, observation: Observation) -> None:
+def _inject_observation_context(
+    msgs: list,
+    observation: Observation,
+    *,
+    context_reports: list[dict] | None = None,
+    label: str = "observation",
+) -> None:
     text = render_prompt_context([
         form_controls_block(getattr(observation, "form_controls", None)),
-    ])
+    ], label=label, report_sink=context_reports)
     if text:
         msgs[1].content = [{"type": "text", "text": f"{text}\n\n"}] + msgs[1].content
 
@@ -474,6 +483,7 @@ def run_checker(
     _is_retry: bool = False,
     prompts: Optional[MilestonePrompts] = None,
     check_knowledge: str = "",
+    context_reports: list[dict] | None = None,
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals.
 
@@ -521,11 +531,15 @@ def run_checker(
         page_title_block(title),
         acceptance_items_block(accept_items),
         knowledge_block("check_rules", check_knowledge),
-    ])
+    ], label="checker.dynamic", report_sink=context_reports)
     if dynamic_context:
         prompt += f"\n\n{dynamic_context}"
     msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
-    _inject_observation_context(msgs, observation)
+    _inject_observation_context(
+        msgs, observation,
+        context_reports=context_reports,
+        label="checker.observation",
+    )
     result = invoke_structured(_make_llm(), msgs, _SingleCheckResult)
 
     def _strip_progress_evidence(r: _SingleCheckResult) -> None:
@@ -554,6 +568,7 @@ def run_checker(
             _is_retry=True,
             prompts=prompts,
             check_knowledge=check_knowledge,
+            context_reports=context_reports,
         )
         _strip_progress_evidence(result)
 
@@ -603,6 +618,7 @@ def run_checker(
             _is_retry=True,
             prompts=prompts,
             check_knowledge=check_knowledge,
+            context_reports=context_reports,
         )
         _strip_progress_evidence(result)
     if result.status == "done" and _still_invalid(result):
@@ -660,6 +676,7 @@ def run_planner(
     app_knowledge: Optional[str] = None,
     elements_knowledge: Optional[str] = None,
     prompts: Optional[MilestonePrompts] = None,
+    context_reports: list[dict] | None = None,
 ) -> _PlanResult:
     """Run the step planner. Used by both production and evals."""
     if prompts is None:
@@ -707,12 +724,20 @@ def run_planner(
     )
     dynamic_context = render_prompt_context([
         extra_instruction_block(extra, source="planner_guard"),
-    ])
+    ], label="planner.dynamic", report_sink=context_reports)
     if dynamic_context:
         prompt += f"\n\n{dynamic_context}"
     msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
-    _inject_knowledge(msgs, app_knowledge, elements_knowledge)
-    _inject_observation_context(msgs, observation)
+    _inject_knowledge(
+        msgs, app_knowledge, elements_knowledge,
+        context_reports=context_reports,
+        label="planner.knowledge",
+    )
+    _inject_observation_context(
+        msgs, observation,
+        context_reports=context_reports,
+        label="planner.observation",
+    )
     plan_schema = prompts.plan_result_schema or _PlanResult
     plan = invoke_structured(_make_llm(), msgs, plan_schema)
     plan = _guard_native_select_plan(plan, milestone, check, observation)
@@ -739,6 +764,7 @@ def run_planner(
                 app_knowledge=app_knowledge,
                 elements_knowledge=elements_knowledge,
                 prompts=prompts,
+                context_reports=context_reports,
             )
         reopened = _reopens_selected_dropdown(plan.instruction, milestone.id, history)
         if reopened:
@@ -756,6 +782,7 @@ def run_planner(
                 app_knowledge=app_knowledge,
                 elements_knowledge=elements_knowledge,
                 prompts=prompts,
+                context_reports=context_reports,
             )
     return _normalize_picker_plan_direction(plan)
 

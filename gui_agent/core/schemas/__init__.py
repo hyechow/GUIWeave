@@ -517,6 +517,13 @@ class PolicyTurn(BaseModel):
         default_factory=list,
         description="本轮 planner 实际注入的渐进知识章节名（KnowledgeSelector 按 (milestone, page) 选定并缓存）；无渐进知识或未选中则为空",
     )
+    llm_context: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "本轮 LLM 上下文决策诊断：context budget included/dropped blocks、估算 chars/tokens、"
+            "block source/priority/ttl/裁剪原因，以及 KnowledgeSelector cache/fallback/section_ids。"
+        ),
+    )
 
 
 class PolicyContext(BaseModel):

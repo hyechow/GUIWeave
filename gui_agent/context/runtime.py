@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, MutableSequence
 
 from gui_agent.context.blocks import ContextBlock, ContextBudgeter
 from gui_agent.core.schemas import Milestone, PolicyTurn
@@ -332,6 +332,7 @@ def render_prompt_context(
     max_chars: int | None = None,
     label: str = "context",
     say: Callable[[str], None] = print,
+    report_sink: MutableSequence[dict] | Callable[[dict], None] | None = None,
 ) -> str:
     """Render context blocks under a hard char ceiling (the ContextBudgeter, drop-only).
 
@@ -340,6 +341,8 @@ def render_prompt_context(
     ``max_chars`` to tighten per call site."""
     budgeter = ContextBudgeter(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
     result = budgeter.apply(blocks)
+    if report_sink is not None and result.decisions:
+        _append_report(report_sink, result.to_report(label=label))
     if result.dropped:
         names = "、".join(f"{b.id}[{b.budget}]({len(b.render())}字)" for b in result.dropped)
         say(f"  [ContextBudget] {label} 超预算({budgeter.max_chars}字),丢弃 {len(result.dropped)} 块: {names}")
@@ -349,3 +352,13 @@ def render_prompt_context(
             f"{budgeter.max_chars} 字,无可丢弃块"
         )
     return result.text
+
+
+def _append_report(
+    sink: MutableSequence[dict] | Callable[[dict], None],
+    report: dict,
+) -> None:
+    if callable(sink):
+        sink(report)
+    else:
+        sink.append(report)

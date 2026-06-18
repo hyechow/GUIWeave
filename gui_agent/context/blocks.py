@@ -112,6 +112,75 @@ class BudgetResult:
     # True when the `required` blocks alone already exceed the ceiling — nothing droppable is
     # left, so the result is over budget by design (required blocks are never dropped).
     over_budget: bool
+    max_chars: int = 0
+    total_chars: int = 0
+    dropped_chars: int = 0
+    decisions: tuple["ContextBlockDecision", ...] = ()
+
+    @property
+    def estimated_tokens(self) -> int:
+        return _estimate_tokens(self.total_chars)
+
+    @property
+    def kept_tokens(self) -> int:
+        return _estimate_tokens(self.kept_chars)
+
+    def to_report(self, *, label: str = "context") -> dict[str, Any]:
+        """Serialize the budget decision for run reports."""
+        blocks = [decision.to_dict() for decision in self.decisions]
+        included = [block for block in blocks if block.get("included")]
+        dropped = [block for block in blocks if not block.get("included")]
+        return {
+            "kind": "context_budget",
+            "label": label,
+            "max_chars": self.max_chars,
+            "estimated_chars": self.total_chars,
+            "estimated_tokens": self.estimated_tokens,
+            "kept_chars": self.kept_chars,
+            "kept_tokens": self.kept_tokens,
+            "dropped_chars": self.dropped_chars,
+            "over_budget": self.over_budget,
+            "included_count": len(included),
+            "dropped_count": len(dropped),
+            "included": included,
+            "dropped": dropped,
+            "blocks": blocks,
+        }
+
+
+@dataclass(frozen=True)
+class ContextBlockDecision:
+    """Report row for one context block after budget selection."""
+
+    id: str
+    source_type: str
+    source: str
+    priority: int
+    ttl: str
+    budget: str
+    chars: int
+    included: bool
+    reason: str
+    truncation_reason: str
+
+    @property
+    def estimated_tokens(self) -> int:
+        return _estimate_tokens(self.chars)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "source_type": self.source_type,
+            "source": self.source,
+            "priority": self.priority,
+            "ttl": self.ttl,
+            "budget": self.budget,
+            "estimated_chars": self.chars,
+            "estimated_tokens": self.estimated_tokens,
+            "included": self.included,
+            "reason": self.reason,
+            "truncation_reason": self.truncation_reason,
+        }
 
 
 class ContextBudgeter:
@@ -159,12 +228,34 @@ class ContextBudgeter:
         kept = tuple(b for b in live if id(b) not in dropped_ids)
         dropped = tuple(b for b in live if id(b) in dropped_ids)
         kept_chars = sum(sizes[id(b)] for b in kept)
+        dropped_chars = sum(sizes[id(b)] for b in dropped)
+        decisions = tuple(
+            ContextBlockDecision(
+                id=b.id,
+                source_type=b.source_type,
+                source=b.source,
+                priority=b.priority,
+                ttl=b.ttl,
+                budget=b.budget,
+                chars=sizes[id(b)],
+                included=id(b) not in dropped_ids,
+                reason=_decision_reason(b, id(b) in dropped_ids, total > self.max_chars),
+                truncation_reason=(
+                    "dropped_over_budget" if id(b) in dropped_ids else "not_truncated"
+                ),
+            )
+            for b in live
+        )
         return BudgetResult(
             text=render_context_blocks(kept, include_headers=self.include_headers),
             kept=kept,
             dropped=dropped,
             kept_chars=kept_chars,
             over_budget=kept_chars > self.max_chars,
+            max_chars=self.max_chars,
+            total_chars=total,
+            dropped_chars=dropped_chars,
+            decisions=decisions,
         )
 
 
@@ -172,3 +263,20 @@ def _format_metadata_value(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return ",".join(str(item) for item in value)
     return str(value)
+
+
+def _estimate_tokens(chars: int) -> int:
+    """Cheap report-only token estimate until call sites have tokenizer access."""
+    if chars <= 0:
+        return 0
+    return max(1, (chars + 3) // 4)
+
+
+def _decision_reason(block: ContextBlock, dropped: bool, was_over_budget: bool) -> str:
+    if dropped:
+        return f"dropped: over budget; tier={block.budget}; ttl={block.ttl}; priority={block.priority}"
+    if block.budget == "required":
+        return "included: required"
+    if was_over_budget:
+        return f"included: survived budget; tier={block.budget}; ttl={block.ttl}; priority={block.priority}"
+    return "included: within budget"

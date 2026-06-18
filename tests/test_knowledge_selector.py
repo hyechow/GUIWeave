@@ -135,6 +135,38 @@ def test_clean_empty_falls_back_to_deterministic_match(monkeypatch):
     stems = p._select_sections(ms, _check("某页"))
     assert stems and stems[0] == "如何创建订单"
     assert calls["n"] == 1
+    report = p._context_reports[-1]
+    assert report["kind"] == "selector"
+    assert report["cache"] == "miss"
+    assert report["section_ids"] == []
+    assert report["sections"][0] == "如何创建订单"
+    assert report["fallback_triggered"] is True
+    assert report["fallback_reason"] == "empty_selector"
+    assert report["cached"] is True
+
+
+def test_empty_page_identity_fallback_hits_but_does_not_cache(monkeypatch):
+    p = MilestoneSupervisorPolicy()
+    p.set_app_knowledge("nav", app_name="RoboTeam", elements="e", sections={
+        "如何创建订单": "---\nselector_when: 新建订单/下单时\n---\n创建订单正文",
+    })
+    calls = _stub(monkeypatch, [_SelectorResult(section_ids=[]), _SelectorResult(section_ids=[])])
+    ms = Milestone.model_validate({
+        "id": "m1", "name": "新建一个订单", "description": "d",
+        "success_condition": "订单创建成功", "kind": "action",
+    })
+
+    assert p._select_sections(ms, _check("")) == ["如何创建订单"]
+    assert p._select_sections(ms, _check("")) == ["如何创建订单"]
+
+    assert calls["n"] == 2
+    assert ("m1", "") not in p._selector_cache
+    first, second = p._context_reports[-2:]
+    assert first["page_known"] is False
+    assert first["cached"] is False
+    assert first["fallback_triggered"] is True
+    assert first["sections"] == ["如何创建订单"]
+    assert second["cache"] == "miss"
 
 
 def test_failure_falls_back_and_is_not_cached(monkeypatch):
@@ -145,6 +177,7 @@ def test_failure_falls_back_and_is_not_cached(monkeypatch):
     assert p._select_sections(ms, _check("如何查询订单的执行状态")) == ["如何查询订单的执行状态"]
     assert p._select_sections(ms, _check("如何查询订单的执行状态")) == ["如何查询订单的执行状态"]
     assert calls["n"] == 2  # 未缓存,每次都重试 LLM
+    assert p._context_reports[-1]["fallback_reason"] == "selector_error"
 
 
 def test_no_progressive_knowledge_returns_empty():

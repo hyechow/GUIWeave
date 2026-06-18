@@ -24,6 +24,7 @@ def test_make_verdict_turn_captures_supervisor_state():
         _timings={"checker": 1.2},
         _token_usage={"checker": {"input": 10, "output": 5}},
         _last_sections_loaded=["orders"],
+        _context_reports=[{"kind": "context_budget", "label": "checker.dynamic"}],
     )
 
     turn = make_verdict_turn(
@@ -44,6 +45,7 @@ def test_make_verdict_turn_captures_supervisor_state():
     assert turn.timings == {"checker": 1.2}
     assert turn.token_usage == {"checker": {"input": 10, "output": 5}}
     assert turn.sections_loaded == ["orders"]
+    assert turn.llm_context == [{"kind": "context_budget", "label": "checker.dynamic"}]
 
 
 def test_supervisor_timing_carry_merges_ordered_timings_and_tokens():
@@ -51,6 +53,7 @@ def test_supervisor_timing_carry_merges_ordered_timings_and_tokens():
     first = SimpleNamespace(
         _timings={"checker": 1.0},
         _token_usage={"checker": {"input": 2, "output": 3}},
+        _context_reports=[{"kind": "context_budget", "label": "checker.dynamic"}],
     )
     final = SimpleNamespace(
         _timings={"checker": 0.5, "action_policy": 2.0},
@@ -58,6 +61,7 @@ def test_supervisor_timing_carry_merges_ordered_timings_and_tokens():
             "checker": {"input": 1, "output": 1},
             "action_policy": {"input": 4, "output": 6},
         },
+        _context_reports=[{"kind": "selector", "label": "knowledge.selector"}],
     )
 
     carry.collect(first)
@@ -69,3 +73,7 @@ def test_supervisor_timing_carry_merges_ordered_timings_and_tokens():
         "checker": {"input": 3, "output": 4},
         "action_policy": {"input": 4, "output": 6},
     }
+    assert final._context_reports == [
+        {"kind": "context_budget", "label": "checker.dynamic"},
+        {"kind": "selector", "label": "knowledge.selector"},
+    ]

@@ -510,6 +510,7 @@ class RunnerReportBuilder:
                 snap=action.get("snap"),
                 sections_loaded=turn.get("sections_loaded") or [],
                 relevant_sections=(turn.get("checker") or {}).get("relevant_sections") or [],
+                llm_context=turn.get("llm_context") or [],
                 operation_mode=operation_mode,
                 non_ui=non_ui,
             ))

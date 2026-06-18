@@ -367,6 +367,7 @@ def decompose(
     current_site: str = "",
     table_summaries: list[dict] | None = None,
     prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
+    context_reports: list[dict] | None = None,
 ) -> Program:
     """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
 
@@ -428,7 +429,14 @@ def decompose(
             priority=35,
             content=table_hint,
         ))
-    parts: list[dict] = [{"type": "text", "text": render_prompt_context(context_blocks)}]
+    parts: list[dict] = [{
+        "type": "text",
+        "text": render_prompt_context(
+            context_blocks,
+            label="orchestrator.decompose",
+            report_sink=context_reports,
+        ),
+    }]
     if png_bytes:
         prepare_png = prepare_vision_prompt_png or (lambda b: b)
         b64 = base64.b64encode(prepare_png(png_bytes)).decode()
@@ -439,7 +447,14 @@ def decompose(
     for attempt in range(_MAX_RETRIES + 1):
         user_parts = list(parts)
         if issues:
-            user_parts.append({"type": "text", "text": render_prompt_context([feedback_block(issues)])})
+            user_parts.append({
+                "type": "text",
+                "text": render_prompt_context(
+                    [feedback_block(issues)],
+                    label="orchestrator.decompose.feedback",
+                    report_sink=context_reports,
+                ),
+            })
         messages = [
             SystemMessage(content=system_prompt or _SYSTEM),
             HumanMessage(content=user_parts),

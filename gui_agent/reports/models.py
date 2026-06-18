@@ -31,6 +31,7 @@ class ReportStep:
     snap: dict | None = None
     sections_loaded: list[str] = field(default_factory=list)    # progressive knowledge injected into the planner this turn
     relevant_sections: list[str] = field(default_factory=list)  # sections the checker flagged relevant (requested)
+    llm_context: list[dict] = field(default_factory=list)       # context budget + selector decisions for this turn
     operation_mode: str = "interactive"  # interactive | non_interactive
     non_ui: dict | None = None
 
