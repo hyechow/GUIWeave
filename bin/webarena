@@ -92,13 +92,12 @@ out_dir="${output_root}/${run_dir_name}/${task_id}"
 
 if [[ "$headless" == "1" ]]; then
   headless_arg=(--headless)
-  hud_arg=()
 else
   headless_arg=()
-  hud_arg=(--hud)
 fi
 
-# headed 模式 --hud 默认开(状态面板叠在 Chrome 窗口上);"$@" 在后,额外参数可覆盖其它默认。
+# headless 是唯一可见性开关:headed 模式默认显示状态 HUD + 光标覆盖,--headless 则全关。
+# "$@" 在后,额外参数可覆盖其它默认。
 exec uv run python -m gui_agent.adapters.browser.webarena \
   --tasks-file "$tasks_file" --task-id "$task_id" \
-  --task-output-dir "$out_dir" "${headless_arg[@]}" "${hud_arg[@]}" "$@"
+  --task-output-dir "$out_dir" "${headless_arg[@]}" "$@"

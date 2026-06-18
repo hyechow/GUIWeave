@@ -89,15 +89,11 @@ def main(
         help="auto-continue 模式下监听 ESC，并在当前 turn 收尾后安全停止",
     )
     parser.add_argument(
-        "--hud",
-        action="store_true",
-        help="显示实时动作状态 HUD 面板（headless 模式下被强制关闭）",
-    )
-    parser.add_argument(
         "--headless",
         action="store_true",
         help="全后台模式：屏蔽 HUD 与动作可视化（光标/覆盖层），三平台统一；"
-             "browser 还会以 headless Chromium 运行。也可用环境变量 AGENT_HEADLESS=1 开启",
+             "browser 还会以 headless Chromium 运行。也可用环境变量 AGENT_HEADLESS=1 开启。"
+             "默认（不加）为交互模式，HUD 与可视化均开启",
     )
     parser.add_argument(
         "--no-router",
@@ -188,7 +184,7 @@ def main(
                 goal = router_result.goal
                 print(f"Router  : {raw_input!r} → {goal!r}")
 
-        hud = bundle.make_status_reporter(args.hud and not headless)
+        hud = bundle.make_status_reporter(not headless)
         with tee_stdio(log_dir):
             for _line in setup.lines:
                 print(_line)

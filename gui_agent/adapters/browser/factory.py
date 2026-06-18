@@ -196,27 +196,16 @@ def _make_browser_hud() -> object:
 
 
 def _make_action_visualizer(session: object) -> object:
-    """The browser ActionVisualizer.
+    """The browser ActionVisualizer: ``BrowserCursorVisualizer`` — reuses the iphone
+    ``agent_cursor`` OS overlay (blue arrow over the real Chrome window). It draws OUTSIDE
+    the page, so it never pollutes the agent's own screenshot perception, and it is immune
+    to the connect_over_cdp binding that hangs ``page.evaluate``. macOS-host only.
 
-    Default: ``BrowserCursorVisualizer`` — reuses the iphone ``agent_cursor`` OS
-    overlay (blue arrow over the real Chrome window). It draws OUTSIDE the page, so
-    it never pollutes the agent's own screenshot perception, and it is immune to the
-    connect_over_cdp binding that hangs ``page.evaluate``. macOS-host only.
-
-    Set ``BROWSER_VISUALIZER=dom`` for the host-agnostic in-page DOM overlay fallback
-    (``BrowserActionVisualizer``) — useful if the browser adapter ever runs off macOS.
-    """
-    import os
-
-    mode = (os.environ.get("BROWSER_VISUALIZER") or "").strip().lower()
-    if _resolve_headless(None) and not mode:
+    None in headless mode — the unified headless switch is the only visibility control
+    (the loop also skips the visualizer when headless; this gate covers callers like the
+    WebArena harness that don't thread the loop's headless param)."""
+    if _resolve_headless(None):
         return None
-    if mode in {"none", "off", "0", "false", "no"}:
-        return None
-    if (mode or "cursor") == "dom":
-        from gui_agent.adapters.browser.visualizer import BrowserActionVisualizer
-
-        return BrowserActionVisualizer(session)
     from gui_agent.adapters.browser.visualizer import BrowserCursorVisualizer
 
     return BrowserCursorVisualizer(session)

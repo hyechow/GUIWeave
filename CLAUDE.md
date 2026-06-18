@@ -43,13 +43,15 @@ uv sync
 
 ```bash
 # iPhone(默认平台)
-uv run python -m gui_agent.core.runner "打开微信并进入通讯录" --auto-continue --hud --supervisor milestone
+uv run python -m gui_agent.core.runner "打开微信并进入通讯录" --auto-continue --supervisor milestone
+# 唯一可见性开关 = --headless(或 env AGENT_HEADLESS=1 / bin/runner 用 HEADLESS=1):全后台,屏蔽 HUD
+# 与动作可视化(光标/覆盖层),三平台统一;不加则为交互模式,HUD 与可视化默认开启。
 
 # Browser:先起带远程调试的 Chrome(独立 profile,默认 profile 开不了 CDP),在弹出窗口登录目标页,再跑 agent:
 bin/launch_chrome_cdp   # 独立 profile + 关遮挡节流(遮住也持续出帧→截图快、非抢占);默认端口 9222
 AGENT_PLATFORM=browser uv run python -m gui_agent.core.runner "点击右上角设置按钮" --auto-continue
 # 非默认端口:PORT=<port> bin/launch_chrome_cdp,agent 侧 export CHROME_CDP_URL=http://localhost:<port>
-# 动作可视化:默认复用 agent_cursor OS 覆盖层(蓝箭头,画在页面外不污染截图);BROWSER_VISUALIZER=dom 切到页内 DOM 覆盖
+# 动作可视化:默认复用 agent_cursor OS 覆盖层(蓝箭头,画在页面外不污染截图);--headless / AGENT_HEADLESS=1 关闭
 
 # Android:先连设备(USB,或 `adb tcpip 5555` 转无线),设 ANDROID_SERIAL(无线为 host:port),再跑 agent:
 bin/scrcpy 192.168.31.240:5555 --off                     # 可选:息屏镜像窗口(HUD/cursor 叠其上;不开则无实时可视化)

@@ -384,7 +384,6 @@ def main() -> int:
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
     parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
-    parser.add_argument("--hud", action="store_true", help="show the translucent status HUD over the Chrome window (macOS)")
     args = parser.parse_args()
 
     # Force the browser platform for build_platform() (here and inside run_agent_loop).
@@ -392,8 +391,8 @@ def main() -> int:
     if args.headless:
         os.environ["BROWSER_HEADLESS"] = "1"
         os.environ["WEB_ARENA_HEADLESS"] = "1"
-        # No OS cursor/HUD overlay in background or CI runs.
-        os.environ.setdefault("BROWSER_VISUALIZER", "none")
+        # headless is the unified switch: it also drops the OS cursor/HUD overlay
+        # (factory _resolve_headless / loop both honor it). No separate viz toggle.
     if args.cdp_url and not args.headless:
         os.environ["CHROME_CDP_URL"] = args.cdp_url
     elif args.cdp_url and args.headless:
@@ -437,9 +436,10 @@ def main() -> int:
 
     action_policy = build_policy("browser_vision")
     supervisor = build_supervisor("milestone")
-    # Translucent status HUD over the Chrome window (None when --hud absent). The
-    # agent loop repositions it onto the exact CDP window rect once connected.
-    hud = build_platform().make_status_reporter(args.hud and not args.headless)
+    # Translucent status HUD over the Chrome window — on in headed mode, off when headless
+    # (the unified visibility switch). The agent loop repositions it onto the exact CDP
+    # window rect once connected.
+    hud = build_platform().make_status_reporter(not args.headless)
     log_dir = create_run_dir("webarena", "browser")
     print(f"[webarena] agent logs: {log_dir}")
 
