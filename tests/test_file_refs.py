@@ -70,5 +70,22 @@ def test_truncation_cap(tmp_path, monkeypatch):
     assert "已截断" in out and "x" * 100 not in out
 
 
+def test_aggregate_total_cap_across_multiple_refs(tmp_path, monkeypatch):
+    # file_reference_block is `required` (never dropped by the budgeter), so the TOTAL across
+    # all @refs must be deterministically bounded — otherwise several big files defeat the hard
+    # context cap. Per-file cap stays high; the aggregate cap truncates/omits the overflow.
+    monkeypatch.setattr(helpers_mod, "_FILE_REF_MAX_CHARS", 1000)
+    monkeypatch.setattr(helpers_mod, "_FILE_REF_TOTAL_MAX_CHARS", 1200)
+    _mk(tmp_path, "a.txt", "a" * 1000)
+    _mk(tmp_path, "b.txt", "b" * 1000)
+    _mk(tmp_path, "c.txt", "c" * 1000)
+    out = resolve_file_refs("读 @a.txt 和 @b.txt 和 @c.txt", base=tmp_path)
+    # total injected text content is bounded by the aggregate cap
+    assert out.count("a") + out.count("b") + out.count("c") <= 1200 + 200  # +slack for marker text
+    assert "总量超上限" in out                       # honest overflow marker present
+    assert "a.txt" in out                            # the first file is fully injected
+    assert "c" * 1000 not in out                     # the third is omitted (budget exhausted)
+
+
 def test_no_refs_returns_empty():
     assert resolve_file_refs("没有任何文件引用的普通任务") == ""

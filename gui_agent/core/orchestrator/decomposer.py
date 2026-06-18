@@ -410,6 +410,7 @@ def decompose(
         )
         context_blocks.append(ContextBlock(
             id="runtime.observation.browser_page",
+            budget="high",
             source_type="runtime_state",
             source="observation",
             ttl="turn",
@@ -420,6 +421,7 @@ def decompose(
     if table_hint:
         context_blocks.append(ContextBlock(
             id="runtime.observation.table_schema",
+            budget="high",
             source_type="runtime_state",
             source="browser_tables",
             ttl="turn",

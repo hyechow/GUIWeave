@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable
 
-from gui_agent.context.blocks import ContextBlock, render_context_blocks
+from gui_agent.context.blocks import ContextBlock, ContextBudgeter
 from gui_agent.core.schemas import Milestone, PolicyTurn
+
+# Hard char ceiling for the dynamic context blocks assembled around a prompt. Generous by
+# default (insurance against runaway inflation — knowledge blobs + history + @file refs piling
+# up), env-overridable for tuning. char≈token upper bound for CJK, so this keeps the block
+# portion well inside the model window. Lower it once real-run peaks are observed.
+DEFAULT_CONTEXT_BLOCKS_MAX_CHARS = int(os.environ.get("CONTEXT_BLOCKS_MAX_CHARS") or 80_000)
 
 
 def current_date_block(now: datetime | None = None) -> ContextBlock:
     now = now or datetime.now()
     return ContextBlock(
         id="runtime.current_date",
+        budget="low",
         source_type="runtime_state",
         source="clock",
         ttl="turn",
@@ -25,6 +33,7 @@ def current_date_block(now: datetime | None = None) -> ContextBlock:
 def history_block(history: list[PolicyTurn], *, limit: int = 8) -> ContextBlock:
     return ContextBlock(
         id="runtime.history.recent_actions",
+        budget="medium",
         source_type="runtime_state",
         source="policy_history",
         ttl="session",
@@ -78,6 +87,7 @@ def extra_instruction_block(extra: str, *, source: str = "guard") -> ContextBloc
         return None
     return ContextBlock(
         id="runtime.output_correction",
+        budget="required",
         source_type="runtime_state",
         source=source,
         ttl="turn",
@@ -91,6 +101,7 @@ def page_title_block(title: str | None) -> ContextBlock | None:
         return None
     return ContextBlock(
         id="runtime.observation.page_title",
+        budget="high",
         source_type="runtime_state",
         source="observation.title",
         ttl="turn",
@@ -108,6 +119,7 @@ def acceptance_items_block(items: list[str]) -> ContextBlock | None:
     enumerated = "\n".join(f"{i}) {text}" for i, text in enumerate(items, 1))
     return ContextBlock(
         id="runtime.acceptance.checklist",
+        budget="required",
         source_type="runtime_state",
         source="milestone.success_condition",
         ttl="turn",
@@ -135,6 +147,7 @@ def knowledge_block(kind: str, content: str | None, *, source: str = "knowledge_
     }
     return ContextBlock(
         id=f"knowledge.{kind}",
+        budget="high" if kind == "check_rules" else "medium",
         source_type="knowledge_base",
         source=source,
         ttl="session",
@@ -149,6 +162,7 @@ def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None
         return None
     return ContextBlock(
         id="runtime.observation.form_controls",
+        budget="high",
         source_type="runtime_state",
         source="platform_adapter",
         ttl="turn",
@@ -203,6 +217,7 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
 def task_goal_block(goal: str) -> ContextBlock:
     return ContextBlock(
         id="runtime.task.goal",
+        budget="required",
         source_type="runtime_state",
         source="user_goal",
         ttl="task",
@@ -216,6 +231,7 @@ def file_reference_block(file_section: str) -> ContextBlock | None:
         return None
     return ContextBlock(
         id="runtime.task.file_refs",
+        budget="required",
         source_type="file_reference",
         source="goal_at_refs",
         ttl="task",
@@ -236,6 +252,7 @@ def browser_page_block(url: str | None, title: str | None, *, site: str = "") ->
         page += f"\n页面：{title}"
     return ContextBlock(
         id="runtime.observation.browser_page",
+        budget="high",
         source_type="runtime_state",
         source="observation",
         ttl="turn",
@@ -251,6 +268,7 @@ def feedback_block(issues: Iterable[str]) -> ContextBlock | None:
     body = "\n".join(f"  - {issue}" for issue in issue_list)
     return ContextBlock(
         id="runtime.decompose.feedback",
+        budget="required",
         source_type="runtime_state",
         source="decomposition_guard",
         ttl="turn",
@@ -268,6 +286,7 @@ def completed_milestones_block(milestones: Iterable[Milestone], *, current_id: s
     ]
     return ContextBlock(
         id="runtime.milestones.completed",
+        budget="medium",
         source_type="runtime_state",
         source="milestone_state",
         ttl="session",
@@ -281,6 +300,7 @@ def tried_instructions_block(instructions: Iterable[str]) -> ContextBlock:
     content = "\n".join(f"  - 「{item}」" for item in items) if items else "  （无）"
     return ContextBlock(
         id="runtime.history.tried_instructions",
+        budget="medium",
         source_type="runtime_state",
         source="policy_history",
         ttl="session",
@@ -293,6 +313,7 @@ def tried_instructions_block(instructions: Iterable[str]) -> ContextBlock:
 def loop_frame_summary_block(summary: str) -> ContextBlock:
     return ContextBlock(
         id="runtime.loop.frame_summary",
+        budget="medium",
         source_type="runtime_state",
         source="loop_checker",
         ttl="turn",
@@ -305,5 +326,26 @@ def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def render_prompt_context(blocks: Iterable[ContextBlock | None]) -> str:
-    return render_context_blocks(blocks, include_headers=True)
+def render_prompt_context(
+    blocks: Iterable[ContextBlock | None],
+    *,
+    max_chars: int | None = None,
+    label: str = "context",
+    say: Callable[[str], None] = print,
+) -> str:
+    """Render context blocks under a hard char ceiling (the ContextBudgeter, drop-only).
+
+    All call sites go through here, so there is no bare/unbudgeted render path. Dropped blocks
+    are logged so the trace shows exactly what was shed. The default ceiling is generous; pass
+    ``max_chars`` to tighten per call site."""
+    budgeter = ContextBudgeter(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
+    result = budgeter.apply(blocks)
+    if result.dropped:
+        names = "、".join(f"{b.id}[{b.budget}]({len(b.render())}字)" for b in result.dropped)
+        say(f"  [ContextBudget] {label} 超预算({budgeter.max_chars}字),丢弃 {len(result.dropped)} 块: {names}")
+    if result.over_budget:
+        say(
+            f"  [ContextBudget] ⚠️ {label} 必留(required)块已达 {result.kept_chars} 字 / 上限 "
+            f"{budgeter.max_chars} 字,无可丢弃块"
+        )
+    return result.text

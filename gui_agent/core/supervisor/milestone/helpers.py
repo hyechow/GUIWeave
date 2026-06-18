@@ -69,6 +69,12 @@ def _format_history(history: list[PolicyTurn]) -> str:
 _TOKEN_BREAK = "，。！？；：、()（）【】《》<>[]" + "\"'" + "“”‘’"
 _FILE_REF_RE = re.compile(rf"@([^\s@{re.escape(_TOKEN_BREAK)}]+)")
 _FILE_REF_MAX_CHARS = 50_000
+# Aggregate cap across ALL @file refs in one goal. file_reference_block is a `required` context
+# block (never dropped by the budgeter — it carries load-bearing task data), so without a total
+# cap several large @files would push the required portion past the context ceiling and defeat
+# the hard cap. Bounding the total here keeps the required portion deterministically small enough
+# that the budgeter's drop-droppable pass can always bring the whole context under budget.
+_FILE_REF_TOTAL_MAX_CHARS = 60_000
 
 
 def resolve_file_refs(goal: str, base: Optional[Path] = None) -> str:
@@ -82,6 +88,8 @@ def resolve_file_refs(goal: str, base: Optional[Path] = None) -> str:
     base = base or Path.cwd()
     sections: list[str] = []
     seen: set[str] = set()
+    total_chars = 0          # running total of injected TEXT content (binary path stubs excluded)
+    omitted: list[str] = []  # @refs skipped/truncated once the aggregate cap is hit
     for raw in _FILE_REF_RE.findall(goal):
         cand = raw.rstrip(".,;:!?")  # plain trailing ASCII punctuation is prose, not path
         path: Optional[Path] = None
@@ -128,10 +136,25 @@ def resolve_file_refs(goal: str, base: Optional[Path] = None) -> str:
             continue
         if len(text) > _FILE_REF_MAX_CHARS:
             text = text[:_FILE_REF_MAX_CHARS] + "\n…（文件过长，已截断）"
+        remaining = _FILE_REF_TOTAL_MAX_CHARS - total_chars
+        if remaining <= 0:
+            omitted.append(cand)
+            print(f"  [FileRef] @{cand} 跳过：引用文件总量已达上限 {_FILE_REF_TOTAL_MAX_CHARS} 字符")
+            continue
+        if len(text) > remaining:
+            text = text[:remaining] + "\n…（引用文件总量超上限，已截断）"
+            omitted.append(cand)
+        total_chars += len(text)
         print(f"  [FileRef] 注入 @{cand}（{len(text)} 字符）")
         sections.append(f"### @{cand}\n{text}")
     if not sections:
         return ""
+    if omitted:
+        sections.append(
+            "### ⚠️ 引用文件总量超上限\n"
+            f"以下 @ 引用因总量超过 {_FILE_REF_TOTAL_MAX_CHARS} 字符被截断或省略，"
+            f"如需其字段值请拆分任务或精简文件：{'、'.join(dict.fromkeys(omitted))}"
+        )
     return (
         "## 引用文件内容（任务中 @ 引用的文件；其中的字段值须严格按原文使用，不得改动或省略）\n"
         + "\n\n".join(sections)

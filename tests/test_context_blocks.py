@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from gui_agent.context import ContextBlock, ContextBundle
+from gui_agent.context import ContextBlock, ContextBudgeter, ContextBundle
 from gui_agent.context.runtime import (
     form_controls_block,
     history_block,
     render_prompt_context,
 )
 from gui_agent.core.schemas import PolicyTurn, SupervisorStep
+
+
+def _blk(id_: str, budget: str, chars: int, *, ttl: str = "turn") -> ContextBlock:
+    return ContextBlock(id_, "runtime_state", "test", "x" * chars, ttl=ttl, budget=budget)
 
 
 def test_context_block_renders_source_metadata():
@@ -60,6 +64,65 @@ def test_runtime_history_context_keeps_existing_history_text_with_metadata():
     assert "ttl=session" in text
     assert "需要搜索" in text
     assert "结果尚未记录" in text
+
+
+def test_budgeter_keeps_all_when_under_ceiling():
+    blocks = [_blk("a", "low", 100), _blk("b", "high", 100)]
+    result = ContextBudgeter(max_chars=10_000).apply(blocks)
+    assert not result.dropped
+    assert {b.id for b in result.kept} == {"a", "b"}
+
+
+def test_budgeter_drops_lowest_tier_first_and_never_required():
+    # required(800) + high(800) + medium(800) + low(800) = ~3200 over a 2000 ceiling.
+    # Shed low, then medium, until it fits; required + high survive.
+    blocks = [
+        _blk("req", "required", 800),
+        _blk("hi", "high", 800),
+        _blk("med", "medium", 800),
+        _blk("lo", "low", 800),
+    ]
+    result = ContextBudgeter(max_chars=2000).apply(blocks)
+    dropped = {b.id for b in result.dropped}
+    kept = {b.id for b in result.kept}
+    assert "req" in kept and "hi" in kept       # required never dropped; high outranks low/medium
+    assert dropped == {"lo", "med"}              # lowest tiers shed first, in order
+    assert not result.over_budget
+
+
+def test_budgeter_preserves_render_order_of_kept_blocks():
+    blocks = [_blk("first", "high", 50), _blk("mid", "low", 4000), _blk("last", "high", 50)]
+    text = ContextBudgeter(max_chars=500).apply(blocks).text
+    assert "context: mid" not in text                       # the big low-tier block was dropped
+    assert text.index("context: first") < text.index("context: last")  # order preserved
+
+
+def test_budgeter_within_tier_keeps_live_turn_over_stale_session():
+    # Two medium blocks, only one can stay. The STALE session-scoped block is shed first; the
+    # current turn's live observation is kept (recency wins within a tier).
+    blocks = [
+        _blk("req", "required", 1300),
+        _blk("turn_med", "medium", 350, ttl="turn"),
+        _blk("session_med", "medium", 350, ttl="session"),
+    ]
+    result = ContextBudgeter(max_chars=2000).apply(blocks)
+    assert {b.id for b in result.dropped} == {"session_med"}
+
+
+def test_budgeter_required_over_ceiling_keeps_required_and_flags_over_budget():
+    blocks = [_blk("req", "required", 5000), _blk("lo", "low", 100)]
+    result = ContextBudgeter(max_chars=1000).apply(blocks)
+    assert {b.id for b in result.kept} == {"req"}   # required survives even alone over budget
+    assert {b.id for b in result.dropped} == {"lo"}
+    assert result.over_budget is True
+
+
+def test_render_prompt_context_enforces_ceiling_and_logs_drops():
+    logs: list[str] = []
+    blocks = [_blk("keep", "required", 100), _blk("drop", "low", 4000)]
+    text = render_prompt_context(blocks, max_chars=500, label="checker", say=logs.append)
+    assert "context: keep" in text and "context: drop" not in text
+    assert any("ContextBudget" in line and "checker" in line and "drop" in line for line in logs)
 
 
 def test_form_controls_context_marks_adapter_source():
