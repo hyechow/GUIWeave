@@ -48,6 +48,8 @@ if __package__ is None or __package__ == "":
 
 from pydantic import BaseModel
 
+from gui_agent.prompts import load_prompt, load_prompt_text
+
 # WebArena's required response schema (mirrors the base_template "Final Response
 # Format"); the AgentResponseEvaluator normalizes case, so plain str fields are fine.
 _TASK_TYPES = ("RETRIEVE", "MUTATE", "NAVIGATE")
@@ -55,6 +57,17 @@ _STATUSES = (
     "SUCCESS", "NOT_FOUND_ERROR", "ACTION_NOT_ALLOWED_ERROR",
     "PERMISSION_DENIED_ERROR", "DATA_VALIDATION_ERROR", "UNKNOWN_ERROR",
 )
+
+# Response-synthesis prompts, loaded from the registry. The system prompt is RAW:
+# its body carries literal JSON examples ({"min":..}) that forbid str.format(), so
+# the two dynamic enum lists are injected via .replace() at import time. The human
+# prompt is a clean rendered template ({intent}/{task_type_guess}/...).
+_WEBARENA_SYSTEM = (
+    load_prompt_text("task.webarena.synthesize_system")
+    .replace("{task_types}", ", ".join(_TASK_TYPES))
+    .replace("{statuses}", ", ".join(_STATUSES))
+)
+_WEBARENA_HUMAN = load_prompt("task.webarena.synthesize_human")
 
 
 class WAResponse(BaseModel):
@@ -216,38 +229,20 @@ def _synthesize_response(intent: str, result: dict, context_path: Path | None = 
     notes = result.get("content_notes") or []
     notes_text = "\n".join(f"- {n}" for n in notes) if notes else "(none collected)"
     evidence_text = _run_evidence_text(context_path)
-    sys_msg = (
-        "You convert a web agent's run result into WebArena-Verified's required "
-        "agent_response JSON. Output exactly: task_type (one of "
-        f"{', '.join(_TASK_TYPES)}), status (one of {', '.join(_STATUSES)}), "
-        "retrieved_data (a LIST, or null), error_details (string or null).\n"
-        "- Follow the OUTPUT FORMAT embedded in the task intent precisely.\n"
-        "- For RETRIEVE, retrieved_data must be a list. Use a list of OBJECTS only "
-        "when the intent asks for keyed fields (e.g. {\"min\":..,\"max\":..}); "
-        "otherwise a list of scalar values. Emit numbers as numbers, not strings.\n"
-        "- If evidence contains row objects with helper columns but the intent asks only "
-        "for item names/terms/ids, return only those scalar values, not the whole row "
-        "objects (e.g. search term task -> [\"hollister\", \"joust bag\"], not "
-        "[{\"term\": \"hollister\", \"uses\": 19}]).\n"
-        "- Prefer Collected notes for RETRIEVE answers. Auxiliary run evidence is "
-        "lower-confidence; use it only when it explicitly contains the requested "
-        "answer and is consistent with the task.\n"
-        "- If the agent did not actually obtain the answer, set status to the best-"
-        "fitting error and retrieved_data to null. Do not invent data."
-    )
-    human = (
-        f"Task intent (includes the required output format):\n{intent}\n\n"
-        f"Agent task_type guess: {result.get('task_type')}\n"
-        f"Goal completed: {result.get('goal_completed')}\n"
-        f"Stop reason: {result.get('stop_reason')}\n"
-        f"Run summary: {result.get('result_summary')}\n\n"
-        f"Collected notes:\n{notes_text}\n\n"
-        f"Auxiliary run evidence:\n{evidence_text}\n\n"
-        "Produce the agent_response JSON."
+    human = _WEBARENA_HUMAN.render(
+        intent=intent,
+        task_type_guess=result.get("task_type"),
+        goal_completed=result.get("goal_completed"),
+        stop_reason=result.get("stop_reason"),
+        result_summary=result.get("result_summary"),
+        notes_text=notes_text,
+        evidence_text=evidence_text,
     )
     cfg = resolve_llm_config("output")
     llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
-    return invoke_structured(llm, [SystemMessage(content=sys_msg), HumanMessage(content=human)], WAResponse)
+    return invoke_structured(
+        llm, [SystemMessage(content=_WEBARENA_SYSTEM), HumanMessage(content=human)], WAResponse
+    )
 
 
 def _write_webarena_report_context(
