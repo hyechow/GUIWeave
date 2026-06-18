@@ -1,9 +1,9 @@
 """Browser perception: session lifecycle + observe(), mirroring the iphone shape.
 
 ``BrowserSession`` is the neutral perception/lifecycle surface core holds as
-``phone`` (it satisfies ``PerceptionSession``): a context manager that connects a
-:class:`PlaywrightDevice` on ``__enter__``, exposes ``.client`` + ``screenshot()``
-and detaches on ``__exit__`` (without closing the user's Chrome).
+``phone`` (it satisfies ``PerceptionSession``): a context manager that connects
+or launches a :class:`PlaywrightDevice` on ``__enter__``, exposes ``.client`` +
+``screenshot()``, and detaches/closes on ``__exit__``.
 
 ``BrowserPerception`` wraps the session's screenshot in an ``Observation`` with
 ``source='browser'`` (satisfies ``Perception``). The primary observation remains
@@ -13,6 +13,7 @@ when CDP can read them.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -34,17 +35,29 @@ class BrowserSession:
         *,
         cdp_url: Optional[str] = None,
         start_url: Optional[str] = None,
+        headless: bool | None = None,
+        user_data_dir: Optional[str] = None,
     ):
         self.client = None  # PlaywrightDevice once connected
         self._cdp_url = cdp_url
         self._start_url = start_url
+        self._headless = _resolve_headless(headless)
+        self._user_data_dir = user_data_dir or os.environ.get("BROWSER_USER_DATA_DIR")
 
     def __enter__(self) -> "BrowserSession":
         # Lazy import keeps the package import-light and core.runtime.factory adapter-free.
         from gui_agent.adapters.browser.device import PlaywrightDevice
 
-        print("连接浏览器中 (Chrome CDP)...")
-        self.client = PlaywrightDevice(cdp_url=self._cdp_url, start_url=self._start_url)
+        if self._headless:
+            print("启动浏览器中 (headless Chromium)...")
+        else:
+            print("连接浏览器中 (Chrome CDP)...")
+        self.client = PlaywrightDevice(
+            cdp_url=self._cdp_url,
+            start_url=self._start_url,
+            headless=self._headless,
+            user_data_dir=self._user_data_dir,
+        )
         self.client.connect()
         print("浏览器连接成功")
         return self
@@ -93,6 +106,13 @@ class BrowserSession:
             return []
         read = getattr(self.client, "read_form_controls", None)
         return read() if read is not None else []
+
+
+def _resolve_headless(headless: bool | None) -> bool:
+    if headless is not None:
+        return headless
+    raw = os.environ.get("BROWSER_HEADLESS") or os.environ.get("WEB_ARENA_HEADLESS")
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 

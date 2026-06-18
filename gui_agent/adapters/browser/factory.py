@@ -140,7 +140,7 @@ def _find_chrome_window() -> "tuple[int, int, int, int] | None":
     return best
 
 
-def _setup_check(cdp_url: "Optional[str]") -> SetupCheckResult:
+def _setup_check(cdp_url: "Optional[str]", *, headless: bool | None = None) -> SetupCheckResult:
     """Pre-session environment check: is the Chrome CDP endpoint reachable? The whole
     browser adapter is connect_over_cdp on an already-running Chrome started with
     remote debugging (bin/launch_chrome_cdp). A clean HTTP probe of ``/json/version``
@@ -149,6 +149,13 @@ def _setup_check(cdp_url: "Optional[str]") -> SetupCheckResult:
     import json
     import os
     import urllib.request
+
+    if _resolve_headless(headless):
+        return SetupCheckResult(
+            ok=True,
+            summary="headless Chromium 将由 Playwright 启动",
+            lines=("  ✓ headless 模式：跳过外部 Chrome CDP 检查",),
+        )
 
     url = cdp_url or os.environ.get("CHROME_CDP_URL") or "http://localhost:9222"
     try:
@@ -197,7 +204,12 @@ def _make_action_visualizer(session: object) -> object:
     """
     import os
 
-    if (os.environ.get("BROWSER_VISUALIZER") or "cursor").lower() == "dom":
+    mode = (os.environ.get("BROWSER_VISUALIZER") or "").strip().lower()
+    if _resolve_headless(None) and not mode:
+        return None
+    if mode in {"none", "off", "0", "false", "no"}:
+        return None
+    if (mode or "cursor") == "dom":
         from gui_agent.adapters.browser.visualizer import BrowserActionVisualizer
 
         return BrowserActionVisualizer(session)
@@ -211,21 +223,30 @@ def build_browser_bundle(
     backend: Optional[str] = None,
     cdp_url: Optional[str] = None,
     start_url: Optional[str] = None,
+    headless: bool | None = None,
+    user_data_dir: Optional[str] = None,
     **_ignored: object,
 ) -> PlatformBundle:
     """Construct the browser PlatformBundle.
 
     ``backend`` is accepted for signature parity with the iphone factory (no
-    browser backends today). ``cdp_url`` / ``start_url`` flow through to the
-    session (default CDP http://localhost:9222, overridable via env CHROME_CDP_URL).
+    browser backends today). ``cdp_url`` / ``start_url`` / ``headless`` /
+    ``user_data_dir`` flow through to the session. CDP defaults to
+    http://localhost:9222, overridable via env CHROME_CDP_URL; headless mode
+    launches Chromium directly and can keep login state in ``user_data_dir``.
     """
     from gui_agent.adapters.browser.executor import BrowserExecutor
     from gui_agent.adapters.browser.perception import BrowserPerception, BrowserSession
 
     return PlatformBundle(
         platform="browser",
-        open_session=lambda: BrowserSession(cdp_url=cdp_url, start_url=start_url),
-        setup_check=lambda: _setup_check(cdp_url),
+        open_session=lambda: BrowserSession(
+            cdp_url=cdp_url,
+            start_url=start_url,
+            headless=headless,
+            user_data_dir=user_data_dir,
+        ),
+        setup_check=lambda: _setup_check(cdp_url, headless=headless),
         make_executor=lambda session: BrowserExecutor(session),
         make_perception=lambda session, png_path: BrowserPerception(session, png_path),
         make_action_policy=_build_action_policy,
@@ -242,3 +263,12 @@ def build_browser_bundle(
         action_policy_choices=_POLICY_NAMES,
         supervisor_choices=_SUPERVISOR_NAMES,
     )
+
+
+def _resolve_headless(headless: bool | None) -> bool:
+    if headless is not None:
+        return headless
+    import os
+
+    raw = os.environ.get("BROWSER_HEADLESS") or os.environ.get("WEB_ARENA_HEADLESS")
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}

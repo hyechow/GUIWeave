@@ -13,8 +13,9 @@ real browser agent (perception + milestone supervisor + executor + visualizer) v
              drives each linear milestone; --no-orchestrator keeps the legacy DAG path.
   post-run : dump network.har + synthesize agent_response.json from the run result.
 
-No headless browser anywhere: auth is CDP cookie injection (see device.load_cookies),
-the browser is the user's CDP-attached Chrome (bin/launch_chrome_cdp).
+Headed mode attaches to the user's CDP Chrome (bin/launch_chrome_cdp). Headless
+mode launches a persistent Chromium profile so cookies/local storage can survive
+across CI/background runs; --storage-state can seed that profile on first use.
 
 Usage:
   AGENT_PLATFORM is forced to "browser" here.
@@ -37,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -140,6 +142,21 @@ def _load_task(tasks_file: Path, task_id: int) -> dict:
             return t
     ids = [t.get("task_id") for t in tasks]
     raise ValueError(f"task {task_id} not in {tasks_file} (have {ids})")
+
+
+def _site_profile_name(task: dict, out_dir: Path) -> str:
+    """Stable profile bucket for headless browser state."""
+    parent = out_dir.parent.name
+    if parent:
+        return parent
+    sites = task.get("sites") or []
+    if isinstance(sites, str):
+        sites = [sites]
+    parts = [
+        re.sub(r"[^a-z0-9]+", "_", str(site).strip().lower()).strip("_")
+        for site in sites
+    ]
+    return "_".join(p for p in parts if p) or "default"
 
 
 def _run_evidence_text(context_path: Path | None) -> str:
@@ -355,6 +372,15 @@ def main() -> int:
     parser.add_argument("--task-output-dir", type=Path, required=True, help="where agent_response.json + network.har go")
     parser.add_argument("--storage-state", type=Path, default=None, help="Playwright storage_state JSON for auth cookies (optional)")
     parser.add_argument("--cdp-url", type=str, default=None, help="Chrome CDP url (default env CHROME_CDP_URL or :9222)")
+    parser.add_argument("--headless", action="store_true", help="launch an isolated headless Chromium instead of attaching to Chrome CDP")
+    parser.add_argument(
+        "--user-data-dir",
+        "--headless-profile-dir",
+        dest="user_data_dir",
+        type=Path,
+        default=None,
+        help="persistent Chromium profile for --headless (default: output/.headless_profiles/<site_run>)",
+    )
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
     parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
@@ -363,8 +389,15 @@ def main() -> int:
 
     # Force the browser platform for build_platform() (here and inside run_agent_loop).
     os.environ["AGENT_PLATFORM"] = "browser"
-    if args.cdp_url:
+    if args.headless:
+        os.environ["BROWSER_HEADLESS"] = "1"
+        os.environ["WEB_ARENA_HEADLESS"] = "1"
+        # No OS cursor/HUD overlay in background or CI runs.
+        os.environ.setdefault("BROWSER_VISUALIZER", "none")
+    if args.cdp_url and not args.headless:
         os.environ["CHROME_CDP_URL"] = args.cdp_url
+    elif args.cdp_url and args.headless:
+        print("[webarena] --cdp-url ignored because --headless launches its own browser")
 
     from dotenv import load_dotenv
     load_dotenv()
@@ -387,11 +420,26 @@ def main() -> int:
     har_path = out_dir / "network.har"
     resp_path = out_dir / "agent_response.json"
 
+    if args.headless:
+        raw_profile = (
+            args.user_data_dir
+            or os.environ.get("WEB_ARENA_USER_DATA_DIR")
+            or os.environ.get("BROWSER_USER_DATA_DIR")
+        )
+        profile_dir = (
+            Path(raw_profile).expanduser()
+            if raw_profile
+            else out_dir.parent.parent / ".headless_profiles" / _site_profile_name(task, out_dir)
+        )
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["BROWSER_USER_DATA_DIR"] = str(profile_dir)
+        print(f"[webarena] headless profile: {profile_dir}")
+
     action_policy = build_policy("browser_vision")
     supervisor = build_supervisor("milestone")
     # Translucent status HUD over the Chrome window (None when --hud absent). The
     # agent loop repositions it onto the exact CDP window rect once connected.
-    hud = build_platform().make_status_reporter(args.hud)
+    hud = build_platform().make_status_reporter(args.hud and not args.headless)
     log_dir = create_run_dir("webarena", "browser")
     print(f"[webarena] agent logs: {log_dir}")
 

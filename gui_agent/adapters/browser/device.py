@@ -1,10 +1,11 @@
 """Playwright/CDP I/O backend implementing gui_agent.core.runtime.contracts.Device.
 
 ``PlaywrightDevice`` attaches to a running Chrome for Testing over the Chrome
-DevTools Protocol (CDP) and drives the active page through a desktop pointer +
-keyboard.  It satisfies the neutral ``Device`` Protocol (connect/close/screenshot/
-tap/type_text/drag/press_home) AND the optional ``ScrollableDevice`` capability
-(scroll), plus the browser-only extras ``navigate(url)`` / ``go_back()``.
+DevTools Protocol (CDP), or launches its own headless Chromium for background/CI
+runs, then drives the active page through a desktop pointer + keyboard.  It
+satisfies the neutral ``Device`` Protocol (connect/close/screenshot/tap/type_text/
+drag/press_home) AND the optional ``ScrollableDevice`` capability (scroll), plus
+the browser-only extras ``navigate(url)`` / ``go_back()``.
 
 UNLIKE mobile (one screen forever), the web has N tabs and a click / window.open
 can spawn a NEW tab (often in the background).  ``self.page`` is bound once at
@@ -27,6 +28,7 @@ import os
 import signal
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 # Default viewport used to denormalize coordinates and for screenshots when the
@@ -106,10 +108,14 @@ class PlaywrightDevice:
         cdp_url: Optional[str] = None,
         *,
         start_url: Optional[str] = None,
+        headless: bool | None = None,
+        user_data_dir: Optional[str] = None,
     ):
         # Resolution: explicit arg -> env CHROME_CDP_URL -> localhost:9222.
         self.cdp_url = cdp_url or os.environ.get("CHROME_CDP_URL") or "http://localhost:9222"
         self.start_url = start_url
+        self.headless = _resolve_headless(headless)
+        self.user_data_dir = user_data_dir or os.environ.get("BROWSER_USER_DATA_DIR")
         self._pw = None  # sync_playwright() handle (stop() on close)
         self._browser = None
         self._context = None
@@ -133,36 +139,68 @@ class PlaywrightDevice:
 
     # ----- lifecycle -------------------------------------------------------
     def connect(self):
-        """Attach to the running Chrome over CDP and bind the active page.
+        """Attach to running Chrome over CDP, or launch a headless browser.
 
-        Reuses the first existing context/page if present (the user's tab); only
-        creates new ones when the attached browser has none.
+        CDP mode reuses the first existing context/page if present (the user's
+        tab); headless mode owns a fresh browser/context/page and closes it on
+        ``close()``.
         """
         from playwright.sync_api import sync_playwright
 
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.connect_over_cdp(self.cdp_url)
-        contexts = self._browser.contexts
-        self._context = contexts[0] if contexts else self._browser.new_context()
-        pages = self._all_pages()
-        # Initial bind: prefer Chrome CDP's /json/list front page. Playwright's
-        # context.pages order is not the Chrome tab selection order, so pages[0] can
-        # be a stale background tab.
-        self.page = self._active_page_from_json_list(pages) or (pages[0] if pages else self._context.new_page())
+        if self.headless:
+            viewport = {"width": _DEFAULT_VIEWPORT_W, "height": _DEFAULT_VIEWPORT_H}
+            if self.user_data_dir:
+                profile_dir = Path(self.user_data_dir).expanduser()
+                profile_dir.mkdir(parents=True, exist_ok=True)
+                self._context = self._pw.chromium.launch_persistent_context(
+                    str(profile_dir),
+                    headless=True,
+                    viewport=viewport,
+                )
+                self._browser = self._context.browser
+            else:
+                self._browser = self._pw.chromium.launch(headless=True)
+                self._context = self._browser.new_context(
+                    viewport=viewport
+                )
+            pages = [p for p in self._context.pages if not _page_closed(p)]
+            self.page = pages[0] if pages else self._context.new_page()
+        else:
+            self._browser = self._pw.chromium.connect_over_cdp(self.cdp_url)
+            contexts = self._browser.contexts
+            self._context = contexts[0] if contexts else self._browser.new_context()
+            pages = self._all_pages()
+            # Initial bind: prefer Chrome CDP's /json/list front page. Playwright's
+            # context.pages order is not the Chrome tab selection order, so pages[0] can
+            # be a stale background tab.
+            self.page = self._active_page_from_json_list(pages) or (pages[0] if pages else self._context.new_page())
         self._context = self.page.context
         self._arm_file_chooser(self.page)
-        self._prev_pages = pages if pages else [self.page]
+        self._prev_pages = self._all_pages() or [self.page]
         self._tab_switched = False
         self._last_viewport = None
         self._dpr = None
+        if self.start_url:
+            self.navigate(self.start_url)
         return self
 
     def close(self):
-        """Detach from Chrome WITHOUT closing the user's browser.
+        """Close owned headless browsers; otherwise detach from Chrome.
 
-        Only stops the Playwright driver (which closes the CDP transport); the
-        attached Chrome and its tabs keep running.
+        CDP mode only stops the Playwright driver (which closes the CDP
+        transport); the attached Chrome and its tabs keep running.
         """
+        if self.headless and self._context is not None:
+            try:
+                self._context.close()
+            except Exception:
+                pass
+        if self.headless and self._browser is not None:
+            try:
+                self._browser.close()
+            except Exception:
+                pass
         if self._pw is not None:
             try:
                 self._pw.stop()
@@ -1035,7 +1073,10 @@ class PlaywrightDevice:
         click-opened tabs in a fresh context, not self._context)."""
         pages: list = []
         try:
-            for ctx in self._browser.contexts:
+            contexts = self._browser.contexts if self._browser is not None else [self._context]
+            for ctx in contexts:
+                if ctx is None:
+                    continue
                 try:
                     pages.extend(p for p in ctx.pages if not _page_closed(p))
                 except Exception:
@@ -1317,6 +1358,17 @@ def _select_all_modifier() -> str:
     import sys
 
     return "Meta" if sys.platform == "darwin" else "Control"
+
+
+def _resolve_headless(headless: bool | None) -> bool:
+    if headless is not None:
+        return headless
+    raw = os.environ.get("BROWSER_HEADLESS") or os.environ.get("WEB_ARENA_HEADLESS")
+    return _truthy(raw)
+
+
+def _truthy(raw: str | None) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _page_closed(page) -> bool:
