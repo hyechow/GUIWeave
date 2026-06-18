@@ -112,6 +112,10 @@ def _gray_u8(png_bytes: bytes) -> object:
     return _impl(png_bytes)
 
 
+def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
+    return png_bytes
+
+
 def _find_chrome_window() -> "tuple[int, int, int, int] | None":
     """(x, y, w, h) screen rect of the largest on-screen Google Chrome window via
     CGWindowList — a pre-connect best-effort guess for HUD placement (refined to the
@@ -258,6 +262,7 @@ def build_browser_bundle(
         make_stitch_accumulator=_make_stitch_accumulator,
         robust_shift=_robust_shift,
         gray_u8=_gray_u8,
+        prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy="browser_vision",
         default_supervisor="milestone",
         action_policy_choices=_POLICY_NAMES,

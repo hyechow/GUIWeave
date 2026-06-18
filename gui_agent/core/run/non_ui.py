@@ -89,6 +89,7 @@ def drive_pending_non_ui(
                 cur_run.returns,
                 read_spec=cur_run.read_spec,
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
             )
             say(f"  [Orchestrator] 只读验收帧 {cur_run.returns} → {reads}")
         elif cur_run.kind == "data_query":

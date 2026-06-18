@@ -555,6 +555,7 @@ def main() -> int:
                                     current_site=cur_site,
                                     table_summaries=initial_tables,
                                     png_bytes=initial_png,
+                                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                                 )
                             )
                         )

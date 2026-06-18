@@ -13,6 +13,7 @@ i.e. when the result is visible), so the verdict is read at exactly the right mo
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -21,7 +22,6 @@ from pydantic import BaseModel, Field
 from gui_agent.context import ContextBlock
 from gui_agent.context.runtime import render_prompt_context
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
@@ -39,14 +39,20 @@ class _StructuredRead(BaseModel):
 
 
 def structured_read(
-    png_bytes: bytes, returns: list[str], read_spec: str = "", check_knowledge: str = "",
+    png_bytes: bytes,
+    returns: list[str],
+    read_spec: str = "",
+    check_knowledge: str = "",
+    prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
 ) -> dict[str, str]:
     """Read `returns` fields off the frame -> {field: value} (empty when not readable).
 
     `read_spec` is the task-level read instruction the decomposer generated from the user goal
     (what each field means + how to judge it off the UI) — the PRIMARY judgment guidance, so the
     extraction semantics live in the program, not in this hardcoded prompt. `check_knowledge`
-    (the app's _check.md signal conventions) is a supplementary reference for icon/colour cues."""
+    (the app's _check.md signal conventions) is a supplementary reference for icon/colour cues.
+    `prepare_vision_prompt_png` is supplied by the platform bundle; shared code must not assume
+    iPhone Retina geometry for browser/android observations."""
     if not returns:
         return {}
     cfg = resolve_llm_config("reader")
@@ -80,7 +86,8 @@ def structured_read(
             content="【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge,
         ) if check_knowledge else None,
     ])
-    b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
+    prepare_png = prepare_vision_prompt_png or (lambda b: b)
+    b64 = base64.b64encode(prepare_png(png_bytes)).decode()
     messages = [
         SystemMessage(content=_SYSTEM),
         HumanMessage(content=[

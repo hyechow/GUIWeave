@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import re
+from collections.abc import Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -27,7 +28,6 @@ from gui_agent.context.runtime import (
     task_goal_block,
 )
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
@@ -366,6 +366,7 @@ def decompose(
     current_title: str = "",
     current_site: str = "",
     table_summaries: list[dict] | None = None,
+    prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
 ) -> Program:
     """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
 
@@ -373,6 +374,8 @@ def decompose(
     navigation knowledge; `file_section` is the resolved content of any `@<path>` refs in the
     goal (config field values the spoken goal only points at — see resolve_file_refs);
     `system_prompt` overrides the default DSL prompt (platform tuning).
+    `prepare_vision_prompt_png` is the platform bundle's vision prompt image hook:
+    iPhone downscales Retina frames, browser/android keep native observations.
     """
     cfg = resolve_llm_config("supervisor.decompose")
     if not cfg.model:
@@ -425,7 +428,8 @@ def decompose(
         ))
     parts: list[dict] = [{"type": "text", "text": render_prompt_context(context_blocks)}]
     if png_bytes:
-        b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
+        prepare_png = prepare_vision_prompt_png or (lambda b: b)
+        b64 = base64.b64encode(prepare_png(png_bytes)).decode()
         parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
 
     issues: list[str] = []

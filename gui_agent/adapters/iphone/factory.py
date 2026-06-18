@@ -110,6 +110,12 @@ def _gray_u8(png_bytes: bytes) -> object:
     return _impl(png_bytes)
 
 
+def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
+    from gui_agent.core.policies.base import resize_to_logical_png
+
+    return resize_to_logical_png(png_bytes)
+
+
 def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) -> PlatformBundle:
     """Construct the iPhone PlatformBundle. ``backend`` is the daemon/mirroir knob
     (passed through to LivePhoneSession; None lets it fall back to AGENT_MODE)."""
@@ -138,6 +144,7 @@ def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) ->
         make_stitch_accumulator=_make_stitch_accumulator,
         robust_shift=_robust_shift,
         gray_u8=_gray_u8,
+        prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy=StructuredOutputPolicy.name,
         default_supervisor=MilestoneSupervisorPolicy.name,
         action_policy_choices=tuple(sorted(_POLICIES)),

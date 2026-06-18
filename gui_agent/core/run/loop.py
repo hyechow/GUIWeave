@@ -181,8 +181,6 @@ def run_agent_loop(
     if hud is not None and hasattr(hud, "set_goal"):
         hud.set_goal(context.goal)
 
-    reader = ContentReader()
-    read_state = ReadState(context=context, reader=reader, pool=_READER_POOL)
     action_state = ActionExecutionState()
     original_goal = context.goal
     noop_count = 0
@@ -193,6 +191,8 @@ def run_agent_loop(
     # the session, executor, perception and scroll/stitch helpers — no adapter
     # class is referenced directly here.
     bundle = build_platform(backend=backend)
+    reader = ContentReader(prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
+    read_state = ReadState(context=context, reader=reader, pool=_READER_POOL)
     # Record the platform on the context so the log and the HTML report can label
     # the run (iphone vs browser). Set here so both the runner and chat (which both
     # call run_agent_loop) persist it.

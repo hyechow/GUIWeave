@@ -228,7 +228,8 @@ def main(
                               file_section=file_section,
                               current_url=cur_url, current_title=cur_title,
                               current_site=cur_site, table_summaries=initial_tables,
-                              png_bytes=initial_png)
+                              png_bytes=initial_png,
+                              prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
                 ))
                 # The config must ALSO reach the execution-time planner deterministically — the
                 # supervisor's constraints flow to every milestone's planner, and reseed never clears

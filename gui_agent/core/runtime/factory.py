@@ -82,6 +82,10 @@ class PlatformBundle:
     make_stitch_accumulator: Callable[..., object]
     robust_shift: Callable[..., object]
     gray_u8: Callable[[bytes], object]
+    # Platform-specific image normalization for shared vision-LLM prompts. iPhone
+    # screenshots are Retina-sized and should be downsampled to logical pixels;
+    # browser/android observations are already in their reasoning coordinate space.
+    prepare_vision_prompt_png: Callable[[bytes], bytes]
     default_action_policy: str
     default_supervisor: str
     action_policy_choices: tuple[str, ...]

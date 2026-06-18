@@ -2,13 +2,13 @@
 
 import base64
 import json
+from collections.abc import Callable
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import CollectionScope, SupervisorStep
 from gui_agent.prompts import load_prompt_text
 
@@ -20,16 +20,20 @@ SYSTEM_PROMPT = load_prompt_text("task.reader.screenshot_text")
 class ContentReader:
     """Extract content notes from a screenshot relevant to the user's goal."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
+    ) -> None:
         cfg = resolve_llm_config("reader")
         self._llm = ChatOpenAI(
             model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
             extra_body={"enable_thinking": False},
         )
+        self._prepare_vision_prompt_png = prepare_vision_prompt_png or (lambda b: b)
 
     def read(self, png_bytes: bytes, goal: str) -> str:
         """Return a brief content summary extracted from the screenshot."""
-        b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
+        b64 = base64.b64encode(self._prepare_vision_prompt_png(png_bytes)).decode()
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=[

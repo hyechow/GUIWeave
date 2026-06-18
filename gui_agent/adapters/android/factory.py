@@ -90,6 +90,10 @@ def _gray_u8(png_bytes: bytes) -> object:
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
+def _prepare_vision_prompt_png(png_bytes: bytes) -> bytes:
+    return png_bytes
+
+
 def _setup_check(serial: "Optional[str]") -> SetupCheckResult:
     """Pre-session environment check for android:
       1. an adb device is reachable (HARD block — nothing works without it);
@@ -197,6 +201,7 @@ def build_android_bundle(
         make_stitch_accumulator=_make_stitch_accumulator,
         robust_shift=_robust_shift,
         gray_u8=_gray_u8,
+        prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy="android_vision",
         default_supervisor="milestone",
         action_policy_choices=_POLICY_NAMES,
