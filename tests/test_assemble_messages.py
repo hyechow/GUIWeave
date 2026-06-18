@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from gui_agent.context import ContextBlock
 from gui_agent.context.runtime import acceptance_items_block, form_controls_block
-from gui_agent.core.supervisor.milestone.helpers import assemble_messages
+from gui_agent.core.llm.messages import assemble_messages
 
 
 def _texts(human_content: list) -> list[str]:
