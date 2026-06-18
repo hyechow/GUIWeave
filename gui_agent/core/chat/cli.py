@@ -221,7 +221,7 @@ def _print_header() -> None:
     console.print("  [bold bright_cyan]iPhone GUI Agent[/]  [dim]─  自动操控 iPhone 的智能助手[/]")
     console.print("  [dim]操作各类 App · 发消息 · 点外卖 · 搜索内容 · 更多…[/]")
     console.print()
-    console.print("  [dim]/exit  退出  ·  /clear  清空历史  ·  /supervisor  切换策略引擎[/]")
+    console.print("  [dim]/exit  退出  ·  /clear  清空历史[/]")
     console.print("  [dim]/mode [silent|standard]  切换操作模式  ·  /model [qwen35|qwen36]  切换模型  ·  /max-turns <n>  最大轮数[/]")
     console.print()
 
@@ -299,14 +299,13 @@ def _print_result(result: dict) -> None:
 # ── Main loop ──────────────────────────────────────────────────────────────
 
 
-_COMMANDS = ["/exit", "/clear", "/supervisor", "/mode", "/mode silent", "/mode standard",
+_COMMANDS = ["/exit", "/clear", "/mode", "/mode silent", "/mode standard",
              "/model", "/model qwen35", "/model qwen36", "/max-turns", "/pref"]
 _completer = WordCompleter(
     _COMMANDS,
     meta_dict={
         "/exit": "退出",
         "/clear": "清空历史",
-        "/supervisor": "切换 supervisor (simple/milestone)",
         "/max-turns": "设置单任务最大轮数 (/max-turns 30)",
         "/pref": "查看/设置偏好 (set 外卖 美团 / del 外卖)",
     },
@@ -393,17 +392,6 @@ def main() -> None:
             _pending_clarification_msg = None
             console.clear()
             _print_header()
-            continue
-
-        if user_msg == "/supervisor":
-            current = supervisor.name
-            if current == "simple":
-                supervisor = build_supervisor("milestone")
-            else:
-                supervisor = build_supervisor("simple")
-            console.print()
-            console.print(f"  [dim]supervisor: {current} → {supervisor.name}[/dim]")
-            console.print()
             continue
 
         if user_msg == "/mode" or user_msg.startswith("/mode "):

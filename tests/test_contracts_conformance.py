@@ -32,7 +32,6 @@ from gui_agent.core.runtime.contracts import (
 from gui_agent.adapters.iphone.client.sync_mcp import SyncMCPClient
 from gui_agent.adapters.iphone.client.mirror_daemon import MirrorDaemonClient
 from gui_agent.adapters.iphone.policies.structured_output import StructuredOutputPolicy
-from gui_agent.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.adapters.iphone.perception import LivePhoneSession, LivePerception
 from gui_agent.adapters.iphone.recon.page_parser import PageParser
@@ -74,7 +73,6 @@ def test_action_policy_conforms():
 
 
 def test_supervisors_conform():
-    assert isinstance(_blank(SimpleSupervisorPolicy), SupervisorPolicy)
     assert isinstance(_blank(MilestoneSupervisorPolicy), SupervisorPolicy)
     assert isinstance(_blank(MilestoneSupervisorPolicy), KnowledgeAwareSupervisor)
 
@@ -173,10 +171,6 @@ def test_syncmcp_lacks_daemon_only_capabilities():
     sm = _blank(SyncMCPClient)
     assert not isinstance(sm, ScrollableDevice)
     assert not isinstance(sm, ZeroPreemptDevice)
-
-
-def test_simple_supervisor_is_not_knowledge_aware():
-    assert not isinstance(_blank(SimpleSupervisorPolicy), KnowledgeAwareSupervisor)
 
 
 def test_pixel_observation_is_not_a_tree_observation():

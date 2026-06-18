@@ -16,7 +16,6 @@ DESIGN RULES (S1 = zero behaviour change)
         - gui_agent/client/sync_mcp.py:SyncMCPClient
         - gui_agent/client/mirror_daemon.py:MirrorDaemonClient
         - gui_agent/policies/structured_output.py:StructuredOutputPolicy
-        - gui_agent/supervisor/simple.py:SimpleSupervisorPolicy
         - gui_agent/supervisor/milestone/policy.py:MilestoneSupervisorPolicy
         - gui_agent/perception.py:LivePhoneSession / LivePerception
         - gui_agent/recon/page_parser.py:PageParser
@@ -327,7 +326,7 @@ class KnowledgeAwareSupervisor(Protocol):
 
     Only ``MilestoneSupervisorPolicy`` implements ``set_app_knowledge``; core
     calls it behind ``hasattr(supervisor, "set_app_knowledge")``. Kept OFF the
-    strict ``SupervisorPolicy`` so ``SimpleSupervisorPolicy`` still conforms.
+    strict ``SupervisorPolicy`` so non-knowledge-aware supervisors still conform.
     """
 
     def set_app_knowledge(

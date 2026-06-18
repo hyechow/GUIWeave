@@ -16,7 +16,6 @@ from gui_agent.core.runtime.factory import PlatformBundle, SetupCheckResult
 from gui_agent.adapters.iphone.executor import ActionExecutor
 from gui_agent.adapters.iphone.perception import LivePerception, LivePhoneSession
 from gui_agent.adapters.iphone.policies.structured_output import StructuredOutputPolicy
-from gui_agent.adapters.iphone.supervisor.simple import SimpleSupervisorPolicy
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 if TYPE_CHECKING:
@@ -31,7 +30,6 @@ _POLICIES: dict[str, type] = {
     StructuredOutputPolicy.name: StructuredOutputPolicy,
 }
 _SUPERVISORS: dict[str, type] = {
-    SimpleSupervisorPolicy.name: SimpleSupervisorPolicy,
     MilestoneSupervisorPolicy.name: MilestoneSupervisorPolicy,
 }
 

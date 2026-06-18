@@ -60,7 +60,7 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
     # Browser uses the structure-neutral milestone supervisor FRAMEWORK with its OWN
     # web-tuned prompts (adapters/browser/supervisor/milestone/prompts.py) injected —
     # it no longer borrows the iphone set. ⚠️ those prompts are a DRAFT and need real
-    # browser-task A/B tuning. The iphone SimpleSupervisorPolicy is not offered here.
+    # browser-task A/B tuning.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
 

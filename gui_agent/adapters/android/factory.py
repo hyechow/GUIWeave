@@ -49,7 +49,7 @@ def _build_action_policy(name: str) -> "ActionPolicy":
 def _build_supervisor(name: str) -> "SupervisorPolicy":
     # Android uses the structure-neutral milestone supervisor FRAMEWORK with its OWN
     # mobile-tuned prompts injected (no longer the iphone-flavored default that called
-    # everything an "iOS 主屏"). The iphone SimpleSupervisorPolicy is not offered here.
+    # everything an "iOS 主屏").
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
 
