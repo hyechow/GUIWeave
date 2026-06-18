@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 if __package__ is None or __package__ == "":
@@ -22,6 +23,7 @@ from gui_agent.core.self_learning.app_summary import (
     match_app_by_url,
 )
 from gui_agent.core.run.state import write_final_run_state
+from llm.structured import get_llm_call_count, get_llm_token_usage
 
 
 def main(
@@ -217,6 +219,7 @@ def main(
             # (default) → the DAG path is unchanged.
             program = None
             orchestrator_context_reports: list[dict] = []
+            orchestrator_metrics: dict = {}
             run_max_turns = args.max_turns
             if args.orchestrator:
                 from gui_agent.core.orchestrator import (
@@ -228,6 +231,9 @@ def main(
                 # them to the decomposer — mirrors the DAG path, which the orchestrator's decompose
                 # otherwise skipped (the LLM only saw the literal @token, never the field values).
                 file_section = resolve_file_refs(goal)
+                orch_started = time.perf_counter()
+                orch_calls_before = get_llm_call_count()
+                orch_tokens_before = get_llm_token_usage()
                 # L2 structural backstops (deterministic, keyed on structural signals, not gate wording):
                 #  · confirm-read action gates → lenient dispatch gate (checker doesn't re-judge the
                 #    result the read owns) — signal = action→read adjacency;
@@ -243,6 +249,17 @@ def main(
                               prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                               context_reports=orchestrator_context_reports)
                 ))
+                orch_tokens_after = get_llm_token_usage()
+                orchestrator_metrics = {
+                    "timings": {"orchestrator.decompose": time.perf_counter() - orch_started},
+                    "token_usage": {
+                        "orchestrator.decompose": {
+                            "input": orch_tokens_after[0] - orch_tokens_before[0],
+                            "output": orch_tokens_after[1] - orch_tokens_before[1],
+                        }
+                    },
+                    "llm_calls": get_llm_call_count() - orch_calls_before,
+                }
                 # The config must ALSO reach the execution-time planner deterministically — the
                 # supervisor's constraints flow to every milestone's planner, and reseed never clears
                 # them (LLM distillation of config into constraints proved unstable; see DAG path).
@@ -285,7 +302,10 @@ def main(
                         router=router_result.model_dump() if router_result else None,
                         knowledge=knowledge_summary,
                         program=program,
-                        orchestrator_context_reports=orchestrator_context_reports,
+                        orchestrator_context_reports=[*orchestrator_context_reports, {
+                            "kind": "orchestrator_metrics",
+                            **orchestrator_metrics,
+                        }] if orchestrator_metrics else orchestrator_context_reports,
                         stop_requested=esc_stop.requested if esc_stop.enabled else None,
                         platform=platform,
                         headless=headless,

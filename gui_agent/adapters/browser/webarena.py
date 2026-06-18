@@ -40,6 +40,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -49,6 +50,7 @@ if __package__ is None or __package__ == "":
 from pydantic import BaseModel
 
 from gui_agent.prompts import load_prompt, load_prompt_text
+from llm.structured import get_llm_call_count, get_llm_token_usage
 
 # WebArena's required response schema (mirrors the base_template "Final Response
 # Format"); the AgentResponseEvaluator normalizes case, so plain str fields are fine.
@@ -498,6 +500,7 @@ def main() -> int:
             else:
                 program = None
                 orchestrator_context_reports: list[dict] = []
+                orchestrator_metrics: dict = {}
                 run_max_turns = args.max_turns
                 with bundle.open_session() as platform:
                     _prime(platform)
@@ -540,6 +543,9 @@ def main() -> int:
                         from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
 
                         file_section = resolve_file_refs(intent)
+                        orch_started = time.perf_counter()
+                        orch_calls_before = get_llm_call_count()
+                        orch_tokens_before = get_llm_token_usage()
                         program = normalize_precondition_gates(
                             normalize_confirm_read_gates(
                                 decompose(
@@ -556,6 +562,17 @@ def main() -> int:
                                 )
                             )
                         )
+                        orch_tokens_after = get_llm_token_usage()
+                        orchestrator_metrics = {
+                            "timings": {"orchestrator.decompose": time.perf_counter() - orch_started},
+                            "token_usage": {
+                                "orchestrator.decompose": {
+                                    "input": orch_tokens_after[0] - orch_tokens_before[0],
+                                    "output": orch_tokens_after[1] - orch_tokens_before[1],
+                                }
+                            },
+                            "llm_calls": get_llm_call_count() - orch_calls_before,
+                        }
                         if file_section and hasattr(supervisor, "_global_constraints"):
                             cap = 3000
                             supervisor._global_constraints.append(
@@ -589,7 +606,10 @@ def main() -> int:
                             router=None,
                             knowledge=knowledge_summary,
                             program=program,
-                            orchestrator_context_reports=orchestrator_context_reports,
+                            orchestrator_context_reports=[*orchestrator_context_reports, {
+                                "kind": "orchestrator_metrics",
+                                **orchestrator_metrics,
+                            }] if orchestrator_metrics else orchestrator_context_reports,
                             stop_requested=esc_stop.requested if esc_stop.enabled else None,
                             platform=platform,
                         )

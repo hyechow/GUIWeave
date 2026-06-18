@@ -304,12 +304,23 @@ def run_agent_loop(
             from gui_agent.core.orchestrator import Interpreter
             _interp = Interpreter(program)
             _orch_interp = _interp  # _save_ctx now mirrors its run_log (reads) into context
+            _orchestrator_reports = list(orchestrator_context_reports or [])
+            _orchestrator_metrics = next(
+                (
+                    report for report in _orchestrator_reports
+                    if isinstance(report, dict) and report.get("kind") == "orchestrator_metrics"
+                ),
+                {},
+            )
             # Persist the decomposed program so the report renders decompose as its OWN row
             # (a distinct stage now, not folded into turn 1's supervisor step).
             context.orchestrator = {
                 "program": program.model_dump(mode="json"),
                 "max_turns": max_turns,
-                "context_reports": list(orchestrator_context_reports or []),
+                "context_reports": _orchestrator_reports,
+                "timings": dict(_orchestrator_metrics.get("timings") or {}),
+                "token_usage": dict(_orchestrator_metrics.get("token_usage") or {}),
+                "llm_calls": int(_orchestrator_metrics.get("llm_calls") or 0),
             }
             _gen = _interp.steps()
             try:

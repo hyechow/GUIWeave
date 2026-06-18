@@ -13,7 +13,8 @@ from gui_agent.core.config import model_price
 _MODULE_CFG: dict[str, str] = {
     "checker": "supervisor", "planner": "supervisor", "replanner": "supervisor",
     "loop_check": "supervisor", "loop_scroll": "supervisor", "selector": "supervisor",
-    "decompose": "supervisor.decompose", "action_policy": "action_policy",
+    "decompose": "supervisor.decompose", "orchestrator.decompose": "supervisor.decompose",
+    "action_policy": "action_policy",
 }
 
 
