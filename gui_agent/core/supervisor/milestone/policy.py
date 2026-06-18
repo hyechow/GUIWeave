@@ -21,7 +21,7 @@ from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, Superviso
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm as _norm_page
 
 from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
-from .helpers import _build_msgs, assemble_messages, _make_llm, run_loop_check, run_planner
+from .helpers import assemble_messages, _make_llm, run_loop_check, run_planner
 from .helpers import run_checker, run_selector, _default_milestone_prompts
 from .runtime import (
     MAX_RETRIES,
@@ -1202,6 +1202,3 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
     def _llm(self) -> ChatOpenAI:
         return _make_llm()
-
-    def _msgs(self, system_prompt: str, observation: Observation) -> list:
-        return _build_msgs(system_prompt, observation.png_bytes, image_resize=self._prompts.image_resize)
