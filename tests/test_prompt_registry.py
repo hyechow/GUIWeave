@@ -91,6 +91,7 @@ def test_migrated_modules_do_not_inline_large_prompt_strings():
         "gui_agent/core/llm/reader.py",
         "gui_agent/core/orchestrator/decomposer.py",
         "gui_agent/core/orchestrator/structured_read.py",
+        "gui_agent/core/orchestrator/data_query_repair.py",
         "gui_agent/core/supervisor/milestone/helpers.py",
         "gui_agent/core/vision/target_verify.py",
     ]
