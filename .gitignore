@@ -25,7 +25,7 @@ videos
 # Swift sources for bin/mirror_daemon; built out of tree.
 # 本地注入层(独立仓库管理),不进主仓库
 injection/
-webarena-verified/
+# webarena-verified/ 现作为 git submodule 引用(见 .gitmodules),不再忽略
 
 # Vendored native binaries (adb + scrcpy standalone), fetched per-machine
 vendor/

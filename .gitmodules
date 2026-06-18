@@ -1,0 +1,3 @@
+[submodule "webarena-verified"]
+	path = webarena-verified
+	url = https://github.com/ServiceNow/webarena-verified
