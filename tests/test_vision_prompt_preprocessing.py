@@ -55,7 +55,7 @@ def test_orchestrator_decompose_uses_injected_vision_preprocessor(monkeypatch):
 
     captured: dict[str, tuple[int, int]] = {}
 
-    def fake_invoke(_llm, messages, _schema):
+    def fake_invoke(_llm, messages, _schema, **_kwargs):
         captured["size"] = _image_size_from_parts(messages[1].content)
         return mod._PlanDraft(goal="g", steps=[mod._StepDraft(op="finish", message="done")])
 
@@ -76,7 +76,7 @@ def test_structured_read_uses_injected_vision_preprocessor(monkeypatch):
 
     captured: dict[str, tuple[int, int]] = {}
 
-    def fake_invoke(_llm, messages, _schema):
+    def fake_invoke(_llm, messages, _schema, **_kwargs):
         captured["size"] = _image_size_from_parts(messages[1].content)
         return SimpleNamespace(reads=[])
 

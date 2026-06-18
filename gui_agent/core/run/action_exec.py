@@ -282,6 +282,7 @@ class ActionExecutionState:
             direction=sv_step.direction,
             drag_column=sv_step.drag_column,
             drag_steps=sv_step.drag_steps,
+            context_reports=getattr(supervisor, "_context_reports", None),
         )
         if hasattr(supervisor, "_timings"):
             supervisor._timings["action_policy"] = time.perf_counter() - started

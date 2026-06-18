@@ -88,7 +88,8 @@ def structured_read(
         ) if check_knowledge else None,
     ], label="structured_read.dynamic", report_sink=context_reports)
     prepare_png = prepare_vision_prompt_png or (lambda b: b)
-    b64 = base64.b64encode(prepare_png(png_bytes)).decode()
+    prepared = prepare_png(png_bytes)
+    b64 = base64.b64encode(prepared).decode()
     messages = [
         SystemMessage(content=_SYSTEM),
         HumanMessage(content=[
@@ -96,7 +97,53 @@ def structured_read(
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
         ]),
     ]
-    result = invoke_structured(llm, messages, _StructuredRead)
+    if context_reports is not None:
+        image_text = f"[image_url omitted: image/png, {len(prepared)} bytes]"
+        context_reports.append({
+            "kind": "prompt_snapshot",
+            "label": "structured_read.dynamic",
+            "roles": [
+                {
+                    "role": "system",
+                    "parts": [{
+                        "label": "task_prompt",
+                        "source_type": "prompt_asset",
+                        "source": "task.orchestrator.structured_read",
+                        "type": "text",
+                        "text": _SYSTEM,
+                        "chars": len(_SYSTEM),
+                    }],
+                },
+                {
+                    "role": "human",
+                    "parts": [
+                        {
+                            "label": "structured_read.dynamic",
+                            "source_type": "prompt_context",
+                            "source": "render_prompt_context",
+                            "type": "text",
+                            "text": text,
+                            "chars": len(text),
+                        },
+                        {
+                            "label": "screenshot",
+                            "source_type": "image",
+                            "source": "observation",
+                            "type": "image",
+                            "text": image_text,
+                            "chars": len(image_text),
+                        },
+                    ],
+                },
+            ],
+        })
+    result = invoke_structured(
+        llm,
+        messages,
+        _StructuredRead,
+        trace_sink=context_reports,
+        trace_label="structured_read.dynamic",
+    )
     # Keep only requested fields; default any missing to "" (当没有).
     by_field = {fr.field: (fr.value or "") for fr in result.reads}
     return {f: by_field.get(f, "") for f in returns}

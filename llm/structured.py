@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
-from typing import TypeVar
+from collections.abc import Callable, MutableSequence
+from typing import Any, TypeVar
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -55,13 +55,18 @@ def invoke_structured(
     llm: ChatOpenAI,
     messages: list[BaseMessage],
     schema: type[ModelT],
+    *,
+    trace_sink: MutableSequence[dict] | Callable[[dict], None] | None = None,
+    trace_label: str = "",
 ) -> ModelT:
     """Invoke a chat model and parse a Pydantic object.
 
     Uses DashScope json_object constrained decoding with thinking disabled.
     Falls back to plain JSON text parsing if the constrained mode fails.
     """
-    msgs = _with_json_instruction(messages, schema)
+    instruction = _json_schema_instruction(schema)
+    msgs = _with_json_instruction(messages, schema, instruction=instruction)
+    _append_schema_instruction_trace(trace_sink, trace_label or schema.__name__, instruction)
 
     # Primary: json_object mode (constrained decoding) + disable thinking
     bound = llm.bind(
@@ -75,7 +80,16 @@ def invoke_structured(
             label="json_object",
         )
         content = _message_text(response.content)
-        return _parse_structured_response(content, schema)
+        parsed = _parse_structured_response(content, schema)
+        _append_trace(
+            trace_sink,
+            label=trace_label,
+            schema=schema,
+            mode="json_object",
+            raw_output=content,
+            parsed=parsed,
+        )
+        return parsed
     except (BadRequestError, ValidationError, ValueError) as exc:
         primary_error = exc
         print(f"json_object 模式失败（{type(exc).__name__}）: {exc}，改用纯文本 JSON 解析...")
@@ -89,7 +103,17 @@ def invoke_structured(
         )
         content = _message_text(response.content)
         try:
-            return _parse_structured_response(content, schema)
+            parsed = _parse_structured_response(content, schema)
+            _append_trace(
+                trace_sink,
+                label=trace_label,
+                schema=schema,
+                mode="json_text_fallback",
+                raw_output=content,
+                parsed=parsed,
+                attempt=fallback_attempt + 1,
+            )
+            return parsed
         except (ValidationError, ValueError) as exc:
             if fallback_attempt == 0:
                 print(f"  fallback 解析失败，重试一次...")
@@ -99,6 +123,69 @@ def invoke_structured(
                 f"结构化输出解析失败（primary + fallback 均失败）: {exc}\n"
                 f"模型原始输出: {content[:500]}"
             ) from exc
+
+
+def _append_trace(
+    sink: MutableSequence[dict] | Callable[[dict], None] | None,
+    *,
+    label: str,
+    schema: type[BaseModel],
+    mode: str,
+    raw_output: str,
+    parsed: BaseModel,
+    attempt: int | None = None,
+) -> None:
+    if sink is None:
+        return
+    report: dict[str, Any] = {
+        "kind": "llm_output",
+        "label": label or schema.__name__,
+        "schema": schema.__name__,
+        "mode": mode,
+        "raw_output": raw_output,
+        "parsed": parsed.model_dump(exclude_none=True),
+        "chars": len(raw_output),
+    }
+    if attempt is not None:
+        report["attempt"] = attempt
+    if callable(sink):
+        sink(report)
+    else:
+        sink.append(report)
+
+
+def _append_schema_instruction_trace(
+    sink: MutableSequence[dict] | Callable[[dict], None] | None,
+    label: str,
+    instruction: str,
+) -> None:
+    if sink is None or callable(sink):
+        return
+    for report in reversed(sink):
+        if (
+            isinstance(report, dict)
+            and report.get("kind") == "prompt_snapshot"
+            and report.get("label") == label
+        ):
+            roles = report.get("roles") or []
+            system = next(
+                (role for role in roles if isinstance(role, dict) and role.get("role") == "system"),
+                None,
+            )
+            if not isinstance(system, dict):
+                return
+            parts = system.setdefault("parts", [])
+            if any(isinstance(part, dict) and part.get("label") == "schema_instruction" for part in parts):
+                return
+            parts.append({
+                "label": "schema_instruction",
+                "source_type": "structured_output",
+                "source": "invoke_structured",
+                "type": "text",
+                "text": instruction,
+                "chars": len(instruction),
+            })
+            return
 
 
 def _invoke_counted_with_retry(fn: Callable[[], ReturnT], label: str) -> ReturnT:
@@ -131,8 +218,19 @@ def _is_transient_response_error(exc: TypeError) -> bool:
 def _with_json_instruction(
     messages: list[BaseMessage],
     schema: type[BaseModel],
+    *,
+    instruction: str | None = None,
 ) -> list[BaseMessage]:
     """Merge JSON schema instruction into the system message (or prepend one)."""
+    instruction = instruction or _json_schema_instruction(schema)
+    if messages and isinstance(messages[0], SystemMessage):
+        merged = SystemMessage(content=f"{messages[0].content}\n\n{instruction}")
+        return [merged, *messages[1:]]
+    return [SystemMessage(content=instruction), *messages]
+
+
+def _json_schema_instruction(schema: type[BaseModel]) -> str:
+    """Instruction appended to structured-output prompts."""
     schema_json = schema.model_json_schema()
     properties = schema_json.get("properties", {})
     required = schema_json.get("required", [])
@@ -147,10 +245,7 @@ def _with_json_instruction(
         "JSON 必须符合以下 schema（仅作为格式约束，不要照抄它）：\n"
         f"{json.dumps(schema_json, ensure_ascii=False)}"
     )
-    if messages and isinstance(messages[0], SystemMessage):
-        merged = SystemMessage(content=f"{messages[0].content}\n\n{instruction}")
-        return [merged, *messages[1:]]
-    return [SystemMessage(content=instruction), *messages]
+    return instruction
 
 
 def _with_repair_instruction(

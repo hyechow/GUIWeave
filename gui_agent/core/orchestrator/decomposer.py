@@ -440,7 +440,13 @@ def decompose(
             context_reports=context_reports,
             decision_text="",
         )
-        draft = invoke_structured(llm, messages, _PlanDraft)
+        draft = invoke_structured(
+            llm,
+            messages,
+            _PlanDraft,
+            trace_sink=context_reports,
+            trace_label="orchestrator.decompose",
+        )
         program = to_program(draft, goal)
         issues = validate_program(program)
         if not issues:

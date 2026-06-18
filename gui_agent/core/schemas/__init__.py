@@ -520,8 +520,9 @@ class PolicyTurn(BaseModel):
     llm_context: list[dict[str, Any]] = Field(
         default_factory=list,
         description=(
-            "本轮 LLM 上下文决策诊断：context budget included/dropped blocks、估算 chars/tokens、"
-            "block source/priority/ttl/裁剪原因，以及 KnowledgeSelector cache/fallback/section_ids。"
+            "本轮 LLM 上下文诊断：实际 prompt 快照、context budget included/dropped blocks、"
+            "估算 chars/tokens、block source/priority/ttl/裁剪原因，以及 KnowledgeSelector "
+            "cache/fallback/section_ids。"
         ),
     )
 

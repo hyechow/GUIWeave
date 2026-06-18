@@ -493,7 +493,13 @@ def run_checker(
         label="checker",
         context_reports=context_reports,
     )
-    result = invoke_structured(_make_llm(), msgs, _SingleCheckResult)
+    result = invoke_structured(
+        _make_llm(),
+        msgs,
+        _SingleCheckResult,
+        trace_sink=context_reports,
+        trace_label="checker",
+    )
 
     def _strip_progress_evidence(r: _SingleCheckResult) -> None:
         # 连续调值类(is_converge)的 checker section 要求把「当前值=/目标值=」写进 missing_evidence
@@ -682,7 +688,13 @@ def run_planner(
         context_reports=context_reports,
     )
     plan_schema = prompts.plan_result_schema or _PlanResult
-    plan = invoke_structured(_make_llm(), msgs, plan_schema)
+    plan = invoke_structured(
+        _make_llm(),
+        msgs,
+        plan_schema,
+        trace_sink=context_reports,
+        trace_label="planner",
+    )
     plan = _guard_native_select_plan(plan, milestone, check, observation)
     plan = _guard_exact_dropdown_target(plan, milestone)
     # Selection re-entry loop breaker: clicking an already-clicked candidate again
@@ -761,4 +773,6 @@ def run_loop_check(
             context_reports=context_reports,
         ),
         _LoopFrameResult,
+        trace_sink=context_reports,
+        trace_label="loop_check",
     )

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import io
+from collections.abc import Callable, MutableSequence
 from typing import Optional, Protocol
 
 from PIL import Image
@@ -33,6 +34,7 @@ class ActionPolicy(Protocol):
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
+        context_reports: MutableSequence[dict] | Callable[[dict], None] | None = None,
     ) -> BaseActionDecision:
         """Return the best action for the current observation and instruction."""
 
@@ -55,6 +57,7 @@ class BaseActionPolicy:
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
         verbose: bool = True,
+        context_reports: MutableSequence[dict] | Callable[[dict], None] | None = None,
     ) -> BaseActionDecision:
         # Lazy imports keep ``import core.policies.base`` light (no eager langchain).
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -68,7 +71,8 @@ class BaseActionPolicy:
             print(f"Provider : {cfg.provider}")
             print(f"Model    : {cfg.model}")
 
-        b64 = base64.b64encode(self._prepare_png(observation.png_bytes)).decode()
+        prepared_png = self._prepare_png(observation.png_bytes)
+        b64 = base64.b64encode(prepared_png).decode()
         llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
         user_text = self._build_user_text(
             instruction, direction=direction, drag_column=drag_column, drag_steps=drag_steps
@@ -82,7 +86,56 @@ class BaseActionPolicy:
                 ]
             ),
         ]
-        decision = invoke_structured(llm, messages, self.decision_schema)
+        if context_reports is not None:
+            _append_report(context_reports, {
+                "kind": "prompt_snapshot",
+                "label": "action_policy",
+                "roles": [
+                    {
+                        "role": "system",
+                        "parts": [{
+                            "label": "task_prompt",
+                            "source_type": "prompt_asset",
+                            "source": f"{self.name}.SYSTEM_PROMPT",
+                            "type": "text",
+                            "text": self.SYSTEM_PROMPT,
+                            "chars": len(self.SYSTEM_PROMPT),
+                        }],
+                    },
+                    {
+                        "role": "human",
+                        "parts": [
+                            {
+                                "label": "instruction",
+                                "source_type": "runtime_state",
+                                "source": "action_policy.instruction",
+                                "type": "text",
+                                "text": user_text,
+                                "chars": len(user_text),
+                            },
+                            {
+                                "label": "screenshot",
+                                "source_type": "image",
+                                "source": "observation",
+                                "type": "image",
+                                "text": (
+                                    f"[image_url omitted: image/png, {len(prepared_png)} bytes]"
+                                ),
+                                "chars": len(
+                                    f"[image_url omitted: image/png, {len(prepared_png)} bytes]"
+                                ),
+                            },
+                        ],
+                    },
+                ],
+            })
+        decision = invoke_structured(
+            llm,
+            messages,
+            self.decision_schema,
+            trace_sink=context_reports,
+            trace_label="action_policy",
+        )
         return self._postprocess(
             decision, instruction, direction=direction, drag_column=drag_column, drag_steps=drag_steps
         )
@@ -125,3 +178,13 @@ def resize_to_logical_png(png_bytes: bytes) -> bytes:
     buf = io.BytesIO()
     small.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _append_report(
+    sink: MutableSequence[dict] | Callable[[dict], None],
+    report: dict,
+) -> None:
+    if callable(sink):
+        sink(report)
+    else:
+        sink.append(report)

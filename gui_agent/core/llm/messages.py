@@ -66,10 +66,11 @@ def assemble_messages(
     sys_text = render_context_blocks([b for b in sys_live if id(b) in kept], include_headers=False)
     hum_text = render_context_blocks([b for b in hum_live if id(b) in kept], include_headers=False)
 
+    date_block = current_date_block()
     system = (
         task_prompt
         + (f"\n\n{sys_text}" if sys_text else "")
-        + f"\n\n{current_date_block().render(include_header=False)}"
+        + f"\n\n{date_block.render(include_header=False)}"
     )
     human_content: list = []
     if hum_text:
@@ -78,14 +79,36 @@ def assemble_messages(
         human_content.append({"type": "text", "text": decision_text})
 
     png_bytes = _png_bytes(observation)
+    image_report: dict | None = None
     if png_bytes:
         prepared = prepare_prompt_png(
             png_bytes,
             image_resize=image_resize,
             prepare_vision_prompt_png=prepare_vision_prompt_png,
         )
+        image_report = {
+            "type": "image",
+            "label": "screenshot",
+            "source": "observation",
+            "bytes": len(prepared),
+            "text": f"[image_url omitted: image/png, {len(prepared)} bytes, image_resize={image_resize}]",
+        }
         b64 = base64.b64encode(prepared).decode()
         human_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+
+    if context_reports is not None:
+        _append_report(
+            context_reports,
+            _prompt_snapshot_report(
+                label=label,
+                task_prompt=task_prompt,
+                system_blocks=[b for b in sys_live if id(b) in kept],
+                human_blocks=[b for b in hum_live if id(b) in kept],
+                date_block=date_block,
+                decision_text=decision_text,
+                image_report=image_report,
+            ),
+        )
 
     return [SystemMessage(content=system), HumanMessage(content=human_content)]
 
@@ -106,3 +129,69 @@ def _append_report(
         sink(report)
     else:
         sink.append(report)
+
+
+def _prompt_snapshot_report(
+    *,
+    label: str,
+    task_prompt: str,
+    system_blocks: Sequence[ContextBlock],
+    human_blocks: Sequence[ContextBlock],
+    date_block: ContextBlock,
+    decision_text: str,
+    image_report: dict | None,
+) -> dict:
+    """Model-visible prompt snapshot for report debugging.
+
+    This records text parts in assembly order, but deliberately omits base64 image data.
+    The returned structure is diagnostic-only; it does not affect the messages sent to the model.
+    """
+    system_parts = [
+        {
+            "label": "task_prompt",
+            "source_type": "prompt_asset",
+            "source": "task_prompt",
+            "type": "text",
+            "text": task_prompt,
+            "chars": len(task_prompt),
+        },
+        *[_context_part(block) for block in system_blocks],
+        _context_part(date_block),
+    ]
+    human_parts = [_context_part(block) for block in human_blocks]
+    if decision_text:
+        human_parts.append({
+            "label": "decision_text",
+            "source_type": "runtime_state",
+            "source": "assemble_messages",
+            "type": "text",
+            "text": decision_text,
+            "chars": len(decision_text),
+        })
+    if image_report is not None:
+        human_parts.append({
+            **image_report,
+            "chars": len(str(image_report.get("text") or "")),
+        })
+    return {
+        "kind": "prompt_snapshot",
+        "label": label,
+        "roles": [
+            {"role": "system", "parts": system_parts},
+            {"role": "human", "parts": human_parts},
+        ],
+    }
+
+
+def _context_part(block: ContextBlock) -> dict:
+    text = block.render(include_header=False)
+    return {
+        "label": block.id,
+        "source_type": block.source_type,
+        "source": block.source,
+        "ttl": block.ttl,
+        "budget": block.budget,
+        "type": "text",
+        "text": text,
+        "chars": len(text),
+    }

@@ -1150,6 +1150,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 context_reports=self._context_reports,
             ),
             plan_schema,
+            trace_sink=self._context_reports,
+            trace_label="loop_scroll",
         )
 
     def _invoke_replanner(
@@ -1191,7 +1193,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             label="replanner",
             context_reports=self._context_reports,
         )
-        result = invoke_structured(self._llm(), msgs, _ReplanResult)
+        result = invoke_structured(
+            self._llm(),
+            msgs,
+            _ReplanResult,
+            trace_sink=self._context_reports,
+            trace_label="replanner",
+        )
         if self._is_sequence(result.instruction):
             print("  [Replan] 多步序列，重试...")
             result = self._invoke_replanner(

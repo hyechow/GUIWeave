@@ -184,7 +184,13 @@ class MilestoneDecompositionMixin:
             label="milestone.decompose",
             context_reports=getattr(self, "_context_reports", None),
         )
-        resp = invoke_structured(llm, msgs, _DecomposeResponse)
+        resp = invoke_structured(
+            llm,
+            msgs,
+            _DecomposeResponse,
+            trace_sink=getattr(self, "_context_reports", None),
+            trace_label="milestone.decompose",
+        )
 
         self._global_constraints = resp.global_constraints
         self.task_type = resp.task_type
