@@ -141,15 +141,70 @@ def _setup_check(serial: "Optional[str]") -> SetupCheckResult:
     return SetupCheckResult(ok=True, summary="android 环境就绪", lines=tuple(lines))
 
 
+def _scrcpy_running(serial: str) -> bool:
+    """True if a scrcpy CLIENT process for ``serial`` (or any, when serial is empty) is already
+    running — the robust idempotency guard. Process-based, not window-based: scrcpy exits when its
+    window closes, so a live client ⟺ a live mirror, and this avoids the window-detection gap
+    (CGWindowList can momentarily return None during teardown churn → spurious relaunch)."""
+    import subprocess
+
+    try:
+        out = subprocess.run(["pgrep", "-fl", "scrcpy"], capture_output=True, text=True).stdout
+    except Exception:
+        return False
+    for line in out.splitlines():
+        if "/adb " in line or " shell " in line or "scrcpy-server" in line:
+            continue  # device-side server / adb helper, not the desktop client
+        if "/scrcpy " not in line and not line.rstrip().endswith("/scrcpy"):
+            continue  # not the scrcpy client binary
+        if not serial or f"-s {serial}" in line:
+            return True
+    return False
+
+
+def _ensure_scrcpy_window(timeout_s: float = 6.0) -> None:
+    """Best-effort: open the scrcpy mirror window (background) for the current device if one is
+    not already up, then wait briefly for it to appear. Interactive (non-headless) runs want the
+    mirror — the HUD and the action-cursor overlay draw on it. No-op if scrcpy is already running
+    for this device (or a mirror is already on screen), if bin/scrcpy can't be launched, or
+    off-macOS — the agent runs fine without a mirror. Reuses bin/scrcpy."""
+    import os
+    import subprocess
+    import time
+
+    from gui_agent.adapters.android.constants import VENDORED_ADB
+    from gui_agent.adapters.android.visualizer import scrcpy_window_rect
+
+    try:
+        serial = (os.environ.get("ANDROID_SERIAL") or "").strip()
+        if _scrcpy_running(serial) or scrcpy_window_rect() is not None:
+            return  # already mirroring — never relaunch
+        script = VENDORED_ADB.parents[2] / "bin" / "scrcpy"  # repo_root/bin/scrcpy
+        if not script.exists():
+            return
+        # No serial arg: bin/scrcpy reads ANDROID_SERIAL from the inherited env (works for both
+        # USB serials and host:port wireless; passing a non-colon USB serial as arg would break it).
+        subprocess.Popen([str(script)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if scrcpy_window_rect() is not None:
+                return
+            time.sleep(0.3)
+    except Exception:
+        pass
+
+
 def _make_android_hud() -> object:
     """Status HUD positioned just BELOW the scrcpy mirror window (the iphone model —
     a narrow phone mirror with the HUD under it, NOT browser's over-the-wide-window
     placement). The neutral core ``AgentHUD`` draws its own OS window, so it never
-    enters the agent's adb screenshot. Falls back to a default screen spot when no
-    scrcpy window is on screen (agent runs headless of any mirror)."""
+    enters the agent's adb screenshot. Auto-opens the scrcpy mirror first (interactive
+    runs only — this path is gated by make_status_reporter(not headless)); falls back to
+    a default screen spot if the mirror can't be opened."""
     from gui_agent.core.ui.hud import AgentHUD
     from gui_agent.adapters.android.visualizer import scrcpy_window_rect
 
+    _ensure_scrcpy_window()
     rect = scrcpy_window_rect()
     if rect:
         wx, wy, ww, wh = rect
