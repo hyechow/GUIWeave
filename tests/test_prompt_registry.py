@@ -85,38 +85,77 @@ def test_migrated_prompt_constants_load_from_registry():
     assert SECTION_SYS == load_prompt_text("task.self_learning.manual_pdf.section_system")
 
 
-def test_migrated_modules_do_not_inline_large_prompt_strings():
-    migrated = [
-        "gui_agent/adapters/iphone/supervisor/milestone/prompts.py",
-        "gui_agent/adapters/browser/supervisor/milestone/prompts.py",
-        "gui_agent/adapters/android/supervisor/milestone/prompts.py",
-        "gui_agent/adapters/iphone/policies/structured_output.py",
-        "gui_agent/adapters/browser/policies.py",
-        "gui_agent/adapters/android/policies.py",
-        "gui_agent/adapters/iphone/router_prompt.py",
-        "gui_agent/adapters/browser/router_prompt.py",
-        "gui_agent/core/llm/output.py",
-        "gui_agent/core/llm/reader.py",
-        "gui_agent/core/orchestrator/decomposer.py",
-        "gui_agent/core/orchestrator/structured_read.py",
-        "gui_agent/core/orchestrator/data_query_repair.py",
-        "gui_agent/core/self_learning/knowledge.py",
-        "gui_agent/core/self_learning/app_summary.py",
-        "gui_agent/core/self_learning/gen_when.py",
-        "gui_agent/core/self_learning/manual_pdf.py",
-        "gui_agent/core/supervisor/milestone/helpers.py",
-        "gui_agent/core/vision/target_verify.py",
-    ]
-    for rel in migrated:
-        tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
+def test_large_inline_prompt_constants_are_explicitly_allowlisted():
+    """Default-deny guardrail: inline LLM prompt strings live in gui_agent/prompts/,
+    not in code — except for an explicit, shrinking legacy allowlist.
+
+    FAILS when a MODULE-LEVEL assignment whose name ends in *_PROMPT / *_SYSTEM /
+    *_RULE holds a string literal of >= MIN_CHARS, unless that (file, name) pair is
+    in LEGACY_INLINE_PROMPTS. Scans ALL of gui_agent/ and fails by default, so an
+    un-migrated or freshly-added inline prompt is caught — the old migrated-allowlist
+    check only guarded files it already knew about and let new violations slip in.
+
+    RATCHET: exceptions are pinned to specific constants. Migrate one to
+    gui_agent/prompts/ and delete its line, or the test fails "stale". You also
+    cannot silently add a new inline prompt to an already-allowlisted file.
+
+    Necessary, not sufficient — a content scan has too many false positives
+    (HTML/CSS/JS templates, schema prose), so the guard keys on the naming
+    convention. Deliberate gaps:
+      - Naming blind spot: only *_PROMPT/*_SYSTEM/*_RULE names are scanned. The
+        largest LIVE blind spot is adapters/browser/webarena.py (_synthesize_response
+        assigns ~1k-char system/human blocks to LOCALS sys_msg/human — no suffix AND
+        function-local). Migrate those to close it (top should_migrate_soon item).
+      - Function-local: HumanMessage/SystemMessage built from inline f-strings inside
+        functions (core/llm/output.py, core/chat/*) are out of scope by design.
+      - BinOp/JoinedStr concatenations are excluded, so a registry-backed
+        `_COMMON + load_prompt_text(...)` (self_learning/knowledge.py) is not flagged.
+      - Schema Field(description=...) prose is intentionally allowed in code (205
+        today, longest 174 — all under threshold, none *_PROMPT/*_SYSTEM/*_RULE).
+    See memory: prompts-isolation-remaining-inline.
+    """
+    SUFFIXES = ("PROMPT", "SYSTEM", "RULE")
+    MIN_CHARS = 200
+    # (repo-relative file, constant name): the ONLY module-level *_PROMPT/
+    # *_SYSTEM/*_RULE string literals >= MIN_CHARS allowed in code. Migrate one
+    # -> delete its line -> the ratchet tightens. All three are the iphone recon
+    # pipeline (dormant since the package rename; see the audit's should_migrate_soon).
+    LEGACY_INLINE_PROMPTS = {
+        ("gui_agent/adapters/iphone/recon/back_nav.py", "BACK_PROMPT"),
+        ("gui_agent/adapters/iphone/recon/cascade_matcher.py", "SEMANTIC_PROMPT"),
+        ("gui_agent/adapters/iphone/recon/page_parser.py", "SYSTEM_PROMPT"),
+    }
+
+    actual = set()
+    for path in (ROOT / "gui_agent").rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        rel = str(path.relative_to(ROOT))
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in tree.body:
             if not isinstance(node, ast.Assign):
                 continue
             if not isinstance(node.value, ast.Constant) or not isinstance(node.value.value, str):
                 continue
-            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
-            if any(name.endswith(("PROMPT", "SYSTEM", "RULE")) for name in names):
-                assert len(node.value.value) < 200, f"{rel}:{names} still inlines a large prompt"
+            matched = [n for n in (t.id for t in node.targets if isinstance(t, ast.Name))
+                       if n.endswith(SUFFIXES)]
+            if not matched:
+                continue
+            if len(node.value.value) >= MIN_CHARS:
+                for name in matched:
+                    actual.add((rel, name))
+
+    new_violations = actual - LEGACY_INLINE_PROMPTS
+    stale = LEGACY_INLINE_PROMPTS - actual
+    assert not new_violations, (
+        f"unallowlisted large inline prompt constant(s): {sorted(new_violations)} — "
+        "move the prompt into gui_agent/prompts/ and load via load_prompt_text(), "
+        "or add an explicit (file, name) entry to LEGACY_INLINE_PROMPTS if it is genuine legacy."
+    )
+    assert not stale, (
+        f"stale allowlist entr(ies): {sorted(stale)} — the inline prompt no longer "
+        "exists (migrated/renamed); delete the line from LEGACY_INLINE_PROMPTS."
+    )
 
 
 def test_shared_prompts_do_not_embed_app_or_site_facts():
