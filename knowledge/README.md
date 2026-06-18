@@ -40,6 +40,44 @@ navigation 的拼接顺序：环境(`_deploy`) → 版本更新(`_update`) → �
 规划时 **KnowledgeSelector**（一次文本-only 的 LLM 微决策）按 `(milestone, 当前页面)` 选若干章节 id，
 **结果缓存**（只在页面/milestone 变化时重选），命中的章节体经 `_elements_for()` 注入 planner/replan。非 RAG（无 embedding）。
 
+## Metadata frontmatter（试点：browser/shopping_admin）
+
+知识文件可以带轻量 YAML frontmatter，用于适配 `gui_agent/context` 的来源标注与注入路由。
+旧字段 `when:` 继续兼容；新字段 `selector_when:` 优先供 KnowledgeSelector 使用。
+
+普通章节建议：
+
+```yaml
+---
+id: knowledge.browser.shopping_admin.orders
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 订单列表、completed orders、customer email 聚合任务时
+when: 订单列表、completed orders、customer email 聚合任务时
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
+---
+```
+
+覆盖层建议：
+
+- `_app.md`: `source_type: knowledge_navigation`, `scope: [decompose, planner, replanner]`
+- `_deploy.md`: `source_type: deployment_context`, `sensitivity: secret`, 可在 frontmatter 写 `aliases:` 用于知识发现
+- `_skill.md`: `source_type: knowledge_skill`, `scope: [decompose, planner, replanner]`
+- `_check.md`: `source_type: knowledge_check_rules`, `scope: [checker]`
+别名统一写在 `_deploy.md` 的 `aliases:`；不再单独维护 `_aliases.md`，因为它们都属于“如何把用户说法
+绑定到这个部署/应用目录”的发现信息。
+
+加载器会剥离 frontmatter 后再把正文注入模型；metadata 保留在 `AppKnowledge.metadata`，章节正文被
+`ProgressiveKnowledge.body_blocks()` 渲染成带来源的 `ContextBlock`。
+
 ## 消费方路由（谁拿什么）
 
 - **decompose**：只拿 `navigation`（要的是页面/流程结构，不需要像素级元素目录）。

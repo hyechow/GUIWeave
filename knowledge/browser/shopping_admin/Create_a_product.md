@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.create_a_product
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要选择产品类型或了解简单、复杂、可配置、分组、虚拟、捆绑、可下载及礼品卡等术语时查阅本节
 when: 当需要选择产品类型或了解简单、复杂、可配置、分组、虚拟、捆绑、可下载及礼品卡等术语时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Create a product
 

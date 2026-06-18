@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.actions_control
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 在网格中处理记录集合时，需使用 Actions control 对 selected products 或 records 执行批量操作
 when: 在网格中处理记录集合时，需使用 Actions control 对 selected products 或 records 执行批量操作
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Actions control
 

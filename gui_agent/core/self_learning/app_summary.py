@@ -20,6 +20,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -90,6 +91,7 @@ class AppKnowledge:
     app_name: str
     sections: dict[str, str] = field(default_factory=dict)  # per-section bodies → progressive load
     check: str = ""  # _check.md content → Checker-only observable completion rules
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)  # channel/stem -> frontmatter
     # Hand-maintained overlay channels actually present this run → {"_check"|"_deploy"|"_skill"|
     # "_update": char_count}. _deploy/_update/_skill are folded into `navigation`; tracked here
     # purely so the report can show each channel's loaded state. Absent file → key absent.
@@ -104,20 +106,24 @@ class AppKnowledge:
             "check_chars": len(self.check),
             "section_count": len(self.sections),
             "overlays": dict(self.overlays),
+            "metadata_keys": sorted(self.metadata),
+            "overlay_metadata": {
+                key: value for key, value in self.metadata.items()
+                if key.startswith("_")
+            },
         }
 
 
-def _parse_frontmatter(text: str) -> dict[str, str]:
-    """Extract YAML frontmatter key-value pairs from markdown text."""
-    m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-    if not m:
-        return {}
-    result: dict[str, str] = {}
-    for line in m.group(1).splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            result[k.strip()] = v.strip()
-    return result
+def _split_knowledge_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Split metadata from knowledge markdown."""
+    from gui_agent.core.self_learning.progressive import split_frontmatter
+
+    return split_frontmatter(text)
+
+
+def _read_knowledge_markdown(path: Path) -> tuple[dict[str, Any], str]:
+    meta, body = _split_knowledge_frontmatter(path.read_text(encoding="utf-8"))
+    return meta, body.strip()
 
 
 def load_page_files(app_dir: Path) -> list[tuple[str, str]]:
@@ -352,20 +358,21 @@ def list_known_apps(platform: str = "iphone") -> list[str]:
 
 
 def _read_dir_aliases(d: Path) -> list[str]:
-    """Alternate names / common misspellings for an app, one per line in ``_aliases.md``.
+    """Alternate names / common misspellings for an app.
 
     Lets ``auto_discover_knowledge`` match a goal that refers to the app by a nickname or a typo
-    (e.g. "RebotTeam" for RoboTeam) instead of only its exact dir name. Lines starting with ``#``
-    are comments; blanks ignored. Platform-agnostic (unlike the iPhone-only ``_APP_ALIASES``)."""
-    p = d / "_aliases.md"
-    if not p.exists():
-        return []
-    out: list[str] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            out.append(line)
-    return out
+    (e.g. "RebotTeam" for RoboTeam) instead of only its exact dir name. Aliases live
+    in ``_deploy.md`` frontmatter because they bind spoken names to this deployed app
+    directory. Platform-agnostic (unlike the iPhone-only ``_APP_ALIASES``)."""
+    deploy = d / "_deploy.md"
+    if deploy.exists():
+        meta, _ = _read_knowledge_markdown(deploy)
+        aliases = meta.get("aliases")
+        if isinstance(aliases, list):
+            return [str(alias).strip() for alias in aliases if str(alias).strip()]
+        if isinstance(aliases, str) and aliases.strip():
+            return [aliases.strip()]
+    return []
 
 
 def load_app_dir(d: Path) -> AppKnowledge | None:
@@ -383,13 +390,18 @@ def load_app_dir(d: Path) -> AppKnowledge | None:
     nav_path = d / "_app.md"
     if not nav_path.exists():
         return None
-    nav = nav_path.read_text(encoding="utf-8").strip()
+    metadata: dict[str, dict[str, Any]] = {}
+    nav_meta, nav = _read_knowledge_markdown(nav_path)
+    if nav_meta:
+        metadata["_app"] = nav_meta
     channels: dict[str, int] = {}  # overlay file stem → char count (for the report)
     overlays = []
     for overlay_name in ("_deploy.md", "_update.md"):
         overlay_path = d / overlay_name
         if overlay_path.exists():
-            text = overlay_path.read_text(encoding="utf-8").strip()
+            meta, text = _read_knowledge_markdown(overlay_path)
+            if meta:
+                metadata[overlay_name[:-3]] = meta
             channels[overlay_name[:-3]] = len(text)
             if text:
                 overlays.append(text)
@@ -399,22 +411,36 @@ def load_app_dir(d: Path) -> AppKnowledge | None:
     # both the layout and the workflows. Hand-maintained, _-prefixed (not a retrievable section).
     skill_path = d / "_skill.md"
     if skill_path.exists():
-        skill = skill_path.read_text(encoding="utf-8").strip()
+        meta, skill = _read_knowledge_markdown(skill_path)
+        if meta:
+            metadata["_skill"] = meta
         channels["_skill"] = len(skill)
         if skill:
             for issue in validate_skill_doc(skill):
                 print(f"  [Skill] ⚠️ {issue}")
             nav = f"{nav}\n\n{skill}"
     elements_path = d / "_elements.md"
-    elements = elements_path.read_text(encoding="utf-8").strip() if elements_path.exists() else ""
+    elements = ""
+    if elements_path.exists():
+        meta, elements = _read_knowledge_markdown(elements_path)
+        if meta:
+            metadata["_elements"] = meta
     check_path = d / "_check.md"
-    check = check_path.read_text(encoding="utf-8").strip() if check_path.exists() else ""
+    check = ""
+    if check_path.exists():
+        meta, check = _read_knowledge_markdown(check_path)
+        if meta:
+            metadata["_check"] = meta
     if check_path.exists():
         channels["_check"] = len(check)
     # Per-section page files (excludes _app.md/_elements.md) → progressive-load bodies.
     sections = {stem: body for stem, body in load_page_files(d)}
+    for stem, body in sections.items():
+        meta, _ = _split_knowledge_frontmatter(body)
+        if meta:
+            metadata[stem] = meta
     return AppKnowledge(navigation=nav, elements=elements, app_name=d.name,
-                        sections=sections, check=check, overlays=channels)
+                        sections=sections, check=check, overlays=channels, metadata=metadata)
 
 
 def load_knowledge_for_app(app: str, platform: str = "browser") -> AppKnowledge | None:
@@ -450,9 +476,9 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
         for d in platform_dir.iterdir():
             if d.is_dir():
                 candidates[d.name.lower()] = d
-                # Per-app aliases / misspellings (knowledge/<plat>/<app>/_aliases.md) — platform-
-                # agnostic, so a typo'd or nicknamed goal still discovers the knowledge. The exact
-                # dir name (set above) wins; aliases only fill gaps.
+                # Per-app aliases / misspellings from _deploy.md frontmatter —
+                # platform-agnostic, so a typo'd or nicknamed goal still discovers
+                # the knowledge. The exact dir name wins; aliases only fill gaps.
                 for alias in _read_dir_aliases(d):
                     candidates.setdefault(alias.lower(), d)
     if platform == "iphone":

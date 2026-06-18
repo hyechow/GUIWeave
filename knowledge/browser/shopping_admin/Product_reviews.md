@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.product_reviews
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要管理产品评论功能、配置前台评论提交或查看客户已提交的评论时
 when: 当需要管理产品评论功能、配置前台评论提交或查看客户已提交的评论时
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Product reviews
 

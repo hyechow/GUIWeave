@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.order_workflow_and_processing
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要查看订单工作流、处理销售订单状态或管理待处理订单时查阅本节
 when: 当需要查看订单工作流、处理销售订单状态或管理待处理订单时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Order workflow and processing
 

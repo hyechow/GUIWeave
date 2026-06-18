@@ -90,6 +90,27 @@ def test_frontmatter_when_parsed_and_stripped():
     assert split_frontmatter("# 直接正文") == ({}, "# 直接正文")
 
 
+def test_frontmatter_supports_context_metadata_lists():
+    from gui_agent.core.self_learning.progressive import split_frontmatter
+
+    meta, body = split_frontmatter(
+        "---\n"
+        "id: knowledge.browser.shopping_admin.orders\n"
+        "source_type: knowledge_section\n"
+        "scope:\n"
+        "  - planner\n"
+        "  - replanner\n"
+        "selector_when: 订单统计时\n"
+        "---\n"
+        "正文"
+    )
+
+    assert meta["id"] == "knowledge.browser.shopping_admin.orders"
+    assert meta["scope"] == ["planner", "replanner"]
+    assert meta["selector_when"] == "订单统计时"
+    assert body == "正文"
+
+
 def test_when_feeds_manifest_and_body_is_clean():
     pk = ProgressiveKnowledge({
         "如何使用机器人模拟器": "---\nwhen: 创建/启用虚拟机器人（模拟器）、无硬件调试时\n---\n模拟器正文",
@@ -105,6 +126,33 @@ def test_when_feeds_manifest_and_body_is_clean():
     # 喂 planner 的正文必须已剥离 frontmatter
     assert pk.bodies(["如何使用机器人模拟器"]).endswith("模拟器正文")
     assert "when:" not in pk.bodies(["如何使用机器人模拟器"])
+
+
+def test_selector_when_takes_precedence_and_bodies_render_metadata():
+    pk = ProgressiveKnowledge({
+        "Orders": (
+            "---\n"
+            "id: knowledge.browser.shopping_admin.orders\n"
+            "source_type: knowledge_section\n"
+            "platform: browser\n"
+            "app: shopping_admin\n"
+            "when: legacy hint\n"
+            "selector_when: completed orders 和 customer email 聚合任务\n"
+            "ttl: session\n"
+            "---\n"
+            "订单正文"
+        ),
+    })
+
+    manifest = pk.selector_manifest()
+    body = pk.bodies(["Orders"])
+
+    assert "completed orders 和 customer email 聚合任务" in manifest
+    assert "legacy hint" not in manifest
+    assert "context: knowledge.browser.shopping_admin.orders" in body
+    assert "type=knowledge_section" in body
+    assert "app=shopping_admin" in body
+    assert "订单正文" in body
 
 
 def test_selector_manifest_lists_ids_and_titles():

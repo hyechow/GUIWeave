@@ -86,12 +86,66 @@ def test_check_md_loaded_into_check_channel(tmp_path, monkeypatch):
     assert k.summary()["check_chars"] > 0
 
 
+def test_frontmatter_metadata_is_stripped_from_loaded_knowledge(tmp_path, monkeypatch):
+    app_dir = _make_app(tmp_path, with_skill=False, with_check=False)
+    (app_dir / "_app.md").write_text(
+        "---\n"
+        "id: knowledge.browser.testapp.navigation\n"
+        "source_type: knowledge_navigation\n"
+        "platform: browser\n"
+        "app: TestApp\n"
+        "---\n"
+        "# 导航\n左侧菜单：订单 / 工具",
+        encoding="utf-8",
+    )
+    (app_dir / "_check.md").write_text(
+        "---\n"
+        "id: knowledge.browser.testapp.check\n"
+        "source_type: knowledge_check_rules\n"
+        "scope:\n"
+        "  - checker\n"
+        "---\n"
+        "# 验收观察规则\n- 保存成功 toast 表示完成",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+
+    k = app_summary.auto_discover_knowledge("在 testapp 做联调实验", "browser")
+
+    assert k is not None
+    assert "---" not in k.navigation
+    assert "source_type:" not in k.check
+    assert k.metadata["_app"]["source_type"] == "knowledge_navigation"
+    assert k.metadata["_check"]["scope"] == ["checker"]
+
+
 def test_check_md_absent_is_empty(tmp_path, monkeypatch):
     _make_app(tmp_path, with_skill=False)
     monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
     k = app_summary.auto_discover_knowledge("在 testapp 修改预设站点", "browser")
     assert k is not None
     assert k.check == ""
+
+
+def test_deploy_frontmatter_aliases_discover_app(tmp_path, monkeypatch):
+    app_dir = _make_app(tmp_path, with_skill=False)
+    (app_dir / "_deploy.md").write_text(
+        "---\n"
+        "aliases:\n"
+        "  - Magento Admin\n"
+        "  - admin backend\n"
+        "---\n"
+        "# 部署\n入口地址：http://example.test/admin/",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+
+    k = app_summary.auto_discover_knowledge("在 Magento Admin 查询订单", "browser")
+
+    assert k is not None
+    assert k.app_name == "TestApp"
+    assert "入口地址" in k.navigation
+    assert "aliases:" not in k.navigation
 
 
 def test_set_app_knowledge_stores_check():

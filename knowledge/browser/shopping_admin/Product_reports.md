@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.product_reports
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 查看产品视图、畅销品、库存水平、已订购产品及下载量的报告
 when: 查看产品视图、畅销品、库存水平、已订购产品及下载量的报告
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Product reports
 

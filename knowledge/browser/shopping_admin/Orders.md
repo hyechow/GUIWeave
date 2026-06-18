@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.orders
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要查看、创建或编辑订单，管理 Orders 网格布局和视图，或按订单历史统计 customer email(s)、completed/any-state orders、most/second/fifth number of orders、have N orders 等订单数聚合任务时查阅本节
 when: 当需要查看、创建或编辑订单，管理 Orders 网格布局和视图，或按订单历史统计 customer email(s)、completed/any-state orders、most/second/fifth number of orders、have N orders 等订单数聚合任务时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Orders
 

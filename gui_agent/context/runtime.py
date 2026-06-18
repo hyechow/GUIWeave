@@ -1,0 +1,309 @@
+"""Runtime context builders for milestone prompt assembly."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from typing import Any, Iterable, Optional
+
+from gui_agent.context.blocks import ContextBlock, render_context_blocks
+from gui_agent.core.schemas import Milestone, PolicyTurn
+
+
+def current_date_block(now: datetime | None = None) -> ContextBlock:
+    now = now or datetime.now()
+    return ContextBlock(
+        id="runtime.current_date",
+        source_type="runtime_state",
+        source="clock",
+        ttl="turn",
+        priority=10,
+        content=f"当前日期：{now.strftime('%Y年%m月%d日 %A')}",
+    )
+
+
+def history_block(history: list[PolicyTurn], *, limit: int = 8) -> ContextBlock:
+    return ContextBlock(
+        id="runtime.history.recent_actions",
+        source_type="runtime_state",
+        source="policy_history",
+        ttl="session",
+        priority=40,
+        metadata={"limit": limit},
+        content=format_history_text(history, limit=limit),
+    )
+
+
+def format_history_text(history: list[PolicyTurn], *, limit: int = 8) -> str:
+    if not history:
+        return "（无历史记录，这是第一轮）"
+    recent = history[-limit:]
+    lines = []
+    for idx, turn in enumerate(recent):
+        sv = turn.supervisor
+        next_sv = recent[idx + 1].supervisor if idx + 1 < len(recent) else None
+        result = next_sv.summary if next_sv else "（结果尚未记录）"
+        unmet = (
+            turn.executed
+            and next_sv
+            and next_sv.milestone_id == sv.milestone_id
+            and (
+                "卡住" in (next_sv.summary or "")
+                or "重试" in (next_sv.summary or "")
+                or "尚未达成" in (next_sv.summary or "")
+                or "调整策略" in (next_sv.summary or "")
+            )
+        )
+        prefix = "⚠️ " if unmet else ""
+        if turn.action_decision and turn.executed:
+            action = turn.action_decision.action
+            outcome = f"未达成: {result}" if unmet else f"结果: {result}"
+            lines.append(
+                f"{turn.index}. {prefix}指令=「{sv.instruction}」"
+                f" → [{action.action_type}] {action.description}"
+                f" → {outcome}"
+            )
+        elif turn.action_decision and not turn.executed:
+            action = turn.action_decision.action
+            lines.append(
+                f"{turn.index}. {prefix}指令=「{sv.instruction}」 → [未执行] [{action.action_type}] {action.description}"
+            )
+        else:
+            lines.append(f"{turn.index}. [跳过动作] {sv.summary} → 结果: {result}")
+    return "\n".join(lines)
+
+
+def extra_instruction_block(extra: str, *, source: str = "guard") -> ContextBlock | None:
+    if not extra:
+        return None
+    return ContextBlock(
+        id="runtime.output_correction",
+        source_type="runtime_state",
+        source=source,
+        ttl="turn",
+        priority=20,
+        content=f"## 输出修正要求\n{extra}",
+    )
+
+
+def page_title_block(title: str | None) -> ContextBlock | None:
+    if not title:
+        return None
+    return ContextBlock(
+        id="runtime.observation.page_title",
+        source_type="runtime_state",
+        source="observation.title",
+        ttl="turn",
+        priority=30,
+        content=(
+            "## 附加页面标题（不在截图里，仅作页面身份辅助信号；仍需结合可见内容判断）\n"
+            f"- 当前页面标题：{title}"
+        ),
+    )
+
+
+def acceptance_items_block(items: list[str]) -> ContextBlock | None:
+    if not items:
+        return None
+    enumerated = "\n".join(f"{i}) {text}" for i, text in enumerate(items, 1))
+    return ContextBlock(
+        id="runtime.acceptance.checklist",
+        source_type="runtime_state",
+        source="milestone.success_condition",
+        ttl="turn",
+        priority=35,
+        metadata={"count": len(items)},
+        content=(
+            "## 逐项验收（填入 item_verdicts）\n"
+            "对下列每个验收子项独立判定：met（是否满足）+ 一句可见证据，按对应 index 填入 item_verdicts。"
+            "逐项判定不改变你对整体 status 的综合判断。\n"
+            f"{enumerated}"
+        ),
+    )
+
+
+def knowledge_block(kind: str, content: str | None, *, source: str = "knowledge_base") -> ContextBlock | None:
+    if not content:
+        return None
+    titles = {
+        "app_navigation": "## 应用导航知识",
+        "page_elements": "## 页面元素知识",
+        "check_rules": (
+            "## 应用验收观察规则（来自知识库，描述该应用界面的实际显示形态与完成标志；"
+            "这是最终解释规则；若它与通用规则或逐项验收的字面理解冲突，以本节对界面事实的解释为准）"
+        ),
+    }
+    return ContextBlock(
+        id=f"knowledge.{kind}",
+        source_type="knowledge_base",
+        source=source,
+        ttl="session",
+        priority=50,
+        content=f"{titles.get(kind, f'## {kind}')}\n{content}",
+    )
+
+
+def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None:
+    text = format_form_controls_text(form_controls)
+    if not text:
+        return None
+    return ContextBlock(
+        id="runtime.observation.form_controls",
+        source_type="runtime_state",
+        source="platform_adapter",
+        ttl="turn",
+        priority=30,
+        metadata={"count": len(form_controls or [])},
+        content=text,
+    )
+
+
+def format_form_controls_text(form_controls: list[dict] | None) -> str:
+    """Compact structured form-control inventory supplied by a platform adapter."""
+    if not form_controls:
+        return ""
+    lines: list[str] = []
+    for item in form_controls[:25]:
+        if not isinstance(item, dict):
+            continue
+        label = str(
+            item.get("label")
+            or item.get("name")
+            or item.get("id")
+            or item.get("placeholder")
+            or "未命名控件"
+        ).strip()
+        kind = str(item.get("kind") or "control").strip()
+        current = str(item.get("selected_text") or item.get("value") or "").strip()
+        bits = [f"{label}: {kind}"]
+        if current or kind == "native_select":
+            bits.append(f'current="{current}"')
+        if item.get("focused") is True:
+            bits.append("focused=true")
+        options = item.get("options")
+        if isinstance(options, list) and options:
+            shown = [str(opt) for opt in options[:20]]
+            suffix = ", ..." if len(options) > len(shown) else ""
+            bits.append("options=[" + ", ".join(shown) + suffix + "]")
+        rect = item.get("rect")
+        if isinstance(rect, dict) and isinstance(rect.get("x"), int) and isinstance(rect.get("y"), int):
+            bits.append(f"center=({rect['x']},{rect['y']})")
+        lines.append("- " + "; ".join(bits))
+    if not lines:
+        return ""
+    return (
+        "## 浏览器 DOM 表单控件（适配器感知，不是截图文本）\n"
+        "这些控件由当前平台适配器提供，只包含可见可编辑控件的类型、当前值和候选项。"
+        "若某控件可由适配器直接设置候选值，应规划为“选择/设置 <字段> 为 <选项>”，"
+        "不要规划为“点击展开后等待选项可见”。\n"
+        + "\n".join(lines)
+    )
+
+
+def task_goal_block(goal: str) -> ContextBlock:
+    return ContextBlock(
+        id="runtime.task.goal",
+        source_type="runtime_state",
+        source="user_goal",
+        ttl="task",
+        priority=20,
+        content=f"用户任务：{goal}",
+    )
+
+
+def file_reference_block(file_section: str) -> ContextBlock | None:
+    if not file_section:
+        return None
+    return ContextBlock(
+        id="runtime.task.file_refs",
+        source_type="file_reference",
+        source="goal_at_refs",
+        ttl="task",
+        priority=25,
+        content=file_section,
+    )
+
+
+def browser_page_block(url: str | None, title: str | None, *, site: str = "") -> ContextBlock | None:
+    if not url and not title and not site:
+        return None
+    page = "## 当前前台页面（以此为准，截图看不到地址栏）"
+    if site:
+        page += f"\n站点：{site}（已知应用）"
+    if url:
+        page += f"\nurl：{url}"
+    if title:
+        page += f"\n页面：{title}"
+    return ContextBlock(
+        id="runtime.observation.browser_page",
+        source_type="runtime_state",
+        source="observation",
+        ttl="turn",
+        priority=30,
+        content=page,
+    )
+
+
+def feedback_block(issues: Iterable[str]) -> ContextBlock | None:
+    issue_list = [issue for issue in issues if issue]
+    if not issue_list:
+        return None
+    body = "\n".join(f"  - {issue}" for issue in issue_list)
+    return ContextBlock(
+        id="runtime.decompose.feedback",
+        source_type="runtime_state",
+        source="decomposition_guard",
+        ttl="turn",
+        priority=20,
+        metadata={"count": len(issue_list)},
+        content=f"上一轮分解存在以下问题，请修正：\n{body}",
+    )
+
+
+def completed_milestones_block(milestones: Iterable[Milestone], *, current_id: str = "") -> ContextBlock:
+    lines = [
+        f"  - [{m.id}] {m.name}（已完成，不要退回到该状态）"
+        for m in milestones
+        if m.status == "done" and m.id != current_id
+    ]
+    return ContextBlock(
+        id="runtime.milestones.completed",
+        source_type="runtime_state",
+        source="milestone_state",
+        ttl="session",
+        priority=40,
+        content="\n".join(lines) if lines else "  （无）",
+    )
+
+
+def tried_instructions_block(instructions: Iterable[str]) -> ContextBlock:
+    items = sorted({item for item in instructions if item})
+    content = "\n".join(f"  - 「{item}」" for item in items) if items else "  （无）"
+    return ContextBlock(
+        id="runtime.history.tried_instructions",
+        source_type="runtime_state",
+        source="policy_history",
+        ttl="session",
+        priority=40,
+        metadata={"count": len(items)},
+        content=content,
+    )
+
+
+def loop_frame_summary_block(summary: str) -> ContextBlock:
+    return ContextBlock(
+        id="runtime.loop.frame_summary",
+        source_type="runtime_state",
+        source="loop_checker",
+        ttl="turn",
+        priority=30,
+        content=summary or "（无当前屏幕摘要）",
+    )
+
+
+def json_text(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def render_prompt_context(blocks: Iterable[ContextBlock | None]) -> str:
+    return render_context_blocks(blocks, include_headers=True)

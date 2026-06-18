@@ -10,16 +10,11 @@ from langchain_openai import ChatOpenAI
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import CollectionScope, SupervisorStep
+from gui_agent.prompts import load_prompt_text
 
 load_dotenv()
 
-SYSTEM_PROMPT = """\
-从截图中提取所有可见的文字内容。
-- 每条记录一行，字段用|分隔（时间|名称|内容|状态 等）
-- 保留所有可见字段，不做筛选、不汇总、不解释
-- 最多200字
-- 无可见文字内容则回复"无相关内容"
-"""
+SYSTEM_PROMPT = load_prompt_text("task.reader.screenshot_text")
 
 
 class ContentReader:

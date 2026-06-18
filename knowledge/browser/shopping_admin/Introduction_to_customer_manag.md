@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.introduction_to_customer_manag
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 需要查看Customers菜单、管理客户账户或了解在线客户时查阅本节
 when: 需要查看Customers菜单、管理客户账户或了解在线客户时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Introduction to customer management
 

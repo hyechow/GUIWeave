@@ -19,27 +19,58 @@ changes. Leaf module: only ``re``.
 from __future__ import annotations
 
 import re
+from typing import Any
+
+from gui_agent.context import ContextBlock, render_context_blocks
 
 _MAX_SELECTED = 3  # cap injected bodies per turn
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 
 
-def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
+def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Split optional YAML frontmatter off a section's markdown: ``(meta, body)``.
 
-    Sections carry a ``when:`` line (何时需要查阅本节) that goes into the selector
-    manifest; the body fed to the planner must NOT include the raw frontmatter block.
-    Files without frontmatter return ``({}, text)`` unchanged."""
+    Sections may carry a legacy ``when:`` line or the richer ``selector_when:``
+    line that goes into the selector manifest. The body fed to the planner must
+    NOT include the raw frontmatter block. Files without frontmatter return
+    ``({}, text)`` unchanged. The parser intentionally supports only scalars and
+    simple dash lists, matching the knowledge metadata we author by hand."""
     m = _FRONTMATTER_RE.match(text)
     if not m:
         return {}, text
-    meta: dict[str, str] = {}
+    meta: dict[str, Any] = {}
+    current_list_key: str | None = None
     for line in m.group(1).splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            meta[k.strip()] = v.strip()
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        stripped = line.strip()
+        if current_list_key and stripped.startswith("- "):
+            meta.setdefault(current_list_key, []).append(_parse_scalar(stripped[2:].strip()))
+            continue
+        current_list_key = None
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if not value:
+            meta[key] = []
+            current_list_key = key
+        else:
+            meta[key] = _parse_scalar(value)
     return meta, text[m.end():]
+
+
+def _parse_scalar(value: str) -> Any:
+    value = value.strip()
+    if value in {"true", "false"}:
+        return value == "true"
+    if value.isdigit():
+        return int(value)
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
 
 
 def _norm(s: str) -> str:
@@ -53,13 +84,15 @@ class ProgressiveKnowledge:
 
     def __init__(self, sections: dict[str, str]):
         # Raw file text in; frontmatter parsed off here so callers stay plumbing-free:
-        # `when:` (何时查阅) feeds the selector manifest, the stripped body feeds the planner.
+        # selector_when/when feeds the selector manifest, the stripped body feeds the planner.
         self.sections: dict[str, str] = {}  # stem -> body markdown (frontmatter stripped)
         self.whens: dict[str, str] = {}     # stem -> when-to-consult one-liner ("" if absent)
+        self.metadata: dict[str, dict[str, Any]] = {}  # stem -> parsed frontmatter metadata
         for stem, text in sections.items():
             meta, body = split_frontmatter(text)
             self.sections[stem] = body
-            self.whens[stem] = meta.get("when", "")
+            self.metadata[stem] = meta
+            self.whens[stem] = str(meta.get("selector_when") or meta.get("when") or "")
         self._index = {_norm(k): k for k in self.sections}
         # Short ids (s01..sNN) for the KnowledgeSelector: the LLM returns ids, not section
         # names, so resolution is an exact table lookup — no paraphrase fuzzy-match misses
@@ -126,9 +159,32 @@ class ProgressiveKnowledge:
 
     def bodies(self, stems: list[str]) -> str:
         """Concatenate the bodies of the given section stems (as returned by :meth:`pick`)."""
-        return "\n\n".join(
-            f"## {k.replace('_', ' ')}\n{self.sections[k]}" for k in stems if k in self.sections
-        )
+        return render_context_blocks(self.body_blocks(stems), include_headers=True)
+
+    def body_blocks(self, stems: list[str]) -> list[ContextBlock]:
+        """Return selected section bodies as source-tagged context blocks."""
+        blocks: list[ContextBlock] = []
+        for stem in stems:
+            if stem not in self.sections:
+                continue
+            meta = self.metadata.get(stem, {})
+            metadata = {
+                str(k): v for k, v in meta.items()
+                if k not in {"id", "source_type", "source", "ttl"} and v not in ("", None)
+            }
+            if metadata.get("selector_when") == metadata.get("when"):
+                metadata.pop("when", None)
+            content = f"## {stem.replace('_', ' ')}\n{self.sections[stem]}"
+            blocks.append(ContextBlock(
+                id=str(meta.get("id") or f"knowledge.section.{_norm(stem)}"),
+                source_type=str(meta.get("source_type") or "knowledge_section"),
+                source=str(meta.get("source") or "knowledge_base"),
+                ttl=str(meta.get("ttl") or "session"),
+                priority=50,
+                metadata=metadata,
+                content=content,
+            ))
+        return blocks
 
     def select(self, names: list[str] | None, page_identity: str = "") -> str:
         """Resolve checker-named sections (+ page_identity fallback) to concatenated bodies.

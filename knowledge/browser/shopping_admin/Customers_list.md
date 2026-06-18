@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.customers_list
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 在 Admin 中查看 Customers grid、管理 customer accounts 或更新 customer information 时
 when: 在 Admin 中查看 Customers grid、管理 customer accounts 或更新 customer information 时
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Customers list
 

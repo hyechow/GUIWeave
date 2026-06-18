@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.product_workspace
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要管理Product workspace中的产品状态、属性集、字段展开折叠或保存选项时查阅本节
 when: 当需要管理Product workspace中的产品状态、属性集、字段展开折叠或保存选项时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Product workspace
 

@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.shipments
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要查看已准备发货的发票记录、创建订单发货或管理部分及完整订单发货时查阅本节
 when: 当需要查看已准备发货的发票记录、创建订单发货或管理部分及完整订单发货时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Shipments
 

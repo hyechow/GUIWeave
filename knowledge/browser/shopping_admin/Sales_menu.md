@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.sales_menu
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 在需要查看订单工作流中的交易记录、管理报价订单发票发货退款退货账单协议或支付活动时查阅本节
 when: 在需要查看订单工作流中的交易记录、管理报价订单发票发货退款退货账单协议或支付活动时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Sales menu
 
