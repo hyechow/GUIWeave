@@ -527,7 +527,7 @@ def run_checker(
         completion_strategy=milestone.completion_strategy,
         task_type=task_type,
         constraints=json.dumps(constraints, ensure_ascii=False),
-        history_text=history_block(history).render(),
+        history_text=history_block(history, current_milestone_id=milestone.id).render(),
         app_name_context=app_name_context,
         kind_section=kind_section,
     )
@@ -731,7 +731,7 @@ def run_planner(
         issues=json.dumps(check.issues, ensure_ascii=False),
         missing_evidence=json.dumps(check.missing_evidence, ensure_ascii=False),
         check_summary=check.summary,
-        history_text=history_block(history).render(),
+        history_text=history_block(history, current_milestone_id=milestone.id).render(),
     )
     msgs = assemble_messages(
         prompt, observation.png_bytes,
@@ -807,7 +807,7 @@ def run_loop_check(
         milestone_desc=milestone.description,
         scroll_stop_condition=milestone.scroll_stop_condition or "滚动至列表物理底部时停止",
         constraints=json.dumps(constraints or [], ensure_ascii=False),
-        history_text=history_block(history).render(),
+        history_text=history_block(history, current_milestone_id=milestone.id).render(),
     )
     return invoke_structured(
         _make_llm(),

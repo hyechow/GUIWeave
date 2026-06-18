@@ -30,7 +30,13 @@ def current_date_block(now: datetime | None = None) -> ContextBlock:
     )
 
 
-def history_block(history: list[PolicyTurn], *, limit: int = 8) -> ContextBlock:
+def history_block(
+    history: list[PolicyTurn],
+    *,
+    limit: int = 8,
+    current_milestone_id: str | None = None,
+    recent_n: int = 6,
+) -> ContextBlock:
     return ContextBlock(
         id="runtime.history.recent_actions",
         budget="medium",
@@ -39,18 +45,71 @@ def history_block(history: list[PolicyTurn], *, limit: int = 8) -> ContextBlock:
         ttl="session",
         priority=40,
         metadata={"limit": limit},
-        content=format_history_text(history, limit=limit),
+        content=format_history_text(
+            history, limit=limit, current_milestone_id=current_milestone_id, recent_n=recent_n
+        ),
     )
 
 
-def format_history_text(history: list[PolicyTurn], *, limit: int = 8) -> str:
+def format_history_text(
+    history: list[PolicyTurn],
+    *,
+    limit: int = 8,
+    current_milestone_id: str | None = None,
+    recent_n: int = 6,
+) -> str:
+    """Render policy history for a prompt.
+
+    Default (current_milestone_id=None): the legacy flat last-``limit`` window — kept so
+    reports / tests / no-milestone callers are unchanged.
+
+    Relevant-history (current_milestone_id set): the current milestone's last ``recent_n`` turns
+    in full detail, preceded by ONE compressed state line per earlier milestone (its last known
+    summary = its done-summary). This keeps the immediately useful detail while collapsing old
+    action-by-action history that bloats long runs. Failure/dead-end signal is handled separately
+    by the planner's tried-instructions + replan-diagnosis injection, so it is not duplicated here."""
     if not history:
         return "（无历史记录，这是第一轮）"
-    recent = history[-limit:]
+    if current_milestone_id is None:
+        return _render_turn_lines(history[-limit:])
+
+    current = [t for t in history if t.supervisor.milestone_id == current_milestone_id]
+    prior = [t for t in history if t.supervisor.milestone_id != current_milestone_id]
+    detail_turns = (current or history)[-recent_n:]
+
+    parts: list[str] = []
+    prior_summary = _completed_milestones_text(prior)
+    if prior_summary:
+        parts.append("已完成/早前子目标进展（每子目标压成一行）：\n" + prior_summary)
+        parts.append("当前子目标最近操作：\n" + _render_turn_lines(detail_turns))
+    else:
+        parts.append(_render_turn_lines(detail_turns))
+    return "\n".join(parts)
+
+
+def _completed_milestones_text(turns: list[PolicyTurn]) -> str:
+    """One compressed line per earlier milestone (in first-seen order): its last known summary
+    (collection_summary preferred). Collapses old turn-by-turn history into milestone state."""
+    last_by_mid: dict[str, PolicyTurn] = {}
+    order: list[str] = []
+    for t in turns:
+        mid = t.supervisor.milestone_id or "?"
+        if mid not in last_by_mid:
+            order.append(mid)
+        last_by_mid[mid] = t
     lines = []
-    for idx, turn in enumerate(recent):
+    for mid in order:
+        sv = last_by_mid[mid].supervisor
+        summary = (sv.collection_summary or sv.summary or "").strip()
+        lines.append(f"- [{mid}] {summary}".rstrip())
+    return "\n".join(lines)
+
+
+def _render_turn_lines(turns: list[PolicyTurn]) -> str:
+    lines = []
+    for idx, turn in enumerate(turns):
         sv = turn.supervisor
-        next_sv = recent[idx + 1].supervisor if idx + 1 < len(recent) else None
+        next_sv = turns[idx + 1].supervisor if idx + 1 < len(turns) else None
         result = next_sv.summary if next_sv else "（结果尚未记录）"
         unmet = (
             turn.executed

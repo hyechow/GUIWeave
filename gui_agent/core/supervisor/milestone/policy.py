@@ -1096,7 +1096,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             constraints=json.dumps(self._global_constraints, ensure_ascii=False),
             failure_hints=json.dumps(milestone.failure_hints, ensure_ascii=False),
             completed_milestones=done_context,
-            history_text=history_block(history).render(),
+            history_text=history_block(history, current_milestone_id=milestone.id).render(),
             tried_instructions=tried_text,
         )
         msgs = assemble_messages(

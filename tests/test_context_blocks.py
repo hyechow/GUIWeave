@@ -3,6 +3,7 @@ from __future__ import annotations
 from gui_agent.context import ContextBlock, ContextBudgeter, ContextBundle
 from gui_agent.context.runtime import (
     form_controls_block,
+    format_history_text,
     history_block,
     render_prompt_context,
 )
@@ -123,6 +124,41 @@ def test_render_prompt_context_enforces_ceiling_and_logs_drops():
     text = render_prompt_context(blocks, max_chars=500, label="checker", say=logs.append)
     assert "context: keep" in text and "context: drop" not in text
     assert any("ContextBudget" in line and "checker" in line and "drop" in line for line in logs)
+
+
+def _turn(idx: int, mid: str, summary: str, instruction: str | None = None) -> PolicyTurn:
+    return PolicyTurn(
+        index=idx,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=bool(instruction), instruction=instruction, stop=False,
+            goal_completed=False, summary=summary, milestone_id=mid,
+        ),
+        executed=bool(instruction),
+    )
+
+
+def test_relevant_history_compresses_prior_milestones():
+    history = [
+        _turn(1, "m1", "进入评论页", "点击评论入口"),
+        _turn(2, "m1", "已在评论列表"),
+        _turn(3, "m2", "设置筛选", "输入 disappointed"),
+        _turn(4, "m2", "已输入关键词", "点击提交"),
+    ]
+    text = format_history_text(history, current_milestone_id="m2")
+    assert "[m1]" in text and "已在评论列表" in text   # prior milestone → one compressed state line (its last summary)
+    assert "进入评论页" not in text                    # prior turn-by-turn detail dropped
+    assert "设置筛选" in text                          # current milestone detail kept
+
+    flat = format_history_text(history)               # legacy mode (no milestone id) unchanged
+    assert "进入评论页" in flat                         # shows every turn
+
+
+def test_relevant_history_first_milestone_has_no_prior_block():
+    history = [_turn(1, "m1", "第一步", "点A"), _turn(2, "m1", "第二步", "点B")]
+    text = format_history_text(history, current_milestone_id="m1")
+    assert "已完成/早前子目标" not in text   # no earlier milestone → no compressed section
+    assert "第一步" in text and "第二步" in text
 
 
 def test_form_controls_context_marks_adapter_source():
