@@ -72,6 +72,24 @@ def test_pick_returns_matched_stems_for_logging():
     assert pk.pick(["不存在XYZ"]) == []
 
 
+def test_match_signals_title_then_when_fallback():
+    # match_signals is the deterministic knowledge fallback when the LLM selector returns
+    # nothing: title substring match first, then selector_when token/bigram overlap.
+    pk = ProgressiveKnowledge({
+        "如何创建订单": "---\nselector_when: 新建订单/下单时\n---\n创建正文",
+        "如何查询订单执行状态": "---\nselector_when: 查询订单执行状态时\n---\n状态正文",
+        "无关章节": "裸正文",
+    })
+    # 标题子串直接命中(最强信号),排最前
+    assert pk.match_signals(["如何创建订单"])[0] == "如何创建订单"
+    # 标题不命中,但 milestone 文字与 when 行 bigram 重叠 → 兜底命中,按重叠度排序
+    assert pk.match_signals(["某页", "新建一个订单", "订单创建成功"])[0] == "如何创建订单"
+    # 完全无关 → 空;空/空白信号 → 空
+    assert pk.match_signals(["今天的天气"]) == []
+    assert pk.match_signals([]) == []
+    assert pk.match_signals(["", "  "]) == []
+
+
 def test_bodies_round_trips_with_pick():
     # select() == bodies(pick(...)) — the split must not change the injected text.
     pk = _pk()

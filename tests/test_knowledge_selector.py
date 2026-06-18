@@ -5,8 +5,12 @@ ids for the planner. These tests stub the LLM call and lock the POLICY-side cont
 
   - fires once per (milestone_id, normalized page_identity), then serves from cache
   - page change / milestone change → new key → fires again
-  - empty selections are cached too (no per-turn retry on a no-knowledge page)
-  - a selector exception falls back to the page_identity fuzzy match and is NOT cached
+  - empty selections are cached too ON A KNOWN PAGE (no per-turn retry on a no-knowledge page)
+  - an UNKNOWN page (empty / 未识别) never caches an empty pick — it re-decides every turn,
+    so knowledge does not go permanently dark when page identity is the weak signal
+  - a clean-empty selector falls back to a deterministic match of (page id + milestone name +
+    success_condition) against section titles / selector_when lines before giving up
+  - a selector exception falls back to the same deterministic match and is NOT cached
     (the next turn retries the LLM)
 """
 
@@ -77,20 +81,67 @@ def test_page_or_milestone_change_refires(monkeypatch):
     assert calls["n"] == 3
 
 
-def test_empty_selection_is_cached(monkeypatch):
+def test_empty_selection_is_cached_on_known_page(monkeypatch):
     p = _policy()
     calls = _stub(monkeypatch, [_SelectorResult(section_ids=[])])
     ms = _ms()
+    # "无关页" 是已识别页面 + selector 明确返空 + 兜底也无命中(这些 section 无 when 行、标题不子串命中)
+    # → 缓存空结果,不逐轮重试
     assert p._select_sections(ms, _check("无关页")) == []
     assert p._select_sections(ms, _check("无关页")) == []
-    assert calls["n"] == 1  # 空结果也缓存,不逐轮重试
+    assert calls["n"] == 1
+
+
+def test_unknown_page_empty_is_not_cached(monkeypatch):
+    p = _policy()
+    calls = _stub(monkeypatch, [_SelectorResult(section_ids=[]), _SelectorResult(section_ids=[])])
+    ms = _ms()
+    # 页面未识别(空 / "未识别")→ 空选择不缓存,逐轮重决(避免页面识别最弱时知识永久关闭)
+    assert p._select_sections(ms, _check("")) == []
+    assert p._select_sections(ms, _check("未识别")) == []
+    assert calls["n"] == 2
+
+
+def test_unknown_page_markers_are_substring_matched(monkeypatch):
+    # The checker writes free-form page identity;归一化后精确匹配会漏掉所有真实变体,必须子串判定。
+    from gui_agent.core.supervisor.milestone.policy import _page_known
+
+    for variant in ["无法识别当前页面", "未知页面（用户中心？）", "unknown page", "页面不确定", "Unidentified view"]:
+        assert _page_known(variant) is False, variant
+    for known in ["订单列表页", "个人中心", "WeChat 聊天列表"]:
+        assert _page_known(known) is True, known
+
+    # 端到端:一个会归一成 "无法识别当前页面" 的身份,空选择不入缓存,逐轮重决
+    calls = _stub(monkeypatch, [_SelectorResult(section_ids=[]), _SelectorResult(section_ids=[])])
+    p_ = _policy()
+    ms = _ms()
+    assert p_._select_sections(ms, _check("无法识别当前页面")) == []
+    assert p_._select_sections(ms, _check("无法识别，可能是设置页")) == []
+    assert calls["n"] == 2
+
+
+def test_clean_empty_falls_back_to_deterministic_match(monkeypatch):
+    p = MilestoneSupervisorPolicy()
+    p.set_app_knowledge("nav", app_name="RoboTeam", elements="e", sections={
+        "如何创建订单": "---\nselector_when: 新建订单/下单时\n---\n创建订单正文",
+        "如何查询订单执行状态": "---\nselector_when: 查询订单执行状态时\n---\n状态正文",
+    })
+    calls = _stub(monkeypatch, [_SelectorResult(section_ids=[])])
+    ms = Milestone.model_validate({
+        "id": "m1", "name": "新建一个订单", "description": "d",
+        "success_condition": "订单创建成功", "kind": "action",
+    })
+    # selector 干净返空 → 确定性兜底用 milestone 文字命中 when 行,不再永久空
+    stems = p._select_sections(ms, _check("某页"))
+    assert stems and stems[0] == "如何创建订单"
+    assert calls["n"] == 1
 
 
 def test_failure_falls_back_and_is_not_cached(monkeypatch):
     p = _policy()
     calls = _stub(monkeypatch, None, error=RuntimeError("llm down"))
     ms = _ms()
-    # 失败 → page_identity 模糊兜底(命中"如何查询订单的执行状态"需页面名含其子串;此处不命中=空)
+    # 失败 → 确定性兜底(match_signals 用 page_identity 标题子串命中"如何查询订单的执行状态")
     assert p._select_sections(ms, _check("如何查询订单的执行状态")) == ["如何查询订单的执行状态"]
     assert p._select_sections(ms, _check("如何查询订单的执行状态")) == ["如何查询订单的执行状态"]
     assert calls["n"] == 2  # 未缓存,每次都重试 LLM

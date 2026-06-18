@@ -79,6 +79,18 @@ def _norm(s: str) -> str:
     return re.sub(r"[\W_]+", "", s, flags=re.UNICODE).lower()
 
 
+def _tokens(s: str) -> set[str]:
+    """Coarse tokens for fuzzy when-line overlap: punctuation-split words (len≥2) plus CJK
+    bigrams, lowercased. `_norm` collapses boundaries so substring matching misses synonym
+    rewrites (「创建启用虚拟机器人时」vs「新建机器人并设为启用」); token/bigram overlap bridges
+    them. Coarse on purpose — this only feeds the deterministic knowledge FALLBACK."""
+    s = (s or "").lower()
+    words = {w for w in re.split(r"[\W_]+", s, flags=re.UNICODE) if len(w) >= 2 and not re.search(r"[一-鿿]", w)}
+    cjk = "".join(re.findall(r"[一-鿿]+", s))
+    bigrams = {cjk[i : i + 2] for i in range(len(cjk) - 1)}
+    return words | bigrams
+
+
 class ProgressiveKnowledge:
     """Holds per-section bodies; exposes a cheap manifest + on-demand body selection."""
 
@@ -157,6 +169,43 @@ class ProgressiveKnowledge:
                 break
         return picked
 
+    def match_signals(self, signals: list[str]) -> list[str]:
+        """Deterministic section pick from free-text signals (page identity, milestone name,
+        success_condition) — the fallback used when the LLM selector returns nothing. Keeps
+        knowledge injection alive when page identity (the selector's main key) is weak.
+
+        Two passes, both capped at ``_MAX_SELECTED``: (1) bidirectional substring match of each
+        signal against section titles (reuses :meth:`_match`, the strongest signal); (2) token /
+        CJK-bigram overlap of the combined signals against each section's selector_when line,
+        ranked by overlap size — this bridges the synonym gaps a bare title misses."""
+        raw = [s for s in signals if s and s.strip()]
+        if not raw:
+            return []
+        picked: list[str] = []
+        seen: set[str] = set()
+        for nm in raw:
+            key = self._match(nm)
+            if key and key not in seen:
+                seen.add(key)
+                picked.append(key)
+            if len(picked) >= _MAX_SELECTED:
+                return picked
+        sig_tokens = _tokens(" ".join(raw))
+        if sig_tokens:
+            scored: list[tuple[int, str]] = []
+            for stem, when in self.whens.items():
+                if stem in seen or not when:
+                    continue
+                overlap = len(sig_tokens & _tokens(when))
+                if overlap:
+                    scored.append((overlap, stem))
+            for _, stem in sorted(scored, key=lambda x: (-x[0], x[1])):
+                seen.add(stem)
+                picked.append(stem)
+                if len(picked) >= _MAX_SELECTED:
+                    break
+        return picked
+
     def bodies(self, stems: list[str]) -> str:
         """Concatenate the bodies of the given section stems (as returned by :meth:`pick`)."""
         return render_context_blocks(self.body_blocks(stems), include_headers=True)
@@ -177,6 +226,7 @@ class ProgressiveKnowledge:
             content = f"## {stem.replace('_', ' ')}\n{self.sections[stem]}"
             blocks.append(ContextBlock(
                 id=str(meta.get("id") or f"knowledge.section.{_norm(stem)}"),
+                budget="high",  # the selector/fallback picked this — relevant, keep over history
                 source_type=str(meta.get("source_type") or "knowledge_section"),
                 source=str(meta.get("source") or "knowledge_base"),
                 ttl=str(meta.get("ttl") or "session"),

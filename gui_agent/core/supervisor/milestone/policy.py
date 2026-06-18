@@ -56,6 +56,19 @@ from .stuck import (
 # ── Main class ────────────────────────────────────────────────────────
 
 
+# Substrings (post-normalization) that mark "page not identified". The KnowledgeSelector keys
+# on page_identity, so an empty pick under an unidentified page must NOT be cached (it would
+# turn knowledge OFF for the rest of the milestone exactly when the key is weakest). Matched as
+# SUBSTRINGS, not exact: the checker writes free-form text ("无法识别当前页面", "未知页面(用户中心?)",
+# "unknown page" → "unknownpage"), so exact-set membership misses every real-world variant.
+_UNKNOWN_PAGE_MARKERS = ("未知", "未识别", "无法识别", "不确定", "unknown", "unidentified")
+
+
+def _page_known(page_identity: str) -> bool:
+    n = _norm_page(page_identity)
+    return bool(n) and not any(marker in n for marker in _UNKNOWN_PAGE_MARKERS)
+
+
 class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin):
     """Two-machine milestone supervisor: single-step and loop run independently."""
 
@@ -969,17 +982,27 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
     def _select_sections(self, milestone: Milestone, check: _SingleCheckResult) -> list[str]:
         """Resolve which knowledge sections to inject this turn, via the KnowledgeSelector.
 
-        Cache key = (milestone id, normalized page_identity): selection only changes when
-        the page or the milestone changes, so most turns reuse the cached stems and cost
-        nothing. Empty selections are cached too (a page with no relevant sections should
-        not retry every turn). On selector failure nothing is cached — the turn falls back
-        to the zero-cost page_identity fuzzy match and the next turn retries the LLM."""
+        Cache key = (milestone id, normalized page_identity): selection only changes when the
+        page or the milestone changes, so most turns reuse the cached stems and cost nothing.
+        Two rules keep knowledge from going permanently dark when page identity is the weak
+        signal (was: an empty pick under an unidentified page got cached and disabled knowledge
+        for the rest of the milestone):
+          - Never cache under an UNKNOWN page (empty / 未知 / 未识别) — those turns re-decide
+            every time instead of locking in an empty.
+          - When the selector cleanly returns nothing, fall back to a deterministic match of
+            (page identity + milestone name + success_condition) against section titles and
+            selector_when lines BEFORE giving up.
+        Only a KNOWN page caches its result (incl. a genuinely empty one = a real "nothing here").
+        On selector failure nothing is cached either — the deterministic fallback covers the turn
+        and the next turn retries the LLM."""
         if self._pk is None:
             return []
         page_id = check.page_identity or ""
+        page_known = _page_known(page_id)
         key = (milestone.id, _norm_page(page_id))
-        if key in self._selector_cache:
+        if page_known and key in self._selector_cache:
             return self._selector_cache[key]
+        signals = [page_id, milestone.name, milestone.success_condition]
         try:
             with _Timer(self._timings, self._timings_order, "selector", self._token_usage):
                 sel = run_selector(
@@ -988,14 +1011,17 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     prompts=self._prompts,
                 )
             stems = self._pk.by_ids(sel.section_ids)
+            if not stems:  # clean-empty selector: try the deterministic fallback before giving up
+                stems = self._pk.match_signals(signals)
             if stems or sel.section_ids:
                 names = "、".join(stems) if stems else "（ID 未命中）"
                 print(f"  [Selector] {names}" + (f" — {sel.reason}" if sel.reason else ""))
-            self._selector_cache[key] = stems
+            if page_known:
+                self._selector_cache[key] = stems
             return stems
         except Exception as exc:  # noqa: BLE001 — selector must never block the planner
-            print(f"  [Selector] 调用失败，回退 page_identity 模糊匹配：{exc}")
-            return self._pk.pick([], page_id)
+            print(f"  [Selector] 调用失败，回退确定性模糊匹配：{exc}")
+            return self._pk.match_signals(signals)
 
     def _elements_for(self, milestone: Milestone, check: _SingleCheckResult) -> Optional[str]:
         """Element knowledge for instruction generation: the per-section bodies the
