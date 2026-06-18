@@ -70,11 +70,19 @@ def test_migrated_prompt_constants_load_from_registry():
     from gui_agent.adapters.browser.supervisor.milestone.prompts import PLAN_PROMPT
     from gui_agent.adapters.iphone.policies.structured_output import SYSTEM_PROMPT
     from gui_agent.core.llm.reader import SYSTEM_PROMPT as READER_PROMPT
+    from gui_agent.core.self_learning.app_summary import (
+        _ELEMENTS_SYSTEM as ELEMENTS_SYS,
+        _NAV_SYSTEM as NAV_SYS,
+    )
+    from gui_agent.core.self_learning.manual_pdf import _SECTION_SYSTEM as SECTION_SYS
 
     assert PLAN_PROMPT == load_prompt_text("task.milestone.browser.planner")
     assert SYSTEM_PROMPT == load_prompt_text("task.action_policy.iphone")
     assert BROWSER_ROUTER_SYSTEM == load_prompt_text("task.router.browser")
     assert READER_PROMPT == load_prompt_text("task.reader.screenshot_text")
+    assert NAV_SYS == load_prompt_text("task.self_learning.app_summary.nav_system")
+    assert ELEMENTS_SYS == load_prompt_text("task.self_learning.app_summary.elements_system")
+    assert SECTION_SYS == load_prompt_text("task.self_learning.manual_pdf.section_system")
 
 
 def test_migrated_modules_do_not_inline_large_prompt_strings():
@@ -92,6 +100,10 @@ def test_migrated_modules_do_not_inline_large_prompt_strings():
         "gui_agent/core/orchestrator/decomposer.py",
         "gui_agent/core/orchestrator/structured_read.py",
         "gui_agent/core/orchestrator/data_query_repair.py",
+        "gui_agent/core/self_learning/knowledge.py",
+        "gui_agent/core/self_learning/app_summary.py",
+        "gui_agent/core/self_learning/gen_when.py",
+        "gui_agent/core/self_learning/manual_pdf.py",
         "gui_agent/core/supervisor/milestone/helpers.py",
         "gui_agent/core/vision/target_verify.py",
     ]

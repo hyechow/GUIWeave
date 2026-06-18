@@ -27,60 +27,19 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.prompts import load_prompt, load_prompt_text
 
 KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "knowledge"
 
 # ── Prompts for _app.md (navigation structure) ─────────────────────────────
 
-_NAV_SYSTEM = """\
-你是一个应用导航结构分析专家。
-
-给定一个应用的所有页面知识文档，生成一份 **应用级导航概览**，只关注页面间的导航关系，\
-不包含具体 UI 元素细节。要求：
-
-1. **应用概述**：1-2 句话说明这个 app 的核心功能
-2. **页面列表**：按层级列出所有页面，标注页面类型（list/detail/chat/modal/form/home），\
-   每个页面用一句话概括其主要功能
-3. **导航关系**：从哪些页面可以跳转到哪些页面，标注触发方式（如「底部导航」「点击搜索」）
-4. **关键操作路径**：列出 3-5 条最常见的用户操作路径
-
-不要列出具体的 UI 元素（如按钮位置、输入框等），这些信息属于元素层面，不在本文档范围内。
-
-输出格式为纯 Markdown，不要包含 YAML frontmatter。
-用中文输出。
-"""
-
-_NAV_PROMPT = """\
-以下是「{app}」应用的 {n} 个页面知识文档：
-
-{pages_text}
-
-请生成应用级导航概览（仅页面结构和导航关系，不含 UI 元素细节）。
-"""
+_NAV_SYSTEM = load_prompt_text("task.self_learning.app_summary.nav_system")
+_NAV_PROMPT = load_prompt("task.self_learning.app_summary.nav_prompt")  # rendered: {app}/{n}/{pages_text}
 
 # ── Prompts for _elements.md (UI elements) ────────────────────────────────
 
-_ELEMENTS_SYSTEM = """\
-你是一个应用 UI 元素分析专家。
-
-给定一个应用的所有页面知识文档，提取并汇总所有页面中的 UI 元素信息。要求：
-
-1. 按页面分组，每个页面列出所有关键 UI 元素
-2. 每个元素保留：名称、位置描述（如「左上角」「底部」）、功能/操作方式
-3. 保留原文的定位描述，不要省略或概括
-4. 去掉页面间的导航关系信息，只保留单页面内的元素信息
-
-输出格式为纯 Markdown，不要包含 YAML frontmatter。
-用中文输出。
-"""
-
-_ELEMENTS_PROMPT = """\
-以下是「{app}」应用的 {n} 个页面知识文档：
-
-{pages_text}
-
-请提取所有页面的 UI 元素信息，按页面分组汇总。
-"""
+_ELEMENTS_SYSTEM = load_prompt_text("task.self_learning.app_summary.elements_system")
+_ELEMENTS_PROMPT = load_prompt("task.self_learning.app_summary.elements_prompt")  # rendered: {app}/{n}/{pages_text}
 
 
 @dataclass
@@ -224,7 +183,7 @@ def build_navigation_summary(app: str, pages: list[tuple[str, str]]) -> str:
     )
     return _call_llm(
         _NAV_SYSTEM,
-        _NAV_PROMPT.format(app=app, n=len(pages), pages_text=pages_text),
+        _NAV_PROMPT.render(app=app, n=len(pages), pages_text=pages_text),
     )
 
 
@@ -235,7 +194,7 @@ def build_elements_summary(app: str, pages: list[tuple[str, str]]) -> str:
     )
     return _call_llm(
         _ELEMENTS_SYSTEM,
-        _ELEMENTS_PROMPT.format(app=app, n=len(pages), pages_text=pages_text),
+        _ELEMENTS_PROMPT.render(app=app, n=len(pages), pages_text=pages_text),
     )
 
 

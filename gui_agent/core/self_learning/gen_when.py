@@ -27,21 +27,11 @@ load_dotenv()
 
 from gui_agent.core.self_learning.app_summary import KNOWLEDGE_DIR, _call_llm  # noqa: E402
 from gui_agent.core.self_learning.progressive import split_frontmatter
+from gui_agent.prompts import load_prompt  # noqa: E402
 
 _SYSTEM = "你是知识库检索描述生成器。"
 
-_PROMPT = """\
-下面是一节应用操作手册。写一行「何时需要查阅本节」的触发描述，要求：
-- 不超过 45 字、单行、不要以句号结尾、不要复述操作步骤
-- 覆盖本节对应的操作/场景关键词；若标题和正文对同一事物用了不同叫法，两种叫法都要包含
-- ⚠️ 只能使用本节标题或正文中出现过的名词，不得引入本节没有的概念或对象
-- 只输出这一行，不要任何前后缀
-
-章节标题：{title}
-
-章节内容：
-{body}
-"""
+_PROMPT = load_prompt("task.self_learning.gen_when.prompt")  # rendered: {title}/{body}
 
 _BODY_CAP = 2500  # the when-line only needs the gist; cap keeps the call small
 
@@ -74,7 +64,7 @@ def generate_for_app(app: str, platform: str = "browser", force: bool = False) -
         meta, body = split_frontmatter(p.read_text(encoding="utf-8"))
         title = p.stem.replace("_", " ")
         try:
-            when = _call_llm(_SYSTEM, _PROMPT.format(title=title, body=body[:_BODY_CAP]))
+            when = _call_llm(_SYSTEM, _PROMPT.render(title=title, body=body[:_BODY_CAP]))
         except Exception as exc:  # noqa: BLE001 — one bad call shouldn't kill the batch
             print(f"  [{i}/{len(todo)}] ✗ {p.stem}: {exc}")
             continue

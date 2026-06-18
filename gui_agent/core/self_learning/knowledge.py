@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.prompts import load_prompt_text
 
 
 PageType = Literal["list", "detail", "chat", "form", "modal", "home", "other"]
@@ -77,70 +78,12 @@ class ExportResult:
 
 
 # ── LLM prompt ───────────────────────────────────────────
-
-_EXPORT_COMMON = """\
-你是一个 iPhone 应用页面分析专家。给定一个页面的探测数据，完成以下任务：
-
-## 输出要求
-
-**page_title**：页面的唯一标识名称，4-8个字。要求：
-- 必须包含功能域 + 页面形态，如「公众号订阅列表」「群聊消息详情」「联系人个人资料」
-- 禁止使用纯通用词（「列表页」「详情页」「主页」），必须加上具体功能域
-- 同一应用内每个页面的 page_title 必须互不相同，可区分
-
-**page_type**：页面类型
-- list：列表页（聊天列表、联系人、消息列表）
-- detail：详情页（个人资料、文章详情）
-- chat：聊天/对话界面
-- form：表单/输入页
-- modal：弹窗/底部弹出
-- home：应用主页
-- other：其他
-
-**description**：1-2句话概括页面功能。要求：
-- 通用化，不含具体联系人、消息内容等私有信息
-- 说明页面用途和关键功能区
-
-**operations**：抽象操作列表。核心原则：**label 和 function 都必须是通用描述，绝对不能出现具体内容**。
-
-通用抽象规则：
-1. **列表行合并**：同类型的多行（聊天、文章、联系人、商品等）合并为一条，label 用通用名如「聊天行」「文章行」「联系人行」
-2. **去除所有具体内容**：人名、店铺名、商品名、文章标题、消息正文、地名、账号名、金额等一律替换为通用描述
-3. **保留功能性标签**：搜索栏、+号按钮、设置按钮等本身就是通用名称，保持原样
-"""
-
-EXPORT_PROMPT = _EXPORT_COMMON + """\
-所有元素均经过实测探测。function 规则：
-4. 有导航结果的标注「进入…」，将「实测→」中的具体页面名抽象为通用类型（如实测→「个人中心概览」写为「进入个人中心」）
-5. 无导航的描述其交互用途（如「收藏」「分享」）
-
-示例（错误 → 正确）：
-- ✗ [Mythos 限] 实测→「…」 → ✓ [文章行]，function：进入文章详情页
-- ✗ [张三] 实测→「…」 → ✓ [聊天行]，function：进入该联系人的聊天详情
-- ✗ [长安网咖] 实测→「…」 → ✓ [店铺行]，function：进入店铺详情页
-"""
-
-EXPORT_PROMPT_ENHANCED = _EXPORT_COMMON + """\
-元素数据分为两类：
-- **已探测**（带「实测→」标记）：经过真实点击，有导航结果，可信度高
-- **未探测**（带「未探测（视觉检测）」标记）：仅通过截图识别，无实测导航数据
-
-4. **function 按数据来源区分**：
-  - 已探测元素：标注「进入…」，将具体页面名抽象为通用类型（如实测→「个人中心概览」写为「进入个人中心」）
-  - 未探测元素：根据元素类型推测交互用途（如「进入搜索页面」「查看活动详情」）
-
-示例（错误 → 正确）：
-- ✗ [Mythos 限] 实测→「…」 → ✓ [文章行]，function：进入文章详情页
-- ✗ [长安网咖] 实测→「…」 → ✓ [店铺行]，function：进入店铺详情页
-- ✗ [入口图标] 未探测 → ✓ [功能入口]，function：进入对应功能页面
-"""
-
-_EXPORT_LEAF = _EXPORT_COMMON + """\
-你将收到一张页面截图和该页面的文字描述。请直接分析截图中所有可交互元素，生成页面知识。
-
-4. **function 按元素类型推断**：根据元素的视觉特征推测交互用途（如「进入搜索页面」「查看活动详情」）
-5. 底部导航栏/Tab栏统一写「切换应用功能模块」
-"""
+# The three export variants share a common preamble (context_block) + a short
+# differential suffix (task_template); assembled at import time from the registry.
+_EXPORT_COMMON = load_prompt_text("task.self_learning.knowledge.common")
+EXPORT_PROMPT = _EXPORT_COMMON + load_prompt_text("task.self_learning.knowledge.strict")
+EXPORT_PROMPT_ENHANCED = _EXPORT_COMMON + load_prompt_text("task.self_learning.knowledge.enhanced")
+_EXPORT_LEAF = _EXPORT_COMMON + load_prompt_text("task.self_learning.knowledge.leaf")
 
 
 def _resize_for_api(png_bytes: bytes, max_dim: int = 768) -> bytes:
