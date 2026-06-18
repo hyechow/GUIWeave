@@ -9,6 +9,7 @@ routes straight into replan (see runner + MilestoneSupervisorPolicy).
 It catches the "screen changed but to the wrong element" failure that SimStuck
 (screen-frozen) cannot — e.g. a 搜索框 tap that mis-hit the 转账 tab.
 """
+
 from __future__ import annotations
 
 import base64
@@ -18,29 +19,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from PIL import Image, ImageDraw
 
-from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.schemas import TargetVerify
+from gui_agent.prompts import load_prompt_text
+from llm.structured import invoke_structured
 
-_SYSTEM = """你是一个 GUI 操作的「落点校验器」。截图上有一个红色圆环+十字标记，表示刚刚点击的位置。
-给你一条操作指令，判断标记**十字中心**是否正好压在指令想点的目标元素本体上。
-
-务必按此顺序，先描述、后判断，不要先看指令下结论：
-1. 只盯着红色十字的正中心，说出它正下方紧贴压住的是哪一个具体 UI 元素——读出该元素上的文字/图标，
-   写进 actual_element。注意它到底属于哪一行/哪一层：是内容区里的按钮、选项控件、列表条目，还是屏幕最底缘那一排 Tab？
-2. 再判断 actual_element 是不是指令要点的目标。完全是同一个元素 → on_target=true；否则 on_target=false。
-
-硬性规则：
-- 只认十字中心的真实位置，绝不能因为「指令说要点 X」就把标记脑补成落在 X 上。
-- 底部 Tab 栏紧贴屏幕最底缘。判断垂直高度：只要十字明显在最底那排 Tab 的**上方**（哪怕只高出一点点、
-  落在内容区的按钮/选项控件/列表项上），就不是 Tab，必须 off_target——即使水平方向与某个 Tab 同列。
-- ⚠️ 底部 Tab 栏有多个并排 Tab，每个 Tab 在图标下方有自己的文字标签。**当前高亮的那个 Tab（通常变蓝/
-  加深，是当前所在页）和顶部页面标题，都是干扰项**——十字压住的 Tab 往往不是高亮那个。必须**按十字的水平
-  位置，逐字读出它正下方那一个 Tab 自己的文字标签**写进 actual_element，绝不能拿高亮 Tab 或页面标题的名字
-  顶替它（例：当前在「世界时钟」页，不代表十字下方最左那个 Tab 就叫「世界时钟」——它可能是「闹钟」）。
-  读不清时用它在 Tab 栏里**从左数第几个**+图标形状判断，不要用页面语境猜。
-- 标记落在目标相邻的元素上（上下相邻行、左右相邻列），哪怕很近，一律 off_target。
-reason 一句话，说明十字中心实际压住了什么。"""
+_SYSTEM = load_prompt_text("task.vision.target_verify")
 
 
 def render_marker(png: bytes, nx: float, ny: float) -> bytes:
