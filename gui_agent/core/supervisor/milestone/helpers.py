@@ -3,13 +3,15 @@ import json
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from gui_agent.context.blocks import ContextBlock, ContextBudgeter, render_context_blocks
 from gui_agent.context.runtime import (
+    DEFAULT_CONTEXT_BLOCKS_MAX_CHARS,
     acceptance_items_block,
     current_date_block,
     extra_instruction_block,
@@ -19,7 +21,6 @@ from gui_agent.context.runtime import (
     history_block,
     knowledge_block,
     page_title_block,
-    render_prompt_context,
 )
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
@@ -183,30 +184,55 @@ def _build_msgs(system_prompt: str, png_bytes: bytes, *, image_resize: str = "re
     ]
 
 
-def _inject_knowledge(
-    msgs: list,
-    app_knowledge: str | None,
-    elements_knowledge: str | None,
-) -> None:
-    """Inject navigation and elements knowledge into the user message."""
-    text = render_prompt_context([
-        knowledge_block("app_navigation", app_knowledge),
-        knowledge_block("page_elements", elements_knowledge),
-    ])
-    if text:
-        msgs[1].content = [{"type": "text", "text": f"{text}\n\n"}] + msgs[1].content
-
-
 def _format_form_controls(form_controls: list[dict] | None) -> str:
     return format_form_controls_text(form_controls)
 
 
-def _inject_observation_context(msgs: list, observation: Observation) -> None:
-    text = render_prompt_context([
-        form_controls_block(getattr(observation, "form_controls", None)),
-    ])
-    if text:
-        msgs[1].content = [{"type": "text", "text": f"{text}\n\n"}] + msgs[1].content
+def assemble_messages(
+    task_prompt: str,
+    png_bytes: bytes,
+    *,
+    system_blocks: Sequence[ContextBlock | None] = (),
+    human_blocks: Sequence[ContextBlock | None] = (),
+    image_resize: str = "retina",
+    max_chars: Optional[int] = None,
+    label: str = "prompt",
+) -> list:
+    """Single context entry path for milestone vision calls.
+
+    Runs ONE ContextBudgeter pass over the UNION of system+human blocks — a per-PROMPT char
+    ceiling, replacing the old per-call-site budgeting (each _inject_* call previously got the
+    full ceiling, so the effective cap was N×). Kept blocks land exactly where the legacy
+    ``_build_msgs`` + ``_inject_knowledge`` + ``_inject_observation_context`` path put them —
+    ``system_blocks`` appended to the system prompt tail (before the date line), ``human_blocks``
+    prepended to the human message — so when nothing is dropped the rendered text is identical to
+    before. Under budget pressure the per-prompt ceiling sheds blocks (logged).
+
+    NOTE: history_text / constraints are still baked into ``task_prompt`` by callers via
+    str.format and remain outside the budget — that migration is the next (eval-gated) step."""
+    sys_live = [b for b in system_blocks if b is not None and (b.content or "").strip()]
+    hum_live = [b for b in human_blocks if b is not None and (b.content or "").strip()]
+    budgeter = ContextBudgeter(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
+    result = budgeter.apply([*sys_live, *hum_live])
+    if result.dropped:
+        names = "、".join(f"{b.id}[{b.budget}]({len(b.render())}字)" for b in result.dropped)
+        print(f"  [ContextBudget] {label} 超预算({budgeter.max_chars}字),丢弃 {len(result.dropped)} 块: {names}")
+    if result.over_budget:
+        print(f"  [ContextBudget] ⚠️ {label} 必留块已达 {result.kept_chars} 字 / 上限 {budgeter.max_chars} 字")
+    kept = {id(b) for b in result.kept}
+    sys_text = render_context_blocks([b for b in sys_live if id(b) in kept], include_headers=True)
+    hum_text = render_context_blocks([b for b in hum_live if id(b) in kept], include_headers=True)
+
+    system = task_prompt + (f"\n\n{sys_text}" if sys_text else "") + f"\n\n{current_date_block().render()}"
+    b64 = base64.b64encode(_prepare_prompt_png(png_bytes, image_resize)).decode()
+    human_content: list = []
+    if hum_text:
+        human_content.append({"type": "text", "text": f"{hum_text}\n\n"})
+    human_content += [
+        {"type": "text", "text": "请根据当前屏幕做出决策。"},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+    ]
+    return [SystemMessage(content=system), HumanMessage(content=human_content)]
 
 
 _OPEN_SELECT_RE = re.compile(r"点击|打开|展开|激活|下拉箭头|选项列表")
@@ -516,16 +542,18 @@ def run_checker(
     # independently (met + evidence) into item_verdicts. Drives the checklist's per-item status; the
     # overall `status` (which gates advance/replan) is unchanged.
     accept_items = split_acceptance_items(milestone.success_condition, milestone.name)
-    dynamic_context = render_prompt_context([
-        extra_instruction_block(extra, source="checker_guard"),
-        page_title_block(title),
-        acceptance_items_block(accept_items),
-        knowledge_block("check_rules", check_knowledge),
-    ])
-    if dynamic_context:
-        prompt += f"\n\n{dynamic_context}"
-    msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
-    _inject_observation_context(msgs, observation)
+    msgs = assemble_messages(
+        prompt, observation.png_bytes,
+        system_blocks=[
+            extra_instruction_block(extra, source="checker_guard"),
+            page_title_block(title),
+            acceptance_items_block(accept_items),
+            knowledge_block("check_rules", check_knowledge),
+        ],
+        human_blocks=[form_controls_block(getattr(observation, "form_controls", None))],
+        image_resize=prompts.image_resize,
+        label="checker",
+    )
     result = invoke_structured(_make_llm(), msgs, _SingleCheckResult)
 
     def _strip_progress_evidence(r: _SingleCheckResult) -> None:
@@ -705,14 +733,17 @@ def run_planner(
         check_summary=check.summary,
         history_text=history_block(history).render(),
     )
-    dynamic_context = render_prompt_context([
-        extra_instruction_block(extra, source="planner_guard"),
-    ])
-    if dynamic_context:
-        prompt += f"\n\n{dynamic_context}"
-    msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
-    _inject_knowledge(msgs, app_knowledge, elements_knowledge)
-    _inject_observation_context(msgs, observation)
+    msgs = assemble_messages(
+        prompt, observation.png_bytes,
+        system_blocks=[extra_instruction_block(extra, source="planner_guard")],
+        human_blocks=[
+            form_controls_block(getattr(observation, "form_controls", None)),
+            knowledge_block("app_navigation", app_knowledge),
+            knowledge_block("page_elements", elements_knowledge),
+        ],
+        image_resize=prompts.image_resize,
+        label="planner",
+    )
     plan_schema = prompts.plan_result_schema or _PlanResult
     plan = invoke_structured(_make_llm(), msgs, plan_schema)
     plan = _guard_native_select_plan(plan, milestone, check, observation)

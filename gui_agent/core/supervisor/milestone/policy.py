@@ -9,8 +9,8 @@ from gui_agent.context.runtime import (
     completed_milestones_block,
     extra_instruction_block,
     history_block,
+    knowledge_block,
     loop_frame_summary_block,
-    render_prompt_context,
     tried_instructions_block,
 )
 from llm.structured import invoke_structured
@@ -19,7 +19,7 @@ from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, Superviso
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm as _norm_page
 
 from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
-from .helpers import _build_msgs, _inject_knowledge, _make_llm, run_loop_check, run_planner
+from .helpers import _build_msgs, assemble_messages, _make_llm, run_loop_check, run_planner
 from .helpers import run_checker, run_selector, _default_milestone_prompts
 from .runtime import (
     MAX_RETRIES,
@@ -1099,13 +1099,16 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             history_text=history_block(history).render(),
             tried_instructions=tried_text,
         )
-        dynamic_context = render_prompt_context([
-            extra_instruction_block(extra, source="replanner_guard"),
-        ])
-        if dynamic_context:
-            prompt += f"\n\n{dynamic_context}"
-        msgs = self._msgs(prompt, observation)
-        _inject_knowledge(msgs, self._app_knowledge, self._elements_for(milestone, check))
+        msgs = assemble_messages(
+            prompt, observation.png_bytes,
+            system_blocks=[extra_instruction_block(extra, source="replanner_guard")],
+            human_blocks=[
+                knowledge_block("app_navigation", self._app_knowledge),
+                knowledge_block("page_elements", self._elements_for(milestone, check)),
+            ],
+            image_resize=self._prompts.image_resize,
+            label="replanner",
+        )
         result = invoke_structured(self._llm(), msgs, _ReplanResult)
         if self._is_sequence(result.instruction):
             print("  [Replan] 多步序列，重试...")
