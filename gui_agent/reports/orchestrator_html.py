@@ -6,8 +6,12 @@ import json
 import re
 from pathlib import Path
 
+from gui_agent.core.config import pricing_currency
+
 from .html_utils import _safe
+from .metrics import _fmt_tokens, _sum_tokens, _token_cost
 from .models import ReportStep
+from .prompt_html import _render_module_io_html
 
 _PROG_KIND_BADGE = {
     "navigation": "milestone-badge-navigation", "filter": "milestone-badge-filter",
@@ -262,40 +266,67 @@ def _render_orchestrator_context_reports(orchestrator: dict) -> str:
     reports = orchestrator.get("context_reports") or []
     if not reports:
         return ""
-    rows: list[str] = []
-    summaries: list[str] = []
-    for report in reports:
-        if not isinstance(report, dict) or report.get("kind") != "context_budget":
-            continue
-        label = _safe(str(report.get("label") or "orchestrator"))
-        included = int(report.get("included_count") or len(report.get("included") or []))
-        dropped = int(report.get("dropped_count") or len(report.get("dropped") or []))
-        summaries.append(f"{label}: +{included}/-{dropped}")
-        rows.append(
-            f'<div class="ctx-row"><strong>{label}</strong> '
-            f'<span class="ctx-keep">included={included}</span> '
-            f'<span class="ctx-drop">dropped={dropped}</span> '
-            f'kept={report.get("kept_chars", 0)} chars/{report.get("kept_tokens", 0)} tok · '
-            f'max={report.get("max_chars")}</div>'
-        )
-        for block in (report.get("blocks") or []):
-            mark = "keep" if block.get("included") else "drop"
-            cls = "ctx-keep" if block.get("included") else "ctx-drop"
-            rows.append(
-                f'<div class="ctx-row {cls}">  {mark} {_safe(str(block.get("id") or ""))} '
-                f'source={_safe(str(block.get("source") or ""))} '
-                f'prio={block.get("priority")} ttl={_safe(str(block.get("ttl") or ""))} '
-                f'budget={_safe(str(block.get("budget") or ""))} '
-                f'{block.get("estimated_chars", 0)} chars/{block.get("estimated_tokens", 0)} tok · '
-                f'{_safe(str(block.get("truncation_reason") or block.get("reason") or ""))}</div>'
-            )
-    if not rows:
+    return _render_module_io_html(reports)
+
+
+def _render_orchestrator_metrics(orchestrator: dict) -> str:
+    token_usage = orchestrator.get("token_usage") if isinstance(orchestrator.get("token_usage"), dict) else {}
+    estimated = False
+    if not token_usage:
+        token_usage = _estimate_orchestrator_token_usage(orchestrator.get("context_reports") or [])
+        estimated = bool(token_usage)
+    ti, to = _sum_tokens(token_usage)
+    timings = orchestrator.get("timings") if isinstance(orchestrator.get("timings"), dict) else {}
+    total_s = sum(float(v or 0) for v in timings.values())
+    calls = int(orchestrator.get("llm_calls") or 0) or _count_prompt_calls(orchestrator.get("context_reports") or [])
+
+    parts: list[str] = []
+    if total_s > 0:
+        parts.append(f"{total_s:.1f}s")
+    elif calls or ti or to:
+        parts.append("耗时未记录")
+    if calls:
+        parts.append(f"{calls} call{'s' if calls != 1 else ''}")
+    if ti or to:
+        prefix = "≈" if estimated else ""
+        cost_prefix = "≈"
+        parts.append(f"{prefix}{_fmt_tokens(ti)}/{_fmt_tokens(to)} tok")
+        parts.append(f"{cost_prefix}{pricing_currency()}{_token_cost(token_usage):.4f}")
+    if not parts:
         return ""
-    summary = _safe(" · ".join(summaries[:3]) + (" ..." if len(summaries) > 3 else ""))
-    return (
-        f'<details class="ctx-detail"><summary>上下文决策 · {summary}</summary>'
-        f'<div class="ctx-list">{"".join(rows)}</div></details>'
-    )
+    return f'<span class="milestone-time">{" · ".join(parts)}</span>'
+
+
+def _estimate_orchestrator_token_usage(reports: list[dict]) -> dict:
+    input_chars = 0
+    output_chars = 0
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        if report.get("kind") == "prompt_snapshot":
+            for role in report.get("roles") or []:
+                if not isinstance(role, dict):
+                    continue
+                for part in role.get("parts") or []:
+                    if isinstance(part, dict) and part.get("type") != "image":
+                        input_chars += int(part.get("chars") or len(str(part.get("text") or "")))
+        elif report.get("kind") == "llm_output":
+            output_chars += int(report.get("chars") or len(str(report.get("raw_output") or "")))
+    input_tokens = _estimate_tokens(input_chars)
+    output_tokens = _estimate_tokens(output_chars)
+    if not input_tokens and not output_tokens:
+        return {}
+    return {"orchestrator.decompose": {"input": input_tokens, "output": output_tokens}}
+
+
+def _count_prompt_calls(reports: list[dict]) -> int:
+    return sum(1 for report in reports if isinstance(report, dict) and report.get("kind") == "prompt_snapshot")
+
+
+def _estimate_tokens(chars: int) -> int:
+    if chars <= 0:
+        return 0
+    return max(1, (chars + 3) // 4)
 
 
 def _render_program_section(orchestrator: dict | None) -> str:
@@ -395,12 +426,14 @@ def _render_program_section(orchestrator: dict | None) -> str:
         f'<span class="prog-input-arrow">↓ 分解为</span></div>'
     ) if goal else ""
     context_html = _render_orchestrator_context_reports(orchestrator)
+    metrics_html = _render_orchestrator_metrics(orchestrator)
     return (
         f'<div class="milestone prog-section" id="ms-orchestrate">'
         f'<div class="milestone-header">'
         f'<h2>#0</h2>'
         f'<span class="milestone-name">编排 · decompose → DSL program</span>'
         f'<span class="milestone-badge milestone-badge-default">program</span>'
+        f'{metrics_html}'
         f'</div>'
         f'<div class="prog-body">{input_html}{context_html}{body}</div>'
         f'</div>'

@@ -12,6 +12,7 @@ from .html_utils import _safe
 from .metrics import CONTEXT_WINDOW, _ctx_color, _fmt_tokens, _sum_tokens, _token_cost
 from .models import ReportData, ReportStep
 from .orchestrator_html import _render_non_ui_detail, _render_program_section
+from .prompt_html import _render_module_io_html
 
 # ── Runner HTML generator ──────────────────────────────────────
 
@@ -229,6 +230,27 @@ HTML_TEMPLATE = """\
   .ctx-row strong {{ color: #0f172a; font-family: -apple-system, "PingFang SC", sans-serif; }}
   .ctx-drop {{ color: #b45309; }}
   .ctx-keep {{ color: #047857; }}
+  .prompt-detail {{ margin-top: 2px; border: 1px solid #ddd6fe; background: #fbfaff; border-radius: 7px; padding: 7px 9px; }}
+  .prompt-detail summary {{ cursor: pointer; color: #5b21b6; font-size: 11px; font-weight: 700; }}
+  .prompt-list {{ margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }}
+  .prompt-call {{ border: 1px solid #ede9fe; background: #fff; border-radius: 7px; padding: 7px 9px; }}
+  .prompt-call summary {{ color: #6d28d9; font-size: 11px; font-weight: 700; cursor: pointer; }}
+  .prompt-call-body {{ margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }}
+  .prompt-role {{ border-left: 3px solid #8b5cf6; padding-left: 10px; display: flex; flex-direction: column; gap: 8px; }}
+  .prompt-output {{ border-left-color: #22c55e; }}
+  .prompt-output-missing {{ border-left-color: #cbd5e1; }}
+  .prompt-role-title {{ align-self: flex-start; text-transform: uppercase; letter-spacing: .06em; color: #6d28d9; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 800; }}
+  .prompt-output .prompt-role-title {{ color: #047857; background: #ecfdf5; border-color: #a7f3d0; }}
+  .prompt-output-missing .prompt-role-title {{ color: #64748b; background: #f8fafc; border-color: #e2e8f0; }}
+  .prompt-part {{ border: 1px solid #eef2ff; border-radius: 6px; overflow: hidden; background: #fff; }}
+  .prompt-part-head {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: #f8fafc; border-bottom: 1px solid #eef2ff; padding: 5px 8px; }}
+  .prompt-part-no {{ display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; border-radius: 9px; background: #ede9fe; color: #5b21b6; font-size: 10px; font-weight: 800; font-family: ui-monospace, SFMono-Regular, monospace; }}
+  .prompt-part-label {{ font-size: 11px; font-weight: 700; color: #334155; font-family: ui-monospace, SFMono-Regular, monospace; }}
+  .prompt-part-meta {{ font-size: 10px; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, monospace; }}
+  .prompt-pre {{ margin: 0; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 8px 10px; color: #1e293b; font-size: 11.5px; line-height: 1.55; font-family: ui-monospace, SFMono-Regular, monospace; background: #fff; }}
+  .prompt-pre-image {{ color: #64748b; background: #f8fafc; }}
+  .prompt-pre-output {{ background: #f8fffb; }}
+  .prompt-empty {{ color: #94a3b8; font-size: 11px; padding: 4px 0; }}
 
   /* Timing bar */
   .timing-bar {{ display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: #f1f5f9; margin-top: 2px; }}
@@ -634,7 +656,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         {sections_html}
         {summary_html}
         {non_ui_html}
-        {_render_context_decisions_html(step.llm_context)}
+        {_render_module_io_html(step.llm_context)}
         {_render_timing_html(step.timings)}
         {_render_token_html(step.token_usage)}
       </div>
