@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.the_admin_tools_and_workspace
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 需要访问 Admin workspace、使用 Global Search 或 Grid Search 查找 product customer order 记录时
 when: 需要访问 Admin workspace、使用 Global Search 或 Grid Search 查找 product customer order 记录时
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # The Admin tools and workspace
 

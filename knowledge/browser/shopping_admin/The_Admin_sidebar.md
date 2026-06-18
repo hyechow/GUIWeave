@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.the_admin_sidebar
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要查看 Admin sidebar 或左侧菜单以访问 Dashboard、Sales、Catalog 等管理工具时查阅本节
 when: 当需要查看 Admin sidebar 或左侧菜单以访问 Dashboard、Sales、Catalog 等管理工具时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # The Admin sidebar
 

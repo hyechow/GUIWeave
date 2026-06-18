@@ -1,3 +1,18 @@
+---
+id: knowledge.browser.shopping_admin.navigation
+source_type: knowledge_navigation
+platform: browser
+app: shopping_admin
+scope:
+  - decompose
+  - planner
+  - replanner
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
+---
 # 应用级导航概览：shopping_admin
 
 ## 1. 应用概述

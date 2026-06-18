@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.customer_groups
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要筛选、创建、编辑客户组，或将客户分配至不同客户组时查阅本节
 when: 当需要筛选、创建、编辑客户组，或将客户分配至不同客户组时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Customer groups
 

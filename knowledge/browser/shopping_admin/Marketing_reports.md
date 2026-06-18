@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.marketing_reports
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 查看购物车状态、搜索词使用情况、通讯发送状态或产品、搜索词、客户、通讯队列信息时
 when: 查看购物车状态、搜索词使用情况、通讯发送状态或产品、搜索词、客户、通讯队列信息时
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Marketing reports
 

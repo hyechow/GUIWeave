@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.moderate_product_reviews
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要在 Admin 中查看、更新状态或批量处理 Commerce product reviews 时查阅本节
 when: 当需要在 Admin 中查看、更新状态或批量处理 Commerce product reviews 时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Moderate product reviews
 

@@ -38,7 +38,7 @@ class ContextBlock:
             value = self.metadata[key]
             if value is None or value == "":
                 continue
-            parts.append(f"{key}={value}")
+            parts.append(f"{key}={_format_metadata_value(value)}")
         header = "[" + " | ".join(parts) + "]"
         return f"{header}\n{body}" if body else header
 
@@ -85,3 +85,9 @@ def render_context_blocks(
         sort_by_priority=sort_by_priority,
         separator=separator,
     )
+
+
+def _format_metadata_value(value: Any) -> str:
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item) for item in value)
+    return str(value)

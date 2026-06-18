@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.products_list
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 在 Products 页面或 Admin 中需要创建、编辑产品，管理多站点产品选择，配置产品网格显示限制及分页排序过滤时查阅
 when: 在 Products 页面或 Admin 中需要创建、编辑产品，管理多站点产品选择，配置产品网格显示限制及分页排序过滤时查阅
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Products list
 

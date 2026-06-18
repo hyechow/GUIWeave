@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.create_categories
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要创建目录分类、规划分类结构或配置多商店根分类时查阅本节
 when: 当需要创建目录分类、规划分类结构或配置多商店根分类时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Create categories
 

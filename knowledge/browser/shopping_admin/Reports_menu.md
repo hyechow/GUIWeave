@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.reports_menu
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要访问Reports menu查看营销、销售、客户、产品或系统洞察等报告时
 when: 当需要访问Reports menu查看营销、销售、客户、产品或系统洞察等报告时
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Reports menu
 

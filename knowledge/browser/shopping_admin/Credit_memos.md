@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.credit_memos
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要生成、打印或查看 Credit memos 并处理 Account credit 与 Online refund 等退款方式时查阅本节
 when: 当需要生成、打印或查看 Credit memos 并处理 Account credit 与 Online refund 等退款方式时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Credit memos
 

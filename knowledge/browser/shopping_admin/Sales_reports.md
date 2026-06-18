@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.sales_reports
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要生成或筛选订单、税务、发票、发货、退款、优惠券及PayPal结算等Sales reports时查阅本节
 when: 当需要生成或筛选订单、税务、发票、发货、退款、优惠券及PayPal结算等Sales reports时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Sales reports
 

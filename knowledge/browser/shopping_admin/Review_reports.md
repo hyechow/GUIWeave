@@ -1,5 +1,18 @@
 ---
+id: knowledge.browser.shopping_admin.review_reports
+source_type: knowledge_section
+platform: browser
+app: shopping_admin
+scope:
+  - planner
+  - replanner
+selector_when: 当需要查看客户或产品维度的 Commerce Reviews 报告时查阅本节
 when: 当需要查看客户或产品维度的 Commerce Reviews 报告时查阅本节
+source: manual_distilled
+confidence: medium
+sensitivity: internal
+ttl: session
+version: 1
 ---
 # Review reports
 
