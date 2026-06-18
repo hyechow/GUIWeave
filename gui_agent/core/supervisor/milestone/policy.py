@@ -1,16 +1,18 @@
 """MilestoneSupervisorPolicy: two-machine milestone supervisor."""
 
-import json
 from typing import Literal, Optional
 
 from langchain_openai import ChatOpenAI
 
 from gui_agent.context.runtime import (
     completed_milestones_block,
+    constraints_block,
     extra_instruction_block,
     history_block,
     knowledge_block,
     loop_frame_summary_block,
+    milestone_block,
+    replan_state_block,
     tried_instructions_block,
 )
 from llm.structured import invoke_structured
@@ -980,6 +982,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         return run_loop_check(
             milestone, observation, history, constraints=self._global_constraints,
             prompts=self._prompts,
+            context_reports=self._context_reports,
         )
 
     def _select_sections(self, milestone: Milestone, check: _SingleCheckResult) -> list[str]:
@@ -1130,14 +1133,24 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         frame: _LoopFrameResult,
         observation: Observation,
     ) -> _PlanResult:
-        prompt = self._prompts.loop_scroll.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            constraints=json.dumps(self._global_constraints, ensure_ascii=False),
-            frame_summary=loop_frame_summary_block(frame.summary).render(),
-        )
+        prompt = self._prompts.loop_scroll
         plan_schema = self._prompts.plan_result_schema or _PlanResult
-        return invoke_structured(self._llm(), self._msgs(prompt, observation), plan_schema)
+        return invoke_structured(
+            self._llm(),
+            assemble_messages(
+                prompt,
+                observation,
+                system_blocks=[
+                    milestone_block(milestone),
+                    constraints_block(self._global_constraints),
+                    loop_frame_summary_block(frame.summary),
+                ],
+                image_resize=self._prompts.image_resize,
+                label="loop_scroll",
+                context_reports=self._context_reports,
+            ),
+            plan_schema,
+        )
 
     def _invoke_replanner(
         self,
@@ -1154,27 +1167,22 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             and t.supervisor.instruction
             and t.supervisor.milestone_id == milestone.id
         })
-        tried_text = tried_instructions_block(tried).render()
-        done_context = completed_milestones_block(
-            self._milestones.values(),
-            current_id=milestone.id,
-        ).render()
-        prompt = self._prompts.replan.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            success_condition=milestone.success_condition,
-            stuck_reason=check.stuck_reason or check.reason,
-            issues=json.dumps(check.issues, ensure_ascii=False),
-            retry_count=milestone.retry_count,
-            constraints=json.dumps(self._global_constraints, ensure_ascii=False),
-            failure_hints=json.dumps(milestone.failure_hints, ensure_ascii=False),
-            completed_milestones=done_context,
-            history_text=history_block(history, current_milestone_id=milestone.id).render(),
-            tried_instructions=tried_text,
-        )
+        prompt = self._prompts.replan
         msgs = assemble_messages(
-            prompt, observation.png_bytes,
-            system_blocks=[extra_instruction_block(extra, source="replanner_guard")],
+            prompt, observation,
+            system_blocks=[
+                milestone_block(milestone),
+                replan_state_block(
+                    check,
+                    retry_count=milestone.retry_count,
+                    failure_hints=milestone.failure_hints,
+                ),
+                constraints_block(self._global_constraints),
+                completed_milestones_block(self._milestones.values(), current_id=milestone.id),
+                history_block(history, current_milestone_id=milestone.id),
+                tried_instructions_block(tried),
+                extra_instruction_block(extra, source="replanner_guard"),
+            ],
             human_blocks=[
                 knowledge_block("app_navigation", self._app_knowledge),
                 knowledge_block("page_elements", self._elements_for(milestone, check)),

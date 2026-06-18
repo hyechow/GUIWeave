@@ -44,10 +44,148 @@ def history_block(
         source="policy_history",
         ttl="session",
         priority=40,
-        metadata={"limit": limit},
-        content=format_history_text(
-            history, limit=limit, current_milestone_id=current_milestone_id, recent_n=recent_n
+        metadata={"limit": limit, "milestone_id": current_milestone_id or ""},
+        content=(
+            "## 历史操作记录\n"
+            + format_history_text(
+                history, limit=limit, current_milestone_id=current_milestone_id, recent_n=recent_n
+            )
         ),
+    )
+
+
+def milestone_block(
+    milestone: Milestone,
+    *,
+    task_type: str | None = None,
+    scroll_stop_condition: str | None = None,
+    retry_count: int | None = None,
+) -> ContextBlock:
+    """Current milestone/task state shared by checker/planner/replanner/loop prompts."""
+    lines = [
+        "## 当前子目标",
+        f"- 名称：{milestone.name}",
+        f"- 描述：{milestone.description}",
+    ]
+    if milestone.success_condition:
+        lines.append(f"- 验收条件：{milestone.success_condition}")
+    if scroll_stop_condition:
+        lines.append(f"- 停止条件：{scroll_stop_condition}")
+    if milestone.kind:
+        lines.append(f"- 子目标类型：{milestone.kind}")
+    if milestone.completion_strategy:
+        lines.append(f"- 完成策略：{milestone.completion_strategy}")
+    if task_type:
+        lines.append(f"- 任务类型：{task_type}")
+    if retry_count is not None:
+        lines.append(f"- 已重试次数：{retry_count}")
+    return ContextBlock(
+        id="runtime.milestone.current",
+        budget="required",
+        source_type="runtime_state",
+        source="milestone",
+        ttl="turn",
+        priority=20,
+        metadata={"milestone_id": milestone.id, "kind": milestone.kind},
+        content="\n".join(lines),
+    )
+
+
+def constraints_block(constraints: Iterable[str] | None) -> ContextBlock | None:
+    items = [str(item).strip() for item in constraints or [] if str(item).strip()]
+    if not items:
+        return None
+    return ContextBlock(
+        id="runtime.constraints.global",
+        budget="required",
+        source_type="runtime_state",
+        source="supervisor_constraints",
+        ttl="task",
+        priority=30,
+        metadata={"count": len(items)},
+        content="## 全局约束\n" + "\n".join(f"- {item}" for item in items),
+    )
+
+
+def app_identity_block(app_name: str) -> ContextBlock | None:
+    if not app_name:
+        return None
+    return ContextBlock(
+        id="runtime.app.identity_hint",
+        budget="high",
+        source_type="runtime_state",
+        source="app_binding",
+        ttl="task",
+        priority=25,
+        content=(
+            "## 应用身份辅助\n"
+            f"任务目标涉及「{app_name}」应用；页面/界面识别仍必须以当前可见内容为准，"
+            "不要预设当前就在目标应用内。"
+        ),
+    )
+
+
+def checker_kind_rules_block(kind_section: str) -> ContextBlock | None:
+    if not kind_section:
+        return None
+    return ContextBlock(
+        id="prompt.milestone.check_kind_rules",
+        budget="required",
+        source_type="prompt_context",
+        source="milestone.check_kind_sections",
+        ttl="turn",
+        priority=35,
+        content=kind_section,
+    )
+
+
+def checker_result_block(check: Any) -> ContextBlock:
+    issues = getattr(check, "issues", None) or []
+    missing = getattr(check, "missing_evidence", None) or []
+    visible = getattr(check, "visible_evidence", None) or []
+    lines = [
+        "## 当前验收结果",
+        f"- status：{getattr(check, 'status', '')}",
+        f"- reason：{getattr(check, 'reason', '')}",
+        f"- issues：{json_text(issues)}",
+        f"- missing_evidence：{json_text(missing)}",
+        f"- visible_evidence：{json_text(visible)}",
+        f"- page_identity：{getattr(check, 'page_identity', '')}",
+        f"- 当前屏幕摘要：{getattr(check, 'summary', '')}",
+    ]
+    return ContextBlock(
+        id="runtime.checker.result",
+        budget="required",
+        source_type="runtime_state",
+        source="checker",
+        ttl="turn",
+        priority=25,
+        content="\n".join(lines),
+    )
+
+
+def replan_state_block(
+    check: Any,
+    *,
+    retry_count: int,
+    failure_hints: Iterable[str] | None = None,
+) -> ContextBlock:
+    issues = getattr(check, "issues", None) or []
+    lines = [
+        "## 重规划状态",
+        f"- 未达成原因：{getattr(check, 'stuck_reason', '') or getattr(check, 'reason', '')}",
+        f"- 具体问题：{json_text(issues)}",
+        f"- 已重试次数：{retry_count}",
+        f"- 可能未达成原因提示：{json_text(list(failure_hints or []))}",
+    ]
+    return ContextBlock(
+        id="runtime.replan.state",
+        budget="required",
+        source_type="runtime_state",
+        source="replanner",
+        ttl="turn",
+        priority=25,
+        content="\n".join(lines),
     )
 
 
@@ -350,7 +488,7 @@ def completed_milestones_block(milestones: Iterable[Milestone], *, current_id: s
         source="milestone_state",
         ttl="session",
         priority=40,
-        content="\n".join(lines) if lines else "  （无）",
+        content="## 已完成的子目标（不要退回这些状态）\n" + ("\n".join(lines) if lines else "  （无）"),
     )
 
 
@@ -365,19 +503,19 @@ def tried_instructions_block(instructions: Iterable[str]) -> ContextBlock:
         ttl="session",
         priority=40,
         metadata={"count": len(items)},
-        content=content,
+        content="## 已尝试但尚未达成的指令\n" + content,
     )
 
 
 def loop_frame_summary_block(summary: str) -> ContextBlock:
     return ContextBlock(
         id="runtime.loop.frame_summary",
-        budget="medium",
+        budget="required",
         source_type="runtime_state",
         source="loop_checker",
         ttl="turn",
         priority=30,
-        content=summary or "（无当前屏幕摘要）",
+        content="## 当前屏幕状态\n" + (summary or "（无当前屏幕摘要）"),
     )
 
 

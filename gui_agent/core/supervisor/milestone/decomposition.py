@@ -15,9 +15,9 @@ from gui_agent.context.runtime import (
     feedback_block,
     file_reference_block,
     knowledge_block,
-    render_prompt_context,
     task_goal_block,
 )
+from gui_agent.core.llm.messages import assemble_messages
 from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.schemas import Milestone, Observation
@@ -160,7 +160,6 @@ class MilestoneDecompositionMixin:
         self, llm: ChatOpenAI, goal: str, observation: Observation,
         feedback: list[str], file_section: str = "",
     ) -> None:
-        msgs = self._msgs(self._prompts.decompose, observation)
         context_blocks = [
             task_goal_block(goal),
             file_reference_block(file_section),
@@ -177,12 +176,14 @@ class MilestoneDecompositionMixin:
             knowledge_block("app_navigation", self._app_knowledge),
             feedback_block(feedback),
         ])
-        context_text = render_prompt_context(
-            context_blocks,
+        msgs = assemble_messages(
+            self._prompts.decompose,
+            observation,
+            human_blocks=context_blocks,
+            image_resize=self._prompts.image_resize,
             label="milestone.decompose",
-            report_sink=getattr(self, "_context_reports", None),
+            context_reports=getattr(self, "_context_reports", None),
         )
-        msgs[1].content = [{"type": "text", "text": context_text}] + msgs[1].content
         resp = invoke_structured(llm, msgs, _DecomposeResponse)
 
         self._global_constraints = resp.global_constraints

@@ -11,11 +11,9 @@ the cheap deterministic backstop pattern, not a string-match band-aid.
 
 from __future__ import annotations
 
-import base64
 import re
 from collections.abc import Callable
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
@@ -24,10 +22,10 @@ from gui_agent.context.runtime import (
     feedback_block,
     file_reference_block,
     knowledge_block,
-    render_prompt_context,
     task_goal_block,
 )
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
@@ -429,36 +427,19 @@ def decompose(
             priority=35,
             content=table_hint,
         ))
-    parts: list[dict] = [{
-        "type": "text",
-        "text": render_prompt_context(
-            context_blocks,
-            label="orchestrator.decompose",
-            report_sink=context_reports,
-        ),
-    }]
-    if png_bytes:
-        prepare_png = prepare_vision_prompt_png or (lambda b: b)
-        b64 = base64.b64encode(prepare_png(png_bytes)).decode()
-        parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
-
     issues: list[str] = []
     program = Program(goal=goal, statements=[])
     for attempt in range(_MAX_RETRIES + 1):
-        user_parts = list(parts)
-        if issues:
-            user_parts.append({
-                "type": "text",
-                "text": render_prompt_context(
-                    [feedback_block(issues)],
-                    label="orchestrator.decompose.feedback",
-                    report_sink=context_reports,
-                ),
-            })
-        messages = [
-            SystemMessage(content=system_prompt or _SYSTEM),
-            HumanMessage(content=user_parts),
-        ]
+        messages = assemble_messages(
+            system_prompt or _SYSTEM,
+            png_bytes,
+            human_blocks=[*context_blocks, feedback_block(issues)],
+            image_resize="none",
+            prepare_vision_prompt_png=prepare_vision_prompt_png,
+            label="orchestrator.decompose",
+            context_reports=context_reports,
+            decision_text="",
+        )
         draft = invoke_structured(llm, messages, _PlanDraft)
         program = to_program(draft, goal)
         issues = validate_program(program)

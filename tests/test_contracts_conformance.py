@@ -117,44 +117,30 @@ def test_milestone_prompts_injected_from_adapter():
     assert sup._prompts.decompose.startswith("你是 iPhone")  # iphone strings preserved verbatim
 
 
-def test_milestone_prompt_sets_format_cleanly():
-    # All three platform MilestonePrompts sets must .format() with EXACTLY the kwargs
-    # helpers.py / policy.py pass — a stray/missing placeholder in a prompt would be a
-    # runtime KeyError. Pins the format wiring (the call-site contract) for every platform.
+def test_milestone_vision_prompts_keep_runtime_data_out_of_templates():
+    # Vision milestone prompts are stable task instructions. Runtime state (milestone,
+    # constraints, checker result, history, loop summaries) enters through ContextBlock
+    # and assemble_messages, not str.format placeholders in prompt assets.
     import string
 
     from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
     from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
     from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
 
-    kwargs = {
-        "single_checker": dict(
-            app_name_context="", milestone_name="", milestone_desc="", success_condition="",
-            milestone_kind="", completion_strategy="", task_type="", constraints="",
-            history_text="", kind_section="",
-        ),
-        "plan": dict(
-            milestone_name="", milestone_desc="", success_condition="", milestone_kind="",
-            constraints="", check_status="", check_reason="", issues="", missing_evidence="",
-            check_summary="", history_text="",
-        ),
-        "loop_frame": dict(
-            milestone_name="", milestone_desc="", scroll_stop_condition="", constraints="",
-            history_text="",
-        ),
-        "loop_scroll": dict(milestone_name="", milestone_desc="", constraints="", frame_summary=""),
-        "replan": dict(
-            milestone_name="", milestone_desc="", success_condition="", stuck_reason="", issues="",
-            retry_count="", constraints="", failure_hints="", completed_milestones="",
-            history_text="", tried_instructions="",
-        ),
+    fields = ("single_checker", "plan", "loop_frame", "loop_scroll", "replan")
+    forbidden = {
+        "app_name_context", "milestone_name", "milestone_desc", "success_condition",
+        "milestone_kind", "completion_strategy", "task_type", "constraints",
+        "history_text", "kind_section", "check_status", "check_reason", "issues",
+        "missing_evidence", "check_summary", "scroll_stop_condition", "frame_summary",
+        "stuck_reason", "retry_count", "failure_hints", "completed_milestones",
+        "tried_instructions",
     }
     for prompts in (IPHONE_MILESTONE_PROMPTS, BROWSER_MILESTONE_PROMPTS, ANDROID_MILESTONE_PROMPTS):
-        for field, kw in kwargs.items():
+        for field in fields:
             template = getattr(prompts, field)
-            template.format(**kw)  # raises KeyError on an unexpected placeholder
             used = {fn for _, fn, _, _ in string.Formatter().parse(template) if fn}
-            assert used <= set(kw), f"{field} has placeholders not passed by the code: {used - set(kw)}"
+            assert not (used & forbidden), f"{field} still contains runtime placeholders: {used & forbidden}"
 
 
 def test_core_milestone_is_leaf_without_iphone_prompts():

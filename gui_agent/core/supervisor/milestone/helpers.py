@@ -1,29 +1,29 @@
-import base64
-import json
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from gui_agent.context.blocks import ContextBlock, ContextBudgeter, render_context_blocks
 from gui_agent.context.runtime import (
-    DEFAULT_CONTEXT_BLOCKS_MAX_CHARS,
     acceptance_items_block,
-    current_date_block,
+    app_identity_block,
+    checker_kind_rules_block,
+    checker_result_block,
+    constraints_block,
     extra_instruction_block,
     form_controls_block,
     format_form_controls_text,
     format_history_text,
     history_block,
     knowledge_block,
+    milestone_block,
     page_title_block,
 )
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.policies.base import resize_to_logical_png
+from gui_agent.core.llm.messages import assemble_messages, prepare_prompt_png
 from gui_agent.core.schemas import (
     Milestone,
     Observation,
@@ -168,74 +168,15 @@ def _make_llm() -> ChatOpenAI:
 
 
 def _prepare_prompt_png(png_bytes: bytes, image_resize: str = "retina") -> bytes:
-    if image_resize == "none":
-        return png_bytes
-    return resize_to_logical_png(png_bytes)
+    return prepare_prompt_png(png_bytes, image_resize=image_resize)
 
 
 def _build_msgs(system_prompt: str, png_bytes: bytes, *, image_resize: str = "retina") -> list:
-    b64 = base64.b64encode(_prepare_prompt_png(png_bytes, image_resize)).decode()
-    return [
-        SystemMessage(content=f"{system_prompt}\n\n{current_date_block().render()}"),
-        HumanMessage(content=[
-            {"type": "text", "text": "请根据当前屏幕做出决策。"},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-        ]),
-    ]
+    return assemble_messages(system_prompt, png_bytes, image_resize=image_resize)
 
 
 def _format_form_controls(form_controls: list[dict] | None) -> str:
     return format_form_controls_text(form_controls)
-
-
-def assemble_messages(
-    task_prompt: str,
-    png_bytes: bytes,
-    *,
-    system_blocks: Sequence[ContextBlock | None] = (),
-    human_blocks: Sequence[ContextBlock | None] = (),
-    image_resize: str = "retina",
-    max_chars: Optional[int] = None,
-    label: str = "prompt",
-    context_reports: list[dict] | None = None,
-) -> list:
-    """Single context entry path for milestone vision calls.
-
-    Runs ONE ContextBudgeter pass over the UNION of system+human blocks — a per-PROMPT char
-    ceiling, replacing the old per-call-site budgeting (each _inject_* call previously got the
-    full ceiling, so the effective cap was N×). Kept blocks land exactly where the legacy
-    ``_build_msgs`` + ``_inject_knowledge`` + ``_inject_observation_context`` path put them —
-    ``system_blocks`` appended to the system prompt tail (before the date line), ``human_blocks``
-    prepended to the human message — so when nothing is dropped the rendered text is identical to
-    before. Under budget pressure the per-prompt ceiling sheds blocks (logged).
-
-    NOTE: history_text / constraints are still baked into ``task_prompt`` by callers via
-    str.format and remain outside the budget — that migration is the next (eval-gated) step."""
-    sys_live = [b for b in system_blocks if b is not None and (b.content or "").strip()]
-    hum_live = [b for b in human_blocks if b is not None and (b.content or "").strip()]
-    budgeter = ContextBudgeter(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
-    result = budgeter.apply([*sys_live, *hum_live])
-    if context_reports is not None and result.decisions:
-        context_reports.append(result.to_report(label=label))
-    if result.dropped:
-        names = "、".join(f"{b.id}[{b.budget}]({len(b.render())}字)" for b in result.dropped)
-        print(f"  [ContextBudget] {label} 超预算({budgeter.max_chars}字),丢弃 {len(result.dropped)} 块: {names}")
-    if result.over_budget:
-        print(f"  [ContextBudget] ⚠️ {label} 必留块已达 {result.kept_chars} 字 / 上限 {budgeter.max_chars} 字")
-    kept = {id(b) for b in result.kept}
-    sys_text = render_context_blocks([b for b in sys_live if id(b) in kept], include_headers=True)
-    hum_text = render_context_blocks([b for b in hum_live if id(b) in kept], include_headers=True)
-
-    system = task_prompt + (f"\n\n{sys_text}" if sys_text else "") + f"\n\n{current_date_block().render()}"
-    b64 = base64.b64encode(_prepare_prompt_png(png_bytes, image_resize)).decode()
-    human_content: list = []
-    if hum_text:
-        human_content.append({"type": "text", "text": f"{hum_text}\n\n"})
-    human_content += [
-        {"type": "text", "text": "请根据当前屏幕做出决策。"},
-        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-    ]
-    return [SystemMessage(content=system), HumanMessage(content=human_content)]
 
 
 _OPEN_SELECT_RE = re.compile(r"点击|打开|展开|激活|下拉箭头|选项列表")
@@ -517,24 +458,12 @@ def run_checker(
         prompts = _default_milestone_prompts()
     if constraints is None:
         constraints = []
-    app_name_context = f"任务目标涉及「{app_name}」应用，" if app_name else ""
     kind_section = prompts.check_kind_sections.get(milestone.kind, prompts.check_section_default)
     # 连续调值类（picker 收敛）在 kind 段之上叠加专用段：当前值以滚轮中心带为准、强制输出
     # 当前值/目标值。这是连续操作进展传感器的基础——避免把已推进的拖动误读为"没动"。
     if milestone.is_converge:
         kind_section = kind_section + prompts.check_section_converge
-    prompt = prompts.single_checker.format(
-        milestone_name=milestone.name,
-        milestone_desc=milestone.description,
-        success_condition=milestone.success_condition,
-        milestone_kind=milestone.kind,
-        completion_strategy=milestone.completion_strategy,
-        task_type=task_type,
-        constraints=json.dumps(constraints, ensure_ascii=False),
-        history_text=history_block(history, current_milestone_id=milestone.id).render(),
-        app_name_context=app_name_context,
-        kind_section=kind_section,
-    )
+    prompt = prompts.single_checker
 
     # Inject the tab TITLE (the viewport-language page name the screenshot doesn't show) as
     # an auxiliary identity signal, so the checker does not need to infer it from pixels. The URL is deliberately NOT
@@ -547,12 +476,17 @@ def run_checker(
     # overall `status` (which gates advance/replan) is unchanged.
     accept_items = split_acceptance_items(milestone.success_condition, milestone.name)
     msgs = assemble_messages(
-        prompt, observation.png_bytes,
+        prompt, observation,
         system_blocks=[
+            app_identity_block(app_name),
+            milestone_block(milestone, task_type=task_type),
+            constraints_block(constraints),
+            history_block(history, current_milestone_id=milestone.id),
             extra_instruction_block(extra, source="checker_guard"),
             page_title_block(title),
             acceptance_items_block(accept_items),
             knowledge_block("check_rules", check_knowledge),
+            checker_kind_rules_block(kind_section),
         ],
         human_blocks=[form_controls_block(getattr(observation, "form_controls", None))],
         image_resize=prompts.image_resize,
@@ -728,22 +662,16 @@ def run_planner(
                 f"{dead_end_lines}"
             )
             extra = f"{extra}\n\n{extra_text}" if extra else extra_text
-    prompt = prompts.plan.format(
-        milestone_name=milestone.name,
-        milestone_desc=milestone.description,
-        success_condition=milestone.success_condition,
-        milestone_kind=milestone.kind,
-        constraints=json.dumps(constraints, ensure_ascii=False),
-        check_status=check.status,
-        check_reason=check.reason,
-        issues=json.dumps(check.issues, ensure_ascii=False),
-        missing_evidence=json.dumps(check.missing_evidence, ensure_ascii=False),
-        check_summary=check.summary,
-        history_text=history_block(history, current_milestone_id=milestone.id).render(),
-    )
+    prompt = prompts.plan
     msgs = assemble_messages(
-        prompt, observation.png_bytes,
-        system_blocks=[extra_instruction_block(extra, source="planner_guard")],
+        prompt, observation,
+        system_blocks=[
+            milestone_block(milestone),
+            constraints_block(constraints),
+            checker_result_block(check),
+            history_block(history, current_milestone_id=milestone.id),
+            extra_instruction_block(extra, source="planner_guard"),
+        ],
         human_blocks=[
             form_controls_block(getattr(observation, "form_controls", None)),
             knowledge_block("app_navigation", app_knowledge),
@@ -809,19 +737,28 @@ def run_loop_check(
     *,
     constraints: Optional[list[str]] = None,
     prompts: Optional[MilestonePrompts] = None,
+    context_reports: list[dict] | None = None,
 ) -> _LoopFrameResult:
     """Run the per-frame scroll_until_boundary assessment. Used by both production and evals."""
     if prompts is None:
         prompts = _default_milestone_prompts()
-    prompt = prompts.loop_frame.format(
-        milestone_name=milestone.name,
-        milestone_desc=milestone.description,
-        scroll_stop_condition=milestone.scroll_stop_condition or "滚动至列表物理底部时停止",
-        constraints=json.dumps(constraints or [], ensure_ascii=False),
-        history_text=history_block(history, current_milestone_id=milestone.id).render(),
-    )
+    prompt = prompts.loop_frame
     return invoke_structured(
         _make_llm(),
-        _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize),
+        assemble_messages(
+            prompt,
+            observation,
+            system_blocks=[
+                milestone_block(
+                    milestone,
+                    scroll_stop_condition=milestone.scroll_stop_condition or "滚动至列表物理底部时停止",
+                ),
+                constraints_block(constraints or []),
+                history_block(history, current_milestone_id=milestone.id),
+            ],
+            image_resize=prompts.image_resize,
+            label="loop_check",
+            context_reports=context_reports,
+        ),
         _LoopFrameResult,
     )

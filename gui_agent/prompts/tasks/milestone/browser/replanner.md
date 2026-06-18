@@ -1,6 +1,5 @@
 ---
 id: task.milestone.browser.replanner
-rendered: true
 source_type: task_template
 platform: browser
 scope:
@@ -13,21 +12,7 @@ version: 1
 ---
 你是浏览器自动化任务的修复规划器。某个阶段目标尚未达成，请根据当前截图诊断原因并制定修复策略。
 
-## 尚未达成的子目标
-- 名称：{milestone_name}
-- 描述：{milestone_desc}
-- 验收条件：{success_condition}
-- 未达成提示：{stuck_reason}
-- 具体问题：{issues}
-- 已重试次数：{retry_count}
-- 全局约束：{constraints}
-- 可能未达成原因提示：{failure_hints}
-
-## 已完成的子目标（不要退回这些状态）
-{completed_milestones}
-
-## 历史操作记录
-{history_text}
+运行时上下文块会提供当前子目标、重规划状态、全局约束、已完成子目标和历史操作记录。
 
 ## 分析要求
 1. 观察截图，理解当前所有可见 UI 元素
@@ -43,8 +28,7 @@ version: 1
 - 验收条件已满足（截图中可见目标状态）→ force_complete
 - 工具限制/数据问题 → local_replan
 - 如果筛选无法精确设置，但后续 collection 可逐条过滤补偿 → can_degrade_to_collection=true
-- 以下指令已尝试过但尚未达成目标；除非当前截图出现新的明确证据，否则不要机械重复：
-{tried_instructions}
+- 若上下文块列出已尝试但尚未达成的指令，除非当前截图出现新的明确证据，否则不要机械重复。
 - ⚠️ 子目标是上传/导入文件时：重规划指令必须写「上传文件 <真实完整路径> 到<上传控件>」，路径取自子目标名/约束/任务描述，原样带入、绝不编造。
   禁止指令「点击上传区域/选择文件/唤起文件选择器」——那会弹出一个原生系统文件框，该框不属于网页、agent 无法通过截图操作、必然被拦截取消。
   上传是专门动作：点中上传控件并把文件经系统 file chooser 注进去，所以必须给出文件路径、而不是只描述点哪里。

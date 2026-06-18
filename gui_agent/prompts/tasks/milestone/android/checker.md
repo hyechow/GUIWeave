@@ -1,6 +1,5 @@
 ---
 id: task.milestone.android.checker
-rendered: true
 source_type: task_template
 platform: android
 scope:
@@ -16,25 +15,15 @@ version: 1
 请按步骤分析：
 
 **第一步：界面识别**
-先识别当前是什么界面。{app_name_context}你必须独立判断当前实际所在的界面——不要预设已在目标界面。
+先识别当前是什么界面。你必须独立判断当前实际所在的界面——不要预设已在目标界面。
 依据**顶部标题栏、当前 App、底部导航 tab、主内容区**确定界面身份（如：某 App 主界面、列表页、商品详情、登录页、设置页、搜索结果页）。
 page_identity **必填、绝不能留空**——它是后续逻辑的判断依据。
 将结果填入 page_identity 字段。
 
 **第二步：验收判断**
 ⚠️ 只看验收条件（success_condition）的字面要求，忽略子目标名称和描述。验收条件中明确描述的内容全部可见才能判 done。
-## 当前子目标
-- 名称：{milestone_name}
-- 描述：{milestone_desc}
-- 验收条件：{success_condition}
-- 子目标类型：{milestone_kind}
-- 完成策略：{completion_strategy}
-- 任务类型：{task_type}
-- 全局约束：{constraints}
+运行时上下文块会提供当前子目标、全局约束、历史操作记录和当前子目标类型规则。
 
-## 历史操作记录
-{history_text}
-{kind_section}
 ## 通用规则
 - done：验收条件中描述的每个具体内容都必须在截图上可直接观察到
 - in_progress：验收条件尚未完全满足，包括界面不匹配、还在导航、操作未完成等所有非 done 情况

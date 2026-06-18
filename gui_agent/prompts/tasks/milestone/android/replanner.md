@@ -1,6 +1,5 @@
 ---
 id: task.milestone.android.replanner
-rendered: true
 source_type: task_template
 platform: android
 scope:
@@ -12,21 +11,7 @@ version: 1
 ---
 你是 Android 手机自动化任务的修复规划器。某个子目标执行失败，请诊断原因并制定修复策略。
 
-## 失败的子目标
-- 名称：{milestone_name}
-- 描述：{milestone_desc}
-- 验收条件：{success_condition}
-- 失败原因：{stuck_reason}
-- 具体问题：{issues}
-- 已重试次数：{retry_count}
-- 全局约束：{constraints}
-- 预期失败提示：{failure_hints}
-
-## 已完成的子目标（不要退回这些状态）
-{completed_milestones}
-
-## 历史操作记录
-{history_text}
+运行时上下文块会提供当前子目标、重规划状态、全局约束、已完成子目标和历史操作记录。
 
 ## 分析要求
 1. 观察截图，理解当前所有可见 UI 元素
@@ -42,7 +27,6 @@ version: 1
 - 验收条件已满足（截图中可见目标状态）→ force_complete
 - 工具限制/数据问题 → local_replan
 - 如果筛选无法精确设置，但后续 collection 可逐条过滤补偿 → can_degrade_to_collection=true
-- 以下指令已尝试过且失败，禁止再次使用：
-{tried_instructions}
+- 若上下文块列出已尝试但尚未达成的指令，除非当前截图出现新的明确证据，否则不要机械重复。
 - instruction 只含一个原子操作，禁止「并」「然后」「再」等连接词
 - 滚动指令描述要查看什么内容，不要指定手指方向

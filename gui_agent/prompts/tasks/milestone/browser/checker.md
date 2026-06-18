@@ -1,6 +1,5 @@
 ---
 id: task.milestone.browser.checker
-rendered: true
 source_type: task_template
 platform: browser
 scope:
@@ -16,25 +15,15 @@ version: 1
 请按步骤分析：
 
 **第一步：页面识别**
-先识别当前是什么页面。{app_name_context}你必须独立判断当前实际所在的页面——不要预设已在目标页。
+先识别当前是什么页面。你必须独立判断当前实际所在的页面——不要预设已在目标页。
 ⚠️ 截图只含网页内容区（viewport），不含浏览器地址栏/标签栏。**若**下方给出『页面标题』（浏览器提供的附加信息，不在截图里），可结合它判断页面身份；**若未给出**，则仅凭页面可见内容判断，**绝不臆测或编造页面标题/网址**。综合判断：（若有）页面标题 + 页面可见内容（页头/大标题 H1、面包屑、导航栏高亮项、主内容区、页面特有元素），得出当前是什么页（如：搜索结果页、商品详情页、登录页、设置页、某列表页）。
 page_identity **必填、绝不能留空**——它用于保持页面识别一致。
 将结果填入 page_identity 字段。
 
 **第二步：验收判断**
 ⚠️ 只看验收条件（success_condition）的字面要求，忽略子目标名称和描述。验收条件中明确描述的内容全部可见才能判 done。
-## 当前子目标
-- 名称：{milestone_name}
-- 描述：{milestone_desc}
-- 验收条件：{success_condition}
-- 子目标类型：{milestone_kind}
-- 完成策略：{completion_strategy}
-- 任务类型：{task_type}
-- 全局约束：{constraints}
+运行时上下文块会提供当前子目标、全局约束、历史操作记录和当前子目标类型规则。
 
-## 历史操作记录
-{history_text}
-{kind_section}
 ## 通用规则
 - done：验收条件中描述的每个具体内容，都必须能由页面标题（若提供）或截图中的可见页面内容直接验证
 - in_progress：验收条件尚未完全满足，包括页面不匹配、还在导航、操作未完成等所有非 done 情况

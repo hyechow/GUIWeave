@@ -1,6 +1,5 @@
 ---
 id: task.milestone.browser.loop_frame
-rendered: true
 source_type: task_template
 platform: browser
 scope:
@@ -13,14 +12,7 @@ version: 1
 你是内容收集的页面状态评估员。当前任务正在滚动收集页面列表内容。
 根据当前截图，评估以下内容：
 
-## 当前子目标
-- 名称：{milestone_name}
-- 描述：{milestone_desc}
-- 停止条件：{scroll_stop_condition}
-- 全局约束：{constraints}
-
-## 历史操作记录
-{history_text}
+运行时上下文块会提供当前子目标、停止条件、全局约束和历史操作记录。
 
 ## 评估要点
 ### 0. 页面加载（loading，最先判断）
