@@ -502,6 +502,7 @@ def main() -> int:
                 }
             else:
                 program = None
+                orchestrator_context_reports: list[dict] = []
                 run_max_turns = args.max_turns
                 with bundle.open_session() as platform:
                     _prime(platform)
@@ -556,6 +557,7 @@ def main() -> int:
                                     table_summaries=initial_tables,
                                     png_bytes=initial_png,
                                     prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                                    context_reports=orchestrator_context_reports,
                                 )
                             )
                         )
@@ -592,6 +594,7 @@ def main() -> int:
                             router=None,
                             knowledge=knowledge_summary,
                             program=program,
+                            orchestrator_context_reports=orchestrator_context_reports,
                             stop_requested=esc_stop.requested if esc_stop.enabled else None,
                             platform=platform,
                         )

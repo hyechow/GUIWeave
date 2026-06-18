@@ -118,12 +118,73 @@ def test_budgeter_required_over_ceiling_keeps_required_and_flags_over_budget():
     assert result.over_budget is True
 
 
+def test_budgeter_long_files_knowledge_history_keep_required_and_report_reasons():
+    blocks = [
+        ContextBlock(
+            "runtime.task.file_refs",
+            "file_reference",
+            "goal_at_refs",
+            "f" * 2200,
+            priority=20,
+            ttl="task",
+            budget="required",
+        ),
+        ContextBlock(
+            "knowledge.section.orders",
+            "knowledge_section",
+            "knowledge/browser/shopping_admin/Orders.md",
+            "k" * 1800,
+            priority=50,
+            ttl="session",
+            budget="high",
+        ),
+        ContextBlock(
+            "runtime.history.recent_actions",
+            "runtime_state",
+            "policy_history",
+            "h" * 1800,
+            priority=80,
+            ttl="session",
+            budget="low",
+        ),
+    ]
+
+    result = ContextBudgeter(max_chars=4700).apply(blocks)
+    report = result.to_report(label="planner.knowledge")
+
+    kept = {b.id for b in result.kept}
+    dropped = {b.id for b in result.dropped}
+    assert "runtime.task.file_refs" in kept
+    assert "knowledge.section.orders" in kept
+    assert dropped == {"runtime.history.recent_actions"}
+    assert report["included_count"] == 2
+    assert report["dropped_count"] == 1
+    file_row = next(b for b in report["blocks"] if b["id"] == "runtime.task.file_refs")
+    hist_row = next(b for b in report["blocks"] if b["id"] == "runtime.history.recent_actions")
+    assert file_row["source"] == "goal_at_refs"
+    assert file_row["priority"] == 20
+    assert file_row["ttl"] == "task"
+    assert file_row["truncation_reason"] == "not_truncated"
+    assert hist_row["included"] is False
+    assert hist_row["truncation_reason"] == "dropped_over_budget"
+
+
 def test_render_prompt_context_enforces_ceiling_and_logs_drops():
     logs: list[str] = []
+    reports: list[dict] = []
     blocks = [_blk("keep", "required", 100), _blk("drop", "low", 4000)]
-    text = render_prompt_context(blocks, max_chars=500, label="checker", say=logs.append)
+    text = render_prompt_context(
+        blocks,
+        max_chars=500,
+        label="checker",
+        say=logs.append,
+        report_sink=reports,
+    )
     assert "context: keep" in text and "context: drop" not in text
     assert any("ContextBudget" in line and "checker" in line and "drop" in line for line in logs)
+    assert reports[0]["label"] == "checker"
+    assert reports[0]["included"][0]["id"] == "keep"
+    assert reports[0]["dropped"][0]["id"] == "drop"
 
 
 def _turn(idx: int, mid: str, summary: str, instruction: str | None = None) -> PolicyTurn:

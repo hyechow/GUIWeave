@@ -57,6 +57,7 @@ def make_interactive_turn(
     timings: dict[str, float] | None = None,
     token_usage: dict[str, dict[str, int]] | None = None,
     sections_loaded: list[str] | None = None,
+    llm_context: list[dict] | None = None,
 ) -> PolicyTurn:
     """Build a normal UI turn."""
     return PolicyTurn(
@@ -77,6 +78,7 @@ def make_interactive_turn(
         timings=timings or {},
         token_usage=token_usage or {},
         sections_loaded=list(sections_loaded or []),
+        llm_context=list(llm_context or []),
     )
 
 
@@ -89,6 +91,7 @@ def make_verdict_turn(
     llm_calls: int = 0,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    llm_context: list[dict] | None = None,
 ) -> PolicyTurn:
     """Build an action-less UI verdict turn from the current supervisor state."""
     return make_interactive_turn(
@@ -106,6 +109,11 @@ def make_verdict_turn(
         timings=getattr(supervisor, "_timings", {}),
         token_usage=getattr(supervisor, "_token_usage", {}),
         sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
+        llm_context=list(
+            llm_context
+            if llm_context is not None
+            else getattr(supervisor, "_context_reports", []) or []
+        ),
     )
 
 
@@ -116,24 +124,28 @@ class SupervisorTimingCarry:
         self.timings: dict[str, float] = {}
         self.order: list[str] = []
         self.token_usage: dict[str, dict[str, int]] = {}
+        self.context_reports: list[dict] = []
 
     def __bool__(self) -> bool:
-        return bool(self.timings)
+        return bool(self.timings or self.context_reports)
 
     def collect(self, supervisor: Any) -> None:
         """Accumulate the supervisor timing/token state from a completed handoff step."""
         self._add_timings(getattr(supervisor, "_timings", {}) or {})
         self._add_tokens(getattr(supervisor, "_token_usage", {}) or {})
+        self.context_reports.extend(list(getattr(supervisor, "_context_reports", []) or []))
 
     def merge_into(self, supervisor: Any) -> None:
         """Merge carried handoff timings into the supervisor's final step state."""
-        if not self.timings:
+        if not self.timings and not self.context_reports:
             return
         self._add_timings(getattr(supervisor, "_timings", {}) or {})
         self._add_tokens(getattr(supervisor, "_token_usage", {}) or {})
+        self.context_reports.extend(list(getattr(supervisor, "_context_reports", []) or []))
         supervisor._timings = self.timings
         supervisor._timings_order = self.order
         supervisor._token_usage = self.token_usage
+        supervisor._context_reports = self.context_reports
 
     def _add_timings(self, timings: dict[str, float]) -> None:
         for key, value in timings.items():
@@ -222,6 +234,7 @@ def record_interactive_turn(
         timings=getattr(supervisor, "_timings", {}),
         token_usage=getattr(supervisor, "_token_usage", {}),
         sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
+        llm_context=list(getattr(supervisor, "_context_reports", []) or []),
     )
     print_timings(supervisor)
     context.turns.append(turn)
@@ -271,6 +284,7 @@ def make_non_ui_turn(
     llm_calls: int = 0,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    llm_context: list[dict] | None = None,
 ) -> PolicyTurn:
     """Build a non-interactive primitive turn (`read` / `data_query`)."""
     elapsed = max(0.0, time.perf_counter() - started_at) if started_at is not None else 0.0
@@ -308,4 +322,5 @@ def make_non_ui_turn(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         timings={kind: elapsed},
+        llm_context=list(llm_context or []),
     )

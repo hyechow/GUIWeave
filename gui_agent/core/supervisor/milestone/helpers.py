@@ -197,6 +197,7 @@ def assemble_messages(
     image_resize: str = "retina",
     max_chars: Optional[int] = None,
     label: str = "prompt",
+    context_reports: list[dict] | None = None,
 ) -> list:
     """Single context entry path for milestone vision calls.
 
@@ -214,6 +215,8 @@ def assemble_messages(
     hum_live = [b for b in human_blocks if b is not None and (b.content or "").strip()]
     budgeter = ContextBudgeter(max_chars or DEFAULT_CONTEXT_BLOCKS_MAX_CHARS)
     result = budgeter.apply([*sys_live, *hum_live])
+    if context_reports is not None and result.decisions:
+        context_reports.append(result.to_report(label=label))
     if result.dropped:
         names = "、".join(f"{b.id}[{b.budget}]({len(b.render())}字)" for b in result.dropped)
         print(f"  [ContextBudget] {label} 超预算({budgeter.max_chars}字),丢弃 {len(result.dropped)} 块: {names}")
@@ -500,6 +503,7 @@ def run_checker(
     _is_retry: bool = False,
     prompts: Optional[MilestonePrompts] = None,
     check_knowledge: str = "",
+    context_reports: list[dict] | None = None,
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals.
 
@@ -553,6 +557,7 @@ def run_checker(
         human_blocks=[form_controls_block(getattr(observation, "form_controls", None))],
         image_resize=prompts.image_resize,
         label="checker",
+        context_reports=context_reports,
     )
     result = invoke_structured(_make_llm(), msgs, _SingleCheckResult)
 
@@ -582,6 +587,7 @@ def run_checker(
             _is_retry=True,
             prompts=prompts,
             check_knowledge=check_knowledge,
+            context_reports=context_reports,
         )
         _strip_progress_evidence(result)
 
@@ -631,6 +637,7 @@ def run_checker(
             _is_retry=True,
             prompts=prompts,
             check_knowledge=check_knowledge,
+            context_reports=context_reports,
         )
         _strip_progress_evidence(result)
     if result.status == "done" and _still_invalid(result):
@@ -688,6 +695,7 @@ def run_planner(
     app_knowledge: Optional[str] = None,
     elements_knowledge: Optional[str] = None,
     prompts: Optional[MilestonePrompts] = None,
+    context_reports: list[dict] | None = None,
 ) -> _PlanResult:
     """Run the step planner. Used by both production and evals."""
     if prompts is None:
@@ -743,6 +751,7 @@ def run_planner(
         ],
         image_resize=prompts.image_resize,
         label="planner",
+        context_reports=context_reports,
     )
     plan_schema = prompts.plan_result_schema or _PlanResult
     plan = invoke_structured(_make_llm(), msgs, plan_schema)
@@ -770,6 +779,7 @@ def run_planner(
                 app_knowledge=app_knowledge,
                 elements_knowledge=elements_knowledge,
                 prompts=prompts,
+                context_reports=context_reports,
             )
         reopened = _reopens_selected_dropdown(plan.instruction, milestone.id, history)
         if reopened:
@@ -787,6 +797,7 @@ def run_planner(
                 app_knowledge=app_knowledge,
                 elements_knowledge=elements_knowledge,
                 prompts=prompts,
+                context_reports=context_reports,
             )
     return _normalize_picker_plan_direction(plan)
 

@@ -44,6 +44,7 @@ def structured_read(
     read_spec: str = "",
     check_knowledge: str = "",
     prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
+    context_reports: list[dict] | None = None,
 ) -> dict[str, str]:
     """Read `returns` fields off the frame -> {field: value} (empty when not readable).
 
@@ -85,7 +86,7 @@ def structured_read(
             priority=50,
             content="【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge,
         ) if check_knowledge else None,
-    ])
+    ], label="structured_read.dynamic", report_sink=context_reports)
     prepare_png = prepare_vision_prompt_png or (lambda b: b)
     b64 = base64.b64encode(prepare_png(png_bytes)).decode()
     messages = [

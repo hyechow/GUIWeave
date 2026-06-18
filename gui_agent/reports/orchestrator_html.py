@@ -258,6 +258,46 @@ def _render_non_ui_log(orchestrator: dict, run_items: list[dict]) -> str:
     )
 
 
+def _render_orchestrator_context_reports(orchestrator: dict) -> str:
+    reports = orchestrator.get("context_reports") or []
+    if not reports:
+        return ""
+    rows: list[str] = []
+    summaries: list[str] = []
+    for report in reports:
+        if not isinstance(report, dict) or report.get("kind") != "context_budget":
+            continue
+        label = _safe(str(report.get("label") or "orchestrator"))
+        included = int(report.get("included_count") or len(report.get("included") or []))
+        dropped = int(report.get("dropped_count") or len(report.get("dropped") or []))
+        summaries.append(f"{label}: +{included}/-{dropped}")
+        rows.append(
+            f'<div class="ctx-row"><strong>{label}</strong> '
+            f'<span class="ctx-keep">included={included}</span> '
+            f'<span class="ctx-drop">dropped={dropped}</span> '
+            f'kept={report.get("kept_chars", 0)} chars/{report.get("kept_tokens", 0)} tok · '
+            f'max={report.get("max_chars")}</div>'
+        )
+        for block in (report.get("blocks") or []):
+            mark = "keep" if block.get("included") else "drop"
+            cls = "ctx-keep" if block.get("included") else "ctx-drop"
+            rows.append(
+                f'<div class="ctx-row {cls}">  {mark} {_safe(str(block.get("id") or ""))} '
+                f'source={_safe(str(block.get("source") or ""))} '
+                f'prio={block.get("priority")} ttl={_safe(str(block.get("ttl") or ""))} '
+                f'budget={_safe(str(block.get("budget") or ""))} '
+                f'{block.get("estimated_chars", 0)} chars/{block.get("estimated_tokens", 0)} tok · '
+                f'{_safe(str(block.get("truncation_reason") or block.get("reason") or ""))}</div>'
+            )
+    if not rows:
+        return ""
+    summary = _safe(" · ".join(summaries[:3]) + (" ..." if len(summaries) > 3 else ""))
+    return (
+        f'<details class="ctx-detail"><summary>上下文决策 · {summary}</summary>'
+        f'<div class="ctx-list">{"".join(rows)}</div></details>'
+    )
+
+
 def _render_program_section(orchestrator: dict | None) -> str:
     """Orchestrator mode: render the decomposed DSL program as its OWN section, #0 编排.
 
@@ -354,6 +394,7 @@ def _render_program_section(orchestrator: dict | None) -> str:
         f'<div class="prog-input"><span class="prog-input-label">输入</span>{goal}'
         f'<span class="prog-input-arrow">↓ 分解为</span></div>'
     ) if goal else ""
+    context_html = _render_orchestrator_context_reports(orchestrator)
     return (
         f'<div class="milestone prog-section" id="ms-orchestrate">'
         f'<div class="milestone-header">'
@@ -361,6 +402,6 @@ def _render_program_section(orchestrator: dict | None) -> str:
         f'<span class="milestone-name">编排 · decompose → DSL program</span>'
         f'<span class="milestone-badge milestone-badge-default">program</span>'
         f'</div>'
-        f'<div class="prog-body">{input_html}{body}</div>'
+        f'<div class="prog-body">{input_html}{context_html}{body}</div>'
         f'</div>'
     )

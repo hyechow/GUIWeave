@@ -206,6 +206,7 @@ def main(
             # interpreter sequences milestones instead of the supervisor's DAG walker. program=None
             # (default) → the DAG path is unchanged.
             program = None
+            orchestrator_context_reports: list[dict] = []
             run_max_turns = args.max_turns
             if args.orchestrator:
                 from gui_agent.core.orchestrator import (
@@ -229,7 +230,8 @@ def main(
                               current_url=cur_url, current_title=cur_title,
                               current_site=cur_site, table_summaries=initial_tables,
                               png_bytes=initial_png,
-                              prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
+                              prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                              context_reports=orchestrator_context_reports)
                 ))
                 # The config must ALSO reach the execution-time planner deterministically — the
                 # supervisor's constraints flow to every milestone's planner, and reseed never clears
@@ -273,6 +275,7 @@ def main(
                         router=router_result.model_dump() if router_result else None,
                         knowledge=knowledge_summary,
                         program=program,
+                        orchestrator_context_reports=orchestrator_context_reports,
                         stop_requested=esc_stop.requested if esc_stop.enabled else None,
                         platform=platform,
                     )

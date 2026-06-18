@@ -222,6 +222,13 @@ HTML_TEMPLATE = """\
   .detail-gap {{ font-size: 11px; font-weight: 600; color: #f59e0b; background: #fffbeb; padding: 1px 6px; border-radius: 10px; margin-left: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
   .detail-instruction {{ font-size: 12px; color: var(--muted); }}
   .detail-summary {{ font-size: 12px; color: #475569; line-height: 1.4; }}
+  .ctx-detail {{ margin-top: 2px; border: 1px solid #e0f2fe; background: #f8fdff; border-radius: 7px; padding: 7px 9px; }}
+  .ctx-detail summary {{ cursor: pointer; color: #0369a1; font-size: 11px; font-weight: 700; }}
+  .ctx-list {{ margin-top: 7px; display: flex; flex-direction: column; gap: 6px; }}
+  .ctx-row {{ font-size: 11px; line-height: 1.45; color: #475569; font-family: ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }}
+  .ctx-row strong {{ color: #0f172a; font-family: -apple-system, "PingFang SC", sans-serif; }}
+  .ctx-drop {{ color: #b45309; }}
+  .ctx-keep {{ color: #047857; }}
 
   /* Timing bar */
   .timing-bar {{ display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: #f1f5f9; margin-top: 2px; }}
@@ -452,6 +459,64 @@ def _render_token_html(token_usage: dict) -> str:
     )
 
 
+def _render_context_decisions_html(reports: list[dict]) -> str:
+    if not reports:
+        return ""
+    rows: list[str] = []
+    summaries: list[str] = []
+    for report in reports:
+        kind = report.get("kind")
+        label = _safe(str(report.get("label") or kind or "context"))
+        if kind == "context_budget":
+            included = int(report.get("included_count") or len(report.get("included") or []))
+            dropped = int(report.get("dropped_count") or len(report.get("dropped") or []))
+            chars = int(report.get("kept_chars") or 0)
+            toks = int(report.get("kept_tokens") or report.get("estimated_tokens") or 0)
+            summaries.append(f"{label}: +{included}/-{dropped}")
+            rows.append(
+                f'<div class="ctx-row"><strong>{label}</strong> '
+                f'<span class="ctx-keep">included={included}</span> '
+                f'<span class="ctx-drop">dropped={dropped}</span> '
+                f'kept={chars} chars/{toks} tok · max={report.get("max_chars")}</div>'
+            )
+            for block in (report.get("blocks") or []):
+                mark = "keep" if block.get("included") else "drop"
+                cls = "ctx-keep" if block.get("included") else "ctx-drop"
+                rows.append(
+                    f'<div class="ctx-row {cls}">  {mark} {_safe(str(block.get("id") or ""))} '
+                    f'source={_safe(str(block.get("source") or ""))} '
+                    f'type={_safe(str(block.get("source_type") or ""))} '
+                    f'prio={block.get("priority")} ttl={_safe(str(block.get("ttl") or ""))} '
+                    f'budget={_safe(str(block.get("budget") or ""))} '
+                    f'{block.get("estimated_chars", 0)} chars/{block.get("estimated_tokens", 0)} tok · '
+                    f'{_safe(str(block.get("truncation_reason") or block.get("reason") or ""))}</div>'
+                )
+        elif kind == "selector":
+            cache = _safe(str(report.get("cache") or ""))
+            sections = report.get("sections") or []
+            ids = report.get("section_ids") or []
+            fallback = "yes" if report.get("fallback_triggered") else "no"
+            summaries.append(f"{label}: cache={cache}, fallback={fallback}")
+            rows.append(
+                f'<div class="ctx-row"><strong>{label}</strong> cache={cache} '
+                f'page_known={str(bool(report.get("page_known"))).lower()} '
+                f'cached={str(bool(report.get("cached"))).lower()} '
+                f'ids={_safe(", ".join(str(i) for i in ids) or "-")} '
+                f'sections={_safe(", ".join(str(s) for s in sections) or "-")} '
+                f'fallback={fallback}:{_safe(str(report.get("fallback_reason") or ""))}</div>'
+            )
+            if report.get("error") or report.get("reason"):
+                rows.append(
+                    f'<div class="ctx-row">  reason={_safe(str(report.get("reason") or ""))} '
+                    f'error={_safe(str(report.get("error") or ""))}</div>'
+                )
+    summary = _safe(" · ".join(summaries[:4]) + (" ..." if len(summaries) > 4 else ""))
+    return (
+        f'<details class="ctx-detail"><summary>上下文决策 · {summary}</summary>'
+        f'<div class="ctx-list">{"".join(rows)}</div></details>'
+    )
+
+
 def _gap_seconds(prev_iso: str, cur_iso: str) -> float | None:
     """Seconds between two ISO timestamps, or None if either is unparseable."""
     if not prev_iso or not cur_iso:
@@ -569,6 +634,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         {sections_html}
         {summary_html}
         {non_ui_html}
+        {_render_context_decisions_html(step.llm_context)}
         {_render_timing_html(step.timings)}
         {_render_token_html(step.token_usage)}
       </div>

@@ -118,6 +118,7 @@ def run_agent_loop(
     on_session_open: object = None,  # callable(platform) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
     program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
+    orchestrator_context_reports: list[dict] | None = None,
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
 ) -> dict:
@@ -306,6 +307,7 @@ def run_agent_loop(
             context.orchestrator = {
                 "program": program.model_dump(mode="json"),
                 "max_turns": max_turns,
+                "context_reports": list(orchestrator_context_reports or []),
             }
             _gen = _interp.steps()
             try:

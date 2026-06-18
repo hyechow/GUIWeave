@@ -75,6 +75,7 @@ def drive_pending_non_ui(
         turn_started = time.perf_counter()
         calls_before = get_llm_call_count()
         tokens_before = get_llm_token_usage()
+        context_reports: list[dict] = []
         reads: dict[str, str] = {}
         completed = True
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
@@ -90,6 +91,7 @@ def drive_pending_non_ui(
                 read_spec=cur_run.read_spec,
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                context_reports=context_reports,
             )
             say(f"  [Orchestrator] 只读验收帧 {cur_run.returns} → {reads}")
         elif cur_run.kind == "data_query":
@@ -229,6 +231,7 @@ def drive_pending_non_ui(
                 llm_calls=get_llm_call_count() - calls_before,
                 input_tokens=get_llm_token_usage()[0] - tokens_before[0],
                 output_tokens=get_llm_token_usage()[1] - tokens_before[1],
+                llm_context=context_reports,
             )
         )
         try:

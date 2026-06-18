@@ -108,6 +108,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
         self._last_sections_loaded: list[str] = []  # progressive section stems injected this turn (logged)
+        self._context_reports: list[dict] = []       # context/selector decisions for this turn
         # KnowledgeSelector cache: (milestone_id, normalized page_identity) → section stems.
         # Selection only changes when the page or the milestone changes, so within a key the
         # selector LLM is never re-invoked (empty selections are cached too).
@@ -167,6 +168,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._timings_order.clear()
         self._token_usage.clear()
         self._last_sections_loaded = []  # reset; _invoke_planner fills it when progressive knowledge is active
+        self._context_reports = []
         # Report-only carry-overs: clear so a turn that DOESN'T run the planner/replan reports
         # null instead of the previous turn's stale plan (e.g. the terminal "done" turn). Both
         # are read solely by runner's _extract_plan/_extract_replan — no internal logic depends
@@ -966,6 +968,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             extra=extra,
             prompts=self._prompts,
             check_knowledge=self._check_knowledge,
+            context_reports=self._context_reports,
         )
 
     def _loop_check(
@@ -1001,7 +1004,16 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         page_known = _page_known(page_id)
         key = (milestone.id, _norm_page(page_id))
         if page_known and key in self._selector_cache:
-            return self._selector_cache[key]
+            stems = self._selector_cache[key]
+            self._record_selector_report(
+                milestone=milestone,
+                page_identity=page_id,
+                page_known=page_known,
+                cache="hit",
+                sections=stems,
+                cached=True,
+            )
+            return stems
         signals = [page_id, milestone.name, milestone.success_condition]
         try:
             with _Timer(self._timings, self._timings_order, "selector", self._token_usage):
@@ -1011,17 +1023,77 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     prompts=self._prompts,
                 )
             stems = self._pk.by_ids(sel.section_ids)
+            fallback_triggered = False
+            fallback_reason = ""
             if not stems:  # clean-empty selector: try the deterministic fallback before giving up
-                stems = self._pk.match_signals(signals)
+                fallback = self._pk.match_signals(signals)
+                fallback_triggered = bool(fallback)
+                fallback_reason = "empty_selector" if fallback else ""
+                stems = fallback
             if stems or sel.section_ids:
                 names = "、".join(stems) if stems else "（ID 未命中）"
                 print(f"  [Selector] {names}" + (f" — {sel.reason}" if sel.reason else ""))
             if page_known:
                 self._selector_cache[key] = stems
+            self._record_selector_report(
+                milestone=milestone,
+                page_identity=page_id,
+                page_known=page_known,
+                cache="miss",
+                section_ids=list(sel.section_ids or []),
+                sections=stems,
+                fallback_triggered=fallback_triggered,
+                fallback_reason=fallback_reason,
+                cached=page_known,
+                reason=sel.reason,
+            )
             return stems
         except Exception as exc:  # noqa: BLE001 — selector must never block the planner
             print(f"  [Selector] 调用失败，回退确定性模糊匹配：{exc}")
-            return self._pk.match_signals(signals)
+            stems = self._pk.match_signals(signals)
+            self._record_selector_report(
+                milestone=milestone,
+                page_identity=page_id,
+                page_known=page_known,
+                cache="miss",
+                sections=stems,
+                fallback_triggered=bool(stems),
+                fallback_reason="selector_error",
+                cached=False,
+                error=str(exc),
+            )
+            return stems
+
+    def _record_selector_report(
+        self,
+        *,
+        milestone: Milestone,
+        page_identity: str,
+        page_known: bool,
+        cache: str,
+        section_ids: list[str] | None = None,
+        sections: list[str] | None = None,
+        fallback_triggered: bool = False,
+        fallback_reason: str = "",
+        cached: bool = False,
+        reason: str = "",
+        error: str = "",
+    ) -> None:
+        self._context_reports.append({
+            "kind": "selector",
+            "label": "knowledge.selector",
+            "milestone_id": milestone.id,
+            "page_identity": page_identity,
+            "page_known": page_known,
+            "cache": cache,
+            "section_ids": list(section_ids or []),
+            "sections": list(sections or []),
+            "fallback_triggered": fallback_triggered,
+            "fallback_reason": fallback_reason,
+            "cached": cached,
+            "reason": reason,
+            "error": error,
+        })
 
     def _elements_for(self, milestone: Milestone, check: _SingleCheckResult) -> Optional[str]:
         """Element knowledge for instruction generation: the per-section bodies the
@@ -1049,6 +1121,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             app_knowledge=self._app_knowledge,
             elements_knowledge=elements,
             prompts=self._prompts,
+            context_reports=self._context_reports,
         )
 
     def _invoke_loop_scroll(
@@ -1108,6 +1181,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             ],
             image_resize=self._prompts.image_resize,
             label="replanner",
+            context_reports=self._context_reports,
         )
         result = invoke_structured(self._llm(), msgs, _ReplanResult)
         if self._is_sequence(result.instruction):

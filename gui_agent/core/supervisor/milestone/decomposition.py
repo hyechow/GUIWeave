@@ -177,7 +177,11 @@ class MilestoneDecompositionMixin:
             knowledge_block("app_navigation", self._app_knowledge),
             feedback_block(feedback),
         ])
-        context_text = render_prompt_context(context_blocks)
+        context_text = render_prompt_context(
+            context_blocks,
+            label="milestone.decompose",
+            report_sink=getattr(self, "_context_reports", None),
+        )
         msgs[1].content = [{"type": "text", "text": context_text}] + msgs[1].content
         resp = invoke_structured(llm, msgs, _DecomposeResponse)
 
