@@ -18,17 +18,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from gui_agent.context import ContextBlock
+from gui_agent.context.runtime import render_prompt_context
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
+from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-_SYSTEM = """\
-你从截图读取【指定字段】的当前值，用于程序判断。这是通用读法，具体「读什么、怎么判读」以本次的【读取说明】为准。对每个字段：
-1. 先在 evidence 里写出你在界面上看到的、与该字段相关的具体信号——包括文字，也包括图标/颜色/形状/位置（例：「起点终点输入框之间右侧有一个绿色圆形对勾✓」）。
-2. 再据【读取说明】（任务级，优先）和【界面信号参考】（应用约定，补充）把该信号判读成 value 的文字值。**图标/颜色信号必须判读成文字写进 value，不能因为它不是文字就留空**（如绿色✓→连通、红字「路径不可达」→不可达、灰色?→未检测）。
-3. 确实读不到（界面没有该信息）才把 value 留空。
-只读被指定的字段，不要补充其他字段、不要编造。
-"""
+_SYSTEM = load_prompt_text("task.orchestrator.structured_read")
 
 
 class _FieldRead(BaseModel):
@@ -57,11 +54,32 @@ def structured_read(
         model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
         extra_body={"enable_thinking": False},
     )
-    text = f"读取以下字段的当前值：{'、'.join(returns)}。"
-    if read_spec:
-        text += ("\n【读取说明】（任务定义，按此判读每个字段；优先于下方应用约定）：\n" + read_spec)
-    if check_knowledge:
-        text += ("\n【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge)
+    text = render_prompt_context([
+        ContextBlock(
+            id="runtime.read.requested_fields",
+            source_type="runtime_state",
+            source="orchestrator.read",
+            ttl="turn",
+            priority=20,
+            content=f"读取以下字段的当前值：{'、'.join(returns)}。",
+        ),
+        ContextBlock(
+            id="runtime.read.spec",
+            source_type="runtime_state",
+            source="program.read_spec",
+            ttl="task",
+            priority=25,
+            content="【读取说明】（任务定义，按此判读每个字段；优先于下方应用约定）：\n" + read_spec,
+        ) if read_spec else None,
+        ContextBlock(
+            id="knowledge.check_rules",
+            source_type="knowledge_base",
+            source="knowledge_base",
+            ttl="session",
+            priority=50,
+            content="【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge,
+        ) if check_knowledge else None,
+    ])
     b64 = base64.b64encode(resize_to_logical_png(png_bytes)).decode()
     messages = [
         SystemMessage(content=_SYSTEM),

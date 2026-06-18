@@ -10,6 +10,14 @@ from typing import Optional
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from gui_agent.context.runtime import (
+    browser_page_block,
+    feedback_block,
+    file_reference_block,
+    knowledge_block,
+    render_prompt_context,
+    task_goal_block,
+)
 from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.schemas import Milestone, Observation
@@ -153,9 +161,10 @@ class MilestoneDecompositionMixin:
         feedback: list[str], file_section: str = "",
     ) -> None:
         msgs = self._msgs(self._prompts.decompose, observation)
-        user_parts: list[dict] = [{"type": "text", "text": f"用户任务：{goal}"}]
-        if file_section:
-            user_parts.append({"type": "text", "text": f"\n{file_section}"})
+        context_blocks = [
+            task_goal_block(goal),
+            file_reference_block(file_section),
+        ]
         if observation.url:
             site = ""
             try:
@@ -163,19 +172,13 @@ class MilestoneDecompositionMixin:
                 site = match_app_by_url(observation.url, observation.source) or ""
             except Exception:
                 site = ""
-            page = "\n## 当前前台页面（以此为准，截图看不到地址栏）"
-            if site:
-                page += f"\n站点：{site}（已知应用）"
-            page += f"\nurl：{observation.url}"
-            if observation.title:
-                page += f"\n页面：{observation.title}"
-            user_parts.append({"type": "text", "text": page})
-        if self._app_knowledge:
-            user_parts.append({"type": "text", "text": f"\n## 应用导航知识\n{self._app_knowledge}"})
-        if feedback:
-            fb = "\n".join(f"  - {i}" for i in feedback)
-            user_parts.append({"type": "text", "text": f"\n上一轮分解存在以下问题，请修正：\n{fb}"})
-        msgs[1].content = user_parts + msgs[1].content
+            context_blocks.append(browser_page_block(observation.url, observation.title, site=site))
+        context_blocks.extend([
+            knowledge_block("app_navigation", self._app_knowledge),
+            feedback_block(feedback),
+        ])
+        context_text = render_prompt_context(context_blocks)
+        msgs[1].content = [{"type": "text", "text": context_text}] + msgs[1].content
         resp = invoke_structured(llm, msgs, _DecomposeResponse)
 
         self._global_constraints = resp.global_constraints

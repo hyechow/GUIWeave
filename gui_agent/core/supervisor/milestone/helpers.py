@@ -1,7 +1,6 @@
 import base64
 import json
 import re
-from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
@@ -10,7 +9,18 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from llm.structured import invoke_structured
+from gui_agent.context.runtime import (
+    acceptance_items_block,
+    current_date_block,
+    extra_instruction_block,
+    form_controls_block,
+    format_form_controls_text,
+    format_history_text,
+    history_block,
+    knowledge_block,
+    page_title_block,
+    render_prompt_context,
+)
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import (
@@ -19,6 +29,8 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     split_acceptance_items,
 )
+from gui_agent.prompts import load_prompt_text
+from llm.structured import invoke_structured
 
 from .schemas import (
     MilestonePrompts,
@@ -31,8 +43,9 @@ from .schemas import (
 
 def _default_milestone_prompts() -> MilestonePrompts:
     """Lazy iphone-prompts default: keeps every no-prompts caller (iphone factory,
-    evals, tests, scripts) working unchanged while the prompt STRINGS live in the
-    iphone adapter — not core. A platform that wants its own prompts injects them."""
+    evals, tests, scripts) working unchanged while prompt bodies live as Markdown
+    assets loaded by the iphone adapter. A platform that wants its own prompts
+    injects them."""
     from gui_agent.adapters.iphone.supervisor.milestone.prompts import (
         IPHONE_MILESTONE_PROMPTS,
     )
@@ -43,42 +56,7 @@ load_dotenv()
 
 
 def _format_history(history: list[PolicyTurn]) -> str:
-    if not history:
-        return "（无历史记录，这是第一轮）"
-    recent = history[-8:]
-    lines = []
-    for idx, turn in enumerate(recent):
-        sv = turn.supervisor
-        next_sv = recent[idx + 1].supervisor if idx + 1 < len(recent) else None
-        result = next_sv.summary if next_sv else "（结果尚未记录）"
-        unmet = (
-            turn.executed
-            and next_sv
-            and next_sv.milestone_id == sv.milestone_id
-            and (
-                "卡住" in (next_sv.summary or "")
-                or "重试" in (next_sv.summary or "")
-                or "尚未达成" in (next_sv.summary or "")
-                or "调整策略" in (next_sv.summary or "")
-            )
-        )
-        prefix = "⚠️ " if unmet else ""
-        if turn.action_decision and turn.executed:
-            action = turn.action_decision.action
-            outcome = f"未达成: {result}" if unmet else f"结果: {result}"
-            lines.append(
-                f"{turn.index}. {prefix}指令=「{sv.instruction}」"
-                f" → [{action.action_type}] {action.description}"
-                f" → {outcome}"
-            )
-        elif turn.action_decision and not turn.executed:
-            action = turn.action_decision.action
-            lines.append(
-                f"{turn.index}. {prefix}指令=「{sv.instruction}」 → [未执行] [{action.action_type}] {action.description}"
-            )
-        else:
-            lines.append(f"{turn.index}. [跳过动作] {sv.summary} → 结果: {result}")
-    return "\n".join(lines)
+    return format_history_text(history)
 
 
 # `@<path>` file references inside the goal text (e.g. 「按 @tmp_scripts/sim.json 的配置新建」).
@@ -172,10 +150,9 @@ def _prepare_prompt_png(png_bytes: bytes, image_resize: str = "retina") -> bytes
 
 
 def _build_msgs(system_prompt: str, png_bytes: bytes, *, image_resize: str = "retina") -> list:
-    today = datetime.now().strftime("%Y年%m月%d日 %A")
     b64 = base64.b64encode(_prepare_prompt_png(png_bytes, image_resize)).decode()
     return [
-        SystemMessage(content=f"{system_prompt}\n\n当前日期：{today}"),
+        SystemMessage(content=f"{system_prompt}\n\n{current_date_block().render()}"),
         HumanMessage(content=[
             {"type": "text", "text": "请根据当前屏幕做出决策。"},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
@@ -189,64 +166,24 @@ def _inject_knowledge(
     elements_knowledge: str | None,
 ) -> None:
     """Inject navigation and elements knowledge into the user message."""
-    parts: list[dict] = []
-    if app_knowledge:
-        parts.append({"type": "text", "text": f"## 应用导航知识\n{app_knowledge}\n\n"})
-    if elements_knowledge:
-        parts.append({"type": "text", "text": f"## 页面元素知识\n{elements_knowledge}\n\n"})
-    if parts:
-        msgs[1].content = parts + msgs[1].content
+    text = render_prompt_context([
+        knowledge_block("app_navigation", app_knowledge),
+        knowledge_block("page_elements", elements_knowledge),
+    ])
+    if text:
+        msgs[1].content = [{"type": "text", "text": f"{text}\n\n"}] + msgs[1].content
 
 
 def _format_form_controls(form_controls: list[dict] | None) -> str:
-    """Compact structured form-control inventory supplied by a platform adapter."""
-    if not form_controls:
-        return ""
-    lines: list[str] = []
-    for item in form_controls[:25]:
-        if not isinstance(item, dict):
-            continue
-        label = str(
-            item.get("label")
-            or item.get("name")
-            or item.get("id")
-            or item.get("placeholder")
-            or "未命名控件"
-        ).strip()
-        kind = str(item.get("kind") or "control").strip()
-        current = str(item.get("selected_text") or item.get("value") or "").strip()
-        bits = [f"{label}: {kind}"]
-        if current or kind == "native_select":
-            bits.append(f'current="{current}"')
-        if item.get("focused") is True:
-            bits.append("focused=true")
-        options = item.get("options")
-        if isinstance(options, list) and options:
-            shown = [str(opt) for opt in options[:20]]
-            suffix = ", ..." if len(options) > len(shown) else ""
-            bits.append("options=[" + ", ".join(shown) + suffix + "]")
-        rect = item.get("rect")
-        if isinstance(rect, dict) and isinstance(rect.get("x"), int) and isinstance(rect.get("y"), int):
-            bits.append(f"center=({rect['x']},{rect['y']})")
-        lines.append("- " + "; ".join(bits))
-    if not lines:
-        return ""
-    return (
-        "## 结构化表单控件（适配器感知，不是截图文本）\n"
-        "这些控件由当前平台适配器提供，只包含可见可编辑控件的类型、当前值和候选项。"
-        "若某控件可由适配器直接设置候选值，应规划为“选择/设置 <字段> 为 <选项>”，"
-        "不要强行规划成“点击展开后等待选项可见”。\n"
-        + "\n".join(lines)
-    )
+    return format_form_controls_text(form_controls)
 
 
 def _inject_observation_context(msgs: list, observation: Observation) -> None:
-    parts: list[dict] = []
-    form_text = _format_form_controls(getattr(observation, "form_controls", None))
-    if form_text:
-        parts.append({"type": "text", "text": f"{form_text}\n\n"})
-    if parts:
-        msgs[1].content = parts + msgs[1].content
+    text = render_prompt_context([
+        form_controls_block(getattr(observation, "form_controls", None)),
+    ])
+    if text:
+        msgs[1].content = [{"type": "text", "text": f"{text}\n\n"}] + msgs[1].content
 
 
 _OPEN_SELECT_RE = re.compile(r"点击|打开|展开|激活|下拉箭头|选项列表")
@@ -541,41 +478,29 @@ def run_checker(
         completion_strategy=milestone.completion_strategy,
         task_type=task_type,
         constraints=json.dumps(constraints, ensure_ascii=False),
-        history_text=_format_history(history),
+        history_text=history_block(history).render(),
         app_name_context=app_name_context,
         kind_section=kind_section,
     )
-    if extra:
-        prompt += f"\n\n## 输出修正要求\n{extra}"
+
     # Inject the tab TITLE (the viewport-language page name the screenshot doesn't show) as
     # an auxiliary identity signal, so the checker does not need to infer it from pixels. The URL is deliberately NOT
     # injected — a machine URL adds little discriminating value as LLM text and costs tokens; it
     # is consumed programmatically instead (url-change = navigation, in the supervisor). Only
     # browser perception supplies a title; iphone/android leave it None and nothing is injected.
     title = getattr(observation, "title", None)
-    if title:
-        prompt += (
-            "\n\n## 附加页面标题（不在截图里，仅作页面身份辅助信号；仍需结合可见内容判断）\n"
-            f"- 当前页面标题：{title}"
-        )
     # Per-item checklist: enumerate the acceptance sub-conditions and ask the checker to judge each
     # independently (met + evidence) into item_verdicts. Drives the checklist's per-item status; the
     # overall `status` (which gates advance/replan) is unchanged.
     accept_items = split_acceptance_items(milestone.success_condition, milestone.name)
-    if accept_items:
-        enumerated = "\n".join(f"{i}) {t}" for i, t in enumerate(accept_items, 1))
-        prompt += (
-            "\n\n## 逐项验收（填入 item_verdicts）\n"
-            "对下列每个验收子项独立判定：met（是否满足）+ 一句可见证据，按对应 index 填入 item_verdicts。"
-            "逐项判定不改变你对整体 status 的综合判断。\n"
-            f"{enumerated}"
-        )
-    if check_knowledge:
-        prompt += (
-            "\n\n## 应用验收观察规则（来自知识库，描述该应用界面的实际显示形态与完成标志；"
-            "这是最终解释规则；若它与通用规则或逐项验收的字面理解冲突，以本节对界面事实的解释为准）\n"
-            f"{check_knowledge}"
-        )
+    dynamic_context = render_prompt_context([
+        extra_instruction_block(extra, source="checker_guard"),
+        page_title_block(title),
+        acceptance_items_block(accept_items),
+        knowledge_block("check_rules", check_knowledge),
+    ])
+    if dynamic_context:
+        prompt += f"\n\n{dynamic_context}"
     msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
     _inject_observation_context(msgs, observation)
     result = invoke_structured(_make_llm(), msgs, _SingleCheckResult)
@@ -667,24 +592,7 @@ def run_checker(
     return result
 
 
-_SELECTOR_PROMPT = """\
-你是知识章节选择器。系统正在操作一个业务应用，下面给出当前任务背景和一份知识章节清单（仅 ID 和标题）。\
-请判断哪些章节的内容对**当前页面上的下一步操作**最有帮助。
-
-## 任务背景
-- 总目标：{goal}
-- 当前子目标：{milestone_name} — {milestone_desc}
-- 完成标准：{success_condition}
-- 当前页面：{page_identity}
-
-## 选择要求
-- 从清单中挑出最相关的 1~3 个章节，把方括号里的 ID 原样填入 section_ids（如 s07）。
-- 优先选与「当前页面」直接对应的章节，其次是完成「当前子目标」所需的操作流程章节。
-- 没有相关章节就返回空列表，不要凑数。
-
-## 知识章节清单
-{manifest}
-"""
+_SELECTOR_PROMPT = load_prompt_text("task.milestone.knowledge_selector")
 
 
 def run_selector(
@@ -772,10 +680,13 @@ def run_planner(
         issues=json.dumps(check.issues, ensure_ascii=False),
         missing_evidence=json.dumps(check.missing_evidence, ensure_ascii=False),
         check_summary=check.summary,
-        history_text=_format_history(history),
+        history_text=history_block(history).render(),
     )
-    if extra:
-        prompt += f"\n\n## 输出修正要求\n{extra}"
+    dynamic_context = render_prompt_context([
+        extra_instruction_block(extra, source="planner_guard"),
+    ])
+    if dynamic_context:
+        prompt += f"\n\n{dynamic_context}"
     msgs = _build_msgs(prompt, observation.png_bytes, image_resize=prompts.image_resize)
     _inject_knowledge(msgs, app_knowledge, elements_knowledge)
     _inject_observation_context(msgs, observation)
@@ -842,7 +753,7 @@ def run_loop_check(
         milestone_desc=milestone.description,
         scroll_stop_condition=milestone.scroll_stop_condition or "滚动至列表物理底部时停止",
         constraints=json.dumps(constraints or [], ensure_ascii=False),
-        history_text=_format_history(history),
+        history_text=history_block(history).render(),
     )
     return invoke_structured(
         _make_llm(),

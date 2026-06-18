@@ -5,13 +5,21 @@ from typing import Literal, Optional
 
 from langchain_openai import ChatOpenAI
 
+from gui_agent.context.runtime import (
+    completed_milestones_block,
+    extra_instruction_block,
+    history_block,
+    loop_frame_summary_block,
+    render_prompt_context,
+    tried_instructions_block,
+)
 from llm.structured import invoke_structured
 from gui_agent.core.vision.frame_analysis import is_loading_frame
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm as _norm_page
 
 from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
-from .helpers import _build_msgs, _format_history, _inject_knowledge, _make_llm, run_loop_check, run_planner
+from .helpers import _build_msgs, _inject_knowledge, _make_llm, run_loop_check, run_planner
 from .helpers import run_checker, run_selector, _default_milestone_prompts
 from .runtime import (
     MAX_RETRIES,
@@ -1027,7 +1035,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             milestone_name=milestone.name,
             milestone_desc=milestone.description,
             constraints=json.dumps(self._global_constraints, ensure_ascii=False),
-            frame_summary=frame.summary,
+            frame_summary=loop_frame_summary_block(frame.summary).render(),
         )
         plan_schema = self._prompts.plan_result_schema or _PlanResult
         return invoke_structured(self._llm(), self._msgs(prompt, observation), plan_schema)
@@ -1047,13 +1055,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             and t.supervisor.instruction
             and t.supervisor.milestone_id == milestone.id
         })
-        tried_text = "\n".join(f"  - 「{i}」" for i in tried) if tried else "  （无）"
-        done_lines = [
-            f"  - [{m.id}] {m.name}（已完成，不要退回到该状态）"
-            for m in self._milestones.values()
-            if m.status == "done" and m.id != milestone.id
-        ]
-        done_context = "\n".join(done_lines) if done_lines else "  （无）"
+        tried_text = tried_instructions_block(tried).render()
+        done_context = completed_milestones_block(
+            self._milestones.values(),
+            current_id=milestone.id,
+        ).render()
         prompt = self._prompts.replan.format(
             milestone_name=milestone.name,
             milestone_desc=milestone.description,
@@ -1064,11 +1070,14 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             constraints=json.dumps(self._global_constraints, ensure_ascii=False),
             failure_hints=json.dumps(milestone.failure_hints, ensure_ascii=False),
             completed_milestones=done_context,
-            history_text=_format_history(history),
+            history_text=history_block(history).render(),
             tried_instructions=tried_text,
         )
-        if extra:
-            prompt += f"\n\n## 输出修正要求\n{extra}"
+        dynamic_context = render_prompt_context([
+            extra_instruction_block(extra, source="replanner_guard"),
+        ])
+        if dynamic_context:
+            prompt += f"\n\n{dynamic_context}"
         msgs = self._msgs(prompt, observation)
         _inject_knowledge(msgs, self._app_knowledge, self._elements_for(milestone, check))
         result = invoke_structured(self._llm(), msgs, _ReplanResult)
