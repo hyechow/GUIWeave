@@ -48,7 +48,7 @@ def _stub(monkeypatch, results=None, error: Exception | None = None):
     """Replace policy_mod.run_selector with a counting stub returning canned results."""
     calls = {"n": 0}
 
-    def fake(goal, milestone, page_identity, manifest, *, prompts=None):
+    def fake(goal, milestone, page_identity, manifest, *, prompts=None, context_reports=None):
         calls["n"] += 1
         if error is not None:
             raise error

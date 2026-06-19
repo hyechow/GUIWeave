@@ -600,6 +600,7 @@ def run_selector(
     manifest: str,
     *,
     prompts: Optional[MilestonePrompts] = None,
+    context_reports: list[dict] | None = None,
 ) -> _SelectorResult:
     """KnowledgeSelector: a dedicated text-only micro-decision picking which knowledge
     sections the upcoming planner should read.
@@ -617,11 +618,51 @@ def run_selector(
         page_identity=page_identity or "（未识别）",
         manifest=manifest,
     )
+    decision_text = "请选择章节并输出 section_ids。"
+    if context_reports is not None:
+        context_reports.append({
+            "kind": "prompt_snapshot",
+            "label": "selector",
+            "roles": [
+                {
+                    "role": "system",
+                    "parts": [
+                        {
+                            "label": "task_prompt",
+                            "source_type": "prompt_asset",
+                            "source": "task.milestone.knowledge_selector",
+                            "type": "text",
+                            "text": prompt,
+                            "chars": len(prompt),
+                        },
+                    ],
+                },
+                {
+                    "role": "human",
+                    "parts": [
+                        {
+                            "label": "decision_text",
+                            "source_type": "runtime_state",
+                            "source": "run_selector",
+                            "type": "text",
+                            "text": decision_text,
+                            "chars": len(decision_text),
+                        },
+                    ],
+                },
+            ],
+        })
     msgs = [
         SystemMessage(content=prompt),
-        HumanMessage(content="请选择章节并输出 section_ids。"),
+        HumanMessage(content=decision_text),
     ]
-    return invoke_structured(_make_llm(), msgs, _SelectorResult)
+    return invoke_structured(
+        _make_llm(),
+        msgs,
+        _SelectorResult,
+        trace_sink=context_reports,
+        trace_label="selector",
+    )
 
 
 def run_planner(

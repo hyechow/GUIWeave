@@ -1024,6 +1024,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     self._goal, milestone, page_id,
                     self._pk.selector_manifest(),
                     prompts=self._prompts,
+                    context_reports=self._context_reports,
                 )
             stems = self._pk.by_ids(sel.section_ids)
             fallback_triggered = False
