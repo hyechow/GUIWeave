@@ -8,8 +8,8 @@ from datetime import datetime
 
 from gui_agent.core.config import model_price, pricing_currency
 
-from .html_utils import _safe
-from .metrics import CONTEXT_WINDOW, _ctx_color, _fmt_tokens, _sum_tokens, _token_cost
+from .html_utils import _attr, _safe
+from .metrics import _fmt_tokens, _sum_tokens, _token_cost
 from .models import ReportData, ReportStep
 from .orchestrator_html import _render_non_ui_detail, _render_program_section
 from .prompt_html import _render_module_io_html
@@ -71,17 +71,40 @@ HTML_TEMPLATE = """\
   .sk-modal-body {{ margin: 0; padding: 18px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; line-height: 1.7; color: var(--text); font-family: ui-monospace, SFMono-Regular, monospace; }}
 
   /* Header */
-  .header {{ max-width: 1080px; margin: 0 auto 20px; padding: 20px 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
-  .header h1 {{ font-size: 18px; font-weight: 700; margin-bottom: 4px; }}
+  .header {{ position: relative; max-width: 1080px; margin: 0 auto 20px; padding: 20px 24px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+  .header h1 {{ font-size: 18px; font-weight: 700; margin-bottom: 4px; padding-right: 72px; }}
   .stats {{ color: var(--muted); font-size: 12px; }}
   .decompose {{ margin-top: 10px; padding: 10px 14px; background: #f8fafc; border-radius: 8px; font-size: 12px; color: #475569; line-height: 1.5; }}
   .decompose-label {{ font-weight: 600; color: #6366f1; margin-right: 4px; }}
+  .compat-row {{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:4px 0; }}
+  .compat-chip {{ display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:999px; background:#f1f5f9; color:#64748b; border:1px solid #e2e8f0; font-size:10px; font-weight:700; font-family:ui-monospace, SFMono-Regular, monospace; }}
+  .report-search-trigger {{ position:absolute; top:19px; right:22px; height:28px; padding:0 10px; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#475569; font-size:11px; font-weight:700; cursor:pointer; }}
+  .report-search-trigger:hover {{ background:#f8fafc; color:#334155; }}
+  .report-search-overlay {{ display:none; position:fixed; inset:0; z-index:998; align-items:flex-start; justify-content:center; padding-top:72px; background:rgba(15,23,42,0.18); backdrop-filter: blur(2px); }}
+  .report-search-overlay.show {{ display:flex; }}
+  .report-search-panel {{ width:min(620px, calc(100vw - 32px)); background:#fff; border:1px solid #cbd5e1; border-radius:10px; padding:10px; box-shadow:0 18px 50px rgba(15,23,42,0.26); }}
+  .report-search-row {{ display:flex; align-items:center; gap:6px; }}
+  .report-search-input {{ flex:1; min-width:0; height:34px; border:1px solid #cbd5e1; border-radius:7px; padding:0 10px; font-size:13px; color:#1e293b; background:#fff; }}
+  .report-search-input:focus {{ outline:2px solid #bfdbfe; border-color:#60a5fa; }}
+  .report-search-btn {{ height:34px; min-width:34px; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#475569; font-size:12px; cursor:pointer; }}
+  .report-search-btn:hover {{ background:#f8fafc; }}
+  .report-search-close {{ font-size:17px; line-height:1; color:#64748b; }}
+  .report-search-count {{ min-width:48px; color:#64748b; font-size:11px; font-weight:700; text-align:right; font-family:ui-monospace, SFMono-Regular, monospace; }}
+  .search-hit {{ outline:1px solid #facc15; background:#fffbeb !important; }}
+  .search-current {{ outline:2px solid #f97316; box-shadow:0 0 0 3px rgba(249,115,22,0.12); }}
   /* ── #0 编排 (DSL program) — vertical, indented like code ── */
   .prog-section {{ }}
   .prog-body {{ padding: 14px 20px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }}
   .prog-input {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; margin-bottom: 6px; border-bottom: 1px dashed var(--border); color: var(--text); }}
   .prog-input-label {{ font-weight: 600; color: #6366f1; font-size: 11px; padding: 1px 7px; background: #eef2ff; border-radius: 10px; }}
   .prog-input-arrow {{ color: #94a3b8; font-size: 11px; font-family: monospace; }}
+  .dataflow-lane {{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; margin:2px 0 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; }}
+  .dataflow-title {{ color:#64748b; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; margin-right:2px; }}
+  .dataflow-node {{ display:inline-flex; align-items:center; min-height:22px; padding:2px 8px; border-radius:999px; background:#fff; border:1px solid #cbd5e1; color:#334155; font-size:11px; font-family:ui-monospace, SFMono-Regular, monospace; max-width:100%; overflow-wrap:anywhere; }}
+  .dataflow-node-read {{ background:#ecfeff; border-color:#a5f3fc; color:#0e7490; }}
+  .dataflow-node-final {{ background:#ecfdf5; border-color:#a7f3d0; color:#047857; }}
+  .dataflow-node-answer {{ background:#eef2ff; border-color:#c7d2fe; color:#4338ca; }}
+  .dataflow-arrow {{ color:#94a3b8; font-family:ui-monospace, SFMono-Regular, monospace; }}
   .prog-step {{ display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }}
   .prog-n {{ display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 3px; border-radius: 9px; background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 11px; flex-shrink: 0; }}
   .prog-name {{ color: var(--text); }}
@@ -193,15 +216,16 @@ HTML_TEMPLATE = """\
   .milestone-badge-filter {{ background: #ede9fe; color: #5b21b6; }}
   .milestone-badge-collection {{ background: #d1fae5; color: #065f46; }}
   .milestone-badge-default {{ background: #f1f5f9; color: #475569; }}
-  .milestone-time {{ font-size: 11px; color: var(--muted); margin-left: auto; font-family: monospace; }}
+  .milestone-time {{ font-size: 11px; color: #475569; margin-left: auto; font-family: monospace; font-weight: 700; }}
 
   /* Thumbnail gallery — one row per milestone */
   .gallery {{ display: flex; gap: 6px; padding: 12px 16px; overflow-x: auto; }}
-  .thumb {{ flex-shrink: 0; width: 140px; cursor: pointer; position: relative; border-radius: 8px; overflow: hidden; border: 2px solid transparent; transition: border-color 0.15s; }}
+  .thumb {{ flex-shrink: 0; width: 152px; cursor: pointer; position: relative; border-radius: 8px; overflow: hidden; border: 2px solid transparent; transition: border-color 0.15s; }}
   .thumb:hover {{ border-color: #6366f1; }}
   .thumb.active {{ border-color: #4338ca; }}
   .thumb img {{ width: 100%; display: block; }}
-  .thumb-label {{ position: absolute; bottom: 0; left: 0; right: 0; padding: 3px 6px; font-size: 10px; font-weight: 600; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,0.7)); }}
+  .thumb-label {{ position: absolute; bottom: 0; left: 0; right: 0; padding: 18px 7px 6px; font-size: 11px; line-height: 1.15; font-weight: 800; color: #fff; background: linear-gradient(to top, rgba(15,23,42,0.88), rgba(15,23,42,0.56) 58%, transparent); display:flex; align-items:center; gap:6px; text-shadow:0 1px 2px rgba(0,0,0,0.72); }}
+  .thumb-time {{ font-size:10px; line-height:1.2; font-weight:800; color:#fff; font-family:ui-monospace, SFMono-Regular, monospace; margin-left:auto; background:rgba(15,23,42,0.72); border:1px solid rgba(255,255,255,0.42); border-radius:5px; padding:1px 4px; text-shadow:none; }}
   .thumb-status {{ position: absolute; top: 4px; right: 4px; width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #fff; font-weight: 700; }}
   .thumb-status-ok {{ background: #22c55e; }}
   .thumb-status-fail {{ background: #ef4444; }}
@@ -219,8 +243,8 @@ HTML_TEMPLATE = """\
   .detail-at {{ font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 500; }}
   .detail-desc {{ font-size: 13px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .detail-status {{ font-size: 11px; font-weight: 600; flex-shrink: 0; }}
-  .detail-time {{ font-size: 13px; font-weight: 600; color: #64748b; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
-  .detail-gap {{ font-size: 11px; font-weight: 600; color: #f59e0b; background: #fffbeb; padding: 1px 6px; border-radius: 10px; margin-left: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
+  .detail-time {{ font-size: 13px; font-weight: 700; color: #334155; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
+  .detail-gap {{ font-size: 12px; font-weight: 800; color: #b45309; background: #fff7ed; border: 1px solid #fed7aa; padding: 1px 7px; border-radius: 10px; margin-left: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }}
   .detail-instruction {{ font-size: 12px; color: var(--muted); }}
   .detail-summary {{ font-size: 12px; color: #475569; line-height: 1.4; }}
   .ctx-detail {{ margin-top: 2px; border: 1px solid #e0f2fe; background: #f8fdff; border-radius: 7px; padding: 7px 9px; }}
@@ -230,32 +254,66 @@ HTML_TEMPLATE = """\
   .ctx-row strong {{ color: #0f172a; font-family: -apple-system, "PingFang SC", sans-serif; }}
   .ctx-drop {{ color: #b45309; }}
   .ctx-keep {{ color: #047857; }}
-  .prompt-detail {{ margin-top: 2px; border: 1px solid #ddd6fe; background: #fbfaff; border-radius: 7px; padding: 7px 9px; }}
-  .prompt-detail summary {{ cursor: pointer; color: #5b21b6; font-size: 11px; font-weight: 700; }}
-  .prompt-list {{ margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }}
-  .prompt-call {{ border: 1px solid #ede9fe; background: #fff; border-radius: 7px; padding: 7px 9px; }}
-  .prompt-call summary {{ color: #6d28d9; font-size: 11px; font-weight: 700; cursor: pointer; }}
-  .prompt-call-body {{ margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }}
-  .prompt-role {{ border-left: 3px solid #8b5cf6; padding-left: 10px; display: flex; flex-direction: column; gap: 8px; }}
+  .prompt-detail {{ margin-top: 2px; border: 1px solid #dbe3ef; background: #fff; border-radius: 7px; overflow: hidden; }}
+  .prompt-detail > summary.prompt-detail-head {{ cursor: pointer; list-style: none; display: flex; align-items: center; gap: 9px; min-width: 0; padding: 7px 9px; color: #334155; font-size: 11px; font-weight: 700; }}
+  .prompt-detail > summary.prompt-detail-head::-webkit-details-marker {{ display: none; }}
+  .prompt-detail > summary.prompt-detail-head::before {{ content: "▸"; color: #64748b; font-size: 10px; flex: 0 0 auto; }}
+  .prompt-detail[open] > summary.prompt-detail-head::before {{ content: "▾"; }}
+  .prompt-detail-title {{ flex: 0 0 auto; color: #1e293b; font-size: 12px; }}
+  .prompt-detail-meta {{ margin-left: auto; min-width: 0; color: #334155; font-size: 10px; font-weight: 800; font-family: ui-monospace, SFMono-Regular, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+  .prompt-list {{ padding: 0 9px 8px; display: flex; flex-direction: column; gap: 8px; }}
+  .prompt-token-detail {{ border: 1px dashed #dbe3ef; background: #f8fafc; border-radius: 6px; overflow: hidden; }}
+  .prompt-token-detail > summary {{ cursor: pointer; list-style: none; display: flex; align-items: center; gap: 7px; padding: 5px 7px; color: #64748b; font-size: 10px; font-weight: 800; font-family: ui-monospace, SFMono-Regular, monospace; }}
+  .prompt-token-detail > summary::-webkit-details-marker {{ display: none; }}
+  .prompt-token-detail > summary::before {{ content: "▸"; color: #94a3b8; font-size: 10px; }}
+  .prompt-token-detail[open] > summary::before {{ content: "▾"; }}
+  .prompt-token-summary {{ color: #94a3b8; font-weight: 700; }}
+  .prompt-token-row {{ display:flex; flex-wrap:wrap; gap:5px; align-items:center; padding:0 7px 7px 21px; color:#64748b; font-size:10px; font-family:ui-monospace, SFMono-Regular, monospace; }}
+  .prompt-token-chip {{ display:inline-flex; gap:5px; align-items:center; padding:1px 6px; border-radius:5px; background:#fff; border:1px solid #e2e8f0; }}
+  .prompt-token-name {{ color:#475569; font-weight:800; }}
+  .prompt-token-count {{ color:#64748b; font-weight:700; }}
+  .prompt-call {{ border: 1px solid #e2e8f0; background: #fff; border-radius: 7px; overflow: hidden; }}
+  .prompt-call > summary {{ color: #334155; font-size: 11px; font-weight: 700; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 7px; min-width: 0; padding: 6px 8px; }}
+  .prompt-call > summary::-webkit-details-marker {{ display: none; }}
+  .prompt-call > summary::before {{ content: "▸"; color: #64748b; font-size: 10px; flex: 0 0 auto; }}
+  .prompt-call[open] > summary::before {{ content: "▾"; }}
+  .prompt-call-title {{ flex: 0 0 auto; color: #3730a3; font-family: ui-monospace, SFMono-Regular, monospace; }}
+  .prompt-call-summary {{ display:block; min-width:0; padding:0; border:0; background:transparent; color:#334155; font-size:11px; font-weight:700; font-family:ui-monospace, SFMono-Regular, monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+  .prompt-call-summary::before {{ content:"·"; color:#cbd5e1; margin-right:7px; }}
+  .prompt-call-summary-ok {{ color:#047857; }}
+  .prompt-call-summary-warn {{ color:#b45309; }}
+  .prompt-call-summary-error {{ color:#b91c1c; }}
+  .prompt-call-summary-muted {{ color:#94a3b8; }}
+  .prompt-call-body {{ padding: 0 9px 9px; display: flex; flex-direction: column; gap: 10px; }}
+  .prompt-role {{ border-left: 2px solid #c4b5fd; padding-left: 10px; display: flex; flex-direction: column; gap: 8px; }}
   .prompt-output {{ border-left-color: #22c55e; }}
   .prompt-output-missing {{ border-left-color: #cbd5e1; }}
-  .prompt-role-title {{ align-self: flex-start; text-transform: uppercase; letter-spacing: .06em; color: #6d28d9; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 800; }}
+  .prompt-role-title {{ align-self: flex-start; text-transform: uppercase; letter-spacing: .06em; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 800; }}
   .prompt-output .prompt-role-title {{ color: #047857; background: #ecfdf5; border-color: #a7f3d0; }}
   .prompt-output-missing .prompt-role-title {{ color: #64748b; background: #f8fafc; border-color: #e2e8f0; }}
-  .prompt-part {{ border: 1px solid #eef2ff; border-radius: 6px; overflow: hidden; background: #fff; }}
-  .prompt-part-head {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: #f8fafc; border-bottom: 1px solid #eef2ff; padding: 5px 8px; }}
-  .prompt-part-no {{ display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; border-radius: 9px; background: #ede9fe; color: #5b21b6; font-size: 10px; font-weight: 800; font-family: ui-monospace, SFMono-Regular, monospace; }}
+  .prompt-part {{ border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; background: #fff; }}
+  .prompt-part-head {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: #f8fafc; border-bottom: 1px solid #e2e8f0; padding: 5px 8px; }}
+  .prompt-part-no {{ display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; border-radius: 9px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 800; font-family: ui-monospace, SFMono-Regular, monospace; }}
   .prompt-part-label {{ font-size: 11px; font-weight: 700; color: #334155; font-family: ui-monospace, SFMono-Regular, monospace; }}
   .prompt-part-meta {{ font-size: 10px; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, monospace; }}
   .prompt-pre {{ margin: 0; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 8px 10px; color: #1e293b; font-size: 11.5px; line-height: 1.55; font-family: ui-monospace, SFMono-Regular, monospace; background: #fff; }}
   .prompt-pre-image {{ color: #64748b; background: #f8fafc; }}
   .prompt-pre-output {{ background: #f8fffb; }}
   .prompt-empty {{ color: #94a3b8; font-size: 11px; padding: 4px 0; }}
+  .prompt-part-collapsed > summary.prompt-part-head {{ cursor:pointer; list-style:none; }}
+  .prompt-part-collapsed > summary.prompt-part-head::-webkit-details-marker {{ display:none; }}
+  .prompt-part-collapsed > summary.prompt-part-head::before {{ content:"▸"; color:#64748b; margin-right:2px; font-size:10px; }}
+  .prompt-part-collapsed[open] > summary.prompt-part-head::before {{ content:"▾"; }}
+  .prompt-schema {{ background:#fcfcff; }}
+  .prompt-schema > summary.prompt-part-head {{ cursor:pointer; list-style:none; }}
+  .prompt-schema > summary.prompt-part-head::-webkit-details-marker {{ display:none; }}
+  .prompt-schema > summary.prompt-part-head::before {{ content:"▸"; color:#64748b; margin-right:2px; font-size:10px; }}
+  .prompt-schema[open] > summary.prompt-part-head::before {{ content:"▾"; }}
 
   /* Timing bar */
   .timing-bar {{ display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: #f1f5f9; margin-top: 2px; }}
   .timing-seg {{ height: 100%; min-width: 1px; }}
-  .timing-labels {{ display: flex; gap: 8px; font-size: 11px; color: #94a3b8; margin-top: 2px; flex-wrap: wrap; }}
+  .timing-labels {{ display: flex; gap: 8px; font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px; flex-wrap: wrap; }}
   .timing-label-dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 2px; vertical-align: middle; margin-right: 2px; }}
 
   /* Action type colors */
@@ -286,6 +344,7 @@ HTML_TEMPLATE = """\
   <main class="main">
     <div class="header">
       <h1>{title}{platform_badge}{run_status_badge}</h1>
+      <button class="report-search-trigger" type="button" onclick="openReportSearch()" title="搜索（/ 或 Cmd/Ctrl+K）">搜索</button>
       <div class="stats">{stats}</div>
       {provenance_html}
       {cost_note_html}
@@ -317,6 +376,19 @@ HTML_TEMPLATE = """\
       <span class="sk-modal-x" onclick="document.getElementById('cl-modal').classList.remove('show')">✕</span>
     </div>
     <div class="cl-modal-body" id="cl-modal-body"></div>
+  </div>
+</div>
+<div class="report-search-overlay" id="report-search-overlay" onclick="if(event.target===this)closeReportSearch()">
+  <div class="report-search-panel">
+    <div class="report-search-row">
+      <input class="report-search-input" id="report-search" type="search"
+        placeholder="搜索模块、字段、文本、block id" oninput="reportSearch(this.value)"
+        onkeydown="if(event.key==='Enter') reportSearchNext(event.shiftKey ? -1 : 1)">
+      <button class="report-search-btn" type="button" onclick="reportSearchNext(-1)">↑</button>
+      <button class="report-search-btn" type="button" onclick="reportSearchNext(1)">↓</button>
+      <span class="report-search-count" id="report-search-count"></span>
+      <button class="report-search-btn report-search-close" type="button" onclick="closeReportSearch()">×</button>
+    </div>
   </div>
 </div>
 <script>
@@ -373,6 +445,93 @@ function showChecklist(id) {{
   document.getElementById('cl-modal-body').innerHTML = src.innerHTML;
   document.getElementById('cl-modal').classList.add('show');
 }}
+function openReportSearch() {{
+  var overlay = document.getElementById('report-search-overlay');
+  var input = document.getElementById('report-search');
+  if (!overlay || !input) return;
+  overlay.classList.add('show');
+  window.setTimeout(function() {{
+    input.focus();
+    input.select();
+  }}, 0);
+}}
+function closeReportSearch() {{
+  var overlay = document.getElementById('report-search-overlay');
+  if (overlay) overlay.classList.remove('show');
+}}
+var reportSearchHits = [];
+var reportSearchIndex = -1;
+function reportSearch(q) {{
+  document.querySelectorAll('.search-hit,.search-current').forEach(function(n) {{
+    n.classList.remove('search-hit');
+    n.classList.remove('search-current');
+  }});
+  reportSearchHits = [];
+  reportSearchIndex = -1;
+  q = (q || '').trim().toLowerCase();
+  var counter = document.getElementById('report-search-count');
+  if (!q) {{
+    if (counter) counter.textContent = '';
+    return;
+  }}
+  var nodes = Array.prototype.slice.call(document.querySelectorAll(
+    '.prompt-call,.prompt-part,.thumb,.dataflow-lane,.prog-step,.prog-finish,.nonui-row,.wa-card'
+  ));
+  reportSearchHits = nodes.filter(function(n) {{
+    var hay = ((n.dataset.searchIndex || '') + ' ' + (n.textContent || '')).toLowerCase();
+    return hay.indexOf(q) !== -1;
+  }});
+  reportSearchHits.forEach(function(n) {{ n.classList.add('search-hit'); }});
+  if (counter) counter.textContent = reportSearchHits.length ? ('0/' + reportSearchHits.length) : '无命中';
+  if (reportSearchHits.length) reportSearchNext(1);
+}}
+function reportSearchNext(delta) {{
+  if (!reportSearchHits.length) return;
+  reportSearchHits.forEach(function(n) {{ n.classList.remove('search-current'); }});
+  reportSearchIndex = (reportSearchIndex + delta + reportSearchHits.length) % reportSearchHits.length;
+  var node = reportSearchHits[reportSearchIndex];
+  revealSearchNode(node);
+  node.classList.add('search-current');
+  var counter = document.getElementById('report-search-count');
+  if (counter) counter.textContent = (reportSearchIndex + 1) + '/' + reportSearchHits.length;
+  node.scrollIntoView({{behavior:'smooth', block:'center', inline:'nearest'}});
+}}
+function revealSearchNode(node) {{
+  var cur = node;
+  while (cur) {{
+    if (cur.tagName && cur.tagName.toLowerCase() === 'details') cur.open = true;
+    cur = cur.parentElement;
+  }}
+  var detail = node.closest('.detail');
+  if (detail && !detail.classList.contains('show')) {{
+    var ms = detail.closest('.milestone');
+    if (ms) {{
+      ms.querySelectorAll('.detail').forEach(function(d) {{ d.classList.remove('show'); }});
+      ms.querySelectorAll('.thumb').forEach(function(t) {{ t.classList.remove('active'); }});
+    }}
+    detail.classList.add('show');
+    var thumb = document.querySelector('[data-detail="' + detail.id + '"]');
+    if (thumb) thumb.classList.add('active');
+  }}
+}}
+document.addEventListener('keydown', function(event) {{
+  var target = event.target;
+  var tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+  var typing = tag === 'input' || tag === 'textarea' || (target && target.isContentEditable);
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {{
+    event.preventDefault();
+    openReportSearch();
+    return;
+  }}
+  if (!typing && event.key === '/') {{
+    event.preventDefault();
+    openReportSearch();
+    return;
+  }}
+  if (event.key === 'Escape') {{
+    closeReportSearch();
+  }}
+}});
 </script>
 </body>
 </html>
@@ -387,6 +546,7 @@ TIMING_COLORS: dict[str, str] = {
     "loop_scroll": "#06b6d4",
     "selector": "#0891b2",
     "action_policy": "#22c55e",
+    "read": "#0f766e",
 }
 
 KIND_BADGE = {
@@ -438,46 +598,75 @@ def _render_timing_html(timings: dict[str, float]) -> str:
         )
     return (
         f'<div class="timing-bar">{segs}</div>'
-        f'<div class="timing-labels">{labels} · total {total:.1f}s</div>'
+        f'<div class="timing-labels">{labels} · LLM total {total:.1f}s</div>'
     )
 
 
-def _ctx_pct_tag(n: int) -> str:
-    """A small, spaced ``N%`` — an input-token count as a share of the model context window,
-    colored by pressure (gray <75%, amber ≥75%, red ≥90%). A subordinate annotation after each
-    module's input count (e.g. ``checker 3.9k 3% /136``), kept light so it doesn't crowd the
-    numbers. Empty when it rounds to 0%."""
-    if not n:
-        return ""
-    pct = n / CONTEXT_WINDOW * 100 if CONTEXT_WINDOW else 0
-    if pct < 0.5:
-        return ""
-    return f'<span style="font-size:0.84em;color:{_ctx_color(n)};margin-right:4px">{pct:.0f}%</span>'
+def _module_total_seconds(step: ReportStep) -> float:
+    return sum(float(v or 0) for v in (step.timings or {}).values())
 
 
-def _render_token_html(token_usage: dict) -> str:
-    """Per-module token usage (input <ctx%> / output) + turn total + estimated cost. The small
-    % after each module's input is that prompt's share of the 128k context window."""
-    ti, to = _sum_tokens(token_usage)
-    if ti == 0 and to == 0:
-        return ""
-    sep = '<span style="color:#cbd5e1;margin:0 3px">/</span>'  # muted divider, recedes
-    parts = []
-    for name, tu in token_usage.items():
-        mi, mo = int(tu.get("input", 0)), int(tu.get("output", 0))
-        if mi == 0 and mo == 0:
-            continue
-        tc = TIMING_COLORS.get(name, "#94a3b8")
-        parts.append(
-            f'<span style="margin-right:12px;white-space:nowrap">'
-            f'<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:{tc};margin-right:3px"></span>'
-            f'{name} {_ctx_pct_tag(mi)}{_fmt_tokens(mi)}{sep}{_fmt_tokens(mo)}</span>'
+def _turn_elapsed_seconds(step: ReportStep, prev_timestamp: str = "") -> tuple[float, str]:
+    module_total = _module_total_seconds(step)
+    wall_gap = _gap_seconds(prev_timestamp, step.timestamp) if prev_timestamp and step.timestamp else None
+    if wall_gap is not None and wall_gap >= 0:
+        return wall_gap, "wall_gap"
+    if step.timestamp and not prev_timestamp and module_total > 0:
+        return module_total, "first_turn_elapsed_estimate"
+    if module_total > 0:
+        return module_total, "module_total"
+    return 0.0, ""
+
+
+def _step_diagnostic_flags(step: ReportStep) -> list[tuple[str, str]]:
+    label_counts: dict[str, int] = {}
+    for report in step.llm_context or []:
+        if isinstance(report, dict) and report.get("kind") == "prompt_snapshot":
+            label = str(report.get("label") or "module")
+            label_counts[label] = label_counts.get(label, 0) + 1
+    flags: list[tuple[str, str]] = []
+    repeated = [f"{k} x{v}" for k, v in label_counts.items() if v > 1]
+    if repeated:
+        flags.append(("warn", "重复 " + ", ".join(repeated[:2])))
+    if step.no_effect:
+        flags.append(("warn", "no_effect"))
+    if step.replan or "replanner" in (step.timings or {}):
+        flags.append(("warn", "replan"))
+    if "✗" in step.status:
+        flags.append(("error", "failed"))
+    if step.operation_mode == "non_interactive":
+        flags.append(("normal", "non-UI"))
+    return flags
+
+
+def _render_thumb_time(step: ReportStep, prev_timestamp: str = "") -> tuple[str, str]:
+    search_bits: list[str] = []
+    module_total = _module_total_seconds(step)
+    for name, val in (step.timings or {}).items():
+        search_bits.append(f"{name} {float(val or 0):.1f}s")
+    for _, text in _step_diagnostic_flags(step):
+        search_bits.append(text)
+
+    elapsed, elapsed_kind = _turn_elapsed_seconds(step, prev_timestamp)
+    if elapsed_kind == "wall_gap":
+        search_bits.append(f"wall_gap {elapsed:.1f}s")
+        return (
+            f'<span class="thumb-time" title="距上一个动作：{elapsed:.1f}s">+{elapsed:.0f}s</span>',
+            " ".join(search_bits),
         )
+    if elapsed_kind == "first_turn_elapsed_estimate":
+        search_bits.append(f"first_turn_elapsed_estimate {elapsed:.1f}s")
+        return (
+            '<span class="thumb-time" '
+            f'title="首轮：从编排完成后起算，按模块耗时估算：{elapsed:.1f}s">'
+            f'+{elapsed:.0f}s</span>',
+            " ".join(search_bits),
+        )
+    if elapsed <= 0:
+        return "", " ".join(search_bits)
     return (
-        f'<div style="display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:#94a3b8;margin-top:3px">'
-        f'{"".join(parts)}'
-        f'<span style="font-weight:600;color:#475569">Σ tok in {_fmt_tokens(ti)} · out {_fmt_tokens(to)} · ≈{pricing_currency()}{_token_cost(token_usage):.4f}</span>'
-        f'</div>'
+        f'<span class="thumb-time" title="模块耗时合计：{elapsed:.1f}s">{elapsed:.1f}s</span>',
+        " ".join(search_bits),
     )
 
 
@@ -637,7 +826,16 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         ts = step.timestamp
         disp = ts.split("T", 1)[1] if "T" in ts else ts
         gap = _gap_seconds(prev_timestamp, ts)
-        gap_html = f'<span class="detail-gap" title="距上一个动作">+{gap:.0f}s</span>' if gap is not None else ""
+        if gap is not None:
+            gap_html = f'<span class="detail-gap" title="距上一个动作">+{gap:.0f}s</span>'
+        else:
+            first_gap = _module_total_seconds(step) if not prev_timestamp else 0.0
+            gap_html = (
+                '<span class="detail-gap" '
+                f'title="首轮：从编排完成后起算，按模块耗时估算：{first_gap:.1f}s">'
+                f'+{first_gap:.0f}s</span>'
+                if first_gap > 0 else ""
+            )
         time_html = f'<span class="detail-time" title="{_safe(ts)}">🕒 {_safe(disp)}</span>{gap_html}'
 
     return f"""
@@ -656,9 +854,8 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         {sections_html}
         {summary_html}
         {non_ui_html}
-        {_render_module_io_html(step.llm_context)}
+        {_render_module_io_html(step.llm_context, step.token_usage)}
         {_render_timing_html(step.timings)}
-        {_render_token_html(step.token_usage)}
       </div>
     </div>"""
 
@@ -917,7 +1114,6 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     # crowds the name out of the sidebar. The ordinal is always short; the raw id stays for
     # the anchor. Falls back to _short_mid for ids not in the milestone list (e.g. _no_milestone).
     _mid_ordinal = {m.get("id", ""): i for i, m in enumerate(data.milestones, 1)}
-
     def _mid_disp(mid: str) -> str:
         return str(_mid_ordinal[mid]) if mid in _mid_ordinal else _short_mid(mid)
 
@@ -997,7 +1193,6 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
     for page in data.pages:
         badge_cls = KIND_BADGE.get(page.milestone_kind, "milestone-badge-default")
-        ms_time = sum(sum(s.timings.values()) for s in page.steps)
         ms_in = sum(_sum_tokens(s.token_usage)[0] for s in page.steps)
         ms_out = sum(_sum_tokens(s.token_usage)[1] for s in page.steps)
         ms_cost = sum(_token_cost(s.token_usage) for s in page.steps)
@@ -1010,9 +1205,12 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
 
         thumbs_html = ""
         details_html = ""
+        ms_elapsed = 0.0
         for si, step in enumerate(page.steps):
             turn_no = step.label.split()[-1]
             detail_id = f"detail-ms{mid_safe}-s{si}"
+            turn_elapsed, _ = _turn_elapsed_seconds(step, prev_ts)
+            ms_elapsed += turn_elapsed
 
             # Status indicator
             if "✓" in step.status:
@@ -1027,12 +1225,22 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
 
             # Thumbnail
             if step.annotated_before_url:
+                thumb_time_html, thumb_search = _render_thumb_time(step, prev_timestamp=prev_ts)
+                thumb_search_index = _attr(
+                    " ".join([
+                        f"T{turn_no}",
+                        at_label,
+                        thumb_search,
+                        step.description or "",
+                        step.summary or "",
+                    ])
+                )
                 thumbs_html += (
-                    f'<div class="thumb" data-detail="{detail_id}" onclick="showDetail(\'{detail_id}\')">'
+                    f'<div class="thumb" data-detail="{detail_id}" data-search-index="{thumb_search_index}" onclick="showDetail(\'{detail_id}\')">'
                     f'<img src="{step.annotated_before_url}" alt="Turn {turn_no}">'
                     f'<div class="thumb-action {at_cls}" title="{at_label}"></div>'
                     f'<div class="thumb-status {status_cls}">{status_text}</div>'
-                    f'<div class="thumb-label">T{turn_no} · {at_label}</div>'
+                    f'<div class="thumb-label">T{turn_no} · {at_label}{thumb_time_html}</div>'
                     f'</div>'
                 )
 
@@ -1049,6 +1257,14 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
         sc_html = f'<div class="milestone-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
         checklist_badge, checklist_data = _render_checklist(page.checklist, f"cl-{mid_safe}")
+        ms_time_html = (
+            f'总耗时 {ms_elapsed:.1f}s'
+            if ms_elapsed > 0
+            else "耗时未记录"
+        )
+        ms_time_title = (
+            "总耗时=本 milestone 内缩略图时间求和；首轮从编排完成后起算，后续按 turn timestamp gap"
+        )
         verify_thumb = ""
         verify_detail = ""
         if page.verify_url:
@@ -1094,7 +1310,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             <span class="milestone-name">{_safe(page.milestone_name)}</span>
             <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
             {checklist_badge}
-            <span class="milestone-time">{ms_time:.1f}s · {len(page.steps)} turns{ms_tok_html}</span>
+            <span class="milestone-time" title="{_safe(ms_time_title)}">{ms_time_html} · {len(page.steps)} turns{ms_tok_html}</span>
             {desc_html}
             {sc_html}
           </div>
@@ -1166,7 +1382,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         stats=stats_str,
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
         webarena_html=_render_webarena_result(data.webarena),
-        program_html=_render_program_section(data.orchestrator),
+        program_html=_render_program_section(data.orchestrator, data.webarena),
         run_status_badge=_render_run_status_badge(data),
         outline_title=("任务编排" if (data.orchestrator.get("program") or {}).get("statements") else "子目标分解"),
         outline_html=outline_html,

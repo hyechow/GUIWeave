@@ -513,6 +513,8 @@ class RunnerReportBuilder:
                 llm_context=turn.get("llm_context") or [],
                 operation_mode=operation_mode,
                 non_ui=non_ui,
+                no_effect=bool(turn.get("no_effect")),
+                replan=turn.get("replan") if isinstance(turn.get("replan"), dict) else None,
             ))
 
         existing_non_ui: set[tuple[str, str]] = set()
