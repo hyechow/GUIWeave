@@ -791,6 +791,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._record_failure_constraint(milestone, check, history)
 
         if milestone.retry_count >= MAX_RETRIES:
+            # mechanism-2: before giving up, judge if the milestone is INFEASIBLE (required control
+            # absent) and, if so, kick back to the orchestrator with a re-plan directive.
+            kick = self._maybe_kickback(milestone, observation, read_inst)
+            if kick:
+                return kick
             fallback = self._try_filter_fallback(milestone, can_degrade=True, read_inst=read_inst)
             if fallback:
                 return fallback
@@ -848,6 +853,45 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 _is_home_identity(self._last_check.page_identity, self._prompts.home_identity_markers)
                 if self._last_check else False
             ),
+            **_ctx(milestone, read_inst),
+        )
+
+    def _maybe_kickback(
+        self, milestone: Milestone, observation: Observation, read_inst: Optional[str],
+    ) -> Optional[SupervisorStep]:
+        """Mechanism-2 (goal level): at give-up time, judge whether the milestone is INFEASIBLE —
+        i.e. the required UI control is ABSENT from the page's actual control inventory — vs merely
+        a feasible-but-stuck action problem. If infeasible, abandon it with a re-plan DIRECTIVE for
+        the orchestrator (kick back) instead of a plain failure.
+
+        Returns None (→ proceed with normal fail) whenever feasible / inconclusive / unobservable —
+        a deliberate conservative-toward-feasible default so it never steals the action-level
+        replanner's feasible-but-stuck cases, and naturally no-ops on visual-only platforms (no DOM
+        form_controls). Only fires here, after MAX_RETRIES, so the control observation is mature."""
+        from .feasibility import control_presence_text, judge_feasibility
+
+        control_text = control_presence_text(observation)
+        if "无适配器可感知" in control_text:
+            return None  # no DOM control inventory (visual platform) → can't confirm absence
+        goal = f"{milestone.name} —— {milestone.success_condition}"
+        try:
+            with _Timer(self._timings, self._timings_order, "feasibility", self._token_usage):
+                verdict = judge_feasibility(goal, control_text, self._app_knowledge or "")
+        except Exception as exc:  # noqa: BLE001 - a judge failure must never crash the run
+            print(f"  [Feasibility] 判定异常（{exc}），按可行处理，走常规失败")
+            return None
+        if verdict.feasible:
+            print(f"  [Feasibility] 判定可行（{verdict.reason}）→ 不踢回，走常规处理")
+            return None
+        print(f"  [Feasibility] milestone 不可行 → 踢回编排器重规划。{verdict.reason}")
+        milestone.status = "failed"
+        return SupervisorStep(
+            should_act=False,
+            stop=True,  # Stage 2: stops the run carrying the directive; Stage 3 makes the loop re-decompose
+            stop_reason=f"milestone 不可行，需重规划：{verdict.reason}",
+            goal_completed=False,
+            summary=verdict.reason,
+            replan_directive=verdict.directive or None,
             **_ctx(milestone, read_inst),
         )
 
