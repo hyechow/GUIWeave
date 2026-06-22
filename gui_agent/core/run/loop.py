@@ -99,6 +99,26 @@ def build_supervisor(name: str) -> "SupervisorPolicy":
     return build_platform().make_supervisor(name)
 
 
+# mechanism-2: how many times a single run may re-decompose after a feasibility kick-back. Bounded
+# to avoid an infinite re-plan loop (the same dead-end milestone re-appearing). One is enough to
+# swap an infeasible route for the prescribed feasible one; a second kick-back ends the run.
+MAX_KICKBACK_REPLANS = 1
+
+
+def should_kickback_replan(sv_step, program, redecompose, replan_count: int) -> bool:
+    """Decide whether a stop step is a mechanism-2 kick-back to re-decompose (vs a terminal stop).
+
+    True only when: we're in orchestrator mode (program), the supervisor attached a re-plan
+    directive (milestone judged infeasible), a redecompose callable is wired, and the per-run
+    budget is not yet spent. Otherwise the stop is handled normally (terminal)."""
+    return bool(
+        program is not None
+        and getattr(sv_step, "replan_directive", None)
+        and callable(redecompose)
+        and replan_count < MAX_KICKBACK_REPLANS
+    )
+
+
 def run_agent_loop(
     prompt: str,
     action_policy: ActionPolicy,
@@ -118,6 +138,7 @@ def run_agent_loop(
     on_session_open: object = None,  # callable(platform) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
     program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
+    redecompose: object = None,  # callable(directive:str)->Program|None; mechanism-2 kick-back re-plan. None disables.
     orchestrator_context_reports: list[dict] | None = None,
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
@@ -331,6 +352,7 @@ def run_agent_loop(
             if _reply is not None:
                 return _finish(_orch_result(context, _interp, _reply))
 
+        _kickback_replans = 0  # mechanism-2: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
         while True:
             interrupted = _stop_after_esc(_interactive_turn_count(context))
             if interrupted is not None:
@@ -548,6 +570,38 @@ def run_agent_loop(
                 silent=silent,
                 on_turn=on_turn,
             )
+
+            # mechanism-2 kick-back: the supervisor judged the milestone INFEASIBLE and attached a
+            # re-plan directive. Re-decompose the goal with that directive and hot-swap the
+            # interpreter, instead of failing the run. Bounded (MAX_KICKBACK_REPLANS); any failure
+            # (redecompose raises / empty program) falls through to the normal terminal handling.
+            if should_kickback_replan(sv_step, program, redecompose, _kickback_replans):
+                _kickback_replans += 1
+                _say(f"\n[Kickback] milestone 判定不可行 → 重规划 ({_kickback_replans}/{MAX_KICKBACK_REPLANS})："
+                     f"{(sv_step.replan_directive or '')[:120]}")
+                _new_program = None
+                try:
+                    _new_program = redecompose(sv_step.replan_directive)  # type: ignore[operator]
+                except Exception as _exc:  # noqa: BLE001 - a redecompose failure must not crash the run
+                    _say(f"[Kickback] 重规划失败（{_exc}），按原失败收尾")
+                if _new_program is not None and _new_program.statements:
+                    from gui_agent.core.orchestrator import Interpreter
+                    _interp = Interpreter(_new_program)
+                    _orch_interp = _interp
+                    context.orchestrator = {
+                        **(context.orchestrator or {}),
+                        "program": _new_program.model_dump(mode="json"),
+                        "replanned_from_kickback": _kickback_replans,
+                    }
+                    _gen = _interp.steps()
+                    try:
+                        _cur_run = next(_gen)
+                    except StopIteration as _e:
+                        return _finish(_orch_result(context, _interp, _e.value or ""))
+                    _reply = _drive_pending_non_ui()  # reseed the first run of the new program
+                    if _reply is not None:
+                        return _finish(_orch_result(context, _interp, _reply))
+                    continue  # resume the loop on the re-decomposed program
 
             if sv_step.stop or sv_step.goal_completed:
                 return finish_terminal_step(

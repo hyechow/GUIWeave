@@ -502,6 +502,7 @@ def main() -> int:
                 orchestrator_context_reports: list[dict] = []
                 orchestrator_metrics: dict = {}
                 run_max_turns = args.max_turns
+                _redecompose = None  # mechanism-2 kick-back re-decompose closure (set in orchestrator branch)
                 with bundle.open_session() as platform:
                     _prime(platform)
                     device = getattr(platform, "client", None)
@@ -580,6 +581,21 @@ def main() -> int:
                                 else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                             )
                         print(f"[webarena] orchestrator: {len(program.statements)} statements")
+
+                        # mechanism-2 kick-back: re-decompose the goal with the supervisor's
+                        # infeasibility directive injected as knowledge (same decompose seam).
+                        def _redecompose(directive: str, _intent=intent, _know=knowledge,
+                                         _file=file_section, _url=cur_url, _title=cur_title,
+                                         _site=cur_site, _tables=initial_tables, _png=initial_png):
+                            extra = "\n\n## ⚠️ 上层反馈·重规划必读（milestone 判定不可行）\n" + (directive or "") + "\n"
+                            base_k = _know.navigation if _know else ""
+                            return normalize_precondition_gates(normalize_confirm_read_gates(decompose(
+                                _intent, knowledge=base_k + extra, file_section=_file,
+                                current_url=_url, current_title=_title, current_site=_site,
+                                table_summaries=_tables, png_bytes=_png,
+                                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                            )))
+
                         if not args.no_dynamic_max_turns:
                             run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                             if run_max_turns != args.max_turns:
@@ -606,6 +622,7 @@ def main() -> int:
                             router=None,
                             knowledge=knowledge_summary,
                             program=program,
+                            redecompose=_redecompose,
                             orchestrator_context_reports=[*orchestrator_context_reports, {
                                 "kind": "orchestrator_metrics",
                                 **orchestrator_metrics,
