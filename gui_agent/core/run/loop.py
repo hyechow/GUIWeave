@@ -99,14 +99,14 @@ def build_supervisor(name: str) -> "SupervisorPolicy":
     return build_platform().make_supervisor(name)
 
 
-# mechanism-2: how many times a single run may re-decompose after a feasibility kick-back. Bounded
+# Feasibility Guard: how many times a single run may re-decompose after a feasibility kick-back. Bounded
 # to avoid an infinite re-plan loop (the same dead-end milestone re-appearing). One is enough to
 # swap an infeasible route for the prescribed feasible one; a second kick-back ends the run.
 MAX_KICKBACK_REPLANS = 1
 
 
 def should_kickback_replan(sv_step, program, redecompose, replan_count: int) -> bool:
-    """Decide whether a stop step is a mechanism-2 kick-back to re-decompose (vs a terminal stop).
+    """Decide whether a stop step is a Feasibility Guard kick-back to re-decompose (vs a terminal stop).
 
     True only when: we're in orchestrator mode (program), the supervisor attached a re-plan
     directive (milestone judged infeasible), a redecompose callable is wired, and the per-run
@@ -138,7 +138,7 @@ def run_agent_loop(
     on_session_open: object = None,  # callable(platform) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
     program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
-    redecompose: object = None,  # callable(directive:str)->Program|None; mechanism-2 kick-back re-plan. None disables.
+    redecompose: object = None,  # callable(directive:str)->Program|None; Feasibility Guard kick-back re-plan. None disables.
     orchestrator_context_reports: list[dict] | None = None,
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
@@ -355,7 +355,7 @@ def run_agent_loop(
             if _reply is not None:
                 return _finish(_orch_result(context, _interp, _reply))
 
-        _kickback_replans = 0  # mechanism-2: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
+        _kickback_replans = 0  # Feasibility Guard: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
 
         def _perform_replan(directive: str) -> "tuple[bool, str | None]":
             """Re-decompose with a kick-back directive + hot-swap the interpreter. Returns
@@ -517,7 +517,7 @@ def run_agent_loop(
                     ))
                 # Sync the last milestone's done verdict into context (no later turn body runs).
                 sync_milestone_states(supervisor, context)
-                # mechanism-2 non-UI kick-back: the program ended because a data_query failed with a
+                # Feasibility Guard non-UI kick-back: the program ended because a data_query failed with a
                 # re-plannable data-source issue (source empty / mismatched with the task). Re-decompose
                 # with that evidence as the directive instead of finishing on the failure.
                 if _nonui_failure:
@@ -624,7 +624,7 @@ def run_agent_loop(
                 on_turn=on_turn,
             )
 
-            # mechanism-2 kick-back: the supervisor judged the milestone INFEASIBLE and attached a
+            # Feasibility Guard kick-back: the supervisor judged the milestone INFEASIBLE and attached a
             # re-plan directive. Re-decompose the goal with that directive and hot-swap the
             # interpreter, instead of failing the run. Bounded (MAX_KICKBACK_REPLANS); any failure
             # (redecompose raises / empty program) falls through to the normal terminal handling.

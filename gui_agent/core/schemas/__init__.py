@@ -369,7 +369,7 @@ class SupervisorStep(BaseModel):
         default=False,
         description="当前帧页面尚未渲染稳定（白屏/加载中），应等待重新观察而非执行/计数",
     )
-    # mechanism-2 kick-back: set when the supervisor judged the milestone INFEASIBLE (required UI
+    # Feasibility Guard kick-back: set when the supervisor judged the milestone INFEASIBLE (required UI
     # control absent) at give-up time. Carries a re-plan directive for the orchestrator to
     # re-decompose the remaining work with, instead of plainly failing the run. The loop acts on
     # this (re-decompose) when wired; until then it rides on a stop step and is logged.

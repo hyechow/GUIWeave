@@ -1,4 +1,4 @@
-"""Mechanism-2: runtime milestone-feasibility judgment (the goal-level stuck diagnosis).
+"""Feasibility Guard: runtime milestone-feasibility judgment (the goal-level stuck diagnosis).
 
 When the agent is STUCK on a milestone, this asks a different question from the action-level
 replanner: is the milestone's GOAL even achievable here — does the required UI control exist? —
@@ -35,7 +35,7 @@ _SYSTEM = load_prompt_text("task.milestone.feasibility")
 
 
 class FeasibilityVerdict(BaseModel):
-    """Mechanism-2 output: is the stuck milestone feasible, and (if not) the kick-back directive."""
+    """Feasibility Guard output: is the stuck milestone feasible, and (if not) the kick-back directive."""
 
     feasible: bool = Field(description="目标在当前环境可否达成:true=可行(继续试),false=不可行(踢回重规划)")
     reason: str = Field(default="", description="一句话依据:点名必需控件 + 它是否在页面控件清单中")
@@ -65,7 +65,7 @@ def _ui_facts_text(ui_facts: Optional[list[dict[str, Any]]]) -> str:
 
 def control_presence_text(observation: Any) -> str:
     """The page's actual control inventory (DOM form_controls + grid facts) — the direct
-    observation mechanism-2 judges against. Empty/visual-only platforms yield a clear sentinel."""
+    observation the Feasibility Guard judges against. Empty/visual-only platforms yield a clear sentinel."""
     parts = [
         format_form_controls_text(getattr(observation, "form_controls", None)),
         _ui_facts_text(getattr(observation, "ui_facts", None)),

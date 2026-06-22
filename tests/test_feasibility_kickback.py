@@ -1,4 +1,4 @@
-"""Stage 2: the supervisor's _maybe_kickback routing at give-up time (mechanism-2 hook).
+"""Stage 2: the supervisor's _maybe_kickback routing at give-up time (Feasibility Guard hook).
 
 The feasibility LLM is monkeypatched — these pin the deterministic ROUTING: infeasible → a stop
 step carrying the directive; feasible/visual/judge-error → None (fall through to normal fail)."""

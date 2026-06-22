@@ -387,7 +387,7 @@ def decompose(
 
     context_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
-        # mechanism-2 kick-back: a runtime correction from the supervisor (the milestone was judged
+        # Feasibility Guard kick-back: a runtime correction from the supervisor (the milestone was judged
         # infeasible). It must NOT be buried in app_navigation knowledge — it's an authoritative
         # constraint, so it gets its own block, priority ABOVE the goal (15 < 20) and `required`
         # budget so the budgeter never drops it. The app knowledge stays for navigation grounding.

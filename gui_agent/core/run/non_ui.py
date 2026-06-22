@@ -28,7 +28,7 @@ class NonUiDriveResult:
     run_index: int
     notes_mark: int
     reply: str | None = None
-    # mechanism-2 (non-UI kick-back): set when a data_query/read step FAILED in a re-plannable way
+    # Feasibility Guard (non-UI kick-back): set when a data_query/read step FAILED in a re-plannable way
     # (data source empty / mismatched with the task intent) — the loop turns this into a re-decompose
     # directive instead of plainly ending the run. None = no re-plannable non-UI failure.
     failure_evidence: str | None = None
@@ -60,7 +60,7 @@ def drive_pending_non_ui(
 ) -> NonUiDriveResult:
     """Execute consecutive `read` / `data_query` runs and advance the interpreter."""
     cur_run = current_run
-    failure_evidence: str | None = None  # last re-plannable non-UI failure (for mechanism-2 kick-back)
+    failure_evidence: str | None = None  # last re-plannable non-UI failure (for Feasibility Guard kick-back)
     obs = done_observation
     frame = getattr(obs, "png_bytes", None) if obs is not None else None
     tables = getattr(obs, "tables", None) if obs is not None else None

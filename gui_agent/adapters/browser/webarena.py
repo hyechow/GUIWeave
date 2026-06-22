@@ -502,7 +502,7 @@ def main() -> int:
                 orchestrator_context_reports: list[dict] = []
                 orchestrator_metrics: dict = {}
                 run_max_turns = args.max_turns
-                _redecompose = None  # mechanism-2 kick-back re-decompose closure (set in orchestrator branch)
+                _redecompose = None  # Feasibility Guard kick-back re-decompose closure (set in orchestrator branch)
                 with bundle.open_session() as platform:
                     _prime(platform)
                     device = getattr(platform, "client", None)
@@ -582,7 +582,7 @@ def main() -> int:
                             )
                         print(f"[webarena] orchestrator: {len(program.statements)} statements")
 
-                        # mechanism-2 kick-back: re-decompose the goal with the supervisor's
+                        # Feasibility Guard kick-back: re-decompose the goal with the supervisor's
                         # infeasibility directive injected as knowledge (same decompose seam).
                         def _redecompose(directive: str, _intent=intent, _know=knowledge,
                                          _file=file_section, _url=cur_url, _title=cur_title,

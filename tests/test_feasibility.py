@@ -1,4 +1,4 @@
-"""Deterministic tests for mechanism-2 (runtime milestone-feasibility) — prompt, extraction, wiring.
+"""Deterministic tests for Feasibility Guard (runtime milestone-feasibility) — prompt, extraction, wiring.
 
 The LLM judgment itself is validated offline (scripts/milestone_feasibility_113.py); here we pin the
 device-free parts: the prompt asset's load-bearing rules, the control-inventory extraction, and that

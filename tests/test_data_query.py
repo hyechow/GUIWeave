@@ -514,7 +514,7 @@ def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkey
 
 
 def test_non_ui_data_query_failure_sets_failure_evidence(tmp_path, monkeypatch):
-    # mechanism-2 non-UI kick-back: a data_query that fails carries failure_evidence so the loop can
+    # Feasibility Guard non-UI kick-back: a data_query that fails carries failure_evidence so the loop can
     # re-decompose instead of ending the run.
     import gui_agent.core.orchestrator.data_query as dq
 

@@ -811,7 +811,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._record_failure_constraint(milestone, check, history)
 
         if milestone.retry_count >= MAX_RETRIES:
-            # mechanism-2: before giving up, judge if the milestone is INFEASIBLE (required control
+            # Feasibility Guard: before giving up, judge if the milestone is INFEASIBLE (required control
             # absent) and, if so, kick back to the orchestrator with a re-plan directive.
             kick = self._maybe_kickback(milestone, observation, read_inst)
             if kick:
@@ -847,7 +847,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
         if replan.strategy == "escalate_human":
             # The replanner can give up EARLY (before MAX_RETRIES) by escalating — another give-up
-            # path. Give mechanism-2 a chance here too: if the milestone is infeasible (required
+            # path. Give the Feasibility Guard a chance here too: if the milestone is infeasible (required
             # control absent), kick back to the orchestrator with a directive instead of escalating.
             kick = self._maybe_kickback(milestone, observation, read_inst)
             if kick:
@@ -885,7 +885,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
     def _maybe_kickback(
         self, milestone: Milestone, observation: Observation, read_inst: Optional[str],
     ) -> Optional[SupervisorStep]:
-        """Mechanism-2 (goal level): at give-up time, judge whether the milestone is INFEASIBLE —
+        """Feasibility Guard (goal level): at give-up time, judge whether the milestone is INFEASIBLE —
         i.e. the required UI control is ABSENT from the page's actual control inventory — vs merely
         a feasible-but-stuck action problem. If infeasible, abandon it with a re-plan DIRECTIVE for
         the orchestrator (kick back) instead of a plain failure.
