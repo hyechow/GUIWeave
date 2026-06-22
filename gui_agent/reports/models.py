@@ -17,6 +17,7 @@ class ReportStep:
     after_url: str | None = None      # screenshot after action
     status: str = ""  # ✓ ✗ ↩ ""
     timestamp: str = ""  # ISO timestamp
+    index: int = 0              # context turn index (for ordering re-decompose cards by at_turn)
     milestone_id: str = ""
     milestone_kind: str = ""
     instruction: str = ""

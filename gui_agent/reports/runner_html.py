@@ -11,7 +11,7 @@ from gui_agent.core.config import model_price, pricing_currency
 from .html_utils import _attr, _safe
 from .metrics import _fmt_tokens, _sum_tokens, _token_cost
 from .models import ReportData, ReportStep
-from .orchestrator_html import _render_non_ui_detail, _render_program_section
+from .orchestrator_html import _render_non_ui_detail, _render_program_section, render_redecompose_card
 from .prompt_html import _render_module_io_html
 
 # ── Runner HTML generator ──────────────────────────────────────
@@ -738,10 +738,12 @@ def _gap_seconds(prev_iso: str, cur_iso: str) -> float | None:
         return None
 
 
-def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = "") -> str:
+def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = "", extra_html: str = "") -> str:
     """Render the expandable detail panel for a step.
 
     prev_timestamp: the previous action's timestamp, to show the inter-action gap.
+    extra_html: appended at the end of the panel — e.g. the re-decompose result block on the turn
+    whose failure triggered it (that turn's conclusion).
     """
     at_cls = f"at-{step.action_type}"
     at_label = AT_LABELS.get(step.action_type, step.action_type)
@@ -856,6 +858,7 @@ def _render_step_detail(step: ReportStep, detail_id: str, prev_timestamp: str = 
         {non_ui_html}
         {_render_module_io_html(step.llm_context, step.token_usage)}
         {_render_timing_html(step.timings)}
+        {extra_html}
       </div>
     </div>"""
 
@@ -1088,6 +1091,9 @@ def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
 
 def generate_html(data: ReportData, grid: bool = False) -> str:
     stats_parts = [f"{k}: {v}" for k, v in data.stats.items()]
+    _rd_n = len((data.orchestrator or {}).get("redecomposes") or [])
+    if _rd_n:  # only when it happened — most runs have 0
+        stats_parts.append(f"re-decompose: {_rd_n}")
     llm_s = sum(m.get("total_time", 0) for m in data.milestones)  # Σ LLM-module timings
     if data.wall_clock_s:
         # True end-to-end elapsed, split into LLM compute, settle waits, and "other"
@@ -1188,10 +1194,29 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         data = f'<div id="{cid}" class="checklist-data" style="display:none">{"".join(rows)}</div>'
         return badge, data
 
-    # Per-milestone sections
+    # Per-milestone sections. A Feasibility kick-back re-decompose IS the outcome of the milestone
+    # whose verification failed — so its #vN card is embedded in THAT milestone's 验收结果 (the
+    # milestone active at the kick-back's `at_turn`), not rendered as a separate sibling card.
+    redecomps = sorted(
+        ((data.orchestrator or {}).get("redecomposes") or []),
+        key=lambda r: r.get("at_turn") or 0,
+    )
+    placed_rd: set = set()
+
     pages_html = ""
     prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
     for page in data.pages:
+        # a re-decompose triggered by one of THIS milestone's turns is that milestone's 验收结果 —
+        # render its banner there (the new plan = the milestones that follow; the banner doesn't
+        # re-list them, just marks the transition + trigger directive).
+        _pturn_set = {s.index for s in page.steps}
+        rd_banner = ""
+        for _rd in redecomps:
+            _n = _rd.get("kickback_n")
+            if _n not in placed_rd and (_rd.get("at_turn") or 0) in _pturn_set:
+                rd_banner += render_redecompose_card(data.orchestrator, _n)
+                placed_rd.add(_n)
+        _triggered_rd = bool(rd_banner)  # → label its verify thumbnail 重编排
         badge_cls = KIND_BADGE.get(page.milestone_kind, "milestone-badge-default")
         ms_in = sum(_sum_tokens(s.token_usage)[0] for s in page.steps)
         ms_out = sum(_sum_tokens(s.token_usage)[1] for s in page.steps)
@@ -1244,8 +1269,22 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                     f'</div>'
                 )
 
+            # This turn's check judged the milestone infeasible → that verdict is THIS turn's
+            # conclusion (the kick-back), so render it in the turn's own detail, not at milestone level.
+            _step_extra = ""
+            if step.replan_directive or (step.stop_reason or "").startswith("milestone 不可行"):
+                _kr = _safe(step.stop_reason or step.summary)
+                _kd = _safe(step.replan_directive)
+                _verdict = ("milestone 判定<b>不可行 → 踢回重编排</b>" if _triggered_rd
+                            else "milestone 判定<b>不可行</b>；已达重编排上限、未能再重规划 → <b>本步失败</b>")
+                _step_extra = (
+                    '<div class="milestone-sc" style="border-left:3px solid #dc2626;background:#fef2f2;'
+                    f'color:#991b1b;margin-top:8px">⚠️ 验收：{_verdict}。{_kr}'
+                    + (f'<div style="margin-top:4px;color:#7f1d1d">↳ 重规划指令：{_kd}</div>' if _kd else "")
+                    + '</div>'
+                )
             # Detail panel (hidden until clicked)
-            details_html += _render_step_detail(step, detail_id, prev_timestamp=prev_ts)
+            details_html += _render_step_detail(step, detail_id, prev_timestamp=prev_ts, extra_html=_step_extra)
             if step.timestamp:
                 prev_ts = step.timestamp
 
@@ -1267,13 +1306,23 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
         verify_thumb = ""
         verify_detail = ""
+        _is_rd_ms = _triggered_rd  # this milestone's verification produced a re-decompose
         if page.verify_url:
             vd_id = f"detail-ms{mid_safe}-verify"
+            if _is_rd_ms:
+                # not a pass — its outcome was a re-decompose; label it 重编排 (red), not 验收
+                _vt_border, _vt_status = "#dc262655", '<div class="thumb-status" style="background:#dc2626">↻</div>'
+                _vt_label = ('<div class="thumb-label" style="background:linear-gradient(transparent, '
+                             'rgba(254,226,226,0.95));color:#dc2626;font-weight:800">重编排</div>')
+            else:
+                _vt_border, _vt_status = "#22c55e40", '<div class="thumb-status thumb-status-ok">✓</div>'
+                _vt_label = ('<div class="thumb-label" style="background:linear-gradient(transparent, '
+                             'rgba(34,197,94,0.7))">验收</div>')
             verify_thumb = (
-                f'<div class="thumb" data-detail="{vd_id}" onclick="showDetail(\'{vd_id}\')" style="border-color:#22c55e40">'
+                f'<div class="thumb" data-detail="{vd_id}" onclick="showDetail(\'{vd_id}\')" style="border-color:{_vt_border}">'
                 f'<img src="{page.verify_url}" alt="验收截图">'
-                f'<div class="thumb-status thumb-status-ok">✓</div>'
-                f'<div class="thumb-label" style="background:linear-gradient(transparent, rgba(34,197,94,0.7))">验收</div>'
+                f'{_vt_status}'
+                f'{_vt_label}'
                 f'</div>'
             )
             ck = page.verify_checker
@@ -1300,21 +1349,13 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'</div>'
                 f'{reason_html}'
                 f'{summary_html}'
+                f'{rd_banner}'  # a re-decompose triggered here IS this milestone's 验收结果 — inside the box
                 f'</div>'
                 f'</div>'
             )
-        # A milestone abandoned as INFEASIBLE has no done_check → its 验收 slot would be blank. Render
-        # the Feasibility kick-back verdict (why + re-decompose directive) as its terminal acceptance.
-        kickback_html = ""
-        if page.kickback:
-            _kr = _safe(page.kickback.get("reason", ""))
-            _kd = _safe(page.kickback.get("directive", ""))
-            kickback_html = (
-                '<div class="milestone-sc" style="border-left:3px solid #dc2626;background:#fef2f2;color:#991b1b">'
-                f'⚠️ 验收：milestone 判定<b>不可行 → 踢回重编排</b>。{_kr}'
-                + (f'<div style="margin-top:4px;color:#7f1d1d">↳ 重规划指令：{_kd}</div>' if _kd else "")
-                + '</div>'
-            )
+        _rd_outside = "" if page.verify_url else rd_banner  # no 验收结果 box → fall back to the card body
+        # (The infeasible-milestone kick-back verdict is rendered on its own turn's detail, above —
+        # it's that turn's conclusion, not a milestone-level banner.)
         pages_html += f"""
         <div class="milestone" id="ms-{mid_safe}">
           <div class="milestone-header">
@@ -1325,13 +1366,18 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             <span class="milestone-time" title="{_safe(ms_time_title)}">{ms_time_html} · {len(page.steps)} turns{ms_tok_html}</span>
             {desc_html}
             {sc_html}
-            {kickback_html}
           </div>
           <div class="gallery">{thumbs_html}{verify_thumb}</div>
           {details_html}
           {verify_detail}
+          {_rd_outside}
           {checklist_data}
         </div>"""
+
+    # any re-decompose whose trigger turn wasn't matched to a milestone (edge) → banner at the end
+    for _rd in redecomps:
+        if _rd.get("kickback_n") not in placed_rd:
+            pages_html += render_redecompose_card(data.orchestrator, _rd.get("kickback_n"))
 
     # Model-config box with an inline "参考单价" chip that pops the rate table on hover.
     cost_note_html = ""

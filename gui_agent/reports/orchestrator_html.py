@@ -429,19 +429,21 @@ def _json_inline(value: object) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _render_program_section(orchestrator: dict | None, webarena: dict | None = None) -> str:
-    """Orchestrator mode: render the decomposed DSL program as its OWN section, #0 编排.
-
-    decompose is a distinct stage now (goal → run/if/finish program), not folded into turn 1
-    and not lumped with the Router / 模型配置 header rows. It gets its own milestone-style card
-    (#0, before the executed milestones) showing the run/if/finish structure vertically.
-    Empty (DAG mode) → no section."""
-    if not orchestrator:
-        return ""
-    stmts = (orchestrator.get("program") or {}).get("statements") or []
-    if not stmts:
-        return ""
-    run_items = _program_run_items(stmts)
+def _render_program_card(
+    orchestrator: dict,
+    program: dict,
+    h2: str,
+    name: str,
+    *,
+    directive: str = "",
+    metrics_html: str = "",
+    extras_html: str = "",
+    h2_style: str = "",
+    embedded: bool = False,
+) -> str:
+    """Render ONE DSL program as a milestone-style card (#0 or #0↻N). env (var→reads, from the
+    runner's mirrored run_log) is shared across a run's cards so {var[field]} refs resolve as the
+    runner did at execute time."""
 
     # var -> {field: value} captured by each completed read (runner mirrors interp.run_log into
     # context.orchestrator). Lets the report show WHAT a read got and resolve {var[field]} action
@@ -506,65 +508,103 @@ def _render_program_section(orchestrator: dict | None, webarena: dict | None = N
                      f' {_safe(cond.get("cmp","=="))} '
                      f'<span class="prog-condval">{_safe(cond.get("value",""))}</span>')
                 then_html = "".join(_walk(s.get("then", []))) or '<div class="prog-step prog-empty">—</div>'
-                else_html = "".join(_walk(s.get("otherwise", []))) or '<div class="prog-step prog-empty">—</div>'
+                else_html = "".join(_walk(s.get("otherwise", [])))
+                # empty else (no otherwise statements) → omit the whole else block, don't show "else : —"
+                else_block = (
+                    f'<div class="prog-cond"><span class="prog-kw">else :</span></div>'
+                    f'<div class="prog-branch prog-branch-else">{else_html}</div>'
+                ) if else_html else ""
                 out.append(
                     f'<div class="prog-if">'
                     f'<div class="prog-cond"><span class="prog-kw">if</span> {c} <span class="prog-kw">:</span></div>'
                     f'<div class="prog-branch">{then_html}</div>'
-                    f'<div class="prog-cond"><span class="prog-kw">else :</span></div>'
-                    f'<div class="prog-branch prog-branch-else">{else_html}</div>'
+                    f'{else_block}'
                     f'</div>'
                 )
             elif op == "finish":
                 out.append(f'<div class="prog-finish">↩ finish「{_safe(s.get("message", ""))}」</div>')
         return out
 
-    def _card(prog: dict, h2: str, name: str, *, directive: str = "",
-              metrics_html: str = "", extras_html: str = "") -> str:
-        """Render one program as its own #N card (shared env/_walk; counter resets per card)."""
-        counter[0] = 0
-        card_body = "".join(_walk(prog.get("statements") or []))
-        g = _safe(prog.get("goal") or "")
-        input_html = (
-            f'<div class="prog-input"><span class="prog-input-label">输入</span>{g}'
-            f'<span class="prog-input-arrow">↓ 分解为</span></div>'
-        ) if g else ""
-        # A re-decompose card leads with WHY it fired (the Feasibility kick-back directive).
-        directive_html = (
-            '<div class="prog-input" style="border-left:3px solid #e0a020;background:#fff8e8">'
-            '<span class="prog-input-label">重编排触发</span>'
-            f'<span style="color:#a05a00">⚠️ 上层判 milestone 不可行 → 踢回指令：{_safe(directive)}</span>'
-            '</div>'
-        ) if directive else ""
-        anchor = h2.replace("#", "").replace("↻", "r")
+    counter[0] = 0
+    card_body = "".join(_walk(program.get("statements") or []))
+    g = _safe(program.get("goal") or "")
+    input_html = (
+        f'<div class="prog-input"><span class="prog-input-label">输入</span>{g}'
+        f'<span class="prog-input-arrow">↓ 分解为</span></div>'
+    ) if g else ""
+    # A re-decompose card leads with WHY it fired (the Feasibility kick-back directive).
+    directive_html = (
+        '<div class="prog-input" style="border-left:3px solid #e0a020;background:#fff8e8">'
+        '<span class="prog-input-label">重编排触发</span>'
+        f'<span style="color:#a05a00">⚠️ 上层判 milestone 不可行 → 踢回指令：{_safe(directive)}</span>'
+        '</div>'
+    ) if directive else ""
+    if embedded:
+        # Integrated INTO a milestone's 验收结果 — a light sub-block (the re-decompose outcome),
+        # NOT an independent #vN milestone card. The new plan itself also runs as the subsequent
+        # executed milestones; this block makes the trigger→new-plan explicit in the 验收 area.
         return (
-            f'<div class="milestone prog-section" id="ms-orchestrate-{anchor}">'
-            f'<div class="milestone-header">'
-            f'<h2>{_safe(h2)}</h2>'
-            f'<span class="milestone-name">{_safe(name)}</span>'
-            f'<span class="milestone-badge milestone-badge-default">program</span>'
-            f'{metrics_html}'
-            f'</div>'
-            f'<div class="prog-body">{directive_html}{input_html}{extras_html}{card_body}</div>'
-            f'</div>'
+            '<div style="margin-top:4px">'
+            '<div style="display:flex;align-items:center;gap:8px;padding:2px 0 6px 0">'
+            f'<span style="color:#dc2626;font-weight:800;font-size:14px">↻ {_safe(h2)}</span>'
+            f'<span style="color:#991b1b;font-weight:700;font-size:13px">{_safe(name)}</span>'
+            f'<span style="margin-left:auto">{metrics_html}</span></div>'
+            f'<div class="prog-body">{directive_html}{input_html}{card_body}{extras_html}</div>'
+            '</div>'
         )
+    anchor = h2.replace("#", "").replace("↻", "r")
+    h2_open = f'<h2 style="{h2_style}">' if h2_style else "<h2>"
+    return (
+        f'<div class="milestone prog-section" id="ms-orchestrate-{anchor}">'
+        f'<div class="milestone-header">'
+        f'{h2_open}{_safe(h2)}</h2>'
+        f'<span class="milestone-name">{_safe(name)}</span>'
+        f'<span class="milestone-badge milestone-badge-default">program</span>'
+        f'{metrics_html}'
+        f'</div>'
+        f'<div class="prog-body">{directive_html}{input_html}{extras_html}{card_body}</div>'
+        f'</div>'
+    )
 
-    # #0 = the original plan; each Feasibility kick-back re-decompose is its own card (#0↻N).
-    cards = [_card(
-        orchestrator.get("program") or {}, "#0", "编排 · decompose → DSL program",
+
+def _render_program_section(orchestrator: dict | None, webarena: dict | None = None) -> str:
+    """Render the ORIGINAL decomposed program as the #0 编排 card (before the executed milestones).
+    Re-decompose cards are NOT here — each renders INLINE right after the milestone that triggered it
+    (render_redecompose_card), so it sits where it actually fired. Empty (DAG mode) → no section."""
+    if not orchestrator:
+        return ""
+    prog0 = orchestrator.get("program") or {}
+    if not prog0.get("statements"):
+        return ""
+    return _render_program_card(
+        orchestrator, prog0, "#0", "编排 · decompose → DSL program",
         metrics_html=_render_orchestrator_metrics(orchestrator),
         extras_html=_render_dataflow_lane(orchestrator, webarena)
         + _render_orchestrator_context_reports(orchestrator),
-    )]
-    for rd in (orchestrator.get("redecomposes") or []):
-        rprog = rd.get("program") or {}
-        if not rprog.get("statements"):
-            continue
-        n = rd.get("kickback_n") or "?"
-        at = rd.get("at_turn")
-        cards.append(_card(
-            rprog, f"#0↻{n}",
-            f"重编排 · 第 {n} 次{f'（T{at} 后）' if at else ''} · Feasibility 踢回",
-            directive=rd.get("directive") or "",
-        ))
-    return "".join(cards)
+    )
+
+
+def render_redecompose_card(orchestrator: dict | None, kickback_n) -> str:
+    """A timeline DIVIDER marking where a Feasibility kick-back re-decomposed the plan. The new
+    plan's steps are NOT listed here — they ARE the milestones that FOLLOW this marker; the banner
+    just marks the transition (trigger + directive + model-call cost) so the subsequent milestones
+    read as the v{N} plan, without duplicating them."""
+    if not orchestrator:
+        return ""
+    rd = next(
+        (r for r in (orchestrator.get("redecomposes") or []) if r.get("kickback_n") == kickback_n),
+        None,
+    )
+    if not rd or not (rd.get("program") or {}).get("statements"):
+        return ""
+    at = rd.get("at_turn")
+    # Render the new plan with the SAME run/if/finish step style as the #0 card (reuse
+    # _render_program_card), in a light embedded block — always visible, not folded.
+    return _render_program_card(
+        orchestrator, rd["program"], f"#v{kickback_n}",
+        f"重编排 · Re-decompose（T{at} 后 · Feasibility 踢回）",
+        directive=rd.get("directive") or "",
+        metrics_html=_render_orchestrator_metrics(rd),
+        extras_html=_render_orchestrator_context_reports(rd),  # 模型调用详情 (this re-decompose's LLM trace)
+        embedded=True,
+    )

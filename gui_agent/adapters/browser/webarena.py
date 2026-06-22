@@ -593,18 +593,20 @@ def main() -> int:
 
                         # Feasibility Guard kick-back: re-decompose the goal with the supervisor's
                         # infeasibility directive injected as knowledge (same decompose seam).
-                        def _redecompose(directive: str, _intent=intent, _know=knowledge,
+                        def _redecompose(directive: str, context_reports=None, _intent=intent, _know=knowledge,
                                          _file=file_section, _url=cur_url, _title=cur_title,
                                          _site=cur_site, _tables=initial_tables, _png=initial_png,
                                          _res=resolution):
                             # The directive rides a DEDICATED high-priority block (corrective_directive),
                             # NOT concatenated into the nav knowledge — so it's authoritative + un-buried.
+                            # context_reports collects this re-decompose's LLM call trace (its 模型调用详情).
                             return normalize_precondition_gates(normalize_confirm_read_gates(decompose(
                                 _intent, knowledge=_know.navigation if _know else "", file_section=_file,
                                 current_url=_url, current_title=_title, current_site=_site,
                                 table_summaries=_tables, png_bytes=_png,
                                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                                 corrective_directive=directive, resolution=_res,
+                                context_reports=context_reports,
                             )))
 
                         if not args.no_dynamic_max_turns:

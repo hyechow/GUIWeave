@@ -368,8 +368,12 @@ def run_agent_loop(
                 return (False, None)
             _kickback_replans += 1
             _say(f"\n[Kickback] 重规划 ({_kickback_replans}/{MAX_KICKBACK_REPLANS})：{directive[:120]}")
+            _rd_calls0 = get_llm_call_count()
+            _rd_tok0 = get_llm_token_usage()
+            _rd_t0 = time.perf_counter()
+            _rd_reports: list = []  # the re-decompose's LLM call trace → its report 模型调用详情
             try:
-                _new = redecompose(directive)  # type: ignore[operator]
+                _new = redecompose(directive, _rd_reports)  # type: ignore[operator]
             except Exception as _exc:  # noqa: BLE001 - a redecompose failure must not crash the run
                 _say(f"[Kickback] 重规划失败（{_exc}），按原结果收尾")
                 return (False, None)
@@ -388,6 +392,14 @@ def run_agent_loop(
                 "directive": directive,
                 "at_turn": len(context.turns),
                 "program": _new.model_dump(mode="json"),
+                # the re-decompose's own LLM call metrics, so its report card shows 模型调用详情
+                "llm_calls": get_llm_call_count() - _rd_calls0,
+                "token_usage": {"orchestrator.redecompose": {
+                    "input": get_llm_token_usage()[0] - _rd_tok0[0],
+                    "output": get_llm_token_usage()[1] - _rd_tok0[1],
+                }},
+                "timings": {"orchestrator.redecompose": time.perf_counter() - _rd_t0},
+                "context_reports": _rd_reports,
             })
             context.orchestrator = {
                 **_prior,

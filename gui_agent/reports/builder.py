@@ -496,6 +496,7 @@ class RunnerReportBuilder:
                 after_url=None,
                 status=status,
                 timestamp=turn.get("timestamp", ""),
+                index=idx,
                 milestone_id=sup.get("milestone_id", ""),
                 milestone_kind=sup.get("milestone_kind", ""),
                 instruction=sup.get("instruction", ""),
@@ -631,6 +632,8 @@ class RunnerReportBuilder:
             # that milestone's terminal acceptance instead.
             kb = next((s for s in page.steps if s.replan_directive or s.stop_reason.startswith("milestone 不可行")), None)
             if kb is not None:
+                # Acceptance display only — this milestone was judged infeasible. (The inline #0↻N
+                # program card is placed separately, by the re-decompose's at_turn, in runner_html.)
                 page.kickback = {
                     "reason": kb.stop_reason or kb.summary,
                     "directive": kb.replan_directive,
