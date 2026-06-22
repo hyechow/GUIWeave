@@ -9,6 +9,10 @@ from llm.structured import get_llm_token_usage
 from gui_agent.core.schemas import Milestone, PolicyTurn
 
 MAX_RETRIES = 3
+# Consult the Feasibility Guard ONCE this early (before the MAX_RETRIES give-up): a milestone that
+# is already stuck twice is worth an infeasibility check now, not after it exhausts all retries. The
+# judge is conservative-toward-feasible, so an early probe that says "feasible" just continues.
+EARLY_FEASIBILITY_AT = 2
 MAX_SCROLL_PER_MILESTONE = 3
 
 _SEARCH_FILTER_MILESTONE_MARKERS = (

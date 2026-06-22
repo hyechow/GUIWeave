@@ -25,6 +25,7 @@ from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
 from .helpers import assemble_messages, _make_llm, run_loop_check, run_planner
 from .helpers import run_checker, run_selector, _default_milestone_prompts
 from .runtime import (
+    EARLY_FEASIBILITY_AT,
     MAX_RETRIES,
     MAX_SCROLL_PER_MILESTONE,
     _Timer,
@@ -97,6 +98,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # Action-Loop Guard: run-scoped (state, action) memory keyed on canonical URL — catches task-level
         # loops the frame guards miss. NOT reset per milestone (a loop can span milestone boundaries).
         self._monitor = ProgressMonitor()
+        self._early_feasibility_probed: set[str] = set()  # milestone ids given an early Feasibility probe
         self._last_check: Optional[_SingleCheckResult] = None
         self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
         self._last_plan: Optional[_PlanResult] = None
@@ -803,6 +805,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             milestone.retry_count += 1
 
         self._record_failure_constraint(milestone, check, history)
+
+        # Early Feasibility probe: a milestone already stuck EARLY_FEASIBILITY_AT times is worth an
+        # infeasibility check now, not after it burns every retry (run 20260622_171843: the data_query
+        # milestone churned the Reviews grid 13 turns before Feasibility fired at give-up). Once per
+        # milestone; the judge is conservative-toward-feasible, so a "feasible" verdict just continues.
+        if (
+            EARLY_FEASIBILITY_AT <= milestone.retry_count < MAX_RETRIES
+            and milestone.id not in self._early_feasibility_probed
+        ):
+            self._early_feasibility_probed.add(milestone.id)
+            kick = self._maybe_kickback(milestone, observation, read_inst)
+            if kick:
+                return kick
 
         if milestone.retry_count >= MAX_RETRIES:
             # Feasibility Guard: before giving up, judge if the milestone is INFEASIBLE (required control
