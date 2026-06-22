@@ -1303,6 +1303,18 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'</div>'
                 f'</div>'
             )
+        # A milestone abandoned as INFEASIBLE has no done_check → its 验收 slot would be blank. Render
+        # the Feasibility kick-back verdict (why + re-decompose directive) as its terminal acceptance.
+        kickback_html = ""
+        if page.kickback:
+            _kr = _safe(page.kickback.get("reason", ""))
+            _kd = _safe(page.kickback.get("directive", ""))
+            kickback_html = (
+                '<div class="milestone-sc" style="border-left:3px solid #dc2626;background:#fef2f2;color:#991b1b">'
+                f'⚠️ 验收：milestone 判定<b>不可行 → 踢回重编排</b>。{_kr}'
+                + (f'<div style="margin-top:4px;color:#7f1d1d">↳ 重规划指令：{_kd}</div>' if _kd else "")
+                + '</div>'
+            )
         pages_html += f"""
         <div class="milestone" id="ms-{mid_safe}">
           <div class="milestone-header">
@@ -1313,6 +1325,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             <span class="milestone-time" title="{_safe(ms_time_title)}">{ms_time_html} · {len(page.steps)} turns{ms_tok_html}</span>
             {desc_html}
             {sc_html}
+            {kickback_html}
           </div>
           <div class="gallery">{thumbs_html}{verify_thumb}</div>
           {details_html}

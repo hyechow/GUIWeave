@@ -21,6 +21,8 @@ class ReportStep:
     milestone_kind: str = ""
     instruction: str = ""
     summary: str = ""
+    replan_directive: str = ""  # Feasibility kick-back: the re-decompose directive on a stop turn
+    stop_reason: str = ""       # terminal reason (e.g. "milestone 不可行，需重规划：…") for a stop turn
     timings: dict[str, float] = field(default_factory=dict)
     token_usage: dict[str, dict[str, int]] = field(default_factory=dict)  # per-module {input, output}
     llm_calls: int = 0
@@ -50,6 +52,7 @@ class ReportPage:
     checklist: list[dict] = field(default_factory=list)
     verify_url: str = ""  # verification screenshot (first turn of next milestone)
     verify_checker: dict = field(default_factory=dict)  # checker result from the last turn (done/in_progress)
+    kickback: dict = field(default_factory=dict)  # Feasibility kick-back terminal state {reason, directive} — the "验收" for an abandoned-as-infeasible milestone
 
 
 @dataclass

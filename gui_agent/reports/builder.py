@@ -500,6 +500,8 @@ class RunnerReportBuilder:
                 milestone_kind=sup.get("milestone_kind", ""),
                 instruction=sup.get("instruction", ""),
                 summary=summary,
+                replan_directive=sup.get("replan_directive") or "",
+                stop_reason=sup.get("stop_reason") or "",
                 timings=turn.get("timings", {}),
                 token_usage=turn.get("token_usage", {}),
                 llm_calls=turn.get("llm_calls", 0),
@@ -624,6 +626,15 @@ class RunnerReportBuilder:
                 if next_first and next_first.raw_screenshot_url:
                     page.verify_url = next_first.raw_screenshot_url
             page.verify_checker = ms_lookup.get(page.milestone_id, {}).get("done_check", {})
+            # A milestone abandoned as INFEASIBLE never produces a done_check, so its 验收 slot is
+            # blank. Surface the Feasibility kick-back verdict (why + the re-decompose directive) as
+            # that milestone's terminal acceptance instead.
+            kb = next((s for s in page.steps if s.replan_directive or s.stop_reason.startswith("milestone 不可行")), None)
+            if kb is not None:
+                page.kickback = {
+                    "reason": kb.stop_reason or kb.summary,
+                    "directive": kb.replan_directive,
+                }
 
         data.pages = pages
         data.milestones = milestones_info
