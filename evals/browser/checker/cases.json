@@ -217,5 +217,26 @@
       ]
     },
     "note": "回归 20260622_105707：Reset→search→Reset 循环 11+ 轮。截图 0 records found + Review 框误填 'Olivia zip j…'、Product 框空。state_trace 标 T8/T10 ⚠️重复。checker 看到轨迹应判 in_progress、不得宣称筛选已成功/已完成——0 条且 Product 未设、还在打转。"
+  },
+  {
+    "label": "搜索/筛选 0 条 = 目标未找到，不得判 done（即便 SC 宽到「动作已发出」）（回归 20260622_113558）",
+    "screenshot": "evals/browser/checker/screenshots/webarena113_product_filter_0records_20260622_113558.png",
+    "with_app_check": false,
+    "milestone": {
+      "name": "在评论列表中搜索/筛选 'Olivia zip jacket' 产品",
+      "description": "在 Product Reviews 列表用 Product 列筛选出 'Olivia zip jacket' 的评论。",
+      "success_condition": "已执行「在评论列表中搜索/筛选 'Olivia zip jacket' 产品」：动作已发出且界面给出响应（出现提示/结果区/列表更新/页面跳转）。",
+      "kind": "action",
+      "app_name": "shopping_admin"
+    },
+    "expected": {
+      "status": "in_progress",
+      "must_not_claim": [
+        "筛选成功",
+        "已完成",
+        "已找到该产品"
+      ]
+    },
+    "note": "回归 20260622_113558：Product 筛选框填了 'Olivia zip j…'、Search 已应用，但 0 records found / We couldn't find any records.（真实产品名是 'Olivia 1/4 Zip Light Jacket'，词不匹配）。SC 写得宽（动作已发出+界面响应），活跑里 checker 据此误判 done → 后续 read 读空 → score 0。新规则：搜索/筛选类 0 条=目标未找到，判 in_progress，把控制权交回 replan 去放宽搜索词。"
   }
 ]

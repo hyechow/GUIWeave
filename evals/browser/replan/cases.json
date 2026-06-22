@@ -19,8 +19,12 @@
       "点击顶部的「导入地图文件」蓝色按钮"
     ],
     "expected": {
-      "must_contain": ["上传"],
-      "must_contain_all": ["/Users/hyde/Downloads/交管测试专用地图_2楼.map_export"],
+      "must_contain": [
+        "上传"
+      ],
+      "must_contain_all": [
+        "/Users/hyde/Downloads/交管测试专用地图_2楼.map_export"
+      ],
       "must_not_contain": [
         "点击.{0,12}(上传区域|拖放)",
         "唤起.{0,8}文件选择器",
@@ -28,5 +32,43 @@
       ]
     },
     "note": "回归 20260616_200258 Turn5 根因层（REPLAN_PROMPT）：之前 REPLAN_PROMPT 没有任何上传规则（PLAN_PROMPT 有），导致 replanner 在『上传弹窗已打开、上传区域可见、尚未选文件』这个子状态下，把上传子目标错翻成『点击弹窗中显示「点击上传或者拖放」的上传区域以唤起系统文件选择器』这种 tap 指令——点击只会弹一个 agent 无法操作、必然被 device._on_file_chooser 拦截取消的原生 OS 文件框，浪费一 turn（本次实测 Turn5 空转，靠 Turn6 才发对 upload）。修复=REPLAN_PROMPT 补上和 PLAN_PROMPT 对称的上传规则（prompts.py）。判据：replan 指令必须含约束里的真实路径、带上传语义，且绝不出现『点击上传区域/拖放/唤起文件选择器』这种会触发原生框的 tap 措辞。对照 planner/cases.json 同源 155232/161159 case（守 PLAN_PROMPT 路径）；本 case 守 REPLAN_PROMPT 路径。确定性兜底（_postprocess guard）见 tests/test_browser_upload_guard.py + action_policy eval 同名 case。"
+  },
+  {
+    "label": "搜索 0 条应放宽搜索词，不得原样重搜完整短语（回归 20260622_113558 Olivia zip jacket）",
+    "screenshot": "evals/browser/replan/screenshots/webarena113_product_filter_0records_20260622_113558.png",
+    "milestone": {
+      "name": "在评论列表中搜索/筛选 'Olivia zip jacket' 产品",
+      "description": "在 Product Reviews 列表用 Product 列筛选出 'Olivia zip jacket' 的评论。",
+      "success_condition": "Product 列已按目标产品筛选，且列表显示该产品的评论记录（非 0 条）。",
+      "kind": "action",
+      "task_type": "action",
+      "retry_count": 2
+    },
+    "constraints": [],
+    "stuck_reason": "Product 筛选框已输入 'Olivia zip jacket' 且 Search 已应用，但页面显示 '0 records found' / \"We couldn't find any records.\"——该完整短语没匹配到任何产品评论。",
+    "issues": [
+      "Product 筛选 'Olivia zip jacket' 返回 0 条，目标产品未找到（可能产品名与该短语不完全一致）"
+    ],
+    "history": [
+      "在 Product 筛选输入框中输入 'Olivia zip jacket'",
+      "点击 'Search' 按钮以应用当前的筛选条件"
+    ],
+    "expected": {
+      "must_not_contain": [
+        "Olivia zip jacket"
+      ],
+      "must_contain": [
+        "Olivia",
+        "jacket",
+        "zip",
+        "放宽",
+        "更短",
+        "部分",
+        "关键词",
+        "缩短",
+        "模糊"
+      ]
+    },
+    "note": "活跑 113558：'Olivia zip jacket' 真实产品名是 'Olivia 1/4 Zip Light Jacket'，完整短语筛 0 条。期望 replanner 诊断出词不匹配并放宽（改用更短/部分关键词如 'Olivia' 或 'jacket' 重搜），而不是原样再搜一遍完整短语。探索性 case：看 replanner 现在会不会放宽。"
   }
 ]
