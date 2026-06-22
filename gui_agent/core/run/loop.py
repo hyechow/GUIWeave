@@ -378,9 +378,20 @@ def run_agent_loop(
             from gui_agent.core.orchestrator import Interpreter
             _interp = Interpreter(_new)
             _orch_interp = _interp
-            context.orchestrator = {
-                **(context.orchestrator or {}),
+            # Keep context.orchestrator["program"] = the ORIGINAL (#0); record each kick-back
+            # re-decompose as its own entry (directive + new program + the turn that triggered it) so
+            # the report renders it as a SEPARATE card (#0↻N), not by overwriting the original plan.
+            _prior = context.orchestrator or {}
+            _redecomps = list(_prior.get("redecomposes") or [])
+            _redecomps.append({
+                "kickback_n": _kickback_replans,
+                "directive": directive,
+                "at_turn": len(context.turns),
                 "program": _new.model_dump(mode="json"),
+            })
+            context.orchestrator = {
+                **_prior,
+                "redecomposes": _redecomps,
                 "replanned_from_kickback": _kickback_replans,
             }
             _gen = _interp.steps()
