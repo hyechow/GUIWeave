@@ -83,9 +83,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # One-shot: skip the next step()'s initial done-check and plan directly (set by reseed
         # for a freshly-entered navigation milestone — DAG _advance parity, see reseed).
         self._skip_initial_check: bool = False
-        # Each entry pairs a frame with the action CENTER (normalized 0-1000 x/y, or None)
-        # that produced it — the 局部 stuck tier inspects the region the agent touched.
-        self._recent_screenshots: list[tuple[bytes, Optional[tuple[float, float]]]] = []
         self._scroll_counts: dict[str, int] = {}
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
@@ -208,7 +205,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._order = [milestone.id]
         self._current_id = milestone.id
         self.task_type = task_type  # 读取门：read milestone 须为 'analysis' 才读
-        self._recent_screenshots.clear()  # 唯一要清的，和 _advance 一致
+        self._monitor.clear_screenshots()  # 唯一要清的，和 _advance 一致
         # DAG `_advance` 的 nav 跳 check 镜像：fresh_advance=刚从上一个 milestone 推进过来（同帧），
         # 此时若新 milestone 是 navigation，它「in_progress by construction」，跳过首次验收直接规划
         # 第一步导航动作——省掉交接时第 2 次 checker。幂等（重点 nav 目标无害；残留 already-done 由
@@ -253,7 +250,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
         if history and history[-1].action_decision:
             if history[-1].action_decision.action.action_type == "type":
-                self._recent_screenshots.clear()
+                self._monitor.clear_screenshots()
 
         prev_page_id = self._last_page_identity.get(milestone.id, "")
 
@@ -360,7 +357,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # 因此保留 SimStuck 的「全局+动作局部均无变化」判据；只有指令重复类 RepStuck 被抑制。
         # ValueStall 作为语义兜底：当画面在动但 checker 读到的当前值长期不变，也判停滞。
         if milestone.is_iterative:
-            sim_stuck = None if self._monitor.url_changed else self._check_screen_similarity(observation, self._action_center(prev_action))
+            sim_stuck = None if self._monitor.url_changed else self._monitor.check_screen_similarity(observation, self._monitor.action_center(prev_action))
             if sim_stuck is not None:
                 print(f"  [Stuck] {sim_stuck.status}: {sim_stuck.reason}")
                 return self._handle_stuck(
@@ -378,7 +375,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
             return self._plan_single(milestone, check, observation, history)
 
-        sim_stuck = None if (self._monitor.url_changed or self._monitor.dom_changed) else self._check_screen_similarity(observation, self._action_center(prev_action))
+        sim_stuck = None if (self._monitor.url_changed or self._monitor.dom_changed) else self._monitor.check_screen_similarity(observation, self._monitor.action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
 
         rep_stuck = self._monitor.check_instruction_repetition(history, milestone.id) if not sim_stuck else None
@@ -550,7 +547,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 return self._handle_stuck(milestone, stuck, read_inst, observation, history)
             return self._advance(milestone, observation, history)
 
-        sim_stuck = self._check_screen_similarity(observation)
+        sim_stuck = self._monitor.check_screen_similarity(observation)
         last_read_added = bool(
             history
             and history[-1].supervisor.milestone_id == milestone.id
@@ -687,7 +684,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if self._last_check is not None:
             self._milestone_done_checks[milestone.id] = self._last_check
         self._current_id = self._next_milestone()
-        self._recent_screenshots.clear()
+        self._monitor.clear_screenshots()
         print(f"  子目标「{done_name}」已完成")
 
         pre_existing = not any(
@@ -762,7 +759,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         prev_page_id: str = "",
         current_page_id: str = "",
     ) -> SupervisorStep:
-        self._recent_screenshots.clear()
+        self._monitor.clear_screenshots()
         skip_retry = False
         if history and history[-1].supervisor and history[-1].supervisor.milestone_id == milestone.id:
             if history[-1].supervisor.instruction and not history[-1].executed:
@@ -962,7 +959,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             dependent.scroll_budget = 15
         milestone.status = "done"
         self._current_id = dependent.id
-        self._recent_screenshots.clear()
+        self._monitor.clear_screenshots()
         msg = (
             f"子目标「{milestone.name}」无法精确筛选，已降级为在「{dependent.name}」阶段收集并过滤。"
         )

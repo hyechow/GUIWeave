@@ -6,14 +6,12 @@ from .runtime import (
     MAX_RETRIES,
     MAX_SCROLL_PER_MILESTONE,
 )
-from .stuck import (
-    STUCK_SCREEN_FROZEN,
-    STUCK_SCREEN_SIMILARITY,
-    STUCK_SCREEN_WINDOW,
-)
 from gui_agent.core.run.progress_monitor import (
     STUCK_REPEAT_WINDOW,
     STUCK_REPEAT_WORD_OVERLAP,
+    STUCK_SCREEN_FROZEN,
+    STUCK_SCREEN_SIMILARITY,
+    STUCK_SCREEN_WINDOW,
 )
 from .schemas import (
     MilestonePrompts,

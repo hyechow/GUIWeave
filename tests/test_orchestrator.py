@@ -231,14 +231,14 @@ def test_supervisor_reseed_single_milestone():
     p = MilestoneSupervisorPolicy()
     p._milestones = {"old": object()}  # type: ignore[dict-item]
     p._order = ["old", "x"]
-    p._recent_screenshots.append((b"frame", None))  # stuck 检测器帧历史
+    p._monitor._recent_screenshots.append((b"frame", None))  # stuck 检测器帧历史
     p._scroll_counts = {"old": 5}             # 其余 per-milestone 态
     run = Run(var="d", name="读判定", kind="read", returns=["连通判定"])
     p.reseed(to_milestone(run, 0), task_type=task_type_for(run))
     assert list(p._order) == ["d"] and p._current_id == "d"
     assert p.task_type == "analysis"          # read → analysis（读取门）
     # 与 DAG 的 _advance 对齐：只清 _recent_screenshots，其余跨 milestone 态保留（不再过度清空）。
-    assert list(p._recent_screenshots) == []
+    assert list(p._monitor._recent_screenshots) == []
     assert p._scroll_counts == {"old": 5}
 
 

@@ -454,7 +454,7 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
     ]
 
     monkeypatch.setattr(policy, "_single_check", lambda *args, **kwargs: check)
-    monkeypatch.setattr(policy, "_check_screen_similarity", lambda *args, **kwargs: stuck)
+    monkeypatch.setattr(policy._monitor, "check_screen_similarity", lambda *args, **kwargs: stuck)
     monkeypatch.setattr(
         policy,
         "_handle_stuck",

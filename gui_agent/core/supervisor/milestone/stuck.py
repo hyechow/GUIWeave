@@ -5,72 +5,13 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from gui_agent.core.schemas import Observation
-from gui_agent.core.vision.frame_analysis import CHANGE_SSIM_DIST_THR, region_change
-
-from .schemas import _PlanResult, _SingleCheckResult
-
-STUCK_SCREEN_WINDOW = 3
-STUCK_SCREEN_SIMILARITY = 0.95
-STUCK_SCREEN_FROZEN = 0.99
+from .schemas import _PlanResult
 
 
 class MilestoneStuckMixin:
-    def _check_screen_similarity(
-        self, observation: Observation, action_center: Optional[tuple[float, float]] = None
-    ) -> Optional[_SingleCheckResult]:
-        self._recent_screenshots.append((observation.png_bytes, action_center))
-        if len(self._recent_screenshots) > STUCK_SCREEN_WINDOW:
-            self._recent_screenshots.pop(0)
-        if len(self._recent_screenshots) < STUCK_SCREEN_WINDOW:
-            return None
-
-        frames = self._recent_screenshots
-        gsims: list[float] = []
-        locs: list[Optional[float]] = []
-        for i in range(1, len(frames)):
-            gs, lc = region_change(frames[i - 1][0], frames[i][0], frames[i][1])
-            gsims.append(gs)
-            locs.append(lc)
-
-        def _no_change(gs: float, lc: Optional[float]) -> bool:
-            return gs >= STUCK_SCREEN_SIMILARITY and (lc is None or lc <= CHANGE_SSIM_DIST_THR)
-
-        if all(_no_change(gs, lc) for gs, lc in zip(gsims, locs)):
-            gstr = ", ".join(f"{g:.2%}" for g in gsims)
-            lstr = ", ".join("∅" if l is None else f"{l:.3f}" for l in locs)
-            frozen = max(gsims) >= STUCK_SCREEN_FROZEN
-            tag = "屏幕冻结（局部+全局均无变化）" if frozen else "连续无变化（局部+全局）"
-            print(f"  [SimStuck] 全局[{gstr}] 局部[{lstr}] → {tag}")
-            return _SingleCheckResult(
-                status="stuck",
-                reason=f"连续 {STUCK_SCREEN_WINDOW} 帧没有看到与目标相关的页面变化",
-                stuck_reason="上一步操作后页面没有出现新内容或目标状态，需要尝试其他可见入口",
-                issues=["连续多帧未看到页面状态推进"],
-                summary="屏幕连续无变化",
-                frozen=frozen,
-            )
-        sim_2back, _ = region_change(frames[-1][0], frames[-3][0])
-        sim_adj, _ = region_change(frames[-1][0], frames[-2][0])
-        if sim_2back >= STUCK_SCREEN_SIMILARITY and sim_adj < STUCK_SCREEN_SIMILARITY:
-            print(f"  [SimStuck] 2back={sim_2back:.2%}, adj={sim_adj:.2%} → AB 循环")
-            return _SingleCheckResult(
-                status="stuck",
-                reason="页面在两个可见状态之间来回切换，验收条件仍未出现",
-                stuck_reason="页面在两个状态之间反复切换，需要换路径或先关闭当前弹窗/面板",
-                issues=["页面状态来回切换"],
-                summary="页面在两个状态之间反复切换",
-            )
-        return None
-
-    @staticmethod
-    def _action_center(action) -> Optional[tuple[float, float]]:
-        if action is None:
-            return None
-        x, y = getattr(action, "x", None), getattr(action, "y", None)
-        if x is None or y is None:
-            return None
-        return (float(x), float(y))
+    """Plan-fixing helpers (picker direction/steps, sequence + repeated-instruction detection).
+    The deterministic stuck DETECTORS (screen-similarity / instruction-repetition / value-stall)
+    moved to gui_agent.core.run.progress_monitor."""
 
     @staticmethod
     def _picker_drag_steps(plan: _PlanResult) -> Optional[int]:

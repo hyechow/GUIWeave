@@ -64,12 +64,12 @@ def test_region_change_identical_frames_no_change_anywhere():
 
 # ── _action_center: where to look (tap/scroll/drag carry x/y) ──────────────────
 def test_action_center_from_coordinates():
-    f = MilestoneSupervisorPolicy._action_center
+    f = ProgressMonitor.action_center
     assert f(types.SimpleNamespace(x=500.0, y=250.0)) == (500.0, 250.0)
 
 
 def test_action_center_none_for_coordless_and_missing():
-    f = MilestoneSupervisorPolicy._action_center
+    f = ProgressMonitor.action_center
     assert f(types.SimpleNamespace(x=None, y=None)) is None  # press_enter / home / back
     assert f(None) is None
 
