@@ -399,8 +399,10 @@ def decompose(
             ttl="task",
             priority=15,
             content=(
-                "## ⚠️ 上层纠正指令（重规划必读，必须严格遵守）\n" + corrective_directive.strip()
-                + "\n\n与下方任何应用知识或默认规划习惯冲突时，一律以本纠正指令为准。"
+                "## ⚠️ 上层纠正指令\n"
+                "【来源：上层运行时纠正（基于真实界面观察）｜权威级别：最高｜必须服从】\n"
+                + corrective_directive.strip()
+                + "\n\n依据上下文优先级裁决规则，本指令高于应用知识与默认习惯：与它们冲突时一律以本指令为准。"
             ),
         ) if corrective_directive.strip() else None,
         file_reference_block(file_section),
