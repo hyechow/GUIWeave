@@ -57,14 +57,16 @@ def task_type_for(run: Run) -> Literal["action", "analysis"]:
 def package_result(
     run: Run, *, completed: bool, summary: str, notes: list[str],
     reads: dict[str, str] | None = None,
+    rows: list[dict[str, str]] | None = None,
 ) -> RunResult:
     """Package a finished milestone's loop state into the RunResult contract. `reads` is the
-    structured {field: value} extracted from the result frame for a read milestone (see
-    orchestrator.structured_read); other milestones pass none."""
+    structured {field: value} for a scalar read; `rows` is the LIST form for a list_read (one dict per
+    row, what a foreach iterates); other milestones pass none."""
     return RunResult(
         completed=completed,
         failed=not completed,
         reads=dict(reads) if reads else {},
+        rows=list(rows) if rows else [],
         summary=summary,
         evidence=list(notes),
     )

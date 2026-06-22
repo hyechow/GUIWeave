@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.orchestrator import If, Run, redecompose
+from gui_agent.core.orchestrator import Finish, ForEach, If, Run, redecompose
 from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates, normalize_precondition_gates
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
 
@@ -67,6 +67,8 @@ def _flatten_runs(stmts: list) -> list[Run]:
         elif isinstance(s, If):
             out.extend(_flatten_runs(s.then))
             out.extend(_flatten_runs(s.otherwise))
+        elif isinstance(s, ForEach):
+            out.extend(_flatten_runs(s.body))   # body Runs count too (the drill steps live here)
     return out
 
 
@@ -118,8 +120,31 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     f"未见读取 rating/评分 的 read/data_query 步（纠正指令要求逐条读取 Detailed Rating）"
                 )
+        elif assertion == "uses_foreach_iteration":
+            # The general-iteration shape (NOT N unrolled steps / not just the first row): a list_read
+            # feeds a foreach whose body opens each detail + reads rating, then a data_query filters
+            # the accumulated set. Regression 20260622_211542: the unrolled re-decompose truncated and
+            # processed only the first review → NOT_FOUND. foreach covers ALL rows.
+            foreaches = [s for s in program.statements if isinstance(s, ForEach)]
+            if not foreaches:
+                details.append(f"未用 foreach 迭代（应 list_read→foreach→data_query，不展开/不只读第一条）: names=[{names}]")
+            else:
+                fe = foreaches[0]
+                over_is_list_read = any(
+                    isinstance(s, Run) and s.kind == "read" and s.list_read and s.var == fe.over
+                    for s in program.statements
+                )
+                if not over_is_list_read:
+                    details.append(f"foreach 的 over「{fe.over}」未指向 list_read 的 read 步")
+                body_reads = [b for b in fe.body if isinstance(b, Run) and b.kind == "read"]
+                body_text = " ".join(
+                    (b.name + " " + " ".join(b.returns) + " " + (b.read_spec or "")).lower() for b in body_reads
+                )
+                if not any(k in body_text for k in ("rating", "评分", "星", "star")):
+                    details.append("foreach body 未读取 rating/评分（应逐条进详情读评分）")
+                if not any(isinstance(s, Run) and s.kind == "data_query" for s in program.statements):
+                    details.append("foreach 之后缺少 data_query（应对累积表筛 rating<=3）")
         elif assertion == "has_finish":
-            from gui_agent.core.orchestrator import Finish
 
             def _has_finish(stmts: list) -> bool:
                 for s in stmts:

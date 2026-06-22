@@ -317,6 +317,7 @@ def run_agent_loop(
                 say=_say,
                 done_observation=done_observation,
                 observation_url=observation_url,
+                materialized_tables=_interp.materialized_tables() if _interp is not None else None,
             )
             _cur_run = result.current_run
             _run_idx = result.run_index

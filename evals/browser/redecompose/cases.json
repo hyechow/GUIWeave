@@ -25,5 +25,31 @@
       "has_finish"
     ],
     "note": "回归 logs/gui_agent/webarena/browser/20260622_201729：旧 _redecompose 闭包冻结 T0 首页帧 + 零经验，重排成『进入 Products List → 搜索产品 Olivia zip jacket』，在无产品名搜索能力的页上反复 0 结果，最终 UNKNOWN_ERROR（score 0）。本 case 喂当前 Reviews 页 + 已执行经验 + 纠正指令 + 剩余计划，期望重排：从当前页续、用已找到的 3 条候选逐条打开 Review Detail 读 Detailed Rating + Nickname、本地筛 rating<=3，绝不退回首页/重新按产品名搜索。"
+  },
+  {
+    "label": "task 113 重排用 foreach 迭代逐条钻取（真实 data_query 失败 directive，回归 20260622_211542 展开截断只读第一条）",
+    "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin/review/product/index/filter/Y3JlYXRlZF9hdCU1QmxvY2FsZSU1RD1lbl9VUyZuYW1lPU9saXZpYQ==/internal_reviews//form_key/vjgQMdDxPmv0BSUV/",
+    "current_title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+    "corrective_directive": "上一份计划在 data_query 步失败：数据源与任务意图不一致: 表格快照不完整（partial=true），仅采集到3行数据，无法代表筛选后的完整数据集。任务要求查询所有评分<=3的客户昵称，当前数据源未包含全量记录，且表格中缺少明确的 'rating' 列（只有 review 文本内容），无法直接基于现有列执行评分过滤。\n这说明取数路线不对（数据源为空或与任务口径不一致）。请改用能真正拿到目标数据的路线重新规划，不要重复上面失败的取数方式。",
+    "prior_experience": "✓ 进入 All Reviews 页面（已到达 Reviews 列表页）\n✓ 在 Product 列用精确值 'Olivia zip jacket'→放宽关键词 'Olivia' 筛选（已筛出 3 条候选评论，row_ids=347,349,351）\n✗ 对当前 Reviews grid 执行 data_query 查询 rating<=3 的昵称失败：表格 partial（仅 3 行）且不含 rating 列，无法基于现有列做评分过滤",
+    "remaining_plan": "1. [data_query] 查询评分 3 星或以下的客户昵称（← 在此步触发了上层纠正：当前 Reviews 网格无 rating 列、数据不完整）\n2. [finish] 返回 rating<=3 的客户昵称",
+    "table_summaries": [
+      {
+        "caption": "Reviews",
+        "headers": ["ID", "Created", "Status", "Title", "Nickname", "Review", "Visibility", "Type", "Product", "SKU", "Action"],
+        "row_count": 3,
+        "partial": true
+      }
+    ],
+    "assertions": [
+      "uses_foreach_iteration",
+      "no_homepage_restart",
+      "has_finish"
+    ],
+    "note": "回归 logs/gui_agent/webarena/browser/20260622_211542：重排选对了钻取详情的正解，但 DSL 当时无迭代原语，只能把 3 条候选【手工展开】成一段超长扁平程序 → JSON 截断（line 96 char 2139）→ 降级后只处理第一条 review（347 rating=5 不符）就 finish → 空答案 NOT_FOUND（正确答案 emma/seam miller 在没被检查的 349/351 里）。本 case 用那次真实的 data_query 失败 directive + 经验 + 剩余，期望重排产出【通用迭代】：list_read 读候选行 → foreach 逐条打开详情读 rating+nickname（自动汇成表）→ data_query 在累积表上筛 rating<=3 → finish。一个 foreach 覆盖全部候选，不展开、不截断、不只读第一条。"
   }
 ]

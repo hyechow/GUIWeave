@@ -57,8 +57,13 @@ def drive_pending_non_ui(
     say: Callable[[str], None],
     done_observation: Observation | None = None,
     observation_url: str | None = None,
+    materialized_tables: list[dict[str, Any]] | None = None,
 ) -> NonUiDriveResult:
-    """Execute consecutive `read` / `data_query` runs and advance the interpreter."""
+    """Execute consecutive `read` / `data_query` runs and advance the interpreter.
+
+    `materialized_tables` = the interpreter's foreach `into` tables (accumulated rows from iterating a
+    collection). They're folded into a data_query's source so a query AFTER a foreach can analyze the
+    whole collected set (filter/aggregate), the same way a UI-rendered grid snapshot is queried."""
     cur_run = current_run
     failure_evidence: str | None = None  # last re-plannable non-UI failure (for Feasibility Guard kick-back)
     obs = done_observation
@@ -82,10 +87,26 @@ def drive_pending_non_ui(
         tokens_before = get_llm_token_usage()
         context_reports: list[dict] = []
         reads: dict[str, str] = {}
+        rows: list[dict[str, str]] = []
         completed = True
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
         executed_sql = cur_run.sql
-        if cur_run.kind == "read" and cur_run.returns:
+        if cur_run.kind == "read" and cur_run.returns and getattr(cur_run, "list_read", False):
+            from gui_agent.core.orchestrator.structured_read import structured_read_rows
+
+            if frame is None:
+                ensure_observation()
+            rows = structured_read_rows(
+                frame,
+                cur_run.returns,
+                read_spec=cur_run.read_spec,
+                check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                context_reports=context_reports,
+            )
+            summary = f"列表读取 {len(rows)} 行（{'、'.join(cur_run.returns)}）"
+            say(f"  [Orchestrator] 列表读取帧 {cur_run.returns} → {len(rows)} 行")
+        elif cur_run.kind == "read" and cur_run.returns:
             from gui_agent.core.orchestrator.structured_read import structured_read
 
             if frame is None:
@@ -112,6 +133,10 @@ def drive_pending_non_ui(
                         query_tables = read_complete() or query_tables
                     except Exception:
                         query_tables = tables
+            # Fold in foreach-accumulated tables (e.g. per-review rows collected by iterating a list):
+            # they're a complete, in-memory data source the query references by its `into` var name.
+            if materialized_tables:
+                query_tables = list(query_tables or []) + list(materialized_tables)
 
             def _try_repair(reason: str) -> _RepairAttempt | None:
                 repair = repair_data_query_sql(
@@ -209,6 +234,7 @@ def drive_pending_non_ui(
             summary=summary,
             notes=[],
             reads=reads,
+            rows=rows,
         )
         milestone_id = run_for_turn.var or f"m{run_index}_{run_for_turn.kind}"
         if not any(m.get("id") == milestone_id for m in context.milestones):

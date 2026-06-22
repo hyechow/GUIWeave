@@ -147,3 +147,79 @@ def structured_read(
     # Keep only requested fields; default any missing to "" (当没有).
     by_field = {fr.field: (fr.value or "") for fr in result.reads}
     return {f: by_field.get(f, "") for f in returns}
+
+
+class _RowRead(BaseModel):
+    fields: list[_FieldRead] = Field(default_factory=list, description="该行各字段的读取")
+
+
+class _RowsRead(BaseModel):
+    rows: list[_RowRead] = Field(default_factory=list, description="逐行提取，每行一个对象")
+
+
+def structured_read_rows(
+    png_bytes: bytes,
+    returns: list[str],
+    read_spec: str = "",
+    check_knowledge: str = "",
+    prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
+    context_reports: list[dict] | None = None,
+) -> list[dict[str, str]]:
+    """LIST read: extract EVERY matching row off the frame → [{field: value}, ...] (the runtime
+    collection a `foreach` iterates). Same judgment scaffolding as structured_read; the difference is
+    row-wise extraction (unknown row count, one object per row), returning the rows."""
+    if not returns:
+        return []
+    cfg = resolve_llm_config("reader")
+    llm = ChatOpenAI(
+        model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+        extra_body={"enable_thinking": False},
+    )
+    text = render_prompt_context([
+        ContextBlock(
+            id="runtime.read.requested_fields",
+            source_type="runtime_state",
+            source="orchestrator.read",
+            ttl="turn",
+            priority=20,
+            content=(
+                f"【列表读取】把界面上所有匹配的行逐行提取，每行返回一个对象，对象的字段为：{'、'.join(returns)}。"
+                "行数不定，把当前帧里所有目标行全部提取；某行某字段读不到就留空。"
+            ),
+        ),
+        ContextBlock(
+            id="runtime.read.spec",
+            source_type="runtime_state",
+            source="program.read_spec",
+            ttl="task",
+            priority=25,
+            content="【读取说明】（任务定义，按此判读每个字段；优先于下方应用约定）：\n" + read_spec,
+        ) if read_spec else None,
+        ContextBlock(
+            id="knowledge.check_rules",
+            source_type="knowledge_base",
+            source="knowledge_base",
+            ttl="session",
+            priority=50,
+            content="【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge,
+        ) if check_knowledge else None,
+    ], label="structured_read_rows.dynamic", report_sink=context_reports)
+    prepare_png = prepare_vision_prompt_png or (lambda b: b)
+    prepared = prepare_png(png_bytes)
+    b64 = base64.b64encode(prepared).decode()
+    messages = [
+        SystemMessage(content=_SYSTEM),
+        HumanMessage(content=[
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+        ]),
+    ]
+    result = invoke_structured(
+        llm, messages, _RowsRead,
+        trace_sink=context_reports, trace_label="structured_read_rows.dynamic",
+    )
+    rows: list[dict[str, str]] = []
+    for row in result.rows:
+        by_field = {fr.field: (fr.value or "") for fr in row.fields}
+        rows.append({f: by_field.get(f, "") for f in returns})
+    return rows

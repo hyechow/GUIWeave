@@ -30,6 +30,7 @@ version: 1
     · read_spec：仅 run_kind="read" 填——【本次读取说明】，按任务需求生成：逐个说明每个 returns 字段在结果界面上看哪里、如何把信号（图标/颜色/文字/位置）判读成值、各取值的含义（例：「连通判定：看起点终点输入框之间的图标——绿色✓=连通，灰色?=未检测/未连通；不可达原因：连通时为空，不可达时读取页面上的红色错误提示文字」）。读取是只读单帧，没有这份说明就只能瞎猜，所以必须写清楚。
     · data_query：仅用于【当前已采集且已处于任务要求口径】的结构化表格/列表快照做筛选、计数、排序、group by、top N、去重等表内分析；它不能替代进入页面、设置/清除页面筛选、提交搜索、切换 tab、分页/导出/采集完整数据。必须填 var、returns、sql。SQL 只能是 SELECT 或 WITH ... SELECT。默认表名 data；每张表也可用 table_1/table_2，若表格区块有标题/caption，还可用其标题的 snake_case 作为别名。SQL 里只能使用 schema 明确列出的 normalized column identifiers；表头/标签说明不是 SQL 语法，禁止把 `Header->column`、`原表头->列名` 这类映射文本写进 SQL。SQL 输出列必须能被 returns/finish 消费：多字段 returns 时，SELECT 列别名必须与 returns 字段一致；若最终答案是多行对象数组（如 `[{"month":...,"count":...}]`），让 SQL 输出对象字段并把 returns 设为 `["result"]`，finish 直接写 `{q[result]}`，不要把每列拆成独立占位符手写数组。不要把表格行塞进 read；表格类 top/most/count/sort/group by 任务在页面数据源准备完成后用 data_query 做分析，不用视觉 read 手工数行。data_scope 默认 complete（要求完整数据，partial 表格会失败；运行时会尽量采集完整分页）；只有任务明确说“当前页面/当前可见/当前已渲染行”时才设 current。对 most/second/fifth/rank/have N 这类按聚合 count 排名的任务，必须处理并列：用 GROUP BY 先算 count，再用 DENSE_RANK() / HAVING count 返回该名次的所有行；不要用 LIMIT 1 OFFSET N 来代表“第 N 多”，因为它会丢掉并列项。
 - op="if"：按某个 read/data_query 步返回的字段值分支。cond_var=那个 read/data_query 步的 var；cond_field=该步 returns 里的字段；cond_cmp 可用 "=="、"!="、"exists"、"empty"、"contains"、"not_contains"、"in"、"not_in"；cond_value 用于等于/包含类比较；cond_values 用于 in/not_in 的候选值列表；then=成立时执行的步骤；otherwise=不成立时执行的步骤。
+- op="foreach"：【通用迭代】对一个运行时才发现的集合，逐元素跑一遍 body。loop_var=循环变量名（body 里用 {循环变量[字段]} 引用当前行）；over=被迭代的列表来源——必须是某个 **list_read=true 的 read 步的 var**；body=每行执行一遍的步骤（run/if/finish）；into=累积表名（留空默认=循环变量+s）。语义：body 里所有 read 字段 + 当前行字段会**自动汇成一张表**（命名为 into），循环结束后可被后续 data_query 直接查询。**一层即可，body 里不要再嵌 foreach。**
 - op="finish"：产出最终答复。message 是模板，可用 {变量[字段]} 引用某 read/data_query 步返回的值。
 
 核心原则：
@@ -48,6 +49,7 @@ version: 1
 8. **关键动作后补一个 read 或 data_query 确认结果（成败由结构化读取/查询定，别只信动作完成）**：会改变状态的关键动作（创建/提交/删除/发送/设置/检测查询，尤其任务的最终动作），在该 action 之后补一个 read 确认界面结果，或在表格数据源已准备好后补一个 data_query 统计表格结果；再由 finish（或 if）据这个结构化结果答复/分支。不要只凭动作步自身完成就当任务成功。配套地（success_condition 例外）：只有当下一步是 read 且 read 会判读同一结果值时，该 action 的 success_condition 才写「动作已发出」而非「结果已显示/某判定已出现」，把结果的具体判读独占给后续 read；如果下一步是 data_query，前一 UI 步必须验收数据源状态（例如已应用/已清除哪些筛选、结果列表已刷新），不能只写动作已发出。
 9. **前置状态（登录/进入某模式）建模成一步「确保已X」并标 `precondition=true`**：这类前置初始往往已满足（会话常已登录）。建成**一步**「确保已登录/已进入X」、run_kind=navigation、**precondition=true**；别拆成「打开登录页 → 输账号密码」这种多步，success_condition 留空或一句话即可（不必纠结这个门怎么写）。
 10. **选择器分解时已知→直接写字面量；只有运行时才知道→read 出来用 {变量[字段]} 接力**。绝大多数情况写字面量即可：实体若有分解时可写的稳定选择器（用户给定名、@配置字段值、任务文本里的编号），直接写进 name，别为它多加 read；已在该实体编辑页就继续操作，别每步回列表重选。仅当后续必须重新选中某实体、而它的名称/编号**分解时未知、只能运行时从界面读到**（典型：新建后系统自动分配的编号/自动命名）时，才两步配合：① 一个 read 把该选择器读进 returns 字段并绑定 var；② 后续步骤 name（必要时连 success_condition）用 `{变量[字段]}` 引用它（`打开工单 {t[工单号]}` → 运行时填成 `打开工单 WO-2024-007`，列表里多个同类也不指错）。变量须是在它之前、当前执行路径上已执行的 read/data_query（不能引用其后或另一分支的结果），字段须在其 returns 里。**只对单个实体的标识接力，别读一个「列表」再挑「第 N 个」**（集合索引表达不了，且列表 read 还得先导航到列表页）——要操作的表单本身能选实体时（如表单里直接选某条目），直接在 action 里选，不必 read。（与规则5不冲突：规则5 管创建步自身写不出未来编号；规则10 管后续要精确重选、选择器运行时才知道。）
+11. **「对集合里每一个都要做某事 / 读某属性」用 foreach 迭代，不要手工展开 N 步、也不要只做第一个**：当目标属性**不在列表网格的列里、只在每条记录的详情页**（如评论的实际评分只在评论详情里，列表无评分列），或需要对一组运行时才知道的条目逐个操作时，**正确做法是迭代**：① 先一个 **list_read=true 的 read** 把这些行读成行对象数组（returns=每行用于定位/最终输出的字段，如 id）；② 用 **foreach** 对每行跑 body（如「打开 {row[id]} 详情」navigation +「读详情里的目标属性」read）；③ foreach 自动把每行结果汇成 into 表；④ 循环后用 **data_query** 对这张 into 表做筛选/聚合（如 `WHERE rating<=3`），finish 引用其结果。**严禁**把「逐条打开详情读取再筛选」写成只处理第一条、或把若干条手工展开成一长串重复 step（行数运行时才知道、且易超长截断）。
 
 只输出与任务相关的步骤，不加多余前置（已在工作区就别加「打开网站」）。**忠于目标、别臆造实体**：目标要操作/选择/处理某实体（某条记录/对象/条目…）时默认它已存在——用已知名称或 read 选现有再引用（规则10），别补「新建/创建/配置」前置；只有目标动词本身就是新建/创建/添加时才建 create 步。先在 reasoning 里想清楚：要到哪些页、做什么操作、读什么结果、关键动作做完怎么确认、是否需要分支，再写 steps。
 
@@ -83,3 +85,15 @@ version: 1
  {"op":"run","run_kind":"filter","name":"用页面筛选控件设置任务要求的状态/类别约束，并按应用知识的 UI 日期格式设置起止日期后提交筛选","success_condition":"可见筛选状态显示任务要求的状态/类别约束和起止日期，列表已刷新"},
  {"op":"run","run_kind":"data_query","var":"q","name":"按月份统计已筛选记录数","returns":["result"],"sql":"SELECT CASE strftime('%m', record_time) WHEN '01' THEN 'January' WHEN '02' THEN 'February' WHEN '03' THEN 'March' END AS month, COUNT(*) AS count FROM data GROUP BY strftime('%m', record_time) ORDER BY strftime('%m', record_time)"},
  {"op":"finish","message":"{q[result]}"}]}
+
+示例（目标属性只在详情里 → list_read + foreach 逐条钻取 + data_query 筛选）——
+{"reasoning":"任务要某产品里评分<=3 的顾客昵称，但评论列表网格没有 rating 列、实际评分只在每条评论的详情里。所以：先筛到该产品的候选评论，用一个 list_read 把候选行读成行对象数组(每行 id)，再 foreach 逐条打开详情读 rating+nickname(自动汇成 reviews 表)，循环后用 data_query 在 reviews 表上筛 rating<=3，finish 返回昵称。绝不手工展开每条、也不能只读第一条。","goal":"返回给某产品评分3星及以下的顾客昵称","steps":[
+ {"op":"run","run_kind":"navigation","name":"进入评论列表页","success_condition":"页面显示评论列表与筛选行"},
+ {"op":"run","run_kind":"filter","name":"用 Product 列筛选出目标产品的评论","success_condition":"列表已显示该产品的评论记录（非0条）"},
+ {"op":"run","run_kind":"read","var":"r","name":"读取候选评论行的 id","returns":["id"],"list_read":true,"read_spec":"id：逐行读取列表里每条评论所在行的 ID 列数值，每行一个对象。"},
+ {"op":"foreach","loop_var":"row","over":"r","into":"reviews","body":[
+   {"op":"run","run_kind":"navigation","name":"打开评论 {row[id]} 的详情","success_condition":"进入该评论详情页，显示评分与昵称"},
+   {"op":"run","run_kind":"read","var":"d","name":"读取该评论的评分与昵称","returns":["rating","nickname"],"read_spec":"rating：详情里的评分（星数/数值，判成整数）；nickname：评论者昵称文字。"}
+ ]},
+ {"op":"run","run_kind":"data_query","var":"q","name":"筛出评分<=3 的昵称","data_scope":"current","returns":["nickname"],"sql":"SELECT nickname FROM reviews WHERE CAST(rating AS INTEGER) <= 3"},
+ {"op":"finish","message":"评分3星及以下的顾客昵称：{q[nickname]}"}]}

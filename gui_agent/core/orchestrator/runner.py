@@ -28,7 +28,7 @@ from typing import Callable, Generator, Optional
 
 from pydantic import BaseModel, Field
 
-from .program import TEMPLATE_RE, Cond, Finish, If, Program, Run, RunResult
+from .program import TEMPLATE_RE, Cond, Finish, ForEach, If, Program, Run, RunResult
 
 # Drive one milestone (one Run spec) to a terminal state and return its structured result.
 MilestoneExecutor = Callable[[Run], RunResult]
@@ -119,6 +119,13 @@ class Interpreter:
         # Set True by the Finish branch when the reached finish cites a read whose reads
         # were entirely empty — the run finished but its answer is hollow. See OrchestratorResult.
         self.finish_incomplete: bool = False
+        # foreach `into` table vars — the ONLY env rows exposed to a data_query as a source. The
+        # list_read SOURCE a foreach iterates also carries .rows, but those are the raw iteration items
+        # (e.g. list ids with no detail fields) — exposing them pollutes the data_query source with a
+        # half-empty table that confuses the repair (regression 20260622_214841: the list_read `r`
+        # table's empty `rating` column made the query judge the source bad, though the accumulated
+        # `reviews` table held the correct ratings).
+        self._materialized_vars: set[str] = set()
 
     @property
     def failed(self) -> bool:
@@ -158,6 +165,10 @@ class Interpreter:
                 reply = yield from self._block(branch)
                 if reply is not None:
                     return reply
+            elif isinstance(s, ForEach):
+                reply = yield from self._foreach(s)
+                if reply is not None:
+                    return reply
             elif isinstance(s, Finish):
                 rendered = self._render(s.message)
                 # Empty-read guard: if this finish cites a read variable whose RunResult.reads
@@ -177,6 +188,58 @@ class Interpreter:
                     self.finish_incomplete = True
                 return rendered
         return None
+
+    def _foreach(self, loop: ForEach) -> Generator[Run, RunResult, Optional[str]]:
+        """Run `loop.body` once per row of env[loop.over].rows, binding env[loop.var] to the row, and
+        AUTO-accumulate each iteration (the row's fields + every body read field) into a materialized
+        table published as env[loop.into]. Yields each body Run so the engine drives it as a milestone
+        — the live loop and the synchronous `drive` both work unchanged. Returns a terminal reply if
+        the body finishes/fails, else None."""
+        src = self.env.get(loop.over)
+        rows = list(src.rows) if src is not None else []
+        into = loop.into or f"{loop.var}s"
+        body_read_vars = self._read_vars(loop.body)
+        accumulated: list[dict[str, str]] = []
+        if not rows:
+            # Nothing discovered to iterate — publish an empty table so a following data_query sees an
+            # (empty, but present and complete) source rather than a missing one.
+            self.env[into] = RunResult(completed=True, rows=[], summary=f"{loop.over} 无可迭代行")
+            self._materialized_vars.add(into)
+            self.run_log.append(RunRecord(
+                name=f"foreach {loop.var} in {loop.over}", var=into,
+                result=self.env[into],
+            ))
+            return None
+        for row in rows:
+            self.env[loop.var] = RunResult(completed=True, reads=dict(row))
+            reply = yield from self._block(loop.body)
+            if reply is not None:
+                return reply  # body finished/failed → terminate the program honestly
+            merged: dict[str, str] = dict(row)
+            for v in body_read_vars:
+                rv = self.env.get(v)
+                if rv is not None:
+                    merged.update({k: val for k, val in rv.reads.items()})
+            accumulated.append(merged)
+        self.env[into] = RunResult(completed=True, rows=accumulated,
+                                   summary=f"采集 {len(accumulated)} 行（foreach {loop.var}）")
+        self._materialized_vars.add(into)
+        self.run_log.append(RunRecord(
+            name=f"foreach {loop.var} in {loop.over}", var=into, result=self.env[into],
+        ))
+        return None
+
+    @staticmethod
+    def _read_vars(stmts: list) -> list[str]:
+        """Body read/data_query vars whose reads get auto-accumulated per iteration (program order)."""
+        out: list[str] = []
+        for s in stmts:
+            if isinstance(s, Run) and s.kind in {"read", "data_query"} and s.var:
+                out.append(s.var)
+            elif isinstance(s, If):
+                out.extend(Interpreter._read_vars(s.then))
+                out.extend(Interpreter._read_vars(s.otherwise))
+        return out
 
     def _eval(self, cond: Cond) -> bool:
         rv = self.env.get(cond.var)
@@ -235,6 +298,24 @@ class Interpreter:
             return val
 
         return TEMPLATE_RE.sub(_sub, template)
+
+    def materialized_tables(self) -> list[dict]:
+        """foreach `into` tables (accumulated per-iteration rows) as data_query-shaped snapshots
+        {caption, headers, rows} — so a data_query after a foreach can query the collected set. ONLY
+        the into tables (not the list_read iteration sources, which carry raw .rows too); caption =
+        the into var (a data_query alias); complete (not partial)."""
+        out: list[dict] = []
+        for var in self._materialized_vars:
+            rv = self.env.get(var)
+            if rv is None:
+                continue
+            headers: list[str] = []
+            for r in rv.rows:
+                for k in r:
+                    if k not in headers:
+                        headers.append(k)
+            out.append({"caption": var, "headers": headers, "rows": list(rv.rows), "partial": False})
+        return out
 
     def _auto_summary(self) -> str:
         """No explicit finish(): summarize from the persisted run results (reads first, else

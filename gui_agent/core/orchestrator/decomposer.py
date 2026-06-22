@@ -30,7 +30,7 @@ from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
 from .intent_resolver import IntentResolution, intent_block
-from .program import BARE_REF_RE, TEMPLATE_RE, Cond, Finish, If, Program, Run, RunKind, Stmt
+from .program import BARE_REF_RE, TEMPLATE_RE, Cond, Finish, ForEach, If, Program, Run, RunKind, Stmt
 
 _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
 # Re-decompose reuses the FULL decomposer prompt (DSL grammar + rules 1-10 + examples) and appends a
@@ -67,6 +67,16 @@ class _StepDraft(BaseModel):
         default="complete",
         description='op=run 且 run_kind=data_query：complete | current。complete=要求完整数据；current=只分析当前页面/当前可见/当前已渲染行。',
     )
+    list_read: bool = Field(
+        default=False,
+        description="op=run 且 run_kind=read：是否为【列表型读取】——逐行提取，每行一个对象（returns 即每行字段），"
+                    "结果是行对象数组，供 foreach 迭代。普通单值读取留 false。",
+    )
+    # --- op=foreach（通用迭代：对某个列表型 read 的每一行跑一遍 body）---
+    loop_var: str = Field(default="", description="op=foreach：循环变量名，body 里用 {循环变量[字段]} 引用当前行")
+    over: str = Field(default="", description="op=foreach：被迭代的列表来源——某个 list_read=true 的 read 步的 var")
+    into: str = Field(default="", description="op=foreach：累积表变量名（留空默认 = 循环变量+s）；循环结束后可被 data_query 查询")
+    body: list["_StepDraft"] = Field(default_factory=list, description="op=foreach：每行执行一遍的步骤（run/if/finish，不可再嵌 foreach）")
     # --- op=if ---
     cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个 read/data_query 步的 var）")
     cond_field: str = Field(default="", description="op=if：读取字段名（该 read/data_query 步 returns 里的字段）")
@@ -150,6 +160,16 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
         op = (d.op or "run").strip().lower()
         if op == "finish":
             out.append(Finish(message=d.message))
+        elif op == "foreach":
+            # One level only: drop any nested foreach in the body (decomposer prompt forbids it; this
+            # is the deterministic backstop) so a malformed nested loop can't reach the interpreter.
+            body = [s for s in _to_stmts(d.body) if not isinstance(s, ForEach)]
+            out.append(ForEach(
+                var=(d.loop_var or "item").strip(),
+                over=d.over.strip(),
+                into=d.into.strip(),
+                body=body,
+            ))
         elif op == "if":
             cmp = _to_cmp(d.cond_cmp)
             out.append(
@@ -177,6 +197,7 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     sql=d.sql,
                     data_scope="current" if (d.data_scope or "").strip().lower() == "current" else "complete",
                     precondition=bool(d.precondition),
+                    list_read=bool(d.list_read) and _to_kind(d.run_kind) == "read",
                 )
             )
     return out
@@ -214,7 +235,22 @@ def validate_program(program: Program) -> list[str]:
             elif isinstance(s, If):
                 _collect_result_vars(s.then)
                 _collect_result_vars(s.otherwise)
+            elif isinstance(s, ForEach):
+                _collect_result_vars(s.body)
     _collect_result_vars(program.statements)
+
+    list_read_vars: set[str] = set()  # vars whose read is list_read=true — the only valid `foreach over`
+
+    def _collect_list_reads(stmts: list[Stmt]) -> None:
+        for s in stmts:
+            if isinstance(s, Run) and s.kind == "read" and s.list_read and s.var:
+                list_read_vars.add(s.var)
+            elif isinstance(s, If):
+                _collect_list_reads(s.then)
+                _collect_list_reads(s.otherwise)
+            elif isinstance(s, ForEach):
+                _collect_list_reads(s.body)
+    _collect_list_reads(program.statements)
 
     def _check_refs(text: str, where: str, scope: dict[str, set[str]]) -> None:
         # `scope` = read var -> returns, for reads already executed BEFORE this point on this path.
@@ -325,6 +361,27 @@ def validate_program(program: Program) -> list[str]:
                         scope[k] = common
                     else:
                         scope.pop(k, None)
+            elif isinstance(s, ForEach):
+                # `over` must be a list_read produced before the loop (its returns = each row's fields).
+                if not s.over:
+                    issues.append(f"foreach（循环变量「{s.var}」）缺少 over——必须指向一个 list_read=true 的 read 步的 var")
+                elif s.over not in list_read_vars:
+                    issues.append(
+                        f"foreach 的 over「{s.over}」不是一个 list_read=true 的 read 步——"
+                        "foreach 只能迭代列表型读取产出的行对象数组；请先加一个 list_read 的 read 步产生「"
+                        f"{s.over}」（放在这个 foreach 之前）"
+                    )
+                if not s.var:
+                    issues.append("foreach 缺少循环变量名（loop_var）——body 需要用 {循环变量[字段]} 引用当前行")
+                if not s.body:
+                    issues.append(f"foreach（循环变量「{s.var}」）的 body 为空——至少要有一个对每行执行的步骤")
+                # body runs in a copied scope with the loop var bound to the over-read's row fields,
+                # so {loop_var[field]} resolves. The loop's materialized `into` table is queried by a
+                # following data_query via SQL table name (not a {var[field]} template), so it isn't
+                # added to template scope here.
+                body_scope = dict(scope)
+                body_scope[s.var] = set(scope.get(s.over, set()))
+                _walk(s.body, body_scope)
 
     _walk(program.statements, {})
     return issues

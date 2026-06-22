@@ -48,11 +48,15 @@ class RunResult(BaseModel):
     """Return contract of one ``run()`` = one milestone driven to a terminal state.
 
     `reads` maps each requested `returns` field to the value the linear executor
-    read off the result frame (读不到 = ""，按「当没有」处理，不让它卡住编排)."""
+    read off the result frame (读不到 = ""，按「当没有」处理，不让它卡住编排).
+    `rows` is the LIST form: a read marked list_read returns one dict per row (the
+    runtime-discovered collection a `foreach` iterates), and a `foreach` materializes
+    its accumulated per-iteration rows here so a later data_query can query them."""
 
     completed: bool = False
     failed: bool = False
     reads: dict[str, str] = Field(default_factory=dict)
+    rows: list[dict[str, str]] = Field(default_factory=list)
     summary: str = ""
     evidence: list[str] = Field(default_factory=list)
 
@@ -86,6 +90,10 @@ class Run(BaseModel):
     # stuck on a login-form / business-data gate. App-specific "what that state looks like" stays
     # in the checker's _check.md. The flag — not a string match — is the detection signal.
     precondition: bool = False
+    # LIST read: extract one dict per matching row (RunResult.rows) instead of one scalar per field —
+    # the runtime-discovered collection a `foreach` iterates (e.g. all visible review row ids). Only
+    # meaningful on kind="read"; default False = the usual single-frame scalar read.
+    list_read: bool = False
 
 
 class Cond(BaseModel):
@@ -113,7 +121,26 @@ class Finish(BaseModel):
     message: str
 
 
-Stmt = Annotated[Union[Run, If, Finish], Field(discriminator="op")]
+class ForEach(BaseModel):
+    """Iterate a runtime-discovered collection: run `body` once per row of a prior list_read's rows.
+
+    The general iteration primitive (NOT a special "collect rows" kind): `over` names a kind="read"
+    var whose RunResult.rows hold the collection (e.g. all review row ids). Each iteration binds
+    `var` to that row, so `body` statements reference the current item with the usual {var[field]}
+    template (e.g. 『打开 review {row[id]} 的详情』). Every read field produced inside the body is
+    AUTO-accumulated, merged with the row's own fields, into one materialized row per iteration; the
+    accumulated table is published to env under `into` so a following data_query can query the whole
+    set (filter/aggregate). One level only — `body` may contain run/if/finish but not another foreach.
+    """
+
+    op: Literal["foreach"] = "foreach"
+    var: str                                    # loop variable bound to each row, referenced as {var[field]}
+    over: str                                   # the list_read Run's var whose .rows are iterated
+    body: list["Stmt"] = Field(default_factory=list)
+    into: str = ""                              # materialized-table var (defaults to f"{var}s" when empty)
+
+
+Stmt = Annotated[Union[Run, If, Finish, ForEach], Field(discriminator="op")]
 
 
 class Program(BaseModel):
@@ -122,4 +149,5 @@ class Program(BaseModel):
 
 
 If.model_rebuild()
+ForEach.model_rebuild()
 Program.model_rebuild()
