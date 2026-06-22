@@ -109,7 +109,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._progress_values: dict[str, list[str]] = {}
         # Action-Loop Guard: run-scoped (state, action) memory keyed on canonical URL — catches task-level
         # loops the frame guards miss. NOT reset per milestone (a loop can span milestone boundaries).
-        self._state_trace = ProgressMonitor()
+        self._monitor = ProgressMonitor()
         self._last_check: Optional[_SingleCheckResult] = None
         self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
         self._last_plan: Optional[_PlanResult] = None
@@ -507,17 +507,15 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # agent is looping, not advancing — force a NEW action via the stuck path (bounded by the
         # replanner's retries). Browser-only (visual platforms have no url → skip).
         _state = canonical_url(getattr(observation, "url", None))
-        if _state and plan.instruction:
-            _interaction_state = getattr(observation, "dom_state", None) or ""
-            _hit = self._state_trace.repeated(_state, plan.instruction, _interaction_state)
-            if _hit is not None:
-                print(f"  [LoopGuard] 同页面(canonical={_state})重复了 T{_hit.index} 做过的同一动作 → 打转，强制换新")
-                _con = (f"⚠️ 在当前页面已经做过「{plan.instruction}」且没带来进展(在打转)。"
-                        "必须换一个【没在该页面试过】的新动作或新入口，禁止再重复该操作。")
-                if _con not in self._global_constraints:
-                    self._global_constraints.append(_con)
-                return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
-            self._state_trace.note(len(history) + 1, _state, plan.instruction, _interaction_state)
+        _interaction_state = getattr(observation, "dom_state", None) or ""
+        _hit = self._monitor.check_loop(len(history) + 1, _state, plan.instruction, _interaction_state)
+        if _hit is not None:
+            print(f"  [LoopGuard] 同页面(canonical={_state})重复了 T{_hit.index} 做过的同一动作 → 打转，强制换新")
+            _con = (f"⚠️ 在当前页面已经做过「{plan.instruction}」且没带来进展(在打转)。"
+                    "必须换一个【没在该页面试过】的新动作或新入口，禁止再重复该操作。")
+            if _con not in self._global_constraints:
+                self._global_constraints.append(_con)
+            return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
         drag_column = getattr(plan, "drag_column", None)
         if drag_steps is not None and drag_column:
             print(f"  [Planner] hints: direction={plan.direction} column={drag_column} steps={drag_steps}")
@@ -1046,7 +1044,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             prompts=self._prompts,
             check_knowledge=self._check_knowledge,
             context_reports=self._context_reports,
-            state_trace_text=self._state_trace.render(),
+            state_trace_text=self._monitor.render(),
         )
 
     def _loop_check(

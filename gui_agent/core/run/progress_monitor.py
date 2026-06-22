@@ -134,6 +134,20 @@ class ProgressMonitor:
         return sum(1 for t in self.turns
                    if t.state == state and t.decision == key and t.interaction_state == ix)
 
+    def check_loop(
+        self, index: int, state: str, decision: str, interaction_state: str = "",
+    ) -> Optional[TraceStep]:
+        """Loop guard in one call: if this (state, decision) was already done here, return the prior
+        turn (the agent is about to redo a move → a loop) and DON'T re-note it. Otherwise record it
+        and return None. No-op when state/decision are empty (e.g. a visual platform with no url)."""
+        if not state or not decision:
+            return None
+        hit = self.repeated(state, decision, interaction_state)
+        if hit is not None:
+            return hit
+        self.note(index, state, decision, interaction_state)
+        return None
+
     def distinct_states(self) -> int:
         return len({t.state for t in self.turns})
 

@@ -202,3 +202,17 @@ def test_distinct_box_is_not_a_false_repeat_by_signature():
     mon = ProgressMonitor()
     mon.note(3, state, action_signature(T3))
     assert mon.repeated(state, action_signature(T17)) is None
+
+
+def test_check_loop_records_then_flags_repeat():
+    # The supervisor's inline Action-Loop Guard, now one call: record-or-detect.
+    state = "/admin/review/product"
+    mon = ProgressMonitor()
+    assert mon.check_loop(3, state, "点击 Search") is None      # first time → recorded
+    assert mon.check_loop(4, state, "Reset Filter") is None
+    hit = mon.check_loop(7, state, "点击 Search")               # redo of T3 → loop, points back
+    assert hit is not None and hit.index == 3
+    assert mon.repeat_count(state, "点击 Search") == 1          # T7 NOT re-noted (only T3)
+    # no-op when state/decision empty (visual platform with no url)
+    assert mon.check_loop(8, "", "x") is None
+    assert mon.check_loop(8, state, "") is None
