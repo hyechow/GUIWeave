@@ -29,6 +29,7 @@ from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
+from .intent_resolver import IntentResolution, intent_block
 from .program import BARE_REF_RE, TEMPLATE_RE, Cond, Finish, If, Program, Run, RunKind, Stmt
 
 _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
@@ -367,6 +368,7 @@ def decompose(
     prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
     context_reports: list[dict] | None = None,
     corrective_directive: str = "",
+    resolution: "IntentResolution | None" = None,
 ) -> Program:
     """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
 
@@ -405,6 +407,10 @@ def decompose(
                 + "\n\n依据上下文优先级裁决规则，本指令高于应用知识与默认习惯：与它们冲突时一律以本指令为准。"
             ),
         ) if corrective_directive.strip() else None,
+        # Intent Resolver: per-entity precise/approximate + search key. Drives column choice and the
+        # exact-then-fuzzy retrieval ladder. Authoritative over default search habits (priority 16,
+        # just under the runtime corrective directive); `required` so the budgeter never drops it.
+        intent_block(resolution),
         file_reference_block(file_section),
         knowledge_block("app_navigation", knowledge),
     ]

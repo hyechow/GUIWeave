@@ -542,8 +542,16 @@ def main() -> int:
                             normalize_precondition_gates,
                         )
                         from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
+                        from gui_agent.core.orchestrator.intent_resolver import resolve_intent
 
                         file_section = resolve_file_refs(intent)
+                        # Intent Resolver: classify lookup entities (precise vs fuzzy + search key)
+                        # BEFORE decompose, so the plan picks the right filter column and builds the
+                        # exact-then-fuzzy retrieval ladder upfront (vs reactive in-loop relaxation).
+                        resolution = resolve_intent(intent, app_knowledge=knowledge.navigation if knowledge else "")
+                        if resolution.entities:
+                            print(f"[webarena] intent: " + "; ".join(
+                                f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
                         orch_started = time.perf_counter()
                         orch_calls_before = get_llm_call_count()
                         orch_tokens_before = get_llm_token_usage()
@@ -560,6 +568,7 @@ def main() -> int:
                                     png_bytes=initial_png,
                                     prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                                     context_reports=orchestrator_context_reports,
+                                    resolution=resolution,
                                 )
                             )
                         )
@@ -586,7 +595,8 @@ def main() -> int:
                         # infeasibility directive injected as knowledge (same decompose seam).
                         def _redecompose(directive: str, _intent=intent, _know=knowledge,
                                          _file=file_section, _url=cur_url, _title=cur_title,
-                                         _site=cur_site, _tables=initial_tables, _png=initial_png):
+                                         _site=cur_site, _tables=initial_tables, _png=initial_png,
+                                         _res=resolution):
                             # The directive rides a DEDICATED high-priority block (corrective_directive),
                             # NOT concatenated into the nav knowledge — so it's authoritative + un-buried.
                             return normalize_precondition_gates(normalize_confirm_read_gates(decompose(
@@ -594,7 +604,7 @@ def main() -> int:
                                 current_url=_url, current_title=_title, current_site=_site,
                                 table_summaries=_tables, png_bytes=_png,
                                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                                corrective_directive=directive,
+                                corrective_directive=directive, resolution=_res,
                             )))
 
                         if not args.no_dynamic_max_turns:
