@@ -47,14 +47,7 @@ from .schemas import (
     _SingleCheckResult,
     _StopConditionPatch,
 )
-from .stuck import (
-    STUCK_REPEAT_WINDOW,
-    STUCK_REPEAT_WORD_OVERLAP,
-    STUCK_SCREEN_FROZEN,
-    STUCK_SCREEN_SIMILARITY,
-    STUCK_SCREEN_WINDOW,
-    MilestoneStuckMixin,
-)
+from .stuck import MilestoneStuckMixin
 
 
 # ── Main class ────────────────────────────────────────────────────────
@@ -103,8 +96,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # url/dom-delta effect signals now live on the ProgressMonitor (observe_effect).
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
-        # 连续调值类的进展追踪：每 milestone 一个滑动窗口，存最近若干轮 checker 读到的「当前值」。
-        self._progress_values: dict[str, list[str]] = {}
+        # 连续调值进展窗口、url/dom 效果信号、帧/指令/值停滞探测都在 ProgressMonitor 上。
         # Action-Loop Guard: run-scoped (state, action) memory keyed on canonical URL — catches task-level
         # loops the frame guards miss. NOT reset per milestone (a loop can span milestone boundaries).
         self._monitor = ProgressMonitor()
@@ -164,7 +156,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             "scroll_counts": dict(self._scroll_counts),
             "progress_values": {
                 mid: list(values)
-                for mid, values in self._progress_values.items()
+                for mid, values in self._monitor._progress_values.items()
             },
         }
 
@@ -377,7 +369,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     prev_page_id=prev_page_id, current_page_id=current_page_id,
                 )
             self._last_check_summary[milestone.id] = check.summary
-            stall = self._check_value_stall(milestone, check)
+            stall = self._monitor.check_value_stall(milestone, check)
             if stall is not None:
                 return self._handle_stuck(
                     milestone, stall, check.read_instruction, observation, history,
@@ -389,12 +381,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         sim_stuck = None if (self._monitor.url_changed or self._monitor.dom_changed) else self._check_screen_similarity(observation, self._action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
 
-        rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
+        rep_stuck = self._monitor.check_instruction_repetition(history, milestone.id) if not sim_stuck else None
         # Stepping a picker / value means repeating the SAME column scroll. The two-tier
         # _check_screen_similarity already returns stuck when the touched region is NOT moving,
         # so reaching here (sim_stuck is None) means the region IS changing — a repeated
         # value-adjust scroll is progress, not a loop. Don't let repetition flag it.
-        if rep_stuck is not None and self._is_value_adjust(prev_action):
+        if rep_stuck is not None and self._monitor.is_value_adjust(prev_action):
             print("  [RepStuck] 已抑制：调值类重复滚动属正常（动作区在变）")
             rep_stuck = None
         # Same exemption from ground truth: the interactive-state fingerprint changed since

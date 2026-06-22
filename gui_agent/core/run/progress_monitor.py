@@ -46,6 +46,12 @@ _VOLATILE_SEG = re.compile(r"/(filter|form_key|key|uenc|back|isAjax|sort|dir|lim
 # (the Reviews filter boxes sit ~200px apart). Floor-division → deterministic, no rounding edge.
 _POS_BIN_PX = 50
 
+# Frame/instruction/value stuck-detector thresholds (moved here from stuck.py — the monitor owns
+# the deterministic stuck facts).
+STUCK_REPEAT_WINDOW = 3
+STUCK_REPEAT_WORD_OVERLAP = 0.85
+STUCK_VALUE_STALL_WINDOW = 4
+
 
 def canonical_url(url: str | None) -> str:
     """Canonical page-state id: host-stripped path with volatile segments removed. '' if no url."""
@@ -113,6 +119,8 @@ class ProgressMonitor:
     dom_changed: bool = False
     _last_url: Optional[str] = None        # raw url (not canonical) — exact-delta comparison
     _last_dom_state: Optional[str] = None  # interactive-state fingerprint (form values + focus)
+    # Per-milestone sliding window of the checker's read "current value" — the value-stall detector.
+    _progress_values: dict = field(default_factory=dict)
 
     def observe_effect(self, url: Optional[str], dom_state: Optional[str]) -> None:
         """Update `url_changed` / `dom_changed` from this turn's observation: a changed url means
@@ -164,6 +172,85 @@ class ProgressMonitor:
         if hit is not None:
             return hit
         self.note(index, state, decision, interaction_state)
+        return None
+
+    # ── deterministic stuck detectors (moved from stuck.py) ────────────────
+    def check_instruction_repetition(self, history, milestone_id: str):
+        """Stuck if the last STUCK_REPEAT_WINDOW instructions for this milestone are near-identical
+        (word overlap ≥ threshold) — the planner is circling. Returns a stuck check or None."""
+        recent = [
+            t.supervisor.instruction
+            for t in history[-STUCK_REPEAT_WINDOW:]
+            if t.supervisor and t.supervisor.instruction and t.supervisor.milestone_id == milestone_id
+        ]
+        if len(recent) < STUCK_REPEAT_WINDOW:
+            return None
+        base_words = set(recent[-1].split())
+        sims = [
+            len(base_words & set(inst.split())) / max(len(base_words), len(set(inst.split())), 1)
+            for inst in recent[:-1]
+        ]
+        if all(s >= STUCK_REPEAT_WORD_OVERLAP for s in sims):
+            print(f"  [RepStuck] {', '.join(f'{s:.2%}' for s in sims)} → 指令连续重复")
+            from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+            return _SingleCheckResult(
+                status="stuck",
+                reason=f"连续 {STUCK_REPEAT_WINDOW} 步给出相似指令，当前页面仍未满足验收条件",
+                stuck_reason="连续相似指令未达成目标，需要改用当前截图中的其他可见入口或操作顺序",
+                issues=["连续操作策略过于相似"],
+                summary="操作陷入重复循环",
+            )
+        return None
+
+    @staticmethod
+    def is_value_adjust(action) -> bool:
+        """True for continuous value-adjust actions (scroll / picker drag) — value-stall applies."""
+        if action is None:
+            return False
+        ta = getattr(action, "target_area", "") or ""
+        return action.action_type == "scroll" or (
+            action.action_type == "drag" and ta.startswith("picker_")
+        )
+
+    @staticmethod
+    def _extract_progress_value(check) -> str:
+        """The 'current value' the checker read this turn (for value-stall), from missing_evidence
+        '当前值=…' or a time/hour-minute pattern in reason/summary."""
+        for ev in check.missing_evidence or []:
+            m = re.search(r"当前值\s*[=:：]\s*(.+)", ev.strip())
+            if m:
+                return re.sub(r"\s+", "", m.group(1))
+        text = f"{check.reason or ''}\n{check.summary or ''}"
+        tm = re.search(r"(上午|下午|AM|PM)?\s*0?(\d{1,2})\s*[:：]\s*0?(\d{1,2})", text, flags=re.IGNORECASE)
+        if tm:
+            return f"{(tm.group(1) or '').upper()}{int(tm.group(2)):02d}:{int(tm.group(3)):02d}"
+        hm = re.search(r"小时(?:列)?(?:中间(?:高亮|选中)?行?|选中值|显示)?(?:为|=|显示为)?['「“]?\s*0?(\d{1,2})", text)
+        mm = re.search(r"分钟(?:列)?(?:中间(?:高亮|选中)?行?|选中值|显示)?(?:为|=|显示为)?['「“]?\s*0?(\d{1,2})", text)
+        if hm and mm:
+            return f"{int(hm.group(1)):02d}:{int(mm.group(1)):02d}"
+        return re.sub(r"\s+", "", check.summary or "")
+
+    def check_value_stall(self, milestone, check):
+        """Stuck if the checker's read value stays identical for STUCK_VALUE_STALL_WINDOW turns —
+        a continuous adjustment that isn't approaching the target (wrong direction / too-small step)."""
+        val = self._extract_progress_value(check)
+        window = self._progress_values.setdefault(milestone.id, [])
+        window.append(val)
+        if len(window) > STUCK_VALUE_STALL_WINDOW:
+            window.pop(0)
+        if len(window) < STUCK_VALUE_STALL_WINDOW or not val:
+            return None
+        if len(set(window)) == 1:
+            print(f"  [ValueStall] 连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留「{val}」，未朝目标推进")
+            window.clear()
+            from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+            return _SingleCheckResult(
+                status="stuck",
+                reason=f"连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留在「{val}」，调整未朝目标推进",
+                stuck_reason="连续调值无进展：当前值多轮未变化",
+                issues=["监控值多轮未朝目标推进（疑似方向错/步长不足/非法值回弹）"],
+                summary=check.summary,
+            )
         return None
 
     def distinct_states(self) -> int:

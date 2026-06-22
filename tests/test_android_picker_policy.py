@@ -14,6 +14,7 @@ from gui_agent.adapters.android.policies import AndroidActionPolicy
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.supervisor.milestone.helpers import _build_msgs
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.run.progress_monitor import ProgressMonitor
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
@@ -480,4 +481,4 @@ def test_progress_value_extracts_time_from_reason_without_missing_evidence():
         summary="当前屏幕为新建闹钟界面。",
     )
 
-    assert MilestoneSupervisorPolicy._extract_progress_value(check) == "上午08:51"
+    assert ProgressMonitor._extract_progress_value(check) == "上午08:51"

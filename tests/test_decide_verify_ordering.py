@@ -95,7 +95,7 @@ def _wire_plan(monkeypatch, p) -> list[str]:
     """Like _wire but in_progress + also records _plan_single / suppresses repetition."""
     calls = _wire(monkeypatch, p, "in_progress")
     monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (calls.append("plan"), "PLAN")[1])
-    monkeypatch.setattr(p, "_check_instruction_repetition", lambda *a, **k: None)
+    monkeypatch.setattr(p._monitor, "check_instruction_repetition", lambda *a, **k: None)
     return calls
 
 

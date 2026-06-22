@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw
 
 from gui_agent.core.vision.frame_analysis import CHANGE_SSIM_DIST_THR, region_change
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.run.progress_monitor import ProgressMonitor
 
 
 def _png(img: Image.Image) -> bytes:
@@ -75,13 +76,13 @@ def test_action_center_none_for_coordless_and_missing():
 
 # ── _is_value_adjust: repeating the same column scroll is normal, not a loop ────
 def test_is_value_adjust_scroll_and_picker_drag():
-    f = MilestoneSupervisorPolicy._is_value_adjust
+    f = ProgressMonitor.is_value_adjust
     assert f(types.SimpleNamespace(action_type="scroll")) is True  # android picker
     assert f(types.SimpleNamespace(action_type="drag", target_area="picker_hour")) is True  # iphone
 
 
 def test_is_value_adjust_false_for_tap_plain_drag_none():
-    f = MilestoneSupervisorPolicy._is_value_adjust
+    f = ProgressMonitor.is_value_adjust
     assert f(types.SimpleNamespace(action_type="tap")) is False
     assert f(types.SimpleNamespace(action_type="drag", target_area="")) is False
     assert f(None) is False

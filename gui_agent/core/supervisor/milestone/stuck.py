@@ -13,9 +13,6 @@ from .schemas import _PlanResult, _SingleCheckResult
 STUCK_SCREEN_WINDOW = 3
 STUCK_SCREEN_SIMILARITY = 0.95
 STUCK_SCREEN_FROZEN = 0.99
-STUCK_REPEAT_WINDOW = 3
-STUCK_REPEAT_WORD_OVERLAP = 0.85
-STUCK_VALUE_STALL_WINDOW = 4
 
 
 class MilestoneStuckMixin:
@@ -66,37 +63,6 @@ class MilestoneStuckMixin:
             )
         return None
 
-    def _check_instruction_repetition(
-        self,
-        history,
-        milestone_id: str,
-    ) -> Optional[_SingleCheckResult]:
-        recent_insts = [
-            t.supervisor.instruction
-            for t in history[-STUCK_REPEAT_WINDOW:]
-            if t.supervisor
-            and t.supervisor.instruction
-            and t.supervisor.milestone_id == milestone_id
-        ]
-        if len(recent_insts) < STUCK_REPEAT_WINDOW:
-            return None
-        base_words = set(recent_insts[-1].split())
-        sims = [
-            len(base_words & set(inst.split())) / max(len(base_words), len(set(inst.split())), 1)
-            for inst in recent_insts[:-1]
-        ]
-        if all(s >= STUCK_REPEAT_WORD_OVERLAP for s in sims):
-            sim_str = ", ".join(f"{s:.2%}" for s in sims)
-            print(f"  [RepStuck] {sim_str} → 指令连续重复")
-            return _SingleCheckResult(
-                status="stuck",
-                reason=f"连续 {STUCK_REPEAT_WINDOW} 步给出相似指令，当前页面仍未满足验收条件",
-                stuck_reason="连续相似指令未达成目标，需要改用当前截图中的其他可见入口或操作顺序",
-                issues=["连续操作策略过于相似"],
-                summary="操作陷入重复循环",
-            )
-        return None
-
     @staticmethod
     def _action_center(action) -> Optional[tuple[float, float]]:
         if action is None:
@@ -105,56 +71,6 @@ class MilestoneStuckMixin:
         if x is None or y is None:
             return None
         return (float(x), float(y))
-
-    @staticmethod
-    def _is_value_adjust(action) -> bool:
-        if action is None:
-            return False
-        ta = getattr(action, "target_area", "") or ""
-        return action.action_type == "scroll" or (
-            action.action_type == "drag" and ta.startswith("picker_")
-        )
-
-    @staticmethod
-    def _extract_progress_value(check: _SingleCheckResult) -> str:
-        for ev in check.missing_evidence or []:
-            m = re.search(r"当前值\s*[=:：]\s*(.+)", ev.strip())
-            if m:
-                return re.sub(r"\s+", "", m.group(1))
-        text = f"{check.reason or ''}\n{check.summary or ''}"
-        time_match = re.search(r"(上午|下午|AM|PM)?\s*0?(\d{1,2})\s*[:：]\s*0?(\d{1,2})", text, flags=re.IGNORECASE)
-        if time_match:
-            period = (time_match.group(1) or "").upper()
-            hour = int(time_match.group(2))
-            minute = int(time_match.group(3))
-            return f"{period}{hour:02d}:{minute:02d}"
-        hour_match = re.search(r"小时(?:列)?(?:中间(?:高亮|选中)?行?|选中值|显示)?(?:为|=|显示为)?['「“]?\s*0?(\d{1,2})", text)
-        minute_match = re.search(r"分钟(?:列)?(?:中间(?:高亮|选中)?行?|选中值|显示)?(?:为|=|显示为)?['「“]?\s*0?(\d{1,2})", text)
-        if hour_match and minute_match:
-            return f"{int(hour_match.group(1)):02d}:{int(minute_match.group(1)):02d}"
-        return re.sub(r"\s+", "", check.summary or "")
-
-    def _check_value_stall(
-        self, milestone, check: _SingleCheckResult,
-    ) -> Optional[_SingleCheckResult]:
-        val = self._extract_progress_value(check)
-        window = self._progress_values.setdefault(milestone.id, [])
-        window.append(val)
-        if len(window) > STUCK_VALUE_STALL_WINDOW:
-            window.pop(0)
-        if len(window) < STUCK_VALUE_STALL_WINDOW or not val:
-            return None
-        if len(set(window)) == 1:
-            print(f"  [ValueStall] 连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留「{val}」，未朝目标推进")
-            window.clear()
-            return _SingleCheckResult(
-                status="stuck",
-                reason=f"连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留在「{val}」，调整未朝目标推进",
-                stuck_reason="连续调值无进展：当前值多轮未变化",
-                issues=["监控值多轮未朝目标推进（疑似方向错/步长不足/非法值回弹）"],
-                summary=check.summary,
-            )
-        return None
 
     @staticmethod
     def _picker_drag_steps(plan: _PlanResult) -> Optional[int]:
