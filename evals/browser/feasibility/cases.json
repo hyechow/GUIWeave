@@ -8,7 +8,11 @@
     "knowledge": "Product Reviews 管理列表在 Admin 侧栏 Marketing > User Content > All Reviews（不在 Catalog 下）。",
     "expected": {
       "feasible": false,
-      "reason_contains": ["Catalog", "Product Reviews", "入口"],
+      "reason_contains": [
+        "Catalog",
+        "Product Reviews",
+        "入口"
+      ],
       "directive_nonempty": true
     },
     "note": "活跑 115356：milestone 指明经 Catalog 进 Product Reviews。截图里 Catalog 浮层只展开出 Products/Categories、没有 Product Reviews——这步在当前页【不可执行】。judge 该从【截图】看出入口不存在（DOM 控件清单只有表单控件、看不到菜单），判 infeasible → 踢回。不可越界去想『Marketing 那条路能不能到』。"
@@ -22,7 +26,10 @@
     "knowledge": "Product Reviews 管理列表在 Admin 侧栏 Marketing > User Content > All Reviews。",
     "expected": {
       "feasible": true,
-      "directive_not_contains": ["data_query", "逐条打开"]
+      "directive_not_contains": [
+        "data_query",
+        "逐条打开"
+      ]
     },
     "note": "对照正例：截图里 Marketing 浮层 User Content 下可见 All Reviews 链接 → 这步要走的导航入口存在 → 可执行 → feasible=true。守边界=只看『这步要的入口在不在』，不看目标页网格是否已显示。"
   },
@@ -34,9 +41,55 @@
     "knowledge": "All Reviews 网格可按 Status/Product/Nickname/日期 筛选；单条评论的评分（rating）显示在该评论的详情页。",
     "expected": {
       "feasible": false,
-      "reason_contains": ["Rating", "评分", "星"],
+      "reason_contains": [
+        "Rating",
+        "评分",
+        "星"
+      ],
       "directive_nonempty": true
     },
     "note": "原始 Feasibility Guard 命中（无截图，纯 DOM 路径）：控件存在性以 DOM 控件清单为准——列表层没有 Rating 筛选控件 → 这步不可执行 → 踢回。守住『控件类判定以 DOM 为权威、不退化』。"
+  },
+  {
+    "label": "搜索框存在但结果未匹配：feasible，但不能把全量2040条当Olivia非零匹配（回归 20260622_165248）",
+    "milestone_goal": "清除当前搜索，改用关键词'Olivia'进行模糊搜索 —— 列表已检索到匹配'Olivia'关键词的记录（非0条）",
+    "milestone_kind": "filter",
+    "control_text": "## DOM 表单控件\n- search-global: text_input; center=(815,98)\n- Search by keyword: text_input; current=\"Olivia\"; focused=true; center=(245,322)\n- per page per page: text_input; current=\"200\"; center=(676,369)\n- of 11: number_input; current=\"1\"; center=(863,369)\n\n## 页面 UI 状态事实\n- kind=grid; record_count=2040; message=2040 records found; active_filters=[]; visible_rows_do_not_match=Olivia",
+    "knowledge": "Products List 页面包含 Search by keyword 控件。若控件存在，Feasibility 应判这一步可执行；但 2040 records found 是全量列表，不是已匹配 Olivia 的证据。",
+    "expected": {
+      "feasible": true,
+      "reason_contains": [
+        "Search by keyword",
+        "搜索"
+      ],
+      "reason_not_contains": [
+        "返回非零结果",
+        "非零结果",
+        "匹配'Olivia'"
+      ],
+      "directive_not_contains": [
+        "逐条打开",
+        "data_query"
+      ]
+    },
+    "note": "活跑 165248：Feasibility 正确地不踢回（搜索框存在），但 reason 错说『当前已输入 Olivia 并返回非零结果』，把 2040 records found 的全量列表当成 Olivia 搜索成功。这个 case 锁住边界：feasible=true 仍可成立，但理由不能把未匹配的全量结果当成成功证据。"
+  },
+  {
+    "label": "评论列表网格无 Rating 列 → 按 rating<=3 筛选/查询不可执行（回归 20260622_171843，T16 即可判，却迟至 T21 才发现）",
+    "milestone_goal": "在当前 All Reviews 评论列表网格上查询：筛选出产品='Olivia zip jacket' 且 rating(评分)<=3 的客户昵称——数据源即当前列表网格，需要按评分列筛选/读取每行的 rating。",
+    "milestone_kind": "data_query",
+    "screenshot": "evals/browser/feasibility/screenshots/webarena113_reviews_grid_no_rating_column_20260622_171843.png",
+    "control_text": "## 浏览器 DOM 表单控件（适配器感知，不是截图文本）\n（当前为 All Reviews 评论列表网格的筛选行控件）\n- search-global: text_input; center=(815,98)\n- reviewGrid_massaction-select: native_select; current=\"Actions\"; options=[Actions, Delete, Update Status]\n- per page: native_select; current=\"20\"; options=[20, 30, 50, 100, 200]\n- From: text_input  (Created 起始)\n- undefined: text_input  (Created 结束)\n- undefined undefined: native_select; options=[Approved, Pending, Not Approved]  (Status)\n- nickname: text_input\n- detail: text_input  (评论正文)\n- visible_in: native_select; options=[Default Store View]\n- Default Store View: native_select; options=[Administrator, Customer, Guest]  (Type)\n- Administrator Customer Guest: text_input; current=\"Olivia\"  (Product)\n- sku: text_input",
+    "knowledge": "",
+    "expected": {
+      "feasible": false,
+      "reason_contains": [
+        "Rating",
+        "评分",
+        "rating"
+      ],
+      "directive_nonempty": true
+    },
+    "note": "活跑里 result 子目标(data_query: SELECT customer_nickname WHERE rating<=3)在 Reviews 网格上空转 T9–T21，T16 还幻觉出一个'Rating 筛选输入框'往里打 '<=3'。但网格筛选行只有 From/To/Status/Nickname/Detail/Visibility/Type/Product/SKU——无 Rating/评分/score 列。该结构信号 T9 起就稳定可见，却迟至 T21(MAX_RETRIES give-up)才由 Feasibility 发现。此 case 锁定：仅凭控件清单(无 rating 控件)+截图，judge 应判不可行并给钻取 Review Detail 的 directive。"
   }
 ]

@@ -64,6 +64,9 @@ def test_feasibility() -> None:
         reason_any = exp.get("reason_contains", [])
         if reason_any and not any(kw in (v.reason or "") for kw in reason_any):
             details.append(f"reason should contain one of {reason_any}")
+        for kw in exp.get("reason_not_contains", []):
+            if kw in (v.reason or ""):
+                details.append(f"reason should NOT contain {kw!r}")
         for kw in exp.get("directive_not_contains", []):
             if kw in (v.directive or ""):
                 details.append(f"directive should NOT contain {kw!r}")
