@@ -194,5 +194,28 @@
       ]
     },
     "note": "截图：路径连通性面板终点输入框显示搜索文本「s9-站点9」、其候选浮层仍展开（#9 s9-站点9…）=终点尚未从候选选定（下拉未收起、移焦会清空）。实跑 checker 却判「起点和终点均已正确填写」，只把「检测结果未显示」列 missing → planner 据此直接点检测；但终点未选定使检测成空操作(no_effect)，planner 误以为没点中、关面板重做，反复 21 轮。正确行为：候选浮层展开=未选定，必须把终点列入 missing_evidence，绝不能宣称终点已填写/选定。与种子 20260612_104857 同类（单选下拉展开≠已设）。"
+  },
+  {
+    "label": "Action-Loop Guard: Reset→search 循环时 checker 不得误判筛选已成功（回归 20260622_105707）",
+    "screenshot": "evals/browser/checker/screenshots/webarena113_reviews_reset_search_loop_0records.png",
+    "with_app_check": false,
+    "milestone": {
+      "name": "在 All Reviews 列表按 Product 筛选出 'Olivia zip jacket' 的评论",
+      "description": "在评论列表页用 Product 筛选框筛出该产品的评论，列表显示匹配记录。",
+      "success_condition": "Product 筛选框显示 'Olivia zip jacket' 且列表已刷新显示该产品的评论记录（非 0 条）。",
+      "kind": "filter",
+      "app_name": "shopping_admin"
+    },
+    "state_trace": " T3 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索\n T4 状态:/admin/review/product/index/internal_reviews | 决策:点击resetfilter清除残留过滤 (同页面)\n T5 状态:/admin/review/product/index/internal_reviews | 决策:在review搜索框输入oliviazipjacket (同页面)\n T7 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索筛选 (同页面)\n T8 状态:/admin/review/product/index/internal_reviews | 决策:点击resetfilter清除残留过滤 ⚠️重复(同 T4)\n T10 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索筛选 ⚠️重复(同 T7)",
+    "expected": {
+      "status": "in_progress",
+      "must_not_claim": [
+        "筛选成功",
+        "已生效",
+        "已完成",
+        "符合验收"
+      ]
+    },
+    "note": "回归 20260622_105707：Reset→search→Reset 循环 11+ 轮。截图 0 records found + Review 框误填 'Olivia zip j…'、Product 框空。state_trace 标 T8/T10 ⚠️重复。checker 看到轨迹应判 in_progress、不得宣称筛选已成功/已完成——0 条且 Product 未设、还在打转。"
   }
 ]

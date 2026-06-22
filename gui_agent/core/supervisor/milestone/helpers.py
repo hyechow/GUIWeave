@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from gui_agent.context import ContextBlock
 from gui_agent.context.runtime import (
     acceptance_items_block,
     app_identity_block,
@@ -445,6 +446,7 @@ def run_checker(
     prompts: Optional[MilestonePrompts] = None,
     check_knowledge: str = "",
     context_reports: list[dict] | None = None,
+    state_trace_text: str = "",
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals.
 
@@ -482,6 +484,13 @@ def run_checker(
             milestone_block(milestone, task_type=task_type),
             constraints_block(constraints),
             history_block(history, current_milestone_id=milestone.id),
+            (ContextBlock(
+                id="runtime.state_trace", budget="high", source_type="runtime_state",
+                source="state_trace", ttl="turn", priority=28,
+                content=("## 任务进展轨迹（状态→决策，越下越新）\n"
+                         "标⚠️重复=同一页面上重复了之前做过的同一决策(在打转，不是推进)。"
+                         "据此判断任务是在推进(不断到达新状态)还是在少数状态里打转。\n" + state_trace_text),
+            ) if state_trace_text.strip() else None),
             extra_instruction_block(extra, source="checker_guard"),
             page_title_block(title),
             acceptance_items_block(accept_items),
