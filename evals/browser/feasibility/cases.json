@@ -1,0 +1,27 @@
+[
+  {
+    "label": "导航 milestone 不因「目标页的列表控件不在当前页」判不可行（回归 20260622_115356）",
+    "milestone_goal": "进入 Product Reviews / All Reviews 列表页：页面显示所有产品评论的列表。",
+    "milestone_kind": "navigation",
+    "control_text": "## DOM 表单控件\n（当前为 Admin Dashboard 首页。无产品评论列表网格、无 Product/Rating 筛选控件、无关键词搜索框。左侧导航栏可见 Catalog / Marketing / Sales / Reports 等菜单入口，可经其进入目标页。）\n\n## 页面 UI 状态事实\n- kind=dashboard",
+    "knowledge": "Product Reviews 管理列表在 Admin 侧栏 Marketing > User Content > All Reviews。",
+    "expected": {
+      "feasible": true,
+      "directive_not_contains": ["data_query", "逐条打开", "逐条"]
+    },
+    "note": "活跑 115356：导航 milestone（进入评论列表页）被按「目标页的评论列表控件是否在当前页」来判——当前是 Dashboard，那控件本就不在（所以才要导航过去）。这不是不可行：导航类的『必需控件』是导航入口（菜单/链接），不是目标页的列表/筛选控件。必须判 feasible=true，不得踢回。"
+  },
+  {
+    "label": "评分≤3 筛选：列表层无 Rating 控件 → 不可行，踢回（回归 20260622_104201）",
+    "milestone_goal": "在 All Reviews 列表中只保留评分≤3 星的评论：列表已按评分≤3 筛选。",
+    "milestone_kind": "filter",
+    "control_text": "## DOM 表单控件\n- Status: native_select（Any/Approved/Pending/Not Approved）\n- Product: input（按产品名筛）\n- Nickname: input\n- Review: input\n- Created: 日期范围\n- SKU: input\n（无 Rating / 评分 / 星级 筛选控件——评分只显示在每条评论的详情里）\n\n## 页面 UI 状态事实\n- kind=grid; record_count=351",
+    "knowledge": "All Reviews 网格可按 Status/Product/Nickname/日期 筛选；单条评论的评分（rating）显示在该评论的详情页。",
+    "expected": {
+      "feasible": false,
+      "reason_contains": ["Rating", "评分", "星"],
+      "directive_nonempty": true
+    },
+    "note": "原始 Feasibility Guard 命中：列表层没有 Rating 筛选控件（评分在每条详情里），按列表控件筛 ≤3 不可行 → 踢回，directive 规定逐条读详情评分。守住真·不可行的判定不被改坏。"
+  }
+]
