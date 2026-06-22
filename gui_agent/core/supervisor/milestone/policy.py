@@ -38,7 +38,7 @@ from .runtime import (
     _last_scroll_was_for,
     _type_only_search_filter_pending_submit,
 )
-from gui_agent.core.run.progress_monitor import ProgressMonitor, action_signature, canonical_url
+from gui_agent.core.run.progress_monitor import ProgressMonitor, canonical_url
 from .schemas import (
     MilestonePrompts,
     _DecomposeResponse,
@@ -496,20 +496,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         _state = canonical_url(getattr(observation, "url", None))
         # Signature catch (Kind-2): re-doing the SAME concrete input — re-typing the same value into
         # the same box — which the instruction guard below misses when the planner rewords it
-        # ("输入X" → "删除后输入X" → "覆盖输入X"). Keyed on the just-EXECUTED action and scoped to
-        # `type`: its value rides the signature so this is self-distinguishing (a re-click of
-        # Search/Reset carries no text and must NOT be flagged here — the instruction guard owns that).
-        # Regression 20260622_171843: 'Olivia zip jacket' re-typed at T3/T9/T12/T13, never caught.
-        _prev_act = history[-1].action_decision.action if (history and history[-1].action_decision) else None
-        if _state and _prev_act is not None and getattr(_prev_act, "action_type", "") == "type":
-            _sig = action_signature(_prev_act)
-            if self._monitor.check_loop(len(history), _state, _sig) is not None:
-                print(f"  [LoopGuard] 重复执行了同一输入动作（{_sig}）→ 打转，强制换新")
-                _con = ("⚠️ 已经把同样的内容输入过同一个输入框且没带来进展(在打转)。"
-                        "必须改用截图中其他可见入口/动作，禁止再把同样内容输进同一个框。")
-                if _con not in self._global_constraints:
-                    self._global_constraints.append(_con)
-                return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
+        # ("输入X" → "删除后输入X" → "覆盖输入X"). Scoped to `type` (its value rides the signature, so a
+        # re-click of Search/Reset carries no text and is left to the instruction guard). Keyed on the
+        # signature ALONE over this milestone's history, NOT on canonical_url: a filter/search/reset
+        # cycle rewrites the url's path shape, so the url-keyed check_loop missed the re-types entirely
+        # (regression 20260622_205544: 'Olivia zip jacket' typed 3× at T3/T6/T10, guard never fired).
+        _sig = self._monitor.check_action_repetition(history, milestone.id)
+        if _sig is not None:
+            print(f"  [LoopGuard] 重复执行了同一输入动作（{_sig}）→ 打转，强制换新")
+            _con = ("⚠️ 已经把同样的内容输入过同一个输入框且没带来进展(在打转)。"
+                    "必须改用截图中其他可见入口/动作，禁止再把同样内容输进同一个框。")
+            if _con not in self._global_constraints:
+                self._global_constraints.append(_con)
+            return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
         _interaction_state = getattr(observation, "dom_state", None) or ""
         _hit = self._monitor.check_loop(len(history) + 1, _state, plan.instruction, _interaction_state)
         if _hit is not None:

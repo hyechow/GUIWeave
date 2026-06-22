@@ -182,6 +182,34 @@ class ProgressMonitor:
         self.note(index, state, decision, interaction_state)
         return None
 
+    @staticmethod
+    def check_action_repetition(history, milestone_id, *, min_repeats: int = 2) -> Optional[str]:
+        """URL-independent type-repeat catch: within THIS milestone, has the most-recently executed
+        `type` action already put the SAME concrete value into the SAME box ≥ min_repeats times?
+        Returns that signature, else None.
+
+        Why not the url-keyed check_loop: a filter/search/reset cycle rewrites the url's path shape
+        (`/index/` → `/index/filter//internal_reviews/…`), so canonical_url is NOT stable across the
+        first-search boundary — the first re-type lands under a different state and never matches
+        (regression 20260622_205544: 'Olivia zip jacket' typed at T3/T6/T10, the guard never fired).
+        The signature alone (type|box|value) IS the identity; scanning the milestone's own executed
+        type actions needs no url. Scoped to `type`: re-putting the same value into the same box is
+        always redundant, whereas a re-click of Search/Reset can be legitimate (instruction guard owns
+        those)."""
+        sigs: list[str] = []
+        for t in history:
+            sv = getattr(t, "supervisor", None)
+            ad = getattr(t, "action_decision", None)
+            if not (getattr(t, "executed", False) and sv and getattr(sv, "milestone_id", None) == milestone_id and ad):
+                continue
+            action = getattr(ad, "action", None)
+            if action is not None and getattr(action, "action_type", "") == "type":
+                sigs.append(action_signature(action))
+        if not sigs:
+            return None
+        last = sigs[-1]
+        return last if sigs.count(last) >= min_repeats else None
+
     # ── deterministic stuck detectors (moved from stuck.py) ────────────────
     def clear_screenshots(self) -> None:
         """Reset the screen-similarity buffer (called on milestone transitions)."""
