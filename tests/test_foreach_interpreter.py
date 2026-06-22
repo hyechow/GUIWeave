@@ -141,6 +141,36 @@ def test_foreach_empty_collection_publishes_empty_table():
     assert interp.env["reviews"].completed is True
 
 
+def test_into_table_is_ready_when_data_query_is_yielded():
+    """Timing regression 20260622_215814: the into table is populated when the LAST body read's result
+    is sent — so by the time the interpreter yields the following data_query, materialized_tables()
+    must already contain it. (The live data_query reads the provider fresh at that point, not a stale
+    snapshot taken before the foreach finished.)"""
+    program = Program(
+        goal="g",
+        statements=[
+            Run(var="r", name="行", kind="read", returns=["id"], list_read=True),
+            ForEach(var="row", over="r", into="reviews", body=[
+                Run(var="d", name="读 {row[id]}", kind="read", returns=["rating"]),
+            ]),
+            Run(var="q", name="筛", kind="data_query", returns=["rating"],
+                sql="SELECT rating FROM reviews"),
+        ],
+    )
+    interp = Interpreter(program)
+    gen = interp.steps()
+    run = next(gen)                                   # the list_read
+    run = gen.send(RunResult(completed=True, rows=[{"id": "1"}, {"id": "2"}]))
+    # now driving foreach body reads; the into table must NOT exist until the last body read is sent
+    while run.kind == "read" and not run.name.startswith("筛"):
+        assert interp.materialized_tables() == []    # not yet — foreach still iterating
+        run = gen.send(RunResult(completed=True, reads={"rating": "3"}))
+    # the loop exited because the yielded run is now the data_query — and the into table is READY
+    assert run.kind == "data_query"
+    assert [m["caption"] for m in interp.materialized_tables()] == ["reviews"]
+    assert len(interp.materialized_tables()[0]["rows"]) == 2
+
+
 def test_foreach_into_defaults_to_var_plural():
     program = Program(
         goal="g",

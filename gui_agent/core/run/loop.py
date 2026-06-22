@@ -317,7 +317,9 @@ def run_agent_loop(
                 say=_say,
                 done_observation=done_observation,
                 observation_url=observation_url,
-                materialized_tables=_interp.materialized_tables() if _interp is not None else None,
+                # a PROVIDER, not a snapshot: a foreach's into table is populated mid-drain (when the
+                # last body read completes), so the data_query must read it fresh — see drive_pending_non_ui.
+                materialized_tables=(lambda: _interp.materialized_tables()) if _interp is not None else None,
             )
             _cur_run = result.current_run
             _run_idx = result.run_index

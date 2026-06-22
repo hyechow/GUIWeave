@@ -57,13 +57,17 @@ def drive_pending_non_ui(
     say: Callable[[str], None],
     done_observation: Observation | None = None,
     observation_url: str | None = None,
-    materialized_tables: list[dict[str, Any]] | None = None,
+    materialized_tables: "Callable[[], list[dict[str, Any]]] | None" = None,
 ) -> NonUiDriveResult:
     """Execute consecutive `read` / `data_query` runs and advance the interpreter.
 
-    `materialized_tables` = the interpreter's foreach `into` tables (accumulated rows from iterating a
-    collection). They're folded into a data_query's source so a query AFTER a foreach can analyze the
-    whole collected set (filter/aggregate), the same way a UI-rendered grid snapshot is queried."""
+    `materialized_tables` = a PROVIDER returning the interpreter's foreach `into` tables (accumulated
+    rows from iterating a collection). It's folded into a data_query's source so a query AFTER a
+    foreach can analyze the whole collected set. It MUST be called fresh right before each data_query
+    (not snapshotted at entry): a foreach's `into` table is populated DURING this drain loop — when the
+    last body read completes the interpreter resumes, accumulates, and yields the data_query — so a
+    value captured at entry is still empty (regression 20260622_215814: the query saw no table though
+    foreach had read all rows)."""
     cur_run = current_run
     failure_evidence: str | None = None  # last re-plannable non-UI failure (for Feasibility Guard kick-back)
     obs = done_observation
@@ -135,8 +139,10 @@ def drive_pending_non_ui(
                         query_tables = tables
             # Fold in foreach-accumulated tables (e.g. per-review rows collected by iterating a list):
             # they're a complete, in-memory data source the query references by its `into` var name.
-            if materialized_tables:
-                query_tables = list(query_tables or []) + list(materialized_tables)
+            # Pulled FRESH here (not at entry) so the just-completed foreach's into table is included.
+            mats = materialized_tables() if callable(materialized_tables) else (materialized_tables or [])
+            if mats:
+                query_tables = list(query_tables or []) + list(mats)
 
             def _try_repair(reason: str) -> _RepairAttempt | None:
                 repair = repair_data_query_sql(
