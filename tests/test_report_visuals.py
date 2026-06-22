@@ -135,6 +135,40 @@ def test_orchestrator_program_renders_dataflow_lane():
     assert "旧日志缺 prompt snapshot" in html
 
 
+def test_orchestrator_program_renders_foreach_block_and_body():
+    # A foreach program must render its loop block + indented body (not be silently dropped), with the
+    # list_read badge and the accumulated into-table row count.
+    html = _render_program_section(
+        {
+            "program": {
+                "goal": "找 rating<=3 昵称",
+                "statements": [
+                    {"op": "run", "kind": "read", "var": "r", "name": "读候选行 id",
+                     "returns": ["id"], "list_read": True},
+                    {"op": "foreach", "var": "row", "over": "r", "into": "reviews", "body": [
+                        {"op": "run", "kind": "action", "name": "打开评论 {row[id]} 详情"},
+                        {"op": "run", "kind": "read", "var": "d", "name": "读评分昵称",
+                         "returns": ["rating", "nickname"]},
+                    ]},
+                    {"op": "run", "kind": "data_query", "var": "q", "name": "筛 rating<=3",
+                     "returns": ["nickname"], "sql": "SELECT ..."},
+                    {"op": "finish", "message": "{q[nickname]}"},
+                ],
+            },
+            "run_log": [
+                {"var": "reviews", "result": {"rows": [{"id": "347"}, {"id": "349"}, {"id": "351"}]}},
+            ],
+            "context_reports": [],
+        },
+        None,
+    )
+    assert "foreach" in html
+    assert "列表读取" in html          # the list_read badge
+    assert "采集 3 行" in html          # accumulated into-table row count
+    assert "打开评论" in html           # body Run rendered (not dropped)
+    assert "prog-branch" in html        # body is indented under the loop
+
+
 def test_thumb_time_only_renders_total_and_keeps_flags_searchable():
     html, search = _render_thumb_time(
         ReportStep(

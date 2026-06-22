@@ -91,3 +91,25 @@ def test_floor_is_never_lowered_by_cap():
     ])
 
     assert estimate_program_turns(prog, floor=60, cap=45) == 60
+
+
+def test_foreach_program_budgets_body_per_iteration_and_lifts_cap():
+    # A foreach iterates a runtime-unknown collection: its body action (open detail) must be budgeted
+    # × an assumed iteration count, and the flat-program cap (32) lifted so a multi-row drill isn't
+    # starved (regression: the per-row open-detail action would otherwise overflow a 32 ceiling).
+    from gui_agent.core.orchestrator import ForEach
+
+    prog = Program(statements=[
+        Run(var="r", name="读候选行", kind="read", returns=["id"], list_read=True),
+        ForEach(var="row", over="r", into="reviews", body=[
+            Run(name="打开评论 {row[id]} 详情", kind="action"),
+            Run(var="d", name="读评分昵称", kind="read", returns=["rating", "nickname"]),
+        ]),
+        Run(var="q", name="筛 rating<=3", kind="data_query", returns=["nickname"], sql="x"),
+        Finish(message="{q[nickname]}"),
+    ])
+
+    # body has one action → budgeted × FOREACH_ASSUMED_ITERS, well above the flat 32 cap, but bounded.
+    est = estimate_program_turns(prog, floor=20)
+    assert est > 32
+    assert est <= 80

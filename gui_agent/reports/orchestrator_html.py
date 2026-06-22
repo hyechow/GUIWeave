@@ -36,6 +36,8 @@ def _program_run_items(stmts: list) -> list[dict]:
         elif op == "if":
             out.extend(_program_run_items(s.get("then", [])))
             out.extend(_program_run_items(s.get("otherwise", [])))
+        elif op == "foreach":
+            out.extend(_program_run_items(s.get("body", [])))
     return out
 
 
@@ -450,10 +452,15 @@ def _render_program_card(
     # targets — a pure read has no turn/milestone, so without this the report only had the static
     # program structure, never the values it read or where they flowed.
     env: dict[str, dict] = {}
+    rows_by_var: dict[str, list] = {}   # foreach `into` / list_read → accumulated rows (for "采集 N 行")
     for r in (orchestrator.get("run_log") or []):
-        reads = (r.get("result") or {}).get("reads") or {}
+        result = r.get("result") or {}
+        reads = result.get("reads") or {}
         if r.get("var") and reads:
             env[r["var"]] = reads
+        rows = result.get("rows") or []
+        if r.get("var") and rows:
+            rows_by_var[r["var"]] = rows
 
     def _resolve(text: str) -> str:
         """Substitute {var[field]} from env (as the runner did at execute time); keep the raw
@@ -479,6 +486,11 @@ def _render_program_card(
             f'<span class="prog-resolved">▸ {_safe(resolved)}</span>' if resolved != name else ""
         )
         ret = [r for r in (s.get("returns") or []) if r]
+        list_html = ""
+        if kind == "read" and s.get("list_read"):
+            n = len(rows_by_var.get(var or "", []))
+            count = f" {n} 行" if n else ""
+            list_html = f'<span class="milestone-badge milestone-badge-default" style="background:#eef">列表读取{count}</span>'
         if kind in {"read", "data_query"} and ret:
             vals = env.get(var or "") or {}
             verb = "查" if kind == "data_query" else "读"
@@ -492,7 +504,7 @@ def _render_program_card(
             f'<div class="prog-step">'
             f'<span class="prog-n">{counter[0]}</span>'
             f'<span class="prog-name">{var_html}{_safe(name)}</span>{resolved_html}'
-            f'<span class="milestone-badge {badge}">{_safe(kind)}</span>{ret_html}'
+            f'<span class="milestone-badge {badge}">{_safe(kind)}</span>{list_html}{ret_html}'
             f'</div>'
         )
 
@@ -519,6 +531,26 @@ def _render_program_card(
                     f'<div class="prog-cond"><span class="prog-kw">if</span> {c} <span class="prog-kw">:</span></div>'
                     f'<div class="prog-branch">{then_html}</div>'
                     f'{else_block}'
+                    f'</div>'
+                )
+            elif op == "foreach":
+                over = s.get("over", "")
+                into = s.get("into") or (f"{s.get('var','')}s")
+                n = len(rows_by_var.get(into, []))
+                collected = f'<span class="prog-ret">→ 采集 {n} 行</span>' if n else ""
+                body_html = "".join(_walk(s.get("body", []))) or '<div class="prog-step prog-empty">—</div>'
+                head = (
+                    f'<span class="prog-kw">foreach</span> '
+                    f'<span class="prog-condvar">{_safe(s.get("var",""))}</span> '
+                    f'<span class="prog-kw">in</span> '
+                    f'<span class="prog-condvar">{_safe(over)}</span> '
+                    f'<span class="prog-kw">→</span> '
+                    f'<span class="prog-condval">{_safe(into)}</span>{collected}'
+                )
+                out.append(
+                    f'<div class="prog-if">'
+                    f'<div class="prog-cond">{head} <span class="prog-kw">:</span></div>'
+                    f'<div class="prog-branch">{body_html}</div>'
                     f'</div>'
                 )
             elif op == "finish":

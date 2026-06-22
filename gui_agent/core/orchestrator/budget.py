@@ -28,11 +28,17 @@ flailing run still fails in bounded time.
 
 from __future__ import annotations
 
-from .program import Finish, If, Program, Run, Stmt
+from .program import Finish, ForEach, If, Program, Run, Stmt
 
 BASE_TURNS = 5            # task-level overhead: initial observe + settle + a decision turn or two
 DEFAULT_FLOOR_TURNS = 20  # the caller's requested minimum (bin/runner passes --max-turns 20)
 DEFAULT_CAP_TURNS = 32    # runaway ceiling; just above the observed max real run (28 turns)
+# A foreach iterates a runtime-unknown number of rows, each running its body (e.g. open detail +
+# read). Budget for an assumed iteration count, and lift the cap when a program has a foreach — its
+# whole point is to process a collection, so the 32-turn ceiling tuned for flat programs would starve
+# it (a 10-row drill = ~40+ turns).
+FOREACH_ASSUMED_ITERS = 12
+FOREACH_CAP_TURNS = 80
 
 NAV_TURNS = 1             # a navigation milestone is ~1-3 taps but knowledge-guided hops collapse
 NAV_CONTRIB_CAP = 4       # total navigation contribution, however many nav steps
@@ -78,8 +84,20 @@ def estimate_program_turns(
     estimate = BASE_TURNS + _estimate_stmts(program.statements)
     estimate = max(floor, estimate)
     if cap is not None:
-        estimate = min(estimate, max(cap, floor))
+        # A foreach program iterates a collection — lift the flat-program cap so its body×rows isn't
+        # starved (still bounded, just higher).
+        effective_cap = FOREACH_CAP_TURNS if _has_foreach(program.statements) else cap
+        estimate = min(estimate, max(effective_cap, floor))
     return estimate
+
+
+def _has_foreach(stmts: list[Stmt]) -> bool:
+    for s in stmts:
+        if isinstance(s, ForEach):
+            return True
+        if isinstance(s, If) and (_has_foreach(s.then) or _has_foreach(s.otherwise)):
+            return True
+    return False
 
 
 def _estimate_stmts(stmts: list[Stmt]) -> int:
@@ -96,6 +114,10 @@ def _estimate_stmts(stmts: list[Stmt]) -> int:
         elif isinstance(stmt, If):
             # 2-turn branch overhead + the heavier of the two arms (only one executes)
             branch_cost += 2 + max(_estimate_stmts(stmt.then), _estimate_stmts(stmt.otherwise))
+        elif isinstance(stmt, ForEach):
+            # body cost × an assumed iteration count (runtime-unknown rows); reads in the body are
+            # free per the model, so this is mostly the per-row action (open detail) × rows.
+            branch_cost += FOREACH_ASSUMED_ITERS * _estimate_stmts(stmt.body)
         elif isinstance(stmt, Finish):
             pass
     return action_cost + min(nav_cost, NAV_CONTRIB_CAP) + branch_cost
