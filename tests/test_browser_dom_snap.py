@@ -99,7 +99,15 @@ def test_target_label_extracts_unquoted_browser_menu_labels():
     assert _target_label("点击左侧导航栏中的 Sales 菜单") == "Sales"
     assert _target_label("点击 Filters 按钮以展开筛选条件区域") == "Filters"
     assert _target_label("点击弹窗中的「取消」按钮") == "取消"
+    assert _target_label("点击虚拟机器人列表中「lucas-10002」所在行操作列下拉菜单中的「操作」") == "操作"
     assert _target_label("点击左侧导航栏的销售菜单") == ""
+
+
+def test_target_label_does_not_treat_filter_value_as_click_label():
+    from gui_agent.adapters.browser.executor import _target_label
+
+    assert _target_label("点击搜索框右侧的放大镜图标以应用'Olivia'筛选条件") == ""
+    assert _target_label("点击搜索按钮搜索'Olivia'") == ""
 
 
 def test_execute_passes_quoted_label_to_dom_snap():
@@ -123,6 +131,23 @@ def test_execute_passes_unquoted_menu_label_to_dom_snap():
     _exec(c).execute(dec)
     assert c.seen_target == "Orders"
     assert c.clicked == (222.0, 114.0)
+
+
+def test_icon_click_rejects_snap_back_to_input_value():
+    # WebArena task 113 run 20260622_165248 T10: the model aimed at the search icon,
+    # but text retarget/snap moved the click to the keyword input center because the
+    # input value was 'Olivia'. Icon clicks should not be pulled back into inputs.
+    c = _FakeClient((313.0, 310.0, "text 391x33"), viewport=(1281, 963))
+    dec = BrowserActionDecision(action=BrowserAction(
+        action_type="tap", x=371, y=320,
+        description="点击搜索框右侧的放大镜图标以应用'Olivia'筛选条件",
+    ))
+    _exec(c).execute(dec)
+    assert c.seen_target == ""
+    assert c.clicked is not None
+    assert 470 <= c.clicked[0] <= 480
+    assert 303 <= c.clicked[1] <= 313
+    assert dec.action.snap is None
 
 
 def test_text_retarget_radius_covers_sidebar_menu_row_misses():

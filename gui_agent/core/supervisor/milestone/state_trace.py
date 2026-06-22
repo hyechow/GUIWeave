@@ -55,6 +55,7 @@ class StateTurn:
     index: int
     state: str       # canonical URL (or a page-identity fallback)
     decision: str    # the action / instruction taken from `state`
+    interaction_state: str = ""  # optional DOM/form-state fingerprint for browser pages
 
 
 @dataclass
@@ -63,16 +64,22 @@ class StateTrace:
 
     turns: list[StateTurn] = field(default_factory=list)
 
-    def note(self, index: int, state: str, decision: str) -> None:
+    def note(self, index: int, state: str, decision: str, interaction_state: str = "") -> None:
         """Record an acting turn. `state` should already be a canonical_url (or page fallback)."""
-        self.turns.append(StateTurn(index=index, state=state, decision=_norm_action(decision)))
+        self.turns.append(StateTurn(
+            index=index,
+            state=state,
+            decision=_norm_action(decision),
+            interaction_state=interaction_state or "",
+        ))
 
-    def repeated(self, state: str, decision: str) -> Optional[StateTurn]:
+    def repeated(self, state: str, decision: str, interaction_state: str = "") -> Optional[StateTurn]:
         """The earliest prior turn with this same (state, action), or None. A hit = the agent is
         about to redo a move it already made in a page it already stood on (a loop)."""
         key = _norm_action(decision)
+        ix = interaction_state or ""
         for t in self.turns:
-            if t.state == state and t.decision == key:
+            if t.state == state and t.decision == key and t.interaction_state == ix:
                 return t
         return None
 
@@ -88,14 +95,15 @@ class StateTrace:
         lines: list[str] = []
         for t in self.turns:
             tag = ""
-            k = (t.state, t.decision)
+            k = (t.state, t.decision, t.interaction_state)
             if k in seen:
                 tag = f" ⚠️重复(同 T{seen[k]})"
             elif t.state == prev_state:
                 tag = " (同页面)"
             seen.setdefault(k, t.index)
             prev_state = t.state
-            lines.append(f" T{t.index} 状态:{t.state or '?'} | 决策:{t.decision[:48]}{tag}")
+            ix = f" | 交互:{t.interaction_state[:8]}" if t.interaction_state else ""
+            lines.append(f" T{t.index} 状态:{t.state or '?'}{ix} | 决策:{t.decision[:48]}{tag}")
         return "\n".join(lines[-recent_n:])
 
 

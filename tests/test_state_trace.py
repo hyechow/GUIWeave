@@ -38,6 +38,16 @@ def test_repeated_is_phrasing_tolerant_and_state_sensitive():
     assert tr.repeated("/b", "点击Search按钮执行搜索") is None
 
 
+def test_repeated_is_interaction_state_sensitive_for_browser_forms():
+    tr = StateTrace()
+    state = "/admin/catalog/product"
+    tr.note(4, state, "按回车键提交", "Search by keyword=Olivia zip jacket")
+
+    assert tr.repeated(state, "按回车键提交", "Search by keyword=Olivia") is None
+    hit = tr.repeated(state, "按回车键提交", "Search by keyword=Olivia zip jacket")
+    assert hit is not None and hit.index == 4
+
+
 def test_distinct_states_counts_frontier():
     tr = StateTrace()
     for i, s in enumerate(["/a", "/a", "/b", "/a"]):

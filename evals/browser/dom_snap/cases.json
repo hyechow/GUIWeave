@@ -1,0 +1,25 @@
+[
+  {
+    "label": "WebArena 113 search icon click must not snap into keyword input (20260622_165248 T10)",
+    "viewport": [1281, 963],
+    "action": {
+      "action_type": "tap",
+      "x": 371,
+      "y": 320,
+      "description": "点击搜索框右侧的放大镜图标以应用'Olivia'筛选条件"
+    },
+    "dom_snap": {
+      "x": 313,
+      "y": 310,
+      "info": "text 391x33"
+    },
+    "expected": {
+      "clicked_x_min": 450,
+      "clicked_x_max": 500,
+      "clicked_y_min": 285,
+      "clicked_y_max": 330,
+      "snap_info_not_contains": ["text 391x33"]
+    },
+    "note": "Regression from logs/gui_agent/webarena/browser/20260622_165248: T10 policy aimed at the search icon around normalized (371,320), denormalized to about (475,308), but DOM snap moved the click to the input/text box center (313,310). The action became a no-op and consumed the last retry. Desired behavior: preserve the icon click or snap to a real search/submit control, never back into the keyword input text region."
+  }
+]

@@ -51,13 +51,61 @@ def _target_label(description: str) -> str:
     long Chinese instruction text as a label.
     """
     quoted = _quoted_label(description)
-    if quoted:
+    if quoted and _quoted_label_is_click_target(description, quoted):
         return quoted
+    # Values embedded in instructions like "apply 'Olivia' filter" or
+    # "search 'Olivia'" are data, not clickable labels. Passing them to DOM
+    # text-retarget can snap a nearby icon click back into the input field.
     match = _INLINE_EN_LABEL_RE.search(description or "")
     if not match:
         return ""
     label = next((g for g in match.groups() if g), "")
     return label.strip()[:40]
+
+
+def _quoted_label_is_click_target(description: str, label: str) -> bool:
+    """Return True when a short quoted string is likely a clickable UI label.
+
+    The last short quote in an instruction is often an input/search value
+    ("应用 'Olivia' 筛选条件"), not the thing to click. Text-retargeting to such
+    values is unsafe because form inputs expose their current value as text.
+    """
+    text = description or ""
+    if not label:
+        return False
+    quoted_forms = [f"「{label}」", f"『{label}』", f"\"{label}\"", f"'{label}'"]
+    positions = [(q, text.rfind(q)) for q in quoted_forms if text.rfind(q) >= 0]
+    if not positions:
+        return False
+    q, pos = max(positions, key=lambda item: item[1])
+    before = text[max(0, pos - 16):pos]
+    after = text[pos + len(q):pos + len(q) + 16]
+    if re.search(r"(输入|搜索|筛选|过滤|关键词|关键字|应用|匹配|包含|值为|设为|设置为)$", before):
+        return False
+    if re.search(r"^(筛选条件|过滤条件|关键词|关键字|搜索词|查询词|值|文本|文字)", after):
+        return False
+    if re.search(r"^(按钮|链接|菜单|菜单项|选项|标签|页签|图标|列|控件)", after):
+        return True
+    if re.search(r"(中的|下的|旁边的|列|按钮|链接|菜单)$", before):
+        return True
+    return False
+
+
+def _should_accept_dom_snap(description: str, info: str, px: float, py: float, cx: float, cy: float) -> bool:
+    """Reject unsafe DOM snaps for icon clicks.
+
+    Search/clear icons are often rendered inside a text input wrapper. Snapping
+    an icon click to the input/text center moves the click away from the icon and
+    turns it into a focus no-op.
+    """
+    if not info:
+        return False
+    desc = description or ""
+    if re.search(r"(图标|icon|放大镜|搜索按钮|search button)", desc, re.IGNORECASE):
+        tag = info.split(" ", 1)[0].lower()
+        if tag in {"input", "textarea", "text"} and abs(cx - px) > 8:
+            return False
+    return True
 
 
 def _select_option_label(description: str) -> str:
@@ -122,9 +170,14 @@ class BrowserExecutor(VisionExecutor):
             # field holding that same value (run 20260613_193023: typing 'admin' into the password
             # box kept retargeting to the account box whose value was already 'admin' → login stuck).
             at = getattr(action, "action_type", "")
-            target = _target_label(getattr(action, "description", "") or "") if at in ("tap", "click") else ""
+            description = getattr(action, "description", "") or ""
+            target = _target_label(description) if at in ("tap", "click") else ""
             cx, cy, info = self._client().dom_snap(px, py, target_text=target)
-            if info is not None and (abs(cx - px) > 1 or abs(cy - py) > 1):
+            if (
+                info is not None
+                and (abs(cx - px) > 1 or abs(cy - py) > 1)
+                and _should_accept_dom_snap(description, info, px, py, cx, cy)
+            ):
                 print(f"  DOM 吸附: ({px:.0f},{py:.0f}) → ({cx:.0f},{cy:.0f}) [{info}]")
                 sx, sy = cx, cy
                 self._record_snap(px, py, sx, sy, info)
