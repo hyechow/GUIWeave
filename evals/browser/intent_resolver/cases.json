@@ -1,0 +1,18 @@
+[
+  {
+    "label": "近似产品名 → product / approximate / 单 token 关键词（回归 20260622_124258 task-113）",
+    "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
+    "expected_entities": [
+      {"mention_contains": "Olivia", "type": "product", "match_mode": "approximate", "search_key_any": ["Olivia"]}
+    ],
+    "note": "'Olivia zip jacket' 是产品的口语叫法（真名 'Olivia 1/4 Zip Light Jacket'）→ product/approximate，关键词取最显著 token 'Olivia'。下游据此按 Product 列、先精确后模糊检索。"
+  },
+  {
+    "label": "精确标识（工单号）→ exact，整串检索",
+    "goal": "把工单 WO-2024-007 的负责人改成张三",
+    "expected_entities": [
+      {"mention_contains": "WO-2024-007", "type": "order", "match_mode": "exact", "search_key_any": ["WO-2024-007"]}
+    ],
+    "note": "工单号是系统精确标识 → exact，原样检索，不加模糊回退（区别于近似产品名）。"
+  }
+]
