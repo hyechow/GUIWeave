@@ -102,7 +102,7 @@ def _wire_plan(monkeypatch, p) -> list[str]:
 def test_url_change_suppresses_false_no_effect(monkeypatch):
     p, m = _policy()
     calls = _wire_plan(monkeypatch, p)
-    p._last_url = "http://x/orders"
+    p._monitor._last_url = "http://x/orders"
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/orders/transport")  # navigated
     p._run_single_turn(m, obs, [_tap_turn(on_target=True, no_effect=True)])
     assert calls == ["plan"]  # URL changed => the tap DID navigate => no_effect suppressed
@@ -111,7 +111,7 @@ def test_url_change_suppresses_false_no_effect(monkeypatch):
 def test_no_url_change_keeps_no_effect_replan(monkeypatch):
     p, m = _policy()
     calls = _wire_plan(monkeypatch, p)
-    p._last_url = "http://x/orders"
+    p._monitor._last_url = "http://x/orders"
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/orders")  # unchanged
     p._run_single_turn(m, obs, [_tap_turn(on_target=True, no_effect=True)])
     assert calls == ["stuck"]  # URL unchanged => no_effect stands => replan

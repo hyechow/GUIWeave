@@ -18,7 +18,7 @@ STUCK_SUMMARY = "__STUCK_SENTINEL__"
 
 def _policy(dom_changed: bool) -> MilestoneSupervisorPolicy:
     p = MilestoneSupervisorPolicy()
-    p._dom_changed = dom_changed
+    p._monitor.dom_changed = dom_changed
     p._invoke_planner = lambda *a, **k: _PlanResult(  # type: ignore[method-assign]
         instruction="在「初始电量」输入框中输入90", summary="填表"
     )

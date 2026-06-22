@@ -100,9 +100,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._elements_knowledge: Optional[str] = None
         self._pk: Optional[ProgressiveKnowledge] = None  # progressive (skill-like) section loader
         self._app_name: str = ""
-        self._last_url: Optional[str] = None  # 上一轮页面 URL(结构化跳页信号；浏览器才有)
-        self._last_dom_state: Optional[str] = None  # 上一轮交互状态指纹(表单值+焦点；浏览器才有)
-        self._dom_changed = False  # 本轮指纹是否变化 = 确定性进展信号(填表时像素/指令都相似)
+        # url/dom-delta effect signals now live on the ProgressMonitor (observe_effect).
         self._last_page_identity: dict[str, str] = {}
         self._last_check_summary: dict[str, str] = {}
         # 连续调值类的进展追踪：每 milestone 一个滑动窗口，存最近若干轮 checker 读到的「当前值」。
@@ -300,23 +298,14 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # the previous action navigated — a definite EFFECT / page change. Use it to suppress the
         # pixel-based false positives below (false no_effect, false sim-stuck on a visually-similar
         # new page). None on iphone/android (url-less) → url_changed stays False, no effect there.
-        cur_url = observation.url
-        url_changed = bool(cur_url and self._last_url is not None and cur_url != self._last_url)
-        if cur_url is not None:
-            self._last_url = cur_url
-        if url_changed:
-            print(f"  [URLChanged] {cur_url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
-
-        # Second structural progress signal: the interactive-state fingerprint (form values +
-        # focus). Filling a form field-by-field keeps pixels near-identical and produces
-        # near-identical instructions ("在X输入框输入Y") — text similarity then misreads real
-        # progress as a loop (20260612_103356: 8-step form fill escalated to stuck). A changed
-        # fingerprint is ground truth that the last action DID something.
-        cur_dom = observation.dom_state
-        self._dom_changed = bool(cur_dom and self._last_dom_state is not None and cur_dom != self._last_dom_state)
-        if cur_dom is not None:
-            self._last_dom_state = cur_dom
-        if self._dom_changed and not url_changed:
+        # The ProgressMonitor owns the Kind-1 "did the last action have an effect" facts: a changed
+        # url = navigated; a changed interaction fingerprint (form values + focus) = a form fill
+        # progressed (20260612_103356: an 8-step form fill kept pixels/instructions near-identical
+        # and got misread as stuck). Both suppress the pixel-based false positives below.
+        self._monitor.observe_effect(observation.url, observation.dom_state)
+        if self._monitor.url_changed:
+            print(f"  [URLChanged] {observation.url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
+        if self._monitor.dom_changed and not self._monitor.url_changed:
             print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
 
         # VERIFY FIRST, before consuming the prior turn's off-target / no-effect signals.
@@ -357,8 +346,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if (
             last_turn is not None
             and getattr(last_turn, "no_effect", False)
-            and not url_changed  # URL changed = the tap DID navigate → not a no-effect
-            and not self._dom_changed  # interactive-state fingerprint moved = the tap DID something
+            and not self._monitor.url_changed  # URL changed = the tap DID navigate → not a no-effect
+            and not self._monitor.dom_changed  # interactive-state fingerprint moved = the tap DID something
             and last_turn.action_decision is not None
             and last_turn.action_decision.action.action_type in ("tap", "click")
             and (last_tv is None or last_tv.on_target)
@@ -379,7 +368,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # 因此保留 SimStuck 的「全局+动作局部均无变化」判据；只有指令重复类 RepStuck 被抑制。
         # ValueStall 作为语义兜底：当画面在动但 checker 读到的当前值长期不变，也判停滞。
         if milestone.is_iterative:
-            sim_stuck = None if url_changed else self._check_screen_similarity(observation, self._action_center(prev_action))
+            sim_stuck = None if self._monitor.url_changed else self._check_screen_similarity(observation, self._action_center(prev_action))
             if sim_stuck is not None:
                 print(f"  [Stuck] {sim_stuck.status}: {sim_stuck.reason}")
                 return self._handle_stuck(
@@ -397,7 +386,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
             return self._plan_single(milestone, check, observation, history)
 
-        sim_stuck = None if (url_changed or self._dom_changed) else self._check_screen_similarity(observation, self._action_center(prev_action))
+        sim_stuck = None if (self._monitor.url_changed or self._monitor.dom_changed) else self._check_screen_similarity(observation, self._action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
 
         rep_stuck = self._check_instruction_repetition(history, milestone.id) if not sim_stuck else None
@@ -410,7 +399,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             rep_stuck = None
         # Same exemption from ground truth: the interactive-state fingerprint changed since
         # last turn, so the "similar" instructions are advancing through a form, not looping.
-        if rep_stuck is not None and self._dom_changed:
+        if rep_stuck is not None and self._monitor.dom_changed:
             print("  [RepStuck] 已抑制：交互状态指纹在变化（填表推进中）")
             rep_stuck = None
         if sim_stuck or rep_stuck:
@@ -445,7 +434,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # 连续调值类豁免「指令重复=失败」升级：对 picker 而言重复"向上拖月份列"直到到位本就
         # 是正确做法，单步式的重复检测会误把它判成撞墙→死路。其停滞由 _check_value_stall 兜。
         if not milestone.is_iterative and self._is_repeated_instruction(plan.instruction, milestone.id, history):
-            if self._dom_changed:
+            if self._monitor.dom_changed:
                 # Ground truth beats text similarity: the interactive-state fingerprint moved
                 # since last turn, so the prior "similar" instruction WORKED (form filling
                 # produces legitimately alike instructions). Let the plan through unchanged.

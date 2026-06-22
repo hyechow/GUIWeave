@@ -106,6 +106,24 @@ class ProgressMonitor:
     """The supervisor's accumulated (state, decision) memory for the current run."""
 
     turns: list[TraceStep] = field(default_factory=list)
+    # Kind-1 "did the last action have an effect" facts (set by observe_effect each turn).
+    # URL/DOM deltas are GROUND TRUTH that the previous action changed something — used to
+    # suppress pixel-based false positives (false no_effect, false sim/rep-stuck on a form fill).
+    url_changed: bool = False
+    dom_changed: bool = False
+    _last_url: Optional[str] = None        # raw url (not canonical) — exact-delta comparison
+    _last_dom_state: Optional[str] = None  # interactive-state fingerprint (form values + focus)
+
+    def observe_effect(self, url: Optional[str], dom_state: Optional[str]) -> None:
+        """Update `url_changed` / `dom_changed` from this turn's observation: a changed url means
+        the previous action navigated (a definite effect); a changed interaction fingerprint means
+        it moved a form/focus. None (visual platforms, no url/dom) → stays False (no signal)."""
+        self.url_changed = bool(url and self._last_url is not None and url != self._last_url)
+        if url is not None:
+            self._last_url = url
+        self.dom_changed = bool(dom_state and self._last_dom_state is not None and dom_state != self._last_dom_state)
+        if dom_state is not None:
+            self._last_dom_state = dom_state
 
     def note(self, index: int, state: str, decision: str, interaction_state: str = "") -> None:
         """Record an acting turn. `state` should already be a canonical_url (or page fallback);
