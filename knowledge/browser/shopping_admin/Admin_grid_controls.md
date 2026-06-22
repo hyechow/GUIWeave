@@ -40,6 +40,10 @@ Admin pages that manage data display a collection of records in a grid. The cont
 
 1. Click **Apply Filters**.
 
+**重要（过滤器会被持久化）**：Magento admin 网格的过滤条件是**按用户持久化保存在数据库里**的，会**跨会话/跨任务残留**。也就是说，进入一个网格时它可能仍带着上一次（甚至上一个任务）设过的过滤条件，导致看到的结果是被旧过滤限制后的子集——常见症状是莫名其妙的 `0 records found` / `We couldn't find any records.`。因此：
+- 当任务要求**全量/不限某维度**，或网格出现**意料之外的空结果**时，**先点 `Clear all` / `Reset Filter` 把过滤器清空（reset）**，再判断数据是否真的为空或再设需要的过滤条件；
+- 不要把"带着残留过滤的 0 条结果"当成"数据不存在"。
+
 ## Export data
 
 1. Select the records that you want to export.
