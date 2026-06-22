@@ -38,9 +38,20 @@ failed = 0
 def test_feasibility() -> None:
     global passed, failed
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
+    skipped = 0
     for c in cases:
+        # A case may attach a screenshot — the Feasibility judge reads navigation menus / visible
+        # page structure from it (DOM control inventory stays authoritative for control presence).
+        image = None
+        if c.get("screenshot"):
+            sp = PROJECT_ROOT / c["screenshot"]
+            if not sp.exists():
+                print(f"  [SKIP] {c['label']:64s}  screenshot not found: {c['screenshot']}")
+                skipped += 1
+                continue
+            image = sp.read_bytes()
         try:
-            v = judge_feasibility(c["milestone_goal"], c["control_text"], c.get("knowledge", ""))
+            v = judge_feasibility(c["milestone_goal"], c["control_text"], c.get("knowledge", ""), image=image)
         except Exception as e:  # noqa: BLE001
             failed += 1
             print(f"  [FAIL] {c['label']:64s}  exception: {e}")
@@ -66,6 +77,8 @@ def test_feasibility() -> None:
         if not ok:
             print(f"        {'; '.join(details)}")
             print(f"        verdict: feasible={v.feasible} | reason={(v.reason or '')[:140]}")
+    if skipped:
+        print(f"  ({skipped} skipped — screenshots not committed to git)")
 
 
 def main() -> int:

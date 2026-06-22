@@ -75,6 +75,10 @@ def control_presence_text(observation: Any) -> str:
 
 
 def _llm() -> ChatOpenAI:
+    # Feasibility reads the page screenshot (nav menus / visible structure), so its model MUST be
+    # vision-capable — configured under supervisor.feasibility in config.yaml (default qwen3.5-35b-a3b,
+    # the same vision model the checker uses). Do NOT point this at a text-only model: it would
+    # silently drop the image and judge blind (the old unset key fell through to a text-only default).
     cfg = resolve_llm_config("supervisor.feasibility")
     if not cfg.model:
         cfg = resolve_llm_config("supervisor")
@@ -86,22 +90,38 @@ def judge_feasibility(
     control_text: str,
     knowledge: str = "",
     *,
+    image: Optional[bytes] = None,
     llm: Optional[ChatOpenAI] = None,
     trace_sink: Optional[list[dict]] = None,
 ) -> FeasibilityVerdict:
-    """Judge whether the stuck milestone's goal is achievable from the page's control inventory.
+    """Judge whether the stuck milestone is executable on the current page.
 
-    ``control_text`` = control_presence_text(observation); ``knowledge`` = the relevant app section
-    (a fallible prior, overridden by the control inventory on conflict). Returns the verdict +, when
-    infeasible, a kick-back directive."""
+    ``control_text`` = control_presence_text(observation) — the AUTHORITATIVE source for control
+    presence (filter/search/input). ``image`` = the page screenshot — supplements the DOM inventory
+    for what it can't see (navigation menus, visible page structure); the prompt keeps the DOM
+    authoritative for control presence so pixels can't hallucinate a filter that isn't there.
+    ``knowledge`` = the relevant app section (a fallible prior, overridden by the inventory on
+    conflict). Returns the verdict +, when infeasible, a kick-back directive."""
     human = (
         f"卡住的 milestone 目标(success_condition):\n{milestone_goal}\n\n"
-        f"当前页面的实际控件清单(DOM 感知 = 直接观察,可靠):\n{control_text}\n"
+        f"当前页面的实际控件清单(DOM 感知 = 控件存在性的权威依据):\n{control_text}\n"
     )
     if knowledge.strip():
         human += f"\n相关功能知识章节(可能过时/写错的文档,仅作先验,与控件清单冲突时以清单为准):\n{knowledge}\n"
+    if image is not None:
+        human += ("\n另附当前页面截图:仅用于看【导航入口与可见页面结构】(侧栏菜单展开了哪些子项、目标入口/链接在不在);"
+                  "控件存在性仍以上面的 DOM 控件清单为准,不要从截图脑补清单里没有的筛选/搜索控件。\n")
     human += "\n请按规则判定;不可行时给出斩钉截铁、不 hedge 的重规划 directive。"
-    msgs = [SystemMessage(content=_SYSTEM), HumanMessage(content=human)]
+    if image is not None:
+        import base64
+        b64 = base64.b64encode(image).decode()
+        human_msg = HumanMessage(content=[
+            {"type": "text", "text": human},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+        ])
+    else:
+        human_msg = HumanMessage(content=human)
+    msgs = [SystemMessage(content=_SYSTEM), human_msg]
     return invoke_structured(
         llm or _llm(), msgs, FeasibilityVerdict,
         trace_sink=trace_sink, trace_label="feasibility",

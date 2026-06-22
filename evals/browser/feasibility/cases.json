@@ -1,18 +1,33 @@
 [
   {
-    "label": "导航 milestone 不因「目标页的列表控件不在当前页」判不可行（回归 20260622_115356）",
-    "milestone_goal": "进入 Product Reviews / All Reviews 列表页：页面显示所有产品评论的列表。",
+    "label": "导航执行不通：截图里 Catalog 下无 Product Reviews 入口 → 不可执行，踢回（回归 20260622_115356）",
+    "milestone_goal": "经 Catalog 菜单进入 Product Reviews 评论列表页：页面显示所有产品评论的列表。",
     "milestone_kind": "navigation",
-    "control_text": "## DOM 表单控件\n（当前为 Admin Dashboard 首页。无产品评论列表网格、无 Product/Rating 筛选控件、无关键词搜索框。左侧导航栏可见 Catalog / Marketing / Sales / Reports 等菜单入口，可经其进入目标页。）\n\n## 页面 UI 状态事实\n- kind=dashboard",
+    "screenshot": "evals/browser/feasibility/screenshots/webarena113_catalog_no_product_reviews_20260622_115356.png",
+    "control_text": "## DOM 表单控件\n（当前为 Admin Dashboard 首页：无评论列表网格、无 Product/Rating 筛选控件、无关键词搜索框。导航菜单是链接结构，不在 DOM 表单控件清单里——其内容见截图。）",
+    "knowledge": "Product Reviews 管理列表在 Admin 侧栏 Marketing > User Content > All Reviews（不在 Catalog 下）。",
+    "expected": {
+      "feasible": false,
+      "reason_contains": ["Catalog", "Product Reviews", "入口"],
+      "directive_nonempty": true
+    },
+    "note": "活跑 115356：milestone 指明经 Catalog 进 Product Reviews。截图里 Catalog 浮层只展开出 Products/Categories、没有 Product Reviews——这步在当前页【不可执行】。judge 该从【截图】看出入口不存在（DOM 控件清单只有表单控件、看不到菜单），判 infeasible → 踢回。不可越界去想『Marketing 那条路能不能到』。"
+  },
+  {
+    "label": "导航可执行：截图里 Marketing 下 All Reviews 入口可见 → feasible（正例）",
+    "milestone_goal": "经 Marketing > All Reviews 进入产品评论列表页：页面显示所有产品评论的列表。",
+    "milestone_kind": "navigation",
+    "screenshot": "evals/browser/feasibility/screenshots/webarena113_marketing_all_reviews_20260622_115356.png",
+    "control_text": "## DOM 表单控件\n（当前为 Admin Dashboard 首页：目标评论列表网格尚未进入，属正常。导航菜单是链接结构，内容见截图。）",
     "knowledge": "Product Reviews 管理列表在 Admin 侧栏 Marketing > User Content > All Reviews。",
     "expected": {
       "feasible": true,
-      "directive_not_contains": ["data_query", "逐条打开", "逐条"]
+      "directive_not_contains": ["data_query", "逐条打开"]
     },
-    "note": "活跑 115356：导航 milestone（进入评论列表页）被按「目标页的评论列表控件是否在当前页」来判——当前是 Dashboard，那控件本就不在（所以才要导航过去）。这不是不可行：导航类的『必需控件』是导航入口（菜单/链接），不是目标页的列表/筛选控件。必须判 feasible=true，不得踢回。"
+    "note": "对照正例：截图里 Marketing 浮层 User Content 下可见 All Reviews 链接 → 这步要走的导航入口存在 → 可执行 → feasible=true。守边界=只看『这步要的入口在不在』，不看目标页网格是否已显示。"
   },
   {
-    "label": "评分≤3 筛选：列表层无 Rating 控件 → 不可行，踢回（回归 20260622_104201）",
+    "label": "评分≤3 筛选：列表层无 Rating 控件 → 不可执行，踢回（DOM 权威，回归 20260622_104201）",
     "milestone_goal": "在 All Reviews 列表中只保留评分≤3 星的评论：列表已按评分≤3 筛选。",
     "milestone_kind": "filter",
     "control_text": "## DOM 表单控件\n- Status: native_select（Any/Approved/Pending/Not Approved）\n- Product: input（按产品名筛）\n- Nickname: input\n- Review: input\n- Created: 日期范围\n- SKU: input\n（无 Rating / 评分 / 星级 筛选控件——评分只显示在每条评论的详情里）\n\n## 页面 UI 状态事实\n- kind=grid; record_count=351",
@@ -22,6 +37,6 @@
       "reason_contains": ["Rating", "评分", "星"],
       "directive_nonempty": true
     },
-    "note": "原始 Feasibility Guard 命中：列表层没有 Rating 筛选控件（评分在每条详情里），按列表控件筛 ≤3 不可行 → 踢回，directive 规定逐条读详情评分。守住真·不可行的判定不被改坏。"
+    "note": "原始 Feasibility Guard 命中（无截图，纯 DOM 路径）：控件存在性以 DOM 控件清单为准——列表层没有 Rating 筛选控件 → 这步不可执行 → 踢回。守住『控件类判定以 DOM 为权威、不退化』。"
   }
 ]

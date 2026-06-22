@@ -896,21 +896,16 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         form_controls). Only fires here, after MAX_RETRIES, so the control observation is mature."""
         from .feasibility import control_presence_text, judge_feasibility
 
-        # Navigation milestones ('go to page X') are an action-finding problem (locate the menu/link),
-        # NOT a 'does this page have the capability' question. Feasibility's step-1 mis-poses them — it
-        # picks the DESTINATION's list control, which is absent on the current page by definition — a
-        # reliable false-infeasible (see evals/browser/feasibility nav case). Never kick back a
-        # navigation give-up; let it go to the normal replan/fail path.
-        if milestone.kind == "navigation":
-            return None
-
         control_text = control_presence_text(observation)
         if "无适配器可感知" in control_text:
             return None  # no DOM control inventory (visual platform) → can't confirm absence
         goal = f"{milestone.name} —— {milestone.success_condition}"
         try:
             with _Timer(self._timings, self._timings_order, "feasibility", self._token_usage):
-                verdict = judge_feasibility(goal, control_text, self._app_knowledge or "")
+                verdict = judge_feasibility(
+                    goal, control_text, self._app_knowledge or "",
+                    image=getattr(observation, "png_bytes", None),
+                )
         except Exception as exc:  # noqa: BLE001 - a judge failure must never crash the run
             print(f"  [Feasibility] 判定异常（{exc}），按可行处理，走常规失败")
             return None
