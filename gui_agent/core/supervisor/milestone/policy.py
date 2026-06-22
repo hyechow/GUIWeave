@@ -8,6 +8,7 @@ from gui_agent.context.runtime import (
     completed_milestones_block,
     constraints_block,
     extra_instruction_block,
+    form_controls_block,
     history_block,
     knowledge_block,
     loop_frame_summary_block,
@@ -507,7 +508,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # replanner's retries). Browser-only (visual platforms have no url → skip).
         _state = canonical_url(getattr(observation, "url", None))
         if _state and plan.instruction:
-            _hit = self._state_trace.repeated(_state, plan.instruction)
+            _interaction_state = getattr(observation, "dom_state", None) or ""
+            _hit = self._state_trace.repeated(_state, plan.instruction, _interaction_state)
             if _hit is not None:
                 print(f"  [LoopGuard] 同页面(canonical={_state})重复了 T{_hit.index} 做过的同一动作 → 打转，强制换新")
                 _con = (f"⚠️ 在当前页面已经做过「{plan.instruction}」且没带来进展(在打转)。"
@@ -515,7 +517,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 if _con not in self._global_constraints:
                     self._global_constraints.append(_con)
                 return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
-            self._state_trace.note(len(history) + 1, _state, plan.instruction)
+            self._state_trace.note(len(history) + 1, _state, plan.instruction, _interaction_state)
         drag_column = getattr(plan, "drag_column", None)
         if drag_steps is not None and drag_column:
             print(f"  [Planner] hints: direction={plan.direction} column={drag_column} steps={drag_steps}")
@@ -1263,6 +1265,9 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             human_blocks=[
                 knowledge_block("app_navigation", self._app_knowledge),
                 knowledge_block("page_elements", self._elements_for(milestone, check)),
+                # DOM control inventory (incl. each input's authoritative `current=` value) — so the
+                # replanner doesn't misdiagnose a narrow scrolled input as truncated from the screenshot.
+                form_controls_block(getattr(observation, "form_controls", None)),
             ],
             image_resize=self._prompts.image_resize,
             label="replanner",
