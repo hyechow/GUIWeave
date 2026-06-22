@@ -749,6 +749,28 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "按月 group/count，不要再重复 status/date WHERE；否则容易把 UI 大小写/日期格式误用于 provider 字段。"
                     f" offenders={offenders}"
                 )
+        elif assertion == "product_lookup_column_and_fuzzy_fallback":
+            # Given an approximate-product Intent Resolution, the plan must (a) look the product up by
+            # the PRODUCT column (not the review-text column), and (b) carry an exact→fuzzy FALLBACK.
+            # Encoding-agnostic: the ladder may be one milestone ("先精确…0条转模糊") OR an if-branch
+            # (exact filter → read count → if 0 → fuzzy filter). _flatten_runs recurses into branches.
+            filters = [r for r in _flatten_runs(program.statements) if r.kind in ("filter", "action")]
+            both = lambda r: f"{r.name} {r.success_condition}"
+            prod = [r for r in filters if re.search(r"产品|Product", both(r)) and "Olivia" in both(r)]
+            if not prod:
+                details.append(
+                    "没有『按 Product/产品 列检索 Olivia』的 milestone（疑似筛错列，如填进 Review 文本列）："
+                    f"{[(r.kind, r.name) for r in filters]}"
+                )
+            # exact→fuzzy fallback present (a milestone OR a branch that does keyword/模糊 search)
+            fuzzy = [r for r in filters
+                     if re.search(r"模糊|关键词|包含|contains", both(r)) and "Olivia" in both(r)]
+            single_ladder = [r for r in prod if re.search(r"0\s*条|模糊|关键词", both(r))]
+            if not (fuzzy or single_ladder):
+                details.append(
+                    "未编出『先精确→0 条转模糊关键词』回退（既无阶梯式 milestone，也无模糊检索分支）："
+                    f"{[r.name for r in filters]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
@@ -768,6 +790,13 @@ def _case_program(case: dict):
     png_bytes = None
     if screenshot_path:
         png_bytes = (PROJECT_ROOT / screenshot_path).read_bytes()
+    # A case may pin a fixed Intent Resolution (entities precise/approximate + search key) so the
+    # plan's column choice + exact→fuzzy ladder is tested deterministically, independent of the
+    # resolver LLM (which has its own suite, evals/browser/intent_resolver).
+    resolution = None
+    if case.get("resolution"):
+        from gui_agent.core.orchestrator.intent_resolver import EntityRef, IntentResolution
+        resolution = IntentResolution(entities=[EntityRef(**e) for e in case["resolution"]])
     program = decompose(
         case["goal"],
         png_bytes=png_bytes,
@@ -775,6 +804,7 @@ def _case_program(case: dict):
         current_url=case.get("current_url", ""),
         current_title=case.get("current_title", ""),
         current_site=case.get("current_site") or (k.app_name if k and case.get("use_knowledge_app_as_current_site") else ""),
+        resolution=resolution,
     )
     if case.get("normalize"):
         program = normalize_precondition_gates(normalize_confirm_read_gates(program))
