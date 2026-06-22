@@ -17,7 +17,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from gui_agent.core.supervisor.milestone.state_trace import StateTrace, canonical_url
+from gui_agent.core.run.progress_monitor import ProgressMonitor as StateTrace, canonical_url
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

@@ -1,12 +1,24 @@
-"""Deterministic tests for the Action-Loop Guard's task-state memory (state_trace)."""
+"""Deterministic tests for ProgressMonitor — the consolidated task-execution-health memory
+(absorbs the former state_trace.py). Covers the canonical-URL state, instruction-keyed repeat
+detection (legacy Action-Loop Guard), the rendered trace fed to the checker, and the new
+action-signature key.
 
-from gui_agent.core.supervisor.milestone.state_trace import (
-    StateTrace,
+The signature fixtures are the real executed actions from WebArena run 20260622_171843, where the
+agent re-typed 'Olivia zip jacket' into the same Product filter box at T3/T9/T12/T13 (and re-clicked
+Reset/Search) while the instruction wording kept changing — so the instruction-keyed guard missed
+it and Feasibility didn't fire until T21. Keying on the action SIGNATURE catches it."""
+
+from types import SimpleNamespace
+
+from gui_agent.core.run.progress_monitor import (
+    ProgressMonitor,
+    action_signature,
     canonical_url,
     state_trace_block,
 )
 
 
+# ── canonical state ────────────────────────────────────────────────────────
 def test_canonical_url_strips_host_and_volatile_filter_segments():
     base = "http://h:7780/admin/review/product/index"
     filtered = "http://h:7780/admin/review/product/index/filter/AbC123==/internal_reviews//form_key/xy/"
@@ -17,67 +29,61 @@ def test_canonical_url_strips_host_and_volatile_filter_segments():
     assert canonical_url("") == "" and canonical_url(None) == ""
 
 
+# ── instruction-keyed repeat detection (legacy Action-Loop Guard) ───────────
 def test_repeated_detects_same_state_action():
-    tr = StateTrace()
+    tr = ProgressMonitor()
     s = "/admin/review/product/index"
     tr.note(3, s, "点击 Search 按钮执行搜索")
     tr.note(4, s, "点击 Reset Filter 按钮")
-    # a NEW action in the same state is not a repeat
     assert tr.repeated(s, "在 Product 框输入关键词") is None
-    # the SAME (state, action) as T3 is a repeat → points back at T3
     hit = tr.repeated(s, "点击 Search 按钮执行搜索")
     assert hit is not None and hit.index == 3
 
 
 def test_repeated_is_phrasing_tolerant_and_state_sensitive():
-    tr = StateTrace()
+    tr = ProgressMonitor()
     tr.note(1, "/a", "点击 Search 按钮，执行搜索！")
-    # same action, light phrasing diff, same state → repeat
     assert tr.repeated("/a", "点击Search按钮执行搜索") is not None
-    # same action, DIFFERENT state → not a repeat (progressed to a new page)
     assert tr.repeated("/b", "点击Search按钮执行搜索") is None
 
 
 def test_repeated_is_interaction_state_sensitive_for_browser_forms():
-    tr = StateTrace()
+    tr = ProgressMonitor()
     state = "/admin/catalog/product"
     tr.note(4, state, "按回车键提交", "Search by keyword=Olivia zip jacket")
-
     assert tr.repeated(state, "按回车键提交", "Search by keyword=Olivia") is None
     hit = tr.repeated(state, "按回车键提交", "Search by keyword=Olivia zip jacket")
     assert hit is not None and hit.index == 4
 
 
 def test_distinct_states_counts_frontier():
-    tr = StateTrace()
+    tr = ProgressMonitor()
     for i, s in enumerate(["/a", "/a", "/b", "/a"]):
         tr.note(i, s, f"act{i}")
     assert tr.distinct_states() == 2  # churned across only 2 pages
 
 
 def test_render_marks_repeats_and_block():
-    tr = StateTrace()
+    tr = ProgressMonitor()
     s = "/admin/review/product/index"
     tr.note(3, s, "搜索 Olivia")
     tr.note(4, s, "Reset Filter")
     tr.note(7, s, "搜索 Olivia")   # repeat of T3
     text = tr.render()
     assert "T3" in text and "T7" in text
-    assert "⚠️重复(同 T3)" in text   # the loop is made visible
+    assert "⚠️重复(同 T3)" in text
 
     blk = state_trace_block(tr)
     assert blk is not None and blk.id == "runtime.state_trace"
     assert "任务进展轨迹" in blk.content and "⚠️重复" in blk.content
-    assert state_trace_block(StateTrace()) is None  # empty → no block
+    assert state_trace_block(ProgressMonitor()) is None  # empty → no block
 
 
 def test_regression_webarena_113_reset_search_loop_20260622_105707():
     """Regression: WebArena task-113 live run 20260622_105707 — a Reset→search→Reset loop the
     frame-level guards missed (every turn changed url/DOM → looked like progress, ran 11+ turns).
-
-    The Action-Loop Guard must (1) collapse the oscillating filtered / cleared-filter URLs into ONE
-    canonical page state, and (2) flag the repeated Reset (T8≡T4) and Search (T10≡T7) so the planner
-    is forced off the loop. Sequence is the real (url, instruction) trace from that run."""
+    The guard must collapse the oscillating URLs into ONE canonical state and flag the repeated
+    Reset (T8≡T4) and Search (T10≡T7). Real (url, instruction) trace from that run."""
     seq = [
         (3, "http://h:7780/admin/review/product/index/filter/Y3Jl_name_Olivia/internal_reviews//form_key/vjgQ/",
          "点击 Search 按钮执行搜索"),
@@ -92,11 +98,8 @@ def test_regression_webarena_113_reset_search_loop_20260622_105707():
         (10, "http://h:7780/admin/review/product/index/filter/Y3Jl_detail_Olivia/internal_reviews//form_key/vjgQ/",
          "点击 Search 按钮执行搜索筛选"),
     ]
-    # (1) the filtered and cleared-filter URLs collapse to a single canonical page state
     assert len({canonical_url(u) for _, u, _ in seq}) == 1
-
-    # (2) replay: a (state, action) seen before is intercepted (not re-noted); the loop is bounded
-    tr = StateTrace()
+    tr = ProgressMonitor()
     intercepted = []
     for idx, url, instr in seq:
         state = canonical_url(url)
@@ -104,14 +107,13 @@ def test_regression_webarena_113_reset_search_loop_20260622_105707():
             intercepted.append(idx)
         else:
             tr.note(idx, state, instr)
-    assert intercepted == [8, 10]                     # the 2nd Reset and 2nd Search are caught
-    assert tr.repeated(canonical_url(seq[0][1]), seq[0][2]) is not None  # 'Search' is now in memory
+    assert intercepted == [8, 10]
+    assert tr.repeated(canonical_url(seq[0][1]), seq[0][2]) is not None
 
 
 def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch):
-    """The Action-Loop Guard also FEEDS the checker: run_checker must surface the state→decision
-    trace (so the checker can judge advancing-vs-looping) when given state_trace_text, and omit the
-    block when it's empty. Pins the wiring so a refactor can't silently drop it."""
+    """The guard also FEEDS the checker: run_checker must surface the state→decision trace when
+    given state_trace_text, and omit the block when empty. Pins the wiring against silent drops."""
     import gui_agent.core.supervisor.milestone.helpers as helpers
     from gui_agent.core.schemas import Milestone, Observation
     from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
@@ -152,3 +154,51 @@ def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch
 
     helpers.run_checker(ms, obs, [], state_trace_text="")   # empty → no trace block
     assert "任务进展轨迹" not in captured["text"]
+
+
+# ── action-signature key (reword/jitter-proof) — Kind-2 evidence ────────────
+def _act(action_type, snapped, info, text=""):
+    return SimpleNamespace(
+        action_type=action_type, x=snapped[0], y=snapped[1], text=text,
+        direction=None, snap={"snapped": list(snapped), "info": info},
+    )
+
+
+# Real (snapped center, snap.info, text) from 20260622_171843 — note the WxH and the x both jitter.
+T3 = _act("type", (825.1, 444.4), "input 61x28", "Olivia zip jacket")   # Product box
+T9 = _act("type", (819.7, 444.4), "input 62x28", "Olivia zip jacket")   # same box, jittered
+T12 = _act("type", (825.1, 444.4), "input 61x28", "Olivia zip jacket")
+T17 = _act("type", (613.6, 444.4), "input 92x28", "<=3")                # a DIFFERENT box (~200px left)
+SEARCH = _act("tap", (121.8, 277.3), "button 75x33")
+RESET = _act("tap", (195.2, 277.3), "button 106x33")
+
+
+def test_action_signature_is_reword_and_jitter_proof():
+    # Same control + value despite WxH jitter (61↔62) and 6px center jitter (819↔825).
+    assert action_signature(T3) == action_signature(T9) == action_signature(T12)
+    # A box ~200px away (the one the agent typed '<=3' into) is a different signature.
+    assert action_signature(T3) != action_signature(T17)
+    assert action_signature(SEARCH) != action_signature(RESET)
+
+
+def test_monitor_flags_the_retype_loop_by_signature():
+    state = "/admin/review/product"
+    mon = ProgressMonitor()
+    assert mon.repeated(state, action_signature(T3)) is None
+    mon.note(3, state, action_signature(T3))
+    mon.note(4, state, action_signature(SEARCH))
+
+    # T9: re-typing the SAME value into the SAME box → flagged, pointing back at T3.
+    hit = mon.repeated(state, action_signature(T9))
+    assert hit is not None and hit.index == 3
+    mon.note(9, state, action_signature(T9))
+
+    mon.note(12, state, action_signature(T12))
+    assert mon.repeat_count(state, action_signature(T12)) >= 2  # T3, T9, T12 all the same
+
+
+def test_distinct_box_is_not_a_false_repeat_by_signature():
+    state = "/admin/review/product"
+    mon = ProgressMonitor()
+    mon.note(3, state, action_signature(T3))
+    assert mon.repeated(state, action_signature(T17)) is None

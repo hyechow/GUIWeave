@@ -37,7 +37,7 @@ from .runtime import (
     _last_scroll_was_for,
     _type_only_search_filter_pending_submit,
 )
-from .state_trace import StateTrace, canonical_url
+from gui_agent.core.run.progress_monitor import ProgressMonitor, canonical_url
 from .schemas import (
     MilestonePrompts,
     _DecomposeResponse,
@@ -109,7 +109,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._progress_values: dict[str, list[str]] = {}
         # Action-Loop Guard: run-scoped (state, action) memory keyed on canonical URL — catches task-level
         # loops the frame guards miss. NOT reset per milestone (a loop can span milestone boundaries).
-        self._state_trace = StateTrace()
+        self._state_trace = ProgressMonitor()
         self._last_check: Optional[_SingleCheckResult] = None
         self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
         self._last_plan: Optional[_PlanResult] = None
