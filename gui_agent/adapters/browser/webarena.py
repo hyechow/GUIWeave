@@ -540,6 +540,7 @@ def main() -> int:
                             estimate_program_turns,
                             normalize_confirm_read_gates,
                             normalize_precondition_gates,
+                            redecompose,
                         )
                         from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
                         from gui_agent.core.orchestrator.intent_resolver import resolve_intent
@@ -591,21 +592,30 @@ def main() -> int:
                             )
                         print(f"[webarena] orchestrator: {len(program.statements)} statements")
 
-                        # Feasibility Guard kick-back: re-decompose the goal with the supervisor's
-                        # infeasibility directive injected as knowledge (same decompose seam).
-                        def _redecompose(directive: str, context_reports=None, _intent=intent, _know=knowledge,
-                                         _file=file_section, _url=cur_url, _title=cur_title,
-                                         _site=cur_site, _tables=initial_tables, _png=initial_png,
-                                         _res=resolution):
-                            # The directive rides a DEDICATED high-priority block (corrective_directive),
-                            # NOT concatenated into the nav knowledge — so it's authoritative + un-buried.
-                            # context_reports collects this re-decompose's LLM call trace (its 模型调用详情).
-                            return normalize_precondition_gates(normalize_confirm_read_gates(decompose(
+                        # Feasibility Guard kick-back: re-decompose ONLY the remaining plan via the
+                        # dedicated redecompose() (NOT a fresh full-goal decompose). The page context
+                        # comes from the CURRENT observation at trigger time — the initial frame is just
+                        # a fallback when the loop has none — so the re-plan continues from where the run
+                        # actually is, not from the start screen. prior_experience / remaining_plan are
+                        # supplied by the loop (summarize_progress over the interpreter's run_log).
+                        def _redecompose(directive: str, context_reports=None, *, observation=None,
+                                         prior_experience="", remaining_plan="",
+                                         _intent=intent, _know=knowledge, _file=file_section,
+                                         _url=cur_url, _title=cur_title, _site=cur_site,
+                                         _tables=initial_tables, _png=initial_png, _res=resolution):
+                            _cur_png = getattr(observation, "png_bytes", None) or _png
+                            _cur_url2 = (getattr(observation, "url", None) or _url) if observation else _url
+                            _cur_title2 = (getattr(observation, "title", None) or _title) if observation else _title
+                            _cur_tables = getattr(observation, "tables", None) if observation else None
+                            if _cur_tables is None:
+                                _cur_tables = _tables
+                            return normalize_precondition_gates(normalize_confirm_read_gates(redecompose(
                                 _intent, knowledge=_know.navigation if _know else "", file_section=_file,
-                                current_url=_url, current_title=_title, current_site=_site,
-                                table_summaries=_tables, png_bytes=_png,
+                                current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
+                                table_summaries=_cur_tables, png_bytes=_cur_png,
                                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                                 corrective_directive=directive, resolution=_res,
+                                prior_experience=prior_experience, remaining_plan=remaining_plan,
                                 context_reports=context_reports,
                             )))
 

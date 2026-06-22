@@ -33,6 +33,10 @@ from .intent_resolver import IntentResolution, intent_block
 from .program import BARE_REF_RE, TEMPLATE_RE, Cond, Finish, If, Program, Run, RunKind, Stmt
 
 _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
+# Re-decompose reuses the FULL decomposer prompt (DSL grammar + rules 1-10 + examples) and appends a
+# "mid-execution revision" framing — the output schema/validation is identical; only the framing
+# (re-plan the REMAINING steps from the CURRENT page, absorbing prior experience) differs.
+_REDECOMPOSE_SYSTEM = _SYSTEM + "\n\n" + load_prompt_text("task.orchestrator.redecomposer")
 
 
 class _StepDraft(BaseModel):
@@ -354,6 +358,120 @@ def _sql_uses_quoted_display_identifier(sql: str) -> bool:
 _MAX_RETRIES = 2
 
 
+def _corrective_directive_block(corrective_directive: str) -> "ContextBlock | None":
+    """Feasibility Guard kick-back: a runtime correction from the supervisor (the milestone was
+    judged infeasible). It must NOT be buried in app_navigation knowledge — it's an authoritative
+    constraint, so it gets its own block, priority ABOVE the goal (15 < 20) and `required` budget
+    so the budgeter never drops it. Shared by decompose() and redecompose()."""
+    if not corrective_directive.strip():
+        return None
+    return ContextBlock(
+        id="runtime.corrective_directive",
+        budget="required",
+        source_type="runtime_state",
+        source="feasibility_kickback",
+        ttl="task",
+        priority=15,
+        content=(
+            "## ⚠️ 上层纠正指令\n"
+            "【来源：上层运行时纠正（基于真实界面观察）｜权威级别：最高｜必须服从】\n"
+            + corrective_directive.strip()
+            + "\n\n依据上下文优先级裁决规则，本指令高于应用知识与默认习惯：与它们冲突时一律以本指令为准。"
+        ),
+    )
+
+
+def _page_and_table_blocks(
+    current_url: str, current_site: str, current_title: str, table_summaries: list[dict] | None
+) -> list["ContextBlock"]:
+    """Ground-truth front-tab identity + current table inventory. Shared by decompose()/redecompose()
+    so the re-decompose sees the CURRENT page (not a frozen start-of-run frame)."""
+    blocks: list[ContextBlock] = []
+    if current_url or current_site:
+        # The screenshot omits the omnibox. Lead with a semantic site name + page title; the raw
+        # url (often an IP) is a tail. Lets the planner skip a navigation milestone when already on
+        # the target page.
+        _parts = []
+        if current_site:
+            _parts.append(f"站点：{current_site}（已知应用）")
+        if current_title:
+            _parts.append(f"页面：{current_title}")
+        if current_url:
+            _parts.append(f"url：{current_url}")
+        page = "\n## 当前前台页面（以此为准，截图看不到地址栏）：" + " · ".join(_parts)
+        page += (
+            "\n若当前已在任务目标站点，可省略『打开该站点』这类重复 milestone；"
+            "但不要省略必要的页内定位/切换 tab/打开目标页面，也不要省略清除或设置筛选、搜索、排序等会改变数据源口径的 UI 步骤。"
+            "视觉 read 前必须先让目标区域处于当前可见终态；"
+            "若目标表格已出现在『当前结构化表格』列表中，只有当它已经处于任务要求的筛选/排序/范围终态时，data_query 才可直接查询该表格；否则先规划 UI 步骤准备数据源。"
+        )
+        blocks.append(ContextBlock(
+            id="runtime.observation.browser_page",
+            budget="high",
+            source_type="runtime_state",
+            source="observation",
+            ttl="turn",
+            priority=30,
+            content=page,
+        ))
+    table_hint = _table_schema_prompt(table_summaries)
+    if table_hint:
+        blocks.append(ContextBlock(
+            id="runtime.observation.table_schema",
+            budget="high",
+            source_type="runtime_state",
+            source="browser_tables",
+            ttl="turn",
+            priority=35,
+            content=table_hint,
+        ))
+    return blocks
+
+
+def _invoke_plan(
+    *,
+    system_prompt: str,
+    png_bytes: bytes | None,
+    context_blocks: list["ContextBlock | None"],
+    goal: str,
+    prepare_vision_prompt_png: Callable[[bytes], bytes] | None,
+    context_reports: list[dict] | None,
+    label: str,
+) -> Program:
+    """Shared LLM call + deterministic validate/feedback-retry. Both decompose() and redecompose()
+    assemble their own context blocks, then hand off here for the identical draft→AST→validate loop."""
+    cfg = resolve_llm_config("supervisor.decompose")
+    if not cfg.model:
+        cfg = resolve_llm_config("supervisor")
+    llm = ChatOpenAI(
+        model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+        extra_body={"enable_thinking": False},
+    )
+    issues: list[str] = []
+    program = Program(goal=goal, statements=[])
+    for attempt in range(_MAX_RETRIES + 1):
+        messages = assemble_messages(
+            system_prompt,
+            png_bytes,
+            human_blocks=[*context_blocks, feedback_block(issues)],
+            image_resize="none",
+            prepare_vision_prompt_png=prepare_vision_prompt_png,
+            label=label,
+            context_reports=context_reports,
+            decision_text="",
+        )
+        draft = invoke_structured(llm, messages, _PlanDraft, trace_sink=context_reports, trace_label=label)
+        program = to_program(draft, goal)
+        issues = validate_program(program)
+        if not issues:
+            break
+        if attempt < _MAX_RETRIES:
+            print(f"  [Orchestrator] 程序分解校验发现 {len(issues)} 项问题，重试 ({attempt+1}/{_MAX_RETRIES})...")
+            for i in issues:
+                print(f"  [Orchestrator]   {i}")
+    return program
+
+
 def decompose(
     goal: str,
     *,
@@ -379,108 +497,116 @@ def decompose(
     `prepare_vision_prompt_png` is the platform bundle's vision prompt image hook:
     iPhone downscales Retina frames, browser/android keep native observations.
     """
-    cfg = resolve_llm_config("supervisor.decompose")
-    if not cfg.model:
-        cfg = resolve_llm_config("supervisor")
-    llm = ChatOpenAI(
-        model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
-        extra_body={"enable_thinking": False},
-    )
-
     context_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
-        # Feasibility Guard kick-back: a runtime correction from the supervisor (the milestone was judged
-        # infeasible). It must NOT be buried in app_navigation knowledge — it's an authoritative
-        # constraint, so it gets its own block, priority ABOVE the goal (15 < 20) and `required`
-        # budget so the budgeter never drops it. The app knowledge stays for navigation grounding.
-        ContextBlock(
-            id="runtime.corrective_directive",
-            budget="required",
-            source_type="runtime_state",
-            source="feasibility_kickback",
-            ttl="task",
-            priority=15,
-            content=(
-                "## ⚠️ 上层纠正指令\n"
-                "【来源：上层运行时纠正（基于真实界面观察）｜权威级别：最高｜必须服从】\n"
-                + corrective_directive.strip()
-                + "\n\n依据上下文优先级裁决规则，本指令高于应用知识与默认习惯：与它们冲突时一律以本指令为准。"
-            ),
-        ) if corrective_directive.strip() else None,
+        _corrective_directive_block(corrective_directive),
         # Intent Resolver: per-entity precise/approximate + search key. Drives column choice and the
         # exact-then-fuzzy retrieval ladder. Authoritative over default search habits (priority 16,
         # just under the runtime corrective directive); `required` so the budgeter never drops it.
         intent_block(resolution),
         file_reference_block(file_section),
         knowledge_block("app_navigation", knowledge),
+        *_page_and_table_blocks(current_url, current_site, current_title, table_summaries),
     ]
-    if current_url or current_site:
-        # Ground-truth front-tab identity (the screenshot omits the omnibox). Lead with a
-        # semantic site name + page title; the raw url (often an IP) is a tail. Lets the
-        # decomposer skip a navigation milestone when already on the target site.
-        _parts = []
-        if current_site:
-            _parts.append(f"站点：{current_site}（已知应用）")
-        if current_title:
-            _parts.append(f"页面：{current_title}")
-        if current_url:
-            _parts.append(f"url：{current_url}")
-        page = "\n## 当前前台页面（以此为准，截图看不到地址栏）：" + " · ".join(_parts)
-        page += (
-            "\n若当前已在任务目标站点，可省略『打开该站点』这类重复 milestone；"
-            "但不要省略必要的页内定位/切换 tab/打开目标页面，也不要省略清除或设置筛选、搜索、排序等会改变数据源口径的 UI 步骤。"
-            "视觉 read 前必须先让目标区域处于当前可见终态；"
-            "若目标表格已出现在『当前结构化表格』列表中，只有当它已经处于任务要求的筛选/排序/范围终态时，data_query 才可直接查询该表格；否则先规划 UI 步骤准备数据源。"
-        )
-        context_blocks.append(ContextBlock(
-            id="runtime.observation.browser_page",
-            budget="high",
-            source_type="runtime_state",
-            source="observation",
-            ttl="turn",
-            priority=30,
-            content=page,
-        ))
-    table_hint = _table_schema_prompt(table_summaries)
-    if table_hint:
-        context_blocks.append(ContextBlock(
-            id="runtime.observation.table_schema",
-            budget="high",
-            source_type="runtime_state",
-            source="browser_tables",
-            ttl="turn",
-            priority=35,
-            content=table_hint,
-        ))
-    issues: list[str] = []
-    program = Program(goal=goal, statements=[])
-    for attempt in range(_MAX_RETRIES + 1):
-        messages = assemble_messages(
-            system_prompt or _SYSTEM,
-            png_bytes,
-            human_blocks=[*context_blocks, feedback_block(issues)],
-            image_resize="none",
-            prepare_vision_prompt_png=prepare_vision_prompt_png,
-            label="orchestrator.decompose",
-            context_reports=context_reports,
-            decision_text="",
-        )
-        draft = invoke_structured(
-            llm,
-            messages,
-            _PlanDraft,
-            trace_sink=context_reports,
-            trace_label="orchestrator.decompose",
-        )
-        program = to_program(draft, goal)
-        issues = validate_program(program)
-        if not issues:
-            break
-        if attempt < _MAX_RETRIES:
-            print(f"  [Orchestrator] 程序分解校验发现 {len(issues)} 项问题，重试 ({attempt+1}/{_MAX_RETRIES})...")
-            for i in issues:
-                print(f"  [Orchestrator]   {i}")
-    return program
+    return _invoke_plan(
+        system_prompt=system_prompt or _SYSTEM,
+        png_bytes=png_bytes,
+        context_blocks=context_blocks,
+        goal=goal,
+        prepare_vision_prompt_png=prepare_vision_prompt_png,
+        context_reports=context_reports,
+        label="orchestrator.decompose",
+    )
+
+
+def _prior_experience_block(prior_experience: str) -> "ContextBlock | None":
+    """Executed steps + their outcomes — the run's accumulated EXPERIENCE (which routes already
+    failed, what data was already read). Context, NOT a to-do: don't redo these. Priority 16, just
+    under the corrective directive (15)."""
+    if not prior_experience.strip():
+        return None
+    return ContextBlock(
+        id="runtime.prior_experience",
+        budget="high",
+        source_type="runtime_state",
+        source="redecompose_progress",
+        ttl="task",
+        priority=16,
+        content=(
+            "## 已执行步骤与结果（经验，勿重做）\n"
+            "【这是本次执行已经跑完的部分及其结果——是你的经验/上下文，不是要重做的清单。"
+            "默认这些步骤的终态已达成；据此避开已被证伪的路径。】\n"
+            + prior_experience.strip()
+        ),
+    )
+
+
+def _remaining_plan_block(remaining_plan: str) -> "ContextBlock | None":
+    """The unexecuted steps — the re-decompose TARGET. Priority 17 (under directive + experience):
+    these are what to re-plan, from the current page, per the directive."""
+    if not remaining_plan.strip():
+        return None
+    return ContextBlock(
+        id="runtime.remaining_plan",
+        budget="required",
+        source_type="runtime_state",
+        source="redecompose_progress",
+        ttl="task",
+        priority=17,
+        content=(
+            "## 剩余计划（重排目标）\n"
+            "【以下是原计划里还没执行、需要你重新规划的部分。你的输出 steps 只覆盖这些剩余工作——"
+            "从当前真实页面继续、服从上层纠正指令、吸收上面的经验把它们重新展开成可执行步骤。】\n"
+            + remaining_plan.strip()
+        ),
+    )
+
+
+def redecompose(
+    goal: str,
+    *,
+    remaining_plan: str = "",
+    prior_experience: str = "",
+    corrective_directive: str = "",
+    png_bytes: bytes | None = None,
+    knowledge: str = "",
+    file_section: str = "",
+    current_url: str = "",
+    current_title: str = "",
+    current_site: str = "",
+    table_summaries: list[dict] | None = None,
+    prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
+    context_reports: list[dict] | None = None,
+    resolution: "IntentResolution | None" = None,
+) -> Program:
+    """Re-decompose the REMAINING (unexecuted) plan mid-run — NOT a fresh full-goal decompose.
+
+    Unlike `decompose` (goal → full plan from the start screen), this is invoked after a Feasibility
+    kick-back: some milestones already ran (their outcomes are `prior_experience`), one hit a
+    correction (`corrective_directive`), and the rest (`remaining_plan`) must be re-planned from the
+    CURRENT page (current_url/title/png/table_summaries reflect where the run actually is now, not
+    its start). Reuses the full DSL prompt + schema + validation; only the framing differs (see
+    redecomposer.md). The returned Program covers only the remaining work.
+    """
+    context_blocks: list[ContextBlock | None] = [
+        task_goal_block(goal),
+        _corrective_directive_block(corrective_directive),
+        _prior_experience_block(prior_experience),
+        _remaining_plan_block(remaining_plan),
+        intent_block(resolution),
+        file_reference_block(file_section),
+        knowledge_block("app_navigation", knowledge),
+        *_page_and_table_blocks(current_url, current_site, current_title, table_summaries),
+    ]
+    return _invoke_plan(
+        system_prompt=_REDECOMPOSE_SYSTEM,
+        png_bytes=png_bytes,
+        context_blocks=context_blocks,
+        goal=goal,
+        prepare_vision_prompt_png=prepare_vision_prompt_png,
+        context_reports=context_reports,
+        label="orchestrator.redecompose",
+    )
 
 
 def _table_schema_prompt(tables: list[dict] | None) -> str:

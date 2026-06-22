@@ -357,11 +357,16 @@ def run_agent_loop(
 
         _kickback_replans = 0  # Feasibility Guard: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
 
-        def _perform_replan(directive: str) -> "tuple[bool, str | None]":
-            """Re-decompose with a kick-back directive + hot-swap the interpreter. Returns
-            (handled, reply): (False, None) = not applicable/failed → caller handles normally;
+        def _perform_replan(directive: str, observation=None) -> "tuple[bool, str | None]":
+            """Re-decompose the REMAINING plan with a kick-back directive + hot-swap the interpreter.
+            Returns (handled, reply): (False, None) = not applicable/failed → caller handles normally;
             (True, None) = re-planned & primed → caller should `continue`; (True, reply) = the new
-            program ended immediately → caller should _finish with reply. Bounded + guard inside."""
+            program ended immediately → caller should _finish with reply. Bounded + guard inside.
+
+            Mid-run state is carried forward, not discarded: the executed milestones + their outcomes
+            become the re-decompose's EXPERIENCE, the unexecuted ones its TARGET (summarize_progress),
+            the CURRENT observation its page context, and the new interpreter inherits env/run_log so
+            already-collected reads still back the final answer (the user's "重编排是有状态记忆的编排")."""
             nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans
             if not (program is not None and directive and callable(redecompose)
                     and _kickback_replans < MAX_KICKBACK_REPLANS):
@@ -372,15 +377,29 @@ def run_agent_loop(
             _rd_tok0 = get_llm_token_usage()
             _rd_t0 = time.perf_counter()
             _rd_reports: list = []  # the re-decompose's LLM call trace → its report 模型调用详情
+            from gui_agent.core.orchestrator import Interpreter, summarize_progress
+            # Snapshot mid-run state BEFORE swapping: experience (done) + remaining (target) for the
+            # re-decompose prompt, and env/run_log to inherit onto the new interpreter.
+            _experience, _remaining = summarize_progress(program, _interp.run_log, _cur_run)
+            _prev_env = dict(_interp.env)
+            _prev_log = list(_interp.run_log)
+            if _experience:
+                _say(f"  [Kickback] 已执行经验 {len(_prev_log)} 步、剩余目标若干 → 仅重排剩余（带经验+当前页面）")
             try:
-                _new = redecompose(directive, _rd_reports)  # type: ignore[operator]
+                _new = redecompose(
+                    directive, _rd_reports,
+                    observation=observation,
+                    prior_experience=_experience,
+                    remaining_plan=_remaining,
+                )  # type: ignore[operator]
             except Exception as _exc:  # noqa: BLE001 - a redecompose failure must not crash the run
                 _say(f"[Kickback] 重规划失败（{_exc}），按原结果收尾")
                 return (False, None)
             if _new is None or not _new.statements:
                 return (False, None)
-            from gui_agent.core.orchestrator import Interpreter
             _interp = Interpreter(_new)
+            _interp.env = _prev_env            # carry forward completed reads (finish refs still resolve)
+            _interp.run_log = _prev_log        # keep prior milestones in the run record / final summary
             _orch_interp = _interp
             # Keep context.orchestrator["program"] = the ORIGINAL (#0); record each kick-back
             # re-decompose as its own entry (directive + new program + the turn that triggered it) so
@@ -549,7 +568,7 @@ def run_agent_loop(
                         + "\n这说明取数路线不对（数据源为空或与任务口径不一致）。请改用能真正拿到目标数据的"
                           "路线重新规划，不要重复上面失败的取数方式。"
                     )
-                    _handled, _r = _perform_replan(_directive)
+                    _handled, _r = _perform_replan(_directive, observation)
                     if _handled and _r is not None:
                         return _finish(_orch_result(context, _interp, _r))
                     if _handled:
@@ -653,7 +672,7 @@ def run_agent_loop(
             # (redecompose raises / empty program) falls through to the normal terminal handling.
             if should_kickback_replan(sv_step, program, redecompose, _kickback_replans):
                 _say("\n[Kickback] milestone 判定不可行 → 重规划")
-                _handled, _reply = _perform_replan(sv_step.replan_directive or "")
+                _handled, _reply = _perform_replan(sv_step.replan_directive or "", observation)
                 if _handled and _reply is not None:
                     return _finish(_orch_result(context, _interp, _reply))
                 if _handled:

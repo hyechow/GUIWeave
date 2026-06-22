@@ -1,0 +1,29 @@
+[
+  {
+    "label": "task 113 重排：从当前 Reviews 页续、用已找到的候选逐条钻取详情读 rating，不退回首页/产品搜索",
+    "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin/review/product/index/filter/Y3JlYXRlZF9hdCU1QmxvY2FsZSU1RD1lbl9VUyZuYW1lPU9saXZpYQ==/internal_reviews//form_key/vjgQMdDxPmv0BSUV/",
+    "current_title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+    "corrective_directive": "执行 'Rating <= 3' 筛选必需依赖一个能输入数值或选择星级的 'Rating/评分' 筛选控件，但当前 Reviews 列表页 DOM 控件清单中不存在该控件（仅有 Status/Type/Visibility 等下拉框，且 Product 列只支持按名称文本筛选）。禁止在当前列表层按缺失的 'Rating' 属性进行筛选，也禁止对 grid data_query 查询不存在的 'Review Rating' 列。唯一可行路线：保留/使用当前 Product=Olivia 已筛出的候选评论结果，逐条打开每条记录的 Review Detail，读取其实际 Detailed Rating 与 Nickname，在本地逻辑中筛选出 Rating<=3 的客户昵称并返回。",
+    "prior_experience": "✓ 进入 Marketing > All Reviews 页面（已到达 Reviews 列表页）\n✓ 用精确值 'Olivia zip jacket' 筛选 Product 列（结果 0 records found —— 精确名未匹配到记录）\n✓ 放宽到关键词 'Olivia' 重新筛选 Product 列（已筛出 3 条候选评论）\n✗ 对当前 Reviews grid 执行 data_query 统计 rating<=3（失败：表格为 partial 且不含 Rating 列，无法代表全量、也无评分字段）",
+    "remaining_plan": "1. [filter] 添加筛选条件：Rating <= 3 —— 原验收：列表只显示评分≤3的评论（← 在此步触发了上层纠正：当前页无 Rating 筛选控件，需改走可行路线）\n2. [read] 读取符合条件的客户昵称\n3. [finish] 返回 rating<=3 的客户昵称",
+    "table_summaries": [
+      {
+        "caption": "Reviews",
+        "headers": ["ID", "Created", "Status", "Title", "Nickname", "Review", "Visibility", "Type", "Product", "SKU", "Action"],
+        "row_count": 3,
+        "partial": true
+      }
+    ],
+    "assertions": [
+      "no_homepage_restart",
+      "no_product_research_dead_end",
+      "drills_detail_reads_rating",
+      "has_finish"
+    ],
+    "note": "回归 logs/gui_agent/webarena/browser/20260622_201729：旧 _redecompose 闭包冻结 T0 首页帧 + 零经验，重排成『进入 Products List → 搜索产品 Olivia zip jacket』，在无产品名搜索能力的页上反复 0 结果，最终 UNKNOWN_ERROR（score 0）。本 case 喂当前 Reviews 页 + 已执行经验 + 纠正指令 + 剩余计划，期望重排：从当前页续、用已找到的 3 条候选逐条打开 Review Detail 读 Detailed Rating + Nickname、本地筛 rating<=3，绝不退回首页/重新按产品名搜索。"
+  }
+]

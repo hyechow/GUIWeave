@@ -40,6 +40,60 @@ class RunRecord(BaseModel):
     result: RunResult
 
 
+def _flatten_runs(stmts: list) -> list["Run"]:
+    """Program order, DFS into if-branches; finishes/ifs themselves are not milestones."""
+    out: list[Run] = []
+    for s in stmts:
+        if isinstance(s, Run):
+            out.append(s)
+        elif isinstance(s, If):
+            out.extend(_flatten_runs(s.then))
+            out.extend(_flatten_runs(s.otherwise))
+    return out
+
+
+def summarize_progress(
+    program: Program,
+    run_log: list[RunRecord],
+    current_run: Optional["Run"] = None,
+) -> tuple[str, str]:
+    """Render (prior_experience, remaining_plan) text for a mid-run re-decompose.
+
+    Re-decompose's target is the UNEXECUTED milestones, with the executed ones as experience
+    ([[progress-monitor-architecture]] / the user's "重编排是有状态记忆的编排"). We derive both from
+    the interpreter's run_log (what completed, with outcomes) and the program statements not yet
+    executed. The milestone that hit the correction (`current_run`) is abandoned mid-yield so it is
+    NOT in run_log — it's surfaced at the head of the remaining plan (its goal still needs doing,
+    via the directive's route)."""
+    executed = {rec.name for rec in run_log}
+
+    exp_lines: list[str] = []
+    for rec in run_log:
+        mark = "✓" if rec.result.completed and not rec.result.failed else "✗"
+        line = f"{mark} {rec.name}"
+        if rec.result.summary:
+            line += f"（{rec.result.summary}）"
+        reads = {k: v for k, v in (rec.result.reads or {}).items() if (v or "").strip()}
+        if reads:
+            line += " — 已读到：" + "；".join(f"{k}={v}" for k, v in reads.items())
+        exp_lines.append(line)
+    experience = "\n".join(exp_lines)
+
+    remaining_runs = [
+        r for r in _flatten_runs(program.statements)
+        if r.name not in executed and (current_run is None or r.name != current_run.name)
+    ]
+    rem_lines: list[str] = []
+    if current_run is not None:
+        sc = f" —— 原验收：{current_run.success_condition}" if current_run.success_condition else ""
+        rem_lines.append(f"1. [{current_run.kind}] {current_run.name}{sc}（← 在此步触发了上层纠正，需按纠正指令改走可行路线）")
+    for i, r in enumerate(remaining_runs, start=len(rem_lines) + 1):
+        sc = f" —— 验收：{r.success_condition}" if r.success_condition else ""
+        rem_lines.append(f"{i}. [{r.kind}] {r.name}{sc}")
+    remaining = "\n".join(rem_lines)
+    return experience, remaining
+
+
 class OrchestratorResult(BaseModel):
     reply: str
     failed: bool = False
