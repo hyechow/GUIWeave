@@ -511,3 +511,32 @@ def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkey
     assert "SQL 修复后仍返回空结果" in result.reply
     assert context.turns[-1].executed is False
     assert context.turns[-1].non_ui["failed"] is True
+
+
+def test_non_ui_data_query_failure_sets_failure_evidence(tmp_path, monkeypatch):
+    # mechanism-2 non-UI kick-back: a data_query that fails carries failure_evidence so the loop can
+    # re-decompose instead of ending the run.
+    import gui_agent.core.orchestrator.data_query as dq
+
+    def _raise(*_a, **_k):
+        raise dq.DataQueryError("SQL 引用了不存在的列 rating")
+
+    monkeypatch.setattr(dq, "execute_data_query", _raise)
+    prog = Program(statements=[
+        Run(var="q", name="查询评分", kind="data_query", returns=["x"],
+            sql="SELECT rating FROM data", data_scope="current"),
+        Finish(message="{q[x]}"),
+    ])
+    steps = Interpreter(prog).steps()
+    cur = next(steps)
+    ctx = PolicyContext(goal="g", supervisor_policy_name="milestone", action_policy_name="action")
+    result = drive_pending_non_ui(
+        current_run=cur, run_index=0, notes_mark=0, interpreter_steps=steps,
+        bundle=None, platform=None, log_dir=tmp_path, supervisor=None, context=ctx,
+        save_context=lambda: None, say=lambda _m: None,
+        done_observation=Observation(png_bytes=b"png", source="browser", tables=[]),
+        observation_url="x.png",
+    )
+    assert result.current_run is None           # program ended on the failure
+    assert result.failure_evidence is not None   # ... but carries re-plannable evidence
+    assert "rating" in result.failure_evidence

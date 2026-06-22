@@ -28,6 +28,10 @@ class NonUiDriveResult:
     run_index: int
     notes_mark: int
     reply: str | None = None
+    # mechanism-2 (non-UI kick-back): set when a data_query/read step FAILED in a re-plannable way
+    # (data source empty / mismatched with the task intent) — the loop turns this into a re-decompose
+    # directive instead of plainly ending the run. None = no re-plannable non-UI failure.
+    failure_evidence: str | None = None
 
 
 @dataclass
@@ -56,6 +60,7 @@ def drive_pending_non_ui(
 ) -> NonUiDriveResult:
     """Execute consecutive `read` / `data_query` runs and advance the interpreter."""
     cur_run = current_run
+    failure_evidence: str | None = None  # last re-plannable non-UI failure (for mechanism-2 kick-back)
     obs = done_observation
     frame = getattr(obs, "png_bytes", None) if obs is not None else None
     tables = getattr(obs, "tables", None) if obs is not None else None
@@ -193,6 +198,11 @@ def drive_pending_non_ui(
                     else:
                         summary = str(exc)
                     say(f"  [Orchestrator] 数据查询失败：{exc}")
+        # A data_query that failed because its data source is empty / mismatched with the task is
+        # RE-PLANNABLE: capture it so the loop can kick back to the orchestrator (re-decompose) rather
+        # than end the run. (read failures are not routed — they're per-frame, not a plan-shape issue.)
+        if not completed and run_for_turn.kind == "data_query":
+            failure_evidence = summary
         result = package_result(
             run_for_turn,
             completed=completed,
@@ -242,6 +252,7 @@ def drive_pending_non_ui(
                 run_index=run_index,
                 notes_mark=notes_mark,
                 reply=exc.value or "",
+                failure_evidence=failure_evidence,
             )
         run_index += 1
         save_context()

@@ -298,9 +298,11 @@ def run_agent_loop(
                 return _finish(_orch_result(context, _interp, f"{reason}（任务未完成）", current=_cur_run))
             return _finish(_make_result(context, reason))
 
+        _nonui_failure: "str | None" = None  # last re-plannable non-UI (data_query) failure evidence
+
         def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
             """Drive pending non-UI primitives and sync the local interpreter cursor."""
-            nonlocal _cur_run, _run_idx, _notes_mark
+            nonlocal _cur_run, _run_idx, _notes_mark, _nonui_failure
             result = drive_pending_non_ui(
                 current_run=_cur_run,
                 run_index=_run_idx,
@@ -319,6 +321,7 @@ def run_agent_loop(
             _cur_run = result.current_run
             _run_idx = result.run_index
             _notes_mark = result.notes_mark
+            _nonui_failure = result.failure_evidence
             return result.reply
 
         if program is not None:
@@ -353,6 +356,41 @@ def run_agent_loop(
                 return _finish(_orch_result(context, _interp, _reply))
 
         _kickback_replans = 0  # mechanism-2: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
+
+        def _perform_replan(directive: str) -> "tuple[bool, str | None]":
+            """Re-decompose with a kick-back directive + hot-swap the interpreter. Returns
+            (handled, reply): (False, None) = not applicable/failed → caller handles normally;
+            (True, None) = re-planned & primed → caller should `continue`; (True, reply) = the new
+            program ended immediately → caller should _finish with reply. Bounded + guard inside."""
+            nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans
+            if not (program is not None and directive and callable(redecompose)
+                    and _kickback_replans < MAX_KICKBACK_REPLANS):
+                return (False, None)
+            _kickback_replans += 1
+            _say(f"\n[Kickback] 重规划 ({_kickback_replans}/{MAX_KICKBACK_REPLANS})：{directive[:120]}")
+            try:
+                _new = redecompose(directive)  # type: ignore[operator]
+            except Exception as _exc:  # noqa: BLE001 - a redecompose failure must not crash the run
+                _say(f"[Kickback] 重规划失败（{_exc}），按原结果收尾")
+                return (False, None)
+            if _new is None or not _new.statements:
+                return (False, None)
+            from gui_agent.core.orchestrator import Interpreter
+            _interp = Interpreter(_new)
+            _orch_interp = _interp
+            context.orchestrator = {
+                **(context.orchestrator or {}),
+                "program": _new.model_dump(mode="json"),
+                "replanned_from_kickback": _kickback_replans,
+            }
+            _gen = _interp.steps()
+            try:
+                _cur_run = next(_gen)
+            except StopIteration as _e:
+                return (True, _e.value or "")
+            _reply2 = _drive_pending_non_ui()  # reseed first run of the new program
+            return (True, _reply2) if _reply2 is not None else (True, None)
+
         while True:
             interrupted = _stop_after_esc(_interactive_turn_count(context))
             if interrupted is not None:
@@ -479,6 +517,21 @@ def run_agent_loop(
                     ))
                 # Sync the last milestone's done verdict into context (no later turn body runs).
                 sync_milestone_states(supervisor, context)
+                # mechanism-2 non-UI kick-back: the program ended because a data_query failed with a
+                # re-plannable data-source issue (source empty / mismatched with the task). Re-decompose
+                # with that evidence as the directive instead of finishing on the failure.
+                if _nonui_failure:
+                    _directive = (
+                        "上一份计划在 data_query 步失败：" + _nonui_failure
+                        + "\n这说明取数路线不对（数据源为空或与任务口径不一致）。请改用能真正拿到目标数据的"
+                          "路线重新规划，不要重复上面失败的取数方式。"
+                    )
+                    _handled, _r = _perform_replan(_directive)
+                    if _handled and _r is not None:
+                        return _finish(_orch_result(context, _interp, _r))
+                    if _handled:
+                        _nonui_failure = None
+                        continue
                 return _finish(_orch_result(context, _interp, _orch_reply))
 
             # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.turns、不消耗
@@ -576,31 +629,11 @@ def run_agent_loop(
             # interpreter, instead of failing the run. Bounded (MAX_KICKBACK_REPLANS); any failure
             # (redecompose raises / empty program) falls through to the normal terminal handling.
             if should_kickback_replan(sv_step, program, redecompose, _kickback_replans):
-                _kickback_replans += 1
-                _say(f"\n[Kickback] milestone 判定不可行 → 重规划 ({_kickback_replans}/{MAX_KICKBACK_REPLANS})："
-                     f"{(sv_step.replan_directive or '')[:120]}")
-                _new_program = None
-                try:
-                    _new_program = redecompose(sv_step.replan_directive)  # type: ignore[operator]
-                except Exception as _exc:  # noqa: BLE001 - a redecompose failure must not crash the run
-                    _say(f"[Kickback] 重规划失败（{_exc}），按原失败收尾")
-                if _new_program is not None and _new_program.statements:
-                    from gui_agent.core.orchestrator import Interpreter
-                    _interp = Interpreter(_new_program)
-                    _orch_interp = _interp
-                    context.orchestrator = {
-                        **(context.orchestrator or {}),
-                        "program": _new_program.model_dump(mode="json"),
-                        "replanned_from_kickback": _kickback_replans,
-                    }
-                    _gen = _interp.steps()
-                    try:
-                        _cur_run = next(_gen)
-                    except StopIteration as _e:
-                        return _finish(_orch_result(context, _interp, _e.value or ""))
-                    _reply = _drive_pending_non_ui()  # reseed the first run of the new program
-                    if _reply is not None:
-                        return _finish(_orch_result(context, _interp, _reply))
+                _say("\n[Kickback] milestone 判定不可行 → 重规划")
+                _handled, _reply = _perform_replan(sv_step.replan_directive or "")
+                if _handled and _reply is not None:
+                    return _finish(_orch_result(context, _interp, _reply))
+                if _handled:
                     continue  # resume the loop on the re-decomposed program
 
             if sv_step.stop or sv_step.goal_completed:
