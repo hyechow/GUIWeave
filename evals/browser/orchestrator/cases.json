@@ -262,5 +262,44 @@
       "product_lookup_column_and_fuzzy_fallback"
     ],
     "note": "活跑 124258 三连错：编排器把 'Olivia zip jacket' 当评论关键词筛进 Review 文本列(应按 Product 列)、用整串筛(应放宽到 'Olivia')、filter 步 SC 写『动作已发出』致 0 条被判 done。给定意图解析(product/approximate/key=Olivia)后,decompose 应产出:按 Product 列『先精确 Olivia zip jacket、0 条转关键词 Olivia 模糊』、SC『检索到匹配记录(非0条)』。一次意图判断同修三处。"
+  },
+  {
+    "label": "WebArena shopping_admin task 113 re-decompose drills Review Detail for rating",
+    "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin/review/product/index/filter/Y3JlYXRlZF9hdCU1QmxvY2FsZSU1RD1lbl9VUyZuYW1lPU9saXZpYQ==/internal_reviews//form_key/vjgQMdDxPmv0BSUV/",
+    "current_title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+    "corrective_directive": "上一份计划在 data_query 步失败：数据源与任务意图不一致: 表格标记为 partial (partial: true)，且 row_count 仅为 3，无法代表全量数据。任务要求查询所有评分<=3的客户昵称，当前采集的数据不完整，可能导致遗漏符合条件的记录。随后 Feasibility 判定当前 Reviews 列表页 DOM 控件清单中不存在用于筛选 Rating (评分) 的输入框或下拉选择控件，仅存在 Product 和 Status 等字段控件，无法直接执行 Rating <= 3 的筛选条件。禁止在当前列表层尝试按不存在的 Rating 列进行筛选，禁止对 data_query 使用不存在的 Rating 列；唯一可行路线：保留/使用当前 Product=Olivia 的 3 条候选结果，逐条打开每条记录的 Review Detail，读取其实际 Detailed Rating 与 Nickname，在本地逻辑中筛选出 Rating<=3 的客户昵称并返回。",
+    "table_summaries": [
+      {
+        "caption": "Reviews",
+        "headers": [
+          "ID",
+          "Created",
+          "Status",
+          "Title",
+          "Nickname",
+          "Review",
+          "Visibility",
+          "Type",
+          "Product",
+          "SKU",
+          "Action"
+        ],
+        "row_count": 3,
+        "partial": true
+      }
+    ],
+    "expected": {
+      "min_statements": 2,
+      "has_read": true
+    },
+    "assertions": [
+      "shopping_admin_review_rating_reorch_drills_detail",
+      "read_has_spec"
+    ],
+    "note": "回归 logs/gui_agent/webarena/browser/20260622_142614：初始计划精确搜 Olivia zip jacket 得 0 条，放宽到 Olivia 得 3 条候选；data_query 失败，因为当前 Reviews grid 是 partial 且没有 rating 列。随后重编排错误地产出『设置筛选条件：Product='Olivia zip jacket' 且 Rating<=3』，在没有 Rating 控件的列表页反复输入/搜索，最终 UNKNOWN_ERROR。此 case 用当时的 kickback 文案、当前 URL/title 和 Reviews 表格 schema 固定重编排输入，期望新计划遵守上层纠正：不要再做列表 Rating 筛选/SQL rating 查询，而是逐条打开 Review Detail 读取 Detailed Rating + Nickname。"
   }
 ]

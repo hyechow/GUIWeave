@@ -771,6 +771,110 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "未编出『先精确→0 条转模糊关键词』回退（既无阶梯式 milestone，也无模糊检索分支）："
                     f"{[r.name for r in filters]}"
                 )
+        elif assertion == "shopping_admin_review_rating_reorch_drills_detail":
+            # 回归 WebArena task 113 / 20260622_142614：第一次 data_query 已因当前 Reviews
+            # grid 为 partial 且缺 rating 字段失败；随后 Feasibility 又确认列表页不存在 Rating
+            # 筛选控件。重编排的唯一可行路线是逐条打开 Review Detail，读取实际 Detailed
+            # Rating + Nickname 后本地筛出 <=3。不能再编出「列表页设置 Rating<=3」或在
+            # 当前列表 data_query 里写 WHERE rating <= 3。
+            seq = _flatten_runs(program.statements)
+            all_text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} {getattr(r, 'sql', '')} "
+                f"{' '.join(r.returns or [])}"
+                for r in seq
+            )
+            has_detail_route = any(
+                marker in all_text
+                for marker in ("Review Detail", "评论详情", "详情", "Edit", "编辑", "逐条", "每条")
+            )
+            reads_rating = any(
+                r.kind == "read"
+                and any(marker in f"{r.name} {r.read_spec} {' '.join(r.returns or [])}"
+                        for marker in ("Rating", "rating", "评分", "Detailed Rating"))
+                for r in seq
+            )
+            reads_nickname = any(
+                r.kind == "read"
+                and any(marker in f"{r.name} {r.read_spec} {' '.join(r.returns or [])}"
+                        for marker in ("Nickname", "nickname", "昵称", "customer"))
+                for r in seq
+            )
+            if not has_detail_route:
+                details.append(
+                    "重编排未体现逐条打开 Review Detail/评论详情 的取数路线；"
+                    f"seq={[(r.kind, r.name) for r in seq]}"
+                )
+            if not reads_rating:
+                details.append(
+                    "重编排缺少从评论详情 read 实际 Rating/评分 的步骤；"
+                    f"reads={[(r.name, r.returns, r.read_spec) for r in seq if r.kind == 'read']}"
+                )
+            if not reads_nickname:
+                details.append(
+                    "重编排缺少读取 Nickname/昵称 的步骤；"
+                    f"reads={[(r.name, r.returns, r.read_spec) for r in seq if r.kind == 'read']}"
+                )
+            bad_sql = [
+                (r.name, r.sql) for r in seq
+                if r.kind == "data_query" and re.search(r"\brating\b|\b评分\b", r.sql or "", flags=re.I)
+            ]
+            if bad_sql:
+                details.append(
+                    "当前列表 schema 无 Rating 列，重编排不得继续对 data_query 使用 rating 字段；"
+                    f"bad_sql={bad_sql}"
+                )
+            bad_filters = []
+            for r in seq:
+                if r.kind not in {"filter", "action"}:
+                    continue
+                text = f"{r.name} {r.success_condition}"
+                mentions_rating_filter = (
+                    any(marker in text for marker in ("Rating", "rating", "评分"))
+                    and any(marker in text for marker in ("筛选", "过滤", "filter", "<=3", "≤3", "3星", "3 星"))
+                )
+                mentions_detail = any(marker in text for marker in ("Review Detail", "评论详情", "详情", "Edit", "编辑", "逐条", "每条"))
+                if mentions_rating_filter and not mentions_detail:
+                    bad_filters.append((r.kind, r.name, r.success_condition))
+            if bad_filters:
+                details.append(
+                    "重编排仍在列表层尝试不可行的 Rating<=3 筛选；应钻取详情读取评分。"
+                    f" bad_filters={bad_filters}"
+                )
+            bad_index_refs = []
+            for r in seq:
+                for attr in ("name", "success_condition", "read_spec"):
+                    text = getattr(r, attr, "") or ""
+                    if re.search(r"\{\w+\[[^\]]+\]\s*\[", text):
+                        bad_index_refs.append((r.kind, r.name, attr, text))
+            if bad_index_refs:
+                details.append(
+                    "DSL 模板只支持 {var[field]}，不支持 {var[field][0]} 这类列表索引；"
+                    "逐条打开详情应直接操作可见行/Edit 链接，或读取单个标识后用 {var[field]} 接力。"
+                    f" bad_index_refs={bad_index_refs}"
+                )
+            bad_templates = []
+
+            def _walk_template_texts(stmts):
+                for s in stmts:
+                    if isinstance(s, Run):
+                        for attr in ("name", "success_condition", "read_spec"):
+                            yield f"{s.kind}:{s.name}:{attr}", getattr(s, attr, "") or ""
+                    elif isinstance(s, If):
+                        yield from _walk_template_texts(s.then)
+                        yield from _walk_template_texts(s.otherwise)
+                    elif isinstance(s, Finish):
+                        yield "finish:message", s.message or ""
+
+            for where, text in _walk_template_texts(program.statements):
+                for raw in re.findall(r"\{[^{}]+\}", text):
+                    if not re.fullmatch(r"\{\w+\[[^\[\]]+\]\}", raw):
+                        bad_templates.append((where, raw, text))
+            if bad_templates:
+                details.append(
+                    "重编排产物不得留下无法由 runner 替换的伪模板/裸变量；"
+                    "最终答案必须引用真实 read/data_query 字段（如 {r1[nickname]}），或通过可执行分支生成。"
+                    f" bad_templates={bad_templates}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
@@ -804,6 +908,8 @@ def _case_program(case: dict):
         current_url=case.get("current_url", ""),
         current_title=case.get("current_title", ""),
         current_site=case.get("current_site") or (k.app_name if k and case.get("use_knowledge_app_as_current_site") else ""),
+        table_summaries=case.get("table_summaries"),
+        corrective_directive=case.get("corrective_directive", ""),
         resolution=resolution,
     )
     if case.get("normalize"):
