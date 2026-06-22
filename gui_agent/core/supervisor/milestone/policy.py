@@ -313,6 +313,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 final_read = _ctx(milestone, read_inst)
             return self._advance(milestone, observation, history, final_read=final_read)
 
+        # The checker itself judged NO PROGRESS (status=stuck) from the 任务进展轨迹 (PROGRESS half of
+        # the checker): the agent is looping / dead-ending, not advancing. Route to the stuck path —
+        # replan + the early Feasibility probe — the same as the deterministic detectors.
+        if check.status == "stuck":
+            print(f"  [Checker] 判定无进展(stuck)：{check.stuck_reason or check.reason}")
+            return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
+
         # Off-target last action (post-action targeting verify said the tap missed) — and the
         # milestone is NOT done (checked above) → route straight into replan. Catches "screen
         # changed but to the wrong element" (e.g. 搜索框 tap hit 转账 tab), which SimStuck can't.

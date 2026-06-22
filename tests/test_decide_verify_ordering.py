@@ -115,3 +115,12 @@ def test_no_url_change_keeps_no_effect_replan(monkeypatch):
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/orders")  # unchanged
     p._run_single_turn(m, obs, [_tap_turn(on_target=True, no_effect=True)])
     assert calls == ["stuck"]  # URL unchanged => no_effect stands => replan
+
+
+def test_checker_stuck_status_routes_to_handle_stuck(monkeypatch):
+    # The checker's OWN PROGRESS verdict (status=stuck, judged from the task-progress trace) routes
+    # to the stuck path — before the deterministic off-target / no-effect signals.
+    p, m = _policy()
+    calls = _wire(monkeypatch, p, "stuck")
+    p._run_single_turn(m, Observation(png_bytes=b"x", source="test"), [_tap_turn(on_target=True)])
+    assert calls == ["stuck"]
