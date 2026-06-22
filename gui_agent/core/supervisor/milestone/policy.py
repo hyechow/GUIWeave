@@ -826,6 +826,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             return self._advance(milestone, observation, history)
 
         if replan.strategy == "escalate_human":
+            # The replanner can give up EARLY (before MAX_RETRIES) by escalating — another give-up
+            # path. Give mechanism-2 a chance here too: if the milestone is infeasible (required
+            # control absent), kick back to the orchestrator with a directive instead of escalating.
+            kick = self._maybe_kickback(milestone, observation, read_inst)
+            if kick:
+                return kick
             fallback = self._try_filter_fallback(
                 milestone, can_degrade=replan.can_degrade_to_collection, read_inst=read_inst,
             )
