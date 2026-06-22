@@ -117,7 +117,12 @@ def test_checker() -> None:
 
         expected = c["expected"]
         details = []
-        if result.status != expected["status"]:
+        # status：单值用 "status"；当一个轨迹对多个状态都合理时（如 0 条结果 + 同时在打转，
+        # stuck/in_progress 都不误判成功），用 "status_in" 接受一个集合，真正的锚点交给 must_not_claim。
+        if "status_in" in expected:
+            if result.status not in expected["status_in"]:
+                details.append(f'status: expected one of {expected["status_in"]!r}, got {result.status!r}')
+        elif result.status != expected["status"]:
             details.append(f'status: expected {expected["status"]!r}, got {result.status!r}')
         if "reason_contains" in expected and not any(kw in result.reason for kw in expected["reason_contains"]):
             details.append(f'reason should contain one of {expected["reason_contains"]}')

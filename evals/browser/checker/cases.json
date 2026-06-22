@@ -208,15 +208,15 @@
     },
     "state_trace": " T3 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索\n T4 状态:/admin/review/product/index/internal_reviews | 决策:点击resetfilter清除残留过滤 (同页面)\n T5 状态:/admin/review/product/index/internal_reviews | 决策:在review搜索框输入oliviazipjacket (同页面)\n T7 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索筛选 (同页面)\n T8 状态:/admin/review/product/index/internal_reviews | 决策:点击resetfilter清除残留过滤 ⚠️重复(同 T4)\n T10 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索筛选 ⚠️重复(同 T7)",
     "expected": {
-      "status": "in_progress",
+      "status_in": ["stuck", "in_progress"],
       "must_not_claim": [
         "筛选成功",
         "已生效",
         "已完成",
-        "符合验收"
+        "(?<!不)符合验收"
       ]
     },
-    "note": "回归 20260622_105707：Reset→search→Reset 循环 11+ 轮。截图 0 records found + Review 框误填 'Olivia zip j…'、Product 框空。state_trace 标 T8/T10 ⚠️重复。checker 看到轨迹应判 in_progress、不得宣称筛选已成功/已完成——0 条且 Product 未设、还在打转。"
+    "note": "回归 20260622_105707：Reset→search→Reset 循环 11+ 轮。截图 0 records found + Review 框误填 'Olivia zip j…'、Product 框空。state_trace 标 T8/T10 ⚠️重复。核心锚点=绝不能宣称筛选已成功/已完成（must_not_claim）。status 接受 stuck 或 in_progress：该轨迹同时是「0 条→放宽搜索词(in_progress)」和「反复 Reset/Search 无新状态→打转(stuck，Block 1 起允许)」，两者都不误判成功、都能让上层纠偏，故任一皆可。"
   },
   {
     "label": "搜索/筛选 0 条 = 目标未找到，不得判 done（即便 SC 宽到「动作已发出」）（回归 20260622_113558）",
