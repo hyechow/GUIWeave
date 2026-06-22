@@ -587,13 +587,14 @@ def main() -> int:
                         def _redecompose(directive: str, _intent=intent, _know=knowledge,
                                          _file=file_section, _url=cur_url, _title=cur_title,
                                          _site=cur_site, _tables=initial_tables, _png=initial_png):
-                            extra = "\n\n## ⚠️ 上层反馈·重规划必读（milestone 判定不可行）\n" + (directive or "") + "\n"
-                            base_k = _know.navigation if _know else ""
+                            # The directive rides a DEDICATED high-priority block (corrective_directive),
+                            # NOT concatenated into the nav knowledge — so it's authoritative + un-buried.
                             return normalize_precondition_gates(normalize_confirm_read_gates(decompose(
-                                _intent, knowledge=base_k + extra, file_section=_file,
+                                _intent, knowledge=_know.navigation if _know else "", file_section=_file,
                                 current_url=_url, current_title=_title, current_site=_site,
                                 table_summaries=_tables, png_bytes=_png,
                                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                                corrective_directive=directive,
                             )))
 
                         if not args.no_dynamic_max_turns:

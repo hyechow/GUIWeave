@@ -366,6 +366,7 @@ def decompose(
     table_summaries: list[dict] | None = None,
     prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
     context_reports: list[dict] | None = None,
+    corrective_directive: str = "",
 ) -> Program:
     """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
 
@@ -386,6 +387,22 @@ def decompose(
 
     context_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
+        # mechanism-2 kick-back: a runtime correction from the supervisor (the milestone was judged
+        # infeasible). It must NOT be buried in app_navigation knowledge — it's an authoritative
+        # constraint, so it gets its own block, priority ABOVE the goal (15 < 20) and `required`
+        # budget so the budgeter never drops it. The app knowledge stays for navigation grounding.
+        ContextBlock(
+            id="runtime.corrective_directive",
+            budget="required",
+            source_type="runtime_state",
+            source="feasibility_kickback",
+            ttl="task",
+            priority=15,
+            content=(
+                "## ⚠️ 上层纠正指令（重规划必读，必须严格遵守）\n" + corrective_directive.strip()
+                + "\n\n与下方任何应用知识或默认规划习惯冲突时，一律以本纠正指令为准。"
+            ),
+        ) if corrective_directive.strip() else None,
         file_reference_block(file_section),
         knowledge_block("app_navigation", knowledge),
     ]

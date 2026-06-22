@@ -119,12 +119,13 @@ def main() -> None:
         print("  ⚠️ 未判不可行/无 directive — 流程在第一关断了"); return
     print(f"  directive: {verdict.directive[:180]}")
 
-    print("\n" + "=" * 70 + "\n[STAGE2+3] 用 directive 重 decompose（_redecompose seam），检查方向\n" + "=" * 70)
-    extra = "\n\n## ⚠️ 上层反馈·重规划必读（milestone 判定不可行）\n" + verdict.directive + "\n"
+    print("\n" + "=" * 70 + "\n[STAGE2+3] 用 corrective_directive 高优先级块重 decompose，检查方向\n" + "=" * 70)
     ok_count = 0
     for k in range(args.n):
         try:
-            program = decompose(GOAL, knowledge=base + extra, current_site=SITE)
+            # the production _redecompose seam: directive rides a dedicated high-priority block,
+            # NOT concatenated into nav knowledge (N=10: 50%→70% adherence).
+            program = decompose(GOAL, knowledge=base, corrective_directive=verdict.directive, current_site=SITE)
         except Exception as exc:  # noqa: BLE001
             print(f"\n--- 重规划 #{k+1}: decompose 失败: {exc}"); continue
         ok, sig = direction_ok(program)
