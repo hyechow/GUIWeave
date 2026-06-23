@@ -20,6 +20,7 @@ version: 1
   - `approximate`:**对命名实体的口语 / 部分 / 转述引用**——产品的日常叫法、只给名不给姓、改写的标题。**默认:产品名、人名、标题这类命名实体倾向 approximate**(人很少记得官方全名,口语名往往不等于存储的规范名)。
 - **search_key**:
   - `approximate`:从 mention 里挑出**最显著、最罕见、最像专名、且最可能逐字出现在系统存储名称里的【单个】token**;丢掉描述性修饰词。例:"Olivia zip jacket" → `Olivia`(整串 "Olivia zip jacket" 不是规范名 "Olivia 1/4 Zip Light Jacket" 的子串,但 "Olivia" 是;子串匹配下单 token 才命中)。
+    若 mention 指的不是单个具体实体、而是一整类/一组同类实体(品类词、复数泛称,如 "tanks products"、"shoes"、"jackets"),**search_key 用该词的单数/词根形式**,不要照抄原词的复数/泛称形式——电商系统的产品名通常用单数命名规范("Tank Top"、"Running Shoe"),复数泛称多半不会逐字出现在单条产品名里。例:"tanks products" → `tank`(不是 `tanks`)。
   - `exact`:整串原值。
 - **reason**:一句话依据。
 
@@ -37,3 +38,6 @@ version: 1
 
 目标:"把工单 WO-2024-007 的负责人改成张三"
 {"entities":[{"mention":"WO-2024-007","type":"order","match_mode":"exact","search_key":"WO-2024-007","reason":"工单号是系统精确标识,原样检索"},{"mention":"张三","type":"customer","match_mode":"exact","search_key":"张三","reason":"指定负责人姓名,作为精确值设置(非检索口径的近似)"}]}
+
+目标:"Return the customer nickname(s) who gave a rating of 3 stars or below for tanks products"
+{"entities":[{"mention":"tanks products","type":"product","match_mode":"approximate","search_key":"tank","reason":"指一类产品(复数泛称),电商产品名按单数命名规范存储('Tank Top'),search_key 取词根单数形式 'tank' 而非原词 'tanks',否则逐字子串匹配会落空"}]}

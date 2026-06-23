@@ -14,5 +14,13 @@
       {"mention_contains": "WO-2024-007", "type": "order", "match_mode": "exact", "search_key_any": ["WO-2024-007"]}
     ],
     "note": "工单号是系统精确标识 → exact，原样检索，不加模糊回退（区别于近似产品名）。"
+  },
+  {
+    "label": "复数品类泛称 → search_key 取单数词根，不照抄原词（回归 20260623_194545 task-116 score=0）",
+    "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for tanks products",
+    "expected_entities": [
+      {"mention_contains": "tanks", "type": "product", "match_mode": "approximate", "search_key_any": ["tank", "Tank"]}
+    ],
+    "note": "'tanks products' 指一类产品（复数泛称），不是单个产品的口语简称。Product 列筛选按产品名子串匹配，电商产品名按单数命名（'Tank Top'），逐字搜 'tanks' 实测 0 条（task 116 因此 score=0）；search_key 须取单数词根 'tank'。"
   }
 ]
