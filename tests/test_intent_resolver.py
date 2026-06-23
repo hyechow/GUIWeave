@@ -1,7 +1,7 @@
-"""Deterministic tests for the Intent Resolver (block rendering + normalization + empty-goal)."""
+"""Deterministic tests for the Intent Resolver (intent_block rendering + normalization + empty-goal)."""
 
-import gui_agent.core.orchestrator.intent_resolver as ir
-from gui_agent.core.orchestrator.intent_resolver import (
+import gui_agent.core.router.intent as ir
+from gui_agent.core.router import (
     EntityRef,
     IntentResolution,
     intent_block,
@@ -9,22 +9,22 @@ from gui_agent.core.orchestrator.intent_resolver import (
 )
 
 
-def test_intent_block_renders_ladder_for_approximate_and_single_for_exact():
+def test_intent_block_renders_facts_only_for_approximate_and_exact():
     res = IntentResolution(entities=[
         EntityRef(mention="Olivia zip jacket", type="product", match_mode="approximate", search_key="Olivia"),
         EntityRef(mention="WO-2024-007", type="order", match_mode="exact", search_key="WO-2024-007"),
     ])
     blk = intent_block(res)
     assert blk is not None and blk.id == "runtime.intent_resolution"
-    assert blk.budget == "required" and blk.priority == 16
-    # approximate → exact-then-fuzzy ladder, naming the column-by-type intent
-    assert "先用精确值「Olivia zip jacket」" in blk.content and "关键词「Olivia」" in blk.content
-    assert "非 0 条" in blk.content and "Product 列" in blk.content
-    # exact → single precise lookup, no fuzzy fallback
-    assert "精确标识 → 直接用「WO-2024-007」" in blk.content
+    assert blk.priority == 21  # right after task_goal_block(20)
+    # the DECISION (fuzzy allowed? which key?) is router-authoritative content — facts only,
+    # no orchestration/strategy prose (that belongs to decomposer.md rule 4b)
+    assert "允许模糊匹配" in blk.content and "关键词：Olivia" in blk.content
+    assert "精确匹配" in blk.content  # exact entity rendered too, just without a key
+    assert "若0条" not in blk.content and "阶梯" not in blk.content  # no strategy leakage
 
 
-def test_intent_block_none_when_empty():
+def test_intent_block_none_when_no_entities():
     assert intent_block(None) is None
     assert intent_block(IntentResolution(entities=[])) is None
 

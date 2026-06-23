@@ -29,7 +29,7 @@ from gui_agent.core.llm.messages import assemble_messages
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-from .intent_resolver import IntentResolution, intent_block
+from gui_agent.core.router import IntentResolution, intent_block
 from .program import BARE_REF_RE, TEMPLATE_RE, Cond, Finish, ForEach, If, Program, Run, RunKind, Stmt
 
 _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
@@ -550,17 +550,17 @@ def decompose(
     `png_bytes` (current screen) gives the planner page context; `knowledge` injects app
     navigation knowledge; `file_section` is the resolved content of any `@<path>` refs in the
     goal (config field values the spoken goal only points at — see resolve_file_refs);
-    `system_prompt` overrides the default DSL prompt (platform tuning).
+    `system_prompt` overrides the default DSL prompt (platform tuning); `resolution` is the
+    router's upfront entity classification (fuzzy-allowed? which key?) — rendered as a FACTS-ONLY
+    context block right after the goal (see intent_block); decompose owns translating it into the
+    retrieval ladder (rule 4b), not the fuzzy/exact decision itself.
     `prepare_vision_prompt_png` is the platform bundle's vision prompt image hook:
     iPhone downscales Retina frames, browser/android keep native observations.
     """
     context_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
-        _corrective_directive_block(corrective_directive),
-        # Intent Resolver: per-entity precise/approximate + search key. Drives column choice and the
-        # exact-then-fuzzy retrieval ladder. Authoritative over default search habits (priority 16,
-        # just under the runtime corrective directive); `required` so the budgeter never drops it.
         intent_block(resolution),
+        _corrective_directive_block(corrective_directive),
         file_reference_block(file_section),
         knowledge_block("app_navigation", knowledge),
         *_page_and_table_blocks(current_url, current_site, current_title, table_summaries),
@@ -647,10 +647,10 @@ def redecompose(
     """
     context_blocks: list[ContextBlock | None] = [
         task_goal_block(goal),
+        intent_block(resolution),
         _corrective_directive_block(corrective_directive),
         _prior_experience_block(prior_experience),
         _remaining_plan_block(remaining_plan),
-        intent_block(resolution),
         file_reference_block(file_section),
         knowledge_block("app_navigation", knowledge),
         *_page_and_table_blocks(current_url, current_site, current_title, table_summaries),

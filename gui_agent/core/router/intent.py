@@ -17,10 +17,17 @@ For each entity the goal needs to find in the system, this returns:
                 is not a substring of 'Olivia 1/4 Zip Light Jacket' but 'Olivia' is). For exact, the
                 full value.
 
-The decomposer consumes this to build, per approximate entity, a prioritized filter milestone:
-try the exact mention first; if it returns 0, retry with search_key — with a result-requiring
-success_condition so 0 records is NOT accepted as done. This pure judgment is the module; the
-decomposer wiring lives in decomposer.py."""
+The DECISION (this module): whether a reference is precise or approximate is intent — decided once,
+upfront. That decision (permissiveness + search key) is rendered as a standalone, facts-only context
+block via intent_block(), which decompose places right after the goal. The decomposer owns only the
+retrieval STRATEGY (how to execute an allowed-fuzzy lookup: the exact→0→key ladder) — NOT the
+whether-fuzzy decision. So intent and orchestration stay separate: the decision lives in this block,
+the strategy lives in decomposer.py (rule 4b).
+
+(A goal-text variant, annotate_goal(), was tried first and measured only ~1/3 decompose compliance —
+a clause buried in goal prose reads as descriptive context and is easy for a 12k-char system prompt
+to skip. intent_block(), as a separately-headed, priority-placed block, measured 100% over N=5. Kept
+the dedicated-block approach; annotate_goal was removed.)"""
 
 from __future__ import annotations
 
@@ -35,7 +42,7 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-_SYSTEM = load_prompt_text("task.orchestrator.intent_resolver")
+_SYSTEM = load_prompt_text("task.router.intent_resolver")
 
 _VALID_MODES = {"exact", "approximate"}
 
@@ -68,17 +75,24 @@ def _llm() -> ChatOpenAI:
 def resolve_intent(
     goal: str,
     *,
-    app_knowledge: str = "",
     llm: Optional[ChatOpenAI] = None,
     trace_sink: Optional[list[dict]] = None,
 ) -> IntentResolution:
-    """Classify the goal's lookup entities (precise vs fuzzy + search key). Empty when none."""
+    """Classify the goal's lookup entities (precise vs fuzzy + search key). Empty when none.
+
+    Text-only judgment on the goal — deliberately takes no app knowledge. The app's navigation
+    knowledge (page map, UI operating details, filter formats) is HOW-layer content; it doesn't
+    carry the kind of fact this judgment actually needs (whether an entity's stored form is exact
+    or normalized away from how users refer to it). Feeding it in was pure noise on the prompt —
+    measured: a knowledge.navigation excerpt led entirely with deployment/login/page-list info,
+    none of which bears on precise-vs-approximate. decompose still receives the full knowledge
+    independently (its own `knowledge` param) for the HOW it actually needs."""
     if not goal.strip():
         return IntentResolution()
-    human = f"用户目标:\n{goal}\n"
-    if app_knowledge.strip():
-        human += f"\n应用知识(可选,帮助判断实体类型/存储形态):\n{app_knowledge[:1500]}\n"
-    human += "\n请抽取需要在系统中检索/定位的实体并分类;不需要检索的泛指词、动作、条件不要列。"
+    human = (
+        f"用户目标:\n{goal}\n"
+        "\n请抽取需要在系统中检索/定位的实体并分类;不需要检索的泛指词、动作、条件不要列。"
+    )
     resolution = invoke_structured(
         llm or _llm(),
         [SystemMessage(content=_SYSTEM), HumanMessage(content=human)],
@@ -97,29 +111,23 @@ def resolve_intent(
 
 
 def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBlock]:
-    """Render the resolution as a high-priority decompose context block (authoritative for how to
-    search). None when there are no entities."""
+    """Render the resolution as a standalone context block — FACTS ONLY (type/match_mode/
+    search_key per entity), no strategy/orchestration prose. The decision (fuzzy allowed? which
+    key?) rides as router-authoritative content; decompose's rule 4b owns translating it into
+    ladder/column/success_condition steps. Placed right after task_goal_block (priority 21) so
+    it's the first thing decompose reads. None when there are no entities."""
     if resolution is None or not resolution.entities:
         return None
-    lines = []
-    for e in resolution.entities:
-        if e.match_mode == "approximate":
-            how = f"近似引用 → 先用精确值「{e.mention}」检索,若 0 条改用关键词「{e.search_key}」模糊重检索"
-        else:
-            how = f"精确标识 → 直接用「{e.mention}」精确检索"
-        lines.append(f"- 实体「{e.mention}」｜类型={e.type}｜{how}")
+    lines = [
+        f"- 实体「{e.mention}」｜类型={e.type}｜{'允许模糊匹配，检索关键词：' + e.search_key if e.match_mode == 'approximate' else '精确匹配'}"
+        for e in resolution.entities
+    ]
     return ContextBlock(
         id="runtime.intent_resolution",
         budget="required",
         source_type="runtime_state",
         source="intent_resolver",
         ttl="task",
-        priority=16,
-        content=(
-            "## 实体检索意图(来源:意图解析｜权威:高于默认习惯)\n"
-            "据此为每个实体编排检索 milestone:按【类型】选对应筛选列(如 product→Product 列,不是评论文本列);\n"
-            "按【精确/近似】决定检索方式(近似实体编成优先级阶梯:先精确、0 条再模糊),并把该 milestone 的\n"
-            "success_condition 写成『已检索到匹配该实体的记录(非 0 条)』——0 条不算完成。\n"
-            + "\n".join(lines)
-        ),
+        priority=21,  # right after task_goal_block(20) — first thing decompose reads
+        content="## 实体检索语义（来源：意图解析）\n" + "\n".join(lines),
     )

@@ -543,13 +543,18 @@ def main() -> int:
                             redecompose,
                         )
                         from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
-                        from gui_agent.core.orchestrator.intent_resolver import resolve_intent
+                        from gui_agent.core.router import resolve_intent
 
                         file_section = resolve_file_refs(intent)
                         # Intent Resolver: classify lookup entities (precise vs fuzzy + search key)
-                        # BEFORE decompose, so the plan picks the right filter column and builds the
-                        # exact-then-fuzzy retrieval ladder upfront (vs reactive in-loop relaxation).
-                        resolution = resolve_intent(intent, app_knowledge=knowledge.navigation if knowledge else "")
+                        # BEFORE decompose. Text-only judgment on the goal — no app knowledge: that
+                        # knowledge is HOW-layer (navigation/UI) content decompose already gets
+                        # independently via its own `knowledge` param; it doesn't carry the kind of
+                        # fact this judgment needs. The DECISION (fuzzy allowed? which key?) is
+                        # intent — decompose renders it as a facts-only context block (intent_block,
+                        # via the `resolution=` param) right after the goal; decompose then owns
+                        # only the retrieval STRATEGY (the exact→0→key ladder), not the decision.
+                        resolution = resolve_intent(intent)
                         if resolution.entities:
                             print(f"[webarena] intent: " + "; ".join(
                                 f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
@@ -600,7 +605,7 @@ def main() -> int:
                         # supplied by the loop (summarize_progress over the interpreter's run_log).
                         def _redecompose(directive: str, context_reports=None, *, observation=None,
                                          prior_experience="", remaining_plan="",
-                                         _intent=intent, _know=knowledge, _file=file_section,
+                                         _goal=intent, _know=knowledge, _file=file_section,
                                          _url=cur_url, _title=cur_title, _site=cur_site,
                                          _tables=initial_tables, _png=initial_png, _res=resolution):
                             _cur_png = getattr(observation, "png_bytes", None) or _png
@@ -610,7 +615,7 @@ def main() -> int:
                             if _cur_tables is None:
                                 _cur_tables = _tables
                             return normalize_precondition_gates(normalize_confirm_read_gates(redecompose(
-                                _intent, knowledge=_know.navigation if _know else "", file_section=_file,
+                                _goal, knowledge=_know.navigation if _know else "", file_section=_file,
                                 current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
                                 table_summaries=_cur_tables, png_bytes=_cur_png,
                                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,

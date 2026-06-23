@@ -1,10 +1,10 @@
 ---
-id: task.orchestrator.intent_resolver
+id: task.router.intent_resolver
 source_type: task_template
 platform: shared
 scope:
-  - orchestrator_intent
-owner: gui_agent.core.orchestrator.intent_resolver
+  - router_intent
+owner: gui_agent.core.router.intent
 schema: IntentResolution
 eval_suites:
   - evals/browser/intent_resolver

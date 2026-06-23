@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.orchestrator.intent_resolver import resolve_intent
+from gui_agent.core.router import resolve_intent
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

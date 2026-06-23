@@ -899,7 +899,7 @@ def _case_program(case: dict):
     # resolver LLM (which has its own suite, evals/browser/intent_resolver).
     resolution = None
     if case.get("resolution"):
-        from gui_agent.core.orchestrator.intent_resolver import EntityRef, IntentResolution
+        from gui_agent.core.router import EntityRef, IntentResolution
         resolution = IntentResolution(entities=[EntityRef(**e) for e in case["resolution"]])
     program = decompose(
         case["goal"],
