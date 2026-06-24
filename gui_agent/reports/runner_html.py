@@ -354,6 +354,7 @@ HTML_TEMPLATE = """\
     {pages_html}
     {result_html}
     {webarena_html}
+    {mobileworld_html}
   </main>
 </div>
 
@@ -1049,6 +1050,55 @@ def _render_webarena_result(webarena: dict) -> str:
     )
 
 
+def _render_mobileworld_result(mobileworld: dict) -> str:
+    """Render the MobileWorld official (state-based) grading verdict — same card format
+    as the WebArena result, just sourced from the ``mobileworld`` context block."""
+    if not mobileworld:
+        return ""
+    score = mobileworld.get("score")
+    reason = str(mobileworld.get("reason") or "")
+    task_name = str(mobileworld.get("task_name") or "")
+    goal = str(mobileworld.get("goal") or "")
+    base_url = str(mobileworld.get("base_url") or "")
+    adb_serial = str(mobileworld.get("adb_serial") or "")
+    graded = score is not None
+    ok = graded and float(score) > 0
+    status = ("SUCCESS" if ok else "FAIL") if graded else "NOT GRADED"
+
+    chip_cls = "wa-chip" if ok else "wa-chip wa-chip-error"
+    card_cls = "wa-card" if ok else "wa-card wa-card-error"
+    meta_bits = []
+    if task_name:
+        meta_bits.append(task_name)
+    if graded:
+        meta_bits.append(f"score {score}")
+    meta_html = f'<span class="wa-meta">{_safe(" · ".join(meta_bits))}</span>' if meta_bits else ""
+
+    rows = ""
+    if goal:
+        rows += f'<div class="wa-k">Goal</div><div class="wa-v">{_safe(goal)}</div>'
+    rows += f'<div class="wa-k">Score</div><div class="wa-v">{_safe(str(score) if graded else "—")}</div>'
+    if reason:
+        rows += f'<div class="wa-k">Reason</div><div class="wa-v">{_safe(reason)}</div>'
+    if base_url:
+        rows += f'<div class="wa-k">Backend</div><div class="wa-v">{_safe(base_url)}</div>'
+    if adb_serial:
+        rows += f'<div class="wa-k">adb</div><div class="wa-v">{_safe(adb_serial)}</div>'
+
+    return (
+        f'<div class="{card_cls}">'
+        f'<div class="wa-head">'
+        f'<span class="wa-label">MobileWorld</span>'
+        f'<span class="{chip_cls}">{_safe(status)}</span>'
+        f'{meta_html}'
+        f'</div>'
+        f'<div class="wa-grid">'
+        f'{rows}'
+        f'</div>'
+        f'</div>'
+    )
+
+
 def _render_provenance(raw_input: str, goal: str, router: dict) -> str:
     """Header row showing the Router/input-resolution result for the run.
 
@@ -1441,6 +1491,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         stats=stats_str,
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
         webarena_html=_render_webarena_result(data.webarena),
+        mobileworld_html=_render_mobileworld_result(data.mobileworld),
         program_html=_render_program_section(data.orchestrator, data.webarena),
         run_status_badge=_render_run_status_badge(data),
         outline_title=("任务编排" if (data.orchestrator.get("program") or {}).get("statements") else "子目标分解"),

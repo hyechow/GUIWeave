@@ -386,6 +386,7 @@ class RunnerReportBuilder:
         data.orchestrator = ctx.get("orchestrator") or {}
         _attach_non_ui_screenshots(data.orchestrator, run_dir)
         data.webarena = ctx.get("webarena") or {}
+        data.mobileworld = ctx.get("mobileworld") or {}
         if data.webarena and not data.webarena.get("eval_result"):
             output_dir = str(data.webarena.get("task_output_dir") or "")
             if output_dir:

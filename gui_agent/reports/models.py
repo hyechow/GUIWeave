@@ -78,6 +78,7 @@ class ReportData:
     knowledge: dict = field(default_factory=dict)  # injected app-knowledge summary {app_name, nav_chars, elements_chars, section_count}
     knowledge_sections: list[dict] = field(default_factory=list)  # sections injected ≥1 turn: {stem, title, body} (body read from knowledge dir for the click-to-view modal)
     webarena: dict = field(default_factory=dict)  # WebArena artifact summary + agent_response.json payload
+    mobileworld: dict = field(default_factory=dict)  # MobileWorld task + state-based eval verdict {task_name, goal, score, reason, base_url, adb_serial}
 
 
 # ── Recon data classes ─────────────────────────────────────────

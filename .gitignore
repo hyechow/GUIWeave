@@ -29,3 +29,9 @@ injection/
 
 # Vendored native binaries (adb + scrcpy standalone), fetched per-machine
 vendor/
+
+# Benchmark run archives: the heavy per-run artifacts (report.html + screenshots +
+# logs + context.json) are derived/regenerable from logs/ — don't commit them.
+# Only the README pass-tables under benchmark/{mobileworld,webarena}/ are tracked.
+benchmark/mobileworld/*/
+benchmark/webarena/*/

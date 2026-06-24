@@ -71,74 +71,8 @@ iPhone GUI Agent 的基准测试任务集。
 
 | 文件 | 说明 |
 |---|---|
-| `tasks.json` | 50 个任务定义，编辑此文件管理任务 |
-| `results.json` | 测试结果，运行后自动生成 |
-| `benchmark.md` | GitHub 展示用表格，由 `generate` 命令自动生成 |
-| `benchmark_cli.py` | CLI 工具 |
-
-## 使用方法
-
-```bash
-# 列出所有任务
-bin/benchmark list
-
-# 筛选：按类别 / 难度 / App
-bin/benchmark list -c operation
-bin/benchmark list -d hard
-bin/benchmark list -a 微信
-
-# 运行单个任务（需要连接 iPhone）
-bin/benchmark run op-001
-
-# 运行多个任务
-bin/benchmark run op-001 op-002 op-003
-
-# 运行全部
-bin/benchmark run --all
-
-# 只跑查询类
-bin/benchmark run --all -c query
-
-# 重跑所有失败的任务
-bin/benchmark rerun
-
-# 手动记录结果（不需要真机）
-bin/benchmark record op-001 pass
-bin/benchmark record op-001 fail -n "找不到元素"
-bin/benchmark record op-001 skip
-
-# 查看某个任务结果
-bin/benchmark result op-001
-
-# 查看统计（通过率、按 App 分布）
-bin/benchmark stats
-
-# 生成 benchmark.md（合并 tasks.json + results.json）
-bin/benchmark generate
-```
-
-## 运行参数
-
-| 参数 | 说明 |
-|---|---|
-| `--supervisor` | 策略引擎：`milestone`（默认）/ `simple` |
-| `--max-turns` | 单任务最大轮数，默认 20 |
-
-```bash
-bin/benchmark run op-001 --supervisor simple --max-turns 30
-```
-
-## 执行可视化
-
-每个任务运行后自动生成 HTML 报告（`report.html`），包含：
-
-- **子目标分解** — 名称、描述、验收条件
-- **按子目标分行展示** — 每行一组缩略图，展示该子目标的操作步骤
-- **Action 标注** — 点击圆圈、滚动箭头、输入文本气泡、拖拽起终点
-- **模块耗时** — 每轮 checker / planner / action_policy 的 stacked bar 图
-- **验收截图** — 每个子目标完成时的无标注截图
-
-报告路径在 `results.json` 的 `report` 字段和汇总输出中显示。
+| `tasks.json` | 50 个任务定义 |
+| `results.json` | 测试结果(归档) |
 
 ## 任务结构
 
@@ -152,10 +86,3 @@ bin/benchmark run op-001 --supervisor simple --max-turns 30
   "expected_outcome": "微信老 Be 的对话中出现商品信息"
 }
 ```
-
-## 工作流
-
-1. 在 `tasks.json` 中编辑/管理任务
-2. `bin/benchmark run` 运行任务，结果写入 `results.json`
-3. `bin/benchmark stats` 查看通过率
-4. `bin/benchmark generate` 生成 markdown 表格用于 GitHub 展示
