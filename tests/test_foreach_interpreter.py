@@ -84,6 +84,64 @@ def test_foreach_iterates_rows_and_accumulates_into_table():
     assert [m["caption"] for m in mats] == ["reviews"]
 
 
+def test_foreach_accumulates_body_action_returns():
+    program = Program(
+        goal="g",
+        statements=[
+            Run(var="r", name="读取候选行", kind="read", returns=["id"], list_read=True),
+            ForEach(var="row", over="r", into="details", body=[
+                Run(
+                    var="d",
+                    name="打开 {row[id]} 详情",
+                    kind="navigation",
+                    returns=["rating"],
+                    read_spec="rating：详情页评分。",
+                ),
+            ]),
+        ],
+    )
+    ratings = {"1": "5", "2": "2"}
+
+    def execute(run: Run) -> RunResult:
+        if run.list_read:
+            return RunResult(completed=True, rows=[{"id": "1"}, {"id": "2"}])
+        rid = run.name.split()[1]
+        return RunResult(completed=True, reads={"rating": ratings[rid]})
+
+    interp = Interpreter(program)
+    drive(interp, execute)
+
+    assert interp.env["details"].rows == [
+        {"id": "1", "rating": "5"},
+        {"id": "2", "rating": "2"},
+    ]
+
+
+def test_foreach_target_identity_is_added_to_success_condition():
+    program = Program(
+        goal="g",
+        statements=[
+            Run(var="r", name="读取候选行", kind="read", returns=["id"], list_read=True),
+            ForEach(var="row", over="r", into="details", body=[
+                Run(
+                    name="打开评论 {row[id]} 的详情",
+                    kind="navigation",
+                    success_condition="进入该评论详情页，显示评分与昵称",
+                ),
+            ]),
+        ],
+    )
+    interp = Interpreter(program)
+    gen = interp.steps()
+    run = next(gen)
+    run = gen.send(RunResult(completed=True, rows=[{"id": "351"}, {"id": "347"}]))
+    assert run.name == "打开评论 351 的详情"
+    assert "351" in run.success_condition
+    run = gen.send(RunResult(completed=True))
+    assert run.name == "打开评论 347 的详情"
+    assert "347" in run.success_condition
+
+
 def test_list_read_source_is_not_exposed_as_data_query_table():
     """Reproduces 20260622_214841: the list_read row has an empty `rating` (the list has no rating
     column); the foreach drills each detail to fill rating. Only the accumulated `into` table — with

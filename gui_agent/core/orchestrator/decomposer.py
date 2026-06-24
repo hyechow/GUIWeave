@@ -44,7 +44,7 @@ class _StepDraft(BaseModel):
 
     op: str = Field(default="run", description='"run" | "if" | "finish"')
     # --- op=run ---
-    var: str = Field(default="", description="把该步结果绑定到的变量名；仅 read/data_query 或后续要引用时填，否则留空")
+    var: str = Field(default="", description="把该步结果绑定到的变量名；带 returns/data_query 或后续要引用时填，否则留空")
     name: str = Field(default="", description="op=run：该 milestone 的一句话操作指令")
     success_condition: str = Field(default="", description="op=run：完成后界面应处于的唯一可截图确认终态")
     run_kind: str = Field(default="action", description='op=run：navigation | filter | action | read | data_query')
@@ -53,11 +53,11 @@ class _StepDraft(BaseModel):
         description="op=run：该步是否为【前置状态保障】（确保已登录 / 已进入某模式或某页，初始往往已满足）。"
                     "是→true 且 run_kind 用 navigation；普通去某页/做某操作就留 false。",
     )
-    returns: list[str] = Field(default_factory=list, description="op=run 且 run_kind=read/data_query：要返回的结果字段名列表")
+    returns: list[str] = Field(default_factory=list, description="op=run：该步完成后要返回的结果字段；data_query 也必须填")
     read_spec: str = Field(
         default="",
-        description="op=run 且 run_kind=read：本次读取说明——逐个说明每个 returns 字段在界面上看什么、"
-                    "如何把信号(图标/颜色/文字/位置)判读成值、各取值含义；让纯只读能据此判读。",
+        description="op=run 且 returns 非空：返回值读取说明——逐个说明每个 returns 字段在完成帧上看什么、"
+                    "如何把信号(图标/颜色/文字/位置)判读成值、各取值含义。",
     )
     sql: str = Field(
         default="",
@@ -78,8 +78,8 @@ class _StepDraft(BaseModel):
     into: str = Field(default="", description="op=foreach：累积表变量名（留空默认 = 循环变量+s）；循环结束后可被 data_query 查询")
     body: list["_StepDraft"] = Field(default_factory=list, description="op=foreach：每行执行一遍的步骤（run/if/finish，不可再嵌 foreach）")
     # --- op=if ---
-    cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个 read/data_query 步的 var）")
-    cond_field: str = Field(default="", description="op=if：读取字段名（该 read/data_query 步 returns 里的字段）")
+    cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个带 returns/data_query 步的 var）")
+    cond_field: str = Field(default="", description="op=if：读取字段名（该步 returns 里的字段）")
     cond_cmp: str = Field(
         default="==",
         description='op=if：条件操作符："==" | "!=" | "exists" | "empty" | "contains" | "not_contains" | "in" | "not_in"',
@@ -89,7 +89,7 @@ class _StepDraft(BaseModel):
     then: list["_StepDraft"] = Field(default_factory=list, description="op=if：条件成立时执行的步骤")
     otherwise: list["_StepDraft"] = Field(default_factory=list, description="op=if：条件不成立时执行的步骤")
     # --- op=finish ---
-    message: str = Field(default="", description="op=finish：最终答复模板，可用 {变量[字段]} 引用某 read 结果")
+    message: str = Field(default="", description="op=finish：最终答复模板，可用 {变量[字段]} 引用某步返回值")
 
 
 class _PlanDraft(BaseModel):
@@ -153,6 +153,29 @@ def _to_cond_values(cmp: str, values: list[str], value: str) -> list[str]:
     return out
 
 
+def _produces_result(run: Run) -> bool:
+    return bool(run.var) and (run.kind == "data_query" or bool(run.returns))
+
+
+def _goal_expects_structured_answer(goal: str) -> bool:
+    text = (goal or "").lower()
+    return bool(
+        re.search(r"\b(how many|count|number|total|which|who|what|find|list|return|show)\b", text)
+        or any(k in goal for k in ("多少", "几个", "几条", "总数", "数量", "哪些", "谁", "什么", "找出", "列出", "返回", "显示"))
+    )
+
+
+def _has_result_source(stmts: list[Stmt]) -> bool:
+    for s in stmts:
+        if isinstance(s, Run) and (s.returns or s.kind == "data_query"):
+            return True
+        if isinstance(s, If) and (_has_result_source(s.then) or _has_result_source(s.otherwise)):
+            return True
+        if isinstance(s, ForEach) and _has_result_source(s.body):
+            return True
+    return False
+
+
 def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
     """Deterministically convert flat step drafts into the clean Program AST."""
     out: list[Stmt] = []
@@ -210,10 +233,10 @@ def to_program(draft: _PlanDraft, goal: str) -> Program:
 def validate_program(program: Program) -> list[str]:
     """Deterministic shape guards — the high-value ones for the read-driven data-flow patterns.
 
-    A read/data_query must request fields + bind a var; an if must branch on a field a prior non-UI result returns; a
+    A result-producing run must request fields + bind a var; an if must branch on a field a prior result returns; a
     precondition may only sit on a navigation step (it ensures a state, so on action/read/filter
     it would be wrongly accepted on frame 1); and every {var[field]} template ref (finish message
-    OR — read-then-reference, rule 10 — a run's name/success_condition/read_spec) must resolve to a
+    OR — result-then-reference, rule 10 — a run's name/success_condition/read_spec) must resolve to a
     read field that is ALREADY PRODUCED on the same execution path. The scope check is path-
     sensitive, not a global symbol table: a ref is valid only if its read precedes it on every path
     reaching it, so forward refs (引用在前、读取在后) and cross-branch refs (一个分支读、另一个分支
@@ -224,13 +247,19 @@ def validate_program(program: Program) -> list[str]:
     issues: list[str] = []
     if not program.statements:
         return ["程序为空：至少要有一个 run 步骤"]
+    if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements):
+        issues.append(
+            "任务要求返回/查找/统计具体答案，但计划没有任何 returns 或 data_query 结果来源；"
+            "不能用裸 finish 猜答案。请让产生结果的 navigation/filter/action 带 returns/read_spec，"
+            "或在表格数据源准备好后使用 data_query，并让 finish 引用 {变量[字段]}。"
+        )
 
-    all_result_vars: set[str] = set()  # every non-UI result var anywhere — to spot botched bare refs
+    all_result_vars: set[str] = set()  # every result var anywhere — to spot botched bare refs
     rank_goal_text = (program.goal or "").lower()
 
     def _collect_result_vars(stmts: list[Stmt]) -> None:
         for s in stmts:
-            if isinstance(s, Run) and s.kind in {"read", "data_query"} and s.var:
+            if isinstance(s, Run) and _produces_result(s):
                 all_result_vars.add(s.var)
             elif isinstance(s, If):
                 _collect_result_vars(s.then)
@@ -253,18 +282,18 @@ def validate_program(program: Program) -> list[str]:
     _collect_list_reads(program.statements)
 
     def _check_refs(text: str, where: str, scope: dict[str, set[str]]) -> None:
-        # `scope` = read var -> returns, for reads already executed BEFORE this point on this path.
+        # `scope` = result var -> returns, for result-producing runs already executed BEFORE this point.
         for m in TEMPLATE_RE.finditer(text or ""):
             var, field = m.group(1), m.group(2).strip().strip("'\"")
             if var not in scope:
                 issues.append(
                     f"{where} 引用的 {{{var}[{field}]}} 中变量「{var}」在此处尚未产生"
-                    f"（不是任何在它之前、且在当前执行路径上的 read/data_query 步的 var；引用在前/读取在后/读取在另一分支都算）"
-                    f"——指代落空；请先加一个 read 或 data_query 步产生「{var}」并放在引用它之前（同一执行路径上），或删掉这个引用"
+                    f"（不是任何在它之前、且在当前执行路径上的返回值/data_query 步的 var；引用在前/读取在后/读取在另一分支都算）"
+                    f"——指代落空；请先让前序步骤通过 returns 或 data_query 产生「{var}」并放在引用它之前（同一执行路径上），或删掉这个引用"
                 )
             elif field not in scope[var]:
                 issues.append(
-                    f"{where} 引用的字段「{var}[{field}]」不在该 read/data_query 步返回的字段（returns）里"
+                    f"{where} 引用的字段「{var}[{field}]」不在该步骤返回的字段（returns）里"
                     f"——请改用它 returns 里已有的字段名，或在该步 returns 里补上「{field}」"
                 )
         # botched bare {var}: a known read var written without [field] — neither resolves nor
@@ -274,7 +303,7 @@ def validate_program(program: Program) -> list[str]:
             var = m.group(1)
             if var in all_result_vars:
                 issues.append(
-                    f"{where} 用了裸 {{{var}}} 缺字段——「{var}」是某个 read/data_query 步的结果变量，"
+                    f"{where} 用了裸 {{{var}}} 缺字段——「{var}」是某个返回值/data_query 步的结果变量，"
                     f"引用它的某个字段要写成 {{{var}[字段]}}（字段取自该步 returns）；裸 {{{var}}} 不会被填上值"
                 )
 
@@ -303,6 +332,10 @@ def validate_program(program: Program) -> list[str]:
                     issues.append(f"data_query 步「{s.name}」没有绑定 var——查询结果无法被后续引用")
                 if s.kind == "data_query" and not s.sql.strip():
                     issues.append(f"data_query 步「{s.name}」没有 sql——必须提供只读 SELECT/WITH SELECT")
+                if s.returns and s.kind != "data_query" and not s.var:
+                    issues.append(f"步骤「{s.name}」声明了 returns 但没有绑定 var——返回值无法被后续 if/finish/foreach 引用")
+                if s.returns and s.kind not in {"read", "data_query"} and not s.read_spec.strip():
+                    issues.append(f"步骤「{s.name}」声明了 returns 但没有 read_spec——必须说明这些返回字段在完成帧上如何读取")
                 if s.kind == "data_query" and _sql_uses_schema_mapping_text(s.sql):
                     issues.append(
                         f"data_query 步「{s.name}」的 SQL 使用了 schema 显示映射文本（如 Header->column）。"
@@ -322,7 +355,7 @@ def validate_program(program: Program) -> list[str]:
                 # check this run's refs BEFORE binding its own var (a read can't reference its own
                 # value — env[var] isn't set until the read completes)
                 _check_refs(f"{s.name}\n{s.success_condition}\n{s.read_spec}", f"步骤「{s.name}」", scope)
-                if s.kind in {"read", "data_query"} and s.var:
+                if _produces_result(s):
                     scope[s.var] = set(s.returns)
             elif isinstance(s, Finish):
                 _check_refs(s.message, "finish 模板", scope)
@@ -330,12 +363,12 @@ def validate_program(program: Program) -> list[str]:
                 if s.cond.var not in scope:
                     issues.append(
                         f"if 条件引用的变量「{s.cond.var}」在此处尚未产生"
-                        "（不是任何在它之前、且在当前执行路径上的 read/data_query 步的 var）"
-                        f"——请在这个 if 之前（同一执行路径上）加一个 read 或 data_query 步产生「{s.cond.var}」"
+                        "（不是任何在它之前、且在当前执行路径上的返回值/data_query 步的 var）"
+                        f"——请在这个 if 之前（同一执行路径上）让某个步骤通过 returns 或 data_query 产生「{s.cond.var}」"
                     )
                 elif s.cond.field not in scope[s.cond.var]:
                     issues.append(
-                        f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该 read/data_query 步返回的字段（returns）里"
+                        f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该步骤返回的字段（returns）里"
                         f"——请把 cond_field 改成该步 returns 里已有的字段名，或在该步 returns 里补上「{s.cond.field}」"
                     )
                 if s.cond.cmp in {"contains", "not_contains"} and not s.cond.value.strip():
@@ -384,7 +417,293 @@ def validate_program(program: Program) -> list[str]:
                 _walk(s.body, body_scope)
 
     _walk(program.statements, {})
+    _check_list_read_direct_query(program.statements, issues)
+    _check_retrieval_retry_preserves_field(program.statements, issues)
     return issues
+
+
+_RETRIEVAL_FIELD_RE = re.compile(
+    r"([A-Za-z][A-Za-z0-9 _/-]{0,30}|[\u4e00-\u9fff]{1,12})\s*"
+    r"(?:列|字段|输入框|筛选框|搜索框|下拉框|column|field|filter|name|名)",
+    re.IGNORECASE,
+)
+_RETRIEVAL_FIELD_EQ_RE = re.compile(
+    r"([A-Za-z][A-Za-z0-9 _/-]{0,30}|[\u4e00-\u9fff]{1,12})\s*(?:=|:|：)",
+    re.IGNORECASE,
+)
+_RETRIEVAL_RETRY_CUE_RE = re.compile(
+    r"0\s*条|无结果|空结果|关键词|模糊|放宽|包含|contains|fuzzy|broaden|partial",
+    re.IGNORECASE,
+)
+_RETRIEVAL_ACTION_CUE_RE = re.compile(
+    r"搜索|筛选|检索|查找|重筛|重搜|filter|search|query",
+    re.IGNORECASE,
+)
+_RETRIEVAL_FIELD_STOPWORDS = {
+    "当前", "目标", "搜索", "筛选", "关键", "关键词", "记录", "列表", "结果", "相关",
+    "使用", "输入", "提交", "页面", "the", "same", "target", "filter", "search",
+}
+_RETRIEVAL_FIELD_PREFIX_RE = re.compile(
+    r"^(?:先用|使用|用|在|按|以|将|把|从|当前|目标|same|target|in|on|by|using)\s*",
+    re.IGNORECASE,
+)
+
+
+def _normalize_retrieval_field(raw: str) -> str:
+    field = re.sub(r"\s+", " ", str(raw or "").strip(" '\"「」『』“”‘’")).strip()
+    previous = None
+    while field and field != previous:
+        previous = field
+        field = _RETRIEVAL_FIELD_PREFIX_RE.sub("", field).strip()
+    lowered = field.lower()
+    if not field or lowered in _RETRIEVAL_FIELD_STOPWORDS:
+        return ""
+    return lowered
+
+
+def _retrieval_field_aliases(field: str) -> set[str]:
+    norm = _normalize_retrieval_field(field)
+    aliases = {norm} if norm else set()
+    bilingual = {
+        "产品": {"product", "产品", "商品"},
+        "商品": {"product", "产品", "商品"},
+        "product": {"product", "产品", "商品"},
+        "客户": {"customer", "客户"},
+        "customer": {"customer", "客户"},
+        "昵称": {"nickname", "昵称"},
+        "nickname": {"nickname", "昵称"},
+        "标题": {"title", "标题"},
+        "title": {"title", "标题"},
+        "状态": {"status", "状态"},
+        "status": {"status", "状态"},
+    }
+    aliases.update(bilingual.get(norm, set()))
+    return {_normalize_retrieval_field(alias) for alias in aliases if _normalize_retrieval_field(alias)}
+
+
+def _extract_retrieval_fields(text: str) -> list[str]:
+    fields: list[str] = []
+    for pattern in (_RETRIEVAL_FIELD_RE, _RETRIEVAL_FIELD_EQ_RE):
+        for raw in pattern.findall(text or ""):
+            field = _normalize_retrieval_field(raw)
+            if field and field not in fields:
+                fields.append(field)
+    return fields
+
+
+def _retrieval_fields_overlap(left: list[str], right: list[str]) -> bool:
+    for a in left:
+        aliases = _retrieval_field_aliases(a)
+        if not aliases:
+            continue
+        for b in right:
+            if aliases & _retrieval_field_aliases(b):
+                return True
+    return False
+
+
+def _flatten_branch_runs(stmts: list[Stmt]) -> list[Run]:
+    out: list[Run] = []
+    for item in stmts:
+        if isinstance(item, Run):
+            out.append(item)
+        elif isinstance(item, If):
+            out.extend(_flatten_branch_runs(item.then))
+            out.extend(_flatten_branch_runs(item.otherwise))
+        elif isinstance(item, ForEach):
+            out.extend(_flatten_branch_runs(item.body))
+    return out
+
+
+def _looks_like_fuzzy_retry(text: str) -> bool:
+    return bool(_RETRIEVAL_RETRY_CUE_RE.search(text or "") and _RETRIEVAL_ACTION_CUE_RE.search(text or ""))
+
+
+def _check_retrieval_retry_preserves_field(stmts: list[Stmt], issues: list[str]) -> None:
+    """Exact->fuzzy retry branches must keep the same target field/column.
+
+    This is a generic data-source guard, not a site rule: when a search/filter step already
+    identifies the target field, an empty-result retry that only says "use keyword K again" lets
+    the planner substitute any visible input. Keep the field in the branch so DOM-level field
+    guards can enforce it.
+    """
+
+    def _walk_seq(seq: list[Stmt]) -> None:
+        previous_fields: list[str] = []
+        previous_label = ""
+        for item in seq:
+            if isinstance(item, Run):
+                text = f"{item.name}\n{item.success_condition}\n{item.read_spec}"
+                field_text = f"{item.name}\n{item.success_condition}"
+                fields = _extract_retrieval_fields(field_text)
+                if item.kind in {"filter", "action"} and fields and _RETRIEVAL_ACTION_CUE_RE.search(text):
+                    previous_fields = fields
+                    previous_label = item.name
+                else:
+                    previous_fields = []
+                    previous_label = ""
+                continue
+            if isinstance(item, If):
+                if previous_fields:
+                    for branch_name, branch in (("then", item.then), ("otherwise", item.otherwise)):
+                        for run in _flatten_branch_runs(branch):
+                            if run.kind not in {"filter", "action"}:
+                                continue
+                            text = f"{run.name}\n{run.success_condition}\n{run.read_spec}"
+                            field_text = f"{run.name}\n{run.success_condition}"
+                            if not _looks_like_fuzzy_retry(text):
+                                continue
+                            fields = _extract_retrieval_fields(field_text)
+                            if not _retrieval_fields_overlap(previous_fields, fields):
+                                issues.append(
+                                    f"if 分支 {branch_name} 的检索回退步骤「{run.name}」没有保留上一检索步骤"
+                                    f"「{previous_label}」的目标字段/列 {previous_fields}。"
+                                    "精确→关键词/模糊重试必须继续点名同一个字段/列（例如「在同一字段输入关键词并提交」），"
+                                    "不能退化成泛关键词搜索，否则执行层可能把值填进相近但错误的字段。"
+                                )
+                _walk_seq(item.then)
+                _walk_seq(item.otherwise)
+                previous_fields = []
+                previous_label = ""
+            elif isinstance(item, ForEach):
+                _walk_seq(item.body)
+                previous_fields = []
+                previous_label = ""
+
+    _walk_seq(stmts)
+
+
+_SQL_NON_FIELD_TOKENS = {
+    "all", "and", "as", "asc", "between", "by", "case", "cast", "count", "dense_rank",
+    "desc", "distinct", "else", "end", "from", "group", "having", "in", "integer", "is",
+    "like", "limit", "not", "null", "offset", "on", "or", "order", "over", "partition",
+    "real", "select", "str", "strftime", "sum", "text", "then", "where", "when", "with",
+    "data", "result",
+}
+
+
+def _data_query_field_tokens(run: Run) -> set[str]:
+    """Best-effort field names a data_query appears to consume or return."""
+    tokens = {str(item).strip().lower() for item in (run.returns or []) if str(item).strip()}
+    tokens.discard("result")
+    for raw in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", run.sql or ""):
+        token = raw.lower()
+        if token in _SQL_NON_FIELD_TOKENS or re.fullmatch(r"table_\d+", token):
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _read_looks_like_list_read(run: Run) -> bool:
+    if run.kind != "read" or not run.returns:
+        return False
+    text = f"{run.name}\n{run.read_spec}".lower()
+    return any(
+        marker in text
+        for marker in (
+            "逐行", "每行", "每一行", "每条记录", "每条", "行对象", "row object", "one object per row",
+        )
+    )
+
+
+def _check_list_read_direct_query(stmts: list[Stmt], issues: list[str]) -> None:
+    """Reject list_read -> data_query plans that skip the required foreach enrichment.
+
+    A list_read only exposes the fields it read per row. If a later data_query consumes fields not
+    present in those rows, the missing fields must be produced by foreach body returns first.
+    """
+
+    foreach_tables: dict[str, tuple[str, set[str]]] = {}
+
+    def _body_result_fields(seq: list[Stmt], row_fields: set[str]) -> set[str]:
+        fields = set(row_fields)
+        for item in seq:
+            if isinstance(item, Run) and item.returns:
+                fields.update(field.lower() for field in item.returns)
+            elif isinstance(item, If):
+                fields.update(_body_result_fields(item.then, row_fields))
+                fields.update(_body_result_fields(item.otherwise, row_fields))
+        return fields
+
+    def _referenced_tables(sql: str) -> set[str]:
+        return {
+            raw.lower()
+            for raw in re.findall(r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)\b", sql or "", flags=re.I)
+        }
+
+    def _walk_seq(seq: list[Stmt], pending: dict[str, tuple[str, set[str]]]) -> None:
+        local = dict(pending)
+        for s in seq:
+            if isinstance(s, Run):
+                if s.kind == "read" and s.var and (s.list_read or _read_looks_like_list_read(s)):
+                    local[s.var] = (s.name, {field.lower() for field in s.returns})
+                    continue
+                if s.kind == "data_query":
+                    needed = _data_query_field_tokens(s)
+                    if local and needed:
+                        for var, (read_name, row_fields) in local.items():
+                            missing = needed - row_fields
+                            if missing:
+                                issues.append(
+                                    f"data_query 步「{s.name}」紧跟列表型 read「{read_name}」后，"
+                                    f"使用/返回了该列表行未读出的字段 {sorted(missing)}；"
+                                    "若这些字段只在每条记录详情里，必须先插入 foreach over="
+                                    f"「{var}」：body 里写一个打开 {{row[用于定位字段]}} 详情/Edit 页的 run，"
+                                    "并在这个 run 上填写 returns/read_spec 读出这些详情字段，foreach 用 into 产出详情表；"
+                                    "然后 data_query 只能查询这个 into 表。不要跳过 foreach 凭空查询详情字段。"
+                                )
+                                break
+                    refs = _referenced_tables(s.sql)
+                    unknown_refs = {
+                        ref for ref in refs
+                        if ref not in foreach_tables and ref != "data" and not re.fullmatch(r"table_\d+", ref)
+                    }
+                    if local and unknown_refs:
+                        issues.append(
+                            f"data_query 步「{s.name}」查询了未由前序 foreach 产出的表 {sorted(unknown_refs)}；"
+                            "列表型 read 只产生行对象数组，不能凭空作为 SQL 表。"
+                            "若需要补详情字段，请先 foreach over 列表 read，body 用打开详情的 run + returns/read_spec "
+                            "产出该 foreach 的 into 表，再查询该 into 表。"
+                        )
+                    for table in refs & set(foreach_tables):
+                        table_label, fields = foreach_tables[table]
+                        missing = needed - fields - refs
+                        if missing:
+                            issues.append(
+                                f"data_query 步「{s.name}」查询 foreach 产出的表「{table_label}」，"
+                                f"但使用/返回了 foreach body 没有通过 returns 产出的字段 {sorted(missing)}；"
+                                "请在该 foreach body 里逐条打开详情，并让打开详情的 run 带 returns/read_spec 产出这些字段，"
+                                "再对 into 表 data_query。"
+                            )
+                            break
+                    if foreach_tables and not (refs & set(foreach_tables)):
+                        produced: set[str] = set()
+                        labels: list[str] = []
+                        for label, fields in foreach_tables.values():
+                            labels.append(label)
+                            produced.update(fields)
+                        missing = needed - produced - refs
+                        if missing:
+                            issues.append(
+                                f"data_query 步「{s.name}」位于 foreach 之后，但使用/返回了此前 foreach "
+                                f"没有通过 returns 产出的字段 {sorted(missing)}；已存在的 foreach 表为 {labels}。"
+                                "若要按每条记录详情字段筛选，请在 foreach body 中用打开详情的 run 返回这些字段，"
+                                "并让 SQL 查询对应的 into 表。"
+                            )
+            elif isinstance(s, ForEach):
+                row_fields = set()
+                if s.over in local:
+                    row_fields = set(local[s.over][1])
+                table_name = (s.into or f"{s.var}s").lower()
+                foreach_tables[table_name] = (s.into or f"{s.var}s", _body_result_fields(s.body, row_fields))
+                if s.over in local:
+                    local.pop(s.over, None)
+                _walk_seq(s.body, {})
+            elif isinstance(s, If):
+                _walk_seq(s.then, dict(local))
+                _walk_seq(s.otherwise, dict(local))
+
+    _walk_seq(stmts, {})
 
 
 def _rank_query_drops_ties(goal_text: str, run: Run) -> bool:
@@ -529,6 +848,50 @@ def _invoke_plan(
     return program
 
 
+def _iter_runs(stmts: list[Stmt]):
+    for stmt in stmts:
+        if isinstance(stmt, Run):
+            yield stmt
+        elif isinstance(stmt, If):
+            yield from _iter_runs(stmt.then)
+            yield from _iter_runs(stmt.otherwise)
+        elif isinstance(stmt, ForEach):
+            yield from _iter_runs(stmt.body)
+
+
+def _normalize_approximate_entity_sql(
+    program: Program,
+    resolution: "IntentResolution | None",
+) -> Program:
+    """Use intent search keys, not approximate spoken mentions, inside SQL filters."""
+    if resolution is None or not resolution.entities:
+        return program
+    replacements: list[tuple[str, str]] = []
+    for entity in resolution.entities:
+        if entity.match_mode != "approximate":
+            continue
+        mention = (entity.mention or "").strip()
+        key = (entity.search_key or "").strip()
+        if not mention or not key or _norm_sql_text(mention) == _norm_sql_text(key):
+            continue
+        replacements.append((mention, key.replace("'", "''")))
+    if not replacements:
+        return program
+    updated = program.model_copy(deep=True)
+    for run in _iter_runs(updated.statements):
+        if run.kind != "data_query" or not run.sql:
+            continue
+        sql = run.sql
+        for mention, key in replacements:
+            sql = re.sub(re.escape(mention), key, sql, flags=re.IGNORECASE)
+        run.sql = sql
+    return updated
+
+
+def _norm_sql_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().lower()
+
+
 def decompose(
     goal: str,
     *,
@@ -565,7 +928,7 @@ def decompose(
         knowledge_block("app_navigation", knowledge),
         *_page_and_table_blocks(current_url, current_site, current_title, table_summaries),
     ]
-    return _invoke_plan(
+    program = _invoke_plan(
         system_prompt=system_prompt or _SYSTEM,
         png_bytes=png_bytes,
         context_blocks=context_blocks,
@@ -574,6 +937,7 @@ def decompose(
         context_reports=context_reports,
         label="orchestrator.decompose",
     )
+    return _normalize_approximate_entity_sql(program, resolution)
 
 
 def _prior_experience_block(prior_experience: str) -> "ContextBlock | None":
@@ -655,7 +1019,7 @@ def redecompose(
         knowledge_block("app_navigation", knowledge),
         *_page_and_table_blocks(current_url, current_site, current_title, table_summaries),
     ]
-    return _invoke_plan(
+    program = _invoke_plan(
         system_prompt=_REDECOMPOSE_SYSTEM,
         png_bytes=png_bytes,
         context_blocks=context_blocks,
@@ -664,6 +1028,7 @@ def redecompose(
         context_reports=context_reports,
         label="orchestrator.redecompose",
     )
+    return _normalize_approximate_entity_sql(program, resolution)
 
 
 def _table_schema_prompt(tables: list[dict] | None) -> str:

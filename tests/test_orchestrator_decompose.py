@@ -162,7 +162,7 @@ def test_validate_if_references_unknown_field():
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
     issues = validate_program(prog)
-    assert any("不在该 read/data_query 步返回的字段（returns）里" in i for i in issues)
+    assert any("不在该步骤返回的字段（returns）里" in i for i in issues)
 
 
 def test_validate_condition_operator_operands():
@@ -179,6 +179,44 @@ def test_validate_condition_operator_operands():
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
     assert any("缺少 cond_value" in i for i in validate_program(missing_value))
+
+
+def test_validate_fuzzy_retry_preserves_filter_field():
+    bad = Program(
+        goal="Return matching records",
+        statements=[
+            Run(
+                var="search_result",
+                name="在产品名 'Olivia zip jacket' 上筛选记录，并读取是否有结果",
+                kind="action",
+                success_condition="筛选动作已提交，界面已响应",
+                returns=["是否有结果"],
+                read_spec="是否有结果：结果行非空则为有结果，否则为无结果。",
+            ),
+            If(
+                cond=Cond(var="search_result", field="是否有结果", value="无结果"),
+                then=[
+                    Run(
+                        name="清除筛选并使用关键词 'Olivia' 重新搜索产品相关记录",
+                        kind="filter",
+                        success_condition="列表显示包含 Olivia 的记录",
+                    )
+                ],
+            ),
+        ],
+    )
+    issues = validate_program(bad)
+    assert any("检索回退" in i and "目标字段/列" in i for i in issues)
+
+    good = bad.model_copy(deep=True)
+    branch = good.statements[1]
+    assert isinstance(branch, If)
+    branch.then[0] = Run(
+        name="清除筛选后，在 Product 列输入关键词 'Olivia' 并提交筛选",
+        kind="filter",
+        success_condition="Product 列已按 Olivia 筛选且列表非空",
+    )
+    assert not any("检索回退" in i for i in validate_program(good))
 
 
 def test_validate_read_without_returns_or_var():
@@ -309,6 +347,17 @@ def test_validate_walks_into_branches():
            otherwise=[Finish(message="x")]),
     ])
     assert validate_program(prog) == []
+
+
+def test_validate_answer_goal_requires_result_source():
+    prog = Program(statements=[
+        Run(name="筛选评论", kind="filter", success_condition="列表已刷新"),
+        Finish(message="提及关键词"),
+    ], goal="How many reviews mention best?")
+
+    issues = validate_program(prog)
+
+    assert any("没有任何 returns 或 data_query 结果来源" in i for i in issues)
 
 
 def test_decomposed_program_drives_correct_branch_end_to_end():

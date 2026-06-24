@@ -210,6 +210,171 @@ def test_to_milestone_maps_runkind():
     assert dq.id == "q"
 
 
+def test_returning_ui_runs_get_target_specific_milestone_ids():
+    from gui_agent.core.orchestrator.engine import to_milestone
+
+    first = to_milestone(
+        Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"]),
+        0,
+    )
+    second = to_milestone(
+        Run(var="d", name="打开评论 347 的详情", kind="navigation", returns=["rating"]),
+        0,
+    )
+
+    assert first.id != second.id
+    assert first.id.startswith("d_")
+    assert second.id.startswith("d_")
+
+
+def test_returning_ui_handoff_does_not_skip_initial_check(tmp_path):
+    from gui_agent.core.run.non_ui import drive_pending_non_ui
+    from gui_agent.core.schemas import Observation, PolicyContext
+
+    class Supervisor:
+        def __init__(self):
+            self.calls = []
+
+        def reseed(self, milestone, task_type="action", fresh_advance=False):
+            self.calls.append((milestone, task_type, fresh_advance))
+
+    supervisor = Supervisor()
+    run = Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"])
+
+    result = drive_pending_non_ui(
+        current_run=run,
+        run_index=0,
+        notes_mark=0,
+        interpreter_steps=None,
+        bundle=None,
+        platform=None,
+        log_dir=tmp_path,
+        supervisor=supervisor,
+        context=PolicyContext(goal="g", supervisor_policy_name="test", action_policy_name="test"),
+        save_context=lambda: None,
+        say=lambda _msg: None,
+        done_observation=Observation(png_bytes=b"x", source="test"),
+    )
+
+    assert result.current_run is run
+    assert supervisor.calls
+    milestone, task_type, fresh_advance = supervisor.calls[0]
+    assert milestone.name == "打开评论 351 的详情"
+    assert task_type == "action"
+    assert fresh_advance is False
+
+
+def test_target_identity_hint_uses_url_only_for_runtime_target_gate():
+    from gui_agent.core.schemas import Milestone, Observation
+    from gui_agent.core.supervisor.milestone.policy import _target_identity_hint
+
+    obs = Observation(png_bytes=b"x", source="test", url="http://host/admin/item/edit/id/347/")
+    ordinary = Milestone(
+        id="m1",
+        name="进入详情页",
+        description="进入详情页",
+        kind="navigation",
+        completion_strategy="visible_once",
+        success_condition="进入详情页",
+    )
+    targeted = ordinary.model_copy(update={
+        "name": "打开记录 347 的详情",
+        "success_condition": "进入该记录详情页（必须对应子目标指定对象「打开记录 347 的详情」）",
+    })
+
+    assert _target_identity_hint(ordinary, obs) == ""
+    hint = _target_identity_hint(targeted, obs)
+    assert "347" in hint
+    assert "URL/路由" in hint
+
+
+def test_route_identity_guard_accepts_identity_only_missing():
+    from gui_agent.core.schemas import Milestone, Observation
+    from gui_agent.core.supervisor.milestone.helpers import _apply_route_identity_checker_guard
+    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+
+    milestone = Milestone(
+        id="m1",
+        name="打开记录 347 的详情",
+        description="打开记录 347 的详情",
+        kind="navigation",
+        success_condition="进入该记录详情页并显示目标字段（必须对应子目标指定对象「打开记录 347 的详情」）",
+    )
+    obs = Observation(png_bytes=b"x", source="test", url="http://host/admin/item/edit/id/347/")
+    result = _SingleCheckResult(
+        status="in_progress",
+        reason="页面是详情页，但需要确认是否为记录 ID 347。",
+        missing_evidence=["确认当前页面显示的是记录 ID 347 的详情，而非其他记录。"],
+        page_identity="记录详情页",
+        summary="详情页字段已显示，但对象身份待确认。",
+    )
+
+    guarded = _apply_route_identity_checker_guard(result, milestone, obs)
+
+    assert guarded.status == "done"
+    assert guarded.missing_evidence == []
+    assert any("347" in item for item in guarded.visible_evidence)
+
+
+def test_route_identity_guard_does_not_accept_missing_fields():
+    from gui_agent.core.schemas import Milestone, Observation
+    from gui_agent.core.supervisor.milestone.helpers import _apply_route_identity_checker_guard
+    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+
+    milestone = Milestone(
+        id="m1",
+        name="打开记录 347 的详情",
+        description="打开记录 347 的详情",
+        kind="navigation",
+        success_condition="进入该记录详情页并显示评分（必须对应子目标指定对象「打开记录 347 的详情」）",
+    )
+    obs = Observation(png_bytes=b"x", source="test", url="http://host/admin/item/edit/id/347/")
+    result = _SingleCheckResult(
+        status="in_progress",
+        reason="页面是详情页，但评分字段不可见。",
+        missing_evidence=["需要显示 rating_stars 评分字段。"],
+        page_identity="记录详情页",
+        summary="详情页未显示评分。",
+    )
+
+    guarded = _apply_route_identity_checker_guard(result, milestone, obs)
+
+    assert guarded.status == "in_progress"
+    assert guarded.missing_evidence == result.missing_evidence
+
+
+def test_approximate_entity_sql_uses_search_key():
+    from gui_agent.core.orchestrator.decomposer import _normalize_approximate_entity_sql
+    from gui_agent.core.orchestrator.program import Program, Run
+    from gui_agent.core.router import EntityRef, IntentResolution
+
+    program = Program(statements=[
+        Run(
+            name="查询昵称",
+            kind="data_query",
+            returns=["result"],
+            sql=(
+                "SELECT customer_nickname AS result FROM detail_rows "
+                "WHERE product_name LIKE '%Olivia zip jacket%' "
+                "AND CAST(rating_stars AS INTEGER) <= 3"
+            ),
+        )
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Olivia zip jacket",
+            type="product",
+            match_mode="approximate",
+            search_key="Olivia",
+        )
+    ])
+
+    normalized = _normalize_approximate_entity_sql(program, resolution)
+
+    assert "Olivia zip jacket" not in normalized.statements[0].sql
+    assert "LIKE '%Olivia%'" in normalized.statements[0].sql
+
+
 def test_task_type_for_non_ui_is_analysis():
     from gui_agent.core.orchestrator.engine import task_type_for
     assert task_type_for(Run(name="读", kind="read", returns=["x"])) == "analysis"
@@ -293,8 +458,8 @@ def test_structured_read_empty_returns_no_llm():
 
 
 def test_normalize_confirm_read_gates_rewrites_action_before_read():
-    # L2 backstop: an action immediately followed by a read (confirm-read) gets a lenient
-    # DISPATCH success_condition, so the checker accepts on "fired" not on the result.
+    # L2 backstop: an action immediately followed by a scalar read is normalized into
+    # an action return contract, with a lenient DISPATCH success_condition.
     from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="进页", kind="navigation", success_condition="页面已显示"),
@@ -304,14 +469,16 @@ def test_normalize_confirm_read_gates_rewrites_action_before_read():
         Finish(message="{r[连通状态]}"),
     ])
     out = normalize_confirm_read_gates(prog)
-    nav, act, read, fin = out.statements
+    nav, act, fin = out.statements
     # 触发型 action 的验收被改写成 dispatch 门：不再断言结果，明确让位给 read
     assert "不判定结果取值" in act.success_condition
-    assert "下一步读取判定" in act.success_condition
+    assert "结构化返回值读取判定" in act.success_condition
     assert "连通标记" not in act.success_condition  # 结果门措辞已被替换
-    # navigation / read / finish 不动；read 的 returns/read_spec 原样
+    # navigation / finish 不动；read 的 returns/read_spec 被挂到 action 上
     assert nav.success_condition == "页面已显示"
-    assert read.returns == ["连通状态"] and read.read_spec == "看绿✓"
+    assert act.var == "r"
+    assert act.returns == ["连通状态"] and act.read_spec == "看绿✓"
+    assert fin.message == "{r[连通状态]}"
     # 原 Program 不被就地改（返回新对象）
     assert prog.statements[1].success_condition == "检测结果（连通标记或不可达提示）已显示在界面"
 
@@ -334,6 +501,9 @@ def test_normalize_confirm_read_gates_recurses_into_if_branches():
     then_action = out.statements[1].then[0]
     assert "不判定结果取值" in then_action.success_condition
     assert "订单创建成功" not in then_action.success_condition  # 原结果门措辞被替换
+    assert then_action.var == "c"
+    assert then_action.returns == ["建单结果"]
+    assert len(out.statements[1].then) == 2
     assert out.statements[1].otherwise[0].message == "不可达"  # otherwise 不受影响
 
 
@@ -349,11 +519,14 @@ def test_normalize_confirm_read_converts_filter_before_read_to_action():
             read_spec="总数：读取 grid 顶部 N records found 中的 N"),
     ])
     out = normalize_confirm_read_gates(prog)
-    trigger, read = out.statements
+    trigger = out.statements[0]
     assert trigger.kind == "action"
     assert "不判定结果取值" in trigger.success_condition
     assert "列表只显示" not in trigger.success_condition
-    assert read.kind == "read" and read.returns == ["总数"]
+    assert trigger.var == "r"
+    assert trigger.returns == ["总数"]
+    assert trigger.read_spec == "总数：读取 grid 顶部 N records found 中的 N"
+    assert len(out.statements) == 1
     assert prog.statements[0].kind == "filter"  # 原 Program 不就地改
 
 
@@ -386,6 +559,9 @@ def test_normalize_confirm_read_converts_filter_inside_if_branch():
     then_filter = out.statements[1].then[0]
     assert then_filter.kind == "action"
     assert "不判定结果取值" in then_filter.success_condition
+    assert then_filter.var == "r"
+    assert then_filter.returns == ["结果数"]
+    assert len(out.statements[1].then) == 1
     assert out.statements[1].otherwise[0].message == "无需查询"
 
 

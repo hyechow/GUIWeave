@@ -9,7 +9,7 @@ puts all branching/variables in the orchestrator — so "the middle read it but 
 final output didn't know" disappears: every milestone's reads live in the env.
 
 Grammar (MVP, no loops):
-    var = run("<milestone>", returns=[...])      # returns = read_spec 字段
+    var = run("<milestone>", returns=[...])      # returns = fields read from the completion frame
     var = run("<data query>", kind="data_query", sql="SELECT ...", returns=[...])
     if var["field"] == "value": <stmts> else: <stmts>
     finish("<message with {var[field]} refs>")
@@ -24,8 +24,8 @@ from pydantic import BaseModel, Field
 
 # DSL data-flow template grammar: ``{var[field]}`` pulls a prior read's value out of the
 # variable environment. Used by finish messages (the original site) AND — since the
-# read-then-reference extension — by a run's name/success_condition/read_spec, so a later
-# action authored as『编辑机器人 {r[实际名称]}』targets the concrete entity a read identified.
+# result-then-reference extension — by a run's name/success_condition/read_spec, so a later
+# action authored as『编辑机器人 {r[实际名称]}』targets the concrete entity a prior result identified.
 # Single source of truth: the runner fills these at execute time, the decomposer validates
 # that every ref resolves to a real read field. Keep both ends on THIS regex.
 TEMPLATE_RE = re.compile(r"\{(\w+)\[([^\]]+)\]\}")
@@ -38,8 +38,10 @@ BARE_REF_RE = re.compile(r"\{(\w+)\}")
 
 # The orchestrator's OWN linear-task vocabulary (decoupled from the executor's
 # MilestoneKind). These are the milestone-sized things the linear executor is good
-# at: 到某页 / 填一组表单 / 点一个按钮 / 读取一个结果 / 对结构化数据做只读查询。
-# "read" and "data_query" are non-UI primitives consumed directly by the orchestrator.
+# at: 到某页 / 填一组表单 / 点一个按钮 / 对结构化数据做只读查询。
+# Any UI run may declare returns/read_spec; those values are extracted from the run's
+# completion frame. "read" remains as a compatibility/no-op current-frame primitive and for
+# list_read collection. "data_query" is a non-UI primitive consumed directly by the orchestrator.
 RunKind = Literal["navigation", "filter", "action", "read", "data_query"]
 CondCmp = Literal["==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"]
 
@@ -62,7 +64,7 @@ class RunResult(BaseModel):
 
 
 class Run(BaseModel):
-    """Drive ONE linear milestone. `var` binds its RunResult; `returns` = fields to read."""
+    """Drive ONE linear milestone. `var` binds its RunResult; `returns` = fields to read from completion."""
 
     op: Literal["run"] = "run"
     var: Optional[str] = None
@@ -70,11 +72,11 @@ class Run(BaseModel):
     success_condition: str = ""
     kind: RunKind = "action"
     returns: list[str] = Field(default_factory=list)
-    # Task-level read instruction, authored by the decomposer from the user goal (not a
-    # hardcoded prompt): for kind="read" it says what each `returns` field means and how to
-    # judge it off the UI (which icon/colour/text carries it, what each value maps to). The
-    # read primitive feeds this to structured_read as the primary judgment guidance; the app's
-    # _check.md is a supplementary signal-convention reference. Empty for non-read runs.
+    # Task-level return-read instruction, authored by the decomposer from the user goal (not a
+    # hardcoded prompt): when `returns` is present it says what each field means and how to
+    # judge it off the UI completion frame (which icon/colour/text carries it, what each value
+    # maps to). structured_read uses this as the primary judgment guidance; app knowledge is a
+    # supplementary signal-convention reference.
     read_spec: str = Field(default="")
     # Restricted SQL for kind="data_query". It runs against the current structured table snapshot
     # in an in-memory sqlite database. Only SELECT / WITH ... SELECT is accepted.

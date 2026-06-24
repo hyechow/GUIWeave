@@ -65,7 +65,7 @@ def drive_pending_non_ui(
     rows from iterating a collection). It's folded into a data_query's source so a query AFTER a
     foreach can analyze the whole collected set. It MUST be called fresh right before each data_query
     (not snapshotted at entry): a foreach's `into` table is populated DURING this drain loop — when the
-    last body read completes the interpreter resumes, accumulates, and yields the data_query — so a
+    last body return completes the interpreter resumes, accumulates, and yields the data_query — so a
     value captured at entry is still empty (regression 20260622_215814: the query saw no table though
     foreach had read all rows)."""
     cur_run = current_run
@@ -279,7 +279,7 @@ def drive_pending_non_ui(
         supervisor.reseed(
             milestone,
             task_type=task_type_for(cur_run),
-            fresh_advance=done_observation is not None,
+            fresh_advance=done_observation is not None and not bool(getattr(cur_run, "returns", None)),
         )
         if not any(m.get("id") == milestone.id for m in context.milestones):
             context.milestones.append(

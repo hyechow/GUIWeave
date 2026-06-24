@@ -54,6 +54,60 @@ def test_validate_rejects_body_ref_to_unbound_var():
     assert any("bad" in i for i in issues)
 
 
+def test_validate_rejects_list_read_direct_query_missing_detail_fields():
+    draft = _PlanDraft(goal="返回详情分数<=3的负责人", steps=[
+        _StepDraft(op="run", run_kind="read", var="r", name="读取候选行 id",
+                   returns=["id"], list_read=True),
+        _StepDraft(op="run", run_kind="data_query", var="q", name="筛详情分数<=3",
+                   returns=["owner_name"],
+                   sql="SELECT owner_name FROM data WHERE CAST(detail_score AS INTEGER) <= 3"),
+    ])
+    issues = validate_program(to_program(draft, "g"))
+    assert any("不要跳过 foreach" in i for i in issues)
+
+
+def test_validate_infers_row_read_spec_when_list_read_flag_missing():
+    draft = _PlanDraft(goal="返回详情分数<=3的负责人", steps=[
+        _StepDraft(op="run", run_kind="read", var="r", name="读取候选行 id",
+                   returns=["id"], read_spec="id：逐行读取列表中每条记录的 ID，每行一个对象。"),
+        _StepDraft(op="run", run_kind="data_query", var="q", name="筛详情分数<=3",
+                   returns=["owner_name"],
+                   sql="SELECT owner_name FROM data WHERE CAST(detail_score AS INTEGER) <= 3"),
+    ])
+    issues = validate_program(to_program(draft, "g"))
+    assert any("不要跳过 foreach" in i for i in issues)
+
+
+def test_validate_rejects_foreach_table_query_missing_body_fields():
+    draft = _PlanDraft(goal="返回详情分数<=3的负责人", steps=[
+        _StepDraft(op="run", run_kind="read", var="r", name="读取候选行 id",
+                   returns=["id"], list_read=True),
+        _StepDraft(op="foreach", loop_var="row", over="r", into="detail_rows", body=[
+            _StepDraft(op="run", run_kind="navigation", name="打开记录 {row[id]} 的详情"),
+        ]),
+        _StepDraft(op="run", run_kind="data_query", var="q", name="筛详情分数<=3",
+                   returns=["owner_name"],
+                   sql="SELECT owner_name FROM detail_rows WHERE CAST(detail_score AS INTEGER) <= 3"),
+    ])
+    issues = validate_program(to_program(draft, "g"))
+    assert any("foreach body 没有通过 returns 产出的字段" in i for i in issues)
+
+
+def test_validate_rejects_post_foreach_query_missing_body_fields_without_table_ref():
+    draft = _PlanDraft(goal="返回详情分数<=3的负责人", steps=[
+        _StepDraft(op="run", run_kind="read", var="r", name="读取候选行 id",
+                   returns=["id"], list_read=True),
+        _StepDraft(op="foreach", loop_var="row", over="r", into="detail_rows", body=[
+            _StepDraft(op="run", run_kind="navigation", name="打开记录 {row[id]} 的详情"),
+        ]),
+        _StepDraft(op="run", run_kind="data_query", var="q", name="筛详情分数<=3",
+                   returns=["owner_name"],
+                   sql="SELECT owner_name FROM data WHERE CAST(detail_score AS INTEGER) <= 3"),
+    ])
+    issues = validate_program(to_program(draft, "g"))
+    assert any("位于 foreach 之后" in i for i in issues)
+
+
 def test_nested_foreach_in_body_is_dropped():
     # One level only: a nested foreach in the body is stripped at conversion (deterministic backstop).
     draft = _PlanDraft(goal="g", steps=[

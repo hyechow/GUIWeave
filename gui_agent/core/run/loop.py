@@ -38,7 +38,7 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.non_ui import drive_pending_non_ui
-from gui_agent.core.orchestrator.collection_runtime import CollectionRuntime
+from gui_agent.core.orchestrator.list_traversal_runtime import ListTraversalRuntime
 from gui_agent.core.orchestrator.engine import is_list_read, package_result
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
@@ -259,8 +259,8 @@ def run_agent_loop(
                     pass
 
         # One-shot post-open hook (before the first observe): lets a caller prime
-        # the just-connected session — e.g. the WebArena entry injects auth cookies,
-        # starts HAR capture and navigates to the task start_url. Runs on the neutral
+        # the just-connected session — e.g. inject auth cookies, start HAR capture,
+        # and navigate to the task start_url. Runs on the neutral
         # `platform` (device at platform.client); default None keeps iphone/chat untouched.
         # NOT wrapped in try: an opt-in caller wants a failed prime (bad cookies /
         # unreachable start_url) to surface, not run the task in a wrong state.
@@ -288,7 +288,7 @@ def run_agent_loop(
         _cur_run = None
         _run_idx = 0
         _notes_mark = 0
-        _collection_runtime: "CollectionRuntime | None" = None
+        _list_traversal_runtime: "ListTraversalRuntime | None" = None
 
         def _stop_after_esc(turn_no: int) -> dict | None:
             if not _stop_requested():
@@ -303,47 +303,54 @@ def run_agent_loop(
 
         _nonui_failure: "str | None" = None  # last re-plannable non-UI (data_query) failure evidence
 
-        def _ensure_collection_runtime() -> "CollectionRuntime | None":
-            nonlocal _collection_runtime
+        def _ensure_list_traversal_runtime() -> "ListTraversalRuntime | None":
+            nonlocal _list_traversal_runtime
             if _cur_run is None or not is_list_read(_cur_run):
-                if _collection_runtime is not None:
-                    _collection_runtime = None
+                if _list_traversal_runtime is not None:
+                    _list_traversal_runtime = None
                 if hasattr(supervisor, "note_collection_progress"):
                     supervisor.note_collection_progress("", done=False)
                 return None
             var = _cur_run.var or f"m{_run_idx}_read"
-            if _collection_runtime is None or _collection_runtime.var != var:
-                _collection_runtime = CollectionRuntime(
+            if _list_traversal_runtime is None or _list_traversal_runtime.var != var:
+                _list_traversal_runtime = ListTraversalRuntime(
                     var=var,
                     returns=list(_cur_run.returns),
                     read_spec=_cur_run.read_spec or "",
                 )
-            return _collection_runtime
+            return _list_traversal_runtime
 
-        def _update_collection_runtime(observation) -> None:
-            """Refresh the deterministic collection controller for the current frame."""
-            runtime = _ensure_collection_runtime()
+        def _update_list_traversal_runtime(observation) -> None:
+            """Refresh the deterministic list traversal controller for the current frame."""
+            runtime = _ensure_list_traversal_runtime()
             if runtime is None or _cur_run is None:
                 return
 
-            def _read_detail(fields: list[str]) -> dict[str, str]:
-                from gui_agent.core.orchestrator.structured_read import structured_read
-
-                return structured_read(
-                    observation.png_bytes,
-                    fields,
-                    read_spec=_cur_run.read_spec,
-                    check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
-                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                )
-
             before = len(runtime.rows)
-            decision = runtime.update(observation, read_detail=_read_detail)
+            decision = runtime.update(observation)
             if hasattr(supervisor, "note_collection_progress"):
                 supervisor.note_collection_progress(runtime.prompt_text(), done=runtime.done)
             delta = len(runtime.rows) - before
             delta_text = f", +{delta} 行" if delta else ""
             _say(f"  [Collect] rows={len(runtime.rows)}{delta_text}, next={decision.action}: {decision.reason}")
+
+        def _read_completed_run_returns(run, observation) -> dict[str, str]:
+            """Extract a UI run's declared return fields from its completion frame."""
+            if run is None or not getattr(run, "returns", None):
+                return {}
+            if is_list_read(run) or getattr(run, "kind", "") in {"read", "data_query"}:
+                return {}
+            from gui_agent.core.orchestrator.structured_read import structured_read
+
+            reads = structured_read(
+                observation.png_bytes,
+                list(run.returns),
+                read_spec=getattr(run, "read_spec", "") or "",
+                check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+            )
+            _say(f"  [Orchestrator] 动作返回读取 {list(run.returns)} → {reads}")
+            return reads
 
         def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
             """Drive pending non-UI primitives and sync the local interpreter cursor."""
@@ -363,7 +370,7 @@ def run_agent_loop(
                 done_observation=done_observation,
                 observation_url=observation_url,
                 # a PROVIDER, not a snapshot: a foreach's into table is populated mid-drain (when the
-                # last body read completes), so the data_query must read it fresh — see drive_pending_non_ui.
+                # last body return completes), so the data_query must read it fresh — see drive_pending_non_ui.
                 materialized_tables=(lambda: _interp.materialized_tables()) if _interp is not None else None,
             )
             _cur_run = result.current_run
@@ -415,7 +422,7 @@ def run_agent_loop(
             become the re-decompose's EXPERIENCE, the unexecuted ones its TARGET (summarize_progress),
             the CURRENT observation its page context, and the new interpreter inherits env/run_log so
             already-collected reads still back the final answer (the user's "重编排是有状态记忆的编排")."""
-            nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans, _collection_runtime
+            nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans, _list_traversal_runtime
             if not (program is not None and directive and callable(redecompose)
                     and _kickback_replans < MAX_KICKBACK_REPLANS):
                 return (False, None)
@@ -474,7 +481,7 @@ def run_agent_loop(
                 "replanned_from_kickback": _kickback_replans,
             }
             _gen = _interp.steps()
-            _collection_runtime = None
+            _list_traversal_runtime = None
             try:
                 _cur_run = next(_gen)
             except StopIteration as _e:
@@ -532,7 +539,7 @@ def run_agent_loop(
             # back after the loop, so the report shows the checker call that ran on the hand-off.
             _carry = SupervisorTimingCarry()
             while True:
-                _update_collection_runtime(observation)
+                _update_list_traversal_runtime(observation)
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
                 sv_step = supervisor.step(observation, context.goal, context.turns)
@@ -550,17 +557,19 @@ def run_agent_loop(
                 read_state.drain_pending(say=_say)
                 read_state.flush(turn_no=turn_no, say=_say)
                 _rows = (
-                    list(_collection_runtime.rows)
-                    if _cur_run is not None and is_list_read(_cur_run) and _collection_runtime is not None
+                    list(_list_traversal_runtime.rows)
+                    if _cur_run is not None and is_list_read(_cur_run) and _list_traversal_runtime is not None
                     else []
                 )
+                _reads = _read_completed_run_returns(_cur_run, observation)
                 _hand = package_result(
                     _cur_run, completed=True, summary=sv_step.summary or "完成",
                     notes=context.content_notes[_notes_mark:],
+                    reads=_reads,
                     rows=_rows,
                 )
                 if _cur_run is not None and is_list_read(_cur_run):
-                    _collection_runtime = None
+                    _list_traversal_runtime = None
                 try:
                     _cur_run = _gen.send(_hand)
                 except StopIteration as _e:          # program finished (finish / off end)

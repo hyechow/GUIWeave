@@ -12,6 +12,8 @@ unstructured content_notes text — structured {field: value} extraction is step
 
 from __future__ import annotations
 
+import hashlib
+import re
 from typing import Literal
 
 from gui_agent.core.schemas import Milestone
@@ -34,6 +36,15 @@ def is_list_read(run: Run) -> bool:
     return run.kind == "read" and bool(getattr(run, "list_read", False)) and bool(run.returns)
 
 
+def _milestone_id(run: Run, index: int) -> str:
+    base = run.var or f"m{index}_{run.kind}"
+    if run.var and run.kind in _RETURN_READ_SOURCE_KINDS and run.returns:
+        slug = re.sub(r"[^a-zA-Z0-9]+", "_", run.name).strip("_")[:32]
+        digest = hashlib.sha1(run.name.encode("utf-8")).hexdigest()[:8]
+        return f"{base}_{slug or digest}_{digest}"
+    return base
+
+
 def to_milestone(run: Run, index: int) -> Milestone:
     """Build a feat-android Milestone the supervisor can drive from a DSL Run spec.
 
@@ -47,11 +58,11 @@ def to_milestone(run: Run, index: int) -> Milestone:
     if is_list_read(run):
         strategy = "react_until_collected"
         success = (
-            f"已完整遍历目标集合「{run.name}」：当前页所有行已处理，必要的行详情已读取，"
+            f"已完整遍历目标集合「{run.name}」：已累计各页/滚动加载出的目标行字段，"
             "并已翻页/滚动到集合末尾；不是只读取当前可见帧。"
         )
     return Milestone(
-        id=run.var or f"m{index}_{run.kind}",
+        id=_milestone_id(run, index),
         name=run.name,
         description=desc,
         success_condition=success,
@@ -84,17 +95,14 @@ def package_result(
     )
 
 
-# ── confirm-read structural backstop (L2) ────────────────────────────────────────────
-# A milestone whose result is confirmed by a following read should be ACCEPTED on
-# "the action/filter fired", never re-adjudicated by the per-milestone checker — that checker is
-# known to thrash on freshly-shown verdicts (20260615_100753: it saw a green ✓, re-clicked
-# 检测, then hallucinated the same ✓ as gray ?, burning 2 frames; WebArena 15: a grid showed
-# "2 records found" after Review=best but the filter checker kept re-judging visible rows).
-# The decomposer prompt (L1) *asks* for a dispatch-form success_condition; this pass
-# *guarantees* it. The signal is purely structural — action/filter Run immediately followed
-# by a read Run is the confirm-read shape — so we never string-match the gate's meaning.
-# Generic over create / submit / delete / send / detect / apply-filter: any trigger→read
-# adjacency. See structured_read / the read primitive for who owns the result judgment instead.
+# ── action return-read structural backstop (L2) ──────────────────────────────────────
+# A UI milestone whose result must be read should carry that read as its return contract,
+# not as the next UI action. Older decompositions may still produce the legacy shape
+# action/filter/navigation -> scalar read; normalize it into one UI Run with
+# returns/read_spec so the engine extracts structured values from the action's completion
+# frame. For action/filter triggers we also rewrite the gate to "dispatched/responded" so
+# the checker does not re-adjudicate the result value that structured_read owns.
+#
 # `data_query` is deliberately excluded: it analyzes the current structured table snapshot, so
 # the preceding UI milestone must still verify the page data source is in the intended
 # filter/search/sort/scope state before SQL runs.
@@ -102,26 +110,70 @@ def package_result(
 _DISPATCH_GATE_TMPL = (
     "已执行「{name}」：动作已发出且界面给出响应"
     "（出现提示/结果区/列表更新/页面跳转/进入加载，任一即可）；"
-    "本步不判定结果取值，具体结果由下一步读取判定。"
+    "本步不判定结果取值（checker 只判动作响应），"
+    "具体结果由本步完成帧的结构化返回值读取判定。"
 )
 
 
 _CONFIRM_READ_TRIGGER_KINDS = {"action", "filter"}
-_CONFIRM_READ_TARGET_KINDS = {"read"}
+_RETURN_READ_SOURCE_KINDS = {"navigation", "filter", "action"}
+_RETURN_READ_TARGET_KINDS = {"read"}
 
 
 def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
     out: list[Stmt] = []
-    n = len(stmts)
-    for i, s in enumerate(stmts):
-        if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
-            nxt = stmts[i + 1] if i + 1 < n else None
-            if isinstance(nxt, Run) and nxt.kind in _CONFIRM_READ_TARGET_KINDS:
+    i = 0
+    while i < len(stmts):
+        s = stmts[i]
+        nxt = stmts[i + 1] if i + 1 < len(stmts) else None
+        if (
+            isinstance(s, Run)
+            and s.kind in _CONFIRM_READ_TRIGGER_KINDS
+            and s.returns
+            and not s.list_read
+        ):
+            update = {"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)}
+            if s.kind == "filter":
+                # A filter with returns is a trigger whose returned values own the count/value
+                # judgment. Execute it as an action so the filter checker does not re-judge the
+                # same result fields.
+                update["kind"] = "action"
+            out.append(s.model_copy(update=update))
+            i += 1
+            continue
+        if (
+            isinstance(s, Run)
+            and isinstance(nxt, Run)
+            and s.kind in _RETURN_READ_SOURCE_KINDS
+            and nxt.kind in _RETURN_READ_TARGET_KINDS
+            and not nxt.list_read
+            and nxt.returns
+            and (not s.var or not nxt.var or s.var == nxt.var)
+        ):
+            update = {
+                "var": nxt.var or s.var,
+                "returns": list(nxt.returns),
+                "read_spec": nxt.read_spec,
+            }
+            if s.kind in _CONFIRM_READ_TRIGGER_KINDS:
                 update = {"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)}
+                update.update({
+                    "var": nxt.var or s.var,
+                    "returns": list(nxt.returns),
+                    "read_spec": nxt.read_spec,
+                })
                 if s.kind == "filter":
                     # A filter that is immediately read is a trigger, not a final acceptance
                     # target. Convert it to action so the filter checker doesn't re-judge the
                     # eventual visible value/count; the following read owns that result.
+                    update["kind"] = "action"
+            out.append(s.model_copy(update=update))
+            i += 2
+            continue
+        if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
+            if isinstance(nxt, Run) and nxt.kind in _RETURN_READ_TARGET_KINDS:
+                update = {"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)}
+                if s.kind == "filter":
                     update["kind"] = "action"
                 s = s.model_copy(update=update)
             out.append(s)
@@ -132,21 +184,21 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
             }))
         else:
             out.append(s)
+        i += 1
     return out
 
 
 def normalize_confirm_read_gates(program: Program) -> Program:
-    """Rewrite every confirm-read-backed trigger's gate to a lenient DISPATCH gate.
+    """Normalize legacy action->read pairs into action return contracts.
 
-    An action/filter Run immediately followed by a read Run (the confirm-read shape) gets its
-    success_condition replaced so the per-milestone checker accepts on "the action fired
-    and the page responded" and never adjudicates the result the read owns. A filter in this
-    shape is converted to action for execution, because the following read owns the visible
-    state/value. A following data_query is not treated as confirm-read; the preceding UI step
-    must still verify the data source state before SQL analyzes it. Recurses into
-    if-branches; returns a NEW Program (inputs untouched); idempotent. This is the structural
-    guarantee behind the decomposer's L1 prompt nudge — independent of how the LLM phrased
-    the gate, so it covers create/submit/delete/send/detect/apply-filter uniformly."""
+    Older plans express result extraction as a scalar read Run immediately after a UI Run.
+    Newer plans put ``returns``/``read_spec`` on that UI Run directly. This pass makes both
+    shapes execute the same way: scalar read pairs are merged into the UI Run when the vars
+    are compatible, and action/filter trigger gates are made lenient dispatch gates so the
+    checker accepts on response while structured_read owns the returned value. A following
+    data_query is not treated as a return read; the preceding UI step must still verify the
+    data source state before SQL analyzes it. Recurses into if-branches; returns a NEW
+    Program (inputs untouched); idempotent."""
     return program.model_copy(update={"statements": _normalize_stmts(program.statements)})
 
 

@@ -173,8 +173,8 @@ class Interpreter:
                 rendered = self._render(s.message)
                 # Empty-read guard: if this finish cites a read variable whose RunResult.reads
                 # is ENTIRELY blank (every requested field came back ""), the finish is answering
-                # on a read that read nothing — e.g. WebArena "top 2 search terms" where the
-                # target table was off-screen / wrong page → structured_read returned "". Mark the
+                # on a read that read nothing — e.g. a retrieve task where the target table was
+                # off-screen / wrong page → structured_read returned "". Mark the
                 # program finish_incomplete so goal_completed stays False (result.py). Rule is
                 # whole-read, not per-ref: a multi-field read like {连通判定, 不可达原因} where only
                 # 不可达原因 is blank (合法: 可达时为空) still has 连通判定 set → NOT flagged — so a
@@ -191,7 +191,7 @@ class Interpreter:
 
     def _foreach(self, loop: ForEach) -> Generator[Run, RunResult, Optional[str]]:
         """Run `loop.body` once per row of env[loop.over].rows, binding env[loop.var] to the row, and
-        AUTO-accumulate each iteration (the row's fields + every body read field) into a materialized
+        AUTO-accumulate each iteration (the row's fields + every body return field) into a materialized
         table published as env[loop.into]. Yields each body Run so the engine drives it as a milestone
         — the live loop and the synchronous `drive` both work unchanged. Returns a terminal reply if
         the body finishes/fails, else None."""
@@ -231,10 +231,10 @@ class Interpreter:
 
     @staticmethod
     def _read_vars(stmts: list) -> list[str]:
-        """Body read/data_query vars whose reads get auto-accumulated per iteration (program order)."""
+        """Body result vars whose reads get auto-accumulated per iteration (program order)."""
         out: list[str] = []
         for s in stmts:
-            if isinstance(s, Run) and s.kind in {"read", "data_query"} and s.var:
+            if isinstance(s, Run) and s.var and (s.kind == "data_query" or s.returns):
                 out.append(s.var)
             elif isinstance(s, If):
                 out.extend(Interpreter._read_vars(s.then))
@@ -281,9 +281,18 @@ class Interpreter:
         read guidance weakens them but doesn't misdirect the action, so it's not worth aborting on.
         Returns the run unchanged when nothing templated (the common case)."""
         missing: list[str] = []
+        target_ref_values: list[str] = []
+        for match in TEMPLATE_RE.finditer(run.name or ""):
+            rv = self.env.get(match.group(1))
+            value = (rv.reads.get(match.group(2).strip().strip("'\""), "") if rv else "").strip()
+            if value:
+                target_ref_values.append(value)
         name = self._render(run.name, missing)              # target → strict (collect empties)
         sc = self._render(run.success_condition)            # gate → lenient
         rs = self._render(run.read_spec)                    # read guidance → lenient
+        if target_ref_values and not any(value in sc for value in target_ref_values):
+            target_gate = f"必须对应子目标指定对象「{name}」"
+            sc = f"{sc}（{target_gate}）" if sc else target_gate
         if name == run.name and sc == run.success_condition and rs == run.read_spec:
             return run, missing
         return run.model_copy(update={"name": name, "success_condition": sc, "read_spec": rs}), missing
