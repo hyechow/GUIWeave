@@ -238,5 +238,44 @@
       ]
     },
     "note": "回归 20260622_113558：Product 筛选框填了 'Olivia zip j…'、Search 已应用，但 0 records found / We couldn't find any records.（真实产品名是 'Olivia 1/4 Zip Light Jacket'，词不匹配）。SC 写得宽（动作已发出+界面响应），活跑里 checker 据此误判 done → 后续 read 读空 → score 0。新规则：搜索/筛选类 0 条=目标未找到，判 in_progress，把控制权交回 replan 去放宽搜索词。"
+  },
+  {
+    "label": "foreach详情页-URL含目标ID且字段可见时不得用字段值否定对象身份（回归 20260624_185832）",
+    "screenshot": "evals/browser/checker/screenshots/webarena113_review_347_detail_jane_smith.png",
+    "with_target_identity_hint": true,
+    "observation": {
+      "url": "http://192.168.31.57:7780/admin/review/product/edit/id/347/",
+      "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",
+      "form_controls": [
+        {
+          "label": "Nickname",
+          "kind": "text_input",
+          "value": "Jane Smith"
+        },
+        {
+          "label": "Summary of Review",
+          "kind": "text_input",
+          "value": "Quite good"
+        }
+      ]
+    },
+    "milestone": {
+      "name": "打开评论 347 的详情",
+      "description": "打开评论 347 的详情",
+      "success_condition": "进入该评论详情页，显示产品名、评分和客户昵称（必须对应子目标指定对象「打开评论 347 的详情」）",
+      "kind": "navigation",
+      "app_name": "shopping_admin"
+    },
+    "expected": {
+      "status": "done",
+      "must_not_claim": [
+        "不匹配",
+        "错误",
+        "wrong",
+        "mismatch",
+        "不是.{0,12}347"
+      ]
+    },
+    "note": "真实 CDP run 20260624_185832：进入 /edit/id/347/ 后页面显示 Nickname=Jane Smith、评分5星，这是评论347的真实详情，但 checker 把 Jane Smith 误当成对象身份不匹配，在列表和详情间打转直到失败。通用不变量：foreach 打开详情页时，URL/路由里的目标ID是对象身份机器证据；字段值只是该对象的读取结果，是否满足最终筛选条件应由后续 data_query 判断，不能反过来否定当前对象身份。"
   }
 ]

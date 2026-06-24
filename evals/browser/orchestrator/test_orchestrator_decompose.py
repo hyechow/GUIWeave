@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.orchestrator import Finish, If, Run, decompose
+from gui_agent.core.orchestrator import Finish, ForEach, If, Run, decompose
 from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates, normalize_precondition_gates
 from gui_agent.core.orchestrator.program import TEMPLATE_RE
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
@@ -71,6 +71,8 @@ def _flatten_runs(stmts: list) -> list[Run]:
         elif isinstance(s, If):
             out.extend(_flatten_runs(s.then))
             out.extend(_flatten_runs(s.otherwise))
+        elif isinstance(s, ForEach):
+            out.extend(_flatten_runs(s.body))
     return out
 
 
@@ -93,6 +95,15 @@ def _flatten_ifs(stmts: list) -> list[If]:
     return out
 
 
+def _has_foreach(stmts: list) -> bool:
+    for s in stmts:
+        if isinstance(s, ForEach):
+            return True
+        if isinstance(s, If) and (_has_foreach(s.then) or _has_foreach(s.otherwise)):
+            return True
+    return False
+
+
 def _sql_identifier(value: object) -> str:
     text = str(value or "").strip().lower()
     text = re.sub(r"[^0-9a-zA-Z]+", "_", text).strip("_")
@@ -113,14 +124,16 @@ def _sql_has_quoted_display_identifier(sql: str) -> bool:
 
 
 def _confirm_read_actions(stmts: list) -> list[Run]:
-    """Action Runs immediately followed by a read Run — the confirm-read shape (rule 8).
-    Adjacency is checked WITHIN each statement list, recursing into if-branches (same
-    structural rule the engine's normalize_confirm_read_gates uses)."""
+    """Action Runs whose result is structurally read.
+
+    New plans put returns/read_spec on the action itself. Legacy plans may still have
+    action -> scalar read; normalize_confirm_read_gates folds those into the action.
+    """
     out: list[Run] = []
     for i, s in enumerate(stmts):
         if isinstance(s, Run) and s.kind == "action":
             nxt = stmts[i + 1] if i + 1 < len(stmts) else None
-            if isinstance(nxt, Run) and nxt.kind == "read":
+            if s.returns or (isinstance(nxt, Run) and nxt.kind == "read"):
                 out.append(s)
         elif isinstance(s, If):
             out.extend(_confirm_read_actions(s.then))
@@ -146,10 +159,11 @@ def _check_basic(program, expected: dict) -> list[str]:
     details: list[str] = []
     runs = _flatten_runs(program.statements)
     reads = [r for r in runs if r.kind == "read"]
+    result_runs = [r for r in runs if r.returns or r.kind == "data_query"]
     if "min_statements" in expected and len(program.statements) < expected["min_statements"]:
         details.append(f"expected >={expected['min_statements']} top-level steps, got {len(program.statements)}")
-    if expected.get("has_read") and not reads:
-        details.append("缺少 read 步（无只读结果提取步）")
+    if expected.get("has_read") and not result_runs:
+        details.append("缺少返回值读取（无带 returns 的步骤或只读结果提取步）")
     if expected.get("has_finish") and not _has_finish(program.statements):
         details.append("缺少 finish 步（无最终答复模板）")
     return details
@@ -163,9 +177,9 @@ _DISPATCH_DEFER_MARKERS = (
     # 动作已发出
     "点击", "已点", "按下", "提交", "发送", "触发", "发起", "进入计算", "计算中",
     "加载", "出现响应", "已发出", "已请求", "已执行", "已操作",
-    # 结果让位给后续 read
+    # 结果让位给结构化返回值读取
     "由下一步", "由后续", "下一步读取", "下一步判", "read 判", "不判定结果",
-    "不判具体", "具体结果由", "成败由", "结果由",
+    "不判具体", "具体结果由", "成败由", "结果由", "返回值", "完成帧",
 )
 
 
@@ -176,11 +190,10 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
 
     for assertion in assertions:
         if assertion == "key_action_has_confirm_read":
-            # 规则8：会改状态/出结果的关键动作后要补一个 read 确认结果。判据=存在「action 紧跟
-            # read」的 confirm-read 对（否则结果只能靠会幻觉的 checker 判，正是要避免的）。
+            # 规则8：会改状态/出结果的关键动作必须有结构化返回值确认，优先是 action 自带 returns。
             if not cr_actions:
                 details.append(
-                    f"无 confirm-read 对（没有 action 紧跟 read）: "
+                    f"无 action 返回值读取（也没有兼容的 action→read）: "
                     f"{[(r.kind, r.name) for r in runs]}"
                 )
         elif assertion == "confirm_read_action_uses_dispatch_gate":
@@ -238,20 +251,22 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     f"{offenders}"
                 )
         elif assertion == "read_has_spec":
-            # 只读单帧没判读说明就只能瞎猜（见 structured_read / prompt 规则）。每个 read 都要有
+            # 返回值读取没判读说明就只能瞎猜（见 structured_read / prompt 规则）。每个结果读取都要有
             # returns + 非空 read_spec。
             bad = [
                 (r.name, r.returns) for r in runs
-                if r.kind == "read" and (not r.returns or not r.read_spec.strip())
+                if (
+                    (r.kind == "read" and not r.returns)
+                    or (r.kind != "data_query" and r.returns and not r.read_spec.strip())
+                )
             ]
             if bad:
-                details.append(f"read 步缺 returns 或 read_spec（判读说明）: {bad}")
+                details.append(f"返回值读取缺 returns 或 read_spec（判读说明）: {bad}")
         elif assertion == "shopping_admin_review_count_uses_action_read":
             # WebArena shopping_admin #15/#11 style: query a Magento admin grid, then report the
             # authoritative count. Applying a Review/search filter is only a trigger; the count
-            # must be read from the grid summary such as "N records found". In production this
-            # case runs after normalize_confirm_read_gates(), so a filter immediately followed by
-            # read should have become action→read with a dispatch/defer gate.
+            # must be read from the grid summary such as "N records found". New plans attach that
+            # read as returns on the trigger action; legacy filter/action→read pairs are normalized.
             def _looks_like_count_read(r: Run) -> bool:
                 text = " ".join([r.name, r.read_spec, *r.returns]).lower()
                 return any(
@@ -262,66 +277,69 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     )
                 )
 
-            count_pairs = [
+            action_reads = [
+                r for r in runs
+                if r.kind == "action" and r.returns and _looks_like_count_read(r)
+            ]
+            legacy_pairs = [
                 (a, b) for a, b in _adjacent_run_pairs(program.statements)
                 if b.kind == "read" and _looks_like_count_read(b)
             ]
-            action_pairs = [(a, b) for a, b in count_pairs if a.kind == "action"]
-            filter_pairs = [(a, b) for a, b in count_pairs if a.kind == "filter"]
-            if not count_pairs:
+            filter_pairs = [(a, b) for a, b in legacy_pairs if a.kind == "filter"]
+            if not action_reads and not legacy_pairs:
                 details.append(
-                    "没有找到紧邻触发步骤的计数 read（应先筛选/搜索，再 read 读取 N records found/评论总数）"
+                    "没有找到计数返回值读取（应先筛选/搜索，并在该 action returns 中读取 N records found/评论总数）"
                 )
-            elif not action_pairs:
+            elif not action_reads and not any(a.kind == "action" for a, _ in legacy_pairs):
                 details.append(
-                    f"计数 read 前一跳不是 action 触发器（生产 normalizer 后应为 action→read）: "
-                    f"{[(a.kind, a.name, b.name) for a, b in count_pairs]}"
+                    f"计数读取不是 action 触发器返回值: "
+                    f"{[(a.kind, a.name, b.name) for a, b in legacy_pairs]}"
                 )
             if filter_pairs:
                 details.append(
-                    f"计数 read 前仍是 filter→read，说明筛选结果还会被 filter checker 重判: "
+                    f"计数读取仍是 filter→read，说明筛选结果还会被 filter checker 重判: "
                     f"{[(a.name, b.name) for a, b in filter_pairs]}"
                 )
             bad_gates = [
-                (a.name, a.success_condition) for a, _ in action_pairs
+                (a.name, a.success_condition) for a in action_reads
                 if not any(m in a.success_condition for m in _DISPATCH_DEFER_MARKERS)
             ]
             if bad_gates:
                 details.append(
-                    f"计数 read 前的 action 不是 dispatch/defer 门（筛选成败应由 read 判定）: {bad_gates}"
+                    f"计数返回值 action 不是 dispatch/defer 门（筛选成败应由返回值判定）: {bad_gates}"
                 )
-            action_text = " ".join(a.name.lower() for a, _ in action_pairs)
-            if action_pairs and not any(k in action_text for k in ("best", "review", "评论", "评价", "筛选", "搜索", "filter", "search")):
+            action_text = " ".join(a.name.lower() for a in action_reads)
+            if action_reads and not any(k in action_text for k in ("best", "review", "评论", "评价", "筛选", "搜索", "filter", "search")):
                 details.append(
-                    f"计数 read 前的 action 看不出是在按 review/best 搜索筛选: {[a.name for a, _ in action_pairs]}"
+                    f"计数返回值 action 看不出是在按 review/best 搜索筛选: {[a.name for a in action_reads]}"
                 )
         elif assertion == "action_targets_read_entity":
-            # read-then-reference（规则10，回归 20260615_163258）。不验「出现了某种 {var[字段]} 形态」
+            # result-then-reference（规则10，回归 20260615_163258）。不验「出现了某种 {var[字段]} 形态」
             # （那只是 prompt 样式），而验整条**顺序不变量**：
-            #   action(创建/识别实体) → read(读出该实体的标识，绑定 var) → 之后的 action 用同一 {var[字段]} 引用。
+            #   action(创建/识别实体并返回标识，绑定 var) → 之后的 action 用同一 {var[字段]} 引用。
             # 163258 侥幸做对仅因列表只有一台、planner 从屏幕拿到了名字；有同类兄弟就指错。这里要求三段
-            # 按程序顺序齐备：read 之前有产生该实体的 action、read 之后有 action 用同一 var 引用其 returns 字段。
+            # 按程序顺序齐备：产生该实体的 action 有返回值、之后有 action 用同一 var 引用其 returns 字段。
             seq = _flatten_runs(program.statements)  # DFS = 程序顺序（本 case 线性，无分支）
             ok = False
-            for i, rd in enumerate(seq):
-                if rd.kind != "read" or not rd.var:
+            for i, producer in enumerate(seq):
+                if not producer.var or not producer.returns:
                     continue
-                fields = set(rd.returns)
-                prior_action = any(a.kind == "action" for a in seq[:i])
+                fields = set(producer.returns)
+                has_action_producer = producer.kind == "action" or any(a.kind == "action" for a in seq[:i])
                 later_ref = any(
                     a.kind == "action" and any(
-                        m.group(1) == rd.var and m.group(2).strip().strip("'\"") in fields
+                        m.group(1) == producer.var and m.group(2).strip().strip("'\"") in fields
                         for m in TEMPLATE_RE.finditer(a.name)
                     )
                     for a in seq[i + 1:]
                 )
-                if prior_action and later_ref:
+                if has_action_producer and later_ref:
                     ok = True
                     break
             if not ok:
                 details.append(
-                    "缺少 read-then-reference 顺序结构：应为 action(创建/识别实体) → read(读出标识,var) → "
-                    "之后的 action 用同一 {var[字段]} 引用（系统生成名称要 read 出再接力，别裸名词/赌列表只有一个）: "
+                    "缺少 result-then-reference 顺序结构：应为 action(创建/识别实体并返回标识,var) → "
+                    "之后的 action 用同一 {var[字段]} 引用（系统生成名称要作为返回值接力，别裸名词/赌列表只有一个）: "
                     f"{[(r.kind, r.name) for r in seq]}"
                 )
         elif assertion == "connectivity_gates_order_no_robot_creation":
@@ -347,7 +365,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             def _preset(r):  # 编辑预设站点幻觉
                 return "预设站点" in r.name
 
-            conn_vars = {r.var for r in seq if r.kind == "read" and r.var and _conn(r)}
+            conn_vars = {r.var for r in seq if r.var and r.returns and _conn(r)}
             gated: list = []
 
             def _walk_gate(stmts, under):
@@ -363,7 +381,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             top_orders = [s for s in program.statements if isinstance(s, Run) and _order(s)]
 
             if not conn_vars:
-                details.append("没有检测连通的 read 步（应先 read 检测连通，再据此 if 分支）")
+                details.append("没有检测连通的返回值步骤（应先产生连通检测 returns，再据此 if 分支）")
             if not gated:
                 details.append("建订单的 action 未被连通检测的 if 门控（应在 if 连通 的分支里）")
             if top_orders:
@@ -465,12 +483,12 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # 当前视口未见，应先 navigation=滚动/定位到 Top Search Terms 区块；若目标在完整报表页，
             # 应先 navigation 到 Search Terms Report。两种都接受，但裸 read 不接受。
             seq = _flatten_runs(program.statements)
-            first_read = next((i for i, r in enumerate(seq) if r.kind == "read"), None)
-            if first_read is None:
-                details.append("没有 read 步（应读取前 2 个搜索词）")
-            elif not any(r.kind == "navigation" for r in seq[:first_read]):
+            first_result = next((i for i, r in enumerate(seq) if r.returns), None)
+            if first_result is None:
+                details.append("没有返回值读取（应读取前 2 个搜索词）")
+            elif seq[first_result].kind != "navigation" and not any(r.kind == "navigation" for r in seq[:first_result]):
                 details.append(
-                    "read 前缺 navigation：目标若在当前页下方，必须先滚动/定位到 Top Search Terms；"
+                    "返回值读取前缺 navigation：目标若在当前页下方，必须先滚动/定位到 Top Search Terms；"
                     "若使用完整数据源，必须先进入 Search Terms Report。run_kinds="
                     f"{[(r.kind, r.name) for r in seq]}"
                 )
@@ -478,7 +496,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             seq = _flatten_runs(program.statements)
             bad_reads = []
             for r in seq:
-                if r.kind != "read":
+                if not r.returns:
                     continue
                 text = " ".join([r.name, r.read_spec, *r.returns]).lower()
                 if "last search terms" in text:
@@ -490,7 +508,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 )
         elif assertion == "shopping_admin_top_terms_not_unsorted_report":
             seq = _flatten_runs(program.statements)
-            first_read = next((i for i, r in enumerate(seq) if r.kind == "read"), None)
+            first_read = next((i for i, r in enumerate(seq) if r.returns), None)
             if first_read is not None:
                 read = seq[first_read]
                 read_text = " ".join([read.name, read.read_spec, *read.returns]).lower()
@@ -749,11 +767,10 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "按月 group/count，不要再重复 status/date WHERE；否则容易把 UI 大小写/日期格式误用于 provider 字段。"
                     f" offenders={offenders}"
                 )
-        elif assertion == "product_lookup_column_and_fuzzy_fallback":
-            # Given an approximate-product Intent Resolution, the plan must (a) look the product up by
-            # the PRODUCT column (not the review-text column), and (b) carry an exact→fuzzy FALLBACK.
-            # Encoding-agnostic: the ladder may be one milestone ("先精确…0条转模糊") OR an if-branch
-            # (exact filter → read count → if 0 → fuzzy filter). _flatten_runs recurses into branches.
+        elif assertion == "product_lookup_uses_product_field":
+            # Given a product-like constraint, any UI filtering/searching step that uses the
+            # product term must keep that term bound to the PRODUCT field/column. Do not force a
+            # particular exact/fuzzy strategy here; that is a runtime decision based on feedback.
             filters = [r for r in _flatten_runs(program.statements) if r.kind in ("filter", "action")]
             both = lambda r: f"{r.name} {r.success_condition}"
             prod = [r for r in filters if re.search(r"产品|Product", both(r)) and "Olivia" in both(r)]
@@ -762,14 +779,58 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "没有『按 Product/产品 列检索 Olivia』的 milestone（疑似筛错列，如填进 Review 文本列）："
                     f"{[(r.kind, r.name) for r in filters]}"
                 )
-            # exact→fuzzy fallback present (a milestone OR a branch that does keyword/模糊 search)
-            fuzzy = [r for r in filters
-                     if re.search(r"模糊|关键词|包含|contains", both(r)) and "Olivia" in both(r)]
-            single_ladder = [r for r in prod if re.search(r"0\s*条|模糊|关键词", both(r))]
-            if not (fuzzy or single_ladder):
+            product_field_re = re.compile(r"Product|产品(?:名|列|字段|筛选框|搜索框|输入框|filter)", re.I)
+            product_terms = ("Olivia", "Olivia zip jacket")
+            product_term_without_product_field = [
+                (r.kind, r.name, r.success_condition)
+                for r in filters
+                if any(term in both(r) for term in product_terms)
+                if not product_field_re.search(both(r))
+            ]
+            if product_term_without_product_field:
                 details.append(
-                    "未编出『先精确→0 条转模糊关键词』回退（既无阶梯式 milestone，也无模糊检索分支）："
-                    f"{[r.name for r in filters]}"
+                    "使用产品词筛选/搜索时必须继续点名 Product/产品字段或列；"
+                    "不能退化成泛搜索，否则 planner 容易填到 Review/Title/Nickname 等错误字段。"
+                    f" offenders={product_term_without_product_field}"
+                )
+        elif assertion == "uses_foreach_iteration":
+            if not _has_foreach(program.statements):
+                details.append(
+                    "需要对运行时发现的候选集合逐条处理，但程序没有 foreach；"
+                    f"seq={[(r.kind, r.name, r.returns) for r in runs]}"
+                )
+        elif assertion == "shopping_admin_review_rating_initial_uses_reviews_source":
+            # Regression for task 113 live run 20260624_171049: initial decompose chose
+            # Catalog > Products, searched the product, and planned to read a product detail page.
+            # The requested answer is a field of review records filtered by product/rating, so the
+            # initial source must be a Reviews/All Reviews collection, with the product as a filter.
+            seq = _flatten_runs(program.statements)
+            texts = [f"{r.kind} {r.name} {r.success_condition} {r.read_spec}" for r in seq]
+            all_text = " ".join(texts).lower()
+            review_source = any(
+                re.search(
+                    r"all reviews|review[s]? list|reviews 数据源|reviews? grid|"
+                    r"marketing\s*>.*reviews|user content.*reviews|评论列表|评价列表|评论数据源",
+                    text,
+                    flags=re.I,
+                )
+                for text in texts
+            )
+            if not review_source:
+                details.append(
+                    "产品评论评分任务的初始编排应以 Reviews/All Reviews 评论集合为主数据源，"
+                    "Product 只是筛选条件；当前没有看到评论集合数据源。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
+            product_dead_end = (
+                re.search(r"catalog\s*>?\s*products|products?\s+list|产品列表|商品列表", all_text, flags=re.I)
+                and re.search(r"产品详情|商品详情|product detail|product workspace|点击搜索结果", all_text, flags=re.I)
+                and not review_source
+            )
+            if product_dead_end:
+                details.append(
+                    "不应先进入 Products List 搜商品详情再读取评论；这会把 product 实体误当主目标，"
+                    "而不是在 Reviews 行集合上按 Product 筛选。"
                 )
         elif assertion == "shopping_admin_review_rating_reorch_drills_detail":
             # 回归 WebArena task 113 / 20260622_142614：第一次 data_query 已因当前 Reviews
@@ -788,13 +849,13 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 for marker in ("Review Detail", "评论详情", "详情", "Edit", "编辑", "逐条", "每条")
             )
             reads_rating = any(
-                r.kind == "read"
+                r.returns
                 and any(marker in f"{r.name} {r.read_spec} {' '.join(r.returns or [])}"
                         for marker in ("Rating", "rating", "评分", "Detailed Rating"))
                 for r in seq
             )
             reads_nickname = any(
-                r.kind == "read"
+                r.returns
                 and any(marker in f"{r.name} {r.read_spec} {' '.join(r.returns or [])}"
                         for marker in ("Nickname", "nickname", "昵称", "customer"))
                 for r in seq
@@ -806,21 +867,32 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 )
             if not reads_rating:
                 details.append(
-                    "重编排缺少从评论详情 read 实际 Rating/评分 的步骤；"
-                    f"reads={[(r.name, r.returns, r.read_spec) for r in seq if r.kind == 'read']}"
+                    "重编排缺少从评论详情返回实际 Rating/评分 的步骤；"
+                    f"reads={[(r.name, r.returns, r.read_spec) for r in seq if r.returns]}"
                 )
             if not reads_nickname:
                 details.append(
-                    "重编排缺少读取 Nickname/昵称 的步骤；"
-                    f"reads={[(r.name, r.returns, r.read_spec) for r in seq if r.kind == 'read']}"
+                    "重编排缺少返回 Nickname/昵称 的步骤；"
+                    f"reads={[(r.name, r.returns, r.read_spec) for r in seq if r.returns]}"
                 )
-            bad_sql = [
-                (r.name, r.sql) for r in seq
-                if r.kind == "data_query" and re.search(r"\brating\b|\b评分\b", r.sql or "", flags=re.I)
-            ]
+            foreach_tables = {
+                (s.into or f"{s.var}s").lower()
+                for s in program.statements
+                if isinstance(s, ForEach)
+            }
+            bad_sql = []
+            for r in seq:
+                if r.kind != "data_query" or not re.search(r"\brating\b|\b评分\b", r.sql or "", flags=re.I):
+                    continue
+                refs = {
+                    raw.lower()
+                    for raw in re.findall(r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)\b", r.sql or "", flags=re.I)
+                }
+                if not (refs & foreach_tables):
+                    bad_sql.append((r.name, r.sql))
             if bad_sql:
                 details.append(
-                    "当前列表 schema 无 Rating 列，重编排不得继续对 data_query 使用 rating 字段；"
+                    "当前列表 schema 无 Rating 列；只有先 foreach 产出详情 into 表后，data_query 才能使用 rating 字段；"
                     f"bad_sql={bad_sql}"
                 )
             bad_filters = []
@@ -918,21 +990,30 @@ def _case_program(case: dict):
 
 
 def _dump_program(program) -> None:
-    for s in program.statements:
-        if isinstance(s, Run):
-            fields = f" returns={s.returns!r}" if s.returns else ""
-            spec = f" read_spec={s.read_spec!r}" if s.read_spec else ""
-            print(f"       [{s.kind}] {s.name}: {s.success_condition}{fields}{spec}")
-        elif isinstance(s, If):
-            print(
-                f"       [if] {s.cond.var}[{s.cond.field}] {s.cond.cmp} "
-                f"{s.cond.value!r} values={s.cond.values!r}"
-            )
-            for b in (*s.then, *s.otherwise):
-                nm = getattr(b, "name", None) or getattr(b, "message", "")
-                print(f"          └ [{getattr(b, 'kind', b.op)}] {nm}")
-        elif isinstance(s, Finish):
-            print(f"       [finish] {s.message}")
+    def _dump_stmts(stmts, indent: str = "       ") -> None:
+        for s in stmts:
+            if isinstance(s, Run):
+                fields = f" returns={s.returns!r}" if s.returns else ""
+                spec = f" read_spec={s.read_spec!r}" if s.read_spec else ""
+                print(f"{indent}[{s.kind}] {s.name}: {s.success_condition}{fields}{spec}")
+            elif isinstance(s, If):
+                print(
+                    f"{indent}[if] {s.cond.var}[{s.cond.field}] {s.cond.cmp} "
+                    f"{s.cond.value!r} values={s.cond.values!r}"
+                )
+                if s.then:
+                    print(f"{indent}  then:")
+                    _dump_stmts(s.then, indent + "    ")
+                if s.otherwise:
+                    print(f"{indent}  else:")
+                    _dump_stmts(s.otherwise, indent + "    ")
+            elif isinstance(s, ForEach):
+                print(f"{indent}[foreach] {s.var} in {s.over} -> {s.into or s.var + 's'}")
+                _dump_stmts(s.body, indent + "    ")
+            elif isinstance(s, Finish):
+                print(f"{indent}[finish] {s.message}")
+
+    _dump_stmts(program.statements)
 
 
 def run_orchestrator_decompose_eval(label_filter: str = "", show_program: bool = False) -> None:

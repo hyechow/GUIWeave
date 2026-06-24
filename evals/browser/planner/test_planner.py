@@ -77,6 +77,17 @@ def _check_instruction(instruction: str, expected: dict) -> list[str]:
     for pattern in expected.get("must_not_contain", []):
         if re.search(pattern, instruction):
             details.append(f"must not match '{pattern}'")
+    alternatives = expected.get("any_of", [])
+    if alternatives:
+        alt_failures = []
+        for alt in alternatives:
+            alt_details = _check_instruction(instruction, alt)
+            if not alt_details:
+                break
+            label = alt.get("label") or f"alternative {len(alt_failures) + 1}"
+            alt_failures.append(f"{label}: {', '.join(alt_details)}")
+        else:
+            details.append("must satisfy one alternative: " + " | ".join(alt_failures))
     return details
 
 
@@ -90,7 +101,11 @@ def test_planner() -> None:
             skipped += 1
             continue
 
-        observation = Observation(png_bytes=screenshot_path.read_bytes(), source="eval")
+        observation = Observation(
+            png_bytes=screenshot_path.read_bytes(),
+            source="eval",
+            **c.get("observation", {}),
+        )
         milestone = Milestone.model_validate({**c["milestone"], "id": c["label"]})
         check = _SingleCheckResult.model_validate({
             **c["checker"],

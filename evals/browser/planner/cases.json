@@ -281,5 +281,86 @@
       ]
     },
     "note": "两次回归合一。155232：planner 把上传 milestone 框成『点击上传区域唤起文件选择器』、丢了路径 → action policy 只能 tap → 原生文件框被 _on_file_chooser 拦截取消 → 失败。161159：加了 PLAN_PROMPT 上传指引后 planner 改用 upload 框架了，但①该次 decompose 把 milestone 命名成『上传指定地图文件』(没带路径)，②二进制 @ref 被 resolve_file_refs 跳过、路径没进约束 → planner 无真实路径可用，照抄了 PLAN_PROMPT 示例里的占位路径 /Users/x/map.map_export → 上传了不存在的文件。本 case 复刻 161159 真实态：milestone 泛化无路径、真实路径只在约束里(resolve_file_refs 现在对二进制 @ref 产出『本地完整路径…』段)。判据：planner 指令必须含约束里的真实路径(must_contain_all)、带上传/导入语义、且绝不出现示例占位 /Users/x/。修法=① resolve_file_refs 二进制 @ref 也产出路径段(进约束)；② PLAN_PROMPT 示例改占位符 <真实完整路径> 并明令『绝不照抄占位/示例路径，从约束/子目标取真实路径』。"
+  },
+  {
+    "label": "filter-fallback-目标词 Olivia 必须压过旧精确词和窄框截断（回归 20260624_182334）",
+    "screenshot": "evals/browser/planner/screenshots/webarena113_fallback_olivia_narrow_product_box.png",
+    "observation": {
+      "form_controls": [
+        {
+          "label": "Product",
+          "kind": "text_input",
+          "value": "Olivia zip jacket",
+          "focused": true
+        }
+      ],
+      "dom_state": "Product=Olivia zip jacket"
+    },
+    "milestone": {
+      "name": "清除当前筛选，在 Product 列改用关键词 'Olivia' 重新提交筛选",
+      "description": "当前精确词 'Olivia zip jacket' 已提交但返回 0 records found；本步必须把 Product 列筛选词改成关键词 'Olivia'。",
+      "success_condition": "Product 列筛选框 current='Olivia'，且提交后列表显示非 0 条结果",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "history": [
+      {
+        "index": 6,
+        "instruction": "在 Product 列输入框中输入 'Olivia zip jacket'",
+        "summary": "Product 筛选框当前值被截图误读为不完整，需要修正为完整关键词。",
+        "action": {
+          "action_type": "type",
+          "x": 1049,
+          "y": 428,
+          "text": "Olivia zip jacket",
+          "description": "在 Product 列输入框中输入 'Olivia zip jacket'"
+        }
+      },
+      {
+        "index": 7,
+        "instruction": "点击 'Search' 按钮提交筛选操作",
+        "summary": "Product 列已填入完整关键词，需要点击 Search。",
+        "action": {
+          "action_type": "tap",
+          "x": 155,
+          "y": 267,
+          "description": "点击 'Search' 按钮提交筛选操作"
+        }
+      }
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "Product 列输入框当前值为 'Olivia zip j' 不完整，需修正为完整关键词 'Olivia zip jacket' 并重新提交筛选。",
+      "missing_evidence": [
+        "需要将 Product 列输入框修正为完整关键词 'Olivia zip jacket'",
+        "需要点击 Search 按钮重新提交筛选以触发界面响应"
+      ],
+      "summary": "Product 筛选框当前值为 'Olivia zip j' 不完整，根据 DOM 表单控件信息，Product 输入框 current='Olivia zip jacket' 是权威状态，但截图显示为截断状态。"
+    },
+    "expected": {
+      "any_of": [
+        {
+          "label": "直接改 Product 关键词",
+          "must_contain_all": [
+            "Product",
+            "输入",
+            "Olivia"
+          ]
+        },
+        {
+          "label": "先清除旧筛选",
+          "must_match": [
+            "Reset Filter|清除|重置"
+          ]
+        }
+      ],
+      "must_not_contain": [
+        "Olivia zip jacket",
+        "zip jacket",
+        "点击.{0,12}Search",
+        "回车"
+      ]
+    },
+    "note": "真实 CDP run 20260624_182334 Turn6-8：精确词已返回 0 条，进入 fallback 子目标后仍被截图尾部和 checker 的含混 missing_evidence 牵回旧精确词，重复输入 'Olivia zip jacket' 多烧 3 轮。通用不变量：当当前子目标明确要求把字段改成新值时，planner 必须使用子目标/验收里的新目标值，不能用历史旧值或 checker 误写的旧值；DOM current 只证明当前旧值是什么，不是下一步应保留的目标。"
   }
 ]

@@ -95,9 +95,19 @@ def test_checker() -> None:
             print(f"  [SKIP] {c['label']:58s}  screenshot not found: {c['screenshot']}")
             skipped += 1
             continue
-        observation = Observation(png_bytes=screenshot_path.read_bytes(), source="eval")
+        observation = Observation(
+            png_bytes=screenshot_path.read_bytes(),
+            source="eval",
+            **c.get("observation", {}),
+        )
         m = c["milestone"]
         milestone = Milestone.model_validate({**m, "id": c["label"]})
+        extra = c.get("extra", "")
+        if c.get("with_target_identity_hint"):
+            from gui_agent.core.supervisor.milestone.policy import _target_identity_hint
+
+            hint = _target_identity_hint(milestone, observation)
+            extra = f"{extra}\n{hint}".strip()
 
         buf = io.StringIO()
         try:
@@ -107,6 +117,7 @@ def test_checker() -> None:
                     app_name=m.get("app_name", ""),
                     task_type=m.get("task_type", "action"),
                     constraints=c.get("constraints", []),
+                    extra=extra,
                     prompts=BROWSER_MILESTONE_PROMPTS,
                     check_knowledge=_app_check_knowledge(c),
                     state_trace_text=c.get("state_trace", ""),

@@ -243,7 +243,7 @@
     "note": "回归 logs/gui_agent/webarena/browser/20260618_100104：UI 只筛了 Status=Complete，没有先用页面 Purchase Date 范围筛选；data_query 又用 status='Complete'（实际 provider 为 lowercase complete）和 month_key/cnt 别名，最终 returns month/count 被静默填空。期望：进入 Sales > Orders 后先通过页面 Filters 设置 Status=Complete 与 Purchase Date 01/01/2023-05/31/2023，再读取完整 Orders grid，用 data_query 按 created_at 的月份聚合，SQL 输出 month/count 对象列，returns=['result']，finish 直接返回对象数组。"
   },
   {
-    "label": "意图解析→近似产品检索:按 Product 列、先精确后模糊、SC 要求非0条（回归 20260622_124258 task-113）",
+    "label": "意图解析→产品评论评分查询:使用 Reviews 数据源且产品约束绑定 Product 字段（回归 task-113）",
     "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
     "knowledge_app": "shopping_admin",
     "resolution": [
@@ -259,9 +259,12 @@
       "has_read": true
     },
     "assertions": [
-      "product_lookup_column_and_fuzzy_fallback"
+      "product_lookup_uses_product_field",
+      "shopping_admin_review_rating_initial_uses_reviews_source",
+      "uses_foreach_iteration",
+      "shopping_admin_review_rating_reorch_drills_detail"
     ],
-    "note": "活跑 124258 三连错：编排器把 'Olivia zip jacket' 当评论关键词筛进 Review 文本列(应按 Product 列)、用整串筛(应放宽到 'Olivia')、filter 步 SC 写『动作已发出』致 0 条被判 done。给定意图解析(product/approximate/key=Olivia)后,decompose 应产出:按 Product 列『先精确 Olivia zip jacket、0 条转关键词 Olivia 模糊』、SC『检索到匹配记录(非0条)』。一次意图判断同修三处。"
+    "note": "活跑 124258 三连错：编排器把产品词当评论关键词筛进 Review 文本列、或退化成 Catalog > Products 商品详情路线，导致读不到评论评分。这个 eval 不再规定『先精确后放宽』，因为那是运行策略，不是应用知识；只锁住通用边界：以 Reviews/All Reviews 评论集合为数据源，涉及产品约束时绑定 Product 字段/列，随后 list_read 候选评论行，foreach 逐条打开 Review Detail 读取 Detailed Rating + Nickname，再 data_query 筛 rating<=3。"
   },
   {
     "label": "WebArena shopping_admin task 113 re-decompose drills Review Detail for rating",

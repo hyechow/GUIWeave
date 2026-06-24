@@ -109,7 +109,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 any(k in r.name.lower() for k in ("详情", "detail", "打开", "逐条", "点击"))
                 for r in runs
             )
-            reads = [r for r in runs if r.kind in {"read", "data_query"}]
+            reads = [r for r in runs if r.returns or r.kind == "data_query"]
             read_text = " ".join(
                 (r.name + " " + " ".join(r.returns) + " " + (r.read_spec or "")).lower() for r in reads
             )
@@ -118,7 +118,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(f"未见『打开/逐条进入评论详情』步骤: names=[{names}]")
             if not reads or not reads_rating:
                 details.append(
-                    f"未见读取 rating/评分 的 read/data_query 步（纠正指令要求逐条读取 Detailed Rating）"
+                    f"未见读取 rating/评分 的返回值/data_query 步（纠正指令要求逐条读取 Detailed Rating）"
                 )
         elif assertion == "uses_foreach_iteration":
             # The general-iteration shape (NOT N unrolled steps / not just the first row): a list_read
@@ -136,7 +136,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 )
                 if not over_is_list_read:
                     details.append(f"foreach 的 over「{fe.over}」未指向 list_read 的 read 步")
-                body_reads = [b for b in fe.body if isinstance(b, Run) and b.kind == "read"]
+                body_reads = [b for b in fe.body if isinstance(b, Run) and b.returns]
                 body_text = " ".join(
                     (b.name + " " + " ".join(b.returns) + " " + (b.read_spec or "")).lower() for b in body_reads
                 )
@@ -197,12 +197,20 @@ def _dump_program(program) -> None:
         for s in stmts:
             if isinstance(s, Run):
                 extra = f" returns={s.returns!r}" if s.returns else ""
-                print(f"{indent}[{s.kind}] {s.name}: {s.success_condition}{extra}")
+                spec = f" read_spec={s.read_spec!r}" if s.read_spec else ""
+                print(f"{indent}[{s.kind}] {s.name}: {s.success_condition}{extra}{spec}")
             elif isinstance(s, If):
                 print(f"{indent}[if] {s.cond.var}[{s.cond.field}] {s.cond.cmp} {s.cond.value!r}")
-                _walk(s.then, indent + "  └ ")
-                _walk(s.otherwise, indent + "  └ ")
-            else:
+                if s.then:
+                    print(f"{indent}  then:")
+                    _walk(s.then, indent + "    ")
+                if s.otherwise:
+                    print(f"{indent}  else:")
+                    _walk(s.otherwise, indent + "    ")
+            elif isinstance(s, ForEach):
+                print(f"{indent}[foreach] {s.var} in {s.over} -> {s.into or s.var + 's'}")
+                _walk(s.body, indent + "    ")
+            elif isinstance(s, Finish):
                 print(f"{indent}[finish] {getattr(s, 'message', '')}")
     _walk(program.statements)
 
