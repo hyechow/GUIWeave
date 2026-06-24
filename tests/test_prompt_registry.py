@@ -168,12 +168,33 @@ def test_shared_prompts_do_not_embed_app_or_site_facts():
         "Magento",
         "shopping_admin",
         "RoboTeam",
+        "WebArena",
+        "Olivia",
+        "zip jacket",
+        "tanks products",
+        "customer nickname(s)",
     ]
     for prompt in iter_prompt_templates():
         if prompt.platform != "shared":
             continue
         for term in banned:
             assert term not in prompt.body, f"{prompt.id} embeds app/site fact {term!r}"
+
+
+def test_non_webarena_prompts_do_not_embed_benchmark_examples():
+    banned = [
+        "WebArena",
+        "Olivia",
+        "zip jacket",
+        "tanks products",
+        "customer nickname(s)",
+        "rating of 3 stars or below",
+    ]
+    for prompt in iter_prompt_templates():
+        if prompt.id.startswith("task.webarena."):
+            continue
+        for term in banned:
+            assert term not in prompt.body, f"{prompt.id} embeds benchmark example {term!r}"
 
 
 def test_adapter_prompts_do_not_embed_specific_app_ui_facts():

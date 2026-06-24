@@ -32,21 +32,21 @@ read. For example, January 1, 2023 should be written as `01/01/2023` (or
 `1/1/2023`), and May 31, 2023 should be written as `05/31/2023` (or
 `5/31/2023`).
 
-For WebArena tasks that ask for customer email(s) by total order count across the
-entire history, the Orders grid is the most reliable source of raw order rows:
-show or export `Customer Email`, `Customer Name`, and `Status`, then count rows
-per email yourself. The Orders grid does not provide built-in aggregation/group
+For tasks that ask for customer email(s) by total order count across the entire
+history, the Orders grid is the most reliable source of raw order rows: show or
+export `Customer Email`, `Customer Name`, and `Status`, then count rows per email
+yourself. The Orders grid does not provide built-in aggregation/group
 by/customer-count controls; it only supports filtering, sorting, pagination,
 column selection, and export. For "completed" order-count tasks, filter
 `Status = Complete`; if the task says "entire history", first clear inherited
-unrequested `Active filters` and then leave only `Status: Complete` applied
-(a lingering `Purchase Date` range means the source is no longer entire history).
-Write the filter milestone's visible success condition to require `Active filters`
-show only `Status: Complete` and no `Purchase Date`/date range/search filter.
-For "any state" tasks, do not apply a status filter and clear any existing
-`Active filters` first (click `Clear all` if it is visible), because Magento
-Admin can retain the last grid filter across tasks/browser sessions. Do not
-assume the Customers grid exposes a reliable `Total Orders` column.
+unrequested `Active filters` and then leave only `Status: Complete` applied (a
+lingering `Purchase Date` range means the source is no longer entire history).
+Write the filter milestone's visible success condition to require `Active
+filters` show only `Status: Complete` and no `Purchase Date`/date range/search
+filter. For "any state" tasks, do not apply a status filter and clear any
+existing `Active filters` first (click `Clear all` if it is visible), because
+Magento Admin can retain the last grid filter across sessions. Do not assume the
+Customers grid exposes a reliable `Total Orders` column.
 
 For completed order-count tasks, the plan must make the completed-status
 constraint explicit. It is not enough to name a step "completed orders": either
@@ -106,8 +106,8 @@ can only see the rows currently in the viewport, so it must scroll within each
 loaded page and read rows in chunks. Use a page size that the agent can reliably
 scan (`20`, `30`, or `50` can be safer for visual collection than `200`), collect
 every visible chunk on each page, then use the pager's next page control until
-all `totalRecords` have been covered. WebArena's seeded Orders grid has more rows
-than one viewport/page chunk, so order-count tasks require multi-chunk collection
+all `totalRecords` have been covered. Large Orders grids can span more rows than
+one viewport/page chunk, so order-count tasks require multi-chunk collection
 before counting by `Customer Email`.
 
 ### Grid layout

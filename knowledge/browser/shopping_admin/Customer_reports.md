@@ -18,23 +18,17 @@ version: 1
 
 Customer reports provide insight into customer activity during a specified time period or date range.
 
-Do not use Customer Reports as the primary source for WebArena tasks that ask for
+Do not use Customer Reports as the primary source for tasks that ask for
 `customer email(s)` by total order count across the entire history, such as "most
 number of orders", "second most number of orders", or "have N orders". These
 tasks need the final output field `Customer Email` and often need exact
 group/count/rank/tie handling. Prefer **Sales > Orders** and aggregate complete
 Orders grid/export rows by `Customer Email`.
 
-## WebArena seeded data range
-
-In WebArena shopping_admin, customer reports can show **No records found** before a date
-range is applied. For "entire history" customer order reports, set:
-
-- **From**: `01/01/2022`
-- **To**: `12/31/2023`
-
-Then click **Refresh**. Treat an empty report before setting this range as "filters not
-applied yet", not as evidence that the backend has no customer/order data.
+Customer reports can show **No records found** before a date range is applied.
+When using these reports, set the intended **From** / **To** range and click
+**Refresh** before treating an empty report as evidence that no matching
+customer/order data exists.
 
 There is no separate "aggregate" button on these report pages. The report is
 aggregated automatically only after **Refresh**, and `Show By` controls the time

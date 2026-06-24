@@ -338,8 +338,8 @@ def load_app_dir(d: Path) -> AppKnowledge | None:
     """Load an app's knowledge (nav + overlays + sections) from its dir, or None if no _app.md.
 
     Shared by goal-substring discovery (``auto_discover_knowledge``) and exact-name binding
-    (``load_knowledge_for_app``, used by the WebArena entry where the intent never names the
-    site). Pins the hand-maintained _-prefixed overlays ABOVE the distilled nav (they survive
+    (``load_knowledge_for_app``, used by callers whose task metadata names the app but whose
+    goal text does not). Pins the hand-maintained _-prefixed overlays ABOVE the distilled nav (they survive
     re-ingest and aren't loaded as retrievable sections):
       _deploy.md — environment/access facts (entry URL, host, creds): where/how to reach this
                    instance. Per-instance config; overrides nothing.
@@ -405,8 +405,8 @@ def load_app_dir(d: Path) -> AppKnowledge | None:
 def load_knowledge_for_app(app: str, platform: str = "browser") -> AppKnowledge | None:
     """Load knowledge by EXACT app/dir name (no goal-substring match).
 
-    The WebArena entry binds knowledge by the task's ``sites`` tag — the intent never names the
-    site — so it needs a direct loader keyed on ``knowledge/<platform>/<app>/`` rather than
+    Some benchmark/task-file entries bind knowledge by metadata such as a ``sites`` tag while the
+    intent never names the site, so they need a direct loader keyed on ``knowledge/<platform>/<app>/`` rather than
     ``auto_discover_knowledge``'s substring match against the goal text."""
     d = KNOWLEDGE_DIR / platform / app
     return load_app_dir(d) if d.is_dir() else None

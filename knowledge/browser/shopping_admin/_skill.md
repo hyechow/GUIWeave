@@ -34,6 +34,15 @@ version: 1
 3. 读取请求排名或词项
 4. 输出区块标题和读数
 
+## skill：产品评论评分查询
+- 触发：rating/stars、customer nickname(s)、reviews for product、product reviews、低评分评论
+- 数据：All Reviews 评论行、Product、Review ID、Detailed Rating、Nickname
+- 步骤：
+1. 到达 All Reviews 评论数据源
+2. 采集候选评论行标识
+3. 逐条进入评论详情补齐评分与昵称
+4. 按评分条件筛选并输出昵称
+
 ## skill：Grid 数据导出或采集
 - 触发：需要完整 grid 数据、导出 CSV/XML、跨分页统计
 - 数据：目标 grid、所需列、筛选口径、分页范围

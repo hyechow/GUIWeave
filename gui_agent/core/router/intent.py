@@ -13,9 +13,9 @@ For each entity the goal needs to find in the system, this returns:
                 approximate (a product/person/title referred to in everyday words — these rarely
                 string-match the canonical stored name; default named entities to approximate).
   - search_key: for approximate, the single most distinctive token likely to appear VERBATIM in the
-                stored name (drop modifiers: 'Olivia zip jacket' → 'Olivia', because the full phrase
-                is not a substring of 'Olivia 1/4 Zip Light Jacket' but 'Olivia' is). For exact, the
-                full value.
+                stored name (drop modifiers: 'Aurora jacket' → 'Aurora', because a broad phrase may
+                not be a substring of the canonical stored name but the distinctive token can be).
+                For exact, the full value.
 
 The DECISION (this module): whether a reference is precise or approximate is intent — decided once,
 upfront. That decision (permissiveness + search key) is rendered as a standalone, facts-only context
@@ -50,7 +50,7 @@ _VALID_MODES = {"exact", "approximate"}
 class EntityRef(BaseModel):
     """One entity the goal must look up in the target system."""
 
-    mention: str = Field(description="目标原文里对该实体的引用,如 'Olivia zip jacket'")
+    mention: str = Field(description="目标原文里对该实体的引用,如 'Aurora jacket'")
     type: str = Field(default="generic", description="实体类型:product|customer|order|category|sku|review_text|generic")
     match_mode: str = Field(default="approximate", description='"exact"=系统级精确标识;"approximate"=口语/部分/转述引用')
     search_key: str = Field(default="", description="approximate:最显著、最可能逐字命中存储名称的【单个】token;exact:整串原值")
