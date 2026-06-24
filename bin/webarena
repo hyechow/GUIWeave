@@ -100,4 +100,5 @@ fi
 # "$@" 在后,额外参数可覆盖其它默认。
 exec uv run python -m gui_agent.adapters.browser.webarena \
   --tasks-file "$tasks_file" --task-id "$task_id" \
-  --task-output-dir "$out_dir" "${headless_arg[@]}" "$@"
+  --task-output-dir "$out_dir" "${headless_arg[@]}" "$@" \
+  --max-turns 25

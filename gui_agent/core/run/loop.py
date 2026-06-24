@@ -38,6 +38,8 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.non_ui import drive_pending_non_ui
+from gui_agent.core.orchestrator.collection_runtime import CollectionRuntime
+from gui_agent.core.orchestrator.engine import is_list_read, package_result
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
@@ -286,6 +288,7 @@ def run_agent_loop(
         _cur_run = None
         _run_idx = 0
         _notes_mark = 0
+        _collection_runtime: "CollectionRuntime | None" = None
 
         def _stop_after_esc(turn_no: int) -> dict | None:
             if not _stop_requested():
@@ -299,6 +302,48 @@ def run_agent_loop(
             return _finish(_make_result(context, reason))
 
         _nonui_failure: "str | None" = None  # last re-plannable non-UI (data_query) failure evidence
+
+        def _ensure_collection_runtime() -> "CollectionRuntime | None":
+            nonlocal _collection_runtime
+            if _cur_run is None or not is_list_read(_cur_run):
+                if _collection_runtime is not None:
+                    _collection_runtime = None
+                if hasattr(supervisor, "note_collection_progress"):
+                    supervisor.note_collection_progress("", done=False)
+                return None
+            var = _cur_run.var or f"m{_run_idx}_read"
+            if _collection_runtime is None or _collection_runtime.var != var:
+                _collection_runtime = CollectionRuntime(
+                    var=var,
+                    returns=list(_cur_run.returns),
+                    read_spec=_cur_run.read_spec or "",
+                )
+            return _collection_runtime
+
+        def _update_collection_runtime(observation) -> None:
+            """Refresh the deterministic collection controller for the current frame."""
+            runtime = _ensure_collection_runtime()
+            if runtime is None or _cur_run is None:
+                return
+
+            def _read_detail(fields: list[str]) -> dict[str, str]:
+                from gui_agent.core.orchestrator.structured_read import structured_read
+
+                return structured_read(
+                    observation.png_bytes,
+                    fields,
+                    read_spec=_cur_run.read_spec,
+                    check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                )
+
+            before = len(runtime.rows)
+            decision = runtime.update(observation, read_detail=_read_detail)
+            if hasattr(supervisor, "note_collection_progress"):
+                supervisor.note_collection_progress(runtime.prompt_text(), done=runtime.done)
+            delta = len(runtime.rows) - before
+            delta_text = f", +{delta} 行" if delta else ""
+            _say(f"  [Collect] rows={len(runtime.rows)}{delta_text}, next={decision.action}: {decision.reason}")
 
         def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
             """Drive pending non-UI primitives and sync the local interpreter cursor."""
@@ -370,7 +415,7 @@ def run_agent_loop(
             become the re-decompose's EXPERIENCE, the unexecuted ones its TARGET (summarize_progress),
             the CURRENT observation its page context, and the new interpreter inherits env/run_log so
             already-collected reads still back the final answer (the user's "重编排是有状态记忆的编排")."""
-            nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans
+            nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans, _collection_runtime
             if not (program is not None and directive and callable(redecompose)
                     and _kickback_replans < MAX_KICKBACK_REPLANS):
                 return (False, None)
@@ -429,6 +474,7 @@ def run_agent_loop(
                 "replanned_from_kickback": _kickback_replans,
             }
             _gen = _interp.steps()
+            _collection_runtime = None
             try:
                 _cur_run = next(_gen)
             except StopIteration as _e:
@@ -486,6 +532,7 @@ def run_agent_loop(
             # back after the loop, so the report shows the checker call that ran on the hand-off.
             _carry = SupervisorTimingCarry()
             while True:
+                _update_collection_runtime(observation)
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
                 sv_step = supervisor.step(observation, context.goal, context.turns)
@@ -502,11 +549,18 @@ def run_agent_loop(
                 _done_name = _cur_run.name
                 read_state.drain_pending(say=_say)
                 read_state.flush(turn_no=turn_no, say=_say)
-                from gui_agent.core.orchestrator.engine import package_result
+                _rows = (
+                    list(_collection_runtime.rows)
+                    if _cur_run is not None and is_list_read(_cur_run) and _collection_runtime is not None
+                    else []
+                )
                 _hand = package_result(
                     _cur_run, completed=True, summary=sv_step.summary or "完成",
                     notes=context.content_notes[_notes_mark:],
+                    rows=_rows,
                 )
+                if _cur_run is not None and is_list_read(_cur_run):
+                    _collection_runtime = None
                 try:
                     _cur_run = _gen.send(_hand)
                 except StopIteration as _e:          # program finished (finish / off end)
@@ -609,16 +663,20 @@ def run_agent_loop(
                 say=_say,
             )
 
-            read_result = read_state.process_turn(
-                original_goal=original_goal,
-                sv_step=sv_step,
-                observation_png=observation.png_bytes,
-                bundle=bundle,
-                turn_no=turn_no,
-                say=_say,
-            )
-            read_added_content = read_result.added_content
-            read_note_hash = read_result.note_hash
+            if _cur_run is not None and is_list_read(_cur_run):
+                read_added_content = False
+                read_note_hash = None
+            else:
+                read_result = read_state.process_turn(
+                    original_goal=original_goal,
+                    sv_step=sv_step,
+                    observation_png=observation.png_bytes,
+                    bundle=bundle,
+                    turn_no=turn_no,
+                    say=_say,
+                )
+                read_added_content = read_result.added_content
+                read_note_hash = read_result.note_hash
 
             action_result = action_state.run(
                 sv_step=sv_step,

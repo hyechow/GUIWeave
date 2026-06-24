@@ -51,6 +51,7 @@ CompletionStrategy = Literal[
     "visible_once",
     "read_once",
     "scroll_until_boundary",
+    "react_until_collected",
     "repeat_until_satisfied",
     "human_escalation",
 ]
@@ -58,9 +59,15 @@ CompletionStrategy = Literal[
 # 「连续操作」轴（与 kind 正交）：靠重复调整逼近目标的策略，区别于单步达成。
 #   - repeat_until_satisfied：收敛到目标值（picker 调日期/时间、步进器、滑块）
 #   - scroll_until_boundary：滚动采集直到边界（已有 loop 机制）
-# 连续操作的「进展/卡住」判据与单步不同：进展=被监控值朝目标逼近，重复同一操作属正常，
+#   - react_until_collected：逐行/逐页集合遍历；系统维护 pending/current/completed rows，
+#     planner 只执行下一步意图（打开行、返回列表、翻页/滚动）。
+# 连续操作的「进展/卡住」判据与单步不同：进展=被监控值朝目标逼近/集合状态推进，重复同一操作属正常，
 # 故 checker(进展传感器)/planner(收敛分流)/stuck(值停滞判据) 都按此轴分流。
-ITERATIVE_STRATEGIES: tuple[str, ...] = ("repeat_until_satisfied", "scroll_until_boundary")
+ITERATIVE_STRATEGIES: tuple[str, ...] = (
+    "repeat_until_satisfied",
+    "scroll_until_boundary",
+    "react_until_collected",
+)
 
 
 class CollectionScope(BaseModel):
@@ -445,7 +452,7 @@ class Milestone(BaseModel):
         default="visible_once",
         description=(
             "visible_once | read_once | scroll_until_boundary | "
-            "repeat_until_satisfied | human_escalation"
+            "react_until_collected | repeat_until_satisfied | human_escalation"
         ),
     )
     scroll_stop_condition: str = Field(

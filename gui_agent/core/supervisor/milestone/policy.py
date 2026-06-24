@@ -100,6 +100,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._monitor = ProgressMonitor()
         self._early_feasibility_probed: set[str] = set()  # milestone ids given an early Feasibility probe
         self._last_check: Optional[_SingleCheckResult] = None
+        self._collection_progress: str = ""
+        self._collection_done: bool = False
         self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
@@ -299,6 +301,17 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if self._monitor.dom_changed and not self._monitor.url_changed:
             print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
 
+        if milestone.completion_strategy == "react_until_collected":
+            if self._collection_done:
+                final_read = None
+                if self.task_type != "action":
+                    read_inst = check.read_instruction or _default_read_instruction(milestone)
+                    final_read = _ctx(milestone, read_inst)
+                return self._advance(milestone, observation, history, final_read=final_read)
+            if check.status in {"done", "stuck"}:
+                print(f"  [Collect] controller 未完成，覆盖 checker {check.status} → in_progress")
+                check = check.model_copy(update={"status": "in_progress"})
+
         # VERIFY FIRST, before consuming the prior turn's off-target / no-effect signals.
         # An action that ACTUALLY satisfied the milestone advances even when the verifiers
         # misreported it — TargetVerify false off-target (tap hit the right tab but was read
@@ -319,6 +332,9 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if check.status == "stuck":
             print(f"  [Checker] 判定无进展(stuck)：{check.stuck_reason or check.reason}")
             return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
+
+        if milestone.completion_strategy == "react_until_collected":
+            return self._plan_single(milestone, check, observation, history)
 
         # Off-target last action (post-action targeting verify said the tap missed) — and the
         # milestone is NOT done (checked above) → route straight into replan. Catches "screen
@@ -501,7 +517,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # signature ALONE over this milestone's history, NOT on canonical_url: a filter/search/reset
         # cycle rewrites the url's path shape, so the url-keyed check_loop missed the re-types entirely
         # (regression 20260622_205544: 'Olivia zip jacket' typed 3× at T3/T6/T10, guard never fired).
-        _sig = self._monitor.check_action_repetition(history, milestone.id)
+        _sig = None if milestone.is_iterative else self._monitor.check_action_repetition(history, milestone.id)
         if _sig is not None:
             print(f"  [LoopGuard] 重复执行了同一输入动作（{_sig}）→ 打转，强制换新")
             _con = ("⚠️ 已经把同样的内容输入过同一个输入框且没带来进展(在打转)。"
@@ -510,7 +526,9 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 self._global_constraints.append(_con)
             return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
         _interaction_state = getattr(observation, "dom_state", None) or ""
-        _hit = self._monitor.check_loop(len(history) + 1, _state, plan.instruction, _interaction_state)
+        _hit = None if milestone.is_iterative else self._monitor.check_loop(
+            len(history) + 1, _state, plan.instruction, _interaction_state
+        )
         if _hit is not None:
             print(f"  [LoopGuard] 同页面(canonical={_state})重复了 T{_hit.index} 做过的同一动作 → 打转，强制换新")
             _con = (f"⚠️ 在当前页面已经做过「{plan.instruction}」且没带来进展(在打转)。"
@@ -1037,6 +1055,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             self._global_constraints.append(constraint)
             print(f"  [Constraint] {constraint}")
 
+    def note_collection_progress(self, text: str, *, done: bool = False) -> None:
+        """Push authoritative collection-runtime state into checker/planner prompts."""
+        self._collection_progress = text or ""
+        self._collection_done = bool(done)
+
     def _single_check(
         self,
         milestone: Milestone,
@@ -1050,6 +1073,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 if t.supervisor and t.supervisor.app_name:
                     app_name = t.supervisor.app_name
                     break
+        if milestone.completion_strategy == "react_until_collected" and self._collection_progress:
+            extra = f"{extra}\n{self._collection_progress}".strip()
         return run_checker(
             milestone, observation, history,
             app_name=app_name,
@@ -1207,6 +1232,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         extra: str = "",
     ) -> _PlanResult:
         elements = self._elements_for(milestone, check)
+        if milestone.completion_strategy == "react_until_collected" and self._collection_progress:
+            extra = f"{extra}\n{self._collection_progress}".strip()
         return run_planner(
             milestone, check, observation, history,
             constraints=self._global_constraints,

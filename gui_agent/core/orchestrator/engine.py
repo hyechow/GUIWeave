@@ -29,6 +29,11 @@ _KIND_MAP: dict[str, tuple[str, str]] = {
 }
 
 
+def is_list_read(run: Run) -> bool:
+    """A ``read`` run whose result is a runtime-discovered row collection."""
+    return run.kind == "read" and bool(getattr(run, "list_read", False)) and bool(run.returns)
+
+
 def to_milestone(run: Run, index: int) -> Milestone:
     """Build a feat-android Milestone the supervisor can drive from a DSL Run spec.
 
@@ -38,11 +43,18 @@ def to_milestone(run: Run, index: int) -> Milestone:
     desc = run.name
     if run.returns:
         desc = f"{run.name}（读取字段：{'、'.join(run.returns)}）"
+    success = run.success_condition or f"完成「{run.name}」"
+    if is_list_read(run):
+        strategy = "react_until_collected"
+        success = (
+            f"已完整遍历目标集合「{run.name}」：当前页所有行已处理，必要的行详情已读取，"
+            "并已翻页/滚动到集合末尾；不是只读取当前可见帧。"
+        )
     return Milestone(
         id=run.var or f"m{index}_{run.kind}",
         name=run.name,
         description=desc,
-        success_condition=run.success_condition or f"完成「{run.name}」",
+        success_condition=success,
         kind=kind,  # type: ignore[arg-type]  # validated against MilestoneKind Literal
         completion_strategy=strategy,  # type: ignore[arg-type]
     )

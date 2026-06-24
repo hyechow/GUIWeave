@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
-from gui_agent.core.orchestrator.engine import package_result, task_type_for, to_milestone
+from gui_agent.core.orchestrator.engine import is_list_read, package_result, task_type_for, to_milestone
 from gui_agent.core.orchestrator.program import Run
 from gui_agent.core.run.turns import make_non_ui_turn
 from gui_agent.core.schemas import Observation, PolicyContext
@@ -84,7 +84,7 @@ def drive_pending_non_ui(
             tables = getattr(obs, "tables", None)
         return obs
 
-    while cur_run is not None and cur_run.kind in {"read", "data_query"}:
+    while cur_run is not None and cur_run.kind in {"read", "data_query"} and not is_list_read(cur_run):
         run_for_turn = cur_run
         turn_started = time.perf_counter()
         calls_before = get_llm_call_count()
@@ -95,22 +95,7 @@ def drive_pending_non_ui(
         completed = True
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
         executed_sql = cur_run.sql
-        if cur_run.kind == "read" and cur_run.returns and getattr(cur_run, "list_read", False):
-            from gui_agent.core.orchestrator.structured_read import structured_read_rows
-
-            if frame is None:
-                ensure_observation()
-            rows = structured_read_rows(
-                frame,
-                cur_run.returns,
-                read_spec=cur_run.read_spec,
-                check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
-                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                context_reports=context_reports,
-            )
-            summary = f"列表读取 {len(rows)} 行（{'、'.join(cur_run.returns)}）"
-            say(f"  [Orchestrator] 列表读取帧 {cur_run.returns} → {len(rows)} 行")
-        elif cur_run.kind == "read" and cur_run.returns:
+        if cur_run.kind == "read" and cur_run.returns:
             from gui_agent.core.orchestrator.structured_read import structured_read
 
             if frame is None:
