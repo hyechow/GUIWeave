@@ -129,6 +129,101 @@ def table_snapshot_js() -> str:
     return entry;
   }};
 
+  const parsePositiveInt = (value) => {{
+    const m = String(value == null ? "" : value).replace(/,/g, "").match(/\\d+/);
+    if (!m) return null;
+    const n = parseInt(m[0]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }};
+  const labelTextFor = (control, root) => {{
+    const parts = [];
+    const id = control && control.id;
+    if (id) {{
+      const label = (root || document).querySelector(`label[for="${{CSS.escape(id)}}"]`);
+      if (label) parts.push(label.textContent || label.innerText || "");
+    }}
+    const labelledBy = control && control.getAttribute && control.getAttribute("aria-labelledby");
+    if (labelledBy) {{
+      for (const ref of labelledBy.split(/\\s+/)) {{
+        const label = document.getElementById(ref);
+        if (label) parts.push(label.textContent || label.innerText || "");
+      }}
+    }}
+    return norm(parts.join(" "));
+  }};
+  const disabled = (el) => !!(
+    el && (
+      el.disabled ||
+      el.matches('[disabled], [aria-disabled="true"], .disabled, [class*="disabled" i]') ||
+      el.closest('[disabled], [aria-disabled="true"], .disabled, [class*="disabled" i]')
+    )
+  );
+  const detectPageSizeState = (pager) => {{
+    let root = pager;
+    for (let depth = 0; root && depth < 5; depth++, root = root.parentElement) {{
+      const candidates = Array.from(root.querySelectorAll([
+        'select',
+        'input',
+        '[role="combobox"]',
+        '.selectmenu input',
+        '[class*="page-size" i] input',
+        '[class*="per-page" i] input',
+      ].join(',')));
+      for (const control of candidates) {{
+        const label = labelTextFor(control, root);
+        let menu = control.closest('.selectmenu, [class*="page-size" i], [class*="per-page" i]');
+        const nearby = norm((menu || control.parentElement || control).textContent || "");
+        const attrs = norm([
+          control.getAttribute("name"),
+          control.getAttribute("id"),
+          control.getAttribute("aria-label"),
+          control.getAttribute("aria-labelledby"),
+          label,
+        ].join(" "));
+        if (
+          !/(per page|page size|rows per page|items per page|每页|每頁)/i.test(attrs) &&
+          !(menu && /(per page|page size|rows per page|items per page|每页|每頁)/i.test(nearby))
+        ) continue;
+
+        const current = parsePositiveInt(control.value || control.getAttribute("value") || control.textContent);
+        menu = menu || root;
+        const optionNodes = Array.from(menu.querySelectorAll([
+          'option',
+          '[role="option"]',
+          '.selectmenu-item',
+          '.selectmenu-items li',
+          '.selectmenu-items button',
+          '.selectmenu-items a',
+          'button',
+          'a',
+        ].join(',')));
+        const options = [];
+        const seen = new Set();
+        for (const option of optionNodes) {{
+          const n = parsePositiveInt(option.textContent || option.innerText || option.value);
+          if (!n || seen.has(n)) continue;
+          seen.add(n);
+          options.push(n);
+        }}
+        options.sort((a, b) => a - b);
+        const activeMenu = menu.querySelector('.selectmenu-items._active, [role="listbox"], ._active');
+        const page_size_menu_open = !!(activeMenu && visible(activeMenu));
+        return {{
+          page_size: current,
+          page_size_options: options,
+          has_page_size_control: true,
+          page_size_menu_open,
+        }};
+      }}
+    }}
+    return {{
+      page_size: null,
+      page_size_options: [],
+      has_page_size_control: false,
+      page_size_menu_open: false,
+    }};
+  }};
+
   const detectPagerState = (tableOrGrid) => {{
     let container = tableOrGrid.parentElement;
     for (let depth = 0; depth < 4 && container; depth++, container = container.parentElement) {{
@@ -177,9 +272,27 @@ def table_snapshot_js() -> str:
       page_count = parseInt(pageMatch[2]);
     }}
 
-    // Magento-style: <input id="*_page-current" value="N"> + <label>of <span>M</span></label>
+    // Magento-style: <input data-ui-id="current-page-input" value="N"> + <label>of M</label>.
+    // The input id is often a dynamic number, so prefer the label's `for` link over id patterns.
+    const pageLabels = Array.from(pager.querySelectorAll('label.admin__control-support-text, label[for]'));
+    for (const label of pageLabels) {{
+      const labelText = label.innerText || '';
+      if (!/\\bof\\s+\\d+/i.test(labelText)) continue;
+      const forId = label.getAttribute('for');
+      const linkedInput = forId ? pager.querySelector(`#${{CSS.escape(forId)}}`) : null;
+      if (!page_index && linkedInput) {{
+        const val = parseInt(linkedInput.value);
+        if (val) page_index = val;
+      }}
+      if (!page_count) {{
+        const match = labelText.match(/\\d+/);
+        if (match) page_count = parseInt(match[0]);
+      }}
+    }}
+
+    // Other Magento variants: <input id="*_page-current" value="N">.
     if (!page_index) {{
-      const pageInput = pager.querySelector('input[id*="page-current" i], input[name="page" i]');
+      const pageInput = pager.querySelector('input[data-ui-id="current-page-input" i], input[id*="page-current" i], input[name="page" i]');
       if (pageInput) {{
         const val = parseInt(pageInput.value);
         if (val) page_index = val;
@@ -212,14 +325,8 @@ def table_snapshot_js() -> str:
       'button[class*="previous" i]',
     ].join(', '));
 
-    if (nextBtn) {{
-      const disabled = nextBtn.disabled || nextBtn.matches('[disabled], [aria-disabled="true"], .disabled, [class*="disabled" i]');
-      has_next_page = !disabled;
-    }}
-    if (prevBtn) {{
-      const disabled = prevBtn.disabled || prevBtn.matches('[disabled], [aria-disabled="true"], .disabled, [class*="disabled" i]');
-      has_prev_page = !disabled;
-    }}
+    if (nextBtn) has_next_page = !disabled(nextBtn);
+    if (prevBtn) has_prev_page = !disabled(prevBtn);
 
     if (!page_index) {{
       const activePage = pager.querySelector([
@@ -234,12 +341,14 @@ def table_snapshot_js() -> str:
       }}
     }}
 
+    const pageSize = detectPageSizeState(pager);
     return {{
       type: 'paged',
       page_index,
       page_count,
       has_next_page,
       has_prev_page,
+      ...pageSize,
     }};
   }};
 

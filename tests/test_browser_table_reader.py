@@ -15,6 +15,7 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "records?" in js
     assert ".dashboard-item-title" in js
     assert "aria-labelledby" in js
+    assert "current-page-input" in js
 
 
 def test_complete_table_snapshot_js_fetches_magento_mui_pages():
@@ -149,6 +150,37 @@ def test_normalize_preserves_traversal_on_last_page():
     tables = normalize_table_snapshots(raw)
     assert tables[0]["traversal"]["has_next_page"] is False
     assert tables[0]["traversal"]["has_prev_page"] is True
+
+
+def test_normalize_preserves_page_size_traversal_fields():
+    raw = {
+        "url": "http://example.test/admin/reviews",
+        "title": "Reviews",
+        "tables": [{
+            "source": "table",
+            "headers": ["ID", "Nickname"],
+            "rows": [{"ID": "26", "Nickname": "Zoe"}],
+            "totalRecords": "27",
+            "traversal": {
+                "type": "paged",
+                "page_index": 2,
+                "page_count": 2,
+                "has_next_page": False,
+                "has_prev_page": True,
+                "page_size": 20,
+                "page_size_options": [20, 30, 50, 100],
+                "has_page_size_control": True,
+                "page_size_menu_open": False,
+            },
+        }],
+    }
+
+    tables = normalize_table_snapshots(raw)
+
+    assert tables[0]["traversal"]["page_size"] == 20
+    assert tables[0]["traversal"]["page_size_options"] == [20, 30, 50, 100]
+    assert tables[0]["traversal"]["has_page_size_control"] is True
+    assert tables[0]["traversal"]["page_size_menu_open"] is False
 
 
 def test_normalize_preserves_traversal_infinite_scroll():
