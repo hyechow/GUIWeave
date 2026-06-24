@@ -9,6 +9,7 @@ worked, and lets the "repeated" plan through instead of retry→escalate.
 
 from __future__ import annotations
 
+from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.core.schemas import Milestone, Observation, SupervisorStep
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
@@ -56,7 +57,94 @@ def test_no_dom_change_still_escalates_to_stuck():
     assert step.summary == STUCK_SUMMARY
 
 
+def test_dom_state_presence_disables_pre_action_text_repeat_guard():
+    # 浏览器有 DOM 指纹时，planner 文本只代表意图；真实重复要等 action_policy/executor
+    # 产生 DOM action signature 后判断。即使上一帧没有 dom_changed，也不能在这里靠文本挡住。
+    obs = Observation(png_bytes=b"png", source="browser", url="http://h/admin/catalog/product", dom_state="abc")
+    step = _policy(dom_changed=False)._plan_single(_ms(), _check(), obs, [])
+    assert step.summary != STUCK_SUMMARY
+    assert step.should_act
+
+
 def test_observation_dom_state_optional():
     # dom_state 是平台可选信号:不提供时为 None(iphone/android),提供时原样保存
     assert _obs().dom_state is None
     assert Observation(png_bytes=b"p", source="t", dom_state="abc123").dom_state == "abc123"
+
+
+def _browser_tap_decision() -> BrowserActionDecision:
+    return BrowserActionDecision.model_validate({
+        "action": {
+            "action_type": "tap",
+            "x": 120,
+            "y": 250,
+            "description": "点击 Edit",
+            "snap": {"snapped": [120, 250], "info": "button 72x32"},
+        }
+    })
+
+
+def _step() -> SupervisorStep:
+    return SupervisorStep(
+        should_act=True,
+        instruction="点击 Edit",
+        stop=False,
+        goal_completed=False,
+        summary="打开详情",
+        milestone_id="m1",
+        completion_strategy="visible_once",
+    )
+
+
+def test_executed_dom_action_signature_is_recorded():
+    p = MilestoneSupervisorPolicy()
+    obs = Observation(png_bytes=b"png", source="browser", url="http://h/admin/catalog/product", dom_state="row=sku-a")
+
+    p.note_executed_action(
+        index=1,
+        observation=obs,
+        supervisor_step=_step(),
+        action_decision=_browser_tap_decision(),
+        executed=True,
+    )
+
+    trace = p._monitor.render()
+    assert "状态:/admin/catalog/product" in trace
+    assert "决策:tap|button@" in trace
+    assert "交互:row=sku-" in trace
+
+
+def test_same_dom_action_on_different_dom_state_is_not_repeat():
+    p = MilestoneSupervisorPolicy()
+    for index, dom_state in [(1, "row=sku-a"), (2, "row=sku-b")]:
+        p.note_executed_action(
+            index=index,
+            observation=Observation(
+                png_bytes=b"png",
+                source="browser",
+                url="http://h/admin/catalog/product",
+                dom_state=dom_state,
+            ),
+            supervisor_step=_step(),
+            action_decision=_browser_tap_decision(),
+            executed=True,
+        )
+
+    assert "⚠️重复" not in p._monitor.render()
+
+
+def test_same_dom_action_on_same_dom_state_marks_repeat():
+    p = MilestoneSupervisorPolicy()
+    obs = Observation(png_bytes=b"png", source="browser", url="http://h/admin/catalog/product", dom_state="row=sku-a")
+    for index in [1, 2]:
+        p.note_executed_action(
+            index=index,
+            observation=obs,
+            supervisor_step=_step(),
+            action_decision=_browser_tap_decision(),
+            executed=True,
+        )
+
+    trace = p._monitor.render()
+    assert "⚠️重复(同 T1)" in trace
+    assert p._global_constraints

@@ -730,6 +730,16 @@ def run_agent_loop(
                 on_turn=on_turn,
             )
 
+            note_executed_action = getattr(supervisor, "note_executed_action", None)
+            if callable(note_executed_action):
+                note_executed_action(
+                    index=turn.index,
+                    observation=observation,
+                    supervisor_step=sv_step,
+                    action_decision=action_decision,
+                    executed=executed,
+                )
+
             # Feasibility Guard kick-back: the supervisor judged the milestone INFEASIBLE and attached a
             # re-plan directive. Re-decompose the goal with that directive and hot-swap the
             # interpreter, instead of failing the run. Bounded (MAX_KICKBACK_REPLANS); any failure

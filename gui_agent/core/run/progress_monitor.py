@@ -15,8 +15,8 @@ Two ways to key an action (the `decision`):
   - the planner's NL instruction (legacy Action-Loop Guard) — reworded phrasings collapse via
     `_norm_action`, but a genuinely reworded SAME action can still slip through; and
   - `action_signature(action)` — a reword-proof identity of the EXECUTED action
-    (action_type | target-control | text). Run 20260622_171843 re-typed 'Olivia zip jacket' into
-    the same box across T3/T9/T12/T13 while the instruction kept changing; the signature collapses
+    (action_type | target-control | text). Run 20260622_171843 re-typed the same long search value
+    into the same box across T3/T9/T12/T13 while the instruction kept changing; the signature collapses
     them, the instruction key did not.
 Both flow through the same `note`/`repeated` — the caller picks the key.
 
@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from gui_agent.context import ContextBlock
+from gui_agent.core.run.instruction_similarity import instructions_are_repeated
 from gui_agent.core.schemas import Observation
 from gui_agent.core.vision.frame_analysis import CHANGE_SSIM_DIST_THR, region_change
 
@@ -191,7 +192,8 @@ class ProgressMonitor:
         Why not the url-keyed check_loop: a filter/search/reset cycle rewrites the url's path shape
         (`/index/` → `/index/filter//internal_reviews/…`), so canonical_url is NOT stable across the
         first-search boundary — the first re-type lands under a different state and never matches
-        (regression 20260622_205544: 'Olivia zip jacket' typed at T3/T6/T10, the guard never fired).
+        (regression 20260622_205544: the same long search value was typed at T3/T6/T10, the guard
+        never fired).
         The signature alone (type|box|value) IS the identity; scanning the milestone's own executed
         type actions needs no url. Scoped to `type`: re-putting the same value into the same box is
         always redundant, whereas a re-click of Search/Reset can be legitimate (instruction guard owns
@@ -285,13 +287,12 @@ class ProgressMonitor:
         ]
         if len(recent) < STUCK_REPEAT_WINDOW:
             return None
-        base_words = set(recent[-1].split())
-        sims = [
-            len(base_words & set(inst.split())) / max(len(base_words), len(set(inst.split())), 1)
+        repeated = [
+            instructions_are_repeated(recent[-1], inst, threshold=STUCK_REPEAT_WORD_OVERLAP)
             for inst in recent[:-1]
         ]
-        if all(s >= STUCK_REPEAT_WORD_OVERLAP for s in sims):
-            print(f"  [RepStuck] {', '.join(f'{s:.2%}' for s in sims)} → 指令连续重复")
+        if all(repeated):
+            print("  [RepStuck] 指令目标一致且文本连续相似 → 指令连续重复")
             from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
             return _SingleCheckResult(
                 status="stuck",

@@ -1,5 +1,6 @@
 """MilestoneSupervisorPolicy: two-machine milestone supervisor."""
 
+import re
 from typing import Literal, Optional
 
 from langchain_openai import ChatOpenAI
@@ -38,7 +39,7 @@ from .runtime import (
     _last_scroll_was_for,
     _type_only_search_filter_pending_submit,
 )
-from gui_agent.core.run.progress_monitor import ProgressMonitor, canonical_url
+from gui_agent.core.run.progress_monitor import ProgressMonitor, action_signature, canonical_url
 from .schemas import (
     MilestonePrompts,
     _DecomposeResponse,
@@ -60,11 +61,52 @@ from .stuck import MilestoneStuckMixin
 # SUBSTRINGS, not exact: the checker writes free-form text ("无法识别当前页面", "未知页面(用户中心?)",
 # "unknown page" → "unknownpage"), so exact-set membership misses every real-world variant.
 _UNKNOWN_PAGE_MARKERS = ("未知", "未识别", "无法识别", "不确定", "unknown", "unidentified")
+_TARGET_IDENTITY_MARKER = "必须对应子目标指定对象"
+_TARGET_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,}")
 
 
 def _page_known(page_identity: str) -> bool:
     n = _norm_page(page_identity)
     return bool(n) and not any(marker in n for marker in _UNKNOWN_PAGE_MARKERS)
+
+
+def _target_identity_hint(milestone: Milestone, observation: Observation) -> str:
+    """Expose exact machine-route identity only for runtime-targeted milestones.
+
+    Foreach/detail workflows often target an object whose stable id is present in the
+    browser route but not visible in the viewport. The generic checker should be able
+    to use that route identity when the milestone itself already contains an explicit
+    target-identity gate; do not inject arbitrary URLs for ordinary page checks.
+    """
+    if _TARGET_IDENTITY_MARKER not in (milestone.success_condition or ""):
+        return ""
+    url = str(getattr(observation, "url", "") or "")
+    if not url:
+        return ""
+    text = f"{milestone.name}\n{milestone.success_condition}"
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for token in _TARGET_TOKEN_RE.findall(text):
+        if not any(ch.isdigit() for ch in token):
+            continue
+        lowered = token.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        tokens.append(token)
+    matches = [
+        token for token in tokens[:8]
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", url)
+    ]
+    if not matches:
+        return ""
+    return (
+        "系统机器状态补充：当前浏览器 URL/路由精确包含当前子目标的目标标识"
+        f"「{'、'.join(matches[:3])}」。判断是否打开了指定对象详情/结果页时，"
+        "这个路由标识就是对象身份的机器可观测证据；若当前页已经是详情/结果页且验收字段可见，"
+        "不得因为字段值（如名称、昵称、评分、状态）与预期筛选结果不同而否定对象身份。"
+        "字段取值仍按当前页面可见内容和结构化读取判定，后续筛选/汇总步骤负责决定这些字段值是否符合最终任务条件。"
+    )
 
 
 class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin):
@@ -160,6 +202,50 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 for mid, values in self._monitor._progress_values.items()
             },
         }
+
+    def note_executed_action(
+        self,
+        *,
+        index: int,
+        observation: Observation,
+        supervisor_step: SupervisorStep,
+        action_decision,
+        executed: bool,
+    ) -> None:
+        """Record the concrete DOM-backed action after executor snapping.
+
+        Planner instructions are only intent text. On browser pages the executor can attach a
+        snapped DOM target to the action, so the repeat key should be the concrete action
+        signature plus the current DOM/form fingerprint. This keeps repeated instructions for
+        different rows/pages from looking identical while still surfacing true same-state loops.
+        """
+        if not executed or action_decision is None:
+            return
+        if getattr(supervisor_step, "completion_strategy", None) in {
+            "repeat_until_satisfied",
+            "scroll_until_boundary",
+            "react_until_collected",
+        }:
+            return
+        action = getattr(action_decision, "action", None)
+        if action is None:
+            return
+        state = canonical_url(getattr(observation, "url", None))
+        dom_state = getattr(observation, "dom_state", None) or ""
+        snap = getattr(action, "snap", None)
+        if not state or (not dom_state and not snap):
+            return
+        decision = action_signature(action)
+        hit = self._monitor.repeated(state, decision, dom_state)
+        self._monitor.note(index, state, decision, dom_state)
+        if hit is not None:
+            print(f"  [LoopGuard] 同 DOM 状态重复执行了 T{hit.index} 的同一动作签名 → 记录为打转事实")
+            con = (
+                f"⚠️ 当前 DOM 状态下已经执行过同一具体动作（{decision}）且目标未达成。"
+                "必须换一个当前页面可见的新入口或新操作，禁止重复同一 DOM 目标。"
+            )
+            if con not in self._global_constraints:
+                self._global_constraints.append(con)
 
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
         self._timings.clear()
@@ -403,7 +489,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         sim_stuck = None if (self._monitor.url_changed or self._monitor.dom_changed) else self._monitor.check_screen_similarity(observation, self._monitor.action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
 
-        rep_stuck = self._monitor.check_instruction_repetition(history, milestone.id) if not sim_stuck else None
+        has_dom_state = bool(getattr(observation, "dom_state", None))
+        rep_stuck = (
+            None
+            if sim_stuck or has_dom_state
+            else self._monitor.check_instruction_repetition(history, milestone.id)
+        )
         # Stepping a picker / value means repeating the SAME column scroll. The two-tier
         # _check_screen_similarity already returns stuck when the touched region is NOT moving,
         # so reaching here (sim_stuck is None) means the region IS changing — a repeated
@@ -447,7 +538,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
         # 连续调值类豁免「指令重复=失败」升级：对 picker 而言重复"向上拖月份列"直到到位本就
         # 是正确做法，单步式的重复检测会误把它判成撞墙→死路。其停滞由 _check_value_stall 兜。
-        if not milestone.is_iterative and self._is_repeated_instruction(plan.instruction, milestone.id, history):
+        #
+        # Browser/DOM-backed pages use executed action signatures instead of planner text:
+        # before action_policy runs we do not yet know which DOM element will be targeted. Using
+        # natural-language similarity here falsely collapses foreach rows such as "打开 SKU A Edit"
+        # and "打开 SKU B Edit". The actual key is recorded after executor DOM snap in
+        # note_executed_action().
+        _has_dom_state = bool(getattr(observation, "dom_state", None))
+        if (
+            not milestone.is_iterative
+            and not _has_dom_state
+            and self._is_repeated_instruction(plan.instruction, milestone.id, history)
+        ):
             if self._monitor.dom_changed:
                 # Ground truth beats text similarity: the interactive-state fingerprint moved
                 # since last turn, so the prior "similar" instruction WORKED (form filling
@@ -516,7 +618,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # re-click of Search/Reset carries no text and is left to the instruction guard). Keyed on the
         # signature ALONE over this milestone's history, NOT on canonical_url: a filter/search/reset
         # cycle rewrites the url's path shape, so the url-keyed check_loop missed the re-types entirely
-        # (regression 20260622_205544: 'Olivia zip jacket' typed 3× at T3/T6/T10, guard never fired).
+        # (regression 20260622_205544: the same long search value was typed 3×, guard never fired).
         _sig = None if milestone.is_iterative else self._monitor.check_action_repetition(history, milestone.id)
         if _sig is not None:
             print(f"  [LoopGuard] 重复执行了同一输入动作（{_sig}）→ 打转，强制换新")
@@ -526,8 +628,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 self._global_constraints.append(_con)
             return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
         _interaction_state = getattr(observation, "dom_state", None) or ""
-        _hit = None if milestone.is_iterative else self._monitor.check_loop(
-            len(history) + 1, _state, plan.instruction, _interaction_state
+        _hit = (
+            None
+            if milestone.is_iterative or _interaction_state
+            else self._monitor.check_loop(len(history) + 1, _state, plan.instruction, _interaction_state)
         )
         if _hit is not None:
             print(f"  [LoopGuard] 同页面(canonical={_state})重复了 T{_hit.index} 做过的同一动作 → 打转，强制换新")
@@ -1056,7 +1160,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print(f"  [Constraint] {constraint}")
 
     def note_collection_progress(self, text: str, *, done: bool = False) -> None:
-        """Push authoritative collection-runtime state into checker/planner prompts."""
+        """Push authoritative list traversal state into checker/planner prompts."""
         self._collection_progress = text or ""
         self._collection_done = bool(done)
 
@@ -1075,6 +1179,9 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     break
         if milestone.completion_strategy == "react_until_collected" and self._collection_progress:
             extra = f"{extra}\n{self._collection_progress}".strip()
+        identity_hint = _target_identity_hint(milestone, observation)
+        if identity_hint:
+            extra = f"{extra}\n{identity_hint}".strip()
         return run_checker(
             milestone, observation, history,
             app_name=app_name,

@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from gui_agent.core.run.instruction_similarity import instructions_are_repeated
+
 from .schemas import _PlanResult
 
 
@@ -74,10 +76,7 @@ class MilestoneStuckMixin:
     def _is_repeated_instruction(
         self, instruction: str, milestone_id: str, history,
     ) -> bool:
-        from difflib import SequenceMatcher
-        _strip = lambda s: re.sub(r"[，。、；：""''《》\s（）\(\)]", "", s.strip())
         _scroll_words = ("滚动", "滑动", "拖动", "拖拽", "scroll", "drag")
-        n_new = _strip(instruction)
 
         stuck_tried: set[str] = set()
         all_tried: list[str] = []
@@ -94,15 +93,11 @@ class MilestoneStuckMixin:
             ):
                 stuck_tried.add(sv.instruction)
 
-        def _similar(new: str, old: str) -> bool:
-            n_old = _strip(old)
-            return bool(n_new and n_old) and SequenceMatcher(None, new, n_old).ratio() >= 0.6
-
         for old in stuck_tried:
-            if _similar(n_new, old):
+            if instructions_are_repeated(instruction, old, threshold=0.6):
                 return True
 
         if any(w in instruction for w in _scroll_words):
             return False
-        similar_count = sum(1 for old in all_tried if _similar(n_new, old))
+        similar_count = sum(1 for old in all_tried if instructions_are_repeated(instruction, old, threshold=0.6))
         return similar_count >= 2

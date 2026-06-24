@@ -240,6 +240,320 @@ def _norm_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip()).lower()
 
 
+_FIELD_SUFFIX_RE = re.compile(
+    r"([A-Za-z][A-Za-z0-9 _/-]{0,30}|[\u4e00-\u9fff]{1,12})\s*"
+    r"(?:列|字段|输入框|筛选框|搜索框|下拉框|column|field|filter)",
+    re.IGNORECASE,
+)
+_QUOTED_RE = re.compile(r"[\"'「『“‘]([^\"'」』”’]{1,80})[\"'」』”’]")
+_GENERIC_CONTROL_LABELS = {
+    "undefined",
+    "from",
+    "to",
+    "perpage",
+    "of",
+    "actions",
+    "searchglobal",
+    "selectall",
+    "unselectall",
+}
+
+
+def _field_aliases(field: str) -> set[str]:
+    norm = _norm_text(field)
+    aliases = {norm} if norm else set()
+    bilingual = {
+        "产品": {"product", "产品"},
+        "商品": {"product", "商品"},
+        "昵称": {"nickname", "昵称"},
+        "评论": {"review", "detail", "评论"},
+        "状态": {"status", "状态"},
+        "可见性": {"visibility", "visiblein", "可见性"},
+        "类型": {"type", "类型"},
+        "标题": {"title", "标题"},
+    }
+    aliases.update(bilingual.get(norm, set()))
+    return {_norm_text(a) for a in aliases if _norm_text(a)}
+
+
+def _extract_target_fields(milestone: Milestone) -> list[str]:
+    text = " ".join([milestone.name or "", milestone.description or ""])
+    fields: list[str] = []
+    for raw in _FIELD_SUFFIX_RE.findall(text):
+        field = str(raw or "").strip(" '\"「」『』")
+        norm = _norm_text(field)
+        if not norm or norm in {"当前", "目标", "搜索", "筛选", "关键词", "读取"}:
+            continue
+        if field not in fields:
+            fields.append(field)
+    return fields[:3]
+
+
+def _control_label(item: dict) -> str:
+    return str(item.get("label") or item.get("name") or item.get("id") or item.get("placeholder") or "").strip()
+
+
+def _visible_field_controls(form_controls: list[dict] | None) -> list[dict]:
+    out: list[dict] = []
+    for item in form_controls or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        if "input" not in kind and "select" not in kind and "textarea" not in kind:
+            continue
+        label = _control_label(item)
+        label_norm = _norm_text(label)
+        if not label_norm or label_norm in _GENERIC_CONTROL_LABELS:
+            continue
+        out.append(item)
+    return out
+
+
+def _instruction_mentions_control(instruction: str, controls: list[dict]) -> dict | None:
+    inst_norm = _norm_text(instruction)
+    for item in controls:
+        label_norm = _norm_text(_control_label(item))
+        if label_norm and len(label_norm) >= 3 and label_norm in inst_norm:
+            return item
+    return None
+
+
+def _find_matching_control(field: str, controls: list[dict]) -> dict | None:
+    aliases = _field_aliases(field)
+    for item in controls:
+        label_norm = _norm_text(_control_label(item))
+        if label_norm and label_norm in aliases:
+            return item
+    return None
+
+
+def _extract_input_value(plan: _PlanResult, milestone: Milestone) -> str:
+    for text in (plan.instruction or "", milestone.name or "", milestone.description or ""):
+        match = re.search(r"(?:输入|填写|搜索|筛选)(?!框)\s*[\"'「『“‘]?([^\"'」』”’，。;；]{1,80})", text)
+        if match:
+            return match.group(1).strip()
+    for text in (plan.instruction or "", milestone.name or "", milestone.description or ""):
+        for value in _QUOTED_RE.findall(text):
+            value = value.strip()
+            if value:
+                return value
+    return ""
+
+
+def _extract_input_value_from_text(text: str) -> str:
+    match = re.search(r"(?:输入|填写|搜索|筛选|设置为|设为)(?!框)\s*[\"'「『“‘]?([^\"'」』”’，。;；]{1,80})", text or "")
+    if match:
+        return match.group(1).strip()
+    for value in _QUOTED_RE.findall(text or ""):
+        value = value.strip()
+        if value:
+            return value
+    return ""
+
+
+_SUBMIT_STALE_INPUT_RE = re.compile(r"Search|Apply|提交|应用|按回车|回车|Enter|搜索按钮|筛选按钮", re.IGNORECASE)
+_CLEAR_FILTER_RE = re.compile(r"Reset Filter|清除|重置|reset", re.IGNORECASE)
+
+
+def _control_current_value(item: dict) -> str:
+    return str(item.get("selected_text") or item.get("value") or "").strip()
+
+
+def _extract_target_value_for_field(milestone: Milestone, field: str) -> str:
+    aliases = _field_aliases(field)
+    texts = [milestone.success_condition or "", milestone.name or "", milestone.description or ""]
+    patterns = [
+        r"(?:current|当前值)\s*=\s*[\"'「『“‘]([^\"'」』”’]{1,80})[\"'」』”’]",
+        r"(?:改用|改为|改成|设置为|设为|输入|填写|使用关键词|关键词)\s*[\"'「『“‘]([^\"'」』”’]{1,80})[\"'」』”’]",
+        r"(?:按|关键词)\s+([A-Za-z0-9][A-Za-z0-9 _/-]{0,60})\s*(?:筛选|搜索|检索|$)",
+    ]
+    for text in texts:
+        norm_text = _norm_text(text)
+        if aliases and not any(alias in norm_text for alias in aliases):
+            continue
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            value = match.group(1).strip(" '\"「」『』“”‘’")
+            if value and _norm_text(value) not in {"current", "目标", "关键词"}:
+                return value
+    return ""
+
+
+def _guard_stale_text_filter_plan(
+    plan: _PlanResult,
+    milestone: Milestone,
+    check: _SingleCheckResult,
+    observation: Observation,
+) -> _PlanResult:
+    """Do not submit a text filter while its DOM current value is still stale."""
+    instruction = plan.instruction or ""
+    if not instruction or _CLEAR_FILTER_RE.search(instruction):
+        return plan
+    controls = _visible_field_controls(getattr(observation, "form_controls", None))
+    if not controls:
+        return plan
+    targets = _extract_target_fields(milestone)
+    if not targets:
+        return plan
+    inst_norm = _norm_text(instruction)
+    plan_value = _extract_input_value_from_text(instruction)
+    for field in targets:
+        target_control = _find_matching_control(field, controls)
+        if target_control is None:
+            continue
+        kind = str(target_control.get("kind") or "")
+        if "input" not in kind and "textarea" not in kind:
+            continue
+        target_value = _extract_target_value_for_field(milestone, field)
+        if not target_value:
+            continue
+        if _norm_text(_control_current_value(target_control)) == _norm_text(target_value):
+            continue
+        label = _control_label(target_control) or field
+        label_mentioned = any(alias in inst_norm for alias in _field_aliases(label) | _field_aliases(field))
+        typed_stale_value = (
+            bool(plan_value)
+            and _norm_text(plan_value) != _norm_text(target_value)
+            and (label_mentioned or re.search(r"输入|填写|搜索|筛选|设置", instruction))
+        )
+        submits_stale_value = bool(_SUBMIT_STALE_INPUT_RE.search(instruction))
+        if not typed_stale_value and not submits_stale_value:
+            continue
+        return plan.model_copy(update={
+            "instruction": f"在 {label} 输入框输入 {target_value}",
+            "summary": (
+                f"子目标要求把「{field}」字段改为「{target_value}」，但 DOM 当前值仍是"
+                f"「{_control_current_value(target_control)}」；先修正字段值，不能提交旧值。"
+            ),
+        })
+    return plan
+
+
+def _guard_named_field_substitution_plan(
+    plan: _PlanResult,
+    milestone: Milestone,
+    check: _SingleCheckResult,
+    observation: Observation,
+) -> _PlanResult:
+    """Do not substitute a different visible field for the field named by the milestone."""
+    instruction = plan.instruction or ""
+    if not instruction or not re.search(r"输入|填写|选择|设置|筛选|搜索", instruction):
+        return plan
+    controls = _visible_field_controls(getattr(observation, "form_controls", None))
+    if not controls:
+        return plan
+    mentioned = _instruction_mentions_control(instruction, controls)
+    if mentioned is None:
+        return plan
+    targets = _extract_target_fields(milestone)
+    if not targets:
+        return plan
+    inst_norm = _norm_text(instruction)
+    for field in targets:
+        aliases = _field_aliases(field)
+        if aliases and any(alias in inst_norm for alias in aliases):
+            return plan
+        target_control = _find_matching_control(field, controls)
+        value = _extract_input_value(plan, milestone)
+        if target_control is not None:
+            label = _control_label(target_control) or field
+            instruction = f"在 {label} 输入框输入 {value}" if value else f"操作 {label} 字段"
+            return plan.model_copy(update={
+                "instruction": instruction,
+                "summary": (
+                    f"子目标要求操作「{field}」字段，原计划指向了「{_control_label(mentioned)}」，"
+                    "已改为目标字段。"
+                ),
+            })
+        return plan.model_copy(update={
+            "instruction": f"横向滚动表格或筛选行，显示「{field}」列的筛选框",
+            "summary": (
+                f"子目标要求操作「{field}」字段，当前可见 DOM 控件未提供该字段；"
+                f"不能把值填入「{_control_label(mentioned)}」，需先定位目标列。"
+            ),
+            "direction": "right",
+        })
+    return plan
+
+
+_ROUTE_TARGET_IDENTITY_MARKER = "必须对应子目标指定对象"
+_ROUTE_TARGET_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,}")
+_IDENTITY_ONLY_MISSING_RE = re.compile(
+    r"身份|标识|对象|对应|指定|当前.*ID|评论\s*ID|记录\s*ID|URL|url|路由|路径|route|"
+    r"不匹配|错误|wrong|mismatch|confirm",
+    re.IGNORECASE,
+)
+_FIELD_VALUE_MISSING_RE = re.compile(
+    r"产品名|评分|星级|昵称|字段|取值|product_name|rating_stars|customer_nickname|"
+    r"summary|review|status|visibility",
+    re.IGNORECASE,
+)
+
+
+def _route_target_matches(milestone: Milestone, observation: Observation) -> list[str]:
+    if _ROUTE_TARGET_IDENTITY_MARKER not in (milestone.success_condition or ""):
+        return []
+    url = str(getattr(observation, "url", "") or "")
+    if not url:
+        return []
+    text = f"{milestone.name}\n{milestone.success_condition}"
+    matches: list[str] = []
+    seen: set[str] = set()
+    for token in _ROUTE_TARGET_TOKEN_RE.findall(text):
+        if not any(ch.isdigit() for ch in token):
+            continue
+        lowered = token.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", url):
+            matches.append(token)
+    return matches
+
+
+def _missing_is_only_target_identity(missing_evidence: list[str]) -> bool:
+    if not missing_evidence:
+        return False
+    missing_text = " ".join(str(item) for item in missing_evidence)
+    if not _IDENTITY_ONLY_MISSING_RE.search(missing_text):
+        return False
+    field_value_hits = _FIELD_VALUE_MISSING_RE.search(missing_text)
+    identity_hits = _IDENTITY_ONLY_MISSING_RE.search(missing_text)
+    return bool(identity_hits) and not field_value_hits
+
+
+def _apply_route_identity_checker_guard(
+    result: _SingleCheckResult,
+    milestone: Milestone,
+    observation: Observation,
+) -> _SingleCheckResult:
+    """Accept route-backed target identity when only object identity is disputed."""
+    if result.status == "done":
+        return result
+    matches = _route_target_matches(milestone, observation)
+    if not matches or not _missing_is_only_target_identity(result.missing_evidence):
+        return result
+    page_identity = result.page_identity or ""
+    claims_text = f"{result.reason} {result.summary} {page_identity}"
+    if not re.search(r"详情|编辑|detail|edit|结果页|result", claims_text, re.IGNORECASE):
+        return result
+    target = "、".join(matches[:3])
+    visible = list(result.visible_evidence or [])
+    visible.append(f"URL/路由包含目标标识 {target}")
+    return result.model_copy(update={
+        "status": "done",
+        "reason": (
+            f"当前页为详情/结果页，且 URL/路由包含当前子目标的目标标识「{target}」；"
+            "缺失证据只是在要求再次确认对象身份，已由机器路由证据满足。"
+        ),
+        "missing_evidence": [],
+        "visible_evidence": visible,
+        "stuck_reason": "",
+    })
+
+
 def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
     """Make structured picker direction consistent with current/target values.
 
@@ -520,6 +834,7 @@ def run_checker(
             ]
 
     _strip_progress_evidence(result)
+    result = _apply_route_identity_checker_guard(result, milestone, observation)
 
     claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
     if result.status == "in_progress" and not _is_retry and _BUTTON_CLAIM_RE.search(claims_text):
@@ -539,6 +854,7 @@ def run_checker(
             context_reports=context_reports,
         )
         _strip_progress_evidence(result)
+        result = _apply_route_identity_checker_guard(result, milestone, observation)
 
     # Validate a done verdict in two stages, because the retry and the force-stuck
     # play different roles:
@@ -589,6 +905,7 @@ def run_checker(
             context_reports=context_reports,
         )
         _strip_progress_evidence(result)
+        result = _apply_route_identity_checker_guard(result, milestone, observation)
     if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
             status="stuck",
@@ -746,6 +1063,8 @@ def run_planner(
         trace_label="planner",
     )
     plan = _guard_native_select_plan(plan, milestone, check, observation)
+    plan = _guard_named_field_substitution_plan(plan, milestone, check, observation)
+    plan = _guard_stale_text_filter_plan(plan, milestone, check, observation)
     plan = _guard_exact_dropdown_target(plan, milestone)
     # Selection re-entry loop breaker: clicking an already-clicked candidate again
     # (without re-typing/searching in between) often means the checker misread an
