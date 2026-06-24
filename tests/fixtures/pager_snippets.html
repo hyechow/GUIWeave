@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<!-- 场景1: 标准 Magento Admin 分页器 ("Page 1 of 2") -->
+<div id="table1" class="admin__table-wrapper">
+  <table>
+    <thead><tr><th>ID</th><th>Name</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Alice</td></tr>
+      <tr><td>2</td><td>Bob</td></tr>
+    </tbody>
+  </table>
+  <div class="admin__data-grid-pagination-wrap">
+    <div class="admin__data-grid-pager">
+      <span class="admin__data-grid-pager-label">Page 1 of 2</span>
+      <button class="action-previous" disabled aria-label="Previous page"></button>
+      <button class="action-next" aria-label="Next page"></button>
+    </div>
+  </div>
+</div>
+
+<!-- 场景2: 末页 (Page 2 of 2, next disabled) -->
+<div id="table2">
+  <table>
+    <thead><tr><th>ID</th><th>Name</th></tr></thead>
+    <tbody><tr><td>3</td><td>Charlie</td></tr></tbody>
+  </table>
+  <nav aria-label="Pagination">
+    <span>Page 2 of 2</span>
+    <button aria-label="Previous page">Prev</button>
+    <button aria-label="Next page" disabled>Next</button>
+  </nav>
+</div>
+
+<!-- 场景3: MUI DataGrid 分页 (数字按钮 + aria-current) -->
+<div id="grid1" role="grid">
+  <div role="row"><span role="columnheader">Email</span><span role="columnheader">Status</span></div>
+  <div role="row"><span role="gridcell">a@b.com</span><span role="gridcell">Active</span></div>
+</div>
+<div class="MuiTablePagination-root">
+  <button disabled aria-label="previous page"><span>&lt;</span></button>
+  <nav aria-label="pagination">
+    <button aria-label="page 1" aria-current="page">1</button>
+    <button aria-label="page 2">2</button>
+    <button aria-label="page 3">3</button>
+  </nav>
+  <button aria-label="next page"><span>&gt;</span></button>
+</div>
+
+<!-- 场景4: 无限滚动 (没有分页器) -->
+<div id="scroll-list" style="overflow-y: auto; height: 200px;">
+  <div role="grid">
+    <div role="row"><span>Item 1</span></div>
+    <div role="row"><span>Item 2</span></div>
+  </div>
+</div>
+
+<!-- 场景5: 简单表格无分页 -->
+<div id="simple">
+  <table>
+    <thead><tr><th>X</th><th>Y</th></tr></thead>
+    <tbody><tr><td>1</td><td>2</td></tr></tbody>
+  </table>
+</div>
+</body>
+</html>

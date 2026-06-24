@@ -128,6 +128,138 @@ def table_snapshot_js() -> str:
     entry.path = entry.path || "";
     return entry;
   }};
+
+  const detectPagerState = (tableOrGrid) => {{
+    let container = tableOrGrid.parentElement;
+    for (let depth = 0; depth < 4 && container; depth++, container = container.parentElement) {{
+      const pagerSelectors = [
+        '.pager', '.pagination', '[role="navigation"][aria-label*="page" i]',
+        '.pages', '.page-numbers', '.data-grid-paginator', '.admin__data-grid-pager',
+        'nav[aria-label*="pagination" i]', '[aria-label*="page" i]',
+      ].join(',');
+      const pager = Array.from(container.querySelectorAll(pagerSelectors)).find(p => {{
+        // Direct containment (one inside the other)
+        if (tableOrGrid.contains(p) || p.contains(tableOrGrid)) return true;
+        // Check if table/pager (or their ancestors) are siblings under current container
+        const findChildInContainer = (el) => {{
+          let current = el;
+          while (current && current !== container) {{
+            if (current.parentElement === container) return current;
+            current = current.parentElement;
+          }}
+          return null;
+        }};
+        const tableChild = findChildInContainer(tableOrGrid);
+        const pagerChild = findChildInContainer(p);
+        if (tableChild && pagerChild) {{
+          const tableIdx = Array.from(container.children).indexOf(tableChild);
+          const pagerIdx = Array.from(container.children).indexOf(pagerChild);
+          if (tableIdx >= 0 && pagerIdx >= 0 && Math.abs(tableIdx - pagerIdx) <= 6) return true;
+        }}
+        return false;
+      }});
+      if (pager) return readPagedPager(pager);
+    }}
+    return detectScrollState(tableOrGrid);
+  }};
+
+  const readPagedPager = (pager) => {{
+    let page_index = null;
+    let page_count = null;
+    let has_next_page = null;
+    let has_prev_page = null;
+
+    const text = pager.innerText || '';
+    const pageMatch = text.match(/(?:page\\s*)?(\\d+)\\s*(?:of|\\/|共)\\s*(?:page\\s*)?(\\d+)/i)
+      || text.match(/(\\d+)\\s*-\\s*\\d+\\s*(?:of|\\/|共)\\s*(\\d+)/i);
+    if (pageMatch) {{
+      page_index = parseInt(pageMatch[1]);
+      page_count = parseInt(pageMatch[2]);
+    }}
+
+    // Magento-style: <input id="*_page-current" value="N"> + <label>of <span>M</span></label>
+    if (!page_index) {{
+      const pageInput = pager.querySelector('input[id*="page-current" i], input[name="page" i]');
+      if (pageInput) {{
+        const val = parseInt(pageInput.value);
+        if (val) page_index = val;
+      }}
+    }}
+    if (!page_count) {{
+      const label = pager.querySelector('label[for*="page-current" i], label.admin__control-support-text');
+      if (label) {{
+        const span = label.querySelector('span');
+        const totalText = span ? span.innerText : label.innerText;
+        const match = totalText.match(/\\d+/);
+        if (match) page_count = parseInt(match[0]);
+      }}
+    }}
+
+    const nextBtn = pager.querySelector([
+      '[aria-label*="next page" i]',
+      '[aria-label*="下一页" i]',
+      '[role="button"][aria-label*="next" i]',
+      '.next-page', '.action-next',
+      'button[title*="Next" i]',
+      'button[class*="next" i]',
+    ].join(', '));
+    const prevBtn = pager.querySelector([
+      '[aria-label*="previous page" i]',
+      '[aria-label*="上一页" i]',
+      '[role="button"][aria-label*="previous" i]',
+      '.prev-page', '.action-previous',
+      'button[title*="Previous" i]',
+      'button[class*="previous" i]',
+    ].join(', '));
+
+    if (nextBtn) {{
+      const disabled = nextBtn.disabled || nextBtn.matches('[disabled], [aria-disabled="true"], .disabled, [class*="disabled" i]');
+      has_next_page = !disabled;
+    }}
+    if (prevBtn) {{
+      const disabled = prevBtn.disabled || prevBtn.matches('[disabled], [aria-disabled="true"], .disabled, [class*="disabled" i]');
+      has_prev_page = !disabled;
+    }}
+
+    if (!page_index) {{
+      const activePage = pager.querySelector([
+        '.active[role="button"]',
+        '[aria-current="page"]',
+        '.current',
+        '[aria-selected="true"]',
+      ].join(', '));
+      if (activePage) {{
+        const pageNum = parseInt(activePage.innerText || activePage.getAttribute('data-page'));
+        if (pageNum) page_index = pageNum;
+      }}
+    }}
+
+    return {{
+      type: 'paged',
+      page_index,
+      page_count,
+      has_next_page,
+      has_prev_page,
+    }};
+  }};
+
+  const detectScrollState = (el) => {{
+    let container = el.parentElement;
+    for (let depth = 0; depth < 4 && container; depth++, container = container.parentElement) {{
+      const style = getComputedStyle(container);
+      const overflow = style.overflow || style.overflowY || '';
+      if (['auto', 'scroll', 'overlay'].includes(overflow) && container.scrollHeight > 0) {{
+        const can_scroll_more = container.scrollHeight > container.scrollTop + container.clientHeight + 2;
+        return {{
+          type: 'scroll',
+          can_scroll_more,
+          at_scroll_end: !can_scroll_more,
+        }};
+      }}
+    }}
+    return {{ type: 'unknown' }};
+  }};
+
   const snapshots = [];
   const seen = new Set();
 
@@ -144,6 +276,7 @@ def table_snapshot_js() -> str:
     const rows = dataRows.map((r) => cellsOf(r, "th,td")).filter((r) => r.length > 0);
     if (!headerCells.length && rows.length < 2) continue;
     if (Math.max(headerCells.length, ...(rows.map((r) => r.length))) < 2) continue;
+    const traversal = detectPagerState(table);
     snapshots.push(finalize({{
       source: "table",
       caption: nearbyTitle(table),
@@ -151,6 +284,7 @@ def table_snapshot_js() -> str:
       rows,
       totalRecords: totalRecordsNear(table),
       path: uniquePath(table),
+      traversal,
     }}));
     seen.add(table);
   }}
@@ -168,7 +302,8 @@ def table_snapshot_js() -> str:
       .map((r) => cellsOf(r, '[role="gridcell"],[role="cell"],[role="rowheader"],td,th'))
       .filter((r) => r.length > 0);
     if (!headers.length && rows.length < 2) continue;
-    if (Math.max(headers.length, ...(rows.map((r) => r.length))) < 2) continue;
+    if (Math.max(headers.length, ...rows.map((r) => r.length)) < 2) continue;
+    const traversal = detectPagerState(grid);
     snapshots.push(finalize({{
       source: "aria-grid",
       caption: nearbyTitle(grid),
@@ -176,6 +311,7 @@ def table_snapshot_js() -> str:
       rows,
       totalRecords: totalRecordsNear(grid),
       path: uniquePath(grid),
+      traversal,
     }}));
   }}
 
@@ -336,6 +472,7 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
         if not rows:
             continue
         total_records = _safe_int(item.get("totalRecords"))
+        traversal = item.get("traversal")  # 新增: pager/scroll traversal state
         out.append(
             {
                 "index": idx,
@@ -349,6 +486,7 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
                 "partial": bool(item.get("partial") or (total_records and len(rows) < total_records)),
                 "path": str(item.get("path") or ""),
                 "page": page,
+                "traversal": traversal if isinstance(traversal, dict) else None,  # 新增
             }
         )
     return out

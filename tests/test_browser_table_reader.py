@@ -96,3 +96,106 @@ def test_normalize_table_snapshots_accepts_provider_dict_rows():
 def test_observation_accepts_optional_table_snapshots():
     obs = Observation(png_bytes=b"png", source="browser", tables=[{"rows": []}])
     assert obs.tables == [{"rows": []}]
+
+
+# ── traversal state: pager/scroll detection from the DOM ───────────────────────────
+
+def test_normalize_preserves_traversal_paged_with_page_index():
+    raw = {
+        "url": "http://example.test/admin/reviews",
+        "title": "Reviews",
+        "tables": [{
+            "source": "table",
+            "caption": "Product Reviews",
+            "headers": ["ID", "Nickname"],
+            "rows": [{"ID": "1", "Nickname": "Amy"}, {"ID": "2", "Nickname": "Bob"}],
+            "totalRecords": "27",
+            "traversal": {
+                "type": "paged",
+                "page_index": 1,
+                "page_count": 2,
+                "has_next_page": True,
+                "has_prev_page": False,
+            },
+        }],
+    }
+    tables = normalize_table_snapshots(raw)
+    assert len(tables) == 1
+    assert tables[0]["traversal"]["type"] == "paged"
+    assert tables[0]["traversal"]["page_index"] == 1
+    assert tables[0]["traversal"]["page_count"] == 2
+    assert tables[0]["traversal"]["has_next_page"] is True
+    assert tables[0]["traversal"]["has_prev_page"] is False
+
+
+def test_normalize_preserves_traversal_on_last_page():
+    raw = {
+        "url": "http://example.test/admin/reviews",
+        "title": "Reviews",
+        "tables": [{
+            "source": "table",
+            "headers": ["ID", "Nickname"],
+            "rows": [{"ID": "26", "Nickname": "Zoe"}],
+            "totalRecords": "27",
+            "traversal": {
+                "type": "paged",
+                "page_index": 2,
+                "page_count": 2,
+                "has_next_page": False,
+                "has_prev_page": True,
+            },
+        }],
+    }
+    tables = normalize_table_snapshots(raw)
+    assert tables[0]["traversal"]["has_next_page"] is False
+    assert tables[0]["traversal"]["has_prev_page"] is True
+
+
+def test_normalize_preserves_traversal_infinite_scroll():
+    raw = {
+        "url": "http://example.test/feed",
+        "title": "Feed",
+        "tables": [{
+            "source": "aria-grid",
+            "headers": ["User", "Post"],
+            "rows": [{"User": "Alice", "Post": "Hello"}],
+            "traversal": {
+                "type": "scroll",
+                "can_scroll_more": True,
+                "at_scroll_end": False,
+            },
+        }],
+    }
+    tables = normalize_table_snapshots(raw)
+    assert tables[0]["traversal"]["type"] == "scroll"
+    assert tables[0]["traversal"]["can_scroll_more"] is True
+    assert tables[0]["traversal"]["at_scroll_end"] is False
+
+
+def test_normalize_handles_missing_traversal():
+    raw = {
+        "url": "http://example.test/simple",
+        "title": "Simple",
+        "tables": [{
+            "source": "table",
+            "headers": ["A", "B"],
+            "rows": [{"A": "1", "B": "2"}],
+        }],
+    }
+    tables = normalize_table_snapshots(raw)
+    assert tables[0]["traversal"] is None
+
+
+def test_normalize_handles_malformed_traversal():
+    raw = {
+        "url": "http://example.test/malformed",
+        "title": "Bad",
+        "tables": [{
+            "source": "table",
+            "headers": ["A", "B"],
+            "rows": [{"A": "1", "B": "2"}],
+            "traversal": "not-a-dict",
+        }],
+    }
+    tables = normalize_table_snapshots(raw)
+    assert tables[0]["traversal"] is None
