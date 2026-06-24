@@ -508,6 +508,7 @@ class PolicyTurn(BaseModel):
         description="本轮是 UI 交互执行，还是非 UI primitive（如 structured read / data_query）",
     )
     observation_source: str
+    observation_url: str = Field(default="", description="本轮观察帧对应的截图文件名；为空时报告层按 turn index 回退推断")
     supervisor: SupervisorStep
     action_decision: Optional[BaseActionDecision] = None
     non_ui: Optional[dict[str, Any]] = Field(

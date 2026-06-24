@@ -321,6 +321,90 @@ def test_report_builder_falls_back_to_flat_run_status_for_archived_logs(tmp_path
     assert "未完成停止" not in html
 
 
+def test_report_builder_uses_prior_observation_frame_for_same_frame_handoff(tmp_path):
+    from PIL import Image
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    Image.new("RGB", (120, 120), "white").save(run_dir / "screenshot_turn_1.png")
+    (run_dir / "context.json").write_text(
+        """
+{
+  "goal": "goal",
+  "supervisor_policy_name": "milestone",
+  "action_policy_name": "action",
+  "milestones": [
+    {
+      "id": "m1",
+      "name": "完成上一阶段",
+      "description": "完成上一阶段",
+      "kind": "action",
+      "success_condition": "完成"
+    },
+    {
+      "id": "m2",
+      "name": "同帧继续点击",
+      "description": "同帧继续点击",
+      "kind": "action",
+      "success_condition": "点击"
+    }
+  ],
+  "turns": [
+    {
+      "index": 1,
+      "timestamp": "2026-06-16T12:00:00",
+      "observation_source": "screen",
+      "supervisor": {
+        "should_act": false,
+        "instruction": null,
+        "stop": true,
+        "stop_reason": "子目标已完成",
+        "goal_completed": false,
+        "summary": "完成上一阶段",
+        "milestone_id": "m1",
+        "milestone_kind": "action"
+      },
+      "action_decision": null,
+      "executed": false
+    },
+    {
+      "index": 2,
+      "timestamp": "2026-06-16T12:00:01",
+      "observation_source": "screen",
+      "supervisor": {
+        "should_act": true,
+        "instruction": "点击下一行",
+        "stop": false,
+        "stop_reason": "",
+        "goal_completed": false,
+        "summary": "继续执行",
+        "milestone_id": "m2",
+        "milestone_kind": "action"
+      },
+      "action_decision": {
+        "action": {
+          "action_type": "tap",
+          "x": 60,
+          "y": 70,
+          "description": "点击下一行"
+        }
+      },
+      "executed": true
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+
+    data = RunnerReportBuilder().build(run_dir)
+    step = [s for p in data.pages for s in p.steps if s.index == 2][0]
+
+    assert step.raw_screenshot_url == "screenshot_turn_1.png"
+    assert step.annotated_before_url == "screenshot_turn_2_ann.jpg"
+    assert (run_dir / "screenshot_turn_2_ann.jpg").exists()
+
+
 def test_report_builder_renders_non_ui_data_query_run_log(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()

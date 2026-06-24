@@ -449,8 +449,19 @@ class RunnerReportBuilder:
             if executed:
                 total_executed += 1
 
-            ss_name = str((non_ui or {}).get("observation_url") or f"screenshot_turn_{idx}.png")
+            ss_name = str(
+                (non_ui or {}).get("observation_url")
+                or turn.get("observation_url")
+                or f"screenshot_turn_{idx}.png"
+            )
             ss_path = run_dir / ss_name
+            if not ss_path.exists() and operation_mode != "non_interactive":
+                for fallback_idx in range(int(idx or 0) - 1, 0, -1):
+                    fallback_path = run_dir / f"screenshot_turn_{fallback_idx}.png"
+                    if fallback_path.exists():
+                        ss_path = fallback_path
+                        ss_name = fallback_path.name
+                        break
             if ss_path.exists() and x is not None and y is not None:
                 img = _load_img(ss_path)
                 annotated_img = annotate_action(

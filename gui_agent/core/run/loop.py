@@ -571,6 +571,7 @@ def run_agent_loop(
                     context.turns.append(make_verdict_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,
+                        observation_url=f"screenshot_turn_{turn_no}.png",
                         supervisor_step=sv_step,
                         supervisor=supervisor,
                         llm_calls=get_llm_call_count() - llm_calls_before,
@@ -608,6 +609,7 @@ def run_agent_loop(
                     context.turns.append(make_verdict_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,
+                        observation_url=f"screenshot_turn_{turn_no}.png",
                         supervisor_step=sv_step,
                         supervisor=supervisor,
                         llm_calls=get_llm_call_count() - llm_calls_before,
@@ -713,6 +715,7 @@ def run_agent_loop(
             turn = record_interactive_turn(
                 context=context,
                 observation_source=observation.source,
+                observation_url=f"screenshot_turn_{turn_no}.png",
                 supervisor_step=sv_step,
                 supervisor=supervisor,
                 action_decision=action_decision,
