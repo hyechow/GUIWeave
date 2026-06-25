@@ -947,6 +947,76 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "最终答案必须引用真实 read/data_query 字段（如 {r1[nickname]}），或通过可执行分支生成。"
                     f" bad_templates={bad_templates}"
                 )
+        elif assertion == "filter_leads_with_exact_value":
+            # Regression task-113 live run 20260625_145506: the approximate entity "Olivia zip
+            # jacket" (search_key "Olivia") was filtered straight by the bare keyword
+            # ("用 Product 列按关键词 'Olivia' 筛选") — fuzzy-first, skipping the exact attempt
+            # rule 4b mandates. The filter step must LEAD with the full exact value; the keyword
+            # is only the 0-results fallback. (Whether exact→fuzzy is one filter step that relaxes
+            # or an if-branch is up to the planner; either way the exact value must be named.)
+            seq = _flatten_runs(program.statements)
+            prod_filters = [
+                r for r in seq
+                if r.kind in ("filter", "action")
+                and re.search(r"olivia", f"{r.name} {r.success_condition}", re.I)
+            ]
+            exact_present = any(
+                "olivia zip jacket" in f"{r.name} {r.success_condition}".lower()
+                for r in prod_filters
+            )
+            if not prod_filters:
+                details.append(
+                    "没有按 Olivia 检索的 filter/action 步（无从校验先精确后模糊）: "
+                    f"{[(r.kind, r.name) for r in seq if r.kind in ('filter', 'action')]}"
+                )
+            elif not exact_present:
+                details.append(
+                    "filter 步直接用关键词 'Olivia' 检索、跳过了精确原值 'Olivia zip jacket'"
+                    "（模糊优先，违反规则4b 先精确后模糊；filter name 必须先点名完整精确原值）: "
+                    f"{[(r.kind, r.name) for r in prod_filters]}"
+                )
+        elif assertion == "browser_drill_uses_url_direct":
+            # Regression task-113 live run 20260625_145506: on browser, the per-row drill opened
+            # each review by clicking ("打开评论 {row[review_id]} 的详情") instead of jumping by the
+            # row's folded detail link ("打开 {row[Action_url]}"). The score was 1.0 but the
+            # execution clicked through every Edit-Review page — defeating part-2's non-interactive
+            # value. Browser list-grid drills must default to URL-direct (rule 11②): list_read reads
+            # a `<col>_url` link column and the foreach body opens via it, so
+            # non_interactive._direct_nav_url fires (deterministic navigate, no UI clicking). This
+            # case carries NO table_summaries on purpose — the upfront decompose runs on the
+            # Dashboard with no headers, exactly where the live bug lived; url-direct must be the
+            # browser default, not contingent on seeing a `_url` header.
+            foreaches = [s for s in program.statements if isinstance(s, ForEach)]
+            list_reads = [r for r in _flatten_runs(program.statements) if r.kind == "read" and r.list_read]
+            reads_url_col = any(
+                any(f.lower().endswith("_url") for f in r.returns) for r in list_reads
+            )
+            body_open_url = False
+            body_open_id: list[str] = []
+            for fe in foreaches:
+                for b in fe.body:
+                    if isinstance(b, Run) and any(k in b.name for k in ("打开", "open", "进入", "详情")):
+                        if re.search(r"\{row\[[^\]]*_url\]\}", b.name, re.I):
+                            body_open_url = True
+                        elif re.search(r"\{row\[", b.name):
+                            body_open_id.append(b.name)
+            if not foreaches:
+                details.append(
+                    "无 foreach，无法校验逐行 URL 直达（browser 逐行钻取应 list_read→foreach→data_query）"
+                )
+            else:
+                if not reads_url_col:
+                    details.append(
+                        "list_read 未读出任何 `<列>_url` 详情链接列（browser 逐行钻取应默认读 Action_url "
+                        "以走 URL 直达，规则11②；本 case 无表头→默认 Action_url）: "
+                        f"returns={[(r.name, r.returns) for r in list_reads]}"
+                    )
+                if not body_open_url:
+                    details.append(
+                        "foreach 打开步未用 `{row[..._url]}` URL 直达，而是按 id 在界面逐条点开"
+                        "（违反 browser 非交互优先；这正是 20260625_145506 评分1.0却点击式钻取的回归）: "
+                        f"{body_open_id}"
+                    )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

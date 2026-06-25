@@ -262,9 +262,12 @@
       "product_lookup_uses_product_field",
       "shopping_admin_review_rating_initial_uses_reviews_source",
       "uses_foreach_iteration",
-      "shopping_admin_review_rating_reorch_drills_detail"
+      "shopping_admin_review_rating_reorch_drills_detail",
+      "filter_leads_with_exact_value",
+      "browser_drill_uses_url_direct"
     ],
-    "note": "活跑 124258 三连错：编排器把产品词当评论关键词筛进 Review 文本列、或退化成 Catalog > Products 商品详情路线，导致读不到评论评分。这个 eval 不再规定『先精确后放宽』，因为那是运行策略，不是应用知识；只锁住通用边界：以 Reviews/All Reviews 评论集合为数据源，涉及产品约束时绑定 Product 字段/列，随后 list_read 候选评论行，foreach 逐条打开 Review Detail 读取 Detailed Rating + Nickname，再 data_query 筛 rating<=3。"
+    "note": "活跑 124258 三连错：编排器把产品词当评论关键词筛进 Review 文本列、或退化成 Catalog > Products 商品详情路线，导致读不到评论评分。这个 eval 不再规定『先精确后放宽』，因为那是运行策略，不是应用知识；只锁住通用边界：以 Reviews/All Reviews 评论集合为数据源，涉及产品约束时绑定 Product 字段/列，随后 list_read 候选评论行，foreach 逐条打开 Review Detail 读取 Detailed Rating + Nickname，再 data_query 筛 rating<=3。",
+    "platform": "browser"
   },
   {
     "label": "WebArena shopping_admin task 113 re-decompose drills Review Detail for rating",

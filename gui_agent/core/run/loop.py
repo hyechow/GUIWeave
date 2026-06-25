@@ -454,7 +454,13 @@ def run_agent_loop(
                 return (False, None)
             _interp = Interpreter(_new)
             _interp.env = _prev_env            # carry forward completed reads (finish refs still resolve)
-            _interp.run_log = _prev_log        # keep prior milestones in the run record / final summary
+            # Keep prior milestones in the run record / final summary, but DROP the failed record(s):
+            # a kickback re-plans *because* a re-plannable step failed, so carrying that ✗ into the new
+            # interpreter's run_log would keep `interp.failed` permanently True and force goal_completed
+            # =False even after the re-decompose recovers (result.py:72) — the superseded failure must
+            # not outvote the successful retry. The full experience (incl. the ✗) was already snapshotted
+            # for the redecompose prompt above; if the new plan fails too, its own ✗ records set failed.
+            _interp.run_log = [r for r in _prev_log if not r.result.failed]
             _orch_interp = _interp
             # Keep context.orchestrator["program"] = the ORIGINAL (#0); record each kick-back
             # re-decompose as its own entry (directive + new program + the turn that triggered it) so
