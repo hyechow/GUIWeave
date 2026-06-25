@@ -30,6 +30,9 @@ injection/
 # Vendored native binaries (adb + scrcpy standalone), fetched per-machine
 vendor/
 
+# Claude Code machine-local settings (per-developer permissions); keep out of the repo.
+.claude/settings.local.json
+
 # Benchmark archives: each suite has reports/<task>.html (SELF-CONTAINED, screenshots
 # inlined as base64 via `python -m gui_agent.reports.inline` — committed) and runs/<task>/
 # (full run logs: raw screenshots + context.json + logs — local-only, regenerable from logs/).

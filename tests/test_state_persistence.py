@@ -321,6 +321,42 @@ def test_report_builder_falls_back_to_flat_run_status_for_archived_logs(tmp_path
     assert "未完成停止" not in html
 
 
+def test_report_status_uses_mobileworld_official_success(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "context.json").write_text(
+        """
+{
+  "goal": "Use Chrome to search for Beijing highest temperature today.",
+  "platform": "android",
+  "run": {
+    "status": "stopped",
+    "goal_completed": false,
+    "stop_reason": "页面持续加载未稳定"
+  },
+  "mobileworld": {
+    "task_name": "ChromeSearchBeijingWeatherTask",
+    "score": 1.0,
+    "reason": "Success"
+  },
+  "milestones": [],
+  "turns": []
+}
+""",
+        encoding="utf-8",
+    )
+
+    data = RunnerReportBuilder().build(run_dir)
+    html = generate_html(data)
+
+    assert data.run_status == "stopped"
+    assert "MobileWorld 通过" in html
+    assert "MobileWorld 官方评分通过" in html
+    assert "score=1.0" in html
+    assert "agent-loop 停止原因：页面持续加载未稳定" in html
+    assert "未完成停止" not in html
+
+
 def test_report_builder_uses_prior_observation_frame_for_same_frame_handoff(tmp_path):
     from PIL import Image
 

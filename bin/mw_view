@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# 启动 MobileWorld 可视化服务(FastAPI 仪表盘)。
+# 用法: bin/mw_view [--port 8000] [--host 0.0.0.0] [--reload]
+#   浏览器开 http://<本机或经 Windows portproxy 的 LAN-IP>:<port>/
+set -e
+cd "$(dirname "$0")/.."
+exec uv run python benchmark/mobileworld/server.py "$@"

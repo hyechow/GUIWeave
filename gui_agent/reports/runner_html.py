@@ -928,7 +928,33 @@ def _render_platform_badge(platform: str) -> str:
     )
 
 
+def _mobileworld_score(mobileworld: dict) -> float | None:
+    if not isinstance(mobileworld, dict):
+        return None
+    score = mobileworld.get("score")
+    if score is None:
+        return None
+    try:
+        return float(score)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mobileworld_passed(mobileworld: dict) -> bool:
+    score = _mobileworld_score(mobileworld)
+    return score is not None and score > 0
+
+
 def _run_status_meta(data: ReportData) -> tuple[str, str, str]:
+    if _mobileworld_passed(data.mobileworld):
+        score = data.mobileworld.get("score")
+        reason = str(data.mobileworld.get("reason") or "Success")
+        return (
+            "completed",
+            "MobileWorld 通过",
+            f"MobileWorld 官方评分通过：score={score}，reason={reason}",
+        )
+
     status = (data.run_status or "").strip()
     if not status:
         status = "completed" if data.goal_completed else "stopped"
@@ -942,7 +968,10 @@ def _run_status_meta(data: ReportData) -> tuple[str, str, str]:
 def _render_run_status_badge(data: ReportData) -> str:
     cls, label, detail = _run_status_meta(data)
     reason = data.stop_reason.strip()
-    tip = f"停止原因：{reason}" if reason else detail
+    if _mobileworld_passed(data.mobileworld):
+        tip = f"{detail}；agent-loop 停止原因：{reason}" if reason else detail
+    else:
+        tip = f"停止原因：{reason}" if reason else detail
     tip_attr = _safe(tip).replace('"', "&quot;")
     return (
         f'<span class="run-status-badge run-status-badge-{cls}" '
@@ -1062,7 +1091,7 @@ def _render_mobileworld_result(mobileworld: dict) -> str:
     base_url = str(mobileworld.get("base_url") or "")
     adb_serial = str(mobileworld.get("adb_serial") or "")
     graded = score is not None
-    ok = graded and float(score) > 0
+    ok = _mobileworld_passed(mobileworld)
     status = ("SUCCESS" if ok else "FAIL") if graded else "NOT GRADED"
 
     chip_cls = "wa-chip" if ok else "wa-chip wa-chip-error"
