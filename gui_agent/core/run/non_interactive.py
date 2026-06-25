@@ -115,13 +115,6 @@ def drive_pending_non_ui(
 
             ensure_observation()
             query_tables = tables
-            if getattr(cur_run, "data_scope", "complete") != "current":
-                read_complete = getattr(platform, "read_complete_tables", None)
-                if read_complete is not None:
-                    try:
-                        query_tables = read_complete() or query_tables
-                    except Exception:
-                        query_tables = tables
             # Fold in foreach-accumulated tables (e.g. per-review rows collected by iterating a list):
             # they're a complete, in-memory data source the query references by its `into` var name.
             # Pulled FRESH here (not at entry) so the just-completed foreach's into table is included.

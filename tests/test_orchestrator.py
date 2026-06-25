@@ -228,7 +228,7 @@ def test_returning_ui_runs_get_target_specific_milestone_ids():
 
 
 def test_returning_ui_handoff_does_not_skip_initial_check(tmp_path):
-    from gui_agent.core.run.non_ui import drive_pending_non_ui
+    from gui_agent.core.run.non_interactive import drive_pending_non_ui
     from gui_agent.core.schemas import Observation, PolicyContext
 
     class Supervisor:

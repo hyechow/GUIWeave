@@ -37,7 +37,7 @@ from gui_agent.core.run.flow import (
     finish_terminal_step,
     handle_loading_frame,
 )
-from gui_agent.core.run.non_ui import drive_pending_non_ui
+from gui_agent.core.run.non_interactive import drive_pending_non_ui
 from gui_agent.core.orchestrator.list_traversal_runtime import ListTraversalRuntime
 from gui_agent.core.orchestrator.engine import is_list_read, package_result
 from gui_agent.core.run.turns import (
