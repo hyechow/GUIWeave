@@ -44,6 +44,7 @@ LOCAL_REGION_HALF = 0.14        # 动作坐标周围方框半边(占比，28% bo
 # is_blank_screen: a blank/loading body is a large, LIGHT, near-UNIFORM region.
 BLANK_BODY_MEAN_MIN = 225.0     # body must be light (rules out dark splash/dark mode)
 BLANK_BODY_STD_MAX = 12.0       # body must be near-uniform (text/icons push std up)
+BLANK_CONTENT_DARK_RATIO_MAX = 0.004  # sparse forms have enough text/lines to exceed this
 
 
 def frame_diff(png_a: bytes, png_b: bytes, focus_y: float | None = None) -> float:
@@ -178,7 +179,13 @@ def is_blank_screen(png_bytes: bytes) -> bool:
         return False
     stat = ImageStat.Stat(body)
     mean, std = stat.mean[0], stat.stddev[0]
-    return mean >= BLANK_BODY_MEAN_MIN and std <= BLANK_BODY_STD_MAX
+    hist = body.histogram()
+    dark_ratio = sum(hist[:210]) / float(body.width * body.height)
+    return (
+        mean >= BLANK_BODY_MEAN_MIN
+        and std <= BLANK_BODY_STD_MAX
+        and dark_ratio <= BLANK_CONTENT_DARK_RATIO_MAX
+    )
 
 
 def is_loading_frame(observation: Observation) -> bool:

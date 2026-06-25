@@ -11,8 +11,13 @@
 #   2) backend HTTP: 容器 6800 经 portproxy 暴露 → MW_BASE_URL=http://<host>:6800
 # 覆盖: MW_BASE_URL=<url> MW_ADB_SERIAL=<host:port> bin/mobileworld <task-name>
 #   默认 MW_BASE_URL=http://192.168.31.57:6800  MW_ADB_SERIAL=192.168.31.57:5556
+# 外网: snapshot 会清空 Android 系统代理；本机 MobileWorld 容器内 proxy_chain 默认
+#       暴露给模拟器为 10.0.2.2:38888，可用 MW_ANDROID_HTTP_PROXY=off 关闭。
+# 稳定性: 若 /task/init 后 emulator/adb 未恢复，默认重启 MobileWorld 容器内 emulator 并重试一次；
+#       可用 MW_EMULATOR_RESTART_CMD=off 关闭，或覆盖为其它启动命令。
 set -e
 cd "$(dirname "$0")/.."
+export PATH="$HOME/.local/bin:$PATH"
 
 headless=0
 args=()
@@ -36,5 +41,7 @@ fi
 exec env AGENT_PLATFORM="android" \
          AGENT_MODE="${AGENT_MODE:-daemon}" \
          AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
+         MW_ANDROID_HTTP_PROXY="${MW_ANDROID_HTTP_PROXY:-10.0.2.2:38888}" \
+         MW_EMULATOR_RESTART_CMD="${MW_EMULATOR_RESTART_CMD:-docker exec mobile_world_env_0 bash /app/docker/start_emulator.sh}" \
          uv run python -m gui_agent.adapters.android.mobileworld \
          "${headless_arg[@]}" "$@"

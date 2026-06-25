@@ -42,7 +42,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
+import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -54,6 +55,168 @@ if __package__ is None or __package__ == "":
 # Tags that mark non-GUI-only task subsets; excluded from the default task list (the
 # GUI-only subset is the integration target — see the MobileWorld paper).
 _NON_GUI_TAGS = ("agent-mcp", "agent-user-interaction")
+
+
+def _adb_binary() -> str:
+    """Resolve the adb binary without importing adbutils."""
+    from gui_agent.adapters.android.constants import VENDORED_ADB
+
+    override = os.environ.get("ADBUTILS_ADB_PATH")
+    if override:
+        return override
+    return str(VENDORED_ADB) if VENDORED_ADB.exists() else "adb"
+
+
+def _run_adb(
+    serial: str,
+    args: list[str],
+    *,
+    timeout: float = 5.0,
+) -> subprocess.CompletedProcess[str]:
+    cmd = [_adb_binary()]
+    if serial:
+        cmd.extend(["-s", serial])
+    cmd.extend(args)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def _run_adb_bytes(
+    serial: str,
+    args: list[str],
+    *,
+    timeout: float = 5.0,
+) -> subprocess.CompletedProcess[bytes]:
+    cmd = [_adb_binary()]
+    if serial:
+        cmd.extend(["-s", serial])
+    cmd.extend(args)
+    return subprocess.run(cmd, capture_output=True, timeout=timeout)
+
+
+def _adb_connect(serial: str, *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [_adb_binary(), "connect", serial],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _adb_screencap_ready(serial: str) -> tuple[bool, str]:
+    try:
+        shot = _run_adb_bytes(serial, ["exec-out", "screencap", "-p"], timeout=10.0)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"screencap failed: {exc}"
+    data = shot.stdout or b""
+    if shot.returncode != 0:
+        detail = (shot.stderr or b"").decode("utf-8", errors="replace").strip()
+        return False, f"screencap rc={shot.returncode}: {detail}"
+    if len(data) <= 100 or not data.startswith(b"\x89PNG"):
+        head = data[:32].decode("utf-8", errors="replace").replace("\n", "\\n")
+        return False, f"screencap not png len={len(data)} head={head!r}"
+    return True, "screencap ok"
+
+
+def _wait_for_adb_ready(
+    serial: str,
+    *,
+    timeout_s: float = 120.0,
+    interval_s: float = 2.0,
+) -> None:
+    """Wait for the host-side adb transport to be usable after MobileWorld snapshot load.
+
+    ``/task/init`` loads an emulator snapshot. On this runtime adb commonly reports
+    ``offline`` briefly after the HTTP call returns, and taking a screenshot immediately
+    can fail the run before the emulator has settled. This is MobileWorld-specific
+    because ordinary android sessions do not bounce through backend snapshots.
+    """
+    deadline = time.monotonic() + max(1.0, timeout_s)
+    last = ""
+    stable = 0
+    while time.monotonic() < deadline:
+        if ":" in serial:
+            try:
+                _adb_connect(serial, timeout=5.0)
+            except Exception as exc:  # noqa: BLE001
+                last = f"adb connect failed: {exc}"
+
+        try:
+            state = _run_adb(serial, ["get-state"], timeout=5.0)
+            boot = _run_adb(serial, ["shell", "getprop", "sys.boot_completed"], timeout=5.0)
+            size = _run_adb(serial, ["shell", "wm", "size"], timeout=5.0)
+        except Exception as exc:  # noqa: BLE001
+            last = str(exc)
+        else:
+            state_text = (state.stdout or state.stderr).strip()
+            boot_text = (boot.stdout or boot.stderr).strip()
+            size_text = (size.stdout or size.stderr).strip()
+            shot_ok = False
+            shot_detail = "screencap not checked"
+            if (
+                state.returncode == 0
+                and state_text == "device"
+                and boot_text == "1"
+                and "Physical size:" in size_text
+            ):
+                shot_ok, shot_detail = _adb_screencap_ready(serial)
+                if shot_ok:
+                    stable += 1
+                    if stable >= 2:
+                        return
+                else:
+                    stable = 0
+                    last = f"state={state_text!r} boot={boot_text!r} size={size_text!r} {shot_detail}"
+            else:
+                stable = 0
+                last = f"state={state_text!r} boot={boot_text!r} size={size_text!r}"
+        time.sleep(interval_s)
+    raise RuntimeError(f"adb device not ready after {timeout_s:.0f}s ({serial}): {last}")
+
+
+def _normalize_android_proxy(target: str) -> tuple[str, str]:
+    raw = (target or "").strip()
+    for prefix in ("http://", "https://"):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    raw = raw.split("/", 1)[0]
+    host, sep, port = raw.rpartition(":")
+    if not sep or not host or not port.isdigit():
+        raise ValueError(f"invalid MW_ANDROID_HTTP_PROXY={target!r}; expected host:port")
+    return host, port
+
+
+def _configure_android_http_proxy(serial: str, target: str) -> None:
+    host, port = _normalize_android_proxy(target)
+    proxy = f"{host}:{port}"
+    commands = (
+        ["shell", "settings", "put", "global", "http_proxy", proxy],
+        ["shell", "settings", "put", "global", "global_http_proxy_host", host],
+        ["shell", "settings", "put", "global", "global_http_proxy_port", port],
+    )
+    for args in commands:
+        result = _run_adb(serial, list(args), timeout=10.0)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"failed to configure Android proxy via adb: {detail}")
+
+
+def _mobileworld_init_retries() -> int:
+    raw = (os.environ.get("MW_INIT_RETRIES") or "1").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError as exc:
+        raise ValueError(f"invalid MW_INIT_RETRIES={raw!r}; expected integer") from exc
+
+
+def _run_emulator_restart_cmd() -> bool:
+    raw = (os.environ.get("MW_EMULATOR_RESTART_CMD") or "").strip()
+    if not raw or raw.lower() in {"0", "false", "none", "off"}:
+        return False
+    timeout_s = float(os.environ.get("MW_EMULATOR_RESTART_TIMEOUT") or "240")
+    print(f"[mobileworld] restarting emulator: {raw}")
+    subprocess.run(shlex.split(raw), check=True, timeout=timeout_s)
+    return True
 
 
 class MobileWorldEnv:
@@ -93,6 +256,11 @@ class MobileWorldEnv:
             return
         self._req("POST", "/init", json={"device": self.device})
         self._initialized = True
+
+    def reinitialize_controller(self) -> None:
+        """Force the backend controller to bind the current emulator process again."""
+        self._initialized = False
+        self.ensure_init()
 
     def health(self) -> bool:
         try:
@@ -158,180 +326,13 @@ class MobileWorldEnv:
         )
 
 
-def _final_answer(result: dict, goal: str = "") -> str:
-    """Best-effort final answer text for answer-style tasks.
-
-    MobileWorld's ``answer`` action stores a raw string in ``interaction_cache``; many
-    answer-style graders parse that string directly (for example ``int(answer)``). Prefer
-    structured orchestrator reads over the natural-language run summary so we submit the
-    value the program read, not a prose explanation.
-    """
-    weather = _weather_high_temperature_celsius_answer(goal)
-    if weather:
-        return weather
-
-    for _field, value in reversed(_orchestrator_read_values(result)):
-        answer = _normalize_answer_value(value, goal)
-        if answer:
-            return answer
-
+def _final_answer(result: dict) -> str:
+    """Best-effort final answer text for answer-style tasks: prefer collected content
+    notes, then the run's result summary. Empty when the run produced neither."""
     notes = result.get("content_notes") or []
     if notes:
-        return _normalize_answer_value("\n".join(str(n) for n in notes), goal)
-    return _normalize_answer_value(str(result.get("result_summary") or "").strip(), goal)
-
-
-def _orchestrator_read_values(result: dict) -> list[tuple[str, str]]:
-    orchestrator = result.get("orchestrator") if isinstance(result, dict) else None
-    run_log = orchestrator.get("run_log") if isinstance(orchestrator, dict) else None
-    if not isinstance(run_log, list):
-        return []
-
-    values: list[tuple[str, str]] = []
-    for record in run_log:
-        if not isinstance(record, dict):
-            continue
-        run_result = record.get("result") if isinstance(record.get("result"), dict) else {}
-        reads = run_result.get("reads") if isinstance(run_result.get("reads"), dict) else {}
-        for field, value in reads.items():
-            text = str(value or "").strip()
-            if text:
-                values.append((str(field), text))
-    return values
-
-
-def _normalize_answer_value(value: str, goal: str = "") -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    if _goal_requires_integer(goal):
-        number = _first_number(text)
-        return str(int(round(number))) if number is not None else text
-    return text
-
-
-def _goal_requires_integer(goal: str) -> bool:
-    text = goal.lower()
-    return bool(
-        re.search(r"\binteger\b", text)
-        or re.search(r"\bwhole\s+number\b", text)
-        or re.search(r"\bnumber\s+only\b", text)
-        or re.search(r"\bonly\s+(?:give|return|answer)\b.*\bnumber\b", text)
-    )
-
-
-def _first_number(text: str) -> float | None:
-    match = re.search(r"[-+]?\d+(?:\.\d+)?", text.replace(",", ""))
-    if not match:
-        return None
-    try:
-        return float(match.group(0))
-    except ValueError:
-        return None
-
-
-def _weather_high_temperature_celsius_answer(goal: str) -> str:
-    """Resolve simple "today's high temperature in Celsius" answers via weather data.
-
-    This is intentionally narrow: it only triggers when the task asks for today's
-    highest/maximum temperature and an integer Celsius answer. It prevents the answer
-    bridge from submitting a prominent but wrong search-result value such as current
-    Fahrenheit temperature when the official grader validates Celsius daily max.
-    """
-    text = (goal or "").strip()
-    lowered = text.lower()
-    if not (
-        "temperature" in lowered
-        and "today" in lowered
-        and ("highest" in lowered or "maximum" in lowered or re.search(r"\bmax\b", lowered))
-        and ("celsius" in lowered or "°c" in lowered)
-        and _goal_requires_integer(text)
-    ):
-        return ""
-
-    city = _extract_weather_city(text)
-    if not city:
-        return ""
-    try:
-        value = _fetch_open_meteo_daily_max_celsius(city)
-    except Exception:  # noqa: BLE001 - answer bridge must fall back to UI reads.
-        return ""
-    return str(int(value + 0.5)) if value >= 0 else str(int(value - 0.5))
-
-
-def _extract_weather_city(goal: str) -> str:
-    patterns = (
-        r"\bfor\s+([A-Z][A-Za-z .'-]{1,60}?)\s+(?:highest|max(?:imum)?|weather|temperature)\b",
-        r"\b([A-Z][A-Za-z .'-]{1,60}?)\s+(?:highest|max(?:imum)?)\s+temperature\b",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, goal)
-        if match:
-            city = re.sub(r"\s+", " ", match.group(1)).strip(" .'-")
-            if city and city.lower() not in {"chrome", "use chrome"}:
-                return city
-    return ""
-
-
-def _fetch_open_meteo_daily_max_celsius(city: str) -> float:
-    import requests
-
-    geo = requests.get(
-        "https://geocoding-api.open-meteo.com/v1/search",
-        params={"name": city, "count": 1, "language": "en", "format": "json"},
-        timeout=8,
-    )
-    geo.raise_for_status()
-    results = geo.json().get("results") or []
-    if not results:
-        raise RuntimeError(f"city not found: {city}")
-    loc = results[0]
-    forecast = requests.get(
-        "https://api.open-meteo.com/v1/forecast",
-        params={
-            "latitude": loc["latitude"],
-            "longitude": loc["longitude"],
-            "daily": "temperature_2m_max",
-            "timezone": loc.get("timezone") or "auto",
-        },
-        timeout=8,
-    )
-    forecast.raise_for_status()
-    temps = forecast.json().get("daily", {}).get("temperature_2m_max") or []
-    if not temps:
-        raise RuntimeError("Open-Meteo daily max temperature unavailable")
-    return float(temps[0])
-
-
-def _init_task_with_retries(
-    env: MobileWorldEnv,
-    task_name: str,
-    *,
-    attempts: int = 6,
-    sleep_seconds: float = 10.0,
-) -> None:
-    """Initialize a MobileWorld task, tolerating emulator restart/offline windows."""
-    last_exc: Exception | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            env.init_task(task_name)
-            return
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-            if attempt >= attempts:
-                break
-            print(
-                f"[mobileworld] init_task failed (attempt {attempt}/{attempts}): "
-                f"{exc}; waiting for backend/emulator recovery and retrying..."
-            )
-            time.sleep(sleep_seconds)
-            try:
-                env._initialized = False
-                env.ensure_init()
-            except Exception:
-                pass
-    assert last_exc is not None
-    raise last_exc
+        return "\n".join(str(n) for n in notes)
+    return str(result.get("result_summary") or "").strip()
 
 
 def _write_mobileworld_context(
@@ -405,7 +406,11 @@ def main() -> int:
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
 
     if not env.health():
-        print(f"[mobileworld] WARN backend /health not ok at {args.base_url} (continuing)")
+        print(f"[mobileworld] WARN backend /health not ok at {args.base_url}")
+        if _run_emulator_restart_cmd():
+            env.reinitialize_controller()
+        else:
+            print("[mobileworld] WARN no emulator restart command configured; continuing")
     goal = env.get_goal(args.task)
     print(f"[mobileworld] task: {args.task}")
     print(f"[mobileworld] goal: {goal}")
@@ -451,14 +456,40 @@ def main() -> int:
         def _prime(_platform) -> None:
             # Reset the app to the task's start state via the backend (the only HTTP we
             # need pre-run; actions thereafter go over adb).
-            print(f"[mobileworld] init_task {args.task} (resetting app state)...")
-            _init_task_with_retries(env, args.task)
-            print("[mobileworld] init_task OK")
+            ready_timeout = float(os.environ.get("MW_ADB_READY_TIMEOUT") or "120")
+            max_retries = _mobileworld_init_retries()
+            for attempt in range(max_retries + 1):
+                try:
+                    print(f"[mobileworld] init_task {args.task} (resetting app state)...")
+                    env.init_task(args.task)
+                    print("[mobileworld] init_task OK")
+                    print(f"[mobileworld] waiting for adb after snapshot ({args.adb_serial})...")
+                    _wait_for_adb_ready(args.adb_serial, timeout_s=ready_timeout)
+                    print("[mobileworld] adb ready")
+                    android_proxy = os.environ.get("MW_ANDROID_HTTP_PROXY")
+                    if android_proxy and android_proxy.strip().lower() not in {"0", "false", "none", "off"}:
+                        proxy_host, proxy_port = _normalize_android_proxy(android_proxy)
+                        _configure_android_http_proxy(args.adb_serial, android_proxy)
+                        print(f"[mobileworld] android proxy restored: {proxy_host}:{proxy_port}")
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    if attempt >= max_retries:
+                        raise
+                    print(
+                        f"[mobileworld] init/adb readiness failed ({exc}); "
+                        f"restart+retry {attempt + 1}/{max_retries}"
+                    )
+                    if not _run_emulator_restart_cmd():
+                        raise
+                    env.reinitialize_controller()
 
         result: dict = {}
         try:
             bundle = build_platform()
             setup = bundle.setup_check()
+            if not setup.ok and _run_emulator_restart_cmd():
+                env.reinitialize_controller()
+                setup = bundle.setup_check()
             for line in setup.lines:
                 print(line)
             if not setup.ok:
@@ -576,7 +607,7 @@ def main() -> int:
             # ----- post-run: answer bridge + official state-based eval -----
             result = result or {}
             if not args.no_answer_bridge:
-                answer = _final_answer(result, goal=intent)
+                answer = _final_answer(result)
                 if answer:
                     try:
                         env.answer(answer)

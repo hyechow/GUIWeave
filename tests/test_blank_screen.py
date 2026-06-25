@@ -55,12 +55,38 @@ def _make_png(body_fill: int, *, textured: bool = False, with_bezel: bool = True
     return buf.getvalue()
 
 
+def _make_sparse_form_png() -> bytes:
+    """Build a mostly-white rendered form, like Android Mail Compose.
+
+    This protects against treating a valid white-background UI as a loading blank
+    just because most of the body is empty whitespace.
+    """
+    img = Image.new("L", (320, 704), 255)
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, 320, 56], fill=245)
+    d.text((48, 24), "Compose", fill=30)
+    rows = [
+        (92, "From   test@gmail.com"),
+        (132, "To     Enter email address"),
+        (172, "Subject   Subject"),
+        (212, "Compose email"),
+    ]
+    for y, label in rows:
+        d.text((8, y), label, fill=90)
+        if y < 200:
+            d.line([(0, y + 28), (320, y + 28)], fill=225, width=1)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 # (id, png-bytes builder, expected is_blank_screen)
 CASES = [
     ("gray239_body_blank",       _make_png(239),                         True),   # the turn-6 case
     ("near_white_blank",         _make_png(252),                         True),
     ("blank_no_bezel",           _make_png(239, with_bezel=False),       True),
     ("rendered_list_not_blank",  _make_png(239, textured=True),          False),  # real content
+    ("sparse_form_not_blank",    _make_sparse_form_png(),                False),
     ("dark_page_not_blank",      _make_png(60),                          False),  # splash/dark mode
 ]
 

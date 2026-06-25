@@ -352,6 +352,12 @@ def validate_program(program: Program) -> list[str]:
                         f"data_query 步「{s.name}」像是在回答聚合排名/第N多，但 SQL 使用 LIMIT/OFFSET 单行截断，"
                         "会丢掉并列项；请先 GROUP BY 计算 count，再用 DENSE_RANK() 或 HAVING count 返回该名次的所有并列结果"
                     )
+                if _API_DIRECT_LINK_RE.search(s.name or "") or _API_DIRECT_LINK_RE.search(s.read_spec or ""):
+                    issues.append(
+                        f"步骤「{s.name}」用了 API/JSON 直链端点（如 api.xxx.com、/repos/、/contributors?）取数——"
+                        "手机/浏览器界面不渲染原始 JSON，纯视觉读不到这些字段；"
+                        "请改走给人看的网页/应用界面（如该仓库主页、设置页）视觉读取其上显示的数字/计数"
+                    )
                 # check this run's refs BEFORE binding its own var (a read can't reference its own
                 # value — env[var] isn't set until the read completes)
                 _check_refs(f"{s.name}\n{s.success_condition}\n{s.read_spec}", f"步骤「{s.name}」", scope)
@@ -420,6 +426,16 @@ def validate_program(program: Program) -> list[str]:
     _check_list_read_direct_query(program.statements, issues)
     _check_retrieval_retry_preserves_field(program.statements, issues)
     return issues
+
+
+# API/JSON direct-link endpoints in a run target (api.xxx.com, /repos/, /contributors?) — the
+# decomposer must route through a human-readable web/app page instead, because mobile/browser UIs
+# don't render raw JSON for vision to read (回归 20260625_195139: api.github.com → 纯视觉读不到,
+# contributors 读成 5/真 15). read 字段名(stars_count/contributors_count)是合法的 returns,不算直链。
+_API_DIRECT_LINK_RE = re.compile(
+    r"https?://api\.|api\.github\.com|/repos/|/contributors\?",
+    re.IGNORECASE,
+)
 
 
 _RETRIEVAL_FIELD_RE = re.compile(

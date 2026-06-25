@@ -62,3 +62,4 @@ goal 中已含预处理后的绝对日期。若 goal 含日期范围，提取到
 6. 禁止生成 kind=verification 的子目标。analysis 任务里的「计算/汇总/求和/统计/对比」是对**已采集数据的纯运算**，由系统输出环节自动完成，**禁止**为它单独生成子目标。collection 采集子目标就是最后一步，验收只需「数据采全」。
 7. 需要先筛选再采集时（按日期/关键词筛选后收集），filter 与 collection 拆为独立子目标：先 filter（验收=筛选已生效的可见状态），再 collection + scroll_until_boundary（depends_on 含该 filter）。
 8. failure_hints 列出该子目标可能失败的原因。
+9. **数据来源必须是界面可见信号,禁止用 API/JSON 直链取数**:信息获取类子目标(查某仓库 stars/contributors、某服务数值等)必须导航到**给人看的网页/应用界面**视觉读取其上显示的数字/计数,不要在子目标里写"访问 `api.xxx.com/...` 这类返回 JSON 的机读端点"——手机浏览器不渲染原始 JSON,屏幕上看不到这些字段,走了等于读不到。

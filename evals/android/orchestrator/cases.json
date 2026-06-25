@@ -1,0 +1,11 @@
+[
+  {
+    "label": "github-info-禁 API/JSON 直链取数（回归 20260625_195139）",
+    "screenshot": "evals/android/orchestrator/screenshots/github_info_home_195139.png",
+    "goal": "Please check the number of stars and contributors on the AndroidWorld GitHub repository, then send an email to kevin_zhang@example.com with the subject line \"AndroidWorld Repository Stats\" and the following message body:\nThere are XXX stars and XXX contributors in the AndroidWorld repository.\n\nReplace \"XXX\" with the actual numbers you find.",
+    "assertions": [
+      "no_api_json_direct_link"
+    ],
+    "note": "195139 纯视觉重跑（删 url_json_read 后门后）：orchestrator decomposer 把 api.github.com REST 端点写进 run.name——手机 Chrome 不渲染原始 JSON，纯视觉读不到字段（contributors 读成 5/真 15），且 mail run 没用 {var} 模板接力 reads、planner 幻觉成 2156/34，最终 score 0.0。program 的 run 必须走 github.com 网页视觉获取，禁止 api.*/JSON 直链端点。这是 mobileworld 默认路径（--orchestrator），不同于 evals/android/decomposer 的 legacy milestone DAG。"
+  }
+]

@@ -1,0 +1,10 @@
+[
+  {
+    "label": "github-repo-读 stars 数（回归 20260625_202900）",
+    "screenshot": "evals/android/structured_read/screenshots/github_repo_home_202900.png",
+    "returns": ["stars"],
+    "read_spec": "stars: 仓库主页右上角 Star 按钮旁显示的数字（该仓库的星标数）",
+    "expected_nonempty": true,
+    "note": "202900 纯视觉重跑（#1 攻破后，硬校验禁 API→改走网页）：agent 进了 github.com/google-research/android_world 仓库主页（网页 Star 按钮旁有 stars≈803），但 structured_read 把 stars_count 读空了 → Kickback → local replan 又退回走 api.github.com。本 case 测 reader 能否从 320 宽仓库主页截图读到 stars。截图本身就是 320 宽（android 默认降采样），若读不到，疑似 Star 按钮旁小数字在 320 宽下对 reader(qwen3.5) 太模糊。contributors 手机网页无明确计数，标为任务本质困难，不在本 case。"
+  }
+]

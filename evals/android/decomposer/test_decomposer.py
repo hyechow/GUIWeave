@@ -97,6 +97,18 @@ def _check_assertions(milestones: list, assertions: list[str]) -> list[str]:
             final_text = _milestone_text(milestones[-1])
             if not any(kw in final_text for kw in ("上午", "早上", "AM")):
                 details.append("final saved-entry milestone dropped AM/morning constraint")
+        elif assertion == "no_api_json_direct_link":
+            import re
+
+            _API_RE = re.compile(
+                r"https?://api\.|api\.github\.com|/repos/|/contributors\?",
+                re.IGNORECASE,
+            )
+            offenders = [m.name for m in milestones if _API_RE.search(_milestone_text(m))]
+            if offenders:
+                details.append(
+                    f"milestone 走了 API/JSON 直链取数（应走网页/应用界面视觉）: {offenders}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

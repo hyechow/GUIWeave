@@ -228,7 +228,7 @@ def test_returning_ui_runs_get_target_specific_milestone_ids():
 
 
 def test_returning_ui_handoff_does_not_skip_initial_check(tmp_path):
-    from gui_agent.core.run.non_ui import drive_pending_non_ui
+    from gui_agent.core.run.non_interactive import drive_pending_non_ui
     from gui_agent.core.schemas import Observation, PolicyContext
 
     class Supervisor:
@@ -449,6 +449,98 @@ def test_package_result_carries_structured_reads():
                        completed=True, summary="读完", notes=[],
                        reads={"连通判定": "连通"})
     assert r.reads == {"连通判定": "连通"} and r.completed
+
+
+def test_missing_ui_return_fields_blocks_empty_action_returns():
+    from gui_agent.core.run.loop import _missing_ui_return_fields
+
+    run = Run(
+        var="repo",
+        name="打开仓库并读取统计",
+        kind="navigation",
+        returns=["stars_count", "contributors_count"],
+    )
+    assert _missing_ui_return_fields(run, {"stars_count": "", "contributors_count": "42"}) == [
+        "stars_count"
+    ]
+    assert _missing_ui_return_fields(run, {"stars_count": "123", "contributors_count": "42"}) == []
+
+
+def test_missing_ui_return_fields_ignores_non_ui_reads():
+    from gui_agent.core.run.loop import _missing_ui_return_fields
+
+    read_run = Run(var="r", name="读取状态", kind="read", returns=["状态"])
+    query_run = Run(var="q", name="查询状态", kind="data_query", returns=["状态"])
+    assert _missing_ui_return_fields(read_run, {}) == []
+    assert _missing_ui_return_fields(query_run, {}) == []
+
+
+def test_tighten_ui_return_run_requires_non_empty_fields():
+    from gui_agent.core.run.loop import _tighten_ui_return_run
+
+    run = Run(
+        var="repo",
+        name="打开目标详情",
+        kind="navigation",
+        returns=["stars_count", "contributors_count"],
+        success_condition="目标详情页已打开",
+        read_spec="stars_count: 星标数；contributors_count: 贡献者数。",
+    )
+
+    tightened = _tighten_ui_return_run(
+        run,
+        ["contributors_count"],
+        {"stars_count": "10.7k", "contributors_count": ""},
+        attempt=2,
+    )
+
+    assert tightened is not run
+    assert "继续定位返回字段：contributors_count" in tightened.name
+    assert "目标详情页已打开" in tightened.success_condition
+    assert "只有当这些字段都能从界面明确读取到非空值时才算完成" in tightened.success_condition
+    assert "stars_count=10.7k" in tightened.success_condition
+    assert "contributors_count" in tightened.read_spec
+    assert "星标数" in tightened.read_spec
+
+
+def test_empty_return_replan_read_is_forced_interactive():
+    from gui_agent.core.run.loop import _force_interactive_return_recovery
+
+    program = Program(statements=[
+        Run(
+            var="repo",
+            name="读取详情页统计",
+            kind="read",
+            returns=["stars_count", "contributors_count"],
+            success_condition="统计清晰可见",
+            read_spec="stars_count: stars; contributors_count: contributors",
+        )
+    ])
+
+    out = _force_interactive_return_recovery(
+        program,
+        "上一子目标被验收为完成，但它声明必须读取返回字段 ['stars_count']，实际读取结果为空：{}。",
+    )
+
+    first = out.statements[0]
+    assert first.kind == "navigation"
+    assert "统计清晰可见" in first.success_condition
+    assert "不要验收完成" in first.success_condition
+    assert "stars_count" in first.read_spec
+    assert program.statements[0].kind == "read"
+
+
+def test_non_empty_return_replan_leaves_read_unchanged():
+    from gui_agent.core.run.loop import _force_interactive_return_recovery
+
+    program = Program(statements=[
+        Run(var="r", name="读取状态", kind="read", returns=["状态"])
+    ])
+
+    out = _force_interactive_return_recovery(program, "普通纠正")
+
+    assert out is program
+    assert out.statements[0].kind == "read"
 
 
 def test_structured_read_empty_returns_no_llm():
@@ -864,3 +956,39 @@ def test_finish_with_no_refs_is_not_incomplete():
     ])
     res = ProgramRunner(lambda run: RunResult(completed=True, reads={"x": ""})).run(prog)
     assert res.finish_incomplete is False
+
+
+def test_validate_program_flags_api_direct_link():
+    # 回归 20260625_195139：decomposer 把 api.github.com REST 端点写进 run.name，手机/浏览器
+    # 不渲染原始 JSON、纯视觉读不到字段（contributors 读成 5/真 15）。validate 必须拒绝
+    # API/JSON 直链端点，强制走给人看的网页/应用界面。read 字段名（stars_count 等）是合法
+    # returns，邮件正文里 {var[contributors_count]} 是正确模板接力，都不应误报。
+    from gui_agent.core.orchestrator.decomposer import validate_program
+
+    # ① api.github.com 直链 → 报 issue
+    api = Program(statements=[
+        Run(var="s", name="访问 https://api.github.com/repos/google-research/android_world 并读 stargazers_count",
+            kind="action", returns=["stargazers_count"], read_spec="stargazers_count: JSON 字段"),
+    ])
+    assert any("API/JSON 直链" in i for i in validate_program(api)), validate_program(api)
+
+    # ② /contributors? 端点 → 报 issue
+    contrib = Program(statements=[
+        Run(var="c", name="访问 https://api.github.com/repos/x/contributors?per_page=100",
+            kind="action", returns=["contributor_count"], read_spec="contributor_count: 数组长度"),
+    ])
+    assert any("API/JSON 直链" in i for i in validate_program(contrib))
+
+    # ③ 走 github.com 网页 → 不报
+    web = Program(statements=[
+        Run(var="s", name="打开 github.com/google-research/android_world 仓库主页读星标数",
+            kind="action", returns=["stars"], read_spec="stars: 主页星标计数"),
+    ])
+    assert not any("API/JSON 直链" in i for i in validate_program(web)), validate_program(web)
+
+    # ④ 邮件正文用 {var[contributors_count]} 模板（字段名）→ 不误报
+    tpl = Program(statements=[
+        Run(var="c", name="读贡献者", kind="read", returns=["contributors_count"], read_spec="x"),
+        Run(name="正文 There are {c[contributors_count]} contributors", kind="action"),
+    ])
+    assert not any("API/JSON 直链" in i for i in validate_program(tpl)), validate_program(tpl)
