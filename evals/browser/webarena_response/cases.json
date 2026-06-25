@@ -1,0 +1,277 @@
+[
+  {
+    "task_id": 11,
+    "intent": "Get the total number of reviews that our store received so far that mention term \"disappointed\"",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 15,
+    "intent": "Get the total number of reviews that our store received so far that mention term \"best\"",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 42,
+    "intent": "Get the top 2 search term(s) in my store",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 63,
+    "intent": "Get customer email(s) who completed the second most number of orders in the entire history",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 64,
+    "intent": "Get customer email(s) who have 2 orders in any state in the entire history",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 65,
+    "intent": "Get customer email(s) who completed the fifth most number of orders in the entire history",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 108,
+    "intent": "Get the monthly count of completed orders from January 2023 through May 2023, inclusive. Return a list of objects with keys \"month\" (month name) and \"count\" (as integer) only, without any additional details.",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 110,
+    "intent": "Get the monthly count of completed orders from Jan 2022 through Nov 2022, inclusive. Return a list of objects with keys \"month\" (month name) and \"count\" (as integer) only, without any additional details.",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 111,
+    "intent": "Get the monthly count of completed orders from Feb 2022 through Nov 2022, inclusive. Return a list of objects with keys \"month\" (month name) and \"count\" (as integer) only, without any additional details.",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 113,
+    "intent": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 116,
+    "intent": "Return the customer nickname(s) who gave a rating of 3 stars or below for tanks products",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 127,
+    "intent": "Get the top 3 search terms that match available products in the store.",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 157,
+    "intent": "View the details of all customers",
+    "expected_task_type": "NAVIGATE"
+  },
+  {
+    "task_id": 184,
+    "intent": "Give me the name and color of the products that have 0 units left. Return a list of objects with keys \"name\" and \"color\".",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 185,
+    "intent": "Give me the material of the products that have 3 units left",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 186,
+    "intent": "Give me the product names and the sizes of the products that have 2-3 units left. Return a list of objects with keys \"name\" and \"size\".",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 193,
+    "intent": "Get the total payment amount of the last 2 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 196,
+    "intent": "Get the payment difference between the last 4 cancelled orders and the last 4 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 197,
+    "intent": "Get the total payment amount of the last 5 non-cancelled orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 200,
+    "intent": "Get the billing name of the oldest complete order.",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 204,
+    "intent": "Get the product name and final price (low to high) of the most recent completed order.Return a list of objects with keys \"name\" (product name) and \"price\" (as number, e.g., 10.99) only, without any additional details",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 212,
+    "intent": "Get the customer name and email with phone number 555-229-3326. Return a list of objects with keys \"name\" and \"email\".",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 214,
+    "intent": "Get the title and rating for all reviews with 3 stars or below for Erica Sports Bra. Return a list of objects with keys \"title\" and \"rating\".",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 345,
+    "intent": "How many reviews did our shop receive in Apr 2023?",
+    "expected_task_type": "RETRIEVE"
+  },
+  {
+    "task_id": 375,
+    "intent": "Go to the Magento Luma theme settings page",
+    "expected_task_type": "NAVIGATE"
+  },
+  {
+    "task_id": 488,
+    "intent": "Change the page title of \"Home Page\" page on my site to \"This is the home page!! Leave here!!\".",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 489,
+    "intent": "Change the page title of \"Privacy Policy\" page on my site to \"No privacy policy is needed in this dystopian world\".",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 491,
+    "intent": "Notify Sarah Miller in their most recent pending order with message \"the order is ready to be shipped soon!\"",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 493,
+    "intent": "Notify Grace Nguyen in their most recent pending order with message \"sorry we are bankrupt, please contact our customer service for refund\"",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 499,
+    "intent": "Update order #304 with the USPS tracking number 13849373987",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 502,
+    "intent": "Mark all Gobi HeatTec Tee as out of stock",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 505,
+    "intent": "Mark all Aeon capri as out of stock",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 544,
+    "intent": "Update the product description of Selene Yoga Hoodie to \"{count} customer(s) love it!\" where count is the number of reviews with 4 stars or above, or \"don't miss out on this amazing product\" when there are no such reviews.",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 545,
+    "intent": "Update the product description of Radiant Tee to \"{count} customer(s) love it!\" where count is the number of reviews with 4 stars or above, or \"don't miss out on this amazing product\" when there are no such reviews.",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 546,
+    "intent": "Update the product description of Lucia Cross-Fit Bra to \"{count} customer(s) love it!\" where count is the number of reviews with 4 stars or above, or \"don't miss out on this amazing product\" when there are no such reviews.",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 549,
+    "intent": "Add a new size XXXL to green Minerva LumaTech V-Tee",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 550,
+    "intent": "Add a new size XXS to blue and purple Nona Fitness Tank",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 551,
+    "intent": "Add new size 30 and 31 to all color variants of Diana Tights",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 679,
+    "intent": "Go to the list of orders that are completed",
+    "expected_task_type": "NAVIGATE"
+  },
+  {
+    "task_id": 694,
+    "intent": "Add a simple product named \"Energy-Bulk Women Shirt\" with 50 in stock, available in size S and color blue, priced at $60 using the appropriate attribute set.",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 696,
+    "intent": "Add a simple product named \"FancyBoy Man Causal Jeans\" with 42 in stock, available in size 34 and color Blue, priced at $169.99 using the appropriate attribute set.",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 697,
+    "intent": "Add a simple product named \"Swatch Smart Watch\" with 42 in stock, available in a single size and color Blue, priced at $769.99 using the appropriate attribute set.",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 701,
+    "intent": "Create a new marketing price rule called \"Mother's day sale\" for all registered customers that offers 15% discount on checkout on all their cart",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 702,
+    "intent": "Create a new marketing price rule called \"Pride Month\" for all registered customers that offers 45% off on all products",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 703,
+    "intent": "Create a new marketing price rule called \"Thanks giving sale\" for all registered customers that offers $40 discount on all their purchase",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 707,
+    "intent": "Show the sales order report for for last year (today is March 15, 2023).",
+    "expected_task_type": "NAVIGATE"
+  },
+  {
+    "task_id": 708,
+    "intent": "Show the tax report for for this year (today is March 15, 2023).",
+    "expected_task_type": "NAVIGATE"
+  },
+  {
+    "task_id": 709,
+    "intent": "Show the orders report from May 1, 2021 to March 31, 2022.",
+    "expected_task_type": "NAVIGATE"
+  },
+  {
+    "task_id": 769,
+    "intent": "We've received 378 brown Aero daily fitness tee in every size, please update the inventory",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 771,
+    "intent": "Approve reviews with four stars or higher to display in our store.",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 774,
+    "intent": "Delete all pending reviews with less than 4 stars",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 776,
+    "intent": "Delete all reviews from the scammer Carlo",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 778,
+    "intent": "Reduce the price of size 28 Sahara leggings by 13.5%",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 780,
+    "intent": "Increase the price of white Ingrid Running with size L and above by $17",
+    "expected_task_type": "MUTATE"
+  },
+  {
+    "task_id": 782,
+    "intent": "Increase the price of all blue running tshirts in extra small and small sizes by 23%",
+    "expected_task_type": "MUTATE"
+  }
+]
