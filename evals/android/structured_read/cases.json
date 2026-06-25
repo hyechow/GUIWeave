@@ -1,10 +1,10 @@
 [
   {
-    "label": "github-repo-读 stars 数（回归 20260625_202900）",
+    "label": "github-repo-读可见计数（回归 20260625_202900）",
     "screenshot": "evals/android/structured_read/screenshots/github_repo_home_202900.png",
-    "returns": ["stars"],
-    "read_spec": "stars: 仓库主页右上角 Star 按钮旁显示的数字（该仓库的星标数）",
+    "returns": ["issues"],
+    "read_spec": "issues: 仓库主页顶部 Issues 标签旁显示的数字（未关闭的 issue 数）",
     "expected_nonempty": true,
-    "note": "202900 纯视觉重跑（#1 攻破后，硬校验禁 API→改走网页）：agent 进了 github.com/google-research/android_world 仓库主页（网页 Star 按钮旁有 stars≈803），但 structured_read 把 stars_count 读空了 → Kickback → local replan 又退回走 api.github.com。本 case 测 reader 能否从 320 宽仓库主页截图读到 stars。截图本身就是 320 宽（android 默认降采样），若读不到，疑似 Star 按钮旁小数字在 320 宽下对 reader(qwen3.5) 太模糊。contributors 手机网页无明确计数，标为任务本质困难，不在本 case。"
+    "note": "202900 纠正：手机 GitHub 主页（Code tab）**根本不显示 stars 计数**——手机版精简，只有 Code/Issues/Pull requests tab + 文件列表；OCR+analyze 确认该截图里 stars 不存在，可见数字仅 Issues 38 / Pull requests 7。所以读 stars 必然空、structured_read 读空是**正确**的；之前『reader 读不准 803』的结论错（截图压根没 803，那个 32.8k 是 README 文件大小）。本 case 改测截图里**真实可见**的 Issues 计数，验证 reader 能读可见数字。stars 要看须切桌面版网站或进 stargazers 页 = 导航策略问题（非 reader 能力）。"
   }
 ]
