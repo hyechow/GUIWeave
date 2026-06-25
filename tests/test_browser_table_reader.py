@@ -53,6 +53,79 @@ def test_normalize_table_snapshots_maps_rows_to_headers():
     assert tables[0]["page"]["title"] == "Orders"
 
 
+def test_normalize_folds_cell_hrefs_into_sibling_url_columns():
+    # A linked column carries its href as a "<col>_url" sibling column — no preset "the url"
+    # field, and the new column must land in headers so data_query can SELECT it.
+    raw = {
+        "url": "http://example.test/admin/orders",
+        "title": "Orders",
+        "tables": [
+            {
+                "source": "table",
+                "headers": ["ID", "Action"],
+                "rows": [
+                    ["000000001", "View"],
+                    ["000000002", "View"],
+                ],
+                "rowLinks": [
+                    ["", "http://example.test/order/1"],
+                    ["", "http://example.test/order/2"],
+                ],
+                "domRows": 2,
+            }
+        ],
+    }
+
+    tables = normalize_table_snapshots(raw)
+
+    assert tables[0]["headers"] == ["ID", "Action", "Action_url"]
+    assert tables[0]["rows"][0] == {
+        "ID": "000000001",
+        "Action": "View",
+        "Action_url": "http://example.test/order/1",
+    }
+    assert tables[0]["rows"][1]["Action_url"] == "http://example.test/order/2"
+
+
+def test_normalize_without_links_leaves_headers_unchanged():
+    raw = {
+        "url": "http://example.test/x",
+        "title": "X",
+        "tables": [
+            {
+                "source": "table",
+                "headers": ["A", "B"],
+                "rows": [["1", "2"]],
+                "domRows": 1,
+            }
+        ],
+    }
+    tables = normalize_table_snapshots(raw)
+    assert tables[0]["headers"] == ["A", "B"]
+    assert tables[0]["rows"][0] == {"A": "1", "B": "2"}
+
+
+def test_normalize_url_column_name_avoids_collision():
+    # If a literal "Action_url" text column already exists, the link column dedupes.
+    raw = {
+        "url": "http://example.test/x",
+        "title": "X",
+        "tables": [
+            {
+                "source": "table",
+                "headers": ["Action", "Action_url"],
+                "rows": [["View", "manual"]],
+                "rowLinks": [["http://example.test/1", ""]],
+                "domRows": 1,
+            }
+        ],
+    }
+    tables = normalize_table_snapshots(raw)
+    assert tables[0]["headers"] == ["Action", "Action_url", "Action_url_2"]
+    assert tables[0]["rows"][0]["Action_url"] == "manual"
+    assert tables[0]["rows"][0]["Action_url_2"] == "http://example.test/1"
+
+
 def test_normalize_table_snapshots_accepts_provider_dict_rows():
     raw = {
         "url": "http://example.test/admin/orders",

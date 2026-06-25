@@ -3,10 +3,20 @@
 `read` and `data_query` are execution primitives, not UI actions. They consume the
 current observation/table snapshot, record a non-interactive turn, and advance the
 DSL interpreter without going through the supervisor/action-policy loop.
+
+A `navigation` run whose (already-templated) target carries a concrete URL on a
+device that exposes a browser-only ``navigate(url)`` is the same shape: a
+deterministic jump, not a UI hunt. The canonical case is a foreach drill —
+``list_read`` collects each row's detail URL (table_reader folds cell hrefs into
+``<col>_url`` sibling columns), then the loop visits ``{row[..._url]}`` directly +
+structured-reads the landed page, with no per-row plan→act loop. Platforms with no
+``navigate`` (iphone/android) and navigations without a URL fall through to the
+supervisor unchanged.
 """
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +50,27 @@ class _RepairAttempt:
     sql: str
     reason: str
     source_issue: str = ""
+
+
+# A concrete http(s) URL embedded in a run's prose target. The CJK exclusion lets the URL end
+# naturally at the Chinese text the planner wraps it in (e.g. "打开 https://h/id/5 的详情").
+_URL_RE = re.compile(r"https?://[^\s一-鿿]+")
+
+
+def _direct_nav_url(run: Run | None, platform: Any) -> str | None:
+    """The URL to jump to if `run` is a deterministic, non-interactive navigation; else None.
+
+    Requires: kind=navigation, a concrete URL already templated into the target name, and a device
+    that exposes a browser-only ``navigate(url)``. A plain navigation (no URL) or a device that
+    can't navigate by URL (iphone/android) returns None and goes through the supervisor as usual."""
+    if run is None or run.kind != "navigation":
+        return None
+    if not callable(getattr(getattr(platform, "client", None), "navigate", None)):
+        return None
+    match = _URL_RE.search(run.name or "")
+    if not match:
+        return None
+    return match.group(0).rstrip(").,;，。）") or None
 
 
 def drive_pending_non_ui(
@@ -84,7 +115,12 @@ def drive_pending_non_ui(
             tables = getattr(obs, "tables", None)
         return obs
 
-    while cur_run is not None and cur_run.kind in {"read", "data_query"} and not is_list_read(cur_run):
+    while cur_run is not None:
+        if not (
+            (cur_run.kind in {"read", "data_query"} and not is_list_read(cur_run))
+            or _direct_nav_url(cur_run, platform) is not None
+        ):
+            break
         run_for_turn = cur_run
         turn_started = time.perf_counter()
         calls_before = get_llm_call_count()
@@ -95,7 +131,36 @@ def drive_pending_non_ui(
         completed = True
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
         executed_sql = cur_run.sql
-        if cur_run.kind == "read" and cur_run.returns:
+        if cur_run.kind == "navigation":
+            from gui_agent.core.orchestrator.structured_read import structured_read
+
+            nav_url = _direct_nav_url(cur_run, platform)  # non-None per the while condition
+            say(f"  [Orchestrator] 直达导航 {nav_url}")
+            platform.client.navigate(nav_url)
+            settle = getattr(platform.client, "wait_settled", None)
+            if callable(settle):
+                try:
+                    settle("navigate")
+                except Exception:  # noqa: BLE001 — settling is best-effort; observe regardless
+                    pass
+            # The jump left the previous page: re-observe the landed page unconditionally.
+            obs_url = f"screenshot_nav_{run_index}.png"
+            obs = bundle.make_perception(platform, log_dir / obs_url).observe()
+            frame = obs.png_bytes
+            tables = obs.tables
+            if cur_run.returns:
+                reads = structured_read(
+                    frame,
+                    list(cur_run.returns),
+                    read_spec=cur_run.read_spec,
+                    check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                    context_reports=context_reports,
+                )
+                say(f"  [Orchestrator] 直达后读取 {cur_run.returns} → {reads}")
+            summary = f"直达导航 {nav_url}"
+            executed_sql = ""
+        elif cur_run.kind == "read" and cur_run.returns:
             from gui_agent.core.orchestrator.structured_read import structured_read
 
             if frame is None:

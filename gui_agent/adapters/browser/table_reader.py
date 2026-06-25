@@ -31,6 +31,18 @@ def table_snapshot_js() -> str:
   }};
   const cellsOf = (row, selector) => Array.from(row.querySelectorAll(selector))
     .filter(visible).slice(0, MAX_CELLS).map(text);
+  // A cell's href is part of the cell's complete content, not a special "url" field:
+  // take the first navigable link inside the cell (absolute URL), "" when there is none.
+  const cellLink = (el) => {{
+    if (!el) return "";
+    const a = el.matches && el.matches("a[href]") ? el : (el.querySelector && el.querySelector("a[href]"));
+    if (!a) return "";
+    const raw = a.getAttribute("href") || "";
+    if (!raw || /^(javascript:|#|mailto:|tel:|data:)/i.test(raw)) return "";
+    return a.href || "";  // resolved absolute URL
+  }};
+  const linksOf = (row, selector) => Array.from(row.querySelectorAll(selector))
+    .filter(visible).slice(0, MAX_CELLS).map(cellLink);
   const titleSelectors = [
     ".dashboard-item-title",
     ".admin__page-section-title",
@@ -118,9 +130,15 @@ def table_snapshot_js() -> str:
   }};
   const finalize = (entry) => {{
     entry.headers = (entry.headers || []).map(norm);
-    entry.rows = (entry.rows || []).map((r) => r.map(norm)).filter((r) => r.some(Boolean));
-    entry.domRows = entry.rows.length;
-    entry.rows = entry.rows.slice(0, MAX_ROWS);
+    // Keep rows and their per-cell links aligned through the same empty-row filter + slice.
+    const links = entry.rowLinks || [];
+    const paired = (entry.rows || [])
+      .map((r, i) => ({{ cells: r.map(norm), links: (links[i] || []).slice() }}))
+      .filter((p) => p.cells.some(Boolean));
+    entry.domRows = paired.length;
+    const kept = paired.slice(0, MAX_ROWS);
+    entry.rows = kept.map((p) => p.cells);
+    entry.rowLinks = kept.map((p) => p.links);
     entry.totalRecords = entry.totalRecords || null;
     entry.partial = !!(entry.totalRecords && entry.rows.length < entry.totalRecords);
     entry.path = entry.path || "";
@@ -436,7 +454,10 @@ def table_snapshot_js() -> str:
     const headerCells = headerRow ? cellsOf(headerRow, "th,td") : [];
     const bodyRows = Array.from(table.querySelectorAll("tbody tr")).filter(visible);
     const dataRows = (bodyRows.length ? bodyRows : allRows.filter((r) => r !== headerRow));
-    const rows = dataRows.map((r) => cellsOf(r, "th,td")).filter((r) => r.length > 0);
+    const built = dataRows.map((r) => ({{ c: cellsOf(r, "th,td"), l: linksOf(r, "th,td") }}))
+      .filter((b) => b.c.length > 0);
+    const rows = built.map((b) => b.c);
+    const rowLinks = built.map((b) => b.l);
     if (!headerCells.length && rows.length < 2) continue;
     if (Math.max(headerCells.length, ...(rows.map((r) => r.length))) < 2) continue;
     const traversal = detectPagerState(table);
@@ -445,6 +466,7 @@ def table_snapshot_js() -> str:
       caption: nearbyTitle(table),
       headers: headerCells,
       rows,
+      rowLinks,
       totalRecords: totalRecordsNear(table),
       path: uniquePath(table),
       traversal,
@@ -462,16 +484,22 @@ def table_snapshot_js() -> str:
     const rows = Array.from(grid.querySelectorAll('[role="row"]'))
       .filter(visible)
       .filter((r) => !r.querySelector('[role="columnheader"]'))
-      .map((r) => cellsOf(r, '[role="gridcell"],[role="cell"],[role="rowheader"],td,th'))
-      .filter((r) => r.length > 0);
-    if (!headers.length && rows.length < 2) continue;
-    if (Math.max(headers.length, ...rows.map((r) => r.length)) < 2) continue;
+      .map((r) => ({{
+        c: cellsOf(r, '[role="gridcell"],[role="cell"],[role="rowheader"],td,th'),
+        l: linksOf(r, '[role="gridcell"],[role="cell"],[role="rowheader"],td,th'),
+      }}))
+      .filter((b) => b.c.length > 0);
+    const gridRows = rows.map((b) => b.c);
+    const gridRowLinks = rows.map((b) => b.l);
+    if (!headers.length && gridRows.length < 2) continue;
+    if (Math.max(headers.length, ...gridRows.map((r) => r.length)) < 2) continue;
     const traversal = detectPagerState(grid);
     snapshots.push(finalize({{
       source: "aria-grid",
       caption: nearbyTitle(grid),
       headers,
-      rows,
+      rows: gridRows,
+      rowLinks: gridRowLinks,
       totalRecords: totalRecordsNear(grid),
       path: uniquePath(grid),
       traversal,
@@ -516,8 +544,13 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
         if width < 2:
             continue
         headers = _dedupe_headers(raw_headers, width)
+        # A cell's href is part of the row's complete content. Fold it in as a sibling column
+        # "<col>_url" — no preset "the url" field; every linked column carries its own. Columns
+        # must live in `headers` (data_query builds its SQL schema from headers, not row keys).
+        raw_links = item.get("rowLinks") if isinstance(item.get("rowLinks"), list) else []
+        link_headers = _link_headers(raw_links, headers, width)
         rows: list[dict[str, str]] = []
-        for raw_row in raw_rows:
+        for ridx, raw_row in enumerate(raw_rows):
             if isinstance(raw_row, dict):
                 row = {header: str(raw_row.get(header, "") or "").strip() for header in headers}
                 if any(row.values()):
@@ -528,9 +561,15 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
             values = [str(v or "").strip() for v in raw_row[:width]]
             if not any(values):
                 continue
-            rows.append({headers[i]: (values[i] if i < len(values) else "") for i in range(width)})
+            row = {headers[i]: (values[i] if i < len(values) else "") for i in range(width)}
+            link_row = raw_links[ridx] if ridx < len(raw_links) and isinstance(raw_links[ridx], list) else []
+            for col_idx, link_header in link_headers.items():
+                href = str(link_row[col_idx]).strip() if col_idx < len(link_row) else ""
+                row[link_header] = href
+            rows.append(row)
         if not rows:
             continue
+        headers = headers + [link_headers[i] for i in sorted(link_headers)]
         total_records = _safe_int(item.get("totalRecords"))
         traversal = item.get("traversal")
         out.append(
@@ -565,6 +604,34 @@ def normalize_viewport(raw: Any) -> dict[str, Any] | None:
     if viewport.get("type") in (None, "unknown"):
         return None
     return viewport
+
+
+def _link_headers(raw_links: list[Any], headers: list[str], width: int) -> dict[int, str]:
+    """Map each text-column index that carries any href to a unique "<col>_url" header name.
+
+    A column is link-bearing if ANY row has a non-empty href in that cell; the whole column then
+    gets a sibling URL column (rectangular: rows without a link store ""). Names are deduped
+    against the existing text headers and each other so data_query sees distinct identifiers."""
+    has_link = [False] * width
+    for link_row in raw_links:
+        if not isinstance(link_row, list):
+            continue
+        for i in range(min(width, len(link_row))):
+            if str(link_row[i] or "").strip():
+                has_link[i] = True
+    taken = set(headers)
+    out: dict[int, str] = {}
+    for i in range(width):
+        if not has_link[i]:
+            continue
+        base = f"{headers[i]}_url"
+        name, n = base, 1
+        while name in taken:
+            n += 1
+            name = f"{base}_{n}"
+        taken.add(name)
+        out[i] = name
+    return out
 
 
 def _dedupe_headers(headers: list[Any], width: int) -> list[str]:

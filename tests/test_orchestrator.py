@@ -264,6 +264,55 @@ def test_returning_ui_handoff_does_not_skip_initial_check(tmp_path):
     assert fresh_advance is False
 
 
+def test_direct_nav_url_gates_on_url_present_and_navigate_capability():
+    from gui_agent.core.run.non_interactive import _direct_nav_url
+
+    class NavClient:
+        def navigate(self, url):  # browser-only extra
+            return "OK"
+
+    class Plat:
+        def __init__(self, client):
+            self.client = client
+
+    nav_capable = Plat(NavClient())
+    no_nav = Plat(object())  # iphone/android-like: no navigate(url)
+
+    # A foreach drill whose target was templated to a concrete URL on a navigate-capable device:
+    # deterministic jump.
+    run = Run(var="d", name="打开 http://host/admin/review/edit/id/5 详情", kind="navigation", returns=["rating"])
+    assert _direct_nav_url(run, nav_capable) == "http://host/admin/review/edit/id/5"
+
+    # Same run, device can't navigate by URL → fall through to the supervisor's interactive drill.
+    assert _direct_nav_url(run, no_nav) is None
+
+    # A navigation with no URL (id-based interactive open) is never a direct jump.
+    id_run = Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"])
+    assert _direct_nav_url(id_run, nav_capable) is None
+
+    # Only navigation runs route here — a read carrying a URL in its name does not.
+    read_run = Run(var="r", name="读取 http://host/x 的值", kind="read", returns=["v"])
+    assert _direct_nav_url(read_run, nav_capable) is None
+
+
+def test_direct_nav_url_extracts_clean_url_across_cjk_and_punctuation():
+    from gui_agent.core.run.non_interactive import _direct_nav_url
+
+    class Plat:
+        class client:
+            @staticmethod
+            def navigate(url):
+                return "OK"
+
+    plat = Plat()
+    # URL ends at the CJK that wraps it — no trailing Chinese leaks into the URL.
+    cjk = Run(name="打开 https://h/a?b=1&c=2 的详情页", kind="navigation")
+    assert _direct_nav_url(cjk, plat) == "https://h/a?b=1&c=2"
+    # Trailing prose punctuation is trimmed.
+    punct = Run(name="跳转到 https://h/item/5）", kind="navigation")
+    assert _direct_nav_url(punct, plat) == "https://h/item/5"
+
+
 def test_target_identity_hint_uses_url_only_for_runtime_target_gate():
     from gui_agent.core.schemas import Milestone, Observation
     from gui_agent.core.supervisor.milestone.policy import _target_identity_hint
