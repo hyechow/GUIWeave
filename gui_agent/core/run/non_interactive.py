@@ -86,6 +86,7 @@ def drive_pending_non_ui(
     context: PolicyContext,
     save_context: Callable[[], None],
     say: Callable[[str], None],
+    status: Callable[[str], None] | None = None,
     done_observation: Observation | None = None,
     observation_url: str | None = None,
     materialized_tables: "Callable[[], list[dict[str, Any]]] | None" = None,
@@ -101,6 +102,16 @@ def drive_pending_non_ui(
     foreach had read all rows)."""
     cur_run = current_run
     failure_evidence: str | None = None  # last re-plannable non-UI failure (for Feasibility Guard kick-back)
+    nav_n = 0  # running count of URL-direct drills in THIS batch — surfaced to the HUD so a long drill
+    #            (dozens of `直达导航` jumps inside one milestone hand-off) doesn't look frozen.
+
+    def _hud(msg: str) -> None:
+        # Non-UI primitives run inside a hand-off, NOT a top-level `--- Turn N ---`, so the main loop
+        # never pushes a HUD status for them. Push one here so the HUD ticks per drill step. (max_turns
+        # is untouched: these still record as non_interactive turns and don't consume the UI budget.)
+        if status is not None:
+            status(msg)
+
     obs = done_observation
     frame = getattr(obs, "png_bytes", None) if obs is not None else None
     tables = getattr(obs, "tables", None) if obs is not None else None
@@ -135,7 +146,9 @@ def drive_pending_non_ui(
             from gui_agent.core.orchestrator.structured_read import structured_read
 
             nav_url = _direct_nav_url(cur_run, platform)  # non-None per the while condition
-            say(f"  [Orchestrator] 直达导航 {nav_url}")
+            nav_n += 1
+            _hud(f"直达钻取 {nav_n}：打开 {nav_url}")
+            say(f"  [Orchestrator] 直达钻取 {nav_n} · 直达导航 {nav_url}")
             platform.client.navigate(nav_url)
             settle = getattr(platform.client, "wait_settled", None)
             if callable(settle):
@@ -163,6 +176,7 @@ def drive_pending_non_ui(
         elif cur_run.kind == "read" and cur_run.returns:
             from gui_agent.core.orchestrator.structured_read import structured_read
 
+            _hud(f"读取验收帧 {'、'.join(cur_run.returns)}")
             if frame is None:
                 ensure_observation()
             reads = structured_read(
@@ -178,6 +192,7 @@ def drive_pending_non_ui(
             from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
             from gui_agent.core.orchestrator.data_query_repair import repair_data_query_sql
 
+            _hud(f"数据查询 {'、'.join(cur_run.returns) or cur_run.name}")
             ensure_observation()
             query_tables = tables
             # Fold in foreach-accumulated tables (e.g. per-review rows collected by iterating a list):

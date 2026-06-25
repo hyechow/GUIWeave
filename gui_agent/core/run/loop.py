@@ -367,6 +367,10 @@ def run_agent_loop(
                 context=context,
                 save_context=_save_ctx,
                 say=_say,
+                # Surface drill progress on the HUD: non-UI primitives run inside a hand-off (no
+                # top-level `--- Turn N ---`), so the HUD would otherwise freeze through a long drill.
+                # Use the interactive-turn count (not a turn_no var that isn't in scope at every call site).
+                status=lambda msg: _status(_interactive_turn_count(context), msg),
                 done_observation=done_observation,
                 observation_url=observation_url,
                 # a PROVIDER, not a snapshot: a foreach's into table is populated mid-drain (when the
