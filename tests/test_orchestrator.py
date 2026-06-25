@@ -500,6 +500,98 @@ def test_package_result_carries_structured_reads():
     assert r.reads == {"连通判定": "连通"} and r.completed
 
 
+def test_missing_ui_return_fields_blocks_empty_action_returns():
+    from gui_agent.core.run.loop import _missing_ui_return_fields
+
+    run = Run(
+        var="repo",
+        name="打开仓库并读取统计",
+        kind="navigation",
+        returns=["stars_count", "contributors_count"],
+    )
+    assert _missing_ui_return_fields(run, {"stars_count": "", "contributors_count": "42"}) == [
+        "stars_count"
+    ]
+    assert _missing_ui_return_fields(run, {"stars_count": "123", "contributors_count": "42"}) == []
+
+
+def test_missing_ui_return_fields_ignores_non_ui_reads():
+    from gui_agent.core.run.loop import _missing_ui_return_fields
+
+    read_run = Run(var="r", name="读取状态", kind="read", returns=["状态"])
+    query_run = Run(var="q", name="查询状态", kind="data_query", returns=["状态"])
+    assert _missing_ui_return_fields(read_run, {}) == []
+    assert _missing_ui_return_fields(query_run, {}) == []
+
+
+def test_tighten_ui_return_run_requires_non_empty_fields():
+    from gui_agent.core.run.loop import _tighten_ui_return_run
+
+    run = Run(
+        var="repo",
+        name="打开目标详情",
+        kind="navigation",
+        returns=["stars_count", "contributors_count"],
+        success_condition="目标详情页已打开",
+        read_spec="stars_count: 星标数；contributors_count: 贡献者数。",
+    )
+
+    tightened = _tighten_ui_return_run(
+        run,
+        ["contributors_count"],
+        {"stars_count": "10.7k", "contributors_count": ""},
+        attempt=2,
+    )
+
+    assert tightened is not run
+    assert "继续定位返回字段：contributors_count" in tightened.name
+    assert "目标详情页已打开" in tightened.success_condition
+    assert "只有当这些字段都能从界面明确读取到非空值时才算完成" in tightened.success_condition
+    assert "stars_count=10.7k" in tightened.success_condition
+    assert "contributors_count" in tightened.read_spec
+    assert "星标数" in tightened.read_spec
+
+
+def test_empty_return_replan_read_is_forced_interactive():
+    from gui_agent.core.run.loop import _force_interactive_return_recovery
+
+    program = Program(statements=[
+        Run(
+            var="repo",
+            name="读取详情页统计",
+            kind="read",
+            returns=["stars_count", "contributors_count"],
+            success_condition="统计清晰可见",
+            read_spec="stars_count: stars; contributors_count: contributors",
+        )
+    ])
+
+    out = _force_interactive_return_recovery(
+        program,
+        "上一子目标被验收为完成，但它声明必须读取返回字段 ['stars_count']，实际读取结果为空：{}。",
+    )
+
+    first = out.statements[0]
+    assert first.kind == "navigation"
+    assert "统计清晰可见" in first.success_condition
+    assert "不要验收完成" in first.success_condition
+    assert "stars_count" in first.read_spec
+    assert program.statements[0].kind == "read"
+
+
+def test_non_empty_return_replan_leaves_read_unchanged():
+    from gui_agent.core.run.loop import _force_interactive_return_recovery
+
+    program = Program(statements=[
+        Run(var="r", name="读取状态", kind="read", returns=["状态"])
+    ])
+
+    out = _force_interactive_return_recovery(program, "普通纠正")
+
+    assert out is program
+    assert out.statements[0].kind == "read"
+
+
 def test_structured_read_empty_returns_no_llm():
     # 无 returns 直接返回 {}，不触 LLM（确定性）。read_spec/check_knowledge 都不影响。
     from gui_agent.core.orchestrator.structured_read import structured_read

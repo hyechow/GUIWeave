@@ -1,4 +1,4 @@
-"""Generic multi-turn traversal runtime for DSL ``list_read`` runs.
+"""Generic multi-turn traversal runtime for row-collection reads.
 
 The runtime is deliberately domain-neutral. It only observes table/grid rows,
 deduplicates visible records, and asks the planner to perform the next
@@ -216,7 +216,7 @@ class ListTraversalDecision:
 
 @dataclass
 class ListTraversalRuntime:
-    """Stateful traversal and passive row accumulator for one ``list_read`` run."""
+    """Stateful traversal and passive row accumulator for one row-collection read."""
 
     var: str
     returns: list[str]

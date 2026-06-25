@@ -137,7 +137,7 @@ def test_orchestrator_program_renders_dataflow_lane():
 
 def test_orchestrator_program_renders_foreach_block_and_body():
     # A foreach program must render its loop block + indented body (not be silently dropped), with the
-    # list_read badge and the accumulated into-table row count.
+    # legacy list_read badge (still rendered for old logs) and the accumulated into-table row count.
     html = _render_program_section(
         {
             "program": {

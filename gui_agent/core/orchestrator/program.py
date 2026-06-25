@@ -41,7 +41,8 @@ BARE_REF_RE = re.compile(r"\{(\w+)\}")
 # at: 到某页 / 填一组表单 / 点一个按钮 / 对结构化数据做只读查询。
 # Any UI run may declare returns/read_spec; those values are extracted from the run's
 # completion frame. "read" remains as a compatibility/no-op current-frame primitive and for
-# list_read collection. "data_query" is a non-UI primitive consumed directly by the orchestrator.
+# row-collection reads (legacy `over=` source for foreach). "data_query" is a non-UI primitive
+# consumed directly by the orchestrator.
 RunKind = Literal["navigation", "filter", "action", "read", "data_query"]
 CondCmp = Literal["==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"]
 
@@ -51,7 +52,7 @@ class RunResult(BaseModel):
 
     `reads` maps each requested `returns` field to the value the linear executor
     read off the result frame (读不到 = ""，按「当没有」处理，不让它卡住编排).
-    `rows` is the LIST form: a read marked list_read returns one dict per row (the
+    `rows` is the LIST form: a row-collection read returns one dict per row (the
     runtime-discovered collection a `foreach` iterates), and a `foreach` materializes
     its accumulated per-iteration rows here so a later data_query can query them."""
 
@@ -92,10 +93,7 @@ class Run(BaseModel):
     # stuck on a login-form / business-data gate. App-specific "what that state looks like" stays
     # in the checker's _check.md. The flag — not a string match — is the detection signal.
     precondition: bool = False
-    # LIST read: extract one dict per matching row (RunResult.rows) instead of one scalar per field —
-    # the runtime-discovered collection a `foreach` iterates (e.g. all visible review row ids). Only
-    # meaningful on kind="read"; default False = the usual single-frame scalar read.
-    list_read: bool = False
+
 
 
 class Cond(BaseModel):
@@ -124,7 +122,7 @@ class Finish(BaseModel):
 
 
 class ForEach(BaseModel):
-    """Iterate a runtime-discovered collection: run `body` once per row of a prior list_read's rows.
+    """Iterate a runtime-discovered collection: run `body` once per row of a prior row-collection read.
 
     The general iteration primitive (NOT a special "collect rows" kind): `over` names a kind="read"
     var whose RunResult.rows hold the collection (e.g. all review row ids). Each iteration binds
@@ -137,7 +135,9 @@ class ForEach(BaseModel):
 
     op: Literal["foreach"] = "foreach"
     var: str                                    # loop variable bound to each row, referenced as {var[field]}
-    over: str                                   # the list_read Run's var whose .rows are iterated
+    over: str = ""                              # the row-collection read's var whose .rows are iterated (legacy path); empty = use collect_fn/target
+    target: str = ""                            # browser path: collect target description (what table/collection to fetch)
+    returns: list[str] = Field(default_factory=list)  # browser path: fields to collect per row
     body: list["Stmt"] = Field(default_factory=list)
     into: str = ""                              # materialized-table var (defaults to f"{var}s" when empty)
 

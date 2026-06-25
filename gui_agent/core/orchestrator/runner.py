@@ -112,19 +112,21 @@ class Interpreter:
     and receives its RunResult via send(); steps() returns the final reply. env / run_log
     accumulate so the answer is built from the whole program's structured state."""
 
-    def __init__(self, program: Program) -> None:
+    def __init__(self, program: Program, collect_fn=None) -> None:
         self._program = program
+        # Optional collect_fn for browser path: callable(target: str, returns: list[str]) -> list[dict] | None.
+        # When ForEach.over is empty, _foreach calls this to retrieve rows directly via DOM/AX tree.
+        # None = legacy path (over must point to an env var with .rows).
+        self._collect_fn = collect_fn
         self.env: dict[str, RunResult] = {}
         self.run_log: list[RunRecord] = []
         # Set True by the Finish branch when the reached finish cites a read whose reads
         # were entirely empty — the run finished but its answer is hollow. See OrchestratorResult.
         self.finish_incomplete: bool = False
         # foreach `into` table vars — the ONLY env rows exposed to a data_query as a source. The
-        # list_read SOURCE a foreach iterates also carries .rows, but those are the raw iteration items
+        # iteration source a foreach iterates also carries .rows, but those are the raw iteration items
         # (e.g. list ids with no detail fields) — exposing them pollutes the data_query source with a
-        # half-empty table that confuses the repair (regression 20260622_214841: the list_read `r`
-        # table's empty `rating` column made the query judge the source bad, though the accumulated
-        # `reviews` table held the correct ratings).
+        # half-empty table that confuses the repair.
         self._materialized_vars: set[str] = set()
 
     @property
@@ -190,13 +192,28 @@ class Interpreter:
         return None
 
     def _foreach(self, loop: ForEach) -> Generator[Run, RunResult, Optional[str]]:
-        """Run `loop.body` once per row of env[loop.over].rows, binding env[loop.var] to the row, and
+        """Run `loop.body` once per row of the collected rows, binding env[loop.var] to the row, and
         AUTO-accumulate each iteration (the row's fields + every body return field) into a materialized
         table published as env[loop.into]. Yields each body Run so the engine drives it as a milestone
         — the live loop and the synchronous `drive` both work unchanged. Returns a terminal reply if
-        the body finishes/fails, else None."""
-        src = self.env.get(loop.over)
-        rows = list(src.rows) if src is not None else []
+        the body finishes/fails, else None.
+
+        Row source priority:
+        1. loop.over non-empty: env[loop.over].rows (legacy path — an env var with collected rows).
+        2. self._collect_fn non-None: browser path — call collect_fn(target, returns) to get rows via DOM/AX.
+        3. fallback: empty rows (nothing to iterate).
+        """
+        rows: list[dict[str, str]] = []
+        src = self.env.get(loop.over) if loop.over else None
+        if src is not None and src.rows:
+            # Legacy path: a preceding step already populated this var with rows (iPhone/Android).
+            rows = list(src.rows)
+        elif self._collect_fn is not None:
+            # Browser path: collect rows from the current page via DOM/AX tree.
+            # Also covers old-style foreach whose over var exists but carries no rows (e.g. when
+            # the preceding row-collection read was silently dropped on schema upgrade).
+            collected = self._collect_fn(loop.target, list(loop.returns))
+            rows = collected if collected is not None else []
         into = loop.into or f"{loop.var}s"
         body_read_vars = self._read_vars(loop.body)
         accumulated: list[dict[str, str]] = []
@@ -311,7 +328,7 @@ class Interpreter:
     def materialized_tables(self) -> list[dict]:
         """foreach `into` tables (accumulated per-iteration rows) as data_query-shaped snapshots
         {caption, headers, rows} — so a data_query after a foreach can query the collected set. ONLY
-        the into tables (not the list_read iteration sources, which carry raw .rows too); caption =
+        the into tables (not the row-collection iteration sources, which carry raw .rows too); caption =
         the into var (a data_query alias); complete (not partial)."""
         out: list[dict] = []
         for var in self._materialized_vars:

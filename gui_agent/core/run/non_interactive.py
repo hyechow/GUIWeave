@@ -6,8 +6,8 @@ DSL interpreter without going through the supervisor/action-policy loop.
 
 A `navigation` run whose (already-templated) target carries a concrete URL on a
 device that exposes a browser-only ``navigate(url)`` is the same shape: a
-deterministic jump, not a UI hunt. The canonical case is a foreach drill —
-``list_read`` collects each row's detail URL (table_reader folds cell hrefs into
+deterministic jump, not a UI hunt. The canonical case is a foreach drill — the
+row collection step collects each row's detail URL (table_reader folds cell hrefs into
 ``<col>_url`` sibling columns), then the loop visits ``{row[..._url]}`` directly +
 structured-reads the landed page, with no per-row plan→act loop. Platforms with no
 ``navigate`` (iphone/android) and navigations without a URL fall through to the
@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
-from gui_agent.core.orchestrator.engine import is_list_read, package_result, task_type_for, to_milestone
+from gui_agent.core.orchestrator.engine import package_result, task_type_for, to_milestone
 from gui_agent.core.orchestrator.program import Run
 from gui_agent.core.run.turns import make_non_ui_turn
 from gui_agent.core.schemas import Observation, PolicyContext
@@ -55,6 +55,7 @@ class _RepairAttempt:
 # A concrete http(s) URL embedded in a run's prose target. The CJK exclusion lets the URL end
 # naturally at the Chinese text the planner wraps it in (e.g. "打开 https://h/id/5 的详情").
 _URL_RE = re.compile(r"https?://[^\s一-鿿]+")
+
 
 
 def _direct_nav_url(run: Run | None, platform: Any) -> str | None:
@@ -128,7 +129,7 @@ def drive_pending_non_ui(
 
     while cur_run is not None:
         if not (
-            (cur_run.kind in {"read", "data_query"} and not is_list_read(cur_run))
+            cur_run.kind in {"read", "data_query"}
             or _direct_nav_url(cur_run, platform) is not None
         ):
             break
@@ -143,7 +144,7 @@ def drive_pending_non_ui(
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
         executed_sql = cur_run.sql
         if cur_run.kind == "navigation":
-            from gui_agent.core.orchestrator.structured_read import structured_read
+            from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
 
             nav_url = _direct_nav_url(cur_run, platform)  # non-None per the while condition
             nav_n += 1
@@ -162,32 +163,48 @@ def drive_pending_non_ui(
             frame = obs.png_bytes
             tables = obs.tables
             if cur_run.returns:
-                reads = structured_read(
-                    frame,
-                    list(cur_run.returns),
-                    read_spec=cur_run.read_spec,
-                    check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
-                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                    context_reports=context_reports,
-                )
-                say(f"  [Orchestrator] 直达后读取 {cur_run.returns} → {reads}")
+                json_reads = read_json_url_returns(cur_run.name, list(cur_run.returns), cur_run.read_spec)
+                if json_reads is not None and any(str(json_reads.get(field, "")).strip() for field in cur_run.returns):
+                    reads = json_reads
+                    say(f"  [Orchestrator] 直达后 URL JSON 读取 {cur_run.returns} → {reads}")
+                else:
+                    from gui_agent.adapters.browser.page_read import read_page_complete
+                    reads = read_page_complete(
+                        obs,
+                        list(cur_run.returns),
+                        read_spec=cur_run.read_spec,
+                        check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                        bundle=bundle,
+                        platform=platform,
+                        log_dir=log_dir,
+                        context_reports=context_reports,
+                    )
+                    say(f"  [Orchestrator] 直达后读取 {cur_run.returns} → {reads}")
             summary = f"直达导航 {nav_url}"
             executed_sql = ""
         elif cur_run.kind == "read" and cur_run.returns:
-            from gui_agent.core.orchestrator.structured_read import structured_read
+            from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
 
             _hud(f"读取验收帧 {'、'.join(cur_run.returns)}")
-            if frame is None:
-                ensure_observation()
-            reads = structured_read(
-                frame,
-                cur_run.returns,
-                read_spec=cur_run.read_spec,
-                check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
-                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                context_reports=context_reports,
-            )
-            say(f"  [Orchestrator] 只读验收帧 {cur_run.returns} → {reads}")
+            json_reads = read_json_url_returns(cur_run.name, list(cur_run.returns), cur_run.read_spec)
+            if json_reads is not None and any(str(json_reads.get(field, "")).strip() for field in cur_run.returns):
+                reads = json_reads
+                say(f"  [Orchestrator] URL JSON 读取 {cur_run.returns} → {reads}")
+            else:
+                if frame is None:
+                    ensure_observation()
+                from gui_agent.adapters.browser.page_read import read_page_complete
+                reads = read_page_complete(
+                    obs,
+                    cur_run.returns,
+                    read_spec=cur_run.read_spec,
+                    check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                    bundle=bundle,
+                    platform=platform,
+                    log_dir=log_dir,
+                    context_reports=context_reports,
+                )
+                say(f"  [Orchestrator] 只读验收帧 {cur_run.returns} → {reads}")
         elif cur_run.kind == "data_query":
             from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
             from gui_agent.core.orchestrator.data_query_repair import repair_data_query_sql

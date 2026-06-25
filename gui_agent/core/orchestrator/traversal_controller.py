@@ -1,4 +1,4 @@
-"""Stateful traversal controller for list_read collection.
+"""Stateful traversal controller for row-collection (foreach source) traversal.
 
 This controller maintains traversal session state (starting page, visited pages,
 direction) and outputs deterministic action recommendations based on the current
@@ -16,17 +16,17 @@ from typing import Literal
 
 @dataclass
 class TraversalController:
-    """Stateful controller for table/grid traversal during list_read collection.
+    """Stateful controller for table/grid traversal during row collection.
 
     Maintains session state to avoid oscillation bugs (e.g., 1↔2 ping-pong)
     and outputs deterministic action recommendations based on the current
     traversal state from the sensor layer.
 
     Args:
-        var: The list_read variable name this controller is associated with.
+        var: The row-collection variable name this controller is associated with.
 
     Attributes:
-        var: The list_read variable name.
+        var: The row-collection variable name.
         started_at_page: The page number where collection started (None until first known page).
         seen_start_page: Whether we've seen page 1 (used to detect if we started mid-list).
         visited_pages: Set of page indices we've already visited (to avoid revisiting).

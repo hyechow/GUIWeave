@@ -554,6 +554,77 @@ class PlaywrightDevice:
         except Exception:
             return []
 
+    def read_semantic_tree(self) -> list[dict]:
+        """Return a pruned flat AX-tree snapshot of the current page.
+
+        Uses CDP ``Accessibility.getFullAXTree``; each node is
+        ``{role, key, value, ref, depth}``.  Scroll-position independent —
+        the full page structure is returned regardless of what is currently
+        in the viewport.  Returns [] on any failure.
+        """
+        from gui_agent.adapters.browser.semantic_page import build_semantic_tree
+
+        try:
+            self._follow_active_tab()
+            return build_semantic_tree(self._cdp_send)
+        except Exception:
+            return []
+
+    def click_by_ref(self, backend_node_id: int) -> str:
+        """Click a DOM element by its ``backendDOMNodeId`` (from the semantic tree).
+
+        Resolves the node via CDP ``DOM.resolveNode`` then invokes ``.click()``
+        directly on the JS object — no coordinate arithmetic, no viewport scroll
+        required.  Returns ``"ok"`` on success or ``"failed: <reason>"`` on any
+        error (stale ref, navigation mid-flight, etc.).
+        """
+        try:
+            self._follow_active_tab()
+            resolve = self._cdp_send("DOM.resolveNode", {"backendNodeId": backend_node_id})
+            obj_id = (resolve.get("object") or {}).get("objectId")
+            if not obj_id:
+                return "failed: could not resolve backendNodeId"
+            self._cdp_send(
+                "Runtime.callFunctionOn",
+                {
+                    "objectId": obj_id,
+                    "functionDeclaration": (
+                        "function(){this.scrollIntoView({block:'nearest',behavior:'instant'});"
+                        "this.click();}"
+                    ),
+                    "returnByValue": True,
+                },
+            )
+            return "ok"
+        except Exception as exc:
+            return f"failed: {exc}"
+
+    def scroll_to_ref(self, backend_node_id: int) -> str:
+        """Scroll a DOM element into the viewport center by its ``backendDOMNodeId``.
+
+        Uses ``scrollIntoView({block:'center',behavior:'instant'})`` — one jump,
+        no incremental scrolling.  Returns ``"ok"`` or ``"failed: <reason>"``.
+        """
+        try:
+            self._follow_active_tab()
+            resolve = self._cdp_send("DOM.resolveNode", {"backendNodeId": backend_node_id})
+            obj_id = (resolve.get("object") or {}).get("objectId")
+            if not obj_id:
+                return "failed: could not resolve backendNodeId"
+            self._cdp_send(
+                "Runtime.callFunctionOn",
+                {
+                    "objectId": obj_id,
+                    "functionDeclaration": (
+                        "function(){this.scrollIntoView({block:'center',behavior:'instant'});}"
+                    ),
+                    "returnByValue": True,
+                },
+            )
+            return "ok"
+        except Exception as exc:
+            return f"failed: {exc}"
+
     def eval_js(self, expression: str) -> object:
         """Best-effort JS eval via page.evaluate(). Used by the action visualizer.
         Returns None on any failure; never raises."""

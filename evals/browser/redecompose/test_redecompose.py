@@ -127,22 +127,28 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # / dropped on re-decompose), so 27 reviews of the WRONG product got drilled and the
             # rating<=3 filter returned other-product nicknames. The fix (decomposer rule 11⑤ +
             # redecomposer override 6): the entity-scoped drill must (a) read the entity-identifying
-            # column (Product) in list_read, and (b) carry the entity-scope predicate (search_key) into
+            # column (Product) in the row collection, and (b) carry the entity-scope predicate (search_key) into
             # the final data_query — so a fumbled upstream filter yields empty → re-take, instead of
             # silently returning the wrong product's reviewers. search_key for task 113 == "Olivia".
             key = "olivia"
-            list_reads = [r for r in runs if r.kind == "read" and r.list_read]
-            reads_entity_col = any(
-                any("product" in f.lower() for f in r.returns) for r in list_reads
-            )
+            foreaches = [s for s in program.statements if isinstance(s, ForEach)]
+            collection_fields: list[str] = []
+            for fe in foreaches:
+                if fe.over:
+                    collection_fields += next(
+                        (r.returns for r in runs if r.kind == "read" and r.var == fe.over), []
+                    )
+                else:
+                    collection_fields += fe.returns  # new-style foreach: collects its own rows
+            reads_entity_col = any("product" in f.lower() for f in collection_fields)
             dqs = [r for r in runs if r.kind == "data_query"]
             dq_sql = " ".join((r.sql or "").lower() for r in dqs)
             scopes_dq = "product" in dq_sql and key in dq_sql
-            if not list_reads:
-                details.append(f"未见 list_read 步，无从校验实体范围采集: names=[{names}]")
+            if not foreaches:
+                details.append(f"未见 foreach 采集步，无从校验实体范围采集: names=[{names}]")
             elif not reads_entity_col:
                 details.append(
-                    "list_read 未读出实体标识列 Product（规则11⑤要求顺手读出，作 data_query 范围谓词的防线）"
+                    "采集步（read 步或 foreach.returns）未读出实体标识列 Product（规则11⑤要求顺手读出，作 data_query 范围谓词的防线）"
                 )
             if not dqs:
                 details.append("缺少 data_query 步（应在累积表上按 Product 范围 + rating 过滤）")
@@ -151,21 +157,23 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     f"data_query 未带实体范围谓词（应 `WHERE Product LIKE '%Olivia%' AND ...`，防上游 Product 筛选失效采到别产品）: sql=[{dq_sql[:160]}]"
                 )
         elif assertion == "uses_foreach_iteration":
-            # The general-iteration shape (NOT N unrolled steps / not just the first row): a list_read
-            # feeds a foreach whose body opens each detail + reads rating, then a data_query filters
-            # the accumulated set. Regression 20260622_211542: the unrolled re-decompose truncated and
-            # processed only the first review → NOT_FOUND. foreach covers ALL rows.
+            # The general-iteration shape (NOT N unrolled steps / not just the first row): a row
+            # collection (legacy read step, or the foreach's own name/returns) feeds a foreach whose
+            # body opens each detail + reads rating, then a data_query filters the accumulated set.
+            # Regression 20260622_211542: the unrolled re-decompose truncated and processed only the
+            # first review → NOT_FOUND. foreach covers ALL rows.
             foreaches = [s for s in program.statements if isinstance(s, ForEach)]
             if not foreaches:
-                details.append(f"未用 foreach 迭代（应 list_read→foreach→data_query，不展开/不只读第一条）: names=[{names}]")
+                details.append(f"未用 foreach 迭代（应先采集候选行再 foreach→data_query，不展开/不只读第一条）: names=[{names}]")
             else:
                 fe = foreaches[0]
-                over_is_list_read = any(
-                    isinstance(s, Run) and s.kind == "read" and s.list_read and s.var == fe.over
-                    for s in program.statements
-                )
-                if not over_is_list_read:
-                    details.append(f"foreach 的 over「{fe.over}」未指向 list_read 的 read 步")
+                if fe.over:
+                    over_is_read_var = any(
+                        isinstance(s, Run) and s.kind == "read" and s.var == fe.over
+                        for s in program.statements
+                    )
+                    if not over_is_read_var:
+                        details.append(f"foreach 的 over「{fe.over}」未指向任何 read 步")
                 body_reads = [b for b in fe.body if isinstance(b, Run) and b.returns]
                 body_text = " ".join(
                     (b.name + " " + " ".join(b.returns) + " " + (b.read_spec or "")).lower() for b in body_reads

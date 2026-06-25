@@ -38,8 +38,11 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.non_interactive import drive_pending_non_ui
-from gui_agent.core.orchestrator.list_traversal_runtime import ListTraversalRuntime
-from gui_agent.core.orchestrator.engine import is_list_read, package_result
+from gui_agent.core.orchestrator.engine import (
+    package_result,
+    task_type_for,
+    to_milestone,
+)
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
@@ -68,10 +71,111 @@ TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 # 加载是 App 渲染延迟、不是 agent 的一步操作，不该消耗轮数预算；但要设上限防页面永挂死循环。
 LOADING_WAIT_S = 0.6          # 每个加载帧重新观察前的等待，给页面渲染时间
 MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂、停止
+MAX_EMPTY_RETURN_RECOVERIES = 3  # 返回字段为空时，最多把当前 UI run 收紧后重新驱动几次
 
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
+
+
+def _missing_ui_return_fields(run: object, reads: dict[str, str]) -> list[str]:
+    """Return UI-run fields that were declared but not actually read.
+
+    A navigation/action/filter run with ``returns`` is only complete for the
+    orchestrator once those fields have values. Empty values mean the milestone
+    was accepted too early or on the wrong page, so the plan should not advance
+    to later steps that interpolate blanks.
+    """
+    if run is None or not getattr(run, "returns", None):
+        return []
+    if getattr(run, "kind", "") in {"read", "data_query"}:
+        return []
+    missing: list[str] = []
+    for field in getattr(run, "returns", []):
+        if not str(reads.get(str(field), "")).strip():
+            missing.append(str(field))
+    return missing
+
+
+def _tighten_ui_return_run(run: object, missing: list[str], reads: dict[str, str], *, attempt: int) -> object:
+    """Make a returning UI run stricter after its completion frame read blanks.
+
+    The decomposer may author a broad success condition such as "page loaded" while
+    the run also declares return fields. If the checker accepts the page before
+    those fields are visible, continue the same UI milestone with an explicit
+    non-empty return-field gate instead of advancing with blanks or waiting as if
+    the page were loading.
+    """
+    if run is None or not hasattr(run, "model_copy"):
+        return run
+    returns = [str(field) for field in getattr(run, "returns", [])]
+    missing_text = "、".join(str(field) for field in missing)
+    present = {
+        str(field): str(value).strip()
+        for field, value in reads.items()
+        if str(value).strip()
+    }
+    present_text = "、".join(f"{field}={value}" for field, value in present.items()) or "无"
+    base_success = str(getattr(run, "success_condition", "") or f"完成「{getattr(run, 'name', '当前子目标')}」")
+    base_read_spec = str(getattr(run, "read_spec", "") or "")
+    recovery = (
+        f"返回字段恢复尝试 {attempt}: 当前完成帧未读到所有必需字段。"
+        f"已读非空值：{present_text}；缺失字段：{missing_text}。"
+        f"只有当这些字段都能从界面明确读取到非空值时才算完成：{'、'.join(returns)}。"
+        "如果当前屏幕不可见，不要验收完成；继续执行必要的页面内操作，例如等待、滚动、"
+        "打开可见的详情/统计/菜单入口、或使用页面搜索，直到缺失字段的具体值可见。"
+    )
+    name = str(getattr(run, "name", "当前子目标"))
+    return run.model_copy(update={
+        "name": f"{name}（继续定位返回字段：{missing_text}）",
+        "success_condition": f"{base_success}\n{recovery}",
+        "read_spec": f"{base_read_spec}\n{recovery}".strip(),
+    })
+
+
+def _force_interactive_return_recovery(program: object, directive: str) -> object:
+    """Convert a mistaken current-frame read into a UI locating run after empty returns.
+
+    A kickback caused by empty UI return fields means the current frame did not
+    expose the required values. If the redecomposer responds with a scalar
+    ``read`` as the first step, that read can only repeat the same empty frame.
+    Treat it as an interactive page-location milestone so the supervisor can
+    scroll, expand sections, or navigate within the page before the structured
+    return extraction runs.
+    """
+    if "实际读取结果为空" not in directive or "返回字段" not in directive:
+        return program
+    if not hasattr(program, "statements") or not hasattr(program, "model_copy"):
+        return program
+
+    from gui_agent.core.orchestrator.program import Run
+
+    statements = list(getattr(program, "statements", []) or [])
+    if not statements:
+        return program
+    first = statements[0]
+    if (
+        not isinstance(first, Run)
+        or first.kind != "read"
+        or not first.returns
+    ):
+        return program
+
+    fields = "、".join(str(field) for field in first.returns)
+    recovery = (
+        "上一次已在当前完成帧尝试读取这些返回字段但结果为空。"
+        f"本步必须先通过界面定位让字段值可见，字段包括：{fields}。"
+        "如果当前屏幕看不到这些值，不要验收完成；继续滚动、展开页面内相关区域、"
+        "打开可见的统计/详情入口或使用页面搜索，直到所有字段都有非空可读值。"
+    )
+    success = str(first.success_condition or f"页面显示可读取的返回字段：{fields}")
+    read_spec = str(first.read_spec or "")
+    statements[0] = first.model_copy(update={
+        "kind": "navigation",
+        "success_condition": f"{success}\n{recovery}",
+        "read_spec": f"{read_spec}\n{recovery}".strip(),
+    })
+    return program.model_copy(update={"statements": statements})
 
 
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
@@ -119,6 +223,30 @@ def should_kickback_replan(sv_step, program, redecompose, replan_count: int) -> 
         and callable(redecompose)
         and replan_count < MAX_KICKBACK_REPLANS
     )
+
+
+
+def _make_collect_fn(bundle, platform, log_dir):
+    """Return a collect_fn for browser (DOM direct), or None for non-browser.
+
+    Browser path: when ForEach.over is empty, the foreach collects rows directly via
+    the DOM/AX semantic tree (read_grid_complete) rather than requiring a prior row-collection Run.
+    Non-browser (iphone/android) has no AX tree → returns None, so the legacy `over` path remains.
+    """
+    client = getattr(platform, "client", None)
+    if client is None or not hasattr(client, "read_semantic_tree"):
+        return None
+
+    def collect_fn(target: str, returns: list) -> list | None:
+        from gui_agent.adapters.browser.page_read import read_grid_complete
+        obs_url = "collect_grid.png"
+        try:
+            obs = bundle.make_perception(platform, log_dir / obs_url).observe()
+        except Exception:  # noqa: BLE001
+            return None
+        return read_grid_complete(obs, list(returns), bundle=bundle, platform=platform, log_dir=log_dir)
+
+    return collect_fn
 
 
 def run_agent_loop(
@@ -288,7 +416,6 @@ def run_agent_loop(
         _cur_run = None
         _run_idx = 0
         _notes_mark = 0
-        _list_traversal_runtime: "ListTraversalRuntime | None" = None
 
         def _stop_after_esc(turn_no: int) -> dict | None:
             if not _stop_requested():
@@ -303,53 +430,32 @@ def run_agent_loop(
 
         _nonui_failure: "str | None" = None  # last re-plannable non-UI (data_query) failure evidence
 
-        def _ensure_list_traversal_runtime() -> "ListTraversalRuntime | None":
-            nonlocal _list_traversal_runtime
-            if _cur_run is None or not is_list_read(_cur_run):
-                if _list_traversal_runtime is not None:
-                    _list_traversal_runtime = None
-                if hasattr(supervisor, "note_collection_progress"):
-                    supervisor.note_collection_progress("", done=False)
-                return None
-            var = _cur_run.var or f"m{_run_idx}_read"
-            if _list_traversal_runtime is None or _list_traversal_runtime.var != var:
-                _list_traversal_runtime = ListTraversalRuntime(
-                    var=var,
-                    returns=list(_cur_run.returns),
-                    read_spec=_cur_run.read_spec or "",
-                )
-            return _list_traversal_runtime
 
-        def _update_list_traversal_runtime(observation) -> None:
-            """Refresh the deterministic list traversal controller for the current frame."""
-            runtime = _ensure_list_traversal_runtime()
-            if runtime is None or _cur_run is None:
-                return
-
-            before = len(runtime.rows)
-            decision = runtime.update(observation)
-            if hasattr(supervisor, "note_collection_progress"):
-                supervisor.note_collection_progress(runtime.prompt_text(), done=runtime.done)
-            delta = len(runtime.rows) - before
-            delta_text = f", +{delta} 行" if delta else ""
-            _say(f"  [Collect] rows={len(runtime.rows)}{delta_text}, next={decision.action}: {decision.reason}")
 
         def _read_completed_run_returns(run, observation) -> dict[str, str]:
             """Extract a UI run's declared return fields from its completion frame."""
             if run is None or not getattr(run, "returns", None):
                 return {}
-            if is_list_read(run) or getattr(run, "kind", "") in {"read", "data_query"}:
+            if getattr(run, "kind", "") in {"read", "data_query"}:
                 return {}
+            from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
+
+            returns = list(run.returns)
+            read_spec = getattr(run, "read_spec", "") or ""
+            json_reads = read_json_url_returns(getattr(run, "name", "") or "", returns, read_spec)
+            if json_reads is not None and any(str(json_reads.get(field, "")).strip() for field in returns):
+                _say(f"  [Orchestrator] URL JSON 返回读取 {returns} → {json_reads}")
+                return json_reads
             from gui_agent.core.orchestrator.structured_read import structured_read
 
             reads = structured_read(
                 observation.png_bytes,
-                list(run.returns),
-                read_spec=getattr(run, "read_spec", "") or "",
+                returns,
+                read_spec=read_spec,
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
             )
-            _say(f"  [Orchestrator] 动作返回读取 {list(run.returns)} → {reads}")
+            _say(f"  [Orchestrator] 动作返回读取 {returns} → {reads}")
             return reads
 
         def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
@@ -385,7 +491,8 @@ def run_agent_loop(
 
         if program is not None:
             from gui_agent.core.orchestrator import Interpreter
-            _interp = Interpreter(program)
+            _collect_fn = _make_collect_fn(bundle, platform, log_dir)
+            _interp = Interpreter(program, collect_fn=_collect_fn)
             _orch_interp = _interp  # _save_ctx now mirrors its run_log (reads) into context
             _orchestrator_reports = list(orchestrator_context_reports or [])
             _orchestrator_metrics = next(
@@ -415,6 +522,7 @@ def run_agent_loop(
                 return _finish(_orch_result(context, _interp, _reply))
 
         _kickback_replans = 0  # Feasibility Guard: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
+        _empty_return_recoveries: dict[tuple[int, str, tuple[str, ...]], int] = {}
 
         def _perform_replan(directive: str, observation=None) -> "tuple[bool, str | None]":
             """Re-decompose the REMAINING plan with a kick-back directive + hot-swap the interpreter.
@@ -426,7 +534,7 @@ def run_agent_loop(
             become the re-decompose's EXPERIENCE, the unexecuted ones its TARGET (summarize_progress),
             the CURRENT observation its page context, and the new interpreter inherits env/run_log so
             already-collected reads still back the final answer (the user's "重编排是有状态记忆的编排")."""
-            nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans, _list_traversal_runtime
+            nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans
             if not (program is not None and directive and callable(redecompose)
                     and _kickback_replans < MAX_KICKBACK_REPLANS):
                 return (False, None)
@@ -456,7 +564,8 @@ def run_agent_loop(
                 return (False, None)
             if _new is None or not _new.statements:
                 return (False, None)
-            _interp = Interpreter(_new)
+            _new = _force_interactive_return_recovery(_new, directive)
+            _interp = Interpreter(_new, collect_fn=_collect_fn)
             _interp.env = _prev_env            # carry forward completed reads (finish refs still resolve)
             # Keep prior milestones in the run record / final summary, but DROP the failed record(s):
             # a kickback re-plans *because* a re-plannable step failed, so carrying that ✗ into the new
@@ -491,7 +600,6 @@ def run_agent_loop(
                 "replanned_from_kickback": _kickback_replans,
             }
             _gen = _interp.steps()
-            _list_traversal_runtime = None
             try:
                 _cur_run = next(_gen)
             except StopIteration as _e:
@@ -542,6 +650,8 @@ def run_agent_loop(
             # as the verdict-frame carry-forward, just merged into this turn instead of the next.
             _orch_reply: "str | None" = None    # set if the program ended during a hand-off
             _did_loading = False
+            _did_kickback_replan = False
+            _did_return_recovery = False
             _terminal_verdict_recorded = False
             # Same-turn hand-offs call supervisor.step() multiple times; each step() clears its own
             # _timings, so the completion check that detected the prior milestone done would be lost
@@ -549,7 +659,6 @@ def run_agent_loop(
             # back after the loop, so the report shows the checker call that ran on the hand-off.
             _carry = SupervisorTimingCarry()
             while True:
-                _update_list_traversal_runtime(observation)
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
                 sv_step = supervisor.step(observation, context.goal, context.turns)
@@ -566,20 +675,72 @@ def run_agent_loop(
                 _done_name = _cur_run.name
                 read_state.drain_pending(say=_say)
                 read_state.flush(turn_no=turn_no, say=_say)
-                _rows = (
-                    list(_list_traversal_runtime.rows)
-                    if _cur_run is not None and is_list_read(_cur_run) and _list_traversal_runtime is not None
-                    else []
-                )
+                _rows = []
                 _reads = _read_completed_run_returns(_cur_run, observation)
+                _missing_returns = _missing_ui_return_fields(_cur_run, _reads)
+                if _missing_returns:
+                    _directive = (
+                        "上一子目标被验收为完成，但它声明必须读取返回字段 "
+                        f"{_missing_returns}，实际读取结果为空：{_reads}。"
+                        "这说明验收过早或页面不对。不要推进到会使用空值的后续步骤；"
+                        "请从当前页面继续或重规划，先真正定位目标数据并读取非空返回值。"
+                    )
+                    _handled, _r = _perform_replan(_directive, observation)
+                    if _handled and _r is not None:
+                        _orch_reply = _r
+                    elif _handled:
+                        _did_kickback_replan = True
+                    else:
+                        _recovery_key = (
+                            _run_idx,
+                            str(getattr(_cur_run, "var", "") or getattr(_cur_run, "name", "")),
+                            tuple(str(field) for field in getattr(_cur_run, "returns", [])),
+                        )
+                        _attempt = _empty_return_recoveries.get(_recovery_key, 0) + 1
+                        if _attempt <= MAX_EMPTY_RETURN_RECOVERIES:
+                            _empty_return_recoveries[_recovery_key] = _attempt
+                            _cur_run = _tighten_ui_return_run(
+                                _cur_run,
+                                _missing_returns,
+                                _reads,
+                                attempt=_attempt,
+                            )
+                            supervisor.reseed(
+                                to_milestone(_cur_run, _run_idx),
+                                task_type=task_type_for(_cur_run),
+                                fresh_advance=False,
+                            )
+                            _say(
+                                "  [Orchestrator] 返回字段为空，继续定位"
+                                f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
+                                + "、".join(_missing_returns)
+                            )
+                            _did_return_recovery = True
+                        else:
+                            _say(
+                                "  [Orchestrator] 返回字段持续为空，停止推进："
+                                + "、".join(_missing_returns)
+                            )
+                            _hand = package_result(
+                                _cur_run,
+                                completed=False,
+                                summary="必需返回字段为空：" + "、".join(_missing_returns),
+                                notes=context.content_notes[_notes_mark:],
+                                reads=_reads,
+                            )
+                            try:
+                                _cur_run = _gen.send(_hand)
+                            except StopIteration as _e:
+                                _orch_reply = _e.value or ""
+                            else:
+                                _did_return_recovery = True
+                    break
                 _hand = package_result(
                     _cur_run, completed=True, summary=sv_step.summary or "完成",
                     notes=context.content_notes[_notes_mark:],
                     reads=_reads,
                     rows=_rows,
                 )
-                if _cur_run is not None and is_list_read(_cur_run):
-                    _list_traversal_runtime = None
                 try:
                     _cur_run = _gen.send(_hand)
                 except StopIteration as _e:          # program finished (finish / off end)
@@ -654,6 +815,9 @@ def run_agent_loop(
                         continue
                 return _finish(_orch_result(context, _interp, _orch_reply))
 
+            if _did_kickback_replan or _did_return_recovery:
+                continue
+
             # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.turns、不消耗
             # max_turns、不累加 noop_count。加载是 App 渲染延迟、不是 agent 的一步操作。
             # 连续加载设上限，防页面永挂导致死循环（旧行为：loading 帧既占轮数，又会因
@@ -684,20 +848,16 @@ def run_agent_loop(
                 say=_say,
             )
 
-            if _cur_run is not None and is_list_read(_cur_run):
-                read_added_content = False
-                read_note_hash = None
-            else:
-                read_result = read_state.process_turn(
-                    original_goal=original_goal,
-                    sv_step=sv_step,
-                    observation_png=observation.png_bytes,
-                    bundle=bundle,
-                    turn_no=turn_no,
-                    say=_say,
-                )
-                read_added_content = read_result.added_content
-                read_note_hash = read_result.note_hash
+            read_result = read_state.process_turn(
+                original_goal=original_goal,
+                sv_step=sv_step,
+                observation_png=observation.png_bytes,
+                bundle=bundle,
+                turn_no=turn_no,
+                say=_say,
+            )
+            read_added_content = read_result.added_content
+            read_note_hash = read_result.note_hash
 
             action_result = action_state.run(
                 sv_step=sv_step,

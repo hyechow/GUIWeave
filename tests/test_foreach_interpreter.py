@@ -1,7 +1,6 @@
-"""The DSL `foreach` loop: iterate a runtime-discovered collection (a prior list_read's rows), run a
-body per row binding {var[field]}, and AUTO-accumulate each iteration into a materialized table a
-later data_query can query. This pins the interpreter semantics (the general iteration primitive that
-replaces the rejected rigid `collect` kind).
+"""The DSL `foreach` loop: iterate a runtime-discovered collection (rows from collect_fn or legacy over=),
+run a body per row binding {var[field]}, and AUTO-accumulate each iteration into a materialized table a
+later data_query can query. This pins the interpreter semantics (the general iteration primitive).
 
 Drives the interpreter synchronously with a mock executor — the same generator the live agent_loop
 drives, so body Runs being yielded one-per-row is exactly the production path."""
@@ -22,7 +21,7 @@ def _review_program() -> Program:
     return Program(
         goal="找出 rating<=3 的昵称",
         statements=[
-            Run(var="r", name="读取候选 review 行", kind="read", returns=["id"], list_read=True),
+            Run(var="r", name="读取候选 review 行", kind="read", returns=["id"]),
             ForEach(
                 var="row", over="r", into="reviews",
                 body=[
@@ -37,7 +36,7 @@ def _review_program() -> Program:
 
 def test_foreach_iterates_rows_and_accumulates_into_table():
     program = _review_program()
-    # mock executor: the list_read returns 3 rows; each detail read returns that row's rating/nickname.
+    # mock executor: the read step returns 3 rows; each detail read returns that row's rating/nickname.
     details = {
         "347": {"rating": "5", "nickname": "Jane"},
         "349": {"rating": "2", "nickname": "Emma"},
@@ -46,7 +45,7 @@ def test_foreach_iterates_rows_and_accumulates_into_table():
     seen_detail_targets: list[str] = []
 
     def execute(run: Run) -> RunResult:
-        if run.kind == "read" and run.list_read:
+        if run.var == "r" and run.kind == "read":
             return RunResult(completed=True, rows=[{"id": "347"}, {"id": "349"}, {"id": "351"}])
         if run.name.startswith("打开 review"):
             # {row[id]} was filled by the interpreter before the engine saw the Run
@@ -79,7 +78,7 @@ def test_foreach_iterates_rows_and_accumulates_into_table():
     assert reviews["partial"] is False
     assert set(reviews["headers"]) == {"id", "rating", "nickname"}
     assert len(reviews["rows"]) == 3
-    # ONLY the foreach into table is exposed — NOT the list_read source `r` (its raw rows carry no
+    # ONLY the foreach into table is exposed — NOT the source `r` (its raw rows carry no
     # detail fields and would pollute the data_query source; regression 20260622_214841).
     assert [m["caption"] for m in mats] == ["reviews"]
 
@@ -88,7 +87,7 @@ def test_foreach_accumulates_body_action_returns():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="读取候选行", kind="read", returns=["id"], list_read=True),
+            Run(var="r", name="读取候选行", kind="read", returns=["id"]),
             ForEach(var="row", over="r", into="details", body=[
                 Run(
                     var="d",
@@ -103,7 +102,7 @@ def test_foreach_accumulates_body_action_returns():
     ratings = {"1": "5", "2": "2"}
 
     def execute(run: Run) -> RunResult:
-        if run.list_read:
+        if run.var == "r" and run.kind == "read":
             return RunResult(completed=True, rows=[{"id": "1"}, {"id": "2"}])
         rid = run.name.split()[1]
         return RunResult(completed=True, reads={"rating": ratings[rid]})
@@ -121,7 +120,7 @@ def test_foreach_target_identity_is_added_to_success_condition():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="读取候选行", kind="read", returns=["id"], list_read=True),
+            Run(var="r", name="读取候选行", kind="read", returns=["id"]),
             ForEach(var="row", over="r", into="details", body=[
                 Run(
                     name="打开评论 {row[id]} 的详情",
@@ -142,15 +141,15 @@ def test_foreach_target_identity_is_added_to_success_condition():
     assert "347" in run.success_condition
 
 
-def test_list_read_source_is_not_exposed_as_data_query_table():
-    """Reproduces 20260622_214841: the list_read row has an empty `rating` (the list has no rating
+def test_row_source_is_not_exposed_as_data_query_table():
+    """Reproduces 20260622_214841: the source read row has an empty `rating` (the list has no rating
     column); the foreach drills each detail to fill rating. Only the accumulated `into` table — with
-    the real ratings — may be a data_query source; the empty-rating list_read source must not leak."""
+    the real ratings — may be a data_query source; the empty-rating source must not leak."""
     program = Program(
         goal="g",
         statements=[
             Run(var="r", name="读候选行", kind="read",
-                returns=["id", "nickname", "rating"], list_read=True),
+                returns=["id", "nickname", "rating"]),
             ForEach(var="row", over="r", into="reviews", body=[
                 Run(name="打开 {row[id]}", kind="navigation"),
                 Run(var="d", name="读详情评分", kind="read", returns=["rating", "nickname"]),
@@ -161,7 +160,7 @@ def test_list_read_source_is_not_exposed_as_data_query_table():
     last: list[str] = []
 
     def execute(run: Run) -> RunResult:
-        if run.list_read:  # list shows id+nickname but NO rating (empty)
+        if run.var == "r" and run.kind == "read":  # list shows id+nickname but NO rating (empty)
             return RunResult(completed=True, rows=[{"id": "1", "nickname": "", "rating": ""},
                                                    {"id": "2", "nickname": "", "rating": ""}])
         if run.name.startswith("打开"):
@@ -181,7 +180,7 @@ def test_foreach_empty_collection_publishes_empty_table():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="读取候选行", kind="read", returns=["id"], list_read=True),
+            Run(var="r", name="读取候选行", kind="read", returns=["id"]),
             ForEach(var="row", over="r", into="reviews",
                     body=[Run(name="打开 {row[id]}", kind="navigation")]),
             Finish(message="done"),
@@ -189,7 +188,7 @@ def test_foreach_empty_collection_publishes_empty_table():
     )
 
     def execute(run: Run) -> RunResult:
-        if run.list_read:
+        if run.var == "r" and run.kind == "read":
             return RunResult(completed=True, rows=[])   # nothing discovered
         return RunResult(completed=True)
 
@@ -207,7 +206,7 @@ def test_into_table_is_ready_when_data_query_is_yielded():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="行", kind="read", returns=["id"], list_read=True),
+            Run(var="r", name="行", kind="read", returns=["id"]),
             ForEach(var="row", over="r", into="reviews", body=[
                 Run(var="d", name="读 {row[id]}", kind="read", returns=["rating"]),
             ]),
@@ -217,7 +216,7 @@ def test_into_table_is_ready_when_data_query_is_yielded():
     )
     interp = Interpreter(program)
     gen = interp.steps()
-    run = next(gen)                                   # the list_read
+    run = next(gen)                                   # the read step (row source)
     run = gen.send(RunResult(completed=True, rows=[{"id": "1"}, {"id": "2"}]))
     # now driving foreach body reads; the into table must NOT exist until the last body read is sent
     while run.kind == "read" and not run.name.startswith("筛"):
@@ -233,14 +232,14 @@ def test_foreach_into_defaults_to_var_plural():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="行", kind="read", returns=["id"], list_read=True),
+            Run(var="r", name="行", kind="read", returns=["id"]),
             ForEach(var="row", over="r",  # no `into` → defaults to f"{var}s"
                     body=[Run(var="d", name="读 {row[id]}", kind="read", returns=["v"])]),
         ],
     )
 
     def execute(run: Run) -> RunResult:
-        if run.list_read:
+        if run.var == "r" and run.kind == "read":
             return RunResult(completed=True, rows=[{"id": "1"}])
         return RunResult(completed=True, reads={"v": "x"})
 

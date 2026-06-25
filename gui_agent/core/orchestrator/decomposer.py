@@ -67,14 +67,9 @@ class _StepDraft(BaseModel):
         default="complete",
         description='op=run 且 run_kind=data_query：complete | current。complete=要求完整数据；current=只分析当前页面/当前可见/当前已渲染行。',
     )
-    list_read: bool = Field(
-        default=False,
-        description="op=run 且 run_kind=read：是否为【列表型读取】——逐行提取，每行一个对象（returns 即每行字段），"
-                    "结果是行对象数组，供 foreach 迭代。普通单值读取留 false。",
-    )
     # --- op=foreach（通用迭代：对某个列表型 read 的每一行跑一遍 body）---
     loop_var: str = Field(default="", description="op=foreach：循环变量名，body 里用 {循环变量[字段]} 引用当前行")
-    over: str = Field(default="", description="op=foreach：被迭代的列表来源——某个 list_read=true 的 read 步的 var")
+    over: str = Field(default="", description="op=foreach：被迭代的列表来源（旧路径，iPhone/Android 兼容）；browser 新路径留空，由 name/returns 驱动")
     into: str = Field(default="", description="op=foreach：累积表变量名（留空默认 = 循环变量+s）；循环结束后可被 data_query 查询")
     body: list["_StepDraft"] = Field(default_factory=list, description="op=foreach：每行执行一遍的步骤（run/if/finish，不可再嵌 foreach）")
     # --- op=if ---
@@ -190,6 +185,8 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
             out.append(ForEach(
                 var=(d.loop_var or "item").strip(),
                 over=d.over.strip(),
+                target=d.name.strip(),
+                returns=[r for r in d.returns if r.strip()],
                 into=d.into.strip(),
                 body=body,
             ))
@@ -220,7 +217,6 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     sql=d.sql,
                     data_scope="current" if (d.data_scope or "").strip().lower() == "current" else "complete",
                     precondition=bool(d.precondition),
-                    list_read=bool(d.list_read) and _to_kind(d.run_kind) == "read",
                 )
             )
     return out
@@ -268,18 +264,6 @@ def validate_program(program: Program) -> list[str]:
                 _collect_result_vars(s.body)
     _collect_result_vars(program.statements)
 
-    list_read_vars: set[str] = set()  # vars whose read is list_read=true — the only valid `foreach over`
-
-    def _collect_list_reads(stmts: list[Stmt]) -> None:
-        for s in stmts:
-            if isinstance(s, Run) and s.kind == "read" and s.list_read and s.var:
-                list_read_vars.add(s.var)
-            elif isinstance(s, If):
-                _collect_list_reads(s.then)
-                _collect_list_reads(s.otherwise)
-            elif isinstance(s, ForEach):
-                _collect_list_reads(s.body)
-    _collect_list_reads(program.statements)
 
     def _check_refs(text: str, where: str, scope: dict[str, set[str]]) -> None:
         # `scope` = result var -> returns, for result-producing runs already executed BEFORE this point.
@@ -395,29 +379,33 @@ def validate_program(program: Program) -> list[str]:
                     else:
                         scope.pop(k, None)
             elif isinstance(s, ForEach):
-                # `over` must be a list_read produced before the loop (its returns = each row's fields).
-                if not s.over:
-                    issues.append(f"foreach（循环变量「{s.var}」）缺少 over——必须指向一个 list_read=true 的 read 步的 var")
-                elif s.over not in list_read_vars:
+                # `over` is optional: non-empty = points to an env var with .rows; empty = browser
+                # collect_fn path (target/returns used to collect rows directly via DOM/AX tree).
+                # When over is provided, validate it resolves to a read var in scope.
+                if s.over and s.over not in scope:
                     issues.append(
-                        f"foreach 的 over「{s.over}」不是一个 list_read=true 的 read 步——"
-                        "foreach 只能迭代列表型读取产出的行对象数组；请先加一个 list_read 的 read 步产生「"
-                        f"{s.over}」（放在这个 foreach 之前）"
+                        f"foreach 的 over「{s.over}」在此处尚未产生"
+                        "（不是任何在它之前、且在当前执行路径上的 read 步的 var）；"
+                        f"请在这个 foreach 之前让某个 read 步产生「{s.over}」"
                     )
                 if not s.var:
                     issues.append("foreach 缺少循环变量名（loop_var）——body 需要用 {循环变量[字段]} 引用当前行")
                 if not s.body:
                     issues.append(f"foreach（循环变量「{s.var}」）的 body 为空——至少要有一个对每行执行的步骤")
-                # body runs in a copied scope with the loop var bound to the over-read's row fields,
+                # body runs in a copied scope with the loop var bound to the over-read's row fields (if any),
                 # so {loop_var[field]} resolves. The loop's materialized `into` table is queried by a
                 # following data_query via SQL table name (not a {var[field]} template), so it isn't
                 # added to template scope here.
                 body_scope = dict(scope)
-                body_scope[s.var] = set(scope.get(s.over, set()))
+                if s.over:
+                    body_scope[s.var] = set(scope.get(s.over, set()))
+                else:
+                    # new-style foreach: loop var fields come from foreach.returns (collect_fn provides them)
+                    body_scope[s.var] = set(s.returns) if s.returns else set()
                 _walk(s.body, body_scope)
 
     _walk(program.statements, {})
-    _check_list_read_direct_query(program.statements, issues)
+    _check_foreach_data_query(program.statements, issues)
     _check_retrieval_retry_preserves_field(program.statements, issues)
     return issues
 
@@ -599,7 +587,8 @@ def _data_query_field_tokens(run: Run) -> set[str]:
     return tokens
 
 
-def _read_looks_like_list_read(run: Run) -> bool:
+def _read_looks_like_row_collection(run: Run) -> bool:
+    """True for read steps that describe per-row collection (old-style; should now be foreach)."""
     if run.kind != "read" or not run.returns:
         return False
     text = f"{run.name}\n{run.read_spec}".lower()
@@ -611,11 +600,12 @@ def _read_looks_like_list_read(run: Run) -> bool:
     )
 
 
-def _check_list_read_direct_query(stmts: list[Stmt], issues: list[str]) -> None:
-    """Reject list_read -> data_query plans that skip the required foreach enrichment.
+def _check_foreach_data_query(stmts: list[Stmt], issues: list[str]) -> None:
+    """Guard foreach/data_query sequencing:
 
-    A list_read only exposes the fields it read per row. If a later data_query consumes fields not
-    present in those rows, the missing fields must be produced by foreach body returns first.
+    1. Old-style row-collection read → data_query without a foreach is rejected (missing enrichment).
+    2. data_query must only reference tables produced by a preceding foreach (not made-up names).
+    3. data_query on a foreach into-table must only use fields that foreach body returns produced.
     """
 
     foreach_tables: dict[str, tuple[str, set[str]]] = {}
@@ -636,13 +626,20 @@ def _check_list_read_direct_query(stmts: list[Stmt], issues: list[str]) -> None:
             for raw in re.findall(r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)\b", sql or "", flags=re.I)
         }
 
+    # Track ALL read vars (list-like or not) for foreach row_fields inference.
+    # list-like reads also trigger direct-query guards; plain reads only provide row fields.
+    all_read_vars: dict[str, tuple[str, set[str]]] = {}
+
     def _walk_seq(seq: list[Stmt], pending: dict[str, tuple[str, set[str]]]) -> None:
         local = dict(pending)
         for s in seq:
             if isinstance(s, Run):
-                if s.kind == "read" and s.var and (s.list_read or _read_looks_like_list_read(s)):
-                    local[s.var] = (s.name, {field.lower() for field in s.returns})
-                    continue
+                if s.kind == "read" and s.var and s.returns:
+                    # Track all read vars for foreach row_fields inference.
+                    all_read_vars[s.var] = (s.name, {field.lower() for field in s.returns})
+                    if _read_looks_like_row_collection(s):
+                        local[s.var] = (s.name, {field.lower() for field in s.returns})
+                        continue
                 if s.kind == "data_query":
                     needed = _data_query_field_tokens(s)
                     if local and needed:
@@ -650,12 +647,12 @@ def _check_list_read_direct_query(stmts: list[Stmt], issues: list[str]) -> None:
                             missing = needed - row_fields
                             if missing:
                                 issues.append(
-                                    f"data_query 步「{s.name}」紧跟列表型 read「{read_name}」后，"
-                                    f"使用/返回了该列表行未读出的字段 {sorted(missing)}；"
-                                    "若这些字段只在每条记录详情里，必须先插入 foreach over="
-                                    f"「{var}」：body 里写一个打开 {{row[用于定位字段]}} 详情/Edit 页的 run，"
-                                    "并在这个 run 上填写 returns/read_spec 读出这些详情字段，foreach 用 into 产出详情表；"
-                                    "然后 data_query 只能查询这个 into 表。不要跳过 foreach 凭空查询详情字段。"
+                                    f"data_query 步「{s.name}」紧跟逐行采集 read「{read_name}」后，"
+                                    f"使用/返回了该行未读出的字段 {sorted(missing)}；"
+                                    "若这些字段只在每条记录详情里，必须先插入 foreach（name 描述集合，returns 列出每行字段）"
+                                    "，body 里写打开详情的 run 并通过 returns/read_spec 产出详情字段，"
+                                    "foreach 用 into 产出汇总表；然后 data_query 只能查询该 into 表。"
+                                    "不要跳过 foreach 凭空查询详情字段。"
                                 )
                                 break
                     refs = _referenced_tables(s.sql)
@@ -666,9 +663,9 @@ def _check_list_read_direct_query(stmts: list[Stmt], issues: list[str]) -> None:
                     if local and unknown_refs:
                         issues.append(
                             f"data_query 步「{s.name}」查询了未由前序 foreach 产出的表 {sorted(unknown_refs)}；"
-                            "列表型 read 只产生行对象数组，不能凭空作为 SQL 表。"
-                            "若需要补详情字段，请先 foreach over 列表 read，body 用打开详情的 run + returns/read_spec "
-                            "产出该 foreach 的 into 表，再查询该 into 表。"
+                            "data_query 只能查询 foreach 的 into 表。"
+                            "若需要补详情字段，请先写 foreach（name/returns），body 用打开详情的 run + returns/read_spec "
+                            "产出 into 表，再查询该表。"
                         )
                     for table in refs & set(foreach_tables):
                         table_label, fields = foreach_tables[table]
@@ -697,8 +694,14 @@ def _check_list_read_direct_query(stmts: list[Stmt], issues: list[str]) -> None:
                             )
             elif isinstance(s, ForEach):
                 row_fields = set()
+                # Use list-like source fields first; fall back to any read var with matching name.
                 if s.over in local:
                     row_fields = set(local[s.over][1])
+                elif s.over in all_read_vars:
+                    row_fields = set(all_read_vars[s.over][1])
+                elif s.returns:
+                    # new-style foreach: collect_fn provides rows with these fields
+                    row_fields = {r.lower() for r in s.returns}
                 table_name = (s.into or f"{s.var}s").lower()
                 foreach_tables[table_name] = (s.into or f"{s.var}s", _body_result_fields(s.body, row_fields))
                 if s.over in local:

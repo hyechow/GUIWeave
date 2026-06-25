@@ -31,10 +31,6 @@ _KIND_MAP: dict[str, tuple[str, str]] = {
 }
 
 
-def is_list_read(run: Run) -> bool:
-    """A ``read`` run whose result is a runtime-discovered row collection."""
-    return run.kind == "read" and bool(getattr(run, "list_read", False)) and bool(run.returns)
-
 
 def _milestone_id(run: Run, index: int) -> str:
     base = run.var or f"m{index}_{run.kind}"
@@ -55,12 +51,6 @@ def to_milestone(run: Run, index: int) -> Milestone:
     if run.returns:
         desc = f"{run.name}（读取字段：{'、'.join(run.returns)}）"
     success = run.success_condition or f"完成「{run.name}」"
-    if is_list_read(run):
-        strategy = "react_until_collected"
-        success = (
-            f"已完整遍历目标集合「{run.name}」：已累计各页/滚动加载出的目标行字段，"
-            "并已翻页/滚动到集合末尾；不是只读取当前可见帧。"
-        )
     return Milestone(
         id=_milestone_id(run, index),
         name=run.name,
@@ -83,8 +73,8 @@ def package_result(
     rows: list[dict[str, str]] | None = None,
 ) -> RunResult:
     """Package a finished milestone's loop state into the RunResult contract. `reads` is the
-    structured {field: value} for a scalar read; `rows` is the LIST form for a list_read (one dict per
-    row, what a foreach iterates); other milestones pass none."""
+    structured {field: value} for a scalar read; `rows` is the LIST form for a foreach-accumulated
+    table (one dict per row); other milestones pass none."""
     return RunResult(
         completed=completed,
         failed=not completed,
@@ -130,7 +120,6 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
             isinstance(s, Run)
             and s.kind in _CONFIRM_READ_TRIGGER_KINDS
             and s.returns
-            and not s.list_read
         ):
             update = {"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)}
             if s.kind == "filter":
@@ -146,7 +135,6 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
             and isinstance(nxt, Run)
             and s.kind in _RETURN_READ_SOURCE_KINDS
             and nxt.kind in _RETURN_READ_TARGET_KINDS
-            and not nxt.list_read
             and nxt.returns
             and (not s.var or not nxt.var or s.var == nxt.var)
         ):

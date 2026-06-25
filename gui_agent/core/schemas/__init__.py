@@ -292,9 +292,20 @@ class Observation(BaseModel):
         description=(
             "当前可滚动/可翻页区域（view window）的遍历边界信号，与页面上是否存在表格无关："
             "{type: 'paged'|'scroll'|'unknown', page_index, page_count, has_next_page, "
-            "has_prev_page, can_scroll_more, at_scroll_end}。是 list_read 遍历决策"
+            "has_prev_page, can_scroll_more, at_scroll_end}。是行采集（foreach 来源）遍历决策"
             "（TraversalController）的权威输入；tables[i].traversal 是其遗留的表格内嵌副本，"
             "不再是决策来源。None=该平台/当前帧未探测到遍历信号（遍历退回像素冻结兜底）。"
+        ),
+    )
+    semantic_tree: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "平台感知层提供的页面语义树（浏览器 v2 路径）。"
+            "每个节点：{role, key, value, ref, depth}，其中 role=ARIA 角色、"
+            "key=可访问名称（标签文本）、value=当前值（表单控件）、"
+            "ref=backendDOMNodeId（用于 DOM 直达动作：点击/滚动/读值，与折叠无关）、"
+            "depth=嵌套深度。是 read_selector / click_selector / resolve_target 的数据来源；"
+            "None=该平台不提供（iphone/android）或当前页探测失败。"
         ),
     )
 

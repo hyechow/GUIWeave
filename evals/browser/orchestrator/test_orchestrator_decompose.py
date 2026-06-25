@@ -980,17 +980,24 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # each review by clicking ("打开评论 {row[review_id]} 的详情") instead of jumping by the
             # row's folded detail link ("打开 {row[Action_url]}"). The score was 1.0 but the
             # execution clicked through every Edit-Review page — defeating part-2's non-interactive
-            # value. Browser list-grid drills must default to URL-direct (rule 11②): list_read reads
-            # a `<col>_url` link column and the foreach body opens via it, so
-            # non_interactive._direct_nav_url fires (deterministic navigate, no UI clicking). This
-            # case carries NO table_summaries on purpose — the upfront decompose runs on the
-            # Dashboard with no headers, exactly where the live bug lived; url-direct must be the
-            # browser default, not contingent on seeing a `_url` header.
+            # value. Browser list-grid drills must default to URL-direct (rule 11②): the row
+            # collection (legacy read step, or the foreach's own returns) reads a `<col>_url` link
+            # column and the foreach body opens via it, so non_interactive._direct_nav_url fires
+            # (deterministic navigate, no UI clicking). This case carries NO table_summaries on
+            # purpose — the upfront decompose runs on the Dashboard with no headers, exactly where
+            # the live bug lived; url-direct must be the browser default, not contingent on seeing
+            # a `_url` header.
             foreaches = [s for s in program.statements if isinstance(s, ForEach)]
-            list_reads = [r for r in _flatten_runs(program.statements) if r.kind == "read" and r.list_read]
-            reads_url_col = any(
-                any(f.lower().endswith("_url") for f in r.returns) for r in list_reads
-            )
+            all_runs = _flatten_runs(program.statements)
+            collection_fields: list[str] = []
+            for fe in foreaches:
+                if fe.over:
+                    collection_fields += next(
+                        (r.returns for r in all_runs if r.kind == "read" and r.var == fe.over), []
+                    )
+                else:
+                    collection_fields += fe.returns  # new-style foreach: collects its own rows
+            reads_url_col = any(f.lower().endswith("_url") for f in collection_fields)
             body_open_url = False
             body_open_id: list[str] = []
             for fe in foreaches:
@@ -1002,14 +1009,14 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                             body_open_id.append(b.name)
             if not foreaches:
                 details.append(
-                    "无 foreach，无法校验逐行 URL 直达（browser 逐行钻取应 list_read→foreach→data_query）"
+                    "无 foreach，无法校验逐行 URL 直达（browser 逐行钻取应先采集候选行再 foreach→data_query）"
                 )
             else:
                 if not reads_url_col:
                     details.append(
-                        "list_read 未读出任何 `<列>_url` 详情链接列（browser 逐行钻取应默认读 Action_url "
+                        "采集步未读出任何 `<列>_url` 详情链接列（browser 逐行钻取应默认读 Action_url "
                         "以走 URL 直达，规则11②；本 case 无表头→默认 Action_url）: "
-                        f"returns={[(r.name, r.returns) for r in list_reads]}"
+                        f"collection_fields={collection_fields}"
                     )
                 if not body_open_url:
                     details.append(

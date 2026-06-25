@@ -100,7 +100,7 @@ def test_foreach_program_budgets_body_per_iteration_and_lifts_cap():
     from gui_agent.core.orchestrator import ForEach
 
     prog = Program(statements=[
-        Run(var="r", name="读候选行", kind="read", returns=["id"], list_read=True),
+        Run(var="r", name="读候选行", kind="read", returns=["id"]),  # list_read field removed
         ForEach(var="row", over="r", into="reviews", body=[
             Run(name="打开评论 {row[id]} 详情", kind="action"),
             Run(var="d", name="读评分昵称", kind="read", returns=["rating", "nickname"]),
