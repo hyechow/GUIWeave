@@ -586,7 +586,12 @@ def _data_query_field_tokens(run: Run) -> set[str]:
     """Best-effort field names a data_query appears to consume or return."""
     tokens = {str(item).strip().lower() for item in (run.returns or []) if str(item).strip()}
     tokens.discard("result")
-    for raw in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", run.sql or ""):
+    # Strip single-quoted string literals first: their contents are VALUES (a LIKE pattern like
+    # '%Olivia%', or status = 'Complete'), not column identifiers — tokenizing through them would
+    # mis-flag the value text as a missing/unknown column. (Double quotes are SQLite identifiers,
+    # left intact so real column refs inside them are still validated.)
+    sql = re.sub(r"'[^']*'", " ", run.sql or "")
+    for raw in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", sql):
         token = raw.lower()
         if token in _SQL_NON_FIELD_TOKENS or re.fullmatch(r"table_\d+", token):
             continue

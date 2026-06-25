@@ -18,13 +18,17 @@
         "partial": true
       }
     ],
+    "resolution": [
+      {"mention": "Olivia zip jacket", "type": "product", "match_mode": "approximate", "search_key": "Olivia"}
+    ],
     "assertions": [
       "no_homepage_restart",
       "no_product_research_dead_end",
       "drills_detail_reads_rating",
+      "scopes_collection_to_entity",
       "has_finish"
     ],
-    "note": "回归 logs/gui_agent/webarena/browser/20260622_201729：旧 _redecompose 闭包冻结 T0 首页帧 + 零经验，重排成『进入 Products List → 搜索产品 Olivia zip jacket』，在无产品名搜索能力的页上反复 0 结果，最终 UNKNOWN_ERROR（score 0）。本 case 喂当前 Reviews 页 + 已执行经验 + 纠正指令 + 剩余计划，期望重排：从当前页续、用已找到的 3 条候选逐条打开 Review Detail 读 Detailed Rating + Nickname、本地筛 rating<=3，绝不退回首页/重新按产品名搜索。"
+    "note": "回归 logs/gui_agent/webarena/browser/20260622_201729：旧 _redecompose 闭包冻结 T0 首页帧 + 零经验，重排成『进入 Products List → 搜索产品 Olivia zip jacket』，在无产品名搜索能力的页上反复 0 结果，最终 UNKNOWN_ERROR（score 0）。本 case 喂当前 Reviews 页 + 已执行经验 + 纠正指令 + 剩余计划，期望重排：从当前页续、用已找到的 3 条候选逐条打开 Review Detail 读 Detailed Rating + Nickname、本地筛 rating<=3，绝不退回首页/重新按产品名搜索。scopes_collection_to_entity 守住 20260622_201729 实跑暴露的产品范围回归：直达钻取机制本身没问题，但采集未锚定到目标产品（Olivia=Product 筛选被搞丢），27 条别产品评论被钻取、答案错；规则 11⑤ 要求 list_read 顺手读 Product 列、data_query 带 `Product LIKE '%Olivia%'` 谓词作防线。"
   },
   {
     "label": "task 113 重排用 foreach 迭代逐条钻取（真实 data_query 失败 directive，回归 20260622_211542 展开截断只读第一条）",
@@ -44,6 +48,9 @@
         "row_count": 3,
         "partial": true
       }
+    ],
+    "resolution": [
+      {"mention": "Olivia zip jacket", "type": "product", "match_mode": "approximate", "search_key": "Olivia"}
     ],
     "assertions": [
       "uses_foreach_iteration",

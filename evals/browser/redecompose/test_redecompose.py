@@ -120,6 +120,36 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     f"未见读取 rating/评分 的返回值/data_query 步（纠正指令要求逐条读取 Detailed Rating）"
                 )
+        elif assertion == "scopes_collection_to_entity":
+            # Regression logs/gui_agent/webarena/browser/20260622_201729 (live re-run): the drill
+            # mechanism worked (27 reviews read via direct-URL jumps) but the ANSWER was wrong — the
+            # collection was never scoped to the target product (the Olivia=Product filter was fumbled
+            # / dropped on re-decompose), so 27 reviews of the WRONG product got drilled and the
+            # rating<=3 filter returned other-product nicknames. The fix (decomposer rule 11⑤ +
+            # redecomposer override 6): the entity-scoped drill must (a) read the entity-identifying
+            # column (Product) in list_read, and (b) carry the entity-scope predicate (search_key) into
+            # the final data_query — so a fumbled upstream filter yields empty → re-take, instead of
+            # silently returning the wrong product's reviewers. search_key for task 113 == "Olivia".
+            key = "olivia"
+            list_reads = [r for r in runs if r.kind == "read" and r.list_read]
+            reads_entity_col = any(
+                any("product" in f.lower() for f in r.returns) for r in list_reads
+            )
+            dqs = [r for r in runs if r.kind == "data_query"]
+            dq_sql = " ".join((r.sql or "").lower() for r in dqs)
+            scopes_dq = "product" in dq_sql and key in dq_sql
+            if not list_reads:
+                details.append(f"未见 list_read 步，无从校验实体范围采集: names=[{names}]")
+            elif not reads_entity_col:
+                details.append(
+                    "list_read 未读出实体标识列 Product（规则11⑤要求顺手读出，作 data_query 范围谓词的防线）"
+                )
+            if not dqs:
+                details.append("缺少 data_query 步（应在累积表上按 Product 范围 + rating 过滤）")
+            elif not scopes_dq:
+                details.append(
+                    f"data_query 未带实体范围谓词（应 `WHERE Product LIKE '%Olivia%' AND ...`，防上游 Product 筛选失效采到别产品）: sql=[{dq_sql[:160]}]"
+                )
         elif assertion == "uses_foreach_iteration":
             # The general-iteration shape (NOT N unrolled steps / not just the first row): a list_read
             # feeds a foreach whose body opens each detail + reads rating, then a data_query filters

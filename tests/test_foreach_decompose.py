@@ -93,6 +93,28 @@ def test_validate_rejects_foreach_table_query_missing_body_fields():
     assert any("foreach body 没有通过 returns 产出的字段" in i for i in issues)
 
 
+def test_validate_accepts_entity_scope_predicate_string_literal_not_a_column():
+    # Regression: the entity-scope backstop (decomposer rule 11⑤) filters the drilled set by the
+    # target entity, e.g. `WHERE Product LIKE '%Olivia%' AND rating <= 3`. The string literal
+    # '%Olivia%' is a VALUE, not a column — the field-token extractor must strip single-quoted
+    # literals before pulling identifiers, otherwise 'olivia' is mis-flagged as a phantom missing
+    # detail field and the validator wrongly rejects a correct, scoped query.
+    draft = _PlanDraft(goal="返回某产品评分<=3的评论者昵称", steps=[
+        _StepDraft(op="run", run_kind="read", var="r", name="读取候选评论行 id 与所属产品",
+                   returns=["id", "Product"], list_read=True),
+        _StepDraft(op="foreach", loop_var="row", over="r", into="detail_rows", body=[
+            _StepDraft(op="run", run_kind="navigation", name="打开评论 {row[id]} 的详情",
+                       returns=["rating", "nickname"]),
+        ]),
+        _StepDraft(op="run", run_kind="data_query", var="q", name="筛该产品评分<=3的评论者",
+                   returns=["nickname"],
+                   sql="SELECT nickname FROM detail_rows WHERE Product LIKE '%Olivia%' AND CAST(rating AS INTEGER) <= 3"),
+    ])
+    issues = validate_program(to_program(draft, "g"))
+    assert not any("没有通过 returns 产出的字段" in i for i in issues), issues
+    assert not any("olivia" in i.lower() for i in issues), issues
+
+
 def test_validate_rejects_post_foreach_query_missing_body_fields_without_table_ref():
     draft = _PlanDraft(goal="返回详情分数<=3的负责人", steps=[
         _StepDraft(op="run", run_kind="read", var="r", name="读取候选行 id",
