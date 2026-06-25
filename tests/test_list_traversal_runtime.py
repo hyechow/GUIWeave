@@ -2,12 +2,21 @@ from gui_agent.core.orchestrator.list_traversal_runtime import ListTraversalRunt
 from gui_agent.core.schemas import Observation
 
 
-def _obs(*, tables=None, controls=None) -> Observation:
+def _obs(*, tables=None, controls=None, viewport=None, png_bytes=b"") -> Observation:
+    # Mirror the real pipeline (table_reader.py's detectPageViewport): when no explicit
+    # viewport is given, reuse the first resolved per-table traversal as the page-level signal.
+    if viewport is None and tables:
+        for t in tables:
+            trav = t.get("traversal") if isinstance(t, dict) else None
+            if isinstance(trav, dict) and trav.get("type") not in (None, "unknown"):
+                viewport = trav
+                break
     return Observation(
-        png_bytes=b"",
+        png_bytes=png_bytes,
         source="test",
         tables=tables,
         form_controls=controls,
+        viewport=viewport,
     )
 
 
@@ -98,6 +107,44 @@ def test_falls_back_when_no_collection_table_is_visible():
 
     assert decision.action == "fallback"
     assert runtime.rows == []
+
+
+def test_traversal_decision_works_without_any_table():
+    """The view window's viewport signal drives paginate/scroll decisions even when no table
+    is ever found — e.g. a card/feed collection, or a vision-only platform. Traversal must not
+    require a resolvable table."""
+    runtime = ListTraversalRuntime(var="items", returns=["Code"])
+
+    first = runtime.update(_obs(viewport={"type": "scroll", "can_scroll_more": True, "at_scroll_end": False}))
+    assert first.action == "scroll_down"
+    assert runtime.rows == []
+
+    second = runtime.update(_obs(viewport={"type": "scroll", "can_scroll_more": False, "at_scroll_end": True}))
+    assert second.action == "done"
+
+
+def test_pixel_freeze_fallback_when_no_viewport_signal_at_all():
+    """iPhone/Android (and any browser page where the page-level sensor found nothing) have no
+    Observation.viewport. Traversal should still deterministically detect a frozen screen via
+    consecutive near-identical frames, instead of looping on 'fallback' forever."""
+    import io
+
+    from PIL import Image
+
+    def _png(color: tuple[int, int, int]) -> bytes:
+        buf = io.BytesIO()
+        Image.new("RGB", (40, 40), color).save(buf, format="PNG")
+        return buf.getvalue()
+
+    runtime = ListTraversalRuntime(var="items", returns=["Code"])
+    frozen_frame = _png((10, 20, 30))
+
+    decisions = [runtime.update(_obs(png_bytes=frozen_frame)) for _ in range(4)]
+
+    # Not enough frames yet to judge -> generic fallback, then converges to a deterministic
+    # "stopped" verdict once the pixel-freeze window fills with identical frames.
+    assert decisions[0].action == "fallback"
+    assert decisions[-1].action == "done"
 
 
 def test_visible_row_changes_are_accumulated_by_key_without_detail_state():

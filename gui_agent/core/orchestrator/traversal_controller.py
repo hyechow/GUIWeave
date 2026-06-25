@@ -48,7 +48,10 @@ class TraversalController:
         """Receive current traversal state and return recommended action.
 
         Args:
-            traversal: The traversal dict from Observation.tables, with keys:
+            traversal: The view window's traversal dict — ``Observation.viewport`` (platform DOM
+                signal) or a pixel-freeze fallback synthesized by the caller when the platform has
+                none. NOT ``table["traversal"]``: this controller knows nothing about tables, only
+                about the scrollable/paginated region currently on screen. Keys:
                 - type: 'paged', 'scroll', or 'unknown'
                 - page_index: Current page number (for paged lists)
                 - page_count: Total pages (for paged lists)

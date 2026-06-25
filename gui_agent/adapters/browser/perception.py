@@ -147,8 +147,11 @@ class BrowserPerception:
         if client is not None and hasattr(client, "form_state_fingerprint"):
             dom_state = client.form_state_fingerprint()
         tables = []
+        viewport = None
         if client is not None and hasattr(client, "read_tables"):
             tables = client.read_tables()
+            if hasattr(client, "read_viewport"):
+                viewport = client.read_viewport()
         form_controls = []
         if client is not None and hasattr(client, "read_form_controls"):
             form_controls = client.read_form_controls()
@@ -157,4 +160,5 @@ class BrowserPerception:
             url=url or None, title=title or None, dom_state=dom_state,
             tables=tables or None,
             form_controls=form_controls or None,
+            viewport=viewport or None,
         )

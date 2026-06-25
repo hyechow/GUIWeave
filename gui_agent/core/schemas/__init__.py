@@ -287,6 +287,16 @@ class Observation(BaseModel):
             "不包含表格行数据。None=该平台不提供或当前页无表单控件。"
         ),
     )
+    viewport: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "当前可滚动/可翻页区域（view window）的遍历边界信号，与页面上是否存在表格无关："
+            "{type: 'paged'|'scroll'|'unknown', page_index, page_count, has_next_page, "
+            "has_prev_page, can_scroll_more, at_scroll_end}。是 list_read 遍历决策"
+            "（TraversalController）的权威输入；tables[i].traversal 是其遗留的表格内嵌副本，"
+            "不再是决策来源。None=该平台/当前帧未探测到遍历信号（遍历退回像素冻结兜底）。"
+        ),
+    )
 
 
 class BaseActionDecision(BaseModel):

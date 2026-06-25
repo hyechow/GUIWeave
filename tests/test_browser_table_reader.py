@@ -3,6 +3,7 @@ from __future__ import annotations
 from gui_agent.adapters.browser.table_reader import (
     complete_table_snapshot_js,
     normalize_table_snapshots,
+    normalize_viewport,
     table_snapshot_js,
 )
 from gui_agent.core.schemas import Observation
@@ -16,6 +17,9 @@ def test_table_snapshot_js_is_serialized_expression():
     assert ".dashboard-item-title" in js
     assert "aria-labelledby" in js
     assert "current-page-input" in js
+    assert "detectPageViewport" in js
+    assert "viewport: detectPageViewport" in js
+    assert "document.documentElement.scrollHeight" in js
 
 
 def test_complete_table_snapshot_js_fetches_magento_mui_pages():
@@ -231,3 +235,45 @@ def test_normalize_handles_malformed_traversal():
     }
     tables = normalize_table_snapshots(raw)
     assert tables[0]["traversal"] is None
+
+
+# ── viewport: the page-level traversal signal, independent of any table ────────────
+
+def test_normalize_viewport_extracts_page_level_paged_state():
+    raw = {
+        "url": "http://example.test/admin/reviews",
+        "tables": [],
+        "viewport": {
+            "type": "paged",
+            "page_index": 1,
+            "page_count": 2,
+            "has_next_page": True,
+            "has_prev_page": False,
+        },
+    }
+    viewport = normalize_viewport(raw)
+    assert viewport == raw["viewport"]
+
+
+def test_normalize_viewport_extracts_scroll_state_without_any_table():
+    """A card/feed page with no <table> at all should still surface a scroll boundary signal —
+    this is the whole point of decoupling traversal from tables."""
+    raw = {
+        "url": "http://example.test/feed",
+        "tables": [],
+        "viewport": {"type": "scroll", "can_scroll_more": True, "at_scroll_end": False},
+    }
+    viewport = normalize_viewport(raw)
+    assert viewport is not None
+    assert viewport["type"] == "scroll"
+    assert viewport["can_scroll_more"] is True
+
+
+def test_normalize_viewport_returns_none_when_unknown():
+    raw = {"url": "http://example.test/static", "tables": [], "viewport": {"type": "unknown"}}
+    assert normalize_viewport(raw) is None
+
+
+def test_normalize_viewport_returns_none_when_absent():
+    raw = {"url": "http://example.test/static", "tables": []}
+    assert normalize_viewport(raw) is None

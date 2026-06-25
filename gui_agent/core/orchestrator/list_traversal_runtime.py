@@ -27,6 +27,13 @@ Action = Literal[
     "fallback",
 ]
 
+# Pixel-freeze fallback (no DOM viewport signal): consecutive global similarity at/above this
+# threshold over this many frames reads as "stopped scrolling" — mirrors
+# gui_agent.core.run.progress_monitor.STUCK_SCREEN_WINDOW/STUCK_SCREEN_FROZEN, kept as a
+# separate constant so traversal's boundary call doesn't couple to the stuck detector's tuning.
+_PIXEL_WINDOW = 3
+_PIXEL_FROZEN_SIMILARITY = 0.99
+
 
 def _norm(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
@@ -222,6 +229,7 @@ class ListTraversalRuntime:
     expected_total: int | None = None
     _last_visible_rows: int = 0
     _last_resolutions: list[ColumnResolution] = field(default_factory=list)
+    _recent_frames: list[bytes] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._traversal = TraversalController(self.var)
@@ -231,15 +239,20 @@ class ListTraversalRuntime:
         return self._last_decision.action == "done"
 
     def update(self, observation: Observation) -> ListTraversalDecision:
+        """Row VALUE extraction (table-specific, when a table is found) is independent of the
+        TRAVERSAL decision (view-window-specific: ``observation.viewport``, or a pixel-freeze
+        fallback when the platform has no DOM signal). A run with no table at all can still
+        paginate/scroll deterministically; a table only adds row extraction on top of that."""
         picked = _best_table(getattr(observation, "tables", None), self.returns)
         table = picked[0] if picked else None
         resolutions = picked[1] if picked else []
+        mismatch: ListTraversalDecision | None = None
         if table is not None:
             visible_rows = [r for r in (table.get("rows") or []) if isinstance(r, dict)]
             self._last_visible_rows = len(visible_rows)
             self._last_resolutions = resolutions
             if visible_rows and not any(resolution.status == "resolved" for resolution in resolutions):
-                decision = ListTraversalDecision(
+                mismatch = ListTraversalDecision(
                     "schema_mismatch",
                     (
                         "已看到集合表格行，但 requested fields 与表头没有可靠映射；"
@@ -253,7 +266,7 @@ class ListTraversalRuntime:
                 if visible_rows and len(self.rows) == before and not self.rows and any(
                     resolution.status == "resolved" for resolution in resolutions
                 ):
-                    decision = ListTraversalDecision(
+                    mismatch = ListTraversalDecision(
                         "schema_mismatch",
                         (
                             "目标字段已映射到表头，但可见行在这些字段下没有读到任何值；"
@@ -261,16 +274,40 @@ class ListTraversalRuntime:
                         ),
                         "停止翻页或滚动；需要先修正读取字段与表头映射，或使用视觉列表读取兜底",
                     )
-                else:
-                    decision = self._decide_from_list(table)
-        else:
-            decision = ListTraversalDecision(
-                "fallback",
-                "当前帧没有可识别的集合表格",
-                "根据当前页面判断如何回到目标列表或显示列表",
-            )
+        decision = mismatch if mismatch is not None else self._decide_from_list(self._viewport_signal(observation))
         self._last_decision = decision
         return decision
+
+    def _viewport_signal(self, observation: Observation) -> dict[str, Any] | None:
+        """The view window's traversal signal: the platform's own ``Observation.viewport`` when
+        available, else a pixel-freeze fallback (consecutive near-identical frames) — never
+        ``table.get("traversal")``, so traversal works with or without a resolvable table."""
+        viewport = getattr(observation, "viewport", None)
+        if isinstance(viewport, dict):
+            self._recent_frames.clear()
+            return viewport
+        return self._pixel_fallback_viewport(getattr(observation, "png_bytes", None))
+
+    def _pixel_fallback_viewport(self, png_bytes: bytes | None) -> dict[str, Any] | None:
+        """Platforms with no DOM traversal signal (iphone/android, or a browser page where the
+        page-level sensor found nothing): treat the view window as still scrollable until the
+        last few frames are near-identical (mirrors ProgressMonitor.check_screen_similarity's
+        frozen threshold, kept independent to avoid coupling traversal to the stuck detector)."""
+        if not png_bytes:
+            return None
+        self._recent_frames.append(png_bytes)
+        if len(self._recent_frames) > _PIXEL_WINDOW:
+            self._recent_frames.pop(0)
+        if len(self._recent_frames) < _PIXEL_WINDOW:
+            return None
+        from gui_agent.core.vision.frame_analysis import region_change
+
+        sims = [
+            region_change(self._recent_frames[i - 1], self._recent_frames[i])[0]
+            for i in range(1, len(self._recent_frames))
+        ]
+        frozen = all(sim >= _PIXEL_FROZEN_SIMILARITY for sim in sims)
+        return {"type": "scroll", "can_scroll_more": not frozen, "at_scroll_end": frozen}
 
     def prompt_text(self) -> str:
         return (
@@ -310,7 +347,7 @@ class ListTraversalRuntime:
             self._seen_rows.add(key)
             self.rows.append({field: row.result_values.get(field, "") for field in self.returns})
 
-    def _decide_from_list(self, table: dict[str, Any]) -> ListTraversalDecision:
+    def _decide_from_list(self, viewport: dict[str, Any] | None) -> ListTraversalDecision:
         if self.expected_total and len(self.rows) >= self.expected_total:
             return ListTraversalDecision(
                 "done",
@@ -318,8 +355,7 @@ class ListTraversalRuntime:
                 "停止，不要继续翻页或滚动",
             )
 
-        traversal = table.get("traversal") if isinstance(table.get("traversal"), dict) else None
-        action = self._traversal.update(traversal)
+        action = self._traversal.update(viewport)
         if action == "paginate_next":
             return ListTraversalDecision("paginate_next", "感知到下一页可用", "点击下一页")
         if action == "paginate_prev":

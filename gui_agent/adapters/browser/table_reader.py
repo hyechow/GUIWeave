@@ -224,15 +224,16 @@ def table_snapshot_js() -> str:
     }};
   }};
 
+  const PAGER_SELECTORS = [
+    '.pager', '.pagination', '[role="navigation"][aria-label*="page" i]',
+    '.pages', '.page-numbers', '.data-grid-paginator', '.admin__data-grid-pager',
+    'nav[aria-label*="pagination" i]', '[aria-label*="page" i]',
+  ].join(',');
+
   const detectPagerState = (tableOrGrid) => {{
     let container = tableOrGrid.parentElement;
     for (let depth = 0; depth < 4 && container; depth++, container = container.parentElement) {{
-      const pagerSelectors = [
-        '.pager', '.pagination', '[role="navigation"][aria-label*="page" i]',
-        '.pages', '.page-numbers', '.data-grid-paginator', '.admin__data-grid-pager',
-        'nav[aria-label*="pagination" i]', '[aria-label*="page" i]',
-      ].join(',');
-      const pager = Array.from(container.querySelectorAll(pagerSelectors)).find(p => {{
+      const pager = Array.from(container.querySelectorAll(PAGER_SELECTORS)).find(p => {{
         // Direct containment (one inside the other)
         if (tableOrGrid.contains(p) || p.contains(tableOrGrid)) return true;
         // Check if table/pager (or their ancestors) are siblings under current container
@@ -352,20 +353,75 @@ def table_snapshot_js() -> str:
     }};
   }};
 
+  const scrollStateOf = (container) => {{
+    const can_scroll_more = container.scrollHeight > container.scrollTop + container.clientHeight + 2;
+    return {{
+      type: 'scroll',
+      can_scroll_more,
+      at_scroll_end: !can_scroll_more,
+    }};
+  }};
+
   const detectScrollState = (el) => {{
     let container = el.parentElement;
     for (let depth = 0; depth < 4 && container; depth++, container = container.parentElement) {{
       const style = getComputedStyle(container);
       const overflow = style.overflow || style.overflowY || '';
       if (['auto', 'scroll', 'overlay'].includes(overflow) && container.scrollHeight > 0) {{
-        const can_scroll_more = container.scrollHeight > container.scrollTop + container.clientHeight + 2;
-        return {{
-          type: 'scroll',
-          can_scroll_more,
-          at_scroll_end: !can_scroll_more,
-        }};
+        return scrollStateOf(container);
       }}
     }}
+    return {{ type: 'unknown' }};
+  }};
+
+  // Page-level traversal sensor: NOT anchored to a table/grid. Used as the canonical
+  // ``viewport`` signal so card/feed-style collections (no <table>) still get a
+  // deterministic pagination/scroll-boundary signal instead of falling back to the LLM.
+  const detectPageViewport = (tableSnapshots) => {{
+    for (const snap of tableSnapshots) {{
+      if (snap.traversal && snap.traversal.type !== 'unknown') return snap.traversal;
+    }}
+    // PAGER_SELECTORS' catch-all `[aria-label*="page" i]` can match a single page-NUMBER link
+    // (e.g. Google's <a aria-label="Page 2">) instead of the pagination bar that wraps it —
+    // readPagedPager() on that tiny element finds no index/buttons, returning an uninformative
+    // 'paged' result that would otherwise read as a confident "no next page -> done". Only trust
+    // a page-level (non-table-anchored) pager match when it actually resolved something.
+    const pager = Array.from(document.querySelectorAll(PAGER_SELECTORS)).find(visible);
+    if (pager) {{
+      const state = readPagedPager(pager);
+      if (state.page_index != null || state.has_next_page != null || state.has_prev_page != null) {{
+        return state;
+      }}
+    }}
+    // Whole-document scroll (the common case): most ordinary pages scroll via the browser
+    // viewport itself with <html>/<body> at the default `overflow: visible` — which the
+    // overflow:auto/scroll/overlay scan below never matches, even though the page plainly
+    // scrolls. Check this BEFORE the inner-container scan so a normal page (e.g. a search
+    // results list with no wrapping <div overflow:auto>) gets a real signal instead of
+    // accidentally matching some unrelated small scrollable widget elsewhere on the page.
+    const docHeight = document.documentElement.scrollHeight;
+    const docTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
+    const viewH = window.innerHeight;
+    if (docHeight > viewH + 2) {{
+      const can_scroll_more = docHeight > docTop + viewH + 2;
+      return {{ type: 'scroll', can_scroll_more, at_scroll_end: !can_scroll_more }};
+    }}
+    // SPA shells where the document itself doesn't grow but an inner panel scrolls.
+    let best = null;
+    let bestArea = 0;
+    for (const el of Array.from(document.querySelectorAll('*'))) {{
+      if (el === document.documentElement || el === document.body) continue;
+      if (!visible(el) || el.scrollHeight <= el.clientHeight) continue;
+      const style = getComputedStyle(el);
+      const overflow = style.overflow || style.overflowY || '';
+      if (!['auto', 'scroll', 'overlay'].includes(overflow)) continue;
+      const area = el.clientWidth * el.clientHeight;
+      if (area > bestArea) {{
+        bestArea = area;
+        best = el;
+      }}
+    }}
+    if (best) return scrollStateOf(best);
     return {{ type: 'unknown' }};
   }};
 
@@ -428,6 +484,7 @@ def table_snapshot_js() -> str:
     url: location.href,
     title: document.title,
     tables: snapshots,
+    viewport: detectPageViewport(snapshots),
   }});
 }})()"""
 
@@ -581,7 +638,7 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
         if not rows:
             continue
         total_records = _safe_int(item.get("totalRecords"))
-        traversal = item.get("traversal")  # 新增: pager/scroll traversal state
+        traversal = item.get("traversal")
         out.append(
             {
                 "index": idx,
@@ -595,10 +652,25 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
                 "partial": bool(item.get("partial") or (total_records and len(rows) < total_records)),
                 "path": str(item.get("path") or ""),
                 "page": page,
-                "traversal": traversal if isinstance(traversal, dict) else None,  # 新增
+                # Legacy table-scoped copy of this table's own pager/scroll state. Kept for
+                # back-compat and as detectPageViewport()'s reuse source; NOT the traversal
+                # decision's authority — that's Observation.viewport (see schemas docstring).
+                "traversal": traversal if isinstance(traversal, dict) else None,
             }
         )
     return out
+
+
+def normalize_viewport(raw: Any) -> dict[str, Any] | None:
+    """Extract the page-level traversal/scroll-boundary signal (independent of tables)."""
+    if not isinstance(raw, dict):
+        return None
+    viewport = raw.get("viewport")
+    if not isinstance(viewport, dict):
+        return None
+    if viewport.get("type") in (None, "unknown"):
+        return None
+    return viewport
 
 
 def _dedupe_headers(headers: list[Any], width: int) -> list[str]:

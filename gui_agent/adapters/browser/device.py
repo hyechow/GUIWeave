@@ -504,6 +504,7 @@ class PlaywrightDevice:
         """
         from gui_agent.adapters.browser.table_reader import (
             normalize_table_snapshots,
+            normalize_viewport,
             table_snapshot_js,
         )
 
@@ -519,9 +520,18 @@ class PlaywrightDevice:
             )
             val = (res.get("result", {}) or {}).get("value")
             raw = json.loads(val) if isinstance(val, str) else val
+            self._last_traversal_viewport = normalize_viewport(raw)
             return normalize_table_snapshots(raw)
         except Exception:
+            self._last_traversal_viewport = None
             return []
+
+    def read_viewport(self) -> dict | None:
+        """Return the page-level traversal/scroll-boundary signal from the last read_tables() call.
+
+        NOT to be confused with ``viewport_size`` (CSS-px width/height for click denorm,
+        cached in ``self._last_viewport``) — different concept, deliberately different name."""
+        return getattr(self, "_last_traversal_viewport", None)
 
     def read_complete_tables(self) -> list[dict]:
         """Return complete structured grid snapshots when a read-only provider exists.
