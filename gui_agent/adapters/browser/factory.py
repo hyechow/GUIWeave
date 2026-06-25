@@ -23,10 +23,11 @@ neutral core AgentHUD; macOS-host only), enabled by the --hud flag.
 
 ACTION VISUALIZATION
 --------------------
-``make_action_visualizer`` provides a live DOM overlay (``BrowserActionVisualizer``)
-that the agent loop flashes on the page at each action's location, so a human
-watching the real Chrome sees where/what the agent clicks/types/scrolls. It is the
-browser implementation of the neutral ``ActionVisualizer`` contract.
+``make_action_visualizer`` provides ``BrowserCursorVisualizer``, which drives the
+iphone ``agent_cursor`` OS overlay over the real Chrome window at each action's
+location, so a human watching the real Chrome sees where/what the agent clicks/
+types/scrolls. It is the browser implementation of the neutral ``ActionVisualizer``
+contract.
 """
 
 from __future__ import annotations

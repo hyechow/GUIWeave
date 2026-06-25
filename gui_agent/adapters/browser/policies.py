@@ -21,6 +21,7 @@ import re
 from dotenv import load_dotenv
 
 from gui_agent.adapters.browser.actions import BrowserActionDecision
+from gui_agent.adapters.browser.option_text import option_text_from_instruction
 from gui_agent.core.policies.base import BaseActionPolicy
 from gui_agent.prompts import load_prompt_text
 
@@ -70,40 +71,10 @@ _UPLOAD_CONTROL_RE = re.compile(
 )
 # instruction 里出现的本地文件绝对路径（supervisor 规则要求把真实路径原样带进 instruction）。
 _FILE_PATH_RE = re.compile(r"(?:/[\w./+~-]+|~/[\w./+~-]+)")
-_QUOTED_OPTION_RE = re.compile(r"[「『\"']([^「」『』\"']{1,40})[」』\"']")
-_SELECT_OPTION_INTENT_RE = re.compile(
-    r"选择|选中|设为|设置|筛选.*=|下拉.*选项|select\s+option",
-    re.IGNORECASE,
-)
 _SELECT_CONTROL_CUE_RE = re.compile(
     r"下拉|选择框|筛选框|选项|option|select",
     re.IGNORECASE,
 )
-_OPTION_AFTER_EQUALS_RE = re.compile(
-    r"(?:=|为|to)\s*([A-Za-z][\w ._/-]{0,39})",
-    re.IGNORECASE,
-)
-_OPTION_AFTER_SELECT_RE = re.compile(
-    r"(?:选择|选中|select)\s*([A-Za-z][\w ._/-]{0,39})",
-    re.IGNORECASE,
-)
-
-
-def _option_text_from_instruction(instruction: str) -> str:
-    text = (instruction or "").strip()
-    if not text or not _SELECT_OPTION_INTENT_RE.search(text):
-        return ""
-    quoted = _QUOTED_OPTION_RE.findall(text)
-    if quoted:
-        return quoted[-1].strip()
-    match = _OPTION_AFTER_EQUALS_RE.search(text)
-    if match:
-        return match.group(1).strip(" .,;，。；")
-    match = _OPTION_AFTER_SELECT_RE.search(text)
-    if match:
-        value = match.group(1).strip(" .,;，。；")
-        return "" if value.lower() in {"option", "options"} else value
-    return ""
 
 
 class BrowserActionPolicy(BaseActionPolicy):
@@ -141,7 +112,7 @@ class BrowserActionPolicy(BaseActionPolicy):
             getattr(action, "action_type", None) == "tap"
             and _SELECT_CONTROL_CUE_RE.search(getattr(action, "description", "") or "")
         ):
-            option_text = _option_text_from_instruction(
+            option_text = option_text_from_instruction(
                 f"{instruction or ''}\n{getattr(action, 'description', '') or ''}"
             )
             if option_text:

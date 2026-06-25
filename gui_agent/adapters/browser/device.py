@@ -111,6 +111,8 @@ class PlaywrightDevice:
         headless: bool | None = None,
         user_data_dir: Optional[str] = None,
     ):
+        from gui_agent.adapters.browser.factory import _resolve_headless
+
         # Resolution: explicit arg -> env CHROME_CDP_URL -> localhost:9222.
         self.cdp_url = cdp_url or os.environ.get("CHROME_CDP_URL") or "http://localhost:9222"
         self.start_url = start_url
@@ -1368,17 +1370,6 @@ def _select_all_modifier() -> str:
     import sys
 
     return "Meta" if sys.platform == "darwin" else "Control"
-
-
-def _resolve_headless(headless: bool | None) -> bool:
-    if headless is not None:
-        return headless
-    raw = os.environ.get("BROWSER_HEADLESS") or os.environ.get("WEB_ARENA_HEADLESS")
-    return _truthy(raw)
-
-
-def _truthy(raw: str | None) -> bool:
-    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _page_closed(page) -> bool:

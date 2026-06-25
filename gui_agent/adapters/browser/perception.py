@@ -38,6 +38,8 @@ class BrowserSession:
         headless: bool | None = None,
         user_data_dir: Optional[str] = None,
     ):
+        from gui_agent.adapters.browser.factory import _resolve_headless
+
         self.client = None  # PlaywrightDevice once connected
         self._cdp_url = cdp_url
         self._start_url = start_url
@@ -106,14 +108,6 @@ class BrowserSession:
             return []
         read = getattr(self.client, "read_form_controls", None)
         return read() if read is not None else []
-
-
-def _resolve_headless(headless: bool | None) -> bool:
-    if headless is not None:
-        return headless
-    raw = os.environ.get("BROWSER_HEADLESS") or os.environ.get("WEB_ARENA_HEADLESS")
-    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
-
 
 
 class BrowserPerception:

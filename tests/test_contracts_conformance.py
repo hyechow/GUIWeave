@@ -296,16 +296,11 @@ def _import_browser():
 
 
 def test_browser_visualizer_conforms():
-    # Both browser visualizers satisfy the neutral ActionVisualizer contract (built
-    # via __new__, no page/connection/daemon needed for structural conformance):
-    #   - BrowserActionVisualizer : in-page DOM overlay (host-agnostic fallback)
-    #   - BrowserCursorVisualizer : reuses the agent_cursor OS overlay (default)
-    from gui_agent.adapters.browser.visualizer import (
-        BrowserActionVisualizer,
-        BrowserCursorVisualizer,
-    )
+    # BrowserCursorVisualizer (built via __new__, no daemon needed for structural
+    # conformance) satisfies the neutral ActionVisualizer contract; it reuses the
+    # agent_cursor OS overlay and is the only browser ActionVisualizer.
+    from gui_agent.adapters.browser.visualizer import BrowserCursorVisualizer
 
-    assert isinstance(_blank(BrowserActionVisualizer), ActionVisualizer)
     assert isinstance(_blank(BrowserCursorVisualizer), ActionVisualizer)
 
 

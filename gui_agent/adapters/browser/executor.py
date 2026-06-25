@@ -15,6 +15,7 @@ import re
 from typing import Optional
 
 from gui_agent.adapters.browser.actions import BrowserAction
+from gui_agent.adapters.browser.option_text import option_text_from_instruction
 from gui_agent.core.runtime.executor import VisionExecutor
 
 # Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
@@ -24,15 +25,6 @@ _INLINE_EN_LABEL_RE = re.compile(
     r"(?:选项|菜单项|菜单|按钮|链接)"
     r"|点击\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*(?:选项|菜单项|菜单|按钮|链接)"
 )
-_OPTION_QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,40})[」』\"']")
-_OPTION_VALUE_RE = re.compile(r"(?:=|为|to)\s*([A-Za-z][\w ._/-]{0,39})", re.IGNORECASE)
-_OPTION_AFTER_SELECT_RE = re.compile(
-    r"(?:选择|选中|select)\s*([A-Za-z][\w ._/-]{0,39})",
-    re.IGNORECASE,
-)
-_SELECT_INTENT_RE = re.compile(r"选择|选中|设为|设置|下拉.*选项|select\s+option", re.IGNORECASE)
-
-
 def _quoted_label(description: str) -> str:
     """The LAST short quoted label in the description — the actionable target
     (「点击…菜单中的「操作」」→ 操作). Longer quotes (robot names, option values with
@@ -108,29 +100,6 @@ def _should_accept_dom_snap(description: str, info: str, px: float, py: float, c
     return True
 
 
-def _select_option_label(description: str) -> str:
-    """Option text for a native select rescue.
-
-    Unlike _quoted_label(), option values can be longer than short UI labels. Keep this
-    extraction gated by select intent so a plain "click Status" tap never tries to set
-    the select value to "Status".
-    """
-    text = description or ""
-    if not _SELECT_INTENT_RE.search(text):
-        return ""
-    matches = _OPTION_QUOTE_RE.findall(text)
-    if matches:
-        return matches[-1].strip()
-    match = _OPTION_VALUE_RE.search(text)
-    if match:
-        return match.group(1).strip(" .,;，。；")
-    match = _OPTION_AFTER_SELECT_RE.search(text)
-    if match:
-        value = match.group(1).strip(" .,;，。；")
-        return "" if value.lower() in {"option", "options"} else value
-    return ""
-
-
 class BrowserExecutor(VisionExecutor):
     """Execute normalized policy actions against the browser via PlaywrightDevice."""
 
@@ -181,7 +150,7 @@ class BrowserExecutor(VisionExecutor):
                 print(f"  DOM 吸附: ({px:.0f},{py:.0f}) → ({cx:.0f},{cy:.0f}) [{info}]")
                 sx, sy = cx, cy
                 self._record_snap(px, py, sx, sy, info)
-            option_text = _select_option_label(getattr(action, "description", "") or "")
+            option_text = option_text_from_instruction(getattr(action, "description", "") or "")
             if at in ("tap", "click") and option_text and (info or "").startswith("select "):
                 print(f"  原生下拉选择: {option_text!r}")
                 result = self._client().select_option(sx, sy, option_text)
