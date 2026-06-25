@@ -261,6 +261,27 @@ def read_grid_from_tree(
     return result_rows
 
 
+def find_prev_page_ref(tree: list[dict]) -> int | None:
+    """Return the ``backendDOMNodeId`` of the 'previous page' button, or None.
+
+    Mirrors ``find_next_page_ref``; used to rewind a grid that loaded mid-pagination
+    (e.g. a saved UI-grid bookmark restoring a non-1 ``currentPage``) back to page 1
+    before forward collection starts — otherwise rows before the landing page are
+    silently lost (only the landing page onward gets collected).
+    """
+    import re
+
+    _PREV_RE = re.compile(
+        "^(prev(ious)?|\u2039|\u2190|<|\ue629)$|prev.?page",
+        re.IGNORECASE,
+    )
+    for node in tree:
+        if node["role"] == "button" and node.get("ref"):
+            if _PREV_RE.search(node["key"].strip()):
+                return node["ref"]
+    return None
+
+
 def find_next_page_ref(tree: list[dict]) -> int | None:
     """Return the ``backendDOMNodeId`` of the 'next page' button in the tree, or None."""
     import re

@@ -327,13 +327,23 @@ def read_grid_complete(
     Returns the full collected row list otherwise.
 
     Single-page grids: reads all rows in one shot (AX tree is scroll-position-independent).
-    Paginated grids: clicks the 'next page' button via DOM ref, re-observes, repeats.
+    Paginated grids: driven by ``Observation.viewport`` (the page-level pager sensor in
+    ``table_reader.py``) through the SAME ``TraversalController`` state machine the
+    multi-turn ``react_until_collected``/``ListTraversalRuntime`` path uses — not a
+    bespoke heuristic. This means a grid that loads mid-pagination (e.g. a saved
+    UI-grid bookmark restoring a non-1 page) rewinds to page 1 for free via the
+    controller's existing ``started_at_page``/``paginate_prev`` logic, instead of a
+    second, narrower click-and-diff mechanism duplicating what the controller already
+    does. When no viewport signal is available at all (no DOM pager sensor matched),
+    this falls back to the legacy forward-only walk via the AX tree's next-page button.
     """
     from gui_agent.adapters.browser.semantic_page import (
         _row_dedup_key,
         find_next_page_ref,
+        find_prev_page_ref,
         read_grid_from_tree,
     )
+    from gui_agent.core.orchestrator.traversal_controller import TraversalController
 
     semantic_tree = getattr(obs, "semantic_tree", None)
     if not semantic_tree:
@@ -350,13 +360,31 @@ def read_grid_complete(
     if client is None or bundle is None or log_dir is None:
         return all_rows  # single-page only, no pagination
 
+    viewport = getattr(obs, "viewport", None)
+    controller = TraversalController("grid") if isinstance(viewport, dict) else None
+
     for page_n in range(1, max_pages):
-        next_ref = find_next_page_ref(semantic_tree)
-        if next_ref is None:
+        if controller is not None:
+            decision = controller.update(viewport)
+            if decision == "done":
+                break
+            if decision == "paginate_prev":
+                ref = find_prev_page_ref(semantic_tree)
+            elif decision == "paginate_next":
+                ref = find_next_page_ref(semantic_tree)
+            else:
+                # stay / set_page_size / unresolved unknown streak: the controller has
+                # no driveable action this frame — fall back to the forward-only signal
+                # so a pager the sensor can't fully parse still makes progress.
+                ref = find_next_page_ref(semantic_tree)
+        else:
+            ref = find_next_page_ref(semantic_tree)
+
+        if ref is None:
             break
 
         try:
-            client.click_by_ref(next_ref)
+            client.click_by_ref(ref)
         except Exception:
             break
 
@@ -376,6 +404,7 @@ def read_grid_complete(
         semantic_tree = getattr(obs, "semantic_tree", None)
         if not semantic_tree:
             break
+        viewport = getattr(obs, "viewport", None)
 
         page_rows = read_grid_from_tree(semantic_tree, returns)
         if not page_rows:
@@ -389,7 +418,10 @@ def read_grid_complete(
                 all_rows.append(r)
                 new_count += 1
 
-        if new_count == 0:
+        # Without a controller (no viewport signal at all), "no new rows" is the only
+        # boundary signal we have. With a controller, a rewind step revisiting an
+        # already-seen page is expected to add 0 rows — that's not "the end of the list".
+        if controller is None and new_count == 0:
             break
 
     return all_rows
