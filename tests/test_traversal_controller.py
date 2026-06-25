@@ -223,3 +223,65 @@ def test_oscillation_prevention():
     # Page 3 (last)
     result = c.update({"type": "paged", "page_index": 3, "has_next_page": False, "has_prev_page": True})
     assert result == "done"  # Don't oscillate back to page 2
+
+
+def test_set_page_size_fires_once_before_any_pagination():
+    c = TraversalController(var="reviews")
+    traversal = {
+        "type": "paged",
+        "page_index": 1,
+        "has_next_page": True,
+        "has_prev_page": False,
+        "page_size": 20,
+        "page_size_options": [20, 50, 200],
+        "has_page_size_control": True,
+        "page_size_menu_open": False,
+    }
+    assert c.update(traversal) == "set_page_size"
+    assert c.target_page_size == 200
+    # One-shot: the very next frame, even unchanged, falls through to normal pagination.
+    assert c.update(traversal) == "paginate_next"
+
+
+def test_set_page_size_skipped_when_already_at_max():
+    c = TraversalController(var="reviews")
+    traversal = {
+        "type": "paged",
+        "page_index": 1,
+        "has_next_page": True,
+        "has_prev_page": False,
+        "page_size": 200,
+        "page_size_options": [20, 50, 200],
+        "has_page_size_control": True,
+        "page_size_menu_open": False,
+    }
+    assert c.update(traversal) == "paginate_next"
+
+
+def test_set_page_size_skipped_when_menu_already_open():
+    c = TraversalController(var="reviews")
+    traversal = {
+        "type": "paged",
+        "page_index": 1,
+        "has_next_page": True,
+        "has_prev_page": False,
+        "page_size": 20,
+        "page_size_options": [20, 50, 200],
+        "has_page_size_control": True,
+        "page_size_menu_open": True,
+    }
+    # Mid-interaction (dropdown already open) -> don't re-recommend opening it; let the
+    # planner finish picking an option. Resolved one-shot regardless.
+    assert c.update(traversal) == "paginate_next"
+    assert c.target_page_size is None
+
+
+def test_set_page_size_skipped_without_page_size_control():
+    c = TraversalController(var="reviews")
+    traversal = {
+        "type": "paged",
+        "page_index": 1,
+        "has_next_page": True,
+        "has_prev_page": False,
+    }
+    assert c.update(traversal) == "paginate_next"

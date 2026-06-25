@@ -40,6 +40,8 @@ class TraversalController:
     visited_pages: set[int] = field(default_factory=set)
     direction: Literal["forward", "backward", "none"] = "none"
     _unknown_count: int = 0
+    _page_size_resolved: bool = False
+    target_page_size: int | None = None
 
     # Constants
     _UNKNOWN_THRESHOLD = 3  # Consecutive unknown frames before falling back to LLM
@@ -62,6 +64,9 @@ class TraversalController:
 
         Returns:
             A recommendation string:
+            - "set_page_size": Switch the page-size control to its largest option first
+              (fewer total pages to click through) — tried at most ONCE, before any
+              pagination decision, regardless of outcome.
             - "paginate_next": Click next page button
             - "paginate_prev": Click previous page button
             - "scroll_down": Scroll down to load more
@@ -72,6 +77,8 @@ class TraversalController:
             1. First frame (traversal is None): Initialize, return "stay"
             2. type='unknown': Increment counter, return "stay" if below threshold (LLM fallback)
             3. type='paged':
+               - First-ever paged frame, a larger page size is available, and not already
+                 mid-change → "set_page_size" (one-shot; see _maybe_set_page_size)
                - Not on page 1 (page_index > 1) and started_at_page is None → "paginate_prev"
                - On page 1 → Record started_at_page=1, seen_start_page=True
                - Forward mode and has_next_page → "paginate_next"
@@ -100,6 +107,9 @@ class TraversalController:
 
         # Case 3: Paged list
         if t_type == "paged":
+            page_size_action = self._maybe_set_page_size(traversal)
+            if page_size_action is not None:
+                return page_size_action
             return self._update_paged(traversal)
 
         # Case 4: Scroll list
@@ -108,6 +118,34 @@ class TraversalController:
 
         # Fallback for any other type
         return "stay"
+
+    def _maybe_set_page_size(self, traversal: dict) -> str | None:
+        """One-shot: on the FIRST paged frame only, if a larger page size is available,
+        recommend switching to it before any pagination — fewer pages means fewer clicks.
+        Resolved exactly once (success or failure) so this never re-fires mid-collection,
+        which would re-trigger total/row-count bookkeeping concerns (see
+        test_total_discrepancy_does_not_drive_page_size_change)."""
+        if self._page_size_resolved:
+            return None
+        self._page_size_resolved = True
+        if not traversal.get("has_page_size_control") or traversal.get("page_size_menu_open"):
+            return None
+        options = traversal.get("page_size_options") or []
+        try:
+            numeric_options = [int(o) for o in options]
+        except (TypeError, ValueError):
+            return None
+        if not numeric_options:
+            return None
+        best = max(numeric_options)
+        try:
+            current = int(traversal.get("page_size") or 0)
+        except (TypeError, ValueError):
+            current = 0
+        if best <= current:
+            return None
+        self.target_page_size = best
+        return "set_page_size"
 
     def _update_paged(self, traversal: dict) -> str:
         """Update state for paged list and return recommendation."""
@@ -181,3 +219,5 @@ class TraversalController:
         self.visited_pages.clear()
         self.direction = "none"
         self._unknown_count = 0
+        self._page_size_resolved = False
+        self.target_page_size = None

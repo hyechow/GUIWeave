@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from gui_agent.adapters.browser.table_reader import (
-    complete_table_snapshot_js,
     normalize_table_snapshots,
     normalize_viewport,
     table_snapshot_js,
@@ -20,14 +19,6 @@ def test_table_snapshot_js_is_serialized_expression():
     assert "detectPageViewport" in js
     assert "viewport: detectPageViewport" in js
     assert "document.documentElement.scrollHeight" in js
-
-
-def test_complete_table_snapshot_js_fetches_magento_mui_pages():
-    js = complete_table_snapshot_js()
-    assert "/mui/index/render/" in js
-    assert "paging[pageSize]" in js
-    assert "totalRecords" in js
-    assert "credentials: \"same-origin\"" in js
 
 
 def test_normalize_table_snapshots_maps_rows_to_headers():

@@ -535,36 +535,6 @@ class PlaywrightDevice:
         cached in ``self._last_viewport``) — different concept, deliberately different name."""
         return getattr(self, "_last_traversal_viewport", None)
 
-    def read_complete_tables(self) -> list[dict]:
-        """Return complete structured grid snapshots when a read-only provider exists.
-
-        Magento Admin grids expose a same-origin JSON provider with pagination
-        metadata. This method fetches those pages from inside the authenticated
-        browser context, then falls back to ordinary DOM snapshots when no such
-        provider is available.
-        """
-        from gui_agent.adapters.browser.table_reader import (
-            complete_table_snapshot_js,
-            normalize_table_snapshots,
-        )
-
-        try:
-            self._follow_active_tab()
-            res = self._cdp_send(
-                "Runtime.evaluate",
-                {
-                    "expression": complete_table_snapshot_js(),
-                    "returnByValue": True,
-                    "awaitPromise": True,
-                },
-            )
-            val = (res.get("result", {}) or {}).get("value")
-            raw = json.loads(val) if isinstance(val, str) else val
-            tables = normalize_table_snapshots(raw)
-            return tables or self.read_tables()
-        except Exception:
-            return self.read_tables()
-
     def read_form_controls(self) -> list[dict]:
         """Return visible form controls with DOM type/value/option metadata."""
         from gui_agent.adapters.browser.form_reader import (

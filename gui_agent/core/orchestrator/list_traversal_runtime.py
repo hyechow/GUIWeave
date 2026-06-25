@@ -19,6 +19,7 @@ from .traversal_controller import TraversalController
 
 
 Action = Literal[
+    "set_page_size",
     "paginate_next",
     "paginate_prev",
     "scroll_down",
@@ -356,6 +357,14 @@ class ListTraversalRuntime:
             )
 
         action = self._traversal.update(viewport)
+        if action == "set_page_size":
+            target = self._traversal.target_page_size
+            current = viewport.get("page_size") if viewport else None
+            return ListTraversalDecision(
+                "set_page_size",
+                f"列表支持调整每页显示条数（当前 {current}，可设为 {target}），先放大每页条数可减少翻页次数",
+                f"把每页显示条数切换为 {target}（先打开每页条数下拉/输入框，选中或输入该值并确认），还不要翻页",
+            )
         if action == "paginate_next":
             return ListTraversalDecision("paginate_next", "感知到下一页可用", "点击下一页")
         if action == "paginate_prev":

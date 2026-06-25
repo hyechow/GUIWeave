@@ -100,6 +100,47 @@ def test_missing_detail_fields_are_accumulated_without_opening_rows():
     ]
 
 
+def test_sets_page_size_to_max_once_before_first_pagination():
+    """Fewer total pages beats clicking through many small ones: when the table exposes a
+    larger page size, switch to it BEFORE any pagination — but only ever try once, so it
+    can't oscillate or interfere with total/row-count bookkeeping later in the collection."""
+    runtime = ListTraversalRuntime(var="items", returns=["Code"])
+    table = _table(
+        [{"Code": "A1", "Name": "Alpha", "Action": "Edit"}],
+        total=50,
+        page=1,
+        has_next=True,
+        traversal_extra={
+            "page_size": 20,
+            "page_size_options": [20, 50, 100, 200],
+            "has_page_size_control": True,
+            "page_size_menu_open": False,
+        },
+    )
+
+    first = runtime.update(_obs(tables=[table]))
+    assert first.action == "set_page_size"
+    assert "200" in first.instruction
+
+    # Still on the same (unchanged) page next observation: the one-shot check does not
+    # re-fire, so traversal proceeds with ordinary pagination instead of repeating itself.
+    second = runtime.update(_obs(tables=[table]))
+    assert second.action == "paginate_next"
+
+
+def test_no_page_size_control_skips_straight_to_pagination():
+    runtime = ListTraversalRuntime(var="items", returns=["Code"])
+    table = _table(
+        [{"Code": "A1", "Name": "Alpha", "Action": "Edit"}],
+        total=2,
+        page=1,
+        has_next=True,
+    )
+
+    decision = runtime.update(_obs(tables=[table]))
+    assert decision.action == "paginate_next"
+
+
 def test_falls_back_when_no_collection_table_is_visible():
     runtime = ListTraversalRuntime(var="items", returns=["Code", "Detail Field"])
 
@@ -210,6 +251,9 @@ def test_total_discrepancy_does_not_drive_page_size_change():
             "page_size_menu_open": False,
         },
     )
+    # The one-shot page-size-max check fires before any pagination decision (separate
+    # behavior, see test_sets_page_size_to_max_once_before_first_pagination below).
+    runtime.update(_obs(tables=[first_table]))
     first = runtime.update(_obs(tables=[first_table]))
     assert first.action == "paginate_next"
 

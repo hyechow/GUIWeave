@@ -12,8 +12,6 @@ from typing import Any
 MAX_TABLES = 12
 MAX_ROWS_PER_TABLE = 500
 MAX_CELLS_PER_ROW = 80
-MAX_COMPLETE_ROWS_PER_TABLE = 5000
-COMPLETE_PAGE_SIZE = 500
 
 
 def table_snapshot_js() -> str:
@@ -485,110 +483,6 @@ def table_snapshot_js() -> str:
     title: document.title,
     tables: snapshots,
     viewport: detectPageViewport(snapshots),
-  }});
-}})()"""
-
-
-def complete_table_snapshot_js() -> str:
-    """Return JS that fetches full read-only Magento MUI grid pages when available.
-
-    The normal DOM reader only sees rows mounted in the current grid. Magento Admin
-    grids also expose a same-origin JSON provider (`/mui/index/render/`) with
-    `items` and `totalRecords`. Running this inside the authenticated page lets a
-    data_query consume the complete current grid dataset without UI scrolling.
-    """
-    return f"""(async () => {{
-  const MAX_TABLES = {MAX_TABLES};
-  const MAX_ROWS = {MAX_COMPLETE_ROWS_PER_TABLE};
-  const PAGE_SIZE = {COMPLETE_PAGE_SIZE};
-  const norm = (v) => String(v == null ? "" : v).replace(/\\s+/g, " ").trim();
-  const scalar = (v) => {{
-    if (v == null) return "";
-    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return norm(v);
-    if (Array.isArray(v)) return v.map((x) => norm(x)).filter(Boolean).join(", ");
-    return "";
-  }};
-  const rowFromItem = (item) => {{
-    const row = {{}};
-    if (!item || typeof item !== "object" || Array.isArray(item)) return row;
-    for (const [key, val] of Object.entries(item)) {{
-      const out = scalar(val);
-      if (out || typeof val === "string" || typeof val === "number" || typeof val === "boolean") {{
-        row[key] = out;
-      }}
-    }}
-    return row;
-  }};
-  const candidateUrls = performance.getEntriesByType("resource")
-    .map((e) => e.name)
-    .filter((url) => url.includes("/mui/index/render/") && url.includes("namespace="));
-  const latestByNamespace = new Map();
-  for (const raw of candidateUrls) {{
-    try {{
-      const url = new URL(raw, location.href);
-      const namespace = url.searchParams.get("namespace") || "";
-      if (!namespace || namespace === "notification_area") continue;
-      latestByNamespace.delete(namespace);
-      latestByNamespace.set(namespace, url.toString());
-    }} catch (_) {{}}
-  }}
-  const fetchPage = async (baseUrl, page) => {{
-    const url = new URL(baseUrl, location.href);
-    url.searchParams.set("paging[pageSize]", String(PAGE_SIZE));
-    url.searchParams.set("paging[current]", String(page));
-    url.searchParams.set("isAjax", "true");
-    const res = await fetch(url.toString(), {{
-      credentials: "same-origin",
-      headers: {{
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-      }},
-    }});
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data || data.ajaxExpired || !Array.isArray(data.items)) return null;
-    return data;
-  }};
-  const tables = [];
-  for (const [namespace, url] of Array.from(latestByNamespace).slice(-MAX_TABLES)) {{
-    const first = await fetchPage(url, 1);
-    if (!first) continue;
-    const total = Number(first.totalRecords || first.items.length || 0);
-    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const items = [...first.items];
-    for (let page = 2; page <= pages && items.length < MAX_ROWS; page++) {{
-      const next = await fetchPage(url, page);
-      if (!next) break;
-      items.push(...next.items);
-    }}
-    const rows = items.slice(0, MAX_ROWS).map(rowFromItem).filter((row) => Object.keys(row).length);
-    if (!rows.length) continue;
-    const headers = [];
-    const seen = new Set();
-    for (const row of rows) {{
-      for (const key of Object.keys(row)) {{
-        if (!seen.has(key)) {{
-          seen.add(key);
-          headers.push(key);
-        }}
-      }}
-    }}
-    if (headers.length < 2) continue;
-    tables.push({{
-      source: "magento-mui",
-      caption: namespace,
-      headers,
-      rows,
-      domRows: rows.length,
-      totalRecords: total || rows.length,
-      partial: !!(total && rows.length < total),
-      path: "/mui/index/render/?namespace=" + namespace,
-    }});
-  }}
-  return JSON.stringify({{
-    url: location.href,
-    title: document.title,
-    tables,
   }});
 }})()"""
 
