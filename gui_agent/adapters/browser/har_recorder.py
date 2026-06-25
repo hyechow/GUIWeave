@@ -17,6 +17,15 @@ Captured per request: method, url, headers, query string, and post body (when CD
 inlines it) + response status/headers/mimeType — exactly the fields the evaluator
 matches on. Response BODIES are not fetched (would need a live ``getResponseBody``);
 add that later if a task evaluates on response content.
+
+``Network.requestWillBeSent.request.headers`` only carries headers the
+page/renderer explicitly set — browser-injected ones (``Accept``, ``Sec-Fetch-*``,
+``Cookie``) are added by the network service afterward and only show up on the
+separate ``Network.requestWillBeSentExtraInfo`` event. Without merging that event
+in, every captured request looks like it has no ``Accept`` header, which makes
+WebArena's ``NetworkEvent.is_navigation_event`` (gated on ``Accept: text/html`` or
+the Sec-Fetch-Dest/Mode/User trio) always False even for real top-level
+navigations — so we subscribe to both events and merge.
 """
 
 from __future__ import annotations
@@ -27,6 +36,21 @@ from urllib.parse import urlsplit, parse_qsl
 
 def _headers_list(headers: dict | None) -> list[dict]:
     return [{"name": str(k), "value": str(v)} for k, v in (headers or {}).items()]
+
+
+def _merge_headers(existing: list[dict], extra: dict) -> list[dict]:
+    """Merge ``extra`` (name->value) into ``existing`` (HAR header-entry list),
+    overwriting by case-insensitive name and appending names not already present."""
+    by_lower = {h["name"].lower(): h for h in existing}
+    for name, value in extra.items():
+        key = name.lower()
+        if key in by_lower:
+            by_lower[key]["value"] = str(value)
+        else:
+            new_h = {"name": str(name), "value": str(value)}
+            by_lower[key] = new_h
+            existing.append(new_h)
+    return existing
 
 
 def _query_list(url: str) -> list[dict]:
@@ -54,6 +78,9 @@ class HarRecorder:
         # requestId -> partial entry dict (request filled first, response merged in).
         self._reqs: dict[str, dict] = {}
         self._order: list[str] = []
+        # requestId -> extra-info headers seen before requestWillBeSent arrived
+        # (CDP does not guarantee event order between the two).
+        self._pending_extra_headers: dict[str, dict] = {}
 
     # ----- lifecycle -------------------------------------------------------
     def start(self) -> "HarRecorder":
@@ -68,6 +95,7 @@ class HarRecorder:
             self._sess = ctx.new_cdp_session(page)
             self._sess.send("Network.enable", {})
             self._sess.on("Network.requestWillBeSent", self._on_request)
+            self._sess.on("Network.requestWillBeSentExtraInfo", self._on_request_extra_info)
             self._sess.on("Network.responseReceived", self._on_response)
             self._sess.on("Network.loadingFinished", self._on_finished)
         except Exception:
@@ -119,6 +147,24 @@ class HarRecorder:
             if rid not in self._reqs:
                 self._order.append(rid)
             self._reqs[rid] = entry
+            extra = self._pending_extra_headers.pop(rid, None)
+            if extra:
+                _merge_headers(entry["request"]["headers"], extra)
+        except Exception:
+            pass
+
+    def _on_request_extra_info(self, params: dict) -> None:
+        try:
+            rid = params.get("requestId")
+            headers = params.get("headers") or {}
+            if rid is None or not headers:
+                return
+            entry = self._reqs.get(rid)
+            if entry is not None:
+                _merge_headers(entry["request"]["headers"], headers)
+            else:
+                # requestWillBeSent hasn't arrived yet — stash for when it does.
+                self._pending_extra_headers[rid] = headers
         except Exception:
             pass
 
