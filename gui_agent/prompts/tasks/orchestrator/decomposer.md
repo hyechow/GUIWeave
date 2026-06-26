@@ -31,6 +31,7 @@ version: 1
     · data_query：仅用于【当前已采集且已处于任务要求口径】的结构化表格/列表快照做筛选、计数、排序、group by、top N、去重等表内分析；它不能替代进入页面、设置/清除页面筛选、提交搜索、切换 tab、分页/导出/采集完整数据。必须填 var、returns、sql。SQL 只能是 SELECT 或 WITH ... SELECT。默认表名 data；每张表也可用 table_1/table_2，若表格区块有标题/caption，还可用其标题的 snake_case 作为别名；foreach 结束后才可查询该 foreach 的 into 表。SQL 里只能使用 schema 明确列出的 normalized column identifiers，或当前程序里已经由 foreach into 产出的字段；表头/标签说明不是 SQL 语法，禁止把 `Header->column`、`原表头->列名` 这类映射文本写进 SQL。SQL 输出列必须能被 returns/finish 消费：多字段 returns 时，SELECT 列别名必须与 returns 字段一致；若最终答案是多行对象数组（如 `[{"month":...,"count":...}]`），让 SQL 输出对象字段并把 returns 设为 `["result"]`，finish 直接写 `{q[result]}`，不要把每列拆成独立占位符手写数组。不要把表格行塞进 read；表格类 top/most/count/sort/group by 任务在页面数据源准备完成后用 data_query 做分析，不用视觉 read 手工数行。若任务只问“筛选/搜索后的匹配记录总数”，且页面会显示 `N records found`、结果数、总数等 UI 计数，筛选后用 read 读取这个计数，不要为了单个 UI 计数凭空写 data_query。data_scope 默认 complete（要求完整数据，partial 表格会失败；运行时会尽量采集完整分页）；只有任务明确说“当前页面/当前可见/当前已渲染行”时才设 current。对 most/second/fifth/rank/have N 这类按聚合 count 排名的任务，必须处理并列：用 GROUP BY 先算 count，再用 DENSE_RANK() / HAVING count 返回该名次的所有行；不要用 LIMIT 1 OFFSET N 来代表“第 N 多”，因为它会丢掉并列项。
 - op="if"：按某个带 returns 的 UI run 或 data_query 返回的字段值分支。cond_var=那个步骤的 var；cond_field=该步 returns 里的字段；cond_cmp 可用 "=="、"!="、"exists"、"empty"、"contains"、"not_contains"、"in"、"not_in"；cond_value 用于等于/包含类比较；cond_values 用于 in/not_in 的候选值列表；then=成立时执行的步骤；otherwise=不成立时执行的步骤。
 - op="foreach"：【通用迭代】对当前页面的一个集合（列表/网格），逐行跑一遍 body。name=该采集操作的描述（如「采集候选评论行」）；loop_var=循环变量名（body 里用 {循环变量[字段]} 引用当前行）；returns=每行需要采集的字段列表（系统自动从当前页面的语义树/网格直取，**无需在 foreach 前另写 read 步**）；into=累积表名（留空默认=循环变量+s）；body=每行执行一遍的步骤（run/if/finish）。语义：body 里所有带 returns 的字段 + foreach 行字段会**自动汇成一张表**（命名为 into），循环结束后可被后续 data_query 直接查询。**一层即可，body 里不要再嵌 foreach。** **⚠️ body 可以为空 `[]`**：当目标列已在网格里、不需要逐行钻详情时，直接把 body 留空——系统用 returns 从网格直取字段（collect_fn 自动翻全部分页），into 产出完整表，省去逐行导航的开销。若 body 为空，returns 必须非空（否则不知道要采集什么字段）。
+  **⚠️ 「取前 N 行的目标列值」高频陷阱**：若任务只要排序/筛选后网格的「前 N / 最近 N / 最旧 N」条记录的某列（如「最近 2 笔已完成订单的 Grand Total」「最旧 1 条已完成订单的账单姓名」），**先查知识库该网格的 Column descriptions 确认该列是否已在默认列**（例如，订单网格的默认列常含总金额/Grand Total、账单姓名/Bill-to Name、日期、状态等字段——这些列**不需要钻详情页**），若确认在网格里：用 foreach body=`[]` + returns 含该列名，data_query 用 `SELECT … FROM tbl LIMIT N` 取前 N 行后聚合。**绝不要**以「任务只要 N 条」为由把 body 里写成 navigation 去逐条打开详情——每条 = 1 次额外导航，N=2 时效率低 10 倍，且详情页字段名常与网格列名不一致导致字段读错。只有知识库明确说目标字段**只在详情页、网格无此列**时才用带 body 的 drill。
 - op="finish"：产出最终答复。message 是模板，可用 {变量[字段]} 引用某步骤返回的值或 data_query 结果。
 
 核心原则：
@@ -94,6 +95,14 @@ version: 1
  ]},
  {"op":"run","run_kind":"data_query","var":"q","name":"筛出该产品评分<=3 的评论者","data_scope":"current","returns":["nickname"],"sql":"SELECT nickname FROM detail_rows WHERE Product LIKE '%Acme%' AND CAST(rating AS INTEGER) <= 3"},
  {"op":"finish","message":"该产品评分3星及以下的评论者：{q[nickname]}"}]}
+
+示例（**目标列已在网格里 → foreach body=[] + LIMIT N，绝不 drill 详情页**）——知识库确认订单网格默认列已含 `Grand Total (Purchased)`，无需打开任何详情页：
+{"reasoning":"任务要最近 2 笔已完成订单的 Grand Total 之和。查 Orders 知识库：Grand Total (Purchased) 是 Orders 网格默认列，不需要钻详情页。先筛 Status=Complete（按 Purchase Date 降序，最新在前），再用 foreach body=[] 采集全量 completed orders，data_query LIMIT 2 取最近两行求和。绝不走 foreach+body 详情钻取——Grand Total 就在网格里。","goal":"最近 2 笔已完成订单的总支付金额之和","steps":[
+ {"op":"run","run_kind":"navigation","name":"进入 Sales > Orders","success_condition":"页面显示订单列表和筛选控件"},
+ {"op":"run","run_kind":"filter","name":"清除无关残留筛选，设置 Status=Complete，按 Purchase Date 降序排列","success_condition":"可见筛选状态仅含 Status: Complete，列表已按创建时间降序刷新，无其它残留筛选"},
+ {"op":"foreach","loop_var":"row","name":"采集已完成订单行（body 为空，Grand Total 直接从网格取）","returns":["Grand Total (Purchased)"],"into":"completed_orders","body":[]},
+ {"op":"run","run_kind":"data_query","var":"q","name":"取最近 2 笔订单 Grand Total 之和","returns":["total"],"sql":"SELECT SUM(grand_total_purchased) AS total FROM (SELECT grand_total_purchased FROM completed_orders LIMIT 2)"},
+ {"op":"finish","message":"{q[total]}"}]}
 
 示例变体（**仅 iPhone/Android**，或在 browser 上已确知该列表行根本没有任何详情链接入口 → 才回退按 id 在界面逐条打开；与上例只差 foreach returns 和 body 两行，实体标识列与谓词照样保留。**注意：browser 上「分解时没看到表头」不属于这种情况——那种情况仍按上一示例默认 `Action_url` 走 URL 直达，不要退化到本变体**）——
 {"reasoning":"同上（含规则11⑤的实体范围防线），但本例是 iPhone/Android（或已确知列表行无任何详情链接入口），详情入口只能在界面里点开，所以 foreach returns 只读 id 与 Product，body 的打开步按 {row[id]} 在界面里逐条打开详情，data_query 仍带 Product 谓词。","goal":"返回某产品(检索关键词 Acme)评分3星及以下的评论者昵称","steps":[
