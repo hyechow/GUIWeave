@@ -43,15 +43,15 @@ version: 1
 3. 逐条进入评论详情补齐评分与昵称
 4. 按评分条件筛选并输出昵称
 
-## skill：Products 网格含非默认列采集（如颜色、Color）
-- 触发：产品颜色、color of products、name and color、products with color、哪些产品的颜色
-- 数据：Products grid、Columns 控件、Color 列（非默认须启用）、Filters 数值范围控件
+## skill：按库存数量筛选产品并取某个属性（颜色/材质/尺码）
+- 触发：产品的颜色/材质/尺码、color/material/size of products、name and color、products with N units left 取某属性；凡是「按库存数量筛选产品、再取该产品某个属性」的任务
+- 数据：Products grid、Columns 控件、Quantity 范围筛选、产品编辑页属性字段。目标属性是否是网格可选列决定走哪条路：Products Columns 面板权威可选列（37 列，含 Color，**不含 Material/Size**）。读属性下拉的空值判定——select 未选中时 `selectedIndex=-1`，判为空，绝不把首项（如 Material 的 Burlap）当已选值。数据模型注记：Quantity 在简单变体上；**Size/Color 是配置型「区分属性」、设在每个变体自己身上**（变体名后缀 -SIZE-COLOR 即来源，下钻变体详情页可直接读到，如 1182=S、1478=XS）；但 **Material 不是区分属性、只挂在配置型父产品上**，按 qty 筛出的变体自身 Material 多为空（`selectedIndex=-1`），真值在父产品（SKU 去 -SIZE-COLOR 后缀）。所以走方案 B 前先分清：目标属性是 Size/Color → 变体详情页能直接读；是 Material → 需 variant→parent 多跳，无单网格 UI 路径（已知难题，勿堆通用多跳逻辑）。
 - 步骤：
-1. 进入 Catalog > Products 产品列表
-2. 按任务条件设置 Filters（数值列精确匹配须同时填 From=X 和 To=X）
-3. 通过 Columns 控件启用 Color 列（Color 不在默认列，否则网格无颜色数据；启用即结束，不需关闭面板——详见 Admin_grid_controls 章节）
-4. **foreach（body 留空）** 采集过滤后的全量网格：`returns: ["Name", "Color"]`，`into: products`，`body: []`——运行时 collect_fn 通过 AX 树自动翻全部分页（产品可能跨 8 页），into 产出 complete 表供 data_query 查询；简单产品 Color 有值，可配置父产品 Color 为空
-5. data_query 过滤 color 非空行，输出 name 与 color
+1. 进入 Catalog > Products，按 Quantity 精确筛选（From=To=N）
+2. 判断目标属性是否为 Columns 面板可选列
+3. 是网格列（如 Color）：启用该列后 foreach 网格直采
+4. 非网格列（如 Material/Size）：foreach 逐行下钻详情页读该属性
+5. data_query 过滤非空、去重，按 intent 输出
 
 ## skill：Grid 数据导出或采集
 - 触发：需要完整 grid 数据、导出 CSV/XML、跨分页统计
