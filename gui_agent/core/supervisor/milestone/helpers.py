@@ -554,6 +554,61 @@ def _apply_route_identity_checker_guard(
     })
 
 
+def _is_json_collection_target(milestone: Milestone) -> bool:
+    text = f"{milestone.name}\n{milestone.description}\n{milestone.success_condition}"
+    return bool(
+        re.search(r"json|api|接口", text, re.IGNORECASE)
+        and re.search(r"数组|列表|集合|array|list", text, re.IGNORECASE)
+    )
+
+
+_JSON_COLLECTION_META_EVIDENCE_RE = re.compile(
+    r"total_count|count/total_count|contributions_count|数组字段|元数据|metadata|计数字段"
+    r"|链接字段|link field|url field",
+    re.IGNORECASE,
+)
+
+
+def _apply_json_collection_checker_guard(
+    result: _SingleCheckResult,
+    milestone: Milestone,
+) -> _SingleCheckResult:
+    """Reject JSON collection done verdicts backed by metadata/link evidence.
+
+    Dense mobile JSON screenshots are easy for the vision model to over-read: a resource detail
+    object containing *_url links and counters can be hallucinated as the linked collection
+    endpoint. If the model's own evidence cites metadata/count/link fields, it has not proven a
+    top-level collection response.
+    """
+    if result.status != "done" or not _is_json_collection_target(milestone):
+        return result
+    if not result.visible_evidence:
+        return result.model_copy(update={
+            "status": "in_progress",
+            "reason": "当前 JSON 数组/列表验收缺少独立可见证据，尚不能确认已进入目标接口响应页。",
+            "summary": result.summary,
+            "missing_evidence": ["目标接口的顶层 JSON 数组/列表数据尚未明确可见"],
+            "visible_evidence": [],
+            "stuck_reason": "",
+        })
+    claims = " ".join([
+        result.reason or "",
+        result.summary or "",
+        " ".join(result.visible_evidence or []),
+        " ".join(v.evidence for v in (result.item_verdicts or [])),
+    ])
+    if not _JSON_COLLECTION_META_EVIDENCE_RE.search(claims):
+        return result
+    return result.model_copy(update={
+        "status": "in_progress",
+        "reason": "当前 JSON 证据只指向链接、计数或元数据字段，尚未证明已进入目标接口的顶层数组/列表响应页。",
+        "summary": result.summary,
+        "missing_evidence": ["目标接口的顶层 JSON 数组/列表数据尚未明确可见"],
+        "visible_evidence": [],
+        "stuck_reason": "",
+    })
+
+
 def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
     """Make structured picker direction consistent with current/target values.
 
@@ -835,6 +890,7 @@ def run_checker(
 
     _strip_progress_evidence(result)
     result = _apply_route_identity_checker_guard(result, milestone, observation)
+    result = _apply_json_collection_checker_guard(result, milestone)
 
     claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
     if result.status == "in_progress" and not _is_retry and _BUTTON_CLAIM_RE.search(claims_text):
@@ -855,6 +911,7 @@ def run_checker(
         )
         _strip_progress_evidence(result)
         result = _apply_route_identity_checker_guard(result, milestone, observation)
+        result = _apply_json_collection_checker_guard(result, milestone)
 
     # Validate a done verdict in two stages, because the retry and the force-stuck
     # play different roles:
@@ -881,6 +938,11 @@ def run_checker(
         # converge done 都会因 visible_evidence 空而白白重试一次。
         if milestone.is_converge:
             return False
+        # API/JSON collection pages are easy to over-accept from dense tiny text
+        # (e.g. a detail JSON containing only a *_url link to the target endpoint).
+        # Re-verify once with a sharper instruction before accepting navigation done.
+        if milestone.kind == "navigation" and _is_json_collection_target(milestone):
+            return True
         return milestone.kind != "navigation" and not r.visible_evidence
 
     def _still_invalid(r: _SingleCheckResult) -> bool:
@@ -898,6 +960,8 @@ def run_checker(
                 "你刚才判定为 done，请重新核对截图确认验收条件是否*已经发生*（而非仅具备执行条件）。"
                 "若确实满足，请在 reason 里写清你看到的具体依据（标题文字、高亮选中项、已设定的值、"
                 "结果提示），并清空 missing_evidence；若截图只显示「可以执行」但结果尚未出现，改判 in_progress。"
+                "若目标是 API/JSON 数组或列表页，只有地址栏/标题能确认目标 endpoint，或截图中清楚可读顶层数组结构"
+                "和多个同类条目时才可判 done；只看到 *_url/link/count 字段、相似字段名或小字号密集文本时必须改判 in_progress。"
             ),
             _is_retry=True,
             prompts=prompts,
@@ -906,6 +970,7 @@ def run_checker(
         )
         _strip_progress_evidence(result)
         result = _apply_route_identity_checker_guard(result, milestone, observation)
+        result = _apply_json_collection_checker_guard(result, milestone)
     if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
             status="stuck",
