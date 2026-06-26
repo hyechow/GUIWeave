@@ -23,6 +23,7 @@ from gui_agent.context.runtime import (
     history_block,
     knowledge_block,
     milestone_block,
+    browser_page_block,
     page_title_block,
 )
 from gui_agent.core.config import resolve_llm_config
@@ -814,6 +815,10 @@ def run_checker(
             checker_kind_rules_block(kind_section),
         ],
         human_blocks=[
+            browser_page_block(
+                getattr(observation, "url", None),
+                None,
+            ),
             active_filters_block(getattr(observation, "form_controls", None)),
             form_controls_block(getattr(observation, "form_controls", None)),
             grid_status_block(getattr(observation, "tables", None)),
