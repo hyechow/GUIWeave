@@ -1079,6 +1079,34 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "注意：list_read 已在 19b63e5 移除，不再是有效 DSL op。"
                     f" top-level stmts={[type(s).__name__ for s in program.statements]}"
                 )
+        elif assertion == "filter_step_clears_residual_filters":
+            # WebArena task 186 (live run 1 scored 0.0): Magento admin grid filters persist
+            # server-side per admin account and leak across tasks. Task 186 ("products with
+            # 2-3 units left") inherited a `Keyword: WS08` filter from task 185, silently
+            # narrowing the grid to 1 of 2 products. The data source must reflect EXACTLY the
+            # task's required filter set — so the filter step must clear unrelated residual
+            # filters / search / keyword / range, not just add the qty 2-3 range. This applies
+            # even though the task HAS a specific filter (qty 2-3); it is not an any/all task.
+            seq = _flatten_runs(program.statements)
+            clear_keywords = (
+                "清除", "残留", "无其它", "无其他", "无关", "仅保留", "只保留", "恰好等于",
+                "重置", "clear", "reset", "no other", "remove existing",
+            )
+            clear_steps = [
+                r for r in seq
+                if r.kind in ("filter", "action", "navigate")
+                and any(kw in f"{r.name} {r.success_condition}".lower() for kw in
+                        (k.lower() for k in clear_keywords))
+            ]
+            if not clear_steps:
+                details.append(
+                    "Magento 后台 grid 筛选按账号持久化、跨任务残留（task 186 继承了 185 的 "
+                    "`Keyword: WS08`，结果只剩 1/2 产品，静默失败）。数据源必须恰好反映本任务要求的"
+                    "筛选集——filter 步骤的 name/success_condition 必须包含清除任务未要求的残留"
+                    "筛选/搜索/关键词/范围（关键词：清除/残留/无其它/无关/仅保留/恰好等于/clear/reset），"
+                    "不能只加 qty 2-3 而不管别的筛选。即使本任务有具体筛选值也要保证无无关筛选叠加。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

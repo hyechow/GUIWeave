@@ -329,5 +329,25 @@
       "products_qty_zero_uses_foreach_collect"
     ],
     "note": "task 184 正确路径：① filter Quantity From=0, To=0（精确匹配，约150条简单+可配置产品）② Columns 按钮启用 Color 列（Color 不在默认列里）③ foreach（body 留空，returns=[Name,Color]，into=products）采集过滤后的全量网格（~150行/~8页，collect_fn 自动翻页，产出 complete into 表）④ data_query SELECT name, color WHERE color IS NOT NULL → 只剩 Color 有值的简单产品（答案：Cronus Yoga Pant -33-Blue / Blue）。不需要 foreach 钻产品详情页——Color 列直接在网格里。失败根因历史：① filter 只设 From=0 不设 To=0（=≥0=全量2040条）② Checker 误判 filter 已生效 → PreExisting 跳过 filter 步骤 ③ partial=true → data_query 拒绝 ④ list_read 已在 19b63e5 移除，正确用 foreach 而非 list_read。"
+  },
+  {
+    "label": "WebArena shopping_admin task 186 — qty 2-3 区间筛选必须清除跨任务残留筛选（Keyword 污染）",
+    "goal": "Give me the product names and the sizes of the products that have 2-3 units left. Return a list of objects with keys \"name\" and \"size\".",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://localhost:8023/admin/",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 3,
+      "has_read": true,
+      "has_finish": true
+    },
+    "assertions": [
+      "products_qty_zero_uses_ui_filter_before_data_query",
+      "filter_step_clears_residual_filters"
+    ],
+    "note": "task 186 正确路径：① filter 步骤先清除任务未要求的残留筛选/搜索/关键词（Magento 后台 grid 筛选按账号持久化、跨任务残留），再设 Quantity From=2, To=3；filter 的 success_condition 要求可见 active filters 恰好等于任务要求（无 WS08 之类残留）② 启用/读取 Size 列 ③ foreach 采集过滤后网格 ④ data_query 输出 name+size。失败根因（live run 1 score 0.0）：继承了 task 185 的 `Keyword: WS08` 残留筛选，结果只剩 WS08 名下 1 个产品，漏掉另一个，数据被污染却报 done。这个 case 锁的就是 decomposer 必须为具体筛选任务也规划清残留步骤（不限 any/all）——见 decomposer.md 规则 4 的「这条不限于 any/all 任务」段。区间 From/To 落框问题已由 dom_snap 身份吸附在 ec4597c 修复（见 tests/test_browser_dom_snap.py），不在本 eval 范围。"
   }
 ]
