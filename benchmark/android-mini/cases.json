@@ -1,0 +1,75 @@
+[
+  {
+    "label": "github-repo-discovery-androidworld",
+    "layer": "CheckGithubInfoTask / step 1",
+    "goal": "帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库。",
+    "runner_args": [
+      "--orchestrator",
+      "--no-router"
+    ],
+    "init_script": "benchmark/android-mini/init/open_chrome_url.sh",
+    "init_url": "https://www.google.com/",
+    "init_keep_foreground": false,
+    "max_turns": 8,
+    "timeout_s": 360,
+    "expected_text_contains_all": [
+      "GitHub - google-research/android_world",
+      "google-research",
+      "android_world",
+      "AndroidWorld is an environment and benchmark for autonomous agents",
+      "Code",
+      "Issues",
+      "README",
+      "Repository files navigation"
+    ],
+    "expected_text_contains_any": [
+      "Folders and files",
+      "View all files",
+      "Languages",
+      "Contributors"
+    ],
+    "forbidden_text_contains": [
+      "api.github.com/repos",
+      "repository results",
+      "Search results",
+      "Search · AndroidWorld"
+    ],
+    "note": "CheckGithubInfoTask 分层后的第 1 步：用真实用户表达检索并打开 AndroidWorld 这个 Android GUI agent benchmark 的 GitHub 目标仓库页面。搜索结果页只算中间态，不能作为通过条件；不测 stars/contributors 读取，也不测邮件发送。"
+  },
+  {
+    "label": "github-repo-info-androidworld",
+    "layer": "CheckGithubInfoTask / step 2",
+    "goal": "帮我看下当前打开的这个 GitHub 仓库现在有多少 stars 和 contributors，直接告诉我两个数字。",
+    "runner_args": [
+      "--orchestrator",
+      "--no-router"
+    ],
+    "init_script": "benchmark/android-mini/init/open_chrome_url.sh",
+    "init_url": "https://github.com/google-research/android_world",
+    "init_keep_foreground": true,
+    "init_settle_s": 12,
+    "max_turns": 12,
+    "timeout_s": 480,
+    "expected_text_contains_all": [
+      "google-research",
+      "android_world"
+    ],
+    "expected_text_contains_any": [
+      "Contributors",
+      "contributors",
+      "stars",
+      "GitHub - google-research/android_world"
+    ],
+    "expected_output_regex_all": [
+      "(?is)(stars?|星标|star 数)[^\\n]{0,80}\\d[\\d,.]*\\s*[kKmM万千]?|\\d[\\d,.]*\\s*[kKmM万千]?[^\\n]{0,80}(stars?|星标)",
+      "(?is)(contributors?|贡献者)[^\\n]{0,80}\\d[\\d,.]*\\s*[kKmM万千]?|\\d[\\d,.]*\\s*[kKmM万千]?[^\\n]{0,80}(contributors?|贡献者)"
+    ],
+    "forbidden_text_contains": [
+      "api.github.com/repos"
+    ],
+    "forbidden_output_contains": [
+      "api.github.com/repos"
+    ],
+    "note": "CheckGithubInfoTask 分层后的第 2 步：初始化脚本先把 Chrome 打开到目标 GitHub 仓库页；任务只测通过移动端 GitHub UI 获取 stars 和 contributors 两个数量并回答，不测仓库检索，也不测邮件发送。"
+  }
+]
