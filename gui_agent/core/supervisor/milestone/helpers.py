@@ -46,6 +46,17 @@ from .schemas import (
 )
 
 
+_DISPATCH_GATE_MARKER = "动作已发出且界面给出响应"
+
+
+def is_dispatch_gate_sc(success_condition: str) -> bool:
+    """True when the SC is a dispatch gate — 'action dispatched + any UI response'.
+
+    Dispatch gates are deterministic: url_changed OR dom_changed is conclusive.
+    The LLM checker should never be asked to verify one."""
+    return _DISPATCH_GATE_MARKER in (success_condition or "")
+
+
 def _default_milestone_prompts() -> MilestonePrompts:
     """Lazy iphone-prompts default: keeps every no-prompts caller (iphone factory,
     evals, tests, scripts) working unchanged while prompt bodies live as Markdown

@@ -24,7 +24,7 @@ from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm
 
 from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
 from .helpers import assemble_messages, _make_llm, run_loop_check, run_planner
-from .helpers import run_checker, run_selector, _default_milestone_prompts
+from .helpers import run_checker, run_selector, _default_milestone_prompts, is_dispatch_gate_sc
 from .runtime import (
     EARLY_FEASIBILITY_AT,
     MAX_RETRIES,
@@ -344,6 +344,30 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
         prev_page_id = self._last_page_identity.get(milestone.id, "")
 
+        # Observe state-change signals first — these are deterministic ground truth.
+        # url_changed / dom_changed feed both the dispatch gate check below and the
+        # stuck/no_effect suppression further down.
+        self._monitor.observe_effect(observation.url, observation.dom_state)
+        if self._monitor.url_changed:
+            print(f"  [URLChanged] {observation.url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
+        if self._monitor.dom_changed and not self._monitor.url_changed:
+            print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
+
+        # Dispatch gate: success_condition asks only "did the action produce any UI response?"
+        # That is a deterministic question — url_changed OR dom_changed is conclusive.
+        # Skip the LLM checker entirely; it should never reason about action dispatch.
+        if is_dispatch_gate_sc(milestone.success_condition) and (
+            self._monitor.url_changed or self._monitor.dom_changed
+        ):
+            check = _SingleCheckResult(
+                status="done",
+                reason="动作已发出且界面响应已确认（URL/DOM 状态变化，确定性信号）",
+                summary="dispatch gate 满足",
+            )
+            print("  [DispatchGate] 确定性响应信号 → done（跳过 LLM 验收）")
+            self._last_check = check
+            return self._advance(milestone, observation, history)
+
         with _Timer(self._timings, self._timings_order, "checker", self._token_usage):
             check = self._single_check(milestone, observation, history)
         self._last_check = check
@@ -372,20 +396,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
         current_page_id = check.page_identity or ""
         self._last_page_identity[milestone.id] = current_page_id
-
-        # Programmatic page-change signal: the browser URL is ground truth, so a changed URL means
-        # the previous action navigated — a definite EFFECT / page change. Use it to suppress the
-        # pixel-based false positives below (false no_effect, false sim-stuck on a visually-similar
-        # new page). None on iphone/android (url-less) → url_changed stays False, no effect there.
-        # The ProgressMonitor owns the Kind-1 "did the last action have an effect" facts: a changed
-        # url = navigated; a changed interaction fingerprint (form values + focus) = a form fill
-        # progressed (20260612_103356: an 8-step form fill kept pixels/instructions near-identical
-        # and got misread as stuck). Both suppress the pixel-based false positives below.
-        self._monitor.observe_effect(observation.url, observation.dom_state)
-        if self._monitor.url_changed:
-            print(f"  [URLChanged] {observation.url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
-        if self._monitor.dom_changed and not self._monitor.url_changed:
-            print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
 
         if milestone.completion_strategy == "react_until_collected":
             if self._collection_done:
