@@ -324,5 +324,30 @@
       ]
     },
     "note": "实跑陷阱 20260626_110802 T4-T20：Columns 面板已打开，DOM 显示 Color checkbox current=on（上次会话残留），但产品网格表头没有 Color 列。Checker 错误地反馈「需要关闭/确认面板使更改生效」，导致 Planner 幻觉出 Apply 按钮并反复点 Cancel。正确行为：in_progress + 反馈说「在面板内点击 Color checkbox，网格即时更新，不需要关闭面板」。严禁在 reason/summary/missing_evidence 里写 关闭面板/Cancel/Apply/确认面板。Columns 面板只有 Cancel（关闭UI）和 Reset（恢复默认），没有 Apply/Save；勾选即生效，DOM current=on 是残留态，不代表本次会话已点击过。"
+  },
+  {
+    "label": "Reviews筛选-2条结果可见时不得幻称结果数未变/Search未提交（回归 20260626_171609 重复Search 5次）",
+    "screenshot": "evals/browser/checker/screenshots/reviews_filtered_2records_best.png",
+    "with_app_check": false,
+    "milestone": {
+      "name": "在评论列表中按关键词 'best' 进行筛选",
+      "description": "在 Reviews 列表按 Review Text 关键词 'best' 筛选（读取字段：总记录数）",
+      "success_condition": "已执行「在评论列表中按关键词 'best' 进行筛选」：动作已发出且界面给出响应（出现提示/结果区/列表更新/页面跳转/进入加载，任一即可）；本步不判定结果取值，具体结果由本步完成帧的结构化返回值读取判定。",
+      "kind": "action",
+      "app_name": "shopping_admin"
+    },
+    "expected": {
+      "status": "done",
+      "must_not_claim": [
+        "Search 按钮尚未点击",
+        "Search/Apply按钮未被点击",
+        "筛选动作未实际执行",
+        "筛选动作尚未生效",
+        "结果数未变",
+        "仍为默认全量",
+        "Active filters"
+      ]
+    },
+    "note": "实跑陷阱 20260626_171609（task 15）：Search 已点击，截图清晰可见「2 records found」和 Review 列筛选框内有'best'，过滤生效无误。但 checker 反复幻称「界面尚未显示 Active filters 标签或结果数变化（仍为默认全量状态）」，导致重复点 Search 5 次。根因：Reviews 页搜索后无 Active filters chip（只有 Products/Orders grid 才有），checker 把「没有 chip」误解为「Search 未提交」，并无视了截图里清晰的「2 records found」计数文本。正确行为：success_condition 属于 dispatch gate（任一即可），截图里记录数由 351 变为 2 = 列表已更新 = done；不得要求 Active filters chip，不得声称结果数未变。"
   }
 ]
