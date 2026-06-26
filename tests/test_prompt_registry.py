@@ -25,6 +25,33 @@ def test_prompt_registry_loads_all_assets():
         assert prompt.body.strip()
 
 
+def test_prompt_registry_ignores_appledouble_markdown(tmp_path, monkeypatch):
+    from gui_agent.prompts import loader
+
+    (tmp_path / "real.md").write_text(
+        "---\n"
+        "id: test.real\n"
+        "source_type: task_template\n"
+        "platform: test\n"
+        "scope:\n"
+        "  - test\n"
+        "owner: tests\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "._real.md").write_bytes(b"\xb0\x00not utf8 apple metadata")
+
+    monkeypatch.setattr(loader, "PROMPT_ROOT", tmp_path)
+    loader._registry.cache_clear()
+    try:
+        prompts = loader.iter_prompt_templates()
+    finally:
+        loader._registry.cache_clear()
+
+    assert [p.id for p in prompts] == ["test.real"]
+
+
 def test_rendered_flag_governs_brace_scanning():
     # The rendered/raw split is authoritative (frontmatter `rendered: true`), not inferred by
     # auto-scanning braces — that misread JSON examples in raw prompts. Contract:
@@ -128,7 +155,7 @@ def test_large_inline_prompt_constants_are_explicitly_allowlisted():
 
     actual = set()
     for path in (ROOT / "gui_agent").rglob("*.py"):
-        if "__pycache__" in path.parts:
+        if "__pycache__" in path.parts or path.name.startswith("._"):
             continue
         rel = str(path.relative_to(ROOT))
         tree = ast.parse(path.read_text(encoding="utf-8"))

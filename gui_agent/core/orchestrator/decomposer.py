@@ -176,6 +176,214 @@ def _has_result_source(stmts: list[Stmt]) -> bool:
     return False
 
 
+def _has_run_step(stmts: list[Stmt]) -> bool:
+    for s in stmts:
+        if isinstance(s, Run):
+            return True
+        if isinstance(s, If) and (_has_run_step(s.then) or _has_run_step(s.otherwise)):
+            return True
+        if isinstance(s, ForEach) and _has_run_step(s.body):
+            return True
+    return False
+
+
+def _has_navigation_step(stmts: list[Stmt]) -> bool:
+    for s in stmts:
+        if isinstance(s, Run) and s.kind == "navigation":
+            return True
+        if isinstance(s, If) and (_has_navigation_step(s.then) or _has_navigation_step(s.otherwise)):
+            return True
+        if isinstance(s, ForEach) and _has_navigation_step(s.body):
+            return True
+    return False
+
+
+def _count_navigation_steps(stmts: list[Stmt], *, include_preconditions: bool = True) -> int:
+    total = 0
+    for s in stmts:
+        if isinstance(s, Run) and s.kind == "navigation":
+            if include_preconditions or not s.precondition:
+                total += 1
+        elif isinstance(s, If):
+            total += max(
+                _count_navigation_steps(s.then, include_preconditions=include_preconditions),
+                _count_navigation_steps(s.otherwise, include_preconditions=include_preconditions),
+            )
+        elif isinstance(s, ForEach):
+            total += _count_navigation_steps(s.body, include_preconditions=include_preconditions)
+    return total
+
+
+def _first_run(stmts: list[Stmt]) -> Run | None:
+    for s in stmts:
+        if isinstance(s, Run):
+            return s
+        if isinstance(s, If):
+            found = _first_run(s.then) or _first_run(s.otherwise)
+            if found:
+                return found
+        if isinstance(s, ForEach):
+            found = _first_run(s.body)
+            if found:
+                return found
+    return None
+
+
+def _goal_requires_navigation_source(goal: str) -> bool:
+    text = (goal or "").lower()
+    return bool(
+        re.search(r"\b(open|go to|navigate|find).{0,80}\b(page|site|website|repo|repository|project|doc|document|github)\b", text)
+        or any(k in goal for k in ("找到", "找一下", "打开", "进入", "仓库", "项目", "页面", "网页", "官网", "文档"))
+    )
+
+
+def _goal_is_location_only(goal: str) -> bool:
+    if not _goal_requires_navigation_source(goal):
+        return False
+    text = (goal or "").lower()
+    data_or_action_terms = (
+        "star", "stars", "contributor", "contributors", "count", "number", "total",
+        "how many", "send", "email", "mail", "sms", "message", "统计", "数量", "多少",
+        "几个", "贡献者", "星标", "发送", "邮件", "短信", "汇总", "读取", "查看数量",
+    )
+    return not any(term in text for term in data_or_action_terms)
+
+
+_NAV_IDENTITY_STOPWORDS = {
+    "android",
+    "github",
+    "git",
+    "repo",
+    "repository",
+    "project",
+    "page",
+    "site",
+    "website",
+    "official",
+    "open",
+    "find",
+    "go",
+    "navigate",
+    "document",
+    "doc",
+}
+
+
+def _ascii_words(text: str) -> list[str]:
+    return [m.group(0).lower() for m in re.finditer(r"[A-Za-z][A-Za-z0-9_-]{2,}", text or "")]
+
+
+def _goal_identity_terms(goal: str) -> list[str]:
+    words = _ascii_words(goal)
+    out: list[str] = []
+    for word in words:
+        if word in _NAV_IDENTITY_STOPWORDS:
+            continue
+        if any(word != other and word in other for other in words):
+            continue
+        if word not in out:
+            out.append(word)
+    return out
+
+
+def _goal_target_terms(goal: str) -> list[str]:
+    words = [
+        word for word in _ascii_words(goal)
+        if word not in _NAV_IDENTITY_STOPWORDS
+    ]
+    if not words:
+        return []
+    longest = max(words, key=len)
+    return [longest]
+
+
+def _goal_allows_search_result_terminal(goal: str) -> bool:
+    text = (goal or "").lower()
+    return bool(
+        re.search(r"\b(search results?|results? page|result list|list results?)\b", text)
+        or any(term in goal for term in ("搜索结果", "检索结果", "结果列表", "列出", "列表"))
+    )
+
+
+def _looks_like_search_result_terminal(text: str) -> bool:
+    lower = (text or "").lower()
+    if re.search(r"\b(search results?|results? page|repository results?|result list)\b", lower):
+        return True
+    return any(
+        term in text
+        for term in (
+            "搜索结果",
+            "检索结果",
+            "结果列表",
+            "结果页",
+            "搜索页",
+            "列表显示",
+            "列表包含",
+            "列表已检索到",
+        )
+    )
+
+
+def _check_navigation_identity(program: Program, issues: list[str]) -> None:
+    if not _goal_requires_navigation_source(program.goal):
+        return
+    goal_lower = (program.goal or "").lower()
+    target_terms = _goal_target_terms(program.goal)
+    identity_terms = _goal_identity_terms(program.goal)
+    forbid_search_result_terminal = (
+        _goal_is_location_only(program.goal)
+        and not _goal_allows_search_result_terminal(program.goal)
+    )
+
+    def _walk(stmts: list[Stmt]) -> None:
+        def _check_hardcoded_github_path(text: str, where: str) -> None:
+            for match in re.finditer(r"github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", text, re.I):
+                path = match.group(1).lower()
+                if path not in goal_lower:
+                    issues.append(
+                        f"{where} 硬写了用户未提供的 GitHub 路径 github.com/{match.group(1)}。"
+                        "找目标仓库时不要从当前截图或模型常识臆定 owner/URL；"
+                        "先通过 UI 搜索/打开，并用 owner/描述/README 主题等身份条件验收。"
+                    )
+
+        for s in stmts:
+            if isinstance(s, Run):
+                text = f"{s.name}\n{s.success_condition}\n{s.read_spec}"
+                lowered = text.lower()
+                is_target_navigation = (
+                    s.kind == "navigation"
+                    and (not target_terms or any(term in lowered for term in target_terms))
+                )
+                if is_target_navigation and identity_terms:
+                    missing = [term for term in identity_terms if term not in lowered]
+                    if missing:
+                        issues.append(
+                            f"导航步骤「{s.name}」用于找到目标页面/仓库，但 success_condition 没有带回用户目标身份限定词 {missing}。"
+                            "请把这些限定词写进可见验收条件（如描述、README 主题、owner/发布方、域名等匹配），"
+                            "不能只用标题/名称同名验收。"
+                        )
+                if (
+                    is_target_navigation
+                    and forbid_search_result_terminal
+                    and _looks_like_search_result_terminal(text)
+                ):
+                    issues.append(
+                        f"导航步骤「{s.name}」把搜索结果页/结果列表作为完成态。"
+                        "纯找到/打开目标页面时，搜索结果只算中间态；"
+                        "请继续点击进入目标详情页/仓库页/文档页，并把目标页面身份写进 success_condition。"
+                    )
+                _check_hardcoded_github_path(text, f"导航步骤「{s.name}」")
+            elif isinstance(s, Finish):
+                _check_hardcoded_github_path(s.message, "finish 文案")
+            elif isinstance(s, If):
+                _walk(s.then)
+                _walk(s.otherwise)
+            elif isinstance(s, ForEach):
+                _walk(s.body)
+
+    _walk(program.statements)
+
+
 def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
     """Deterministically convert flat step drafts into the clean Program AST."""
     out: list[Stmt] = []
@@ -247,6 +455,33 @@ def validate_program(program: Program) -> list[str]:
     issues: list[str] = []
     if not program.statements:
         return ["程序为空：至少要有一个 run 步骤"]
+    if _goal_requires_navigation_source(program.goal) and not _has_navigation_step(program.statements):
+        issues.append(
+            "任务是找到/打开/进入某个页面、仓库、项目、文档或官网，但计划没有任何 navigation run，"
+            "不能只用裸 finish 或当前帧 read 直接回答当前截图/模型猜到的链接。请增加 navigation run，通过 UI 到达目标页面；"
+            "success_condition 必须包含 owner/发布方/域名/描述/README 主题等可见身份信息，确认目标身份。"
+        )
+    if _goal_requires_navigation_source(program.goal):
+        first = _first_run(program.statements)
+        if first is not None and first.kind != "navigation":
+            issues.append(
+                f"任务是找到/打开/进入目标页面，但第一个可执行 run「{first.name}」是 {first.kind}，"
+                "不能先用当前帧 read/filter/action 代替找页。请把第一步改成 navigation，通过 UI 搜索/打开/定位到目标页面，"
+                "再在到达后的完成帧读取需要的身份信息。"
+            )
+    if _goal_is_location_only(program.goal) and _has_result_source(program.statements):
+        issues.append(
+            "这是纯找到/打开目标页面的任务，不需要 returns/data_query/if 读取 owner/title 等字段。"
+            "请把 owner/发布方/域名/描述/README 主题等身份要求写进 navigation 的 success_condition；"
+            "不要用返回字段恢复逻辑追逐 owner/title，避免已到达正确页面后又导航走。"
+        )
+    if _goal_is_location_only(program.goal) and _count_navigation_steps(program.statements, include_preconditions=False) > 1:
+        issues.append(
+            "这是纯找到/打开目标页面的任务，外层计划应合并为一个目标 navigation run。"
+            "不要把打开浏览器、进入搜索页/官网、输入关键词、点击结果拆成多个 navigation 子任务；"
+            "这些都属于同一个“找到并打开目标详情页”的执行路径。"
+        )
+    _check_navigation_identity(program, issues)
     if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements):
         issues.append(
             "任务要求返回/查找/统计具体答案，但计划没有任何 returns 或 data_query 结果来源；"
@@ -426,6 +661,24 @@ def validate_program(program: Program) -> list[str]:
     _check_list_read_direct_query(program.statements, issues)
     _check_retrieval_retry_preserves_field(program.statements, issues)
     return issues
+
+
+def _navigation_source_fallback(goal: str, program: Program) -> Program:
+    resolved_goal = (program.goal or goal or "").strip()
+    return Program(
+        goal=resolved_goal or goal,
+        statements=[
+            Run(
+                name=f"通过界面找到目标页面：{resolved_goal or goal}",
+                kind="navigation",
+                success_condition=(
+                    "当前界面显示与用户目标完全一致的页面/仓库/项目/文档/官网；"
+                    "可见 owner/发布方/域名/描述/README 主题等身份信息匹配用户目标的所有限定词。"
+                    "搜索结果页/结果列表只算中间态；仅标题或名称同名不算完成。"
+                ),
+            )
+        ],
+    )
 
 
 # API/JSON direct-link endpoints in a run target (api.xxx.com, /repos/, /contributors?) — the
@@ -861,6 +1114,19 @@ def _invoke_plan(
             print(f"  [Orchestrator] 程序分解校验发现 {len(issues)} 项问题，重试 ({attempt+1}/{_MAX_RETRIES})...")
             for i in issues:
                 print(f"  [Orchestrator]   {i}")
+    needs_nav_fallback = (
+        issues
+        and _goal_requires_navigation_source(program.goal or goal)
+        and (
+            not _has_navigation_step(program.statements)
+            or ((_first_run(program.statements) is not None) and (_first_run(program.statements).kind != "navigation"))
+            or _goal_is_location_only(program.goal or goal)
+            or any("身份限定词" in issue or "GitHub 路径" in issue or "纯找到/打开目标页面" in issue for issue in issues)
+        )
+    )
+    if needs_nav_fallback:
+        print("  [Orchestrator] 分解仍缺少可靠目标身份约束，按找页/到达语义降级为 navigation run")
+        program = _navigation_source_fallback(goal, program)
     return program
 
 

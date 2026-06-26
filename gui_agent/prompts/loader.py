@@ -84,6 +84,8 @@ def iter_prompt_templates() -> tuple[PromptTemplate, ...]:
 def _registry() -> dict[str, PromptTemplate]:
     prompts: dict[str, PromptTemplate] = {}
     for path in sorted(PROMPT_ROOT.rglob("*.md")):
+        if path.name.startswith("._"):
+            continue
         meta, body = _split_frontmatter(path)
         prompt_id = str(meta.get("id") or "").strip()
         if not prompt_id:

@@ -144,6 +144,157 @@ def test_validate_empty_program():
     assert validate_program(Program(statements=[])) == ["程序为空：至少要有一个 run 步骤"]
 
 
+def test_validate_find_page_goal_rejects_bare_finish():
+    prog = Program(
+        goal="帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+        statements=[
+            Finish(message="已找到：https://github.com/example/AndroidWorld"),
+        ],
+    )
+
+    issues = validate_program(prog)
+
+    assert any("没有任何 navigation run" in issue for issue in issues)
+    assert any("目标身份" in issue for issue in issues)
+
+
+def test_validate_find_repo_goal_requires_identity_terms():
+    bad = Program(
+        goal="帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+        statements=[
+            Run(
+                name="确认当前页面为 AndroidWorld 项目主页",
+                kind="navigation",
+                success_condition=(
+                    "页面 URL 包含 github.com/kongpf8848/AndroidWorld，"
+                    "页面标题显示 kongpf8848 / AndroidWorld。"
+                ),
+            ),
+            Finish(message="已找到：https://github.com/kongpf8848/AndroidWorld"),
+        ],
+    )
+
+    issues = validate_program(bad)
+
+    assert any("身份限定词" in issue and "benchmark" in issue for issue in issues)
+    assert any("用户未提供的 GitHub 路径" in issue for issue in issues)
+
+    good = Program(
+        goal=bad.goal,
+        statements=[
+            Run(
+                name="搜索并打开 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+                kind="navigation",
+                success_condition=(
+                    "页面显示 AndroidWorld 仓库；描述或 README 主题明确表明它是 "
+                    "Android GUI agent benchmark；owner/发布方/域名与该项目身份匹配。"
+                ),
+            )
+        ],
+    )
+
+    assert validate_program(good) == []
+
+
+def test_validate_find_repo_goal_rejects_read_only_confirmation():
+    prog = Program(
+        goal="帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+        statements=[
+            Run(
+                var="repo",
+                name="读取当前仓库身份信息",
+                kind="read",
+                returns=["owner", "repo_name", "description"],
+                read_spec="读取当前页面 owner、repo_name、description。",
+            ),
+            Finish(message="https://github.com/{repo[owner]}/{repo[repo_name]}"),
+        ],
+    )
+
+    issues = validate_program(prog)
+
+    assert any("没有任何 navigation run" in issue for issue in issues)
+    assert any("第一个可执行 run" in issue and "read" in issue for issue in issues)
+    assert any("当前帧 read" in issue for issue in issues)
+
+
+def test_validate_location_only_goal_rejects_return_fields():
+    prog = Program(
+        goal="帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+        statements=[
+            Run(
+                var="repo",
+                name="搜索并打开 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+                kind="navigation",
+                returns=["owner", "page_title"],
+                success_condition=(
+                    "页面显示 AndroidWorld 仓库，描述或 README 表明它是 Android GUI agent benchmark。"
+                ),
+                read_spec="owner: owner; page_title: title",
+            )
+        ],
+    )
+
+    issues = validate_program(prog)
+
+    assert any("纯找到/打开目标页面" in issue for issue in issues)
+
+
+def test_validate_find_repo_goal_rejects_search_result_terminal():
+    prog = Program(
+        goal="帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+        statements=[
+            Run(
+                name="搜索 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+                kind="navigation",
+                success_condition=(
+                    "GitHub 搜索结果列表显示 AndroidWorld 仓库结果，"
+                    "描述包含 Android GUI agent benchmark。"
+                ),
+            )
+        ],
+    )
+
+    issues = validate_program(prog)
+
+    assert any("搜索结果页/结果列表作为完成态" in issue for issue in issues)
+
+
+def test_validate_location_only_goal_rejects_over_decomposed_navigation():
+    prog = Program(
+        goal="帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",
+        statements=[
+            Run(
+                name="打开 Chrome 浏览器",
+                kind="navigation",
+                success_condition="Chrome 浏览器已打开",
+            ),
+            Run(
+                name="导航到 GitHub 官网",
+                kind="navigation",
+                success_condition="GitHub 首页显示",
+            ),
+            Run(
+                name="在 GitHub 搜索框输入 AndroidWorld 并执行搜索",
+                kind="navigation",
+                success_condition="搜索结果列表显示 AndroidWorld 相关仓库",
+            ),
+            Run(
+                name="点击第一个匹配的 AndroidWorld 仓库链接进入详情页",
+                kind="navigation",
+                success_condition=(
+                    "页面显示 AndroidWorld 仓库；描述或 README 主题明确表明它是 "
+                    "Android GUI agent benchmark；owner/发布方/域名与该项目身份匹配。"
+                ),
+            ),
+        ],
+    )
+
+    issues = validate_program(prog)
+
+    assert any("外层计划应合并为一个目标 navigation run" in issue for issue in issues)
+
+
 def test_validate_if_references_unknown_var():
     prog = Program(statements=[
         Run(var="d", name="读", kind="read", returns=["连通判定"]),
