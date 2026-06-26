@@ -54,24 +54,38 @@ def _runs(stmts: list) -> list:
     return out
 
 
-# 只匹配 URL 形式的 API/JSON 直链端点（api.*/repos//contributors?），不匹配 read 字段名
-# （stars_count/contributors_count 是合法的 returns 字段名，邮件正文里 {var[stars_count]} 是
-# 正确的模板接力，不是走 API）。
-_API_RE = re.compile(
-    r"https?://api\.|api\.github\.com|/repos/|/contributors\?",
-    re.IGNORECASE,
+# 策略(2026/06/26 放开 API 后):走 api 合法,但 api URL 必须 {var} 接力运行时读到的真实
+# owner/repo,不许 decomposer 凭记忆硬写具体实体(幻觉)。URL 模板是通用知识(非幻觉),
+# 实体来自运行时——read 地址栏 URL → {var} 构造 api URL → read JSON 字段(result-then-reference)。
+# 只匹配硬写的具体实体(api.github.com/repos/owner/repo),不匹配 {var} 模板({u[owner]} 含
+# 括号不匹配该字符类),也不匹配 read 字段名(stargazers_count 等合法 returns)。
+_API_ENTITY_RE = re.compile(
+    r"api\.github\.com/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", re.IGNORECASE
 )
+_VAR_REF_RE = re.compile(r"\{[A-Za-z_]\w*(?:\[|\})")
 
 
 def _check_assertions(runs: list, assertions: list[str]) -> list[str]:
     details: list[str] = []
     for a in assertions:
-        if a == "no_api_json_direct_link":
-            offenders = [r.name for r in runs if _API_RE.search(r.name or "")]
+        if a == "no_hardcoded_api_entity":
+            # api URL 含具体 owner/repo(非 {var} 模板)= 凭记忆幻觉
+            offenders = []
+            for r in runs:
+                for field in (r.name, getattr(r, "read_spec", "") or ""):
+                    for m in _API_ENTITY_RE.finditer(field or ""):
+                        window = field[max(0, m.start() - 5):m.end() + 5]
+                        if not _VAR_REF_RE.search(window):
+                            offenders.append(f"{r.name!r} 硬写 {m.group(0)}")
             if offenders:
                 details.append(
-                    f"run 走了 API/JSON 直链取数（应走网页/应用界面视觉）: {offenders}"
+                    "API 实体幻觉(应先 read 地址栏 URL 提取 owner/repo,再 {var} 接力构造 api URL): "
+                    + "; ".join(offenders)
                 )
+        elif a == "has_read_step":
+            # 防退化:必须有带 returns 的读数 step,不能纯 navigation 翻仓库列表(20260626 失败模式)
+            if not any(r.returns for r in runs):
+                details.append("plan 无任何带 returns 的 run(纯 navigation 退化,读不到目标字段)")
         else:
             details.append(f"unknown assertion: {a}")
     return details

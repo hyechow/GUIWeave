@@ -462,13 +462,13 @@ def validate_program(program: Program) -> list[str]:
     issues: list[str] = []
     if not program.statements:
         return ["程序为空：至少要有一个 run 步骤"]
-    if _goal_requires_navigation_source(program.goal) and not _has_navigation_step(program.statements):
+    if _goal_is_location_only(program.goal) and not _has_navigation_step(program.statements):
         issues.append(
             "任务是找到/打开/进入某个页面、仓库、项目、文档或官网，但计划没有任何 navigation run，"
             "不能只用裸 finish 或当前帧 read 直接回答当前截图/模型猜到的链接。请增加 navigation run，通过 UI 到达目标页面；"
             "success_condition 必须包含 owner/发布方/域名/描述/README 主题等可见身份信息，确认目标身份。"
         )
-    if _goal_requires_navigation_source(program.goal):
+    if _goal_is_location_only(program.goal):
         first = _first_run(program.statements)
         if first is not None and first.kind != "navigation":
             issues.append(
@@ -489,6 +489,7 @@ def validate_program(program: Program) -> list[str]:
             "这些都属于同一个“找到并打开目标详情页”的执行路径。"
         )
     _check_navigation_identity(program, issues)
+    _check_hardcoded_api_entity(program, issues)
     if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements):
         issues.append(
             "任务要求返回/查找/统计具体答案，但计划没有任何 returns 或 data_query 结果来源；"
@@ -685,6 +686,38 @@ def _navigation_source_fallback(goal: str, program: Program) -> Program:
 # API direct-link ban lifted (2026/06/26): agents may visit api endpoints via the browser and
 # read the JSON through read_screen_text (text-source structured_read). Host-side URL fetching
 # (url_json_read / _direct_nav_url) stays removed — only in-browser access counts.
+
+# API 实体不许硬写(result-then-reference):走 api 时 owner/repo 必须 {var} 接力运行时读到的真实
+# 值(读地址栏 URL),不许 decomposer 凭记忆写死具体实体(非知名仓库会幻觉)。只匹配硬写的具体实体
+# (api.github.com/repos/owner/repo);{var} 模板(api.github.com/repos/{u[owner]}/{u[repo]})含括号
+# 不匹配该字符类,故不误报;read 字段名(stargazers_count)也不匹配。
+_API_ENTITY_RE = re.compile(
+    r"api\.github\.com/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", re.IGNORECASE
+)
+_VAR_REF_RE = re.compile(r"\{[A-Za-z_]\w*(?:\[|\})")
+
+
+def _check_hardcoded_api_entity(program: Program, issues: list[str]) -> None:
+    """走 api 时 owner/repo 必须 {var} 接力运行时读到的真实值,不许凭记忆硬写具体实体。"""
+    def _walk(stmts: list[Stmt]) -> None:
+        for s in stmts:
+            if isinstance(s, Run):
+                for field in (s.name, s.read_spec or ""):
+                    for m in _API_ENTITY_RE.finditer(field or ""):
+                        window = field[max(0, m.start() - 5):m.end() + 5]
+                        if not _VAR_REF_RE.search(window):
+                            issues.append(
+                                f"步骤「{s.name}」硬写了 api 实体 {m.group(0)}——"
+                                "owner/repo 要从运行时读地址栏 URL 用 {var} 接力"
+                                "(先 read URL 提取 owner/repo,再用 api URL 模板 "
+                                "api.github.com/repos/{u[owner]}/{u[repo]} 导航),不能凭记忆写死。"
+                            )
+            elif isinstance(s, If):
+                _walk(s.then)
+                _walk(s.otherwise)
+            elif isinstance(s, ForEach):
+                _walk(s.body)
+    _walk(program.statements)
 
 
 _RETRIEVAL_FIELD_RE = re.compile(
@@ -1112,7 +1145,7 @@ def _invoke_plan(
                 print(f"  [Orchestrator]   {i}")
     needs_nav_fallback = (
         issues
-        and _goal_requires_navigation_source(program.goal or goal)
+        and _goal_is_location_only(program.goal or goal)
         and (
             not _has_navigation_step(program.statements)
             or ((_first_run(program.statements) is not None) and (_first_run(program.statements).kind != "navigation"))

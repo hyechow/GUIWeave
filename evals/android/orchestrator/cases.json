@@ -1,9 +1,9 @@
 [
   {
-    "label": "github-info-禁 API/JSON 直链取数（回归 20260625_195139）",
-    "screenshot": "evals/android/orchestrator/screenshots/github_info_home_195139.png",
-    "goal": "Please check the number of stars and contributors on the AndroidWorld GitHub repository, then send an email to kevin_zhang@example.com with the subject line \"AndroidWorld Repository Stats\" and the following message body:\nThere are XXX stars and XXX contributors in the AndroidWorld repository.\n\nReplace \"XXX\" with the actual numbers you find.",
-    "assertions": [],
-    "note": "【2026/06/26 方向反转：已放开 API，允许 agent 经浏览器访问 api endpoint、用 read_screen_text 读 JSON；no_api_json_direct_link 断言已停用。下为 195139 纯视觉时期历史，保留备查。】195139 纯视觉重跑（删 url_json_read 后门后）：orchestrator decomposer 把 api.github.com REST 端点写进 run.name——手机 Chrome 不渲染原始 JSON，纯视觉读不到字段（contributors 读成 5/真 15），且 mail run 没用 {var} 模板接力 reads、planner 幻觉成 2156/34，最终 score 0.0。program 的 run 必须走 github.com 网页视觉获取，禁止 api.*/JSON 直链端点。这是 mobileworld 默认路径（--orchestrator），不同于 evals/android/decomposer 的 legacy milestone DAG。"
+    "label": "github-repo-info-API须基于运行时URL构造(回归 20260626_204339)",
+    "screenshot": "evals/android/orchestrator/screenshots/github_repo_info_init_20260626.png",
+    "goal": "帮我看下当前打开的这个 GitHub 仓库现在有多少 stars 和 contributors，直接告诉我两个数字。",
+    "assertions": ["no_hardcoded_api_entity", "has_read_step"],
+    "note": "回归 20260626_204339(android-mini github-repo-info 真机跑):decomposer 想走 api.github.com/repos/google-research/android_world(从训练记忆搬 owner/repo = 幻觉),被 7cd0c10 导航身份强制降级成纯 navigation,agent 退化视觉翻 google-research 的 349 仓库 12 轮失败,完全没用上 API/read_screen_text。通用策略:API 访问必须 result-then-reference——先 read 地址栏真实 URL 提取 owner/repo,再用 {var} 构造 api URL 模板(api.github.com/repos/{u[owner]}/{u[repo]}),不许 decomposer 凭记忆硬写具体实体。URL 模板是通用知识(非幻觉),owner/repo 来自运行时(非幻觉)。assertion: no_hardcoded_api_entity(api URL 不硬写实体)+ has_read_step(有带 returns 的读数 step,防纯 navigation 退化)。"
   }
 ]
