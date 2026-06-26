@@ -29,6 +29,7 @@
 | 186 | 1.0 | ✅ | Give me the product names and the sizes of the products that have 2-3 units lef… | [report](reports/186.html) |
 | 193 | 1.0 | ✅ | Get the total payment amount of the last 2 completed orders | [report](reports/193.html) |
 | 196 | 1.0 | ✅ | Get the payment difference between the last 4 cancelled orders and the last 4 c… | [report](reports/196.html) |
+| 197 | 1.0 | ✅ | Get the total payment amount of the last 5 non-cancelled orders | [report](reports/197.html) |
 | 345 | 1.0 | ✅ | How many reviews did our shop receive in Apr 2023? | [report](reports/345.html) |
 
 ## 已知问题/局限
@@ -45,3 +46,5 @@
   连续失败根因已覆盖：① foreach 产出的 complete `completed_orders` 表与当前 DOM partial 表同时存在时，旧 `data_query` 完整性检查会被未引用的 partial sibling 阻塞；② `Grand Total (Purchased)` 是 `$106.00` 这类 UI 金额文本，直接 `SUM(grand_total_purchased)` 在 SQLite 中得到 `0.0`；③ `Purchase Date` 是 `Feb 3, 2023 6:08:03 PM` 这类人类日期文本，直接 `ORDER BY purchase_date` 是字典序。修复后运行时为可解析列暴露 typed shadows：`grand_total_purchased_num` 用于金额聚合，`purchase_date_ts` 用于日期排序；最终 SQL 为 `SELECT SUM(grand_total_purchased_num) AS total FROM (SELECT grand_total_purchased_num FROM completed_orders ORDER BY purchase_date_ts DESC LIMIT 2)`。本次官方 eval：answer/response 均为 `182.4`。
 - **task 196 "last 4 cancelled vs completed payment difference"：已修复，score 1.0（11 turns，headed run `logs/gui_agent/webarena/browser/20260626_215131`）。**
   历史失败根因：① `SELECT SUM(...) FROM table LIMIT 4` 把 `LIMIT` 放在聚合之后，实际求了全状态全表总额；② `finish`/SQL 曾尝试用 `{var[field]}` 或 `a-b` 做差，产生负值或不可执行模板；③ foreach returns 写内部名 `created_at`，collect_fn 读不到日期列。修复后统一走：分别筛 `Status=Canceled`/`Complete` 并按 `Purchase Date` 降序，foreach body=[] 采集可见列 `Purchase Date` + `Grand Total (Purchased)`，最终 data_query 用 `purchase_date_ts` 子查询 `LIMIT 4` 后 `SUM(grand_total_purchased_num)`，再 `ABS(cancelled-completed)`。新增泛化兜底：data_query SQL 禁止 `{...}` 模板、禁止把前序 var 当 SQL 表名；聚合类任务禁止让 filter/action/read 目测读取当前可见网格行字段或手工相加。官方 eval：answer/response 均为 `194.25`。
+- **task 197 "last 5 non-cancelled orders total payment"：已修复，score 1.0（3 turns，headed run `logs/gui_agent/webarena/browser/20260626_221207`）。**
+  首跑失败 `logs/gui_agent/webarena/browser/20260626_220626`：decomposer 把 non-cancelled 写成 UI 负筛选「Status 不为 Canceled」，planner 只能在单值下拉里选择 `Complete`，导致数据源只剩完成订单；`data_query_repair` 正确拒绝口径不一致并返回 unknown_error。修复：prompt 增加通用否定约束规则（non-X/not X/excluding X 不可用单值下拉近似；未知是否有负筛选控件时采完整行后 SQL 排除），shopping_admin skill 明确 Status 是单值筛选、non-cancelled 不用 UI Status 下拉。正确路径是清除 active filters、foreach 采全量 Orders 的 `Status`/`Purchase Date`/`Grand Total (Purchased)`，SQL `WHERE lower(status) NOT LIKE '%cancel%' ORDER BY purchase_date_ts DESC LIMIT 5` 后外层 `SUM(grand_total_purchased_num)`。官方 eval：answer/response 均为 `778.2`。

@@ -27,13 +27,13 @@ version: 1
 
 ## skill：订单支付金额/最近 N 订单聚合
 - 触发：payment amount、Grand Total、last N orders、completed/canceled/cancelled orders、non-cancelled orders、payment difference
-- 数据：Orders grid；可见列 `Status`、`Purchase Date`、`Grand Total (Purchased)`。foreach returns 用可见列名，不用内部名 `created_at`；SQL 再用 `purchase_date_ts` 和 `grand_total_purchased_num`。
+- 数据：Orders grid；可见列 `Status`、`Purchase Date`、`Grand Total (Purchased)`。Status 是单值筛选；non-cancelled 不用 UI Status 下拉，不用 Complete 近似。foreach returns 用可见列名，不用内部名 `created_at`；SQL 再用 `purchase_date_ts` 和 `grand_total_purchased_num`。
 - 步骤：
 1. 进入 Sales > Orders
-2. 设置/清除 Status，并清无关残留
-3. foreach body=[] 采集 Purchase Date 和 Grand Total
+2. non-cancelled 禁用 UI Status；清筛后采全量
+3. foreach body=[] 采 Status、Date、Grand Total
 4. data_query 用 purchase_date_ts LIMIT N 后聚合
-5. 比较多个口径时用 CTE/ABS 输出最终值
+5. 多口径用 CTE/ABS；SQL 排除 Canceled
 
 ## skill：Dashboard 搜索词读取
 - 触发：top search terms、most-used search terms、recent search terms、dashboard search terms

@@ -1370,6 +1370,110 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "必须用 foreach body=[] 采集两个状态口径的完整 Orders 网格，再由 data_query 聚合计算。"
                     f" offenders={offenders}"
                 )
+        elif assertion == "orders_non_cancelled_total_uses_status_exclusion":
+            seq = _flatten_runs(program.statements)
+            foreaches = _flatten_foreaches(program.statements)
+            grid_collects = [
+                fe for fe in foreaches
+                if not fe.body
+                and any("status" in str(ret).lower() for ret in fe.returns)
+                and any("grand" in str(ret).lower() and "total" in str(ret).lower() for ret in fe.returns)
+                and any("purchase" in str(ret).lower() and "date" in str(ret).lower() for ret in fe.returns)
+            ]
+            if not grid_collects:
+                details.append(
+                    "task 197 的 non-cancelled 口径应从 Orders 网格采集完整行，foreach returns 至少包含 "
+                    "Status、Purchase Date、Grand Total (Purchased)；不能只采金额/日期，也不能钻详情。"
+                    f" foreaches={[(fe.target, fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
+                )
+            bad_status_filters = []
+            negative_status_filters = []
+            for r in seq:
+                if r.kind not in {"filter", "action", "navigation"}:
+                    continue
+                text = f"{r.name} {r.success_condition}".lower()
+                sets_single_status = "status" in text and re.search(r"\bcomplete\b|\bprocessing\b|\bpending\b", text)
+                mentions_non_cancel = re.search(r"non[- ]?cancell?ed|not cancell?ed|exclude cancell?ed|排除.*取消|非取消", text)
+                if sets_single_status and not mentions_non_cancel:
+                    bad_status_filters.append((r.kind, r.name, r.success_condition))
+                negative_status_ui = (
+                    ("status" in text or "状态" in text)
+                    and re.search(
+                        r"不为|不是|不含|排除|非取消|无\s*cancell?ed|not\s+cancell?ed|exclude\s+cancell?ed|non[- ]?cancell?ed",
+                        text,
+                        flags=re.I,
+                    )
+                )
+                clear_only = re.search(r"清除|清空|无关|残留|clear|reset|no active", text, flags=re.I)
+                negative_action = re.search(r"设置|筛选|应用|选择|确保|set|apply|select|filter|ensure", text, flags=re.I)
+                if negative_status_ui and (negative_action or not clear_only):
+                    negative_status_filters.append((r.kind, r.name, r.success_condition))
+            if bad_status_filters:
+                details.append(
+                    "task 197 是 non-cancelled，不等于 Status=Complete/Processing/Pending 单一状态；"
+                    "页面应清除状态筛选后采集完整 Orders，再在 SQL 里排除 Canceled/Cancelled。"
+                    f" bad_status_filters={bad_status_filters}"
+                )
+            if negative_status_filters:
+                details.append(
+                    "task 197 不能规划 UI 负筛选「Status 不为/排除 Canceled」；Magento Status 是单值下拉，"
+                    "执行层会退化成选择 Complete。正确做法是清除状态筛选，采集含 Status 的完整 Orders，"
+                    "再在 data_query SQL 中排除 Canceled/Cancelled。"
+                    f" negative_status_filters={negative_status_filters}"
+                )
+            clear_keywords = (
+                "清除", "残留", "无其它", "无其他", "无关", "clear", "reset",
+                "no active", "active filters", "all orders", "全量",
+            )
+            if not any(
+                r.kind in {"filter", "action", "navigation"}
+                and any(kw in f"{r.name} {r.success_condition}".lower() for kw in clear_keywords)
+                for r in seq
+            ):
+                details.append(
+                    "task 197 需要全量 non-cancelled 口径；data_query 前必须清除无关/残留 Status 筛选，"
+                    "不能继承上一题 Canceled/Complete active filter。"
+                    f" seq={[(r.kind, r.name, r.success_condition) for r in seq]}"
+                )
+            dqs = [r for r in seq if r.kind == "data_query"]
+            combined_sql = "\n".join((r.sql or "").lower() for r in dqs)
+            has_status_exclusion = bool(
+                re.search(r"\bstatus\b.{0,80}(?:not\s+like|not\s+in|!=|<>).{0,80}cancell?ed|"
+                          r"\bstatus\b.{0,80}(?:not\s+like|not\s+in|!=|<>).{0,80}cancel",
+                          combined_sql, flags=re.I | re.S)
+                or re.search(r"\bwhere\b(?:(?!\border\s+by\b).)*\bstatus\b(?:(?!\border\s+by\b).)*\bnot\b(?:(?!\border\s+by\b).)*cancel",
+                             combined_sql, flags=re.I | re.S)
+            )
+            if not has_status_exclusion:
+                details.append(
+                    "task 197 必须在 SQL 中按 Status 排除 Canceled/Cancelled（如 lower(status) NOT LIKE '%cancel%'），"
+                    "不能只取 complete 或不处理 non-cancelled 口径。"
+                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                )
+            if "limit 5" not in combined_sql:
+                details.append(
+                    "task 197 需要取最近 5 笔 non-cancelled orders；SQL 应包含 LIMIT 5。"
+                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                )
+            if "grand_total_purchased_num" not in combined_sql or "purchase_date_ts" not in combined_sql:
+                details.append(
+                    "task 197 金额求和必须用 grand_total_purchased_num，最近排序必须用 purchase_date_ts。"
+                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                )
+            bad_limit = [
+                r.sql for r in dqs
+                if re.search(
+                    r"\bselect\s+sum\s*\([^)]*\)\s+(?:as\s+\w+\s+)?from\s+[a-z_][a-z0-9_]*\s+limit\s+5\b",
+                    (r.sql or "").lower(),
+                    flags=re.DOTALL,
+                )
+            ]
+            if bad_limit:
+                details.append(
+                    "task 197 不能写 `SELECT SUM(...) FROM table LIMIT 5`；"
+                    "必须先在子查询里按日期排序并 LIMIT 5，再外层 SUM。"
+                    f" bad_sql={bad_limit}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
