@@ -93,7 +93,7 @@ If you do not want your product grid to be limited, use filters more precisely t
 |Cost|The actual cost of the item.|
 |Manufacturer|The manufacturer of the product.|
 |Meta Keywords|Meta keywords for the product.|
-|Color|The product color.|
+|Color|The product color. **不在默认列里**：需先点 Columns 按钮，勾选 Color 后该列才出现在网格中。适合「找出颜色」类任务时提前启用。|
 |Set Product as New from Date|The first date of the set product as a new promotion.|
 |Set Product as New to Date|The last date of the set product as a new promotion.|
 |Active From / To|The product start and end date.|

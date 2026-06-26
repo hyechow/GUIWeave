@@ -11,6 +11,7 @@ Coordinates are normalized 0-1000 over the viewport; NO YOLO snap, NO picker.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Optional
 
@@ -89,6 +90,14 @@ def _should_accept_dom_snap(description: str, info: str, px: float, py: float, c
     Search/clear icons are often rendered inside a text input wrapper. Snapping
     an icon click to the input/text center moves the click away from the icon and
     turns it into a focus no-op.
+
+    Also rejects snaps where the original click point lies outside the snapped
+    element's bbox AND the snap distance exceeds 80px — this catches the Magento
+    admin flyout failure: clicking inside a flyout panel at (230,247) causes
+    .closest('li') to bubble up to the sidebar Catalog <li> (static bbox 88x62,
+    center 44,230), which is a DOM ancestor of the absolutely-positioned flyout
+    but visually 187px away.  Text-retarget snaps (info starts with 'text ') are
+    intentionally far-reaching and exempt from this check.
     """
     if not info:
         return False
@@ -97,6 +106,18 @@ def _should_accept_dom_snap(description: str, info: str, px: float, py: float, c
         tag = info.split(" ", 1)[0].lower()
         if tag in {"input", "textarea", "text"} and abs(cx - px) > 8:
             return False
+    if not info.startswith("text "):
+        try:
+            parts = info.split(" ", 1)
+            if len(parts) > 1:
+                w, h = (int(v) for v in parts[1].split("x"))
+                tol = 20
+                x_ok = (cx - w / 2 - tol) <= px <= (cx + w / 2 + tol)
+                y_ok = (cy - h / 2 - tol) <= py <= (cy + h / 2 + tol)
+                if not (x_ok and y_ok) and math.hypot(cx - px, cy - py) > 80:
+                    return False
+        except Exception:
+            pass
     return True
 
 
