@@ -492,6 +492,7 @@ def validate_program(program: Program) -> list[str]:
     _check_navigation_identity(program, issues)
     _check_hardcoded_api_entity(program, issues)
     _check_api_text_source(program, issues)
+    _check_numeric_read_uses_api(program, issues)
     if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements):
         issues.append(
             "任务要求返回/查找/统计具体答案，但计划没有任何 returns 或 data_query 结果来源；"
@@ -717,6 +718,35 @@ def _check_api_text_source(program: Program, issues: list[str]) -> None:
             elif isinstance(s, ForEach):
                 _walk(s.body)
     _walk(program.statements)
+
+
+def _check_numeric_read_uses_api(program: Program, issues: list[str]) -> None:
+    """读数值(stars/contributors/计数等)的任务优先走 api:手机页面常不显示这类数据(精简)
+    或它在视口外,裸读页面会读空;api 数据可靠。已有 api run 则不报。"""
+    text = (program.goal or "").lower()
+    if not any(k in text for k in ("star", "contributor", "count", "数量", "多少", "几个", "数字", "number", "总数")):
+        return
+
+    def _has_api(stmts: list[Stmt]) -> bool:
+        for s in stmts:
+            if isinstance(s, Run):
+                if "api.github.com" in f"{s.name}\n{s.read_spec or ''}".lower():
+                    return True
+                if s.kind == "data_query":  # data_query(表格聚合)也是合法数值来源
+                    return True
+            elif isinstance(s, If):
+                if _has_api(s.then) or _has_api(s.otherwise):
+                    return True
+            elif isinstance(s, ForEach):
+                if _has_api(s.body):
+                    return True
+        return False
+
+    if not _has_api(program.statements):
+        issues.append(
+            "任务要读数值(stars/contributors/计数等),但计划没走 api——手机页面常不显示这类数据"
+            "或它在视口外,裸读会读空。优先走 api(如 api.github.com)用 text_source 读 JSON 取可靠数值。"
+        )
 
 
 def _check_hardcoded_api_entity(program: Program, issues: list[str]) -> None:

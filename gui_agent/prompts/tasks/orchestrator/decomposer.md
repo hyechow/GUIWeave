@@ -57,6 +57,7 @@ version: 1
    - ✅ stars(三步 result-then-reference,owner/repo 从运行时接力、不许凭记忆写死):① read 地址栏 URL(**text_source**)提取 owner/repo → ② navigation 到 api URL **模板** `https://api.github.com/repos/{u[owner]}/{u[repo]}`(**text_source**)→ ③ read `stargazers_count`。URL 模板是通用知识(非幻觉),owner/repo 来自运行时真实页面(非幻觉);硬写具体 owner/repo 会被 validate 拒
    - ✅ contributors(同 stars 走 api——数据都从 api 拿,不导航网页):read URL 提取 owner/repo → navigation 到 `https://api.github.com/repos/{u[owner]}/{u[repo]}/contributors?per_page=100`(**text_source**)→ read「contributors 数 = JSON 数组里对象的个数」(/repos 无 contributors 字段,用 /contributors 端点数数组)
    - ❌ 不要构造绕过浏览器的 host 侧取数后门(直接 HTTP 请求 JSON);agent 只经浏览器界面访问
+   - ⚠ navigation 到 api/数据源的 **name 字段必须写完整 URL(含 {var} 模板)**,如「导航到 `https://api.github.com/repos/{u[owner]}/{u[repo]}`」;**严禁**写「导航到 GitHub API 获取信息」这种描述——运行时 {var} 已替换成真实值(google-research/android_world),planner 直接用该 URL;若只写描述,planner 会自己臆造 URL、写错 owner/repo(20260626_213657 真机:写成了 android-wear-os)
 
 只输出与任务相关的步骤，不加多余前置（已在工作区就别加「打开网站」）。**忠于目标、别臆造实体**：目标要操作/选择/处理某实体（某条记录/对象/条目…）时默认它已存在——用已知名称或 read 选现有再引用（规则10），别补「新建/创建/配置」前置；只有目标动词本身就是新建/创建/添加时才建 create 步。先在 reasoning 里想清楚：要到哪些页、做什么操作、读什么结果、关键动作做完怎么确认、是否需要分支，再写 steps。
 
