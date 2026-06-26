@@ -217,7 +217,11 @@ def drive_pending_non_ui(
             # Pulled FRESH here (not at entry) so the just-completed foreach's into table is included.
             mats = materialized_tables() if callable(materialized_tables) else (materialized_tables or [])
             if mats:
-                query_tables = list(query_tables or []) + list(mats)
+                # Foreach-materialized tables go FIRST so they become table_1/data in the profile.
+                # The SQL references them by their `into` var name (e.g. "completed_orders"); if they
+                # appear after the current-page DOM snapshot, the repair LLM sees the DOM's partial=True
+                # table as table_1 and incorrectly rejects the query as data-source mismatch.
+                query_tables = list(mats) + list(query_tables or [])
 
             def _try_repair(reason: str) -> _RepairAttempt | None:
                 repair = repair_data_query_sql(
