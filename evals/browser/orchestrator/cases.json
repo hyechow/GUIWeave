@@ -365,8 +365,32 @@
     },
     "assertions": [
       "orders_total_payment_no_detail_drill",
-      "orders_total_payment_filters_complete_clears_residual"
+      "orders_total_payment_filters_complete_clears_residual",
+      "orders_total_payment_sorts_purchase_date_desc",
+      "orders_total_payment_uses_foreach_collect_and_data_query"
     ],
-    "note": "task 193 正确路径：① navigate → Sales > Orders ② filter Status=Complete（SC 含清除残留，恰好等于 Status: Complete）③ read 前 2 行 Grand Total 直接从网格读（Orders 网格默认含 Grand Total 列，无需钻详情页）④ finish 求和。失败根因（live run score N/A，被 kill）：decomposer 生成了 foreach drill——逐条打开订单详情页读 total_amount（order_id=9/11/13... 共 8+ 次 URL-direct 钻取），其中部分订单读出 $0.00（order_id 9/13 误读）；DSL 校验器在启动时报 2 条错误：① filter step 声明 returns 但无 var ② data_query 引用 foreach body 未产出的字段 total_amount。anti-pattern：Grand Total 已是 Orders 网格默认列，任务只需 top 2 行 → 应直接 read/read_once，不应 foreach drill 进详情页。"
+    "note": "task 193 正确路径：① navigate → Sales > Orders ② filter Status=Complete，并清除无关残留筛选 ③ 明确按 Purchase Date 降序（最新在前）④ foreach body=[] 从 Orders 网格直接采集 Purchase Date 与 Grand Total (Purchased)，into 产出完整 completed_orders 类表 ⑤ data_query 对该完整表按 purchase_date_ts 取最近 2 行，并用 grand_total_purchased_num 求和后 finish。历史失败一（live run score N/A，被 kill）：decomposer 生成 foreach drill，逐条打开订单详情页读 total_amount，部分详情读成 $0.00；Grand Total 已是 Orders 网格默认列，不应钻详情。历史失败二 logs/gui_agent/webarena/browser/20260626_195323：planner 改成 foreach body=[] + data_query 后，checker 又把 Status 列排序误判为 Purchase Date 降序；随后 runtime 把 foreach 产出的 complete into 表和当前 Orders DOM partial 表一起传给 data_query，旧完整性检查因未被 SQL 引用的 partial DOM sibling 拒绝查询。历史失败三 logs/gui_agent/webarena/browser/20260626_201607：data_query 对 `$106.00` 这类金额显示文本直接 SUM 得 0.0，并按 `Feb 3, 2023 ...` 这类日期文本字典序排序；必须使用运行时 typed shadows（金额 _num、日期 _ts）。此 case 锁定分解形态：必须用网格采集+data_query 引用 foreach into 表，并把金额/日期类型化查询写对。"
+  },
+  {
+    "label": "WebArena shopping_admin task 196 — last 4 cancelled/completed payment difference uses ordered subqueries",
+    "goal": "Get the payment difference between the last 4 cancelled orders and the last 4 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 2,
+      "has_finish": true
+    },
+    "assertions": [
+      "orders_total_payment_no_detail_drill",
+      "orders_payment_difference_uses_both_status_filters",
+      "data_query_sql_no_template_refs",
+      "orders_payment_difference_uses_abs_last4_subqueries",
+      "orders_payment_difference_no_visual_row_aggregation"
+    ],
+    "note": "task 196 正确路径：① navigate → Sales > Orders ② 分别准备 cancelled/canceled 与 completed/complete 两个 Orders grid 状态口径（每次切换状态前清除上一状态和无关残留筛选）③ foreach body=[] 从网格采集可见列 Purchase Date 与 Grand Total (Purchased)，into 产出完整状态表；不要把内部字段名 created_at 写进 foreach returns，collect_fn 读不到 ④ 单个 data_query 用 CTE 分别 `ORDER BY purchase_date_ts DESC LIMIT 4` 后 `SUM(grand_total_purchased_num)`，最终返回 `ABS(cancelled_total - completed_total)`。历史失败 logs/gui_agent/webarena/browser/20260626_205652：SQL 写成 `SELECT SUM(grand_total_purchased_num) AS total FROM cancelled_orders LIMIT 4` / completed 同形，LIMIT 在聚合之后生效，实际求了两个状态的全表总和；finish 又输出 `cancelled_total - completed_total`，得到 -3217.43，官方期望 194.25。历史失败 logs/gui_agent/webarena/browser/20260626_213426：初始计划 foreach returns 写 `created_at`，运行时采集表只剩 id + grand_total_purchased、缺时间列，data_query repair 正确拒绝并返回 DATA_VALIDATION_ERROR。后续 decomposer eval 曾退化为 action returns `total_canceled/total_completed`，read_spec 目测前 4 行求和，再在 SQL 写 `{c1[total_canceled]}` 模板；这同样非法，必须由 foreach/data_query 完成多行聚合。"
   }
 ]

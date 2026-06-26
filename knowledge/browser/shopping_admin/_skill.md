@@ -25,6 +25,16 @@ version: 1
 4. 按 Customer Email 聚合计数
 5. 输出满足排名或数量条件的邮箱
 
+## skill：订单支付金额/最近 N 订单聚合
+- 触发：payment amount、Grand Total、last N orders、completed/canceled/cancelled orders、non-cancelled orders、payment difference
+- 数据：Orders grid；可见列 `Status`、`Purchase Date`、`Grand Total (Purchased)`。foreach returns 用可见列名，不用内部名 `created_at`；SQL 再用 `purchase_date_ts` 和 `grand_total_purchased_num`。
+- 步骤：
+1. 进入 Sales > Orders
+2. 设置/清除 Status，并清无关残留
+3. foreach body=[] 采集 Purchase Date 和 Grand Total
+4. data_query 用 purchase_date_ts LIMIT N 后聚合
+5. 比较多个口径时用 CTE/ABS 输出最终值
+
 ## skill：Dashboard 搜索词读取
 - 触发：top search terms、most-used search terms、recent search terms、dashboard search terms
 - 数据：Dashboard 搜索词区块、请求口径、排名或词项

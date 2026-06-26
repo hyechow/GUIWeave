@@ -85,6 +85,17 @@ def _has_finish(stmts: list) -> bool:
     return False
 
 
+def _flatten_finishes(stmts: list) -> list[Finish]:
+    out: list[Finish] = []
+    for s in stmts:
+        if isinstance(s, Finish):
+            out.append(s)
+        elif isinstance(s, If):
+            out.extend(_flatten_finishes(s.then))
+            out.extend(_flatten_finishes(s.otherwise))
+    return out
+
+
 def _flatten_ifs(stmts: list) -> list[If]:
     out: list[If] = []
     for s in stmts:
@@ -102,6 +113,18 @@ def _has_foreach(stmts: list) -> bool:
         if isinstance(s, If) and (_has_foreach(s.then) or _has_foreach(s.otherwise)):
             return True
     return False
+
+
+def _flatten_foreaches(stmts: list) -> list[ForEach]:
+    out: list[ForEach] = []
+    for s in stmts:
+        if isinstance(s, ForEach):
+            out.append(s)
+            out.extend(_flatten_foreaches(s.body))
+        elif isinstance(s, If):
+            out.extend(_flatten_foreaches(s.then))
+            out.extend(_flatten_foreaches(s.otherwise))
+    return out
 
 
 def _sql_identifier(value: object) -> str:
@@ -598,6 +621,18 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "data_query SQL 只能使用实际 normalized column identifiers，"
                     "不能把 schema 展示里的 Header->column 映射文本或带空格/标点的 quoted UI 表头写进 SQL: "
                     f"{offenders}"
+                )
+        elif assertion == "data_query_sql_no_template_refs":
+            seq = _flatten_runs(program.statements)
+            offenders = [
+                (r.name, r.sql) for r in seq
+                if r.kind == "data_query" and re.search(r"\{[^{}]+\}", r.sql or "")
+            ]
+            if offenders:
+                details.append(
+                    "data_query SQL 不是模板面，不能包含 {变量[字段]} 或任何 {...}；"
+                    "若要做差值/比例/合计，应先把相关行集 materialize 成表，再在 SQL/CTE 内基于表列计算。"
+                    f" offenders={offenders}"
                 )
         elif assertion == "shopping_admin_completed_order_count_filters_complete":
             seq = _flatten_runs(program.statements)
@@ -1156,6 +1191,184 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "Magento 后台 grid 筛选持久化跨任务残留，filter 步骤必须清除无关残留筛选，"
                     "success_condition 含「清除/残留/恰好等于」等关键词。"
                     f" seq={[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "orders_total_payment_uses_foreach_collect_and_data_query":
+            # WebArena task 193, 20260626_195323: The correct route is a grid
+            # collection, not detail drill and not direct data_query over the current
+            # partial DOM table. foreach body=[] materializes a complete
+            # `into` table; data_query must aggregate the first 2 rows from that table.
+            foreaches = _flatten_foreaches(program.statements)
+            grid_collects = [
+                fe for fe in foreaches
+                if not fe.body and any(
+                    "grand" in str(ret).lower() and "total" in str(ret).lower()
+                    for ret in fe.returns
+                )
+            ]
+            if not grid_collects:
+                details.append(
+                    "task 193 应用 foreach body=[] 从 Orders 网格直接采集 Grand Total (Purchased)，"
+                    "让 collect_fn 自动翻页并产出 complete into 表；不能直接 data_query 当前 DOM "
+                    "partial 表，也不能钻详情页。"
+                    f" foreaches={[(fe.target, fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
+                )
+            dqs = [r for r in _flatten_runs(program.statements) if r.kind == "data_query"]
+            into_names = {
+                (fe.into or f"{fe.var}s").strip().lower()
+                for fe in grid_collects
+                if (fe.into or f"{fe.var}s").strip()
+            }
+            ok_query = False
+            for dq in dqs:
+                sql = (dq.sql or "").lower()
+                amount_is_typed = "grand_total_purchased_num" in sql or re.search(
+                    r"\b[a-z0-9_]*grand[a-z0-9_]*total[a-z0-9_]*_num\b", sql
+                )
+                date_sort_is_typed = (
+                    "order by" not in sql
+                    or "purchase_date" not in sql
+                    or "purchase_date_ts" in sql
+                )
+                if (
+                    "sum" in sql
+                    and "limit" in sql
+                    and "2" in sql
+                    and any(name and name in sql for name in into_names)
+                    and amount_is_typed
+                    and date_sort_is_typed
+                ):
+                    ok_query = True
+                    break
+            if not ok_query:
+                details.append(
+                    "task 193 的 data_query 应对 foreach 产出的完整表求前 2 行 Grand Total 之和"
+                    "（SQL 需引用 foreach into 表，并包含 SUM 与 LIMIT 2；金额显示文本必须用 "
+                    "grand_total_purchased_num 一类 _num 影子列；若 SQL 按 Purchase Date 排序，"
+                    "必须用 purchase_date_ts 一类 _ts 影子列，不能按原始日期文本排序）。"
+                    f" dqs={[(r.name, r.sql) for r in dqs]} into_names={sorted(into_names)}"
+                )
+        elif assertion == "orders_total_payment_sorts_purchase_date_desc":
+            # The SQL LIMIT 2 is only meaningful if the UI data source has first been
+            # sorted by Purchase Date descending. The live run 20260626_195323 was
+            # wrongly accepted while the visible sort arrow was on Status.
+            seq = _flatten_runs(program.statements)
+            prep_steps = [r for r in seq if r.kind in ("filter", "action", "navigation")]
+            sort_steps = [
+                r for r in prep_steps
+                if "purchase date" in f"{r.name} {r.success_condition}".lower()
+                and any(
+                    kw in f"{r.name} {r.success_condition}".lower()
+                    for kw in ("降序", "倒序", "desc", "descending", "latest", "最近", "newest")
+                )
+            ]
+            if not sort_steps:
+                details.append(
+                    "task 193 的 LIMIT 2 代表最近 2 笔，前置 UI 步骤必须明确按 Purchase Date "
+                    "降序/最新在前排序；不能只筛 Status=Complete，或把 Status 列排序误当日期排序。"
+                    f" seq={[(r.kind, r.name, r.success_condition) for r in seq]}"
+                )
+        elif assertion == "orders_payment_difference_uses_both_status_filters":
+            seq = _flatten_runs(program.statements)
+            text = " ".join(f"{r.kind} {r.name} {r.success_condition} {r.sql}" for r in seq).lower()
+            if not re.search(r"\bcancell?ed\b|取消", text) or "complete" not in text:
+                details.append(
+                    "task 196 必须分别取得 cancelled/canceled 与 completed/complete 两个订单状态口径；"
+                    "当前计划没有同时体现这两个状态。"
+                    f" seq={[(r.kind, r.name, r.success_condition, r.sql) for r in seq]}"
+                )
+            clear_keywords = (
+                "清除", "残留", "无其它", "无其他", "无关", "仅保留", "只保留", "恰好等于",
+                "clear", "reset",
+            )
+            clear_steps = [
+                r for r in seq
+                if r.kind in ("filter", "action", "navigation")
+                and any(kw in f"{r.name} {r.success_condition}".lower() for kw in clear_keywords)
+            ]
+            if not clear_steps:
+                details.append(
+                    "task 196 会连续切换两个 Orders grid 状态筛选，必须清除无关/上一状态残留筛选，"
+                    "并让 active filters 恰好等于当前状态条件。"
+                    f" seq={[(r.kind, r.name, r.success_condition) for r in seq]}"
+                )
+        elif assertion == "orders_payment_difference_uses_abs_last4_subqueries":
+            foreaches = _flatten_foreaches(program.statements)
+            grid_collects = [
+                fe for fe in foreaches
+                if not fe.body
+                and any("grand" in str(ret).lower() and "total" in str(ret).lower() for ret in fe.returns)
+                and any("purchase" in str(ret).lower() and "date" in str(ret).lower() for ret in fe.returns)
+            ]
+            if not grid_collects:
+                details.append(
+                    "task 196 应从 Orders 网格采集可见列 Purchase Date 与 Grand Total (Purchased)，"
+                    "让 data_query 对完整表按日期排序后聚合；不能只查当前 DOM、不能钻详情，"
+                    "也不能把内部字段名 created_at 写进 foreach returns（collect_fn 读不到）。"
+                    f" foreaches={[(fe.target, fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
+                )
+            dqs = [r for r in _flatten_runs(program.statements) if r.kind == "data_query"]
+            combined_sql = "\n".join((r.sql or "").lower() for r in dqs)
+            bad_limit = [
+                r.sql for r in dqs
+                if re.search(
+                    r"\bselect\s+sum\s*\([^)]*\)\s+(?:as\s+\w+\s+)?from\s+[a-z_][a-z0-9_]*\s+limit\s+4\b",
+                    (r.sql or "").lower(),
+                    flags=re.DOTALL,
+                )
+            ]
+            if bad_limit:
+                details.append(
+                    "task 196 的旧失败就是 `SELECT SUM(...) FROM table LIMIT 4`：LIMIT 在聚合后生效，"
+                    "实际求了全表总和。必须写成 `SUM FROM (SELECT ... ORDER BY purchase_date_ts DESC LIMIT 4)`。"
+                    f" bad_sql={bad_limit}"
+                )
+            if "abs" not in combined_sql:
+                finish_text = " ".join(f.message.lower() for f in _flatten_finishes(program.statements))
+                if "绝对" not in finish_text and "absolute" not in finish_text:
+                    details.append(
+                        "task 196 问的是 payment difference between A and B，未要求 A minus B；"
+                        "应返回绝对差 ABS(a-b)，不能在 finish 中拼接可能为负的 a-b。"
+                        f" dqs={[(r.name, r.sql) for r in dqs]} finishes={[f.message for f in _flatten_finishes(program.statements)]}"
+                    )
+            if combined_sql.count("limit 4") < 2:
+                details.append(
+                    "task 196 需要分别取最近 4 笔 cancelled 和最近 4 笔 completed；"
+                    "SQL 应对两个状态口径各自 LIMIT 4。"
+                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                )
+            has_amount_num = "grand_total_purchased_num" in combined_sql
+            has_date_ts = "purchase_date_ts" in combined_sql or "created_at_ts" in combined_sql
+            if not has_amount_num or not has_date_ts:
+                details.append(
+                    "task 196 金额聚合必须用 grand_total_purchased_num 一类 _num 影子列，"
+                    "最近订单排序必须用 purchase_date_ts/created_at_ts 一类 _ts 影子列。"
+                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                )
+        elif assertion == "orders_payment_difference_no_visual_row_aggregation":
+            seq = _flatten_runs(program.statements)
+            offenders = []
+            for r in seq:
+                if r.kind == "data_query" or not r.returns:
+                    continue
+                text = f"{r.name} {r.success_condition} {r.read_spec} {' '.join(r.returns)}".lower()
+                mentions_top_n_rows = re.search(
+                    r"(first|top|last|latest|recent|oldest|前|最近|最后|最新|最旧|最早)\s*4.{0,80}"
+                    r"(row|rows|record|records|order|orders|行|条|笔)",
+                    text,
+                    flags=re.I,
+                )
+                mentions_manual_agg = re.search(
+                    r"sum|total|add up|average|avg|difference|aggregate|总和|合计|求和|相加|平均|差值|聚合",
+                    text,
+                    flags=re.I,
+                )
+                if mentions_top_n_rows and mentions_manual_agg:
+                    offenders.append((r.kind, r.name, r.returns, r.read_spec))
+            if offenders:
+                details.append(
+                    "task 196 不能让 action/filter/read 目测读取前 4 行并手工求总额/差值；"
+                    "必须用 foreach body=[] 采集两个状态口径的完整 Orders 网格，再由 data_query 聚合计算。"
+                    f" offenders={offenders}"
                 )
         else:
             details.append(f"unknown assertion: {assertion}")
