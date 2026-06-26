@@ -19,17 +19,30 @@ from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.adapters.browser.option_text import option_text_from_instruction
 from gui_agent.core.runtime.executor import VisionExecutor
 
-# jQuery datepicker API set — format-independent, triggers all picker callbacks.
-# Accepts ISO dates (YYYY-MM-DD) and common date strings via JS Date constructor.
+# Datepicker value set — directly writes el.value without firing events.
+# Avoids trigger('change') which fires Magento's AJAX filter refresh and
+# resets unsaved inputs in other date fields.
+# Primary path: parse ISO YYYY-MM-DD → Magento's mm/d/yy format (jQuery UI).
+# Fallback: jQuery datepicker('setDate') for non-ISO strings, no event trigger.
 _DATEPICKER_SET_JS = """(() => {{
   const el = document.activeElement;
   if (!el || !el.classList.contains('_has-datepicker')) return false;
+  const raw = '{value}';
+  // ISO YYYY-MM-DD — parse parts directly to avoid UTC/timezone shift
+  const iso = raw.match(/^(\d{{4}})-(\d{{2}})-(\d{{2}})$/);
+  if (iso) {{
+    const [, y, m, d] = iso;
+    // Magento/jQuery UI uses mm/d/yy (zero-padded month, bare day, 4-digit year)
+    el.value = String(parseInt(m)).padStart(2, '0') + '/' + parseInt(d) + '/' + y;
+    return true;
+  }}
+  // Non-ISO: fall back to jQuery setDate without change event
   if (!window.jQuery) return false;
   try {{
-    const d = new Date('{value}');
-    if (isNaN(d.getTime())) return false;
-    jQuery(el).datepicker('setDate', d);
-    jQuery(el).trigger('change');
+    const dt = new Date(raw);
+    if (isNaN(dt.getTime())) return false;
+    jQuery(el).datepicker('setDate', dt);
+    // Do NOT trigger('change') — fires Magento AJAX and resets form state
     return true;
   }} catch(e) {{ return false; }}
 }})()"""
