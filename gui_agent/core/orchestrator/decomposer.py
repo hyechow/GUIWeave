@@ -369,6 +369,7 @@ def _invoke_plan(
     prepare_vision_prompt_png: Callable[[bytes], bytes] | None,
     context_reports: list[dict] | None,
     label: str,
+    attempt_observer: "Callable[[int, list[ValidationIssue]], None] | None" = None,
 ) -> Program:
     """Shared LLM call + deterministic validate/feedback-retry. Both decompose() and redecompose()
     assemble their own context blocks, then hand off here for the identical draft→AST→validate loop."""
@@ -395,6 +396,12 @@ def _invoke_plan(
         draft = invoke_structured(llm, messages, _PlanDraft, trace_sink=context_reports, trace_label=label)
         program = to_program(draft, goal)
         issues = validate_program(program)
+        if attempt_observer is not None:
+            # Offline instrumentation only (default None ⇒ production path unchanged): record the
+            # codes that fired on each draft so the retry-efficacy harness can measure, per code,
+            # whether feeding it back actually clears it on the next attempt. See
+            # scripts/validator_retry_efficacy.py.
+            attempt_observer(attempt, list(issues))
         if not issues:
             break
         if attempt < _MAX_RETRIES:
@@ -463,6 +470,7 @@ def decompose(
     context_reports: list[dict] | None = None,
     corrective_directive: str = "",
     resolution: "IntentResolution | None" = None,
+    attempt_observer: "Callable[[int, list[ValidationIssue]], None] | None" = None,
 ) -> Program:
     """Decompose a user goal into a DSL Program via LLM + deterministic validate/retry.
 
@@ -492,6 +500,7 @@ def decompose(
         prepare_vision_prompt_png=prepare_vision_prompt_png,
         context_reports=context_reports,
         label="orchestrator.decompose",
+        attempt_observer=attempt_observer,
     )
     return _normalize_approximate_entity_sql(program, resolution)
 
