@@ -1024,6 +1024,29 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                         "（违反 browser 非交互优先；这正是 20260625_145506 评分1.0却点击式钻取的回归）: "
                         f"{body_open_id}"
                     )
+        elif assertion == "products_qty_zero_uses_ui_filter_before_data_query":
+            # WebArena task 184: Products grid has 2040 rows (340 pages). data_scope:complete
+            # reads max_pages=20 (~120 rows), so collected << total_records → partial=true →
+            # data_query refuses. A Quantity=0 UI filter reduces results to ≤5 products so a
+            # complete read is possible. The decomposer must plan a UI step (filter or action)
+            # before data_query — the run_kind label (filter vs action) is a soft concern;
+            # the hard requirement is that the quantity constraint is applied in the UI, not
+            # only in data_query SQL WHERE.
+            seq = _flatten_runs(program.statements)
+            qty_keywords = ("quantity", "qty", "库存", "0 units", "unit", "数量")
+            ui_steps = [
+                r for r in seq
+                if r.kind in ("filter", "action")
+                and any(kw in f"{r.name} {r.success_condition}".lower() for kw in qty_keywords)
+            ]
+            if not ui_steps:
+                details.append(
+                    "Products grid 有 2040 行（340 页）→ data_scope 最多读 120 行 → partial=true → "
+                    "data_query 拒绝运行；必须先建 filter/action run 在 UI 侧设 Quantity=0 缩小结果集，"
+                    "不能只靠 data_query SQL WHERE quantity=0（大表截断后无法查）。"
+                    "当前计划缺少针对 quantity/qty/库存 的 UI 步骤。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
