@@ -197,9 +197,139 @@ def test_execute_data_query_rejects_mutating_sql():
         execute_data_query(_orders_table(), "DROP TABLE data", ["result"])
 
 
+def test_execute_data_query_rejects_template_refs():
+    with pytest.raises(DataQueryError, match="不支持模板表达式"):
+        execute_data_query(
+            _orders_table(),
+            "SELECT ABS({c1[total_canceled]} - 10) AS difference",
+            ["difference"],
+        )
+
+
 def test_execute_data_query_rejects_partial_tables_by_default():
     with pytest.raises(DataQueryError, match="表格快照不完整"):
         execute_data_query(_orders_table(partial=True), "SELECT COUNT(*) AS n FROM data", ["n"])
+
+
+def test_execute_data_query_exposes_typed_shadows_for_currency_and_dates():
+    reads = execute_data_query(
+        [
+            {
+                "caption": "completed_orders",
+                "headers": ["Purchase Date", "Grand Total (Purchased)"],
+                "rows": [
+                    {"Purchase Date": "Feb 3, 2023 6:08:03 PM", "Grand Total (Purchased)": "$106.00"},
+                    {"Purchase Date": "May 7, 2023 6:41:05 PM", "Grand Total (Purchased)": "$90.00"},
+                    {"Purchase Date": "Jun 1, 2023 1:00:00 PM", "Grand Total (Purchased)": "$92.40"},
+                ],
+                "partial": False,
+            }
+        ],
+        """
+        SELECT SUM(grand_total_purchased_num) AS total
+        FROM (
+          SELECT grand_total_purchased_num
+          FROM completed_orders
+          ORDER BY purchase_date_ts DESC
+          LIMIT 2
+        )
+        """,
+        ["total"],
+    )
+
+    assert reads == {"total": "182.4"}
+
+
+def test_execute_data_query_rejects_aggregate_limit_after_aggregation():
+    with pytest.raises(DataQueryError, match="LIMIT 放在聚合之后"):
+        execute_data_query(
+            [
+                {
+                    "caption": "cancelled_orders",
+                    "headers": ["Purchase Date", "Grand Total (Purchased)"],
+                    "rows": [
+                        {"Purchase Date": "Feb 3, 2023 6:08:03 PM", "Grand Total (Purchased)": "$106.00"},
+                        {"Purchase Date": "May 7, 2023 6:41:05 PM", "Grand Total (Purchased)": "$90.00"},
+                    ],
+                    "partial": False,
+                }
+            ],
+            "SELECT SUM(grand_total_purchased_num) AS total FROM cancelled_orders LIMIT 4",
+            ["total"],
+        )
+
+
+def test_execute_data_query_rejects_cte_aggregate_limit_after_aggregation():
+    with pytest.raises(DataQueryError, match="LIMIT 放在聚合之后"):
+        execute_data_query(
+            [
+                {
+                    "caption": "cancelled_orders",
+                    "headers": ["Purchase Date", "Grand Total (Purchased)"],
+                    "rows": [
+                        {"Purchase Date": "Feb 3, 2023 6:08:03 PM", "Grand Total (Purchased)": "$106.00"},
+                        {"Purchase Date": "May 7, 2023 6:41:05 PM", "Grand Total (Purchased)": "$90.00"},
+                    ],
+                    "partial": False,
+                },
+                {
+                    "caption": "completed_orders",
+                    "headers": ["Purchase Date", "Grand Total (Purchased)"],
+                    "rows": [
+                        {"Purchase Date": "Feb 4, 2023 6:08:03 PM", "Grand Total (Purchased)": "$100.00"},
+                    ],
+                    "partial": False,
+                },
+            ],
+            """
+            WITH cancelled_sum AS (
+              SELECT SUM(grand_total_purchased_num) AS total
+              FROM cancelled_orders
+              LIMIT 4
+            ),
+            completed_sum AS (
+              SELECT SUM(grand_total_purchased_num) AS total
+              FROM completed_orders
+              LIMIT 4
+            )
+            SELECT ABS((SELECT total FROM cancelled_sum) - (SELECT total FROM completed_sum)) AS difference
+            """,
+            ["difference"],
+        )
+
+
+def test_execute_data_query_allows_complete_materialized_table_with_partial_dom_sibling():
+    reads = execute_data_query(
+        [
+            {
+                "caption": "completed_orders",
+                "headers": ["Grand Total (Purchased)"],
+                "rows": [
+                    {"Grand Total (Purchased)": "$106.00"},
+                    {"Grand Total (Purchased)": "$159.40"},
+                ],
+                "partial": False,
+            },
+            {
+                "caption": "Orders",
+                "headers": ["ID", "Grand Total (Purchased)", "Status"],
+                "rows": [
+                    {"ID": "000000004", "Grand Total (Purchased)": "$106.00", "Status": "Complete"},
+                ],
+                "row_count": 1,
+                "total_records": 153,
+                "partial": True,
+                "path": "div#container>div.admin__data-grid-outer-wrap>div.admin__data-grid-wrap>table.data-grid.data-grid-draggable",
+            },
+        ],
+        """
+        SELECT SUM(grand_total_purchased_num) AS total
+        FROM (SELECT grand_total_purchased_num FROM completed_orders LIMIT 2)
+        """,
+        ["total"],
+    )
+
+    assert reads == {"total": "265.4"}
 
 
 def test_non_ui_repairs_empty_data_query_with_actual_table_snapshot(tmp_path, monkeypatch):

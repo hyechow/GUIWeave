@@ -118,6 +118,382 @@ def test_validate_accepts_entity_scope_predicate_string_literal_not_a_column():
     assert not any("olivia" in i.lower() for i in issues), issues
 
 
+def test_validate_accepts_typed_shadow_fields_from_foreach_columns():
+    draft = _PlanDraft(goal="返回最近两笔订单总金额", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            name="采集已完成订单行",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="completed_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="取最近两笔订单总金额",
+            returns=["total"],
+            sql=(
+                "SELECT SUM(grand_total_purchased_num) AS total "
+                "FROM (SELECT grand_total_purchased_num FROM completed_orders "
+                "ORDER BY purchase_date_ts DESC LIMIT 2)"
+            ),
+        ),
+        _StepDraft(op="finish", message="{q[total]}"),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert issues == []
+
+
+def test_validate_rejects_aggregate_limit_after_aggregation():
+    draft = _PlanDraft(goal="返回最近四笔取消订单金额总和", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            name="采集取消订单行",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="cancelled_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="计算最近四笔取消订单金额",
+            returns=["total"],
+            sql="SELECT SUM(grand_total_purchased_num) AS total FROM cancelled_orders LIMIT 4",
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("LIMIT 放在 SUM/AVG/COUNT" in issue for issue in issues)
+
+
+def test_validate_rejects_cte_aggregate_limit_after_aggregation():
+    draft = _PlanDraft(goal="返回两组最近四行金额绝对差", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="cancelled_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="completed_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="计算差值",
+            returns=["difference"],
+            sql=(
+                "WITH cancelled_sum AS ("
+                "SELECT SUM(grand_total_purchased_num) AS total FROM cancelled_orders LIMIT 4"
+                "), completed_sum AS ("
+                "SELECT SUM(grand_total_purchased_num) AS total FROM completed_orders LIMIT 4"
+                ") SELECT ABS((SELECT total FROM cancelled_sum) - "
+                "(SELECT total FROM completed_sum)) AS difference"
+            ),
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("LIMIT 放在 SUM/AVG/COUNT" in issue for issue in issues)
+
+
+def test_validate_accepts_cte_abs_over_foreach_tables():
+    draft = _PlanDraft(goal="返回两组最近四行金额绝对差", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="cancelled_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="completed_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="计算差值",
+            returns=["difference"],
+            sql=(
+                "WITH c AS ("
+                "SELECT SUM(grand_total_purchased_num) AS total_cancelled "
+                "FROM (SELECT grand_total_purchased_num FROM cancelled_orders "
+                "ORDER BY purchase_date_ts DESC LIMIT 4)"
+                "), d AS ("
+                "SELECT SUM(grand_total_purchased_num) AS total_completed "
+                "FROM (SELECT grand_total_purchased_num FROM completed_orders "
+                "ORDER BY purchase_date_ts DESC LIMIT 4)"
+                ") SELECT ABS(total_cancelled - total_completed) AS difference FROM c, d"
+            ),
+        ),
+        _StepDraft(op="finish", message="{q[difference]}"),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert issues == []
+
+
+def test_validate_accepts_derived_table_aliases_over_foreach_tables():
+    draft = _PlanDraft(goal="返回两组最近四行金额绝对差", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="cancelled_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="completed_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="计算差值",
+            returns=["difference"],
+            sql=(
+                "SELECT ABS(c.total - comp.total) AS difference "
+                "FROM (SELECT SUM(grand_total_purchased_num) AS total "
+                "FROM (SELECT grand_total_purchased_num FROM cancelled_orders "
+                "ORDER BY purchase_date_ts DESC LIMIT 4)) c, "
+                "(SELECT SUM(grand_total_purchased_num) AS total "
+                "FROM (SELECT grand_total_purchased_num FROM completed_orders "
+                "ORDER BY purchase_date_ts DESC LIMIT 4)) comp"
+            ),
+        ),
+        _StepDraft(op="finish", message="{q[difference]}"),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert issues == []
+
+
+def test_validate_rejects_prior_data_query_vars_as_sql_tables():
+    draft = _PlanDraft(goal="返回两组最近四行金额绝对差", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="cancelled_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q_cancelled",
+            name="计算取消订单总额",
+            returns=["total_cancelled"],
+            sql=(
+                "SELECT SUM(grand_total_purchased_num) AS total_cancelled "
+                "FROM (SELECT grand_total_purchased_num FROM cancelled_orders "
+                "ORDER BY purchase_date_ts DESC LIMIT 4)"
+            ),
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="错误地把上一步 var 当表查",
+            returns=["difference"],
+            sql="SELECT COALESCE(total_cancelled, 0) AS difference FROM q_cancelled",
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("前序结果变量当成 SQL 表名" in issue for issue in issues)
+
+
+def test_validate_rejects_temporal_limit_without_order_by():
+    draft = _PlanDraft(goal="返回最近四笔订单金额", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Grand Total (Purchased)"],
+            into="orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="计算最近四笔订单金额",
+            returns=["total"],
+            sql=(
+                "SELECT SUM(grand_total_purchased_num) AS total "
+                "FROM (SELECT grand_total_purchased_num FROM orders LIMIT 4)"
+            ),
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("没有 ORDER BY" in issue for issue in issues)
+
+
+def test_validate_rejects_temporal_aggregate_without_limit():
+    draft = _PlanDraft(goal="返回最近四笔订单金额", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="计算最近四笔订单金额",
+            returns=["total"],
+            sql="SELECT SUM(grand_total_purchased_num) AS total FROM orders",
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("没有先按日期/时间 ORDER BY 后 LIMIT" in issue for issue in issues)
+
+
+def test_validate_body_empty_missing_shadow_field_says_add_returns_not_drill():
+    draft = _PlanDraft(goal="返回最近四笔订单金额", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Grand Total (Purchased)"],
+            into="orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="计算最近四笔订单金额",
+            returns=["total"],
+            sql=(
+                "SELECT SUM(grand_total_purchased_num) AS total "
+                "FROM (SELECT grand_total_purchased_num FROM orders "
+                "ORDER BY purchase_date_ts DESC LIMIT 4)"
+            ),
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+    message = "\n".join(issues)
+
+    assert "加入 foreach returns" in message
+    assert "打开详情" not in message
+
+
+def test_validate_rejects_finish_template_expression():
+    draft = _PlanDraft(goal="返回差值", steps=[
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="读总数",
+            returns=["total"],
+            sql="SELECT COUNT(*) AS total FROM data",
+        ),
+        _StepDraft(op="finish", message="{abs(q[total] - 4)}"),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("不支持的模板表达式" in issue for issue in issues)
+
+
+def test_validate_rejects_data_query_template_refs():
+    draft = _PlanDraft(goal="返回差值", steps=[
+        _StepDraft(
+            op="run",
+            run_kind="action",
+            var="c1",
+            name="筛选取消订单并读取总额",
+            returns=["total_canceled"],
+            read_spec="total_canceled：读取页面显示的取消订单总额。",
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="计算差值",
+            returns=["difference"],
+            sql="SELECT ABS({c1[total_canceled]} - 10) AS difference",
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("SQL 包含模板表达式" in issue for issue in issues)
+
+
+def test_validate_rejects_visual_row_aggregation_returns():
+    draft = _PlanDraft(goal="返回最近四笔订单金额差值", steps=[
+        _StepDraft(
+            op="run",
+            run_kind="action",
+            var="c",
+            name="筛选取消订单并读取最近 4 笔总额",
+            returns=["total_canceled"],
+            read_spec="total_canceled：在订单网格中读取前 4 行 Grand Total 并手工相加得到总和。",
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("目测聚合表格前 N 行" in issue for issue in issues)
+
+
+def test_validate_rejects_table_row_fields_on_filter_returns_for_aggregation_goal():
+    draft = _PlanDraft(goal="返回最近四笔订单金额差值", steps=[
+        _StepDraft(
+            op="run",
+            run_kind="filter",
+            var="f",
+            name="筛选取消订单并按日期降序排列",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            read_spec="从当前可见的订单网格行中读取 Purchase Date 和 Grand Total (Purchased) 列的值。",
+        ),
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            returns=["Purchase Date", "Grand Total (Purchased)"],
+            into="orders",
+            body=[],
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any("表格行字段挂在 filter returns" in issue for issue in issues)
+
+
 def test_validate_rejects_post_foreach_query_missing_body_fields_without_table_ref():
     draft = _PlanDraft(goal="返回详情分数<=3的负责人", steps=[
         _StepDraft(op="run", run_kind="read", var="r", name="读取候选行 id",
