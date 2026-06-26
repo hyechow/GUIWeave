@@ -112,7 +112,7 @@ def drive_pending_non_ui(
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
         executed_sql = cur_run.sql
         if cur_run.kind == "read" and cur_run.returns:
-            from gui_agent.core.orchestrator.structured_read import structured_read
+            from gui_agent.core.orchestrator.structured_read import resolve_text_source, structured_read
 
             _hud(f"读取验收帧 {'、'.join(cur_run.returns)}")
             if frame is None:
@@ -124,6 +124,7 @@ def drive_pending_non_ui(
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
                 context_reports=context_reports,
+                text_source=resolve_text_source(cur_run, platform),
             )
             say(f"  [Orchestrator] 只读验收帧 {cur_run.returns} → {reads}")
         elif cur_run.kind == "data_query":

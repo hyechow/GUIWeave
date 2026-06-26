@@ -45,6 +45,7 @@ def structured_read(
     check_knowledge: str = "",
     prepare_vision_prompt_png: Callable[[bytes], bytes] | None = None,
     context_reports: list[dict] | None = None,
+    text_source: str | None = None,
 ) -> dict[str, str]:
     """Read `returns` fields off the frame -> {field: value} (empty when not readable).
 
@@ -87,18 +88,36 @@ def structured_read(
             content="【界面信号参考】（应用约定，某字段若以图标/颜色/位置表示可据此判读成文字值）：\n" + check_knowledge,
         ) if check_knowledge else None,
     ], label="structured_read.dynamic", report_sink=context_reports)
-    prepare_png = prepare_vision_prompt_png or (lambda b: b)
-    prepared = prepare_png(png_bytes)
-    b64 = base64.b64encode(prepared).decode()
-    messages = [
-        SystemMessage(content=_SYSTEM),
-        HumanMessage(content=[
-            {"type": "text", "text": text},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-        ]),
-    ]
+    if text_source is not None:
+        # read_screen_text: feed the viewport a11y TEXT instead of the screenshot — the reader
+        # extracts the same `returns` fields off text, not pixels (precise for numerals / lists /
+        # in-browser API JSON that vision OCR misreads). text_source comes from the platform's
+        # read_visible_text (ScreenTextReader), already viewport-filtered so read == seen.
+        human_text = text + "\n\n【当前屏幕可见文本（a11y tree，视口内，读到的=看到的）】\n" + text_source
+        messages = [
+            SystemMessage(content=_SYSTEM),
+            HumanMessage(content=[{"type": "text", "text": human_text}]),
+        ]
+        obs_label, obs_source_type, obs_kind, obs_text = (
+            "screen_text", "text", "text",
+            f"[text_source: {len(text_source)} chars, viewport a11y text]",
+        )
+    else:
+        prepare_png = prepare_vision_prompt_png or (lambda b: b)
+        prepared = prepare_png(png_bytes)
+        b64 = base64.b64encode(prepared).decode()
+        messages = [
+            SystemMessage(content=_SYSTEM),
+            HumanMessage(content=[
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+            ]),
+        ]
+        obs_label, obs_source_type, obs_kind, obs_text = (
+            "screenshot", "image", "image",
+            f"[image_url omitted: image/png, {len(prepared)} bytes]",
+        )
     if context_reports is not None:
-        image_text = f"[image_url omitted: image/png, {len(prepared)} bytes]"
         context_reports.append({
             "kind": "prompt_snapshot",
             "label": "structured_read.dynamic",
@@ -126,12 +145,12 @@ def structured_read(
                             "chars": len(text),
                         },
                         {
-                            "label": "screenshot",
-                            "source_type": "image",
+                            "label": obs_label,
+                            "source_type": obs_source_type,
                             "source": "observation",
-                            "type": "image",
-                            "text": image_text,
-                            "chars": len(image_text),
+                            "type": obs_kind,
+                            "text": obs_text,
+                            "chars": len(obs_text),
                         },
                     ],
                 },
@@ -147,6 +166,26 @@ def structured_read(
     # Keep only requested fields; default any missing to "" (当没有).
     by_field = {fr.field: (fr.value or "") for fr in result.reads}
     return {f: by_field.get(f, "") for f in returns}
+
+
+def resolve_text_source(run: object, platform: object) -> str | None:
+    """If ``run`` opts into text-source read (``run.text_source``) AND the platform exposes
+    ``read_visible_text`` (Android; ScreenTextReader capability), return the current frame's
+    viewport a11y text; otherwise None (caller reads off the screenshot).
+
+    Centralized so every structured_read call site (non_ui / non_interactive /
+    loop._read_completed_run_returns) shares one probe + fallback. ``platform.client`` is the
+    Device (loop.py: "device at platform.client"). Never raises: a text-path failure falls back
+    to the screenshot read rather than blocking the run."""
+    if not getattr(run, "text_source", False):
+        return None
+    device = getattr(platform, "client", None)
+    if device is None or not hasattr(device, "read_visible_text"):
+        return None
+    try:
+        return device.read_visible_text() or None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class _RowRead(BaseModel):

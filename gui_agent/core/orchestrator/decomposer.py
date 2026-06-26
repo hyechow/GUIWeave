@@ -72,6 +72,12 @@ class _StepDraft(BaseModel):
         description="op=run 且 run_kind=read：是否为【列表型读取】——逐行提取，每行一个对象（returns 即每行字段），"
                     "结果是行对象数组，供 foreach 迭代。普通单值读取留 false。",
     )
+    text_source: bool = Field(
+        default=False,
+        description="op=run 且 returns 非空：是否用【读屏文本】抽取字段——reader 从当前帧可见文本(a11y tree,视口内,读到的=看到的)"
+                    "而非截图 OCR 读取,数字/列表/经浏览器访问的 API JSON 字段因此更精确。仅支持 read_visible_text 的平台"
+                    "(Android)生效,其余回退视觉。只读非交互(不点不滚)。需要精确读数字/计数/API JSON 时开 true,普通视觉可读字段留 false。",
+    )
     # --- op=foreach（通用迭代：对某个列表型 read 的每一行跑一遍 body）---
     loop_var: str = Field(default="", description="op=foreach：循环变量名，body 里用 {循环变量[字段]} 引用当前行")
     over: str = Field(default="", description="op=foreach：被迭代的列表来源——某个 list_read=true 的 read 步的 var")
@@ -429,6 +435,7 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     data_scope="current" if (d.data_scope or "").strip().lower() == "current" else "complete",
                     precondition=bool(d.precondition),
                     list_read=bool(d.list_read) and _to_kind(d.run_kind) == "read",
+                    text_source=bool(d.text_source),
                 )
             )
     return out
@@ -587,12 +594,6 @@ def validate_program(program: Program) -> list[str]:
                         f"data_query 步「{s.name}」像是在回答聚合排名/第N多，但 SQL 使用 LIMIT/OFFSET 单行截断，"
                         "会丢掉并列项；请先 GROUP BY 计算 count，再用 DENSE_RANK() 或 HAVING count 返回该名次的所有并列结果"
                     )
-                if _API_DIRECT_LINK_RE.search(s.name or "") or _API_DIRECT_LINK_RE.search(s.read_spec or ""):
-                    issues.append(
-                        f"步骤「{s.name}」用了 API/JSON 直链端点（如 api.xxx.com、/repos/、/contributors?）取数——"
-                        "手机/浏览器界面不渲染原始 JSON，纯视觉读不到这些字段；"
-                        "请改走给人看的网页/应用界面（如该仓库主页、设置页）视觉读取其上显示的数字/计数"
-                    )
                 # check this run's refs BEFORE binding its own var (a read can't reference its own
                 # value — env[var] isn't set until the read completes)
                 _check_refs(f"{s.name}\n{s.success_condition}\n{s.read_spec}", f"步骤「{s.name}」", scope)
@@ -681,14 +682,9 @@ def _navigation_source_fallback(goal: str, program: Program) -> Program:
     )
 
 
-# API/JSON direct-link endpoints in a run target (api.xxx.com, /repos/, /contributors?) — the
-# decomposer must route through a human-readable web/app page instead, because mobile/browser UIs
-# don't render raw JSON for vision to read (回归 20260625_195139: api.github.com → 纯视觉读不到,
-# contributors 读成 5/真 15). read 字段名(stars_count/contributors_count)是合法的 returns,不算直链。
-_API_DIRECT_LINK_RE = re.compile(
-    r"https?://api\.|api\.github\.com|/repos/|/contributors\?",
-    re.IGNORECASE,
-)
+# API direct-link ban lifted (2026/06/26): agents may visit api endpoints via the browser and
+# read the JSON through read_screen_text (text-source structured_read). Host-side URL fetching
+# (url_json_read / _direct_nav_url) stays removed — only in-browser access counts.
 
 
 _RETRIEVAL_FIELD_RE = re.compile(

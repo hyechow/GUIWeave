@@ -165,6 +165,34 @@ class ZeroPreemptDevice(Protocol):
     zero_preempt: bool
 
 
+@runtime_checkable
+class ScreenTextReader(Protocol):
+    """Optional capability: read all VISIBLE text on the current screen frame as a
+    flat string (Android a11y tree ``text`` + ``content-desc``, viewport-bounds-
+    filtered so the agent reads exactly what is on screen).
+
+    A NON-INTERACTIVE, read-only affordance — explicitly NOT a perception channel:
+    it is probed ON DEMAND (a text-source structured_read / read_screen step), never
+    auto-injected into every turn. Only ``AndroidDevice`` implements it today
+    (``uiautomator dump``); iphone / browser leave it unimplemented, in which case
+    core falls back to the ordinary vision (screenshot) read.
+
+    Kept OFF the base ``Device`` Protocol (same pattern as ``ScrollableDevice``) so
+    the iphone ``SyncMCPClient`` / ``MirrorDaemonClient`` still conform with zero
+    changes; core guards via ``hasattr(device, "read_visible_text")``. The viewport
+    filter is the whole point: without it the dump returns the entire off-screen
+    view tree (a sneakier super-perception); with it, read == seen.
+    """
+
+    def read_visible_text(self) -> str:
+        """Return the visible text of the current frame as one newline-joined string.
+
+        Empty when unreadable (caller falls back to vision). MUST NOT mutate the UI
+        — no tap / scroll / navigation; it is a pure read off the current state.
+        """
+        ...
+
+
 # ===========================================================================
 # Perception — session lifecycle + observe()
 # ===========================================================================
@@ -533,6 +561,7 @@ __all__ = [
     "Device",
     "ScrollableDevice",
     "ZeroPreemptDevice",
+    "ScreenTextReader",
     # Perception
     "PerceptionSession",
     "Perception",

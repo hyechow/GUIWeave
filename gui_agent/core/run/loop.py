@@ -448,7 +448,7 @@ def run_agent_loop(
                 return {}
             if is_list_read(run) or getattr(run, "kind", "") in {"read", "data_query"}:
                 return {}
-            from gui_agent.core.orchestrator.structured_read import structured_read
+            from gui_agent.core.orchestrator.structured_read import resolve_text_source, structured_read
 
             returns = list(run.returns)
             read_spec = getattr(run, "read_spec", "") or ""
@@ -458,6 +458,7 @@ def run_agent_loop(
                 read_spec=read_spec,
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                text_source=resolve_text_source(run, platform),
             )
             _say(f"  [Orchestrator] 动作返回读取 {returns} → {reads}")
             return reads

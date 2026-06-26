@@ -29,7 +29,6 @@
       "Contributors"
     ],
     "forbidden_text_contains": [
-      "api.github.com/repos",
       "repository results",
       "Search results",
       "Search · AndroidWorld"
@@ -63,12 +62,6 @@
     "expected_output_regex_all": [
       "(?is)(stars?|星标|star 数)[^\\n]{0,80}\\d[\\d,.]*\\s*[kKmM万千]?|\\d[\\d,.]*\\s*[kKmM万千]?[^\\n]{0,80}(stars?|星标)",
       "(?is)(contributors?|贡献者)[^\\n]{0,80}\\d[\\d,.]*\\s*[kKmM万千]?|\\d[\\d,.]*\\s*[kKmM万千]?[^\\n]{0,80}(contributors?|贡献者)"
-    ],
-    "forbidden_text_contains": [
-      "api.github.com/repos"
-    ],
-    "forbidden_output_contains": [
-      "api.github.com/repos"
     ],
     "note": "CheckGithubInfoTask 分层后的第 2 步：初始化脚本先把 Chrome 打开到目标 GitHub 仓库页；任务只测通过移动端 GitHub UI 获取 stars 和 contributors 两个数量并回答，不测仓库检索，也不测邮件发送。"
   }

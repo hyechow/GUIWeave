@@ -958,37 +958,18 @@ def test_finish_with_no_refs_is_not_incomplete():
     assert res.finish_incomplete is False
 
 
-def test_validate_program_flags_api_direct_link():
-    # 回归 20260625_195139：decomposer 把 api.github.com REST 端点写进 run.name，手机/浏览器
-    # 不渲染原始 JSON、纯视觉读不到字段（contributors 读成 5/真 15）。validate 必须拒绝
-    # API/JSON 直链端点，强制走给人看的网页/应用界面。read 字段名（stars_count 等）是合法
-    # returns，邮件正文里 {var[contributors_count]} 是正确模板接力，都不应误报。
+def test_validate_program_allows_api_direct_link():
+    # 2026/06/26 方向反转：放开 API——agent 可经浏览器访问 api endpoint 取数，用
+    # text_source=read_screen_text 读 JSON 文本（reader 从 a11y 文本抽字段）。validate
+    # 不再拒绝 API/JSON 直链（_API_DIRECT_LINK_RE 已移除）。锁定放开方向，防止禁令被
+    # 无意加回；195139 的"纯视觉读不到 JSON"教训现由 text_source 解决（见 evals note）。
     from gui_agent.core.orchestrator.decomposer import validate_program
 
-    # ① api.github.com 直链 → 报 issue
+    # API 直链 run + text_source（新方向：经浏览器访问 API、读屏文本抽字段）→ 不报 issue
     api = Program(statements=[
         Run(var="s", name="访问 https://api.github.com/repos/google-research/android_world 并读 stargazers_count",
-            kind="action", returns=["stargazers_count"], read_spec="stargazers_count: JSON 字段"),
+            kind="action", returns=["stargazers_count"], read_spec="stargazers_count: JSON 字段",
+            text_source=True),
     ])
-    assert any("API/JSON 直链" in i for i in validate_program(api)), validate_program(api)
-
-    # ② /contributors? 端点 → 报 issue
-    contrib = Program(statements=[
-        Run(var="c", name="访问 https://api.github.com/repos/x/contributors?per_page=100",
-            kind="action", returns=["contributor_count"], read_spec="contributor_count: 数组长度"),
-    ])
-    assert any("API/JSON 直链" in i for i in validate_program(contrib))
-
-    # ③ 走 github.com 网页 → 不报
-    web = Program(statements=[
-        Run(var="s", name="打开 github.com/google-research/android_world 仓库主页读星标数",
-            kind="action", returns=["stars"], read_spec="stars: 主页星标计数"),
-    ])
-    assert not any("API/JSON 直链" in i for i in validate_program(web)), validate_program(web)
-
-    # ④ 邮件正文用 {var[contributors_count]} 模板（字段名）→ 不误报
-    tpl = Program(statements=[
-        Run(var="c", name="读贡献者", kind="read", returns=["contributors_count"], read_spec="x"),
-        Run(name="正文 There are {c[contributors_count]} contributors", kind="action"),
-    ])
-    assert not any("API/JSON 直链" in i for i in validate_program(tpl)), validate_program(tpl)
+    issues = validate_program(api)
+    assert not any("API/JSON 直链" in i for i in issues), issues

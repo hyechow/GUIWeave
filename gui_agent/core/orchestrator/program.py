@@ -96,6 +96,12 @@ class Run(BaseModel):
     # the runtime-discovered collection a `foreach` iterates (e.g. all visible review row ids). Only
     # meaningful on kind="read"; default False = the usual single-frame scalar read.
     list_read: bool = False
+    # read_screen_text: read this run's `returns` off the viewport a11y TEXT (Android uiautomator)
+    # instead of the screenshot — precise for numerals / lists / in-browser API JSON that vision OCR
+    # misreads. Resolved by the runtime only when the platform exposes read_visible_text
+    # (ScreenTextReader capability); otherwise falls back to the screenshot. Non-interactive
+    # (no tap/scroll): read == seen, NOT a perception channel.
+    text_source: bool = False
 
 
 class Cond(BaseModel):

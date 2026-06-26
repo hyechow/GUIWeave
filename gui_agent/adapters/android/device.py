@@ -45,7 +45,10 @@ def _clamp(v: float, lo: float, hi: float) -> int:
 
 
 class AndroidDevice:
-    """adb-backed phone device. Vision-only; no UIAutomator tree access here."""
+    """adb-backed phone device. Vision-only PERCEPTION (screenshots only); the
+    UIAutomator a11y tree is exposed solely via the optional ``read_visible_text()``
+    read-action (ScreenTextReader capability) — NOT a perception channel: probed on
+    demand and viewport-filtered, so it reads exactly what is on screen."""
 
     # Capability marker probed by core via getattr(client, "zero_preempt", False).
     # adb input injects on-device (never steals the Mac cursor), but it is not the
@@ -214,6 +217,62 @@ class AndroidDevice:
                 dev.shell(f"rm -f {remote}")
             except Exception:  # noqa: BLE001
                 pass
+
+    def read_visible_text(self) -> str:
+        """Read all VISIBLE text on the current frame as one newline-joined string
+        (the optional ScreenTextReader capability).
+
+        Source: ``uiautomator dump`` (the Android a11y tree), taking each node's
+        ``text`` + ``content-desc``. Viewport-bounds-filtered against ``win_w`` /
+        ``win_h`` so the agent reads EXACTLY what is on screen (no off-screen,
+        scroll-to-reveal nodes) — this is what keeps it a non-perception read-action
+        rather than a sneakier super-perception: read == seen.
+
+        NON-INTERACTIVE: uiautomator dump does not tap/scroll/change the UI. Empty
+        string when the dump is unreadable (caller falls back to the vision read)."""
+        import re
+        import xml.etree.ElementTree as ET
+        from html import unescape
+
+        dev = self._require_dev()
+        remote = "/sdcard/_gui_agent_ui.xml"
+        xml_text = ""
+        for _ in range(2):  # uiautomator dump occasionally fails first try mid-transition
+            try:
+                dev.shell(f"uiautomator dump {remote}")
+                xml_text = dev.shell(f"cat {remote}")
+            except Exception:  # noqa: BLE001
+                xml_text = ""
+            if "<node" in xml_text:
+                break
+            xml_text = ""
+        try:
+            dev.shell(f"rm -f {remote}")
+        except Exception:  # noqa: BLE001
+            pass
+        if not xml_text:
+            return ""
+
+        w, h = self.win_w, self.win_h
+        bounds_re = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
+        try:
+            root = ET.fromstring(xml_text)
+        except Exception:  # noqa: BLE001
+            return ""
+        pieces: list[str] = []
+        for node in root.iter("node"):
+            bm = bounds_re.search(node.get("bounds") or "")
+            if not bm:
+                continue
+            x1, y1, x2, y2 = (int(bm.group(i)) for i in (1, 2, 3, 4))
+            # keep nodes INTERSECTING the viewport (partly visible == visible)
+            if x2 <= 0 or y2 <= 0 or x1 >= w or y1 >= h:
+                continue
+            for attr in ("text", "content-desc"):
+                val = (node.get(attr) or "").strip()
+                if val:
+                    pieces.append(unescape(val))
+        return "\n".join(pieces)
 
     # ----- input primitives (Device Protocol) ------------------------------
     def tap(self, x: float, y: float) -> str:
