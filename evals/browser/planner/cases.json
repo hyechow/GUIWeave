@@ -362,5 +362,76 @@
       ]
     },
     "note": "真实 CDP run 20260624_182334 Turn6-8：精确词已返回 0 条，进入 fallback 子目标后仍被截图尾部和 checker 的含混 missing_evidence 牵回旧精确词，重复输入 'Olivia zip jacket' 多烧 3 轮。通用不变量：当当前子目标明确要求把字段改成新值时，planner 必须使用子目标/验收里的新目标值，不能用历史旧值或 checker 误写的旧值；DOM current 只证明当前旧值是什么，不是下一步应保留的目标。"
+  },
+  {
+    "label": "columns-panel-scroll-面板内目标不可见时应向下滚动面板而非关闭（回归 20260626_105002 T8-T18 打转）",
+    "screenshot": "evals/browser/planner/screenshots/columns_panel_scroll_needed.png",
+    "milestone": {
+      "name": "通过 Columns 控件启用 Color 列",
+      "description": "点击 Columns 按钮打开列选择面板，在面板内找到 Color 复选框并勾选，使产品列表表格中出现 Color 列。",
+      "success_condition": "产品列表表格表头出现 Color 列",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "Columns 面板已打开，DOM 显示 Color checkbox current=on，但产品列表表格表头没有 Color 列，主页面尚未反映该列启用。",
+      "issues": [],
+      "missing_evidence": [
+        "产品列表表格表头尚未出现 Color 列"
+      ],
+      "summary": "Columns 面板已展开，面板内可见 ID/Name/Type 等默认列的复选框，但 Color 等非默认列在面板可视区域之外。"
+    },
+    "expected": {
+      "must_contain": [
+        "scroll",
+        "滚动"
+      ],
+      "must_not_contain": [
+        "Cancel",
+        "关闭.*面板",
+        "点击.*Cancel"
+      ]
+    },
+    "note": "实跑陷阱：面板显示 \"14 out of 37 visible\"，Color 在面板下方可视区外。Checker 看到 DOM current=on 误报「Color 已勾选，只需关闭面板」→ Planner 反复点 Cancel → Color 从未真正被找到和勾选 → T8-T18 循环 11 轮失败。修复后 checker 不再把面板内 checkbox DOM 状态当主页面已生效的证据。本 case 验证 planner 在「面板已开、目标不可见」时应输出 scroll 在面板内向下滚动，而不是点 Cancel 关闭面板。must_contain 含 scroll/滚动，must_not_contain 守住「不点 Cancel / 不关闭面板」。"
+  },
+  {
+    "label": "columns-panel-cancel-trap-禁止把Cancel当Apply（回归 20260626_110802 T4-T21 打转）",
+    "screenshot": "evals/browser/planner/screenshots/columns_panel_stale_cancel_trap.png",
+    "milestone": {
+      "name": "通过 Columns 控件启用 Color 列",
+      "description": "点击 Columns 按钮打开列选择面板，在面板内找到 Color 复选框并勾选，使产品列表表格中出现 Color 列。",
+      "success_condition": "产品列表表格表头出现 Color 列",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "Columns 面板已打开，DOM 显示 Color checkbox current=on，但该状态可能是上次会话的残留；产品列表表格表头尚未出现 Color 列，说明本次会话内 Color checkbox 未被实际点击。需在面板内找到 Color checkbox 并点击，网格将即时更新，不需要关闭面板。",
+      "issues": [],
+      "missing_evidence": [
+        "产品列表表格表头尚未出现 Color 列（DOM current=on 是残留态，需在本次会话内实际点击 Color checkbox）"
+      ],
+      "summary": "Columns 面板已展开，Color checkbox DOM 显示 on（残留），但表头无 Color 列，需点击 checkbox 使本次会话生效。"
+    },
+    "expected": {
+      "must_contain": [
+        "checkbox",
+        "Color",
+        "勾选",
+        "点击",
+        "scroll",
+        "滚动"
+      ],
+      "must_not_contain": [
+        "Cancel",
+        "Apply",
+        "关闭面板",
+        "确认面板",
+        "应用.*面板",
+        "关闭.*应用"
+      ]
+    },
+    "note": "实跑陷阱 20260626_110802 T4-T21：Planner 看到 checker 说「需要关闭/确认面板」，生成「点击 Apply 按钮（或关闭面板以应用更改）」——Columns 面板没有 Apply 按钮（只有 Cancel + Reset），点 Cancel 只关闭面板 UI，不会让网格出现新列。正确动作：在面板内找到 Color checkbox 并点击（即使 DOM 已显示 on，也要重新点击以触发本次会话的即时更新）。must_contain 要求 instruction 提及 checkbox/点击/勾选，must_not_contain 守住禁止把 Cancel 当 Apply 这一核心回归点。 must_contain 含 scroll/滚动，因为面板 Color 不在视口时先滚动也是正确的第一步——核心回归点只是禁止把 Cancel/Apply 当提交操作。"
   }
 ]

@@ -208,7 +208,10 @@
     },
     "state_trace": " T3 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索\n T4 状态:/admin/review/product/index/internal_reviews | 决策:点击resetfilter清除残留过滤 (同页面)\n T5 状态:/admin/review/product/index/internal_reviews | 决策:在review搜索框输入oliviazipjacket (同页面)\n T7 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索筛选 (同页面)\n T8 状态:/admin/review/product/index/internal_reviews | 决策:点击resetfilter清除残留过滤 ⚠️重复(同 T4)\n T10 状态:/admin/review/product/index/internal_reviews | 决策:点击search执行搜索筛选 ⚠️重复(同 T7)",
     "expected": {
-      "status_in": ["stuck", "in_progress"],
+      "status_in": [
+        "stuck",
+        "in_progress"
+      ],
       "must_not_claim": [
         "筛选成功",
         "已生效",
@@ -277,5 +280,49 @@
       ]
     },
     "note": "真实 CDP run 20260624_185832：进入 /edit/id/347/ 后页面显示 Nickname=Jane Smith、评分5星，这是评论347的真实详情，但 checker 把 Jane Smith 误当成对象身份不匹配，在列表和详情间打转直到失败。通用不变量：foreach 打开详情页时，URL/路由里的目标ID是对象身份机器证据；字段值只是该对象的读取结果，是否满足最终筛选条件应由后续 data_query 判断，不能反过来否定当前对象身份。"
+  },
+  {
+    "label": "columns-panel-checkbox-current-on-禁止说关闭面板/Cancel（回归 20260626_110802 T4-T20 打转）",
+    "screenshot": "evals/browser/checker/screenshots/columns_panel_checkbox_stale_on.png",
+    "observation": {
+      "url": "http://192.168.31.57:7780/admin/catalog/product/",
+      "title": "Products / Inventory / Catalog / Magento Admin",
+      "form_controls": [
+        {
+          "label": "Color",
+          "kind": "checkbox_input",
+          "current": "on"
+        },
+        {
+          "label": "ID",
+          "kind": "checkbox_input",
+          "current": "on"
+        },
+        {
+          "label": "Name",
+          "kind": "checkbox_input",
+          "current": "on"
+        }
+      ]
+    },
+    "milestone": {
+      "name": "通过 Columns 控件启用 Color 列",
+      "description": "点击 Columns 按钮打开列选择面板，在面板内找到 Color 复选框并勾选，使产品列表表格中出现 Color 列。",
+      "success_condition": "产品列表表格表头出现 Color 列",
+      "kind": "action",
+      "app_name": "shopping_admin"
+    },
+    "expected": {
+      "status": "in_progress",
+      "must_not_claim": [
+        "(?<!不)需要关闭面板",
+        "关闭面板[使以]",
+        "点击.*Cancel",
+        "Cancel.*关闭",
+        "确认面板",
+        "应用.*面板"
+      ]
+    },
+    "note": "实跑陷阱 20260626_110802 T4-T20：Columns 面板已打开，DOM 显示 Color checkbox current=on（上次会话残留），但产品网格表头没有 Color 列。Checker 错误地反馈「需要关闭/确认面板使更改生效」，导致 Planner 幻觉出 Apply 按钮并反复点 Cancel。正确行为：in_progress + 反馈说「在面板内点击 Color checkbox，网格即时更新，不需要关闭面板」。严禁在 reason/summary/missing_evidence 里写 关闭面板/Cancel/Apply/确认面板。Columns 面板只有 Cancel（关闭UI）和 Reset（恢复默认），没有 Apply/Save；勾选即生效，DOM current=on 是残留态，不代表本次会话已点击过。"
   }
 ]

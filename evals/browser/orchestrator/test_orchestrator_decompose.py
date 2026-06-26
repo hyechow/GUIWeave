@@ -1027,11 +1027,9 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
         elif assertion == "products_qty_zero_uses_ui_filter_before_data_query":
             # WebArena task 184: Products grid has 2040 rows (340 pages). data_scope:complete
             # reads max_pages=20 (~120 rows), so collected << total_records → partial=true →
-            # data_query refuses. A Quantity=0 UI filter reduces results to ≤5 products so a
-            # complete read is possible. The decomposer must plan a UI step (filter or action)
-            # before data_query — the run_kind label (filter vs action) is a soft concern;
-            # the hard requirement is that the quantity constraint is applied in the UI, not
-            # only in data_query SQL WHERE.
+            # data_query refuses. A Quantity From=0,To=0 UI filter reduces results to ~150
+            # rows (~8 pages, fits within max_pages=20) so a complete read is possible.
+            # The decomposer must plan a UI step (filter or action) before data_query.
             seq = _flatten_runs(program.statements)
             qty_keywords = ("quantity", "qty", "库存", "0 units", "unit", "数量")
             ui_steps = [
@@ -1042,10 +1040,44 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             if not ui_steps:
                 details.append(
                     "Products grid 有 2040 行（340 页）→ data_scope 最多读 120 行 → partial=true → "
-                    "data_query 拒绝运行；必须先建 filter/action run 在 UI 侧设 Quantity=0 缩小结果集，"
+                    "data_query 拒绝运行；必须先建 filter/action run 在 UI 侧设 Quantity From=0,To=0，"
+                    "把结果缩到约 150 行（≤max_pages=20 可完整采集），再 data_query。"
                     "不能只靠 data_query SQL WHERE quantity=0（大表截断后无法查）。"
                     "当前计划缺少针对 quantity/qty/库存 的 UI 步骤。"
                     f" seq={[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "products_qty_zero_enables_color_column":
+            # WebArena task 184: Color is NOT a default column in the Products grid.
+            # The decomposer must include a step to enable the Color column (via the Columns
+            # button) before collecting the grid. Without this, the grid has no Color data
+            # and the task cannot be answered without drilling into each product detail page.
+            seq = _flatten_runs(program.statements)
+            color_keywords = ("color", "colour", "颜色", "columns", "column")
+            color_steps = [
+                r for r in seq
+                if r.kind in ("filter", "action")
+                and any(kw in f"{r.name} {r.success_condition}".lower() for kw in color_keywords)
+            ]
+            if not color_steps:
+                details.append(
+                    "Color 列不在 Products 网格的默认列里，必须先点 Columns 按钮启用 Color 列，"
+                    "才能在网格采集时获取颜色数据。否则只能钻每个产品详情页（~150 次），极低效。"
+                    "当前计划缺少启用 Color 列的步骤（filter/action run，关键词 color/columns/颜色）。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "products_qty_zero_uses_foreach_collect":
+            # WebArena task 184: After filtering to ~150 rows and enabling Color column,
+            # the plan must use a foreach (body can be empty, returns=[Name, Color]) to
+            # collect all grid rows via collect_fn/read_grid_complete (automatic pagination).
+            # list_read was removed in 19b63e5; foreach is the correct op.
+            # Uses module-level _has_foreach (line 98) — do NOT redefine locally.
+            if not _has_foreach(program.statements):
+                details.append(
+                    "过滤后约 150 条记录（8 页），必须用 foreach（body 留空，returns 含 Name/Color，"
+                    "into 产出完整表）采集全量网格行——collect_fn 自动通过 AX 树翻全部分页，"
+                    "不能直接 data_query 当前页（partial=true，只有 20 行，data_query 会拒绝）。"
+                    "注意：list_read 已在 19b63e5 移除，不再是有效 DSL op。"
+                    f" top-level stmts={[type(s).__name__ for s in program.statements]}"
                 )
         else:
             details.append(f"unknown assertion: {assertion}")

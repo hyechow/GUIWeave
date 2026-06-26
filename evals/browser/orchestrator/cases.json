@@ -309,7 +309,7 @@
     "note": "回归 logs/gui_agent/webarena/browser/20260622_142614：初始计划精确搜 Olivia zip jacket 得 0 条，放宽到 Olivia 得 3 条候选；data_query 失败，因为当前 Reviews grid 是 partial 且没有 rating 列。随后重编排错误地产出『设置筛选条件：Product='Olivia zip jacket' 且 Rating<=3』，在没有 Rating 控件的列表页反复输入/搜索，最终 UNKNOWN_ERROR。此 case 用当时的 kickback 文案、当前 URL/title 和 Reviews 表格 schema 固定重编排输入，期望新计划遵守上层纠正：不要再做列表 Rating 筛选/SQL rating 查询，而是逐条打开 Review Detail 读取 Detailed Rating + Nickname。"
   },
   {
-    "label": "WebArena shopping_admin task 184 — 大表列值约束必须先建 filter run（Products grid qty=0，2040行截断）",
+    "label": "WebArena shopping_admin task 184 — qty=0 filter + Color列启用 + 网格采集（无需foreach钻详情）",
     "goal": "Give me the name and color of the products that have 0 units left. Return a list of objects with keys \"name\" and \"color\".",
     "platform": "browser",
     "knowledge_app": "shopping_admin",
@@ -324,8 +324,10 @@
     },
     "assertions": [
       "products_qty_zero_uses_ui_filter_before_data_query",
-      "data_query_sql_no_schema_mapping_text"
+      "products_qty_zero_enables_color_column",
+      "data_query_sql_no_schema_mapping_text",
+      "products_qty_zero_uses_foreach_collect"
     ],
-    "note": "task 184 失败根因：分解器把 qty=0 约束只写进了 data_query SQL（WHERE CAST(quantity AS INTEGER) = 0），没有前置 filter run 在 Products grid UI 侧设 Quantity=0 筛选控件。Products grid 有 2040 行（340 页），data_scope:complete 最多读 max_pages=20（约 120 行），collected 远小于 total_records → partial=true → data_query 拒绝运行。正确做法：先 filter 把 qty=0 过滤到 UI 里（缩到 ≤5 行），再完整读取，再 data_query 取 name+color。Rule 4 已要求「UI 有对应筛选控件时先建 filter run」，但模型未对数值型列（Quantity From/To 范围控件）应用此规则；需在 decomposer.md 加明确禁止「仅靠 SQL WHERE 过滤大表列值」的反例。"
+    "note": "task 184 正确路径：① filter Quantity From=0, To=0（精确匹配，约150条简单+可配置产品）② Columns 按钮启用 Color 列（Color 不在默认列里）③ foreach（body 留空，returns=[Name,Color]，into=products）采集过滤后的全量网格（~150行/~8页，collect_fn 自动翻页，产出 complete into 表）④ data_query SELECT name, color WHERE color IS NOT NULL → 只剩 Color 有值的简单产品（答案：Cronus Yoga Pant -33-Blue / Blue）。不需要 foreach 钻产品详情页——Color 列直接在网格里。失败根因历史：① filter 只设 From=0 不设 To=0（=≥0=全量2040条）② Checker 误判 filter 已生效 → PreExisting 跳过 filter 步骤 ③ partial=true → data_query 拒绝 ④ list_read 已在 19b63e5 移除，正确用 foreach 而非 list_read。"
   }
 ]

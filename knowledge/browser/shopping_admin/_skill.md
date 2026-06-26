@@ -43,6 +43,16 @@ version: 1
 3. 逐条进入评论详情补齐评分与昵称
 4. 按评分条件筛选并输出昵称
 
+## skill：Products 网格含非默认列采集（如颜色、Color）
+- 触发：产品颜色、color of products、name and color、products with color、哪些产品的颜色
+- 数据：Products grid、Columns 控件、Color 列（非默认须启用）、Filters 数值范围控件
+- 步骤：
+1. 进入 Catalog > Products 产品列表
+2. 按任务条件设置 Filters（数值列精确匹配须同时填 From=X 和 To=X）
+3. 通过 Columns 控件启用 Color 列（Color 不在默认列，否则网格无颜色数据；启用即结束，不需关闭面板——详见 Admin_grid_controls 章节）
+4. **foreach（body 留空）** 采集过滤后的全量网格：`returns: ["Name", "Color"]`，`into: products`，`body: []`——运行时 collect_fn 通过 AX 树自动翻全部分页（产品可能跨 8 页），into 产出 complete 表供 data_query 查询；简单产品 Color 有值，可配置父产品 Color 为空
+5. data_query 过滤 color 非空行，输出 name 与 color
+
 ## skill：Grid 数据导出或采集
 - 触发：需要完整 grid 数据、导出 CSV/XML、跨分页统计
 - 数据：目标 grid、所需列、筛选口径、分页范围

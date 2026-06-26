@@ -390,8 +390,10 @@ def validate_program(program: Program) -> list[str]:
                     )
                 if not s.var:
                     issues.append("foreach 缺少循环变量名（loop_var）——body 需要用 {循环变量[字段]} 引用当前行")
-                if not s.body:
-                    issues.append(f"foreach（循环变量「{s.var}」）的 body 为空——至少要有一个对每行执行的步骤")
+                if not s.body and not s.returns:
+                    issues.append(f"foreach（循环变量「{s.var}」）的 body 为空且未设置 returns——"
+                                  "若目标列已在网格里，在 foreach 上设 returns（系统自动从网格直取这些字段）；"
+                                  "若需逐行钻详情，在 body 里添加打开详情的步骤")
                 # body runs in a copied scope with the loop var bound to the over-read's row fields (if any),
                 # so {loop_var[field]} resolves. The loop's materialized `into` table is queried by a
                 # following data_query via SQL table name (not a {var[field]} template), so it isn't

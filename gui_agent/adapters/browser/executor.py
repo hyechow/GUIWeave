@@ -22,9 +22,9 @@ from gui_agent.core.runtime.executor import VisionExecutor
 # Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
 _QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,8})[」』\"']")
 _INLINE_EN_LABEL_RE = re.compile(
-    r"(?:菜单下的|子菜单中的|下的|中的)\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*"
-    r"(?:选项|菜单项|菜单|按钮|链接)"
-    r"|点击\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*(?:选项|菜单项|菜单|按钮|链接)"
+    r"(?:菜单下的|子菜单中的|下的|中的|内的)\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*"
+    r"(?:选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
+    r"|点击\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*(?:选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
 )
 def _quoted_label(description: str) -> str:
     """The LAST short quoted label in the description — the actionable target
@@ -73,13 +73,13 @@ def _quoted_label_is_click_target(description: str, label: str) -> bool:
     q, pos = max(positions, key=lambda item: item[1])
     before = text[max(0, pos - 16):pos]
     after = text[pos + len(q):pos + len(q) + 16]
-    if re.search(r"(输入|搜索|筛选|过滤|关键词|关键字|应用|匹配|包含|值为|设为|设置为)$", before):
+    if re.search(r"(输入|搜索|筛选|过滤|关键词|关键字|应用|匹配|包含|值为|设为|设置为)\s*$", before):
         return False
-    if re.search(r"^(筛选条件|过滤条件|关键词|关键字|搜索词|查询词|值|文本|文字)", after):
+    if re.search(r"^\s*(筛选条件|过滤条件|关键词|关键字|搜索词|查询词|值|文本|文字)", after):
         return False
-    if re.search(r"^(按钮|链接|菜单|菜单项|选项|标签|页签|图标|列|控件)", after):
+    if re.search(r"^\s*(按钮|链接|菜单|菜单项|选项|标签|页签|图标|列|控件)", after):
         return True
-    if re.search(r"(中的|下的|旁边的|列|按钮|链接|菜单)$", before):
+    if re.search(r"(中的|下的|旁边的|列|按钮|链接|菜单)\s*$", before):
         return True
     return False
 

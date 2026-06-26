@@ -41,7 +41,7 @@ Admin pages that manage data display a collection of records in a grid. The cont
 1. Click **Apply Filters**.
 
 **数值列的 From/To 过滤**：数值型列（如 Quantity、Price）展开时显示 **From** 和 **To** 两个输入框，表示范围区间。
-- 要精确匹配某值（如库存恰好为 0），必须**同时填写 From=0 和 To=0**；只填 From=0 不填 To 表示「≥ 0」，会匹配所有非负库存产品（即全部 2040 条），不是精确匹配。
+- 要精确匹配某值（如库存恰好为 0），必须**同时填写 From=X 和 To=X**；只填 From=X 不填 To 表示「≥ X」，会匹配所有满足下界的行（可能是全量），不是精确匹配。
 - 只填 To=X 不填 From 表示「≤ X」。
 
 **重要（过滤器会被持久化）**：Magento admin 网格的过滤条件是**按用户持久化保存在数据库里**的，会**跨会话/跨任务残留**。也就是说，进入一个网格时它可能仍带着上一次（甚至上一个任务）设过的过滤条件，导致看到的结果是被旧过滤限制后的子集——常见症状是莫名其妙的 `0 records found` / `We couldn't find any records.`。因此：
@@ -80,6 +80,14 @@ The selection of columns and their order in the grid can be changed according to
    - To return the default grid view, click **Reset**.
 
   Make sure to scroll down to see all available columns.
+
+**Columns 面板操作要点**：
+- 面板底部只有两个按钮：**Cancel（取消所有改动并关闭）** 和 **Reset（恢复默认列集合）**，没有 Apply/Save 按钮（Filters 面板才有 Apply Filters，不要混淆）。
+- 勾选/取消某列的复选框后，**网格立即更新**（无需点任何按钮），可实时看到效果。
+- ⚠️ **勾选完目标列后通常根本不需要关闭面板**：网格已即时更新，后续 foreach/采集走 AX 树从 DOM 直接读行，面板开着也不影响。除非明确要求关闭，否则勾完直接进入下一步，不要自加「关闭面板」动作。
+- ⚠️ **绝不点 Cancel**：Cancel 会**撤销**自面板打开以来的所有改动（包括刚勾的列），等同「取消操作」，不是关闭方式。
+- ⚠️ 若确需关闭，点面板外空白区——但 Columns 面板是**覆盖在网格上的浮层**，空白区下方常是产品行/链接，容易误中跳到详情页；能不关就不关。
+- **Reset** 恢复为默认列集合（移除用户自定义列）；比 Cancel 破坏性更大，基本不用。
 
 ### Move a column
 
