@@ -12,6 +12,7 @@
 | task | score | 结果 | 目标 | 报告 |
 | --- | --- | --- | --- | --- |
 | 11 | 1.0 | ✅ | Get the total number of reviews that our store received so far that mention term… | [report](reports/11.html) |
+| 15 | 1.0 | ✅ | Get the total number of reviews that our store received so far that mention term… | [report](reports/15.html) |
 | 42 | 1.0 | ✅ | Get the top 2 search term(s) in my store | [report](reports/42.html) |
 | 63 | 1.0 | ✅ | Get customer email(s) who completed the second most number of orders in the enti… | [report](reports/63.html) |
 | 64 | 1.0 | ✅ | Get customer email(s) who have 2 orders in any state in the entire history | [report](reports/64.html) |
