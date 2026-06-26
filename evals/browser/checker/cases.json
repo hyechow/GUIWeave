@@ -329,6 +329,23 @@
     "label": "Reviews筛选-2条结果可见时不得幻称结果数未变/Search未提交（回归 20260626_171609 重复Search 5次）",
     "screenshot": "evals/browser/checker/screenshots/reviews_filtered_2records_best.png",
     "with_app_check": false,
+    "observation": {
+      "tables": [
+        {
+          "index": 0,
+          "source": "grid",
+          "caption": "Reviews",
+          "headers": ["ID", "Created", "Status", "Title", "Nickname", "Review", "Visibility", "Type", "Product", "SKU", "Action"],
+          "rows": [["199", "", "Approved", "Best hoodies I've owned.", "Beatris", "im planning on buying another one of these in a...", "", "Guest", "Selene Yoga Hoodie", "WH05", "Edit"], ["73", "", "Approved", "Hate the fabric", "Hai", "Why is this kind of fabric all the rage? I know...", "", "Guest", "Balboa Persistence Tee", "MS03", "Edit"]],
+          "row_count": 2,
+          "dom_row_count": 2,
+          "total_records": 2,
+          "partial": false,
+          "path": "",
+          "traversal": {"type": "paged", "page_index": 1, "page_count": 1, "has_next_page": false, "has_prev_page": false}
+        }
+      ]
+    },
     "milestone": {
       "name": "在评论列表中按关键词 'best' 进行筛选",
       "description": "在 Reviews 列表按 Review Text 关键词 'best' 筛选（读取字段：总记录数）",

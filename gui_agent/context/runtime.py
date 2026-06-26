@@ -353,6 +353,45 @@ def knowledge_block(kind: str, content: str | None, *, source: str = "knowledge_
     )
 
 
+def grid_status_block(tables: list[dict] | None) -> ContextBlock | None:
+    """Inject DOM-derived grid record count into the checker context.
+
+    Checker LLMs sometimes hallucinate 'count unchanged / filter not applied' when
+    the screenshot lacks an 'Active filters' chip (e.g. Magento Reviews page). Passing
+    the DOM-authoritative total_records as structured text gives the checker an
+    unambiguous textual signal — no screenshot reading required.
+    """
+    if not tables:
+        return None
+    lines: list[str] = []
+    for t in tables:
+        if not isinstance(t, dict):
+            continue
+        total = t.get("total_records")
+        rows = t.get("row_count") or len(t.get("rows") or [])
+        caption = str(t.get("caption") or t.get("source") or "网格").strip()
+        if total is not None:
+            partial = t.get("partial", False)
+            lines.append(
+                f"- {caption}: 当前页 {rows} 行，总记录数 {total}"
+                + ("（部分，未完整采集）" if partial else "")
+            )
+        elif rows:
+            lines.append(f"- {caption}: 当前页 {rows} 行（总记录数未知）")
+    if not lines:
+        return None
+    content = "## 当前网格/表格记录数（DOM 权威值，非视觉推断）\n" + "\n".join(lines)
+    return ContextBlock(
+        id="runtime.observation.grid_status",
+        budget="high",
+        source_type="runtime_state",
+        source="platform_adapter",
+        ttl="turn",
+        priority=29,
+        content=content,
+    )
+
+
 def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None:
     text = format_form_controls_text(form_controls)
     if not text:
