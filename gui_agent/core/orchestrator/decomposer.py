@@ -61,7 +61,10 @@ class _StepDraft(BaseModel):
     )
     sql: str = Field(
         default="",
-        description="op=run 且 run_kind=data_query：只读 SQL。只能 SELECT/WITH SELECT；默认表名 data，列名为表头 snake_case。",
+        description=(
+            "op=run 且 run_kind=data_query：只读 SQL。只能 SELECT/WITH SELECT；默认表名 data，"
+            "列名为表头 snake_case；金额/数字/百分比显示文本可用 <column>_num，日期时间显示文本可用 <column>_ts。"
+        ),
     )
     data_scope: str = Field(
         default="complete",
@@ -290,6 +293,17 @@ def validate_program(program: Program) -> list[str]:
                     f"{where} 用了裸 {{{var}}} 缺字段——「{var}」是某个返回值/data_query 步的结果变量，"
                     f"引用它的某个字段要写成 {{{var}[字段]}}（字段取自该步 returns）；裸 {{{var}}} 不会被填上值"
                 )
+        for m in re.finditer(r"\{([^{}]+)\}", text or ""):
+            raw = m.group(0)
+            expr = m.group(1).strip()
+            if TEMPLATE_RE.fullmatch(raw) or BARE_REF_RE.fullmatch(raw):
+                continue
+            if any(var and var in expr for var in all_result_vars) or re.search(r"[()+\-*/]", expr):
+                issues.append(
+                    f"{where} 包含不支持的模板表达式 {{{expr}}}。"
+                    "模板只支持 {变量[字段]} 引用；加减乘除、ABS/difference 等计算必须放进 data_query，"
+                    "再让 finish 引用 data_query 返回字段。"
+                )
 
     def _walk(stmts: list[Stmt], scope: dict[str, set[str]]) -> None:
         # Sequential statements mutate `scope` in place; if-branches each get a copy, and only
@@ -316,10 +330,44 @@ def validate_program(program: Program) -> list[str]:
                     issues.append(f"data_query 步「{s.name}」没有绑定 var——查询结果无法被后续引用")
                 if s.kind == "data_query" and not s.sql.strip():
                     issues.append(f"data_query 步「{s.name}」没有 sql——必须提供只读 SELECT/WITH SELECT")
+                if s.kind == "data_query" and _sql_contains_template_ref(s.sql):
+                    issues.append(
+                        f"data_query 步「{s.name}」的 SQL 包含模板表达式 {{...}}。"
+                        "SQL 不会执行 {变量[字段]} 替换，也不能引用 action/read 的标量返回值；"
+                        "data_query 只能查询当前结构化表格或 foreach into 表。若要做差值/比例/合计，"
+                        "请先把相关行集 materialize 成表，再在同一个 SQL/CTE 里计算并输出字段。"
+                    )
+                if s.kind == "data_query":
+                    scope_vars = {str(var).lower() for var in scope}
+                    bad_var_tables = sorted((_sql_referenced_tables(s.sql) - _sql_cte_names(s.sql)) & scope_vars)
+                    if bad_var_tables:
+                        issues.append(
+                            f"data_query 步「{s.name}」把前序结果变量当成 SQL 表名使用：{bad_var_tables}。"
+                            "SQL 不能查询 read/action/data_query 的 var；只能查询当前表格 data/table_N/caption，"
+                            "或 foreach 产出的 into 表。若要组合多个聚合结果，把这些聚合写进同一个 SQL/CTE。"
+                        )
                 if s.returns and s.kind != "data_query" and not s.var:
                     issues.append(f"步骤「{s.name}」声明了 returns 但没有绑定 var——返回值无法被后续 if/finish/foreach 引用")
                 if s.returns and s.kind not in {"read", "data_query"} and not s.read_spec.strip():
                     issues.append(f"步骤「{s.name}」声明了 returns 但没有 read_spec——必须说明这些返回字段在完成帧上如何读取")
+                if s.returns and s.kind != "data_query" and _run_looks_like_visual_row_aggregation(s):
+                    issues.append(
+                        f"步骤「{s.name}」试图在 UI return/read_spec 中目测聚合表格前 N 行或多行数值。"
+                        "表格求和/平均/差值/排名不能靠 action/read 手工相加；"
+                        "请先用页面筛选/排序准备数据源，用 foreach body=[] 采集需要的网格列，"
+                        "再用 data_query 对完整表做 SUM/AVG/COUNT/ABS 等计算。"
+                    )
+                if (
+                    s.returns
+                    and s.kind != "data_query"
+                    and _goal_needs_table_analysis(program.goal)
+                    and _run_looks_like_table_row_field_collection(s)
+                ):
+                    issues.append(
+                        f"步骤「{s.name}」把表格行字段挂在 {s.kind} returns 上读取。"
+                        "聚合/排序/top-N 类任务不能让 filter/action/read 读取当前可见网格行字段；"
+                        "这些字段应放在 foreach returns 中采集完整行集，然后用 data_query 分析。"
+                    )
                 if s.kind == "data_query" and _sql_uses_schema_mapping_text(s.sql):
                     issues.append(
                         f"data_query 步「{s.name}」的 SQL 使用了 schema 显示映射文本（如 Header->column）。"
@@ -335,6 +383,26 @@ def validate_program(program: Program) -> list[str]:
                     issues.append(
                         f"data_query 步「{s.name}」像是在回答聚合排名/第N多，但 SQL 使用 LIMIT/OFFSET 单行截断，"
                         "会丢掉并列项；请先 GROUP BY 计算 count，再用 DENSE_RANK() 或 HAVING count 返回该名次的所有并列结果"
+                    )
+                if s.kind == "data_query" and _aggregate_query_limits_after_aggregation(s.sql):
+                    issues.append(
+                        f"data_query 步「{s.name}」把 LIMIT 放在 SUM/AVG/COUNT 等聚合之后；"
+                        "LIMIT 不会限制聚合输入行。若任务是最近/前 N 行的金额/数值聚合，"
+                        "请先在 FROM 子查询里 ORDER BY/LIMIT 选出 N 行，再在外层 SUM/AVG/COUNT，"
+                        "例如 SELECT SUM(amount_num) AS total FROM "
+                        "(SELECT amount_num FROM rows ORDER BY date_ts DESC LIMIT N)。"
+                    )
+                if s.kind == "data_query" and _temporal_limit_without_order(rank_goal_text, s):
+                    issues.append(
+                        f"data_query 步「{s.name}」在回答最近/最旧/last/latest/oldest 这类时间顺序任务时使用了 LIMIT，"
+                        "但对应 SELECT 没有 ORDER BY；LIMIT 只能取任意/当前插入顺序行，不能代表最近/最旧。"
+                        "请采集日期/时间列，并在子查询中 ORDER BY <date>_ts DESC/ASC 后再 LIMIT。"
+                    )
+                if s.kind == "data_query" and _temporal_aggregate_without_row_limit(rank_goal_text, s):
+                    issues.append(
+                        f"data_query 步「{s.name}」在回答最近/最旧/last/latest/oldest N 行的聚合任务时，"
+                        "SQL 直接对整张表 SUM/AVG/COUNT，没有先按日期/时间 ORDER BY 后 LIMIT N。"
+                        "请先用子查询或 CTE 选出目标 N 行，再聚合。"
                     )
                 # check this run's refs BEFORE binding its own var (a read can't reference its own
                 # value — env[var] isn't set until the read completes)
@@ -564,9 +632,9 @@ def _check_retrieval_retry_preserves_field(stmts: list[Stmt], issues: list[str])
 
 
 _SQL_NON_FIELD_TOKENS = {
-    "all", "and", "as", "asc", "between", "by", "case", "cast", "count", "dense_rank",
-    "desc", "distinct", "else", "end", "from", "group", "having", "in", "integer", "is",
-    "like", "limit", "not", "null", "offset", "on", "or", "order", "over", "partition",
+    "abs", "all", "and", "as", "asc", "avg", "between", "by", "case", "cast", "count", "dense_rank",
+    "coalesce", "desc", "distinct", "else", "end", "from", "group", "having", "in", "integer", "is",
+    "like", "limit", "max", "min", "not", "null", "offset", "on", "or", "order", "over", "partition",
     "real", "select", "str", "strftime", "sum", "text", "then", "where", "when", "with",
     "data", "result",
 }
@@ -581,12 +649,63 @@ def _data_query_field_tokens(run: Run) -> set[str]:
     # mis-flag the value text as a missing/unknown column. (Double quotes are SQLite identifiers,
     # left intact so real column refs inside them are still validated.)
     sql = re.sub(r"'[^']*'", " ", run.sql or "")
+    ignored = _sql_derived_identifier_tokens(sql)
     for raw in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", sql):
         token = raw.lower()
-        if token in _SQL_NON_FIELD_TOKENS or re.fullmatch(r"table_\d+", token):
+        if token in ignored or token in _SQL_NON_FIELD_TOKENS or re.fullmatch(r"table_\d+", token):
             continue
         tokens.add(token)
     return tokens
+
+
+def _sql_derived_identifier_tokens(sql: str) -> set[str]:
+    tokens = {raw.lower() for raw in re.findall(r"\bas\s+([A-Za-z_][A-Za-z0-9_]*)\b", sql or "", flags=re.I)}
+    tokens.update(_sql_cte_names(sql))
+    tokens.update(_sql_table_alias_tokens(sql))
+    return tokens
+
+
+def _sql_cte_names(sql: str) -> set[str]:
+    text = sql or ""
+    if not re.match(r"^\s*with\b", text, flags=re.I):
+        return set()
+    return {
+        raw.lower()
+        for raw in re.findall(r"(?:\bwith\b|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s+as\s*\(", text, flags=re.I)
+    }
+
+
+def _sql_table_alias_tokens(sql: str) -> set[str]:
+    """Best-effort aliases for derived tables, e.g. `FROM (...) c, (...) comp`."""
+    aliases = {
+        raw.lower()
+        for raw in re.findall(r"\)\s+(?:as\s+)?([A-Za-z_][A-Za-z0-9_]*)\b", sql or "", flags=re.I)
+    }
+    return {alias for alias in aliases if alias not in _SQL_NON_FIELD_TOKENS}
+
+
+def _sql_referenced_tables(sql: str) -> set[str]:
+    return {
+        raw.lower()
+        for raw in re.findall(r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)\b", sql or "", flags=re.I)
+    }
+
+
+def _missing_query_fields(needed: set[str], available: set[str], ignored: set[str] | None = None) -> set[str]:
+    ignored = ignored or set()
+    return {
+        token for token in needed
+        if token not in ignored and not _query_field_available(token, available)
+    }
+
+
+def _query_field_available(token: str, available: set[str]) -> bool:
+    if token in available:
+        return True
+    for suffix in ("_num", "_ts"):
+        if token.endswith(suffix) and token[: -len(suffix)] in available:
+            return True
+    return False
 
 
 def _read_looks_like_row_collection(run: Run) -> bool:
@@ -610,7 +729,7 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: list[str]) -> None:
     3. data_query on a foreach into-table must only use fields that foreach body returns produced.
     """
 
-    foreach_tables: dict[str, tuple[str, set[str]]] = {}
+    foreach_tables: dict[str, tuple[str, set[str], bool]] = {}
 
     def _body_result_fields(seq: list[Stmt], row_fields: set[str]) -> set[str]:
         fields = set(row_fields)
@@ -646,7 +765,7 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: list[str]) -> None:
                     needed = _data_query_field_tokens(s)
                     if local and needed:
                         for var, (read_name, row_fields) in local.items():
-                            missing = needed - row_fields
+                            missing = _missing_query_fields(needed, row_fields)
                             if missing:
                                 issues.append(
                                     f"data_query 步「{s.name}」紧跟逐行采集 read「{read_name}」后，"
@@ -657,7 +776,7 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: list[str]) -> None:
                                     "不要跳过 foreach 凭空查询详情字段。"
                                 )
                                 break
-                    refs = _referenced_tables(s.sql)
+                    refs = _referenced_tables(s.sql) - _sql_cte_names(s.sql)
                     unknown_refs = {
                         ref for ref in refs
                         if ref not in foreach_tables and ref != "data" and not re.fullmatch(r"table_\d+", ref)
@@ -670,26 +789,34 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: list[str]) -> None:
                             "产出 into 表，再查询该表。"
                         )
                     for table in refs & set(foreach_tables):
-                        table_label, fields = foreach_tables[table]
+                        table_label, fields, body_empty = foreach_tables[table]
                         # Exclude data_query returns from the check: they are output aliases
                         # (e.g. "SUM(...) AS total"), not fields that must come from the foreach table.
                         returns_aliases = {str(r).strip().lower() for r in (s.returns or [])}
-                        missing = needed - fields - refs - returns_aliases
+                        missing = _missing_query_fields(needed, fields, refs | returns_aliases)
                         if missing:
-                            issues.append(
-                                f"data_query 步「{s.name}」查询 foreach 产出的表「{table_label}」，"
-                                f"但使用/返回了 foreach body 没有通过 returns 产出的字段 {sorted(missing)}；"
-                                "请在该 foreach body 里逐条打开详情，并让打开详情的 run 带 returns/read_spec 产出这些字段，"
-                                "再对 into 表 data_query。"
-                            )
+                            if body_empty:
+                                issues.append(
+                                    f"data_query 步「{s.name}」查询 foreach body=[] 产出的网格表「{table_label}」，"
+                                    f"但 SQL 需要的字段 {sorted(missing)} 没有被该 foreach returns 采集；"
+                                    "请把这些字段的基础网格列加入 foreach returns（例如需要 *_ts 就采集对应日期/时间列，"
+                                    "需要 *_num 就采集对应金额/数字列），不要因此改成逐条钻取。"
+                                )
+                            else:
+                                issues.append(
+                                    f"data_query 步「{s.name}」查询 foreach 产出的表「{table_label}」，"
+                                    f"但使用/返回了 foreach body 没有通过 returns 产出的字段 {sorted(missing)}；"
+                                    "请在该 foreach body 里逐条打开详情，并让打开详情的 run 带 returns/read_spec 产出这些字段，"
+                                    "再对 into 表 data_query。"
+                                )
                             break
                     if foreach_tables and not (refs & set(foreach_tables)):
                         produced: set[str] = set()
                         labels: list[str] = []
-                        for label, fields in foreach_tables.values():
+                        for label, fields, _body_empty in foreach_tables.values():
                             labels.append(label)
                             produced.update(fields)
-                        missing = needed - produced - refs
+                        missing = _missing_query_fields(needed, produced, refs)
                         if missing:
                             issues.append(
                                 f"data_query 步「{s.name}」位于 foreach 之后，但使用/返回了此前 foreach "
@@ -710,7 +837,11 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: list[str]) -> None:
                     # maps to "grand_total_purchased" and matches what data_query SQL writes.
                     row_fields = {_sql_identifier(r) for r in s.returns}
                 table_name = (s.into or f"{s.var}s").lower()
-                foreach_tables[table_name] = (s.into or f"{s.var}s", _body_result_fields(s.body, row_fields))
+                foreach_tables[table_name] = (
+                    s.into or f"{s.var}s",
+                    _body_result_fields(s.body, row_fields),
+                    not bool(s.body),
+                )
                 if s.over in local:
                     local.pop(s.over, None)
                 _walk_seq(s.body, {})
@@ -731,9 +862,157 @@ def _rank_query_drops_ties(goal_text: str, run: Run) -> bool:
     return bool(re.search(r"\blimit\s+1\b", sql) or re.search(r"\boffset\s+\d+\b", sql))
 
 
+_AGGREGATE_FN_RE = re.compile(r"\b(?:sum|avg|min|max|count)\s*\(", flags=re.IGNORECASE)
+
+
+def _aggregate_query_limits_after_aggregation(sql: str) -> bool:
+    text = sql or ""
+    words = list(_sql_words_with_depth(text))
+    for idx, (select_pos, word, depth) in enumerate(words):
+        if word != "select":
+            continue
+        from_pos = None
+        limit_pos = None
+        group_pos = None
+        for pos, next_word, next_depth in words[idx + 1:]:
+            if next_depth < depth:
+                break
+            if next_depth != depth:
+                continue
+            if next_word == "select":
+                break
+            if next_word == "from" and from_pos is None:
+                from_pos = pos
+            elif next_word == "group" and from_pos is not None and group_pos is None:
+                group_pos = pos
+            elif next_word == "limit" and from_pos is not None:
+                limit_pos = pos
+                break
+        if from_pos is not None and limit_pos is not None and group_pos is None:
+            if _AGGREGATE_FN_RE.search(text[select_pos:from_pos]):
+                return True
+    return False
+
+
+def _temporal_limit_without_order(goal_text: str, run: Run) -> bool:
+    haystack = f"{goal_text}\n{run.name}\n{run.success_condition}".lower()
+    if not re.search(r"\b(last|recent|latest|newest|oldest)\b|最近|最后|最新|最旧|最早", haystack):
+        return False
+    return _sql_has_limit_without_same_level_order(run.sql or "")
+
+
+def _temporal_aggregate_without_row_limit(goal_text: str, run: Run) -> bool:
+    haystack = f"{goal_text}\n{run.name}\n{run.success_condition}".lower()
+    if not re.search(r"\b(last|recent|latest|newest|oldest)\b|最近|最后|最新|最旧|最早", haystack):
+        return False
+    sql = (run.sql or "").lower()
+    if not _AGGREGATE_FN_RE.search(sql):
+        return False
+    if re.search(r"\blimit\s+\d+\b", sql):
+        return False
+    if re.search(r"\b(row_number|rank|dense_rank)\s*\(", sql):
+        return False
+    return True
+
+
+def _sql_has_limit_without_same_level_order(sql: str) -> bool:
+    words = list(_sql_words_with_depth(sql or ""))
+    for idx, (select_pos, word, depth) in enumerate(words):
+        if word != "select":
+            continue
+        limit_pos = None
+        order_pos = None
+        for pos, next_word, next_depth in words[idx + 1:]:
+            if next_depth < depth:
+                break
+            if next_depth != depth:
+                continue
+            if next_word == "select":
+                break
+            if next_word == "order" and order_pos is None:
+                order_pos = pos
+            elif next_word == "limit":
+                limit_pos = pos
+                break
+        if limit_pos is not None and order_pos is None:
+            return True
+    return False
+
+
+def _top_level_sql_keyword_pos(sql: str, keyword: str, *, start: int = 0) -> int | None:
+    target = keyword.lower()
+    for pos, word in _top_level_sql_words(sql):
+        if pos >= start and word == target:
+            return pos
+    return None
+
+
+def _top_level_sql_words(sql: str):
+    for pos, word, depth in _sql_words_with_depth(sql):
+        if depth == 0:
+            yield pos, word
+
+
+def _sql_words_with_depth(sql: str):
+    depth = 0
+    quote: str | None = None
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        nxt = sql[i + 1] if i + 1 < len(sql) else ""
+        if quote:
+            if quote == "]":
+                if ch == "]":
+                    quote = None
+            elif ch == quote:
+                if nxt == quote:
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if ch in {"'", '"', "`"}:
+            quote = ch
+            i += 1
+            continue
+        if ch == "[":
+            quote = "]"
+            i += 1
+            continue
+        if ch == "-" and nxt == "-":
+            end = sql.find("\n", i + 2)
+            i = len(sql) if end == -1 else end + 1
+            continue
+        if ch == "/" and nxt == "*":
+            end = sql.find("*/", i + 2)
+            i = len(sql) if end == -1 else end + 2
+            continue
+        if ch == "(":
+            depth += 1
+            i += 1
+            continue
+        if ch == ")":
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if ch.isalpha() or ch == "_":
+            j = i + 1
+            while j < len(sql) and (sql[j].isalnum() or sql[j] == "_"):
+                j += 1
+            yield i, sql[i:j].lower(), depth
+            i = j
+            continue
+        i += 1
+
+
 def _sql_uses_schema_mapping_text(sql: str) -> bool:
     """Reject copied schema display forms such as `Header->column` in SQL."""
     return bool(re.search(r"\b[a-zA-Z_][\w .\"'`-]*\s*->\s*[a-zA-Z_]\w*\b", sql or ""))
+
+
+def _sql_contains_template_ref(sql: str) -> bool:
+    """SQL is not a template surface; `{var[field]}` belongs in run text/finish only."""
+    return bool(re.search(r"\{[^{}]+\}", sql or ""))
 
 
 def _sql_uses_quoted_display_identifier(sql: str) -> bool:
@@ -744,6 +1023,59 @@ def _sql_uses_quoted_display_identifier(sql: str) -> bool:
             if text and _sql_identifier(text) != text:
                 return True
     return False
+
+
+_VISUAL_ROW_AGG_RE = re.compile(
+    r"("
+    r"(?:sum|total|average|avg|difference|add up|aggregate).{0,80}"
+    r"(?:first|top|last|latest|recent|oldest|前|最近|最后|最新|最旧|最早)\s*\d+"
+    r"|(?:first|top|last|latest|recent|oldest)\s*\d+.{0,80}"
+    r"(?:sum|total|average|avg|difference|add up|aggregate)"
+    r"|(?:前|最近|最后|最新|最旧|最早)\s*\d+\s*(?:行|条|笔|个|rows?|records?|orders?).{0,80}"
+    r"(?:总和|合计|求和|相加|平均|差值|聚合|sum|total|average|avg|difference)"
+    r"|(?:总和|合计|求和|相加|平均|差值|聚合).{0,80}"
+    r"(?:前|最近|最后|最新|最旧|最早)\s*\d+\s*(?:行|条|笔|个|rows?|records?|orders?)"
+    r")",
+    flags=re.IGNORECASE,
+)
+
+
+def _run_looks_like_visual_row_aggregation(run: Run) -> bool:
+    """Catch plans that ask a UI run to manually add table rows instead of using data_query."""
+    text = f"{run.name}\n{run.success_condition}\n{run.read_spec}\n{' '.join(run.returns or [])}".lower()
+    if not _VISUAL_ROW_AGG_RE.search(text):
+        return False
+    return bool(
+        re.search(r"\b(row|rows|record|records|order|orders|table|grid)\b|行|条|笔|表格|网格", text)
+    )
+
+
+def _goal_needs_table_analysis(goal: str) -> bool:
+    text = (goal or "").lower()
+    return bool(
+        re.search(
+            r"\b(count|sum|total|average|avg|top|most|least|rank|second|third|fourth|fifth|last|latest|recent|oldest|difference)\b",
+            text,
+        )
+        or re.search(r"总数|数量|求和|总额|平均|最多|最少|排名|第[二三四五]|最近|最后|最新|最旧|最早|差值|差异", goal or "")
+    )
+
+
+def _run_looks_like_table_row_field_collection(run: Run) -> bool:
+    """Non-data runs should prepare a table source, not return per-row grid fields for analysis."""
+    text = f"{run.name}\n{run.success_condition}\n{run.read_spec}".lower()
+    if not re.search(r"\b(row|rows|record|records|table|grid|visible)\b|行|条|表格|网格|可见", text):
+        return False
+    returns = [str(ret or "").strip().lower() for ret in (run.returns or [])]
+    if not returns:
+        return False
+    if len(returns) == 1 and re.search(r"(?:record|row|result|match).*count|records?_found|count|total_records|数量|总数", returns[0]):
+        return False
+    row_value_markers = (
+        "date", "time", "amount", "price", "total", "grand", "status", "customer", "email",
+        "sku", "name", "qty", "quantity", "日期", "时间", "金额", "总额", "状态", "客户", "邮箱", "数量",
+    )
+    return len(returns) >= 2 or any(any(marker in ret for marker in row_value_markers) for ret in returns)
 
 
 _MAX_RETRIES = 2
@@ -1083,10 +1415,12 @@ def _table_schema_prompt(tables: list[dict] | None) -> str:
             row_text = "?"
         completeness = "partial" if table.get("partial") else "complete"
         caption_text = f' caption="{caption}";' if caption else ""
+        typed_shadows = _schema_typed_shadow_candidates(headers, sql_columns)
         column_text = ", ".join(sql_columns) if sql_columns else "(no headers)"
+        typed_text = f"; typed shadows if parseable: {', '.join(typed_shadows)}" if typed_shadows else ""
         labels_text = f"; source labels: {', '.join(labels)}" if labels else ""
         lines.append(
-            f"- {'/'.join(aliases)};{caption_text} sql columns: {column_text}{labels_text}; rows: {row_text}; {completeness}"
+            f"- {'/'.join(aliases)};{caption_text} sql columns: {column_text}{typed_text}{labels_text}; rows: {row_text}; {completeness}"
         )
     if not lines:
         return ""
@@ -1095,8 +1429,25 @@ def _table_schema_prompt(tables: list[dict] | None) -> str:
         "这些表格来自当前界面已采集的表格快照；用于规划 data_query 的表名和列名。"
         "这里故意不提供行数据，实际查询由受限 SQLite primitive 在运行时读取。\n"
         + "\n".join(lines)
-        + "\n若这些表格已经是任务要求的数据源终态，可生成 data_query；否则先规划导航、筛选/搜索/排序、清除旧筛选或完整采集步骤。SQL 只能使用表名和 sql columns 中列出的 snake_case 标识符。source labels 只是人类可读说明，不是 SQL 语法。"
+        + "\n若这些表格已经是任务要求的数据源终态，可生成 data_query；否则先规划导航、筛选/搜索/排序、清除旧筛选或完整采集步骤。SQL 只能使用表名、sql columns 中列出的 snake_case 标识符，以及运行时可解析的 typed shadows。source labels 只是人类可读说明，不是 SQL 语法。"
     )
+
+
+def _schema_typed_shadow_candidates(headers: list[Any], columns: list[str]) -> list[str]:
+    shadows: list[str] = []
+    numeric_hints = (
+        "amount", "total", "price", "cost", "qty", "quantity", "count", "number", "score",
+        "rating", "percent", "uses", "results", "subtotal", "tax", "shipping", "payment",
+        "paid", "grand", "%",
+    )
+    datetime_hints = ("date", "time", "created", "updated", "purchased", "ordered", "posted")
+    for header, column in zip(headers, columns):
+        text = f"{header} {column}".lower()
+        if any(hint in text for hint in datetime_hints):
+            shadows.append(f"{column}_ts")
+        if any(hint in text for hint in numeric_hints):
+            shadows.append(f"{column}_num")
+    return shadows[:24]
 
 
 def _sql_identifier(value: object) -> str:
