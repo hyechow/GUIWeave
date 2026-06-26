@@ -349,5 +349,24 @@
       "filter_step_clears_residual_filters"
     ],
     "note": "task 186 正确路径：① filter 步骤先清除任务未要求的残留筛选/搜索/关键词（Magento 后台 grid 筛选按账号持久化、跨任务残留），再设 Quantity From=2, To=3；filter 的 success_condition 要求可见 active filters 恰好等于任务要求（无 WS08 之类残留）② 启用/读取 Size 列 ③ foreach 采集过滤后网格 ④ data_query 输出 name+size。失败根因（live run 1 score 0.0）：继承了 task 185 的 `Keyword: WS08` 残留筛选，结果只剩 WS08 名下 1 个产品，漏掉另一个，数据被污染却报 done。这个 case 锁的就是 decomposer 必须为具体筛选任务也规划清残留步骤（不限 any/all）——见 decomposer.md 规则 4 的「这条不限于 any/all 任务」段。区间 From/To 落框问题已由 dom_snap 身份吸附在 ec4597c 修复（见 tests/test_browser_dom_snap.py），不在本 eval 范围。"
+  },
+  {
+    "label": "WebArena shopping_admin task 193 — last 2 completed orders total payment uses grid Grand Total (no drill)",
+    "goal": "Get the total payment amount of the last 2 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 2,
+      "has_finish": true
+    },
+    "assertions": [
+      "orders_total_payment_no_detail_drill",
+      "orders_total_payment_filters_complete_clears_residual"
+    ],
+    "note": "task 193 正确路径：① navigate → Sales > Orders ② filter Status=Complete（SC 含清除残留，恰好等于 Status: Complete）③ read 前 2 行 Grand Total 直接从网格读（Orders 网格默认含 Grand Total 列，无需钻详情页）④ finish 求和。失败根因（live run score N/A，被 kill）：decomposer 生成了 foreach drill——逐条打开订单详情页读 total_amount（order_id=9/11/13... 共 8+ 次 URL-direct 钻取），其中部分订单读出 $0.00（order_id 9/13 误读）；DSL 校验器在启动时报 2 条错误：① filter step 声明 returns 但无 var ② data_query 引用 foreach body 未产出的字段 total_amount。anti-pattern：Grand Total 已是 Orders 网格默认列，任务只需 top 2 行 → 应直接 read/read_once，不应 foreach drill 进详情页。"
   }
 ]

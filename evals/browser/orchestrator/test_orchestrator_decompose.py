@@ -1107,6 +1107,56 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "不能只加 qty 2-3 而不管别的筛选。即使本任务有具体筛选值也要保证无无关筛选叠加。"
                     f" seq={[(r.kind, r.name) for r in seq]}"
                 )
+        elif assertion == "orders_total_payment_no_detail_drill":
+            # WebArena task 193: Grand Total is a default column in the Orders grid.
+            # The plan must NOT drill into individual order detail pages (foreach body
+            # with order/view navigation). Reading top-N rows directly from the grid is
+            # sufficient — no foreach drill needed.
+            for s in program.statements:
+                if not isinstance(s, ForEach):
+                    continue
+                body_runs = _flatten_runs(s.body)
+                drill_runs = [
+                    r for r in body_runs
+                    if r.kind == "navigation" and any(
+                        marker in f"{r.name} {r.success_condition}".lower()
+                        for marker in ("order/view", "订单详情", "detail", "view/order_id")
+                    )
+                ]
+                if drill_runs:
+                    details.append(
+                        "Orders 网格默认含 Grand Total 列，最近 N 笔订单金额应直接从网格读取，"
+                        "不需要 foreach drill 进订单详情页。"
+                        "检测到 foreach body 含详情页导航（anti-pattern：每笔订单单独 URL-direct 开详情）。"
+                        f" drill_runs={[(r.kind, r.name) for r in drill_runs]}"
+                    )
+        elif assertion == "orders_total_payment_filters_complete_clears_residual":
+            # WebArena task 193: must filter Status=Complete AND clear residual filters.
+            seq = _flatten_runs(program.statements)
+            text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition}"
+                for r in seq
+            ).lower()
+            if "status" not in text or "complete" not in text:
+                details.append(
+                    "task 193 需要筛选 Status=Complete 后读取订单金额，当前未看到 Status/Complete 筛选。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
+            clear_keywords = (
+                "清除", "残留", "无其它", "无其他", "无关", "仅保留", "只保留", "恰好等于",
+                "重置", "clear", "reset",
+            )
+            clear_steps = [
+                r for r in seq
+                if r.kind in ("filter", "action", "navigate")
+                and any(kw in f"{r.name} {r.success_condition}".lower() for kw in clear_keywords)
+            ]
+            if not clear_steps:
+                details.append(
+                    "Magento 后台 grid 筛选持久化跨任务残留，filter 步骤必须清除无关残留筛选，"
+                    "success_condition 含「清除/残留/恰好等于」等关键词。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
