@@ -25,14 +25,40 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.supervisor.milestone import run_checker
+from gui_agent.adapters.android.actions import AndroidActionDecision
 from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
 passed = 0
 failed = 0
+
+
+def _build_history(entries: list[dict]) -> list[PolicyTurn]:
+    """Reconstruct compact PolicyTurn history entries for history-sensitive checker cases."""
+    turns = []
+    for h in entries:
+        sv = SupervisorStep(
+            should_act=True,
+            instruction=h["instruction"],
+            stop=False,
+            goal_completed=False,
+            summary=h.get("summary", ""),
+            milestone_id=h.get("milestone_id"),
+            milestone_kind=h.get("milestone_kind"),
+            completion_strategy=h.get("completion_strategy"),
+        )
+        ad = AndroidActionDecision.model_validate({"action": h["action"]}) if h.get("action") else None
+        turns.append(PolicyTurn(
+            index=h.get("index", len(turns) + 1),
+            observation_source="eval",
+            supervisor=sv,
+            action_decision=ad,
+            executed=h.get("executed", True),
+        ))
+    return turns
 
 
 def _report(label: str, ok: bool, detail: str = "") -> None:
@@ -58,7 +84,7 @@ def test_checker() -> None:
         try:
             with redirect_stdout(buf):
                 result = run_checker(
-                    milestone, observation, [],
+                    milestone, observation, _build_history(c.get("history", [])),
                     app_name=m.get("app_name", ""),
                     task_type=m.get("task_type", "action"),
                     constraints=c.get("constraints", []),

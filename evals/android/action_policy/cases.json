@@ -106,5 +106,19 @@
     "screenshot": "evals/android/action_policy/screenshots/alarm_picker.png",
     "instruction": "点击『重复』设置项",
     "expected": { "action_type": "tap" }
+  },
+  {
+    "label": "Gmail正文输入必须带正文框坐标（回归 20260626_220437 T17）",
+    "screenshot": "evals/android/action_policy/screenshots/gmail_compose_body_empty_20260626_220437_t17.png",
+    "instruction": "在正文输入框中输入 There are 805 stars and 9 contributors in the AndroidWorld repository.",
+    "expected": {
+      "action_type": "type",
+      "text": "There are 805 stars and 9 contributors in the AndroidWorld repository."
+    },
+    "expected_non_null": ["x", "y"],
+    "expected_range": {
+      "y": [300, 850]
+    },
+    "note": "MobileWorld CheckGithubInfoTask logs/gui_agent/mobileworld/android/20260626_220437 T17：正文框可见但未聚焦，action_policy 输出 type 却不带 x/y，执行器按“当前输入框已聚焦”直接 clear+type，结果正文未进入并造成后续重填。"
   }
 ]

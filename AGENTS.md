@@ -54,6 +54,26 @@ Concrete examples:
 
 For syntax checks, prefer targeted `uv run python -m py_compile <files>`.
 
+## Remote Execution
+
+This workspace is mirrored on the Ubuntu server at `root@192.168.31.57` over
+SSH port `2222`, with the remote checkout at `/root/iphone-use`.
+
+Use local filesystem tools for reading and editing files in this workspace.
+Run tests, evals, harnesses, ADB/Docker checks, and service-dependent commands
+on the remote server unless the user explicitly asks to run them locally.
+
+Use a login shell when invoking remote commands so the remote toolchain is on
+`PATH`, for example:
+
+```bash
+ssh -p 2222 root@192.168.31.57 'bash -lc "cd /root/iphone-use && uv run pytest"'
+```
+
+Remote `uv` is available at `/root/.local/bin/uv`; using `bash -lc` is normally
+enough to find it. If a command behaves differently locally and remotely, trust
+the remote result for runtime behavior.
+
 ## Coding Style
 
 Use idiomatic Python with 4-space indentation and type hints for public

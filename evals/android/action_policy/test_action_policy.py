@@ -55,6 +55,23 @@ def _check_action(action, expected: dict) -> list[str]:
     return details
 
 
+def _check_extra_expectations(action, case: dict) -> list[str]:
+    details = []
+    for key in case.get("expected_non_null", []):
+        actual = getattr(action, key, None)
+        if actual is None:
+            details.append(f"{key}: expected non-null")
+    for key, bounds in case.get("expected_range", {}).items():
+        actual = getattr(action, key, None)
+        if actual is None:
+            details.append(f"{key}: expected in range {bounds}, got None")
+            continue
+        lo, hi = bounds
+        if not (lo <= actual <= hi):
+            details.append(f"{key}: expected in range {bounds}, got {actual!r}")
+    return details
+
+
 def test_action_policy() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     if not cases:
@@ -84,6 +101,7 @@ def test_action_policy() -> None:
             continue
 
         details = _check_action(decision.action, c["expected"])
+        details.extend(_check_extra_expectations(decision.action, c))
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
         if not ok:

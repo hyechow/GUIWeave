@@ -115,5 +115,55 @@
       "reason_contains": ["傍晚", "下午", "PM"]
     },
     "note": "截图中列表条目是「傍晚 6:30」，属于 PM，不满足上午/早上/AM 6:30 的保存结果。"
+  },
+  {
+    "label": "发送动作响应门-邮件发送后跳回Inbox应判done（回归 20260626_220437 T21）",
+    "screenshot": "evals/android/checker/screenshots/gmail_inbox_after_send_20260626_220437_t21.png",
+    "milestone": {
+      "name": "填写收件人 kevin_zhang@example.com、主题 \"AndroidWorld Repository Stats\"、正文 \"There are 805 stars and 9 contributors in the AndroidWorld repository.\" 并发送",
+      "description": "填写收件人 kevin_zhang@example.com、主题 \"AndroidWorld Repository Stats\"、正文 \"There are 805 stars and 9 contributors in the AndroidWorld repository.\" 并发送（读取字段：发送状态）",
+      "success_condition": "已执行「填写收件人 kevin_zhang@example.com、主题 \"AndroidWorld Repository Stats\"、正文 \"There are 805 stars and 9 contributors in the AndroidWorld repository.\" 并发送」：动作已发出且界面给出响应（出现提示/结果区/列表更新/页面跳转/进入加载，任一即可）；本步不判定结果取值（checker 只判动作响应），具体结果由本步完成帧的结构化返回值读取判定。",
+      "kind": "action",
+      "completion_strategy": "visible_once",
+      "app_name": "Gmail"
+    },
+    "history": [
+      {
+        "index": 20,
+        "instruction": "点击发送按钮发送邮件",
+        "summary": "邮件内容已填写完整，收件人、主题和正文均已正确输入，现在需要点击发送按钮将邮件发出。",
+        "milestone_id": "发送动作响应门-邮件发送后跳回Inbox应判done（回归 20260626_220437 T21）",
+        "milestone_kind": "action",
+        "completion_strategy": "visible_once",
+        "action": {
+          "action_type": "tap",
+          "x": 823,
+          "y": 87,
+          "description": "点击发送按钮发送邮件"
+        },
+        "executed": true
+      }
+    ],
+    "expected": {
+      "status": "done",
+      "reason_contains": ["Inbox", "收件箱", "跳转", "响应"]
+    },
+    "note": "MobileWorld CheckGithubInfoTask 日志 logs/gui_agent/mobileworld/android/20260626_220437：T20 邮件字段完整并点击发送，T21 已跳回 Gmail Inbox，官方评测 score=1.0；但内部 checker 把 Inbox 误判为还需重新 Compose，导致 T22-T27 重开空白邮件并 false failed。对带 returns/read_spec 的发送/提交动作响应门，上一动作是发送且当前从表单页跳转到列表/Inbox，即为动作响应，除非 SC 明确要求成功 toast。"
+  },
+  {
+    "label": "仓库详情JSON不能验收为contributors数组页（回归 20260626_220437 T7）",
+    "screenshot": "evals/android/checker/screenshots/github_repo_json_not_contributors_20260626_220437_t7.png",
+    "milestone": {
+      "name": "导航到 contributors API: https://api.github.com/repos/google-research/android_world/contributors?per_page=100&anon=1",
+      "description": "导航到 contributors API: https://api.github.com/repos/google-research/android_world/contributors?per_page=100&anon=1（读取字段：contributors）",
+      "success_condition": "页面加载完成，显示 contributors JSON 数组数据",
+      "kind": "navigation",
+      "completion_strategy": "visible_once",
+      "app_name": "Chrome"
+    },
+    "expected": {
+      "status": "in_progress"
+    },
+    "note": "MobileWorld CheckGithubInfoTask logs/gui_agent/mobileworld/android/20260626_220437 T7：屏幕仍是仓库详情 API JSON，只看到 contributors_url 等字段，并非 /contributors 接口返回的顶层 contributor 对象数组；当时 checker 曾误判 contributors 子目标 done，随后 returns 读空并反复定位。"
   }
 ]
