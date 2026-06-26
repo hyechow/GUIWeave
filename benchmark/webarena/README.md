@@ -25,6 +25,7 @@
 | 127 | 1.0 | ✅ | Get the top 3 search terms that match available products in the store | [report](reports/127.html) |
 | 157 | 1.0 | ✅ | View the details of all customers | [report](reports/157.html) |
 | 186 | 1.0 | ✅ | Give me the product names and the sizes of the products that have 2-3 units lef… | [report](reports/186.html) |
+| 345 | 0.0 | ❌ | How many reviews did our shop receive in Apr 2023? | [report](reports/345.html) |
 
 ## 已知问题/局限
 
@@ -32,5 +33,7 @@
   CDP 直查 ground truth 确认：Magento 把 **Quantity 存在简单变体上、Material 存在配置型父产品上**。qty=3 命中两个简单变体（1478 `WS08-XS-Blue`、1182 `WH11-S-Blue`），它们**自身 Material 字段为空**（`selectedIndex=-1`）；期望答案 `Cotton/Fleece` 实为其配置型父产品（1492 `WS08` Minerva LumaTech V-Tee=Cotton、1194 `WH11` Eos V-Neck Hoodie=Fleece）的材质。没有任何一个产品同时满足"qty=3"且"material 有值"，WebArena 的 ground truth 本质是一条 DB join（variant.qty → parent.material），admin 后台**没有干净的单网格路径**能得到。需 variant→parent 多跳（按 SKU 去 `-SIZE-COLOR` 后缀定位父产品），但该能力窄而脆（基本只服务这一 `{{Attribute}} of products with {{N}} units left` 模板族、且易误泛化），暂不为它堆通用多跳逻辑；skill 里仅留一行数据模型注记。附带修复了一个通用读值 bug：属性下拉未选中时（`selectedIndex=-1`）误把首项 `Burlap` 当已选值。对照组 task 184（同模板，属性=Color）走通 score 1.0，因为 Color 是 Products 网格可选列、无需跨变体/父产品。
 - **task_type=navigate + AJAX 驱动的状态变更（如 679 "Go to the list of orders that are completed"）：评测器结构性盲区，非我们可修。**
   `NetworkEventEvaluator._filter_events_by_criteria`（`webarena-verified/src/.../network_event_evaluator.py`）对 `task.is_navigate_task`（数据集里固定的 ground truth，不受我们提交的 `agent_response.task_type` 影响）+ `expected.http_method=="GET"`（默认值）的任务，只认"最后一次真实整页文档导航"（`NetworkEvent.is_navigation_event`，要求 `Accept: text/html` 或 Sec-Fetch 三件套）。但 Magento 后台的 grid 筛选（如 sales_order_grid 设 `filters[status]=complete`）天生是纯 AJAX（`mui/index/render`，`Accept: application/json`），永远不满足 `is_navigation_event`，于是这条 evaluator 拿到的候选事件永远是页面本身的导航，跟 `expected.url`（指向 AJAX 端点）必然不匹配，跟我们筛选条件设没设对、清没清残留状态都无关。凡是"Magento 后台需要先设置筛选/排序才能到达某视图"且被标成 navigate 的任务，理论上都会撞同一个墙。
+- **task 345 "How many reviews in Apr 2023"：跨任务残留筛选 + 日期 picker 格式冲突，score 0.0（待复跑）。**
+  task 15 在 Reviews 页留下 `keyword=best` 残留；task 345 日期筛选叠在其上 → 0条 → planner Reset Filter 清光；第二次填日期时 Magento 日期 picker 把 From 变成今天（`06/26/2026`），To 丢失连字符（`20230430`）→ 再次 0条。根因：① decomposer 未为该 filter step 生成"清除残留"步骤（rule 4 未命中）；② 日期格式应为 `MM/DD/YYYY`（如 `04/01/2023`），不是 ISO 格式。答案：351（全部评价均在 2023年4月）。
 - **无关筛选残留污染 — 已在 decomposer + checker 两侧收紧（提示层，2026-06-26）。**
   Magento 后台的 grid 筛选状态按管理员账号持久化在服务端，跨任务运行会互相污染（task 186 首跑就带着上一题残留的 `Keyword: WS08`，结果只剩 1/2 产品、数据被污染却报 done；679 复测也曾带 `created_at` 残留）。收紧方式：① **decomposer**（`decomposer.md` 规则 4「这条不限于 any/all 任务」段）——任何用页面筛选准备数据源的任务，filter 步骤的 name/success_condition 都必须包含"清除任务未要求的残留筛选/搜索/关键词/范围，使可见 active filters 恰好等于任务要求的集合"，不再只对 any/all 任务生效；② **checker**（`checker.md`）——当子目标 success_condition 含"无残留/恰好等于"措辞时，必须核验可见 active-filters chip 里没有任务未要求的额外筛选，有则判 in_progress。eval 锁：`evals/browser/orchestrator` 的 task 186 case + `filter_step_clears_residual_filters` 断言（×3 稳定通过）。**仍是提示层约束**（非确定性兜底）：`SingleCheck`/`PreExisting` 这类跳过判定本身没改、`ui_facts`/`active_filters` 感知路径仍是 dormant；若要再硬化，方向是让 PreExisting 确定性比对"当前活跃筛选集合 vs 任务要求集合"。
