@@ -354,11 +354,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
 
         # Dispatch gate: success_condition asks only "did the action produce any UI response?"
-        # That is a deterministic question — url_changed OR dom_changed is conclusive.
-        # Skip the LLM checker entirely; it should never reason about action dispatch.
-        if is_dispatch_gate_sc(milestone.success_condition) and (
-            self._monitor.url_changed or self._monitor.dom_changed
-        ):
+        # That is a deterministic question — url_changed is conclusive (page navigation is
+        # unambiguous). dom_changed alone is NOT used: it fires on any form fill / datepicker
+        # set / focus change, which would short-circuit before the submit action runs.
+        if is_dispatch_gate_sc(milestone.success_condition) and self._monitor.url_changed:
             check = _SingleCheckResult(
                 status="done",
                 reason="动作已发出且界面响应已确认（URL/DOM 状态变化，确定性信号）",
