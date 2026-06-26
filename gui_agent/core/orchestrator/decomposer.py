@@ -671,7 +671,10 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: list[str]) -> None:
                         )
                     for table in refs & set(foreach_tables):
                         table_label, fields = foreach_tables[table]
-                        missing = needed - fields - refs
+                        # Exclude data_query returns from the check: they are output aliases
+                        # (e.g. "SUM(...) AS total"), not fields that must come from the foreach table.
+                        returns_aliases = {str(r).strip().lower() for r in (s.returns or [])}
+                        missing = needed - fields - refs - returns_aliases
                         if missing:
                             issues.append(
                                 f"data_query 步「{s.name}」查询 foreach 产出的表「{table_label}」，"
@@ -702,8 +705,10 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: list[str]) -> None:
                 elif s.over in all_read_vars:
                     row_fields = set(all_read_vars[s.over][1])
                 elif s.returns:
-                    # new-style foreach: collect_fn provides rows with these fields
-                    row_fields = {r.lower() for r in s.returns}
+                    # new-style foreach: collect_fn provides rows with these fields.
+                    # Normalize with _sql_identifier (same as runtime) so "Grand Total (Purchased)"
+                    # maps to "grand_total_purchased" and matches what data_query SQL writes.
+                    row_fields = {_sql_identifier(r) for r in s.returns}
                 table_name = (s.into or f"{s.var}s").lower()
                 foreach_tables[table_name] = (s.into or f"{s.var}s", _body_result_fields(s.body, row_fields))
                 if s.over in local:
