@@ -359,6 +359,7 @@ def _check_navigation_identity(program: Program, issues: list[str]) -> None:
                 is_target_navigation = (
                     s.kind == "navigation"
                     and (not target_terms or any(term in lowered for term in target_terms))
+                    and "api.github.com" not in lowered  # navigation 到 api 是取数,不是找页
                 )
                 if is_target_navigation and identity_terms:
                     missing = [term for term in identity_terms if term not in lowered]
