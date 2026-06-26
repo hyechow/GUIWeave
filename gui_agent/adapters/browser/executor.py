@@ -26,6 +26,30 @@ _INLINE_EN_LABEL_RE = re.compile(
     r"(?:选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
     r"|点击\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*(?:选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
 )
+_RANGE_FIELD_LABEL_RE = re.compile(
+    # The from/to/min/max qualifier must be a SEPARATE word (space before, non-letter after) —
+    # otherwise "admin" matches its trailing "min", "tomato" its "to", etc. The field label is a
+    # single token (no internal space) so a leading fill verb ("set Quantity to") isn't swallowed
+    # into it — Magento's numeric range fields are all single words (Quantity/Price/Weight).
+    r"([A-Za-z][\w/-]{0,30}?)\s+(from|to|min|max)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+
+
+def _range_field_label(description: str) -> str:
+    """The field label a range-filter fill names (e.g. "Quantity to") — used to DOM-snap
+    a `type` focus-tap onto the right one of two visually-identical adjacent From/To inputs
+    by field identity + from/to role, instead of by the ambiguous vision pixel.
+
+    Only the LABEL is returned, never the typed value (which lives in action.text), so passing
+    it to dom_snap cannot recreate the value-retarget bug. Empty for an ordinary type action
+    (no from/to/min/max qualifier) — those snap normally with no retarget."""
+    match = _RANGE_FIELD_LABEL_RE.search(description or "")
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", f"{match.group(1)} {match.group(2)}").strip()
+
+
 def _quoted_label(description: str) -> str:
     """The LAST short quoted label in the description — the actionable target
     (「点击…菜单中的「操作」」→ 操作). Longer quotes (robot names, option values with
@@ -161,7 +185,17 @@ class BrowserExecutor(VisionExecutor):
             # box kept retargeting to the account box whose value was already 'admin' → login stuck).
             at = getattr(action, "action_type", "")
             description = getattr(action, "description", "") or ""
-            target = _target_label(description) if at in ("tap", "click") else ""
+            if at in ("tap", "click"):
+                target = _target_label(description)
+            elif at == "type":
+                # A range-filter fill (From/To) renders two visually-identical adjacent inputs;
+                # vision returns near-identical coords for both, so the focus-tap collapses onto
+                # one box. Pass the field LABEL the planner named (carried in description) so
+                # dom_snap disambiguates by DOM identity + from/to role. Value stays in
+                # action.text → no value-retarget regression.
+                target = _range_field_label(description)
+            else:
+                target = ""
             cx, cy, info = self._client().dom_snap(px, py, target_text=target)
             if (
                 info is not None

@@ -23,6 +23,7 @@
 | 116 | 1.0 | ✅ | Return the customer nickname(s) who gave a rating of 3 stars or below for tanks p… | [report](reports/116.html) |
 | 127 | 1.0 | ✅ | Get the top 3 search terms that match available products in the store | [report](reports/127.html) |
 | 157 | 1.0 | ✅ | View the details of all customers | [report](reports/157.html) |
+| 186 | 1.0 | ✅ | Give me the product names and the sizes of the products that have 2-3 units lef… | [report](reports/186.html) |
 
 ## 已知问题/局限
 

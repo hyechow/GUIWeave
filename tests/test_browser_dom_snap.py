@@ -164,7 +164,8 @@ def test_type_focus_tap_does_not_text_retarget():
     # A `type` focus-tap must NOT pass the quoted value as a label: dom_snap matches inputs by
     # .value, so typing 'admin' would retarget onto an already-filled account field whose value
     # is 'admin' (run 20260613_193023: password box never filled → login stuck). Only genuine
-    # tap/click should text-retarget; for type we pass target_text="" → plain elementFromPoint.
+    # tap/click should text-retarget; for a PLAIN type (no from/to/min/max qualifier) we pass
+    # target_text="" → plain elementFromPoint.
     c = _FakeClient((250.0, 487.0, "text 302x20"), viewport=(1000, 1000))
     ex = _exec(c)
     ex._cur_action = BrowserAction(
@@ -173,3 +174,56 @@ def test_type_focus_tap_does_not_text_retarget():
     )
     ex._tap(248, 560)
     assert c.seen_target == ""                 # 'admin' 没被当标签传给 dom_snap
+
+
+# ── Range-filter From/To fill: type focus-tap retargets by FIELD LABEL, not pixel ──
+# A numeric range filter renders two visually-identical adjacent inputs (qty[from]/qty[to]);
+# vision returns near-identical coords for both, so the focus-tap collapses onto one box
+# (WebArena 186: "fill To" landed in From). The fix: pass the planner-named field label so
+# dom_snap disambiguates by DOM identity + from/to role. The value stays in action.text.
+
+def test_range_field_label_extraction():
+    from gui_agent.adapters.browser.executor import _range_field_label
+
+    assert _range_field_label("在 Quantity to 输入框填入 3") == "Quantity to"
+    assert _range_field_label("把 Quantity from 设为 2") == "Quantity from"
+    assert _range_field_label("Price max 设置为 100") == "Price max"
+    assert _range_field_label("Weight min 填 0.5") == "Weight min"
+    assert _range_field_label("set Quantity to 5") == "Quantity to"   # 动词不被吞进 label
+    # 普通 type:无 from/to/min/max 限定词 → 不重定向(尤其 'admin' 的尾 'min' 不算)
+    assert _range_field_label("在搜索框输入 admin") == ""
+    assert _range_field_label("输入 tomato 到搜索框") == ""
+    assert _range_field_label("点击 Filters 按钮") == ""
+
+
+def test_type_range_fill_passes_field_label_to_dom_snap():
+    # The focus-tap for a range fill carries the field label so dom_snap can pick the right
+    # of two adjacent From/To inputs by identity — NOT the typed value (which stays in text).
+    c = _FakeClient((565.0, 409.0, "text 120x24"), viewport=(1000, 1000))
+    ex = _exec(c)
+    ex._cur_action = BrowserAction(
+        action_type="type", x=656, y=420, text="3",
+        description="在 Quantity to 输入框填入 3",
+    )
+    ex._tap(656, 420)
+    assert c.seen_target == "Quantity to"      # 字段标签传给 dom_snap
+    assert c.clicked == (565.0, 409.0)         # 落在身份重定向后的 To 框
+
+
+def test_postprocess_carries_range_fill_instruction_into_description():
+    # policies._postprocess: a range-fill instruction names the field only in the planner
+    # instruction (the vision description is just "执行type并输入3"); carry it into the type
+    # action's description so the executor can extract the field label.
+    from gui_agent.adapters.browser.executor import _range_field_label
+    from gui_agent.adapters.browser.policies import BrowserActionPolicy
+
+    pol = BrowserActionPolicy.__new__(BrowserActionPolicy)
+    act = BrowserAction(action_type="type", x=656, y=420, text="3", description="执行type并输入3")
+    out = pol._postprocess(BrowserActionDecision(action=act), "在 Quantity to 输入框填入 3")
+    assert out.action.action_type == "type"                       # 不改动作类型
+    assert _range_field_label(out.action.description) == "Quantity to"
+
+    # 普通 type 指令不被改写(description 原样保留)
+    act2 = BrowserAction(action_type="type", x=300, y=120, text="admin", description="在搜索框输入admin")
+    out2 = pol._postprocess(BrowserActionDecision(action=act2), "在搜索框输入 admin")
+    assert out2.action.description == "在搜索框输入admin"

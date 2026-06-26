@@ -21,6 +21,7 @@ import re
 from dotenv import load_dotenv
 
 from gui_agent.adapters.browser.actions import BrowserActionDecision
+from gui_agent.adapters.browser.executor import _range_field_label
 from gui_agent.adapters.browser.option_text import option_text_from_instruction
 from gui_agent.core.policies.base import BaseActionPolicy
 from gui_agent.prompts import load_prompt_text
@@ -75,6 +76,10 @@ _SELECT_CONTROL_CUE_RE = re.compile(
     r"下拉|选择框|筛选框|选项|option|select",
     re.IGNORECASE,
 )
+# 区间过滤器（From/To）填值：planner 指令里点名了某个「字段 from/to」框。把这条字段命名指令带进
+# type 动作的 description，executor 的聚焦点吸附即可按 DOM 身份（name/label + from/to 角色）
+# 命中相邻同形两框中的正确那个，而不是靠 vision 几乎相同的像素瞎猜。
+_FILL_VERB_RE = re.compile(r"填入|填写|输入|设为|设置为|设置成|set\b", re.IGNORECASE)
 
 
 class BrowserActionPolicy(BaseActionPolicy):
@@ -120,4 +125,14 @@ class BrowserActionPolicy(BaseActionPolicy):
                     update={"action_type": "select_option", "text": option_text}
                 )
                 decision = decision.model_copy(update={"action": action})
+        if (
+            getattr(action, "action_type", None) == "type"
+            and _FILL_VERB_RE.search(instruction or "")
+            and _range_field_label(instruction or "")
+        ):
+            # Carry the planner's field-naming instruction (e.g.「把 Quantity to 设为 3」) into the
+            # type action's description so the executor's focus-tap can retarget to the right
+            # From/To input by field identity. The typed value remains in action.text untouched.
+            action = action.model_copy(update={"description": instruction})
+            decision = decision.model_copy(update={"action": action})
         return decision

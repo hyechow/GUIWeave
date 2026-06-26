@@ -34,6 +34,12 @@ version: 1
   不要写「点击 <字段> 下拉框以展开选项列表」；native select 的弹层通常不在截图中，后续会走专门的
   select_option primitive 直接设置值。例如目标是 Status = Complete，DOM 摘要显示 `Status: native_select`
   且 options 含 Complete，则输出「在 Status 下拉框选择 Complete」。
+- ⚠️ 数值/日期**区间过滤器**（同一字段并排两个外观相同的输入框，如 Quantity、Price 的 From/To；
+  即使两端取同一个数也要分别填）：指令必须把字段名连同 `from`/`to`（或 `min`/`max`）限定词一起写明，
+  写成「在 <字段> to 输入框填入 <值>」「设置 <字段> from 为 <值>」这种形式，每个端点单独一步。
+  目标框由专门的吸附逻辑按字段身份（name/label + from/to 角色）定位，**不要**只写「在 Quantity 输入框
+  填 3」——少了 from/to 限定词，两个同形框无法区分，值会落错框。例：按 Quantity=3 精确筛选 →
+  先「设置 Quantity from 为 3」，再「设置 Quantity to 为 3」。
 - ⚠️ 搜索式下拉框（带搜索框、点开弹出候选列表）按【当前截图】的展开状态处理；checker 的
   reason/missing_evidence 可能描述过时状态，候选浮层有无以截图为准。浮层展开时先解决这个下拉框，
   不要跳去操作其他字段：
