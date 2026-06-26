@@ -91,6 +91,10 @@ def form_controls_js() -> str:
     seen.add(el);
     if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'hidden') continue;
     const kind = kindOf(el);
+    const isFilter = el.id.includes('_filter_')
+      || !!el.closest('[data-role="filter-form"]')
+      || !!el.closest('.admin__data-grid-filters');
+    const isDatepicker = el.classList && el.classList.contains('_has-datepicker');
     const item = {
       label: cut(labelOf(el), 80),
       kind,
@@ -102,6 +106,8 @@ def form_controls_js() -> str:
       focused: el === document.activeElement,
       rect: rectOf(el),
     };
+    if (isFilter) item.is_filter = true;
+    if (isDatepicker) item.is_datepicker = true;
     if (el.tagName === 'SELECT') {
       const opts = Array.from(el.options || []);
       const sel = el.selectedOptions && el.selectedOptions[0];
@@ -157,6 +163,10 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
             norm["options"] = options
         if item.get("focused") is True:
             norm["focused"] = True
+        if item.get("is_filter") is True:
+            norm["is_filter"] = True
+        if item.get("is_datepicker") is True:
+            norm["is_datepicker"] = True
         rect = item.get("rect")
         if isinstance(rect, dict):
             norm["rect"] = {

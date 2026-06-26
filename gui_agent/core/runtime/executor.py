@@ -99,8 +99,9 @@ class VisionExecutor:
                 time.sleep(0.3)
             else:
                 print("未提供输入坐标，默认当前输入框已聚焦，直接输入文字")
-            self._clear_before_type(client, action.text)
-            print(f"  结果: {client.type_text(action.text)}")
+            if not self._type_intercept(client, action.text):
+                self._clear_before_type(client, action.text)
+                print(f"  结果: {client.type_text(action.text)}")
 
         elif action.action_type == "clear_text":
             print("清空当前输入框")
@@ -152,6 +153,13 @@ class VisionExecutor:
         return True
 
     # ----- hooks (platform overrides) --------------------------------------
+    def _type_intercept(self, client, text: str) -> bool:
+        """Platform hook called before clear+type. Return True to skip default behavior.
+
+        Override in adapters to handle special input controls (e.g. date pickers)
+        that require a non-keyboard interaction to set a value correctly."""
+        return False
+
     def _clear_before_type(self, client, text: str) -> None:
         """Clear the focused field before typing ``text`` (default: clear_text)."""
         print(f"  清空并输入: {text!r}")

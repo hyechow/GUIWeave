@@ -392,6 +392,51 @@ def grid_status_block(tables: list[dict] | None) -> ContextBlock | None:
     )
 
 
+def active_filters_block(form_controls: list[dict] | None) -> ContextBlock | None:
+    """Inject DOM-authoritative active filter state into planner + checker context.
+
+    Reads ``is_filter=True`` entries from form_controls (set by form_reader.js when the
+    input is inside a grid filter area or its ID matches ``*_filter_*``).  Only entries
+    with a non-empty value are included — these represent currently-active filters that
+    the next task milestone may need to clear before applying its own constraints.
+
+    Parallel to ``grid_status_block``: both replace screenshot-vision with DOM facts.
+    """
+    if not form_controls:
+        return None
+    lines: list[str] = []
+    for item in form_controls:
+        if not isinstance(item, dict):
+            continue
+        if not item.get("is_filter"):
+            continue
+        value = str(item.get("value") or item.get("selected_text") or "").strip()
+        if not value:
+            continue
+        label = str(item.get("label") or item.get("name") or item.get("id") or "字段").strip()
+        name = str(item.get("name") or "").strip()
+        date_hint = " [日期 MM/DD/YYYY]" if item.get("is_datepicker") else ""
+        name_part = f" (name={name})" if name and name != label else ""
+        lines.append(f"- {label}{name_part}: {value!r}{date_hint}")
+    if not lines:
+        return None
+    content = (
+        "## 当前活跃网格筛选（DOM 权威值，非视觉推断）\n"
+        "以下 filter 输入框**当前有非空值**，说明页面存在持久化的筛选条件。"
+        "若本步骤不需要这些筛选，必须先 Reset Filter 清除，再应用本步骤要求的筛选。\n"
+        + "\n".join(lines)
+    )
+    return ContextBlock(
+        id="runtime.observation.active_filters",
+        budget="high",
+        source_type="runtime_state",
+        source="platform_adapter",
+        ttl="turn",
+        priority=28,
+        content=content,
+    )
+
+
 def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None:
     text = format_form_controls_text(form_controls)
     if not text:
@@ -425,9 +470,14 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
         ).strip()
         kind = str(item.get("kind") or "control").strip()
         current = str(item.get("selected_text") or item.get("value") or "").strip()
+        placeholder = str(item.get("placeholder") or "").strip()
         bits = [f"{label}: {kind}"]
         if current or kind == "native_select":
             bits.append(f'current="{current}"')
+        if item.get("is_datepicker") and placeholder:
+            bits.append(f'placeholder="{placeholder}" [日期 MM/DD/YYYY]')
+        elif item.get("is_datepicker"):
+            bits.append("[日期 MM/DD/YYYY]")
         if item.get("focused") is True:
             bits.append("focused=true")
         options = item.get("options")

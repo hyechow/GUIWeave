@@ -12,6 +12,7 @@ from gui_agent.context.runtime import (
     acceptance_items_block,
     app_identity_block,
     checker_kind_rules_block,
+    active_filters_block,
     checker_result_block,
     constraints_block,
     extra_instruction_block,
@@ -813,6 +814,7 @@ def run_checker(
             checker_kind_rules_block(kind_section),
         ],
         human_blocks=[
+            active_filters_block(getattr(observation, "form_controls", None)),
             form_controls_block(getattr(observation, "form_controls", None)),
             grid_status_block(getattr(observation, "tables", None)),
         ],
@@ -1050,6 +1052,7 @@ def run_planner(
             extra_instruction_block(extra, source="planner_guard"),
         ],
         human_blocks=[
+            active_filters_block(getattr(observation, "form_controls", None)),
             form_controls_block(getattr(observation, "form_controls", None)),
             knowledge_block("app_navigation", app_knowledge),
             knowledge_block("page_elements", elements_knowledge),

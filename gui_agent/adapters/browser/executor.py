@@ -19,6 +19,21 @@ from gui_agent.adapters.browser.actions import BrowserAction
 from gui_agent.adapters.browser.option_text import option_text_from_instruction
 from gui_agent.core.runtime.executor import VisionExecutor
 
+# jQuery datepicker API set — format-independent, triggers all picker callbacks.
+# Accepts ISO dates (YYYY-MM-DD) and common date strings via JS Date constructor.
+_DATEPICKER_SET_JS = """(() => {{
+  const el = document.activeElement;
+  if (!el || !el.classList.contains('_has-datepicker')) return false;
+  if (!window.jQuery) return false;
+  try {{
+    const d = new Date('{value}');
+    if (isNaN(d.getTime())) return false;
+    jQuery(el).datepicker('setDate', d);
+    jQuery(el).trigger('change');
+    return true;
+  }} catch(e) {{ return false; }}
+}})()"""
+
 # Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
 _QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,8})[」』\"']")
 _INLINE_EN_LABEL_RE = re.compile(
@@ -230,6 +245,30 @@ class BrowserExecutor(VisionExecutor):
             }
         except Exception:  # noqa: BLE001
             pass
+
+    def _type_intercept(self, client, text: str) -> bool:
+        """Use jQuery datepicker API when the focused element is a date-picker input.
+
+        Magento admin date filters use jQuery UI datepicker; the expected input format
+        is ``mm/d/yy`` (MM/DD/YYYY).  Typing ISO ``YYYY-MM-DD`` directly causes the
+        picker to reset the field to today's date.  This intercept calls
+        ``jQuery(el).datepicker('setDate', new Date('YYYY-MM-DD'))`` instead,
+        which is format-independent and triggers all picker callbacks correctly.
+
+        Returns True (skip normal clear+type) when a date was set via the API.
+        Falls back to normal typing for non-datepicker fields or when jQuery is absent.
+        """
+        ev = getattr(client, "eval_js", None)
+        if ev is None:
+            return False
+        try:
+            result = ev(_DATEPICKER_SET_JS.format(value=text.strip().replace("'", "\\'")))
+            if result is True:
+                print(f"  [datepicker] jQuery setDate({text!r}) OK")
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        return False
 
     def _clear_before_type(self, client, text: str) -> None:
         # Replace existing contents: select-all + type. BUT only for plain
