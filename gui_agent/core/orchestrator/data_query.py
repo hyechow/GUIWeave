@@ -11,6 +11,7 @@ import json
 import re
 import sqlite3
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -32,21 +33,27 @@ def execute_data_query(
     The first table is available as `data`; every table is also available as
     `table_1`, `table_2`, ... and, when possible, a sanitized caption alias.
     Column names are normalized to snake_case identifiers, e.g. "Item Name"
-    becomes `item_name`.
+    becomes `item_name`. Display-value columns that parse consistently also expose
+    typed shadows: `<column>_num` for numeric/currency/percent text and
+    `<column>_ts` for date/time text.
     """
     snapshots = [t for t in (tables or []) if isinstance(t, dict) and t.get("rows")]
     if not snapshots:
         raise DataQueryError("当前观察没有可查询的结构化表格数据")
+    normalized_sql = _validate_select_sql(sql)
+    normalized_sql = _rewrite_quoted_display_identifiers(normalized_sql, snapshots)
     if require_complete:
-        partial = [str(t.get("caption") or t.get("path") or f"table_{i}") for i, t in enumerate(snapshots, 1) if t.get("partial")]
+        referenced = _referenced_snapshot_indexes(normalized_sql, snapshots)
+        partial = [
+            str(t.get("caption") or t.get("path") or f"table_{i + 1}")
+            for i, t in enumerate(snapshots)
+            if t.get("partial") and (not referenced or i in referenced)
+        ]
         if partial:
             raise DataQueryError(
                 "表格快照不完整，不能直接分析；请先分页/采集完整数据。partial tables: "
                 + ", ".join(partial[:3])
             )
-
-    normalized_sql = _validate_select_sql(sql)
-    normalized_sql = _rewrite_quoted_display_identifiers(normalized_sql, snapshots)
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     try:
@@ -76,6 +83,11 @@ def _validate_select_sql(sql: str) -> str:
         text = text[:-1].strip()
     if ";" in text:
         raise DataQueryError("SQL 只允许单条语句")
+    if re.search(r"\{[^{}]+\}", text):
+        raise DataQueryError(
+            "data_query SQL 不支持模板表达式 {...}；"
+            "SQL 只能查询当前结构化表格或 foreach into 表，差值/比例/合计请在 SQL/CTE 内基于表列计算。"
+        )
     first = re.match(r"^\s*([a-zA-Z_]+)", text)
     keyword = (first.group(1).lower() if first else "")
     if keyword not in {"select", "with"}:
@@ -89,7 +101,123 @@ def _validate_select_sql(sql: str) -> str:
     )
     if forbidden:
         raise DataQueryError(f"SQL 包含禁止关键字: {forbidden.group(1)}")
+    _reject_top_level_aggregate_limit(text)
     return text
+
+
+_AGGREGATE_FN_RE = re.compile(r"\b(?:sum|avg|min|max|count)\s*\(", flags=re.IGNORECASE)
+
+
+def _reject_top_level_aggregate_limit(sql: str) -> None:
+    """Reject `SELECT SUM(x) FROM table LIMIT N`.
+
+    In SQL, LIMIT is applied after aggregation. For "sum the last N rows" the
+    LIMIT must live inside a subquery that orders/selects those N input rows.
+    """
+    words = list(_sql_words_with_depth(sql))
+    for idx, (select_pos, word, depth) in enumerate(words):
+        if word != "select":
+            continue
+        from_pos = None
+        limit_pos = None
+        group_pos = None
+        for pos, next_word, next_depth in words[idx + 1:]:
+            if next_depth < depth:
+                break
+            if next_depth != depth:
+                continue
+            if next_word == "select":
+                break
+            if next_word == "from" and from_pos is None:
+                from_pos = pos
+            elif next_word == "group" and from_pos is not None and group_pos is None:
+                group_pos = pos
+            elif next_word == "limit" and from_pos is not None:
+                limit_pos = pos
+                break
+        if from_pos is None or limit_pos is None or group_pos is not None:
+            continue
+        if _AGGREGATE_FN_RE.search(sql[select_pos:from_pos]):
+            raise DataQueryError(
+                "SQL 把 LIMIT 放在聚合之后，不能限制 SUM/AVG/COUNT 的输入行；"
+                "请先在子查询中 ORDER BY/LIMIT 选出目标行，再在外层聚合，"
+                "例如 SELECT SUM(amount_num) AS total FROM "
+                "(SELECT amount_num FROM data ORDER BY date_ts DESC LIMIT N)"
+            )
+
+
+def _top_level_keyword_pos(sql: str, keyword: str, *, start: int = 0) -> int | None:
+    target = keyword.lower()
+    for pos, word in _top_level_words(sql):
+        if pos >= start and word == target:
+            return pos
+    return None
+
+
+def _top_level_words(sql: str):
+    for pos, word, depth in _sql_words_with_depth(sql):
+        if depth == 0:
+            yield pos, word
+
+
+def _sql_words_with_depth(sql: str):
+    depth = 0
+    quote: str | None = None
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        nxt = sql[i + 1] if i + 1 < len(sql) else ""
+        if quote:
+            if quote == "]":
+                if ch == "]":
+                    quote = None
+            elif ch == quote:
+                # SQL escapes quote characters by doubling them.
+                if nxt == quote:
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if ch in {"'", '"', "`"}:
+            quote = ch
+            i += 1
+            continue
+        if ch == "[":
+            quote = "]"
+            i += 1
+            continue
+        if ch == "-" and nxt == "-":
+            end = sql.find("\n", i + 2)
+            i = len(sql) if end == -1 else end + 1
+            continue
+        if ch == "/" and nxt == "*":
+            end = sql.find("*/", i + 2)
+            i = len(sql) if end == -1 else end + 2
+            continue
+        if ch == "(":
+            depth += 1
+            i += 1
+            continue
+        if ch == ")":
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if depth == 0 and (ch.isalpha() or ch == "_"):
+            j = i + 1
+            while j < len(sql) and (sql[j].isalnum() or sql[j] == "_"):
+                j += 1
+            yield i, sql[i:j].lower(), depth
+            i = j
+            continue
+        if depth != 0 and (ch.isalpha() or ch == "_"):
+            j = i + 1
+            while j < len(sql) and (sql[j].isalnum() or sql[j] == "_"):
+                j += 1
+            yield i, sql[i:j].lower(), depth
+            i = j
+            continue
+        i += 1
 
 
 def _load_tables(conn: sqlite3.Connection, tables: list[dict[str, Any]]) -> None:
@@ -97,9 +225,9 @@ def _load_tables(conn: sqlite3.Connection, tables: list[dict[str, Any]]) -> None
     for idx, table in enumerate(tables, 1):
         rows = table.get("rows") or []
         headers = table.get("headers") or _headers_from_rows(rows)
-        columns = _unique_identifiers(headers)
+        columns, row_values = _prepare_table_values(headers, rows)
         table_name = f"table_{idx}"
-        _create_and_insert(conn, table_name, columns, rows)
+        _create_and_insert(conn, table_name, columns, row_values)
         used_aliases.add(table_name)
         if idx == 1:
             conn.execute(f"CREATE VIEW data AS SELECT * FROM {_quote_ident(table_name)}")
@@ -108,6 +236,48 @@ def _load_tables(conn: sqlite3.Connection, tables: list[dict[str, Any]]) -> None
         if alias and alias not in used_aliases:
             conn.execute(f"CREATE VIEW {_quote_ident(alias)} AS SELECT * FROM {_quote_ident(table_name)}")
             used_aliases.add(alias)
+
+
+_TABLE_REF_RE = re.compile(
+    r"\b(?:from|join)\s+(?:\"([^\"]+)\"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))",
+    flags=re.IGNORECASE,
+)
+
+
+def _referenced_snapshot_indexes(sql: str, tables: list[dict[str, Any]]) -> set[int]:
+    """Return snapshot indexes referenced by table aliases in the query.
+
+    Complete foreach materializations and current-page DOM snapshots are often passed
+    together. A partial DOM sibling must not block a query that references only the
+    complete materialized table, while queries against `data`/caption/table_N still
+    need the normal completeness guard.
+    """
+    aliases = _table_alias_indexes(tables)
+    refs: set[int] = set()
+    for match in _TABLE_REF_RE.finditer(sql or ""):
+        raw = next((g for g in match.groups() if g), "")
+        key = _identifier(raw)
+        if key in aliases:
+            refs.add(aliases[key])
+    return refs
+
+
+def _table_alias_indexes(tables: list[dict[str, Any]]) -> dict[str, int]:
+    aliases: dict[str, int] = {}
+    used_aliases: set[str] = set()
+    for idx, table in enumerate(tables):
+        table_name = f"table_{idx + 1}"
+        aliases[table_name] = idx
+        used_aliases.add(table_name)
+        if idx == 0:
+            aliases["data"] = idx
+            used_aliases.add("data")
+
+        alias = _identifier(table.get("caption") or "")
+        if alias and alias not in used_aliases:
+            aliases[alias] = idx
+            used_aliases.add(alias)
+    return aliases
 
 
 def _rewrite_quoted_display_identifiers(sql: str, tables: list[dict[str, Any]]) -> str:
@@ -179,25 +349,186 @@ def _identifier_aliases(tables: list[dict[str, Any]]) -> dict[str, str]:
 
         rows = table.get("rows") or []
         headers = table.get("headers") or _headers_from_rows(rows)
-        columns = _unique_identifiers(headers)
-        for header, column in zip(headers, columns):
+        base_columns = _unique_identifiers(headers)
+        columns, _ = _prepare_table_values(headers, rows)
+        for column in columns:
             add(column, column)
+        for header, column in zip(headers, base_columns):
             add(header, column)
             normalized = _identifier(header)
             if normalized:
                 add(normalized, column)
+            for suffix in ("num", "ts"):
+                shadow = f"{column}_{suffix}"
+                if shadow in columns:
+                    add(f"{header} {suffix}", shadow)
+                    add(f"{header}_{suffix}", shadow)
 
     return mapping
 
 
-def _create_and_insert(conn: sqlite3.Connection, table_name: str, columns: list[str], rows: list[Any]) -> None:
+def _prepare_table_values(headers: list[Any], rows: list[Any]) -> tuple[list[str], list[list[str]]]:
+    base_columns = _unique_identifiers(headers)
+    base_values = [_row_values(row, base_columns) for row in rows]
+    shadows = _typed_shadow_columns(base_columns, base_values)
+    columns = base_columns + [shadow for _, shadow, _ in shadows]
+    prepared_rows: list[list[str]] = []
+    for values in base_values:
+        extras: list[str] = []
+        for source_idx, _shadow, kind in shadows:
+            raw = values[source_idx] if source_idx < len(values) else ""
+            parsed = _parse_numeric_value(raw) if kind == "num" else _parse_datetime_value(raw)
+            extras.append(parsed or "")
+        prepared_rows.append(values + extras)
+    return columns, prepared_rows
+
+
+def _typed_shadow_columns(base_columns: list[str], rows: list[list[str]]) -> list[tuple[int, str, str]]:
+    shadows: list[tuple[int, str, str]] = []
+    used = set(base_columns)
+    for idx, column in enumerate(base_columns):
+        values = [row[idx] for row in rows if idx < len(row)]
+        nonempty = [value for value in values if str(value or "").strip()]
+        if not nonempty:
+            continue
+        date_count = sum(1 for value in nonempty if _parse_datetime_value(value) is not None)
+        numeric_count = sum(1 for value in nonempty if _parse_numeric_value(value) is not None)
+        threshold = _typed_parse_threshold(len(nonempty))
+        if date_count >= threshold:
+            shadow = _unique_shadow_identifier(column, "ts", used)
+            shadows.append((idx, shadow, "ts"))
+            used.add(shadow)
+        if numeric_count >= threshold:
+            shadow = _unique_shadow_identifier(column, "num", used)
+            shadows.append((idx, shadow, "num"))
+            used.add(shadow)
+    return shadows
+
+
+def _typed_parse_threshold(nonempty_count: int) -> int:
+    return max(1, (nonempty_count * 4 + 4) // 5)
+
+
+def _unique_shadow_identifier(column: str, suffix: str, used: set[str]) -> str:
+    candidate = f"{column}_{suffix}"
+    if candidate not in used:
+        return candidate
+    n = 2
+    while f"{candidate}_{n}" in used:
+        n += 1
+    return f"{candidate}_{n}"
+
+
+_CURRENCY_SYMBOLS_RE = r"\$€£¥₹₩₪₫฿₽₺₦₱"
+_MONTH_RE = re.compile(
+    r"\b(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|"
+    r"aug|august|sep|sept|september|oct|october|nov|november|dec|december)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _parse_numeric_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text or _looks_datetime_like(text):
+        return None
+    text = re.sub(r"\s+", " ", text).replace("−", "-")
+    if re.search(r"[A-Za-z]", text):
+        return None
+
+    had_currency = bool(re.search(f"[{_CURRENCY_SYMBOLS_RE}]", text))
+    negative = False
+    if re.fullmatch(r"\([^()]+\)", text):
+        negative = True
+        text = text[1:-1].strip()
+    if text.startswith(("-", "+")):
+        negative = text[0] == "-" if not negative else negative
+        text = text[1:].strip()
+
+    text = re.sub(f"^[{_CURRENCY_SYMBOLS_RE}]+", "", text).strip()
+    text = re.sub(f"[{_CURRENCY_SYMBOLS_RE}]+$", "", text).strip()
+    percent = text.endswith("%")
+    if percent:
+        text = text[:-1].strip()
+
+    had_comma = "," in text
+    had_decimal = "." in text
+    number_text = text.replace(",", "")
+    if not re.fullmatch(r"(?:\d+(?:\.\d+)?|\.\d+)", number_text):
+        return None
+    if (
+        len(number_text) > 1
+        and number_text.startswith("0")
+        and not (had_currency or had_comma or had_decimal or percent or negative)
+    ):
+        return None
+
+    number = float(number_text)
+    if negative:
+        number = -number
+    return format(number, ".15g")
+
+
+_DATETIME_FORMATS = (
+    "%b %d, %Y %I:%M:%S %p",
+    "%B %d, %Y %I:%M:%S %p",
+    "%b %d, %Y %I:%M %p",
+    "%B %d, %Y %I:%M %p",
+    "%b %d, %Y",
+    "%B %d, %Y",
+    "%m/%d/%Y %I:%M:%S %p",
+    "%m/%d/%Y %I:%M %p",
+    "%m/%d/%Y",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d",
+)
+
+
+def _parse_datetime_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text or not _looks_datetime_like(text):
+        return None
+    text = re.sub(r"\s+", " ", text)
+    normalized = re.sub(r"\bSept\b", "Sep", text, flags=re.IGNORECASE)
+    iso_text = normalized.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(iso_text)
+    except ValueError:
+        dt = None
+    if dt is None:
+        for fmt in _DATETIME_FORMATS:
+            try:
+                dt = datetime.strptime(normalized, fmt)
+                break
+            except ValueError:
+                continue
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return str(int(dt.timestamp()))
+
+
+def _looks_datetime_like(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    return bool(
+        _MONTH_RE.search(value)
+        or re.search(r"\d{1,4}[/-]\d{1,2}[/-]\d{1,4}", value)
+        or re.search(r"\d{4}-\d{1,2}-\d{1,2}", value)
+        or re.search(r"\d{1,2}:\d{2}", value)
+    )
+
+
+def _create_and_insert(conn: sqlite3.Connection, table_name: str, columns: list[str], row_values: list[list[str]]) -> None:
     col_defs = ", ".join(f"{_quote_ident(c)} TEXT" for c in columns)
     conn.execute(f"CREATE TABLE {_quote_ident(table_name)} ({col_defs})")
-    if not rows:
+    if not row_values:
         return
     placeholders = ", ".join("?" for _ in columns)
     sql = f"INSERT INTO {_quote_ident(table_name)} VALUES ({placeholders})"
-    conn.executemany(sql, [_row_values(row, columns) for row in rows])
+    conn.executemany(sql, row_values)
 
 
 def _row_values(row: Any, columns: list[str]) -> list[str]:
