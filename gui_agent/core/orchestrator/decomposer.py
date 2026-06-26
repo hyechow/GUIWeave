@@ -378,7 +378,8 @@ def _check_navigation_identity(program: Program, issues: list[str]) -> None:
                         "纯找到/打开目标页面时，搜索结果只算中间态；"
                         "请继续点击进入目标详情页/仓库页/文档页，并把目标页面身份写进 success_condition。"
                     )
-                _check_hardcoded_github_path(text, f"导航步骤「{s.name}」")
+                if s.kind == "navigation":
+                    _check_hardcoded_github_path(text, f"导航步骤「{s.name}」")
             elif isinstance(s, Finish):
                 _check_hardcoded_github_path(s.message, "finish 文案")
             elif isinstance(s, If):
@@ -490,6 +491,7 @@ def validate_program(program: Program) -> list[str]:
         )
     _check_navigation_identity(program, issues)
     _check_hardcoded_api_entity(program, issues)
+    _check_api_text_source(program, issues)
     if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements):
         issues.append(
             "任务要求返回/查找/统计具体答案，但计划没有任何 returns 或 data_query 结果来源；"
@@ -695,6 +697,26 @@ _API_ENTITY_RE = re.compile(
     r"api\.github\.com/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", re.IGNORECASE
 )
 _VAR_REF_RE = re.compile(r"\{[A-Za-z_]\w*(?:\[|\})")
+
+
+def _check_api_text_source(program: Program, issues: list[str]) -> None:
+    """走 api(api.github.com)的 run 必须 text_source=True——手机 Chrome 不渲染原始 JSON,
+    视觉 OCR 读不到字段,只能用 read_screen_text(a11y 文本)抽。"""
+    def _walk(stmts: list[Stmt]) -> None:
+        for s in stmts:
+            if isinstance(s, Run):
+                fields = f"{s.name}\n{s.read_spec or ''}"
+                if "api.github.com" in fields.lower() and not s.text_source:
+                    issues.append(
+                        f"步骤「{s.name}」走 api(api.github.com)但没开 text_source——"
+                        "手机 Chrome 不渲染原始 JSON,视觉读不到字段;必须 text_source=true 用 read_screen_text 抽。"
+                    )
+            elif isinstance(s, If):
+                _walk(s.then)
+                _walk(s.otherwise)
+            elif isinstance(s, ForEach):
+                _walk(s.body)
+    _walk(program.statements)
 
 
 def _check_hardcoded_api_entity(program: Program, issues: list[str]) -> None:
