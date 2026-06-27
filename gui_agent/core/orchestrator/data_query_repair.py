@@ -91,6 +91,8 @@ def repair_data_query_sql(
 
 
 def _tables_profile(tables: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    from gui_agent.core.orchestrator.data_query import _prepare_table_values as _ptv
+
     out: list[dict[str, Any]] = []
     for idx, table in enumerate(tables or [], start=1):
         if not isinstance(table, dict):
@@ -99,17 +101,20 @@ def _tables_profile(tables: list[dict[str, Any]] | None) -> list[dict[str, Any]]
         if not rows:
             continue
         headers = table.get("headers") or _headers_from_rows(rows)
-        columns = _unique_identifiers(headers)
+        base_columns = _unique_identifiers(headers)
+        all_columns, prepared_rows = _ptv(headers, rows)
+        shadow_columns = all_columns[len(base_columns):]
+        columns = all_columns
         sample_rows = []
-        for row in rows[:5]:
-            sample_rows.append({str(k): _cut(v) for k, v in list(row.items())[:24]})
+        for prow in prepared_rows[:5]:
+            sample_rows.append({col: _cut(prow[ci]) for ci, col in enumerate(columns) if ci < len(prow)})
         distinct: dict[str, list[str]] = {}
         ranges: dict[str, dict[str, str]] = {}
-        for header, column in zip(headers[:24], columns[:24]):
+        for ci, column in enumerate(columns[:24]):
             values: list[str] = []
             all_values: list[str] = []
-            for row in rows[:200]:
-                raw = _lookup(row, header, column)
+            for prow in prepared_rows[:200]:
+                raw = prow[ci] if ci < len(prow) else ""
                 if raw in (None, ""):
                     continue
                 text = _cut(raw, 80)
@@ -127,6 +132,9 @@ def _tables_profile(tables: list[dict[str, Any]] | None) -> list[dict[str, Any]]
         caption_alias = _identifier(table.get("caption") or "")
         if caption_alias and caption_alias not in aliases:
             aliases.append(caption_alias)
+        source_labels = {column: str(header) for header, column in zip(headers, base_columns)}
+        for sc in shadow_columns:
+            source_labels[sc] = f"(typed shadow of {sc.rsplit('_', 1)[0]})"
         out.append(
             {
                 "caption": table.get("caption") or "",
@@ -134,7 +142,7 @@ def _tables_profile(tables: list[dict[str, Any]] | None) -> list[dict[str, Any]]
                 "row_count": table.get("row_count") or table.get("totalRecords") or table.get("total_records") or len(rows),
                 "partial": bool(table.get("partial")),
                 "sql_columns": columns,
-                "source_labels": {column: str(header) for header, column in zip(headers, columns)},
+                "source_labels": source_labels,
                 "sample_rows": sample_rows,
                 "distinct_sample_values": distinct,
                 "value_ranges": ranges,

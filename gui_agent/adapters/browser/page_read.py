@@ -366,14 +366,22 @@ def read_grid_complete(
     all_rows: list[dict[str, str]] = list(rows)
     seen_keys: set[str] = {_row_dedup_key(r) for r in all_rows}
 
-    if limit and len(all_rows) >= limit:
-        return all_rows[:limit]  # first page already satisfies limit — skip pagination entirely
+    viewport = getattr(obs, "viewport", None)
+    _on_page_1 = not isinstance(viewport, dict) or (
+        (viewport.get("page_index") or 1) <= 1 and not viewport.get("has_prev_page")
+    )
+    # When grid is not on page 1 (e.g. left mid-pagination by a prior run),
+    # disable limit so the controller rewinds + forward-collects all rows;
+    # the downstream data_query's ORDER BY + LIMIT selects the correct row.
+    _effective_limit = limit if _on_page_1 else None
+
+    if _effective_limit and len(all_rows) >= _effective_limit:
+        return all_rows[:_effective_limit]
 
     client = getattr(platform, "client", None) if platform is not None else None
     if client is None or bundle is None or log_dir is None:
         return all_rows  # single-page only, no pagination
 
-    viewport = getattr(obs, "viewport", None)
     controller = TraversalController("grid") if isinstance(viewport, dict) else None
 
     for page_n in range(1, max_pages):
@@ -431,7 +439,7 @@ def read_grid_complete(
                 all_rows.append(r)
                 new_count += 1
 
-        if limit and len(all_rows) >= limit:
+        if _effective_limit and len(all_rows) >= _effective_limit:
             break  # collected enough rows — no need to paginate further
 
         # Without a controller (no viewport signal at all), "no new rows" is the only

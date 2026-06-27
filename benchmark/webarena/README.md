@@ -30,6 +30,9 @@
 | 193 | 1.0 | ✅ | Get the total payment amount of the last 2 completed orders | [report](reports/193.html) |
 | 196 | 1.0 | ✅ | Get the payment difference between the last 4 cancelled orders and the last 4 c… | [report](reports/196.html) |
 | 197 | 1.0 | ✅ | Get the total payment amount of the last 5 non-cancelled orders | [report](reports/197.html) |
+| 200 | 1.0 | ✅ | Get the billing name of the oldest complete order | [report](reports/200.html) |
+| 204 | 1.0 | ✅ | Get the product name and final price (low to high) of the most recent completed… | [report](reports/204.html) |
+| 212 | 1.0 | ✅ | Get the customer name and email with phone number 555-229-3326 | [report](reports/212.html) |
 | 345 | 1.0 | ✅ | How many reviews did our shop receive in Apr 2023? | [report](reports/345.html) |
 
 ## 已知问题/局限
@@ -48,3 +51,9 @@
   历史失败根因：① `SELECT SUM(...) FROM table LIMIT 4` 把 `LIMIT` 放在聚合之后，实际求了全状态全表总额；② `finish`/SQL 曾尝试用 `{var[field]}` 或 `a-b` 做差，产生负值或不可执行模板；③ foreach returns 写内部名 `created_at`，collect_fn 读不到日期列。修复后统一走：分别筛 `Status=Canceled`/`Complete` 并按 `Purchase Date` 降序，foreach body=[] 采集可见列 `Purchase Date` + `Grand Total (Purchased)`，最终 data_query 用 `purchase_date_ts` 子查询 `LIMIT 4` 后 `SUM(grand_total_purchased_num)`，再 `ABS(cancelled-completed)`。新增泛化兜底：data_query SQL 禁止 `{...}` 模板、禁止把前序 var 当 SQL 表名；聚合类任务禁止让 filter/action/read 目测读取当前可见网格行字段或手工相加。官方 eval：answer/response 均为 `194.25`。
 - **task 197 "last 5 non-cancelled orders total payment"：已修复，score 1.0（3 turns，headed run `logs/gui_agent/webarena/browser/20260626_221207`）。**
   首跑失败 `logs/gui_agent/webarena/browser/20260626_220626`：decomposer 把 non-cancelled 写成 UI 负筛选「Status 不为 Canceled」，planner 只能在单值下拉里选择 `Complete`，导致数据源只剩完成订单；`data_query_repair` 正确拒绝口径不一致并返回 unknown_error。修复：prompt 增加通用否定约束规则（non-X/not X/excluding X 不可用单值下拉近似；未知是否有负筛选控件时采完整行后 SQL 排除），shopping_admin skill 明确 Status 是单值筛选、non-cancelled 不用 UI Status 下拉。正确路径是清除 active filters、foreach 采全量 Orders 的 `Status`/`Purchase Date`/`Grand Total (Purchased)`，SQL `WHERE lower(status) NOT LIKE '%cancel%' ORDER BY purchase_date_ts DESC LIMIT 5` 后外层 `SUM(grand_total_purchased_num)`。官方 eval：answer/response 均为 `778.2`。
+- **task 200 "oldest complete order billing name"：score 1.0。**
+  与 204 同族（订单详情查询），受益于同一批修复。
+- **task 204 "most recent completed order product name + price"：已修复，score 1.0（5 turns）。**
+  连续失败根因三层：① **SQLite CAST 静默归零**——`CAST('$45.00' AS REAL)` = 0.0（`$` 前缀导致），decomposer 生成的 `CAST(Price AS REAL)` 或 `CAST(REPLACE(Price,'$','') AS REAL)` 都得到错误结果。修复：decomposer.md 通用规则强制用 `_num` 影子列（已剥 `$`/`,`/`%` 并转 REAL），禁止对 UI 文本做 CAST/REPLACE 手动转换；`data_query_repair.py` 的 `_tables_profile` 改为显示影子列（repair LLM 可见 `price_num=45.0`）；skill 约束 ⑤ 明确 `price_num`。② **导航步 `kind=action`**——decomposer 把 URL 直达步生成为 `action`（应为 `navigation`），`_direct_nav_url()` 不触发，走 checker 路径时 PreExisting 误判（hostname 匹配但非详情页）。修复：decomposer.md run_kind 定义明确"凡 name 含 URL 模板一律 navigation"；skill 约束 ③ 明确 `run_kind=navigation` + `name="打开 {q[url]}"`。③ **`limit` 短路非首页行**——`read_grid_complete` 的 `limit=1` 在 viewport 检查前短路返回，grid 若停在第 5 页则采到第 5 页首行（错误订单）。修复：先检查 viewport page_index/has_prev_page，非首页时禁用 limit 让 TraversalController rewind + 全量采集，由 data_query ORDER BY 选正确行。
+- **task 212 "customer name/email by phone number"：已修复，score 1.0。**
+  失败根因：电话号存储为 `(555) 229-3326`（括号区号+空格），任务给的 `555-229-3326` 整串搜索 0 命中。修复：skill 明确用去区号后的本地号段（`229-3326`）做 keyword 子串搜索。

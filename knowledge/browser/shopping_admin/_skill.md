@@ -73,13 +73,13 @@ version: 1
 
 ## skill：最近/最旧某状态订单的商品明细
 - 触发：most recent/latest/oldest order、最近一笔/最新订单、order 的 product name + price、订单的商品和价格、一笔订单里所有商品、return a list of products/price of an order
-- 数据：Orders grid（`Action_url`、`Purchase Date`）+ 订单详情页 `Items Ordered` 表（`Product`、`Price`）。约束：① 「最近/最旧」只看 grid `Purchase Date`，不看详情页 `Order Date`；② grid-collect foreach 必须含 `Purchase Date`，由 data_query `ORDER BY purchase_date_ts LIMIT 1` 选出 URL（不可直接用列表第一行）；③ 钻取是独立 navigation 步、returns 留空；④ 商品由第二个独立 foreach 采集（details 表含 rowspan 幻影行 Price=''、Product 含 SKU 后缀）。
+- 数据：Orders grid（`Action_url`、`Purchase Date`）+ 订单详情页 `Items Ordered` 表（`Product`、`Price`）。约束：① 「最近/最旧」只看 grid `Purchase Date`，不看详情页 `Order Date`；② grid-collect foreach 必须含 `Purchase Date`，由 data_query `ORDER BY purchase_date_ts LIMIT 1` 选出 URL（不可直接用列表第一行）；③ 钻取是独立 navigation 步（run_kind=navigation、不是 action），name 写 `打开 {q[url]}`（运行时确定性导航）、returns 留空；④ 商品由第二个独立 foreach 采集（details 表含 rowspan 幻影行 Price=''；Product 格式为 `名称 SKU: ...`，用 `substr(product,1,instr(product,' SKU:')-1)` 取纯名称）；⑤ 价格数值运算用影子列 `price_num`（Price 带 `$` 前缀，不可 CAST）。
 - 步骤：
 1. 进 Orders，清筛 + 设 Status + 按 Purchase Date 排序
 2. foreach limit=1 采 Action_url+日期，data_query LIMIT 1
-3. navigation URL 直达钻到该订单详情页（此步 returns 留空，不读商品）
+3. `run_kind=navigation`、`name="打开 {q[url]}"`（name 里必须含 URL 模板 `{q[url]}`、运行时确定性导航）、returns 留空
 4. 另起独立 foreach 采 Items Ordered 表 Product+Price 读全部行
-5. data_query 滤空价幻影行、剥 SKU、转价、排序，输出商品列表
+5. data_query 用 price_num 滤幻影行(>0)、剥 SKU、排序输出
 
 ## skill：Grid 数据导出或采集
 - 触发：需要完整 grid 数据、导出 CSV/XML、跨分页统计
