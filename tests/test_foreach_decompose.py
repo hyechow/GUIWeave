@@ -33,6 +33,28 @@ def test_foreach_draft_round_trips_and_validates_clean():
     assert validate_program(program) == []  # {row[id]} in-scope; over is a list_read
 
 
+def test_orphan_list_read_used_directly_is_scalarized():
+    draft = _PlanDraft(goal="g", steps=[
+        _StepDraft(
+            op="run",
+            run_kind="read",
+            var="winners",
+            name="读取获奖者姓名",
+            returns=["winner_names"],
+            list_read=True,
+            read_spec="winner_names: 从搜索结果中提取所有获奖者姓名，每行一个对象",
+        ),
+        _StepDraft(op="finish", message="{winners[winner_names]}"),
+    ])
+
+    program = to_program(draft, "g")
+    read = program.statements[0]
+
+    assert isinstance(read, Run)
+    assert read.list_read is False
+    assert validate_program(program) == []
+
+
 def test_validate_rejects_over_that_is_not_a_list_read():
     draft = _PlanDraft(goal="g", steps=[
         _StepDraft(op="run", run_kind="read", var="r", name="读", returns=["id"]),  # NOT list_read

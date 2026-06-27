@@ -144,6 +144,96 @@ def test_validate_empty_program():
     assert validate_program(Program(statements=[])) == ["程序为空：至少要有一个 run 步骤"]
 
 
+def test_validate_resume_message_requires_contact_from_source_file():
+    bad = Program(
+        goal=(
+            "Find Kevin's resume and send a text message to Kevin saying: "
+            "\"Your interview is scheduled for tomorrow morning at 10:30 AM.\""
+        ),
+        statements=[
+            Run(
+                name="打开消息应用",
+                kind="navigation",
+                success_condition="消息应用界面已打开，显示对话列表或新建消息入口",
+            ),
+            Run(
+                var="search_result",
+                name="在消息应用中搜索Kevin",
+                kind="action",
+                returns=["found"],
+                success_condition="搜索已响应",
+                read_spec="found: 搜索结果包含 Kevin 则 true，否则 false。",
+            ),
+            If(
+                cond=Cond(var="search_result", field="found", value="true"),
+                then=[
+                    Run(
+                        name="选择Kevin的对话并发送短信",
+                        kind="action",
+                        success_condition="短信已成功发送",
+                    )
+                ],
+                otherwise=[Finish(message="未找到Kevin的联系方式，无法发送短信。")],
+            ),
+        ],
+    )
+
+    issues = validate_program(bad)
+
+    assert any("简历/CV获取联系信息" in issue for issue in issues)
+
+
+def test_validate_resume_message_allows_contact_read_then_template_send():
+    good = Program(
+        goal=(
+            "Find Kevin's resume and send a text message to Kevin saying: "
+            "\"Your interview is scheduled for tomorrow morning at 10:30 AM.\""
+        ),
+        statements=[
+            Run(
+                name="在文件/下载中找到并打开Kevin的简历",
+                kind="navigation",
+                success_condition="当前界面显示Kevin的简历正文内容",
+            ),
+            Run(
+                var="contact",
+                name="读取Kevin简历中的电话号码",
+                kind="read",
+                returns=["电话号码"],
+                read_spec="电话号码：从当前打开的简历正文中读取完整电话号码。",
+                text_source=True,
+            ),
+            Run(
+                name=(
+                    "向 {contact[电话号码]} 发送短信，内容为："
+                    "Your interview is scheduled for tomorrow morning at 10:30 AM."
+                ),
+                kind="action",
+                success_condition="短信已成功发送",
+            ),
+        ],
+    )
+
+    assert validate_program(good) == []
+
+
+def test_resume_message_fallback_reads_contact_before_send():
+    from gui_agent.core.orchestrator.decomposer import _source_contact_send_fallback
+
+    goal = (
+        "Find Kevin's resume and send a text message to Kevin saying: "
+        "\"Your interview is scheduled for tomorrow morning at 10:30 AM.\""
+    )
+    fallback = _source_contact_send_fallback(goal, Program(goal=goal, statements=[]))
+
+    assert len(fallback.statements) == 3
+    assert isinstance(fallback.statements[1], Run)
+    assert fallback.statements[1].returns == ["电话号码"]
+    assert fallback.statements[1].text_source is True
+    assert "{contact[电话号码]}" in fallback.statements[2].name
+    assert validate_program(fallback) == []
+
+
 def test_validate_find_page_goal_rejects_bare_finish():
     prog = Program(
         goal="帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库",

@@ -181,6 +181,92 @@ def _force_interactive_return_recovery(program: object, directive: str) -> objec
     return program.model_copy(update={"statements": statements})
 
 
+def _is_empty_return_recovery_directive(directive: str) -> bool:
+    return "实际读取结果为空" in directive and "返回字段" in directive
+
+
+def _branch_has_ui_work(stmts: list[object]) -> bool:
+    from gui_agent.core.orchestrator.program import If, Run
+
+    for stmt in stmts:
+        if isinstance(stmt, Run) and stmt.kind in {"navigation", "filter", "action"}:
+            return True
+        if isinstance(stmt, If) and (
+            _branch_has_ui_work(list(stmt.then)) or _branch_has_ui_work(list(stmt.otherwise))
+        ):
+            return True
+    return False
+
+
+def _branch_is_failure_finish(stmts: list[object]) -> bool:
+    from gui_agent.core.orchestrator.program import Finish, If
+
+    failure_words = ("无法", "未能", "不能", "失败", "找不到", "没有找到", "no ", "not ")
+    has_finish = False
+    for stmt in stmts:
+        if isinstance(stmt, Finish):
+            has_finish = True
+            message = stmt.message.lower()
+            if any(word in message for word in failure_words):
+                continue
+            return False
+        if isinstance(stmt, If):
+            if not (
+                _branch_is_failure_finish(list(stmt.then))
+                and _branch_is_failure_finish(list(stmt.otherwise))
+            ):
+                return False
+            has_finish = True
+            continue
+        return False
+    return has_finish
+
+
+def _normalize_empty_return_recovery_branches(program: object, directive: str) -> object:
+    """Fix a narrow redecompose failure mode after empty return recovery.
+
+    The recovery directive means: first make the missing return field non-empty, then
+    continue the remaining plan. Some redecompose outputs accidentally invert the
+    follow-up branch as ``if field empty: do remaining UI work else: failure``. That
+    would stop immediately after a successful read. Only in this recovery context,
+    swap branches when the empty branch contains UI work and the non-empty branch is
+    plainly a failure finish.
+    """
+    if not _is_empty_return_recovery_directive(directive):
+        return program
+    if not hasattr(program, "statements") or not hasattr(program, "model_copy"):
+        return program
+
+    from gui_agent.core.orchestrator.program import If
+
+    changed = False
+
+    def _fix(stmts: list[object]) -> list[object]:
+        nonlocal changed
+        out: list[object] = []
+        for stmt in stmts:
+            if isinstance(stmt, If):
+                then = _fix(list(stmt.then))
+                otherwise = _fix(list(stmt.otherwise))
+                if (
+                    stmt.cond.cmp == "empty"
+                    and _branch_has_ui_work(then)
+                    and _branch_is_failure_finish(otherwise)
+                ):
+                    changed = True
+                    out.append(stmt.model_copy(update={"then": otherwise, "otherwise": then}))
+                elif then != list(stmt.then) or otherwise != list(stmt.otherwise):
+                    out.append(stmt.model_copy(update={"then": then, "otherwise": otherwise}))
+                else:
+                    out.append(stmt)
+            else:
+                out.append(stmt)
+        return out
+
+    statements = _fix(list(getattr(program, "statements", []) or []))
+    return program.model_copy(update={"statements": statements}) if changed else program
+
+
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
 # settle wait (near-zero added latency). Daemon threads; finishes at process exit.
 _VERIFY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="verify")
@@ -569,6 +655,7 @@ def run_agent_loop(
             if _new is None or not _new.statements:
                 return (False, None)
             _new = _force_interactive_return_recovery(_new, directive)
+            _new = _normalize_empty_return_recovery_branches(_new, directive)
             _interp = Interpreter(_new)
             _interp.env = _prev_env            # carry forward completed reads (finish refs still resolve)
             # Keep prior milestones in the run record / final summary, but DROP the failed record(s):

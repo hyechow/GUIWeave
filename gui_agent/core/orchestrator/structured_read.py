@@ -13,6 +13,7 @@ i.e. when the result is visible), so the verdict is read at exactly the right mo
 from __future__ import annotations
 
 import base64
+import re
 from collections.abc import Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -26,6 +27,8 @@ from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
 _SYSTEM = load_prompt_text("task.orchestrator.structured_read")
+_PHONE_FIELD_RE = re.compile(r"phone|tel|telephone|mobile|电话|手机号|电话号码|号码", re.IGNORECASE)
+_TEL_URI_RE = re.compile(r"tel:\+?([0-9][0-9\s().-]{6,}[0-9])", re.IGNORECASE)
 
 
 class _FieldRead(BaseModel):
@@ -36,6 +39,23 @@ class _FieldRead(BaseModel):
 
 class _StructuredRead(BaseModel):
     reads: list[_FieldRead] = Field(default_factory=list)
+
+
+def _phone_digits(text: str) -> str:
+    digits = re.sub(r"\D+", "", text or "")
+    return digits if len(digits) >= 7 else ""
+
+
+def _normalize_phone_read_value(field: str, value: str, read_spec: str = "", text_source: str = "") -> str:
+    """Canonicalize phone reads to digits, preferring explicit tel: accessibility links."""
+    if not _PHONE_FIELD_RE.search(f"{field}\n{read_spec}"):
+        return value
+    for match in _TEL_URI_RE.finditer(text_source or ""):
+        digits = _phone_digits(match.group(1))
+        if digits:
+            return digits
+    digits = _phone_digits(value)
+    return digits or value
 
 
 def structured_read(
@@ -165,7 +185,10 @@ def structured_read(
     )
     # Keep only requested fields; default any missing to "" (当没有).
     by_field = {fr.field: (fr.value or "") for fr in result.reads}
-    return {f: by_field.get(f, "") for f in returns}
+    return {
+        f: _normalize_phone_read_value(f, by_field.get(f, ""), read_spec, text_source or "")
+        for f in returns
+    }
 
 
 def resolve_text_source(run: object, platform: object) -> str | None:

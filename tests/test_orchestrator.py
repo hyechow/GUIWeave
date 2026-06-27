@@ -543,6 +543,49 @@ def test_non_empty_return_replan_leaves_read_unchanged():
     assert out.statements[0].kind == "read"
 
 
+def test_empty_return_recovery_swaps_inverted_empty_branch():
+    from gui_agent.core.run.loop import _normalize_empty_return_recovery_branches
+
+    program = Program(statements=[
+        Run(var="r", name="读取获奖者", kind="navigation", returns=["winners"]),
+        If(
+            cond=Cond(var="r", field="winners", cmp="empty"),
+            then=[
+                Run(name="打开 Mastodon 并发布投票", kind="action"),
+                Finish(message="发布完成：{r[winners]}"),
+            ],
+            otherwise=[Finish(message="未能找到获奖者，无法继续创建投票。")],
+        ),
+    ])
+
+    out = _normalize_empty_return_recovery_branches(
+        program,
+        "上一子目标被验收为完成，但它声明必须读取返回字段 ['winners']，实际读取结果为空：{}。",
+    )
+
+    fixed = out.statements[1]
+    assert isinstance(fixed, If)
+    assert isinstance(fixed.then[0], Finish)
+    assert "无法继续" in fixed.then[0].message
+    assert any(isinstance(stmt, Run) and "Mastodon" in stmt.name for stmt in fixed.otherwise)
+
+
+def test_empty_return_recovery_branch_normalizer_is_directive_scoped():
+    from gui_agent.core.run.loop import _normalize_empty_return_recovery_branches
+
+    program = Program(statements=[
+        If(
+            cond=Cond(var="r", field="winners", cmp="empty"),
+            then=[Run(name="打开 Mastodon 并发布投票", kind="action")],
+            otherwise=[Finish(message="未能找到获奖者，无法继续创建投票。")],
+        ),
+    ])
+
+    out = _normalize_empty_return_recovery_branches(program, "普通纠正")
+
+    assert out is program
+
+
 def test_structured_read_empty_returns_no_llm():
     # 无 returns 直接返回 {}，不触 LLM（确定性）。read_spec/check_knowledge 都不影响。
     from gui_agent.core.orchestrator.structured_read import structured_read
@@ -973,3 +1016,47 @@ def test_validate_program_allows_api_direct_link():
     ])
     issues = validate_program(api)
     assert not any("API/JSON 直链" in i for i in issues), issues
+
+
+def test_to_program_defaults_text_source_for_phone_number_returns():
+    from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, to_program
+
+    program = to_program(
+        _PlanDraft(steps=[
+            _StepDraft(
+                op="run",
+                run_kind="action",
+                var="r",
+                name="打开 Kevin_CV.pdf 并读取电话号码",
+                returns=["电话号码"],
+                read_spec="电话号码：读取 PDF 正文中的完整电话号码。",
+            )
+        ]),
+        "读取 Kevin 简历电话号码",
+    )
+
+    run = program.statements[0]
+    assert isinstance(run, Run)
+    assert run.text_source is True
+
+
+def test_to_program_keeps_visual_signal_reads_on_screenshot():
+    from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, to_program
+
+    program = to_program(
+        _PlanDraft(steps=[
+            _StepDraft(
+                op="run",
+                run_kind="action",
+                var="r",
+                name="检测连通状态",
+                returns=["是否可达"],
+                read_spec="是否可达：看起点终点之间的图标颜色，绿色对勾=可达，红色叉=不可达。",
+            )
+        ]),
+        "检测 A 到 B 是否可达",
+    )
+
+    run = program.statements[0]
+    assert isinstance(run, Run)
+    assert run.text_source is False

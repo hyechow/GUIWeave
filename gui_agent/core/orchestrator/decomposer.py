@@ -38,6 +38,93 @@ _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
 # (re-plan the REMAINING steps from the CURRENT page, absorbing prior experience) differs.
 _REDECOMPOSE_SYSTEM = _SYSTEM + "\n\n" + load_prompt_text("task.orchestrator.redecomposer")
 
+_TEXT_SOURCE_READ_RE = re.compile(
+    r"phone|tel|telephone|mobile|email|e-mail|url|link|count|number|"
+    r"stars?|contributors?|issues?|pull\s*requests?|"
+    r"电话|手机号|电话号码|号码|邮箱|邮件|网址|链接|计数|数量|数字|多少|几个",
+    re.IGNORECASE,
+)
+_VISUAL_SIGNAL_READ_RE = re.compile(
+    r"图标|颜色|绿色|红色|灰色|蓝色|位置|勾|叉|icon|colou?r|position|badge|checkmark|cross",
+    re.IGNORECASE,
+)
+_RESUME_SOURCE_RE = re.compile(r"\b(resume|cv)\b|简历", re.IGNORECASE)
+_SOURCE_FILE_RE = re.compile(
+    r"\b(resume|cv|file|document|pdf|download|downloads)\b|简历|文件|文档|下载",
+    re.IGNORECASE,
+)
+_SEND_ACTION_RE = re.compile(
+    r"\b(send|text|sms|message|email|mail|notify)\b|发送|发短信|短信|邮件|通知",
+    re.IGNORECASE,
+)
+_EXPLICIT_DESTINATION_RE = re.compile(
+    r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:\+?\d[\d .()_-]{6,}\d)",
+    re.IGNORECASE,
+)
+_CONTACT_FIELD_RE = re.compile(
+    r"phone|tel|telephone|mobile|email|e-mail|contact|recipient|"
+    r"电话|手机号|电话号码|号码|邮箱|邮件地址|联系方式|联系人|收件人",
+    re.IGNORECASE,
+)
+_SMS_GOAL_RE = re.compile(r"\b(text|sms|message)\b|短信|发短信|消息", re.IGNORECASE)
+_EMAIL_GOAL_RE = re.compile(r"\b(email|mail)\b|邮件|邮箱", re.IGNORECASE)
+_EN_RESUME_OWNER_RE = re.compile(r"\b([A-Z][A-Za-z0-9_.-]{1,40})'s\s+(?:resume|cv)\b", re.IGNORECASE)
+_ZH_RESUME_OWNER_RE = re.compile(r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9_.-]{1,20})的简历")
+
+
+def _default_text_source_for_returns(name: str, read_spec: str, returns: list[str]) -> bool:
+    """Use Android read_screen_text by default for exact textual/numeric fields.
+
+    This is a deterministic backstop for cases where the model remembers to request
+    a return field (e.g. 电话号码) but forgets ``text_source``. It deliberately avoids
+    icon/colour/position reads unless the field itself is an explicit text/digit cue.
+    """
+    if not returns:
+        return False
+    returns_text = " ".join(returns)
+    text = f"{name}\n{read_spec}\n{returns_text}"
+    if not _TEXT_SOURCE_READ_RE.search(text):
+        return False
+    if _VISUAL_SIGNAL_READ_RE.search(read_spec or "") and not _TEXT_SOURCE_READ_RE.search(returns_text):
+        return False
+    return True
+
+
+def _goal_source_contact_requirement(goal: str) -> tuple[str, str, str] | None:
+    """Detect resume/CV tasks where the destination contact must be read at runtime.
+
+    Example: "Find Kevin's resume and send a text message to Kevin" does not give a
+    phone number. The resume is the authoritative source for Kevin's contact info, so
+    opening Messages and searching "Kevin" is a wrong plan even if it is a plausible
+    default habit. Keep this semantic guard narrow: explicit email/phone destinations
+    are already actionable and do not need a contact read from the file.
+    """
+    if not _RESUME_SOURCE_RE.search(goal or "") or not _SEND_ACTION_RE.search(goal or ""):
+        return None
+    if _EXPLICIT_DESTINATION_RE.search(goal or ""):
+        return None
+
+    owner = ""
+    m = _EN_RESUME_OWNER_RE.search(goal or "")
+    if m:
+        owner = m.group(1)
+        if not re.search(rf"\bto\s+{re.escape(owner)}\b", goal, re.IGNORECASE):
+            return None
+    else:
+        m = _ZH_RESUME_OWNER_RE.search(goal or "")
+        if m:
+            owner = m.group(1)
+            if not re.search(rf"(?:给|向|发给|发送给).{{0,12}}{re.escape(owner)}", goal):
+                return None
+        else:
+            return None
+
+    if _SMS_GOAL_RE.search(goal or ""):
+        return owner, "电话号码", "短信"
+    if _EMAIL_GOAL_RE.search(goal or ""):
+        return owner, "邮箱", "邮件"
+    return owner, "联系方式", "消息"
+
 
 class _StepDraft(BaseModel):
     """One DSL step in flat, LLM-friendly form. `op` selects which fields matter."""
@@ -455,26 +542,91 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                 )
             )
         else:  # run (default)
+            returns = [r for r in d.returns if r.strip()]
+            kind = _to_kind(d.run_kind)
             out.append(
                 Run(
                     var=(d.var.strip() or None),
                     name=d.name,
                     success_condition=d.success_condition,
-                    kind=_to_kind(d.run_kind),
-                    returns=[r for r in d.returns if r.strip()],
+                    kind=kind,
+                    returns=returns,
                     read_spec=d.read_spec,
                     sql=d.sql,
                     data_scope="current" if (d.data_scope or "").strip().lower() == "current" else "complete",
                     precondition=bool(d.precondition),
-                    list_read=bool(d.list_read) and _to_kind(d.run_kind) == "read",
-                    text_source=bool(d.text_source),
+                    list_read=bool(d.list_read) and kind == "read",
+                    text_source=bool(d.text_source) or _default_text_source_for_returns(d.name, d.read_spec, returns),
                 )
             )
     return out
 
 
+def _foreach_over_vars(stmts: list[Stmt]) -> set[str]:
+    refs: set[str] = set()
+    for s in stmts:
+        if isinstance(s, ForEach):
+            if s.over:
+                refs.add(s.over)
+            refs.update(_foreach_over_vars(s.body))
+        elif isinstance(s, If):
+            refs.update(_foreach_over_vars(s.then))
+            refs.update(_foreach_over_vars(s.otherwise))
+    return refs
+
+
+def _contains_data_query(stmts: list[Stmt]) -> bool:
+    for s in stmts:
+        if isinstance(s, Run) and s.kind == "data_query":
+            return True
+        if isinstance(s, ForEach) and _contains_data_query(s.body):
+            return True
+        if isinstance(s, If) and (_contains_data_query(s.then) or _contains_data_query(s.otherwise)):
+            return True
+    return False
+
+
+def _normalize_orphan_list_reads(stmts: list[Stmt], foreach_overs: set[str]) -> list[Stmt]:
+    """Downgrade list_read flags that are not actually used as foreach sources.
+
+    `list_read` is row-object collection for a later foreach. LLMs sometimes set it
+    for ordinary "read a list of names" steps that are referenced directly by a
+    finish/action template; keeping the flag makes runtime enter scroll traversal
+    and can block on non-table pages. Preserve list_read when a later data_query is
+    present so validation can still reject list_read→data_query plans that skipped
+    the required foreach enrichment.
+    """
+    out_rev: list[Stmt] = []
+    data_query_after = False
+    for s in reversed(stmts):
+        item: Stmt = s
+        if isinstance(s, ForEach):
+            body = _normalize_orphan_list_reads(s.body, foreach_overs)
+            item = s.model_copy(update={"body": body})
+            data_query_after = data_query_after or _contains_data_query(body)
+        elif isinstance(s, If):
+            then = _normalize_orphan_list_reads(s.then, foreach_overs)
+            otherwise = _normalize_orphan_list_reads(s.otherwise, foreach_overs)
+            item = s.model_copy(update={"then": then, "otherwise": otherwise})
+            data_query_after = data_query_after or _contains_data_query(then) or _contains_data_query(otherwise)
+        elif isinstance(s, Run):
+            if s.kind == "data_query":
+                data_query_after = True
+            elif (
+                s.kind == "read"
+                and s.list_read
+                and (not s.var or s.var not in foreach_overs)
+                and not data_query_after
+            ):
+                item = s.model_copy(update={"list_read": False})
+        out_rev.append(item)
+    return list(reversed(out_rev))
+
+
 def to_program(draft: _PlanDraft, goal: str) -> Program:
-    return Program(goal=draft.goal or goal, statements=_to_stmts(draft.steps))
+    statements = _to_stmts(draft.steps)
+    statements = _normalize_orphan_list_reads(statements, _foreach_over_vars(statements))
+    return Program(goal=draft.goal or goal, statements=statements)
 
 
 def validate_program(program: Program) -> list[str]:
@@ -696,7 +848,127 @@ def validate_program(program: Program) -> list[str]:
     _walk(program.statements, {})
     _check_list_read_direct_query(program.statements, issues)
     _check_retrieval_retry_preserves_field(program.statements, issues)
+    _check_source_contact_before_send(program, issues)
     return issues
+
+
+def _check_source_contact_before_send(program: Program, issues: list[str]) -> None:
+    requirement = _goal_source_contact_requirement(program.goal)
+    if requirement is None:
+        return
+    owner, field_label, channel = requirement
+
+    def _run_text(run: Run) -> str:
+        return f"{run.name}\n{run.success_condition}\n{run.read_spec}"
+
+    def _walk(stmts: list[Stmt], *, source_seen: bool, contacts: dict[str, set[str]]) -> tuple[bool, dict[str, set[str]]]:
+        local_source_seen = source_seen
+        local_contacts = {k: set(v) for k, v in contacts.items()}
+        for item in stmts:
+            if isinstance(item, Run):
+                text = _run_text(item)
+                if _SOURCE_FILE_RE.search(text):
+                    local_source_seen = True
+                contact_fields = {field for field in item.returns if _CONTACT_FIELD_RE.search(field)}
+                if local_source_seen and item.var and contact_fields:
+                    local_contacts.setdefault(item.var, set()).update(contact_fields)
+                if item.kind == "action" and _SEND_ACTION_RE.search(text):
+                    if not local_contacts:
+                        issues.append(
+                            f"任务要求先从{owner}的简历/CV获取联系信息再发送{channel}，"
+                            f"但发送步骤「{item.name}」之前没有任何从源文件读取{field_label}/联系方式的返回值。"
+                            "请先打开源简历/文件并用 returns 读取联系方式，再执行发送动作。"
+                        )
+                    else:
+                        refs = {
+                            f"{{{var}[{field}]}}"
+                            for var, fields in local_contacts.items()
+                            for field in fields
+                        }
+                        if not any(ref in text for ref in refs):
+                            example_var, example_fields = next(iter(local_contacts.items()))
+                            example_field = next(iter(example_fields))
+                            example_ref = "{" + example_var + "[" + example_field + "]}"
+                            issues.append(
+                                f"发送步骤「{item.name}」没有引用前序从源文件读取出的联系方式。"
+                                f"请把目标收件人写成 {example_ref} "
+                                "这类 {变量[字段]} 模板，避免退回按姓名搜索联系人。"
+                            )
+            elif isinstance(item, If):
+                then_source, then_contacts = _walk(
+                    item.then,
+                    source_seen=local_source_seen,
+                    contacts=local_contacts,
+                )
+                else_source, else_contacts = _walk(
+                    item.otherwise,
+                    source_seen=local_source_seen,
+                    contacts=local_contacts,
+                )
+                local_source_seen = then_source and else_source
+                merged: dict[str, set[str]] = {}
+                for var in set(then_contacts) & set(else_contacts):
+                    common = then_contacts[var] & else_contacts[var]
+                    if common:
+                        merged[var] = common
+                local_contacts.update(merged)
+            elif isinstance(item, ForEach):
+                _walk(item.body, source_seen=local_source_seen, contacts=local_contacts)
+        return local_source_seen, local_contacts
+
+    _walk(program.statements, source_seen=False, contacts={})
+
+
+def _source_contact_send_fallback(goal: str, program: Program) -> Program:
+    requirement = _goal_source_contact_requirement(program.goal or goal)
+    if requirement is None:
+        return program
+    owner, field_label, channel = requirement
+    message = _extract_quoted_message(goal) or "任务中指定的消息内容"
+    source_label = f"{owner}的简历" if owner else "目标简历"
+    if channel == "短信":
+        send_name = f"向 {{contact[{field_label}]}} 发送短信，内容为：{message}"
+        send_success = "短信已成功发送；当前对话中可见刚发送的指定内容。"
+    elif channel == "邮件":
+        send_name = f"向 {{contact[{field_label}]}} 发送邮件，正文为：{message}"
+        send_success = "邮件已成功发送；已进入发送完成状态或已离开发送编辑页。"
+    else:
+        send_name = f"向 {{contact[{field_label}]}} 发送消息，内容为：{message}"
+        send_success = "消息已成功发送；当前会话中可见刚发送的指定内容。"
+    return Program(
+        goal=program.goal or goal,
+        statements=[
+            Run(
+                name=f"在文件/下载中找到并打开{source_label}",
+                kind="navigation",
+                success_condition=f"当前界面显示{source_label}的正文内容，能读取其中的联系方式。",
+            ),
+            Run(
+                var="contact",
+                name=f"读取{source_label}中的{field_label}",
+                kind="read",
+                returns=[field_label],
+                read_spec=(
+                    f"{field_label}：从当前打开的{source_label}正文中读取完整的{field_label}/联系方式；"
+                    "不要按姓名猜测联系人，也不要从消息列表搜索结果中取值。"
+                ),
+                text_source=True,
+            ),
+            Run(
+                name=send_name,
+                kind="action",
+                success_condition=send_success,
+            ),
+        ],
+    )
+
+
+def _extract_quoted_message(text: str) -> str:
+    candidates: list[str] = []
+    for pattern in (r'"([^"]+)"', r"'([^']+)'", r"“([^”]+)”", r"「([^」]+)」"):
+        candidates.extend(m.group(1).strip() for m in re.finditer(pattern, text or ""))
+    candidates = [c for c in candidates if c]
+    return max(candidates, key=len) if candidates else ""
 
 
 def _navigation_source_fallback(goal: str, program: Program) -> Program:
@@ -1239,6 +1511,9 @@ def _invoke_plan(
     if needs_nav_fallback:
         print("  [Orchestrator] 分解仍缺少可靠目标身份约束，按找页/到达语义降级为 navigation run")
         program = _navigation_source_fallback(goal, program)
+    elif issues and _goal_source_contact_requirement(program.goal or goal):
+        print("  [Orchestrator] 分解仍未先从源文件读取联系方式，按源文件→联系方式→发送语义降级")
+        program = _source_contact_send_fallback(goal, program)
     return program
 
 
