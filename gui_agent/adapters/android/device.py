@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import io
 import os
+import time
 from typing import Optional
 
 from gui_agent.adapters.android.constants import (
@@ -230,49 +231,83 @@ class AndroidDevice:
 
         NON-INTERACTIVE: uiautomator dump does not tap/scroll/change the UI. Empty
         string when the dump is unreadable (caller falls back to the vision read)."""
-        import re
         import xml.etree.ElementTree as ET
+        import re
         from html import unescape
 
         dev = self._require_dev()
         remote = "/sdcard/_gui_agent_ui.xml"
-        xml_text = ""
-        for _ in range(2):  # uiautomator dump occasionally fails first try mid-transition
-            try:
-                dev.shell(f"uiautomator dump {remote}")
-                xml_text = dev.shell(f"cat {remote}")
-            except Exception:  # noqa: BLE001
-                xml_text = ""
-            if "<node" in xml_text:
-                break
+        w, h = self.win_w, self.win_h
+        bounds_re = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
+
+        def _dump_xml() -> str:
             xml_text = ""
+            for _ in range(2):  # uiautomator dump occasionally fails first try mid-transition
+                try:
+                    dev.shell(f"uiautomator dump {remote}")
+                    xml_text = dev.shell(f"cat {remote}")
+                except Exception:  # noqa: BLE001
+                    xml_text = ""
+                if "<node" in xml_text:
+                    return xml_text
+            return ""
+
+        def _extract(xml_text: str) -> str:
+            if not xml_text:
+                return ""
+            try:
+                root = ET.fromstring(xml_text)
+            except Exception:  # noqa: BLE001
+                return ""
+            pieces: list[str] = []
+            for node in root.iter("node"):
+                bm = bounds_re.search(node.get("bounds") or "")
+                if not bm:
+                    continue
+                x1, y1, x2, y2 = (int(bm.group(i)) for i in (1, 2, 3, 4))
+                # keep nodes INTERSECTING the viewport (partly visible == visible)
+                if x2 <= 0 or y2 <= 0 or x1 >= w or y1 >= h:
+                    continue
+                for attr in ("text", "content-desc"):
+                    val = (node.get(attr) or "").strip()
+                    if val:
+                        pieces.append(unescape(val))
+            return "\n".join(pieces)
+
+        def _needs_retry(text: str) -> bool:
+            # Some document/PDF viewers render pixels before their accessibility text
+            # tree catches up. A toolbar-only dump is not enough for text_source reads.
+            lines = [line for line in text.splitlines() if line.strip()]
+            if not text or len(text) < 80:
+                return True
+            toolbar_only = (
+                len(text) < 250
+                and len(lines) <= 6
+                and "Open document" in text
+                and "Search in document" in text
+                and "More options" in text
+            )
+            return toolbar_only
+
+        latest = ""
+        best = ""
+        attempts = int(os.environ.get("ANDROID_SCREEN_TEXT_ATTEMPTS", "4"))
+        interval_s = float(os.environ.get("ANDROID_SCREEN_TEXT_RETRY_INTERVAL_S", "0.4"))
+        for attempt in range(max(1, attempts)):
+            text = _extract(_dump_xml())
+            if text:
+                latest = text
+                if len(text) > len(best):
+                    best = text
+            if not _needs_retry(text):
+                break
+            if attempt < attempts - 1:
+                time.sleep(interval_s)
         try:
             dev.shell(f"rm -f {remote}")
         except Exception:  # noqa: BLE001
             pass
-        if not xml_text:
-            return ""
-
-        w, h = self.win_w, self.win_h
-        bounds_re = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
-        try:
-            root = ET.fromstring(xml_text)
-        except Exception:  # noqa: BLE001
-            return ""
-        pieces: list[str] = []
-        for node in root.iter("node"):
-            bm = bounds_re.search(node.get("bounds") or "")
-            if not bm:
-                continue
-            x1, y1, x2, y2 = (int(bm.group(i)) for i in (1, 2, 3, 4))
-            # keep nodes INTERSECTING the viewport (partly visible == visible)
-            if x2 <= 0 or y2 <= 0 or x1 >= w or y1 >= h:
-                continue
-            for attr in ("text", "content-desc"):
-                val = (node.get(attr) or "").strip()
-                if val:
-                    pieces.append(unescape(val))
-        return "\n".join(pieces)
+        return latest or best
 
     # ----- input primitives (Device Protocol) ------------------------------
     def tap(self, x: float, y: float) -> str:

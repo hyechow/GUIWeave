@@ -241,6 +241,11 @@ class AndroidActionPolicy(BaseActionPolicy):
             hint_parts.append(f"⚠️ Picker 距离：约 {steps} 格，按距离选择 small/medium/large，近距离必须收小。")
         if hint_parts:
             hint_parts.append("⚠️ Picker 必须输出 action_type=scroll，禁止 tap/drag。")
+        elif _is_tap_only_instruction(instruction):
+            hint_parts.append(
+                "⚠️ 本步是点击/选择操作：如果目标元素或选项已在截图中可见，必须输出 action_type=tap，"
+                "并填写目标中心 x/y；没有 x/y 的 tap 会执行失败。禁止改成 scroll/drag。"
+            )
         hint_prefix = "\n".join(hint_parts)
         return (
             f"{hint_prefix}\n操作指令：{instruction}\n\n请根据截图执行该指令。"

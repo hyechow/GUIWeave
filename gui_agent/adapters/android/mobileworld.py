@@ -189,10 +189,15 @@ def _normalize_android_proxy(target: str) -> tuple[str, str]:
 def _configure_android_http_proxy(serial: str, target: str) -> None:
     host, port = _normalize_android_proxy(target)
     proxy = f"{host}:{port}"
+    exclusions = os.environ.get(
+        "MW_ANDROID_HTTP_PROXY_EXCLUDE",
+        "10.0.2.2,localhost,127.0.0.1",
+    ).strip()
     commands = (
         ["shell", "settings", "put", "global", "http_proxy", proxy],
         ["shell", "settings", "put", "global", "global_http_proxy_host", host],
         ["shell", "settings", "put", "global", "global_http_proxy_port", port],
+        ["shell", "settings", "put", "global", "global_http_proxy_exclusion_list", exclusions],
     )
     for args in commands:
         result = _run_adb(serial, list(args), timeout=10.0)

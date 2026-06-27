@@ -128,6 +128,17 @@ def test_configure_android_http_proxy_sets_global_settings(monkeypatch):
             "192.168.31.57:5556",
             ("shell", "settings", "put", "global", "global_http_proxy_port", "38888"),
         ),
+        (
+            "192.168.31.57:5556",
+            (
+                "shell",
+                "settings",
+                "put",
+                "global",
+                "global_http_proxy_exclusion_list",
+                "10.0.2.2,localhost,127.0.0.1",
+            ),
+        ),
     ]
 
 

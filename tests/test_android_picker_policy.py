@@ -203,6 +203,32 @@ def test_android_picker_postprocess_does_not_rewrite_plain_tap():
     assert result.action.y == 420
 
 
+def test_android_tap_only_instruction_gets_no_scroll_hint():
+    policy = AndroidActionPolicy()
+
+    user_text = policy._build_user_text("点击弹窗列表中可见的 1 week 文字/整行")
+
+    assert "必须输出 action_type=tap" in user_text
+    assert "填写目标中心 x/y" in user_text
+    assert "没有 x/y 的 tap 会执行失败" in user_text
+    assert "禁止改成 scroll/drag" in user_text
+    assert "Picker 必须输出 action_type=scroll" not in user_text
+
+
+def test_android_picker_instruction_keeps_scroll_hint_over_tap_hint():
+    policy = AndroidActionPolicy()
+
+    user_text = policy._build_user_text(
+        "在分钟列滚动一点，把 5 分钟调到 6 分钟",
+        direction="increase",
+        drag_column="minute",
+        drag_steps=1,
+    )
+
+    assert "Picker 必须输出 action_type=scroll" in user_text
+    assert "必须输出 action_type=tap" not in user_text
+
+
 def test_android_picker_postprocess_does_not_rewrite_plain_scroll_with_time_text():
     policy = AndroidActionPolicy()
     decision = _decision(

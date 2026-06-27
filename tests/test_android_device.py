@@ -217,6 +217,51 @@ def _device_with(dev):
     return d
 
 
+class _UiDumpFakeDev:
+    def __init__(self, xml_dumps: list[str]):
+        self.xml_dumps = xml_dumps
+        self.shell_log: list[str] = []
+        self._cat_idx = 0
+
+    def shell(self, cmd):
+        s = cmd if isinstance(cmd, str) else " ".join(cmd)
+        self.shell_log.append(s)
+        if s.startswith("cat "):
+            idx = min(self._cat_idx, len(self.xml_dumps) - 1)
+            self._cat_idx += 1
+            return self.xml_dumps[idx]
+        return ""
+
+
+def test_read_visible_text_retries_toolbar_only_document_tree(monkeypatch):
+    toolbar_only = """<?xml version='1.0' encoding='UTF-8'?>
+    <hierarchy><node bounds="[0,0][1080,2400]">
+      <node text="Open document" bounds="[700,120][820,250]" />
+      <node text="Edit document" bounds="[820,120][900,250]" />
+      <node text="Search in document" bounds="[900,120][1000,250]" />
+      <node content-desc="More options" bounds="[1000,120][1080,250]" />
+    </node></hierarchy>"""
+    pdf_text_ready = """<?xml version='1.0' encoding='UTF-8'?>
+    <hierarchy><node bounds="[0,0][1080,2400]">
+      <node text="Open document" bounds="[700,120][820,250]" />
+      <node text="Kevin Zhang" bounds="[607,329][750,349]" />
+      <node text="+1 (555)" bounds="[915,362][967,375]" />
+      <node text="123-4567" bounds="[653,379][704,390]" />
+      <node content-desc="tel:+15551234567" bounds="[902,360][976,378]" />
+      <node text="Detail-oriented software engineer with 5+ years of experience building scalable web applications." bounds="[300,420][900,460]" />
+    </node></hierarchy>"""
+    fake = _UiDumpFakeDev([toolbar_only, pdf_text_ready])
+    d = _device_with(fake)
+    d.win_w, d.win_h = 1080, 2400
+
+    monkeypatch.setenv("ANDROID_SCREEN_TEXT_RETRY_INTERVAL_S", "0")
+    text = d.read_visible_text()
+
+    assert "tel:+15551234567" in text
+    assert "+1 (555)" in text
+    assert sum(s.startswith("uiautomator dump ") for s in fake.shell_log) == 2
+
+
 def test_detect_ime_read_only_sets_flag_true_when_already_adbkeyboard():
     from gui_agent.adapters.android.constants import ADBKEYBOARD_IME
 
