@@ -15,7 +15,7 @@ import re
 from collections.abc import Callable
 
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from gui_agent.context import ContextBlock
 from gui_agent.context.runtime import (
@@ -96,6 +96,36 @@ class _StepDraft(BaseModel):
     otherwise: list["_StepDraft"] = Field(default_factory=list, description="op=if：条件不成立时执行的步骤")
     # --- op=finish ---
     message: str = Field(default="", description="op=finish：最终答复模板，可用 {变量[字段]} 引用某步返回值")
+
+    @field_validator("cond_value", mode="before")
+    @classmethod
+    def _coerce_cond_value(cls, v):
+        # LLM 偶尔把比较值输出成 bool/数字/None（如 cond_value=True），pydantic str 校验失败 → 整个
+        # plan 走降级纯文本解析（20260626_232944 SendInterviewInvitationTask 回归）。coerce 成 str；
+        # bool→小写 true/false（匹配 read 出的布尔字段值）。
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if v is None:
+            return ""
+        return v if isinstance(v, str) else str(v)
+
+    @field_validator("cond_values", mode="before")
+    @classmethod
+    def _coerce_cond_values(cls, v):
+        # 同上：in/not_in 的候选值列表也可能混进 bool/None。
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = [v]
+        out: list[str] = []
+        for item in v:
+            if isinstance(item, bool):
+                out.append("true" if item else "false")
+            elif item is None:
+                continue
+            else:
+                out.append(item if isinstance(item, str) else str(item))
+        return out
 
 
 class _PlanDraft(BaseModel):
