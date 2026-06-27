@@ -317,6 +317,7 @@ def read_grid_complete(
     platform: Any = None,
     log_dir: Path | None = None,
     max_pages: int = _DEFAULT_MAX_PAGES,
+    limit: int | None = None,
 ) -> list[dict[str, str]] | None:
     """Code-level row-collection primitive for browser: extract all grid rows from the AX
     semantic tree, following pagination links without consuming interactive turns.
@@ -364,6 +365,9 @@ def read_grid_complete(
     assert semantic_tree is not None
     all_rows: list[dict[str, str]] = list(rows)
     seen_keys: set[str] = {_row_dedup_key(r) for r in all_rows}
+
+    if limit and len(all_rows) >= limit:
+        return all_rows[:limit]  # first page already satisfies limit — skip pagination entirely
 
     client = getattr(platform, "client", None) if platform is not None else None
     if client is None or bundle is None or log_dir is None:
@@ -426,6 +430,9 @@ def read_grid_complete(
                 seen_keys.add(k)
                 all_rows.append(r)
                 new_count += 1
+
+        if limit and len(all_rows) >= limit:
+            break  # collected enough rows — no need to paginate further
 
         # Without a controller (no viewport signal at all), "no new rows" is the only
         # boundary signal we have. With a controller, a rewind step revisiting an

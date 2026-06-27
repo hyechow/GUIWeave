@@ -237,14 +237,14 @@ def _make_collect_fn(bundle, platform, log_dir):
     if client is None or not hasattr(client, "read_semantic_tree"):
         return None
 
-    def collect_fn(target: str, returns: list) -> list | None:
+    def collect_fn(target: str, returns: list, limit: int | None = None) -> list | None:
         from gui_agent.adapters.browser.page_read import read_grid_complete
         obs_url = "collect_grid.png"
         try:
             obs = bundle.make_perception(platform, log_dir / obs_url).observe()
         except Exception:  # noqa: BLE001
             return None
-        return read_grid_complete(obs, list(returns), bundle=bundle, platform=platform, log_dir=log_dir)
+        return read_grid_complete(obs, list(returns), bundle=bundle, platform=platform, log_dir=log_dir, limit=limit)
 
     return collect_fn
 

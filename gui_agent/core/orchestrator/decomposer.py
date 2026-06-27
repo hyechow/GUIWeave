@@ -80,6 +80,7 @@ class _StepDraft(BaseModel):
     over: str = Field(default="", description="op=foreach：被迭代的列表来源（旧路径，iPhone/Android 兼容）；browser 新路径留空，由 name/returns 驱动")
     into: str = Field(default="", description="op=foreach：累积表变量名（留空默认 = 循环变量+s）；循环结束后可被 data_query 查询")
     body: list["_StepDraft"] = Field(default_factory=list, description="op=foreach：每行执行一遍的步骤（run/if/finish，不可再嵌 foreach）")
+    limit: int | None = Field(default=None, description="op=foreach：采集行数上限（None=全量）；对已排序 grid 取 topK 时填 K，避免全量翻页")
     # --- op=if ---
     cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个带 returns/data_query 步的 var）")
     cond_field: str = Field(default="", description="op=if：读取字段名（该步 returns 里的字段）")
@@ -180,6 +181,7 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                 returns=[r for r in d.returns if r.strip()],
                 into=d.into.strip(),
                 body=body,
+                limit=d.limit if d.limit and d.limit > 0 else None,
             ))
         elif op == "if":
             cmp = _to_cmp(d.cond_cmp)

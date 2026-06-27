@@ -212,8 +212,10 @@ class Interpreter:
             # Browser path: collect rows from the current page via DOM/AX tree.
             # Also covers old-style foreach whose over var exists but carries no rows (e.g. when
             # the preceding row-collection read was silently dropped on schema upgrade).
-            collected = self._collect_fn(loop.target, list(loop.returns))
+            collected = self._collect_fn(loop.target, list(loop.returns), limit=loop.limit)
             rows = collected if collected is not None else []
+        if loop.limit and rows:
+            rows = rows[: loop.limit]
         into = loop.into or f"{loop.var}s"
         body_read_vars = self._read_vars(loop.body)
         accumulated: list[dict[str, str]] = []

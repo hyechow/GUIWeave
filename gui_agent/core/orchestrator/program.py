@@ -140,6 +140,7 @@ class ForEach(BaseModel):
     returns: list[str] = Field(default_factory=list)  # browser path: fields to collect per row
     body: list["Stmt"] = Field(default_factory=list)
     into: str = ""                              # materialized-table var (defaults to f"{var}s" when empty)
+    limit: int | None = None                    # stop after collecting this many rows (None = collect all); use for sorted top-K grids
 
 
 Stmt = Annotated[Union[Run, If, Finish, ForEach], Field(discriminator="op")]
