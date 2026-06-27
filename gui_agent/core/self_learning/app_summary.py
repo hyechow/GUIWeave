@@ -94,7 +94,7 @@ def load_page_files(app_dir: Path) -> list[tuple[str, str]]:
     """
     pages: list[tuple[str, str]] = []
     for md in sorted(app_dir.glob("*.md")):
-        if md.name.startswith("_"):
+        if md.name.startswith("_") or md.name.startswith("."):  # 跳 macOS AppleDouble ._*
             continue
         pages.append((md.stem, md.read_text(encoding="utf-8")))
     return pages

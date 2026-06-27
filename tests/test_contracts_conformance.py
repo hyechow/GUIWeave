@@ -141,6 +141,22 @@ def test_milestone_vision_prompts_keep_runtime_data_out_of_templates():
             assert not (used & forbidden), f"{field} still contains runtime placeholders: {used & forbidden}"
 
 
+def test_android_message_send_prompts_distinguish_draft_from_sent():
+    from gui_agent.adapters.android.policies import SYSTEM_PROMPT as ACTION_PROMPT
+    from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
+
+    checker_text = (
+        ANDROID_MILESTONE_PROMPTS.single_checker
+        + ANDROID_MILESTONE_PROMPTS.check_kind_sections["action"]
+    )
+
+    assert "未发送草稿" in checker_text
+    assert "输入框" in checker_text
+    assert "发送按钮" in ANDROID_MILESTONE_PROMPTS.plan
+    assert "发送按钮" in ACTION_PROMPT
+    assert "不要改成 press_enter" in ACTION_PROMPT
+
+
 def test_core_milestone_is_leaf_without_iphone_prompts():
     # Importing the core milestone package must NOT pull the iphone adapter — its
     # prompts are imported lazily only at supervisor construction.
