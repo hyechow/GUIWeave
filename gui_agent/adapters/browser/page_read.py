@@ -346,13 +346,22 @@ def read_grid_complete(
     from gui_agent.core.orchestrator.traversal_controller import TraversalController
 
     semantic_tree = getattr(obs, "semantic_tree", None)
-    if not semantic_tree:
-        return None
-
-    rows = read_grid_from_tree(semantic_tree, returns)
+    rows = read_grid_from_tree(semantic_tree, returns) if semantic_tree else None
     if rows is None:
-        return None  # no table or no column match → fall back to interactive
+        # AX-tree path found no matching grid. Some plain DOM data-tables aren't exposed as
+        # grids in the AX tree even though the DOM <table> scan (read_tables) captures them —
+        # notably a drilled order/detail page's "Items Ordered" table. Fall back to the DOM
+        # table snapshot projection before giving up. These detail tables don't paginate, so a
+        # single-page projection is already complete (pagination below is AX-tree-driven and is
+        # correctly skipped for this branch). rows_from_tables returns None when nothing matches
+        # → caller still falls back to interactive react_until_collected.
+        from gui_agent.core.orchestrator.list_traversal_runtime import rows_from_tables
 
+        return rows_from_tables(getattr(obs, "tables", None), returns)
+
+    # rows is not None ⇒ the AX tree produced this grid, so semantic_tree is truthy. The
+    # pagination walk below is AX-tree-driven and relies on that invariant.
+    assert semantic_tree is not None
     all_rows: list[dict[str, str]] = list(rows)
     seen_keys: set[str] = {_row_dedup_key(r) for r in all_rows}
 

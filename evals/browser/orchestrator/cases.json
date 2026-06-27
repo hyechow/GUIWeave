@@ -430,5 +430,23 @@
       "customer_phone_lookup_uses_keyword_search"
     ],
     "note": "task 212 正确路径：① Customers > All Customers，清除跨任务残留筛选 ② 用顶部 Search by keyword（全文子串 LIKE）搜电话的本地号段 229-3326（不是 Filters 的 Phone 列精确筛选，也不是整串 555-229-3326）③ 命中行读 Name+Email 输出。失败根因（live run 20260626_233039 score 0.0）：用 Phone 列精确筛 555-229-3326 → 0 records → NOT_FOUND。Ground truth(CDP)：电话存为 (555) 229-3326，keyword search 是字面子串，整串 555-229-3326 不是其连续子串、任何控件都 0 命中；229-3326 命中 1 条 = Veronica Costello / roni_cost@example.com。修复见 knowledge _skill.md「按电话号查客户」。"
+  },
+  {
+    "label": "WebArena shopping_admin task 204 — 最近已完成订单的商品名+价格：grid Purchase Date 选最新 + 钻取读全部明细行",
+    "goal": "Get the product name and final price (low to high) of the most recent completed order. Return a list of objects with keys \"name\" (product name) and \"price\" (as number, e.g., 10.99) only, without any additional details",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 4,
+      "has_finish": true
+    },
+    "assertions": [
+      "most_recent_order_drills_and_reads_all_items"
+    ],
+    "note": "task 204 正确路径：① Sales>Orders 清残留筛选+Status=Complete+按 Purchase Date 降序 ② foreach 全量采 Action_url+Purchase Date ③ data_query 按 purchase_date_ts DESC LIMIT 1 选最新单的 Action_url（绝不靠列表第一行、绝不硬编码 order_id、绝不用详情页 Order Date）④ URL 直达钻取 ⑤ 第二个 foreach 采 Items Ordered 表 Product+Price 读全部商品行（一单常多商品，rowspan 会有空 Price 幻影行）⑥ data_query WHERE Price!='' 滤幻影、SUBSTR 剥 SKU 取名、CAST 转价、ORDER BY price ASC 输出列表。期望 order 230 = Ida Workout Parachute Pant 38.4 + Proteus Fitness Jackshirt 45.0。"
   }
 ]

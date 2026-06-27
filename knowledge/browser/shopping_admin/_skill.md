@@ -71,6 +71,16 @@ version: 1
 2. 用顶部 Search by keyword 搜本地号段（去区号后 7 位，如 `229-3326`）
 3. 命中行读所需字段（Name、Email 等）输出
 
+## skill：最近/最旧某状态订单的商品明细
+- 触发：most recent/latest/oldest order、最近一笔/最新订单、order 的 product name + price、订单的商品和价格、一笔订单里所有商品、return a list of products/price of an order
+- 数据：判定「最近/最旧」**只看 Orders grid 的 `Purchase Date` 列**（内部 `purchase_date_ts`），**绝不用订单详情页的 `Order Date`**——两者不同，详情日期会误导（task-204 的 decoy order 89 详情日期看着新，但 grid Purchase Date 排名靠后）。流程：先 filter（清残留筛选 + 设 Status 口径），foreach 全量采 `Action_url` + `Purchase Date`，data_query 按 `purchase_date_ts DESC/ASC LIMIT 1` 选出目标单的 `Action_url`，**URL 直达钻取，绝不硬编码/猜 order_id，也绝不靠「列表第一行」**（残留排序失效就会错）。钻到详情页后，商品明细在 **`Items Ordered` 表**（table_reader 已捕获，表头含 `Product`/`Price`）。**关键：一张订单常含多个商品，必须读全部行——所以钻取和读商品是两步，不是一步。** 钻取那一步只是 navigation（打开 `{选出的 url}`），**该步 returns 留空、绝不在打开详情这一步上挂 `returns=['Product','Price']` 去读商品**（那是「单行标量详情读」的写法，只会读到第一个商品，漏掉其余）。打开详情后，**另起一个独立的 foreach（body=[], returns=`['Product','Price']`）**采这张详情表（`_best_table` 按 returns 自动从详情页 4 张表里选中 Items Ordered）。该表因 rowspan 会拆出 `Price` 为空的幻影行，且 `Product` 单元格形如 `Ida Workout Parachute Pant SKU: WP03-28-Blue ...`——data_query 里 `WHERE Price != ''` 过滤幻影行、商品名取 `Product` 列 `SKU:` 之前的部分、`Price`（如 `$45.00`）转数值，按 intent（low to high 等）排序后输出商品列表。
+- 步骤：
+1. 进 Orders，清筛 + 设 Status + 按 Purchase Date 排序
+2. foreach 全量采行，data_query 按日期选目标单链接
+3. navigation URL 直达钻到该订单详情页（此步 returns 留空，不读商品）
+4. 另起独立 foreach 采 Items Ordered 表 Product+Price 读全部行
+5. data_query 滤空价幻影行、剥 SKU、转价、排序，输出商品列表
+
 ## skill：Grid 数据导出或采集
 - 触发：需要完整 grid 数据、导出 CSV/XML、跨分页统计
 - 数据：目标 grid、所需列、筛选口径、分页范围

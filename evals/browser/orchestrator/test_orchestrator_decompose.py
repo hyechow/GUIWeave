@@ -1512,6 +1512,56 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "必须先在子查询里按日期排序并 LIMIT 5，再外层 SUM。"
                     f" bad_sql={bad_limit}"
                 )
+        elif assertion == "most_recent_order_drills_and_reads_all_items":
+            # WebArena task 204: product name + price (low to high) of the most-recent completed order.
+            # Robust shape (knowledge skill「最近/最旧某状态订单的商品明细」+ memory webarena-204-most-recent-order):
+            #   filter Status + Purchase Date sort → foreach collect [Action_url, Purchase Date]
+            #   → data_query ORDER BY purchase_date_ts LIMIT 1 (pick the latest order's detail url)
+            #   → URL-direct drill → SECOND foreach collect [Product, Price] (read ALL line items)
+            #   → data_query clean+sort → finish list.
+            # Guards the live-run failures: hardcoded/decoy order_id, "open列表第一行", reading only the first product,
+            # and deciding "most recent" from the detail-page Order Date instead of the grid Purchase Date.
+            seq = _flatten_runs(program.statements)
+            foreaches = _flatten_foreaches(program.statements)
+            dqs = [r for r in seq if r.kind == "data_query"]
+            combined_sql = "\n".join((r.sql or "").lower() for r in dqs)
+            grid_collect = [
+                fe for fe in foreaches
+                if any("_url" in str(ret).lower() or "action" in str(ret).lower() for ret in fe.returns)
+                and any("purchase" in str(ret).lower() and "date" in str(ret).lower() for ret in fe.returns)
+            ]
+            if not grid_collect:
+                details.append(
+                    "task 204 判定『最近订单』必须 foreach 采集 Action_url + Purchase Date，由 data_query 按日期选最新，"
+                    "不能靠目测列表第一行。"
+                    f" foreaches={[(fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
+                )
+            if "purchase_date_ts" not in combined_sql and "created_at_ts" not in combined_sql:
+                details.append(
+                    "task 204 选最新单必须用 purchase_date_ts/created_at_ts 影子列排序（grid Purchase Date），"
+                    "绝不用详情页 Order Date。"
+                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                )
+            items_collect = [
+                fe for fe in foreaches
+                if any("product" in str(ret).lower() for ret in fe.returns)
+                and any("price" in str(ret).lower() for ret in fe.returns)
+            ]
+            if not items_collect:
+                details.append(
+                    "task 204 一张订单可能含多个商品，必须用第二个 foreach 采 Items Ordered 表的 Product+Price 读全部行，"
+                    "不能用一个 read 只读『第一行/first product』。"
+                    f" foreaches={[(fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
+                )
+            hardcoded = [
+                r.name for r in seq
+                if re.search(r"order_id/\d+", r.name or "", flags=re.I)
+            ]
+            if hardcoded:
+                details.append(
+                    "task 204 钻取必须 URL 直达 data_query 选出的链接（{var[字段]} 模板），绝不硬编码 order_id。"
+                    f" hardcoded={hardcoded}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

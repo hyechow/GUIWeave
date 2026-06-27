@@ -541,6 +541,11 @@ _SQL_NON_FIELD_TOKENS = {
     "like", "limit", "max", "min", "not", "null", "offset", "on", "or", "order", "over", "partition",
     "real", "select", "str", "strftime", "sum", "text", "then", "where", "when", "with",
     "data", "result",
+    # SQL scalar/string/numeric/window FUNCTIONS — never grid columns. Cleaning a collected cell
+    # (e.g. strip "SKU: ..." off a Product name, cast "$45.00"→number) naturally uses these; without
+    # the allowlist they were mis-flagged as foreach-returns columns (FOREACH_DQ_GRID_FIELD_MISSING).
+    "replace", "trim", "ltrim", "rtrim", "substr", "substring", "instr", "length", "lower", "upper",
+    "split_part", "nullif", "ifnull", "round", "rank", "row_number", "lead", "lag", "ntile",
 }
 
 def _data_query_field_tokens(run: Run) -> set[str]:
