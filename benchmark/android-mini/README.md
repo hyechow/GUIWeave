@@ -29,3 +29,8 @@ URL，并按 case 配置选择保留 Chrome 前台，或 force-stop 后回到 La
 | --- | --- | --- | --- |
 | github-repo-discovery-androidworld | CheckGithubInfoTask / step 1 | 帮我找到 AndroidWorld 这个 Android GUI agent benchmark 项目的 GitHub 仓库。 | 当前 Android UI 文本必须处在 `google-research/android_world` 仓库详情页，搜索结果页不算通过 |
 | github-repo-info-androidworld | CheckGithubInfoTask / step 2 | 帮我看下 AndroidWorld 这个 Android GUI agent benchmark 的 GitHub 仓库现在有多少 stars 和 contributors，直接告诉我两个数字。 | 最终输出必须同时包含 stars 和 contributors 的数量表达；UI 仍需停留在 GitHub 相关页面，不走 API/JSON |
+| find-kevin-resume | SendInterviewInvitationTask / step 1 | 在手机的 Download 文件夹里找到 Kevin 的简历文件。 | 当前 UI 必须显示 Kevin 简历/PDF 相关文本 |
+| read-kevin-resume-phone | SendInterviewInvitationTask / step 2 | 打开 Kevin 简历并读出电话号码。 | 最终输出必须包含 `15551234567` |
+| mastodon-postpoll-search-winners | MastodonPostPollTask / step 1 | 从 Google 搜索结果页读取 2025 Nobel Prize in Economics 三位获奖者。 | 最终输出必须包含 `Joel Mokyr`、`Philippe Aghion`、`Peter Howitt` |
+| mastodon-postpoll-compose-settings | MastodonPostPollTask / step 2 | 在已打开的 Mastodon poll compose 面板里填三位获奖者，并设置 `1 week` / 多选。 | 当前 UI 必须同时显示 `#vote2025`、三个人名、`1 week`、`Multiple choice`；不发布 |
+| mastodon-postpoll-publish | MastodonPostPollTask / step 3 | 从已填好的 Mastodon poll compose 页发布投票。 | 后端数据库必须存在本次 marker 的 `#vote2025` poll，且包含三个人名、`multiple=true`、约 1 周过期 |

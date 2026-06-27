@@ -64,5 +64,128 @@
       "(?is)(contributors?|贡献者)[^\\n]{0,80}\\d[\\d,.]*\\s*[kKmM万千]?|\\d[\\d,.]*\\s*[kKmM万千]?[^\\n]{0,80}(contributors?|贡献者)"
     ],
     "note": "CheckGithubInfoTask 分层后的第 2 步：初始化脚本先把 Chrome 打开到目标 GitHub 仓库页；任务只测通过移动端 GitHub UI 获取 stars 和 contributors 两个数量并回答，不测仓库检索，也不测邮件发送。"
+  },
+  {
+    "label": "find-kevin-resume",
+    "layer": "SendInterviewInvitationTask / step 1",
+    "goal": "在手机的 Download 文件夹里找到 Kevin 的简历文件。",
+    "runner_args": [
+      "--orchestrator",
+      "--no-router"
+    ],
+    "init_script": "benchmark/android-mini/init/open_files.sh",
+    "init_settle_s": 4,
+    "max_turns": 8,
+    "timeout_s": 300,
+    "expected_text_contains_any": [
+      "Kevin_CV",
+      "Kevin",
+      "resume",
+      ".pdf"
+    ],
+    "note": "SendInterviewInvitationTask 分层第 1 步：在 Download 找 Kevin 简历(Kevin_CV.pdf)。完整任务(发短信)在 mobileworld SendInterviewInvitationTask,backend 查短信服务验证。"
+  },
+  {
+    "label": "read-kevin-resume-phone",
+    "layer": "SendInterviewInvitationTask / step 2",
+    "goal": "在手机的 Download 文件夹里打开 Kevin 的简历文件(Kevin_CV.pdf),看下里面的电话号码是多少,直接告诉我号码。",
+    "runner_args": [
+      "--orchestrator",
+      "--no-router"
+    ],
+    "init_script": "benchmark/android-mini/init/open_files.sh",
+    "init_keep_foreground": true,
+    "init_settle_s": 5,
+    "max_turns": 6,
+    "timeout_s": 240,
+    "expected_output_regex_all": [
+      "15551234567"
+    ],
+    "note": "SendInterviewInvitationTask 分层第 2 步：从 Kevin_CV.pdf 读电话(15551234567)。第 3 步(发短信到该号)走 mobileworld backend(android-mini 无短信服务)。"
+  },
+  {
+    "label": "mastodon-postpoll-search-winners",
+    "layer": "MastodonPostPollTask / step 1 search winners",
+    "goal": "当前已经打开 Google 关于 2025 Nobel Prize in Economics winners 的搜索结果页。请从结果页找出获奖者姓名，直接告诉我三个英文姓名。不要打开 Mastodon。",
+    "runner_args": [
+      "--orchestrator",
+      "--no-router",
+      "--no-dynamic-max-turns"
+    ],
+    "init_script": "benchmark/android-mini/init/open_chrome_url.sh",
+    "init_url": "https://www.google.com/search?q=2025+Nobel+Prize+in+Economics+winners",
+    "init_keep_foreground": true,
+    "init_settle_s": 12,
+    "max_turns": 6,
+    "timeout_s": 360,
+    "expected_output_regex_all": [
+      "(?is)Joel\\s+Mokyr",
+      "(?is)Philippe\\s+Aghion",
+      "(?is)Peter\\s+Howitt"
+    ],
+    "forbidden_output_contains": [
+      "获奖者姓名"
+    ],
+    "note": "MastodonPostPollTask 粗粒度 mini 第 1 段：初始化到 Google 搜索结果页，只测从结果页抽取 2025 诺贝尔经济学奖三位获奖者姓名，不进入 Mastodon。"
+  },
+  {
+    "label": "mastodon-postpoll-compose-settings",
+    "layer": "MastodonPostPollTask / compose poll form",
+    "goal": "当前已经在 Mastodon 新帖撰写页，正文已有 #vote2025 且投票面板已打开。请把投票选项依次填成 Joel Mokyr、Philippe Aghion、Peter Howitt，并把 Poll length 设置为 1 week、Style 设置为 Pick multiple（界面可能显示 Multiple choice）。不要发布。",
+    "runner_args": [
+      "--orchestrator",
+      "--no-router",
+      "--no-dynamic-max-turns"
+    ],
+    "init_script": "benchmark/android-mini/init/open_mastodon_poll_compose.sh",
+    "init_env": {
+      "ANDROID_MINI_HTTP_PROXY": "off",
+      "ANDROID_MINI_START_MASTODON_BACKEND": "1"
+    },
+    "init_settle_s": 3,
+    "init_timeout_s": 240,
+    "max_turns": 8,
+    "timeout_s": 300,
+    "expected_text_contains_all": [
+      "#vote2025",
+      "Joel Mokyr",
+      "Philippe Aghion",
+      "Peter Howitt",
+      "1 week",
+      "Multiple choice"
+    ],
+    "forbidden_text_contains": [
+      "获奖者姓名",
+      "Pick one",
+      "1 day"
+    ],
+    "note": "MastodonPostPollTask 粗粒度 mini：跳过 Google 搜索和 MobileWorld reset，直接测试 Mastodon poll 表单 5-8 turn 内能否填三个人名、设置一周和多选；Mastodon UI 的多选值显示为 Multiple choice；不发布，避免污染官方任务状态。"
+  },
+  {
+    "label": "mastodon-postpoll-publish",
+    "layer": "MastodonPostPollTask / step 3 publish",
+    "goal": "当前 Mastodon 新帖页面已经填好 #vote2025 投票：选项是 Joel Mokyr、Philippe Aghion、Peter Howitt，Poll length 是 1 week，Style 是 Multiple choice。请发布这条投票。",
+    "runner_args": [
+      "--orchestrator",
+      "--no-router",
+      "--no-dynamic-max-turns"
+    ],
+    "init_script": "benchmark/android-mini/init/open_mastodon_poll_compose.sh",
+    "init_env": {
+      "ANDROID_MINI_HTTP_PROXY": "off",
+      "ANDROID_MINI_START_MASTODON_BACKEND": "1",
+      "ANDROID_MINI_PREFILL_POLL": "1",
+      "ANDROID_MINI_POST_MARKER_FILE": "/tmp/android-mini-mastodon-post-marker.txt"
+    },
+    "init_settle_s": 3,
+    "init_timeout_s": 240,
+    "max_turns": 5,
+    "timeout_s": 240,
+    "verify_script": "benchmark/android-mini/verify/verify_mastodon_poll_post.sh",
+    "verify_env": {
+      "ANDROID_MINI_POST_MARKER_FILE": "/tmp/android-mini-mastodon-post-marker.txt"
+    },
+    "verify_timeout_s": 60,
+    "note": "MastodonPostPollTask 粗粒度 mini 第 3 段：初始化脚本预填完整 poll 并给正文加本次运行 marker，任务只测发布动作；发布后用 Mastodon 数据库验证 #vote2025、三位候选人、多选和一周时长。"
   }
 ]

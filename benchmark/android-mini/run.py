@@ -122,6 +122,37 @@ def _initialize_android_state(env: dict[str, str], adb: str, case: dict) -> None
         raise RuntimeError(f"init_script failed ({script}): {detail}")
 
 
+def _run_verify_script(env: dict[str, str], adb: str, case: dict) -> str | None:
+    script = str(case.get("verify_script") or "").strip()
+    if not script:
+        return None
+    script_path = (PROJECT_ROOT / script).resolve()
+    try:
+        script_path.relative_to(PROJECT_ROOT)
+    except ValueError as exc:
+        raise ValueError(f"verify_script must stay inside repository: {script}") from exc
+    if not script_path.exists():
+        raise FileNotFoundError(f"verify_script not found: {script}")
+
+    verify_env = {
+        **env,
+        "ADB": adb,
+        "ANDROID_ADB_BIN": adb,
+    }
+    for key, value in (case.get("verify_env") or {}).items():
+        verify_env[str(key)] = str(value)
+
+    result = _run(
+        ["bash", str(script_path)],
+        timeout=int(case.get("verify_timeout_s", 60)),
+        env=verify_env,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return f"verify_script failed ({script}): {detail}"
+    return None
+
+
 def _dump_ui_text(env: dict[str, str], adb: str) -> str:
     dump = _adb(env, adb, ["shell", "uiautomator", "dump", "/sdcard/window.xml"], timeout=20)
     if dump.returncode != 0:
@@ -271,9 +302,10 @@ def _run_case(
 
     output = _extract_final_output(result.stdout)
     output_issues = _check_output(output, case)
+    verify_issue = _run_verify_script(bench_env, adb, case)
 
     ui_text, issues = _dump_and_check_ui_text(bench_env, adb, case)
-    issues = [*output_issues, *issues]
+    issues = [*output_issues, *([verify_issue] if verify_issue else []), *issues]
     if issues:
         snippet = "\n".join(ui_text.splitlines()[:80])
         output_snippet = "\n".join(output.splitlines()[:20])
