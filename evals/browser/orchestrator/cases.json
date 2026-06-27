@@ -412,5 +412,23 @@
       "orders_non_cancelled_total_uses_status_exclusion"
     ],
     "note": "task 197 正确路径：① navigate → Sales > Orders ② 清除所有无关/残留筛选，尤其不能继承 task 196 的 Status=Canceled/Complete；non-cancelled 不是 Complete，页面不应只筛单一状态 ③ foreach body=[] 从 Orders 网格采集完整订单行的可见列 Status、Purchase Date、Grand Total (Purchased) ④ data_query 在 SQL 中排除 Canceled/Cancelled（如 lower(status) NOT LIKE '%cancel%'），再按 purchase_date_ts DESC LIMIT 5，外层 SUM(grand_total_purchased_num)。官方 GT 为 778.2（annotation: 219.4+210+166.4+93.4+89）。"
+  },
+  {
+    "label": "WebArena shopping_admin task 212 — 按电话查客户走 keyword search 子串+本地号段（非 Phone 列精确筛选）",
+    "goal": "Find the customer name and email with phone number 555-229-3326. Return a list of objects with keys \"name\" and \"email\".",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 2,
+      "has_finish": true
+    },
+    "assertions": [
+      "customer_phone_lookup_uses_keyword_search"
+    ],
+    "note": "task 212 正确路径：① Customers > All Customers，清除跨任务残留筛选 ② 用顶部 Search by keyword（全文子串 LIKE）搜电话的本地号段 229-3326（不是 Filters 的 Phone 列精确筛选，也不是整串 555-229-3326）③ 命中行读 Name+Email 输出。失败根因（live run 20260626_233039 score 0.0）：用 Phone 列精确筛 555-229-3326 → 0 records → NOT_FOUND。Ground truth(CDP)：电话存为 (555) 229-3326，keyword search 是字面子串，整串 555-229-3326 不是其连续子串、任何控件都 0 命中；229-3326 命中 1 条 = Veronica Costello / roni_cost@example.com。修复见 knowledge _skill.md「按电话号查客户」。"
   }
 ]

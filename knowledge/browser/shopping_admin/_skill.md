@@ -63,6 +63,14 @@ version: 1
 4. 非网格列（如 Material/Size）：foreach 逐行下钻详情页读该属性
 5. data_query 过滤非空、去重，按 intent 输出
 
+## skill：按电话号查客户
+- 触发：phone number、电话号查客户、find customer with phone、customer name/email/与电话相关的客户查找
+- 数据：Customers grid 顶部 **Search by keyword**（全文**子串**匹配），不是 Filters 面板的 **Phone 列**精确筛选。电话在 Magento 存为带分隔符格式如 `(555) 229-3326`（括号区号 + 空格），任务给的 `555-229-3326` 这类纯连字符整串**不是存储值的连续子串**，整串搜（无论 keyword 还是 Phone 列）都 0 命中。能稳定命中的是去掉区号的**本地号段**（后 7 位，如 `229-3326`），它在各种分隔符格式下都连续。
+- 步骤：
+1. 进入 Customers > All Customers，先清除残留筛选
+2. 用顶部 Search by keyword 搜本地号段（去区号后 7 位，如 `229-3326`）
+3. 命中行读所需字段（Name、Email 等）输出
+
 ## skill：Grid 数据导出或采集
 - 触发：需要完整 grid 数据、导出 CSV/XML、跨分页统计
 - 数据：目标 grid、所需列、筛选口径、分页范围

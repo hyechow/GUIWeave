@@ -1059,6 +1059,44 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                         "（违反 browser 非交互优先；这正是 20260625_145506 评分1.0却点击式钻取的回归）: "
                         f"{body_open_id}"
                     )
+        elif assertion == "customer_phone_lookup_uses_keyword_search":
+            # WebArena task 212 live run 20260626_233039: "find customer with phone 555-229-3326"
+            # was planned (and executed) as a Filters→Phone-column EXACT filter on the full
+            # punctuated number → 0 records → NOT_FOUND. Ground truth: Magento stores the phone as
+            # '(555) 229-3326' (parenthesized area code + space); the customer grid keyword search
+            # is a literal substring LIKE, so the full '555-229-3326' is never a contiguous
+            # substring (the ') ' breaks it) and matches nothing by ANY control. The stable hit is
+            # the local-number fragment '229-3326' via the top "Search by keyword" box (see
+            # knowledge _skill.md「按电话号查客户」). So the phone-lookup filter/action step must
+            # (a) use keyword search, not the Phone column filter, and (b) search the local
+            # fragment '229-3326', not the full '555-229-3326'.
+            seq = _flatten_runs(program.statements)
+            phone_steps = [
+                r for r in seq
+                if r.kind in ("filter", "action")
+                and re.search(r"229-?3326|电话|phone", f"{r.name} {r.success_condition}", re.I)
+            ]
+            if not phone_steps:
+                details.append(
+                    "没有按电话检索的 filter/action 步（无从校验电话查找走法）: "
+                    f"{[(r.kind, r.name) for r in seq if r.kind in ('filter', 'action')]}"
+                )
+            else:
+                blob = " ".join(f"{r.name} {r.success_condition}" for r in phone_steps).lower()
+                uses_phone_column = bool(re.search(r"phone\s*列|phone\s*column|phone\s*字段|phone\s*筛选|按\s*phone", blob))
+                uses_keyword = bool(re.search(r"keyword|search by keyword|关键词|搜索框|顶部.*搜索", blob))
+                if uses_phone_column or not uses_keyword:
+                    details.append(
+                        "电话查找用了 Phone 列精确筛选（或没走顶部 keyword search）——电话存为 "
+                        "'(555) 229-3326'，Phone 列精确/整串匹配命中不了；应走顶部 Search by keyword: "
+                        f"{[(r.kind, r.name) for r in phone_steps]}"
+                    )
+                if "555-229-3326" in blob and "229-3326" not in blob.replace("555-229-3326", ""):
+                    details.append(
+                        "电话查找搜了完整号 '555-229-3326'——它不是存储值 '(555) 229-3326' 的连续子串、0 命中；"
+                        "应搜去区号的本地号段 '229-3326': "
+                        f"{[(r.kind, r.name) for r in phone_steps]}"
+                    )
         elif assertion == "products_qty_zero_uses_ui_filter_before_data_query":
             # WebArena task 184: Products grid has 2040 rows (340 pages). data_scope:complete
             # reads max_pages=20 (~120 rows), so collected << total_records → partial=true →
