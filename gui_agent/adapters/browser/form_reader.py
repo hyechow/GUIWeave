@@ -69,6 +69,10 @@ def form_controls_js() -> str:
     if (tag === 'TEXTAREA') return 'textarea';
     if (role === 'combobox') return 'aria_combobox';
     if (role === 'listbox') return 'aria_listbox';
+    // Magento selectmenu: <input> 是自定义下拉的显示框,选项在 .selectmenu-items 里、click 绑在
+    // 选项 <button>(.selectmenu-item-action) 上。识别为 selectmenu(选选项,非 type 输入),否则被当
+    // text_input → planner 用 type 填值,改了显示框却不触发 setSize(见 task 63 per page 复盘)。
+    if (tag === 'INPUT' && el.closest('.selectmenu')) return 'selectmenu';
     if (tag === 'INPUT') return (el.type || 'text').toLowerCase() + '_input';
     return role || tag.toLowerCase();
   };
@@ -114,6 +118,13 @@ def form_controls_js() -> str:
       item.value = cut(el.value, 80);
       item.selected_text = cut(sel ? (sel.textContent || sel.label || sel.value) : '', 80);
       item.options = opts.map(o => cut(o.textContent || o.label || o.value, 80)).filter(Boolean).slice(0, 60);
+    } else if (kind === 'selectmenu') {
+      // selectmenu:value=input 显示值;options 从 .selectmenu-items 选项 button 文本抓
+      // (折叠时选项在 DOM 但不可见,querySelectorAll 不受 visible 限制,仍能取到)。
+      item.value = cut(el.value, 80);
+      const sm = el.closest('.selectmenu');
+      const optEls = sm ? Array.from(sm.querySelectorAll('.selectmenu-items .selectmenu-item-action, .selectmenu-items button')) : [];
+      item.options = optEls.map(o => cut(o.textContent || '', 80)).filter(Boolean).slice(0, 60);
     } else if ((el.type || '').toLowerCase() === 'password') {
       item.value = el.value ? '(password set)' : '';
     } else {

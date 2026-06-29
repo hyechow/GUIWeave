@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Magento selectmenu fixture</title></head>
+<body>
+<!-- Magento admin grid per-page control: a knockout "selectmenu" (NOT a native <select>).
+     The visible <input type=text> is just the display box (data-bind value: _value); the real
+     options live in .selectmenu-items as <button class="selectmenu-item-action"> with click:setSize.
+     Mirrors the live DOM from logs/.../20260629_104539 (task 63). -->
+<div class="selectmenu" data-bind="collapsible">
+  <div class="selectmenu-value" data-bind="openCollapsible">
+    <input type="text" aria-labelledby="per-page-text"
+           id="sales_order_grid.sales_order_grid.listing_top.listing_paging_sizes" value="20">
+  </div>
+  <button class="selectmenu-toggle" type="button" aria-labelledby="per-page-text select-button-text"
+          data-bind="css: {_active: $collapsible.opened}, toggleCollapsible">
+    <span id="select-button-text">Select</span>
+  </button>
+  <div class="selectmenu-items" data-bind="css: {_active: $collapsible.opened}">
+    <ul>
+      <li><div class="selectmenu-item"><button class="selectmenu-item-action" type="button" data-bind="text: $size().label, click: setSize.bind($data, $size().value)">20</button></div></li>
+      <li><div class="selectmenu-item"><button class="selectmenu-item-action" type="button">30</button></div></li>
+      <li><div class="selectmenu-item"><button class="selectmenu-item-action" type="button">50</button></div></li>
+      <li><div class="selectmenu-item"><button class="selectmenu-item-action" type="button">100</button></div></li>
+      <li><div class="selectmenu-item"><button class="selectmenu-item-action" type="button">200</button></div></li>
+    </ul>
+  </div>
+  <label class="admin__control-support-text" id="per-page-text"
+         for="sales_order_grid.sales_order_grid.listing_top.listing_paging_sizes">per page</label>
+</div>
+</body>
+</html>
