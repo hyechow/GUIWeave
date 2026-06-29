@@ -1173,6 +1173,41 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._collection_progress = text or ""
         self._collection_done = bool(done)
 
+    def _last_action_effect_text(self, history: list[PolicyTurn]) -> str:
+        """Deterministic "did the last action execute / change the page" fact for the checker.
+
+        Task-63复盘核心: "动作是否执行成功"与"动作效果是否达成"是两个独立判断——不能用效果
+        (如某列是否出现)反推动作有没有执行。这里只报告动作执行的确定性事实(URL/交互指纹
+        是否变化),让 checker 据此区分"动作执行了但效果未达" vs "动作没执行",不再把效果未达
+        当成"没点中"而引导无效 retry。无确定性信号(视觉平台无 DOM 指纹)时返回 ""。"""
+        if not history:
+            return ""
+        last = history[-1]
+        instr = ((last.supervisor.instruction if last.supervisor else "") or "").strip().replace("\n", " ")
+        instr_brief = instr[:80]
+        executed = bool(getattr(last, "executed", True))
+        no_effect = bool(getattr(last, "no_effect", False))
+        if not executed:
+            fact = "上一步动作未被执行(动作未发出)。"
+        elif self._monitor.url_changed:
+            fact = "页面 URL 已变化——上一步动作确定性地产生了导航效果(动作已执行成功)。"
+        elif self._monitor.dom_changed:
+            fact = ("页面交互状态指纹已变化(dom_changed)——上一步动作确定性地改变了表单/焦点等"
+                    "交互状态,即动作本身已成功执行(不是没点中)。")
+        elif no_effect:
+            fact = "动作已发出,但 settle 全程页面零变化(no_effect)——这一击对当前页面无任何效果。"
+        else:
+            return ""  # executed 但无 url/dom/no_effect 信号 → 无确定性事实,不注入
+        return (
+            "## 上一步动作的确定性执行结果(运行时事实,非视觉推断)\n"
+            f"上一步动作「{instr_brief}」:{fact}\n"
+            "⚠️ 判断要点: '动作是否执行成功'与'动作效果是否达成'是两个独立判断。上面的信号只"
+            "说明动作是否执行/是否改变了界面状态,**不直接等于验收效果**。若动作已执行"
+            "(dom_changed/URL 变化)但验收目标(如主网格出现某列、某值已设置)未达成,应判 in_progress "
+            "并指出'动作已执行但效果未现、需换方式(换控件/滚动/换路径)',**不得**归因为"
+            "'动作没点中/需重复点击同一控件'——重复一个已执行的动作不会产生新效果,只会打转。"
+        )
+
     def _single_check(
         self,
         milestone: Milestone,
@@ -1201,6 +1236,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             check_knowledge=self._check_knowledge,
             context_reports=self._context_reports,
             state_trace_text=self._monitor.render(),
+            last_action_effect=self._last_action_effect_text(history),
         )
 
     def _loop_check(

@@ -121,6 +121,7 @@ def test_checker() -> None:
                     prompts=BROWSER_MILESTONE_PROMPTS,
                     check_knowledge=_app_check_knowledge(c),
                     state_trace_text=c.get("state_trace", ""),
+                    last_action_effect=c.get("last_action_effect", ""),
                 )
         except Exception as e:  # noqa: BLE001
             _report(c["label"], False, f"exception: {e}")

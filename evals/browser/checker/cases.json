@@ -335,14 +335,59 @@
           "index": 0,
           "source": "grid",
           "caption": "Reviews",
-          "headers": ["ID", "Created", "Status", "Title", "Nickname", "Review", "Visibility", "Type", "Product", "SKU", "Action"],
-          "rows": [["199", "", "Approved", "Best hoodies I've owned.", "Beatris", "im planning on buying another one of these in a...", "", "Guest", "Selene Yoga Hoodie", "WH05", "Edit"], ["73", "", "Approved", "Hate the fabric", "Hai", "Why is this kind of fabric all the rage? I know...", "", "Guest", "Balboa Persistence Tee", "MS03", "Edit"]],
+          "headers": [
+            "ID",
+            "Created",
+            "Status",
+            "Title",
+            "Nickname",
+            "Review",
+            "Visibility",
+            "Type",
+            "Product",
+            "SKU",
+            "Action"
+          ],
+          "rows": [
+            [
+              "199",
+              "",
+              "Approved",
+              "Best hoodies I've owned.",
+              "Beatris",
+              "im planning on buying another one of these in a...",
+              "",
+              "Guest",
+              "Selene Yoga Hoodie",
+              "WH05",
+              "Edit"
+            ],
+            [
+              "73",
+              "",
+              "Approved",
+              "Hate the fabric",
+              "Hai",
+              "Why is this kind of fabric all the rage? I know...",
+              "",
+              "Guest",
+              "Balboa Persistence Tee",
+              "MS03",
+              "Edit"
+            ]
+          ],
           "row_count": 2,
           "dom_row_count": 2,
           "total_records": 2,
           "partial": false,
           "path": "",
-          "traversal": {"type": "paged", "page_index": 1, "page_count": 1, "has_next_page": false, "has_prev_page": false}
+          "traversal": {
+            "type": "paged",
+            "page_index": 1,
+            "page_count": 1,
+            "has_next_page": false,
+            "has_prev_page": false
+          }
         }
       ]
     },
@@ -366,5 +411,82 @@
       ]
     },
     "note": "实跑陷阱 20260626_171609（task 15）：Search 已点击，截图清晰可见「2 records found」和 Review 列筛选框内有'best'，过滤生效无误。但 checker 反复幻称「界面尚未显示 Active filters 标签或结果数变化（仍为默认全量状态）」，导致重复点 Search 5 次。根因：Reviews 页搜索后无 Active filters chip（只有 Products/Orders grid 才有），checker 把「没有 chip」误解为「Search 未提交」，并无视了截图里清晰的「2 records found」计数文本。正确行为：success_condition 属于 dispatch gate（任一即可），截图里记录数由 351 变为 2 = 列表已更新 = done；不得要求 Active filters chip，不得声称结果数未变。"
+  },
+  {
+    "label": "columns-panel-checkbox-dom_changed-禁止说重新点击（回归 task 63 T13-T18 打转）",
+    "screenshot": "evals/browser/checker/screenshots/sa_orders_columns_customer_email.png",
+    "observation": {
+      "url": "http://192.168.31.57:7780/admin/sales/order/",
+      "title": "Orders / Operations / Sales / Magento Admin",
+      "form_controls": [
+        {
+          "label": "ID",
+          "kind": "checkbox_input",
+          "current": "on"
+        },
+        {
+          "label": "Purchase Date",
+          "kind": "checkbox_input",
+          "current": "on"
+        },
+        {
+          "label": "Bill-to Name",
+          "kind": "checkbox_input",
+          "current": "on"
+        },
+        {
+          "label": "Grand Total (Purchased)",
+          "kind": "checkbox_input",
+          "current": "on"
+        },
+        {
+          "label": "Status",
+          "kind": "checkbox_input",
+          "current": "on"
+        },
+        {
+          "label": "Customer Email",
+          "kind": "checkbox_input",
+          "current": "on",
+          "focused": true
+        },
+        {
+          "label": "Billing Address",
+          "kind": "checkbox_input",
+          "current": "on"
+        }
+      ]
+    },
+    "milestone": {
+      "name": "通过 Columns 控件启用 Customer Email 列",
+      "description": "点击 Columns 按钮打开列选择面板，在面板内找到 Customer Email 复选框并勾选，使订单列表表格中出现 Customer Email 列。",
+      "success_condition": "订单列表表格表头出现 Customer Email 列",
+      "kind": "action",
+      "app_name": "shopping_admin"
+    },
+    "history": [
+      {
+        "index": 13,
+        "instruction": "在 Columns 面板内点击勾选 'Customer Email' 复选框",
+        "action": "tap",
+        "executed": true
+      }
+    ],
+    "last_action_effect": "## 上一步动作的确定性执行结果(运行时事实,非视觉推断)\n上一步动作「在 Columns 面板内点击勾选 'Customer Email' 复选框」:页面交互状态指纹已变化(dom_changed)——上一步动作确定性地改变了表单/焦点等交互状态,即动作本身已成功执行(不是没点中)。\n⚠️ 判断要点: '动作是否执行成功'与'动作效果是否达成'是两个独立判断。上面的信号只说明动作是否执行/是否改变了界面状态,**不直接等于验收效果**。若动作已执行(dom_changed/URL 变化)但验收目标(如主网格出现某列、某值已设置)未达成,应判 in_progress 并指出'动作已执行但效果未现、需换方式(换控件/滚动/换路径)',**不得**归因为'动作没点中/需重复点击同一控件'——重复一个已执行的动作不会产生新效果,只会打转。",
+    "expected": {
+      "status": "in_progress",
+      "must_not_claim": [
+        "重新点击",
+        "重复点击",
+        "再次点击",
+        "重新勾选",
+        "没点中",
+        "未点击",
+        "未点中",
+        "需重新",
+        "重复.*点击"
+      ]
+    },
+    "note": "task 63 复盘 T13-T18：agent 点击 Customer Email checkbox，DOM 交互指纹变化(dom_changed=true)→ 动作确定性执行成功(checkbox current=on 且 focused)。但主网格未出现 Customer Email 列(点击改了 input.checked 却没触发 Magento 列更新)。Checker 把'效果未达'当成'动作没执行'，反馈'重新点击/没点中'，逼 agent 反复点同一已生效 checkbox 直到 retry 耗尽。本 case 验证确定性执行信号注入后：动作已执行(dom_changed)，效果未达(列没出)，应判 in_progress + 反馈'动作已执行但效果未现、需换方式'，**不得**归因为'没点中/重新点击'。与 columns-panel-checkbox-current-on(残留态,无 dom_changed 信号)形成对照：那个 case 允许引导重新点击(current=on 可能是残留没真点)，本 case 有 dom_changed=true(确定真点了)所以禁止引导重新点击。"
   }
 ]

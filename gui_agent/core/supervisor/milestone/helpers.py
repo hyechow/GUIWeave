@@ -775,6 +775,7 @@ def run_checker(
     check_knowledge: str = "",
     context_reports: list[dict] | None = None,
     state_trace_text: str = "",
+    last_action_effect: str = "",
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals.
 
@@ -819,6 +820,11 @@ def run_checker(
                          "标⚠️重复=同一页面上重复了之前做过的同一决策(在打转，不是推进)。"
                          "据此判断任务是在推进(不断到达新状态)还是在少数状态里打转。\n" + state_trace_text),
             ) if state_trace_text.strip() else None),
+            (ContextBlock(
+                id="runtime.last_action_effect", budget="high", source_type="runtime_state",
+                source="last_action_effect", ttl="turn", priority=29,
+                content=last_action_effect,
+            ) if last_action_effect.strip() else None),
             extra_instruction_block(extra, source="checker_guard"),
             page_title_block(title),
             acceptance_items_block(accept_items),
