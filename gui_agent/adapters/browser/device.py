@@ -660,11 +660,17 @@ class PlaywrightDevice:
         return f"OK tap ({x:.0f},{y:.0f})"
 
     def select_option(self, x: Optional[float], y: Optional[float], option_text: str) -> str:
-        """Select an option from a native ``<select>`` or visible ARIA/listbox control.
+        """Select an option: mouse-click for rendered dropdowns, JS only for native ``<select>``.
 
-        Native browser dropdown popups are outside the page rendering tree, so screenshots
-        often cannot see their open option list. This primitive sets the page control
-        directly and dispatches the same input/change events the page listens for.
+        Two paths by what the screenshot can see (mouse interaction is the default — most
+        general and natural; JS is only the fallback when CDP can't render the control):
+        - native ``<select>``: option popups are outside the page rendering tree (CDP can't
+          capture them, the mouse can't target them), so set value + dispatch input/change
+          via JS — the ONLY case where we bypass the mouse.
+        - custom dropdown (ARIA/listbox/Magento selectmenu): options ARE rendered in the
+          page, so find the option's coordinates and ``page.mouse.click`` them — the
+          physical click fires the full mousedown→mouseup→click chain and works for any
+          handler binding (click/checked), no need to guess which element holds the handler.
         """
         self._follow_active_tab()
         try:
@@ -720,7 +726,7 @@ class PlaywrightDevice:
                         select.dispatchEvent(new Event('change', {bubbles: true}));
                         return {
                             ok: true,
-                            kind: 'select',
+                            mode: 'native',
                             label: labelOf(option),
                             value: option.value,
                         };
@@ -736,11 +742,15 @@ class PlaywrightDevice:
                     const option = candidates.find((el) => norm(labelOf(el)) === wanted)
                         || candidates.find((el) => norm(labelOf(el)).includes(wanted));
                     if (option) {
-                        const clickable = option.closest(
-                            '[role=option], [role=menuitem], button, a, li, div'
-                        ) || option;
-                        clickable.click();
-                        return {ok: true, kind: 'dom-option', label: labelOf(option)};
+                        // option 是页面渲染的自定义下拉项(CDP 截得到) → 返回其坐标,由调用方
+                        // page.mouse.click 物理点击(鼠标优先:触发完整 mousedown→mouseup→click 事件链,
+                        // 不挑 click/checked 绑定,是最通用自然的交互;只有 native <select> 的 option 不
+                        // 在渲染树才用 JS)。优先叶子 button/a(挂 handler 的元素)的坐标,避免点到外层容器。
+                        const leaf = option.querySelector('button, a, [data-bind*="click"]')
+                            || (option.matches('button, a, [data-bind*="click"]') ? option : null);
+                        const hit = leaf || option;
+                        const r = hit.getBoundingClientRect();
+                        return {ok: true, mode: 'mouse', x: r.x + r.width/2, y: r.y + r.height/2, label: labelOf(option)};
                     }
 
                     return {
@@ -761,10 +771,22 @@ class PlaywrightDevice:
                 detail = f"{detail}; options={options}"
             return f"failed: {detail}"
         label = result.get("label") or option_text
-        kind = result.get("kind") or "select"
+        mode = result.get("mode") or "native"
+        if mode == "mouse":
+            # 自定义下拉:option 渲染在页面 → 物理鼠标点 option 坐标(鼠标优先,JS 只留 native <select>)
+            mx, my = result.get("x"), result.get("y")
+            if mx is None or my is None:
+                return f"failed: mouse target missing coordinates"
+            try:
+                mx, my = float(mx), float(my)
+            except (TypeError, ValueError):
+                return f"failed: mouse target not finite ({mx!r},{my!r})"
+            page.mouse.click(mx, my)
+            return f"OK select_option {label!r} (mouse)"
+        # native <select>:option 不在渲染树,JS 已在上方 set value + dispatch change
         value = result.get("value")
         suffix = f" value={value!r}" if value is not None else ""
-        return f"OK select_option {label!r} ({kind}){suffix}"
+        return f"OK select_option {label!r} (select){suffix}"
 
     def dom_snap(
         self, x: float, y: float, target_text: str = ""
