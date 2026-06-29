@@ -13,6 +13,9 @@
 #   shopping       -> webarena-verified/output/shopping_run/<id>/
 #   shopping+reddit -> webarena-verified/output/shopping_reddit_run/<id>/
 # 覆盖: TASKS_FILE=<path> RUN_DIR=<name> TASK_OUTPUT_ROOT=<path> bin/webarena <id>
+# 换内网主机 IP: export WA_HOST=192.168.x.x   (不含端口则保留 tasks-file 原端口;
+#                                              含端口如 192.168.x.x:8888 则整体替换 netloc)
+#              或单次覆盖 --host 192.168.x.x (优先级高于 WA_HOST)。tasks-file 里的 IP 无需改动。
 set -e
 cd "$(dirname "$0")/.."
 

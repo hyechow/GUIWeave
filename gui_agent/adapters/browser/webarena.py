@@ -43,6 +43,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -148,6 +149,21 @@ def _finalize_response(resp: WAResponse, *, goal_completed: bool = True, intent:
         })
 
     return resp.model_copy(update=updates)
+
+
+def _rewrite_url_host(url: str, host_override: str) -> str:
+    """Replace a start_url's netloc with host_override.
+
+    If host_override carries no port (no ':'), keep the original port so per-site
+    ports (shopping_admin=7780, shopping=7770, ...) survive an IP-only override;
+    an override with a port (e.g. ``host:port``) replaces the whole netloc.
+    """
+    parts = urlsplit(url)
+    if ":" in host_override or parts.port is None:
+        new_netloc = host_override
+    else:
+        new_netloc = f"{host_override}:{parts.port}"
+    return urlunsplit(parts._replace(netloc=new_netloc))
 
 
 def _load_task(tasks_file: Path, task_id: int) -> dict:
@@ -381,6 +397,13 @@ def main() -> int:
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
     parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=None,
+        help="override the start_url host (IP-only keeps the per-site port; host:port replaces the netloc). "
+             "Also read from env WA_HOST / .env (lower precedence than --host).",
+    )
     args = parser.parse_args()
 
     # Force the browser platform for build_platform() (here and inside run_agent_loop).
@@ -398,6 +421,10 @@ def main() -> int:
     from dotenv import load_dotenv
     load_dotenv()
 
+    # Host override for start_urls: --host > WA_HOST env/.env > none. Lets a new LAN
+    # IP be configured in one place without editing the baked tasks-file.
+    host_override = args.host or os.environ.get("WA_HOST") or None
+
     from gui_agent.core.runtime.factory import build_platform
     from gui_agent.core.run.io import EscStopSignal, create_run_dir
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
@@ -406,6 +433,12 @@ def main() -> int:
     task = _load_task(args.tasks_file, args.task_id)
     intent = task["intent"]
     start_urls = task.get("start_urls") or []
+    if host_override and start_urls:
+        rewritten = [_rewrite_url_host(u, host_override) for u in start_urls]
+        for old, new in zip(start_urls, rewritten):
+            if old != new:
+                print(f"[webarena] start_url host override: {old} -> {new}")
+        start_urls = rewritten
     start_url = start_urls[0] if start_urls else None
     print(f"[webarena] task {args.task_id}  sites={task.get('sites')}")
     print(f"[webarena] intent: {intent}")
