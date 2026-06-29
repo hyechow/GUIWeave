@@ -1,5 +1,35 @@
 [
   {
+    "label": "筛选已生效→不得据表格展示列(Salable Quantity)推翻已应用的 Quantity 筛选（回归 20260629_173028 clear/reset 循环）",
+    "screenshot": "evals/browser/checker/screenshots/products_qty3_filter_salable_distractor.png",
+    "observation": {
+      "applied_filters": {
+        "Quantity": "3 - 3"
+      }
+    },
+    "milestone": {
+      "name": "清除无关筛选，设置 Quantity From=3 且 To=3",
+      "description": "在 Catalog > Products 网格按 Quantity 精确筛选出库存为 3 的产品。",
+      "success_condition": "网格 Active filters 显示已生效筛选 Quantity: 3 - 3（筛选控件状态达成即可，不需逐行复核库存）。",
+      "kind": "filter",
+      "app_name": "shopping_admin"
+    },
+    "expected": {
+      "status": "done",
+      "must_not_claim": [
+        "Salable",
+        "可销售",
+        "库存为 2",
+        "库存为2",
+        "不符合",
+        "重新设置",
+        "重设"
+      ]
+    },
+    "note": "回归 live run 20260629_173028：Quantity From=3 To=3 已应用（Active filters chip = Quantity: 3 - 3，截图可见），命中正好两条（ID 1478 Minerva、ID 1182 Eos），两行 Quantity 列都是 3.0000。但网格另有一个相邻展示列 Salable Quantity（=可销售=库存−预留），Eos 行显示 Default Stock: 2。旧 checker 把 Salable=2 误当库存、判该行不符合 → in_progress → agent 反复 clear→reset 筛选打转直到 ESC。本 case 锁：注入 applied_filter_state_block（Observation.applied_filters）后，checker 必须从筛选控件自身状态判 done，绝不拿表格里的 Salable Quantity 展示列推翻一个已正确生效的 Quantity 筛选。对应生产侧 policy.step 的 FilterGate 确定性门（本 case 走 run_checker 弱路径，门走强路径跳过 LLM）。",
+    "with_app_check": false
+  },
+  {
     "label": "动态验收知识-_check.md使列编号短形式判已保存（回归 20260612_202142 验收格式错配16轮）",
     "screenshot": "evals/browser/checker/screenshots/roboteam_preset_saved_list_short_form.png",
     "with_app_check": true,

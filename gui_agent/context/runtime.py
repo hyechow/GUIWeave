@@ -437,6 +437,40 @@ def active_filters_block(form_controls: list[dict] | None) -> ContextBlock | Non
     )
 
 
+def applied_filter_state_block(applied_filters: dict[str, str] | None) -> ContextBlock | None:
+    """Inject the grid's currently-APPLIED filters (Active-filters chips) as a deterministic fact.
+
+    Distinct from ``active_filters_block`` (which reads filter INPUT-box values, framed as
+    residuals to clear): this is the post-Apply chip state — the authoritative answer to "which
+    filters are in EFFECT right now". A filter chip is the control's own state; whether a row's
+    Quantity is 3 is what that chip already encodes. So the checker must judge a filter
+    milestone's progress from these chips, NOT by re-reading a table display column (e.g. Magento
+    `Salable Quantity`, which is Quantity minus reserved and is a SEPARATE column) — conflating
+    the two rejected a correctly-applied `Quantity: 3 - 3` filter and drove a clear→reset loop
+    (run 20260629_173028). None when there are no applied filters."""
+    if not applied_filters:
+        return None
+    lines = [f"- {label}: {value!r}" for label, value in applied_filters.items()]
+    content = (
+        "## 当前已生效筛选（Active filters，筛选控件权威状态）\n"
+        "以下是网格筛选器**当前已应用**的条件（筛选已生效的确定性信号）：\n"
+        + "\n".join(lines)
+        + "\n⚠️ 判断要点：'筛选是否已生效'由上面这些 chip 决定，**不是**由表格里展示了哪些行/列决定。"
+        "若本步骤要求的筛选已出现在上面，则筛选动作**已成功生效**；行/单元格里某个**展示列**的值"
+        "（如 Salable Quantity=可销售=库存−预留，与被筛选的 Quantity 是不同列）**不得**用来推翻"
+        "已生效的筛选、或据此要求重设/清除筛选——那只会打转。"
+    )
+    return ContextBlock(
+        id="runtime.observation.applied_filter_state",
+        budget="high",
+        source_type="runtime_state",
+        source="platform_adapter",
+        ttl="turn",
+        priority=28,
+        content=content,
+    )
+
+
 def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None:
     text = format_form_controls_text(form_controls)
     if not text:

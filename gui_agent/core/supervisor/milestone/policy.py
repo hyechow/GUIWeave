@@ -25,6 +25,7 @@ from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm
 from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
 from .helpers import assemble_messages, _make_llm, run_loop_check, run_planner
 from .helpers import run_checker, run_selector, _default_milestone_prompts, is_dispatch_gate_sc
+from .helpers import filter_chips_clean, filter_state_satisfies_target
 from .runtime import (
     EARLY_FEASIBILITY_AT,
     MAX_RETRIES,
@@ -364,6 +365,30 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 summary="dispatch gate 满足",
             )
             print("  [DispatchGate] 确定性响应信号 → done（跳过 LLM 验收）")
+            self._last_check = check
+            return self._advance(milestone, observation, history)
+
+        # Filter "action-applied" gate — generalizes the dispatch gate to filter milestones.
+        # A `filter` milestone's job is to APPLY a filter; the grid's Active-filters chips
+        # (Observation.applied_filters) report authoritatively whether the intended filter is in
+        # effect, independent of which rows/columns are rendered. So "动作是否生效" is decided by
+        # the control's own state, NOT by re-reading row content — the checker once conflated a
+        # display column (Magento Salable Quantity) with the filtered Quantity and rejected a
+        # correctly-applied `Quantity: 3 - 3` into a clear→reset loop (run 20260629_173028).
+        # `filter_chips_clean` keeps the gate from masking an unrelated residual the milestone
+        # still owes a clear for (task 186 class). Skips the LLM checker like the dispatch gate.
+        applied_filters = getattr(observation, "applied_filters", None)
+        if (
+            milestone.kind == "filter"
+            and filter_state_satisfies_target(applied_filters, milestone)
+            and filter_chips_clean(applied_filters, milestone)
+        ):
+            check = _SingleCheckResult(
+                status="done",
+                reason="目标筛选已生效（Active filters chip 命中，确定性状态信号）；行内容由筛选编码，无需逐行复核",
+                summary="filter applied gate 满足",
+            )
+            print(f"  [FilterGate] 目标筛选已生效 {applied_filters} → done（跳过 LLM 验收）")
             self._last_check = check
             return self._advance(milestone, observation, history)
 

@@ -13,6 +13,7 @@ from gui_agent.context.runtime import (
     app_identity_block,
     checker_kind_rules_block,
     active_filters_block,
+    applied_filter_state_block,
     checker_result_block,
     constraints_block,
     extra_instruction_block,
@@ -55,6 +56,106 @@ def is_dispatch_gate_sc(success_condition: str) -> bool:
     Dispatch gates are deterministic: url_changed OR dom_changed is conclusive.
     The LLM checker should never be asked to verify one."""
     return _DISPATCH_GATE_MARKER in (success_condition or "")
+
+
+# ── filter "action-applied" gate ──────────────────────────────────────────────
+# A `filter` milestone's job is to APPLY a filter; its success is "the intended filter is in
+# effect" — which the grid reports authoritatively via its Active-filters chips
+# (Observation.applied_filters), NOT by re-reading row/cell values. Generalizes the dispatch
+# gate: there `url_changed` is the deterministic "the action took effect" signal; here it is
+# "the target chip is present". Decouples action-applied from effect-judgment so the checker
+# can't reject a correctly-applied filter on display-column grounds (e.g. Magento Salable
+# Quantity ≠ the filtered Quantity → clear→reset loop, live run 20260629_173028).
+
+# A capitalized English attribute word (Quantity, Price, Status, …) is the filter column the
+# chips key on. `From=N … To=M` is decompose's canonical range phrasing; `Column: value` covers
+# the single-value SC ("…显示 Quantity: 3…").
+_FILTER_RANGE_RE = re.compile(
+    r"([A-Z][A-Za-z ]{1,20}?)\s*From\s*[=:：]?\s*([\w.\-]+)"
+    r".{0,8}?To\s*[=:：]?\s*([\w.\-]+)",
+    re.IGNORECASE,
+)
+_FILTER_SINGLE_RE = re.compile(r"\b([A-Z][A-Za-z]{2,20})\s*[:：=]\s*([A-Za-z0-9][\w.\-]{0,24})")
+
+
+def _value_tokens(s: str) -> list[str]:
+    """Alphanumeric tokens of a chip value, lowercased (drops separators like ' - ', ':')."""
+    return [t.lower() for t in re.findall(r"[A-Za-z0-9.]+", s or "")]
+
+
+def parse_filter_target(milestone: Milestone) -> Optional[tuple[str, list[str]]]:
+    """The filter this `filter` milestone intends to apply, as `(column, value_tokens)` matched
+    against the applied chip's value as an exact token-multiset. None when not confidently
+    parseable — the gate then stays out of the way (falls back to the checker). Reads the
+    milestone name (decompose writes structured "设置 Quantity From=3 To=3") and SC. The range
+    form keeps BOTH bounds (From=3,To=3 → ['3','3']) so a '2 - 3' chip does NOT satisfy a
+    '3 - 3' target."""
+    text = f"{milestone.name or ''}\n{milestone.success_condition or ''}"
+    m = _FILTER_RANGE_RE.search(text)
+    if m:
+        col = m.group(1).strip()
+        vals = [m.group(2).strip(), m.group(3).strip()]
+        if col and all(vals):
+            return col, _value_tokens(" ".join(vals))
+    m = _FILTER_SINGLE_RE.search(text)
+    if m:
+        col = m.group(1).strip()
+        val = m.group(2).strip()
+        if col and val and col.lower() not in ("from", "to"):
+            return col, _value_tokens(val)
+    return None
+
+
+# Always-on system filters that are not task pollution and never need clearing — a chip outside
+# {target column} ∪ this set means an unrelated residual still applied (cf. task 186's leaked
+# `Keyword`), so the gate must NOT fire `done` (the milestone's "clear unrelated filters" duty
+# is unmet); fall back to the checker/planner to drive the clear.
+_BENIGN_FILTER_LABELS = {"store view"}
+
+
+def filter_chips_clean(
+    applied_filters: Optional[dict[str, str]], milestone: Milestone
+) -> bool:
+    """True when no applied chip is an unrelated residual — every chip is either the milestone's
+    target column or a benign always-on system filter. Conservative: unparseable target → False."""
+    target = parse_filter_target(milestone)
+    if target is None:
+        return False
+    col_l = target[0].lower()
+    for label in (applied_filters or {}):
+        ll = label.lower()
+        if col_l in ll or ll in col_l:
+            continue
+        if ll in _BENIGN_FILTER_LABELS:
+            continue
+        return False  # an unrelated residual filter is still applied
+    return True
+
+
+def filter_state_satisfies_target(
+    applied_filters: Optional[dict[str, str]], milestone: Milestone
+) -> bool:
+    """True when the grid's applied-filter chips already contain this milestone's target filter —
+    i.e. the filter ACTION took effect, authoritatively, regardless of the rendered rows. Match =
+    the target column appears as a chip label AND that chip's value tokens are an exact multiset
+    of the target's. Returns False when there are no chips or the target can't be parsed (stay
+    conservative: never false-`done` a milestone whose intent we couldn't pin down)."""
+    if not applied_filters:
+        return False
+    target = parse_filter_target(milestone)
+    if target is None:
+        return False
+    column, values = target
+    if not values:
+        return False
+    col_l = column.lower()
+    want = sorted(values)
+    for label, value in applied_filters.items():
+        ll = label.lower()
+        if col_l in ll or ll in col_l:
+            if sorted(_value_tokens(value)) == want:
+                return True
+    return False
 
 
 def _default_milestone_prompts() -> MilestonePrompts:
@@ -837,6 +938,7 @@ def run_checker(
                 None,
             ),
             active_filters_block(getattr(observation, "form_controls", None)),
+            applied_filter_state_block(getattr(observation, "applied_filters", None)),
             form_controls_block(getattr(observation, "form_controls", None)),
             grid_status_block(getattr(observation, "tables", None)),
         ],
@@ -1075,6 +1177,7 @@ def run_planner(
         ],
         human_blocks=[
             active_filters_block(getattr(observation, "form_controls", None)),
+            applied_filter_state_block(getattr(observation, "applied_filters", None)),
             form_controls_block(getattr(observation, "form_controls", None)),
             knowledge_block("app_navigation", app_knowledge),
             knowledge_block("page_elements", elements_knowledge),

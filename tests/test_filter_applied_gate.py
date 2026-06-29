@@ -1,0 +1,189 @@
+"""Unit tests for the filter "action-applied" gate building blocks.
+
+Covers the deterministic decoupling of "did the filter ACTION take effect" (the applied chips)
+from "do the rendered rows look right" (the EFFECT) — the regression behind live run
+20260629_173028, where the checker conflated Magento's `Salable Quantity` display column with
+the filtered `Quantity` and rejected a correctly-applied `Quantity: 3 - 3` filter into a
+clear→reset loop.
+"""
+
+from gui_agent.adapters.browser.filter_state import (
+    applied_filters_js,
+    normalize_applied_filters,
+)
+from gui_agent.core.schemas import Milestone
+from gui_agent.core.supervisor.milestone.helpers import (
+    filter_chips_clean,
+    filter_state_satisfies_target,
+    parse_filter_target,
+)
+
+
+def _filter_ms(name: str, sc: str = "") -> Milestone:
+    return Milestone(
+        id="m_filter", name=name, description=name, success_condition=sc, kind="filter"
+    )
+
+
+# ── normalize_applied_filters ──────────────────────────────────────────────────
+def test_normalize_parses_json_string_chips():
+    raw = '{"Quantity": "3 - 3", "Store View": "Default Store View"}'
+    assert normalize_applied_filters(raw) == {
+        "Quantity": "3 - 3",
+        "Store View": "Default Store View",
+    }
+
+
+def test_normalize_empty_or_garbage_is_none():
+    assert normalize_applied_filters("{}") is None
+    assert normalize_applied_filters("") is None
+    assert normalize_applied_filters("not json") is None
+    assert normalize_applied_filters(None) is None
+
+
+def test_applied_filters_js_targets_active_filter_chips():
+    # Selector grounded against live Magento 2.4.6 DOM (probe_chips): ul.admin__current-filters-list
+    # > li, label in span[data-bind*="label"], Remove button stripped.
+    js = applied_filters_js()
+    assert "admin__current-filters-list" in js
+    assert 'data-bind*=\\"label\\"' in js or "data-bind*=" in js
+    assert "button" in js  # the Remove button is stripped from the value
+
+
+# ── parse_filter_target ─────────────────────────────────────────────────────────
+def test_parse_range_keeps_both_bounds():
+    # task 185: name carries the structured range
+    assert parse_filter_target(_filter_ms("清除无关筛选，设置 Quantity From=3 且 To=3")) == (
+        "Quantity",
+        ["3", "3"],
+    )
+
+
+def test_parse_range_distinct_bounds():
+    assert parse_filter_target(_filter_ms("设置 Quantity From=2 To=3")) == (
+        "Quantity",
+        ["2", "3"],
+    )
+
+
+def test_parse_single_column_value():
+    assert parse_filter_target(_filter_ms("应用 Status: Complete 筛选")) == (
+        "Status",
+        ["complete"],
+    )
+
+
+def test_parse_unparseable_is_none():
+    assert parse_filter_target(_filter_ms("进入产品列表页并打开筛选面板")) is None
+
+
+# ── filter_state_satisfies_target (the gate predicate) ──────────────────────────
+def test_gate_fires_when_target_chip_present():
+    ms = _filter_ms("清除无关筛选，设置 Quantity From=3 且 To=3",
+                    "可见筛选状态显示 Quantity: 3 - 3")
+    applied = {"Store View": "Default Store View", "Quantity": "3 - 3"}
+    assert filter_state_satisfies_target(applied, ms) is True
+
+
+def test_gate_does_not_fire_on_wrong_range():
+    # The real failure's antidote: a 2-3 chip must NOT satisfy a 3-3 target.
+    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    assert filter_state_satisfies_target({"Quantity": "2 - 3"}, ms) is False
+
+
+def test_gate_ignores_unrelated_display_column_values():
+    # Salable Quantity present as a (hypothetical) chip must not be mistaken for Quantity.
+    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    applied = {"Salable Quantity": "2", "Quantity": "3 - 3"}
+    assert filter_state_satisfies_target(applied, ms) is True
+
+
+def test_gate_false_when_no_chips():
+    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    assert filter_state_satisfies_target(None, ms) is False
+    assert filter_state_satisfies_target({}, ms) is False
+
+
+def test_gate_false_when_target_unparseable():
+    ms = _filter_ms("打开筛选面板")
+    assert filter_state_satisfies_target({"Quantity": "3 - 3"}, ms) is False
+
+
+# ── filter_chips_clean (residual-pollution guard, cf. task 186) ─────────────────
+def test_chips_clean_target_plus_benign_store_view():
+    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    assert filter_chips_clean({"Store View": "Default Store View", "Quantity": "3 - 3"}, ms) is True
+
+
+def test_chips_not_clean_with_leaked_residual():
+    # A leaked Keyword filter (task 186 class) must block the gate so the clear duty is honored.
+    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    assert filter_chips_clean({"Keyword": "WS08", "Quantity": "3 - 3"}, ms) is False
+
+
+# ── strong-path integration: the gate fires in the real policy.step(), no LLM ───
+import gui_agent.core.supervisor.milestone.policy as policy_mod  # noqa: E402
+from gui_agent.core.schemas import Observation  # noqa: E402
+
+# A real (non-blank) PNG so is_loading_frame() doesn't short-circuit to a loading frame.
+_FIXTURE_PNG = (
+    "evals/browser/checker/screenshots/products_qty3_filter_salable_distractor.png"
+)
+
+
+def _qty3_filter_milestone() -> Milestone:
+    return _filter_ms(
+        "清除无关筛选，设置 Quantity From=3 且 To=3",
+        "网格 Active filters 显示已生效筛选 Quantity: 3 - 3（控件状态达成即可，不需逐行复核库存）。",
+    )
+
+
+def _run_step(monkeypatch, applied_filters):
+    """Drive a real MilestoneSupervisorPolicy.step() for the qty=3 filter milestone with the given
+    applied_filters. Spies on run_checker: it must NOT be called when the gate fires (the gate is
+    authoritative and skips the LLM checker), and MUST be called when it doesn't."""
+    import os
+
+    png = open(_FIXTURE_PNG, "rb").read() if os.path.exists(_FIXTURE_PNG) else b"\x89PNG\r\n\x1a\n"
+    checker_calls: list[int] = []
+
+    def _spy_run_checker(*a, **k):
+        checker_calls.append(1)
+        raise _CheckerReached()
+
+    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
+    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+
+    pol = policy_mod.MilestoneSupervisorPolicy()
+    ms = _qty3_filter_milestone()
+    pol.reseed(ms)
+    obs = Observation(png_bytes=png, source="test", applied_filters=applied_filters)
+    step = None
+    try:
+        step = pol.step(obs, goal="material of products with 3 units left", history=[])
+    except _CheckerReached:
+        pass
+    return ms, step, checker_calls
+
+
+class _CheckerReached(Exception):
+    pass
+
+
+def test_strong_gate_fires_done_without_invoking_checker(monkeypatch):
+    ms, step, checker_calls = _run_step(monkeypatch, {"Quantity": "3 - 3"})
+    assert checker_calls == [], "FilterGate must bypass the LLM checker when target chip is present"
+    assert ms.status == "done"
+    assert step is not None and step.goal_completed is True
+
+
+def test_no_chips_falls_through_to_checker(monkeypatch):
+    # No applied_filters → gate cannot fire → step() must reach the LLM checker (control).
+    _ms, _step, checker_calls = _run_step(monkeypatch, None)
+    assert checker_calls == [1], "without applied_filters the gate must not fire; checker runs"
+
+
+def test_wrong_range_chip_falls_through_to_checker(monkeypatch):
+    # A 2-3 chip does not satisfy a 3-3 target → gate must not fire → checker runs.
+    _ms, _step, checker_calls = _run_step(monkeypatch, {"Quantity": "2 - 3"})
+    assert checker_calls == [1]
