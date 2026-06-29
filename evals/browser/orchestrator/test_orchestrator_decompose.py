@@ -1562,6 +1562,68 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "task 204 钻取必须 URL 直达 data_query 选出的链接（{var[字段]} 模板），绝不硬编码 order_id。"
                     f" hardcoded={hardcoded}"
                 )
+        elif assertion == "shopping_admin_theme_settings_via_content_design":
+            # task 375「Go to the Magento Luma theme settings page」: 主题设置在
+            # Content › Design › Themes(点 Magento Luma 行 → system_design_theme/edit/id/3),
+            # 不在 System/Stores 菜单。旧失败计划去 SYSTEM 菜单找 Design → NOT_FOUND。
+            # 判据=计划经 Content+Design/Themes(或直达 system_design_theme URL),否则违规。
+            seq = _flatten_runs(program.statements)
+            text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec}" for r in seq
+            ).lower()
+            via_content = ("content" in text) and ("design" in text or "theme" in text or "主题" in text)
+            via_url = "system_design_theme" in text
+            if not (via_content or via_url):
+                details.append(
+                    "「Magento Luma theme settings」导航必须经 Content › Design › Themes(点 Magento Luma 行)，"
+                    "不要去 System/Stores 菜单找 Design;当前计划未见 Content/Design/Themes 路径: "
+                    f"{[(r.kind, r.name) for r in seq]}"
+                )
+        elif assertion == "shopping_admin_show_report_is_navigate_no_returns":
+            # task 707「Show the sales order report for last year (today Mar 15 2023)」:
+            # 纯导航/展示意图 — 进 Reports › Sales › Orders、设日期范围、点 Show Report,
+            # 报表渲染即终态。NetworkEvent 已通过;失败根因 = decompose 误当取数任务,
+            # 给计划绑 returns ['total_orders','total_revenue'] → 空读→kickback 死循环→
+            # 自报 RETRIEVE/DATA_VALIDATION_ERROR(期望 navigate/success)。
+            # 判据①: 计划不得绑任何 returns、不得有 data_query(任务不要求返回字段)。
+            # 判据②: 计划必须包含 Show Report(生成/渲染报表)动作。
+            seq = _flatten_runs(program.statements)
+            text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec}" for r in seq
+            ).lower()
+            has_returns = any(getattr(r, "returns", None) for r in seq)
+            has_data_query = any(r.kind == "data_query" for r in seq)
+            has_show_report = any(
+                k in text for k in ("show report", "提交", "submit", "生成", "应用", "apply", "查看报")
+            )
+            if has_returns or has_data_query:
+                offenders = [
+                    (r.kind, r.name, getattr(r, "returns", None)) for r in seq
+                    if getattr(r, "returns", None) or r.kind == "data_query"
+                ]
+                details.append(
+                    "「Show the sales order report」是纯导航/展示意图,不要绑 returns 或 data_query"
+                    "(任务不要求返回 total_orders/total_revenue 等字段,只需渲染报表);"
+                    f"当前计划出现取数: {offenders}"
+                )
+            if not has_show_report:
+                details.append(
+                    "「Show the sales order report」计划必须包含点击 Show Report(渲染报表)的动作作为终态;"
+                    f"当前计划未见: {[(r.kind, r.name) for r in seq]}"
+                )
+            # case 设 normalize=true 时,终态提交 action 必须被 normalize 成 navigate-submit dispatch
+            # gate(含标记 "动作已发出且界面给出响应"),让确定性 url_changed 判 done、绕过会把 Magento
+            # 渲染 URL(仍含 "filter")误读成"未提交"的 LLM checker —— 这是 707 反复点 Show Report 的根因修复。
+            from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
+            terminal_action = next(
+                (r for r in reversed(seq) if r.kind in ("action", "filter")), None
+            )
+            if terminal_action is not None and not is_dispatch_gate_sc(terminal_action.success_condition):
+                details.append(
+                    "终态提交 action 应被 normalize 成 navigate-submit dispatch gate(success_condition 含"
+                    "「动作已发出且界面给出响应」),使 url_changed 确定性判 done、不交给 LLM checker 误判渲染 URL;"
+                    f"当前终态 action success_condition='{terminal_action.success_condition}'"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

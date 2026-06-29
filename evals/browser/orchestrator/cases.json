@@ -448,5 +448,38 @@
       "most_recent_order_drills_and_reads_all_items"
     ],
     "note": "task 204 正确路径：① Sales>Orders 清残留筛选+Status=Complete+按 Purchase Date 降序 ② foreach 全量采 Action_url+Purchase Date ③ data_query 按 purchase_date_ts DESC LIMIT 1 选最新单的 Action_url（绝不靠列表第一行、绝不硬编码 order_id、绝不用详情页 Order Date）④ URL 直达钻取 ⑤ 第二个 foreach 采 Items Ordered 表 Product+Price 读全部商品行（一单常多商品，rowspan 会有空 Price 幻影行）⑥ data_query WHERE Price!='' 滤幻影、SUBSTR 剥 SKU 取名、CAST 转价、ORDER BY price ASC 输出列表。期望 order 230 = Ida Workout Parachute Pant 38.4 + Proteus Fitness Jackshirt 45.0。"
+  },
+  {
+    "label": "WebArena shopping_admin task 375 — Magento Luma 主题设置页：经 Content›Design›Themes(非 System)",
+    "goal": "Go to the Magento Luma theme settings page",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "expected": {
+      "min_statements": 1
+    },
+    "assertions": [
+      "shopping_admin_theme_settings_via_content_design"
+    ],
+    "note": "task 375 是 network-event 导航任务：评测要 GET admin/system_design_theme/edit/id/3。主题设置在 Content › Design › Themes(点 Magento Luma 行=theme id 3),不在 System/Stores 菜单——旧失败计划去 SYSTEM 找 Design → NOT_FOUND。断言锁定计划经 Content/Design/Themes 路径。"
+  },
+  {
+    "label": "WebArena shopping_admin task 707 — Show 销售订单报表(去年)：纯导航,不绑 returns",
+    "goal": "Show the sales order report for last year. Today is March 15, 2023.",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 1
+    },
+    "assertions": [
+      "shopping_admin_show_report_is_navigate_no_returns"
+    ],
+    "note": "task 707 是 network-event 导航任务：NetworkEvent 已通过(Show Report 触发 GET reports/report_sales/sales/filter?report_type=created_at_order&from=2022-01-01&to=2022-12-31)。失败根因 = decompose 误当取数任务,给计划绑 returns ['total_orders','total_revenue'] → 空读→kickback 死循环→自报 RETRIEVE/DATA_VALIDATION_ERROR(期望 navigate/success)。断言锁定计划纯导航(无 returns/data_query)+ 含 Show Report 渲染动作。'last year' 相对 Mar 15 2023 = 2022 全年(From 01/01/2022,To 12/31/2022)。"
   }
 ]

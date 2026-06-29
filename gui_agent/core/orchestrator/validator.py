@@ -120,8 +120,26 @@ ALL_CODES: frozenset[str] = frozenset({
 def _produces_result(run: Run) -> bool:
     return bool(run.var) and (run.kind == "data_query" or bool(run.returns))
 
+# navigate-shape intents: "go to / open / view / show / display the <X> (report|page|...)" with NO
+# field/count/aggregation ask → reach+render a destination, NOT a structured-answer task. Mirrors
+# synthesize_system.md's NAVIGATE test; without this, the verb "show"/"显示" alone (e.g. "Show the
+# sales order report") wrongly trips NO_RESULT_SOURCE and pushes the plan to bolt on phantom returns.
+_NAV_SHAPE_RE = re.compile(
+    r"\b(go to|open|view|show|display|navigate to|查看|打开|进入|显示)\b.*"
+    r"\b(report|page|section|dashboard|grid|list|settings|screen|tab|menu|报表|报告|页面|界面|设置)\b",
+    re.IGNORECASE,
+)
+_RETRIEVE_KW_RE = re.compile(
+    r"\b(how many|count|number|total|top|most|least|rank|average|sum|which|who|whose|find|get)\b",
+    re.IGNORECASE,
+)
+
 def _goal_expects_structured_answer(goal: str) -> bool:
     text = (goal or "").lower()
+    # navigate-shape destination intent with no retrieve/aggregation keyword and no "... of <field>"
+    # extraction tail → just reach/render the page; do NOT demand a returns/data_query result source.
+    if _NAV_SHAPE_RE.search(text) and not _RETRIEVE_KW_RE.search(text) and " of " not in text:
+        return False
     return bool(
         re.search(r"\b(how many|count|number|total|which|who|what|find|list|return|show)\b", text)
         or any(k in goal for k in ("多少", "几个", "几条", "总数", "数量", "哪些", "谁", "什么", "找出", "列出", "返回", "显示"))

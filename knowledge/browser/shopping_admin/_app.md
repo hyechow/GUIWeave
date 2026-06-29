@@ -67,7 +67,7 @@ version: 1
 
 ### 报表与分析 (Reports)
 *   **Reports Menu (navigation hub)**: 报表分类导航页，按销售、产品、客户等维度组织。
-*   **Sales Reports (list)**: 销售类报表汇总（订单、税收、发票、运费等）。
+*   **Sales Reports (list)**: 销售类报表汇总（订单、税收、发票、运费等）。其中 **Orders Report**（Reports › Sales › Orders）按日期区间统计订单。⚠️ **"Show / View the sales order report (for <时间段>)" 是纯导航（NAVIGATE）意图,不是取数任务**：目标只是**到达并渲染**该报表 —— 进 Reports › Sales › Orders,在 **From / To** 填日期区间(MM/DD/YYYY),点 **Show Report**。**终态/成功判据是导航性的而非数据性的**:点 Show Report 后页面 URL 跳到报表渲染端点(`…/reports/report_sales/sales/filter/…`)即算到达成功。⚠️ **报表区可能为空**(该年度统计未刷新 / 无订单时显示 "No records found",且 Magento 报表页始终把 Filter 表单留在顶部、统计表渲染在其下方甚至 below-fold)——**空报表 / 看不到统计行也算成功,绝不要因为"没看到统计表格"就反复点 Show Report**(实测会被误判 in_progress 死循环点 7 次后失败)。success_condition 只写"已点 Show Report 且 URL 进入 report_sales/sales/filter 渲染页",不要写"统计表格已渲染/出现 N 行数据"。**不要给这类意图绑 returns / data_query / 不要去读 total_orders、total_revenue 等具体数值**(任务没要求返回任何字段,retrieved_data 应为 null;读不存在的字段会触发空读→kickback 死循环→误入 Refresh Statistics)。时间段换算示例:"last year" 相对 today=Mar 15 2023 → 2022 全年 → From `01/01/2022`、To `12/31/2022`(底层精确请求 `…/reports/report_sales/sales/filter?report_type=created_at_order&from=2022-01-01&to=2022-12-31`)。
 *   **Product Reports (list)**: 产品类报表汇总（浏览量、畅销品、库存预警等）。
 *   **Customer Reports (list)**: 客户类报表汇总（订单总额、新增账户、愿望清单等）。
 *   **Marketing Reports (list)**: 营销类报表汇总（购物车放弃率、搜索词、邮件问题等）。
@@ -78,6 +78,13 @@ version: 1
 *   **Configuration (form)**: 全局系统配置中心，包含商店设置、税务、货币、属性集等。
 *   **Attribute Sets (list/form)**: 产品属性集的定义与管理。
 *   **Extensions Marketplace (external link)**: 合作伙伴与扩展程序市场入口。
+
+### 内容与设计 (Content)
+*   **Pages (list/form)**: CMS 静态页面列表及编辑页（如 Home Page、Privacy Policy 的标题/内容）。
+*   **Blocks / Widgets (list/form)**: 可复用内容块与小部件配置。
+*   **Design Configuration (list)**: 各 Store View 的设计配置入口。
+*   **Themes (list)**: 已安装主题列表（Magento Luma、Magento Blank 等）。⚠️ **主题设置 / 外观设置 / "Magento Luma theme settings page" 在这里**——路径 **Content › Design › Themes**，**不在 System/Stores 菜单**（Design 入口属于 Content，不属于 System）。进列表后点 **Magento Luma** 行进入该主题设置页 `admin/system_design_theme/edit/id/3`（页标题 "Theme: Magento Luma"）。
+*   **Schedule (list)**: 设计变更的定时排程。
 
 ## 3. 导航关系
 
@@ -108,6 +115,9 @@ version: 1
     *   `Sidebar` -> `Reports`: 进入 **Reports Menu**。
     *   `Reports Menu` -> `Sales` / `Products` / `Customers` / `Marketing`: 进入对应的 **Report List** 页。
     *   `Report List` -> `Export` / `Refresh`: 触发数据导出或刷新操作（通常在同一页面或弹窗完成）。
+*   **Content 模块**:
+    *   `Sidebar` -> `Content` -> `Design` -> `Themes`: 进入 **Themes** 列表；点 **Magento Luma** 行 -> 该主题设置页（`admin/system_design_theme/edit/id/3`）。主题/外观设置都走这里，**不要去 System/Stores 菜单找 Design**。
+    *   `Sidebar` -> `Content` -> `Elements` -> `Pages`: 进入 **Pages** 列表（CMS 页面标题/内容编辑）。
 
 ### 跨模块关联
 *   **Order Detail** -> **Customer Profile**: 点击订单中的客户名称跳转至 **All Customers List** 或客户详情。
@@ -127,7 +137,7 @@ version: 1
     `Sidebar (Customers)` -> `Customer Groups` -> `Add New Customer Group` -> `Customer Group Workspace` (设置税类和网站排除) -> `Save` -> `All Customers List` -> 选中客户 -> `Actions` -> `Assign a Customer Group`。
 
 4.  **查看销售绩效与报表**:
-    `Admin Dashboard` -> `Sidebar (Reports)` -> `Reports Menu` -> `Sales` -> `Orders Report` (选择日期范围) -> `Show Report` -> `Export` (下载 CSV/Excel)。
+    `Admin Dashboard` -> `Sidebar (Reports)` -> `Reports Menu` -> `Sales` -> `Orders Report` (在 From/To 选择日期范围) -> `Show Report` (提交后 URL 进入 `…/reports/report_sales/sales/filter/…` 渲染页即到达终态;**报表区可能为空也算成功,不要反复点**)。⚠️ 不要规划 `Export`/下载 CSV(agent 读不回下载文件,已禁);"show the report" 类意图到 Show Report 提交进入渲染页就结束,不读具体数值、不要求出现统计行。
 
 5.  **审核用户评论**:
     `Sidebar (Marketing)` -> `User Content` -> `Pending Reviews` -> `List` -> `Click Review` -> `Moderate Product Reviews` (Status: Approved/Not Approved) -> `Save Review`。
