@@ -874,24 +874,27 @@ def _render_knowledge_html(k: dict, sections: list[dict] | None = None) -> str:
     sc = k.get("section_count", 0)
     nav = k.get("nav_chars", 0)
     _k = lambda n: f"{n / 1000:.1f}k" if n >= 1000 else str(n)  # noqa: E731
+    # section_count is 0 when an app has only a monolithic _app.md (no progressive page files);
+    # omit the 章节 prefix then so the meta never reads as "0 章节" (looks like nothing loaded).
+    _meta = (f"{sc} 章节 · " if sc else "") + f"导航 {_k(nav)} 字"
     out = [
         '<div class="sidebar-knowledge">',
         '<div class="sidebar-title">知识库</div>',
         f'<div class="sk-app">{app}</div>',
-        f'<div class="sk-meta">{sc} 章节 · 导航 {_k(nav)} 字</div>',
+        f'<div class="sk-meta">{_meta}</div>',
     ]
-    # Hand-maintained overlay channels — loaded (with size) vs absent. Human labels; the file
-    # stem is in the hover title for traceability. Skipped entirely when no overlay exists.
+    # Hand-maintained overlay channels — only the ones actually loaded are shown (with size).
+    # Absent overlays (_deploy/_skill/_update when an app has none) are omitted, NOT marked
+    # "未加载", so the sidebar never looks like the app knowledge failed to load. Human label
+    # shown; file stem in the hover title for traceability.
     overlays = k.get("overlays") or {}
     if overlays:
         _CH = [("_check", "验收"), ("_deploy", "部署"), ("_skill", "技能"), ("_update", "更新")]
         out.append(f'<div class="sk-sections-label">动态知识 · {len(overlays)}</div>')
-        chips = []
-        for stem, label in _CH:
-            if stem in overlays:
-                chips.append(f'<span class="sk-ch on" data-tip="{stem}.md · {_k(overlays[stem])} 字">{label}</span>')
-            else:
-                chips.append(f'<span class="sk-ch off" data-tip="{stem}.md（未加载）">{label}</span>')
+        chips = [
+            f'<span class="sk-ch on" data-tip="{stem}.md · {_k(overlays[stem])} 字">{label}</span>'
+            for stem, label in _CH if stem in overlays
+        ]
         out.append('<div class="sk-channels">' + "".join(chips) + "</div>")
     sections = sections or []
     if sections:
