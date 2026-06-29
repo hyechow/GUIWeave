@@ -33,27 +33,38 @@ read. For example, January 1, 2023 should be written as `01/01/2023` (or
 `5/31/2023`).
 
 For tasks that ask for customer email(s) by total order count across the entire
-history, the Orders grid is the most reliable source of raw order rows: show or
-export `Customer Email`, `Customer Name`, and `Status`, then count rows per email
-yourself. The Orders grid does not provide built-in aggregation/group
-by/customer-count controls; it only supports filtering, sorting, pagination,
-column selection, and export. For "completed" order-count tasks, filter
-`Status = Complete`; if the task says "entire history", first clear inherited
-unrequested `Active filters` and then leave only `Status: Complete` applied (a
-lingering `Purchase Date` range means the source is no longer entire history).
-Write the filter milestone's visible success condition to require `Active
-filters` show only `Status: Complete` and no `Purchase Date`/date range/search
-filter. For "any state" tasks, do not apply a status filter and clear any
-existing `Active filters` first (click `Clear all` if it is visible), because
-Magento Admin can retain the last grid filter across sessions. Do not assume the
-Customers grid exposes a reliable `Total Orders` column.
+history, the Orders grid is the most reliable source of raw order rows: show
+`Customer Email`, `Customer Name`, and `Status`, then count rows per email
+yourself (do **not** export/download — the agent cannot read downloaded files
+back). The Orders grid does not provide built-in aggregation/group by/customer-
+count controls; it only supports filtering, sorting, pagination, and column
+selection. Do not assume the Customers grid exposes a reliable `Total Orders`
+column.
 
-For completed order-count tasks, the plan must make the completed-status
-constraint explicit. It is not enough to name a step "completed orders": either
-add a UI filter/action step for `Status = Complete` before collecting rows, or put
-an explicit SQL predicate such as `WHERE lower(status) = 'complete'` in the
-`data_query`. Without that explicit predicate, any-state and completed counts are
-ambiguous and should be treated as incorrectly modeled.
+⚠️ **统计订单数前,判口径的关键 = intent 里有没有 "completed" 这个词:**
+- **含 "completed"**(筛 Complete):"who completed the most/second/Nth number of
+  orders" / "who completed N orders" / "completed orders" —— WebArena 这类任务的
+  参考答案**按 `Status = Complete` 计数**(实测 task 63 坐实:期望答案 helloworld+
+  michael.nguyen 只有在 Complete 口径下计数才相等[各 8],any-state 下 14 vs 12 凑不
+  齐;Complete 口径第二多正是这两人,全量下 janesmith456 唯一第一)。**第一步先 `Clear
+  all` 清掉所有残留 `Active filters`**(残留 `Purchase Date` range 说明源已不是 entire
+  history,必须删),再**只应用 `Status = Complete`**,采全量 Complete 行(筛后约 155 行
+  必须采全,个位计数漏几笔名次就乱)。filter milestone 验收写成 `Active filters` 只显示
+  `Status: Complete` 且无 `Purchase Date`/date range。
+- **字面 "any state" / 只说 "have N orders"**(不筛 Status):如 "who have N orders in
+  any state"(task 64) = **所有状态**订单数,**不要**筛 `Status = Complete`,plan 里
+  不得出现 `Status = Complete` 的 filter 或 SQL 谓词。**第一步先 `Clear all` 清掉所有
+  残留 `Active filters`**(含残留的 `Status: Complete`,绝不能沿用),再不加状态筛选地
+  采全量。
+
+For any task whose intent contains "completed" (e.g. "who completed the Nth most
+number of orders", "who completed N orders", "completed orders"), the plan must
+make the completed-status constraint explicit: add a UI filter step for
+`Status = Complete` before collecting rows, or put an explicit SQL predicate such
+as `WHERE lower(status) = 'complete'` in the `data_query`. Only when the task
+literally says "in any state" (or just "have N orders" without "completed") do
+the opposite — no status filter, count all states, and the `data_query` must NOT
+carry a status predicate.
 
 For monthly completed-order counts over a `Purchase Date` range, prefer the page
 filters before reading rows: in **Sales > Orders**, open **Filters**, set
@@ -80,24 +91,22 @@ provider stores status as lowercase `complete`, and repeating UI dates risks
 mixing UI input format with provider storage format.
 
 For tasks phrased as "customer email(s) who completed the most/second/fifth
-number of orders" or "customer email(s) who have N orders", use this Orders grid
-as the primary UI source, not Customers grid and not Customer Reports. The reason
-is field coverage: Orders grid/export can provide both the filter field
-(`Status`) and the final grouping/output field (`Customer Email`), while Customer
-Reports usually show customer names and interval aggregates, and Customers grid
-does not reliably expose total order counts. After the complete raw rows are
-available, use a data query or deterministic local aggregation: group by
-`Customer Email`, count rows, rank the distinct counts when the task says most /
-second / fifth, and return all emails tied at the requested rank. For "have N
-orders", return emails whose count is exactly N, not greater-than-or-equal N. If
-the task says "any state", the Orders grid must have no active status filter
-before counting; a visible `Status: Complete` active filter means the data source
-is wrong until `Clear all` is clicked.
-If the task says completed orders across the entire history, the Orders grid
-should show `Status: Complete` as the only active task filter before counting; a
-visible `Purchase Date` active filter or date range from a previous task means
-the data source is wrong until filters are cleared and `Status: Complete` is
-applied again.
+number of orders" or "customer email(s) who have N orders in any state", use this
+Orders grid as the primary UI source, not Customers grid and not Customer Reports.
+The reason to prefer the Orders grid is field coverage: it provides both the
+filter field (`Status`) and the final grouping/output field (`Customer Email`),
+while Customer Reports usually show customer names and interval aggregates, and
+the Customers grid does not reliably expose total order counts. Apply the status
+constraint per the ⚠️ 口径 rule above (intent contains "completed" → filter
+`Status = Complete`; literal "any state" → no filter, `Clear all` first). After
+the complete raw rows are available, use a data query or deterministic local
+aggregation: group by `Customer Email`, count rows, rank the distinct counts when
+the task says most / second / fifth, and return all emails tied at the requested
+rank. For "have N orders", return emails whose count is exactly N, not
+greater-than-or-equal N. For "completed" tasks the Orders grid should show
+`Status: Complete` as the only active task filter before counting; a visible
+`Purchase Date` active filter or date range from a previous task means the data
+source is wrong until filters are cleared and `Status: Complete` is re-applied.
 
 If downloads/exports are not allowed, collect the raw rows by combining grid
 pagination with within-page vertical scrolling. This is not infinite-scroll

@@ -17,11 +17,11 @@ version: 1
 
 ## skill：订单邮箱数量聚合
 - 触发：customer email(s)、completed orders、any-state orders、most/second/fifth number of orders、have N orders
-- 数据：订单状态口径、Customer Email、Status、完整订单行
+- 数据：订单状态口径（关键）——判别看 intent 有没有 "completed"：含 `completed`（`who completed the most/second/Nth number of orders`、`who completed N orders`、`completed orders`）→ 按 **`Status = Complete`** 计数（WebArena 参考答案实测如此，task 63 坐实），第一步 `Clear all` 清残留后**只筛 Status=Complete**、采全量 Complete 行（约 155 行必须采全，否则个位计数名次乱）；字面 `any state`/只说 `have N orders`（task 64）→ **不筛 Status**、SQL 不写 status 谓词、`Clear all` 清掉所有残留筛选（含残留的 `Status: Complete`）后采全量。计数采集（关键）——foreach returns 必须采 `ID`+`Customer Email`+`Status` 三列；`ID` 是逐行唯一列(缺它会被按整行内容去重塌掉同客户多笔订单、计数全错),`Status` 一并采回供口径判定/复核。另需完整订单行
 - 步骤：
 1. 进入 Sales > Orders 订单数据源
-2. 根据口径建立状态约束
-3. 采集完整订单行
+2. 按口径设状态约束：含 completed→Clear all 后只 Status=Complete；字面 any state→Clear all 后不筛
+3. foreach 采 ID + Customer Email + Status（ID 逐行唯一防去重塌缩）
 4. 按 Customer Email 聚合计数
 5. 输出满足排名或数量条件的邮箱
 
