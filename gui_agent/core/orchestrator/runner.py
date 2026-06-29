@@ -217,6 +217,29 @@ class Interpreter:
         if loop.limit and rows:
             rows = rows[: loop.limit]
         into = loop.into or f"{loop.var}s"
+        # Platform-general column-completeness safety net. A declared returns column that is
+        # absent (no key) from EVERY collected row means the source grid never rendered it and
+        # the collector silently dropped it — feeding an empty grouping/key column to a
+        # downstream data_query yields a silent wrong/empty answer (burned WebArena task 63:
+        # foreach declared Customer Email but the Orders grid didn't render it). "Absent as a
+        # key in all rows" is the precise signal: a legitimately-blank-but-rendered column keeps
+        # its key (= ""), so this never mis-fires on those. Browser tries to self-heal upstream
+        # (Columns control) before we get here; this fails honestly when heal was impossible or
+        # the platform has no such control, so the run surfaces the gap instead of answering on
+        # missing data.
+        if rows and loop.returns:
+            uncovered = [f for f in loop.returns if all(f not in row for row in rows)]
+            if uncovered:
+                self.finish_incomplete = True
+                self.env[into] = RunResult(
+                    completed=False, rows=[],
+                    summary=f"采集列缺失：声明的 {uncovered} 未出现在任何行（网格未渲染该列，已丢列）",
+                )
+                self._materialized_vars.add(into)
+                self.run_log.append(RunRecord(
+                    name=f"foreach {loop.var} in {loop.over}", var=into, result=self.env[into],
+                ))
+                return None
         body_read_vars = self._read_vars(loop.body)
         accumulated: list[dict[str, str]] = []
         if not rows:

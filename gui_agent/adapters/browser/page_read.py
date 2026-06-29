@@ -310,6 +310,102 @@ def read_page_complete(
 _DEFAULT_MAX_PAGES = 20
 
 
+def _missing_grid_columns(rows: list[dict[str, str]], returns: list[str]) -> list[str]:
+    """Declared ``returns`` columns that NO collected row carries a non-empty value for.
+
+    A column absent from every row means the grid never rendered it and the AX extractor
+    silently dropped the declared field (``read_grid_from_tree`` only emits keys for headers
+    it matched). Distinct from a column that's present-but-blank in a row."""
+    if not rows:
+        return []
+    return [f for f in returns if not any(str(r.get(f, "")).strip() for r in rows)]
+
+
+def _settle_click(client: Any) -> None:
+    """Best-effort settle after a non-navigation click (opening a panel / toggling a column)."""
+    fn = getattr(client, "wait_settled", None)
+    if callable(fn):
+        try:
+            fn("click")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _heal_missing_columns(
+    obs: Any,
+    returns: list[str],
+    rows: list[dict[str, str]],
+    *,
+    bundle: Any,
+    platform: Any,
+    client: Any,
+    log_dir: Path | None,
+) -> tuple[Any, list[dict[str, str]]] | tuple[None, None]:
+    """Browser self-heal for declared grid columns the page isn't currently rendering.
+
+    When some ``returns`` columns are missing from the collected rows, open the grid's
+    "Columns" visibility control, enable the missing column toggles, re-observe, and re-extract.
+    Returns ``(healed_obs, healed_rows)`` when the re-read now covers strictly more of the
+    missing columns; otherwise ``(None, None)`` to mean "leave the original collection as-is"
+    (the platform-general safety net in the foreach runner then fails honestly). Bounded to a
+    single heal attempt; zero work when nothing is missing. General to any grid/column."""
+    from gui_agent.adapters.browser.semantic_page import (
+        find_column_toggle_refs,
+        find_columns_control_ref,
+        read_grid_from_tree,
+    )
+
+    missing = _missing_grid_columns(rows, returns)
+    if not missing or client is None or bundle is None or log_dir is None:
+        return None, None
+    tree = getattr(obs, "semantic_tree", None)
+    if not tree:
+        return None, None
+    cols_ref = find_columns_control_ref(tree)
+    if cols_ref is None:
+        return None, None
+
+    try:
+        client.click_by_ref(cols_ref)
+        _settle_click(client)
+        panel_obs = bundle.make_perception(platform, log_dir / "columns_panel.png").observe()
+    except Exception:  # noqa: BLE001
+        return None, None
+
+    panel_tree = getattr(panel_obs, "semantic_tree", None) or tree
+    toggles = find_column_toggle_refs(panel_tree, missing)
+    if not toggles:
+        # Couldn't locate the toggles. The panel is a harmless overlay (we won't re-read), so
+        # just bail — never click Cancel/Reset or page blanks (would revert / mis-navigate).
+        return None, None
+
+    # Enabling a column checkbox updates the grid live — no Apply button, and per the
+    # Admin_grid_controls knowledge the panel needn't (and shouldn't) be closed: it's an overlay
+    # and the grid <table> stays in the AX tree, so we read straight through it. NEVER re-click
+    # the control to "close" (toggle behavior is unreliable) nor Cancel/Reset (would revert the
+    # column we just enabled).
+    for ref in toggles:
+        try:
+            client.click_by_ref(ref)
+            _settle_click(client)
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        healed_obs = bundle.make_perception(platform, log_dir / "grid_healed.png").observe()
+    except Exception:  # noqa: BLE001
+        return None, None
+    healed_tree = getattr(healed_obs, "semantic_tree", None)
+    if not healed_tree:
+        return None, None
+    new_rows = read_grid_from_tree(healed_tree, returns)
+    if new_rows is None:
+        return None, None
+    if len(_missing_grid_columns(new_rows, returns)) < len(missing):
+        return healed_obs, new_rows
+    return None, None
+
+
 def read_grid_complete(
     obs: Any,
     returns: list[str],
@@ -359,6 +455,19 @@ def read_grid_complete(
         from gui_agent.core.orchestrator.list_traversal_runtime import rows_from_tables
 
         return rows_from_tables(getattr(obs, "tables", None), returns)
+
+    # Self-heal: if the grid didn't render some declared columns (the AX extractor silently
+    # drops unmatched fields), enable them via the grid's "Columns" control and re-read BEFORE
+    # paginating, so every page is collected with the full column set. No-op (zero extra
+    # observes) when all declared columns are already present.
+    _client0 = getattr(platform, "client", None) if platform is not None else None
+    _healed_obs, _healed_rows = _heal_missing_columns(
+        obs, returns, rows, bundle=bundle, platform=platform, client=_client0, log_dir=log_dir,
+    )
+    if _healed_rows is not None:
+        obs = _healed_obs
+        rows = _healed_rows
+        semantic_tree = getattr(obs, "semantic_tree", None)
 
     # rows is not None ⇒ the AX tree produced this grid, so semantic_tree is truthy. The
     # pagination walk below is AX-tree-driven and relies on that invariant.

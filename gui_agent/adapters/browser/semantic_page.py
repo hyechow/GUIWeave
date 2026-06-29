@@ -297,6 +297,63 @@ def find_next_page_ref(tree: list[dict]) -> int | None:
     return None
 
 
+def find_columns_control_ref(tree: list[dict]) -> int | None:
+    """Return the ``backendDOMNodeId`` of a grid's "Columns" visibility-control toggle, or None.
+
+    Magento admin grids hide some columns by default (e.g. the Orders grid does not render
+    ``Customer Email`` out of the box) behind a "Columns" button that opens a panel of
+    per-column checkboxes. Used by the collector to enable a declared collection column the
+    grid isn't currently rendering, instead of silently dropping it. Matches a button/link/
+    combobox whose label is — or starts with — "columns" (the live label is often "Columns"
+    or "Columns 13 of 20")."""
+    for node in tree:
+        if not node.get("ref"):
+            continue
+        if node["role"] not in {"button", "link", "combobox", "menuitem"}:
+            continue
+        nk = _normalize(node["key"])
+        if nk == "columns" or nk.startswith("columns "):
+            return node["ref"]
+    return None
+
+
+def find_column_toggle_refs(tree: list[dict], fields: list[str]) -> list[int]:
+    """Return refs of per-column visibility toggles matching any of ``fields`` (the missing
+    declared columns), for use after the "Columns" control panel is opened.
+
+    Normally called for columns the grid is NOT rendering — i.e. OFF toggles — so clicking turns
+    them ON. As a guard against ever reverting an already-enabled column (the Magento checkbox
+    carries its checked state as ``value`` = "true"/"false"), toggles already ON are skipped.
+    Label match mirrors ``read_grid_from_tree``'s field→header fuzzy logic but requires a strong
+    match to avoid enabling the wrong column. General to any grid/column, not Magento-specific."""
+    from difflib import SequenceMatcher
+
+    norm_fields = [_normalize(f) for f in fields if _normalize(f)]
+    refs: list[int] = []
+    seen: set[int] = set()
+    for node in tree:
+        ref = node.get("ref")
+        if not ref or ref in seen:
+            continue
+        if node["role"] not in {
+            "checkbox", "menuitemcheckbox", "switch", "menuitemradio", "option", "menuitem",
+        }:
+            continue
+        # Skip toggles already ON: never un-check (revert) a column that's already enabled. A
+        # missing column's toggle reads "false"; only an unreliable match could be "true".
+        if (node.get("value") or "").strip().lower() == "true":
+            continue
+        nk = _normalize(node["key"])
+        if not nk:
+            continue
+        for nf in norm_fields:
+            if nk == nf or SequenceMatcher(None, nf, nk).ratio() >= 0.85:
+                refs.append(ref)
+                seen.add(ref)
+                break
+    return refs
+
+
 def read_from_tree(
     tree: list[dict],
     returns: list[str],

@@ -247,3 +247,67 @@ def test_foreach_into_defaults_to_var_plural():
     result = runner.run(program)
     assert "rows" in result.env  # default into = "row" + "s"
     assert result.env["rows"].rows == [{"id": "1", "v": "x"}]
+
+
+def test_foreach_fails_honestly_when_declared_column_missing_from_all_rows():
+    """Column-completeness safety net (WebArena task 63 regression). When a declared returns
+    column is absent (no key) from EVERY collected row — the grid silently dropped it — the
+    foreach must NOT silently accumulate a key column's worth of nothing. It publishes an empty
+    into-table and marks the run finish_incomplete so a downstream data_query can't manufacture
+    a confident wrong answer from missing data."""
+    program = Program(
+        goal="按 Customer Email 统计订单数",
+        statements=[
+            Run(var="r", name="读取订单行", kind="read",
+                returns=["ID", "Customer Email", "Status"]),
+            ForEach(var="row", over="r", into="orders",
+                    returns=["ID", "Customer Email", "Status"],
+                    body=[Run(name="noop {row[ID]}", kind="navigation")]),
+            Finish(message="done"),
+        ],
+    )
+
+    def execute(run: Run) -> RunResult:
+        if run.var == "r" and run.kind == "read":
+            # The grid rendered only ID + Status — Customer Email key never created.
+            return RunResult(completed=True, rows=[
+                {"ID": "1", "Status": "Complete"},
+                {"ID": "2", "Status": "Complete"},
+            ])
+        return RunResult(completed=True)
+
+    interp = Interpreter(program)
+    drive(interp, execute)
+    assert interp.finish_incomplete is True
+    assert interp.env["orders"].rows == []
+    assert interp.env["orders"].completed is False
+
+
+def test_foreach_does_not_misfire_on_present_but_blank_column():
+    """The safety net keys on 'absent as a key', not 'blank value' — a rendered-but-empty cell
+    (legitimate: e.g. an optional column blank for this filtered set) keeps its key and must NOT
+    trip the guard."""
+    program = Program(
+        goal="g",
+        statements=[
+            Run(var="r", name="读取行", kind="read", returns=["ID", "Coupon"]),
+            ForEach(var="row", over="r", into="orders", returns=["ID", "Coupon"],
+                    body=[Run(name="noop {row[ID]}", kind="navigation")]),
+            Finish(message="done"),
+        ],
+    )
+
+    def execute(run: Run) -> RunResult:
+        if run.var == "r" and run.kind == "read":
+            return RunResult(completed=True, rows=[
+                {"ID": "1", "Coupon": ""},   # Coupon present as a key, just blank
+                {"ID": "2", "Coupon": ""},
+            ])
+        return RunResult(completed=True)
+
+    interp = Interpreter(program)
+    drive(interp, execute)
+    assert interp.finish_incomplete is False
+    assert interp.env["orders"].rows == [
+        {"ID": "1", "Coupon": ""}, {"ID": "2", "Coupon": ""},
+    ]
