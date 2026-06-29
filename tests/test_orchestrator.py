@@ -756,6 +756,50 @@ def test_normalize_confirm_read_gates_action_without_following_read_unchanged():
     assert normalize_confirm_read_gates(out).statements[0].success_condition == "第一步生效页"
 
 
+def test_normalize_navigate_submit_gates_terminal_action():
+    # 纯导航/展示任务（无 returns/data_query/foreach）且含 navigation run：终态提交 action 被改写为
+    # navigate-submit dispatch gate，让确定性 url_changed 判 done、绕过会误读渲染 URL 的 LLM checker
+    # (task 707「Show the sales order report」: 点 Show Report 落到 …/filter/<base64>/ 渲染页)。
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
+    prog = Program(statements=[
+        Run(name="进入 Reports>Sales>Orders 报表页", kind="navigation", success_condition="报表筛选页已显示"),
+        Run(name="设置日期范围并点击 Show Report", kind="action", success_condition="统计表格已渲染出 N 行"),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    # navigation run 不动（自有 arrival checker）
+    assert out.statements[0].success_condition == "报表筛选页已显示"
+    # 终态 action 带上 dispatch-gate 标记
+    assert is_dispatch_gate_sc(out.statements[1].success_condition)
+    # 幂等：再跑一次仍是 dispatch gate（不叠加）
+    again = normalize_confirm_read_gates(out)
+    assert is_dispatch_gate_sc(again.statements[1].success_condition)
+    assert again.statements[1].success_condition == out.statements[1].success_condition
+
+
+def test_normalize_navigate_submit_gates_skips_when_no_navigation_run():
+    # 无 navigation run 的纯 action 链不算到达类导航任务 → 终态 action 不被改写（守 707 修复不外溢）。
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    prog = Program(statements=[
+        Run(name="第一步动作", kind="action", success_condition="第一步生效页"),
+        Run(name="第二步动作", kind="action", success_condition="第二步生效页"),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    assert out.statements[1].success_condition == "第二步生效页"
+
+
+def test_normalize_navigate_submit_gates_skips_when_returns_present():
+    # 带 returns（取数任务）→ 不是纯导航 → 终态 action 走原有 confirm-read 逻辑，不套 navigate-submit gate。
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    prog = Program(statements=[
+        Run(name="进入列表页", kind="navigation", success_condition="列表已显示"),
+        Run(var="r", name="筛选并读取计数", kind="action", returns=["count"], success_condition="结果已显示"),
+    ])
+    out = normalize_confirm_read_gates(prog)
+    # returns 仍在（没被当作纯导航终态吞掉）
+    assert out.statements[1].returns == ["count"]
+
+
 def test_if_branches_on_structured_reads_end_to_end():
     # 串起来：read milestone 拿到结构化 {连通判定:连通} → if 走 then(建单)。
     prog = Program(statements=[

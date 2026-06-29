@@ -18,7 +18,7 @@ from typing import Literal
 
 from gui_agent.core.schemas import Milestone
 
-from .program import If, Program, Run, Stmt
+from .program import ForEach, If, Program, Run, Stmt
 from .runner import RunResult
 
 # DSL RunKind -> feat-android (kind, completion_strategy).
@@ -104,6 +104,22 @@ _DISPATCH_GATE_TMPL = (
     "具体结果由本步完成帧的结构化返回值读取判定。"
 )
 
+# Navigate/show tasks (no returns / data_query anywhere) end in a terminal submit whose only
+# purpose is to NAVIGATE to a destination/render page — e.g. "click Show Report" lands on
+# Magento's `…/reports/.../filter/<base64>/` render URL. Without returns, the confirm-read gate
+# above never fires, so the LLM checker is left to adjudicate "did we arrive?" — and it misreads
+# Magento render URLs that still contain "filter" / keep the submit button visible as "not yet
+# submitted", looping the same click. The submit's effect is a navigation, which url_changed
+# answers deterministically; gate it like a dispatch gate so the conclusive url_changed marks it
+# done and the LLM checker (and its false "filter == config page" prior) is bypassed. Carries the
+# dispatch-gate marker so is_dispatch_gate_sc() recognizes it.
+_NAV_SUBMIT_GATE_TMPL = (
+    "已执行「{name}」：动作已发出且界面给出响应"
+    "（页面跳转/URL 变化/出现结果区或加载，任一即可）；"
+    "本步是纯导航/展示意图的终态，只判动作是否已触发页面跳转，"
+    "不要求出现具体数据行/统计表（报表/结果可能为空）。"
+)
+
 
 _CONFIRM_READ_TRIGGER_KINDS = {"action", "filter"}
 _RETURN_READ_SOURCE_KINDS = {"navigation", "filter", "action"}
@@ -176,6 +192,56 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
     return out
 
 
+def _program_is_pure_navigate(stmts: list[Stmt]) -> bool:
+    """A navigate/show program: no statement anywhere requests structured data — no Run with
+    returns, no data_query, no foreach (collection). Such a task is judged purely by arrival."""
+    for s in stmts:
+        if isinstance(s, Run):
+            if s.returns or s.kind == "data_query":
+                return False
+        elif isinstance(s, ForEach):
+            return False
+        elif isinstance(s, If):
+            if not (_program_is_pure_navigate(s.then) and _program_is_pure_navigate(s.otherwise)):
+                return False
+    return True
+
+
+def _has_navigation_run(stmts: list[Stmt]) -> bool:
+    """True if any Run (recursively) is a navigation step — i.e. the task genuinely reaches a
+    destination page. Distinguishes a reach-then-submit SHOW task (navigation + terminal action,
+    e.g. enter report page then Show Report) from a bare action sequence (no navigation), so the
+    navigate-submit gate stays scoped to arrival tasks and never touches plain action chains."""
+    for s in stmts:
+        if isinstance(s, Run) and s.kind == "navigation":
+            return True
+        if isinstance(s, If) and (_has_navigation_run(s.then) or _has_navigation_run(s.otherwise)):
+            return True
+        if isinstance(s, ForEach) and _has_navigation_run(s.body):
+            return True
+    return False
+
+
+def _gate_terminal_navigate_submit(stmts: list[Stmt]) -> list[Stmt]:
+    """For a pure-navigate program, rewrite the LAST top-level action/filter Run's gate to the
+    navigate-submit dispatch gate so its conclusive url_changed marks the milestone done (the
+    LLM checker is bypassed). Navigation-kind runs keep their own arrival checker untouched."""
+    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
+
+    out = list(stmts)
+    for i in range(len(out) - 1, -1, -1):
+        s = out[i]
+        if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
+            if not is_dispatch_gate_sc(s.success_condition):
+                out[i] = s.model_copy(
+                    update={"success_condition": _NAV_SUBMIT_GATE_TMPL.format(name=s.name)}
+                )
+            break
+        if isinstance(s, Run):  # a navigation/read terminal — leave arrival checking to it
+            break
+    return out
+
+
 def normalize_confirm_read_gates(program: Program) -> Program:
     """Normalize legacy action->read pairs into action return contracts.
 
@@ -185,9 +251,15 @@ def normalize_confirm_read_gates(program: Program) -> Program:
     are compatible, and action/filter trigger gates are made lenient dispatch gates so the
     checker accepts on response while structured_read owns the returned value. A following
     data_query is not treated as a return read; the preceding UI step must still verify the
-    data source state before SQL analyzes it. Recurses into if-branches; returns a NEW
-    Program (inputs untouched); idempotent."""
-    return program.model_copy(update={"statements": _normalize_stmts(program.statements)})
+    data source state before SQL analyzes it. For pure-navigate programs (no returns/
+    data_query/foreach), the terminal submit action is additionally gated as a navigate-submit
+    dispatch gate so url_changed deterministically marks arrival (the LLM checker's false
+    "render URL still contains 'filter' == not submitted" prior is bypassed). Recurses into
+    if-branches; returns a NEW Program (inputs untouched); idempotent."""
+    stmts = _normalize_stmts(program.statements)
+    if _program_is_pure_navigate(stmts) and _has_navigation_run(stmts):
+        stmts = _gate_terminal_navigate_submit(stmts)
+    return program.model_copy(update={"statements": stmts})
 
 
 # ── precondition gate backstop (L2) ──────────────────────────────────────────────────
