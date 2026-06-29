@@ -481,5 +481,22 @@
       "shopping_admin_show_report_is_navigate_no_returns"
     ],
     "note": "task 707 是 network-event 导航任务：NetworkEvent 已通过(Show Report 触发 GET reports/report_sales/sales/filter?report_type=created_at_order&from=2022-01-01&to=2022-12-31)。失败根因 = decompose 误当取数任务,给计划绑 returns ['total_orders','total_revenue'] → 空读→kickback 死循环→自报 RETRIEVE/DATA_VALIDATION_ERROR(期望 navigate/success)。断言锁定计划纯导航(无 returns/data_query)+ 含 Show Report 渲染动作。'last year' 相对 Mar 15 2023 = 2022 全年(From 01/01/2022,To 12/31/2022)。"
+  },
+  {
+    "label": "WebArena shopping_admin task 708 — Show 税务报表(今年)：纯导航,选 Tax 报表 + this-year 截到 today",
+    "goal": "Show the tax report for this year. Today is March 15, 2023.",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 1
+    },
+    "assertions": [
+      "shopping_admin_show_report_is_navigate_no_returns"
+    ],
+    "note": "task 708 = 707 的兄弟,同 navigate-submit dispatch gate 机制。bad case(live run 20260629_155936 score 0):decompose/执行打错 NetworkEvent GET 两处——(1) 进了 Orders 报表 report_sales/sales/filter 而非 Tax 报表 report_sales/tax/filter('tax report' 必须进 Reports › Sales › Tax);(2) 'this year' 日期填成全年 to=2023-12-31,正确应截到 today=2023-03-15(期望 GET reports/report_sales/tax/filter?report_type=created_at_order&from=2023-01-01&to=2023-03-15)。修法纯知识层(_app.md 报表子类型→URL 映射 + 相对日期换算 this-year 截到 today)。此断言只锁离线可验的部分(纯导航/无 returns/含 Show Report 渲染动作);报表子类型与日期正确性靠 live run 验。"
   }
 ]
