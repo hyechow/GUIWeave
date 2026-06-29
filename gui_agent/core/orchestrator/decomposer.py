@@ -993,6 +993,13 @@ def _navigation_source_fallback(goal: str, program: Program) -> Program:
 # read the JSON through read_screen_text (text-source structured_read). Host-side URL fetching
 # (url_json_read / _direct_nav_url) stays removed — only in-browser access counts.
 
+# NEXT(site-specific 遗留 — P0 WHAT/HOW 边界评审 2026/06/29):下面 _API_ENTITY_RE /
+# _check_api_text_source / _check_numeric_read_uses_api / _check_hardcoded_api_entity,以及上方
+# _TEXT_SOURCE_READ_RE(stars|contributors)、_NAV_IDENTITY_STOPWORDS(github/repo)、
+# _check_hardcoded_github_path —— 这批把「读 stars/contributors 必须走 api.github.com」的 GitHub
+# 专用策略焊进了通用 decomposer。GitHub 的 site WHAT 已在 knowledge/android/Chrome/_app.md(借壳
+# Chrome 注入),prompt decomposer.md 规则12 已去 GitHub 特化、只留通用 HOW;这批代码校验暂留作
+# 安全网,通用化时应基于 text_source 标志或通用 api 域名,而非 api.github.com 字面量。
 # API 实体不许硬写(result-then-reference):走 api 时 owner/repo 必须 {var} 接力运行时读到的真实
 # 值(读地址栏 URL),不许 decomposer 凭记忆写死具体实体(非知名仓库会幻觉)。只匹配硬写的具体实体
 # (api.github.com/repos/owner/repo);{var} 模板(api.github.com/repos/{u[owner]}/{u[repo]})含括号
