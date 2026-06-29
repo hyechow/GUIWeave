@@ -18,15 +18,23 @@ def form_controls_js() -> str:
     s = clean(s);
     return s.length > n ? s.slice(0, n - 1) + '…' : s;
   };
-  const visible = (el) => {
+  const rendered = (el) => {
+    // 元素在 DOM 中实际渲染(有尺寸、非 display:none/visibility:hidden),不限视口位置。
     const r = el.getBoundingClientRect();
     const st = getComputedStyle(el);
-    return r.width > 0 && r.height > 0
-      && r.bottom >= 0 && r.right >= 0
-      && r.top <= (innerHeight || document.documentElement.clientHeight)
-      && r.left <= (innerWidth || document.documentElement.clientWidth)
-      && st.visibility !== 'hidden' && st.display !== 'none';
+    return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
   };
+  const inViewport = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.bottom >= 0 && r.right >= 0
+      && r.top <= (innerHeight || document.documentElement.clientHeight)
+      && r.left <= (innerWidth || document.documentElement.clientWidth);
+  };
+  const visible = (el) => rendered(el) && inViewport(el);
+  // <select>/<textarea> 的「当前值」读 DOM 即可、与是否在视口内无关(长表单里 Material 这类
+  // 属性常在 below-fold)。仅按是否渲染收录它们,避免读值落到 vision 把 multiselect 选项列表
+  // 的第一个当成选中值(WebArena task 185:Material multiselect 在 fold 下 → 误读 Burlap)。
+  const keepForRead = (el) => (el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') && rendered(el);
   const labelFromContainer = (el) => {
     const boxes = [
       el.closest('.admin__field'),
@@ -91,7 +99,7 @@ def form_controls_js() -> str:
   const seen = new Set();
   const selector = 'input,select,textarea,[role=combobox],[role=listbox]';
   for (const el of Array.from(document.querySelectorAll(selector))) {
-    if (seen.has(el) || !visible(el)) continue;
+    if (seen.has(el) || !(visible(el) || keepForRead(el))) continue;
     seen.add(el);
     if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'hidden') continue;
     const kind = kindOf(el);
@@ -114,9 +122,11 @@ def form_controls_js() -> str:
     if (isDatepicker) item.is_datepicker = true;
     if (el.tagName === 'SELECT') {
       const opts = Array.from(el.options || []);
-      const sel = el.selectedOptions && el.selectedOptions[0];
+      // 取「全部已选项」(multiple 时可能多选)而非仅第一个选中项,join 成可读文本;
+      // 多选属性(如 Material)否则只读到第一个选中值,漏掉其余。
+      const selOpts = Array.from(el.selectedOptions || []);
       item.value = cut(el.value, 80);
-      item.selected_text = cut(sel ? (sel.textContent || sel.label || sel.value) : '', 80);
+      item.selected_text = cut(selOpts.map(o => o.textContent || o.label || o.value).filter(Boolean).join(', '), 80);
       item.options = opts.map(o => cut(o.textContent || o.label || o.value, 80)).filter(Boolean).slice(0, 60);
     } else if (kind === 'selectmenu') {
       // selectmenu:value=input 显示值;options 从 .selectmenu-items 选项 button 文本抓

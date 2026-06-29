@@ -1152,6 +1152,54 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "注意：list_read 已在 19b63e5 移除，不再是有效 DSL op。"
                     f" top-level stmts={[type(s).__name__ for s in program.statements]}"
                 )
+        elif assertion == "shopping_admin_material_drills_parent_configurable":
+            # WebArena task 185 ("Give me the material of the products that have 3 units left",
+            # expected ["cotton","fleece"]). REVISED root cause (live REST + run 20260629_164903):
+            # this is a parent/child ENTITY problem, not a vision-read bug. The Qty=3 filter matches
+            # CHILD simple variants (qty lives on children; parent qty=0). Material is NOT a
+            # distinguishing attribute — it lives ONLY on the PARENT configurable (a multiselect),
+            # and is empty on the child. So a plan that just drills the qty-filtered (child) row
+            # reads an empty Material and loops. The correct plan must (a) filter Qty=3 (covered by
+            # products_qty_zero_uses_ui_filter_before_data_query), (b) foreach over the filtered
+            # variants, (c) for each, RESOLVE TO THE PARENT CONFIGURABLE — strip the -SIZE-COLOR
+            # suffix, keyword-search the base name in the Products grid, pick the Type=Configurable
+            # row — and read Material there (primary/first selected value only). See memory
+            # webarena-185-material-multiselect-read and knowledge _skill.md "按库存数量筛选产品".
+            seq = _flatten_runs(program.statements)
+            all_text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} {' '.join(r.returns or [])}"
+                for r in seq
+            ).lower()
+            reads_material = any(
+                any(m in f"{r.name} {r.read_spec} {' '.join(r.returns or [])}".lower()
+                    for m in ("material", "材质", "材料"))
+                for r in seq
+            )
+            if not reads_material:
+                details.append(
+                    "task 185 要读产品的 Material 属性，但计划里没有任何步骤读取 material/材质。"
+                    f" seq={[(r.kind, r.name, r.returns) for r in seq]}"
+                )
+            if not _has_foreach(program.statements):
+                details.append(
+                    "Material 不在 Products 网格默认列里，必须用 foreach 逐个过滤后产品处理 "
+                    "Material；当前计划没有 foreach。"
+                    f" top-level stmts={[type(s).__name__ for s in program.statements]}"
+                )
+            resolves_parent = any(
+                m in all_text
+                for m in (
+                    "configurable", "父产品", "父配置", "parent", "基名", "去后缀",
+                    "去 -size", "去掉后缀", "-size-color", "去掉 -size", "去除后缀",
+                )
+            )
+            if not resolves_parent:
+                details.append(
+                    "Material 只在父配置型产品上有值（按 qty 筛出的是子变体、Material 为空），"
+                    "计划必须从变体解析到父 configurable（去 -SIZE-COLOR 后缀搜基名 → 选 "
+                    "Type=Configurable 行）再读 Material，而非直接钻子变体详情页。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
         elif assertion == "filter_step_clears_residual_filters":
             # WebArena task 186 (live run 1 scored 0.0): Magento admin grid filters persist
             # server-side per admin account and leak across tasks. Task 186 ("products with
