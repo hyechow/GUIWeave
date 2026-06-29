@@ -13,13 +13,30 @@
     "table_summaries": [
       {
         "caption": "Reviews",
-        "headers": ["ID", "Created", "Status", "Title", "Nickname", "Review", "Visibility", "Type", "Product", "SKU", "Action"],
+        "headers": [
+          "ID",
+          "Created",
+          "Status",
+          "Title",
+          "Nickname",
+          "Review",
+          "Visibility",
+          "Type",
+          "Product",
+          "SKU",
+          "Action"
+        ],
         "row_count": 3,
         "partial": true
       }
     ],
     "resolution": [
-      {"mention": "Olivia zip jacket", "type": "product", "match_mode": "approximate", "search_key": "Olivia"}
+      {
+        "mention": "Olivia zip jacket",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key": "Olivia"
+      }
     ],
     "assertions": [
       "no_homepage_restart",
@@ -44,13 +61,30 @@
     "table_summaries": [
       {
         "caption": "Reviews",
-        "headers": ["ID", "Created", "Status", "Title", "Nickname", "Review", "Visibility", "Type", "Product", "SKU", "Action"],
+        "headers": [
+          "ID",
+          "Created",
+          "Status",
+          "Title",
+          "Nickname",
+          "Review",
+          "Visibility",
+          "Type",
+          "Product",
+          "SKU",
+          "Action"
+        ],
         "row_count": 3,
         "partial": true
       }
     ],
     "resolution": [
-      {"mention": "Olivia zip jacket", "type": "product", "match_mode": "approximate", "search_key": "Olivia"}
+      {
+        "mention": "Olivia zip jacket",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key": "Olivia"
+      }
     ],
     "assertions": [
       "uses_foreach_iteration",
@@ -58,5 +92,39 @@
       "has_finish"
     ],
     "note": "回归 logs/gui_agent/webarena/browser/20260622_211542：重排选对了钻取详情的正解，但 DSL 当时无迭代原语，只能把 3 条候选【手工展开】成一段超长扁平程序 → JSON 截断（line 96 char 2139）→ 降级后只处理第一条 review（347 rating=5 不符）就 finish → 空答案 NOT_FOUND（正确答案 emma/seam miller 在没被检查的 349/351 里）。本 case 用那次真实的 data_query 失败 directive + 经验 + 剩余，期望重排产出【通用迭代】：list_read 读候选行 → foreach 逐条打开详情读 rating+nickname（自动汇成表）→ data_query 在累积表上筛 rating<=3 → finish。一个 foreach 覆盖全部候选，不展开、不截断、不只读第一条。"
+  },
+  {
+    "label": "task 63 重排：不得规划 Export CSV/读文件等浏览器外路径（agent 是浏览器助手，无文件系统能力）",
+    "goal": "Get customer email(s) who completed the second most number of orders in the entire history",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin/sales/order/",
+    "current_title": "Orders / Operations / Sales / Magento Admin",
+    "corrective_directive": "执行按客户邮箱分组排名的 data_query 失败：数据源与任务意图不一致。任务要求查询 'entire history'（全量历史）中完成订单数排名第二的客户邮箱，但当前采集的表格数据存在严重口径问题：1) completed_orders 表缺少客户邮箱列（customer_email），无法按邮箱分组；2) Sales > Orders 列表页表格虽有客户姓名(bill_to_name)但无 email 字段，且 row_count=20、partial=true，是受分页限制的子集，非全量历史。当前数据源既不全量也不含目标字段。需要在浏览器界面能力范围内补齐：通过 Orders 网格的 Columns 控件启用 Customer Email 列后重新采集，或逐条钻取订单详情读邮箱；不得依赖浏览器外的能力。",
+    "prior_experience": "✓ 进入 Sales > Orders 订单列表页\n✓ 设置 Status = Complete 筛选（已应用，列表显示完成订单）\n✗ foreach body=[] 采集 completed orders + data_query 查 second-most（失败：Orders grid 默认列无 Customer Email，partial 不全量，无法按客户邮箱分组排名）",
+    "remaining_plan": "1. [data_query] 在 completed_orders 上按客户分组 count、DENSE_RANK 取第二档、返回 email —— 失败：表缺 email 列、partial\n2. [finish] 返回 second-most customer email",
+    "table_summaries": [
+      {
+        "caption": "Orders",
+        "headers": [
+          "ID",
+          "Purchase Date",
+          "Bill-to Name",
+          "Ship-to Name",
+          "Grand Total (Purchased)",
+          "Status",
+          "Action"
+        ],
+        "row_count": 20,
+        "partial": true
+      }
+    ],
+    "assertions": [
+      "no_offline_file_export",
+      "no_homepage_restart",
+      "has_finish"
+    ],
+    "note": "task 63 复盘 logs/gui_agent/webarena/browser/20260629_092711：data_query 失败（Orders grid 默认列无 Customer Email、partial 不全量），Feasibility-Guard kick-back 触发 redecompose，重排生成了『点击 Export 按钮 → 导出 CSV → 读文件』路径——agent 随后卡在 Export 按钮循环（下载不在 DOM 体现，判 no_effect → stuck），retry 耗尽失败。根因：agent 是浏览器操作助手，download CSV 之后无法读取本地文件——这是浏览器外的能力范畴，该路径从规划起就无效。本 case 校验 redecompose 不得生成依赖文件导出/读取的浏览器外路径，必须停留在浏览器内能力（Columns 启用 Customer Email 列重新采集、或 foreach 逐条钻取订单详情读邮箱）。与 task 113 重排 case 同构（都是 kick-back 后的剩余计划重排），新增 no_offline_file_export 维度。"
   }
 ]

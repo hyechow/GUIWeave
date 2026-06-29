@@ -85,6 +85,16 @@ _RESTART_MARKERS = (
 # control. The directive says to USE the already-found candidates, not re-search the product.
 _PRODUCT_RESEARCH_MARKERS = ("搜索产品", "搜索 产品", "按产品名", "重新搜索 olivia", "搜索 olivia zip jacket")
 
+# Browser agent has NO filesystem access. Planning "Export CSV/Excel → read the file" is an
+# invalid path: after download the agent cannot read the local file. Re-decompose must stay
+# within browser capabilities (grid columns / foreach drill / data_query). Regression
+# logs/gui_agent/webarena/browser/20260629_092711 (task 63): data_query failed (Orders grid has
+# no Customer Email column, partial), kick-back re-decompose planned "click Export → export CSV
+# → read file" — a dead path the browser agent cannot complete.
+_FILE_EXPORT_MARKERS = (
+    "export", "导出", "下载", "download", "csv", "excel", "读文件", "读取文件", "解析文件",
+)
+
 
 def _check_assertions(program, assertions: list[str]) -> list[str]:
     details: list[str] = []
@@ -102,6 +112,13 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             if hits:
                 details.append(
                     f"重排不得退回『按产品名重新搜索』的死路（纠正指令要求用已找到的候选逐条钻取）: {hits}"
+                )
+        elif assertion == "no_offline_file_export":
+            hits = [r.name for r in runs if any(m in r.name.lower() for m in _FILE_EXPORT_MARKERS)]
+            if hits:
+                details.append(
+                    f"重排不得规划浏览器外路径（导出/下载文件后读取——agent 是浏览器助手，无文件系统能力，"
+                    f"download 后无法读本地文件）: {hits}"
                 )
         elif assertion == "drills_detail_reads_rating":
             # The directive's route: open each review's DETAIL and read its rating (+ nickname).
