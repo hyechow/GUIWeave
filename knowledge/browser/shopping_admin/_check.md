@@ -25,6 +25,6 @@ version: 1
   - **Quantity 筛选验收只看 Active filters chip，不逐行比数值** ⚠️：Products 网格同时有 **Quantity**（库存）和 **Salable Quantity**（可售 = 库存 − 已预留）两列，后者数值常小于 Quantity。按 Quantity 筛选后，Active filters 出现 `Quantity: N - N` 且 records > 0 即筛选成功（`done`）。**不要因为某行 Salable Quantity < N 就否定筛选结果**——Salable Quantity 不是筛选条件，其值与 Quantity 不同是正常的（有预留订单时 Salable < Quantity）。
   - **数值筛选 chip 格式等价**：Magento 数值范围筛选的 Active filters chip 始终显示区间格式 `列名: X - X`（如 `Quantity: 3 - 3`），即使验收条件写作 `Quantity: 3`（单值写法）。`Quantity: N - N` 等同于 `Quantity: N` 精确匹配，两种写法都满足验收。
 - Orders grid 的 any-state / all orders 口径要求没有状态过滤。若可见 Active filters 中仍有 Status: Complete、Status: Pending 等状态过滤，不能判定为已准备好全状态数据源。
-- completed orders 口径必须有明确状态约束：界面过滤显示 Status = Complete，或后续 data_query 明确使用 `lower(status) = 'complete'`。仅在子目标名称里写 completed 不等于过滤已生效。
+- completed orders 口径必须有可在界面验证的状态约束：Active filters 显示 Status = Complete。仅在子目标名称里写 completed、而界面没有 Status=Complete 过滤，不等于口径已生效。
 - Dashboard 中 Top Search Terms 与 Last Search Terms 不是同一口径。询问 top / most-used search terms 时，只有标题为 Top Search Terms 的区块满足验收；Last Search Terms 只表示最近搜索词。
 - 订单邮箱数量聚合的最终证据必须包含 Customer Email 与订单状态/订单行数据。Customers grid 或 Customer Reports 若没有 Customer Email + 完整订单行，不能单独作为邮箱聚合任务的完成证据。

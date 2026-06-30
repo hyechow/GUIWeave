@@ -17,12 +17,12 @@ version: 1
 
 ## skill：订单邮箱数量聚合
 - 触发：customer email(s)、completed orders、any-state orders、most/second/fifth number of orders、have N orders
-- 数据：订单状态口径（关键）——判别看 intent 有没有 "completed"：含 `completed`（`who completed the most/second/Nth number of orders`、`who completed N orders`、`completed orders`）→ 按 **`Status = Complete`** 计数（WebArena 参考答案实测如此，task 63 坐实），第一步 `Clear all` 清残留后**只筛 Status=Complete**、采全量 Complete 行（约 155 行必须采全，否则个位计数名次乱）；字面 `any state`/只说 `have N orders`（task 64）→ **不筛 Status**、SQL 不写 status 谓词、`Clear all` 清掉所有残留筛选（含残留的 `Status: Complete`）后采全量。计数采集（关键）——foreach returns 必须采 `ID`+`Customer Email`+`Status` 三列；`ID` 是逐行唯一列(缺它会被按整行内容去重塌掉同客户多笔订单、计数全错),`Status` 一并采回供口径判定/复核。另需完整订单行
+- 数据：订单数据源 = Sales > Orders。**口径判别看 intent 有没有 "completed"**：含 `completed`（`who completed the most/second/Nth number of orders`、`who completed N orders`、`completed orders`）→ 按 **`Status = Complete`** 计数，先清残留筛选、只筛 Status=Complete 后采全量 Complete 行；字面 `any state` / 只说 `have N orders` → **不筛 Status**，清掉所有残留筛选（含残留的 `Status: Complete`）后采全量。**计数单位是「每一笔订单」**：同一客户的多笔订单是多笔、不能并成一笔，因此要采到订单的唯一标识（Orders grid 的 **ID** 列）以及 **Customer Email**、**Status**，否则同客户多笔订单会被并行折叠、人均计数偏小、排名错乱。
 - 步骤：
 1. 进入 Sales > Orders 订单数据源
-2. 按口径设状态约束：含 completed→Clear all 后只 Status=Complete；字面 any state→Clear all 后不筛
-3. foreach 采 ID + Customer Email + Status（ID 逐行唯一防去重塌缩）
-4. 按 Customer Email 聚合计数
+2. 按口径设状态约束：含 completed→清残留后只筛 Status=Complete；字面 any state→清残留后不筛状态
+3. 采全量订单行，含 Order ID（逐笔唯一）、Customer Email、Status
+4. 按 Customer Email 聚合订单数
 5. 输出满足排名或数量条件的邮箱
 
 ## skill：订单支付金额/最近 N 订单聚合
@@ -55,14 +55,12 @@ version: 1
 
 ## skill：按库存数量筛选产品并取某个属性（颜色/材质/尺码）
 - 触发：产品的颜色/材质/尺码、color/material/size of products、name and color、products with N units left 取某属性；凡是「按库存数量筛选产品、再取该产品某个属性」的任务
-- 数据：Products grid、Columns 控件、Quantity 范围筛选、产品编辑页属性字段。目标属性是否是网格可选列决定走哪条路：Products Columns 面板权威可选列（37 列，含 Color，**不含 Material/Size**）。读属性下拉的空值判定——select 未选中时 `selectedIndex=-1`，判为空，绝不把首项（如 Material 的 Burlap）当已选值。**属性来源按证据解析、不要预设路线**：Magento 产品属性可能挂在**产品自身**、也可能挂在其**父 Configurable 产品**上。一般规律（供判断「何时回退」，不是命令直奔父）：Quantity 在简单变体上；**Size/Color 是配置型「区分属性」、设在每个变体自己身上**（变体名后缀 -SIZE-COLOR 即来源，变体详情页可直接读到，如 1182=S、1478=XS）；**Material 在本数据集里常由 Configurable 父产品承载**、按 qty 筛出的变体自身 Material 多为空（`selectedIndex=-1`）。因此通用做法 = **逐行先在产品自身读目标属性；仅当自身为空、且 SKU 呈变体后缀**，才 fallback 去读父产品（**保护条件：自身非空就用自身、绝不去父覆盖它**）。父 fallback 路径：从 SKU 去 `-SIZE-COLOR` 后缀得父 SKU（如 `WH11-S-Blue → WH11`、`WS08-XS-Blue → WS08`），清掉 Quantity/Keyword 残留后在 Products 顶部 **Search by keyword 搜父 SKU**，结果首屏常先出现 simple variants，要滚动/查看完整结果，最终以 `SKU=父SKU` 且 `Type=Configurable Product` 验证父行（父产品 Quantity 显示 0）→ 打开读 Material。不要用产品名/品牌词替代父 SKU；名称搜索会命中同系列 simple variants，父产品 identity 仍是 SKU。**Material 是 multiselect 多选**：父产品常含多个材质（Cotton+Lycra®、Fleece+Polyester+Spandex），本类任务取**主材质 = 第一个已选项**（`value`/首个 selectedOption，如 Cotton、Fleece），不要把全部已选项都报（评测对多出的值判 Extra→失败）。
-  细节：非网格属性函数 `resolve_product_material(sku, product_url)` 先 `navigation var=self_d returns=['material']` 打开 `{product_url}` 直达该 SKU 自身详情读属性。详情读完用浏览器返回 Products 列表；`if self_d[material] exists` 则用自身并 `source_kind='self'`。否则 `compute base_sku=sku.rsplit('-',2)[0]`，在 Products 顶部 keyword 搜 `{base_sku}`，选 `SKU={base_sku}` 且 `Type=Configurable Product` 的父产品，打开后读父 Material，返回搜索结果列表，并 `source_kind='parent'`。fallback 搜父会改变列表状态，所以自身读取必须用行内 URL，不要依赖“当前 qty=N 列表点行”；Material 读取 run 的验收只需确认进入对应 SKU 编辑页，具体字段值由 returns/read_spec 读取。
+- 数据：Products grid、Columns 控件、Quantity 范围筛选、产品编辑页属性字段。目标属性是否是 grid 可选列决定走哪条路——Products Columns 面板可选列含 **Color**，**不含 Material / Size**。Magento 产品属性可能挂在**产品自身**，也可能挂在其**父 Configurable 产品**上：Size/Color 是配置型「区分属性」、设在每个变体自身（变体名后缀 `-SIZE-COLOR` 即来源，变体编辑页可直接读到）；**Material 在本数据集常由 Configurable 父产品承载**，按 qty 筛出的简单变体自身 Material 多为空值。父产品的 identity 是 **SKU**（= 变体 SKU 去掉 `-SIZE-COLOR` 后缀，如 `WS08-XS-Blue → WS08`）且 **Type = Configurable Product**，不是产品名——按名称搜会命中同系列变体。**Material 是 multiselect 多选属性**，父产品常含多个材质（如 Cotton+Lycra®、Fleece+Polyester+Spandex）；当任务问「该产品的材质」（单数）时，答案取**主材质 = 首个已选材质**。
 - 步骤：
-1. 进入 Products；清筛并按 Quantity=N 精确筛选
-2. 判断目标属性是否为 Columns 面板可选列
-3. 是网格列（如 Color）：启用该列后 foreach 网格直采
-4. 非网格属性：采 SKU+URL，自身空则按父 SKU 搜父
-5. data_query 查 into 表，过滤 material 非空、去重输出（每个产品只取主材质）
+1. 进入 Products，清除残留筛选，按 Quantity 精确筛选出候选产品
+2. 目标属性是 grid 可选列（如 Color）→ 启用该列后直接从 grid 读
+3. 目标属性不在 grid（如 Material）→ 逐个候选产品读取：先在**产品自身**编辑页读该属性；**仅当自身为空**才按父 SKU（去 `-SIZE-COLOR` 后缀）搜出 `Type=Configurable Product` 的父产品、读其属性（自身非空就用自身，不去父覆盖）
+4. 汇总各产品属性，过滤空值、去重输出；Material 取主材质
 
 ## skill：按电话号查客户
 - 触发：phone number、电话号查客户、find customer with phone、customer name/email/与电话相关的客户查找
