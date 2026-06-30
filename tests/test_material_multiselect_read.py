@@ -14,7 +14,8 @@ highlighted). Both products' reads fell to VISION, which is inconsistent:
 Fix direction: the native-select DOM value is authoritative and must win — the primary material is
 the FIRST SELECTED option (from selectedOptions / selected_text), never the first listed option, and
 never a vision guess. These tests pin that invariant on the DOM read path (`_read_from_form_controls`).
-A present-but-unselected multiselect must read "" (→ re-locate/kickback), NOT the first option.
+A present-but-unselected multiselect must read "" so the program can branch/fail honestly, NOT guess
+the first option.
 """
 
 from gui_agent.adapters.browser.page_read import _read_from_form_controls
@@ -48,8 +49,8 @@ def test_wh11_primary_material_is_first_selected_option():
 
 
 def test_unselected_multiselect_reads_empty_not_first_option():
-    # Nothing selected → "" (caller treats empty as not-found → re-locate/kickback). Must NOT fall
-    # back to the first listed option (Burlap) — that is exactly the WS08 vision misread.
+    # Nothing selected → "". Must NOT fall back to the first listed option (Burlap) — that is
+    # exactly the WS08 vision misread.
     out = _read_from_form_controls([_material_control("")], ["material"])
     assert out == {"material": ""}
     assert out["material"] != "Burlap"
@@ -72,10 +73,11 @@ def test_handoff_read_returns_primary_of_multiselect():
     assert read_form_control_returns(fc, ["material"]) == {"material": "Fleece"}
 
 
-def test_handoff_read_skips_empty_and_missing_for_vision_fallback():
-    # Empty selection or no matching control → field omitted, so the caller vision-reads it (and
-    # iPhone/Android, which have no form_controls, fall straight to vision — unchanged).
-    assert read_form_control_returns([_material_control("")], ["material"]) == {}
+def test_handoff_read_returns_empty_native_select_without_vision_fallback():
+    # A matched-but-unselected native select is an authoritative empty value. It must not be
+    # omitted, because omission tells the caller to vision-read the option list; that is how the
+    # live bad case picked Burlap, the first listed option.
+    assert read_form_control_returns([_material_control("")], ["material"]) == {"material": ""}
     assert read_form_control_returns(None, ["material"]) == {}
     assert read_form_control_returns([{"kind": "native_select", "label": "Status",
                                        "selected_text": "Complete"}], ["material"]) == {}

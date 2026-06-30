@@ -78,6 +78,42 @@ MAX_EMPTY_RETURN_RECOVERIES = 3  # 返回字段为空时，最多把当前 UI ru
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
 
 
+_EMPTY_RETURN_OK_CUES = (
+    "留空",
+    "未选中",
+    "selectedindex=-1",
+    "unselected",
+    "no selection",
+    "empty allowed",
+    "allow empty",
+)
+
+
+def _compact_text(text: str) -> str:
+    return "".join(ch.lower() for ch in str(text or "") if not ch.isspace())
+
+
+def _read_spec_fragments(text: str) -> list[str]:
+    spec = str(text or "")
+    for sep in ("；", ";", "\n", "。"):
+        spec = spec.replace(sep, "\n")
+    return [frag.strip() for frag in spec.splitlines() if frag.strip()]
+
+
+def _ui_return_field_allows_empty(run: object, field: str) -> bool:
+    """Whether this return field explicitly treats blank as a valid value."""
+    field_key = _compact_text(field)
+    if not field_key:
+        return False
+    for fragment in _read_spec_fragments(getattr(run, "read_spec", "") or ""):
+        compact = _compact_text(fragment)
+        if field_key not in compact:
+            continue
+        if any(_compact_text(cue) in compact for cue in _EMPTY_RETURN_OK_CUES):
+            return True
+    return False
+
+
 def _missing_ui_return_fields(run: object, reads: dict[str, str]) -> list[str]:
     """Return UI-run fields that were declared but not actually read.
 
@@ -92,8 +128,12 @@ def _missing_ui_return_fields(run: object, reads: dict[str, str]) -> list[str]:
         return []
     missing: list[str] = []
     for field in getattr(run, "returns", []):
-        if not str(reads.get(str(field), "")).strip():
-            missing.append(str(field))
+        field_name = str(field)
+        if str(reads.get(field_name, "")).strip():
+            continue
+        if field_name in reads and _ui_return_field_allows_empty(run, field_name):
+            continue
+        missing.append(field_name)
     return missing
 
 
@@ -454,10 +494,10 @@ def run_agent_loop(
 
             # DOM-first: a native <select>'s selected value is authoritative over a vision guess
             # (live 185: vision read the first LISTED option Burlap instead of the selected Cotton;
-            # the DOM form control carries the real selection). Vision fills only the fields the DOM
-            # didn't resolve — iPhone/Android have no form_controls so this is a no-op there.
+            # the DOM form control carries the real selection). An unselected native select is also
+            # authoritative empty, not "missing"; vision fills only fields the DOM did not match.
             dom_reads = read_form_control_returns(getattr(observation, "form_controls", None), returns)
-            missing = [f for f in returns if not str(dom_reads.get(f, "")).strip()]
+            missing = [f for f in returns if f not in dom_reads]
             if not missing:
                 _say(f"  [Orchestrator] DOM 表单返回读取 {returns} → {dom_reads}")
                 return dom_reads

@@ -520,6 +520,34 @@ def test_missing_ui_return_fields_blocks_empty_action_returns():
     assert _missing_ui_return_fields(run, {"stars_count": "123", "contributors_count": "42"}) == []
 
 
+def test_missing_ui_return_fields_allows_explicit_empty_select_value():
+    from gui_agent.core.run.loop import _missing_ui_return_fields
+
+    run = Run(
+        var="self_d",
+        name="打开产品详情页读 Material",
+        kind="navigation",
+        returns=["material"],
+        read_spec="material：该产品自身 Material 主材质（首个已选项的 value），未选中(selectedIndex=-1)则留空",
+    )
+
+    assert _missing_ui_return_fields(run, {"material": ""}) == []
+
+
+def test_missing_ui_return_fields_scopes_empty_allowance_to_the_field():
+    from gui_agent.core.run.loop import _missing_ui_return_fields
+
+    run = Run(
+        var="probe",
+        name="触发检测并读取结果",
+        kind="action",
+        returns=["是否可达", "不可达原因"],
+        read_spec="是否可达：绿色判为可达，红色判为不可达；不可达原因：可达时留空，不可达时读错误提示",
+    )
+
+    assert _missing_ui_return_fields(run, {"是否可达": "", "不可达原因": ""}) == ["是否可达"]
+
+
 def test_missing_ui_return_fields_ignores_non_ui_reads():
     from gui_agent.core.run.loop import _missing_ui_return_fields
 

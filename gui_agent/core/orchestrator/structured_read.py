@@ -41,8 +41,10 @@ def read_form_control_returns(
     Material), never the numeric option id and never the first *listed* option (the WS08 vision
     misread that returned Burlap instead of the selected Cotton).
 
-    Returns only the fields that matched a control AND read a non-empty value — the caller fills any
-    remaining fields from vision. Empty/None form_controls (iPhone/Android) → {} → pure vision, as
+    Returns native-select fields once a matching control is found, even when the selected value is
+    empty: an unselected ``<select multiple>`` is an authoritative empty value, not a cue to guess
+    from the option list. Other empty controls are omitted so the caller can still try vision for
+    fields that were not resolved. Empty/None form_controls (iPhone/Android) → {} → pure vision, as
     before. Matching is exact-normalized label, else a substring containment either way."""
     if not form_controls:
         return {}
@@ -65,9 +67,10 @@ def read_form_control_returns(
         if (best.get("kind") or "") == "native_select":
             selected = best.get("selected_text") or ""
             value = selected.split(",")[0].strip() if selected else ""
+            out[field] = value
         else:
             value = str(best.get("selected_text") or best.get("value") or "")
-        if str(value).strip():
+        if (best.get("kind") or "") != "native_select" and str(value).strip():
             out[field] = value
     return out
 

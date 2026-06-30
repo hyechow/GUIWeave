@@ -235,7 +235,8 @@ def _read_from_form_controls(
             # task 185 Material). The primary value is the FIRST selected option — never the numeric
             # option id in `value`, and never the first *listed* option (the WS08 vision misread that
             # returned Burlap instead of the selected Cotton). selected_text joins all selected with
-            # ", "; an empty selection reads "" so the caller re-locates instead of guessing.
+            # ", "; an empty selection reads "" so callers can branch/fail honestly instead of
+            # guessing.
             selected = best.get("selected_text") or ""
             value = selected.split(",")[0].strip() if selected else ""
         else:
