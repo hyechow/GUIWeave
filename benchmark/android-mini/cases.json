@@ -189,6 +189,93 @@
     "note": "MastodonPostPollTask 粗粒度 mini 第 3 段：初始化脚本预填完整 poll 并给正文加本次运行 marker，任务只测发布动作；发布后用 Mastodon 数据库验证 #vote2025、三位候选人、多选和一周时长。"
   },
   {
+    "label": "mastodon-mm-notice-read-source",
+    "layer": "MastodonMattermostPostNoticeTask / step 1 source notice",
+    "goal": "当前在 Mattermost。请找到 announcement 频道里 mike 发的 Security announcement，并直接告诉我公告原文。",
+    "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
+    "init_script": "benchmark/android-mini/init/open_mattermost_notice.sh",
+    "init_env": {
+      "ANDROID_MINI_HTTP_PROXY": "off",
+      "ANDROID_MINI_START_MATTERMOST_BACKEND": "1",
+      "ANDROID_MINI_RESET_MATTERMOST_BACKEND": "1"
+    },
+    "init_settle_s": 8,
+    "init_timeout_s": 180,
+    "max_turns": 8,
+    "timeout_s": 360,
+    "expected_output_contains_all": [
+      "Security: rotated API keys; check 1Password vault for updated entries."
+    ],
+    "note": "MastodonMattermostPostNoticeTask 第 1 段：init 重置并启动 Mattermost,验证 announcement 频道存在 mike 的 Security 公告后打开 Mattermost；任务只测 agent 能否进入/定位 announcement 频道并读出原文,不进入 Mastodon。"
+  },
+  {
+    "label": "mastodon-mm-notice-compose-post",
+    "layer": "MastodonMattermostPostNoticeTask / step 2 Mastodon post",
+    "goal": "当前在 Mastodon 新帖撰写页。请发布这条公告，并设置为仅关注者可见，同时 @openCompany：Security: rotated API keys; check 1Password vault for updated entries.",
+    "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
+    "init_script": "benchmark/android-mini/init/open_mastodon_notice_compose.sh",
+    "init_env": {
+      "ANDROID_MINI_HTTP_PROXY": "off",
+      "ANDROID_MINI_START_MASTODON_BACKEND": "1",
+      "ANDROID_MINI_RESET_MASTODON_BACKEND": "1",
+      "ANDROID_MINI_STATUS_MARKER_FILE": "/tmp/android-mini-mastodon-notice-status-marker.txt"
+    },
+    "init_settle_s": 4,
+    "init_timeout_s": 240,
+    "max_turns": 10,
+    "timeout_s": 420,
+    "verify_script": "benchmark/android-mini/verify/verify_mastodon_notice_post.sh",
+    "verify_env": {
+      "ANDROID_MINI_STATUS_MARKER_FILE": "/tmp/android-mini-mastodon-notice-status-marker.txt"
+    },
+    "verify_timeout_s": 60,
+    "note": "第 2 段：init 重置 Mastodon,记录 test 用户当前最大 status id,并直接打开空白 compose 页；任务只测输入公告、添加 @openCompany、设为 followers-only 并发布。DB 验证运行后新 status 包含原公告、visibility=2、mentions 精确为 openCompany。"
+  },
+  {
+    "label": "mastodon-mm-notice-full-sync",
+    "layer": "MastodonMattermostPostNoticeTask / full handoff",
+    "goal": "请把 Mattermost 的 announcement 频道里 mike 发的 Security announcement 同步到 Mastodon，保持公告原文不变，设置为仅关注者可见，并同时 @openCompany。",
+    "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
+    "init_script": "benchmark/android-mini/init/open_mattermost_notice.sh",
+    "init_env": {
+      "ANDROID_MINI_HTTP_PROXY": "off",
+      "ANDROID_MINI_START_MATTERMOST_BACKEND": "1",
+      "ANDROID_MINI_RESET_MATTERMOST_BACKEND": "1",
+      "ANDROID_MINI_START_MASTODON_BACKEND": "1",
+      "ANDROID_MINI_RESET_MASTODON_BACKEND": "1",
+      "ANDROID_MINI_STATUS_MARKER_FILE": "/tmp/android-mini-mastodon-notice-status-marker.txt"
+    },
+    "init_settle_s": 8,
+    "init_timeout_s": 360,
+    "max_turns": 16,
+    "timeout_s": 720,
+    "verify_script": "benchmark/android-mini/verify/verify_mastodon_notice_post.sh",
+    "verify_env": {
+      "ANDROID_MINI_STATUS_MARKER_FILE": "/tmp/android-mini-mastodon-notice-status-marker.txt"
+    },
+    "verify_timeout_s": 60,
+    "note": "完整 handoff mini：init 同时重置 Mattermost/Mastodon,确认 Mattermost source 存在并记录 Mastodon status 基线,然后从 Mattermost 开始。通过 DB 验证新 Mastodon status 包含原公告、followers-only(visibility=2)、且 mention 集合精确为 openCompany。"
+  },
+  {
+    "label": "mastodon-list-navigate-to-manage",
+    "layer": "MastodonManageMultiListTask / step 0",
+    "goal": "当前在 Mastodon 的 Home 时间线页面。请进入 Lists 页面（显示已有列表、Create list 和 Manage lists 选项）。",
+    "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
+    "init_script": "benchmark/android-mini/init/open_mastodon.sh",
+    "init_env": {
+      "ANDROID_MINI_HTTP_PROXY": "off",
+      "ANDROID_MINI_START_MASTODON_BACKEND": "1",
+      "ANDROID_MINI_MASTODON_LIST_STATE": "open-created",
+      "ANDROID_MINI_MASTODON_LIST_ENTRY": "none"
+    },
+    "init_settle_s": 5,
+    "max_turns": 6,
+    "timeout_s": 240,
+    "expected_text_contains_all": ["Create list", "Manage lists"],
+    "verify_timeout_s": 60,
+    "note": "MastodonManageMultiListTask 第 0 步(导航前置 = 完整任务 View my lists)。其余 5 个 mini 用 ENTRY=manage 由 init 替 agent 完成导航;此 case 用 ENTRY=none(init 只启动 app 落在 Home),由 agent 自己 Home 下拉 → Lists 导航。用 UI 文本(Create list + Manage lists)验证到达 Lists 页,不查 DB(导航不改 list 状态)。这条会复现 mobileworld 完整任务卡在 Home 下拉 → Lists 的浮层 tap(logs/.../mobileworld/android/20260630_185253),修后转 PASS。"
+  },
+  {
     "label": "mastodon-list-cleanup",
     "layer": "MastodonManageMultiListTask / step 1",
     "goal": "当前在 Mastodon 的 Manage lists 页面。帮我把 old-cute 和 old-open 这两个旧 list 都删掉。",

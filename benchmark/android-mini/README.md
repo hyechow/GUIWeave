@@ -33,6 +33,12 @@ Mastodon list 类 case 使用 `benchmark/android-mini/init/open_mastodon.sh` 的
 用户加入 list，然后用 DB 精确验证。对应结果用
 `benchmark/android-mini/verify/verify_mastodon_lists.sh` 查 Mastodon DB 精确验证。
 
+MastodonMattermostPostNoticeTask 拆成 Mattermost source-read、Mastodon compose/post、
+以及跨 app full-sync 三段。`open_mattermost_notice.sh` 会重置 Mattermost 并确认
+announcement 频道里 mike 的 Security 公告存在；需要发帖的 case 会记录运行前 `test`
+用户的最大 Mastodon status id，再由 `verify_mastodon_notice_post.sh` 只验证本次运行后
+新增的 status，避免旧数据误判。
+
 ## Cases
 
 | label | layer | goal | assertion |
@@ -44,6 +50,10 @@ Mastodon list 类 case 使用 `benchmark/android-mini/init/open_mastodon.sh` 的
 | mastodon-postpoll-search-winners | MastodonPostPollTask / step 1 | 从 Google 搜索结果页读取 2025 Nobel Prize in Economics 三位获奖者。 | 最终输出必须包含 `Joel Mokyr`、`Philippe Aghion`、`Peter Howitt` |
 | mastodon-postpoll-compose-settings | MastodonPostPollTask / step 2 | 在已打开的 Mastodon poll compose 面板里填三位获奖者，并设置 `1 week` / 多选。 | 当前 UI 必须同时显示 `#vote2025`、三个人名、`1 week`、`Multiple choice`；不发布 |
 | mastodon-postpoll-publish | MastodonPostPollTask / step 3 | 从已填好的 Mastodon poll compose 页发布投票。 | 后端数据库必须存在本次 marker 的 `#vote2025` poll，且包含三个人名、`multiple=true`、约 1 周过期 |
+| mastodon-mm-notice-read-source | MastodonMattermostPostNoticeTask / step 1 | 当前在 Mattermost。找到 announcement 频道里 mike 的 Security announcement，并说出公告原文。 | 最终输出必须包含原文 `Security: rotated API keys; check 1Password vault for updated entries.` |
+| mastodon-mm-notice-compose-post | MastodonMattermostPostNoticeTask / step 2 | 当前在 Mastodon 新帖撰写页。发布指定公告，设置 followers-only，并 `@openCompany`。 | DB 验证运行后新增 toot 包含原公告、`visibility=2`、mention 精确为 `openCompany` |
+| mastodon-mm-notice-full-sync | MastodonMattermostPostNoticeTask / full handoff | 从 Mattermost announcement 频道读取 mike 的 Security announcement 并同步到 Mastodon。 | DB 验证运行后新增 toot 包含原公告、`visibility=2`、mention 精确为 `openCompany` |
+| mastodon-list-navigate-to-manage | MastodonManageMultiListTask / step 0 | 当前在 Mastodon 的 Home 时间线。进入 Lists 页面（显示已有列表、`Create list` 和 `Manage lists`）。 | `ENTRY=none`(init 只启动 app)，agent 自己 Home→Lists 导航；UI 文本验证(`Create list`+`Manage lists`)，不查 DB |
 | mastodon-list-cleanup | MastodonManageMultiListTask / step 1 | 当前在 Mastodon 的 Manage lists 页面。帮我把 `old-cute` 和 `old-open` 这两个旧 list 都删掉。 | init 先创建 `old-open`/`old-cute` 脏状态；DB 验证 `test` 用户 list 为空 |
 | mastodon-list-open-create | MastodonManageMultiListTask / step 2 | 当前在 Mastodon 的 Manage lists 页面。帮我新建一个叫 `open` 的 list，回复显示范围设成我关注的人。 | DB 验证 `open` 存在、`replies_policy=1`、`exclusive=false`、成员为空 |
 | mastodon-list-open-add-members | MastodonManageMultiListTask / step 3 | 当前在 Mastodon 的 Manage lists 页面。帮我把 `openCompany` 和 `openUniversity` 加到 `open` list 里。 | init 预置空 `open`；DB 验证成员精确为 `openCompany`、`openUniversity` |
