@@ -96,6 +96,9 @@ def test_target_label_extracts_unquoted_browser_menu_labels():
     from gui_agent.adapters.browser.executor import _target_label
 
     assert _target_label("点击左侧导航栏 Sales 菜单下的 Orders 选项") == "Orders"
+    # 子菜单项 suffix: 子-prefixed forms must be matched so text-retarget can rescue an adjacent-menu
+    # miss (live 185: "Catalog 菜单下的 Products 子菜单项" snapped to the neighbouring Categories link).
+    assert _target_label("点击左侧导航栏 Catalog 菜单下的 Products 子菜单项") == "Products"
     assert _target_label("点击左侧导航栏中的 Sales 菜单") == "Sales"
     assert _target_label("点击 Filters 按钮以展开筛选条件区域") == "Filters"
     assert _target_label("点击弹窗中的「取消」按钮") == "取消"

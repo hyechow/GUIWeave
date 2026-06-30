@@ -49,10 +49,14 @@ _DATEPICKER_SET_JS = """(() => {{
 
 # Quoted UI label in an action description: 「操作」 / 『确定』 / "取消" / '编辑'.
 _QUOTE_RE = re.compile(r"[「『\"']([^「」『』\"']{1,8})[」』\"']")
+# Suffix must list 子菜单项/子菜单 BEFORE 菜单项/菜单: the engine tries alternatives left-to-right at
+# the SAME position, and for "Products 子菜单项" the text starts with 子, so 菜单项 fails there — without
+# the 子-prefixed forms _target_label returns "" and text-retarget can't rescue an adjacent-menu miss
+# (live 185: "Catalog 菜单下的 Products 子菜单项" snapped to the neighbouring Categories link).
 _INLINE_EN_LABEL_RE = re.compile(
     r"(?:菜单下的|子菜单中的|下的|中的|内的)\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*"
-    r"(?:选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
-    r"|点击\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*(?:选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
+    r"(?:子菜单项|子菜单|选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
+    r"|点击\s*([A-Z][A-Za-z0-9 &_-]{1,40})\s*(?:子菜单项|子菜单|选项|菜单项|菜单|按钮|链接|复选框|checkbox)"
 )
 _RANGE_FIELD_LABEL_RE = re.compile(
     # The from/to/min/max qualifier must be a SEPARATE word (space before, non-letter after) —
