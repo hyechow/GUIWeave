@@ -5,5 +5,12 @@
     "goal": "帮我看下当前打开的这个 GitHub 仓库现在有多少 stars 和 contributors，直接告诉我两个数字。",
     "assertions": ["no_hardcoded_api_entity", "has_read_step"],
     "note": "回归 20260626_204339(android-mini github-repo-info 真机跑):decomposer 想走 api.github.com/repos/google-research/android_world(从训练记忆搬 owner/repo = 幻觉),被 7cd0c10 导航身份强制降级成纯 navigation,agent 退化视觉翻 google-research 的 349 仓库 12 轮失败,完全没用上 API/read_screen_text。通用策略:API 访问必须 result-then-reference——先 read 地址栏真实 URL 提取 owner/repo,再用 {var} 构造 api URL 模板(api.github.com/repos/{u[owner]}/{u[repo]}),不许 decomposer 凭记忆硬写具体实体。URL 模板是通用知识(非幻觉),owner/repo 来自运行时(非幻觉)。assertion: no_hardcoded_api_entity(api URL 不硬写实体)+ has_read_step(有带 returns 的读数 step,防纯 navigation 退化)。"
+  },
+  {
+    "label": "mastodon-list-cleanup-多步删除不能降级为找页(回归 20260629_164945)",
+    "screenshot": "evals/android/orchestrator/screenshots/mastodon_list_cleanup_init_20260629.png",
+    "goal": "当前在 Mastodon 的 Manage lists 页面。帮我把 old-cute 和 old-open 这两个旧 list 都删掉。",
+    "assertions": ["has_delete_steps", "no_nav_only_degradation"],
+    "note": "回归 20260629_164945(android-mini mastodon-list-cleanup 真机跑):decomposer 两次重试后仍「缺少可靠目标身份约束」,降级为 navigation run,只生成「到达页面」语句。supervisor 看到页面到了就判完成,实际没执行删除。日志显示 attempts 生成了正确的删除步骤(点击 More options → Delete list → 确认),但校验失败原因是「returns 没绑定 var」和「deletion_results 未产生」。问题:删除是会改变状态的操作,不应降级为找页;多步操作需要聚合结果,但 returns→var 绑定机制不完整。assertion: has_delete_steps(包含删除动作步骤) + no_nav_only_degradation(不降级为纯 navigation)。"
   }
 ]
