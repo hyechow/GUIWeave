@@ -390,7 +390,7 @@ class PlaywrightDevice:
         if self._cdp is None or self._net_session is self._cdp:
             return
         try:
-            self._cdp.send("Network.enable", {})
+            self._timed_cdp_send(self._cdp, "Network.enable", {})
 
             def _on_req(p):
                 if p.get("type") in ("XHR", "Fetch"):
@@ -406,7 +406,11 @@ class PlaywrightDevice:
             self._cdp.on("Network.loadingFailed", _on_done)
             self._net_session = self._cdp
         except Exception:
-            self._net_session = None
+            # Network tracking is an optimization for settle. If enabling it hangs/fails, mark this
+            # session as handled so wait_settled degrades to DOM/readyState instead of retrying the
+            # same failing Network.enable on every poll.
+            self._net_session = self._cdp
+            self._xhr_ids.clear()
 
     def wait_settled(self, action_type: Optional[str] = None) -> tuple[float, bool]:
         """Wait until the page is settled using CDP signals (not pixel diffing). Returns
