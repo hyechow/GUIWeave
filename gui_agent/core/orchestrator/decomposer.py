@@ -269,15 +269,16 @@ def _to_functions(drafts: list["_FunctionDraft"]) -> list[FunctionDef]:
 
 
 def to_program(draft: _PlanDraft, goal: str) -> Program:
-    # lazy: engine→runner→… avoids an import cycle here. Insert loop-entry arrivals BEFORE chaining
-    # so the inserted arrival participates in FROM[i] := TO[i-1].
-    from .engine import chain_from_states, insert_loop_entry_arrivals
+    # lazy: engine→runner→… avoids an import cycle here. Run AST compiler normalizations before
+    # loop-entry arrivals, then chain from_state so inserted/normalized runs participate in
+    # FROM[i] := TO[i-1].
+    from .engine import chain_from_states, collapse_foreach_enrichment_passes, insert_loop_entry_arrivals
 
-    return chain_from_states(insert_loop_entry_arrivals(Program(
+    return chain_from_states(insert_loop_entry_arrivals(collapse_foreach_enrichment_passes(Program(
         goal=draft.goal or goal,
         statements=_to_stmts(draft.steps),
         functions=_to_functions(getattr(draft, "functions", []) or []),
-    )))
+    ))))
 
 
 
@@ -729,4 +730,3 @@ def _schema_typed_shadow_candidates(headers: list[Any], columns: list[str]) -> l
         if any(hint in text for hint in numeric_hints):
             shadows.append(f"{column}_num")
     return shadows[:24]
-

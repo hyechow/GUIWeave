@@ -27,6 +27,7 @@ from .runner import (
 )
 from .engine import (
     chain_from_states,
+    collapse_foreach_enrichment_passes,
     insert_loop_entry_arrivals,
     normalize_confirm_read_gates,
     normalize_precondition_gates,
@@ -40,5 +41,5 @@ __all__ = [
     "ValidationIssue", "IssueList",
     "estimate_program_turns",
     "normalize_confirm_read_gates", "normalize_precondition_gates", "chain_from_states",
-    "insert_loop_entry_arrivals",
+    "collapse_foreach_enrichment_passes", "insert_loop_entry_arrivals",
 ]

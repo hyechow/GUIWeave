@@ -264,6 +264,78 @@ def test_validator_flags_dead_conditional_in_function():
     assert validate_program(_prog(_fn("self_d"))) == []            # bound → no issue
 
 
+def test_validator_accepts_function_returns_in_foreach_table_query():
+    # Typed capability chain: foreach collects the row key, call resolves a detail field, and the
+    # function's declared returns become columns in the foreach into table for data_query.
+    from gui_agent.core.orchestrator import validate_program
+
+    program = Program(
+        goal="返回逐行详情字段",
+        functions=[FunctionDef(name="resolve", params=["sku"], returns=["material"], body=[
+            Run(kind="navigation", var="d", returns=["material"], read_spec="读 material",
+                name="打开 SKU={sku} 的详情页并读取 material"),
+        ])],
+        statements=[
+            ForEach(var="row", into="out", returns=["SKU"], body=[
+                Call(func="resolve", args={"sku": "{row[SKU]}"}, var="m"),
+            ]),
+            Run(kind="data_query", var="q", returns=["material"], name="去重 material",
+                sql="SELECT DISTINCT material FROM out"),
+            Finish(message="{q[material]}"),
+        ],
+    )
+
+    assert validate_program(program) == []
+
+
+def test_validator_checks_call_args_against_current_row_contract():
+    # Live 185 shape guard: a second foreach that only declares material cannot call a function with
+    # {row[SKU]} / {row[Action_url]}; those fields are not in that loop row contract.
+    from gui_agent.core.orchestrator import validate_program
+
+    program = Program(
+        goal="返回逐行详情字段",
+        functions=[FunctionDef(name="resolve", params=["sku"], returns=["material"], body=[
+            Run(kind="navigation", var="d", returns=["material"], read_spec="读 material",
+                name="打开 SKU={sku} 的详情页并读取 material"),
+        ])],
+        statements=[
+            ForEach(var="row", into="out", returns=["material"], body=[
+                Call(func="resolve", args={"sku": "{row[SKU]}"}, var="m"),
+            ]),
+        ],
+    )
+
+    issues = validate_program(program)
+    assert "TEMPLATE_FIELD_NOT_IN_RETURNS" in {i.code for i in issues}
+
+
+def test_validator_allows_row_url_capability_when_passed_and_used():
+    from gui_agent.core.orchestrator import validate_program
+
+    program = Program(
+        goal="逐行打开详情读字段",
+        functions=[FunctionDef(name="resolve", params=["sku", "detail_url"], returns=["material"], body=[
+            Run(kind="navigation", var="d", returns=["material"], read_spec="读 material",
+                name="打开 {detail_url}，进入 SKU={sku} 的详情页并读取 material"),
+        ])],
+        statements=[
+            ForEach(var="row", into="out", returns=["SKU", "Action_url"], body=[
+                Call(
+                    func="resolve",
+                    args={"sku": "{row[SKU]}", "detail_url": "{row[Action_url]}"},
+                    var="m",
+                ),
+            ]),
+            Run(kind="data_query", var="q", returns=["material"], name="去重 material",
+                sql="SELECT DISTINCT material FROM out"),
+            Finish(message="{q[material]}"),
+        ],
+    )
+
+    assert validate_program(program) == []
+
+
 def test_function_callable_from_main_not_loop_bound():
     # Functions are decoupled from loops — callable directly from main.
     program = Program(

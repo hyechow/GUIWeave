@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from gui_agent.core.orchestrator.program import Cond, Finish, ForEach, If, Program, Run
+from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Run
 from gui_agent.core.orchestrator.validator import ALL_CODES, IssueList, ValidationIssue, validate_program
 
 _VALIDATOR_SRC = Path("gui_agent/core/orchestrator/validator.py")
@@ -80,6 +80,21 @@ SAMPLES: dict[str, Program] = {
     ]),
     "RETURNS_WITHOUT_VAR": Program(statements=[Run(name="点击", kind="action", returns=["a"], read_spec="读")]),
     "RETURNS_WITHOUT_READ_SPEC": Program(statements=[Run(var="v", name="点击", kind="action", returns=["a"])]),
+    "CALL_FUNC_NOT_DEFINED": Program(statements=[Call(func="missing", args={}, var="m")]),
+    "CALL_RETURNS_WITHOUT_VAR": Program(
+        functions=[FunctionDef(name="f", returns=["x"], body=[Compute(var="x", expr="'1'")])],
+        statements=[Call(func="f", args={})],
+    ),
+    "FUNCTION_RETURN_NOT_PRODUCED": Program(
+        functions=[FunctionDef(name="f", returns=["x"], body=[Compute(var="y", expr="'1'")])],
+        statements=[Call(func="f", args={}, var="m")],
+    ),
+    "FUNCTION_URL_PARAM_NOT_USED": Program(
+        functions=[FunctionDef(name="f", params=["sku", "detail_url"], returns=["material"], body=[
+            Run(var="d", name="打开 SKU={sku} 详情页", kind="navigation", returns=["material"], read_spec="读 material"),
+        ])],
+        statements=[Call(func="f", args={"sku": "ABC", "detail_url": "https://example.test/detail"}, var="m")],
+    ),
     "VISUAL_ROW_AGGREGATION": Program(statements=[
         Run(var="v", name="把最近 3 笔订单的金额相加", kind="read", returns=["total"],
             read_spec="对最近 3 笔订单求和"),
@@ -139,6 +154,19 @@ SAMPLES: dict[str, Program] = {
     ]),
     "FOREACH_BODY_GOAL_NO_ROW_TEMPLATE": Program(statements=[
         ForEach(var="row", returns=["material"], body_goal="读这一行的材质"),
+    ]),
+    "FOREACH_CALL_DROPS_ROW_URL": Program(
+        functions=[FunctionDef(name="f", params=["sku"], returns=["material"], body=[
+            Run(var="d", name="打开 SKU={sku} 详情页", kind="navigation", returns=["material"], read_spec="读 material"),
+        ])],
+        statements=[ForEach(var="row", returns=["SKU", "Action_url"], body=[
+            Call(func="f", args={"sku": "{row[SKU]}"}, var="m"),
+        ])],
+    ),
+    "FOREACH_ROW_URL_NOT_USED": Program(statements=[
+        ForEach(var="row", returns=["SKU", "Action_url"], body=[
+            Run(name="打开 {row[SKU]} 详情页", kind="navigation"),
+        ]),
     ]),
     "RETRIEVAL_RETRY_DROPS_FIELD": Program(statements=[
         _read(var="r", returns=("a",)),

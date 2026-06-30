@@ -4,9 +4,9 @@
 - a foreach's materialized `into` table is queryable by a following data_query (the whole point:
   collect per-item detail, then filter/aggregate the set)."""
 
-from gui_agent.core.orchestrator import ForEach, Interpreter, Program, Run, RunResult, drive
+from gui_agent.core.orchestrator import Call, ForEach, Interpreter, Program, Run, RunResult, drive
 from gui_agent.core.orchestrator.data_query import execute_data_query
-from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, to_program, validate_program
+from gui_agent.core.orchestrator.decomposer import _FunctionDraft, _PlanDraft, _StepDraft, to_program, validate_program
 
 
 def _good_draft() -> _PlanDraft:
@@ -53,6 +53,43 @@ def test_validate_rejects_body_ref_to_unbound_var():
     ])
     issues = validate_program(to_program(draft, "g"))
     assert any("bad" in i for i in issues)
+
+
+def test_to_program_collapses_collection_then_enrichment_foreach():
+    # Compiler pass for the 185-style malformed draft:
+    # foreach #1 collects row capabilities; foreach #2 should enrich those same rows via a function.
+    # Browser over="" would re-collect the grid in foreach #2, so to_program folds both into one
+    # typed foreach that collects the first loop's row fields and runs the second loop's body.
+    draft = _PlanDraft(goal="返回逐行详情字段",
+        functions=[_FunctionDraft(name="resolve", params=["sku", "action_url"], returns=["material"], body=[
+            _StepDraft(op="run", run_kind="navigation", var="d", name="打开 {action_url} 详情",
+                       returns=["material"], read_spec="读 material"),
+        ])],
+        steps=[
+            _StepDraft(op="foreach", loop_var="row", into="products_rows", returns=["sku", "action_url"]),
+            _StepDraft(op="foreach", loop_var="row", into="resolved_materials", returns=["material"], body=[
+                _StepDraft(
+                    op="call",
+                    func="resolve",
+                    var="m",
+                    call_args={"sku": "{row[sku]}", "action_url": "{row[action_url]}"},
+                ),
+            ]),
+            _StepDraft(op="run", run_kind="data_query", var="q", name="汇总 material",
+                       returns=["material"], sql="SELECT DISTINCT material FROM resolved_materials"),
+            _StepDraft(op="finish", message="{q[material]}"),
+        ])
+
+    program = to_program(draft, "g")
+    foreaches = [s for s in program.statements if isinstance(s, ForEach)]
+
+    assert len(foreaches) == 1
+    fe = foreaches[0]
+    assert fe.into == "resolved_materials"
+    assert fe.returns == ["sku", "action_url"]
+    assert len(fe.body) == 1 and isinstance(fe.body[0], Call)
+    assert fe.body[0].args == {"sku": "{row[sku]}", "action_url": "{row[action_url]}"}
+    assert validate_program(program) == []
 
 
 def test_validate_rejects_row_collection_direct_query_missing_detail_fields():

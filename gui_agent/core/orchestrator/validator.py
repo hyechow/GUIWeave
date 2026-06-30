@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from .program import BARE_REF_RE, TEMPLATE_RE, Finish, ForEach, If, Program, Run, Stmt
+from .program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, Finish, ForEach, FunctionDef, If, Program, Run, Stmt
 
 # Severity is metadata for governance/measurement; today every rule equally triggers the one
 # repair-retry, so all issues are "error". Differentiating (e.g. "warn" advisory rules) is a
@@ -87,6 +87,11 @@ ALL_CODES: frozenset[str] = frozenset({
     "DATA_QUERY_VAR_AS_TABLE",
     "RETURNS_WITHOUT_VAR",
     "RETURNS_WITHOUT_READ_SPEC",
+    # function / capability data-flow
+    "CALL_FUNC_NOT_DEFINED",
+    "CALL_RETURNS_WITHOUT_VAR",
+    "FUNCTION_RETURN_NOT_PRODUCED",
+    "FUNCTION_URL_PARAM_NOT_USED",
     # table aggregation must go through data_query, not UI eyeballing
     "VISUAL_ROW_AGGREGATION",
     "TABLE_ROW_FIELD_COLLECTION",
@@ -108,6 +113,8 @@ ALL_CODES: frozenset[str] = frozenset({
     "FOREACH_EMPTY_BODY_NO_RETURNS",
     "FOREACH_BODY_GOAL_MISSING_RETURNS",
     "FOREACH_BODY_GOAL_NO_ROW_TEMPLATE",
+    "FOREACH_CALL_DROPS_ROW_URL",
+    "FOREACH_ROW_URL_NOT_USED",
     # retrieval exact->fuzzy retry must keep the same field
     "RETRIEVAL_RETRY_DROPS_FIELD",
     # foreach / data_query field provenance
@@ -147,13 +154,16 @@ def _goal_expects_structured_answer(goal: str) -> bool:
         or any(k in goal for k in ("多少", "几个", "几条", "总数", "数量", "哪些", "谁", "什么", "找出", "列出", "返回", "显示"))
     )
 
-def _has_result_source(stmts: list[Stmt]) -> bool:
+def _has_result_source(stmts: list[Stmt], function_returns: dict[str, set[str]] | None = None) -> bool:
+    function_returns = function_returns or {}
     for s in stmts:
         if isinstance(s, Run) and (s.returns or s.kind == "data_query"):
             return True
-        if isinstance(s, If) and (_has_result_source(s.then) or _has_result_source(s.otherwise)):
+        if isinstance(s, Call) and s.var and function_returns.get(s.func):
             return True
-        if isinstance(s, ForEach) and _has_result_source(s.body):
+        if isinstance(s, If) and (_has_result_source(s.then, function_returns) or _has_result_source(s.otherwise, function_returns)):
+            return True
+        if isinstance(s, ForEach) and _has_result_source(s.body, function_returns):
             return True
     return False
 
@@ -174,7 +184,9 @@ def validate_program(program: Program) -> list[ValidationIssue]:
     issues = IssueList()
     if not program.statements:
         return IssueList.one("EMPTY_PROGRAM", "程序为空：至少要有一个 run 步骤")
-    if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements):
+    function_defs = {fn.name: fn for fn in getattr(program, "functions", None) or []}
+    function_returns = {name: {field for field in fn.returns if field} for name, fn in function_defs.items()}
+    if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements, function_returns):
         issues.add("NO_RESULT_SOURCE", 
             "任务要求返回/查找/统计具体答案，但计划没有任何 returns 或 data_query 结果来源；"
             "不能用裸 finish 猜答案。请让产生结果的 navigation/filter/action 带 returns/read_spec，"
@@ -187,6 +199,8 @@ def validate_program(program: Program) -> list[ValidationIssue]:
     def _collect_result_vars(stmts: list[Stmt]) -> None:
         for s in stmts:
             if isinstance(s, Run) and _produces_result(s):
+                all_result_vars.add(s.var)
+            elif isinstance(s, Call) and s.var and function_returns.get(s.func):
                 all_result_vars.add(s.var)
             elif isinstance(s, If):
                 _collect_result_vars(s.then)
@@ -339,6 +353,30 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                 _check_refs(f"{s.name}\n{s.success_condition}\n{s.read_spec}", f"步骤「{s.name}」", scope)
                 if _produces_result(s):
                     scope[s.var] = set(s.returns)
+            elif isinstance(s, Call):
+                fn = function_defs.get(s.func)
+                if fn is None:
+                    issues.add(
+                        "CALL_FUNC_NOT_DEFINED",
+                        f"call 调用了未定义的函数「{s.func}」；请先在 functions 中定义它，"
+                        "或把这一步改成显式 run/compute/foreach。"
+                    )
+                for param, value in (s.args or {}).items():
+                    _check_refs(str(value), f"call「{s.func}」参数「{param}」", scope)
+                returns = function_returns.get(s.func, set())
+                if returns and not s.var:
+                    issues.add(
+                        "CALL_RETURNS_WITHOUT_VAR",
+                        f"call「{s.func}」调用的函数声明了 returns={sorted(returns)}，但 call 没有绑定 var；"
+                        "这些返回字段无法被后续 if/finish/foreach/data_query 引用。请给 call 设置 var。"
+                    )
+                if s.var and returns:
+                    scope[s.var] = set(returns)
+            elif isinstance(s, Compute):
+                # Compute binds a scalar for runtime {name} substitution, not a RunResult; it is
+                # intentionally excluded from template scope because {var[field]} must come from a
+                # typed result value. Function return coverage is checked below.
+                continue
             elif isinstance(s, Finish):
                 _check_refs(s.message, "finish 模板", scope)
             elif isinstance(s, If):
@@ -414,6 +452,7 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                 else:
                     # new-style foreach: loop var fields come from foreach.returns (collect_fn provides them)
                     body_scope[s.var] = set(s.returns) if s.returns else set()
+                _check_foreach_url_policy(s, body_scope.get(s.var, set()), function_defs, issues)
                 _walk(s.body, body_scope)
 
     _walk(program.statements, {})
@@ -425,7 +464,8 @@ def validate_program(program: Program) -> list[ValidationIssue]:
     # if inside resolve_product_material was never checked.
     for fn in getattr(program, "functions", None) or []:
         _walk(fn.body, {})
-    _check_foreach_data_query(program.statements, issues)
+        _check_function_contract(fn, function_defs, function_returns, issues)
+    _check_foreach_data_query(program.statements, issues, function_returns)
     _check_retrieval_retry_preserves_field(program.statements, issues)
     return issues
 
@@ -520,6 +560,170 @@ def _flatten_branch_runs(stmts: list[Stmt]) -> list[Run]:
         elif isinstance(item, ForEach):
             out.extend(_flatten_branch_runs(item.body))
     return out
+
+_URL_CAPABILITY_RE = re.compile(r"(?:url|href|link|链接|网址|詳細連結|详情链接)", re.IGNORECASE)
+_DETAIL_OPEN_RE = re.compile(
+    r"\b(?:open|edit|view|drill\s+into|detail|record)\b|打开|点开|点击|编辑页|详情页|详情|明细|记录页",
+    re.IGNORECASE,
+)
+
+def _is_url_capability(name: str) -> bool:
+    return bool(_URL_CAPABILITY_RE.search(str(name or "")))
+
+def _run_text(run: Run) -> str:
+    return f"{run.name}\n{run.success_condition}\n{run.read_spec}"
+
+def _run_looks_like_detail_open(run: Run) -> bool:
+    return run.kind in {"navigation", "action", "read"} and bool(_DETAIL_OPEN_RE.search(_run_text(run)))
+
+def _field_key(field: str) -> str:
+    return str(field or "").strip().strip("'\"").lower()
+
+def _template_fields_for_var(text: str, var: str) -> set[str]:
+    return {
+        match.group(2).strip().strip("'\"")
+        for match in TEMPLATE_RE.finditer(text or "")
+        if match.group(1) == var
+    }
+
+def _run_uses_any_url_param(run: Run, url_params: set[str]) -> bool:
+    text = _run_text(run)
+    return any(f"{{{param}}}" in text for param in url_params)
+
+def _run_references_any_param(run: Run, params: set[str]) -> bool:
+    if not params:
+        return False
+    refs = set(BARE_REF_RE.findall(_run_text(run)))
+    return bool(refs & params)
+
+def _function_opens_detail(fn: FunctionDef, function_defs: dict[str, FunctionDef], seen: set[str] | None = None) -> bool:
+    seen = seen or set()
+    if fn.name in seen:
+        return False
+    seen.add(fn.name)
+
+    def _walk(seq: list[Stmt]) -> bool:
+        for item in seq:
+            if isinstance(item, Run) and _run_looks_like_detail_open(item):
+                return True
+            if isinstance(item, If) and (_walk(item.then) or _walk(item.otherwise)):
+                return True
+            if isinstance(item, ForEach) and _walk(item.body):
+                return True
+            if isinstance(item, Call):
+                child = function_defs.get(item.func)
+                if child is not None and _function_opens_detail(child, function_defs, seen):
+                    return True
+        return False
+
+    return _walk(fn.body)
+
+def _check_foreach_url_policy(
+    loop: ForEach,
+    row_fields: set[str],
+    function_defs: dict[str, FunctionDef],
+    issues: IssueList,
+) -> None:
+    """Typed row capability policy: if a row exposes URL/HREF/link, detail opening must use it.
+
+    This is intentionally site-neutral. A URL-like field is an addressable capability; clicking a
+    row by display text/SKU/name from a mutable list is position-dependent and breaks after a prior
+    iteration changes search/filter state. The policy forces the compiler to pass/use the URL
+    capability for detail-entry steps instead of relying on prompt wording.
+    """
+
+    url_fields = {field for field in row_fields if _is_url_capability(field)}
+    if not url_fields:
+        return
+    url_keys = {_field_key(field) for field in url_fields}
+
+    for item in loop.body:
+        if isinstance(item, Run) and _run_looks_like_detail_open(item):
+            refs = _template_fields_for_var(_run_text(item), loop.var)
+            ref_keys = {_field_key(field) for field in refs}
+            if refs and not (ref_keys & url_keys):
+                issues.add(
+                    "FOREACH_ROW_URL_NOT_USED",
+                    f"foreach 行「{loop.var}」提供了 URL/HREF/link 能力 {sorted(url_fields)}，"
+                    f"但详情打开步骤「{item.name}」只引用了当前行的非 URL 字段 {sorted(refs)}。"
+                    "逐行打开详情时必须直接使用行 URL/link（例如 {row[url]}），不要依赖当前列表仍停在同一结果集后再按文本点行。"
+                )
+        elif isinstance(item, Call):
+            fn = function_defs.get(item.func)
+            if fn is None or not _function_opens_detail(fn, function_defs):
+                continue
+            call_row_fields: set[str] = set()
+            for value in (item.args or {}).values():
+                call_row_fields.update(_template_fields_for_var(str(value), loop.var))
+            call_row_keys = {_field_key(field) for field in call_row_fields}
+            if call_row_fields and not (call_row_keys & url_keys):
+                issues.add(
+                    "FOREACH_CALL_DROPS_ROW_URL",
+                    f"foreach 行「{loop.var}」提供了 URL/HREF/link 能力 {sorted(url_fields)}，"
+                    f"但调用会打开详情的函数「{item.func}」时只传入了非 URL 行字段 {sorted(call_row_fields)}。"
+                    "请把 URL/link 字段作为函数参数传入，并在函数的详情打开步骤中使用它。"
+                )
+
+def _body_declared_fields(seq: list[Stmt], function_returns: dict[str, set[str]]) -> set[str]:
+    fields: set[str] = set()
+    for item in seq:
+        if isinstance(item, Run):
+            fields.update(field for field in item.returns if field)
+        elif isinstance(item, Compute):
+            if item.var:
+                fields.add(item.var)
+        elif isinstance(item, Call):
+            fields.update(function_returns.get(item.func, set()))
+        elif isinstance(item, If):
+            fields.update(_body_declared_fields(item.then, function_returns))
+            fields.update(_body_declared_fields(item.otherwise, function_returns))
+        elif isinstance(item, ForEach):
+            fields.update(_body_declared_fields(item.body, function_returns))
+    return fields
+
+def _check_function_contract(
+    fn: FunctionDef,
+    function_defs: dict[str, FunctionDef],
+    function_returns: dict[str, set[str]],
+    issues: IssueList,
+) -> None:
+    produced = _body_declared_fields(fn.body, function_returns)
+    missing = {field for field in fn.returns if field and field not in produced}
+    if missing:
+        issues.add(
+            "FUNCTION_RETURN_NOT_PRODUCED",
+            f"函数「{fn.name}」声明 returns={list(fn.returns)}，但 body 没有通过 Run.returns、Compute.var "
+            f"或被调函数 returns 产出字段 {sorted(missing)}；运行时这些字段会变成空值。"
+            "请在函数体中显式读取/计算这些字段，或从函数 returns 中删除它们。"
+        )
+
+    url_params = {param for param in fn.params if _is_url_capability(param)}
+    if not url_params:
+        return
+    non_url_params = {param for param in fn.params if param not in url_params}
+
+    def _walk(seq: list[Stmt]) -> None:
+        for item in seq:
+            if isinstance(item, Run):
+                if (
+                    item.returns
+                    and _run_looks_like_detail_open(item)
+                    and _run_references_any_param(item, non_url_params)
+                    and not _run_uses_any_url_param(item, url_params)
+                ):
+                    issues.add(
+                        "FUNCTION_URL_PARAM_NOT_USED",
+                        f"函数「{fn.name}」有 URL/HREF/link 参数 {sorted(url_params)}，"
+                        f"但详情打开/读取步骤「{item.name}」用非 URL 参数定位且没有使用 URL 参数。"
+                        "如果调用方已经传入行 URL/link，详情入口必须打开该 URL/link；其它字段只应用于验收或 fallback 判别。"
+                    )
+            elif isinstance(item, If):
+                _walk(item.then)
+                _walk(item.otherwise)
+            elif isinstance(item, ForEach):
+                _walk(item.body)
+
+    _walk(fn.body)
 
 def _looks_like_fuzzy_retry(text: str) -> bool:
     return bool(_RETRIEVAL_RETRY_CUE_RE.search(text or "") and _RETRIEVAL_ACTION_CUE_RE.search(text or ""))
@@ -663,7 +867,11 @@ def _read_looks_like_row_collection(run: Run) -> bool:
         )
     )
 
-def _check_foreach_data_query(stmts: list[Stmt], issues: IssueList) -> None:
+def _check_foreach_data_query(
+    stmts: list[Stmt],
+    issues: IssueList,
+    function_returns: dict[str, set[str]] | None = None,
+) -> None:
     """Guard foreach/data_query sequencing:
 
     1. Old-style row-collection read → data_query without a foreach is rejected (missing enrichment).
@@ -671,6 +879,7 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: IssueList) -> None:
     3. data_query on a foreach into-table must only use fields that foreach body returns produced.
     """
 
+    function_returns = function_returns or {}
     foreach_tables: dict[str, tuple[str, set[str], bool]] = {}
 
     def _body_result_fields(seq: list[Stmt], row_fields: set[str]) -> set[str]:
@@ -678,6 +887,8 @@ def _check_foreach_data_query(stmts: list[Stmt], issues: IssueList) -> None:
         for item in seq:
             if isinstance(item, Run) and item.returns:
                 fields.update(field.lower() for field in item.returns)
+            elif isinstance(item, Call):
+                fields.update(field.lower() for field in function_returns.get(item.func, set()))
             elif isinstance(item, If):
                 fields.update(_body_result_fields(item.then, row_fields))
                 fields.update(_body_result_fields(item.otherwise, row_fields))

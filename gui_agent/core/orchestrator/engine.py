@@ -18,7 +18,7 @@ from typing import Literal, Optional
 
 from gui_agent.core.schemas import Milestone
 
-from .program import Call, Compute, ForEach, If, Program, Run, Stmt
+from .program import TEMPLATE_RE, Call, Compute, Finish, ForEach, If, Program, Run, Stmt
 from .runner import RunResult
 
 # DSL RunKind -> feat-android (kind, completion_strategy).
@@ -315,6 +315,96 @@ def normalize_precondition_gates(program: Program) -> Program:
     antipattern → no stuck). Recurses into if-branches; returns a NEW Program (inputs untouched);
     idempotent. App-specific markers stay in the checker's _check.md, which judges this gate."""
     return program.model_copy(update={"statements": _normalize_precondition_stmts(program.statements)})
+
+
+# ── foreach compiler normalization ────────────────────────────────────────────────
+# A common malformed decomposition for per-row enrichment is:
+#   foreach row -> products_rows returns=[sku, action_url], body=[]
+#   foreach row -> enriched returns=[material], body=[call resolve({row[sku]}, {row[action_url]})]
+#
+# In the browser path, an over="" foreach means "collect rows from the CURRENT grid". The second
+# loop above would therefore re-collect the grid using `returns=[material]`, then try to call the
+# function with row[sku]/row[action_url] fields that are not in that loop's row contract. The
+# compiler can repair this deterministically: it is really one loop that collects the first loop's
+# row capabilities and runs the second loop's enrichment body, materializing into the second loop's
+# target table. This is site-agnostic typed data-flow normalization, not task knowledge.
+
+def _refs_to_loop_var(stmts: list[Stmt], loop_var: str) -> set[str]:
+    refs: set[str] = set()
+    for s in stmts:
+        if isinstance(s, Run):
+            for text in (s.name, s.success_condition, s.read_spec):
+                refs.update(field.strip().strip("'\"") for var, field in TEMPLATE_RE.findall(text or "") if var == loop_var)
+        elif isinstance(s, Call):
+            for value in (s.args or {}).values():
+                refs.update(field.strip().strip("'\"") for var, field in TEMPLATE_RE.findall(str(value)) if var == loop_var)
+        elif isinstance(s, Finish):
+            refs.update(field.strip().strip("'\"") for var, field in TEMPLATE_RE.findall(s.message or "") if var == loop_var)
+        elif isinstance(s, If):
+            if s.cond.var == loop_var:
+                refs.add(s.cond.field)
+            refs.update(_refs_to_loop_var(s.then, loop_var))
+            refs.update(_refs_to_loop_var(s.otherwise, loop_var))
+        elif isinstance(s, ForEach):
+            refs.update(_refs_to_loop_var(s.body, loop_var))
+    return refs
+
+
+def _lower_set(values: list[str] | set[str]) -> set[str]:
+    return {str(v).strip().lower() for v in values if str(v).strip()}
+
+
+def _can_collapse_foreach_pair(first: ForEach, second: ForEach) -> bool:
+    if first.body or first.body_goal or not first.returns:
+        return False
+    if not second.body or second.body_goal:
+        return False
+    first_table = first.into or f"{first.var}s"
+    if second.over and second.over != first_table:
+        return False
+    refs = _refs_to_loop_var(second.body, second.var)
+    if not refs:
+        return False
+    return _lower_set(refs).issubset(_lower_set(first.returns))
+
+
+def _collapse_foreach_stmts(stmts: list[Stmt]) -> list[Stmt]:
+    out: list[Stmt] = []
+    i = 0
+    while i < len(stmts):
+        s = stmts[i]
+        nxt = stmts[i + 1] if i + 1 < len(stmts) else None
+        if isinstance(s, ForEach) and isinstance(nxt, ForEach) and _can_collapse_foreach_pair(s, nxt):
+            out.append(nxt.model_copy(update={
+                "over": "",
+                "target": s.target or nxt.target,
+                "returns": list(s.returns),
+                "limit": s.limit if s.limit is not None else nxt.limit,
+            }))
+            i += 2
+            continue
+        if isinstance(s, If):
+            out.append(s.model_copy(update={
+                "then": _collapse_foreach_stmts(s.then),
+                "otherwise": _collapse_foreach_stmts(s.otherwise),
+            }))
+        elif isinstance(s, ForEach):
+            out.append(s.model_copy(update={"body": _collapse_foreach_stmts(s.body)}))
+        else:
+            out.append(s)
+        i += 1
+    return out
+
+
+def collapse_foreach_enrichment_passes(program: Program) -> Program:
+    """Fold row-collection foreach + per-row enrichment foreach into one typed loop.
+
+    Returns a NEW Program (inputs untouched); idempotent. Function bodies are left unchanged because
+    this normalization is about materialized table loops in statement blocks, not reusable helper
+    bodies.
+    """
+
+    return program.model_copy(update={"statements": _collapse_foreach_stmts(program.statements)})
 
 
 # A loop/function body that STARTS by acting on a list page (filter/action) and then drills INTO a
