@@ -3,9 +3,10 @@ control flow (functions / call / if / foreach), pure compute (deterministic deri
 linear GUI milestones (Run). The whole file (main + functions) is produced in ONE decompose;
 each function is decomposed ONCE and called N times (no per-row re-decompose).
 
-185 shape: a function resolve_parent_material(name) derives the base via a Compute (NOT a GUI
-milestone — that separation is what unstuck the agent), runs one linear GUI milestone, returns
-material; a foreach calls it per row. Driven synchronously with a mock executor (no LLM/live).
+Legacy 185 regression shape: a function resolve_parent_material(name) derives the base via a
+Compute (NOT a GUI milestone), runs one linear GUI milestone, returns material; a foreach calls it
+per row. The current 185 plan adds self-first + Action_url below; this legacy fixture still pins the
+generic function/compute/call mechanics.
 """
 
 import pytest
@@ -13,9 +14,11 @@ import pytest
 from gui_agent.core.orchestrator import (
     Call,
     Compute,
+    Cond,
     Finish,
     ForEach,
     FunctionDef,
+    If,
     Interpreter,
     Program,
     Run,
@@ -104,6 +107,161 @@ def test_compute_accepts_braced_scalar_refs():
     interp = Interpreter(program, collect_fn=lambda t, r, limit=None: rows)
     drive(interp, execute)
     assert seen == ["搜 WS08", "搜 WH11"]  # NOT "搜 " (empty) — braces stripped, compute succeeded
+
+
+def _resolve_product_material_fn() -> FunctionDef:
+    # The 185 approach: a function with self-first resolution expressed as an explicit `if` on the
+    # self read — read the attribute on the product itself; the parent is only a FALLBACK when self is
+    # empty (one shape covers attrs on the variant — Size/Color → self, done — AND on the parent —
+    # Material). The self read uses the row's Action_url so it does not depend on the Products list
+    # still showing the qty=3 result set after a previous parent fallback search changed filters.
+    return FunctionDef(
+        name="resolve_product_material", params=["sku", "product_url"],
+        returns=["material", "source_kind", "source_sku"], body=[
+            Run(kind="navigation", var="self_d", returns=["material"],
+                name="打开 {product_url}，进入 SKU={sku} 自己的产品详情页",
+                success_condition="已进入 SKU={sku} 的产品详情页",
+                read_spec="material：自身 Material 主材质，空则留空"),
+            If(cond=Cond(var="self_d", field="material", cmp="exists"),
+               then=[
+                   Compute(var="source_kind", expr="'self'"),
+                   Compute(var="source_sku", expr="sku"),
+                   Run(kind="navigation", name="使用浏览器返回上一页，回到 Products 列表或搜索结果页",
+                       success_condition="页面显示 Products 列表、Search by keyword 输入框和结果表格"),
+               ],
+               otherwise=[
+                   Compute(var="base_sku", expr="sku.rsplit('-',2)[0]"),
+                   Run(kind="navigation", name="使用浏览器返回上一页，回到 Products 列表或搜索结果页",
+                       success_condition="页面显示 Products 列表、顶部 Search by keyword 输入框和结果表格"),
+                   Run(kind="filter", name="搜父 SKU={base_sku}、Type=Configurable",
+                       success_condition="出现 SKU={base_sku}、Type=Configurable 行"),
+                   Run(kind="read", var="parent_d", returns=["material"],
+                       name="开父 SKU={base_sku} 编辑页读 Material"),
+                   Run(kind="navigation", name="使用浏览器返回上一页，回到 Products 搜索结果列表",
+                       success_condition="页面显示 Products 列表、Search by keyword 输入框和结果表格"),
+                   Compute(var="source_kind", expr="'parent'"), Compute(var="source_sku", expr="base_sku"),
+               ]),
+        ])
+
+
+def _qty3_program() -> Program:
+    return Program(goal="material of products with 3 units left",
+        functions=[_resolve_product_material_fn()],
+        statements=[
+            ForEach(var="row", into="out", returns=["SKU", "Action_url"], body=[
+                Call(
+                    func="resolve_product_material",
+                    args={
+                        "sku": "{row[SKU]}",
+                        "product_url": "{row[Action_url]}",
+                    },
+                    var="m",
+                )]),
+            Finish(message="done")])
+
+
+def _drive_qty3(self_material_by_sku: dict[str, str]) -> tuple[list[dict], list[str]]:
+    rows = [
+        {"SKU": "WH11-S-Blue", "Action_url": "http://shop/admin/catalog/product/edit/id/11"},
+        {"SKU": "WS08-XS-Blue", "Action_url": "http://shop/admin/catalog/product/edit/id/8"},
+    ]
+    interp = Interpreter(_qty3_program(), collect_fn=lambda t, r, limit=None: rows)
+    opened: list[str] = []
+    url_to_sku = {row["Action_url"]: row["SKU"] for row in rows}
+
+    def execute(run: Run) -> RunResult:
+        if "material" in run.returns:
+            opened.append(run.name)
+            if "开父" in run.name:
+                return RunResult(completed=True, reads={"material": "ParentMat"})
+            url = run.name.split("打开 ", 1)[1].split("，", 1)[0]
+            sku = url_to_sku[url]
+            return RunResult(completed=True, reads={"material": self_material_by_sku.get(sku, "")})
+        opened.append(run.name)
+        return RunResult(completed=True)
+
+    drive(interp, execute)
+    return interp.env["out"].rows, opened
+
+
+def test_attribute_read_on_self_when_present_does_not_touch_parent():
+    # Size/Color-style: the variant carries the value → read self, return source_kind=self, and the
+    # parent fallback branch is NEVER entered (no "开父" read).
+    rows, opened = _drive_qty3({"WH11-S-Blue": "Fleece", "WS08-XS-Blue": "Cotton"})
+    assert rows == [
+        {
+            "SKU": "WH11-S-Blue",
+            "Action_url": "http://shop/admin/catalog/product/edit/id/11",
+            "material": "Fleece",
+            "source_kind": "self",
+            "source_sku": "WH11-S-Blue",
+        },
+        {
+            "SKU": "WS08-XS-Blue",
+            "Action_url": "http://shop/admin/catalog/product/edit/id/8",
+            "material": "Cotton",
+            "source_kind": "self",
+            "source_sku": "WS08-XS-Blue",
+        },
+    ]
+    assert all("搜父候选" not in name for name in opened)
+    assert opened.count("使用浏览器返回上一页，回到 Products 列表或搜索结果页") == 2
+
+
+def test_parent_fallback_only_when_self_empty():
+    # Material-style: WH11 variant carries it (self), WS08 variant empty → resolve parent (source_sku
+    # = derived parent base WS08). Parent is the fallback, taken per-row by evidence, not by default.
+    rows, opened = _drive_qty3({"WH11-S-Blue": "Fleece", "WS08-XS-Blue": ""})
+    assert rows == [
+        {
+            "SKU": "WH11-S-Blue",
+            "Action_url": "http://shop/admin/catalog/product/edit/id/11",
+            "material": "Fleece",
+            "source_kind": "self",
+            "source_sku": "WH11-S-Blue",
+        },
+        {
+            "SKU": "WS08-XS-Blue",
+            "Action_url": "http://shop/admin/catalog/product/edit/id/8",
+            "material": "ParentMat",
+            "source_kind": "parent",
+            "source_sku": "WS08",
+        },
+    ]
+    assert "使用浏览器返回上一页，回到 Products 列表或搜索结果页" in opened
+    assert "搜父 SKU=WS08、Type=Configurable" in opened
+    assert "使用浏览器返回上一页，回到 Products 搜索结果列表" in opened
+
+
+def test_validator_flags_dead_conditional_in_function():
+    # "编排逻辑写死" root cause: the self-first `if` reads self_d, but the self-read milestone binds a
+    # DIFFERENT var → self_d is never produced → condition is always empty → every row falls to else →
+    # degenerates to hardcoded-always-parent. validate_program now walks function bodies, so the
+    # existing IF_COND_VAR_NOT_IN_SCOPE rule catches the var mismatch and triggers a repair retry.
+    from gui_agent.core.orchestrator import Cond, validate_program
+
+    def _fn(self_read_var: str) -> FunctionDef:
+        return FunctionDef(name="resolve", params=["sku"], returns=["material"], body=[
+            Run(kind="filter", name="搜 {sku}", success_condition="出现 {sku}"),
+            Run(kind="navigation", var=self_read_var, returns=["material"], read_spec="读 material",
+                name="开 {sku} 编辑页", success_condition="进入"),
+            If(cond=Cond(var="self_d", field="material", cmp="exists"),
+               then=[Compute(var="source_kind", expr="'self'")],
+               otherwise=[Run(kind="navigation", var="pd", returns=["material"], read_spec="读",
+                              name="开父", success_condition="进父")]),
+        ])
+
+    def _prog(fn: FunctionDef) -> Program:
+        return Program(goal="取材质", functions=[fn], statements=[
+            ForEach(var="row", into="out", returns=["SKU"],
+                    body=[Call(func="resolve", args={"sku": "{row[SKU]}"}, var="m")]),
+            Run(kind="data_query", var="q", returns=["material"], name="去重",
+                sql="SELECT DISTINCT material FROM out"),
+            Finish(message="{q[material]}")])
+
+    bad = [i.code for i in validate_program(_prog(_fn("d")))]       # self-read var 'd' ≠ if's 'self_d'
+    assert "IF_COND_VAR_NOT_IN_SCOPE" in bad
+    assert validate_program(_prog(_fn("self_d"))) == []            # bound → no issue
 
 
 def test_function_callable_from_main_not_loop_bound():

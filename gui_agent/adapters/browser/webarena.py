@@ -407,6 +407,8 @@ def _print_program(program) -> None:
         nm = type(s).__name__
         if nm == "Run":
             line = f"{indent}[{s.kind}] {s.name}"
+            if getattr(s, "var", ""):
+                line += f"  → {s.var}"          # the bind var — what a later if/finish references
             if getattr(s, "returns", None):
                 line += f"  returns={s.returns}"
             print(line)

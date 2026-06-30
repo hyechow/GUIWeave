@@ -194,6 +194,8 @@ def validate_program(program: Program) -> list[ValidationIssue]:
             elif isinstance(s, ForEach):
                 _collect_result_vars(s.body)
     _collect_result_vars(program.statements)
+    for fn in getattr(program, "functions", None) or []:
+        _collect_result_vars(fn.body)
 
 
     def _check_refs(text: str, where: str, scope: dict[str, set[str]]) -> None:
@@ -415,6 +417,14 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                 _walk(s.body, body_scope)
 
     _walk(program.statements, {})
+    # Function bodies are validated under the SAME rules, each starting from an empty result-var
+    # scope (params/computes are scalars, not result vars). This is what makes IF_COND_VAR_NOT_IN_SCOPE
+    # catch a self-first resolution that degenerates to hardcoded-always-parent: an `if self_d[...]`
+    # whose `self_d` isn't bound by a preceding read/call IN THE FUNCTION → dead conditional → every
+    # row falls to else → always-parent (the "编排逻辑写死" root cause). Without walking functions, the
+    # if inside resolve_product_material was never checked.
+    for fn in getattr(program, "functions", None) or []:
+        _walk(fn.body, {})
     _check_foreach_data_query(program.statements, issues)
     _check_retrieval_retry_preserves_field(program.statements, issues)
     return issues

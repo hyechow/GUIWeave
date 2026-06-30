@@ -331,7 +331,7 @@
     "note": "task 184 正确路径：① filter Quantity From=0, To=0（精确匹配，约150条简单+可配置产品）② Columns 按钮启用 Color 列（Color 不在默认列里）③ foreach（body 留空，returns=[Name,Color]，into=products）采集过滤后的全量网格（~150行/~8页，collect_fn 自动翻页，产出 complete into 表）④ data_query SELECT name, color WHERE color IS NOT NULL → 只剩 Color 有值的简单产品（答案：Cronus Yoga Pant -33-Blue / Blue）。不需要 foreach 钻产品详情页——Color 列直接在网格里。失败根因历史：① filter 只设 From=0 不设 To=0（=≥0=全量2040条）② Checker 误判 filter 已生效 → PreExisting 跳过 filter 步骤 ③ partial=true → data_query 拒绝 ④ list_read 已在 19b63e5 移除，正确用 foreach 而非 list_read。"
   },
   {
-    "label": "WebArena shopping_admin task 185 — Material 属性不在网格列，必须 foreach 逐产品钻详情读 Material",
+    "label": "WebArena shopping_admin task 185 — Material 非网格列，foreach 采 URL 后 self-first/fallback 读 Material",
     "goal": "Give me the material of the products that have 3 units left.",
     "platform": "browser",
     "knowledge_app": "shopping_admin",
@@ -349,7 +349,7 @@
       "uses_foreach_iteration",
       "shopping_admin_material_drills_parent_configurable"
     ],
-    "note": "task 185 正确路径（REVISED，live REST+run 20260629_164903 坐实）：这是 parent/child 实体问题，不是 vision 读值 bug。① filter Quantity From=3, To=3 命中的是【子简单变体】（qty 挂在 children 上；如 WS08-XS-Blue qty=3、Eos WH11 的 qty=3 子变体），父配置型 qty=0 ② Material 不是区分属性、只挂在【父配置型】产品上，子变体 Material 为空 → 直接钻子变体详情页读 Material 会读到空值并死循环（live run T11-T16 全是 scroll → ACTION_NOT_ALLOWED）③ 正确做法：foreach 每个子变体取名去 -SIZE-COLOR 后缀得基名 → Products grid keyword 搜基名独特词（先清残留 keyword；全名带 ™/连字符走全文索引常 0 命中）→ 选 Type=Configurable Product 行打开 → 读 Material multiselect 的【主材质=第一个已选项/value】④ 期望 [cotton, fleece]：父产品 Material 多值（Cotton+Lycra® / Fleece+Polyester+Spandex），评测对多出的值判 Extra→失败，故每个产品只报主材质。本 case 锁 decompose 计划形态须含 variant→parent 解析。read 层 form_reader 修法（below-fold <select> 收录 + multiselect join，读父产品 Material 用，已 live 验证可读出 Cotton,Lycra®）见 tests/test_browser_form_reader.py 与 memory webarena-185-material-multiselect-read；本离线 case 验证不到读层。"
+    "note": "task 185 当前约束：① filter Quantity From=3, To=3 命中简单变体；Material 不在 Products 网格列。② 编排应按证据解析属性来源：先 foreach 采 SKU + Action_url，用 Action_url 直达该产品自身详情读 Material；自身非空就用自身。③ 详情读完必须用浏览器返回上一页/Products 搜索结果列表，复用连续操作历史，避免下一行从前一条详情页重新走侧边栏。④ 仅自身为空时才派生父 SKU（如 WS08-XS-Blue → WS08），在 Products keyword 搜父 SKU，再选 SKU=父SKU 且 Type=Configurable Product 的父产品；父产品 identity 是 SKU，不是产品名。⑤ fallback 搜父会改变 Products 列表状态，因此自身读取不能写成“当前 qty 结果列表点 SKU 那一行”，必须 URL 直达。⑥ Material 多选只报第一个已选项/value，期望 [cotton, fleece]。"
   },
   {
     "label": "WebArena shopping_admin task 186 — qty 2-3 区间筛选必须清除跨任务残留筛选（Keyword 污染）",

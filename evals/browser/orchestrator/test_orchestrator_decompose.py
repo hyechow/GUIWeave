@@ -1190,6 +1190,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 + " " + " ".join((fe.body_goal or "") + " " + " ".join(fe.returns or []) for fe in foreaches)
                 + " " + " ".join(_fn_text(fn) for fn in functions)
             ).lower()
+            fn_text_all = " ".join(_fn_text(fn) for fn in functions).lower()
             if not any(m in all_text for m in ("material", "材质", "材料")):
                 details.append(
                     "task 185 要读产品的 Material，但计划（含 foreach body_goal/returns）里没出现 material/材质。"
@@ -1205,8 +1206,51 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 "-size-color", "去掉后缀", "去除后缀", "去掉 -size",
             )):
                 details.append(
-                    "Material 只在父配置型产品上有值（qty 筛出的是子变体、Material 为空）；计划必须从变体"
-                    "解析到父 configurable（去 -SIZE-COLOR 后缀搜基名 → 选 Type=Configurable 行）再读。"
+                    "Material 在本数据集常由父配置型产品承载（qty 筛出的子变体自身 Material 为空）；计划必须"
+                    "保留『自身为空则回退到父 configurable』的 fallback 路径（去 -SIZE-COLOR 后缀搜基名 → 选 "
+                    "Type=Configurable 行再读），否则空值回退无门。"
+                )
+            # The redesign reads the product's OWN attribute FIRST and only falls back to the parent
+            # when it's empty — parent must be a FALLBACK, not the unconditional route. The plan should
+            # therefore read self (a self/variant read or an if on the self value), not jump straight
+            # to the parent. Lenient: any sign of a self-first / conditional-fallback shape.
+            if not any(m in all_text for m in (
+                "自身", "自己", "self", "为空", "若空", "空则", "exists", "empty", "selectedindex", "回退", "fallback",
+            )):
+                details.append(
+                    "属性来源应按证据解析：先在产品自身读 Material、仅自身为空才回退父 configurable（parent 是 "
+                    "fallback 不是默认路线）；计划里看不到『先读自身 / 空则回退』的迹象，疑似把『直奔父产品』写死。"
+                )
+            url_cols = [
+                r for fe in foreaches for r in (fe.returns or [])
+                if "url" in (r or "").lower() or "链接" in (r or "").lower()
+            ]
+            if not url_cols or not any(m in all_text for m in (
+                "{product_url}", "{row[action_url]}", "action_url", "_url", "href", "详情链接",
+            )):
+                details.append(
+                    "自身属性读取应使用 Products 行自带详情链接（如 Action_url/product_url）直达，而不是依赖"
+                    "『当前 qty 结果列表仍在场』后再点行；父产品 fallback 会改变列表搜索状态，下一轮会漂。"
+                    f" foreach returns={[(fe.into, fe.returns) for fe in foreaches]}"
+                )
+            if any(m in all_text for m in (
+                "当前products结果列表", "当前 products 结果列表", "当前结果列表", "qty=3 结果列表",
+                "库存结果列表", "点开sku=", "点开 sku=", "sku={sku}那一行",
+            )):
+                details.append(
+                    "函数里的自身读取不能写成『当前结果列表点 SKU 那一行』；这是位置相关入口。应 foreach 采 "
+                    "Action_url 并打开该 URL 直达自身详情，fallback 分支再单独回 Products 搜父。"
+                )
+            if not any(m in all_text for m in ("base_sku", "父 sku", "父sku", "sku={base", "sku = {base")):
+                details.append(
+                    "父产品 fallback 应由 SKU 去 -SIZE-COLOR 后缀得到父 SKU，并以 SKU={base_sku} + "
+                    "Type=Configurable Product 验证父行；不要把父 identity 建在产品名/品牌词上。"
+                    f" all_text={all_text[:240]}"
+                )
+            if not any(m in fn_text_all for m in ("返回", "上一页", "go_back", "back")):
+                details.append(
+                    "逐行详情读取函数应在读完详情后显式返回上一页/Products 搜索结果列表，复用浏览器历史；"
+                    "否则下一行会从前一条详情页开始，进入列表和搜索父产品会多烧多轮。"
                 )
             if len(foreaches) > 1:
                 details.append(
@@ -1214,6 +1258,30 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "会重新采集网格、material 落不进表（live 214011）。"
                     f"当前有 {len(foreaches)} 个 foreach：{[fe.into for fe in foreaches]}"
                 )
+            # NO-DEAD-CONDITIONAL: the self-first resolution is expressed as a function with an `if` on
+            # the self read (resolve_product_material). The orchestration logic must not be "written
+            # dead" — i.e. an `if.cond.var` that no preceding read/call in scope binds → the condition
+            # is always empty → every row falls to else → degenerates to hardcoded-always-parent (the
+            # "编排逻辑写死" the user flagged). Flag any If whose cond.var isn't produced upstream.
+            def _bound_vars(stmts):
+                out = set()
+                for s in stmts:
+                    nm = type(s).__name__
+                    if nm in ("Run", "Call", "Compute") and getattr(s, "var", ""):
+                        out.add(s.var)
+                    if nm == "If":
+                        out |= _bound_vars(s.then) | _bound_vars(s.otherwise)
+                    if nm == "ForEach":
+                        out |= _bound_vars(s.body)
+                return out
+            for fn in functions:
+                bound = _bound_vars(fn.body) | set(fn.params)
+                for st in fn.body:
+                    if type(st).__name__ == "If" and st.cond.var not in bound:
+                        details.append(
+                            f"函数 {fn.name} 的 if 条件引用了未绑定的变量 {st.cond.var!r}（没有在先的 read/call/"
+                            "compute 产出它）→ 条件恒空、永远走 else，self-first 退化成 hardcoded-always-parent。"
+                            f" if.cond.var={st.cond.var!r}, 已绑定={sorted(bound)}")
             # material must LAND per row + the row must be TEMPLATED — checked per the foreach shape:
             for fe in foreaches:
                 tmpl = "{%s[" % fe.var
@@ -1244,6 +1312,17 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                             f"op=call 的 call_args 必须用 `{tmpl}…]`（如 `{{{fe.var}[Name]}}`）把当前行代入函数参数，"
                             "运行时才逐行不同；否则每次都用同一个值、只命中第一个（live 215344）。"
                             f" call_args={[c.args for c in calls]}")
+                    if not any(
+                        f"{{{fe.var}[sku]}}" in str(v).lower()
+                        or str(k).lower() == "sku"
+                        for c in calls
+                        for k, v in (c.args or {}).items()
+                    ):
+                        details.append(
+                            f"op=call 必须把当前行 SKU 传入函数（如 sku=`{{{fe.var}[SKU]}}`），"
+                            "fallback 父产品由 SKU 去 -SIZE-COLOR 后缀得到；不要只传产品名。"
+                            f" call_args={[c.args for c in calls]}"
+                        )
                 elif fe.body_goal:  # agentic sub-goal shape
                     if not any("material" in (r or "").lower() for r in (fe.returns or [])):
                         details.append(
