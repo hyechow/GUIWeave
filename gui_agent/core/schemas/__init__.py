@@ -300,6 +300,13 @@ class BaseActionDecision(BaseModel):
         default=None,
         description="当截图中找不到指令要求的目标元素时填写原因（如「当前页面无通讯录标签」）；找到目标时留空",
     )
+    # Supervisor instruction that produced this action. Filled by action_policy
+    # _postprocess (NOT the LLM), so the executor's a11y tap snap can read the full
+    # target text — action.description is often a generic "执行tap操作" that drops it.
+    instruction: Optional[str] = Field(
+        default=None,
+        description="产生该 action 的 supervisor 指令（action_policy._postprocess 透传，供 executor a11y 校正读取完整目标）",
+    )
 
     @model_validator(mode="before")
     @classmethod

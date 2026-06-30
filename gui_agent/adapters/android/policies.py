@@ -262,6 +262,11 @@ class AndroidActionPolicy(BaseActionPolicy):
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
     ) -> AndroidActionDecision:
+        # 透传 supervisor instruction 到 decision.instruction（LLM 常留空）。下游 executor
+        # 的 a11y tap 校正需要完整目标文本——action.description 经常被简化成 generic
+        # "执行tap操作"，丢了 "点击下拉菜单中的 'Lists' 选项" 这种目标。
+        if not decision.instruction:
+            decision.instruction = instruction
         _, column, steps, scroll_direction = _resolve_picker_hints(
             instruction, direction, drag_column, drag_steps
         )
