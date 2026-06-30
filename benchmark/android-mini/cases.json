@@ -191,7 +191,7 @@
   {
     "label": "mastodon-list-cleanup",
     "layer": "MastodonManageMultiListTask / step 1",
-    "goal": "这是当前屏幕上的删除操作序列，不是找页面任务，也不需要 returns/读取字段。当前已经在 Mastodon 的 Manage lists 页面，页面上有 old-cute 和 old-open 两个旧 list。必须按顺序执行这些 UI 动作：1. 点击 old-cute 行右侧 More options；2. 点击菜单里的 Delete list；3. 在确认弹窗点击 Delete；4. old-cute 消失后不要结束，必须点击 old-open 行右侧 More options；5. 点击菜单里的 Delete list；6. 在确认弹窗点击 Delete。只要屏幕文本还包含 old-cute 或 old-open，就绝不能判完成，也不能输出最终结果。不要只是读取列表名称。",
+    "goal": "当前在 Mastodon 的 Manage lists 页面。帮我把 old-cute 和 old-open 这两个旧 list 都删掉。",
     "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
     "init_script": "benchmark/android-mini/init/open_mastodon.sh",
     "init_env": {
@@ -208,12 +208,12 @@
       "ANDROID_MINI_MASTODON_LIST_EXPECTATION": "empty"
     },
     "verify_timeout_s": 60,
-    "note": "MastodonManageMultiListTask 第 1 步:先用 DB 准备 old-open/old-cute 脏状态,任务只测进入 lists 并删除所有旧 list；通过 DB 验证 test 用户没有任何 list。"
+    "note": "MastodonManageMultiListTask 第 1 步:先用 DB 准备 old-open/old-cute 脏状态,任务只测删除所有旧 list；通过 DB 验证 test 用户没有任何 list。测试约束不写进 goal：应删除 old-cute 和 old-open，不能只是读取列表名称，不能在仍有旧 list 时判完成。"
   },
   {
     "label": "mastodon-list-open-create",
     "layer": "MastodonManageMultiListTask / step 2",
-    "goal": "当前已经在 Mastodon 的 Manage lists 页面，当前没有任何 list。请点击右下角 Create list 按钮创建新 list，名字填 'open'；在 Show replies to 下拉里选择屏幕上可见的 'Anyone I follow'，选中后不要再改；最后点击底部 Create 保存。",
+    "goal": "当前在 Mastodon 的 Manage lists 页面。帮我新建一个叫 open 的 list，回复显示范围设成我关注的人。",
     "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
     "init_script": "benchmark/android-mini/init/open_mastodon.sh",
     "init_env": {
@@ -230,12 +230,12 @@
       "ANDROID_MINI_MASTODON_LIST_EXPECTATION": "open-created"
     },
     "verify_timeout_s": 60,
-    "note": "第 2 步:从空 list 状态创建 open list,并设置 replies_policy=followed users(1),exclusive=false；通过 DB 精确验证 list 名称和权限,不要求加成员。"
+    "note": "第 2 步:从空 list 状态创建 open list,并设置 replies_policy=followed users(1),exclusive=false；通过 DB 精确验证 list 名称和权限,不要求加成员。UI 上 followed users 通常显示为 Anyone I follow；这个映射属于测试说明,不写进 goal。"
   },
   {
     "label": "mastodon-list-open-add-members",
     "layer": "MastodonManageMultiListTask / step 3",
-    "goal": "当前已经在 Mastodon 的 Manage lists 页面，'open' list 已经建好但没有成员。请进入 open list 的 List members 页面，点右下角 Add member；把 openCompany 和 openUniversity 两个用户加入列表。每点一次 Add 后，该行按钮变成 Remove 就表示这个用户已经加入，不要再点同一行；两个用户都显示 Remove 后返回 List members。",
+    "goal": "当前在 Mastodon 的 Manage lists 页面。帮我把 openCompany 和 openUniversity 加到 open list 里。",
     "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
     "init_script": "benchmark/android-mini/init/open_mastodon.sh",
     "init_env": {
@@ -252,12 +252,12 @@
       "ANDROID_MINI_MASTODON_LIST_EXPECTATION": "open-members"
     },
     "verify_timeout_s": 60,
-    "note": "第 3 步:DB 预置 open 空 list,任务只测搜索/添加 username 含 open 的成员；通过 DB 验证成员精确为 openCompany/openUniversity,且 open 权限保持 replies_policy=1、exclusive=false。"
+    "note": "第 3 步:DB 预置 open 空 list,任务只测给 open 添加指定成员；通过 DB 验证成员精确为 openCompany/openUniversity,且 open 权限保持 replies_policy=1、exclusive=false。测试约束不写进 goal：只添加精确 username,不要打开用户主页或重复点击已加入用户。"
   },
   {
     "label": "mastodon-list-cute-create",
     "layer": "MastodonManageMultiListTask / step 4",
-    "goal": "当前已经在 Mastodon 的 Manage lists 页面，open list 已经完成。请点击右下角 Create list 按钮创建新 list，名字填 'cute'；在 Show replies to 下拉里选择屏幕上可见的 'Members of the list'，选中后不要再改；打开 'Hide members in following' 开关。点击底部 Create 保存前，必须确认 Hide members in following 开关已经是开启状态（蓝色、滑块在右侧）；如果仍是关闭状态，不能提交，必须先把它打开。",
+    "goal": "当前在 Mastodon 的 Manage lists 页面。帮我新建一个叫 cute 的 list，只显示 list 成员的回复，并把成员从 following 里隐藏。",
     "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
     "init_script": "benchmark/android-mini/init/open_mastodon.sh",
     "init_env": {
@@ -274,12 +274,12 @@
       "ANDROID_MINI_MASTODON_LIST_EXPECTATION": "cute-created"
     },
     "verify_timeout_s": 60,
-    "note": "第 4 步:DB 预置已完成的 open list,任务只测创建 cute list 并设置 replies_policy=list members(0)、exclusive=true；通过 DB 验证 cute 权限且 open 仍保持完成状态。"
+    "note": "第 4 步:DB 预置已完成的 open list,任务只测创建 cute list 并设置 replies_policy=list members(0)、exclusive=true；通过 DB 验证 cute 权限且 open 仍保持完成状态。UI 上 list members 通常显示为 Members of the list；Hide members in following 必须开启,这些是验收说明,不写进 goal。"
   },
   {
     "label": "mastodon-list-cute-add-members",
     "layer": "MastodonManageMultiListTask / step 5",
-    "goal": "当前屏幕已是 Mastodon 的 cute list 的「Add member / 添加成员」界面，候选用户列表可见。请把头像为猫或狗的用户加入 cute list：逐个点击这些用户所在行右侧的 Add 按钮，该行按钮变成 Remove 即表示已加入；只点 Add 按钮，不要点击头像、用户名或打开个人主页，已显示 Remove 的用户不要重复点击。完成后 cute list 应包含全部头像为猫或狗的用户。",
+    "goal": "当前在 cute list 的 Add member 页面。帮我把 pupper、kitty 和 olivia 加到这个 list 里，其他人不要加。",
     "runner_args": ["--orchestrator", "--no-router", "--no-dynamic-max-turns"],
     "init_script": "benchmark/android-mini/init/open_mastodon.sh",
     "init_env": {
@@ -289,13 +289,13 @@
       "ANDROID_MINI_MASTODON_LIST_ENTRY": "add-cute"
     },
     "init_settle_s": 5,
-    "max_turns": 8,
-    "timeout_s": 360,
+    "max_turns": 5,
+    "timeout_s": 320,
     "verify_script": "benchmark/android-mini/verify/verify_mastodon_lists.sh",
     "verify_env": {
       "ANDROID_MINI_MASTODON_LIST_EXPECTATION": "full"
     },
     "verify_timeout_s": 60,
-    "note": "第 5 步(合并原 5a/5b/5c 逐个加成员,粒度过细):DB 预置 open 完成 + 空 cute list,任务测一次性给 cute 添加全部头像为猫或狗的用户；DB 验证 cute 成员精确为 pupper/kitty/olivia,并同时验证 open 仍完整。"
+    "note": "第 5 步:DB 预置 open 完成 + cute 空 list,任务从 cute 的 Add member 页面开始,用一个用户级 mini case 添加 pupper/kitty/olivia 三个成员；通过 DB 验证 cute 成员精确为 pupper/kitty/olivia,并同时验证 open 仍完整。测试约束不写进 goal：只点击目标用户行右侧 Add,不要打开用户主页,不要添加或移除其他用户。"
   }
 ]

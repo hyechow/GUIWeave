@@ -22,6 +22,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CASES_FILE = Path(__file__).parent / "cases.json"
+_LOG_DIR_RE = re.compile(r"^Log Dir\s*:\s*(.+)$", re.M)
 
 
 def _norm(text: str) -> str:
@@ -204,6 +205,56 @@ def _extract_final_output(stdout: str) -> str:
     return matches[-1].group("output").strip()
 
 
+def _extract_log_dir(stdout: str) -> Path | None:
+    match = _LOG_DIR_RE.search(stdout or "")
+    if not match:
+        return None
+    raw = match.group(1).strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    try:
+        path.resolve().relative_to(PROJECT_ROOT.resolve())
+    except ValueError:
+        return None
+    return path if path.is_dir() else None
+
+
+def _write_case_result(
+    case: dict,
+    log_dir: Path | None,
+    *,
+    ok: bool,
+    detail: str,
+    output: str = "",
+    issues: list[str] | None = None,
+) -> None:
+    if log_dir is None:
+        return
+    payload = {
+        "kind": "android-mini",
+        "label": case.get("label"),
+        "layer": case.get("layer"),
+        "goal": case.get("goal"),
+        "passed": ok,
+        "detail": detail,
+        "issues": issues or [],
+        "final_output": output,
+        "max_turns": case.get("max_turns"),
+        "timeout_s": case.get("timeout_s"),
+        "written_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    try:
+        (log_dir / "android-mini-result.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _check_output(output: str, case: dict) -> list[str]:
     if not (
         case.get("expected_output_contains_all")
@@ -296,9 +347,12 @@ def _run_case(
         print(result.stdout)
         if result.stderr.strip():
             print(result.stderr, file=sys.stderr)
+    log_dir = _extract_log_dir(result.stdout)
     if result.returncode != 0:
         tail = "\n".join((result.stdout + "\n" + result.stderr).splitlines()[-40:])
-        return False, f"runner exited with {result.returncode}\n{tail}"
+        detail = f"runner exited with {result.returncode}\n{tail}"
+        _write_case_result(case, log_dir, ok=False, detail=detail)
+        return False, detail
 
     output = _extract_final_output(result.stdout)
     output_issues = _check_output(output, case)
@@ -309,8 +363,12 @@ def _run_case(
     if issues:
         snippet = "\n".join(ui_text.splitlines()[:80])
         output_snippet = "\n".join(output.splitlines()[:20])
-        return False, "; ".join(issues) + f"\nFinal output:\n{output_snippet}\nUI text head:\n{snippet}"
-    return True, str(case.get("pass_message") or "case assertions passed")
+        detail = "; ".join(issues) + f"\nFinal output:\n{output_snippet}\nUI text head:\n{snippet}"
+        _write_case_result(case, log_dir, ok=False, detail=detail, output=output, issues=issues)
+        return False, detail
+    detail = str(case.get("pass_message") or "case assertions passed")
+    _write_case_result(case, log_dir, ok=True, detail=detail, output=output)
+    return True, detail
 
 
 def main() -> int:

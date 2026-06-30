@@ -27,8 +27,10 @@ Mastodon list 类 case 使用 `benchmark/android-mini/init/open_mastodon.sh` 的
 `ANDROID_MINI_MASTODON_LIST_STATE` 准备独立前置状态，避免调试后半段时每次都真实
 重跑前面的创建/添加动作。支持的状态包括 `dirty`、`empty`、`open-created`、
 `open-members`、`cute-created`、`cute-pupper`、`cute-pupper-kitty`、`full`。
-其中成员添加被拆成单步 mini case：init 直接打开 Add member 页面，每个 case 只点
-一个用户行右侧的 `Add` 一次，然后用 DB 精确验证。对应结果用
+拆分 mini case 时，`goal` 必须保留真实用户表达；精确点击约束、DB 断言、禁止误点等
+测试细节放在 `note` / `verify_*` / `expected_*`，不要写进 agent 看到的 prompt。
+成员添加保持为一个用户级 case：init 直接打开 Add member 页面，目标是一次性把指定
+用户加入 list，然后用 DB 精确验证。对应结果用
 `benchmark/android-mini/verify/verify_mastodon_lists.sh` 查 Mastodon DB 精确验证。
 
 ## Cases
@@ -42,8 +44,8 @@ Mastodon list 类 case 使用 `benchmark/android-mini/init/open_mastodon.sh` 的
 | mastodon-postpoll-search-winners | MastodonPostPollTask / step 1 | 从 Google 搜索结果页读取 2025 Nobel Prize in Economics 三位获奖者。 | 最终输出必须包含 `Joel Mokyr`、`Philippe Aghion`、`Peter Howitt` |
 | mastodon-postpoll-compose-settings | MastodonPostPollTask / step 2 | 在已打开的 Mastodon poll compose 面板里填三位获奖者，并设置 `1 week` / 多选。 | 当前 UI 必须同时显示 `#vote2025`、三个人名、`1 week`、`Multiple choice`；不发布 |
 | mastodon-postpoll-publish | MastodonPostPollTask / step 3 | 从已填好的 Mastodon poll compose 页发布投票。 | 后端数据库必须存在本次 marker 的 `#vote2025` poll，且包含三个人名、`multiple=true`、约 1 周过期 |
-| mastodon-list-cleanup | MastodonManageMultiListTask / step 1 | 打开 Mastodon lists 页面并删除所有旧 list。 | init 先创建 `old-open`/`old-cute` 脏状态；DB 验证 `test` 用户 list 为空 |
-| mastodon-list-open-create | MastodonManageMultiListTask / step 2 | 创建 `open` list，并把 replies 设置成 followed users。 | DB 验证 `open` 存在、`replies_policy=1`、`exclusive=false`、成员为空 |
-| mastodon-list-open-add-members | MastodonManageMultiListTask / step 3 | 给 `open` 添加用户名包含 `open` 的用户。 | init 预置空 `open`；DB 验证成员精确为 `openCompany`、`openUniversity` |
-| mastodon-list-cute-create | MastodonManageMultiListTask / step 4 | 创建 `cute` list，replies 设置成 list members，并启用 hide members in following。 | init 预置已完成 `open`；DB 验证 `cute` 存在、`replies_policy=0`、`exclusive=true`、成员为空 |
-| mastodon-list-cute-add-members | MastodonManageMultiListTask / step 5 | 从 Add member 页面给 `cute` 一次性添加全部头像为猫或狗的用户。 | init 预置 `open` 完成 + 空 `cute`；DB 验证 `cute` 成员精确为 `pupper`、`kitty`、`olivia`，并验证 `open` 仍完整 |
+| mastodon-list-cleanup | MastodonManageMultiListTask / step 1 | 当前在 Mastodon 的 Manage lists 页面。帮我把 `old-cute` 和 `old-open` 这两个旧 list 都删掉。 | init 先创建 `old-open`/`old-cute` 脏状态；DB 验证 `test` 用户 list 为空 |
+| mastodon-list-open-create | MastodonManageMultiListTask / step 2 | 当前在 Mastodon 的 Manage lists 页面。帮我新建一个叫 `open` 的 list，回复显示范围设成我关注的人。 | DB 验证 `open` 存在、`replies_policy=1`、`exclusive=false`、成员为空 |
+| mastodon-list-open-add-members | MastodonManageMultiListTask / step 3 | 当前在 Mastodon 的 Manage lists 页面。帮我把 `openCompany` 和 `openUniversity` 加到 `open` list 里。 | init 预置空 `open`；DB 验证成员精确为 `openCompany`、`openUniversity` |
+| mastodon-list-cute-create | MastodonManageMultiListTask / step 4 | 当前在 Mastodon 的 Manage lists 页面。帮我新建一个叫 `cute` 的 list，只显示 list 成员的回复，并把成员从 following 里隐藏。 | init 预置已完成 `open`；DB 验证 `cute` 存在、`replies_policy=0`、`exclusive=true`、成员为空 |
+| mastodon-list-cute-add-members | MastodonManageMultiListTask / step 5 | 当前在 `cute` list 的 Add member 页面。帮我把 `pupper`、`kitty` 和 `olivia` 加到这个 list 里，其他人不要加。 | init 预置 `open` 完成 + 空 `cute`；DB 验证 `cute` 成员精确为 `pupper`、`kitty`、`olivia`，并验证 `open` 仍完整 |
