@@ -109,6 +109,23 @@ def _check_assertions(milestones: list, assertions: list[str]) -> list[str]:
                 details.append(
                     f"milestone 走了 API/JSON 直链取数（应走网页/应用界面视觉）: {offenders}"
                 )
+        elif assertion == "action_milestone_accepts_state_change":
+            # action 任务验收必须是「动作后的状态变化」，禁止纯预存态（目标已存在/可见于
+            # 列表）。要求 action milestone 的验收至少含一个状态变化信号词，否则疑似预存态
+            # 或弱验收（回归 20260629_214725：搜索用户 openCompany 的验收是"用户在列表"，
+            # 预存成立 → 没点 Add 就 finish）。
+            _STATE_CHANGE = ("变", "Remove", "已加入", "已添加", "添加成功", "新增",
+                             "成功", "保存", "已保存", "提交", "已提交", "开启", "已开启",
+                             "已设定", "已创建", "发送成功", "已发送", "弹出")
+            action_milestones = [m for m in milestones if m.kind == "action"]
+            if not action_milestones:
+                details.append("no action milestone found（本 case 应有改变状态的 action 步）")
+            for m in action_milestones:
+                if not any(kw in _milestone_text(m) for kw in _STATE_CHANGE):
+                    details.append(
+                        f"action milestone「{m.name}」验收缺少动作后状态变化信号"
+                        f"（疑似预存态/弱验收）: {m.success_condition!r}"
+                    )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details
@@ -135,12 +152,11 @@ def test_decomposer() -> None:
         details.extend(_check_assertions(milestones, c.get("assertions", [])))
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
-        if not ok:
-            for m in milestones:
-                print(
-                    "       "
-                    f"[{m.kind}/{m.completion_strategy}] {m.name}: {m.success_condition}"
-                )
+        for m in milestones:
+            print(
+                "       "
+                f"[{m.kind}/{m.completion_strategy}] {m.name}: {m.success_condition}"
+            )
 
 
 def main() -> int:

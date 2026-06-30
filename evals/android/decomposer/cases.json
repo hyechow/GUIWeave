@@ -24,5 +24,18 @@
     },
     "assertions": [],
     "note": "【2026/06/26 方向反转：已放开 API，允许 agent 经浏览器访问 api endpoint、用 read_screen_text 读 JSON；no_api_json_direct_link 断言已停用。下为 195139 纯视觉时期历史，保留备查。】195139 纯视觉重跑（删 url_json_read 后门后）：decomposer 把 api.github.com REST 端点写进 milestone——手机 Chrome 不渲染原始 JSON，纯视觉读不到字段，contributors 读成 5（真15）、stars 虽读到1695却因下游 mail milestone 没用 {var} 模板接力、planner 幻觉成 2156。decompose 必须走 github.com 网页视觉获取，禁止 api.*/JSON 直链端点。"
+  },
+  {
+    "label": "mastodon-list-add-members-action 验收须状态变化非预存态（回归 20260629_214725）",
+    "screenshot": "evals/android/decomposer/screenshots/mastodon_manage_lists_20260629.png",
+    "goal": "当前在 Mastodon 的 Manage lists 页面。帮我把 openCompany 和 openUniversity 加到 open list 里。",
+    "expected": {
+      "min_milestones": 2,
+      "task_type": "action"
+    },
+    "assertions": [
+      "action_milestone_accepts_state_change"
+    ],
+    "note": "20260629_214725（dashscope）decompose 把'添加成员'拆出'搜索用户 openCompany'伪子目标，验收 returns=['目标用户存在']（用户在不在列表）。但 Mastodon Add member 搜索页默认列出所有 follow 用户，目标预存 → checker 判 done + PreExisting 短路 → 没点 Add 就 finish。action 任务的验收必须是动作后的状态变化（如 Add→Remove），禁止预存态。"
   }
 ]
