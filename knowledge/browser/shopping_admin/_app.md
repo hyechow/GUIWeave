@@ -64,11 +64,11 @@ version: 1
 
 ### 报表与分析 (Reports)
 *   **Reports Menu (navigation hub)**: 报表分类导航页，按销售、产品、客户等维度组织。
-*   **Sales Reports (list)**: 销售类报表汇总（订单、税收、发票、运费等）。其中 **Orders Report**（Reports › Sales › Orders）按日期区间统计订单。⚠️ **"Show / View the sales order report (for <时间段>)" 是纯导航（NAVIGATE）意图,不是取数任务**：目标只是**到达并渲染**该报表 —— **先按报表子类型选对入口**(见下方「报表子类型 → URL 映射」:orders→Reports › Sales › **Orders**、tax→Reports › Sales › **Tax**;**"tax report" 必须进 Tax 报表,不是 Orders 报表**),在 **From / To** 填日期区间(MM/DD/YYYY),点 **Show Report**。**终态/成功判据是导航性的而非数据性的**:点 Show Report 后页面 URL 跳到该子类型的报表渲染端点(`…/reports/report_sales/<subtype>/filter/…`,subtype=sales 对应 orders 报表、tax 对应 tax 报表)即算到达成功。⚠️ **报表区可能为空**(该年度统计未刷新 / 无订单时显示 "No records found",且 Magento 报表页始终把 Filter 表单留在顶部、统计表渲染在其下方甚至 below-fold)——**空报表 / 看不到统计行也算成功,绝不要因为"没看到统计表格"就反复点 Show Report**(实测会被误判 in_progress 死循环点 7 次后失败)。success_condition 只写"已点 Show Report 且 URL 进入 report_sales/<subtype>/filter 渲染页",不要写"统计表格已渲染/出现 N 行数据"。**不要给这类意图绑 returns / data_query / 不要去读 total_orders、total_revenue 等具体数值**(任务没要求返回任何字段,retrieved_data 应为 null;读不存在的字段会触发空读→kickback 死循环→误入 Refresh Statistics)。时间段换算见下方「相对日期换算」。
-*   **报表子类型 → URL 映射**(决定 `report_sales/<subtype>/filter` 的 subtype,务必按 intent 的报表名选对,否则 NetworkEvent 不匹配):**orders / sales order report → `sales`**(Reports › Sales › Orders);**tax report → `tax`**(Reports › Sales › Tax);invoiced → `invoiced`、shipping → `shipping`、refunds → `refunded`、coupons → `coupons`(均在 Reports › Sales › 对应子项)。
+*   **Sales Reports (list)**: 销售类报表汇总（订单、税收、发票、运费等），子项含 **Orders**（Reports › Sales › Orders）、**Tax**（Reports › Sales › Tax）等，按日期区间统计。⚠️ **"Show / View the sales order report / tax report (for <时间段>)" 是导航类意图**——目标是**到达并渲染**对应报表，不是读取报表里的具体数值。做法：① 按报表名选对子类型入口（**"tax report" 进 Tax 报表，不是 Orders 报表**；子类型→URL 见下方映射）；② 在 **From / To** 填日期区间（**MM/DD/YYYY**，相对日期换算见下方），点 **Show Report**。报表渲染在 URL `…/reports/report_sales/<subtype>/filter/…`，进入该渲染页即视为到达。**报表区可能为空**（无数据时显示 "No records found"），且 Magento 报表页把 Filter 表单留在顶部、统计表渲染在其下方甚至 below-fold——空报表是正常结果。这类导航意图不要求返回任何数值字段（不读 total_orders / total_revenue 等）。
+*   **报表子类型 → URL 映射**(决定 `report_sales/<subtype>/filter` 的 subtype,务必按 intent 的报表名选对,否则会进错报表):**orders / sales order report → `sales`**(Reports › Sales › Orders);**tax report → `tax`**(Reports › Sales › Tax);invoiced → `invoiced`、shipping → `shipping`、refunds → `refunded`、coupons → `coupons`(均在 Reports › Sales › 对应子项)。
 *   **相对日期换算**(报表 From/To,相对 intent 里给定的 today;**关键:"this year" 截到今天、不是年底**):
-    *   **"last year"** = 去年**整年** → From `01/01/<去年>`、To `12/31/<去年>`。例:today=Mar 15 2023 → From `01/01/2022`、To `12/31/2022`(请求 `report_sales/sales/filter?report_type=created_at_order&from=2022-01-01&to=2022-12-31`)。
-    *   **"this year"** = 今年 1 月 1 日 → **今天**(当年未过完,To 取 today,**不要填 12/31**)。例:today=Mar 15 2023 的 "tax report for this year" → From `01/01/2023`、To `03/15/2023`(请求 `report_sales/tax/filter?report_type=created_at_order&from=2023-01-01&to=2023-03-15`)。
+    *   **"last year"** = 去年**整年** → From `01/01/<去年>`、To `12/31/<去年>`。例:today=Mar 15 2023 → From `01/01/2022`、To `12/31/2022`。
+    *   **"this year"** = 今年 1 月 1 日 → **今天**(当年未过完,To 取 today,**不要填 12/31**)。例:today=Mar 15 2023 的 "tax report for this year" → From `01/01/2023`、To `03/15/2023`。
     *   **显式区间**(intent 已给起止日期)= 直接用,不换算。例:"orders report from May 1 2021 to March 31 2022" → From `05/01/2021`、To `03/31/2022`。
 *   **Product Reports (list)**: 产品类报表汇总（浏览量、畅销品、库存预警等）。
 *   **Customer Reports (list)**: 客户类报表汇总（订单总额、新增账户、愿望清单等）。
@@ -139,7 +139,7 @@ version: 1
     `Sidebar (Customers)` -> `Customer Groups` -> `Add New Customer Group` -> `Customer Group Workspace` (设置税类和网站排除) -> `Save` -> `All Customers List` -> 选中客户 -> `Actions` -> `Assign a Customer Group`。
 
 4.  **查看销售绩效与报表**:
-    `Admin Dashboard` -> `Sidebar (Reports)` -> `Reports Menu` -> `Sales` -> `Orders Report`(tax report 则选 `Tax`,见「报表子类型 → URL 映射」)-> (在 From/To 选择日期范围,相对日期按「相对日期换算」:this year 截到 today、不是年底) -> `Show Report` (提交后 URL 进入 `…/reports/report_sales/<subtype>/filter/…` 渲染页即到达终态;**报表区可能为空也算成功,不要反复点**)。⚠️ 不要规划 `Export`/下载 CSV(agent 读不回下载文件,已禁);"show the report" 类意图到 Show Report 提交进入渲染页就结束,不读具体数值、不要求出现统计行。
+    `Admin Dashboard` -> `Sidebar (Reports)` -> `Reports Menu` -> `Sales` -> `Orders Report`(tax report 则选 `Tax`,见「报表子类型 → URL 映射」)-> (在 From/To 选日期范围,相对日期按「相对日期换算」)-> `Show Report`,进入 `…/reports/report_sales/<subtype>/filter/…` 渲染页即到达。报表区可能为空(正常结果)。不要用 `Export`/下载 CSV——下载的文件读不回来。
 
 5.  **审核用户评论**:
     `Sidebar (Marketing)` -> `User Content` -> `Pending Reviews` -> `List` -> `Click Review` -> `Moderate Product Reviews` (Status: Approved/Not Approved) -> `Save Review`。

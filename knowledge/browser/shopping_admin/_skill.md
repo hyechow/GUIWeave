@@ -27,13 +27,13 @@ version: 1
 
 ## skill：订单支付金额/最近 N 订单聚合
 - 触发：payment amount、Grand Total、last N orders、completed/canceled/cancelled orders、non-cancelled orders、payment difference
-- 数据：Orders grid；可见列 `Status`、`Purchase Date`、`Grand Total (Purchased)`。Status 是单值筛选；non-cancelled 不用 UI Status 下拉，不用 Complete 近似。foreach returns 用可见列名，不用内部名 `created_at`；SQL 再用 `purchase_date_ts` 和 `grand_total_purchased_num`。
+- 数据：Orders grid；可见列含 `Status`、`Purchase Date`、`Grand Total (Purchased)`。Status 是**单值**筛选。**non-cancelled / 非取消口径** = 排除 Status=Canceled 的订单：单值下拉选不出「非某值」，所以**不要**用 UI Status 下拉去近似，也**不要**用 Complete 近似 non-cancelled——清掉状态筛选采全量后，分析时排除 Canceled。
 - 步骤：
 1. 进入 Sales > Orders
-2. non-cancelled 禁用 UI Status；清筛后采全量
-3. foreach body=[] 采 Status、Date、Grand Total
-4. data_query 用 purchase_date_ts LIMIT N 后聚合
-5. 多口径用 CTE/ABS；SQL 排除 Canceled
+2. non-cancelled：不用 UI Status 单值下拉，清筛后采全量、分析时排除 Canceled
+3. 采集订单的 Status、Purchase Date、Grand Total
+4. 按 Purchase Date 选出口径要求的订单（如最近 N 笔），再对 Grand Total 做求和/平均/差值
+5. 多个口径对比（差值/比例）时分别备好各口径数据再统一比较
 
 ## skill：Dashboard 搜索词读取
 - 触发：top search terms、most-used search terms、recent search terms、dashboard search terms
@@ -72,13 +72,13 @@ version: 1
 
 ## skill：最近/最旧某状态订单的商品明细
 - 触发：most recent/latest/oldest order、最近一笔/最新订单、order 的 product name + price、订单的商品和价格、一笔订单里所有商品、return a list of products/price of an order
-- 数据：Orders grid（`Action_url`、`Purchase Date`）+ 订单详情页 `Items Ordered` 表（`Product`、`Price`）。约束：① 「最近/最旧」只看 grid `Purchase Date`，不看详情页 `Order Date`；② grid-collect foreach 必须含 `Purchase Date`，由 data_query `ORDER BY purchase_date_ts LIMIT 1` 选出 URL（不可直接用列表第一行）；③ 钻取是独立 navigation 步（run_kind=navigation、不是 action），name 写 `打开 {q[url]}`（运行时确定性导航）、returns 留空；④ 商品由第二个独立 foreach 采集（details 表含 rowspan 幻影行 Price=''；Product 格式为 `名称 SKU: ...`，用 `substr(product,1,instr(product,' SKU:')-1)` 取纯名称）；⑤ 价格数值运算用影子列 `price_num`（Price 带 `$` 前缀，不可 CAST）。
+- 数据：订单列表 grid（含每行 `Action_url`、`Purchase Date`）+ 订单详情页 `Items Ordered` 表（含 `Product`、`Price`）。约束：① 「最近/最旧」以 grid 的 **Purchase Date** 为准，不看详情页的 `Order Date`；按 Purchase Date 排序选出目标那一笔，**不要直接取列表第一行**（列表默认排序未必是日期序）；② 订单详情 `Items Ordered` 表含合计/小计类**无价格的幻影行**（Price 为空），统计商品时要剔除；`Product` 单元格是「商品名 + `SKU: …`」格式，取纯商品名要去掉 `SKU:` 及其后内容。
 - 步骤：
-1. 进 Orders，清筛 + 设 Status + 按 Purchase Date 排序
-2. foreach limit=1 采 Action_url+日期，data_query LIMIT 1
-3. `run_kind=navigation`、`name="打开 {q[url]}"`（name 里必须含 URL 模板 `{q[url]}`、运行时确定性导航）、returns 留空
-4. 另起独立 foreach 采 Items Ordered 表 Product+Price 读全部行
-5. data_query 用 price_num 滤幻影行(>0)、剥 SKU、排序输出
+1. 进 Orders，清筛、设 Status、按 Purchase Date 排序
+2. 用 Purchase Date 排序选出目标订单（最近/最旧那一笔），拿到其详情页入口
+3. 打开该订单详情页
+4. 采集 Items Ordered 表的全部商品行（Product + Price）
+5. 剔除无价格的幻影行、Product 取纯名称，按需排序输出商品与价格
 
 ## skill：Grid 数据导出或采集
 - 触发：需要完整 grid 数据、导出 CSV/XML、跨分页统计

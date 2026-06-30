@@ -43,52 +43,22 @@ column.
 
 ⚠️ **统计订单数前,判口径的关键 = intent 里有没有 "completed" 这个词:**
 - **含 "completed"**(筛 Complete):"who completed the most/second/Nth number of
-  orders" / "who completed N orders" / "completed orders" —— WebArena 这类任务的
-  参考答案**按 `Status = Complete` 计数**(实测 task 63 坐实:期望答案 helloworld+
-  michael.nguyen 只有在 Complete 口径下计数才相等[各 8],any-state 下 14 vs 12 凑不
-  齐;Complete 口径第二多正是这两人,全量下 janesmith456 唯一第一)。**第一步先 `Clear
-  all` 清掉所有残留 `Active filters`**(残留 `Purchase Date` range 说明源已不是 entire
-  history,必须删),再**只应用 `Status = Complete`**,采全量 Complete 行(筛后约 155 行
-  必须采全,个位计数漏几笔名次就乱)。filter milestone 验收写成 `Active filters` 只显示
-  `Status: Complete` 且无 `Purchase Date`/date range。
-- **字面 "any state" / 只说 "have N orders"**(不筛 Status):如 "who have N orders in
-  any state"(task 64) = **所有状态**订单数,**不要**筛 `Status = Complete`,plan 里
-  不得出现 `Status = Complete` 的 filter 或 SQL 谓词。**第一步先 `Clear all` 清掉所有
-  残留 `Active filters`**(含残留的 `Status: Complete`,绝不能沿用),再不加状态筛选地
-  采全量。
-
-For any task whose intent contains "completed" (e.g. "who completed the Nth most
-number of orders", "who completed N orders", "completed orders"), the plan must
-make the completed-status constraint explicit: add a UI filter step for
-`Status = Complete` before collecting rows, or put an explicit SQL predicate such
-as `WHERE lower(status) = 'complete'` in the `data_query`. Only when the task
-literally says "in any state" (or just "have N orders" without "completed") do
-the opposite — no status filter, count all states, and the `data_query` must NOT
-carry a status predicate.
+  orders" / "who completed N orders" / "completed orders" —— 按 **`Status = Complete`**
+  计数。**第一步先 `Clear all` 清掉所有残留 `Active filters`**(残留 `Purchase Date`
+  range 说明源已不是 entire history,必须删),再**只应用 `Status = Complete`**,采全量
+  Complete 行。
+- **字面 "any state" / 只说 "have N orders"**(不筛 Status):**所有状态**订单数,
+  **不要**筛 `Status = Complete`。**第一步先 `Clear all` 清掉所有残留 `Active filters`**
+  (含残留的 `Status: Complete`,绝不能沿用),再不加状态筛选地采全量。
 
 For monthly completed-order counts over a `Purchase Date` range, prefer the page
 filters before reading rows: in **Sales > Orders**, open **Filters**, set
-`Status = Complete`, set `Purchase Date` **from** and **to**, then click
-**Apply Filters**. The date filter accepts US-style dates such as `01/01/2023`
-or `1/1/2023`; do not use ISO input such as `2023-01-01` in the filter fields.
-Convert task dates into that UI format in the page filter step; for example,
-`2023-01-01` should be written as `01/01/2023`, and `2023-05-31` as
-`05/31/2023`. ISO values like `2023-01-01` are suitable for storage/provider
-data, not for the visible Admin date filter inputs.
-After the filter is applied, read the complete Orders grid and aggregate by
-month. The complete Magento grid provider exposes `created_at` as
-`YYYY-MM-DD HH:MM:SS` and `status` as lowercase values such as `complete`, while
-the visible DOM column is labeled `Purchase Date` and displays values like
-`Feb 3, 2023 6:08:03 PM`. For a final answer that must be a JSON list of objects
-with keys like `month` and `count`, make the `data_query` return a single
-`result` field whose SQL rows are aliased as `month` and `count`; `month` must be
-the requested month name such as `January`, not `01` or `2023-01`. Do not split
-the list into separate `{q[month]}` and `{q[count]}` placeholders. After the page
-filter has already applied `Status = Complete` and `Purchase Date` from/to, the
-SQL should not repeat those predicates; it should only group/count/project the
-already-filtered rows. Repeating `WHERE status = 'Complete'` is wrong because the
-provider stores status as lowercase `complete`, and repeating UI dates risks
-mixing UI input format with provider storage format.
+`Status = Complete`, set `Purchase Date` **from**/**to** (US-style `MM/DD/YYYY`,
+not ISO — see the date-filter note above), click **Apply Filters**, then read the
+complete grid and aggregate by month. Data-shape note: the Magento grid provider
+exposes `created_at` as `YYYY-MM-DD HH:MM:SS` and `status` as lowercase values
+such as `complete`, while the visible DOM column is labeled `Purchase Date` and
+displays values like `Feb 3, 2023 6:08:03 PM`.
 
 For tasks phrased as "customer email(s) who completed the most/second/fifth
 number of orders" or "customer email(s) who have N orders in any state", use this
@@ -98,15 +68,11 @@ filter field (`Status`) and the final grouping/output field (`Customer Email`),
 while Customer Reports usually show customer names and interval aggregates, and
 the Customers grid does not reliably expose total order counts. Apply the status
 constraint per the ⚠️ 口径 rule above (intent contains "completed" → filter
-`Status = Complete`; literal "any state" → no filter, `Clear all` first). After
-the complete raw rows are available, use a data query or deterministic local
-aggregation: group by `Customer Email`, count rows, rank the distinct counts when
-the task says most / second / fifth, and return all emails tied at the requested
-rank. For "have N orders", return emails whose count is exactly N, not
-greater-than-or-equal N. For "completed" tasks the Orders grid should show
-`Status: Complete` as the only active task filter before counting; a visible
-`Purchase Date` active filter or date range from a previous task means the data
-source is wrong until filters are cleared and `Status: Complete` is re-applied.
+`Status = Complete`; literal "any state" → no filter, `Clear all` first). Then
+aggregate the complete raw rows by `Customer Email`, counting one per order. Two
+business semantics: for most / second / fifth, tied emails share a rank — return
+**all** emails tied at the requested rank; "have N orders" means a count of
+**exactly N**, not N-or-more.
 
 If downloads/exports are not allowed, collect the raw rows by combining grid
 pagination with within-page vertical scrolling. This is not infinite-scroll
