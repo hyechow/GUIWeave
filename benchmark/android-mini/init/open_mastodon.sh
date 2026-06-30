@@ -209,8 +209,11 @@ open_list_entry() {
       return 0
       ;;
     menu|lists|manage|add-cute|cute-add)
-      tap_text "Home" || adb_cmd shell input tap 190 205
-      sleep 0.8
+      if [[ "$(printf '%s' "$list_entry" | tr '[:upper:]' '[:lower:]')" == "menu" ]]; then
+        tap_text "Home" || adb_cmd shell input tap 190 205
+        sleep 0.8
+        return 0
+      fi
       ;;
     *)
       echo "unknown ANDROID_MINI_MASTODON_LIST_ENTRY: $list_entry" >&2
@@ -218,13 +221,11 @@ open_list_entry() {
       ;;
   esac
 
-  case "$(printf '%s' "$list_entry" | tr '[:upper:]' '[:lower:]')" in
-    menu)
-      return 0
-      ;;
-  esac
-
-  tap_text "Lists"
+  if ! tap_text "Lists"; then
+    tap_text "Home" || adb_cmd shell input tap 190 205
+    sleep 0.8
+    tap_text "Lists"
+  fi
   sleep 0.8
 
   case "$(printf '%s' "$list_entry" | tr '[:upper:]' '[:lower:]')" in

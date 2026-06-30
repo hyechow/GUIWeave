@@ -68,7 +68,10 @@ _TARGET_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,}")
 # hardcoded list would leak the benchmark answer (which users satisfy the task condition)
 # into the supervisor; the agent must read the UI and judge, and these helpers must stay
 # generic.
-_ROW_TARGET_INSTRUCTION_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_.:-]{2,})(?:\s*(?:这一|那一|所在|个))*\s*行")
+_ROW_TARGET_INSTRUCTION_RE = re.compile(
+    r"['\"`“”‘’@]*([A-Za-z][A-Za-z0-9_.:-]{2,})['\"`“”‘’]*"
+    r"(?:\s*(?:用户|成员|账号|账户|联系人|这一|那一|所在|个))*\s*行"
+)
 _ONLY_ADD_TARGET_RE = re.compile(r"只(?:允许)?(?:点击|点)\s*([A-Za-z][A-Za-z0-9_.:-]{2,})")
 
 
@@ -101,7 +104,10 @@ def _one_shot_add_target(text: str) -> str | None:
 def _expected_one_shot_add_targets(text: str) -> set[str]:
     """Return explicit Add targets named in the goal/milestone text (no hardcoded set)."""
 
-    return {match.group(1).lower() for match in _ONLY_ADD_TARGET_RE.finditer(text or "")}
+    raw = text or ""
+    targets = {match.group(1).lower() for match in _ONLY_ADD_TARGET_RE.finditer(raw)}
+    targets.update(match.group(1).lower() for match in _ROW_TARGET_INSTRUCTION_RE.finditer(raw))
+    return targets
 
 
 def _is_list_member_remove_button_action(text: str) -> bool:
@@ -639,6 +645,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     f"{sorted(expected_add_targets)}，确定性改为返回确认"
                 )
                 plan_add_target = None
+        if not plan_add_target and _is_one_shot_add_button_action(plan.instruction):
+            prior_one_shot_add = any(
+                turn.supervisor
+                and turn.supervisor.milestone_id == milestone.id
+                and _is_one_shot_add_button_action(turn.supervisor.instruction or "")
+                for turn in history
+            )
+            if prior_one_shot_add:
+                plan.instruction = "按返回键"
+                print(
+                    "  [OneShotAdd] 已点击过一次 Add 但无法解析当前目标，"
+                    "避免重复切换移除，确定性改为返回确认"
+                )
         if plan_add_target:
             handled_add_targets = {
                 target
@@ -1146,6 +1165,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
                 replan.instruction = "按返回键"
                 replan_add_target = None
+        if not replan_add_target and _is_one_shot_add_button_action(replan.instruction or ""):
+            prior_one_shot_add = any(
+                turn.supervisor
+                and turn.supervisor.milestone_id == milestone.id
+                and _is_one_shot_add_button_action(turn.supervisor.instruction or "")
+                for turn in history
+            )
+            if prior_one_shot_add:
+                print(
+                    "  [OneShotAdd] replanner 在已点击过一次 Add 后仍要求 Add，"
+                    "但无法解析当前目标，确定性改为返回确认"
+                )
+                replan.instruction = "按返回键"
         if replan_add_target:
             handled_add_targets = {
                 target
