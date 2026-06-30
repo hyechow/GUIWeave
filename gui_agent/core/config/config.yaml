@@ -48,14 +48,6 @@ profiles:
     supervisor:
       model: qwen3.6-35b-a3b
       decompose: {model: qwen3.6-35b-a3b}
-  qwen36-gguf:   # 第三方 llama.cpp 端点（OpenAI 兼容，http://ai.sunjun3773.top:62222/v1），Qwen3.6-35B-A3B gguf 量化；base_url/key 见 .env 的 OPENAI_*。仅用于速度/效果对比，不是生产配置
-    action_policy: {provider: openai, model: Qwen3.6-35B-A3B.gguf}
-    recon:
-      navigator: {provider: openai, model: Qwen3.6-35B-A3B.gguf}
-    supervisor:
-      provider: openai
-      model: Qwen3.6-35B-A3B.gguf
-      decompose: {provider: openai, model: Qwen3.6-35B-A3B.gguf}
 
 # 各模型单价（元/百万 token），用于报告成本估算。key 为模型名，需与上面 llm.*.model 对应；
 # 报告按「模块→该模块所用模型→单价」逐模块计费再汇总，故不同模块用不同模型也能算准。
