@@ -8,7 +8,11 @@ from gui_agent.core.supervisor.milestone.helpers import (
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
-def test_format_form_controls_tells_planner_native_select_is_not_visual_popup():
+def test_format_form_controls_is_dom_fact_only_no_planner_directive():
+    # The form-controls context block is a DOM FACT surface: control type, current value,
+    # candidate options. Planner HOW ("plan as select/set, don't click-expand") was relocated to
+    # planner.md, and the deterministic _guard_native_select_plan (below) enforces the behavior —
+    # so the fact block must NOT carry that directive (keeps observation vs directive separated).
     text = _format_form_controls([{
         "kind": "native_select",
         "label": "Status",
@@ -19,7 +23,9 @@ def test_format_form_controls_tells_planner_native_select_is_not_visual_popup():
     assert "浏览器 DOM 表单控件" in text
     assert "Status: native_select" in text
     assert "Complete" in text
-    assert "不要规划为“点击展开后等待选项可见”" in text
+    # fact-only boundary: no planner instruction text leaked into the observation block
+    assert "不要规划为" not in text
+    assert "应规划为" not in text
 
 
 def test_native_select_guard_rewrites_open_click_plan_to_select_value():

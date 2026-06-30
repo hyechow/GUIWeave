@@ -357,7 +357,8 @@ def grid_status_block(tables: list[dict] | None) -> ContextBlock | None:
     """Inject DOM-derived grid record count into the checker context.
 
     Checker LLMs sometimes hallucinate 'count unchanged / filter not applied' when
-    the screenshot lacks an 'Active filters' chip (e.g. Magento Reviews page). Passing
+    the screenshot lacks an 'Active filters' chip (e.g. a listing page that renders no
+    chip even when filtered). Passing
     the DOM-authoritative total_records as structured text gives the checker an
     unambiguous textual signal — no screenshot reading required.
     """
@@ -423,7 +424,7 @@ def active_filters_block(form_controls: list[dict] | None) -> ContextBlock | Non
     content = (
         "## 当前活跃网格筛选（DOM 权威值，非视觉推断）\n"
         "以下 filter 输入框**当前有非空值**，说明页面存在持久化的筛选条件。"
-        "若本步骤不需要这些筛选，必须先 Reset Filter 清除，再应用本步骤要求的筛选。\n"
+        "若本步骤不需要这些筛选，应在应用本步骤要求的筛选前，先清除这些与本步无关的残留筛选。\n"
         + "\n".join(lines)
     )
     return ContextBlock(
@@ -442,12 +443,12 @@ def applied_filter_state_block(applied_filters: dict[str, str] | None) -> Contex
 
     Distinct from ``active_filters_block`` (which reads filter INPUT-box values, framed as
     residuals to clear): this is the post-Apply chip state — the authoritative answer to "which
-    filters are in EFFECT right now". A filter chip is the control's own state; whether a row's
-    Quantity is 3 is what that chip already encodes. So the checker must judge a filter
-    milestone's progress from these chips, NOT by re-reading a table display column (e.g. Magento
-    `Salable Quantity`, which is Quantity minus reserved and is a SEPARATE column) — conflating
-    the two rejected a correctly-applied `Quantity: 3 - 3` filter and drove a clear→reset loop
-    (run 20260629_173028). None when there are no applied filters."""
+    filters are in EFFECT right now". A filter chip is the control's own state; whether the
+    filtered field equals its target is what that chip already encodes. So the checker must judge a filter
+    milestone's progress from these chips, NOT by re-reading a table display column (e.g. a display
+    column derived from the filtered field, or a same-named neighbor computed on a different basis,
+    which is a SEPARATE column) — conflating the two rejected a correctly-applied range filter and
+    drove a clear→reset loop (run 20260629_173028). None when there are no applied filters."""
     if not applied_filters:
         return None
     lines = [f"- {label}: {value!r}" for label, value in applied_filters.items()]
@@ -457,7 +458,7 @@ def applied_filter_state_block(applied_filters: dict[str, str] | None) -> Contex
         + "\n".join(lines)
         + "\n⚠️ 判断要点：'筛选是否已生效'由上面这些 chip 决定，**不是**由表格里展示了哪些行/列决定。"
         "若本步骤要求的筛选已出现在上面，则筛选动作**已成功生效**；行/单元格里某个**展示列**的值"
-        "（如 Salable Quantity=可销售=库存−预留，与被筛选的 Quantity 是不同列）**不得**用来推翻"
+        "（如某个由被筛字段派生、或与之相邻同名却按不同口径计算的展示列，是另一列）**不得**用来推翻"
         "已生效的筛选、或据此要求重设/清除筛选——那只会打转。"
     )
     return ContextBlock(
@@ -479,7 +480,7 @@ def filter_residual_block(
     helpers.filter_residual_labels). This replaces the old blanket "always clear ALL filters"
     decompose-prompt rule, which — written before the page is seen — could only be unconditional
     and so taught the model to wipe legitimate filters wholesale (一刀切). Here we name exactly the
-    chips to remove, so the agent clears the leaked residual (e.g. `Keyword: WS08`) and KEEPS the
+    chips to remove, so the agent clears the leaked residual (e.g. a stale `<field>: <value>` chip) and KEEPS the
     task's own filter. None when there are no residuals."""
     if not residuals:
         return None
@@ -559,9 +560,7 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
         return ""
     return (
         "## 浏览器 DOM 表单控件（适配器感知，不是截图文本）\n"
-        "这些控件由当前平台适配器提供，只包含可见可编辑控件的类型、当前值和候选项。"
-        "若某控件可由适配器直接设置候选值，应规划为“选择/设置 <字段> 为 <选项>”，"
-        "不要规划为“点击展开后等待选项可见”。\n"
+        "这些控件由当前平台适配器提供，只包含可见可编辑控件的类型、当前值和候选项。\n"
         "⚠️ `*_input` 文本框的 `current=` 是它**实际内容的权威，优先级高于截图像素**："
         "窄文本框在截图里可能只显示滚动后的尾部（已输入完整目标词时，框窄可能只显示尾部片段）——"
         "**只要某 `*_input` 文本框的 `current=` 等于目标值，就是已正确输入完整内容，判该输入已达成；不要据截图把它判成「输入不完整/缺前缀/被截断/需重输」**。\n"

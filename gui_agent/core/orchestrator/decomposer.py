@@ -80,10 +80,10 @@ class _StepDraft(BaseModel):
     over: str = Field(default="", description="op=foreach：被迭代的列表来源（旧路径，iPhone/Android 兼容）；browser 新路径留空，由 name/returns 驱动")
     into: str = Field(default="", description="op=foreach：累积表变量名（留空默认 = 循环变量+s）；循环结束后可被 data_query 查询")
     body: list["_StepDraft"] = Field(default_factory=list, description="op=foreach：每行执行一遍的步骤（run/if/finish，不可再嵌 foreach）")
-    body_goal: str = Field(default="", description="op=foreach（逐行子目标，替代写死的 body）：当每行子任务太复杂、固定步骤拼不可靠（需从行字段派生键→搜索另一个关联实体→按谓词判别行→读其属性，即 per-row 实体 join），填一句含字面模板 {循环变量[字段]} 的子目标，运行时按行当场分解、由 agent 多跳完成；配 returns=每行产出契约。与 body 互斥；子目标内不得再用 body_goal。例：'把 {row[Name]} 去 -SIZE-COLOR 后缀得基名→搜→开 Type=Configurable 父产品→读 Material 主材质→返回 material'")
+    body_goal: str = Field(default="", description="op=foreach（逐行子目标，替代写死的 body）：当每行子任务太复杂、固定步骤拼不可靠（需从行字段派生键→搜索另一个关联实体→按谓词判别行→读其属性，即 per-row 实体 join），填一句含字面模板 {循环变量[字段]} 的子目标，运行时按行当场分解、由 agent 多跳完成；配 returns=每行产出契约。与 body 互斥；子目标内不得再用 body_goal。例：'由 {row[entity_key]} 派生父实体标识→搜索关联父实体→打开匹配行→读取目标属性 attr→返回 attr'")
     limit: int | None = Field(default=None, description="op=foreach：采集行数上限（None=全量）；对已排序 grid 取 topK 时填 K，避免全量翻页")
     # --- op=compute（纯计算：解释器确定性求值，不是 GUI milestone；用于从已有标量派生新值）---
-    expr: str = Field(default="", description="op=compute：受限表达式，对作用域内标量（函数参数 + 之前的 compute 结果，用裸名引用）求值，结果绑到 var（标量，后续 milestone/参数里用 {var} 引用）。只允许：字符串方法(rsplit/split/strip/replace/lower…)、切片/索引、`+`、以及 re_sub(pattern,repl,s)/re_search(pattern,s)/len/str/int。例：re_sub('-[A-Za-z]+-[A-Za-z]+$','',name) 把 -SIZE-COLOR 后缀去掉得基名；name.rsplit('-',2)[0] 同理。**派生类计算用它，别塞进 milestone 让 agent 现场算。**")
+    expr: str = Field(default="", description="op=compute：受限表达式，对作用域内标量（函数参数 + 之前的 compute 结果，用裸名引用）求值，结果绑到 var（标量，后续 milestone/参数里用 {var} 引用）。只允许：字符串方法(rsplit/split/strip/replace/lower…)、切片/索引、`+`、以及 re_sub(pattern,repl,s)/re_search(pattern,s)/len/str/int。例：re_sub('-[^-]+$','',entity_key) 去掉最后一段后缀得到父实体标识；entity_key.rsplit('-',1)[0] 同理。**派生类计算用它，别塞进 milestone 让 agent 现场算。**")
     # --- op=call（调用一个函数定义；可出现在 main / if / foreach body 任意处，函数与循环无关）---
     func: str = Field(default="", description="op=call：要调用的函数名（必须是 functions 里定义过的）")
     call_args: dict[str, str] = Field(default_factory=dict, description="op=call：参数名→取值模板（在调用处作用域解析：{row[字段]} 取当前行、{标量} 取标量、或字面量）。函数返回值绑到 var（一个 RunResult，后续用 {var[返回字段]} 引用）")
@@ -729,5 +729,4 @@ def _schema_typed_shadow_candidates(headers: list[Any], columns: list[str]) -> l
         if any(hint in text for hint in numeric_hints):
             shadows.append(f"{column}_num")
     return shadows[:24]
-
 

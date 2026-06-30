@@ -315,11 +315,11 @@ class Observation(BaseModel):
     applied_filters: Optional[dict[str, str]] = Field(
         default=None,
         description=(
-            "平台感知层提供的「当前已生效筛选」结构状态（如浏览器 Magento 网格的 Active filters "
-            "chips：{列名/维度: 值}，例 {'Quantity': '3 - 3', 'Store View': 'Default Store View'}）。"
+            "平台感知层提供的「当前已生效筛选」结构状态（如某些浏览器后台网格的 Active filters "
+            "chips：{列名/维度: 值}，例 {'<字段A>': '<范围值>', '<字段B>': '<枚举值>'}）。"
             "这是筛选控件自身的权威状态——筛选「是否已生效」的确定性信号，与表格里展示了哪些行/列"
             "无关。filter 类里程碑据此判「动作已生效」(action-applied)，与「行内容是否符合期望」"
-            "(effect) 解耦，避免 checker 拿表格展示列(如 Salable Quantity)推翻一个已正确生效的筛选。"
+            "(effect) 解耦，避免 checker 拿表格展示列(某个由被筛字段派生/相邻的展示列)推翻一个已正确生效的筛选。"
             "None=该平台不提供或当前页无已生效筛选。"
         ),
     )
