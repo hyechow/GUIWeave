@@ -46,21 +46,26 @@ version: 1
 
 ## skill：产品评论评分查询
 - 触发：rating/stars、customer nickname(s)、reviews for product、product reviews、低评分评论
-- 数据：All Reviews 评论行、Product、Review ID、Detailed Rating、Nickname
+- 数据：All Reviews 评论行含 Product、Review ID、行详情链接列 **Action_url**；**Detailed Rating** 与 **Nickname** 在 Review Detail 详情页读取，不是 All Reviews grid/Columns 可直接启用的列；按产品查评论时，产品约束绑定 **Product** 字段/列。
 - 步骤：
-1. 到达 All Reviews 评论数据源
-2. 采集候选评论行标识
-3. 逐条进入评论详情补齐评分与昵称
-4. 按评分条件筛选并输出昵称
+1. 到达 All Reviews 评论数据源。
+2. Product 字段先精确值、再关键词筛候选。
+3. 候选行采 ID、Product、Action_url。
+4. 打开 Action_url 读 Detailed Rating、Nickname。
+5. 按评分条件筛选并输出 Nickname。
 
 ## skill：按库存数量筛选产品并取某个属性（颜色/材质/尺码）
 - 触发：产品的颜色/材质/尺码、color/material/size of products、name and color、products with N units left 取某属性；凡是「按库存数量筛选产品、再取该产品某个属性」的任务
-- 数据：Products grid、Columns 控件、Quantity 范围筛选、产品编辑页属性字段。目标属性是否是 grid 可选列决定走哪条路——Products Columns 面板可选列含 **Color**，**不含 Material / Size**。Magento 产品属性可能挂在**产品自身**，也可能挂在其**父 Configurable 产品**上：Size/Color 是配置型「区分属性」、设在每个变体自身（变体名后缀 `-SIZE-COLOR` 即来源，变体编辑页可直接读到）；**Material 在本数据集常由 Configurable 父产品承载**，按 qty 筛出的简单变体自身 Material 多为空值。父产品的 identity 是 **SKU**（= 变体 SKU 去掉 `-SIZE-COLOR` 后缀，如 `WS08-XS-Blue → WS08`）且 **Type = Configurable Product**，不是产品名——按名称搜会命中同系列变体。**Material 是 multiselect 多选属性**，父产品常含多个材质（如 Cotton+Lycra®、Fleece+Polyester+Spandex）；当任务问「该产品的材质」（单数）时，答案取**主材质 = 首个已选材质**。
+- 数据：Products grid 行可采 **SKU** 与行详情链接列 **Action_url**；Products Columns 面板可选列含 **Color**，**不含 Material / Size**；Size/Color 是变体自身属性，变体名后缀 `-SIZE-COLOR` 即来源；**Material** 常由父 **Configurable Product** 承载，简单变体自身常为空；父产品 identity 是 **SKU**：变体 SKU 去 `-SIZE-COLOR` 后缀，如 `WS08-XS-Blue → WS08`；找父产品必须验证 **SKU=父SKU** 且 **Type=Configurable Product**；Material 是 multiselect，任务问单数材质时取首个已选值。
 - 步骤：
-1. 进入 Products，清除残留筛选，按 Quantity 精确筛选出候选产品
-2. 目标属性是 grid 可选列（如 Color）→ 启用该列后直接从 grid 读
-3. 目标属性不在 grid（如 Material）→ 逐个候选产品读取：先在**产品自身**编辑页读该属性；**仅当自身为空**才按父 SKU（去 `-SIZE-COLOR` 后缀）搜出 `Type=Configurable Product` 的父产品、读其属性（自身非空就用自身，不去父覆盖）
-4. 汇总各产品属性，过滤空值、去重输出；Material 取主材质
+1. 进入 Products；清残留；按 Quantity 筛候选。
+2. Color：启用 Columns/Color 后从 grid 读。
+3. Material：候选 foreach 采 SKU + Action_url。
+4. Material：必须打开 `{row[Action_url]}` 读自身，禁止按 SKU 点行。
+5. 父 SKU = `sku.rsplit('-', 2)[0]`，去掉尺码和颜色两段。
+6. 搜父 SKU 后必须选 SKU=父SKU 且 Type=Configurable Product。
+7. 不得只读自身后过滤空值；Material 空值必须回退父产品。
+8. foreach/call 后必须汇总 material，过滤空值、去重输出。
 
 ## skill：按电话号查客户
 - 触发：phone number、电话号查客户、find customer with phone、customer name/email/与电话相关的客户查找
