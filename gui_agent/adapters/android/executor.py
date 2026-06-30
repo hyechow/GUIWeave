@@ -89,6 +89,51 @@ def _row_button_coords(
     return ((x1 + x2) / 2) / win_w * 1000, ((y1 + y2) / 2) / win_h * 1000
 
 
+_MENU_ITEM_RE = re.compile(
+    r"(?:下拉菜单|下拉|菜单|列表|popup|dropdown)"
+    r"[\s\S]{0,20}?"
+    r"(?:"
+    r"['\"]\s*([A-Za-z][^'\"\n]{1,30})\s*['\"]"  # 引号目标: 'Lists'
+    r"|"
+    r"\b([A-Za-z][A-Za-z0-9_. -]{1,30}?)\s+(?:选项|项|标题栏|按钮|条目)"  # 无引号 + 后缀: Lists 选项
+    r")",
+    re.I,
+)
+
+
+def _menu_item_coords(
+    xml_text: str, target: str, win_w: int, win_h: int,
+) -> tuple[float, float] | None:
+    """Return the 0-1000 normalized center of the unique a11y node whose text or
+    content-desc equals ``target`` (case-insensitive). Pure (no device I/O) so it is
+    unit-testable. Returns None on zero or multiple matches (ambiguous → don't snap,
+    let vision decide). Used for dropdown/menu/list item taps (e.g. Mastodon Home
+    dropdown -> Lists) where vision jitters between adjacent rows."""
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:  # noqa: BLE001
+        return None
+    target_lc = (target or "").strip().lower()
+    if not target_lc:
+        return None
+    matches: list[tuple[int, int, int, int]] = []
+    for node in root.iter("node"):
+        bm = _BOUNDS_RE.search(node.get("bounds") or "")
+        if not bm:
+            continue
+        text = (node.get("text") or node.get("content-desc") or "").strip()
+        if text.lower() != target_lc:
+            continue
+        x1, y1, x2, y2 = (int(bm.group(i)) for i in (1, 2, 3, 4))
+        if x2 <= 0 or y2 <= 0 or x1 >= win_w or y1 >= win_h:
+            continue
+        matches.append((x1, y1, x2, y2))
+    if len(matches) != 1:
+        return None
+    x1, y1, x2, y2 = matches[0]
+    return ((x1 + x2) / 2) / win_w * 1000, ((y1 + y2) / 2) / win_h * 1000
+
+
 class AndroidExecutor(VisionExecutor):
     """Execute normalized policy actions against the phone via AndroidDevice."""
 
@@ -129,7 +174,13 @@ class AndroidExecutor(VisionExecutor):
             self._execute_scroll_action(action)
             return True
         if action.action_type == "tap":
-            corrected = self._resolve_row_button_tap(action.description or "")
+            # a11y snaps match on the full targeting text. action.description is often
+            # a generic "执行tap操作", so prefer decision.instruction (the supervisor's
+            # full instruction) which carries the actual target.
+            desc = f"{decision.instruction or ''} {action.description or ''}"
+            corrected = self._resolve_row_button_tap(desc)
+            if corrected is None:
+                corrected = self._resolve_menu_item_tap(desc)
             if corrected is not None:
                 action.x, action.y = corrected
         return super().execute(decision, app_name=app_name, png_bytes=png_bytes, is_home_screen=is_home_screen)
@@ -175,6 +226,44 @@ class AndroidExecutor(VisionExecutor):
                 f"  [AndroidSnap] {target} 行 {button_text.title()} "
                 f"按钮坐标校正: ({nx:.0f},{ny:.0f})"
             )
+        return coords
+
+    def _resolve_menu_item_tap(self, description: str) -> tuple[float, float] | None:
+        """Snap '点击下拉菜单/列表里的 X 选项/项' taps to the matching a11y node.
+
+        Mastodon's Home dropdown (and similar list/popup menus) renders each item as a
+        TextView with stable bounds, but vision's coordinate estimate jitters between
+        adjacent rows and occasionally taps the wrong item (e.g. Live feed instead of
+        Lists). UIAutomator reads item bounds directly, so snap when the instruction
+        explicitly targets a menu/list item."""
+        match = _MENU_ITEM_RE.search(description or "")
+        if not match:
+            return None
+        target = (match.group(1) or match.group(2) or "").strip()
+        client = self._client()
+        dev = getattr(client, "_dev", None)
+        if dev is None:
+            return None
+
+        remote = "/sdcard/_gui_agent_exec_ui.xml"
+        xml_text = ""
+        for attempt in range(2):
+            try:
+                dev.shell(f"uiautomator dump {remote}")
+                xml_text = dev.shell(f"cat {remote}")
+            except Exception:  # noqa: BLE001
+                xml_text = ""
+            if "<node" in xml_text:
+                break
+            if attempt == 0:
+                time.sleep(0.2)
+        if "<node" not in xml_text:
+            return None
+
+        coords = _menu_item_coords(xml_text, target, client.win_w, client.win_h)
+        if coords is not None:
+            nx, ny = coords
+            print(f"  [AndroidSnap] 菜单项 {target} 坐标校正: ({nx:.0f},{ny:.0f})")
         return coords
 
     def _dispatch_extra(self, action: AndroidAction, client) -> Optional[bool]:
