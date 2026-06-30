@@ -514,15 +514,41 @@ def run_agent_loop(
             return _list_traversal_runtime
 
         def _update_list_traversal_runtime(observation) -> None:
-            """Refresh the deterministic list traversal controller for the current frame."""
+            """Refresh the deterministic list traversal controller for the current frame.
+
+            Row source is platform-adaptive (capability-based, not platform-named): when the
+            observation carries structured ``tables`` (Browser DOM) the runtime reads those; when
+            it does not (Android/iPhone, vision-only) we fall back to vision-extracted rows via
+            structured_read_rows. The runtime dedups/accumulates either source unchanged. This is
+            the single place the table-vs-vision split is decided, so it generalizes to any
+            platform without per-platform branches. The vision read is best-effort: on failure we
+            pass no rows and let the LLM checker remain the completion authority."""
             runtime = _ensure_list_traversal_runtime()
             if runtime is None or _cur_run is None:
                 return
 
+            vision_rows: "list[dict[str, str]] | None" = None
+            if not getattr(observation, "tables", None) and getattr(observation, "png_bytes", None):
+                from gui_agent.core.orchestrator.structured_read import structured_read_rows
+                try:
+                    vision_rows = structured_read_rows(
+                        observation.png_bytes,
+                        list(_cur_run.returns),
+                        read_spec=_cur_run.read_spec or "",
+                        check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
+                        prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                    )
+                except Exception:  # noqa: BLE001  best-effort; never block the agent loop
+                    vision_rows = None
+
             before = len(runtime.rows)
-            decision = runtime.update(observation)
+            decision = runtime.update(observation, vision_rows=vision_rows)
             if hasattr(supervisor, "note_collection_progress"):
-                supervisor.note_collection_progress(runtime.prompt_text(), done=runtime.done)
+                supervisor.note_collection_progress(
+                    runtime.prompt_text(),
+                    done=runtime.done,
+                    has_structural_signal=runtime.ever_saw_table,
+                )
             delta = len(runtime.rows) - before
             delta_text = f", +{delta} 行" if delta else ""
             _say(f"  [Collect] rows={len(runtime.rows)}{delta_text}, next={decision.action}: {decision.reason}")

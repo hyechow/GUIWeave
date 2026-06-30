@@ -22,6 +22,8 @@ _ALNUM_ENTITY_RE = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._:-]{2,}[A-Za-z0-9]"
 )
 _NUMBER_RE = re.compile(r"\b\d{2,}\b")
+_ROW_TARGET_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_.:-]{2,})\s*行")
+_USER_TARGET_RE = re.compile(r"(?:用户|用户名|账号)\s*[\"'「『“‘]?([A-Za-z][A-Za-z0-9_.:-]{2,})")
 
 
 def normalize_instruction(text: str) -> str:
@@ -37,6 +39,11 @@ def instruction_entities(text: str) -> set[str]:
         for match in pattern.finditer(raw):
             value = match.group(1) if pattern is _QUOTED_RE else match.group(0)
             value = value.strip().lower()
+            if value:
+                entities.add(value)
+    for pattern in (_ROW_TARGET_RE, _USER_TARGET_RE):
+        for match in pattern.finditer(raw):
+            value = match.group(1).strip().lower()
             if value:
                 entities.add(value)
     return entities

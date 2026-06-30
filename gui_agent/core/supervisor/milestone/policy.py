@@ -63,6 +63,57 @@ from .stuck import MilestoneStuckMixin
 _UNKNOWN_PAGE_MARKERS = ("未知", "未识别", "无法识别", "不确定", "unknown", "unidentified")
 _TARGET_IDENTITY_MARKER = "必须对应子目标指定对象"
 _TARGET_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,}")
+# One-shot Add/Remove targets are extracted from the instruction/goal itself (e.g.
+# "点 pupper 这一行的 Add", "只允许点击 kitty") — NOT from a hardcoded member list. A
+# hardcoded list would leak the benchmark answer (which users satisfy the task condition)
+# into the supervisor; the agent must read the UI and judge, and these helpers must stay
+# generic.
+_ROW_TARGET_INSTRUCTION_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_.:-]{2,})(?:\s*(?:这一|那一|所在|个))*\s*行")
+_ONLY_ADD_TARGET_RE = re.compile(r"只(?:允许)?(?:点击|点)\s*([A-Za-z][A-Za-z0-9_.:-]{2,})")
+
+
+def _is_one_shot_add_button_action(text: str) -> bool:
+    """True for list/search row Add buttons where repeating the tap toggles removal."""
+
+    raw = text or ""
+    norm = raw.lower()
+    if "add" not in norm and "添加" not in raw:
+        return False
+    if "button" not in norm and "按钮" not in raw:
+        return False
+    # Located by a row / row-side cue (行 / 右侧 / right); no hardcoded member names.
+    if "行" not in raw and "右侧" not in raw and "right" not in norm:
+        return False
+    return True
+
+
+def _one_shot_add_target(text: str) -> str | None:
+    """Return the row target for a one-shot Add button instruction."""
+
+    if not _is_one_shot_add_button_action(text):
+        return None
+    match = _ROW_TARGET_INSTRUCTION_RE.search(text or "")
+    if match:
+        return match.group(1).lower()
+    return None
+
+
+def _expected_one_shot_add_targets(text: str) -> set[str]:
+    """Return explicit Add targets named in the goal/milestone text (no hardcoded set)."""
+
+    return {match.group(1).lower() for match in _ONLY_ADD_TARGET_RE.finditer(text or "")}
+
+
+def _is_list_member_remove_button_action(text: str) -> bool:
+    """True for list-member row Remove buttons that would undo prior work."""
+
+    raw = text or ""
+    norm = raw.lower()
+    if "remove" not in norm and "移除" not in raw:
+        return False
+    if "button" not in norm and "按钮" not in raw:
+        return False
+    return "行" in raw or "右侧" in raw
 
 
 def _page_known(page_identity: str) -> bool:
@@ -144,6 +195,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._last_check: Optional[_SingleCheckResult] = None
         self._collection_progress: str = ""
         self._collection_done: bool = False
+        # True when the runtime observed a structured observation.tables (Browser DOM). Stays
+        # False on vision-only platforms (Android/iPhone), where collection completion defers to
+        # the LLM checker's traversal verdict instead of the (signal-less) structural sensor.
+        self._collection_has_structural_signal: bool = False
         self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
@@ -388,7 +443,21 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
 
         if milestone.completion_strategy == "react_until_collected":
-            if self._collection_done:
+            # Completion authority is capability-based, not platform-named:
+            #  - structural signal present (Browser observation.tables): the deterministic
+            #    runtime is authoritative — advance only on _collection_done; otherwise its
+            #    "not done" vetoes a premature checker "done" → in_progress (original behavior).
+            #  - no structural signal (Android/iPhone vision): the runtime has no table to
+            #    traverse, so the LLM checker's traversal verdict ("已完整遍历…滚动到集合末尾")
+            #    is the authority. Trusting checker-done here unblocks collection on table-less
+            #    platforms and removes the livelock where an idle structural sensor vetoed
+            #    checker-done forever (logs/.../android/20260629_173536).
+            collection_complete = self._collection_done or (
+                check.status == "done" and not self._collection_has_structural_signal
+            )
+            if collection_complete:
+                if not self._collection_done:
+                    print("  [Collect] table-less 平台无结构化表格：信任 checker done，推进集合读取")
                 final_read = None
                 if self.task_type != "action":
                     read_inst = check.read_instruction or _default_read_instruction(milestone)
@@ -453,6 +522,20 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             and (last_tv is None or last_tv.on_target)
         ):
             tapped = last_turn.action_decision.action.description or "目标元素"
+            last_instruction = last_turn.supervisor.instruction or ""
+            if _is_one_shot_add_button_action(f"{last_instruction} {tapped}"):
+                print(
+                    f"  [NoEffect] 上一步点击「{last_instruction or tapped}」可能是一次性 Add 切换，"
+                    "不按零变化重试同一按钮 → 继续规划下一目标"
+                )
+                check = check.model_copy(update={
+                    "reason": (
+                        f"{check.reason} 上一步已点击过目标行右侧 Add；这类 Add/Remove 切换可能"
+                        "不会立即产生稳定可见变化，避免重复点击同一用户，继续处理下一个目标。"
+                    ),
+                    "summary": check.summary,
+                })
+                return self._plan_single(milestone, check, observation, history)
             print(f"  [NoEffect] 上一步点击「{tapped}」落点正确但屏幕零变化，已先验收(未完成)→ replan")
             stuck = _SingleCheckResult(
                 status="stuck",
@@ -536,6 +619,81 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     milestone, check, observation, history,
                     extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
                 )
+        if _is_list_member_remove_button_action(plan.instruction):
+            print("  [OneShotAdd] 禁止点击成员行 Remove，确定性改为返回确认")
+            plan.instruction = "按返回键"
+        plan_add_target = _one_shot_add_target(plan.instruction)
+        if plan_add_target:
+            goal_text = " ".join(
+                [
+                    milestone.name or "",
+                    milestone.description or "",
+                    milestone.success_condition or "",
+                ]
+            ).lower()
+            expected_add_targets = _expected_one_shot_add_targets(goal_text)
+            if expected_add_targets and plan_add_target not in expected_add_targets:
+                plan.instruction = "按返回键"
+                print(
+                    f"  [OneShotAdd] {plan_add_target} 不属于当前目标集合 "
+                    f"{sorted(expected_add_targets)}，确定性改为返回确认"
+                )
+                plan_add_target = None
+        if plan_add_target:
+            handled_add_targets = {
+                target
+                for turn in history
+                if turn.supervisor
+                and turn.supervisor.milestone_id == milestone.id
+                for target in [_one_shot_add_target(turn.supervisor.instruction or "")]
+                if target
+            }
+            if not expected_add_targets and handled_add_targets:
+                plan.instruction = "按返回键"
+                print(
+                    "  [OneShotAdd] 已点击过一次 Add 且无法解析更多目标，"
+                    "确定性改为返回确认"
+                )
+                plan_add_target = None
+            if plan_add_target in handled_add_targets:
+                remaining_targets = [
+                    target
+                    for target in expected_add_targets
+                    if target not in handled_add_targets
+                ]
+                print(
+                    f"  [OneShotAdd] 已点击过 {plan_add_target} 的 Add，"
+                    "避免重复切换移除"
+                )
+                if not remaining_targets:
+                    plan.instruction = "按返回键"
+                    print(
+                        "  [OneShotAdd] 当前目标集合没有剩余用户，"
+                        "不重试 Add，也不让 planner 选择新用户，确定性改为返回确认"
+                    )
+                    plan_add_target = _one_shot_add_target(plan.instruction)
+                else:
+                    with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                        plan = self._invoke_planner(
+                            milestone,
+                            check,
+                            observation,
+                            history,
+                            extra=(
+                                f"你已经点击过 {plan_add_target} 行右侧 Add。Add/Remove 是切换按钮，"
+                                "重复点击同一用户会把成员移除。请改点尚未处理的目标用户右侧 Add；"
+                                f"已处理：{', '.join(sorted(handled_add_targets))}。"
+                            ),
+                        )
+                    plan_add_target = _one_shot_add_target(plan.instruction)
+                    if (
+                        not plan_add_target
+                        or plan_add_target in handled_add_targets
+                        or plan_add_target not in expected_add_targets
+                    ):
+                        next_target = remaining_targets[0]
+                        plan.instruction = f"点击 {next_target} 行右侧的 Add 按钮"
+                        print(f"  [OneShotAdd] planner 仍未给出新目标，确定性改为 {next_target}")
         # 连续调值类豁免「指令重复=失败」升级：对 picker 而言重复"向上拖月份列"直到到位本就
         # 是正确做法，单步式的重复检测会误把它判成撞墙→死路。其停滞由 _check_value_stall 兜。
         #
@@ -968,6 +1126,68 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         ) if milestone.is_iterative else ""
         with _Timer(self._timings, self._timings_order, "replanner", self._token_usage):
             replan = self._invoke_replanner(milestone, check, observation, history, extra=iter_extra)
+        if _is_list_member_remove_button_action(replan.instruction or ""):
+            print("  [OneShotAdd] replanner 要点击成员行 Remove，确定性改为返回确认")
+            replan.instruction = "按返回键"
+        replan_add_target = _one_shot_add_target(replan.instruction or "")
+        if replan_add_target:
+            goal_text = " ".join(
+                [
+                    milestone.name or "",
+                    milestone.description or "",
+                    milestone.success_condition or "",
+                ]
+            ).lower()
+            expected_add_targets = _expected_one_shot_add_targets(goal_text)
+            if expected_add_targets and replan_add_target not in expected_add_targets:
+                print(
+                    f"  [OneShotAdd] replanner 目标 {replan_add_target} 不属于当前目标集合 "
+                    f"{sorted(expected_add_targets)}，确定性改为返回确认"
+                )
+                replan.instruction = "按返回键"
+                replan_add_target = None
+        if replan_add_target:
+            handled_add_targets = {
+                target
+                for turn in history
+                if turn.supervisor
+                and turn.supervisor.milestone_id == milestone.id
+                for target in [_one_shot_add_target(turn.supervisor.instruction or "")]
+                if target
+            }
+            if not expected_add_targets and handled_add_targets:
+                print(
+                    "  [OneShotAdd] replanner 在已点击过一次 Add 后仍要求 Add，"
+                    "且无法解析更多目标，确定性改为返回确认"
+                )
+                replan.instruction = "按返回键"
+                replan_add_target = None
+            if replan_add_target in handled_add_targets:
+                goal_text = " ".join(
+                    [
+                        milestone.name or "",
+                        milestone.description or "",
+                        milestone.success_condition or "",
+                    ]
+                ).lower()
+                remaining_targets = [
+                    target
+                    for target in expected_add_targets
+                    if target not in handled_add_targets
+                ]
+                if remaining_targets:
+                    next_target = remaining_targets[0]
+                    print(
+                        f"  [OneShotAdd] replanner 要重复 {replan_add_target}，"
+                        f"确定性改为 {next_target}"
+                    )
+                    replan.instruction = f"点击 {next_target} 行右侧的 Add 按钮"
+                else:
+                    print(
+                        f"  [OneShotAdd] replanner 要重复 {replan_add_target}，"
+                        "目标 Add 都已点击过，确定性改为返回确认"
+                    )
+                    replan.instruction = "按返回键"
         self._last_replan = replan
         print(f"  [Replan] 诊断={replan.diagnosis}, 策略={replan.strategy}")
 
@@ -1159,10 +1379,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             self._global_constraints.append(constraint)
             print(f"  [Constraint] {constraint}")
 
-    def note_collection_progress(self, text: str, *, done: bool = False) -> None:
-        """Push authoritative list traversal state into checker/planner prompts."""
+    def note_collection_progress(
+        self, text: str, *, done: bool = False, has_structural_signal: bool = False,
+    ) -> None:
+        """Push authoritative list traversal state into checker/planner prompts.
+
+        has_structural_signal is True when the deterministic runtime observed a structured
+        observation.tables (Browser DOM). It stays False on vision-only platforms (Android/
+        iPhone), where collection completion defers to the LLM checker's traversal verdict
+        rather than the (signal-less) structural sensor — see react_until_collected."""
         self._collection_progress = text or ""
         self._collection_done = bool(done)
+        self._collection_has_structural_signal = bool(has_structural_signal)
 
     def _single_check(
         self,

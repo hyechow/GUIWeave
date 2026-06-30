@@ -222,6 +222,10 @@ class ListTraversalRuntime:
     expected_total: int | None = None
     _last_visible_rows: int = 0
     _last_resolutions: list[ColumnResolution] = field(default_factory=list)
+    # True once a structured observation.tables was seen (Browser DOM). Stays False on
+    # vision-only platforms (Android/iPhone), where completion defers to the LLM checker —
+    # see MilestoneSupervisorPolicy.react_until_collected.
+    ever_saw_table: bool = False
 
     def __post_init__(self) -> None:
         self._traversal = TraversalController(self.var)
@@ -230,11 +234,17 @@ class ListTraversalRuntime:
     def done(self) -> bool:
         return self._last_decision.action == "done"
 
-    def update(self, observation: Observation) -> ListTraversalDecision:
+    def update(
+        self,
+        observation: Observation,
+        *,
+        vision_rows: list[dict[str, str]] | None = None,
+    ) -> ListTraversalDecision:
         picked = _best_table(getattr(observation, "tables", None), self.returns)
         table = picked[0] if picked else None
         resolutions = picked[1] if picked else []
         if table is not None:
+            self.ever_saw_table = True
             visible_rows = [r for r in (table.get("rows") or []) if isinstance(r, dict)]
             self._last_visible_rows = len(visible_rows)
             self._last_resolutions = resolutions
@@ -263,6 +273,10 @@ class ListTraversalRuntime:
                     )
                 else:
                     decision = self._decide_from_list(table)
+        elif vision_rows:
+            # Table-less platform (Android/iPhone vision): the deterministic table sensor has no
+            # signal here, so accumulate the rows the vision reader extracted this frame instead.
+            decision = self._observe_vision_rows(vision_rows)
         else:
             decision = ListTraversalDecision(
                 "fallback",
@@ -271,6 +285,48 @@ class ListTraversalRuntime:
             )
         self._last_decision = decision
         return decision
+
+    def _observe_vision_rows(self, vision_rows: list[dict[str, str]]) -> ListTraversalDecision:
+        """Table-less platform (Android/iPhone): accumulate vision-extracted rows.
+
+        The traversal sensor is table-backed and unavailable here, so this path only dedups +
+        accumulates the rows the vision reader extracted this frame — giving the downstream
+        ``foreach`` real row values. Completion on a table-less platform is the LLM checker's
+        traversal verdict (policy's ``react_until_collected`` trusts checker-done when there is
+        no structural signal); the plateau hint below is a secondary signal that also lets
+        ``runtime.done`` flip to True once a scroll yields no new rows."""
+        new = 0
+        for raw in vision_rows:
+            if not isinstance(raw, dict):
+                continue
+            values = {str(k): str(v or "").strip() for k, v in raw.items()}
+            key = self._vision_row_key(values)
+            if not key or key in self._seen_rows:
+                continue
+            self._seen_rows.add(key)
+            self.rows.append({field: values.get(field, "") for field in self.returns})
+            new += 1
+        self._last_visible_rows = len(vision_rows)
+        if new == 0 and self.rows:
+            return ListTraversalDecision(
+                "done",
+                f"视觉读取本帧无新增行，已累计 {len(self.rows)} 行（疑似已到集合末尾；以验收为准）",
+                "停止滚动；若仍有目标行未采集请继续滚动",
+            )
+        return ListTraversalDecision(
+            "fallback",
+            f"视觉读取本帧新增 {new} 行，已累计 {len(self.rows)} 行",
+            "若界面仍有未采集的目标行则向下滚动，否则停止",
+        )
+
+    def _vision_row_key(self, values: dict[str, str]) -> str:
+        """Dedup key for a vision row: primary return-field value when present, else joined values."""
+        for field in self.returns:
+            normalized = _norm(values.get(field))
+            if normalized:
+                return f"{_norm(field)}:{normalized}"
+        joined = "|".join(_norm(v) for v in values.values() if v)
+        return f"row:{joined}" if joined else ""
 
     def prompt_text(self) -> str:
         return (
