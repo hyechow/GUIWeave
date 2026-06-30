@@ -230,6 +230,7 @@ def _write_case_result(
     detail: str,
     output: str = "",
     issues: list[str] | None = None,
+    verify_ui_text: str = "",
 ) -> None:
     if log_dir is None:
         return
@@ -242,6 +243,10 @@ def _write_case_result(
         "detail": detail,
         "issues": issues or [],
         "final_output": output,
+        # The UIAutomator text dump captured by run.py's own verify pass (after the
+        # agent finishes), so PASS/FAIL both leave visible evidence of what page the
+        # app was actually on — not just the agent's checker verdict.
+        "verify_ui_text": verify_ui_text,
         "max_turns": case.get("max_turns"),
         "timeout_s": case.get("timeout_s"),
         "written_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -364,10 +369,10 @@ def _run_case(
         snippet = "\n".join(ui_text.splitlines()[:80])
         output_snippet = "\n".join(output.splitlines()[:20])
         detail = "; ".join(issues) + f"\nFinal output:\n{output_snippet}\nUI text head:\n{snippet}"
-        _write_case_result(case, log_dir, ok=False, detail=detail, output=output, issues=issues)
+        _write_case_result(case, log_dir, ok=False, detail=detail, output=output, issues=issues, verify_ui_text=ui_text)
         return False, detail
     detail = str(case.get("pass_message") or "case assertions passed")
-    _write_case_result(case, log_dir, ok=True, detail=detail, output=output)
+    _write_case_result(case, log_dir, ok=True, detail=detail, output=output, verify_ui_text=ui_text)
     return True, detail
 
 
