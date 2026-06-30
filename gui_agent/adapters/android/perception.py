@@ -87,10 +87,18 @@ class AndroidPerception:
     def observe(self) -> Observation:
         print("截图中 (Android)...")
         png_bytes = self.session.screenshot()
+        loading: bool | None = None
+        client = self.session.client
+        if client is not None and hasattr(client, "read_visible_text"):
+            try:
+                if str(client.read_visible_text()).strip():
+                    loading = False
+            except Exception:
+                loading = None
         # Downscale to the configured width (default 320) — cuts LLM tokens; tap
         # coords are unaffected (the executor denormalizes against device pixels).
         png_bytes = _downscale_width(png_bytes, SCREENSHOT_MAX_WIDTH)
         self.screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.screenshot_path.write_bytes(png_bytes)
         print(f"截图大小: {len(png_bytes) // 1024} KB，已保存到 {self.screenshot_path}")
-        return Observation(png_bytes=png_bytes, source="android")
+        return Observation(png_bytes=png_bytes, source="android", loading=loading)

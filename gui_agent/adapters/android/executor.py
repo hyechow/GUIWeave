@@ -11,6 +11,10 @@ the inherited ``_denorm`` (normalized 0-1000 -> ``viewport_size`` px) goes strai
 
 from __future__ import annotations
 
+import re
+import time
+import xml.etree.ElementTree as ET
+from html import unescape
 from typing import Optional
 
 from gui_agent.adapters.android.actions import AndroidAction
@@ -28,6 +32,11 @@ _ANDROID_PICKER_AMOUNT_UNITS = {
     "ampm": {"small": 1, "medium": 1, "large": 1},
     "minute": {"small": 1, "medium": 2, "large": 3},
 }
+_ROW_BUTTON_RE = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9_.:-]{2,})(?:\s*\([^)]*\))?\s*行右侧(?:的)?\s*(Add|Remove)\s*按钮",
+    re.I,
+)
+_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 
 
 class AndroidExecutor(VisionExecutor):
@@ -69,7 +78,95 @@ class AndroidExecutor(VisionExecutor):
             print(f"\n动作: [{action.action_type}] {action.description}")
             self._execute_scroll_action(action)
             return True
+        if action.action_type == "tap":
+            corrected = self._resolve_row_button_tap(action.description or "")
+            if corrected is not None:
+                action.x, action.y = corrected
         return super().execute(decision, app_name=app_name, png_bytes=png_bytes, is_home_screen=is_home_screen)
+
+    def _resolve_row_button_tap(self, description: str) -> tuple[float, float] | None:
+        """Snap '<user> 行右侧 Add/Remove 按钮' taps to the matching a11y node.
+
+        Vision sometimes confuses adjacent Mastodon member rows because the Add buttons
+        are vertically dense. UIAutomator gives stable visible bounds for the username
+        labels and right-side Add/Remove buttons, so use it only for this explicit row
+        button instruction shape and leave all other taps untouched.
+        """
+
+        match = _ROW_BUTTON_RE.search(description)
+        if not match:
+            return None
+        target = match.group(1).lower()
+        button_text = match.group(2).lower()
+        client = self._client()
+        dev = getattr(client, "_dev", None)
+        if dev is None:
+            return None
+
+        remote = "/sdcard/_gui_agent_exec_ui.xml"
+        xml_text = ""
+        for attempt in range(2):
+            try:
+                dev.shell(f"uiautomator dump {remote}")
+                xml_text = dev.shell(f"cat {remote}")
+            except Exception:  # noqa: BLE001
+                xml_text = ""
+            if "<node" in xml_text:
+                break
+            if attempt == 0:
+                time.sleep(0.2)
+        if "<node" not in xml_text:
+            return None
+
+        try:
+            root = ET.fromstring(xml_text)
+        except Exception:  # noqa: BLE001
+            return None
+
+        nodes: list[tuple[str, int, int, int, int]] = []
+        for node in root.iter("node"):
+            bounds = node.get("bounds") or ""
+            bm = _BOUNDS_RE.search(bounds)
+            if not bm:
+                continue
+            text = (node.get("text") or node.get("content-desc") or "").strip()
+            if not text:
+                continue
+            x1, y1, x2, y2 = (int(bm.group(i)) for i in (1, 2, 3, 4))
+            if x2 <= 0 or y2 <= 0 or x1 >= client.win_w or y1 >= client.win_h:
+                continue
+            nodes.append((unescape(text), x1, y1, x2, y2))
+
+        target_centers: list[float] = []
+        for text, _x1, y1, _x2, y2 in nodes:
+            norm = text.strip().lower()
+            if norm == target or norm == f"@{target}":
+                target_centers.append((y1 + y2) / 2)
+        if not target_centers:
+            return None
+        row_y = sum(target_centers) / len(target_centers)
+
+        candidates: list[tuple[float, int, int, int, int]] = []
+        for text, x1, y1, x2, y2 in nodes:
+            if text.strip().lower() != button_text:
+                continue
+            if (x1 + x2) / 2 < client.win_w * 0.55:
+                continue
+            cy = (y1 + y2) / 2
+            dist = abs(cy - row_y)
+            if dist <= 130:
+                candidates.append((dist, x1, y1, x2, y2))
+        if not candidates:
+            return None
+
+        _dist, x1, y1, x2, y2 = min(candidates, key=lambda item: item[0])
+        nx = ((x1 + x2) / 2) / client.win_w * 1000
+        ny = ((y1 + y2) / 2) / client.win_h * 1000
+        print(
+            f"  [AndroidSnap] {target} 行右侧 {button_text.title()} "
+            f"坐标校正: ({nx:.0f},{ny:.0f})"
+        )
+        return nx, ny
 
     def _dispatch_extra(self, action: AndroidAction, client) -> Optional[bool]:
         at = action.action_type
