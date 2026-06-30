@@ -33,10 +33,60 @@ _ANDROID_PICKER_AMOUNT_UNITS = {
     "minute": {"small": 1, "medium": 2, "large": 3},
 }
 _ROW_BUTTON_RE = re.compile(
-    r"\b([A-Za-z][A-Za-z0-9_.:-]{2,})(?:\s*\([^)]*\))?\s*行右侧(?:的)?\s*(Add|Remove)\s*按钮",
+    r"\b([A-Za-z][A-Za-z0-9_.:-]{2,})(?:\s*\([^)]*\))?['\"]?"
+    r"\s*[^行]{0,8}?行(?:右侧|右边)?(?:的)?\s*['\"]?"
+    r"(Add|Remove)['\"]?\s*按钮",
     re.I,
 )
 _BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
+
+
+def _row_button_coords(
+    xml_text: str, target: str, button_text: str, win_w: int, win_h: int,
+) -> tuple[float, float] | None:
+    """Return the 0-1000 normalized center of the Add/Remove button on ``target``'s
+    row, parsed from a UIAutomator dump. Pure (no device I/O) so it is unit-testable;
+    the executor wraps this with the dump + snap decision. ``button_text``/``target``
+    are already lower-cased by the caller."""
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:  # noqa: BLE001
+        return None
+    nodes: list[tuple[str, int, int, int, int]] = []
+    for node in root.iter("node"):
+        bm = _BOUNDS_RE.search(node.get("bounds") or "")
+        if not bm:
+            continue
+        text = (node.get("text") or node.get("content-desc") or "").strip()
+        if not text:
+            continue
+        x1, y1, x2, y2 = (int(bm.group(i)) for i in (1, 2, 3, 4))
+        if x2 <= 0 or y2 <= 0 or x1 >= win_w or y1 >= win_h:
+            continue
+        nodes.append((unescape(text), x1, y1, x2, y2))
+
+    target_centers = [
+        (y1 + y2) / 2
+        for _text, _x1, y1, _x2, y2 in nodes
+        if _text.strip().lower() in (target, f"@{target}")
+    ]
+    if not target_centers:
+        return None
+    row_y = sum(target_centers) / len(target_centers)
+
+    candidates: list[tuple[float, int, int, int, int]] = []
+    for text, x1, y1, x2, y2 in nodes:
+        if text.strip().lower() != button_text:
+            continue
+        if (x1 + x2) / 2 < win_w * 0.55:  # right-side buttons only
+            continue
+        cy = (y1 + y2) / 2
+        if abs(cy - row_y) <= 130:
+            candidates.append((abs(cy - row_y), x1, y1, x2, y2))
+    if not candidates:
+        return None
+    _dist, x1, y1, x2, y2 = min(candidates, key=lambda item: item[0])
+    return ((x1 + x2) / 2) / win_w * 1000, ((y1 + y2) / 2) / win_h * 1000
 
 
 class AndroidExecutor(VisionExecutor):
@@ -118,55 +168,14 @@ class AndroidExecutor(VisionExecutor):
         if "<node" not in xml_text:
             return None
 
-        try:
-            root = ET.fromstring(xml_text)
-        except Exception:  # noqa: BLE001
-            return None
-
-        nodes: list[tuple[str, int, int, int, int]] = []
-        for node in root.iter("node"):
-            bounds = node.get("bounds") or ""
-            bm = _BOUNDS_RE.search(bounds)
-            if not bm:
-                continue
-            text = (node.get("text") or node.get("content-desc") or "").strip()
-            if not text:
-                continue
-            x1, y1, x2, y2 = (int(bm.group(i)) for i in (1, 2, 3, 4))
-            if x2 <= 0 or y2 <= 0 or x1 >= client.win_w or y1 >= client.win_h:
-                continue
-            nodes.append((unescape(text), x1, y1, x2, y2))
-
-        target_centers: list[float] = []
-        for text, _x1, y1, _x2, y2 in nodes:
-            norm = text.strip().lower()
-            if norm == target or norm == f"@{target}":
-                target_centers.append((y1 + y2) / 2)
-        if not target_centers:
-            return None
-        row_y = sum(target_centers) / len(target_centers)
-
-        candidates: list[tuple[float, int, int, int, int]] = []
-        for text, x1, y1, x2, y2 in nodes:
-            if text.strip().lower() != button_text:
-                continue
-            if (x1 + x2) / 2 < client.win_w * 0.55:
-                continue
-            cy = (y1 + y2) / 2
-            dist = abs(cy - row_y)
-            if dist <= 130:
-                candidates.append((dist, x1, y1, x2, y2))
-        if not candidates:
-            return None
-
-        _dist, x1, y1, x2, y2 = min(candidates, key=lambda item: item[0])
-        nx = ((x1 + x2) / 2) / client.win_w * 1000
-        ny = ((y1 + y2) / 2) / client.win_h * 1000
-        print(
-            f"  [AndroidSnap] {target} 行右侧 {button_text.title()} "
-            f"坐标校正: ({nx:.0f},{ny:.0f})"
-        )
-        return nx, ny
+        coords = _row_button_coords(xml_text, target, button_text, client.win_w, client.win_h)
+        if coords is not None:
+            nx, ny = coords
+            print(
+                f"  [AndroidSnap] {target} 行 {button_text.title()} "
+                f"按钮坐标校正: ({nx:.0f},{ny:.0f})"
+            )
+        return coords
 
     def _dispatch_extra(self, action: AndroidAction, client) -> Optional[bool]:
         at = action.action_type
