@@ -19,7 +19,12 @@ from gui_agent.core.orchestrator import (
     to_program,
     validate_program,
 )
-from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, _table_schema_prompt
+from gui_agent.core.orchestrator.decomposer import (
+    _PlanDraft,
+    _StepDraft,
+    _goal_expects_structured_answer,
+    _table_schema_prompt,
+)
 
 
 def _connectivity_draft() -> _PlanDraft:
@@ -61,6 +66,38 @@ def test_to_program_builds_if_and_finish():
     assert isinstance(branch.then[0], Run) and branch.then[0].name == "建单"
     assert isinstance(branch.otherwise[0], Finish)
     assert branch.otherwise[0].message == "不可达：{d[不可达原因]}"
+
+
+def test_to_program_drops_phase_skip_finish_before_followup_steps():
+    draft = _PlanDraft(
+        steps=[
+            _StepDraft(op="run", run_kind="read", var="existing_lists", name="读取现有列表名称",
+                       returns=["list_name"], list_read=True),
+            _StepDraft(
+                op="if",
+                cond_var="existing_lists",
+                cond_field="list_name",
+                cond_cmp="empty",
+                then=[_StepDraft(op="finish", message="没有需要删除的列表，直接创建新列表")],
+                otherwise=[],
+            ),
+            _StepDraft(op="run", run_kind="action", name="点击Create list创建新列表",
+                       success_condition="进入创建列表表单"),
+        ],
+    )
+
+    prog = to_program(draft, "")
+    branch = prog.statements[1]
+    assert isinstance(branch, If)
+    assert branch.then == []
+    assert isinstance(prog.statements[2], Run)
+    assert prog.statements[2].name == "点击Create list创建新列表"
+
+
+def test_validate_program_flags_finish_that_claims_followup():
+    prog = Program(statements=[Finish(message="没有需要删除的列表，直接创建新列表")])
+    issues = validate_program(prog)
+    assert any("finish 会终止整个程序" in issue for issue in issues)
 
 
 def test_to_program_maps_extended_condition_values():
@@ -599,6 +636,40 @@ def test_validate_answer_goal_requires_result_source():
     issues = validate_program(prog)
 
     assert any("没有任何 returns 或 data_query 结果来源" in i for i in issues)
+
+
+def test_goal_expects_action_not_misjudged():
+    # list/show/return 在 GUI 任务里常是名词或界面动作，action 任务不应被判为"期望结构化答案"
+    # （回归 logs/.../android/20260630_102504：open list 的 list 触发误判 → navigation 被塞 returns → 死锁）
+    assert _goal_expects_structured_answer("帮我把 openCompany 和 openUniversity 加到 open list 里。") is False
+    assert _goal_expects_structured_answer("返回上一页") is False
+    assert _goal_expects_structured_answer("show the settings page") is False
+
+
+def test_goal_expects_read_still_true():
+    # 数量/疑问/列举类仍判 True，收紧词表不得误伤 read
+    assert _goal_expects_structured_answer("How many stars does this repo have?") is True
+    assert _goal_expects_structured_answer("这个仓库有多少 contributors？") is True
+    assert _goal_expects_structured_answer("找出列表里出现次数第二多的项") is True
+    assert _goal_expects_structured_answer("列出所有未完成的订单") is True
+
+
+def test_validate_action_plan_not_forced_returns():
+    # 纯 action plan（navigation 无 returns + action 步）不应被 validate_program 报
+    # "任务要求返回答案但无 returns"——action goal 不再被误判为期望结构化答案
+    prog = Program(statements=[
+        Run(name="进入 open list 的 List members", kind="navigation",
+            success_condition="进入 open list 的 List members 页"),
+        Run(name="点 Add member 搜索并添加 openCompany", kind="action",
+            success_condition="openCompany 所在行按钮由 Add 变成 Remove"),
+        Run(name="返回并添加 openUniversity", kind="action",
+            success_condition="openUniversity 所在行按钮由 Add 变成 Remove"),
+        Finish(message="已把 openCompany 和 openUniversity 加到 open list"),
+    ], goal="帮我把 openCompany 和 openUniversity 加到 open list 里。")
+
+    issues = validate_program(prog)
+
+    assert not any("没有任何 returns 或 data_query 结果来源" in i for i in issues)
 
 
 def test_decomposed_program_drives_correct_branch_end_to_end():

@@ -228,6 +228,11 @@ _StepDraft.model_rebuild()
 
 _VALID_KINDS = {"navigation", "filter", "action", "read", "data_query"}
 _VALID_CMPS = {"==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"}
+_NON_TERMINAL_FINISH_RE = re.compile(
+    r"继续|接着|随后|下一步|直接(?:创建|进入|执行|进行|处理)|再(?:创建|进入|执行|进行|处理)"
+    r"|continue|proceed|next\s+step|then\s+(?:create|open|go|do|handle)",
+    re.IGNORECASE,
+)
 _CMP_ALIASES = {
     "=": "==",
     "eq": "==",
@@ -281,10 +286,15 @@ def _produces_result(run: Run) -> bool:
 
 
 def _goal_expects_structured_answer(goal: str) -> bool:
+    # "需要结构化答案" = 数量/疑问/列举类（读数/计数/查找）。只用这类强信号词判定；
+    # 刻意排除 list / show / return / 显示 / 返回 —— 它们在 GUI 任务里常是名词或界面动作
+    # （open list、show page、return to home），会把 action 任务（如"把用户加到 open list"）
+    # 误判为需要返回答案，进而被 validate_program 逼着给 navigation 塞 returns，触发空字段
+    # 死锁（见 logs/.../android/20260630_102504）。
     text = (goal or "").lower()
     return bool(
-        re.search(r"\b(how many|count|number|total|which|who|what|find|list|return|show)\b", text)
-        or any(k in goal for k in ("多少", "几个", "几条", "总数", "数量", "哪些", "谁", "什么", "找出", "列出", "返回", "显示"))
+        re.search(r"\b(how many|count|number|total|which|who|what|find)\b", text)
+        or any(k in goal for k in ("多少", "几个", "几条", "总数", "数量", "哪些", "谁", "什么", "找出", "列出"))
     )
 
 
@@ -591,6 +601,34 @@ def _contains_data_query(stmts: list[Stmt]) -> bool:
     return False
 
 
+def _finish_claims_followup(message: str) -> bool:
+    return bool(_NON_TERMINAL_FINISH_RE.search(message or ""))
+
+
+def _drop_non_terminal_finishes(stmts: list[Stmt]) -> list[Stmt]:
+    """Treat "finish, then continue" drafts as empty branches.
+
+    `finish` is terminal in the interpreter. LLMs sometimes write it as prose for
+    "nothing to do in this phase; continue with the next top-level steps", e.g. an
+    empty cleanup branch before creation. Removing only messages that explicitly
+    describe follow-up work preserves legitimate early-exit answers.
+    """
+    out: list[Stmt] = []
+    for s in stmts:
+        if isinstance(s, Finish) and _finish_claims_followup(s.message):
+            continue
+        if isinstance(s, If):
+            out.append(s.model_copy(update={
+                "then": _drop_non_terminal_finishes(s.then),
+                "otherwise": _drop_non_terminal_finishes(s.otherwise),
+            }))
+        elif isinstance(s, ForEach):
+            out.append(s.model_copy(update={"body": _drop_non_terminal_finishes(s.body)}))
+        else:
+            out.append(s)
+    return out
+
+
 def _normalize_orphan_list_reads(stmts: list[Stmt], foreach_overs: set[str]) -> list[Stmt]:
     """Downgrade list_read flags that are not actually used as foreach sources.
 
@@ -630,6 +668,7 @@ def _normalize_orphan_list_reads(stmts: list[Stmt], foreach_overs: set[str]) -> 
 
 def to_program(draft: _PlanDraft, goal: str) -> Program:
     statements = _to_stmts(draft.steps)
+    statements = _drop_non_terminal_finishes(statements)
     statements = _normalize_orphan_list_reads(statements, _foreach_over_vars(statements))
     return Program(goal=draft.goal or goal, statements=statements)
 
@@ -793,6 +832,11 @@ def validate_program(program: Program) -> list[str]:
                     scope[s.var] = set(s.returns)
             elif isinstance(s, Finish):
                 _check_refs(s.message, "finish 模板", scope)
+                if _finish_claims_followup(s.message):
+                    issues.append(
+                        f"finish 文案「{s.message}」描述了后续动作，但 finish 会终止整个程序；"
+                        "如果只是当前阶段无事可做，请删除这个 finish，让程序继续后续 run/foreach 步骤"
+                    )
             elif isinstance(s, If):
                 if s.cond.var not in scope:
                     issues.append(
