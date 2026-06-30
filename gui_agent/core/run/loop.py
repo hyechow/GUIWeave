@@ -269,6 +269,7 @@ def run_agent_loop(
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
     program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
     redecompose: object = None,  # callable(directive:str)->Program|None; Feasibility Guard kick-back re-plan. None disables.
+    subdecompose: object = None,  # callable(goal:str)->Program|None; per-row agentic sub-goal (ForEach.body_goal). None disables.
     orchestrator_context_reports: list[dict] | None = None,
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
@@ -446,17 +447,33 @@ def run_agent_loop(
             if json_reads is not None and any(str(json_reads.get(field, "")).strip() for field in returns):
                 _say(f"  [Orchestrator] URL JSON 返回读取 {returns} → {json_reads}")
                 return json_reads
-            from gui_agent.core.orchestrator.structured_read import structured_read
+            from gui_agent.core.orchestrator.structured_read import (
+                read_form_control_returns,
+                structured_read,
+            )
 
+            # DOM-first: a native <select>'s selected value is authoritative over a vision guess
+            # (live 185: vision read the first LISTED option Burlap instead of the selected Cotton;
+            # the DOM form control carries the real selection). Vision fills only the fields the DOM
+            # didn't resolve — iPhone/Android have no form_controls so this is a no-op there.
+            dom_reads = read_form_control_returns(getattr(observation, "form_controls", None), returns)
+            missing = [f for f in returns if not str(dom_reads.get(f, "")).strip()]
+            if not missing:
+                _say(f"  [Orchestrator] DOM 表单返回读取 {returns} → {dom_reads}")
+                return dom_reads
             reads = structured_read(
                 observation.png_bytes,
-                returns,
+                missing,
                 read_spec=read_spec,
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
             )
-            _say(f"  [Orchestrator] 动作返回读取 {returns} → {reads}")
-            return reads
+            merged = {**reads, **dom_reads}
+            if dom_reads:
+                _say(f"  [Orchestrator] 返回读取 {returns} → DOM {dom_reads} + 视觉 {reads}")
+            else:
+                _say(f"  [Orchestrator] 动作返回读取 {returns} → {reads}")
+            return merged
 
         def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
             """Drive pending non-UI primitives and sync the local interpreter cursor."""
@@ -492,7 +509,7 @@ def run_agent_loop(
         if program is not None:
             from gui_agent.core.orchestrator import Interpreter
             _collect_fn = _make_collect_fn(bundle, platform, log_dir)
-            _interp = Interpreter(program, collect_fn=_collect_fn)
+            _interp = Interpreter(program, collect_fn=_collect_fn, subdecompose_fn=subdecompose)
             _orch_interp = _interp  # _save_ctx now mirrors its run_log (reads) into context
             _orchestrator_reports = list(orchestrator_context_reports or [])
             _orchestrator_metrics = next(
@@ -565,7 +582,7 @@ def run_agent_loop(
             if _new is None or not _new.statements:
                 return (False, None)
             _new = _force_interactive_return_recovery(_new, directive)
-            _interp = Interpreter(_new, collect_fn=_collect_fn)
+            _interp = Interpreter(_new, collect_fn=_collect_fn, subdecompose_fn=subdecompose)
             _interp.env = _prev_env            # carry forward completed reads (finish refs still resolve)
             # Keep prior milestones in the run record / final summary, but DROP the failed record(s):
             # a kickback re-plans *because* a re-plannable step failed, so carrying that ✗ into the new

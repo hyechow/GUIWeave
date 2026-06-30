@@ -8,7 +8,9 @@ Boundaries:
   Linear Executor     drive ONE milestone -> RunResult     (injected; real driver TODO)
 """
 
-from .program import Cond, CondCmp, Finish, ForEach, If, Program, Run, RunResult, Stmt
+from .program import (
+    Call, Compute, Cond, CondCmp, Finish, ForEach, FunctionDef, If, Program, Run, RunResult, Stmt,
+)
 from .decomposer import decompose, redecompose, to_program
 from .validator import IssueList, ValidationIssue, validate_program
 from .structured_read import structured_read
@@ -23,14 +25,20 @@ from .runner import (
     drive,
     summarize_progress,
 )
-from .engine import normalize_confirm_read_gates, normalize_precondition_gates
+from .engine import (
+    chain_from_states,
+    insert_loop_entry_arrivals,
+    normalize_confirm_read_gates,
+    normalize_precondition_gates,
+)
 
 __all__ = [
-    "Cond", "CondCmp", "Finish", "ForEach", "If", "Program", "Run", "RunResult", "Stmt",
+    "Call", "Compute", "Cond", "CondCmp", "Finish", "ForEach", "FunctionDef", "If", "Program", "Run", "RunResult", "Stmt",
     "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
     "RunRecord", "drive", "summarize_progress", "structured_read", "DataQueryError", "execute_data_query",
     "decompose", "redecompose", "to_program", "validate_program",
     "ValidationIssue", "IssueList",
     "estimate_program_turns",
-    "normalize_confirm_read_gates", "normalize_precondition_gates",
+    "normalize_confirm_read_gates", "normalize_precondition_gates", "chain_from_states",
+    "insert_loop_entry_arrivals",
 ]

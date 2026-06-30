@@ -230,7 +230,11 @@ class BaseAction(BaseModel):
     @model_validator(mode="after")
     def _require_text_for_type(self) -> "BaseAction":
         if self.action_type == "type" and not self.text:
-            raise ValueError("type 动作必须填写 text 字段，不能为空")
+            # The model frequently emits `type` with empty text to mean "clear the field"
+            # (description like 「清空输入框」). `clear_text` is the proper action for that — coerce
+            # to it instead of raising, which otherwise crashes the whole run on one malformed
+            # action decision (live: type x=247 text="" 「清空 Search by keyword」 → ValidationError).
+            self.action_type = "clear_text"
         # value_direction is an iphone-only field (picker); getattr keeps this base
         # validator correct for both the base and the iphone subclass.
         if self.action_type in {"scroll", "drag"} and not (
@@ -486,6 +490,10 @@ class Milestone(BaseModel):
             "visible_once | read_once | scroll_until_boundary | "
             "react_until_collected | repeat_until_satisfied | human_escalation"
         ),
+    )
+    precondition: bool = Field(
+        default=False,
+        description="True when this milestone ensures an entry state and may already be satisfied on the first frame.",
     )
     scroll_stop_condition: str = Field(
         default="",

@@ -468,6 +468,11 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     assert p._skip_initial_check is False                 # action → 保留 check（防双执行）
     p.reseed(to_milestone(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
+    # precondition 入口归一化门（kind=navigation 但 precondition=True）：必须让 checker 先判
+    # （满足→done、不动作），不能跳 check 把分支决策泄漏给 planner（live 185 stop / 错域 selector）。
+    p.reseed(to_milestone(Run(name="确保在列表页", kind="navigation", precondition=True), 3),
+             fresh_advance=True)
+    assert p._skip_initial_check is False
 
 
 def test_advance_persists_done_check_on_terminal_completion():

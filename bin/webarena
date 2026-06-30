@@ -5,6 +5,7 @@
 #       bin/webarena --headless 11            # 后台/CI 跑 task 11(不需要手动打开 Chrome)
 #       bin/webarena 15 --max-turns 30        # 透传给 webarena.py
 #       bin/webarena 15 --no-orchestrator     # 回退旧 milestone DAG 路径
+#       bin/webarena 185 --confirm            # 先把编排器分解出的程序打印到终端，按回车才开始执行（Ctrl-C 取消）
 # 前置: headed 模式先 bin/launch_chrome_cdp 起带远程调试的 Chrome,并在弹窗里登录目标站点。
 #      headless 模式由 Playwright 自动启动浏览器，并复用持久 profile 保持登录态；
 #      首次需要登录态时可传 --storage-state，或用 WEB_ARENA_USER_DATA_DIR/--user-data-dir 指定 profile。

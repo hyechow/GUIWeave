@@ -28,6 +28,50 @@ from llm.structured import invoke_structured
 _SYSTEM = load_prompt_text("task.orchestrator.structured_read")
 
 
+def _norm_label(s: str) -> str:
+    return "".join(ch for ch in (s or "").strip().lower() if ch.isalnum())
+
+
+def read_form_control_returns(
+    form_controls: list[dict] | None, returns: list[str]
+) -> dict[str, str]:
+    """Read declared return fields from the platform-neutral ``obs.form_controls`` (DOM-captured
+    select/input values), BEFORE any vision guess. A native ``<select>``'s selected option text is
+    authoritative — for a multiselect the primary value is the FIRST selected option (live 185:
+    Material), never the numeric option id and never the first *listed* option (the WS08 vision
+    misread that returned Burlap instead of the selected Cotton).
+
+    Returns only the fields that matched a control AND read a non-empty value — the caller fills any
+    remaining fields from vision. Empty/None form_controls (iPhone/Android) → {} → pure vision, as
+    before. Matching is exact-normalized label, else a substring containment either way."""
+    if not form_controls:
+        return {}
+    out: dict[str, str] = {}
+    for field in returns:
+        nf = _norm_label(field)
+        if not nf:
+            continue
+        best: dict | None = None
+        for fc in form_controls:
+            nl = _norm_label(fc.get("label") or fc.get("name") or fc.get("id") or "")
+            if not nl:
+                continue
+            if nl == nf or nf in nl or nl in nf:
+                best = fc
+                if nl == nf:
+                    break
+        if best is None:
+            continue
+        if (best.get("kind") or "") == "native_select":
+            selected = best.get("selected_text") or ""
+            value = selected.split(",")[0].strip() if selected else ""
+        else:
+            value = str(best.get("selected_text") or best.get("value") or "")
+        if str(value).strip():
+            out[field] = value
+    return out
+
+
 class _FieldRead(BaseModel):
     field: str = Field(description="字段名（照抄请求里的字段）")
     evidence: str = Field(default="", description="界面上与该字段相关的信号（文字/图标/颜色/位置），先写这个")

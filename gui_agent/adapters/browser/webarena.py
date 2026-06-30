@@ -90,6 +90,24 @@ def _search_term_scalar(item: object) -> object | None:
     return None
 
 
+def _single_column_scalars(data: list) -> list | None:
+    """A single-column result — every item a dict with the SAME one key — is scalar values, never
+    the intended RETRIEVE answer. A 1-column ``data_query`` (e.g. ``SELECT DISTINCT material``) yields
+    rows ``[{"material": "cotton"}, {"material": "fleece"}]``; webarena expects ``[cotton, fleece]``,
+    so the ``{"material": …}`` wrapper must be unwrapped (live 185 returned the stringified dicts and
+    scored 0). Returns None unless EVERY item is a dict with exactly one key and all share that key —
+    multi-key objects are intentional keyed output and are left untouched."""
+    keys = set()
+    out: list = []
+    for item in data:
+        if not isinstance(item, dict) or len(item) != 1:
+            return None
+        (k, v), = item.items()
+        keys.add(k)
+        out.append(v)
+    return out if len(keys) == 1 else None
+
+
 def _normalize_retrieved_data_for_intent(data: object, intent: str = "") -> object:
     """Conservatively coerce obvious over-shaped WebArena answers to the requested shape.
 
@@ -100,6 +118,10 @@ def _normalize_retrieved_data_for_intent(data: object, intent: str = "") -> obje
     """
     if not isinstance(data, list) or not data:
         return data
+    # General: unwrap a single-column row list to scalars (any intent — the wrapper is never wanted).
+    single_col = _single_column_scalars(data)
+    if single_col is not None:
+        return single_col
     intent_l = (intent or "").lower()
     asks_search_terms = "search term" in intent_l or ("search" in intent_l and "term" in intent_l)
     asks_metric = any(
@@ -378,6 +400,63 @@ def _print_webarena_outputs(
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
+def _print_program(program) -> None:
+    """Pretty-print the decomposed DSL program (functions + statements) to the terminal so the plan
+    is visible before/while it runs. Robust to type via class name (no import coupling)."""
+    def emit(s, indent: str = "  ") -> None:
+        nm = type(s).__name__
+        if nm == "Run":
+            line = f"{indent}[{s.kind}] {s.name}"
+            if getattr(s, "returns", None):
+                line += f"  returns={s.returns}"
+            print(line)
+            if s.success_condition:
+                print(f"{indent}    ✓ {s.success_condition}")
+        elif nm == "Compute":
+            print(f"{indent}[compute] {s.var} = {s.expr}")
+        elif nm == "Call":
+            print(f"{indent}[call] {s.func}({s.args}) -> {s.var}")
+        elif nm == "If":
+            c = s.cond
+            print(f"{indent}[if] {c.var}[{c.field}] {c.cmp} {c.value!r}{(' ' + str(c.values)) if c.values else ''}")
+            for b in s.then:
+                emit(b, indent + "    then ")
+            for b in s.otherwise:
+                emit(b, indent + "    else ")
+        elif nm == "ForEach":
+            print(f"{indent}[foreach] {s.var} -> {s.into or s.var + 's'} returns={s.returns}")
+            if getattr(s, "body_goal", ""):
+                print(f"{indent}    body_goal: {s.body_goal}")
+            for b in s.body:
+                emit(b, indent + "    ")
+        elif nm == "Finish":
+            print(f"{indent}[finish] {s.message}")
+        else:
+            print(f"{indent}{nm}: {s}")
+
+    print("[webarena] ── orchestrator program ─────────────────────────")
+    for fn in getattr(program, "functions", []) or []:
+        print(f"  def {fn.name}({', '.join(fn.params)}) -> {fn.returns}")
+        for b in fn.body:
+            emit(b, "      ")
+    for s in program.statements:
+        emit(s)
+    print("[webarena] ─────────────────────────────────────────────────")
+
+
+def _confirm_to_run(enabled: bool) -> bool:
+    """When --confirm and stdin is a TTY: wait for Enter before executing. Returns False if the user
+    cancels (Ctrl-C / EOF). No-op (returns True) otherwise so headless/CI runs are unaffected."""
+    if not enabled or not sys.stdin.isatty():
+        return True
+    try:
+        input("[webarena] 按回车开始执行编排器程序（Ctrl-C 取消）…")
+        return True
+    except (EOFError, KeyboardInterrupt):
+        print("\n[webarena] 已取消，不执行。")
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a WebArena-Verified task on the browser agent")
     parser.add_argument("--tasks-file", type=Path, required=True, help="agent-input-get output JSON")
@@ -397,6 +476,8 @@ def main() -> int:
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
     parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
+    parser.add_argument("--confirm", action="store_true",
+                        help="print the decomposed orchestrator program and WAIT for Enter before executing (inspect the plan first; Ctrl-C cancels). No-op when stdin is not a TTY.")
     parser.add_argument(
         "--host",
         type=str,
@@ -628,7 +709,9 @@ def main() -> int:
                                 file_section if len(file_section) <= cap
                                 else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                             )
-                        print(f"[webarena] orchestrator: {len(program.statements)} statements")
+                        print(f"[webarena] orchestrator: {len(program.statements)} statements"
+                              f"{(', ' + str(len(program.functions)) + ' functions') if program.functions else ''}")
+                        _print_program(program)
 
                         # Feasibility Guard kick-back: re-decompose ONLY the remaining plan via the
                         # dedicated redecompose() (NOT a fresh full-goal decompose). The page context
@@ -664,6 +747,8 @@ def main() -> int:
                     else:
                         print("[webarena] orchestrator: disabled; using legacy milestone DAG")
 
+                    if not _confirm_to_run(args.confirm):
+                        return 1
                     with EscStopSignal(enabled=True) as esc_stop:
                         if esc_stop.enabled:
                             print("[webarena] Interrupt: 按 ESC 将在当前 turn 收尾后停止")

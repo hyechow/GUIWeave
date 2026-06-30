@@ -129,6 +129,38 @@ def test_search_term_rows_keep_objects_when_intent_asks_metric():
     assert resp.retrieved_data == rows
 
 
+def test_single_column_rows_are_unwrapped_to_scalars():
+    # Live 185: a 1-column data_query (SELECT DISTINCT material) yields row dicts; webarena expects
+    # flat scalars, so [{"material":"cotton"},{"material":"fleece"}] must become [cotton, fleece]
+    # regardless of intent (the {"material":…} wrapper is never the wanted RETRIEVE answer; the run
+    # shipped stringified dicts and scored 0).
+    resp = _finalize_response(
+        WAResponse(
+            task_type="RETRIEVE",
+            status="SUCCESS",
+            retrieved_data=[{"material": "cotton"}, {"material": "fleece"}],
+            error_details=None,
+        ),
+        goal_completed=True,
+        intent="Give me the material of the products that have 3 units left",
+    )
+    assert resp.status == "SUCCESS"
+    assert resp.retrieved_data == ["cotton", "fleece"]
+
+
+def test_multi_key_rows_are_left_as_objects():
+    # Guard the narrowness: a 2-key row is intentional keyed output, NOT a single column → untouched.
+    rows = [{"name": "Joust Bag", "count": 4}, {"name": "hollister", "count": 19}]
+    resp = _finalize_response(
+        WAResponse(
+            task_type="RETRIEVE", status="SUCCESS", retrieved_data=rows, error_details=None,
+        ),
+        goal_completed=True,
+        intent="List each product name and its count",
+    )
+    assert resp.retrieved_data == rows
+
+
 def test_report_context_includes_official_eval(tmp_path):
     context_path = tmp_path / "context.json"
     context_path.write_text('{"goal":"x"}', encoding="utf-8")

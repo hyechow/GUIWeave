@@ -302,7 +302,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # 第一步导航动作——省掉交接时第 2 次 checker。幂等（重点 nav 目标无害；残留 already-done 由
         # 下一轮正常 check 兜底）。action/filter/collection 一律保留 check：重跑 action 可能双执行
         # （re-send/re-submit），collection 需要 checker 的 read_instruction。一次性，step() 消费后清。
-        self._skip_initial_check = fresh_advance and milestone.kind == "navigation"
+        # precondition（入口状态归一化门，如 loop/function 体的「确保在列表页」）例外：它本就可能
+        # 第一帧即满足，必须让 checker 先判（满足→done、不动作、不发 stop；未满足→in_progress→planner
+        # 才规划返回动作），否则 SkipCheck 会把分支判断泄漏给 planner（live 185 的 stop / 错域 selector）。
+        self._skip_initial_check = (
+            fresh_advance and milestone.kind == "navigation" and not milestone.precondition
+        )
 
     # ── Single-step machine ───────────────────────────────────────────
 
@@ -914,7 +919,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # extra action is harmless. Other kinds keep the check — re-running an
         # action milestone could double-execute (re-send/re-submit), and
         # collection/verification need the checker's read_instruction.
-        if next_ms.kind == "navigation":
+        # precondition entry-state gates (e.g. loop/function-body「确保在列表页」) are exempt: they
+        # may already hold on frame 1, so the checker must judge first (satisfied→done, no action;
+        # else→in_progress→plan the return). Skipping it leaks the branch decision to the planner.
+        if next_ms.kind == "navigation" and not next_ms.precondition:
             print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
             # (done check for the completed milestone already saved at the top of _advance)
             synthetic = _SingleCheckResult(

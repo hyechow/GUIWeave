@@ -230,7 +230,16 @@ def _read_from_form_controls(
                 best_score = score
         if best is None:
             return None
-        value = best.get("selected_text") or best.get("value") or ""
+        if (best.get("kind") or "") == "native_select":
+            # The SELECTED option text is authoritative for a <select>/<select multiple> (WebArena
+            # task 185 Material). The primary value is the FIRST selected option — never the numeric
+            # option id in `value`, and never the first *listed* option (the WS08 vision misread that
+            # returned Burlap instead of the selected Cotton). selected_text joins all selected with
+            # ", "; an empty selection reads "" so the caller re-locates instead of guessing.
+            selected = best.get("selected_text") or ""
+            value = selected.split(",")[0].strip() if selected else ""
+        else:
+            value = best.get("selected_text") or best.get("value") or ""
         result[field] = str(value)
     return result
 

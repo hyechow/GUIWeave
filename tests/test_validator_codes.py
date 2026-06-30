@@ -134,6 +134,12 @@ SAMPLES: dict[str, Program] = {
     "FOREACH_EMPTY_BODY_NO_RETURNS": Program(statements=[
         ForEach(var="row", body=[]),
     ]),
+    "FOREACH_BODY_GOAL_MISSING_RETURNS": Program(statements=[
+        ForEach(var="row", body_goal="读 {row[Name]} 的材质"),
+    ]),
+    "FOREACH_BODY_GOAL_NO_ROW_TEMPLATE": Program(statements=[
+        ForEach(var="row", returns=["material"], body_goal="读这一行的材质"),
+    ]),
     "RETRIEVAL_RETRY_DROPS_FIELD": Program(statements=[
         _read(var="r", returns=("a",)),
         Run(name="在 Status 列筛选 Complete", kind="filter", success_condition="筛选完成"),

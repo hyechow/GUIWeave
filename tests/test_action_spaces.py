@@ -182,3 +182,19 @@ def test_base_rejects_all_platform_actions():
     for bad in ("navigate", "home", "back", "app_switch"):
         with pytest.raises(Exception):
             BaseAction(action_type=bad, description="x")
+
+
+def test_type_empty_text_coerces_to_clear_text():
+    """A `type` action with empty text (the model's common way of saying「清空输入框」) must coerce
+    to the proper `clear_text` action, NOT raise — one malformed action decision should never crash
+    the whole run (live: type x=247 text="" 「清空 Search by keyword」 → ValidationError → run died)."""
+    for cls in (BaseAction, BrowserAction):
+        a = cls.model_validate(
+            {"action_type": "type", "x": 247, "y": 375, "text": "", "description": "清空输入框"}
+        )
+        assert a.action_type == "clear_text"
+    # a normal type with text is untouched
+    b = BrowserAction.model_validate(
+        {"action_type": "type", "x": 1, "y": 2, "text": "hello", "description": "输入"}
+    )
+    assert b.action_type == "type" and b.text == "hello"

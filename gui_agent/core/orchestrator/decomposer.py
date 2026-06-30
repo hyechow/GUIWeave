@@ -30,7 +30,7 @@ from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
 from gui_agent.core.router import IntentResolution, intent_block
-from .program import Cond, Finish, ForEach, If, Program, Run, RunKind, Stmt
+from .program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Run, RunKind, Stmt
 from .validator import (  # validator lives in its own module; decompose imports it back
     ValidationIssue,
     validate_program,
@@ -47,7 +47,7 @@ _REDECOMPOSE_SYSTEM = _SYSTEM + "\n\n" + load_prompt_text("task.orchestrator.red
 class _StepDraft(BaseModel):
     """One DSL step in flat, LLM-friendly form. `op` selects which fields matter."""
 
-    op: str = Field(default="run", description='"run" | "if" | "finish"')
+    op: str = Field(default="run", description='"run" | "if" | "finish" | "foreach" | "compute" | "call"')
     # --- op=run ---
     var: str = Field(default="", description="把该步结果绑定到的变量名；带 returns/data_query 或后续要引用时填，否则留空")
     name: str = Field(default="", description="op=run：该 milestone 的一句话操作指令")
@@ -80,7 +80,13 @@ class _StepDraft(BaseModel):
     over: str = Field(default="", description="op=foreach：被迭代的列表来源（旧路径，iPhone/Android 兼容）；browser 新路径留空，由 name/returns 驱动")
     into: str = Field(default="", description="op=foreach：累积表变量名（留空默认 = 循环变量+s）；循环结束后可被 data_query 查询")
     body: list["_StepDraft"] = Field(default_factory=list, description="op=foreach：每行执行一遍的步骤（run/if/finish，不可再嵌 foreach）")
+    body_goal: str = Field(default="", description="op=foreach（逐行子目标，替代写死的 body）：当每行子任务太复杂、固定步骤拼不可靠（需从行字段派生键→搜索另一个关联实体→按谓词判别行→读其属性，即 per-row 实体 join），填一句含字面模板 {循环变量[字段]} 的子目标，运行时按行当场分解、由 agent 多跳完成；配 returns=每行产出契约。与 body 互斥；子目标内不得再用 body_goal。例：'把 {row[Name]} 去 -SIZE-COLOR 后缀得基名→搜→开 Type=Configurable 父产品→读 Material 主材质→返回 material'")
     limit: int | None = Field(default=None, description="op=foreach：采集行数上限（None=全量）；对已排序 grid 取 topK 时填 K，避免全量翻页")
+    # --- op=compute（纯计算：解释器确定性求值，不是 GUI milestone；用于从已有标量派生新值）---
+    expr: str = Field(default="", description="op=compute：受限表达式，对作用域内标量（函数参数 + 之前的 compute 结果，用裸名引用）求值，结果绑到 var（标量，后续 milestone/参数里用 {var} 引用）。只允许：字符串方法(rsplit/split/strip/replace/lower…)、切片/索引、`+`、以及 re_sub(pattern,repl,s)/re_search(pattern,s)/len/str/int。例：re_sub('-[A-Za-z]+-[A-Za-z]+$','',name) 把 -SIZE-COLOR 后缀去掉得基名；name.rsplit('-',2)[0] 同理。**派生类计算用它，别塞进 milestone 让 agent 现场算。**")
+    # --- op=call（调用一个函数定义；可出现在 main / if / foreach body 任意处，函数与循环无关）---
+    func: str = Field(default="", description="op=call：要调用的函数名（必须是 functions 里定义过的）")
+    call_args: dict[str, str] = Field(default_factory=dict, description="op=call：参数名→取值模板（在调用处作用域解析：{row[字段]} 取当前行、{标量} 取标量、或字面量）。函数返回值绑到 var（一个 RunResult，后续用 {var[返回字段]} 引用）")
     # --- op=if ---
     cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个带 returns/data_query 步的 var）")
     cond_field: str = Field(default="", description="op=if：读取字段名（该步 returns 里的字段）")
@@ -96,12 +102,28 @@ class _StepDraft(BaseModel):
     message: str = Field(default="", description="op=finish：最终答复模板，可用 {变量[字段]} 引用某步返回值")
 
 
+class _FunctionDraft(BaseModel):
+    """A reusable function — a parameterized sub-program, decoupled from any loop. Decomposed ONCE
+    with main (one LLM call, like writing a code file), called N times via op=call."""
+
+    name: str = Field(default="", description="函数名（main 或别的步骤用 op=call 调用它）")
+    params: list[str] = Field(default_factory=list, description="参数名列表；函数体里用 {参数名} 引用（参数是标量）")
+    body: list[_StepDraft] = Field(default_factory=list, description="函数体步骤（run milestone / compute / call / if / finish）；与 main 一样写")
+    returns: list[str] = Field(default_factory=list, description="函数对外返回的字段名（compute 标量名，或体内某 milestone returns 的字段名）")
+
+
 class _PlanDraft(BaseModel):
     reasoning: str = Field(
         default="",
         description="先分析任务：要到哪些页、做什么操作、读什么结果、是否需要条件分支；再据此写 steps",
     )
     goal: str = Field(default="", description="任务一句话描述")
+    functions: list[_FunctionDraft] = Field(
+        default_factory=list,
+        description="可复用函数定义（顶层，与循环无关）。当某个子过程要被 foreach 逐行调用、或在多处复用、"
+                    "或本身是多跳实体查找（派生→搜→判别→读）时，把它写成一个函数，main 里用 op=call 调用。"
+                    "整份程序（main steps + functions）一次产出，像写一个代码文件。",
+    )
     steps: list[_StepDraft] = Field(default_factory=list)
 
 
@@ -170,17 +192,31 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
         op = (d.op or "run").strip().lower()
         if op == "finish":
             out.append(Finish(message=d.message))
+        elif op == "compute":
+            if d.expr.strip() and d.var.strip():
+                out.append(Compute(var=d.var.strip(), expr=d.expr.strip()))
+        elif op == "call":
+            if d.func.strip():
+                out.append(Call(
+                    func=d.func.strip(),
+                    args={k.strip(): v for k, v in (d.call_args or {}).items() if k.strip()},
+                    var=(d.var.strip() or None),
+                ))
         elif op == "foreach":
             # One level only: drop any nested foreach in the body (decomposer prompt forbids it; this
             # is the deterministic backstop) so a malformed nested loop can't reach the interpreter.
             body = [s for s in _to_stmts(d.body) if not isinstance(s, ForEach)]
+            body_goal = (getattr(d, "body_goal", "") or "").strip()
             out.append(ForEach(
                 var=(d.loop_var or "item").strip(),
                 over=d.over.strip(),
                 target=d.name.strip(),
                 returns=[r for r in d.returns if r.strip()],
+                # body_goal (agentic per-row sub-goal) is mutually exclusive with body; when present
+                # it wins and body is dropped (the runtime decomposes the sub-goal fresh per row).
                 into=d.into.strip(),
-                body=body,
+                body=[] if body_goal else body,
+                body_goal=body_goal,
                 limit=d.limit if d.limit and d.limit > 0 else None,
             ))
         elif op == "if":
@@ -215,8 +251,33 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
     return out
 
 
+def _to_functions(drafts: list["_FunctionDraft"]) -> list[FunctionDef]:
+    """Convert function drafts → FunctionDef. One level of function bodies; nested foreach in a
+    body is still dropped by _to_stmts' foreach handling, but functions themselves may call others."""
+    out: list[FunctionDef] = []
+    for fd in drafts or []:
+        name = (fd.name or "").strip()
+        if not name:
+            continue
+        out.append(FunctionDef(
+            name=name,
+            params=[p.strip() for p in fd.params if p.strip()],
+            body=_to_stmts(fd.body),
+            returns=[r.strip() for r in fd.returns if r.strip()],
+        ))
+    return out
+
+
 def to_program(draft: _PlanDraft, goal: str) -> Program:
-    return Program(goal=draft.goal or goal, statements=_to_stmts(draft.steps))
+    # lazy: engine→runner→… avoids an import cycle here. Insert loop-entry arrivals BEFORE chaining
+    # so the inserted arrival participates in FROM[i] := TO[i-1].
+    from .engine import chain_from_states, insert_loop_entry_arrivals
+
+    return chain_from_states(insert_loop_entry_arrivals(Program(
+        goal=draft.goal or goal,
+        statements=_to_stmts(draft.steps),
+        functions=_to_functions(getattr(draft, "functions", []) or []),
+    )))
 
 
 

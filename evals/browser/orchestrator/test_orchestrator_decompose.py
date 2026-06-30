@@ -1165,41 +1165,112 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # suffix, keyword-search the base name in the Products grid, pick the Type=Configurable
             # row — and read Material there (primary/first selected value only). See memory
             # webarena-185-material-multiselect-read and knowledge _skill.md "按库存数量筛选产品".
+            # Accepts BOTH the agentic body_goal shape (preferred — per-row sub-goal decomposed at
+            # runtime) AND the legacy pre-baked body shape. The 185 lineage of live failures is
+            # encoded as guards: material must actually LAND per row (214011 DATA_VALIDATION_ERROR),
+            # a SINGLE foreach (no collect+drill over='' split, 214011), and the row must be
+            # TEMPLATED so each iteration is distinct (215344 searched "Minerva" twice).
             seq = _flatten_runs(program.statements)
-            all_text = " ".join(
-                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} {' '.join(r.returns or [])}"
-                for r in seq
+            foreaches = _flatten_foreaches(program.statements)
+            functions = list(getattr(program, "functions", []) or [])
+            funcs_by_name = {fn.name: fn for fn in functions}
+
+            def _fn_text(fn) -> str:
+                parts = [fn.name, " ".join(fn.returns or [])]
+                for r in _flatten_runs(fn.body):
+                    parts.append(f"{r.name} {r.read_spec} {' '.join(r.returns or [])}")
+                parts += [st.expr for st in fn.body if type(st).__name__ == "Compute"]
+                return " ".join(parts)
+
+            # text spans statement runs + foreach body_goals + ALL function bodies (the function
+            # shape puts the parent-resolution + material read INSIDE a FunctionDef, not in main)
+            all_text = (
+                " ".join(f"{r.name} {r.success_condition} {r.read_spec} {' '.join(r.returns or [])}"
+                         for r in seq)
+                + " " + " ".join((fe.body_goal or "") + " " + " ".join(fe.returns or []) for fe in foreaches)
+                + " " + " ".join(_fn_text(fn) for fn in functions)
             ).lower()
-            reads_material = any(
-                any(m in f"{r.name} {r.read_spec} {' '.join(r.returns or [])}".lower()
-                    for m in ("material", "材质", "材料"))
-                for r in seq
-            )
-            if not reads_material:
+            if not any(m in all_text for m in ("material", "材质", "材料")):
                 details.append(
-                    "task 185 要读产品的 Material 属性，但计划里没有任何步骤读取 material/材质。"
-                    f" seq={[(r.kind, r.name, r.returns) for r in seq]}"
+                    "task 185 要读产品的 Material，但计划（含 foreach body_goal/returns）里没出现 material/材质。"
+                    f" foreaches={[(fe.into, fe.returns, (fe.body_goal or '')[:40]) for fe in foreaches]}"
                 )
             if not _has_foreach(program.statements):
                 details.append(
-                    "Material 不在 Products 网格默认列里，必须用 foreach 逐个过滤后产品处理 "
-                    "Material；当前计划没有 foreach。"
+                    "Material 不在 Products 网格默认列里，必须用 foreach 逐个产品处理；当前计划没有 foreach。"
                     f" top-level stmts={[type(s).__name__ for s in program.statements]}"
                 )
-            resolves_parent = any(
-                m in all_text
-                for m in (
-                    "configurable", "父产品", "父配置", "parent", "基名", "去后缀",
-                    "去 -size", "去掉后缀", "-size-color", "去掉 -size", "去除后缀",
-                )
-            )
-            if not resolves_parent:
+            if not any(m in all_text for m in (
+                "configurable", "父产品", "父配置", "parent", "基名", "去后缀",
+                "-size-color", "去掉后缀", "去除后缀", "去掉 -size",
+            )):
                 details.append(
-                    "Material 只在父配置型产品上有值（按 qty 筛出的是子变体、Material 为空），"
-                    "计划必须从变体解析到父 configurable（去 -SIZE-COLOR 后缀搜基名 → 选 "
-                    "Type=Configurable 行）再读 Material，而非直接钻子变体详情页。"
-                    f" seq={[(r.kind, r.name) for r in seq]}"
+                    "Material 只在父配置型产品上有值（qty 筛出的是子变体、Material 为空）；计划必须从变体"
+                    "解析到父 configurable（去 -SIZE-COLOR 后缀搜基名 → 选 Type=Configurable 行）再读。"
                 )
+            if len(foreaches) > 1:
+                details.append(
+                    "Material 下钻必须收敛成**单个 foreach**；拆成两个 over='' foreach 时，浏览器路径下第二个"
+                    "会重新采集网格、material 落不进表（live 214011）。"
+                    f"当前有 {len(foreaches)} 个 foreach：{[fe.into for fe in foreaches]}"
+                )
+            # material must LAND per row + the row must be TEMPLATED — checked per the foreach shape:
+            for fe in foreaches:
+                tmpl = "{%s[" % fe.var
+                calls = [s for s in fe.body if type(s).__name__ == "Call"]
+                if calls:  # function-call shape (preferred): material lands via a called function
+                    called = [funcs_by_name[c.func] for c in calls if c.func in funcs_by_name]
+                    if not any(
+                        any("material" in (r or "").lower() for r in (fn.returns or []))
+                        for fn in called
+                    ):
+                        details.append(
+                            "foreach body 的 op=call 必须调用一个 returns 含 material 的函数（material 随行"
+                            "汇进 into 表供 data_query 查询）；当前被调函数都没返回 material。"
+                            f" calls={[c.func for c in calls]}, funcs={[(fn.name, fn.returns) for fn in functions]}")
+                    # The function must ACT to reach the parent (search+open) — a pure `read`
+                    # milestone doesn't navigate/search, it only reads the current frame, so material
+                    # comes back empty (live 20260630_094410: run_kind=read → no search/open → "").
+                    if called and not any(
+                        any(r.kind in ("navigation", "action", "filter") for r in _flatten_runs(fn.body))
+                        for fn in called
+                    ):
+                        details.append(
+                            "被调函数必须有一个【会动作的】milestone（run_kind=navigation/action/filter）去搜索并"
+                            "打开父产品——纯 read milestone 不导航/不搜索、只读当前帧，material 必空"
+                            f"（live 094410）。函数 body kinds={[[r.kind for r in _flatten_runs(fn.body)] for fn in called]}")
+                    if not any(tmpl in v for c in calls for v in (c.args or {}).values()):
+                        details.append(
+                            f"op=call 的 call_args 必须用 `{tmpl}…]`（如 `{{{fe.var}[Name]}}`）把当前行代入函数参数，"
+                            "运行时才逐行不同；否则每次都用同一个值、只命中第一个（live 215344）。"
+                            f" call_args={[c.args for c in calls]}")
+                elif fe.body_goal:  # agentic sub-goal shape
+                    if not any("material" in (r or "").lower() for r in (fe.returns or [])):
+                        details.append(
+                            f"body_goal foreach(var={fe.var!r}) 的 returns 必须含 material —— 这是每行子目标"
+                            "产出的契约，运行时汇进 into 表供 data_query 查询；否则 material 落不进表。"
+                            f" returns={fe.returns}")
+                    if tmpl not in fe.body_goal:
+                        details.append(
+                            f"body_goal 必须**字面**含循环变量模板 `{tmpl}…]`（如 `{{{fe.var}[Name]}}`），"
+                            "运行时才按行代入每个变体名；否则每行子目标都一样、只命中第一个（live 215344）。"
+                            f" body_goal={(fe.body_goal or '')[:60]!r}")
+                else:  # legacy pre-baked body shape
+                    body_runs = _flatten_runs(fe.body)
+                    if not body_runs:
+                        continue
+                    if not any("material" in " ".join(r.returns or []).lower()
+                               or any(m in (r.read_spec or "").lower() for m in ("material", "材质"))
+                               for r in body_runs):
+                        details.append(
+                            "Material 必须由 foreach body 内的 run 逐行读出（随行汇进 into 表）；当前 body 没有"
+                            " run 返回 material（live 214011 类 DATA_VALIDATION_ERROR）。"
+                            f" foreach into={fe.into}")
+                    if not any(tmpl in (r.name or "") for r in body_runs):
+                        details.append(
+                            f"foreach(var={fe.var!r}) 的 body 必须在某 run name 里字面引用 `{tmpl}…]`，运行时"
+                            "才逐行代入变体名；否则每次都跑同一条泛指令、只命中第一个（live 215344）。"
+                            f" body run names={[(r.name or '')[:40] for r in body_runs]}")
         elif assertion == "filter_step_clears_residual_filters":
             # WebArena task 186 (live run 1 scored 0.0): Magento admin grid filters persist
             # server-side per admin account and leak across tasks. Task 186 ("products with
@@ -1733,11 +1804,20 @@ def _dump_program(program) -> None:
                     print(f"{indent}  else:")
                     _dump_stmts(s.otherwise, indent + "    ")
             elif isinstance(s, ForEach):
-                print(f"{indent}[foreach] {s.var} in {s.over} -> {s.into or s.var + 's'}")
+                print(f"{indent}[foreach] {s.var} in {s.over} -> {s.into or s.var + 's'} returns={s.returns}")
+                if s.body_goal:
+                    print(f"{indent}    [body_goal] {s.body_goal}")
                 _dump_stmts(s.body, indent + "    ")
             elif isinstance(s, Finish):
                 print(f"{indent}[finish] {s.message}")
+            elif type(s).__name__ == "Compute":
+                print(f"{indent}[compute] {s.var} = {s.expr}")
+            elif type(s).__name__ == "Call":
+                print(f"{indent}[call] {s.func}({s.args}) -> {s.var}")
 
+    for fn in getattr(program, "functions", []) or []:
+        print(f"  [def] {fn.name}({', '.join(fn.params)}) -> {fn.returns}")
+        _dump_stmts(fn.body, "      ")
     _dump_stmts(program.statements)
 
 

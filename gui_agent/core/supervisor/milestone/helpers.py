@@ -14,6 +14,7 @@ from gui_agent.context.runtime import (
     checker_kind_rules_block,
     active_filters_block,
     applied_filter_state_block,
+    filter_residual_block,
     checker_result_block,
     constraints_block,
     extra_instruction_block,
@@ -130,6 +131,61 @@ def filter_chips_clean(
             continue
         return False  # an unrelated residual filter is still applied
     return True
+
+
+# A filter milestone whose INTENT is "no filter on dimension X / 全量 / any state" — here EVERY
+# applied chip (beyond benign system filters) is an unwanted residual to clear. Distinct from the
+# common case (a specific target filter), where only chips OUTSIDE the target are residual.
+_NO_FILTER_INTENT_RE = re.compile(
+    r"全量|不限|任意状态|无筛选|没有.{0,6}筛选|清空所有筛选|清除所有筛选|any\s+state|all\s+(?:orders|records|states)",
+    re.IGNORECASE,
+)
+
+# A KEYWORD-SEARCH milestone (uses the grid's global "Search by keyword" box). Its intended active
+# filter is ONLY the keyword chip — so any pre-existing COLUMN filter (Quantity/Status/…) is a
+# residual that must be cleared, else keyword+column AND together return the wrong rows (live
+# 114706: searching WS08 with a leftover Quantity:3-3 returned the qty=3 child, not the qty=0
+# Configurable parent → "no Configurable found").
+_KEYWORD_SEARCH_INTENT_RE = re.compile(r"search\s+by\s+keyword|关键词|keyword", re.IGNORECASE)
+
+
+def filter_residual_labels(
+    applied_filters: Optional[dict[str, str]], milestone: Milestone
+) -> list[str]:
+    """The applied-filter chip labels that are UNRELATED RESIDUALS for this filter milestone —
+    computed at RUNTIME by diffing the live chips against the milestone's INTENDED filter set
+    (not a blanket "clear all" prescribed at decompose time, which can't see the live state and so
+    misleads the model into wiping legitimate filters; cf. the over-broad task-186 prompt rule).
+
+    - intent = a specific target filter (e.g. Quantity 3-3): residual = any chip whose column is
+      NOT the target and NOT a benign system filter (e.g. a leaked `Keyword: WS08`).
+    - intent = "no filter / 全量 / any state": residual = every non-benign chip.
+    - intent unparseable and not a no-filter task → [] (can't diff; don't guess)."""
+    if not applied_filters:
+        return []
+    target = parse_filter_target(milestone)
+    text = f"{milestone.name or ''} {milestone.success_condition or ''} {milestone.description or ''}"
+    no_filter_intent = bool(_NO_FILTER_INTENT_RE.search(text))
+    keyword_intent = bool(_KEYWORD_SEARCH_INTENT_RE.search(text))
+    if target is None and not no_filter_intent and not keyword_intent:
+        return []
+    # intended-filter column: a parsed column target wins; else a keyword search keeps only the
+    # `Keyword` chip; else (no-filter intent) nothing is intended → every non-benign chip residual.
+    if target is not None:
+        col_l = target[0].lower()
+    elif keyword_intent:
+        col_l = "keyword"
+    else:
+        col_l = ""
+    out: list[str] = []
+    for label in applied_filters:
+        ll = label.lower()
+        if col_l and (col_l in ll or ll in col_l):
+            continue  # the intended target filter — keep it
+        if ll in _BENIGN_FILTER_LABELS:
+            continue  # benign always-on system filter — keep it
+        out.append(label)
+    return out
 
 
 def filter_state_satisfies_target(
@@ -357,7 +413,11 @@ def _norm_text(text: str) -> str:
 
 _FIELD_SUFFIX_RE = re.compile(
     r"([A-Za-z][A-Za-z0-9 _/-]{0,30}|[\u4e00-\u9fff]{1,12})\s*"
-    r"(?:列|字段|输入框|筛选框|搜索框|下拉框|column|field|filter)",
+    # `列` only as a COLUMN suffix — NOT inside `列表`(list)/`列出`(to list): "Products 列表" means
+    # the Products LIST page, not a "Products" column, so it must not be extracted as a filter
+    # field (else _guard_named_field_substitution_plan hijacks a keyword search into a column-filter
+    # hunt — live 102944: 横向 scroll 找「Products」列的筛选框 instead of using Search by keyword).
+    r"(?:列(?![表出])|字段|输入框|筛选框|搜索框|下拉框|column|field|filter)",
     re.IGNORECASE,
 )
 _QUOTED_RE = re.compile(r"[\"'「『“‘]([^\"'」』”’]{1,80})[\"'」』”’]")
@@ -391,8 +451,16 @@ def _field_aliases(field: str) -> set[str]:
     return {_norm_text(a) for a in aliases if _norm_text(a)}
 
 
+# Runtime annotations the orchestrator appends to a milestone name (e.g. the empty-returns retry
+# `（继续定位返回字段：material）` from loop.py) are NOT user-named columns — strip them before field
+# extraction so they don't get parsed as a "继续定位返回" column and hijack the planner (live 120601:
+# the retry annotation drove a 横向 scroll hunt for a「继续定位返回」column filter on the edit page).
+_RUNTIME_ANNOTATION_RE = re.compile(r"[（(]继续定位[^）)]*[）)]")
+
+
 def _extract_target_fields(milestone: Milestone) -> list[str]:
     text = " ".join([milestone.name or "", milestone.description or ""])
+    text = _RUNTIME_ANNOTATION_RE.sub(" ", text)
     fields: list[str] = []
     for raw in _FIELD_SUFFIX_RE.findall(text):
         field = str(raw or "").strip(" '\"「」『』")
@@ -552,7 +620,15 @@ def _guard_named_field_substitution_plan(
     check: _SingleCheckResult,
     observation: Observation,
 ) -> _PlanResult:
-    """Do not substitute a different visible field for the field named by the milestone."""
+    """Do not substitute a different visible field for the field named by the milestone.
+
+    Only meaningful for milestones that SET/FILTER a named field (filter / action). A
+    navigation/read/collection milestone (open an Edit link, read a value) targets a control by
+    role, not a named grid column — applying the column-substitution guard there only mis-fires
+    (live 120601: a navigation milestone "open the Edit link 〔继续定位返回字段：material〕" got
+    hijacked into a column-filter scroll). Skip it for those kinds."""
+    if milestone.kind not in ("filter", "action"):
+        return plan
     instruction = plan.instruction or ""
     if not instruction or not re.search(r"输入|填写|选择|设置|筛选|搜索", instruction):
         return plan
@@ -939,6 +1015,10 @@ def run_checker(
             ),
             active_filters_block(getattr(observation, "form_controls", None)),
             applied_filter_state_block(getattr(observation, "applied_filters", None)),
+            filter_residual_block(
+                filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
+                getattr(observation, "applied_filters", None),
+            ),
             form_controls_block(getattr(observation, "form_controls", None)),
             grid_status_block(getattr(observation, "tables", None)),
         ],
@@ -1178,6 +1258,10 @@ def run_planner(
         human_blocks=[
             active_filters_block(getattr(observation, "form_controls", None)),
             applied_filter_state_block(getattr(observation, "applied_filters", None)),
+            filter_residual_block(
+                filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
+                getattr(observation, "applied_filters", None),
+            ),
             form_controls_block(getattr(observation, "form_controls", None)),
             knowledge_block("app_navigation", app_knowledge),
             knowledge_block("page_elements", elements_knowledge),

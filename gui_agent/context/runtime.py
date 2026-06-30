@@ -471,6 +471,38 @@ def applied_filter_state_block(applied_filters: dict[str, str] | None) -> Contex
     )
 
 
+def filter_residual_block(
+    residuals: list[str], applied_filters: dict[str, str] | None
+) -> ContextBlock | None:
+    """Inject the PRECISE set of unrelated residual filters to clear — computed at runtime by
+    diffing the live Active-filters chips against this milestone's intended filter set (see
+    helpers.filter_residual_labels). This replaces the old blanket "always clear ALL filters"
+    decompose-prompt rule, which — written before the page is seen — could only be unconditional
+    and so taught the model to wipe legitimate filters wholesale (一刀切). Here we name exactly the
+    chips to remove, so the agent clears the leaked residual (e.g. `Keyword: WS08`) and KEEPS the
+    task's own filter. None when there are no residuals."""
+    if not residuals:
+        return None
+    af = applied_filters or {}
+    lines = [f"- {label}: {af.get(label, '')!r}" for label in residuals]
+    content = (
+        "## 需要清除的【无关残留筛选】（运行时按 live chip 与本任务意图 state-diff 算出）\n"
+        "当前 Active filters 里有**与本任务无关的残留**（来自上一个任务/会话，会悄悄缩小结果集）：\n"
+        + "\n".join(lines)
+        + "\n👉 **只清除上面这几条残留**（点各自的 ✕，或 Clear all 后**重新设置本任务自己的筛选**）；"
+        "**不要**因为'要清残留'就把本任务自己要的筛选也一并清掉不重设。没列在上面的筛选都该保留。"
+    )
+    return ContextBlock(
+        id="runtime.observation.filter_residuals",
+        budget="high",
+        source_type="runtime_state",
+        source="platform_adapter",
+        ttl="turn",
+        priority=29,
+        content=content,
+    )
+
+
 def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None:
     text = format_form_controls_text(form_controls)
     if not text:

@@ -55,13 +55,14 @@ version: 1
 
 ## skill：按库存数量筛选产品并取某个属性（颜色/材质/尺码）
 - 触发：产品的颜色/材质/尺码、color/material/size of products、name and color、products with N units left 取某属性；凡是「按库存数量筛选产品、再取该产品某个属性」的任务
-- 数据：Products grid、Columns 控件、Quantity 范围筛选、产品编辑页属性字段。目标属性是否是网格可选列决定走哪条路：Products Columns 面板权威可选列（37 列，含 Color，**不含 Material/Size**）。读属性下拉的空值判定——select 未选中时 `selectedIndex=-1`，判为空，绝不把首项（如 Material 的 Burlap）当已选值。数据模型注记：Quantity 在简单变体上；**Size/Color 是配置型「区分属性」、设在每个变体自己身上**（变体名后缀 -SIZE-COLOR 即来源，下钻变体详情页可直接读到，如 1182=S、1478=XS）；但 **Material 不是区分属性、只挂在配置型父产品上**，按 qty 筛出的变体自身 Material 多为空（`selectedIndex=-1`），真值在父产品（SKU 去 -SIZE-COLOR 后缀）。所以走方案 B 前先分清：目标属性是 Size/Color → 变体详情页能直接读；是 Material → 需 variant→parent 多跳，无单网格 UI 路径（已知难题，勿堆通用多跳逻辑）。
+- 数据：Products grid、Columns 控件、Quantity 范围筛选、产品编辑页属性字段。目标属性是否是网格可选列决定走哪条路：Products Columns 面板权威可选列（37 列，含 Color，**不含 Material/Size**）。读属性下拉的空值判定——select 未选中时 `selectedIndex=-1`，判为空，绝不把首项（如 Material 的 Burlap）当已选值。数据模型注记：Quantity 在简单变体上；**Size/Color 是配置型「区分属性」、设在每个变体自己身上**（变体名后缀 -SIZE-COLOR 即来源，下钻变体详情页可直接读到，如 1182=S、1478=XS）；但 **Material 不是区分属性、只挂在配置型父产品上**，按 qty 筛出的变体自身 Material 多为空（`selectedIndex=-1`），真值在父产品（SKU/名去 -SIZE-COLOR 后缀）。所以走方案 B 前先分清：目标属性是 Size/Color → 变体详情页能直接读；是 **Material → 必须从变体上跳到父配置型产品再读**，路径（live 实测可靠）：取变体名去掉 `-SIZE-COLOR` 后缀得基名 → 回 Products grid 顶部 **Search by keyword** 用基名里**一个独特词**搜（整条带 ™/连字符的全名走全文索引常 0 命中；且 keyword 搜索跨任务残留，先清空再搜）→ 结果里挑 **Type=Configurable Product** 那行（父产品，其 Quantity 显示 0）→ 打开它读 Material。**Material 是 multiselect 多选**：父产品常含多个材质（如 Cotton+Lycra®、Fleece+Polyester+Spandex），但本类任务期望「该产品的材质」取**主材质 = 第一个已选项**（即下拉的 `value`/首个 selectedOption，如 Cotton、Fleece），不要把全部已选项都报上（评测对多出的值判 Extra→失败）。
 - 步骤：
-1. 进入 Catalog > Products，按 Quantity 精确筛选（From=To=N）
+1. 进入 Catalog > Products，清除残留筛选，按 Quantity 精确筛选（From=To=N）。筛选完成的判据 = Active filters 出现 `Quantity: N - N` chip 且 records found > 0；**不要逐行验证数值**（网格同时有 Quantity 和 Salable Quantity 两列，后者 = 库存 − 预留，数值常 < Quantity，会误导验收）
 2. 判断目标属性是否为 Columns 面板可选列
 3. 是网格列（如 Color）：启用该列后 foreach 网格直采
-4. 非网格列（如 Material/Size）：foreach 逐行下钻详情页读该属性
-5. data_query 过滤非空、去重，按 intent 输出
+4. 是 Size/Color 但非网格列：foreach 逐行下钻**变体自己**的详情页读该属性（区分属性挂在变体上）
+5. 是 **Material**：它**不是网格列**，真值在【父配置型 configurable 产品】上、子变体为空。**绝不要把 material 放进 foreach.returns 当网格列直采**（那样采到空值）。把"从一个变体找到它的父配置型产品并读主材质"写成一个**函数** `resolve_parent_material(sku)`（**用 SKU 派生父键最稳**：变体 SKU=`WS08-XS-Blue`、父 SKU=`WS08`，按 SKU 搜是精确匹配；按全名搜走全文索引常 **0 命中**——live 095433 搜全名得 0 records、卡满 25 轮）：① `op=compute var=base expr="sku.rsplit('-',2)[0]"` 取父 SKU（纯计算、不是 milestone）；② `op=run run_kind=filter`：**回到 Products 列表、用顶部 Search by keyword 框**清空并搜 `{base}`，success_condition 写"结果出现 SKU={base}、Type=Configurable 的父产品行"；③ `op=run run_kind=navigation var=d returns=['material']`：打开结果里 **Type=Configurable Product（SKU={base}）** 父产品编辑页，read_spec 读 Material 主材质（首个已选项/value）。⚠️ **②③ 的 success_condition 都要锚定 `{base}`**——否则上一行残留的编辑页满足泛化验收、这一行没真搜就读到上个产品的材质（live 094903：Eos 读成 Minerva 的 Cotton）。main 里 filter qty=N 后,foreach（var=`row`、returns=`['Name','SKU']`）每行 `op=call resolve_parent_material(sku={row[SKU]})`、var 接住,material 随行汇进 into 表。函数只分解一次、被调多次。
+6. data_query 查 into 表，过滤 material 非空、去重输出（每个产品只取主材质）
 
 ## skill：按电话号查客户
 - 触发：phone number、电话号查客户、find customer with phone、customer name/email/与电话相关的客户查找

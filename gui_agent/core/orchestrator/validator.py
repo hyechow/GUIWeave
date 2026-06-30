@@ -106,6 +106,8 @@ ALL_CODES: frozenset[str] = frozenset({
     "FOREACH_OVER_NOT_IN_SCOPE",
     "FOREACH_MISSING_LOOP_VAR",
     "FOREACH_EMPTY_BODY_NO_RETURNS",
+    "FOREACH_BODY_GOAL_MISSING_RETURNS",
+    "FOREACH_BODY_GOAL_NO_ROW_TEMPLATE",
     # retrieval exact->fuzzy retry must keep the same field
     "RETRIEVAL_RETRY_DROPS_FIELD",
     # foreach / data_query field provenance
@@ -384,7 +386,19 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                     )
                 if not s.var:
                     issues.add("FOREACH_MISSING_LOOP_VAR", "foreach 缺少循环变量名（loop_var）——body 需要用 {循环变量[字段]} 引用当前行")
-                if not s.body and not s.returns:
+                if s.body_goal and not s.body:
+                    # Agentic per-row sub-goal (body_goal WITHOUT body): decomposed fresh at runtime,
+                    # so it must template the row (else every row runs identically — live 215344) and
+                    # declare what to return per row. (body_goal WITH body = a docstring on a templated
+                    # sub-function — allowed; the body itself carries the steps.)
+                    if not s.returns:
+                        issues.add("FOREACH_BODY_GOAL_MISSING_RETURNS", f"foreach（循环变量「{s.var}」）的 body_goal 必须配 returns——"
+                                   "声明每行子目标要产出的字段（如 ['material']），否则结果汇不进 into 表供后续查询")
+                    if ("{%s[" % s.var) not in s.body_goal:
+                        issues.add("FOREACH_BODY_GOAL_NO_ROW_TEMPLATE", f"foreach 的 body_goal 必须**字面**引用循环变量模板 "
+                                   f"`{{{s.var}[字段]}}`（如 `{{{s.var}[Name]}}`），运行时才按行代入；否则每行子目标都一样、"
+                                   "只命中第一个（live 215344：两次都搜同一个名字）")
+                elif not s.body and not s.returns:
                     issues.add("FOREACH_EMPTY_BODY_NO_RETURNS", f"foreach（循环变量「{s.var}」）的 body 为空且未设置 returns——"
                                   "若目标列已在网格里，在 foreach 上设 returns（系统自动从网格直取这些字段）；"
                                   "若需逐行钻详情，在 body 里添加打开详情的步骤")

@@ -14,6 +14,7 @@ from gui_agent.adapters.browser.filter_state import (
 from gui_agent.core.schemas import Milestone
 from gui_agent.core.supervisor.milestone.helpers import (
     filter_chips_clean,
+    filter_residual_labels,
     filter_state_satisfies_target,
     parse_filter_target,
 )
@@ -187,3 +188,51 @@ def test_wrong_range_chip_falls_through_to_checker(monkeypatch):
     # A 2-3 chip does not satisfy a 3-3 target → gate must not fire → checker runs.
     _ms, _step, checker_calls = _run_step(monkeypatch, {"Quantity": "2 - 3"})
     assert checker_calls == [1]
+
+
+# ── filter_residual_labels (runtime state-diff: clear only unrelated residuals) ──
+def test_residuals_only_the_leaked_chip_not_the_target():
+    # The 186 scenario done right: a leaked `Keyword: WS08` is residual; the task's own Quantity
+    # filter and the benign Store View are KEPT — no blanket Clear-all.
+    ms = _filter_ms("清除残留筛选，设置 Quantity From=3 且 To=3")
+    applied = {"Quantity": "3 - 3", "Keyword": "WS08", "Store View": "Default Store View"}
+    assert filter_residual_labels(applied, ms) == ["Keyword"]
+
+
+def test_no_residuals_when_only_target_and_benign():
+    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    assert filter_residual_labels({"Quantity": "3 - 3", "Store View": "x"}, ms) == []
+
+
+def test_no_filter_intent_makes_every_chip_residual():
+    # "any state / 全量" task: the intent is NO filter, so every non-benign chip is residual.
+    ms = _filter_ms("清除筛选，准备全量 all orders 数据源（不限状态）")
+    assert filter_residual_labels({"Status": "Complete", "Store View": "x"}, ms) == ["Status"]
+
+
+def test_unparseable_non_nofilter_target_yields_no_residuals():
+    # Can't diff without an intent → return [] (don't guess / don't blanket-clear).
+    ms = _filter_ms("打开筛选面板")
+    assert filter_residual_labels({"Keyword": "WS08"}, ms) == []
+
+
+def test_residuals_empty_when_no_applied_filters():
+    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    assert filter_residual_labels(None, ms) == []
+
+
+def test_keyword_search_treats_leftover_column_filter_as_residual():
+    # live 114706: searching WS08 via Search by keyword while Quantity:3-3 is still applied →
+    # keyword+column AND → the qty=3 child, not the qty=0 Configurable parent. The leftover
+    # Quantity column filter IS a residual for a keyword-search milestone; the Keyword chip is kept.
+    ms = _filter_ms("回到 Products 列表，用顶部 Search by keyword 框搜父产品 SKU WS08")
+    assert filter_residual_labels({"Quantity": "3 - 3"}, ms) == ["Quantity"]
+    assert filter_residual_labels(
+        {"Keyword": "WS08", "Quantity": "3 - 3", "Store View": "x"}, ms
+    ) == ["Quantity"]
+
+
+def test_quantity_filter_milestone_not_treated_as_keyword_search():
+    # a real Quantity column-filter milestone must NOT be mis-read as keyword-search.
+    ms = _filter_ms("清除残留筛选，设置 Quantity From=3 且 To=3")
+    assert filter_residual_labels({"Quantity": "3 - 3", "Keyword": "WS08"}, ms) == ["Keyword"]

@@ -103,3 +103,88 @@ def test_stale_filter_guard_allows_explicit_reset_before_retyping():
     guarded = _guard_stale_text_filter_plan(plan, milestone, _check(), observation)
 
     assert guarded.instruction == plan.instruction
+
+
+def test_list_page_name_not_extracted_as_filter_column():
+    """`Products 列表`(the Products LIST page) must NOT be parsed as a "Products" column — else the
+    named-field guard hijacks a keyword search into a column-filter hunt (live 102944: the agent
+    scrolled right hunting a「Products」column filter instead of using Search by keyword)."""
+    from gui_agent.core.supervisor.milestone.helpers import _extract_target_fields
+
+    m = Milestone.model_validate({
+        "id": "d", "kind": "filter",
+        "name": "回到 Catalog > Products 列表页，在顶部 Search by keyword 输入框输入父产品 SKU WS08 并提交搜索",
+        "description": "", "success_condition": "",
+    })
+    fields = _extract_target_fields(m)
+    assert "Products" not in fields, fields
+    # a genuine column-filter milestone still extracts its column
+    m2 = Milestone.model_validate({
+        "id": "x", "kind": "filter", "name": "在 Status 列筛选 Complete",
+        "description": "", "success_condition": "",
+    })
+    assert "Status" in _extract_target_fields(m2)
+
+
+def test_keyword_search_on_list_page_not_hijacked_to_column_filter():
+    """BAD CASE 102944: a function milestone 'go to the Products LIST, type SKU into Search by
+    keyword, submit' is a GLOBAL keyword search — the named-field guard must NOT mistake the
+    'Products 列表' (list page) for a 'Products' column and rewrite the plan into a horizontal-scroll
+    hunt for a column filter. The agent thrashed 25 turns scrolling right for a「Products」filter
+    box instead of using the Search by keyword box it was already pointed at."""
+    milestone = Milestone.model_validate({
+        "id": "d",
+        "name": "回到 Catalog > Products 列表页，在顶部 Search by keyword 输入框输入父产品 SKU WS08，按回车提交搜索",
+        "description": "",
+        "success_condition": "Products 列表已按关键词 WS08 刷新，出现 SKU=WS08、Type=Configurable 的行",
+        "kind": "filter",
+    })
+    observation = Observation(
+        png_bytes=b"png",
+        source="browser",
+        form_controls=[
+            {"label": "Search by keyword", "kind": "text_input"},
+        ],
+    )
+    plan = _PlanResult(
+        instruction="在 Search by keyword 输入框输入 WS08 并提交搜索",
+        summary="用关键词搜索框搜父产品 SKU",
+    )
+
+    guarded = _guard_named_field_substitution_plan(plan, milestone, _check(), observation)
+
+    # must NOT hijack into a column-filter hunt
+    assert "横向滚动" not in (guarded.instruction or "")
+    assert guarded.direction != "right"
+    assert "Search by keyword" in (guarded.instruction or "")
+
+
+def test_runtime_retry_annotation_not_extracted_as_field():
+    """The orchestrator's empty-returns retry annotation `（继续定位返回字段：material）` must NOT be
+    parsed as a「继续定位返回」column (live 120601: it hijacked a read into a column-filter scroll)."""
+    from gui_agent.core.supervisor.milestone.helpers import _extract_target_fields
+
+    m = Milestone.model_validate({
+        "id": "d", "kind": "navigation",
+        "name": "点搜索结果里 SKU=WS08 那一行的 Edit 链接，打开它的编辑页（继续定位返回字段：material）",
+        "description": "", "success_condition": "",
+    })
+    assert _extract_target_fields(m) == []
+
+
+def test_named_field_guard_skipped_for_navigation_read_milestones():
+    """A navigation/read milestone targets a control by role (open Edit, read a value), not a named
+    grid column — the column-substitution guard must not touch it."""
+    milestone = Milestone.model_validate({
+        "id": "d", "kind": "navigation",
+        "name": "点 SKU=WS08 行的 Edit 链接打开编辑页，读取 Material（继续定位返回字段：material）",
+        "description": "", "success_condition": "进入编辑页",
+    })
+    observation = Observation(
+        png_bytes=b"png", source="browser",
+        form_controls=[{"label": "Material", "kind": "native_select"}],
+    )
+    plan = _PlanResult(instruction="向下滚动以显示 Material 字段并读取", summary="读 material")
+    guarded = _guard_named_field_substitution_plan(plan, milestone, _check(), observation)
+    assert guarded.instruction == plan.instruction  # untouched
+    assert "横向滚动" not in (guarded.instruction or "")

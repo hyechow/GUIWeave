@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Literal
+from typing import Literal, Optional
 
 from gui_agent.core.schemas import Milestone
 
-from .program import ForEach, If, Program, Run, Stmt
+from .program import Call, Compute, ForEach, If, Program, Run, Stmt
 from .runner import RunResult
 
 # DSL RunKind -> feat-android (kind, completion_strategy).
@@ -58,6 +58,7 @@ def to_milestone(run: Run, index: int) -> Milestone:
         success_condition=success,
         kind=kind,  # type: ignore[arg-type]  # validated against MilestoneKind Literal
         completion_strategy=strategy,  # type: ignore[arg-type]
+        precondition=run.precondition,  # entry-state gate: checker judges frame-1, no fresh-nav skip
     )
 
 
@@ -314,3 +315,129 @@ def normalize_precondition_gates(program: Program) -> Program:
     antipattern → no stuck). Recurses into if-branches; returns a NEW Program (inputs untouched);
     idempotent. App-specific markers stay in the checker's _check.md, which judges this gate."""
     return program.model_copy(update={"statements": _normalize_precondition_stmts(program.statements)})
+
+
+# A loop/function body that STARTS by acting on a list page (filter/action) and then drills INTO a
+# record (a later navigation) leaves the page on that record's detail/edit page. On iteration 2+ of
+# a foreach the body re-enters from there — where the first step's search/filter control does not
+# exist — so it has nowhere to act (live 185: function searched the next parent SKU while still on
+# the prior parent's edit page). Prepend an arrival that returns to the list page first.
+#
+# The instruction is a LINEAR step, not a branch: name = one imperative (go to the list page), SC = a
+# definite target STATE (on the list page). It must NOT read "若在编辑页则返回；若已在列表则不操作" —
+# that smuggles if/else into a milestone (breaks the FROM→TO-edge + single-page contract and makes
+# the selector/planner unable to pick one action: live 185 mis-retrieved Customers knowledge and
+# emitted a [stop] for the no-op). Idempotency is the MECHANISM's job, not the prose's: the step is
+# marked precondition=true, so when the SC already holds (already on the list) the checker passes it
+# on frame 1 with no action — iteration 1 / single calls pay nothing — without any conditional text.
+_ENTRY_ARRIVAL_NAME = "确保当前处于承载下一步搜索/筛选的列表（数据源）页。"
+_ENTRY_ARRIVAL_SC = (
+    "当前处于带搜索框与结果表格的列表/搜索（数据源）页，而非某条记录的编辑/详情表单页。"
+)
+
+
+def _first_run_and_later_nav(body: list[Stmt]) -> tuple[Optional[Run], bool]:
+    first: Optional[Run] = None
+    later_nav = False
+    for s in body:
+        if isinstance(s, Run):
+            if first is None:
+                first = s
+            elif s.kind == "navigation":
+                later_nav = True
+    return first, later_nav
+
+
+def _maybe_prepend_arrival(body: list[Stmt]) -> list[Stmt]:
+    first, later_nav = _first_run_and_later_nav(body)
+    # A precondition first-step is NOT a reason to skip: a *pure* arrival precondition is
+    # kind='navigation' (already excluded by the kind check), so the only first-step that reaches
+    # here with precondition=True is a precondition filter/action — which still acts on the list and
+    # still needs to re-enter it on iteration 2+. (The decomposer folding "回到列表页" into a
+    # precondition filter is exactly the case that must still get a deterministic arrival.)
+    if first is None or first.kind not in ("filter", "action"):
+        return body  # already arrives by navigation first, or doesn't act on a page
+    if not later_nav:
+        return body  # body stays on one page → re-entry state == entry state, no guard needed
+    arrival = Run(kind="navigation", precondition=True,
+                  name=_ENTRY_ARRIVAL_NAME, success_condition=_ENTRY_ARRIVAL_SC)
+    return [arrival, *body]
+
+
+def insert_loop_entry_arrivals(program: Program) -> Program:
+    """Prepend an idempotent "return to the list page" arrival to every loop/function body that opens
+    by acting on a list and then drills into a record — see _ENTRY_ARRIVAL_NAME. Returns a NEW Program
+    (inputs untouched); idempotent (a body already starting with the navigation arrival is left alone,
+    since its first Run is then kind='navigation')."""
+    def walk(stmts: list[Stmt]) -> list[Stmt]:
+        out: list[Stmt] = []
+        for s in stmts:
+            if isinstance(s, ForEach):
+                out.append(s.model_copy(update={"body": _maybe_prepend_arrival(walk(s.body))}))
+            elif isinstance(s, If):
+                out.append(s.model_copy(update={"then": walk(s.then), "otherwise": walk(s.otherwise)}))
+            else:
+                out.append(s)
+        return out
+
+    new_funcs = [f.model_copy(update={"body": _maybe_prepend_arrival(walk(f.body))})
+                 for f in program.functions]
+    new_stmts = walk(program.statements)
+    return program.model_copy(update={"statements": new_stmts, "functions": new_funcs})
+
+
+def _func_exit_sc(name: str, funcs: dict, _seen: frozenset = frozenset()) -> str:
+    """Exit state of a function = success_condition of the last Run in its body (what the page looks
+    like when the call returns). Used to chain FROM across a Call. Bounded against cycles."""
+    fn = funcs.get(name)
+    if fn is None or name in _seen:
+        return ""
+    last_sc = ""
+    for s in fn.body:
+        if isinstance(s, Run):
+            last_sc = s.success_condition
+        elif isinstance(s, Call):
+            last_sc = _func_exit_sc(s.func, funcs, _seen | {name})
+    return last_sc
+
+
+def _chain_block(stmts: list[Stmt], entry_sc: str, funcs: dict) -> list[Stmt]:
+    """Walk one linear block, setting each Run.from_state := the success_condition of the Run that
+    executes just before it (FROM[i] := TO[i-1]). Compute doesn't change the page (FROM carries
+    through); a Call advances FROM to the called function's exit state; If/ForEach recurse with the
+    current FROM as their branch/body entry but leave FROM unchanged afterwards (branch/loop end is
+    ambiguous — conservative)."""
+    out: list[Stmt] = []
+    prev = entry_sc
+    for s in stmts:
+        if isinstance(s, Run):
+            out.append(s.model_copy(update={"from_state": prev}))
+            prev = s.success_condition
+        elif isinstance(s, Compute):
+            out.append(s)  # pure derivation, page unchanged → FROM carries through
+        elif isinstance(s, Call):
+            out.append(s)
+            prev = _func_exit_sc(s.func, funcs)
+        elif isinstance(s, If):
+            out.append(s.model_copy(update={
+                "then": _chain_block(s.then, prev, funcs),
+                "otherwise": _chain_block(s.otherwise, prev, funcs),
+            }))
+        elif isinstance(s, ForEach):
+            out.append(s.model_copy(update={"body": _chain_block(s.body, prev, funcs)}))
+        else:
+            out.append(s)
+    return out
+
+
+def chain_from_states(program: Program) -> Program:
+    """Populate every Run.from_state with the EXIT state of the milestone before it (FROM[i] :=
+    TO[i-1]) — see Run.from_state. The chain restarts at each block boundary (main / each function
+    body / inside a loop or branch): a block's first step has from_state="" because its entry is the
+    call-site / loop-carry state (a known SET the continuity prompt handles), not a single prior SC.
+    Returns a NEW Program (inputs untouched); idempotent."""
+    funcs = {f.name: f for f in program.functions}
+    new_funcs = [f.model_copy(update={"body": _chain_block(f.body, "", funcs)})
+                 for f in program.functions]
+    new_stmts = _chain_block(program.statements, "", funcs)
+    return program.model_copy(update={"statements": new_stmts, "functions": new_funcs})

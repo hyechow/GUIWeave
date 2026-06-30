@@ -221,6 +221,7 @@ def main(
             orchestrator_context_reports: list[dict] = []
             orchestrator_metrics: dict = {}
             run_max_turns = args.max_turns
+            _subdecompose = None  # per-row sub-goal decomposer; set inside the orchestrator block
             if args.orchestrator:
                 from gui_agent.core.orchestrator import (
                     decompose, estimate_program_turns,
@@ -270,6 +271,19 @@ def main(
                         else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
                     )
                 print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
+
+                # Per-row agentic sub-goal (ForEach.body_goal): decompose a row-templated sub-goal
+                # fresh at runtime, reusing the same app knowledge + normalize passes as the main
+                # decompose. The runtime depth guard enforces one-level-only; the decomposer is told
+                # not to nest. Lets the full agent loop solve complex per-row sub-tasks (derive →
+                # search → disambiguate → open → read) instead of the decomposer pre-baking brittle
+                # micro-steps. See memory typed-returns-validation / webarena-185.
+                def _subdecompose(sub_goal: str):
+                    return normalize_precondition_gates(normalize_confirm_read_gates(
+                        decompose(sub_goal, knowledge=knowledge.navigation if knowledge else "",
+                                  current_site=cur_site,
+                                  prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
+                    ))
                 if not args.no_dynamic_max_turns:
                     run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                     if run_max_turns != args.max_turns:
@@ -302,6 +316,7 @@ def main(
                         router=router_result.model_dump() if router_result else None,
                         knowledge=knowledge_summary,
                         program=program,
+                        subdecompose=_subdecompose,
                         orchestrator_context_reports=[*orchestrator_context_reports, {
                             "kind": "orchestrator_metrics",
                             **orchestrator_metrics,

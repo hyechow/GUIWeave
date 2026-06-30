@@ -71,6 +71,13 @@ class Run(BaseModel):
     var: Optional[str] = None
     name: str
     success_condition: str = ""
+    # Entry state of this milestone — the EXIT (success_condition) of the milestone that runs just
+    # before it in the same linear block: FROM[i] := TO[i-1]. Derived deterministically by
+    # `chain_from_states` (not authored by the LLM); empty at a block boundary (function/loop body
+    # entry, where the entry is the call-site / loop-carry state). A milestone is an edge FROM→TO;
+    # both endpoints are verifiable states (FROM via precondition entry-check, TO via the checker),
+    # only the traversal between them is dynamic. Used to ground instruction phrasing / continuity.
+    from_state: str = ""
     kind: RunKind = "action"
     returns: list[str] = Field(default_factory=list)
     # Task-level return-read instruction, authored by the decomposer from the user goal (not a
@@ -139,18 +146,68 @@ class ForEach(BaseModel):
     target: str = ""                            # browser path: collect target description (what table/collection to fetch)
     returns: list[str] = Field(default_factory=list)  # browser path: fields to collect per row
     body: list["Stmt"] = Field(default_factory=list)
+    # Per-row SUB-GOAL (agentic body): when set, the body is NOT pre-baked Stmts — instead, for
+    # each row, the sub-goal text (templated with `{var[field]}`) is decomposed fresh at runtime
+    # into a sub-program and driven by the full agent loop (plan/replan/checker), and the
+    # sub-program's declared `returns` are merged back into the row. Use for per-row tasks too
+    # complex for a fixed step list — e.g. "for this child variant, find its parent configurable
+    # product and read the primary Material" (derive key → search → disambiguate → open → read).
+    # Mutually exclusive with `body`. One level only: the sub-program may not itself use body_goal.
+    body_goal: str = ""
     into: str = ""                              # materialized-table var (defaults to f"{var}s" when empty)
     limit: int | None = None                    # stop after collecting this many rows (None = collect all); use for sorted top-K grids
 
 
-Stmt = Annotated[Union[Run, If, Finish, ForEach], Field(discriminator="op")]
+class Compute(BaseModel):
+    """A PURE-COMPUTE statement — deterministic value derivation the interpreter evaluates itself,
+    NOT a GUI milestone. Separates compute (CPU) from GUI effect (agent): e.g. deriving a parent
+    SKU/base name by stripping a variant suffix is a string op, NOT something the agent should do
+    by vision-while-operating (that overloaded the milestone and made the agent stall). `expr` is a
+    restricted Python expression over scalar variables in scope (params + prior compute results),
+    referenced by bare name; result binds to scalar `var`. Whitelisted ops only (str methods, slice,
+    re.sub/search) — no calls, attributes, or names outside the whitelist."""
+
+    op: Literal["compute"] = "compute"
+    var: str                                    # scalar variable the result binds to (referenced as {var})
+    expr: str                                   # restricted expression, e.g. name.rsplit('-', 2)[0]
+
+
+class Call(BaseModel):
+    """Invoke a FunctionDef. `args` maps each param name → a value template (resolved in the CALLER's
+    scope: {row[field]} from a loop row, {var} from a scalar, or a literal). The callee runs in a
+    fresh scalar frame with those params bound; its declared `returns` are collected and bound to
+    `var` as a RunResult (referenced downstream as {var[field]}). Callable anywhere — main, an if
+    branch, or a foreach body — functions are NOT loop-bound."""
+
+    op: Literal["call"] = "call"
+    func: str                                   # FunctionDef name to invoke
+    args: dict[str, str] = Field(default_factory=dict)  # param name → value template (caller scope)
+    var: Optional[str] = None                   # bind the function's returns here (a RunResult)
+
+
+Stmt = Annotated[Union[Run, If, Finish, ForEach, Compute, Call], Field(discriminator="op")]
+
+
+class FunctionDef(BaseModel):
+    """A reusable, parameterized sub-program — a function in the DSL, decoupled from any loop. Its
+    `body` is a normal statement list (milestones / compute / if / nested calls); `params` are bound
+    as scalars on entry; `returns` names the scalar/read fields exposed to the caller on exit. The
+    whole program (main + all functions) is produced in ONE decompose — like writing a code file —
+    and each function is decomposed ONCE and called N times (no per-row re-decompose)."""
+
+    name: str
+    params: list[str] = Field(default_factory=list)
+    body: list[Stmt] = Field(default_factory=list)
+    returns: list[str] = Field(default_factory=list)
 
 
 class Program(BaseModel):
     goal: str = ""
     statements: list[Stmt] = Field(default_factory=list)
+    functions: list[FunctionDef] = Field(default_factory=list)
 
 
 If.model_rebuild()
 ForEach.model_rebuild()
+FunctionDef.model_rebuild()
 Program.model_rebuild()

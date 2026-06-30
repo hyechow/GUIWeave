@@ -28,7 +28,11 @@ from typing import Callable, Generator, Optional
 
 from pydantic import BaseModel, Field
 
-from .program import TEMPLATE_RE, Cond, Finish, ForEach, If, Program, Run, RunResult
+from .program import (
+    BARE_REF_RE, TEMPLATE_RE, Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Run,
+    RunResult,
+)
+from .safe_eval import SafeEvalError, safe_eval
 
 # Drive one milestone (one Run spec) to a terminal state and return its structured result.
 MilestoneExecutor = Callable[[Run], RunResult]
@@ -112,14 +116,29 @@ class Interpreter:
     and receives its RunResult via send(); steps() returns the final reply. env / run_log
     accumulate so the answer is built from the whole program's structured state."""
 
-    def __init__(self, program: Program, collect_fn=None) -> None:
+    def __init__(self, program: Program, collect_fn=None, subdecompose_fn=None) -> None:
         self._program = program
         # Optional collect_fn for browser path: callable(target: str, returns: list[str]) -> list[dict] | None.
         # When ForEach.over is empty, _foreach calls this to retrieve rows directly via DOM/AX tree.
         # None = legacy path (over must point to an env var with .rows).
         self._collect_fn = collect_fn
+        # Optional subdecompose_fn for agentic per-row sub-goals: callable(goal: str) -> Program.
+        # When ForEach.body_goal is set, _foreach renders the sub-goal with the row and decomposes
+        # it fresh per row, then `yield from`s the sub-program's Runs so the engine drives them as
+        # full milestones (plan/replan/checker). None = no sub-goal support (body_goal can't run).
+        self._subdecompose_fn = subdecompose_fn
+        # Depth guard: a per-row sub-program may NOT itself spawn another body_goal sub-goal
+        # (one level only). Incremented while driving a sub-program's block.
+        self._subgoal_depth = 0
         self.env: dict[str, RunResult] = {}
         self.run_log: list[RunRecord] = []
+        # First-class functions: name → FunctionDef (decomposed ONCE with main, called N times).
+        self._functions: dict[str, FunctionDef] = {fn.name: fn for fn in (program.functions or [])}
+        # Scalar scope for params + Compute results, referenced by bare `{name}`. A function call
+        # swaps in a fresh frame (proper lexical scope: a function sees only its params + its own
+        # computes, not the caller's). Bounded call depth guards runaway recursion.
+        self._scalars: dict[str, str] = {}
+        self._call_depth = 0
         # Set True by the Finish branch when the reached finish cites a read whose reads
         # were entirely empty — the run finished but its answer is hollow. See OrchestratorResult.
         self.finish_incomplete: bool = False
@@ -171,6 +190,13 @@ class Interpreter:
                 reply = yield from self._foreach(s)
                 if reply is not None:
                     return reply
+            elif isinstance(s, Compute):
+                # Pure compute — evaluate deterministically, bind a scalar. NOT a milestone (no yield).
+                self._compute(s)
+            elif isinstance(s, Call):
+                reply = yield from self._call(s)
+                if reply is not None:
+                    return reply
             elif isinstance(s, Finish):
                 rendered = self._render(s.message)
                 # Empty-read guard: if this finish cites a read variable whose RunResult.reads
@@ -203,6 +229,20 @@ class Interpreter:
         2. self._collect_fn non-None: browser path — call collect_fn(target, returns) to get rows via DOM/AX.
         3. fallback: empty rows (nothing to iterate).
         """
+        # Two body shapes:
+        #   • body_goal WITHOUT body  → agentic per-row sub-goal: decomposed fresh per row at
+        #     runtime. `returns` is the per-row CONTRACT (e.g. material), so the grid columns to
+        #     gather are the row fields the sub-goal templates (`{var[field]}`).
+        #   • body (with body_goal as an optional docstring) → a templated sub-function authored
+        #     once in the main decompose; executed per row by {var[field]} substitution (no runtime
+        #     decompose). This is the normal foreach: `returns` are the grid collect columns.
+        agentic_subgoal = bool(loop.body_goal) and not loop.body
+        if agentic_subgoal:
+            collect_cols = sorted({
+                f.strip() for v, f in TEMPLATE_RE.findall(loop.body_goal) if v == loop.var
+            })
+        else:
+            collect_cols = list(loop.returns)
         rows: list[dict[str, str]] = []
         src = self.env.get(loop.over) if loop.over else None
         if src is not None and src.rows:
@@ -212,7 +252,7 @@ class Interpreter:
             # Browser path: collect rows from the current page via DOM/AX tree.
             # Also covers old-style foreach whose over var exists but carries no rows (e.g. when
             # the preceding row-collection read was silently dropped on schema upgrade).
-            collected = self._collect_fn(loop.target, list(loop.returns), limit=loop.limit)
+            collected = self._collect_fn(loop.target, list(collect_cols), limit=loop.limit)
             rows = collected if collected is not None else []
         if loop.limit and rows:
             rows = rows[: loop.limit]
@@ -227,8 +267,8 @@ class Interpreter:
         # (Columns control) before we get here; this fails honestly when heal was impossible or
         # the platform has no such control, so the run surfaces the gap instead of answering on
         # missing data.
-        if rows and loop.returns:
-            uncovered = [f for f in loop.returns if all(f not in row for row in rows)]
+        if rows and collect_cols:
+            uncovered = [f for f in collect_cols if all(f not in row for row in rows)]
             if uncovered:
                 self.finish_incomplete = True
                 self.env[into] = RunResult(
@@ -254,9 +294,33 @@ class Interpreter:
             return None
         for row in rows:
             self.env[loop.var] = RunResult(completed=True, reads=dict(row))
-            reply = yield from self._block(loop.body)
-            if reply is not None:
-                return reply  # body finished/failed → terminate the program honestly
+            if agentic_subgoal:
+                # Agentic per-row sub-goal: render with the row, decompose fresh, drive its Runs
+                # as full milestones (yield from → engine plans/replans each), merge its produced
+                # fields back into the row.
+                sub_stmts, sub_read_vars = self._subgoal_statements(loop)
+                if sub_stmts is None:
+                    self.finish_incomplete = True
+                    self.env[into] = RunResult(
+                        completed=False, rows=[],
+                        summary="body_goal 无法分解（未接入 subdecompose_fn 或超出一层嵌套）",
+                    )
+                    self._materialized_vars.add(into)
+                    self.run_log.append(RunRecord(
+                        name=f"foreach {loop.var} (body_goal)", var=into, result=self.env[into]))
+                    return None
+                self._subgoal_depth += 1
+                try:
+                    reply = yield from self._block(sub_stmts)
+                finally:
+                    self._subgoal_depth -= 1
+                if reply is not None:
+                    return reply
+                body_read_vars = sub_read_vars
+            else:
+                reply = yield from self._block(loop.body)
+                if reply is not None:
+                    return reply  # body finished/failed → terminate the program honestly
             merged: dict[str, str] = dict(row)
             for v in body_read_vars:
                 rv = self.env.get(v)
@@ -271,12 +335,102 @@ class Interpreter:
         ))
         return None
 
+    def _subgoal_statements(self, loop: ForEach) -> tuple[Optional[list], list[str]]:
+        """Decompose this foreach's `body_goal` for the CURRENT row (already bound in env) into a
+        sub-program, returning (its statements, its result vars to merge). (None, []) when it can't
+        run: no subdecompose_fn wired, already one level deep (one-level-only), or decompose failed.
+        The row value is rendered INTO the goal text, so the sub-program is concrete (no per-row
+        templating needed inside it)."""
+        if self._subdecompose_fn is None or self._subgoal_depth > 0:
+            return None, []
+        sub_goal = self._render(loop.body_goal)
+        try:
+            sub_prog = self._subdecompose_fn(sub_goal)
+        except Exception:  # noqa: BLE001 — a failed sub-decompose must not crash the parent run
+            sub_prog = None
+        if sub_prog is None or not getattr(sub_prog, "statements", None):
+            return None, []
+        return list(sub_prog.statements), self._read_vars(sub_prog.statements)
+
+    # ── pure compute + function calls ─────────────────────────────────────
+    def _compute(self, c: Compute) -> None:
+        """Evaluate a Compute's restricted expression over the current scalar scope and bind the
+        result as a scalar. A failure (bad expr / index) leaves the scalar empty and logs honestly —
+        a downstream `{var}` then renders empty, so a milestone that needs it fails fast in _fill.
+
+        Accept the SAME `{name}` template convention the rest of the DSL uses for scalar refs: the
+        decomposer reaches for `{sku}` (as it does in every milestone name) instead of bare `sku`,
+        but to safe_eval `{sku}` is a one-element SET literal → SafeEvalError → silently-empty result
+        (live 185: base_sku came out "", so the search milestone ran with an empty keyword). Strip the
+        braces around bare identifiers so `{sku}.rsplit(...)` and `sku.rsplit(...)` are equivalent."""
+        expr = BARE_REF_RE.sub(r"\1", c.expr)
+        try:
+            val = safe_eval(expr, dict(self._scalars))
+            self._scalars[c.var] = "" if val is None else str(val)
+        except SafeEvalError as e:
+            self._scalars[c.var] = ""
+            self.run_log.append(RunRecord(
+                name=f"compute {c.var} = {c.expr}", var=c.var,
+                result=RunResult(completed=False, summary=f"compute 求值失败: {e}")))
+
+    _MAX_CALL_DEPTH = 6
+
+    def _call(self, call: Call) -> Generator[Run, RunResult, Optional[str]]:
+        """Invoke a FunctionDef: render args in the caller scope, run the body in a FRESH scalar
+        frame (the function sees only its params + its own computes), then bind the declared returns
+        into the caller's env under `call.var`. The body's Runs are `yield from`'d so the engine
+        drives them as full milestones — same generator path as the top program."""
+        fn = self._functions.get(call.func)
+        if fn is None:
+            fail = RunResult(completed=False, failed=True, summary=f"未定义的函数「{call.func}」")
+            self.run_log.append(RunRecord(name=f"call {call.func}", var=call.var, result=fail))
+            return f"调用了未定义的函数「{call.func}」"
+        if self._call_depth >= self._MAX_CALL_DEPTH:
+            fail = RunResult(completed=False, failed=True, summary=f"函数调用嵌套超过 {self._MAX_CALL_DEPTH} 层")
+            self.run_log.append(RunRecord(name=f"call {call.func}", var=call.var, result=fail))
+            return f"函数调用嵌套过深（{call.func}）"
+        # Render args in the CALLER's scope (env {x[f]} + caller scalars {y}), bind to params.
+        bound = {p: self._render(call.args.get(p, "")) for p in fn.params}
+        saved_scalars = self._scalars
+        self._scalars = bound
+        self._call_depth += 1
+        try:
+            reply = yield from self._block(fn.body)
+            collected = self._collect_returns(fn)
+        finally:
+            self._call_depth -= 1
+            self._scalars = saved_scalars
+        if reply is not None:
+            return reply  # a finish/failure inside the function terminates the whole program
+        if call.var:
+            self.env[call.var] = RunResult(completed=True, reads=collected)
+        return None
+
+    def _collect_returns(self, fn: FunctionDef) -> dict[str, str]:
+        """A function's declared returns, gathered from its frame: scalar (Compute result) first,
+        else the most recent body milestone read of that field. Missing → "" (honest blank)."""
+        collected: dict[str, str] = {}
+        body_vars = self._read_vars(fn.body)
+        for r in fn.returns:
+            if r in self._scalars:
+                collected[r] = self._scalars[r]
+                continue
+            for v in reversed(body_vars):
+                rv = self.env.get(v)
+                if rv is not None and (rv.reads.get(r, "") or "").strip():
+                    collected[r] = rv.reads[r]
+                    break
+            collected.setdefault(r, "")
+        return collected
+
     @staticmethod
     def _read_vars(stmts: list) -> list[str]:
         """Body result vars whose reads get auto-accumulated per iteration (program order)."""
         out: list[str] = []
         for s in stmts:
             if isinstance(s, Run) and s.var and (s.kind == "data_query" or s.returns):
+                out.append(s.var)
+            elif isinstance(s, Call) and s.var:
                 out.append(s.var)
             elif isinstance(s, If):
                 out.extend(Interpreter._read_vars(s.then))
@@ -329,6 +483,14 @@ class Interpreter:
             value = (rv.reads.get(match.group(2).strip().strip("'\""), "") if rv else "").strip()
             if value:
                 target_ref_values.append(value)
+        # Bare `{base}` scalar refs in the name (function params / Compute results) also identify the
+        # per-row target — anchor the acceptance gate to them too, so a leftover page from the prior
+        # iteration can't satisfy a generic gate (live 094903: the Eos call read Minerva's stale
+        # edit page because the gate was "已进入某 Configurable 编辑页", not "...{base}...").
+        for m in BARE_REF_RE.finditer(run.name or ""):
+            v = (self._scalars.get(m.group(1), "") or "").strip()
+            if v:
+                target_ref_values.append(v)
         name = self._render(run.name, missing)              # target → strict (collect empties)
         sc = self._render(run.success_condition)            # gate → lenient
         rs = self._render(run.read_spec)                    # read guidance → lenient
@@ -348,7 +510,15 @@ class Interpreter:
                 missing.append(f"{var}[{field}]")
             return val
 
-        return TEMPLATE_RE.sub(_sub, template)
+        # Scalars first (bare `{name}` for params + Compute results); then {var[field]} from env.
+        # Disjoint patterns ({base} has no `[`), so order is safe. Only names actually in scalar
+        # scope are substituted — a stray bare {foo} is left for the existing botched-ref handling.
+        def _sub_scalar(m) -> str:
+            name = m.group(1)
+            return self._scalars[name] if name in self._scalars else m.group(0)
+
+        out = BARE_REF_RE.sub(_sub_scalar, template) if self._scalars else template
+        return TEMPLATE_RE.sub(_sub, out)
 
     def materialized_tables(self) -> list[dict]:
         """foreach `into` tables (accumulated per-iteration rows) as data_query-shaped snapshots
