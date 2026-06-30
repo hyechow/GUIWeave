@@ -151,6 +151,35 @@
     "note": "MobileWorld CheckGithubInfoTask 日志 logs/gui_agent/mobileworld/android/20260626_220437：T20 邮件字段完整并点击发送，T21 已跳回 Gmail Inbox，官方评测 score=1.0；但内部 checker 把 Inbox 误判为还需重新 Compose，导致 T22-T27 重开空白邮件并 false failed。对带 returns/read_spec 的发送/提交动作响应门，上一动作是发送且当前从表单页跳转到列表/Inbox，即为动作响应，除非 SC 明确要求成功 toast。"
   },
   {
+    "label": "提交动作响应门-list Create 后跳 Manage list members 应判 done（回归 20260701_002521 T27）",
+    "screenshot": "evals/android/checker/screenshots/mastodon_cute_create_manage_members_20260701_002521_t27.png",
+    "milestone": {
+      "name": "填写名称 cute、设置 Show replies to 为 Members of the list、启用 Hide members in following、点击 Create",
+      "description": "创建 cute list，设 replies=Members of the list，启用 hide members，保存",
+      "success_condition": "已执行「填写名称 cute、设置 Show replies to 为 Members of the list、启用 Hide members in following、点击 Create」：动作已发出且界面给出响应（出现提示/结果区/列表更新/页面跳转/进入加载，任一即可）；本步不判定结果取值（checker 只判动作响应）",
+      "kind": "action",
+      "completion_strategy": "visible_once",
+      "app_name": "Mastodon"
+    },
+    "history": [
+      {
+        "index": 26,
+        "instruction": "点击底部的 Create 按钮提交创建列表表单",
+        "summary": "cute list 表单已填好（名称=cute, Show replies to=Members of the list, Hide members 启用），点击 Create 提交",
+        "milestone_id": "提交动作响应门-list Create 后跳 Manage list members 应判 done（回归 20260701_002521 T27）",
+        "milestone_kind": "action",
+        "completion_strategy": "visible_once",
+        "action": {"action_type": "tap", "x": 500, "y": 925, "description": "点击底部的 Create 按钮提交创建列表表单"},
+        "executed": true
+      }
+    ],
+    "expected": {
+      "status": "done",
+      "reason_contains": ["Manage list members", "成员", "跳转", "响应", "创建"]
+    },
+    "note": "MobileWorld MastodonManageMultiListTask logs/gui_agent/mobileworld/android/20260701_002521 m17：T26 cute 表单填好点 Create 提交，T27 已跳到该 list 的 Manage list members 页面（创建成功后的成员管理页）。success_condition 明确『页面跳转任一即可』，应判 done。但 checker 判 in_progress『无法确认 Create 响应』→ agent 反复点 Create + 返回 5 轮 retry 3 failed，cute 加成员没机会，score 0（cute no members）。对照同 case『邮件发送后跳 Inbox 判 done』：提交动作跳到下一页（Manage list members / Inbox）即动作响应，应判 done。"
+  },
+  {
     "label": "仓库详情JSON不能验收为contributors数组页（回归 20260626_220437 T7）",
     "screenshot": "evals/android/checker/screenshots/github_repo_json_not_contributors_20260626_220437_t7.png",
     "milestone": {
