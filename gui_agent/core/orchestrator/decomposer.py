@@ -366,8 +366,13 @@ def _goal_is_location_only(goal: str) -> bool:
     text = (goal or "").lower()
     data_or_action_terms = (
         "star", "stars", "contributor", "contributors", "count", "number", "total",
-        "how many", "send", "email", "mail", "sms", "message", "统计", "数量", "多少",
-        "几个", "贡献者", "星标", "发送", "邮件", "短信", "汇总", "读取", "查看数量",
+        "how many", "send", "email", "mail", "sms", "message", "delete", "remove",
+        "create", "add", "edit", "save", "submit", "publish", "post", "set",
+        "select", "choose", "fill", "type", "clear", "toggle", "enable", "disable",
+        "统计", "数量", "多少", "几个", "贡献者", "星标", "发送", "邮件", "短信",
+        "汇总", "读取", "查看数量", "删除", "删掉", "删", "移除", "清除", "新建",
+        "创建", "添加", "加入", "加到", "编辑", "修改", "保存", "提交", "发布",
+        "设置", "设成", "选择", "填写", "输入", "清空", "切换", "开启", "关闭",
     )
     return not any(term in text for term in data_or_action_terms)
 
@@ -1505,13 +1510,13 @@ def _invoke_plan(
             print(f"  [Orchestrator] 程序分解校验发现 {len(issues)} 项问题，重试 ({attempt+1}/{_MAX_RETRIES})...")
             for i in issues:
                 print(f"  [Orchestrator]   {i}")
+    raw_goal = goal or ""
     needs_nav_fallback = (
         issues
-        and _goal_is_location_only(program.goal or goal)
+        and _goal_is_location_only(raw_goal)
         and (
             not _has_navigation_step(program.statements)
             or ((_first_run(program.statements) is not None) and (_first_run(program.statements).kind != "navigation"))
-            or _goal_is_location_only(program.goal or goal)
             or any("身份限定词" in issue or "GitHub 路径" in issue or "纯找到/打开目标页面" in issue for issue in issues)
         )
     )
