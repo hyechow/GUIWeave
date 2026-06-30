@@ -313,6 +313,104 @@ def test_direct_nav_url_extracts_clean_url_across_cjk_and_punctuation():
     assert _direct_nav_url(punct, plat) == "https://h/item/5"
 
 
+def test_direct_back_gates_on_explicit_back_and_capability():
+    from gui_agent.core.run.non_interactive import _direct_back
+
+    class BackClient:
+        def go_back(self):
+            return "OK back"
+
+    class Plat:
+        def __init__(self, client):
+            self.client = client
+
+    capable = Plat(BackClient())
+    no_back = Plat(object())
+    run = Run(name="使用浏览器返回上一页，回到 Products 列表", kind="navigation")
+    assert _direct_back(run, capable) is True
+    assert _direct_back(run, no_back) is False
+    assert _direct_back(Run(name="进入 Catalog > Products", kind="navigation"), capable) is False
+    assert _direct_back(Run(name="返回上一页", kind="read"), capable) is False
+
+
+def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
+    from gui_agent.core.run.non_interactive import drive_pending_non_ui
+    from gui_agent.core.schemas import Observation, PolicyContext
+
+    list_url = "http://host/admin/catalog/product/?filters=wh11"
+    detail_url = "http://host/admin/catalog/product/edit/id/1478/"
+
+    class Client:
+        def __init__(self):
+            self.url = list_url
+            self.navigated: list[str] = []
+            self.back_calls = 0
+
+        def navigate(self, url: str):
+            self.url = url
+            self.navigated.append(url)
+            return "OK"
+
+        def go_back(self):
+            self.back_calls += 1
+            self.url = "http://host/admin/catalog/product/edit/id/1194/"
+            return "OK back"
+
+    class Platform:
+        def __init__(self):
+            self.client = Client()
+
+    class Perception:
+        def __init__(self, platform):
+            self.platform = platform
+
+        def observe(self):
+            return Observation(png_bytes=b"x", source="browser", url=self.platform.client.url)
+
+    class Bundle:
+        def make_perception(self, platform, path):
+            return Perception(platform)
+
+    class Supervisor:
+        _check_knowledge = ""
+
+        def reseed(self, *args, **kwargs):
+            raise AssertionError("all non-UI runs should complete")
+
+    nav = Run(name=f"打开 {detail_url} 详情", kind="navigation")
+    back = Run(name="浏览器返回上一页，回到 Products 列表", kind="navigation")
+
+    def _steps():
+        first = yield nav
+        assert first.completed
+        second = yield back
+        assert second.completed
+        return "done"
+
+    gen = _steps()
+    first_run = next(gen)
+    platform = Platform()
+
+    result = drive_pending_non_ui(
+        current_run=first_run,
+        run_index=0,
+        notes_mark=0,
+        interpreter_steps=gen,
+        bundle=Bundle(),
+        platform=platform,
+        log_dir=tmp_path,
+        supervisor=Supervisor(),
+        context=PolicyContext(goal="g", supervisor_policy_name="test", action_policy_name="test"),
+        save_context=lambda: None,
+        say=lambda _msg: None,
+        done_observation=Observation(png_bytes=b"x", source="browser", url=list_url),
+    )
+
+    assert result.reply == "done"
+    assert platform.client.navigated == [detail_url, list_url]
+    assert platform.client.back_calls == 0
+
+
 def test_target_identity_hint_uses_url_only_for_runtime_target_gate():
     from gui_agent.core.schemas import Milestone, Observation
     from gui_agent.core.supervisor.milestone.policy import _target_identity_hint

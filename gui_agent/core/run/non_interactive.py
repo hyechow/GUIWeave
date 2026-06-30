@@ -55,6 +55,7 @@ class _RepairAttempt:
 # A concrete http(s) URL embedded in a run's prose target. The CJK exclusion lets the URL end
 # naturally at the Chinese text the planner wraps it in (e.g. "打开 https://h/id/5 的详情").
 _URL_RE = re.compile(r"https?://[^\s一-鿿]+")
+_BACK_NAV_RE = re.compile(r"返回|上一页|后退|\bback\b", re.IGNORECASE)
 
 
 
@@ -72,6 +73,15 @@ def _direct_nav_url(run: Run | None, platform: Any) -> str | None:
     if not match:
         return None
     return match.group(0).rstrip(").,;，。）") or None
+
+
+def _direct_back(run: Run | None, platform: Any) -> bool:
+    """True when a navigation run explicitly asks for browser history back."""
+    if run is None or run.kind != "navigation":
+        return False
+    if not callable(getattr(getattr(platform, "client", None), "go_back", None)):
+        return False
+    return bool(_BACK_NAV_RE.search(run.name or ""))
 
 
 def drive_pending_non_ui(
@@ -105,6 +115,7 @@ def drive_pending_non_ui(
     failure_evidence: str | None = None  # last re-plannable non-UI failure (for Feasibility Guard kick-back)
     nav_n = 0  # running count of URL-direct drills in THIS batch — surfaced to the HUD so a long drill
     #            (dozens of `直达导航` jumps inside one milestone hand-off) doesn't look frozen.
+    direct_return_stack: list[str] = []
 
     def _hud(msg: str) -> None:
         # Non-UI primitives run inside a hand-off, NOT a top-level `--- Turn N ---`, so the main loop
@@ -131,6 +142,7 @@ def drive_pending_non_ui(
         if not (
             cur_run.kind in {"read", "data_query"}
             or _direct_nav_url(cur_run, platform) is not None
+            or _direct_back(cur_run, platform)
         ):
             break
         run_for_turn = cur_run
@@ -143,11 +155,36 @@ def drive_pending_non_ui(
         completed = True
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
         executed_sql = cur_run.sql
-        if cur_run.kind == "navigation":
+        if cur_run.kind == "navigation" and _direct_back(cur_run, platform):
+            nav_n += 1
+            return_url = direct_return_stack.pop() if direct_return_stack else ""
+            if return_url:
+                _hud(f"直达返回 {nav_n}：回到 {return_url}")
+                say(f"  [Orchestrator] 直达返回 {nav_n} · 导航回 {return_url}")
+                platform.client.navigate(return_url)
+            else:
+                _hud(f"直达返回 {nav_n}：浏览器后退")
+                say(f"  [Orchestrator] 直达返回 {nav_n} · 浏览器后退")
+                platform.client.go_back()
+            settle = getattr(platform.client, "wait_settled", None)
+            if callable(settle):
+                try:
+                    settle("navigate" if return_url else "back")
+                except Exception:  # noqa: BLE001 — settling is best-effort; observe regardless
+                    pass
+            obs_url = f"screenshot_back_{run_index}.png"
+            obs = bundle.make_perception(platform, log_dir / obs_url).observe()
+            frame = obs.png_bytes
+            tables = obs.tables
+            summary = "浏览器后退"
+            executed_sql = ""
+        elif cur_run.kind == "navigation":
             from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
 
             nav_url = _direct_nav_url(cur_run, platform)  # non-None per the while condition
             nav_n += 1
+            if obs is not None and getattr(obs, "url", None):
+                direct_return_stack.append(str(obs.url))
             _hud(f"直达钻取 {nav_n}：打开 {nav_url}")
             say(f"  [Orchestrator] 直达钻取 {nav_n} · 直达导航 {nav_url}")
             platform.client.navigate(nav_url)
