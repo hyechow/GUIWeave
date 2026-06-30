@@ -57,13 +57,42 @@ def test_no_arrival_when_body_stays_on_one_page():
     assert p.functions[0].body[0].name == "筛 X"  # unchanged
 
 
-def test_no_arrival_when_body_starts_with_navigation():
+def test_no_arrival_when_body_starts_with_plain_navigation():
+    # A navigation that ARRIVES at a page (not a record drill) is left alone — it's already an arrival.
     fn = FunctionDef(name="f", params=[], returns=["x"], body=[
-        Run(kind="navigation", name="进入详情页", success_condition="在详情页"),
+        Run(kind="navigation", name="进入 Catalog 设置页", success_condition="在设置页"),
         Run(kind="action", name="操作", success_condition="完成"),
     ])
     p = insert_loop_entry_arrivals(Program(goal="g", functions=[fn], statements=[]))
-    assert p.functions[0].body[0].name == "进入详情页"  # already arrives by nav → untouched
+    assert p.functions[0].body[0].name == "进入 Catalog 设置页"  # plain arrival nav → untouched
+
+
+def test_arrival_prepended_when_first_step_drills_a_record_row():
+    # Self-first 185 shape: the body's FIRST step is a navigation that DRILLS into a result row
+    # (clicks SKU={sku} 那一行的 Edit) — no re-search. It inherently leaves the list, so foreach
+    # iter2+ re-enters from the prior record's page → it needs the deterministic "回列表页" arrival.
+    fn = FunctionDef(name="resolve", params=["sku"], returns=["material"], body=[
+        Run(kind="navigation", var="self_d", returns=["material"],
+            name="在当前结果列表点开 SKU={sku} 那一行的 Edit，进入它的详情页", success_condition="在 {sku} 详情页"),
+        Run(kind="navigation", name="（else 里）开父详情页", success_condition="在父详情页"),
+    ])
+    p = insert_loop_entry_arrivals(Program(goal="g", functions=[fn], statements=[]))
+    body = p.functions[0].body
+    assert body[0].kind == "navigation" and body[0].success_condition == _ENTRY_ARRIVAL_SC
+    assert body[1].name.startswith("在当前结果列表点开")  # the drill follows the arrival
+
+
+def test_no_arrival_when_first_step_opens_row_url():
+    # URL direct-open is position-independent: it works from any page after templating, so adding a
+    # generic list-arrival before it is unnecessary and can destroy the source filter context.
+    fn = FunctionDef(name="resolve", params=["sku", "product_url"], returns=["material"], body=[
+        Run(kind="navigation", var="self_d", returns=["material"],
+            name="打开 {product_url}，进入 SKU={sku} 自己的产品详情页", success_condition="在 {sku} 详情页"),
+    ])
+    p = insert_loop_entry_arrivals(Program(goal="g", functions=[fn], statements=[]))
+    body = p.functions[0].body
+    assert len(body) == 1
+    assert body[0].name.startswith("打开 {product_url}")
 
 
 def test_arrival_prepended_to_foreach_body_with_direct_runs():

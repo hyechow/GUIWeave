@@ -348,17 +348,44 @@ def _first_run_and_later_nav(body: list[Stmt]) -> tuple[Optional[Run], bool]:
     return first, later_nav
 
 
-def _maybe_prepend_arrival(body: list[Stmt]) -> list[Stmt]:
+# A navigation that DRILLS into a record by CLICKING A ROW in the live list (位置相关：must be on the
+# list to find the row) — as opposed to (a) a navigation that ARRIVES at a list/page, or (b) a URL
+# OPEN that drills by the row's own href (位置无关：works from any page → needs no list arrival). Only
+# the click-a-row form needs the deterministic "回列表页" arrival on foreach re-entry.
+_RECORD_DRILL_NAME_RE = re.compile(r"那一?行|Edit\b|编辑页|详情页|详情|进入它|打开它|打开该|的\s*Edit", re.IGNORECASE)
+# A name that resolves a URL/href via a {…url…}/{url}/{…链接…} template → position-independent open.
+_URL_OPEN_NAME_RE = re.compile(r"\{[^{}]*url[^{}]*\}|\{[^{}]*href[^{}]*\}|\{[^{}]*链接[^{}]*\}|\{url\}", re.IGNORECASE)
+
+
+def _is_url_open(run: Run) -> bool:
+    return run.kind == "navigation" and bool(_URL_OPEN_NAME_RE.search(run.name or ""))
+
+
+def _is_record_drill(run: Run) -> bool:
+    # A URL open is position-independent (drills by href, not by clicking a row in the list) → it is
+    # NOT a click-a-row drill and needs no list arrival, even though its name may say 详情/打开.
+    return (run.kind == "navigation"
+            and bool(_RECORD_DRILL_NAME_RE.search(run.name or ""))
+            and not _is_url_open(run))
+
+
+def _maybe_prepend_arrival(body: list[Stmt], *, drill_first_needs_arrival: bool = False) -> list[Stmt]:
     first, later_nav = _first_run_and_later_nav(body)
-    # A precondition first-step is NOT a reason to skip: a *pure* arrival precondition is
-    # kind='navigation' (already excluded by the kind check), so the only first-step that reaches
-    # here with precondition=True is a precondition filter/action — which still acts on the list and
-    # still needs to re-enter it on iteration 2+. (The decomposer folding "回到列表页" into a
-    # precondition filter is exactly the case that must still get a deterministic arrival.)
-    if first is None or first.kind not in ("filter", "action"):
-        return body  # already arrives by navigation first, or doesn't act on a page
-    if not later_nav:
-        return body  # body stays on one page → re-entry state == entry state, no guard needed
+    if first is None:
+        return body
+    # (a) filter/action acting on the list, then drilling away (needs a LATER nav, else it stays on
+    # one page) — applies to foreach AND function bodies. (b) a navigation that itself drills into a
+    # record row: it inherently leaves the list, so iter2+ re-enters from the prior record and needs
+    # the arrival — but ONLY for function bodies (the self-first 185 call-per-row shape). foreach
+    # bodies that open a detail per row already work without it (the list-traversal re-entry is
+    # handled elsewhere) and a forced arrival there would change long-standing behavior, so it's
+    # gated by drill_first_needs_arrival. A *pure* arrival nav (确保在列表页) isn't a drill → excluded.
+    acts_on_list = first.kind in ("filter", "action")
+    drills_record = drill_first_needs_arrival and _is_record_drill(first)
+    if not (acts_on_list or drills_record):
+        return body
+    if acts_on_list and not later_nav:
+        return body  # filter/action body that stays on one page → re-entry == entry, no guard needed
     arrival = Run(kind="navigation", precondition=True,
                   name=_ENTRY_ARRIVAL_NAME, success_condition=_ENTRY_ARRIVAL_SC)
     return [arrival, *body]
@@ -380,7 +407,7 @@ def insert_loop_entry_arrivals(program: Program) -> Program:
                 out.append(s)
         return out
 
-    new_funcs = [f.model_copy(update={"body": _maybe_prepend_arrival(walk(f.body))})
+    new_funcs = [f.model_copy(update={"body": _maybe_prepend_arrival(walk(f.body), drill_first_needs_arrival=True)})
                  for f in program.functions]
     new_stmts = walk(program.statements)
     return program.model_copy(update={"statements": new_stmts, "functions": new_funcs})
