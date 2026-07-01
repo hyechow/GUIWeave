@@ -105,6 +105,17 @@ version: 1
 4. 展开 Actions 折叠区，设 Apply 折扣类型 + Discount Amount
 5. Save
 
+## skill：创建目录价格规则（Catalog Price Rule，作用于商品）
+- 触发：X% off / $N off **on (all) products**、on the catalog、目录价格规则；即折扣作用于商品而非购物车（判别见上一条 Cart vs Catalog）
+- 数据：Marketing > Catalog Price Rules > Add New Rule（存 `catalog_rule/promo_catalog/save`）。sections = Rule Information / Conditions / Actions。**必填：Rule Name、is_active、Websites、Customer Groups**（和 Cart 同款多选：`website_ids` 选 `Main Website`；`customer_group_ids` 的「all registered」= `General`+`Wholesale`+`Retailer`，无「All Customers」选项）。**没有 Coupon 字段**。**Conditions 区**：任务是「on all products / 全部商品」时**留空不加条件**（空条件=作用于全部商品）。**折扣在 `Actions` 折叠区（默认折叠，先点 Actions 区标题展开）**：Apply(`simple_action`) 选 `Apply as percentage of original`（X% off）或 `Apply as fixed amount`（$N off），Discount Amount(`discount_amount`) 填数值（45% 填 45）。
+- 步骤：
+1. 进 Marketing > Catalog Price Rules，点 Add New Rule
+2. 填 Rule Name、Active=Yes、Websites 选 Main Website
+3. 在 Customer Groups 逐个选中对应客户组
+4. Conditions 留空（作用于全部商品）
+5. 展开 Actions 折叠区，设 Apply（percentage/fixed）+ Discount Amount
+6. Save
+
 ## skill：按订单号/客户定位订单（订单类改写的前置检索）
 - 触发：order #N、update order #、notify … in their … order、订单 #、给某客户的订单做某操作
 - 数据：Sales > Orders grid 顶部搜索框/筛选。**订单引用「#N」（如 `#304`）搜索时必须去掉「#」，直接搜数字 `304`**（Orders grid 按订单号 increment id 匹配，带「#」会 0 命中，499 就是搜 `#304` 空手而归）；找「某客户最近的 pending 订单」先按客户姓名检索 + Status 筛 `Pending`，再按 Purchase Date 取最新一笔，姓名精确 0 命中时退回姓/名关键词。
