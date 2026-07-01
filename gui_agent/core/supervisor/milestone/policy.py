@@ -25,7 +25,7 @@ from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm
 from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
 from .helpers import assemble_messages, _make_llm, run_loop_check, run_planner
 from .helpers import run_checker, run_selector, _default_milestone_prompts, is_dispatch_gate_sc
-from .helpers import filter_chips_clean, filter_state_satisfies_target
+from .helpers import filter_chips_clean, filter_state_satisfies_target, native_select_satisfies_target
 from .runtime import (
     EARLY_FEASIBILITY_AT,
     MAX_RETRIES,
@@ -394,6 +394,21 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 summary="filter applied gate 满足",
             )
             print(f"  [FilterGate] 目标筛选已生效 {applied_filters} → done（跳过 LLM 验收）")
+            self._last_check = check
+            return self._advance(milestone, observation, history)
+
+        # Native-select value gate — same signal protocol as the filter gate, on obs.dom. A native
+        # <select>'s selection is DOM-authoritative (form_controls.selected_text); the vision checker
+        # provably loops "still-open list box = not selected" despite the DOM even with the labeled
+        # arbitration protocol (WebArena 702 Customer Groups). When a select-focused milestone's
+        # target value is already selected, that is deterministic ground truth.
+        if native_select_satisfies_target(getattr(observation, "form_controls", None), milestone):
+            check = _SingleCheckResult(
+                status="done",
+                reason="目标 native select 的已选值已满足（obs.dom selected_text 权威，确定性信号）；列表框常开不代表未选中",
+                summary="native select value gate 满足",
+            )
+            print("  [NativeSelectGate] DOM selected_text 满足目标 → done（跳过 LLM 视觉误判）")
             self._last_check = check
             return self._advance(milestone, observation, history)
 

@@ -354,6 +354,74 @@ def _format_form_controls(form_controls: list[dict] | None) -> str:
 _OPEN_SELECT_RE = re.compile(r"点击|打开|展开|激活|下拉箭头|选项列表")
 
 
+def _advance_native_multiselect_plan(plan, milestone, observation):
+    """If the plan re-selects a native <select> option that DOM already shows selected, advance to
+    the next milestone-target option not yet in selected_text. control.selected is DOM-authoritative,
+    so re-issuing an already-selected value only loops (WebArena 702: re-select General forever
+    instead of moving on to Wholesale/Retailer). Reads the same obs.dom signal as the checker gate."""
+    instruction = getattr(plan, "instruction", "") or ""
+    form_controls = getattr(observation, "form_controls", None)
+    if not instruction or not form_controls or not re.search(r"选择|选中", instruction):
+        return plan
+    ctx = _norm_text(" ".join([milestone.name or "", milestone.success_condition or ""]))
+    instr_norm = _norm_text(instruction)
+    for item in form_controls:
+        if not isinstance(item, dict) or item.get("kind") != "native_select":
+            continue
+        label = str(item.get("label") or item.get("name") or "").strip()
+        if not label or _norm_text(label) not in instr_norm:
+            continue
+        options = [str(o).strip() for o in (item.get("options") or []) if str(o).strip()]
+        selected = _norm_text(str(item.get("selected_text") or ""))
+        being_selected = next((o for o in options if _norm_text(o) and _norm_text(o) in instr_norm), "")
+        if not being_selected or _norm_text(being_selected) not in selected:
+            return plan  # not a re-select of an already-selected option — leave the plan alone
+        nxt = next((o for o in options if _norm_text(o) in ctx and _norm_text(o) not in selected), "")
+        if not nxt:
+            return plan  # all milestone-target options already selected — nothing to advance to
+        note = f"{being_selected} 已在 DOM selected_text 中（已选），改选下一个未选目标 {nxt}。"
+        return plan.model_copy(update={
+            "instruction": f"在 {label} 下拉框选择 {nxt}",
+            "summary": (f"{plan.summary}；{note}" if getattr(plan, "summary", "") else note),
+        })
+    return plan
+
+
+def native_select_satisfies_target(
+    form_controls: Optional[list[dict]], milestone: Milestone
+) -> bool:
+    """True when every native <select> the milestone targets already holds its target option value(s)
+    per DOM (form_controls.selected_text). The control.selected claim is DOM-authoritative (obs.dom),
+    so this is deterministic ground truth the vision checker must not override — it otherwise loops
+    "still-open list box = not selected" despite the DOM (WebArena 702 Customer Groups; the prompt
+    arbitration protocol alone did not stop it). Reads the same typed obs.dom signal as the block.
+
+    Conservative: only a SELECT-focused milestone (no save/submit/create cue — a compound
+    fill-and-save milestone is not done just because a select is set), and only when the target can
+    be pinned down (returns False otherwise, never false-`done`)."""
+    if not form_controls or not isinstance(form_controls, list):
+        return False
+    ctx = _norm_text(" ".join([milestone.name or "", milestone.success_condition or ""]))
+    if not ctx or re.search(r"保存|save|提交|submit|创建|create", ctx):
+        return False
+    referenced = 0
+    for item in form_controls:
+        if not isinstance(item, dict) or item.get("kind") != "native_select":
+            continue
+        label = _norm_text(str(item.get("label") or item.get("name") or ""))
+        if not label or label not in ctx:
+            continue
+        options = [str(o).strip() for o in (item.get("options") or []) if str(o).strip()]
+        targets = [o for o in options if _norm_text(o) and _norm_text(o) in ctx]
+        if not targets:
+            continue
+        referenced += 1
+        selected = _norm_text(str(item.get("selected_text") or ""))
+        if not all(_norm_text(t) in selected for t in targets):
+            return False
+    return referenced > 0
+
+
 def _guard_native_select_plan(
     plan: _PlanResult,
     milestone: Milestone,
@@ -1287,6 +1355,7 @@ def run_planner(
         trace_label="planner",
     )
     plan = _guard_native_select_plan(plan, milestone, check, observation)
+    plan = _advance_native_multiselect_plan(plan, milestone, observation)
     plan = _guard_named_field_substitution_plan(plan, milestone, check, observation)
     plan = _guard_stale_text_filter_plan(plan, milestone, check, observation)
     plan = _guard_exact_dropdown_target(plan, milestone)
