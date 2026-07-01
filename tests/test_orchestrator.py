@@ -786,6 +786,21 @@ def test_single_dispatch_action_still_gets_dispatch_gate():
     assert is_dispatch_gate_sc(act.success_condition)        # still dispatch-gated
 
 
+def test_fill_only_milestone_is_not_compound_create():
+    # WebArena 702 split plan: a FILL-ONLY milestone (fills fields, no open/create cue) must NOT get
+    # the "…and saved" SC — it can never be satisfied by filling, which forced a premature save +
+    # re-create loop. Only a milestone that BOTH opens/creates a form AND fills it is compound.
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
+    prog = Program(statements=[
+        Run(var="m", kind="action", returns=["填写状态"], read_spec="x",
+            name="填写 Rule Name 为 'Pride Month'，Websites 选中 Main Website，Customer Groups 选中 General/Wholesale/Retailer"),
+    ])
+    act = normalize_confirm_read_gates(prog).statements[0]
+    assert is_dispatch_gate_sc(act.success_condition)        # fill-only → dispatch gate, not saved-SC
+    assert "保存成功" not in act.success_condition
+
+
 def test_normalize_confirm_read_gates_recurses_into_if_branches():
     # confirm-read inside an if-branch (建单 action → 确认建单 read) is rewritten too;
     # the otherwise branch (no action→read pair) is untouched.

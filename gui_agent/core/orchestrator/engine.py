@@ -130,12 +130,17 @@ _NAV_SUBMIT_GATE_TMPL = (
 # success_condition instead of the dispatch gate, so the checker+planner drive fill→save→confirm and
 # the milestone actually owns the whole single-page create flow.
 _FORM_FILL_RE = re.compile(r"填写|填入|录入|输入", re.I)
-_FIELD_ASSIGN_RE = re.compile(r"[=＝]|选择|设为|设置为", re.I)
+# The OPEN/CREATE cue is what makes the milestone navigate (list → …/new/) mid-flow, which is the
+# intermediate url_change that misfires the dispatch gate. A fill-ONLY milestone (no open cue) does
+# not navigate, so the dispatch gate never fires on it — it must NOT get the "…and saved" SC or it
+# can never be satisfied by filling (WebArena 702 split plan: the fill-only milestone got the
+# saved-SC, forcing a premature save then a re-create loop).
+_FORM_OPEN_RE = re.compile(r"add\s+new|新建|创建|新增|添加|进入[^。]{0,6}表单|打开[^。]{0,6}表单", re.I)
 
 
 def _is_compound_form_fill(name: str) -> bool:
     text = name or ""
-    return bool(_FORM_FILL_RE.search(text)) or len(_FIELD_ASSIGN_RE.findall(text)) >= 2
+    return bool(_FORM_FILL_RE.search(text)) and bool(_FORM_OPEN_RE.search(text))
 
 
 _FORM_SAVE_SC_TMPL = (
