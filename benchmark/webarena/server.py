@@ -34,7 +34,54 @@ WA_DIR = Path(__file__).resolve().parent                           # benchmark/w
 WA_LOGS = ROOT / "logs" / "gui_agent" / "webarena" / "browser"
 README = WA_DIR / "README.md"
 REPORTS = WA_DIR / "reports"
-SA_RUN = ROOT / "webarena-verified" / "output" / "sa_run"          # official eval_result.json per task
+OUTPUT_ROOT = ROOT / "webarena-verified" / "output"                # tasks-files + per-site run/<id>/eval_result.json
+_RUN_DIR = {"shopping_admin": "sa_run", "shopping": "shopping_run"}  # site → official run output dir name
+
+
+def discover_sites() -> list[str]:
+    """站点 = output/ 下的 *_hard_tasks.json,文件名前缀即站点名(数据驱动:多几个文件多几个 tab)。"""
+    if not OUTPUT_ROOT.exists():
+        return []
+    return sorted(f.name[: -len("_hard_tasks.json")] for f in OUTPUT_ROOT.glob("*_hard_tasks.json"))
+
+
+def load_site_tasks(site: str) -> list[dict]:
+    """该站点 tasks-file 里的全量任务(task_id + intent)。"""
+    fp = OUTPUT_ROOT / f"{site}_hard_tasks.json"
+    try:
+        data = json.loads(fp.read_text(encoding="utf-8", errors="replace"))
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for x in data if isinstance(data, list) else []:
+        tid = x.get("task_id")
+        if tid is None:
+            continue
+        out.append({"task_id": tid, "intent": (x.get("intent") or "")})
+    return out
+
+
+def _run_dir_for_site(site: str) -> Path:
+    return OUTPUT_ROOT / _RUN_DIR.get(site, f"{site}_run")
+
+
+def official_eval(site: str, task_id) -> dict | None:
+    """站点官方 eval_result.json(按 task_id 覆盖式落盘),作为无 log run 时的兜底评分源。"""
+    fp = _run_dir_for_site(site) / str(task_id) / "eval_result.json"
+    if not fp.is_file():
+        return None
+    try:
+        d = json.loads(fp.read_text(encoding="utf-8", errors="replace"))
+    except Exception:  # noqa: BLE001
+        return None
+    evrs = d.get("evaluators_results") or []
+    agent_status, error, _ = _agent_from_eval(evrs)
+    return {
+        "score": d.get("score"),
+        "evaluators": {er.get("evaluator_name"): er.get("status") for er in evrs},
+        "agent_status": agent_status,
+        "error": error,
+    }
 
 app = FastAPI(title="WebArena 可视化")
 
@@ -70,17 +117,29 @@ def _agent_from_eval(evrs: list[dict]) -> tuple[str | None, str | None, str | No
     return None, None, None
 
 
+_META_CACHE: dict[str, tuple[float, dict]] = {}  # str(run_dir) -> (context.json mtime, meta)
+
+
 def _run_meta(d: Path) -> dict:
-    """单次 run 的元数据。主源 context.json 的 webarena 子结构;stdout 补崩溃判定。"""
-    goal, score, task_id, task_type = None, None, None, None
-    agent_status, error, evaluators, turns = None, None, {}, 0
+    """单次 run 的元数据。主源 context.json 的 webarena 子结构;stdout 补崩溃判定。
+
+    按 context.json 的 mtime 缓存:已完成的 run(context.json 不再变)直接复用上次解析结果,
+    避免每次请求都重析全部 run 的完整 context.json(单个可达 MB 级)。"""
     ctx = d / "context.json"
+    mtime = ctx.stat().st_mtime if ctx.is_file() else None
+    if mtime is not None:
+        hit = _META_CACHE.get(str(d))
+        if hit and hit[0] == mtime:
+            return hit[1]
+    goal, score, task_id, task_type = None, None, None, None
+    agent_status, error, evaluators, turns, sites = None, None, {}, 0, []
     if ctx.is_file():
         try:
             cj = json.loads(ctx.read_text(encoding="utf-8", errors="replace"))
             goal = cj.get("goal")
             turns = len(cj.get("turns") or []) if isinstance(cj.get("turns"), list) else 0
             wa = cj.get("webarena") or {}
+            sites = wa.get("sites") or []
             ev = wa.get("eval_result") or {}
             score = ev.get("score")
             task_id = ev.get("task_id")
@@ -99,12 +158,13 @@ def _run_meta(d: Path) -> dict:
     n_shots = len(list(d.glob("screenshot_turn_*_ann.jpg"))) or len(list(d.glob("screenshot_turn_*.png")))
     # timed-out/killed sweep runs: context.json exists but no eval + last line hangs at settle
     hung = bool(re.search(r"CDP settle 异常，回退视觉", stdout)) and score is None
-    return {
+    meta = {
         "id": d.name,
         "ts": ts,
         "ts_str": ts.strftime("%Y-%m-%d %H:%M:%S") if ts else d.name,
         "task_id": task_id,
         "task": str(task_id) if task_id is not None else "(unknown)",
+        "sites": sites,
         "goal": (goal or "")[:160],
         "score": score,
         "score_str": f"{score:g}" if score is not None else "—",
@@ -119,6 +179,9 @@ def _run_meta(d: Path) -> dict:
         "has_report": (d / "report.html").exists(),
         "n_screenshots": n_shots,
     }
+    if mtime is not None:
+        _META_CACHE[str(d)] = (mtime, meta)
+    return meta
 
 
 def parse_runs() -> list[dict]:
@@ -131,69 +194,11 @@ def parse_runs() -> list[dict]:
     return runs
 
 
-def _status_badge(status: str) -> str:
-    if "✅" in status:
-        return "pass"
-    if "❌" in status:
-        return "fail"
-    return "todo"
-
-
-def parse_readme_tasks() -> list[dict]:
-    """解析 README.md 的 shopping_admin 表 → [{name(task_id), score, status, goal, report}]。"""
-    text = _read(README)
-    rows: list[dict] = []
-    in_table = False
-    for line in text.splitlines():
-        s = line.strip()
-        low = s.lower()
-        if s.startswith("|") and "task" in low and "score" in low:  # header
-            in_table = True
-            continue
-        if re.match(r"^\|\s*-{2,}", s):  # separator
-            continue
-        if not in_table or not s.startswith("|"):
-            if in_table and s and not s.startswith("|"):
-                in_table = False
-            continue
-        parts = [p.strip() for p in s.strip("|").split("|")]
-        if len(parts) < 5:
-            continue
-        name, score, status, goal, report = parts[0], parts[1], parts[2], parts[3], parts[4]
-        if name.lower() in ("task", "任务") or name.startswith("---"):
-            continue
-        m = re.search(r"\((reports/[^)]+)\)", report)
-        rows.append({
-            "name": name, "score": score, "status": status,
-            "badge": _status_badge(status), "goal": goal,
-            "report": m.group(1) if m else None,
-        })
-    return rows
-
-
 def latest_run_for_task(task: str, runs: list[dict]) -> dict | None:
     for r in runs:
         if r["task"] == str(task):
             return r
     return None
-
-
-def task_display_state(task: dict, latest: dict | None) -> dict:
-    """README 是策展基线,可能滞后;有带 eval 的最新 run 时用它覆盖 score/status。"""
-    out = dict(task)
-    if latest is None or latest.get("score") is None:
-        out["source"] = "README"
-        return out
-    score = latest["score"]
-    out["score"] = latest.get("score_str") or f"{score:g}"
-    if latest.get("passed"):
-        out["status"], out["badge"] = "✅ 通过", "pass"
-    elif latest.get("crashed") or latest.get("hung"):
-        out["status"], out["badge"] = "💥 崩溃/挂死", "crash"
-    else:
-        out["status"], out["badge"] = "❌ 失败", "fail"
-    out["source"] = f"logs/{latest['id']}"
-    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -280,43 +285,75 @@ def _run_badge(r: dict) -> str:
     return "<span class='badge todo'>— 无 eval</span>"
 
 
+def build_task_rows(site: str, runs: list[dict]) -> list[dict]:
+    """该站点全量任务表:tasks-file 全部题目,评分优先用最新 log run,兜底官方 eval_result.json。"""
+    rows = []
+    for t in load_site_tasks(site):
+        tid = t["task_id"]
+        lr = latest_run_for_task(tid, runs)
+        off = official_eval(site, tid)
+        score = lr["score"] if (lr and lr["score"] is not None) else (off or {}).get("score")
+        badge, status = "todo", "⬜ 未跑"
+        if score is not None:
+            if score >= 1.0:
+                badge, status = "pass", "✅ 通过"
+            elif lr and (lr["crashed"] or lr["hung"]):
+                badge, status = "crash", "💥 挂死"
+            else:
+                badge, status = "fail", "❌ 失败"
+        rows.append({
+            "task_id": tid,
+            "goal": t["intent"][:160],
+            "score_str": f"{score:g}" if score is not None else "—",
+            "badge": badge, "status": status,
+            "run_id": lr["id"] if lr else None,
+            "agent_status": (lr or {}).get("agent_status") or (off or {}).get("agent_status") or "",
+            "has_report": (REPORTS / f"{tid}.html").is_file(),
+        })
+    return rows
+
+
 @app.get("/", response_class=HTMLResponse)
-def index():
+def index(site: str | None = None):
+    sites = discover_sites()
+    if not sites:
+        return _layout("WebArena 可视化", _header("无 tasks-file")
+                       + "<main><p style='padding:24px;color:#8a93a3'>webarena-verified/output/ 下没有 *_hard_tasks.json</p></main>")
     runs = parse_runs()
-    raw_tasks = parse_readme_tasks()
-    latest_by_task = {t["name"]: latest_run_for_task(t["name"], runs) for t in raw_tasks}
-    tasks = [task_display_state(t, latest_by_task[t["name"]]) for t in raw_tasks]
-    n_total = len(tasks)
-    n_pass = sum(1 for t in tasks if t["badge"] == "pass")
-    n_fail = sum(1 for t in tasks if t["badge"] in ("fail", "crash"))
-    n_todo = sum(1 for t in tasks if t["badge"] == "todo")
+    if site not in sites:  # default to the site with the most runs (the one being tested)
+        site = max(sites, key=lambda s: sum(1 for r in runs if s in (r.get("sites") or [])))
+    site_runs = [r for r in runs if site in (r.get("sites") or [])]
+    rows = build_task_rows(site, runs)
+
+    n_total = len(rows)
+    n_pass = sum(1 for r in rows if r["badge"] == "pass")
+    n_fail = sum(1 for r in rows if r["badge"] in ("fail", "crash"))
+    n_todo = sum(1 for r in rows if r["badge"] == "todo")
     rate = (n_pass / n_total * 100) if n_total else 0
-    n_runs = len(runs)
-    n_run_pass = sum(1 for r in runs if r["passed"])
+
+    tabs = []
+    for s in sites:
+        cls = "btn" if s == site else "btn ghost"
+        tabs.append(f"<a class='{cls}' href='/?site={s}'>{_html.escape(s)} <span class='pill'>{len(load_site_tasks(s))}</span></a>")
 
     trows = []
-    for i, t in enumerate(tasks, 1):
-        lr = latest_by_task[t["name"]]
-        runlink = f"<a href='/run/{lr['id']}'>最新运行</a>" if lr else "—"
-        if t["report"]:
-            report = f"<a href='/report/{_html.escape(t['name'])}'>报告</a>"
-        elif lr and lr.get("has_report"):
-            report = f"<a href='/run/{lr['id']}/report.html' target='_blank'>运行报告</a>"
-        else:
-            report = "—"
-        source = _html.escape(t.get("source") or "README")
+    for i, t in enumerate(rows, 1):
+        tid = t["task_id"]
+        runlink = f"<a href='/run/{t['run_id']}'>运行</a>" if t["run_id"] else "—"
+        report = f"<a href='/report/{tid}'>报告</a>" if t["has_report"] else "—"
         trows.append(
             "<tr>"
-            f"<td class='task'>{i}. {_html.escape(t['name'])}</td>"
-            f"<td class='score'>{_html.escape(t['score'])}</td>"
-            f"<td><span class='badge {t['badge']}' title='来源: {source}'>{_html.escape(t['status'])}</span></td>"
+            f"<td class='task'>{i}. {tid}</td>"
+            f"<td class='score'>{t['score_str']}</td>"
+            f"<td><span class='badge {t['badge']}'>{_html.escape(t['status'])}</span></td>"
+            f"<td><span class='pill'>{_html.escape(t['agent_status'] or '—')}</span></td>"
             f"<td class='goal' title='{_html.escape(t['goal'])}'>{_html.escape(t['goal'])}</td>"
             f"<td>{report}</td><td>{runlink}</td>"
             "</tr>"
         )
 
     rrows = []
-    for r in runs[:40]:
+    for r in site_runs[:10]:
         tlabel = r["task"] if r["task"] != "(unknown)" else r["id"]
         tlink = f"<a href='/run/{r['id']}'>{_html.escape(tlabel)}</a>"
         detail = r["error"] or (r["goal"] if not r["passed"] else "")
@@ -331,27 +368,26 @@ def index():
             "</tr>"
         )
 
-    body = _header(f"{n_total} 归档任务 · {n_runs} 次运行 · 任务表优先用最新 logs 评分") + f"""
+    body = _header(f"站点 {site} · {n_total} 任务 · {len(site_runs)} 次运行") + f"""
     <main>
+      <div class='btnrow'>{''.join(tabs)}</div>
       <div class='stats'>
-        <div class='stat rate'><div class='n'>{rate:.1f}%</div><div class='l'>归档通过率 ({n_pass}/{n_total})</div></div>
+        <div class='stat rate'><div class='n'>{rate:.1f}%</div><div class='l'>通过率 ({n_pass}/{n_total})</div></div>
         <div class='stat pass'><div class='n'>{n_pass}</div><div class='l'>✅ 通过</div></div>
-        <div class='stat fail'><div class='n'>{n_fail}</div><div class='l'>❌ 失败</div></div>
-        <div class='stat todo'><div class='n'>{n_todo}</div><div class='l'>⬜ 未评</div></div>
-        <div class='stat'><div class='n'>{n_runs}</div><div class='l'>总运行次数</div></div>
-        <div class='stat pass'><div class='n'>{n_run_pass}</div><div class='l'>运行通过</div></div>
+        <div class='stat fail'><div class='n'>{n_fail}</div><div class='l'>❌ 失败/挂死</div></div>
+        <div class='stat todo'><div class='n'>{n_todo}</div><div class='l'>⬜ 未跑</div></div>
       </div>
 
       <section>
-        <div class='hd'>📋 shopping_admin 归档任务 <span class='hint'>README 表 · 有最新 run 时覆盖评分</span></div>
+        <div class='hd'>📋 {_html.escape(site)} 全量任务 <span class='hint'>tasks-file 全部题目 · 评分优先最新 run,兜底官方 eval</span></div>
         <div class='bd'><table>
-          <tr><th>任务</th><th>score</th><th>结果</th><th>目标</th><th>报告</th><th>运行</th></tr>
-          {''.join(trows) if trows else '<tr><td colspan=6 style="color:#8a93a3;padding:20px">README 无任务表</td></tr>'}
+          <tr><th>task</th><th>score</th><th>结果</th><th>agent</th><th>目标</th><th>报告</th><th>运行</th></tr>
+          {''.join(trows) if trows else '<tr><td colspan=7 style="color:#8a93a3;padding:20px">无任务</td></tr>'}
         </table></div>
       </section>
 
       <section>
-        <div class='hd'>🕑 最近运行 <span class='hint'>前 40 · {WA_LOGS.relative_to(ROOT)} · 每 5s 自动刷新</span></div>
+        <div class='hd'>🕑 最近运行 <span class='hint'>该站前 10 · 每 5s 自动刷新</span></div>
         <div class='bd'><table>
           <tr><th>时间</th><th>task</th><th>结果</th><th>agent</th><th>错误/目标</th><th>轮次/帧</th></tr>
           {''.join(rrows) if rrows else '<tr><td colspan=6 style="color:#8a93a3;padding:20px">暂无运行</td></tr>'}
@@ -360,20 +396,22 @@ def index():
     </main>
     <script>
     (() => {{
-      const initial = {{count: {n_runs}, latest: {json.dumps(runs[0]["id"] if runs else "")}}};
+      // 轮询廉价 head 端点(只 stat 不 parse);首拍自定基线,signature 变了才 reload(reload 时才走全量)。
+      let base = null;
       async function tick() {{
         try {{
-          const res = await fetch('/api/runs?ts=' + Date.now(), {{cache: 'no-store'}});
+          const res = await fetch('/api/runs/head?ts=' + Date.now(), {{cache: 'no-store'}});
           if (!res.ok) return;
-          const data = await res.json();
-          const latest = data.length ? data[0].id : '';
-          if (data.length !== initial.count || latest !== initial.latest) window.location.reload();
+          const h = await res.json();
+          const key = h.count + ':' + h.sig;
+          if (base === null) {{ base = key; return; }}
+          if (key !== base) window.location.reload();
         }} catch (err) {{}}
       }}
       window.setInterval(tick, 5000);
     }})();
     </script>"""
-    return _layout("WebArena 可视化", body)
+    return _layout(f"WebArena · {site}", body)
 
 
 def _shot_key(p: Path):
@@ -485,6 +523,23 @@ def run_stdout(run_id: str):
 @app.get("/api/runs")
 def api_runs():
     return parse_runs()
+
+
+@app.get("/api/runs/head")
+def api_runs_head():
+    """轮询用的廉价变更信号:只 stat,不 parse 任何 context.json。
+
+    signature = 全部 run 目录数 + 最大 mtime(取 context.json 的 mtime;没有则用目录 mtime)。
+    新 run 出现(目录数变)或某 run 完成/重写 context.json(mtime 变)都会改变 signature。"""
+    dirs = [d for d in WA_LOGS.iterdir() if d.is_dir()] if WA_LOGS.exists() else []
+    sig = 0.0
+    for d in dirs:
+        ctx = d / "context.json"
+        try:
+            sig = max(sig, (ctx if ctx.exists() else d).stat().st_mtime)
+        except OSError:
+            pass
+    return {"count": len(dirs), "sig": round(sig, 3)}
 
 
 def main(argv: list[str] | None = None) -> int:
