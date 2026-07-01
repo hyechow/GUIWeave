@@ -304,7 +304,10 @@ class PlaywrightDevice:
         self._follow_active_tab()
         page = self._require_page()
         try:
-            png = page.screenshot(type="png")
+            # Capped: page.screenshot blocks on a stalled event loop during a slow-save navigation
+            # (WebArena 702 post-Save freeze moved here once _follow_active_tab was capped). On
+            # timeout fall through to the raw-CDP screenshot, which is itself SIGALRM-capped.
+            png = self._run_capped(lambda: page.screenshot(type="png"), _CDP_SEND_TIMEOUT_S)
         except Exception:
             png = self._cdp_screenshot()
         wh = self._css_viewport_from_png(png)
@@ -340,15 +343,24 @@ class PlaywrightDevice:
 
     def _timed_cdp_send(self, session, method: str, params: dict) -> dict:
         """Send on a CDP session with the same SIGALRM cap used by _cdp_send."""
+        return self._run_capped(lambda: session.send(method, params), _CDP_SEND_TIMEOUT_S)
+
+    def _run_capped(self, fn, timeout_s: float):
+        """Run a (Playwright) callable under a SIGALRM wall-clock cap, raising ``_CDPTimeout`` if it
+        exceeds ``timeout_s``. Not just raw CDP: any Playwright sync call can block on a stalled
+        event loop — e.g. ``page.wait_for_timeout`` during a slow-save navigation, the WebArena 702
+        post-Save freeze (faulthandler caught the main thread parked there). SIGALRM does interrupt a
+        blocked Playwright greenlet call (proven: capped CDP sends raise on Chrome stalls). MAIN
+        THREAD ONLY (SIGALRM); off it (or where SIGALRM is absent) it runs uncapped."""
         if (
             threading.current_thread() is not threading.main_thread()
             or not hasattr(signal, "SIGALRM")
         ):
-            return session.send(method, params)
+            return fn()
         prev = signal.signal(signal.SIGALRM, _cdp_alarm)
-        signal.setitimer(signal.ITIMER_REAL, _CDP_SEND_TIMEOUT_S)
+        signal.setitimer(signal.ITIMER_REAL, timeout_s)
         try:
-            return session.send(method, params)
+            return fn()
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, prev)
@@ -1388,10 +1400,13 @@ class PlaywrightDevice:
         """
         if self._browser is None:
             return
-        # Flush pending Playwright events so context.pages lists are up-to-date.
+        # Flush pending Playwright events so context.pages lists are up-to-date. Capped: this is the
+        # one hot-path Playwright call with no wall-clock guard, and it blocks forever when the event
+        # loop is stalled by a slow-save navigation (WebArena 702 post-Save freeze). The pump is
+        # best-effort — on timeout, skip it (the except already swallows failures) rather than hang.
         if self.page is not None:
             try:
-                self.page.wait_for_timeout(200)
+                self._run_capped(lambda: self.page.wait_for_timeout(200), 3.0)
             except Exception:
                 pass
         # Collect pages across ALL contexts — connect_over_cdp puts click-opened
