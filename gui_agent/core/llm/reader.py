@@ -27,6 +27,7 @@ class ContentReader:
         cfg = resolve_llm_config("reader")
         self._llm = ChatOpenAI(
             model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+            timeout=cfg.timeout_s, max_retries=cfg.max_retries,
             extra_body={"enable_thinking": False},
         )
         self._prepare_vision_prompt_png = prepare_vision_prompt_png or (lambda b: b)

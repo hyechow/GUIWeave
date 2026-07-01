@@ -336,7 +336,8 @@ def resolve_file_refs(goal: str, base: Optional[Path] = None) -> str:
 
 def _make_llm() -> ChatOpenAI:
     cfg = resolve_llm_config("supervisor")
-    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+                      timeout=cfg.timeout_s, max_retries=cfg.max_retries)
 
 
 def _prepare_prompt_png(png_bytes: bytes, image_resize: str = "retina") -> bytes:

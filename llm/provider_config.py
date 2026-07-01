@@ -64,6 +64,14 @@ class ChatProviderConfig:
     model: str
     api_key: Optional[str]
     base_url: str
+    # Per-request wall-clock timeout (s) + retry count for the chat HTTP call. Without an explicit
+    # timeout the OpenAI SDK default (~600s) lets a single stalled request hang the agent for
+    # minutes, and with retries for tens of minutes — the observed WebArena "hang" (a frozen log at
+    # an LLM-call boundary). Normal checker/planner calls are 3–9s, so 60s is ~10x headroom: a
+    # stalled call fails fast and retries instead of blocking the run. Override via CHAT_TIMEOUT_S /
+    # CHAT_MAX_RETRIES.
+    timeout_s: float = 60.0
+    max_retries: int = 2
 
 
 def resolve_chat_provider_config(
@@ -95,4 +103,6 @@ def resolve_chat_provider_config(
         model=resolved_model,
         api_key=resolved_api_key,
         base_url=resolved_base_url,
+        timeout_s=float(os.getenv("CHAT_TIMEOUT_S", "60")),
+        max_retries=int(os.getenv("CHAT_MAX_RETRIES", "2")),
     )

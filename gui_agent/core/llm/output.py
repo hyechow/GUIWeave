@@ -45,7 +45,8 @@ def generate_reply(
     session=list  → chat mode (CHAT prompt with session context)
     """
     cfg = resolve_llm_config("output")
-    llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url, extra_body={"enable_thinking": False})
+    llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+                     timeout=cfg.timeout_s, max_retries=cfg.max_retries, extra_body={"enable_thinking": False})
 
     if content_notes:
         messages = _analysis_messages(goal, result, content_notes, collection_context)
@@ -79,6 +80,7 @@ def compose_orchestration_reply(
     cfg = resolve_llm_config("output")
     llm = ChatOpenAI(
         model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+        timeout=cfg.timeout_s, max_retries=cfg.max_retries,
         extra_body={"enable_thinking": False},
     )
     lines = []

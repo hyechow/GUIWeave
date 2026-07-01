@@ -25,7 +25,8 @@ def _image_size_from_parts(parts: list[dict]) -> tuple[int, int]:
 
 
 def _fake_cfg():
-    return SimpleNamespace(model="fake-model", api_key="fake-key", base_url="http://fake")
+    return SimpleNamespace(model="fake-model", api_key="fake-key", base_url="http://fake",
+                           timeout_s=60.0, max_retries=2)
 
 
 def test_platform_bundle_vision_prompt_preprocessing():
