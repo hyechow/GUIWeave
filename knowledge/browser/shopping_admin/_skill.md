@@ -67,6 +67,16 @@ version: 1
 7. 不得只读自身后过滤空值；Material 空值必须回退父产品。
 8. foreach/call 后必须汇总 material，过滤空值、去重输出。
 
+## skill：改配置型商品某（些）变体的价格
+- 触发：increase/reduce/change the price of [white/blue/size L/XS] [product] by N%/$N；改某颜色/尺寸变体的价格、给某商品某变体调价
+- 数据：某个 size/color 变体是**独立的 Simple Product**（SKU=`基础SKU-SIZE-COLOR`），它自己有 **Price** 字段——改变体价 = 打开那个 Simple 变体的编辑页改 Price 并 Save。定位变体：Catalog > Products 用**基础商品名关键词**搜（**剥掉颜色/尺寸/类别词**，如 "white Ingrid Running"→搜 `Ingrid`、"blue running tshirt"→搜 `tshirt`），grid 里找 SKU/name 含目标 size+color 的 **Type=Simple Product** 变体行并打开；或从配置型父产品（`Type=Configurable Product`）的 **Configurations** 变体网格定位那一行。**关键纠正**：① "running"/"tshirt" 是名字/类目、**不是 `Type` 筛选**（`Type` 选项只有 Simple/Virtual/Bundle/Configurable/Grouped/Downloadable 商品类型，选 `Running` 必然 option not found）；② **颜色/尺寸是变体属性、绝不能进商品名搜索**（否则 0 records）；③ **绝不用变体页上的 Size/Pattern/Color 属性下拉去"切换变体"**——那不导航到别的变体，还会展开遮挡下方 Price 框。百分比调价按变体**现价**算（降 13.5% = 现价×0.865；涨 N% = 现价×(1+N/100)），$N 定额直接加减。批量（"size L 及以上"/"所有蓝色 XS"）：对每个匹配变体逐个打开改价 Save。
+- 步骤：
+1. Catalog > Products，清残留筛选。
+2. 按基础商品名关键词搜（剥颜色/尺寸/类别词）。
+3. 定位目标 size/color 的 Simple 变体行并打开。
+4. 按现价算新价，改该变体 Price 字段。
+5. Save；多个变体则逐个重复。
+
 ## skill：按电话号查客户
 - 触发：phone number、电话号查客户、find customer with phone、customer name/email/与电话相关的客户查找
 - 数据：Customers grid 顶部 **Search by keyword**（全文**子串**匹配），不是 Filters 面板的 **Phone 列**精确筛选。电话在 Magento 存为带分隔符格式如 `(555) 229-3326`（括号区号 + 空格），任务给的 `555-229-3326` 这类纯连字符整串**不是存储值的连续子串**，整串搜（无论 keyword 还是 Phone 列）都 0 命中。能稳定命中的是去掉区号的**本地号段**（后 7 位，如 `229-3326`），它在各种分隔符格式下都连续。
