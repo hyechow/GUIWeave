@@ -745,8 +745,17 @@ class PlaywrightDevice:
                                 options: options.map((opt) => labelOf(opt)).filter(Boolean).slice(0, 20),
                             };
                         }
-                        select.value = option.value;
-                        option.selected = true;
+                        // <select multiple> (e.g. Magento Cart Price Rule "Customer Groups"):
+                        // setting select.value REPLACES the whole selection (deselects the rest),
+                        // so selecting groups one-per-call would leave only the last. Add to the
+                        // selection instead. Single-select keeps the value= path. Verified live via
+                        // CDP on /sales_rule/promo_quote/new/ (customer_group_ids).
+                        if (select.multiple) {
+                            option.selected = true;
+                        } else {
+                            select.value = option.value;
+                            option.selected = true;
+                        }
                         select.dispatchEvent(new Event('input', {bubbles: true}));
                         select.dispatchEvent(new Event('change', {bubbles: true}));
                         return {
