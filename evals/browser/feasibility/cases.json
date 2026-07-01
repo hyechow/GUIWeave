@@ -115,5 +115,23 @@
       ]
     },
     "note": "活跑 205544：Product 筛选框已输入完整 'Olivia zip jacket'（DOM current 权威=全值），但框窄、截图里只看得到滚动后的尾部 'via zip jacket'。Feasibility judge 据【截图像素】判『Product 控件只含 via zip jacket、缺 Olivia 前缀、无法精确匹配→不可行』，给出错误 directive（进 Catalog > Products List 搜产品），把 redecompose 引向死路。修复：feasibility.md 规则6——只判控件【存在性】不判【当前值】，`*_input` 的 current= 权威于截图；窄框滚动尾不是控件缺失。Product 控件存在且值完整→feasible=true（0 条是搜索词/数据问题，归 agent 换法，不是不可行）。reason 不得出现 缺前缀/不完整/截断/无法精确匹配 这类据像素的判词。"
+  },
+  {
+    "label": "Catalog rule 表单:Apply/折扣在折叠的 Actions 区(未展开→不在 DOM)不得被判「错规则类型→踢去 Cart」(回归 20260701_212514)",
+    "milestone_goal": "在 New Catalog Price Rule 表单填写 Rule Name='Pride Month'、Active=Yes、Websites 选 Main Website、Customer Groups 选中 General/Wholesale/Retailer、展开 Actions 设 Apply='Apply as percentage of original' 且 Discount Amount=45，然后保存。",
+    "milestone_kind": "action",
+    "screenshot": "evals/browser/feasibility/screenshots/catalog_rule_actions_collapsed_not_cart.png",
+    "control_text": "## 浏览器 DOM 表单控件\n- Rule Name: text_input; current=\"Pride Month\"\n- Active: checkbox_input; current=\"1\"\n- Websites: native_select; 已选中(DOM权威)=\"\"; options=[Main Website]\n- Customer Groups: native_select; 已选中(DOM权威)=\"General, Wholesale, Retailer\"; options=[NOT LOGGED IN, General, Wholesale, Retailer]\n（注：Apply(simple_action) 与 Discount Amount 字段在默认收起的 Actions 折叠区内，收起时不进 DOM 清单——展开 Actions 后才出现。）",
+    "knowledge": "Catalog Price Rule 的折扣在 Actions 折叠区：Apply(simple_action) 选 'Apply as percentage of original'（X% off）或 'Apply as fixed amount'（$N），Discount Amount 填数值。'Apply as percentage of original' 正是 Catalog 规则的 Apply 选项。",
+    "expected": {
+      "feasible": true,
+      "directive_not_contains": [
+        "Cart",
+        "购物车",
+        "sales_rule",
+        "promo_quote"
+      ]
+    },
+    "note": "回归 live run 20260701_212514：702 是 Catalog Price Rule，agent 进对 Catalog 表单填到一半。Feasibility 判官把 milestone 要的 Apply='Apply as percentage of original' 误判为『属于 Cart Price Rule 的选项、Catalog 表单中不存在』→ feasible=false → 踢回去 Cart，推翻正确进展。实则该 Apply 选项正是 Catalog 的、只是在默认收起的 Actions 折叠区（未展开时不进 DOM 清单）。judge 应判 feasible=true（控件在折叠区，展开即得），绝不据『控件不在清单』跳到『错规则类型/改道 Cart』——类型 decompose 已定，判官不得改道（feasibility.md 规则7、8）。"
   }
 ]
