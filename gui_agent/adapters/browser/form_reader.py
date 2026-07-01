@@ -30,6 +30,16 @@ def form_controls_js() -> str:
       && r.top <= (innerHeight || document.documentElement.clientHeight)
       && r.left <= (innerWidth || document.documentElement.clientWidth);
   };
+  // Vertical position of an off-viewport control relative to the current viewport, so the planner
+  // knows WHICH WAY to scroll instead of guessing (guessing "down" sent 702 chasing the Websites
+  // field that had scrolled ABOVE the viewport). 'above' = need to scroll up, 'below' = down.
+  const viewportPos = (el) => {
+    const r = el.getBoundingClientRect();
+    const vh = innerHeight || document.documentElement.clientHeight;
+    if (r.bottom < 0) return 'above';
+    if (r.top > vh) return 'below';
+    return 'in';
+  };
   // 收录所有已「渲染」的控件,不按视口位置丢弃,并给每个控件标 in_viewport。长表单(如 Cart
   // Price Rule)里 Rule Name 在顶、Discount/Save 在底,滚到中部时首尾控件滑出视口 —— 旧的视口
   // 过滤会把它们从清单里删掉,feasibility 于是误判「控件不存在」而放弃(WebArena 702 Rule Name /
@@ -118,6 +128,7 @@ def form_controls_js() -> str:
       focused: el === document.activeElement,
       rect: rectOf(el),
       in_viewport: inViewport(el),
+      viewport_pos: viewportPos(el),
     };
     if (isFilter) item.is_filter = true;
     if (isDatepicker) item.is_datepicker = true;
@@ -201,6 +212,10 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
         # concluding it is absent.
         if item.get("in_viewport") is False:
             norm["in_viewport"] = False
+            # Carry the scroll DIRECTION so the planner scrolls the right way to reach it.
+            vp = item.get("viewport_pos")
+            if vp in ("above", "below"):
+                norm["viewport_pos"] = vp
         out.append(norm)
     return out
 
