@@ -518,5 +518,82 @@
       ]
     },
     "note": "task 63 复盘 T13-T18：agent 点击 Customer Email checkbox，DOM 交互指纹变化(dom_changed=true)→ 动作确定性执行成功(checkbox current=on 且 focused)。但主网格未出现 Customer Email 列(点击改了 input.checked 却没触发 Magento 列更新)。Checker 把'效果未达'当成'动作没执行'，反馈'重新点击/没点中'，逼 agent 反复点同一已生效 checkbox 直到 retry 耗尽。本 case 验证确定性执行信号注入后：动作已执行(dom_changed)，效果未达(列没出)，应判 in_progress + 反馈'动作已执行但效果未现、需换方式'，**不得**归因为'没点中/重新点击'。与 columns-panel-checkbox-current-on(残留态,无 dom_changed 信号)形成对照：那个 case 允许引导重新点击(current=on 可能是残留没真点)，本 case 有 dom_changed=true(确定真点了)所以禁止引导重新点击。"
+  },
+  {
+    "label": "702 Catalog rule 表单填到一半(Websites 未选)不得被误判为「错规则类型→去 Cart Price Rules」（回归 20260701_212514 类型翻转跑偏）",
+    "screenshot": "evals/browser/checker/screenshots/catalog_rule_websites_unfilled_not_cart.png",
+    "observation": {
+      "url": "http://192.168.1.13:7780/admin/catalog_rule/promo_catalog/new/",
+      "title": "New Catalog Price Rule / Catalog Price Rule / Promotions / Marketing / Magento Admin",
+      "form_controls": [
+        {
+          "kind": "text_input",
+          "name": "name",
+          "label": "Rule Name",
+          "value": "Pride Month",
+          "selected_text": ""
+        },
+        {
+          "kind": "checkbox_input",
+          "name": "is_active",
+          "label": "Active",
+          "value": "1",
+          "selected_text": ""
+        },
+        {
+          "kind": "native_select",
+          "name": "website_ids",
+          "label": "Websites",
+          "value": "",
+          "selected_text": "",
+          "options": [
+            "Main Website"
+          ]
+        },
+        {
+          "kind": "native_select",
+          "name": "customer_group_ids",
+          "label": "Customer Groups",
+          "value": "",
+          "selected_text": "General, Wholesale, Retailer",
+          "options": [
+            "NOT LOGGED IN",
+            "General",
+            "Wholesale",
+            "Retailer"
+          ]
+        }
+      ]
+    },
+    "milestone": {
+      "name": "填写 Catalog Price Rule 规则信息并保存",
+      "description": "在 New Catalog Price Rule 表单填写：Rule Name='Pride Month'、Active=Yes、Websites 选 Main Website、Customer Groups 选中 General/Wholesale/Retailer、Conditions 留空、展开 Actions 设 Apply 为 'Apply as percentage of original' 且 Discount Amount=45，然后保存。",
+      "success_condition": "New Catalog Price Rule 表单各字段按要求填妥并保存成功。",
+      "kind": "action"
+    },
+    "state_trace": "T9 选中 Customer Groups General/Wholesale/Retailer\nT10 向下滚动找 Actions\n⚠️重复 T11 仍未选 Websites（Websites 在视口上方被跳过）",
+    "expected": {
+      "status_in": [
+        "in_progress",
+        "stuck"
+      ],
+      "must_not_claim": [
+        "Cart Price Rule",
+        "Cart Price Rules",
+        "sales_rule",
+        "promo_quote",
+        "wrong type",
+        "wrong rule type",
+        "错.{0,4}类型",
+        "错误的?规则类型",
+        "应.{0,4}是\\s*Cart",
+        "改.{0,4}(去|为|成)?\\s*Cart",
+        "导航.{0,8}Cart",
+        "navigate.{0,25}Cart",
+        "should.{0,15}Cart"
+      ]
+    },
+    "note": "回归 live run 20260701_212514：702 是 Catalog Price Rule（'45% off on all products'→catalog_rule/promo_catalog/save）。agent 正确进 Catalog 表单、填了 Rule Name/Active/Customer Groups，但漏选了视口上方的 Websites → 卡住。此时 checker 的 stuck 恢复把「字段漏填」误诊为「规则类型错，应去 Cart Price Rules」，把 agent 从正确的 Catalog 表单赶去了错误的 Cart 页，推翻了正确进展。规则类型在 decompose 已定、不是当前状态维度，checker 不得据 stuck 二次翻转类型；缺 Websites 应判 in_progress/stuck 并指向补选 Websites，而非换规则类型。",
+    "with_app_check": false
   }
 ]
