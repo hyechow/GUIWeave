@@ -331,27 +331,21 @@ class PlaywrightDevice:
             return self._timed_send(method, params)
 
     def _timed_send(self, method: str, params: dict) -> dict:
-        """``self._cdp.send`` with a hard wall-clock cap via SIGALRM, so a Chrome that
-        never answers (intermittent ``Page.captureScreenshot`` stalls) raises
-        ``_CDPTimeout`` instead of blocking ``selector.select`` forever. MAIN THREAD
-        ONLY (SIGALRM); off it (or where SIGALRM is absent) it sends uncapped. The
-        normal path adds only a setitimer arm/disarm — microseconds."""
         return self._timed_cdp_send(self._cdp, method, params)
 
     def _timed_cdp_send(self, session, method: str, params: dict) -> dict:
-        """Send on a CDP session with the same SIGALRM cap used by _cdp_send."""
-        if (
-            threading.current_thread() is not threading.main_thread()
-            or not hasattr(signal, "SIGALRM")
-        ):
-            return session.send(method, params)
-        prev = signal.signal(signal.SIGALRM, _cdp_alarm)
-        signal.setitimer(signal.ITIMER_REAL, _CDP_SEND_TIMEOUT_S)
-        try:
-            return session.send(method, params)
-        finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, prev)
+        """Send a raw CDP command — NO signal-based timeout.
+
+        A SIGALRM cap used to guard this, but interrupting an in-flight Playwright sync call with a
+        signal corrupts the greenlet↔asyncio bridge so the NEXT call hangs forever
+        (playwright-python #1150) — that was the real cause of the WebArena 702 slow-save freezes
+        (settle's capped CDP send fired SIGALRM during the ~25-60s Catalog reindex → the following
+        call hung indefinitely). A raw send has no native timeout, so it blocks naturally; a slow-save
+        reindex pins the renderer for the save duration then the send returns cleanly (verified live:
+        wait_for_url waited out a 25s reindex and observation resumed normally). Navigation-triggering
+        actions are additionally waited out with a NATIVE Playwright wait in wait_settled, which is
+        the clean, corruption-free backstop."""
+        return session.send(method, params)
 
     def _cdp_screenshot(self) -> bytes:
         import base64
