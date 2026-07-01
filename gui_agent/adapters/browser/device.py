@@ -301,19 +301,31 @@ class PlaywrightDevice:
         denormalizes 0-1000 against the exact frame the LLM is about to see —
         with no separate, separately-failing window.innerHeight read.
         """
-        self._follow_active_tab()
-        page = self._require_page()
-        try:
-            # Capped: page.screenshot blocks on a stalled event loop during a slow-save navigation
-            # (WebArena 702 post-Save freeze moved here once _follow_active_tab was capped). On
-            # timeout fall through to the raw-CDP screenshot, which is itself SIGALRM-capped.
-            png = self._run_capped(lambda: page.screenshot(type="png"), _CDP_SEND_TIMEOUT_S)
-        except Exception:
-            png = self._cdp_screenshot()
-        wh = self._css_viewport_from_png(png)
-        if wh is not None:
-            self._last_viewport = wh
-        return png
+        # Resilient capture. Both the Playwright and the raw-CDP screenshot are SIGALRM-capped so a
+        # stalled event loop during a slow-save navigation can't freeze the run (WebArena 702 post-Save
+        # freeze). But a busy renderer can make BOTH stall past their caps for one turn — that must not
+        # crash the run: retry (re-follow the active tab, rebuild the CDP session, brief sleep) so the
+        # slow navigation is waited out and the shot lands once the page settles.
+        last_exc: Optional[Exception] = None
+        for _attempt in range(4):
+            self._follow_active_tab()
+            page = self._require_page()
+            png = None
+            try:
+                png = self._run_capped(lambda: page.screenshot(type="png"), _CDP_SEND_TIMEOUT_S)
+            except Exception:
+                try:
+                    png = self._cdp_screenshot()
+                except Exception as exc:  # both paths stalled/failed this turn — recover and retry
+                    last_exc = exc
+                    self._cdp = None
+                    time.sleep(2.0)
+                    continue
+            wh = self._css_viewport_from_png(png)
+            if wh is not None:
+                self._last_viewport = wh
+            return png
+        raise last_exc if last_exc is not None else RuntimeError("screenshot failed after retries")
 
     def _cdp_send(self, method: str, params: dict) -> dict:
         """Send a raw CDP command on the cached per-page session, rebuilding it once
