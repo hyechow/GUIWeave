@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -20,31 +20,6 @@ SETTLE_FIRST_S = 1.0
 SETTLE_UNIT_S = 0.5
 SETTLE_MAX_UNITS = 6
 SETTLE_GESTURE_FIRST_S = 0.3
-# Hard per-call wall-clock cap. A wedged CDP connection can make wait_settled()/screenshot() block
-# FOREVER — the try/except paths below only catch raises, not hangs. Without this guard, one such
-# hang freezes the whole run until an external kill (WebArena sweep 502/505/549 each froze right
-# after "回退视觉" for the full 600s timeout). Guard every CDP call with a timeout so a wedge
-# degrades to "couldn't settle → advance the turn" instead. A thread stuck on a hung call can't be
-# reclaimed and leaks — acceptable, since a wedged CDP is terminal for the run anyway.
-SETTLE_CALL_TIMEOUT_S = 6.0
-_SETTLE_EXEC = ThreadPoolExecutor(max_workers=4, thread_name_prefix="settle-guard")
-
-
-class _SettleCallTimeout(Exception):
-    """A guarded CDP settle/screenshot call exceeded its wall-clock cap (connection likely wedged)."""
-
-
-def _guarded_call(fn: Callable[[], Any], timeout_s: float | None = None) -> Any:
-    """Run fn() in a worker thread with a wall-clock timeout; raise _SettleCallTimeout if it hangs.
-
-    timeout_s=None reads the module-level SETTLE_CALL_TIMEOUT_S at call time (so tests can shrink it)."""
-    if timeout_s is None:
-        timeout_s = SETTLE_CALL_TIMEOUT_S
-    fut = _SETTLE_EXEC.submit(fn)
-    try:
-        return fut.result(timeout=timeout_s)
-    except FuturesTimeoutError as exc:
-        raise _SettleCallTimeout(f"call exceeded {timeout_s:.0f}s") from exc
 
 
 def settle_after_action(
@@ -59,19 +34,19 @@ def settle_after_action(
         cdp_settle = getattr(platform, "wait_settled", None)
         if cdp_settle is not None:
             try:
-                return _guarded_call(lambda: cdp_settle(action_type))
+                return cdp_settle(action_type)
             except Exception as exc:
-                print(f"  [Settle] CDP settle 异常/超时，回退视觉: {exc}")
+                print(f"  [Settle] CDP settle 异常，回退视觉: {exc}")
     started = time.perf_counter()
     if action_type in ("drag", "scroll"):
         prev: bytes | None = None
         for i in range(1, SETTLE_MAX_UNITS + 1):
             time.sleep(SETTLE_GESTURE_FIRST_S if i == 1 else SETTLE_UNIT_S)
             try:
-                cur = _guarded_call(platform.screenshot)
+                cur = platform.screenshot()
             except Exception:
                 elapsed = time.perf_counter() - started
-                print(f"  [Settle] {elapsed:.1f}s ({i} 轮，截图异常/超时提前返回)")
+                print(f"  [Settle] {elapsed:.1f}s ({i} 轮，截图异常提前返回)")
                 return elapsed, False
             if prev is not None and frame_diff(prev, cur) < STABLE_MEAN_THR:
                 elapsed = time.perf_counter() - started
@@ -92,10 +67,10 @@ def settle_after_action(
     for i in range(1, SETTLE_MAX_UNITS + 1):
         time.sleep(SETTLE_FIRST_S if i == 1 else SETTLE_UNIT_S)
         try:
-            cur = _guarded_call(platform.screenshot)
+            cur = platform.screenshot()
         except Exception:
             elapsed = time.perf_counter() - started
-            print(f"  [Settle] {elapsed:.1f}s ({i} 轮，截图异常/超时提前返回)")
+            print(f"  [Settle] {elapsed:.1f}s ({i} 轮，截图异常提前返回)")
             return elapsed, False
         tab_just_switched = bool(pop_tab and pop_tab())
         if tab_just_switched:
