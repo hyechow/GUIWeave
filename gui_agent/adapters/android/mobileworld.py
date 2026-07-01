@@ -26,10 +26,10 @@ from this machine (a tiny adb relay + portproxy for 5556, a portproxy for 6800).
 Usage:
   AGENT_PLATFORM is forced to "android" here; ANDROID_SERIAL is set from --adb-serial.
   uv run python -m gui_agent.adapters.android.mobileworld <task_name> \
-      --base-url http://192.168.31.57:6800 --adb-serial 192.168.31.57:5556
+      --base-url http://192.168.1.13:6800 --adb-serial 192.168.1.13:5556
   # discover task names:
   uv run python -m gui_agent.adapters.android.mobileworld --list \
-      --base-url http://192.168.31.57:6800
+      --base-url http://192.168.1.13:6800
 
 KNOWN LIMIT: the android adapter does not implement scroll-collect yet, so a task whose
 milestone plans completion_strategy='scroll_until_boundary' (e.g. "read every item on
@@ -368,10 +368,10 @@ def _write_mobileworld_context(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a MobileWorld task on the android agent loop")
     parser.add_argument("task", nargs="?", help="MobileWorld task name (omit with --list)")
-    parser.add_argument("--base-url", default=os.environ.get("MW_BASE_URL", "http://192.168.31.57:6800"),
+    parser.add_argument("--base-url", default=os.environ.get("MW_BASE_URL", "http://192.168.1.13:6800"),
                         help="MobileWorld backend URL (env MW_BASE_URL; default :6800)")
     parser.add_argument("--adb-serial", default=os.environ.get("MW_ADB_SERIAL")
-                        or os.environ.get("ANDROID_SERIAL", "192.168.31.57:5556"),
+                        or os.environ.get("ANDROID_SERIAL", "192.168.1.13:5556"),
                         help="adb serial for the emulator (env MW_ADB_SERIAL/ANDROID_SERIAL; default :5556)")
     parser.add_argument("--device", default="emulator-5554",
                         help="in-container emulator serial the backend controls (default emulator-5554)")
@@ -579,10 +579,7 @@ def main() -> int:
                                 context_reports=context_reports,
                             )))
 
-                        if not args.no_dynamic_max_turns:
-                            run_max_turns = estimate_program_turns(program, floor=args.max_turns)
-                            if run_max_turns != args.max_turns:
-                                print(f"[mobileworld] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
+                        # 动态轮次提升已移除：只认 --max-turns。后续若要按 DSL 复杂度加轮，见 estimate_program_turns。
                     else:
                         print("[mobileworld] orchestrator: disabled; using legacy milestone DAG")
 

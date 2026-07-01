@@ -624,10 +624,7 @@ def main() -> int:
                                 context_reports=context_reports,
                             )))
 
-                        if not args.no_dynamic_max_turns:
-                            run_max_turns = estimate_program_turns(program, floor=args.max_turns)
-                            if run_max_turns != args.max_turns:
-                                print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
+                        # 动态轮次提升已移除：只认 --max-turns。后续若要按 DSL 复杂度加轮，见 estimate_program_turns。
                     else:
                         print("[webarena] orchestrator: disabled; using legacy milestone DAG")
 

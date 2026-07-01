@@ -270,13 +270,7 @@ def main(
                         else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
                     )
                 print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
-                if not args.no_dynamic_max_turns:
-                    run_max_turns = estimate_program_turns(program, floor=args.max_turns)
-                    if run_max_turns != args.max_turns:
-                        print(
-                            f"Orchestrator: max_turns {args.max_turns} -> {run_max_turns} "
-                            "based on program complexity"
-                        )
+                # 动态轮次提升已移除：只认 --max-turns。后续若要按 DSL 复杂度加轮，见 estimate_program_turns。
 
             try:
                 stop_on_esc = args.stop_on_esc and args.auto_continue

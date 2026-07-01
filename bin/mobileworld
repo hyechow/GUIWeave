@@ -10,7 +10,7 @@
 #   1) emulator adb: 容器 5556 经 adb relay + portproxy 暴露 → `adb connect <host>:5556`
 #   2) backend HTTP: 容器 6800 经 portproxy 暴露 → MW_BASE_URL=http://<host>:6800
 # 覆盖: MW_BASE_URL=<url> MW_ADB_SERIAL=<host:port> bin/mobileworld <task-name>
-#   默认 MW_BASE_URL=http://192.168.31.57:6800  MW_ADB_SERIAL=192.168.31.57:5556
+#   默认 MW_BASE_URL=http://192.168.1.13:6800  MW_ADB_SERIAL=192.168.1.13:5556
 # 外网: snapshot 会清空 Android 系统代理；本机 MobileWorld 容器内 proxy_chain 默认
 #       暴露给模拟器为 10.0.2.2:38888，可用 MW_ANDROID_HTTP_PROXY=off 关闭。
 # 稳定性: 若 /task/init 后 emulator/adb 未恢复，默认重启 MobileWorld 容器内 emulator 并重试一次；
@@ -38,6 +38,17 @@ fi
 
 # headless 是唯一可见性开关:headed 模式默认显示状态 HUD + 光标覆盖,--headless 则全关。
 # "$@" 在后,额外参数可覆盖默认。AGENT_MODEL 默认 qwen35(与 bin/runner 一致)。
+# max-turns 默认 20:正确任务 20 轮内完成,跑偏了 100 轮也不够;显式传 --max-turns 可覆盖。
+has_max_turns=0
+for a in "$@"; do [[ "$a" == "--max-turns" ]] && has_max_turns=1; done
+[[ "$has_max_turns" == "0" ]] && set -- "$@" --max-turns 20
+# mobileworld.py 默认会按 DSL 复杂度动态提升 max_turns,突破上面设的 20 上限(实测 18-milestone
+# 任务被提到 43)。bin/mobileworld 默认严格守 20:与 android-mini cases.json 一律带
+# --no-dynamic-max-turns 对齐。若某任务确实需要更多轮,显式传更大的 --max-turns。
+has_nody=0
+for a in "$@"; do [[ "$a" == "--no-dynamic-max-turns" ]] && has_nody=1; done
+[[ "$has_nody" == "0" ]] && set -- "$@" --no-dynamic-max-turns
+
 exec env AGENT_PLATFORM="android" \
          AGENT_MODE="${AGENT_MODE:-daemon}" \
          AGENT_MODEL="${AGENT_MODEL:-qwen35}" \
