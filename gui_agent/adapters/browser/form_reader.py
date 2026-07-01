@@ -30,11 +30,11 @@ def form_controls_js() -> str:
       && r.top <= (innerHeight || document.documentElement.clientHeight)
       && r.left <= (innerWidth || document.documentElement.clientWidth);
   };
-  const visible = (el) => rendered(el) && inViewport(el);
-  // <select>/<textarea> 的「当前值」读 DOM 即可、与是否在视口内无关(长表单里 Material 这类
-  // 属性常在 below-fold)。仅按是否渲染收录它们,避免读值落到 vision 把 multiselect 选项列表
-  // 的第一个当成选中值(WebArena task 185:Material multiselect 在 fold 下 → 误读 Burlap)。
-  const keepForRead = (el) => (el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') && rendered(el);
+  // 收录所有已「渲染」的控件,不按视口位置丢弃,并给每个控件标 in_viewport。长表单(如 Cart
+  // Price Rule)里 Rule Name 在顶、Discount/Save 在底,滚到中部时首尾控件滑出视口 —— 旧的视口
+  // 过滤会把它们从清单里删掉,feasibility 于是误判「控件不存在」而放弃(WebArena 702 Rule Name /
+  // 703 discount_amount),planner 也不知道该滚过去。改为报全部已渲染控件 + in_viewport 标志,由消费
+  // 方决定是否先滚动。原 keepForRead 只把 select/textarea 豁免视口(Material below-fold),现统一到全部。
   const labelFromContainer = (el) => {
     const boxes = [
       el.closest('.admin__field'),
@@ -99,7 +99,7 @@ def form_controls_js() -> str:
   const seen = new Set();
   const selector = 'input,select,textarea,[role=combobox],[role=listbox]';
   for (const el of Array.from(document.querySelectorAll(selector))) {
-    if (seen.has(el) || !(visible(el) || keepForRead(el))) continue;
+    if (seen.has(el) || !rendered(el)) continue;
     seen.add(el);
     if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'hidden') continue;
     const kind = kindOf(el);
@@ -117,6 +117,7 @@ def form_controls_js() -> str:
       selected_text: '',
       focused: el === document.activeElement,
       rect: rectOf(el),
+      in_viewport: inViewport(el),
     };
     if (isFilter) item.is_filter = true;
     if (isDatepicker) item.is_datepicker = true;
@@ -195,6 +196,11 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
                 for key in ("x", "y", "w", "h")
                 if isinstance(rect.get(key), (int, float))
             }
+        # Only flag the exceptional off-viewport controls (in-viewport is the default). Lets the
+        # planner scroll to a rendered-but-off-screen control instead of the feasibility judge
+        # concluding it is absent.
+        if item.get("in_viewport") is False:
+            norm["in_viewport"] = False
         out.append(norm)
     return out
 

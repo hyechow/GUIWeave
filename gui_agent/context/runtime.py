@@ -547,6 +547,8 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
             bits.append("[日期 MM/DD/YYYY]")
         if item.get("focused") is True:
             bits.append("focused=true")
+        if item.get("in_viewport") is False:
+            bits.append("[需先滚动到视口]")
         options = item.get("options")
         if isinstance(options, list) and options:
             shown = [str(opt) for opt in options[:20]]
@@ -560,7 +562,9 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
         return ""
     return (
         "## 浏览器 DOM 表单控件（适配器感知，不是截图文本）\n"
-        "这些控件由当前平台适配器提供，只包含可见可编辑控件的类型、当前值和候选项。\n"
+        "这些控件涵盖当前页**所有已渲染**的可编辑控件（含需滚动才进入视口的），给出类型、当前值和候选项。"
+        "标 `[需先滚动到视口]` 的控件**确实存在于表单中**，只是不在当前视口——要操作它先滚动到它，"
+        "**不要因为它不在当前截图里就判它「不存在」/「缺失」**。\n"
         "⚠️ `*_input` 文本框的 `current=` 是它**实际内容的权威，优先级高于截图像素**："
         "窄文本框在截图里可能只显示滚动后的尾部（已输入完整目标词时，框窄可能只显示尾部片段）——"
         "**只要某 `*_input` 文本框的 `current=` 等于目标值，就是已正确输入完整内容，判该输入已达成；不要据截图把它判成「输入不完整/缺前缀/被截断/需重输」**。\n"
