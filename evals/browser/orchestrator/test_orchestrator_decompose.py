@@ -1822,6 +1822,26 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "「动作已发出且界面给出响应」),使 url_changed 确定性判 done、不交给 LLM checker 误判渲染 URL;"
                     f"当前终态 action success_condition='{terminal_action.success_condition}'"
                 )
+        elif assertion == "variant_price_reads_current_before_set":
+            # 778/780/782: percentage price change on a configurable-product variant. The new price
+            # depends on the variant's CURRENT price (only known at runtime), so the plan must READ
+            # the current Price before computing/setting it — not leave the fill target empty or
+            # hardcode a number. Regression 778: milestone was "更新 Price 字段为 <空>" and the agent
+            # submitted product[price]=100.00 (expected 64.88 = 75.00×0.865).
+            seq = _flatten_runs(program.statements)
+
+            def _reads_current_price(r: Run) -> bool:
+                text = " ".join([r.name, r.read_spec, *(r.returns or [])]).lower()
+                has_price = "price" in text or "价" in text
+                has_read = any(m in text for m in ("current", "现价", "当前", "read", "读"))
+                return has_price and has_read and bool((r.returns or []) or r.read_spec.strip())
+
+            if not any(_reads_current_price(r) for r in seq):
+                details.append(
+                    "百分比调价未先读取变体当前 Price → 会凭空填/留空目标价（回归 778：milestone「更新 Price 为 空」、"
+                    "实际提交 product[price]=100.00，期望 64.88=75.00×0.865）；计划应含「读当前 Price → 按系数算 → 填」。"
+                    f"当前步骤: {[(r.kind, r.name) for r in seq]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

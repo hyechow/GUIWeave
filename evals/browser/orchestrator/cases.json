@@ -519,5 +519,22 @@
       "shopping_admin_show_report_is_navigate_no_returns"
     ],
     "note": "task 708 = 707 的兄弟,同 navigate-submit dispatch gate 机制。bad case(live run 20260629_155936 score 0):decompose/执行打错 NetworkEvent GET 两处——(1) 进了 Orders 报表 report_sales/sales/filter 而非 Tax 报表 report_sales/tax/filter('tax report' 必须进 Reports › Sales › Tax);(2) 'this year' 日期填成全年 to=2023-12-31,正确应截到 today=2023-03-15(期望 GET reports/report_sales/tax/filter?report_type=created_at_order&from=2023-01-01&to=2023-03-15)。修法纯知识层(_app.md 报表子类型→URL 映射 + 相对日期换算 this-year 截到 today)。此断言只锁离线可验的部分(纯导航/无 returns/含 Show Report 渲染动作);报表子类型与日期正确性靠 live run 验。"
+  },
+  {
+    "label": "变体百分比调价必须先读现价再算，不得凭空填/留空目标价（回归 778 product[price]=100.00）",
+    "goal": "Reduce the price of size 28 Sahara leggings by 13.5%",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.1.13:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 2
+    },
+    "assertions": [
+      "variant_price_reads_current_before_set"
+    ],
+    "note": "回归 live 20260701_234527/778：改配置型商品变体价，机制修对后（skill：搜基础名→定位 Simple 变体→改 Price→Save）仍 score 0，因目标价凭空填 100.00（期望 64.88=现价75×0.865）。百分比调价的目标价依赖变体运行时现价，decompose 不能 upfront 定死/留空——价格步骤须写成「读该变体当前 Price → 按系数算 → 填」。skill 已强化此点，本 case 离线锁住 decompose 产出含读现价步骤。"
   }
 ]
