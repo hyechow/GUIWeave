@@ -97,17 +97,18 @@ version: 1
 
 ## skill：创建购物车价格规则（Cart Price Rule）
 - 触发：create/new (marketing/cart) price rule、价格规则、折扣规则、给某类客户 X% off / $N discount
-- 数据：Marketing > Cart Price Rules > **Add New Rule** 表单。关键字段与本数据集的**固定事实**：
-  - **Customer Groups 是多选列表框（multi-select），选项固定为 `NOT LOGGED IN` / `General` / `Wholesale` / `Retailer`——没有名为「All Customers」的选项**。按语义展开成要选中的具体组：
-    - **「all registered customers / 所有已注册客户」= 选 `General` + `Wholesale` + `Retailer`**（**排除** `NOT LOGGED IN`，它代表未登录访客＝未注册）。
-    - 「all customers / 所有客户」= 4 个组**全选**（含 `NOT LOGGED IN`）。
-    - 多选时**逐个选中每个目标组**；**绝不要去选字面「All Customers」**——该选项不存在，会 `option not found` 反复打转直到判失败。
-  - Rule Name（规则名，用任务给的原文）、Active（启用）。
-  - 折扣在 **Actions** 区：Apply 选 `Percent of Product Price Discount`（X% off）或 `Fixed Amount Discount`（$N off）/`Fixed Amount Discount for Whole Cart`，Discount Amount 填数值（百分比填 15 不填 15%，定额填 40 不带 $）。
-- 步骤：进 Marketing > Cart Price Rules → Add New Rule → 填 Rule Name、Active=Yes → **按语义在 Customer Groups 里逐个选中对应的组** → 设 Apply 折扣类型 + Discount Amount → Save。
+- 数据：Marketing > Cart Price Rules > Add New Rule 表单。**Customer Groups 是多选列表框（`<select multiple>`，name=customer_group_ids），选项固定为 `NOT LOGGED IN` / `General` / `Wholesale` / `Retailer`，没有名为「All Customers」的选项**——「all registered customers/所有已注册客户」= 逐个选中 `General`+`Wholesale`+`Retailer`（排除 `NOT LOGGED IN` 未登录访客），「all customers/所有客户」= 4 组全选，绝不去选字面「All Customers」（不存在，会 `option not found` 打转）。Rule Name 用任务原文；Active 设 Yes；折扣在 Actions 区：Apply 选 `Percent of Product Price Discount`（X% off）或 `Fixed Amount Discount`/`Fixed Amount Discount for Whole Cart`（$N off），Discount Amount 填数值（百分比填 15 不填 15%，定额填 40 不带 $）。
+- 步骤：
+1. 进 Marketing > Cart Price Rules，点 Add New Rule
+2. 填 Rule Name、Active=Yes
+3. 在 Customer Groups 逐个选中对应客户组（组集见数据）
+4. 设 Apply 折扣类型 + Discount Amount
+5. Save
 
 ## skill：按订单号/客户定位订单（订单类改写的前置检索）
 - 触发：order #N、update order #、notify … in their … order、订单 #、给某客户的订单做某操作
-- 数据：Sales > Orders grid 顶部搜索框 / 筛选。**检索格式事实**：
-  - **订单引用「#N」（如 `#304`）搜索时必须去掉「#」，直接搜数字 `304`**——Orders grid 按订单号（increment id）匹配，带「#」→ 0 命中（499 就是搜 `#304` 空手而归）。
-  - 找「某客户**最近的 pending 订单**」：先按客户姓名检索 + 用 Status 筛 `Pending`，再按 **Purchase Date** 取最新一笔；姓名精确 0 命中时退回姓/名关键词。
+- 数据：Sales > Orders grid 顶部搜索框/筛选。**订单引用「#N」（如 `#304`）搜索时必须去掉「#」，直接搜数字 `304`**（Orders grid 按订单号 increment id 匹配，带「#」会 0 命中，499 就是搜 `#304` 空手而归）；找「某客户最近的 pending 订单」先按客户姓名检索 + Status 筛 `Pending`，再按 Purchase Date 取最新一笔，姓名精确 0 命中时退回姓/名关键词。
+- 步骤：
+1. 进 Sales > Orders
+2. 按订单号（去掉 #）或客户姓名 + Status=Pending 检索定位目标订单
+3. 打开该订单执行改写（填 USPS 单号 / 发通知等）
