@@ -552,7 +552,13 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
         current = str(item.get("selected_text") or item.get("value") or "").strip()
         placeholder = str(item.get("placeholder") or "").strip()
         bits = [f"{label}: {kind}"]
-        if current or kind == "native_select":
+        if kind == "native_select":
+            # A native <select> (incl. <select multiple>): its SELECTION is DOM-authoritative and
+            # is what the checker must judge on — say so explicitly so the model doesn't read the
+            # still-visible option list as "not chosen yet". Empty = nothing selected.
+            sel = str(item.get("selected_text") or "").strip()
+            bits.append(f'已选中(DOM权威)="{sel}"' if sel else '已选中(DOM权威)=""(当前无选中项)')
+        elif current:
             bits.append(f'current="{current}"')
         if item.get("is_datepicker") and placeholder:
             bits.append(f'placeholder="{placeholder}" [日期 MM/DD/YYYY]')
