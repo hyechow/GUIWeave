@@ -97,12 +97,12 @@ version: 1
 
 ## skill：创建购物车价格规则（Cart Price Rule）
 - 触发：create/new (marketing/cart) price rule、价格规则、折扣规则、给某类客户 X% off / $N discount
-- 数据：Marketing > Cart Price Rules > Add New Rule 表单。**必填字段有 Rule Name、Websites、Customer Groups、Coupon**，漏任一保存即校验失败。**Websites（`<select multiple>` name=website_ids）必填、默认空，必须选 `Main Website`（本数据集唯一站点）**。**Customer Groups（`<select multiple>` name=customer_group_ids）选项固定为 `NOT LOGGED IN`/`General`/`Wholesale`/`Retailer`，没有「All Customers」选项**——「all registered customers/所有已注册客户」= 逐个选中 `General`+`Wholesale`+`Retailer`（排除 `NOT LOGGED IN` 未登录访客），「all customers」= 4 组全选，绝不去选字面「All Customers」（不存在，会 `option not found` 打转）。Coupon 用默认 `No Coupon`。Rule Name 用任务原文；Active 设 Yes；折扣在 Actions 区：Apply 选 `Percent of Product Price Discount`（X% off）或 `Fixed Amount Discount`/`Fixed Amount Discount for Whole Cart`（$N off），Discount Amount 填数值（百分比填 15 不填 15%，定额填 40 不带 $）。
+- 数据：Marketing > Cart Price Rules > Add New Rule 表单。**必填字段有 Rule Name、Websites、Customer Groups、Coupon**，漏任一保存即校验失败。**Websites（`<select multiple>` name=website_ids）必填、默认空，必须选 `Main Website`（本数据集唯一站点）**。**Customer Groups（`<select multiple>` name=customer_group_ids）选项固定为 `NOT LOGGED IN`/`General`/`Wholesale`/`Retailer`，没有「All Customers」选项**——「all registered customers/所有已注册客户」= 逐个选中 `General`+`Wholesale`+`Retailer`（排除 `NOT LOGGED IN` 未登录访客），「all customers」= 4 组全选，绝不去选字面「All Customers」（不存在，会 `option not found` 打转）。Coupon 用默认 `No Coupon`。Rule Name 用任务原文；Active 设 Yes。**折扣配置在 `Actions` 折叠区（默认折叠、位于表单下方，`simple_action`/`discount_amount` 字段折叠时不在 DOM）——必须先点 `Actions` 区标题展开，字段才出现**：Apply(`simple_action`) 选 `Percent of product price discount`（X% off）或 `Fixed amount discount`/`Fixed amount discount for whole cart`（$N off），Discount Amount(`discount_amount`) 填数值（百分比填 15 不填 15%，定额填 40 不带 $）。
 - 步骤：
 1. 进 Marketing > Cart Price Rules，点 Add New Rule
 2. 填 Rule Name、Active=Yes、Websites 选 Main Website
 3. 在 Customer Groups 逐个选中对应客户组（组集见数据）
-4. 设 Apply 折扣类型 + Discount Amount
+4. 展开 Actions 折叠区，设 Apply 折扣类型 + Discount Amount
 5. Save
 
 ## skill：按订单号/客户定位订单（订单类改写的前置检索）
