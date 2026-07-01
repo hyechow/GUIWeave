@@ -755,6 +755,37 @@ def test_normalize_confirm_read_gates_rewrites_action_before_read():
     assert prog.statements[1].success_condition == "检测结果（连通标记或不可达提示）已显示在界面"
 
 
+def test_compound_form_fill_action_skips_dispatch_gate():
+    # WebArena 701: a returns-bearing ACTION that OPENS + FILLS a form + SAVES ("点击 Add New Rule
+    # 并填写规则信息…") must NOT get the dispatch gate — its first url_changed is opening the form,
+    # which would mark the milestone done on the empty form (创建状态=失败). It gets a real
+    # filled+saved SC so the milestone drives fill→save→confirm.
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
+    prog = Program(statements=[
+        Run(var="m", kind="action", returns=["创建状态"], read_spec="创建状态：出现'规则已保存'→成功",
+            name="点击 Add New Rule 按钮并填写规则信息：Rule Name='X', Websites 选择 Main Website, "
+                 "Customer Groups 选择 General/Wholesale/Retailer, Discount Amount 15"),
+    ])
+    act = normalize_confirm_read_gates(prog).statements[0]
+    assert not is_dispatch_gate_sc(act.success_condition)   # NOT dispatch-gated
+    assert "保存成功" in act.success_condition
+    assert "继续填写" in act.success_condition
+    assert act.returns == ["创建状态"]                        # returns still own the result value
+
+
+def test_single_dispatch_action_still_gets_dispatch_gate():
+    # A single-click terminal dispatch (no form fill) keeps the dispatch gate: its url_changed IS
+    # the conclusive done signal.
+    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
+    prog = Program(statements=[
+        Run(var="q", kind="action", returns=["报表"], read_spec="x", name="点击 Show Report 按钮"),
+    ])
+    act = normalize_confirm_read_gates(prog).statements[0]
+    assert is_dispatch_gate_sc(act.success_condition)        # still dispatch-gated
+
+
 def test_normalize_confirm_read_gates_recurses_into_if_branches():
     # confirm-read inside an if-branch (建单 action → 确认建单 read) is rewritten too;
     # the otherwise branch (no action→read pair) is untouched.

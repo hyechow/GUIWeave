@@ -122,6 +122,36 @@ _NAV_SUBMIT_GATE_TMPL = (
 )
 
 
+# A returns-bearing ACTION that fills form fields before its terminal save is a COMPOUND form op,
+# not a single dispatch. Its FIRST url_changed is opening/navigating the form (e.g. list → …/new/),
+# which would trip the dispatch gate before any field is filled or the save fires — the milestone
+# is marked done on the empty form and the returns read the unsaved page (WebArena 701
+# "点击 Add New Rule 并填写规则信息…" → 创建状态=失败). Give it a real "filled + saved"
+# success_condition instead of the dispatch gate, so the checker+planner drive fill→save→confirm and
+# the milestone actually owns the whole single-page create flow.
+_FORM_FILL_RE = re.compile(r"填写|填入|录入|输入", re.I)
+_FIELD_ASSIGN_RE = re.compile(r"[=＝]|选择|设为|设置为", re.I)
+
+
+def _is_compound_form_fill(name: str) -> bool:
+    text = name or ""
+    return bool(_FORM_FILL_RE.search(text)) or len(_FIELD_ASSIGN_RE.findall(text)) >= 2
+
+
+_FORM_SAVE_SC_TMPL = (
+    "「{name}」已完整填写并保存成功：出现保存成功提示，或已跳转到已保存记录/列表页并可见该新记录；"
+    "若仍停留在表单页、字段尚未填全、或出现校验/红色错误，则未完成——继续填写剩余字段后保存。"
+)
+
+
+def _trigger_success_condition(run: Run) -> str:
+    """Dispatch gate for a single-dispatch trigger; a real filled+saved SC for a compound form-fill/
+    create action (so it is not marked done on the intermediate open-form url_change)."""
+    if run.kind == "action" and _is_compound_form_fill(run.name):
+        return _FORM_SAVE_SC_TMPL.format(name=run.name)
+    return _DISPATCH_GATE_TMPL.format(name=run.name)
+
+
 _CONFIRM_READ_TRIGGER_KINDS = {"action", "filter"}
 _RETURN_READ_SOURCE_KINDS = {"navigation", "filter", "action"}
 _RETURN_READ_TARGET_KINDS = {"read"}
@@ -138,7 +168,7 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
             and s.kind in _CONFIRM_READ_TRIGGER_KINDS
             and s.returns
         ):
-            update = {"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)}
+            update = {"success_condition": _trigger_success_condition(s)}
             if s.kind == "filter":
                 # A filter with returns is a trigger whose returned values own the count/value
                 # judgment. Execute it as an action so the filter checker does not re-judge the
@@ -161,7 +191,7 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
                 "read_spec": nxt.read_spec,
             }
             if s.kind in _CONFIRM_READ_TRIGGER_KINDS:
-                update = {"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)}
+                update = {"success_condition": _trigger_success_condition(s)}
                 update.update({
                     "var": nxt.var or s.var,
                     "returns": list(nxt.returns),
@@ -177,7 +207,7 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
             continue
         if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
             if isinstance(nxt, Run) and nxt.kind in _RETURN_READ_TARGET_KINDS:
-                update = {"success_condition": _DISPATCH_GATE_TMPL.format(name=s.name)}
+                update = {"success_condition": _trigger_success_condition(s)}
                 if s.kind == "filter":
                     update["kind"] = "action"
                 s = s.model_copy(update=update)
