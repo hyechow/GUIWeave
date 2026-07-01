@@ -306,26 +306,47 @@ class PlaywrightDevice:
         # freeze). But a busy renderer can make BOTH stall past their caps for one turn — that must not
         # crash the run: retry (re-follow the active tab, rebuild the CDP session, brief sleep) so the
         # slow navigation is waited out and the shot lands once the page settles.
+        # A slow server-side navigation (e.g. a Catalog price-rule save that reindexes for 40-60s+)
+        # pins the renderer so EVERY CDP/Playwright call stalls — there is no way to observe until it
+        # finishes, the agent simply has to wait it out. Retry with progress so it reads as "waiting",
+        # not "frozen"; the budget (≈6×20s caps) covers a ~2min save; and on total failure degrade to
+        # the last good frame so the run NEVER crashes (the deterministic url-change signal still
+        # advances the milestone once the page settles).
         last_exc: Optional[Exception] = None
-        for _attempt in range(4):
-            self._follow_active_tab()
-            page = self._require_page()
-            png = None
+        for _attempt in range(6):
             try:
-                png = self._run_capped(lambda: page.screenshot(type="png"), _CDP_SEND_TIMEOUT_S)
-            except Exception:
-                try:
-                    png = self._cdp_screenshot()
-                except Exception as exc:  # both paths stalled/failed this turn — recover and retry
-                    last_exc = exc
-                    self._cdp = None
-                    time.sleep(2.0)
-                    continue
+                # ONE outer cap around the whole capture — bounds every Playwright/CDP call inside
+                # (_follow_active_tab pump, page.screenshot, new_cdp_session rebuild, raw CDP send),
+                # so no single unguarded call can stall the run (ends the per-call whack-a-mole).
+                png = self._run_capped(self._capture_frame, 15.0)
+            except Exception as exc:
+                last_exc = exc
+                self._cdp = None  # force a fresh CDP session next attempt
+                if _attempt < 5:
+                    print(f"  [screenshot] 页面暂无响应（慢保存/导航中），等待重试 {_attempt + 1}/6…")
+                time.sleep(2.0)
+                continue
             wh = self._css_viewport_from_png(png)
             if wh is not None:
                 self._last_viewport = wh
+            self._last_png = png
             return png
+        # Never crash the run: fall back to the last good frame if we have one (the deterministic
+        # url-change signal still advances the milestone once the page finally settles).
+        if getattr(self, "_last_png", None) is not None:
+            print("  [screenshot] 多次重试仍无响应，回退上一帧（run 不中断，靠 url 变化推进）")
+            return self._last_png
         raise last_exc if last_exc is not None else RuntimeError("screenshot failed after retries")
+
+    def _capture_frame(self) -> bytes:
+        """One capture attempt: follow the active tab, then Playwright screenshot with a raw-CDP
+        fallback. Called ONLY inside a _run_capped so every call here is bounded by that one cap."""
+        self._follow_active_tab()
+        page = self._require_page()
+        try:
+            return page.screenshot(type="png")
+        except Exception:
+            return self._cdp_screenshot()
 
     def _cdp_send(self, method: str, params: dict) -> dict:
         """Send a raw CDP command on the cached per-page session, rebuilding it once
@@ -359,16 +380,23 @@ class PlaywrightDevice:
 
     def _run_capped(self, fn, timeout_s: float):
         """Run a (Playwright) callable under a SIGALRM wall-clock cap, raising ``_CDPTimeout`` if it
-        exceeds ``timeout_s``. Not just raw CDP: any Playwright sync call can block on a stalled
-        event loop — e.g. ``page.wait_for_timeout`` during a slow-save navigation, the WebArena 702
-        post-Save freeze (faulthandler caught the main thread parked there). SIGALRM does interrupt a
-        blocked Playwright greenlet call (proven: capped CDP sends raise on Chrome stalls). MAIN
-        THREAD ONLY (SIGALRM); off it (or where SIGALRM is absent) it runs uncapped."""
+        exceeds ``timeout_s``. Not just raw CDP: ANY Playwright sync call can block on a stalled event
+        loop during a slow-save navigation (page.screenshot, new_cdp_session, wait_for_timeout,
+        session.send — the WebArena 702 post-Save freeze). SIGALRM does interrupt a blocked Playwright
+        greenlet call (proven: capped CDP sends raise on Chrome stalls). MAIN THREAD ONLY (SIGALRM);
+        off it it runs uncapped.
+
+        Re-entrant: if an OUTER _run_capped already armed the wall-clock, an inner call just runs
+        under that deadline — nesting setitimer would otherwise let the inner's disarm cancel the
+        outer's cap. So ONE cap wrapped around a whole capture bounds every Playwright/CDP call inside
+        it (ending the per-call whack-a-mole)."""
         if (
             threading.current_thread() is not threading.main_thread()
             or not hasattr(signal, "SIGALRM")
+            or getattr(self, "_alarm_armed", False)
         ):
             return fn()
+        self._alarm_armed = True
         prev = signal.signal(signal.SIGALRM, _cdp_alarm)
         signal.setitimer(signal.ITIMER_REAL, timeout_s)
         try:
@@ -376,6 +404,7 @@ class PlaywrightDevice:
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, prev)
+            self._alarm_armed = False
 
     def _cdp_screenshot(self) -> bytes:
         import base64
