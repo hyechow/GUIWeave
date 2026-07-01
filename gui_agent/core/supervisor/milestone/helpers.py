@@ -998,8 +998,16 @@ def run_checker(
                          "据此判断任务是在推进(不断到达新状态)还是在少数状态里打转。\n" + state_trace_text),
             ) if state_trace_text.strip() else None),
             (ContextBlock(
-                id="runtime.last_action_effect", budget="high", source_type="runtime_state",
-                source="last_action_effect", ttl="turn", priority=29,
+                id="runtime.last_action_effect", budget="high", source_type="obs.effect",
+                source="progress_monitor", ttl="turn", priority=29,
+                # Deterministic post-action effect (url/dom delta): authoritative for whether the
+                # last action produced a navigation/DOM change — NOT for whether the RESULT is
+                # correct. freshness=post_action: it describes the just-executed action's effect.
+                authoritative_for=(
+                    "action.effect.url_changed", "action.effect.dom_changed", "action.effect.no_effect",
+                ),
+                freshness="post_action",
+                coverage="complete",
                 content=last_action_effect,
             ) if last_action_effect.strip() else None),
             extra_instruction_block(extra, source="checker_guard"),

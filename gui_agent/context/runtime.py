@@ -464,10 +464,16 @@ def applied_filter_state_block(applied_filters: dict[str, str] | None) -> Contex
     return ContextBlock(
         id="runtime.observation.applied_filter_state",
         budget="high",
-        source_type="runtime_state",
+        source_type="obs.dom",
         source="platform_adapter",
         ttl="turn",
         priority=28,
+        # The Active-filters chips are authoritative for WHICH filters are applied — NOT for which
+        # rows are currently rendered (a display column ≠ the filtered field).
+        authoritative_for=("filter.applied",),
+        not_authoritative_for=("table.rendered_rows",),
+        freshness="turn",
+        coverage="complete",
         content=content,
     )
 
@@ -511,10 +517,17 @@ def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None
     return ContextBlock(
         id="runtime.observation.form_controls",
         budget="high",
-        source_type="runtime_state",
+        source_type="obs.dom",
         source="platform_adapter",
         ttl="turn",
         priority=30,
+        # DOM is authoritative for a control's value/selection, NOT for whether it is visually
+        # occluded / in the viewport (that is obs.vision). rendered_only: reports rendered controls,
+        # not a guarantee of every control the page could render.
+        authoritative_for=("control.value", "control.selected"),
+        not_authoritative_for=("modal.visibility", "layout.visible_structure"),
+        freshness="turn",
+        coverage="rendered_only",
         metadata={"count": len(form_controls or [])},
         content=text,
     )

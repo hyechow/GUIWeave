@@ -36,6 +36,13 @@ class ContextBlock:
     # char ceiling. Producers tag load-bearing blocks `required`; default is droppable `medium`.
     budget: str = "medium"
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    # Signal-source authority (see context/signal_source_architecture.md). Which claim/domains this
+    # block is authoritative for, and (optionally) explicitly NOT — so a source can't be read
+    # outside its authority. freshness/coverage let the model reconcile conflicts without guessing.
+    authoritative_for: tuple[str, ...] = ()
+    not_authoritative_for: tuple[str, ...] = ()
+    freshness: str = ""      # turn | post_action | prior_turn | task_static
+    coverage: str = ""       # complete | rendered_only | partial | unknown
 
     def render(self, *, include_header: bool = True) -> str:
         body = (self.content or "").strip()
@@ -46,6 +53,14 @@ class ContextBlock:
             f"type={self.source_type}",
             f"source={self.source}",
         ]
+        if self.authoritative_for:
+            parts.append(f"authoritative_for={','.join(self.authoritative_for)}")
+        if self.not_authoritative_for:
+            parts.append(f"not_authoritative_for={','.join(self.not_authoritative_for)}")
+        if self.freshness:
+            parts.append(f"freshness={self.freshness}")
+        if self.coverage:
+            parts.append(f"coverage={self.coverage}")
         if self.ttl:
             parts.append(f"ttl={self.ttl}")
         for key in sorted(self.metadata):
