@@ -78,6 +78,11 @@ class HarRecorder:
         # requestId -> partial entry dict (request filled first, response merged in).
         self._reqs: dict[str, dict] = {}
         self._order: list[str] = []
+        # A redirect (POST → 302 → GET) reuses ONE requestId and fires requestWillBeSent again
+        # with a redirectResponse. The pre-redirect request (e.g. the Magento save POST the
+        # NetworkEventEvaluator matches on) must be archived here BEFORE it is overwritten by the
+        # redirect target, or it is lost and every mutation task scores 0 despite a real save.
+        self._redirected: list[dict] = []
         # requestId -> extra-info headers seen before requestWillBeSent arrived
         # (CDP does not guarantee event order between the two).
         self._pending_extra_headers: dict[str, dict] = {}
@@ -142,8 +147,20 @@ class HarRecorder:
             }
             if isinstance(post_text, str) and post_text:
                 entry["request"]["postData"] = {"mimeType": content_type, "text": post_text}
-            # A redirect reuses the same requestId; keep the latest request snapshot
-            # but don't lose ordering.
+            # A redirect (e.g. save POST → 302 → GET) reuses the same requestId and re-fires
+            # requestWillBeSent with a redirectResponse. Archive the PRE-redirect request with that
+            # 302 response instead of overwriting it — otherwise the POST the evaluator matches on is
+            # lost to the redirect target (988 GETs, 0 POST; every mutation task scored 0).
+            redirect = params.get("redirectResponse")
+            prev = self._reqs.get(rid)
+            if redirect and prev is not None:
+                prev["response"].update({
+                    "status": redirect.get("status", 0),
+                    "statusText": redirect.get("statusText", ""),
+                    "headers": _headers_list(redirect.get("headers")),
+                    "redirectURL": redirect.get("url") or req.get("url", ""),
+                })
+                self._redirected.append(prev)
             if rid not in self._reqs:
                 self._order.append(rid)
             self._reqs[rid] = entry
@@ -204,11 +221,12 @@ class HarRecorder:
         """Serialize buffered events to a HAR 1.2 file (no live session needed)."""
         import json
 
+        collected = list(self._redirected) + [
+            self._reqs[rid] for rid in self._order if self._reqs.get(rid)
+        ]
+        collected.sort(key=lambda e: float(e["_t0"]) if isinstance(e.get("_t0"), (int, float)) else 0.0)
         entries = []
-        for rid in self._order:
-            e = self._reqs.get(rid)
-            if not e:
-                continue
+        for e in collected:
             e.pop("_t0", None)
             entries.append(e)
         har = {

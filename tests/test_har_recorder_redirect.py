@@ -1,0 +1,66 @@
+"""Offline regression for the HarRecorder redirect bug that made every mutation task score 0.
+
+Magento admin Save is a form POST → 302 → GET (edit/list). Chrome re-fires requestWillBeSent for
+the redirect under the SAME requestId; the recorder used to overwrite the POST entry with the
+redirect-target GET, so the save POST the NetworkEventEvaluator matches on vanished (real capture:
+988 GET, 0 POST → actual:[] → 0 despite a genuine save). The fix archives the pre-redirect request
+with its 302 response instead of overwriting it."""
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+
+from gui_agent.adapters.browser.har_recorder import HarRecorder
+
+
+def _dump(rec: HarRecorder) -> dict:
+    fd, path = tempfile.mkstemp(suffix=".har")
+    os.close(fd)
+    try:
+        rec.dump(path)
+        return json.load(open(path))
+    finally:
+        os.unlink(path)
+
+
+def test_redirect_preserves_pre_redirect_save_post():
+    rec = HarRecorder(device=object())
+    rid = "REQ-1"
+    save_url = "http://host/admin/sales_rule/promo_quote/save"
+    # 1) the save POST fires
+    rec._on_request({
+        "requestId": rid, "wallTime": 1.0, "timestamp": 100.0,
+        "request": {
+            "method": "POST", "url": save_url,
+            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+            "postData": "name=mother%27s+day+sale&website_ids%5B0%5D=1&customer_group_ids%5B0%5D=1",
+        },
+    })
+    # 2) redirect: SAME requestId re-fires with a redirectResponse (302) + the GET target
+    rec._on_request({
+        "requestId": rid, "wallTime": 1.1, "timestamp": 101.0,
+        "redirectResponse": {"status": 302, "statusText": "Found", "headers": {}, "url": save_url},
+        "request": {"method": "GET", "url": "http://host/admin/sales_rule/promo_quote/edit/id/5/", "headers": {}},
+    })
+    # 3) the GET target completes
+    rec._on_response({"requestId": rid, "response": {"status": 200, "statusText": "OK", "headers": {}, "mimeType": "text/html"}})
+    rec._on_finished({"requestId": rid, "timestamp": 102.0})
+
+    entries = _dump(rec)["log"]["entries"]
+    posts = [e for e in entries if e["request"]["method"] == "POST" and "promo_quote/save" in e["request"]["url"]]
+    assert len(posts) == 1, [(e["request"]["method"], e["request"]["url"]) for e in entries]
+    assert posts[0]["response"]["status"] == 302               # POST carries its 302 redirect response
+    assert posts[0]["request"].get("postData", {}).get("text")  # post body preserved for the evaluator
+    # the redirect-target GET is still present too
+    assert any(e["request"]["method"] == "GET" and "edit/id/5" in e["request"]["url"] for e in entries)
+
+
+def test_plain_get_still_recorded_once():
+    # A non-redirected GET is unaffected.
+    rec = HarRecorder(device=object())
+    rec._on_request({"requestId": "R2", "wallTime": 1.0, "timestamp": 1.0,
+                     "request": {"method": "GET", "url": "http://host/admin/", "headers": {}}})
+    rec._on_finished({"requestId": "R2", "timestamp": 2.0})
+    entries = _dump(rec)["log"]["entries"]
+    assert len(entries) == 1 and entries[0]["request"]["method"] == "GET"
