@@ -35,6 +35,9 @@
 | 212 | 1.0 | ✅ | Get the customer name and email with phone number 555-229-3326 | [report](reports/212.html) |
 | 345 | 1.0 | ✅ | How many reviews did our shop receive in Apr 2023? | [report](reports/345.html) |
 | 375 | 1.0 | ✅ | Go to the Magento Luma theme settings page | [report](reports/375.html) |
+| 701 | 1.0 | ✅ | Draft a new marketing price rule for Mother's day sale that offers $15 discount o… | [report](reports/701.html) |
+| 702 | 1.0 | ✅ | Draft a new marketing price rule for Pride Month that offers 45% off on all produ… | [report](reports/702.html) |
+| 703 | 1.0 | ✅ | Draft a new marketing price rule for Thanks giving sale that offers $40 discount … | [report](reports/703.html) |
 | 707 | 1.0 | ✅ | Show the sales order report for last year (today is March 15, 2023) | [report](reports/707.html) |
 | 708 | 1.0 | ✅ | Show the tax report for this year (today is March 15, 2023) | [report](reports/708.html) |
 | 709 | 1.0 | ✅ | Show the orders report from May 1, 2021 to March 31, 2022 | [report](reports/709.html) |
@@ -61,3 +64,9 @@
   连续失败根因三层：① **SQLite CAST 静默归零**——`CAST('$45.00' AS REAL)` = 0.0（`$` 前缀导致），decomposer 生成的 `CAST(Price AS REAL)` 或 `CAST(REPLACE(Price,'$','') AS REAL)` 都得到错误结果。修复：decomposer.md 通用规则强制用 `_num` 影子列（已剥 `$`/`,`/`%` 并转 REAL），禁止对 UI 文本做 CAST/REPLACE 手动转换；`data_query_repair.py` 的 `_tables_profile` 改为显示影子列（repair LLM 可见 `price_num=45.0`）；skill 约束 ⑤ 明确 `price_num`。② **导航步 `kind=action`**——decomposer 把 URL 直达步生成为 `action`（应为 `navigation`），`_direct_nav_url()` 不触发，走 checker 路径时 PreExisting 误判（hostname 匹配但非详情页）。修复：decomposer.md run_kind 定义明确"凡 name 含 URL 模板一律 navigation"；skill 约束 ③ 明确 `run_kind=navigation` + `name="打开 {q[url]}"`。③ **`limit` 短路非首页行**——`read_grid_complete` 的 `limit=1` 在 viewport 检查前短路返回，grid 若停在第 5 页则采到第 5 页首行（错误订单）。修复：先检查 viewport page_index/has_prev_page，非首页时禁用 limit 让 TraversalController rewind + 全量采集，由 data_query ORDER BY 选正确行。
 - **task 212 "customer name/email by phone number"：已修复，score 1.0。**
   失败根因：电话号存储为 `(555) 229-3326`（括号区号+空格），任务给的 `555-229-3326` 整串搜索 0 命中。修复：skill 明确用去区号后的本地号段（`229-3326`）做 keyword 子串搜索。
+- **task 701/702/703 价格规则族（首批 MUTATE 写入任务）：全部 score 1.0。** 由 `NetworkEventEvaluator` 校验保存 POST（HAR 里的 `promo_*/save`），不再是读取类。这一族踩通了多条**通用**修复：
+  - **Cart vs Catalog 判别**：`701`（$15 off **on checkout**）、`703`（$40 off **on checkout**）是 **Cart** Price Rule（`sales_rule/promo_quote/save`）；`702`（45% off **on all products**）是 **Catalog** Price Rule（`catalog_rule/promo_catalog/save`，另一套表单）。按 intent 关键词判别（"cart/checkout/purchase"→Cart、"on products/catalog"→Catalog），知识里补了两套 skill。
+  - **多选控件**：`<select multiple>`（Customer Groups / Websites）选中态由 DOM `selected_text` 权威（native_select 常开列表框≠未选中）；"all registered customers"=逐个选 `General`+`Wholesale`+`Retailer`（无字面 "All Customers" 选项）。选择改"按 option 反查 select"+离屏控件标**滚动方向**（几何 rect），修长表单里 Websites 滚出视口选不上的打转。
+  - **Feasibility 不得质疑规则类型**：折扣控件在默认收起的 `Actions` 折叠区（未展开不进 DOM 清单），判官曾据"控件不在清单"误判"在错的规则类型→踢去 Cart"，翻转正确进展。规则 7/8：类型 decompose 定死、判官不得改道；控件不在清单归因"折叠区/视口外"而非缺失（回归 case `evals/browser/feasibility` + `evals/browser/checker`）。
+  - **HAR 保存 POST 捕获**：HarRecorder 曾被 302 重定向的目标 GET 覆盖掉 save POST（同 requestId），解锁整个 MUTATE 类的 NetworkEvent 评分。
+  - **慢保存挂死（Catalog 特有）**：`catalog_rule/save` 触发 ~25-60s 同步重索引、期间 render 进程钉死。device 曾用 SIGALRM 给 raw CDP send 加墙钟帽——但信号打断 in-flight Playwright sync 调用会损坏 greenlet↔asyncio 桥、**后续调用永久挂**（playwright-python #1150，官方已知限制）。移除帽后 CDP 自然 block ~27s、重索引结束干净恢复（见 memory `playwright-never-signal-interrupt`；慢导航正确姿势=自然 block 或 `wait_for_url`/`wait_for_load_state` 原生等待，绝不用信号）。
