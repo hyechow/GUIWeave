@@ -4,6 +4,7 @@ import types
 from gui_agent.adapters.browser.webarena import (
     WAResponse,
     _finalize_response,
+    _preflight_failure_response,
     _run_official_eval,
     _official_eval_summary,
     _write_webarena_report_context,
@@ -159,6 +160,21 @@ def test_multi_key_rows_are_left_as_objects():
         intent="List each product name and its count",
     )
     assert resp.retrieved_data == rows
+
+
+def test_preflight_failure_response_is_deterministic_error():
+    resp = _preflight_failure_response(
+        "Tell me the top search terms",
+        {
+            "stop_reason": "orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
+            "result_summary": "orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
+        },
+    )
+
+    assert resp.task_type == "RETRIEVE"
+    assert resp.status == "DATA_VALIDATION_ERROR"
+    assert resp.retrieved_data is None
+    assert "ROUTER_ENTITY_DROPPED" in (resp.error_details or "")
 
 
 def test_report_context_includes_official_eval(tmp_path):

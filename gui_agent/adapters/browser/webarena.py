@@ -173,6 +173,81 @@ def _finalize_response(resp: WAResponse, *, goal_completed: bool = True, intent:
     return resp.model_copy(update=updates)
 
 
+def _guess_webarena_task_type(intent: str) -> str:
+    text = (intent or "").strip().lower()
+    retrieve_markers = (
+        "what", "which", "who", "when", "where", "how many", "how much",
+        "list", "give me", "get", "find", "show", "tell me", "return",
+        "report", "retrieve", "count", "number", "average", "top ",
+    )
+    mutate_markers = (
+        "create", "add", "edit", "update", "change", "delete", "remove",
+        "set ", "submit", "place", "enable", "disable", "assign", "save",
+    )
+    navigate_markers = ("open ", "go to", "navigate", "visit")
+    if any(marker in text for marker in retrieve_markers):
+        return "RETRIEVE"
+    if any(marker in text for marker in mutate_markers):
+        return "MUTATE"
+    if any(marker in text for marker in navigate_markers):
+        return "NAVIGATE"
+    return "RETRIEVE"
+
+
+def _preflight_failure_response(intent: str, result: dict) -> WAResponse:
+    details = str(result.get("result_summary") or result.get("stop_reason") or "orchestration preflight failed")
+    return WAResponse(
+        task_type=_guess_webarena_task_type(intent),
+        status="DATA_VALIDATION_ERROR",
+        retrieved_data=None,
+        error_details=details,
+    )
+
+
+def _write_orchestration_preflight_context(
+    context_path: Path,
+    *,
+    intent: str,
+    action_policy: object,
+    supervisor: object,
+    knowledge_summary: dict | None,
+    program: object,
+    max_turns: int,
+    orchestrator_context_reports: list[dict],
+    orchestrator_metrics: dict,
+    preflight_result: object,
+    result: dict,
+) -> None:
+    from gui_agent.core.schemas import PolicyContext
+
+    context = PolicyContext(
+        goal=intent,
+        supervisor_policy_name=str(getattr(supervisor, "name", "milestone")),
+        action_policy_name=str(getattr(action_policy, "name", "browser_vision")),
+        platform="browser",
+        raw_input=intent,
+    )
+    context.knowledge = knowledge_summary
+    context.run.status = "stopped"
+    context.run.stop_reason = str(result.get("stop_reason") or "")
+    context.run.goal_completed = False
+    context.run.output = str(result.get("result_summary") or "")
+    context.orchestrator = {
+        "program": program.model_dump(mode="json") if hasattr(program, "model_dump") else None,
+        "max_turns": max_turns,
+        "context_reports": orchestrator_context_reports,
+        "timings": dict(orchestrator_metrics.get("timings") or {}),
+        "token_usage": dict(orchestrator_metrics.get("token_usage") or {}),
+        "llm_calls": int(orchestrator_metrics.get("llm_calls") or 0),
+        "preflight": (
+            preflight_result.model_dump(mode="json")
+            if hasattr(preflight_result, "model_dump")
+            else preflight_result
+        ),
+    }
+    context_path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
+
+
 def _rewrite_url_host(url: str, host_override: str) -> str:
     """Replace a start_url's netloc with host_override.
 
@@ -477,6 +552,7 @@ def main() -> int:
     )
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
+    parser.add_argument("--no-orchestrator-preflight", action="store_true", help="do not stop after deterministic router/decompose preflight failures")
     parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
     parser.add_argument("--confirm", action="store_true",
                         help="print the decomposed orchestrator program and WAIT for Enter before executing (inspect the plan first; Ctrl-C cancels). No-op when stdin is not a TTY.")
@@ -618,6 +694,7 @@ def main() -> int:
                 orchestrator_context_reports: list[dict] = []
                 orchestrator_metrics: dict = {}
                 run_max_turns = args.max_turns
+                preflight_blocked = False
                 _redecompose = None  # Feasibility Guard kick-back re-decompose closure (set in orchestrator branch)
                 with bundle.open_session() as platform:
                     _prime(platform)
@@ -657,6 +734,7 @@ def main() -> int:
                             normalize_confirm_read_gates,
                             normalize_precondition_gates,
                             redecompose,
+                            validate_orchestration_preflight,
                         )
                         from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
                         from gui_agent.core.router import resolve_intent
@@ -715,6 +793,47 @@ def main() -> int:
                               f"{(', ' + str(len(program.functions)) + ' functions') if program.functions else ''}")
                         _print_program(program)
 
+                        preflight = validate_orchestration_preflight(intent, program, resolution=resolution)
+                        orchestrator_context_reports.append({
+                            "kind": "orchestrator_preflight",
+                            **preflight.model_dump(mode="json"),
+                        })
+                        if preflight.ok:
+                            print("[webarena] orchestrator preflight: ok")
+                        else:
+                            for issue in preflight.blocking_issues:
+                                evidence = f" ({'; '.join(issue.evidence)})" if issue.evidence else ""
+                                print(f"[webarena] orchestrator preflight: {issue.code}: {issue.message}{evidence}")
+                            if not args.no_orchestrator_preflight:
+                                preflight_blocked = True
+                                summary = "; ".join(
+                                    f"{issue.code}: {issue.message}" for issue in preflight.blocking_issues[:3]
+                                )
+                                result = {
+                                    "task_type": _guess_webarena_task_type(intent),
+                                    "goal_completed": False,
+                                    "stop_reason": f"orchestrator preflight failed: {summary}",
+                                    "result_summary": f"orchestrator preflight failed: {summary}",
+                                    "content_notes": None,
+                                    "preflight_failed": True,
+                                }
+                                _write_orchestration_preflight_context(
+                                    log_dir / "context.json",
+                                    intent=intent,
+                                    action_policy=action_policy,
+                                    supervisor=supervisor,
+                                    knowledge_summary=knowledge_summary,
+                                    program=program,
+                                    max_turns=run_max_turns,
+                                    orchestrator_context_reports=[*orchestrator_context_reports, {
+                                        "kind": "orchestrator_metrics",
+                                        **orchestrator_metrics,
+                                    }],
+                                    orchestrator_metrics=orchestrator_metrics,
+                                    preflight_result=preflight,
+                                    result=result,
+                                )
+
                         # Feasibility Guard kick-back: re-decompose ONLY the remaining plan via the
                         # dedicated redecompose() (NOT a fresh full-goal decompose). The page context
                         # comes from the CURRENT observation at trigger time — the initial frame is just
@@ -742,42 +861,43 @@ def main() -> int:
                                 context_reports=context_reports,
                             )))
 
-                        if not args.no_dynamic_max_turns:
+                        if not preflight_blocked and not args.no_dynamic_max_turns:
                             run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                             if run_max_turns != args.max_turns:
                                 print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
                     else:
                         print("[webarena] orchestrator: disabled; using legacy milestone DAG")
 
-                    if not _confirm_to_run(args.confirm):
-                        return 1
-                    with EscStopSignal(enabled=True) as esc_stop:
-                        if esc_stop.enabled:
-                            print("[webarena] Interrupt: 按 ESC 将在当前 turn 收尾后停止")
-                        else:
-                            print("[webarena] Interrupt: stdin 不是 TTY，ESC 停止未启用")
-                        result = run_agent_loop(
-                            intent,
-                            action_policy,
-                            supervisor,
-                            None,                       # input_context_path
-                            log_dir,
-                            log_dir / "context.json",
-                            max_turns=run_max_turns,
-                            auto_continue=True,
-                            hud=hud,
-                            raw_input=intent,
-                            router=None,
-                            knowledge=knowledge_summary,
-                            program=program,
-                            redecompose=_redecompose,
-                            orchestrator_context_reports=[*orchestrator_context_reports, {
-                                "kind": "orchestrator_metrics",
-                                **orchestrator_metrics,
-                            }] if orchestrator_metrics else orchestrator_context_reports,
-                            stop_requested=esc_stop.requested if esc_stop.enabled else None,
-                            platform=platform,
-                        )
+                    if not preflight_blocked:
+                        if not _confirm_to_run(args.confirm):
+                            return 1
+                        with EscStopSignal(enabled=True) as esc_stop:
+                            if esc_stop.enabled:
+                                print("[webarena] Interrupt: 按 ESC 将在当前 turn 收尾后停止")
+                            else:
+                                print("[webarena] Interrupt: stdin 不是 TTY，ESC 停止未启用")
+                            result = run_agent_loop(
+                                intent,
+                                action_policy,
+                                supervisor,
+                                None,                       # input_context_path
+                                log_dir,
+                                log_dir / "context.json",
+                                max_turns=run_max_turns,
+                                auto_continue=True,
+                                hud=hud,
+                                raw_input=intent,
+                                router=None,
+                                knowledge=knowledge_summary,
+                                program=program,
+                                redecompose=_redecompose,
+                                orchestrator_context_reports=[*orchestrator_context_reports, {
+                                    "kind": "orchestrator_metrics",
+                                    **orchestrator_metrics,
+                                }] if orchestrator_metrics else orchestrator_context_reports,
+                                stop_requested=esc_stop.requested if esc_stop.enabled else None,
+                                platform=platform,
+                            )
 
             # ----- post-run artifacts -----
             rec = recorder_holder.get("rec")
@@ -788,7 +908,10 @@ def main() -> int:
                 print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
 
             try:
-                resp = _synthesize_response(intent, result or {}, log_dir / "context.json")
+                if result.get("preflight_failed"):
+                    resp = _preflight_failure_response(intent, result or {})
+                else:
+                    resp = _synthesize_response(intent, result or {}, log_dir / "context.json")
                 response_payload = _finalize_response(
                     resp, goal_completed=bool(result.get("goal_completed")), intent=intent
                 ).model_dump()
