@@ -146,6 +146,16 @@ SAMPLES: dict[str, Program] = {
         _read(returns=("a",)),
         If(cond=Cond(var="v", field="a", cmp="in", values=[]), then=[Finish(message="ok")]),
     ]),
+    # live 778 shape: `count == '0'` (empty guard) with the WORK under then and the not-found finish
+    # under else — at runtime count='3' → else → finished "未找到" with zero saves.
+    "IF_EMPTY_GUARD_INVERTED": Program(statements=[
+        _read(returns=("count",)),
+        If(
+            cond=Cond(var="v", field="count", cmp="==", value="0"),
+            then=[Run(name="打开变体并更新价格", kind="action")],
+            otherwise=[Finish(message="未找到任何匹配变体")],
+        ),
+    ]),
     "FOREACH_OVER_NOT_IN_SCOPE": Program(statements=[
         ForEach(var="row", over="missing", body=[Finish(message="ok")]),
     ]),
@@ -228,3 +238,47 @@ def test_issuelist_is_list_compatible():
     lst.add("A", "msg-a")
     assert lst == ["msg-a"] and lst[0].code == "A"
     assert IssueList() == []  # empty compares equal to plain list — keeps `validate_program(...) == []`
+
+
+def test_if_empty_guard_inverted_shapes():
+    from gui_agent.core.orchestrator import validate_program
+
+    def codes(prog):
+        return {i.code for i in validate_program(prog)}
+
+    # inverted (the live 778 shape) → flagged
+    bad = SAMPLES["IF_EMPTY_GUARD_INVERTED"]
+    assert "IF_EMPTY_GUARD_INVERTED" in codes(bad)
+
+    # correct shape: ==0 → not-found finish; work in else → NOT flagged
+    good = Program(statements=[
+        _read(returns=("count",)),
+        If(
+            cond=Cond(var="v", field="count", cmp="==", value="0"),
+            then=[Finish(message="未找到任何匹配变体")],
+            otherwise=[Run(name="打开变体并更新价格", kind="action")],
+        ),
+    ])
+    assert "IF_EMPTY_GUARD_INVERTED" not in codes(good)
+
+    # symmetric inversion: `!= '0'` with work under else / finish under then → flagged
+    bad2 = Program(statements=[
+        _read(returns=("count",)),
+        If(
+            cond=Cond(var="v", field="count", cmp="!=", value="0"),
+            then=[Finish(message="未找到任何匹配变体")],
+            otherwise=[Run(name="打开变体并更新价格", kind="action")],
+        ),
+    ])
+    assert "IF_EMPTY_GUARD_INVERTED" in codes(bad2)
+
+    # both branches have work (ambiguous) → not flagged
+    ambiguous = Program(statements=[
+        _read(returns=("count",)),
+        If(
+            cond=Cond(var="v", field="count", cmp="==", value="0"),
+            then=[Run(name="走空态处理流程", kind="action")],
+            otherwise=[Run(name="打开变体并更新价格", kind="action")],
+        ),
+    ])
+    assert "IF_EMPTY_GUARD_INVERTED" not in codes(ambiguous)

@@ -108,6 +108,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "IF_COND_FIELD_NOT_IN_RETURNS",
     "IF_COND_MISSING_VALUE",
     "IF_COND_MISSING_VALUES",
+    "IF_EMPTY_GUARD_INVERTED",
     # foreach shape
     "FOREACH_OVER_NOT_IN_SCOPE",
     "FOREACH_MISSING_LOOP_VAR",
@@ -449,10 +450,28 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                         "contains/not_contains 必须给出要匹配的文字"
                     )
                 if s.cond.cmp in {"in", "not_in"} and not [v for v in s.cond.values if v.strip()]:
-                    issues.add("IF_COND_MISSING_VALUES", 
+                    issues.add("IF_COND_MISSING_VALUES",
                         f"if 条件「{s.cond.var}[{s.cond.field}] {s.cond.cmp}」缺少 cond_values——"
                         "in/not_in 必须给出一个或多个候选值"
                     )
+                # Empty-guard inversion: `count == '0'` means NOTHING matched, so the then-branch
+                # must be the not-found exit and the work goes in else. A live 778 decompose put the
+                # whole price-update pipeline under then and the "未找到" finish under else — at
+                # runtime count='3' → else → finished "not found" with zero saves. Deterministic
+                # shape check: guard==0 + work in then + else is only a finish ⇒ branches swapped
+                # (and the symmetric `!= '0'` form).
+                _zero = s.cond.value.strip() in {"0", "0条", "0 条"}
+                if _zero and s.cond.cmp in {"==", "!="}:
+                    work_branch, exit_branch = (s.then, s.otherwise) if s.cond.cmp == "==" else (s.otherwise, s.then)
+                    _has_work = any(isinstance(x, (Run, ForEach, Call)) for x in work_branch)
+                    _only_finish = bool(exit_branch) and all(isinstance(x, Finish) for x in exit_branch)
+                    if _has_work and _only_finish:
+                        issues.add("IF_EMPTY_GUARD_INVERTED",
+                            f"if 条件「{s.cond.var}[{s.cond.field}] {s.cond.cmp} '0'」是空集守卫，但分支放反了："
+                            f"{'then' if s.cond.cmp == '==' else 'else'} 分支（={s.cond.cmp} '0'＝没找到）装着主要工作，"
+                            f"而另一分支只有 finish——运行时一旦找到记录（count≠0）会直接走 finish 报「未找到」、跳过全部工作。"
+                            "请交换两个分支：命中 0 的那支放「未找到」finish，另一支放实际工作"
+                        )
                 then_scope, else_scope = dict(scope), dict(scope)
                 _walk(s.then, then_scope)
                 _walk(s.otherwise, else_scope)
