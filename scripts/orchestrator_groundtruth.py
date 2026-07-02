@@ -29,8 +29,10 @@ import argparse
 import json
 import re
 import sys
+import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -227,6 +229,8 @@ def main() -> int:
     ap.add_argument("--tasks", nargs="*", type=int, help="explicit task ids (else all site tasks)")
     ap.add_argument("--hard-only", action="store_true", help="intersect with the hard-tasks set")
     ap.add_argument("--k", type=int, default=1, help="decompose samples per task")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="parallel tasks (LLM calls are IO-bound; 4-8 is safe)")
     ap.add_argument("--limit", type=int, default=0, help="cap number of tasks (0 = no cap)")
     args = ap.parse_args()
 
@@ -255,23 +259,40 @@ def main() -> int:
 
     out_dir = PROJECT_ROOT / "logs/orchestrator_groundtruth" / time.strftime("%Y%m%d_%H%M%S")
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"── Orchestrator Ground-Truth Benchmark ── {len(tasks)} tasks × k={args.k} → {out_dir}")
+    print(f"── Orchestrator Ground-Truth Benchmark ── {len(tasks)} tasks × k={args.k}"
+          f" × workers={args.workers} → {out_dir}")
 
     results: list[dict] = []
     fail_counter: Counter[str] = Counter()
-    for i, task in enumerate(tasks, 1):
-        r = run_task(task, knowledge_nav, current_site, args.k)
-        results.append(r)
-        for s in r["samples"]:
-            for f in s["fails"]:
-                fail_counter[re.sub(r"_\d+_", "_N_", f)] += 1
-        mark = "✅" if r["pass_at_1"] else ("🔁" if r["pass_at_k"] else "❌")
-        first = r["samples"][0] if r["samples"] else {}
-        print(f"  [{i:>2}/{len(tasks)}] {mark} {r['task_id']:>4}  {r['intent'][:60]}"
-              f"  {'|' + ';'.join(first.get('fails', [])[:3]) if first.get('fails') else ''}")
-        (out_dir / "report.json").write_text(
-            json.dumps({"tasks": results}, ensure_ascii=False, indent=1), encoding="utf-8"
-        )
+    done = 0
+    lock = threading.Lock()  # guards results/counter/print/report across worker completions
+
+    def _record(r: dict) -> None:
+        nonlocal done
+        with lock:
+            done += 1
+            results.append(r)
+            for s in r["samples"]:
+                for f in s["fails"]:
+                    fail_counter[re.sub(r"_\d+_", "_N_", f)] += 1
+            mark = "✅" if r["pass_at_1"] else ("🔁" if r["pass_at_k"] else "❌")
+            first = r["samples"][0] if r["samples"] else {}
+            print(f"  [{done:>2}/{len(tasks)}] {mark} {r['task_id']:>4}  {r['intent'][:60]}"
+                  f"  {'|' + ';'.join(first.get('fails', [])[:3]) if first.get('fails') else ''}",
+                  flush=True)
+            results.sort(key=lambda t: t["task_id"])
+            (out_dir / "report.json").write_text(
+                json.dumps({"tasks": results}, ensure_ascii=False, indent=1), encoding="utf-8"
+            )
+
+    if args.workers <= 1:
+        for task in tasks:
+            _record(run_task(task, knowledge_nav, current_site, args.k))
+    else:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futs = [pool.submit(run_task, task, knowledge_nav, current_site, args.k) for task in tasks]
+            for fut in as_completed(futs):
+                _record(fut.result())
 
     n = len(results)
     p1 = sum(r["pass_at_1"] for r in results)
