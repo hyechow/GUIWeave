@@ -22,6 +22,10 @@ version: 1
   - `approximate`:从 mention 里挑出**最显著、最罕见、最像专名、且最可能逐字出现在系统存储名称里的【单个】token**;丢掉描述性修饰词。例:"Aurora jacket" → `Aurora`(整串口语短语不一定是规范名的子串,但最显著专名 token 更可能逐字命中)。
     若 mention 指的不是单个具体实体、而是一整类/一组同类实体(品类词、复数泛称,如 "running shoes"、"jackets"),**search_key 用该词的单数/词根形式**,不要照抄原词的复数/泛称形式——许多系统的条目名称使用单数命名,复数泛称多半不会逐字出现在单条记录名里。例:"running shoes" → `shoe`(不是 `shoes`)。
   - `exact`:整串原值。
+- **cardinality**:这个引用指向**一个**实体还是**一组**实体?
+  - `single`:唯一一个(某个订单、某个客户、某个具体产品)。默认。
+  - `set`:一个**规格/条件**,匹配**多个**实体——凡出现"**所有** X"、"**每个** X"、复数、或"某商品在 **size L 及以上** / **所有蓝色** / **size 28**(一个尺寸对应多个颜色变体)"这类**限定一批而非锁定一个**的说法。下游必须**逐个迭代**处理,而不是当成单个操作。**判断关键**:去掉限定词后基底还能对应多条记录 → set。例:"size 28 Sahara leggings"=Sahara 下 size 28 的**所有颜色变体**(多个)→ set;"the oldest complete order"=唯一一个 → single。
+- **selector**:`cardinality="set"` 时,填把这批成员从基底筛出来的**规格**(就是 search_key 为了检索而丢掉的那部分限定词),如 `size 28`、`blue + size XS`、`size L 及以上`、`rating<=3`;`single` 时留空。
 - **reason**:一句话依据。
 
 规则:
@@ -40,4 +44,7 @@ version: 1
 {"entities":[{"mention":"WO-2024-007","type":"order","match_mode":"exact","search_key":"WO-2024-007","reason":"工单号是系统精确标识,原样检索"},{"mention":"张三","type":"customer","match_mode":"exact","search_key":"张三","reason":"指定负责人姓名,作为精确值设置(非检索口径的近似)"}]}
 
 目标:"查找 running shoes 这一类商品"
-{"entities":[{"mention":"running shoes","type":"product","match_mode":"approximate","search_key":"shoe","reason":"指一类产品(复数泛称),系统条目名常按单数命名,search_key 取词根单数形式 'shoe' 而非原词 'shoes',否则逐字子串匹配可能落空"}]}
+{"entities":[{"mention":"running shoes","type":"product","match_mode":"approximate","search_key":"shoe","cardinality":"single","selector":"","reason":"指一类产品(复数泛称),系统条目名常按单数命名,search_key 取词根单数形式 'shoe' 而非原词 'shoes',否则逐字子串匹配可能落空"}]}
+
+目标:"Reduce the price of size 28 Sahara leggings by 13.5%"
+{"entities":[{"mention":"size 28 Sahara leggings","type":"product","match_mode":"approximate","search_key":"Sahara","cardinality":"set","selector":"size 28","reason":"Sahara leggings 是配置型产品,'size 28' 是一个尺寸、对应多个颜色变体 → 一组实体(set),下游须对每个 size 28 变体逐个调价;search_key 取显著 token 'Sahara',selector 保留把这组筛出来的规格 'size 28'"}]}

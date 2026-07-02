@@ -63,6 +63,13 @@ def test_intent_resolver() -> None:
             key_any = exp.get("search_key_any")
             if key_any and e.search_key not in key_any:
                 details.append(f"{exp['mention_contains']}: key {e.search_key!r} not in {key_any}")
+            if "cardinality" in exp and getattr(e, "cardinality", "single") != exp["cardinality"]:
+                details.append(
+                    f"{exp['mention_contains']}: cardinality {getattr(e, 'cardinality', 'single')!r} != {exp['cardinality']!r}"
+                )
+            sel_sub = exp.get("selector_contains")
+            if sel_sub and sel_sub.lower() not in (getattr(e, "selector", "") or "").lower():
+                details.append(f"{exp['mention_contains']}: selector {getattr(e, 'selector', '')!r} 不含 {sel_sub!r}")
 
         ok = not details
         passed += ok

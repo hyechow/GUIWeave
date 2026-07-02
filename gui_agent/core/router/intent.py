@@ -54,6 +54,8 @@ class EntityRef(BaseModel):
     type: str = Field(default="generic", description="实体类型:product|customer|order|category|sku|review_text|generic")
     match_mode: str = Field(default="approximate", description='"exact"=系统级精确标识;"approximate"=口语/部分/转述引用')
     search_key: str = Field(default="", description="approximate:最显著、最可能逐字命中存储名称的【单个】token;exact:整串原值")
+    cardinality: str = Field(default="single", description='"single"=指向唯一一个实体;"set"=一个规格,匹配多个实体(如"size 28 的所有颜色变体"、"所有蓝色 XS 商品"、"评分≤3 的所有评论")→ 下游须逐个迭代')
+    selector: str = Field(default="", description='cardinality="set" 时,把成员从基底筛出来的规格/限定词(被 search_key 丢掉的那部分),如 "size 28"、"blue + size XS"、"rating<=3";single 时留空')
     reason: str = Field(default="", description="一句话依据")
 
 
