@@ -51,6 +51,16 @@ def test_intent_resolver() -> None:
             continue
 
         details: list[str] = []
+        # entities that must NOT be extracted (values-to-set misread as lookups, filter conditions)
+        for banned in c.get("not_expected_mentions", []):
+            hit = next((x for x in r.entities if banned.lower() in x.mention.lower()
+                        and getattr(x, "role", "lookup") != "value"), None)
+            if hit is not None:
+                details.append(f"不该抽取的「{banned}」被抽成 lookup 实体: {hit.mention!r}")
+        if not c["expected_entities"] and r.entities:
+            lookups = [x.mention for x in r.entities if getattr(x, "role", "lookup") != "value"]
+            if lookups:
+                details.append(f"期望空实体表(纯条件/口径),却抽出 lookup: {lookups}")
         for exp in c["expected_entities"]:
             e = _find(r.entities, exp["mention_contains"])
             if e is None:
@@ -60,6 +70,8 @@ def test_intent_resolver() -> None:
                 details.append(f"{exp['mention_contains']}: type {e.type!r} != {exp['type']!r}")
             if "match_mode" in exp and e.match_mode != exp["match_mode"]:
                 details.append(f"{exp['mention_contains']}: mode {e.match_mode!r} != {exp['match_mode']!r}")
+            if "role" in exp and getattr(e, "role", "lookup") != exp["role"]:
+                details.append(f"{exp['mention_contains']}: role {getattr(e, 'role', 'lookup')!r} != {exp['role']!r}")
             key_any = exp.get("search_key_any")
             if key_any and e.search_key not in key_any:
                 details.append(f"{exp['mention_contains']}: key {e.search_key!r} not in {key_any}")

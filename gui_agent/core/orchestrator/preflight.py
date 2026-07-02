@@ -155,6 +155,12 @@ def _check_router_entity_coverage(
 ) -> list[OrchestrationPreflightIssue]:
     issues: list[OrchestrationPreflightIssue] = []
     for entity in resolution.entities:
+        # role=value entities are values to SET (a new rule name, a form scope) — used verbatim,
+        # never searched, never iterated. Enforcing lookup-coverage on them produced false blocks
+        # on live-green tasks: 703 (rule name "Thanks giving sale" normalized to key "Thanksgiving"
+        # → KEY_DROPPED) and 702 ("all registered customers" scope → SET_WITHOUT_FOREACH).
+        if str(getattr(entity, "role", "lookup") or "lookup").strip().lower() == "value":
+            continue
         mention = str(entity.mention or "").strip()
         search_key = str(entity.search_key or "").strip()
         match_mode = str(entity.match_mode or "").strip().lower()

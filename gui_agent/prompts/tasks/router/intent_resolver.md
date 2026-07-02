@@ -14,6 +14,9 @@ version: 1
 
 对每个这样的实体,输出一项:
 - **mention**:目标原文里对它的引用(原样,如 "Aurora jacket")。
+- **role**:这个引用是【要找的】还是【要填的】?
+  - `lookup`:要在系统里**检索/定位的既有实体**(某产品、某订单、某客户)。默认。
+  - `value`:要**设置/创建/填写的值**——新建对象的名称(如「创建名为 X 的规则」里的 X)、表单选项、规则作用域(如 "for all registered customers"、"apply to all products" 是规则表单里的设置项,**不是要遍历的集合**)。value 一律**原样使用**:search_key=原文整串、**绝不改拼写/归一化**、cardinality=single。
 - **type**:实体类型——`product` | `customer` | `order` | `category` | `sku` | `review_text` | `generic`。这决定下游按哪个字段/列筛(产品按 Product 列,不是评论文本列)。
 - **match_mode**:
   - `exact`:**系统级精确标识**——订单号/工单号、SKU、数字 ID、邮箱、`@文件`里的字段值、用户显然照抄的精确串。这类在系统里就是这个值。
@@ -29,12 +32,12 @@ version: 1
 - **reason**:一句话依据。
 
 规则:
-1. 只列**需要在系统里检索/定位的实体**;泛指词("评论"、"客户")、动作("筛选"、"查看")、条件("评分≤3")不要列。
+1. 只列**需要在系统里检索/定位的实体**和**要填入的值**;泛指词("评论"、"客户")、动作("筛选"、"查看")不要列。**筛选条件/排名口径也不要列**——"评分≤3"、"最近的/最旧的"、"completed 状态"、"last 2 completed orders" 这类是**对集合的约束**,不是实体;把它们抽成实体会让下游拿着 "completed" 当关键词去搜(搜不到)。约束交给下游的筛选/排序步骤表达。
 2. 拿不准类型就填 `generic`;拿不准精确/近似,命名实体默认 `approximate`、码/号/ID 默认 `exact`。
 3. search_key 是**单个** token,不是短语(子串匹配里短语常因中间夹字而落空)。
 4. 没有需要检索的实体时,返回空列表。
 
-只输出 JSON:{"entities":[{"mention":...,"type":...,"match_mode":...,"search_key":...,"reason":...}]}
+只输出 JSON:{"entities":[{"mention":...,"role":...,"type":...,"match_mode":...,"search_key":...,"cardinality":...,"selector":...,"reason":...}]}
 
 示例——
 目标:"查找 Aurora jacket 对应的商品记录"
@@ -48,3 +51,13 @@ version: 1
 
 目标:"Reduce the price of size 28 Sahara leggings by 13.5%"
 {"entities":[{"mention":"size 28 Sahara leggings","type":"product","match_mode":"approximate","search_key":"Sahara","cardinality":"set","selector":"size 28","reason":"Sahara leggings 是配置型产品,'size 28' 是一个尺寸、对应多个颜色变体 → 一组实体(set),下游须对每个 size 28 变体逐个调价;search_key 取显著 token 'Sahara',selector 保留把这组筛出来的规格 'size 28'"}]}
+
+目标:"Create a new marketing price rule called \"Thanks giving sale\" for all registered customers that applies to all products with 40% discount"
+{"entities":[{"mention":"Thanks giving sale","role":"value","type":"generic","match_mode":"exact","search_key":"Thanks giving sale","cardinality":"single","selector":"","reason":"要创建的规则名=待填入值,原样使用(即使拼写不规范也不纠正);'for all registered customers'/'applies to all products'是规则表单的作用域设置项,不是要检索或遍历的实体,不抽取"}]}
+
+目标:"Delete all pending reviews with less than 4 stars"
+{"entities":[{"mention":"all pending reviews with less than 4 stars","role":"lookup","type":"review_text","match_mode":"approximate","search_key":"pending","cardinality":"set","selector":"status=pending 且 rating<4","reason":"『所有…的评论』=一个条件匹配的集合(set),下游须逐条删除;selector 保留把成员筛出来的条件"}]}
+
+目标:"Get the total payment amount of the last 2 completed orders"
+{"entities":[]}
+(解释:'last 2 completed orders' 是筛选条件+排名口径(状态=completed、按时间取 2 条),不是要检索定位的具名实体——不抽取,约束交给下游的筛选/排序步骤。)

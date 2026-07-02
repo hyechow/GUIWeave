@@ -3,7 +3,14 @@
     "label": "近似产品名 → product / approximate / 单 token 关键词（回归 20260622_124258 task-113）",
     "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
     "expected_entities": [
-      {"mention_contains": "Olivia", "type": "product", "match_mode": "approximate", "search_key_any": ["Olivia"]}
+      {
+        "mention_contains": "Olivia",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key_any": [
+          "Olivia"
+        ]
+      }
     ],
     "note": "'Olivia zip jacket' 是产品的口语叫法（真名 'Olivia 1/4 Zip Light Jacket'）→ product/approximate，关键词取最显著 token 'Olivia'。下游据此按 Product 列、先精确后模糊检索。"
   },
@@ -11,7 +18,14 @@
     "label": "精确标识（工单号）→ exact，整串检索",
     "goal": "把工单 WO-2024-007 的负责人改成张三",
     "expected_entities": [
-      {"mention_contains": "WO-2024-007", "type": "order", "match_mode": "exact", "search_key_any": ["WO-2024-007"]}
+      {
+        "mention_contains": "WO-2024-007",
+        "type": "order",
+        "match_mode": "exact",
+        "search_key_any": [
+          "WO-2024-007"
+        ]
+      }
     ],
     "note": "工单号是系统精确标识 → exact，原样检索，不加模糊回退（区别于近似产品名）。"
   },
@@ -19,7 +33,15 @@
     "label": "复数品类泛称 → search_key 取单数词根，不照抄原词（回归 20260623_194545 task-116 score=0）",
     "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for tanks products",
     "expected_entities": [
-      {"mention_contains": "tanks", "type": "product", "match_mode": "approximate", "search_key_any": ["tank", "Tank"]}
+      {
+        "mention_contains": "tanks",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key_any": [
+          "tank",
+          "Tank"
+        ]
+      }
     ],
     "note": "'tanks products' 指一类产品（复数泛称），不是单个产品的口语简称。Product 列筛选按产品名子串匹配，电商产品名按单数命名（'Tank Top'），逐字搜 'tanks' 实测 0 条（task 116 因此 score=0）；search_key 须取单数词根 'tank'。"
   },
@@ -27,8 +49,56 @@
     "label": "变体规格 → cardinality=set + selector 保留 size 28（回归 778：多变体被解析成单个产品）",
     "goal": "Reduce the price of size 28 Sahara leggings by 13.5%",
     "expected_entities": [
-      {"mention_contains": "Sahara", "type": "product", "match_mode": "approximate", "search_key_any": ["Sahara"], "cardinality": "set", "selector_contains": "28"}
+      {
+        "mention_contains": "Sahara",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key_any": [
+          "Sahara"
+        ],
+        "cardinality": "set",
+        "selector_contains": "28"
+      }
     ],
     "note": "回归 live 778：'size 28 Sahara leggings' 是配置型产品 Sahara 下 size 28 的【所有颜色变体】（3 个：id 1841/1842/1843，各改成 64.88）。router 原本把它压成单个 product/approximate/key=Sahara，丢了 'size 28' 和多变体性，下游 decompose 因此产出单变体计划、最多改 1/3→score 0。cardinality 必须=set、selector 保留 'size 28'，下游 decompose 才会 foreach-over-matching-variants。"
+  },
+  {
+    "label": "待创建的规则名 → role=value 原样保留(回归 702/703:值被当检索实体+改拼写)",
+    "goal": "Create a new marketing price rule called \"Thanks giving sale\" for all registered customers that applies to all products with 40% discount",
+    "expected_entities": [
+      {
+        "mention_contains": "Thanks giving",
+        "role": "value",
+        "search_key_any": [
+          "Thanks giving sale"
+        ]
+      }
+    ],
+    "not_expected_mentions": [
+      "registered customers",
+      "all products"
+    ],
+    "note": "规则名是待填入值:role=value、search_key 原样整串(绝不归一化成 'Thanksgiving');'for all registered customers'/'applies to all products' 是规则表单作用域设置,不是要检索/遍历的实体,不抽取(702 曾被抽成 set → 误要求 foreach)。"
+  },
+  {
+    "label": "『所有…的评论』→ set + selector(回归 774:一个实体都没抽,漏 set 标记→无 foreach)",
+    "goal": "Delete all pending reviews with less than 4 stars",
+    "expected_entities": [
+      {
+        "mention_contains": "review",
+        "cardinality": "set",
+        "selector_contains": "4"
+      }
+    ],
+    "note": "774:'all pending reviews with <4 stars' 是条件匹配的集合,必须抽出来标 set(selector 保留 pending+rating<4),否则 decompose 塌成单次/批量动作,eval 期望 3 次独立 delete。"
+  },
+  {
+    "label": "筛选条件/排名口径不抽取(回归 193/204:'completed' 被当检索关键词)",
+    "goal": "Get the total payment amount of the last 2 completed orders",
+    "expected_entities": [],
+    "not_expected_mentions": [
+      "completed"
+    ],
+    "note": "'last 2 completed orders' 是状态筛选+按时间取 2 条的口径,不是具名实体;抽成 approximate/key=completed 会让下游拿 'completed' 当关键词搜(preflight 误报 KEY_DROPPED ×4)。应返回空实体表。"
   }
 ]

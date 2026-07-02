@@ -150,3 +150,23 @@ def test_preflight_accepts_set_entity_with_foreach():
     result = validate_orchestration_preflight("Update all size 28 products", program, resolution=resolution)
 
     assert result.ok
+
+
+def test_preflight_skips_value_role_entities():
+    # 702/703 regression: values to SET (a new rule's name, a form scope) are used verbatim, never
+    # searched/iterated — coverage checks on them false-blocked live-green tasks.
+    program = Program(statements=[
+        Run(kind="navigation", name="进入 Cart Price Rules 页面"),
+        Run(kind="action", name='填写 Rule Name 为 "Thanks giving sale"，Customer Groups 全选，保存'),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(mention="Thanks giving sale", role="value", match_mode="approximate",
+                  search_key="Thanksgiving"),           # even with a normalized key → skipped
+        EntityRef(mention="all registered customers", role="value", cardinality="set",
+                  selector="registered"),               # scope setting marked set → skipped
+    ])
+
+    result = validate_orchestration_preflight(
+        'Create a new marketing price rule called "Thanks giving sale"', program, resolution=resolution)
+
+    assert result.ok, [i.code for i in result.blocking_issues]

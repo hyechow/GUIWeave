@@ -51,6 +51,7 @@ class EntityRef(BaseModel):
     """One entity the goal must look up in the target system."""
 
     mention: str = Field(description="目标原文里对该实体的引用,如 'Aurora jacket'")
+    role: str = Field(default="lookup", description='"lookup"=要在系统里检索/定位的既有实体;"value"=要设置/创建/填写的值(新名称、表单选项、规则作用域)——原样使用,不检索、绝不改拼写')
     type: str = Field(default="generic", description="实体类型:product|customer|order|category|sku|review_text|generic")
     match_mode: str = Field(default="approximate", description='"exact"=系统级精确标识;"approximate"=口语/部分/转述引用')
     search_key: str = Field(default="", description="approximate:最显著、最可能逐字命中存储名称的【单个】token;exact:整串原值")
@@ -122,6 +123,11 @@ def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBloc
         return None
 
     def _line(e: EntityRef) -> str:
+        # role=value: a value to be SET/CREATED (a new rule name, a form option, a scope setting) —
+        # used verbatim, never searched. Rendering it as a retrieval line made decompose search for
+        # things that don't exist yet (703 "Thanks giving sale") or foreach over form settings (702).
+        if getattr(e, "role", "lookup") == "value":
+            return f"- 待填入值「{e.mention}」｜类型={e.type}｜原样填写（不检索、不改拼写）"
         match = ("允许模糊匹配，检索关键词：" + e.search_key) if e.match_mode == "approximate" else "精确匹配"
         # cardinality=set is authoritative: the reference denotes a SET (selector picks the members),
         # not one entity — decompose MUST iterate (foreach over the members), not emit a single action.
