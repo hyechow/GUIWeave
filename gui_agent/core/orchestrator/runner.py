@@ -116,7 +116,7 @@ class Interpreter:
     and receives its RunResult via send(); steps() returns the final reply. env / run_log
     accumulate so the answer is built from the whole program's structured state."""
 
-    def __init__(self, program: Program, collect_fn=None, subdecompose_fn=None) -> None:
+    def __init__(self, program: Program, collect_fn=None, subdecompose_fn=None, expand_fn=None) -> None:
         self._program = program
         # Optional collect_fn for browser path: callable(target: str, returns: list[str]) -> list[dict] | None.
         # When ForEach.over is empty, _foreach calls this to retrieve rows directly via DOM/AX tree.
@@ -127,6 +127,12 @@ class Interpreter:
         # it fresh per row, then `yield from`s the sub-program's Runs so the engine drives them as
         # full milestones (plan/replan/checker). None = no sub-goal support (body_goal can't run).
         self._subdecompose_fn = subdecompose_fn
+        # Optional expand_fn — progressive-orchestration checkpoint expansion: callable(body_goal,
+        # loop_var, rows, returns) -> ForeachExpansion | None. Tried ONCE at foreach entry when the
+        # REAL rows are in hand: membership judged against actual data (selection AS data) + one
+        # shared concrete body, then rows execute deterministically. None result (or no expand_fn)
+        # falls back to per-row subdecompose — expansion is strictly an upgrade path.
+        self._expand_fn = expand_fn
         # Depth guard: a per-row sub-program may NOT itself spawn another body_goal sub-goal
         # (one level only). Incremented while driving a sub-program's block.
         self._subgoal_depth = 0
@@ -292,6 +298,31 @@ class Interpreter:
                 result=self.env[into],
             ))
             return None
+        # Checkpoint expansion (progressive orchestration): with the REAL rows now in hand, ONE
+        # refinement call selects the member rows (judgment as data — the decision t=0 literal
+        # guessing got 0-for-all on live 778) and emits one shared concrete body; the loop below
+        # then runs deterministically. Falls back to per-row subdecompose on None.
+        expanded_note = ""
+        if agentic_subgoal and self._expand_fn is not None and self._subgoal_depth == 0:
+            expansion = None
+            try:
+                expansion = self._expand_fn(loop.body_goal, loop.var, rows, list(loop.returns))
+            except Exception:  # noqa: BLE001 — expansion must never be a new failure mode
+                expansion = None
+            if expansion is not None:
+                rows = [rows[i] for i in expansion.member_indices if 0 <= i < len(rows)]
+                expanded_note = expansion.note or f"检查点展开:圈选 {len(rows)} 行"
+                print(f"  [Expand] {expanded_note}")
+                if not rows:
+                    self.env[into] = RunResult(completed=True, rows=[],
+                                               summary=f"{expanded_note}(无成员,集合为空)")
+                    self._materialized_vars.add(into)
+                    self.run_log.append(RunRecord(
+                        name=f"foreach {loop.var} (expanded)", var=into, result=self.env[into]))
+                    return None
+                agentic_subgoal = False           # body is now concrete; no per-row decompose
+                loop = loop.model_copy(update={"body": list(expansion.body), "body_goal": ""})
+                body_read_vars = self._read_vars(loop.body)
         for row in rows:
             self.env[loop.var] = RunResult(completed=True, reads=dict(row))
             if agentic_subgoal:
@@ -328,7 +359,8 @@ class Interpreter:
                     merged.update({k: val for k, val in rv.reads.items()})
             accumulated.append(merged)
         self.env[into] = RunResult(completed=True, rows=accumulated,
-                                   summary=f"采集 {len(accumulated)} 行（foreach {loop.var}）")
+                                   summary=f"采集 {len(accumulated)} 行（foreach {loop.var}）"
+                                           + (f"；{expanded_note}" if expanded_note else ""))
         self._materialized_vars.add(into)
         self.run_log.append(RunRecord(
             name=f"foreach {loop.var} in {loop.over}", var=into, result=self.env[into],
