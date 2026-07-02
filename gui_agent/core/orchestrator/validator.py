@@ -476,7 +476,11 @@ def validate_program(program: Program) -> list[ValidationIssue]:
             elif isinstance(s, Compute):
                 # Compute binds a scalar for runtime {name} substitution, not a RunResult; it is
                 # intentionally excluded from template scope because {var[field]} must come from a
-                # typed result value. Function return coverage is checked below.
+                # typed result value. Function return coverage is checked below. The ONE legal
+                # var[field] use of a compute scalar is a SELF-FIELD cond (field == var) — the
+                # Python-surface compiles a free-form `if <expr>:` to Compute + that cond shape,
+                # and the interpreter resolves it from the scalar scope.
+                scope[s.var] = {s.var}
                 continue
             elif isinstance(s, Finish):
                 _check_refs(s.message, "finish 模板", scope)

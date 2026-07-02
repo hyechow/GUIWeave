@@ -455,7 +455,12 @@ class Interpreter:
 
     def _eval(self, cond: Cond) -> bool:
         rv = self.env.get(cond.var)
-        actual = (rv.reads.get(cond.field, "") if rv else "").strip()
+        if rv is not None:
+            actual = rv.reads.get(cond.field, "").strip()
+        else:
+            # Scalar cond (Python-surface compiles a free-form `if <expr>:` to a Compute scalar +
+            # this cond with field == var): resolve from the compute/param scope.
+            actual = str(self._scalars.get(cond.var, "")).strip()
         target = cond.value.strip()
         if cond.cmp == "==":
             return actual == target

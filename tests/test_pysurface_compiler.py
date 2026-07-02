@@ -73,7 +73,7 @@ else:
     ("while True:\n    pass", "不支持的语句"),
     ("x = [r for r in rows]", "运行时不支持"),
     ("def f():\n    pass", "def"),
-    ("if a['x'] > a['y'] * 2:\n    finish('x')", "不在支持范围"),
+    ("if [r for r in a]:\n    finish('x')", "运行时不支持"),
     ("navigate(some_var)", "字符串字面量"),
 ])
 def test_bad_constructs_rejected_with_feedback(bad, hint):
@@ -93,3 +93,46 @@ def test_safe_eval_membership_and_ternary():
     assert safe_eval("'yes' if '-28-' in sku else 'no'", scope) == "yes"
     assert safe_eval("float(price) > 70", scope) is True
     assert safe_eval("float('$1,299.00')", {}) == 1299.0
+
+
+def test_v2_idioms_assigned_collect_pass_guard_numeric_cond():
+    # The five natural idioms the first python-arm run rejected (93 compile errors → empty programs):
+    # assigned collect, pass, `if C: continue` guard, free-form numeric condition, collect read_spec.
+    prog = compile_python_plan('''
+navigate("进入评论列表", sc="网格已加载")
+rows = collect("所有 pending 评论行", returns=["id", "rating"], read_spec="rating: 星级数字")
+for row in rows:
+    if int(row["rating"]) >= 4:
+        continue
+    action(f"删除评论 {row['id']}", sc="该行已删除")
+finish("已删除所有低于 4 星的 pending 评论")
+''')
+    kinds = [type(s).__name__ for s in prog.statements]
+    assert kinds == ["Run", "ForEach", "Finish"]
+    fe = prog.statements[1]
+    assert "列读取说明" in fe.target                       # read_spec folded into target
+    body_kinds = [type(b).__name__ for b in fe.body]
+    assert body_kinds == ["Compute", "If"]                  # synthetic cond scalar + guard If
+    guard = fe.body[1]
+    assert guard.then == [] and len(guard.otherwise) == 1   # continue → work in otherwise
+    assert guard.cond.field == guard.cond.var               # self-field scalar cond
+    assert not validate_program(prog)
+
+
+def test_v2_guard_executes_correctly():
+    prog = compile_python_plan('''
+for row in collect("变体行", returns=["sku"]):
+    if "-28-" not in row["sku"]:
+        continue
+    action(f"更新 {row['sku']}", sc="已保存")
+finish("done")
+''')
+    seen: list[str] = []
+
+    def execute(run: Run) -> RunResult:
+        seen.append(run.name)
+        return RunResult(completed=True)
+
+    rows = [{"sku": "WP02-28-Blue"}, {"sku": "WP02-29-Red"}, {"sku": "WP02-28-Gray"}]
+    drive(Interpreter(prog, collect_fn=lambda t, c, limit=None: rows), execute)
+    assert seen == ["更新 WP02-28-Blue", "更新 WP02-28-Gray"]   # -29- row skipped by the guard

@@ -208,9 +208,27 @@ def _is_call_to(node: ast.AST, names: set[str]) -> bool:
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in names
 
 
-def _compile_block(body: list[ast.stmt]) -> list[Stmt]:
+_COND_SEQ = [0]  # synthetic cond-scalar counter (module-level: names must be unique per program)
+
+
+def _cond_or_scalar(test: ast.AST, out: list[Stmt]) -> Cond:
+    """Compile an if-test: the direct Cond shapes when possible; otherwise fall back to a synthetic
+    Compute scalar (`'True' if <expr> else 'False'`) + a self-field cond — so ANY safe_eval-able
+    Python condition (numeric compares, membership, boolean logic) is expressible."""
+    try:
+        return _compile_cond(test)
+    except CompileIssue:
+        expr = _compute_expr(test)  # dialect-checked; raises CompileIssue with the fix hint
+        _COND_SEQ[0] += 1
+        var = f"cond_{_COND_SEQ[0]}"
+        out.append(Compute(var=var, expr=f"'True' if ({expr}) else 'False'"))
+        return Cond(var=var, field=var, cmp="==", value="True")
+
+
+def _compile_block(body: list[ast.stmt], collects: Optional[dict] = None) -> list[Stmt]:
+    collects = dict(collects or {})  # name → collect ast.Call, for `rows = collect(...)` then `for r in rows:`
     out: list[Stmt] = []
-    for stmt in body:
+    for idx, stmt in enumerate(body):
         # bare call: run / finish
         if isinstance(stmt, ast.Expr) and _is_call_to(stmt.value, set(_RUN_FUNCS)):
             out.append(_compile_run(stmt.value, var=None))  # type: ignore[arg-type]
@@ -221,21 +239,27 @@ def _compile_block(body: list[ast.stmt]) -> list[Stmt]:
             out.append(Finish(message=_const_str(call.args[0], "finish 文本")))
         elif isinstance(stmt, ast.Expr) and _is_call_to(stmt.value, {"subgoal"}):
             raise CompileIssue("subgoal() 只能作为 for 循环体的唯一语句（逐行子目标）")
-        # assignment: run-with-var or compute
+        # assignment: run-with-var, saved collect, or compute
         elif isinstance(stmt, ast.Assign):
             if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
                 raise CompileIssue("赋值只支持单个变量名作为目标")
             var = stmt.targets[0].id
             if _is_call_to(stmt.value, set(_RUN_FUNCS)):
                 out.append(_compile_run(stmt.value, var=var))  # type: ignore[arg-type]
-            elif _is_call_to(stmt.value, {"collect", "subgoal", "finish"}):
+            elif _is_call_to(stmt.value, {"collect"}):
+                collects[var] = stmt.value  # `rows = collect(...)` → consumed by `for r in rows:`
+            elif _is_call_to(stmt.value, {"subgoal", "finish"}):
                 raise CompileIssue(f"{stmt.value.func.id}() 不能赋值给变量")  # type: ignore[union-attr]
             else:
                 out.append(Compute(var=var, expr=_compute_expr(stmt.value)))
-        # for row in collect(...):
+        # for row in collect(...):  /  for row in <saved collect name>:
         elif isinstance(stmt, ast.For):
+            if isinstance(stmt.iter, ast.Name) and stmt.iter.id in collects:
+                stmt = ast.For(target=stmt.target, iter=collects[stmt.iter.id],
+                               body=stmt.body, orelse=stmt.orelse)
             if not isinstance(stmt.target, ast.Name) or not _is_call_to(stmt.iter, {"collect"}):
-                raise CompileIssue("循环只支持 `for 变量 in collect(\"采集目标\", returns=[...]):` 这一种形式")
+                raise CompileIssue("循环只支持 `for 变量 in collect(\"采集目标\", returns=[...]):`"
+                                   "（或先 `rows = collect(...)` 再 `for 变量 in rows:`）")
             if stmt.orelse:
                 raise CompileIssue("for-else 不支持")
             call = stmt.iter  # type: ignore[assignment]
@@ -250,8 +274,11 @@ def _compile_block(body: list[ast.stmt]) -> list[Stmt]:
                     limit = k.value.value if isinstance(k.value.value, int) else None
                 elif k.arg == "into" and isinstance(k.value, ast.Constant):
                     into = str(k.value.value)
+                elif k.arg == "read_spec":
+                    # column-reading guidance folds into the collect target description
+                    target_desc = f"{target_desc}（列读取说明：{_const_str(k.value, 'read_spec')}）"
                 else:
-                    raise CompileIssue(f"collect() 不支持关键字参数 {k.arg}（可用：returns/limit/into）")
+                    raise CompileIssue(f"collect() 不支持关键字参数 {k.arg}（可用：returns/limit/into/read_spec）")
             # single-subgoal body → agentic per-row sub-goal
             if len(stmt.body) == 1 and isinstance(stmt.body[0], ast.Expr) \
                     and _is_call_to(stmt.body[0].value, {"subgoal"}):
@@ -263,11 +290,23 @@ def _compile_block(body: list[ast.stmt]) -> list[Stmt]:
                                    into=into, limit=limit))
             else:
                 out.append(ForEach(var=stmt.target.id, target=target_desc, returns=returns,
-                                   body=_compile_block(stmt.body), into=into, limit=limit))
+                                   body=_compile_block(stmt.body, collects), into=into, limit=limit))
         elif isinstance(stmt, ast.If):
-            out.append(If(cond=_compile_cond(stmt.test),
-                          then=_compile_block(stmt.body),
-                          otherwise=_compile_block(stmt.orelse)))
+            # Guard idiom `if C: continue` (rest of the loop body only runs when NOT C) →
+            # If(C, then=[], otherwise=REST). The model writes this naturally for row filtering.
+            if len(stmt.body) == 1 and isinstance(stmt.body[0], ast.Continue) and not stmt.orelse:
+                cond = _cond_or_scalar(stmt.test, out)
+                rest = _compile_block(body[idx + 1:], collects)
+                out.append(If(cond=cond, then=[], otherwise=rest))
+                return out
+            cond = _cond_or_scalar(stmt.test, out)
+            out.append(If(cond=cond,
+                          then=_compile_block(stmt.body, collects),
+                          otherwise=_compile_block(stmt.orelse, collects)))
+        elif isinstance(stmt, ast.Pass):
+            continue
+        elif isinstance(stmt, ast.Continue):
+            raise CompileIssue("continue 只支持 `if 条件: continue` 的守卫形式（且在循环体内）")
         elif isinstance(stmt, (ast.Import, ast.ImportFrom)):
             raise CompileIssue("不需要 import——navigate/filter/action/read/data_query/collect/subgoal/finish 都是内置的")
         elif isinstance(stmt, ast.FunctionDef):
