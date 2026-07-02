@@ -250,3 +250,40 @@ def test_subgoal_if_nested_finish_also_stripped():
     interp = Interpreter(prog, collect_fn=_collect, subdecompose_fn=subdecompose)
     reply = drive(interp, execute)
     assert seen.count("处理") == 4 and reply == "done"
+
+
+def test_bodygoal_loopvar_drift_aliased_and_zero_binding_honest():
+    # Live 778 run 000715: var=item but body_goal templates {row[sku]} — collect_cols came out
+    # empty → 0 rows → "无可迭代行" reported COMPLETE. The drifted name is mechanically unambiguous
+    # (exactly one templated name) → alias; a body_goal with NO row template fails honestly.
+    prog = Program(goal="降价", statements=[
+        ForEach(var="item", target="Sahara 行", returns=["sku"],
+                body_goal="判断 {row[sku]} 是否 size 28;若是处理"),
+        Finish(message="done"),
+    ])
+    calls: list[str] = []
+
+    def subdecompose(goal):
+        calls.append(goal)
+        return Program(goal=goal, statements=[
+            Run(kind="action", name="处理", success_condition="ok"),
+        ])
+
+    def execute(run: Run) -> RunResult:
+        return RunResult(completed=True)
+
+    interp = Interpreter(prog, collect_fn=_collect, subdecompose_fn=subdecompose)
+    drive(interp, execute)
+    assert len(calls) == 4                                    # aliased: all 4 rows iterated
+    assert "WP05-28-Gray" in calls[0]                         # {row[sku]} rendered per row
+    assert not interp.finish_incomplete
+
+    # no row template at all → honest incomplete, not a silent complete
+    prog2 = Program(goal="降价", statements=[
+        ForEach(var="item", target="行", returns=["sku"], body_goal="对每一行做处理"),
+        Finish(message="done"),
+    ])
+    interp2 = Interpreter(prog2, collect_fn=_collect, subdecompose_fn=subdecompose)
+    drive(interp2, execute)
+    assert interp2.finish_incomplete
+    assert interp2.env["items"].completed is False

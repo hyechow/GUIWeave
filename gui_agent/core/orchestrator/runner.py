@@ -268,10 +268,36 @@ class Interpreter:
         #     once in the main decompose; executed per row by {var[field]} substitution (no runtime
         #     decompose). This is the normal foreach: `returns` are the grid collect columns.
         agentic_subgoal = bool(loop.body_goal) and not loop.body
+        alias_var: Optional[str] = None
         if agentic_subgoal:
             collect_cols = sorted({
                 f.strip() for v, f in TEMPLATE_RE.findall(loop.body_goal) if v == loop.var
             })
+            if not collect_cols:
+                # Loop-var drift: the body_goal templates ONE consistent other name (var=item,
+                # body_goal writes {row[sku]}) — mechanically unambiguous, so alias instead of
+                # collecting zero columns → zero rows → a false "complete" (live 778 run 000715:
+                # validator flagged it but the decompose retry budget ran out and the plan shipped).
+                _names = {v for v, _ in TEMPLATE_RE.findall(loop.body_goal)}
+                if len(_names) == 1:
+                    alias_var = _names.pop()
+                    collect_cols = sorted({
+                        f.strip() for v, f in TEMPLATE_RE.findall(loop.body_goal) if v == alias_var
+                    })
+                    print(f"  [Foreach] 循环变量别名:body_goal 引用「{alias_var}」≠ 声明的「{loop.var}」,已机械对齐")
+            if not collect_cols:
+                # No row binding at all — the per-row sub-goal would run IDENTICALLY for every row.
+                # Fail honestly instead of collecting nothing and reporting completion.
+                self.finish_incomplete = True
+                into0 = loop.into or f"{loop.var}s"
+                self.env[into0] = RunResult(
+                    completed=False, rows=[],
+                    summary="body_goal 未引用任何行字段模板（{" + loop.var + "[字段]}）——无法按行采集/迭代",
+                )
+                self._materialized_vars.add(into0)
+                self.run_log.append(RunRecord(
+                    name=f"foreach {loop.var} (body_goal 无行绑定)", var=into0, result=self.env[into0]))
+                return None
         else:
             collect_cols = list(loop.returns)
         rows: list[dict[str, str]] = []
@@ -372,6 +398,8 @@ class Interpreter:
                 body_read_vars = self._read_vars(loop.body)
         for row in rows:
             self.env[loop.var] = RunResult(completed=True, reads=dict(row))
+            if alias_var:
+                self.env[alias_var] = self.env[loop.var]   # drifted body_goal name resolves too
             if agentic_subgoal:
                 # Agentic per-row sub-goal: render with the row, decompose fresh, drive its Runs
                 # as full milestones (yield from → engine plans/replans each), merge its produced
