@@ -32,6 +32,22 @@ _STR_METHODS = frozenset({
 })
 
 
+def _coerce_num(x: Any) -> Any:
+    """A page-read value is always a str ("75.00", "$45", "1,299"). For *, -, / that can only be
+    numeric intent — parse the leading number (strip currency/grouping) so arithmetic works even when
+    the decomposer forgot float(). Non-numeric strings pass through unchanged (the op then errors
+    honestly)."""
+    if not isinstance(x, str):
+        return x
+    m = re.search(r"-?\d[\d,]*\.?\d*", x)
+    if not m:
+        return x
+    try:
+        return float(m.group(0).replace(",", ""))
+    except ValueError:
+        return x
+
+
 def _re_sub(pattern: str, repl: str, s: str) -> str:
     return re.sub(pattern, repl, s)
 
@@ -77,6 +93,12 @@ def _ev(node: ast.AST, scope: dict[str, Any]) -> Any:
         raise SafeEvalError(f"未知变量: {node.id}")
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod, ast.Mult, ast.Sub, ast.Div)):
         left, right = _ev(node.left, scope), _ev(node.right, scope)
+        # `+` (concat / add) and `%` (string format) keep string semantics. But *, -, / on a value
+        # read off the page (always a str like "75.00") can only be numeric intent — coerce numeric
+        # strings so `current_price * 0.865` works whether or not the decomposer wrapped float()
+        # (WebArena 778: it wrote `round(current_price * 0.865, 2)` → "can't multiply sequence").
+        if isinstance(node.op, (ast.Mult, ast.Sub, ast.Div)):
+            left, right = _coerce_num(left), _coerce_num(right)
         if isinstance(node.op, ast.Mod):
             return left % right
         if isinstance(node.op, ast.Mult):

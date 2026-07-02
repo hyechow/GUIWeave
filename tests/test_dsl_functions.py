@@ -449,3 +449,40 @@ def test_fill_fails_fast_on_empty_compute_scalar():
     reply = drive(Interpreter(program), execute)
     assert executed == []  # the gap-named milestone never reached the executor
     assert "无法执行" in reply and "new_price" in reply
+
+
+def test_safe_eval_coerces_numeric_strings_for_arithmetic():
+    # Page reads are always strings ("75.00", "$1,299.00"). *, -, / can only be numeric intent, so
+    # they coerce — the compute works whether or not the decomposer wrapped float() (WebArena 778
+    # wrote `round(current_price * 0.865, 2)` on a str → "can't multiply sequence").
+    assert safe_eval("round(current_price * 0.865, 2)", {"current_price": "75.00"}) == 64.88
+    assert safe_eval("round(price * 0.865, 2)", {"price": "$1,299.00"}) == 1123.63
+    assert safe_eval("qty - 1", {"qty": "10"}) == 9.0
+    assert safe_eval("total / 2", {"total": "100"}) == 50.0
+    # `+` and `%` keep string semantics — SKU derivation must NOT become numeric.
+    assert safe_eval("a + b", {"a": "WS08", "b": "-XS"}) == "WS08-XS"
+
+
+def test_compute_scope_exposes_read_fields_bare_and_dotted():
+    # The decomposer references a prior read's field BOTH ways nondeterministically: bare
+    # `current_price` and `variant_row['current_price']`. Both must resolve (WebArena 778: the bare
+    # form silently produced "" and the fill milestone lost its value).
+    for expr in ("round(current_price * 0.865, 2)",
+                 "round(variant_row['current_price'] * 0.865, 2)"):
+        program = Program(goal="降价", statements=[
+            Run(kind="action", var="variant_row", returns=["current_price"],
+                name="点 size28 变体行", success_condition="选中"),
+            Compute(var="new_price", expr=expr),
+            Run(kind="action", name="将 Price 更新为 {new_price} 并保存", success_condition="保存成功"),
+            Finish(message="done"),
+        ])
+        seen: list[str] = []
+
+        def execute(run: Run) -> RunResult:
+            seen.append(run.name)
+            if run.var == "variant_row":
+                return RunResult(completed=True, reads={"current_price": "75.00"})
+            return RunResult(completed=True)
+
+        drive(Interpreter(program), execute)
+        assert seen[-1] == "将 Price 更新为 64.88 并保存", f"expr {expr!r} → {seen[-1]!r}"

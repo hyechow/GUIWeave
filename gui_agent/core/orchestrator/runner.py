@@ -364,12 +364,17 @@ class Interpreter:
         (live 185: base_sku came out "", so the search milestone ran with an empty keyword). Strip the
         braces around bare identifiers so `{sku}.rsplit(...)` and `sku.rsplit(...)` are equivalent."""
         expr = BARE_REF_RE.sub(r"\1", c.expr)
-        # Scope = env RunResults' reads (each result var exposed as its reads dict, so the natural
-        # `product_detail['current_price']` the decomposer writes resolves) + scalars (the compute's
-        # own namespace, wins on collision). Without env reads every numeric derivation from a read
-        # value raised 未知变量 → silently "" → the fill milestone lost its concrete value and the
-        # planner hallucinated one (WebArena 778: typed 200.00 instead of current×0.865).
-        scope: dict[str, Any] = {v: dict(rv.reads) for v, rv in self.env.items()}
+        # Scope from env RunResults' reads, in BOTH shapes the decomposer nondeterministically writes:
+        # the field name bare (`current_price`) AND the var-as-dict (`variant_row['current_price']`).
+        # Without this, a numeric derivation from a read value raised 未知变量 → silently "" → the fill
+        # milestone lost its concrete value and the planner hallucinated one (WebArena 778: bare
+        # current_price → new_price "" → fail-fast; earlier subscript form → typed 200.00). Scalars
+        # (params + prior computes) win on collision.
+        scope: dict[str, Any] = {}
+        for _v, _rv in self.env.items():
+            for _field, _val in _rv.reads.items():
+                scope[_field] = _val           # flat field ref (last read wins)
+            scope[_v] = dict(_rv.reads)         # var-as-dict for `{var}['field']`; var name wins over a same-named field
         scope.update(self._scalars)
         try:
             val = safe_eval(expr, scope)
