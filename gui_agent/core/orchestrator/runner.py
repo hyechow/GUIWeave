@@ -429,7 +429,28 @@ class Interpreter:
             sub_prog = None
         if sub_prog is None or not getattr(sub_prog, "statements", None):
             return None, []
-        return list(sub_prog.statements), self._read_vars(sub_prog.statements)
+        # Strip the sub-program's Finish statements: a per-row sub-goal's finish means "this ROW is
+        # done", not "the TASK is done" — left in place it became the _block reply and terminated
+        # the whole program after member #1 (live 778 run 234512: 1 of 3 variants saved, then the
+        # run exited SUCCESS). The parent skeleton owns the task-level finish.
+        stmts = self._strip_finish(list(sub_prog.statements))
+        if not stmts:
+            return None, []
+        return stmts, self._read_vars(stmts)
+
+    @staticmethod
+    def _strip_finish(stmts: list) -> list:
+        out = []
+        for s in stmts:
+            if isinstance(s, Finish):
+                continue
+            if isinstance(s, If):
+                s = s.model_copy(update={
+                    "then": Interpreter._strip_finish(s.then),
+                    "otherwise": Interpreter._strip_finish(s.otherwise),
+                })
+            out.append(s)
+        return out
 
     # ── pure compute + function calls ─────────────────────────────────────
     def _compute(self, c: Compute) -> None:

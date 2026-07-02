@@ -5,7 +5,7 @@ fallback. All deterministic — expand_fn is mocked; expansion._parse_and_valida
 from __future__ import annotations
 
 from gui_agent.core.orchestrator import (
-    Compute, Finish, ForEach, Interpreter, Program, Run, RunResult, drive,
+    Compute, Cond, Finish, ForEach, If, Interpreter, Program, Run, RunResult, drive,
 )
 from gui_agent.core.orchestrator.expansion import ForeachExpansion, _parse_and_validate
 
@@ -202,3 +202,51 @@ def test_selection_empty_publishes_empty_table():
     reply = drive(interp, execute)
     assert executed == [] and interp.env["rows"].rows == []
     assert not interp.finish_incomplete and reply is not None
+
+
+def test_subgoal_finish_does_not_terminate_the_loop():
+    # Live 778 run 234512: the per-row sub-program ended with its own Finish — it became the _block
+    # reply and terminated the WHOLE program after member #1 (1 of 3 variants saved, exit SUCCESS).
+    # A row-level finish means "this row is done"; the skeleton owns the task-level finish.
+    prog = Program(goal="降价", statements=[
+        ForEach(var="row", target="变体行", returns=["sku"],
+                body_goal="对 {row[sku]} 读价改价保存"),
+        Finish(message="全部完成"),
+    ])
+    def subdecompose(goal):
+        return Program(goal=goal, statements=[
+            Run(kind="action", name=f"处理 {goal[-18:]}", success_condition="ok"),
+            Finish(message="该行已完成"),                      # ← must NOT end the parent loop
+        ])
+    seen: list[str] = []
+    def execute(run: Run) -> RunResult:
+        seen.append(run.name)
+        return RunResult(completed=True)
+    interp = Interpreter(prog, collect_fn=_collect, subdecompose_fn=subdecompose)
+    reply = drive(interp, execute)
+    assert len(seen) == 4, seen                                # all 4 rows processed
+    assert reply == "全部完成"                                 # skeleton finish, not the row's
+    assert len(interp.env["rows"].rows) == 4
+
+
+def test_subgoal_if_nested_finish_also_stripped():
+    prog = Program(goal="g", statements=[
+        ForEach(var="row", target="行", returns=["sku"], body_goal="对 {row[sku]} 条件处理"),
+        Finish(message="done"),
+    ])
+    def subdecompose(goal):
+        return Program(goal=goal, statements=[
+            Run(kind="read", var="v", name="读状态", returns=["s"], read_spec="读", success_condition="ok"),
+            If(cond=Cond(var="v", field="s", cmp="==", value="skip"),
+               then=[Finish(message="跳过")],                   # nested finish
+               otherwise=[Run(kind="action", name="处理", success_condition="ok")]),
+        ])
+    seen: list[str] = []
+    def execute(run: Run) -> RunResult:
+        seen.append(run.name)
+        if run.var == "v":
+            return RunResult(completed=True, reads={"s": "go"})
+        return RunResult(completed=True)
+    interp = Interpreter(prog, collect_fn=_collect, subdecompose_fn=subdecompose)
+    reply = drive(interp, execute)
+    assert seen.count("处理") == 4 and reply == "done"
