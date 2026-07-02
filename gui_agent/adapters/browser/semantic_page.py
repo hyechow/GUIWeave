@@ -235,6 +235,23 @@ def read_grid_from_tree(
         if best_col >= 0:
             field_to_col[field] = best_col
 
+    # URL-ish fields match by CAPABILITY, not header text: the decomposer names the row-link column
+    # unpredictably (detail_url / action_url / edit_url / url / link ...) while the actual header is
+    # e.g. "Action" — a name-only match silently drops the column and the foreach dies on the
+    # column-completeness net (live 778 run 232803: declared detail_url, header Action). A link
+    # column is directly observable: its cells carry hrefs (cell_links). Map any unmatched *_url
+    # field to the column with the highest link coverage (tie → rightmost; action columns trail).
+    _urlish = _re.compile(r"(_?url|link|href)$", _re.IGNORECASE)
+    _unmatched_url_fields = [f for f in returns if f not in field_to_col and _urlish.search(f)]
+    if _unmatched_url_fields:
+        data_links = [cl for i, cl in enumerate(rows_cell_links) if i != header_row_idx]
+        n_cols = max((len(cl) for cl in data_links), default=0)
+        coverage = [sum(1 for cl in data_links if col < len(cl) and cl[col]) for col in range(n_cols)]
+        if coverage and max(coverage) > 0:
+            best = max(range(n_cols), key=lambda c: (coverage[c], c))
+            for f in _unmatched_url_fields:
+                field_to_col[f] = best
+
     if not field_to_col:
         return None
 
