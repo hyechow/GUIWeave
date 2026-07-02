@@ -63,20 +63,23 @@ EXPAND_GOAL = "对目标集合(size 28 的 Sahara leggings 变体)的每个成�
 _SYSTEM = """你在渐进式编排的【foreach 检查点】:骨架计划已声明「对目标集合的每个成员执行子目标」,\
 现在集合的候选行已从页面真实采集到(见下方 JSON)。你的任务两件:
 
-1. **圈选成员**(member_row_ids):看着真实行数据,判断哪些行属于目标集合,给出它们的 id 列表。\
+1. **圈选成员**(member_row_indices 给行号,或 member_row_ids 给 id):看着真实行数据,判断哪些行属于目标集合,给出它们的 id 列表。\
 不要写谓词、不要归纳规律——直接根据每行的实际字段值逐行判断。
 2. **产出成员 body**(body):对每个选中的成员要执行的具体步骤列表(所有成员共用,\
 用 {row[字段]} 引用当前成员的行字段)。可用步骤:
    - {"op":"run","kind":"navigation|action","name":"...","success_condition":"...","var":"...","returns":[...],"read_spec":"..."}
    - {"op":"compute","var":"...","expr":"<受限表达式:round/float、算术、{row[字段]} 或已读变量>"}
+   - {"op":"if","cond":{"var":"某读取步的var","field":"字段","cmp":"empty|exists|==|!=","value":"..."},"then":[...],"otherwise":[...]}(分支;空值回退用 cmp="empty")
    规则:运行时才知道的值必须先读(returns)再用;算出的值必须以 {变量名} 模板写进后续 action 的 name;\
 success_condition 写可见终态。
+若子目标含「读某属性,为空则回退到父/关联实体」:body 必须写成 读取步(returns 该属性)→ if 该字段 empty → then 分支里 compute 派生关联键(如 name.rsplit('-', 2)[0] 去掉“-尺寸-颜色”后缀)→ 用 {派生变量} 搜索并打开关联实体 → 再读该属性;otherwise 分支留空(已读到)。
 
 只输出 JSON。"""
 
 
 class ExpandDraft(BaseModel):
     member_row_ids: list[str] = Field(default_factory=list)
+    member_row_indices: list[int] = Field(default_factory=list)
     body: list[dict] = Field(default_factory=list)
     reason: str = ""
 
@@ -128,24 +131,98 @@ def grade(draft: ExpandDraft) -> list[str]:
     return fails
 
 
+# ── case 185: per-row JOIN body (read → if-empty → derive parent → search → read parent) ─────
+# Real rows from run 20260626_163834 (task 185 family "material of products with 3 units left"):
+# two qty=3 children, no material column collected — the body must do the full parent join.
+ROWS_185 = [
+    {"Action_url": "http://192.168.31.57:7780/admin/catalog/product/edit/id/1478/",
+     "name": "Minerva LumaTech\u2122 V-Tee-XS-Blue", "size": "XS"},
+    {"Action_url": "http://192.168.31.57:7780/admin/catalog/product/edit/id/1182/",
+     "name": "Eos V-Neck Hoodie-S-Blue", "size": "S"},
+]
+GT_MEMBERS_185 = {0, 1}
+GOAL_185 = "Give me the material of the products that have 3 units left"
+EXPAND_GOAL_185 = ("对每个成员:打开 {row[Action_url]} 进入产品编辑页,读取 Material 属性;"
+                   "若 Material 为空(子变体常不设),从产品名称去掉「-尺寸-颜色」后缀派生父产品名,"
+                   "按父产品名搜索并打开父产品(Configurable Product),读取父的 Material;返回 material")
+
+
+def _sel_indices(draft: "ExpandDraft") -> set[int]:
+    if draft.member_row_indices:
+        return {int(i) for i in draft.member_row_indices}
+    return {int(x) for x in draft.member_row_ids if str(x).isdigit()}
+
+
+def grade_185(draft: ExpandDraft) -> list[str]:
+    fails: list[str] = []
+    if _sel_indices(draft) != GT_MEMBERS_185:
+        fails.append(f"selection {sorted(_sel_indices(draft))} != {sorted(GT_MEMBERS_185)}")
+    from gui_agent.core.orchestrator.expansion import _parse_and_validate
+    stmts, issues = _parse_and_validate(draft.body, "row", ["Action_url", "name", "size"], GOAL_185)
+    if stmts is None:
+        return fails + issues
+    fails += issues
+    body = stmts
+
+    def _all_runs(stmts):
+        out = []
+        for s2 in stmts:
+            if isinstance(s2, Run): out.append(s2)
+            elif hasattr(s2, "then"): out += _all_runs(s2.then) + _all_runs(s2.otherwise)
+        return out
+
+    def _all_computes(stmts):
+        out = []
+        for s2 in stmts:
+            if isinstance(s2, Compute): out.append(s2)
+            elif hasattr(s2, "then"): out += _all_computes(s2.then) + _all_computes(s2.otherwise)
+        return out
+
+    runs, computes = _all_runs(body), _all_computes(body)
+    if not any("{row[Action_url]}" in (r.name or "") for r in runs):
+        fails.append("没有用 {row[Action_url]} 打开子产品(应 URL 直达)")
+    if not any(r.returns and any("material" in f.lower() for f in r.returns) for r in runs):
+        fails.append("没有读取 material 的步骤")
+    has_if = any(not isinstance(s2, (Run, Compute)) and hasattr(s2, "then") for s2 in body)
+    if not has_if:
+        fails.append("没有 if 空值回退分支(子变体 Material 常为空,须回退父产品)")
+    derives = any(re.search(r"rsplit|removesuffix|re_sub|split", c.expr) for c in computes)
+    if not derives:
+        fails.append("没有派生父产品名的 compute(去 -尺寸-颜色 后缀)")
+    cvars = [c.var for c in computes if c.var]
+    if cvars and not any(("{" + v + "}") in (r.name or "") for v in cvars for r in runs):
+        fails.append("派生出的父名没有以 {var} 接进搜索/导航步骤")
+    return fails
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--k", type=int, default=5)
+    ap.add_argument("--case", choices=["778", "185"], default="778")
     args = ap.parse_args()
     llm = _llm()
-    human = (f"总目标:{GOAL}\n\n子目标(对每个成员):{EXPAND_GOAL}\n\n"
-             f"已采集的候选行(真实页面数据):\n{json.dumps(REAL_ROWS, ensure_ascii=False, indent=1)}")
+    if args.case == "185":
+        goal, expand_goal, rows, grader = GOAL_185, EXPAND_GOAL_185, ROWS_185, grade_185
+        gt_members = GT_MEMBERS_185
+    else:
+        goal, expand_goal, rows, grader = GOAL, EXPAND_GOAL, REAL_ROWS, grade
+        gt_members = GT_MEMBERS
+    human = (f"总目标:{goal}\n\n子目标(对每个成员):{expand_goal}\n\n循环变量名:row\n"
+             f"已采集的候选行(真实页面数据,行号即列表下标):\n{json.dumps(rows, ensure_ascii=False, indent=1)}")
 
     ok = 0
     sel_ok = 0
     for i in range(args.k):
         draft = invoke_structured(llm, [SystemMessage(content=_SYSTEM), HumanMessage(content=human)], ExpandDraft)
-        fails = grade(draft)
+        fails = grader(draft)
         if fails:  # one feedback retry, mirroring the real decompose pipeline
             retry_h = human + "\n\n上一版的问题(修正后重出完整 JSON):\n" + "\n".join(f"- {f}" for f in fails)
             draft = invoke_structured(llm, [SystemMessage(content=_SYSTEM), HumanMessage(content=retry_h)], ExpandDraft)
-            fails = grade(draft)
-        sel_hit = set(draft.member_row_ids) == GT_MEMBERS
+            fails = grader(draft)
+        if args.case == "185":
+            sel_hit = _sel_indices(draft) == gt_members
+        else:
+            sel_hit = set(draft.member_row_ids) == gt_members
         sel_ok += sel_hit
         ok += not fails
         print(f"[{i+1}/{args.k}] {'✅' if not fails else '❌'} 圈选={'✓' if sel_hit else sorted(set(draft.member_row_ids))}"

@@ -57,16 +57,25 @@ def _parse_and_validate(body_dicts: list[dict], loop_var: str, row_fields: list[
     """Parse the drafted body dicts through the Stmt union and run the standard validator against
     a ForEach wrapper (so {var[field]} row templates resolve). Returns (stmts, issues) — stmts is
     None when the draft isn't even structurally parseable."""
-    for st in body_dicts:  # json_object mode emits null for omitted optional strings
-        if isinstance(st, dict):
-            for k in ("read_spec", "success_condition", "name", "sql", "expr"):
-                if st.get(k) is None:
-                    st[k] = ""
+    def _normalize(steps: list) -> None:
+        # Recursive: if-branch bodies carry the same draft quirks as top level (found via the 185
+        # join case — nested steps kept read_spec=None/False/dict and failed pydantic).
+        for st in steps:
+            if not isinstance(st, dict):
+                continue
+            for k in ("read_spec", "success_condition", "sql", "expr", "name"):
+                if k in st and not isinstance(st[k], str):
+                    st[k] = "" if not isinstance(st[k], (int, float)) else str(st[k])
             # kind-as-op alias: the model naturally writes {"op":"navigation"/"read"/...} even
             # though the union tag is op="run" + kind — normalize instead of burning a retry.
             if st.get("op") in ("navigation", "filter", "action", "read", "data_query"):
                 st["kind"] = st["op"]
                 st["op"] = "run"
+            for branch in ("then", "otherwise", "body"):
+                if isinstance(st.get(branch), list):
+                    _normalize(st[branch])
+
+    _normalize(body_dicts)
     try:
         program = Program(goal=goal, statements=[
             ForEach(var=loop_var, target="检查点已圈选的成员行", returns=list(row_fields),
@@ -130,6 +139,13 @@ def expand_foreach(
         idx = [i for i in draft.member_row_indices if 0 <= i < len(rows)]
         if len(idx) != len(set(idx)):
             idx = list(dict.fromkeys(idx))
+        if not idx and draft.member_row_indices:
+            # Convention drift: some drafts answer with row 'id'-field VALUES instead of positions
+            # (observed on 185: [1478, 1182] — the correct members, wrong coordinate system). Map
+            # id-ish values back to positions instead of failing a correct selection.
+            wanted = {str(i) for i in draft.member_row_indices}
+            idx = [pos for pos, r in enumerate(rows)
+                   if any(str(r.get(k, "")) in wanted for k in ("id", "ID", "Id"))]
         stmts, issues = _parse_and_validate(draft.body, loop_var, row_fields, goal or body_goal)
         if stmts is not None and not issues:
             note = f"检查点展开:圈选 {len(idx)}/{len(rows)} 行;body {len(stmts)} 步"
