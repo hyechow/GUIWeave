@@ -123,11 +123,15 @@ def test_preflight_accepts_mutation_without_finish_or_returns():
 
 
 def test_preflight_accepts_set_entity_with_foreach():
+    # Contract update (live 778 run 235723): membership riding only in the collect TARGET text is
+    # NOT filtering — the collector greps grid rows and ignores the description. The foreach must
+    # carry a real mechanism; here: member_desc (selection checkpoint).
     program = Program(
         statements=[
             ForEach(
                 var="row",
                 target="products matching size 28",
+                member_desc="size 28 的产品",
                 returns=["sku"],
                 body=[Run(kind="action", name="Update product {row[sku]}")],
             ),
@@ -170,3 +174,37 @@ def test_preflight_skips_value_role_entities():
         'Create a new marketing price rule called "Thanks giving sale"', program, resolution=resolution)
 
     assert result.ok, [i.code for i in result.blocking_issues]
+
+
+def test_preflight_blocks_set_with_foreach_but_no_membership():
+    # Live 778 run 235723: foreach over ALL 7 Sahara rows (into named "size28_leggings" — naming is
+    # not filtering) straight into a price-cut call — would mutate -29- variants and the parent.
+    program = Program(statements=[
+        Run(kind="filter", name="搜索 Sahara"),
+        ForEach(var="legging", target="Sahara 行", returns=["id", "detail_url", "sku"],
+                body=[Run(kind="action", name="打开 {legging[detail_url]} 并降价保存")]),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(mention="size 28 Sahara leggings", match_mode="approximate",
+                  search_key="Sahara", cardinality="set", selector="size 28"),
+    ])
+    result = validate_orchestration_preflight("Reduce the price of size 28 Sahara leggings", program,
+                                              resolution=resolution)
+    assert any(i.code == "ROUTER_SET_SELECTOR_NOT_APPLIED" for i in result.blocking_issues)
+
+
+def test_preflight_accepts_membership_via_member_desc_or_bodygoal():
+    resolution = IntentResolution(entities=[
+        EntityRef(mention="size 28 Sahara leggings", match_mode="approximate",
+                  search_key="Sahara", cardinality="set", selector="size 28"),
+    ])
+    with_md = Program(statements=[
+        ForEach(var="row", target="Sahara 行", returns=["sku"], member_desc="size 28 的变体",
+                body=[Run(kind="action", name="处理 {row[sku]}")]),
+    ])
+    assert validate_orchestration_preflight("Reduce ...", with_md, resolution=resolution).ok
+    with_bg = Program(statements=[
+        ForEach(var="row", target="Sahara 行", returns=["sku"],
+                body_goal="判断 {row[sku]} 是否 size 28;若是降价保存"),
+    ])
+    assert validate_orchestration_preflight("Reduce ...", with_bg, resolution=resolution).ok

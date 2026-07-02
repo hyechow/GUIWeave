@@ -142,7 +142,7 @@ def validate_orchestration_preflight(
         )
 
     if resolution is not None:
-        issues.extend(_check_router_entity_coverage(resolution, program_text, foreach_stmts))
+        issues.extend(_check_router_entity_coverage(resolution, program_text, foreach_stmts, program))
 
     ok = not any(issue.severity == "error" for issue in issues)
     return OrchestrationPreflightResult(ok=ok, issues=issues)
@@ -152,7 +152,16 @@ def _check_router_entity_coverage(
     resolution: IntentResolution,
     program_text: str,
     foreach_stmts: list[ForEach],
+    program: Program | None = None,
 ) -> list[OrchestrationPreflightIssue]:
+    def _program_has_if_or_fn_if() -> bool:
+        # An If in a called function body also counts as a membership mechanism.
+        for fn in (getattr(program, "functions", None) or []):
+            for st in fn.body:
+                if isinstance(st, If):
+                    return True
+        return False
+
     issues: list[OrchestrationPreflightIssue] = []
     for entity in resolution.entities:
         # role=value entities are values to SET (a new rule name, a form scope) — used verbatim,
@@ -210,6 +219,50 @@ def _check_router_entity_coverage(
                     evidence=[f"mention={mention}", f"selector={getattr(entity, 'selector', '') or ''}"],
                 )
             )
+        elif cardinality == "set" and str(getattr(entity, "selector", "") or "").strip():
+            # A foreach exists — but does anything actually APPLY the selector? Naming the into
+            # table "size28_leggings" is not filtering (live 778 run 235723: foreach over ALL 7
+            # Sahara rows straight into a price-cut call — would have mutated the -29- variants and
+            # the configurable parent). A membership mechanism is one of: member_desc (selection
+            # checkpoint), a body_goal (per-row judgment), or an If inside the body/functions.
+            def _has_membership(fe: ForEach) -> bool:
+                if (getattr(fe, "member_desc", "") or "").strip() or (fe.body_goal or "").strip():
+                    return True
+                def _walk(stmts) -> bool:
+                    for st in stmts:
+                        if isinstance(st, If):
+                            return True
+                        if isinstance(st, ForEach) and _walk(st.body):
+                            return True
+                    return False
+                return _walk(fe.body)
+
+            def _selector_in_filter_step() -> bool:
+                # A UI filter/search step that carries the selector's tokens scopes the collection
+                # BEFORE the loop (e.g. "Filter products by size 28") — equally valid membership.
+                sel_tokens = [t for t in _norm(getattr(entity, "selector", "")).split() if len(t) >= 2]
+                if not sel_tokens or program is None:
+                    return False
+                for st in _iter_runs(program.statements):
+                    if st.kind in ("filter", "navigation"):
+                        text = _norm(f"{st.name} {st.success_condition}")
+                        if all(t in text for t in sel_tokens):
+                            return True
+                return False
+
+            if (not any(_has_membership(fe) for fe in foreach_stmts)
+                    and not _program_has_if_or_fn_if() and not _selector_in_filter_step()):
+                issues.append(
+                    OrchestrationPreflightIssue(
+                        code="ROUTER_SET_SELECTOR_NOT_APPLIED",
+                        message=(
+                            "Router marked a set entity with a selector, but no foreach carries a "
+                            "membership mechanism (member_desc / body_goal / an If) — the loop would "
+                            "act on EVERY collected row, mutating non-members."
+                        ),
+                        evidence=[f"mention={mention}", f"selector={getattr(entity, 'selector', '')}"],
+                    )
+                )
     return issues
 
 
