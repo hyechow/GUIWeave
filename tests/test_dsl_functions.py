@@ -394,3 +394,58 @@ def test_safe_eval_rejects_dangerous():
 def test_safe_eval_unknown_name_raises():
     with pytest.raises(SafeEvalError):
         safe_eval("nope + 'x'", {})
+
+
+def test_safe_eval_numeric_derivation():
+    # WebArena 778: percentage price change — both live decomposes naturally wrote
+    # round(float(current_price) * 0.865, 2). float/round/abs and * - / must evaluate,
+    # else the whole numeric-compute class silently degrades to "".
+    assert safe_eval("round(float('150.00') * 0.865, 2)", {}) == 129.75
+    assert safe_eval("round(float(p) * (1 - 0.135), 2)", {"p": "75.00"}) == 64.88
+    assert safe_eval("abs(10 - 12.5)", {}) == 2.5
+    assert safe_eval("round(-13.5 / 100, 3)", {}) == -0.135
+
+
+def test_compute_reads_env_run_result_fields():
+    # 778 runtime root cause: the compute expr references a prior read's field the natural way —
+    # product_detail['current_price'] — but the eval scope only held scalars, so it raised
+    # 未知变量 → silently "" → the fill milestone lost its concrete value and the planner
+    # hallucinated one (typed 200.00 instead of current×0.865). Env reads must be in scope.
+    program = Program(goal="降价13.5%", statements=[
+        Run(kind="navigation", var="product_detail", returns=["current_price"],
+            read_spec="读 Price", name="打开变体详情页", success_condition="进入编辑页"),
+        Compute(var="new_price", expr="str(round(float(product_detail['current_price']) * 0.865, 2))"),
+        Run(kind="action", name="将价格更新为 {new_price} 并保存", success_condition="保存成功"),
+        Finish(message="已更新为 {new_price}"),
+    ])
+    seen: list[str] = []
+
+    def execute(run: Run) -> RunResult:
+        seen.append(run.name)
+        if run.var == "product_detail":
+            return RunResult(completed=True, reads={"current_price": "150.00"})
+        return RunResult(completed=True)
+
+    reply = drive(Interpreter(program), execute)
+    # The fill action reached the executor with the EXACT computed value — not "新值", not empty.
+    assert seen[-1] == "将价格更新为 129.75 并保存"
+    assert "129.75" in reply
+
+
+def test_fill_fails_fast_on_empty_compute_scalar():
+    # A failed compute binds "" — the consuming action must FAIL FAST (honest reply), not run with
+    # a gap-name the planner then fills with a hallucinated value (778: typed 200.00).
+    program = Program(goal="降价", statements=[
+        Compute(var="new_price", expr="round(float(nonexistent['x']), 2)"),  # 求值失败 → ""
+        Run(kind="action", name="将价格更新为 {new_price} 并保存", success_condition="保存成功"),
+        Finish(message="done"),
+    ])
+    executed: list[str] = []
+
+    def execute(run: Run) -> RunResult:
+        executed.append(run.name)
+        return RunResult(completed=True)
+
+    reply = drive(Interpreter(program), execute)
+    assert executed == []  # the gap-named milestone never reached the executor
+    assert "无法执行" in reply and "new_price" in reply

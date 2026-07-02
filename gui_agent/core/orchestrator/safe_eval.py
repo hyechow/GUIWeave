@@ -44,6 +44,10 @@ def _re_search(pattern: str, s: str, group: int = 0) -> str:
 _FUNCS = {
     "re_sub": _re_sub, "re_search": _re_search,
     "len": len, "str": str, "int": int, "lower": str.lower, "upper": str.upper,
+    # Numeric derivation (WebArena 778 percentage price change): both decompose attempts naturally
+    # wrote round(float(current_price) * 0.865, 2) — without these the whole numeric-compute class
+    # silently degraded to "" and the fill milestone lost its concrete value.
+    "float": float, "round": round, "abs": abs,
 }
 
 
@@ -71,9 +75,20 @@ def _ev(node: ast.AST, scope: dict[str, Any]) -> Any:
         if node.id in _FUNCS:
             return _FUNCS[node.id]
         raise SafeEvalError(f"未知变量: {node.id}")
-    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod, ast.Mult, ast.Sub, ast.Div)):
         left, right = _ev(node.left, scope), _ev(node.right, scope)
-        return left % right if isinstance(node.op, ast.Mod) else left + right
+        if isinstance(node.op, ast.Mod):
+            return left % right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Div):
+            return left / right
+        return left + right
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        val = _ev(node.operand, scope)
+        return -val if isinstance(node.op, ast.USub) else +val
     if isinstance(node, ast.Subscript):
         val = _ev(node.value, scope)
         sl = node.slice

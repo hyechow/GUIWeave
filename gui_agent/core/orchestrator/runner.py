@@ -24,7 +24,7 @@ output didn't know" disappears: the answer comes from the whole program, not the
 
 from __future__ import annotations
 
-from typing import Callable, Generator, Optional
+from typing import Any, Callable, Generator, Optional
 
 from pydantic import BaseModel, Field
 
@@ -364,14 +364,22 @@ class Interpreter:
         (live 185: base_sku came out "", so the search milestone ran with an empty keyword). Strip the
         braces around bare identifiers so `{sku}.rsplit(...)` and `sku.rsplit(...)` are equivalent."""
         expr = BARE_REF_RE.sub(r"\1", c.expr)
+        # Scope = env RunResults' reads (each result var exposed as its reads dict, so the natural
+        # `product_detail['current_price']` the decomposer writes resolves) + scalars (the compute's
+        # own namespace, wins on collision). Without env reads every numeric derivation from a read
+        # value raised 未知变量 → silently "" → the fill milestone lost its concrete value and the
+        # planner hallucinated one (WebArena 778: typed 200.00 instead of current×0.865).
+        scope: dict[str, Any] = {v: dict(rv.reads) for v, rv in self.env.items()}
+        scope.update(self._scalars)
         try:
-            val = safe_eval(expr, dict(self._scalars))
+            val = safe_eval(expr, scope)
             self._scalars[c.var] = "" if val is None else str(val)
         except SafeEvalError as e:
             self._scalars[c.var] = ""
             self.run_log.append(RunRecord(
                 name=f"compute {c.var} = {c.expr}", var=c.var,
                 result=RunResult(completed=False, summary=f"compute 求值失败: {e}")))
+            print(f"  [Compute] {c.var} = {c.expr} 求值失败: {e}")
 
     _MAX_CALL_DEPTH = 6
 
@@ -488,9 +496,17 @@ class Interpreter:
         # iteration can't satisfy a generic gate (live 094903: the Eos call read Minerva's stale
         # edit page because the gate was "已进入某 Configurable 编辑页", not "...{base}...").
         for m in BARE_REF_RE.finditer(run.name or ""):
+            if m.group(1) not in self._scalars:
+                continue  # stray bare {foo} → existing botched-ref handling, not a scalar gap
             v = (self._scalars.get(m.group(1), "") or "").strip()
             if v:
                 target_ref_values.append(v)
+            else:
+                # A KNOWN scalar (function param / Compute result) that resolved empty: the action
+                # target has no concrete value — fail fast like an empty {var[field]} name ref, so a
+                # failed compute can't silently degrade the milestone to a generic name the planner
+                # then fills with a hallucinated value (WebArena 778: typed 200.00).
+                missing.append(f"{{{m.group(1)}}}")
         name = self._render(run.name, missing)              # target → strict (collect empties)
         sc = self._render(run.success_condition)            # gate → lenient
         rs = self._render(run.read_spec)                    # read guidance → lenient
