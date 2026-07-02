@@ -193,7 +193,8 @@ def _with_backoff(fn, *args, **kwargs):
             time.sleep(wait)
 
 
-def run_task(task: dict, knowledge_nav: str, current_site: str, k: int) -> dict:
+def run_task(task: dict, knowledge_nav: str, current_site: str, k: int,
+             surface: str = "json") -> dict:
     goal = task["intent"]
     gt = derive_ground_truth(task)
     resolution = None
@@ -203,12 +204,23 @@ def run_task(task: dict, knowledge_nav: str, current_site: str, k: int) -> dict:
     except Exception as e:  # noqa: BLE001 — grade the samples without router coverage
         res_err = f"{type(e).__name__}: {e}"
 
+    if surface == "python":
+        from gui_agent.core.orchestrator.pysurface import decompose_py
+
+        def _decompose(goal, knowledge, current_site, resolution):
+            return decompose_py(goal, knowledge=knowledge, current_site=current_site,
+                                resolution=resolution)
+    else:
+        def _decompose(goal, knowledge, current_site, resolution):
+            return decompose(goal, knowledge=knowledge, current_site=current_site,
+                             resolution=resolution)
+
     samples: list[dict] = []
     for _ in range(k):
         t0 = time.time()
         try:
             program = _with_backoff(
-                decompose,
+                _decompose,
                 goal,
                 knowledge=knowledge_nav,
                 current_site=current_site,
@@ -252,6 +264,8 @@ def main() -> int:
     ap.add_argument("--k", type=int, default=1, help="decompose samples per task")
     ap.add_argument("--workers", type=int, default=1,
                     help="parallel tasks (LLM calls are IO-bound; 4-8 is safe)")
+    ap.add_argument("--surface", choices=["json", "python"], default="json",
+                    help="decompose front-end: json = production _PlanDraft; python = pysurface arm")
     ap.add_argument("--limit", type=int, default=0, help="cap number of tasks (0 = no cap)")
     args = ap.parse_args()
 
@@ -308,10 +322,10 @@ def main() -> int:
 
     if args.workers <= 1:
         for task in tasks:
-            _record(run_task(task, knowledge_nav, current_site, args.k))
+            _record(run_task(task, knowledge_nav, current_site, args.k, surface=args.surface))
     else:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            futs = [pool.submit(run_task, task, knowledge_nav, current_site, args.k) for task in tasks]
+            futs = [pool.submit(run_task, task, knowledge_nav, current_site, args.k, args.surface) for task in tasks]
             for fut in as_completed(futs):
                 _record(fut.result())
 

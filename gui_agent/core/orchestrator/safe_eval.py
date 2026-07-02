@@ -57,13 +57,25 @@ def _re_search(pattern: str, s: str, group: int = 0) -> str:
     return m.group(group) if m else ""
 
 
+def _lenient_float(x: object) -> float:
+    """float() over a page read must tolerate currency/grouping ("$75.00", "1,299") — the value the
+    author sees on screen IS the number; failing on the glyphs makes float(price) a trap."""
+    coerced = _coerce_num(x)
+    return float(coerced)  # non-numeric still raises honestly
+
+
+def _lenient_int(x: object) -> int:
+    coerced = _coerce_num(x)
+    return int(float(coerced)) if isinstance(coerced, float) else int(coerced)
+
+
 _FUNCS = {
     "re_sub": _re_sub, "re_search": _re_search,
-    "len": len, "str": str, "int": int, "lower": str.lower, "upper": str.upper,
+    "len": len, "str": str, "int": _lenient_int, "lower": str.lower, "upper": str.upper,
     # Numeric derivation (WebArena 778 percentage price change): both decompose attempts naturally
     # wrote round(float(current_price) * 0.865, 2) — without these the whole numeric-compute class
     # silently degraded to "" and the fill milestone lost its concrete value.
-    "float": float, "round": round, "abs": abs,
+    "float": _lenient_float, "round": round, "abs": abs,
 }
 
 
@@ -111,6 +123,50 @@ def _ev(node: ast.AST, scope: dict[str, Any]) -> Any:
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
         val = _ev(node.operand, scope)
         return -val if isinstance(node.op, ast.USub) else +val
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return not _ev(node.operand, scope)
+    # Comparisons / boolean logic / ternary: the decomposer (especially the Python-surface arm)
+    # naturally writes membership predicates like `'-28-' in sku`, `a == b and c`, `x if cond else y`
+    # (live 124348 wrote `'size 28' in row['name'].lower() or ...` → "不允许的表达式节点: Compare"
+    # → silently ""). All pure, deterministic, no new capability surface.
+    if isinstance(node, ast.Compare):
+        left = _ev(node.left, scope)
+        for op, comparator in zip(node.ops, node.comparators):
+            right = _ev(comparator, scope)
+            if isinstance(op, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)):
+                l_c, r_c = _coerce_num(left), _coerce_num(right)
+                ok = (l_c < r_c if isinstance(op, ast.Lt) else l_c <= r_c if isinstance(op, ast.LtE)
+                      else l_c > r_c if isinstance(op, ast.Gt) else l_c >= r_c)
+            elif isinstance(op, ast.Eq):
+                ok = left == right
+            elif isinstance(op, ast.NotEq):
+                ok = left != right
+            elif isinstance(op, ast.In):
+                ok = left in right
+            elif isinstance(op, ast.NotIn):
+                ok = left not in right
+            else:
+                raise SafeEvalError(f"不允许的比较运算: {type(op).__name__}")
+            if not ok:
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.BoolOp):
+        if isinstance(node.op, ast.And):
+            val = True
+            for v in node.values:
+                val = _ev(v, scope)
+                if not val:
+                    return val
+            return val
+        val = False
+        for v in node.values:
+            val = _ev(v, scope)
+            if val:
+                return val
+        return val
+    if isinstance(node, ast.IfExp):
+        return _ev(node.body, scope) if _ev(node.test, scope) else _ev(node.orelse, scope)
     if isinstance(node, ast.Subscript):
         val = _ev(node.value, scope)
         sl = node.slice
