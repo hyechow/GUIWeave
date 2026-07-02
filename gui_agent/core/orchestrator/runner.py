@@ -38,6 +38,24 @@ from .safe_eval import SafeEvalError, safe_eval
 MilestoneExecutor = Callable[[Run], RunResult]
 
 
+class _ScalarRead(str):
+    """A single-field read var in compute scope: IS the value it read (str ops / arithmetic-coerce
+    work directly) while still answering var['field'] subscripts. Multi-field vars stay plain dicts
+    (using them as a scalar is genuinely ambiguous → honest error)."""
+
+    def __new__(cls, value: str, field: str):
+        obj = super().__new__(cls, value)
+        obj._field = field
+        return obj
+
+    def __getitem__(self, key):  # noqa: D105 — var['field'] → value; other str indexing unchanged
+        if isinstance(key, str):
+            if key == self._field:
+                return str(self)
+            raise KeyError(key)
+        return super().__getitem__(key)
+
+
 class RunRecord(BaseModel):
     name: str
     var: Optional[str] = None
@@ -438,7 +456,15 @@ class Interpreter:
         for _v, _rv in self.env.items():
             for _field, _val in _rv.reads.items():
                 scope[_field] = _val           # flat field ref (last read wins)
-            scope[_v] = dict(_rv.reads)         # var-as-dict for `{var}['field']`; var name wins over a same-named field
+            if len(_rv.reads) == 1:
+                # A single-field read var is usable BOTH as the scalar it read AND as var['field']:
+                # the decomposer treats it as a scalar (live 778 run 233801 wrote
+                # `old_price_str.replace('$','')` where old_price_str was a one-field read var —
+                # scope held a dict → 不允许的方法调用 → "" → fail-fast with the right value in hand).
+                ((_only_field, _only_val),) = _rv.reads.items()
+                scope[_v] = _ScalarRead(_only_val, _only_field)
+            else:
+                scope[_v] = dict(_rv.reads)     # var-as-dict for `{var}['field']`; var name wins over a same-named field
         scope.update(self._scalars)
         try:
             val = safe_eval(expr, scope)

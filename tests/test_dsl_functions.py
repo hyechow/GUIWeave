@@ -512,3 +512,30 @@ def test_compute_template_field_braces_in_foreach_body():
         "打开 WP09-28-Blue 并更新价格为 64.875 保存",
         "打开 WP09-28-Gray 并更新价格为 64.875 保存",
     ]
+
+
+def test_compute_single_field_read_var_usable_as_scalar():
+    # Live 778 run 233801: the sub-program bound the price read to a one-field var and wrote
+    # `float(old_price_str.replace('$', ''))` — scope held a dict → .replace rejected → "" →
+    # fail-fast with the right value in hand. A single-field read var now IS its value (str ops,
+    # arithmetic coercion) while still answering var['field'].
+    for expr in ("float(p.replace('$', '')) * 0.865",
+                 "float(p) * 0.865",                      # lenient float on "$75.00"
+                 "float(p['price']) * 0.865"):            # dict-style access still works
+        program = Program(goal="降价", statements=[
+            Run(kind="read", var="p", returns=["price"], name="读价", read_spec="读",
+                success_condition="ok"),
+            Compute(var="np", expr=expr),
+            Run(kind="action", name="更新为 {np} 保存", success_condition="ok"),
+            Finish(message="done"),
+        ])
+        seen: list[str] = []
+
+        def execute(run: Run) -> RunResult:
+            seen.append(run.name)
+            if run.var == "p":
+                return RunResult(completed=True, reads={"price": "$75.00"})
+            return RunResult(completed=True)
+
+        drive(Interpreter(program), execute)
+        assert seen[-1] == "更新为 64.875 保存", f"{expr!r} → {seen[-1]!r}"
