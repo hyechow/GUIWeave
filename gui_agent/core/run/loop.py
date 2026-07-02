@@ -549,9 +549,9 @@ def run_agent_loop(
         if program is not None:
             from gui_agent.core.orchestrator import Interpreter
             _collect_fn = _make_collect_fn(bundle, platform, log_dir)
-            from gui_agent.core.orchestrator.expansion import expand_foreach
+            from gui_agent.core.orchestrator.expansion import expand_foreach, select_members
             _interp = Interpreter(program, collect_fn=_collect_fn, subdecompose_fn=subdecompose,
-                                  expand_fn=expand_foreach)
+                                  expand_fn=expand_foreach, select_fn=select_members)
             _orch_interp = _interp  # _save_ctx now mirrors its run_log (reads) into context
             _orchestrator_reports = list(orchestrator_context_reports or [])
             _orchestrator_metrics = next(
@@ -625,7 +625,7 @@ def run_agent_loop(
                 return (False, None)
             _new = _force_interactive_return_recovery(_new, directive)
             _interp = Interpreter(_new, collect_fn=_collect_fn, subdecompose_fn=subdecompose,
-                                  expand_fn=expand_foreach)
+                                  expand_fn=expand_foreach, select_fn=select_members)
             _interp.env = _prev_env            # carry forward completed reads (finish refs still resolve)
             # Keep prior milestones in the run record / final summary, but DROP the failed record(s):
             # a kickback re-plans *because* a re-plannable step failed, so carrying that ✗ into the new

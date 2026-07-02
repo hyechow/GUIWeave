@@ -154,6 +154,13 @@ class ForEach(BaseModel):
     # product and read the primary Material" (derive key → search → disambiguate → open → read).
     # Mutually exclusive with `body`. One level only: the sub-program may not itself use body_goal.
     body_goal: str = ""
+    # Progressive orchestration, selection-only form: a SEMANTIC description of which collected rows
+    # belong to the target set (e.g. 「size 28 的 Sahara leggings 变体」). Set together with an
+    # explicit `body`: the checkpoint makes ONE selection call against the REAL rows (membership as
+    # data — cross-family 16/16 offline) and runs the t=0-authored body on the selected rows only.
+    # Body authoring stays at t=0 (mature decomposer prompt, full validator gates, offline-verifiable);
+    # ONLY the decision that genuinely needs runtime data is deferred. Empty ⇒ iterate all rows.
+    member_desc: str = ""
     into: str = ""                              # materialized-table var (defaults to f"{var}s" when empty)
     limit: int | None = None                    # stop after collecting this many rows (None = collect all); use for sorted top-K grids
 

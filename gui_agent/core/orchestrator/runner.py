@@ -116,7 +116,8 @@ class Interpreter:
     and receives its RunResult via send(); steps() returns the final reply. env / run_log
     accumulate so the answer is built from the whole program's structured state."""
 
-    def __init__(self, program: Program, collect_fn=None, subdecompose_fn=None, expand_fn=None) -> None:
+    def __init__(self, program: Program, collect_fn=None, subdecompose_fn=None, expand_fn=None,
+                 select_fn=None) -> None:
         self._program = program
         # Optional collect_fn for browser path: callable(target: str, returns: list[str]) -> list[dict] | None.
         # When ForEach.over is empty, _foreach calls this to retrieve rows directly via DOM/AX tree.
@@ -133,6 +134,12 @@ class Interpreter:
         # shared concrete body, then rows execute deterministically. None result (or no expand_fn)
         # falls back to per-row subdecompose — expansion is strictly an upgrade path.
         self._expand_fn = expand_fn
+        # Optional select_fn — selection-ONLY checkpoint (preferred progressive form): callable
+        # (member_desc, rows) -> list[int] | None. Used when ForEach carries member_desc + an
+        # explicit t=0 body: the body was authored under the mature decomposer prompt and full
+        # gates (offline-verifiable); only the membership decision — the part that genuinely needs
+        # runtime data — is deferred. None result keeps all rows (t=0 body must then self-filter).
+        self._select_fn = select_fn
         # Depth guard: a per-row sub-program may NOT itself spawn another body_goal sub-goal
         # (one level only). Incremented while driving a sub-program's block.
         self._subgoal_depth = 0
@@ -298,11 +305,33 @@ class Interpreter:
                 result=self.env[into],
             ))
             return None
+        # Selection-only checkpoint (preferred progressive form): member_desc + explicit t=0 body.
+        # ONE selection call filters the REAL rows; the t=0-authored body (mature prompt, full
+        # gates) runs on the members. None ⇒ keep all rows (body executes per row unfiltered —
+        # same as pre-member_desc behaviour, strictly no downgrade).
+        expanded_note = ""
+        if loop.member_desc and loop.body and self._select_fn is not None and self._subgoal_depth == 0:
+            sel: Optional[list[int]] = None
+            try:
+                sel = self._select_fn(loop.member_desc, rows)
+            except Exception:  # noqa: BLE001 — selection must never be a new failure mode
+                sel = None
+            if sel is not None:
+                total = len(rows)
+                rows = [rows[i] for i in sel if 0 <= i < total]
+                expanded_note = f"检查点圈选:{len(rows)}/{total} 行属于「{loop.member_desc[:30]}」"
+                print(f"  [Select] {expanded_note}")
+                if not rows:
+                    self.env[into] = RunResult(completed=True, rows=[],
+                                               summary=f"{expanded_note}(无成员,集合为空)")
+                    self._materialized_vars.add(into)
+                    self.run_log.append(RunRecord(
+                        name=f"foreach {loop.var} (selected)", var=into, result=self.env[into]))
+                    return None
         # Checkpoint expansion (progressive orchestration): with the REAL rows now in hand, ONE
         # refinement call selects the member rows (judgment as data — the decision t=0 literal
         # guessing got 0-for-all on live 778) and emits one shared concrete body; the loop below
         # then runs deterministically. Falls back to per-row subdecompose on None.
-        expanded_note = ""
         if agentic_subgoal and self._expand_fn is not None and self._subgoal_depth == 0:
             expansion = None
             try:

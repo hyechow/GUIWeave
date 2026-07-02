@@ -91,6 +91,72 @@ def _parse_and_validate(body_dicts: list[dict], loop_var: str, row_fields: list[
     return list(fe.body), issues
 
 
+def _build_llm():
+    from langchain_openai import ChatOpenAI
+
+    from gui_agent.core.config import resolve_llm_config
+
+    cfg = resolve_llm_config("supervisor.decompose")
+    if not cfg.model:
+        cfg = resolve_llm_config("supervisor")
+    return ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
+                      extra_body={"enable_thinking": False})
+
+
+def _map_selection(raw: list[int], rows: list[dict]) -> list[int]:
+    """Positions in range, deduped; id-VALUE answers ([1478, 1182]) mapped back to positions."""
+    idx = [i for i in raw if 0 <= i < len(rows)]
+    idx = list(dict.fromkeys(idx))
+    if not idx and raw:
+        wanted = {str(i) for i in raw}
+        idx = [pos for pos, r in enumerate(rows)
+               if any(str(r.get(k, "")) in wanted for k in ("id", "ID", "Id"))]
+    return idx
+
+
+class _SelectDraft(BaseModel):
+    member_row_indices: list[int] = Field(default_factory=list)
+    reason: str = ""
+
+
+def select_members(
+    member_desc: str,
+    rows: list[dict],
+    *,
+    goal: str = "",
+    llm=None,
+    trace_sink: Optional[list] = None,
+) -> Optional[list[int]]:
+    """Selection-only checkpoint call: which of the REAL rows belong to the target set. The body is
+    NOT authored here — it was written at t=0 under the mature decomposer prompt and full gates;
+    this defers ONLY the membership decision (the part that needs runtime data; cross-family 16/16
+    offline). None ⇒ caller keeps all rows / falls back."""
+    if not rows or len(rows) > EXPAND_MAX_ROWS:
+        return None
+    import json
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from gui_agent.prompts import load_prompt_text
+    from llm.structured import invoke_structured
+
+    if llm is None:
+        llm = _build_llm()
+    human = (
+        f"总目标:{goal}\n\n目标集合(成员描述):{member_desc}\n\n"
+        f"已采集的候选行(真实页面数据,行号即列表下标):\n{json.dumps(rows, ensure_ascii=False, indent=1)}"
+    )
+    try:
+        draft = invoke_structured(
+            llm,
+            [SystemMessage(content=load_prompt_text("task.orchestrator.foreach_select")),
+             HumanMessage(content=human)],
+            _SelectDraft, trace_sink=trace_sink, trace_label="foreach.select")
+    except Exception:  # noqa: BLE001 — selection is an upgrade; failure → keep all rows upstream
+        return None
+    return _map_selection(draft.member_row_indices, rows)
+
+
 def expand_foreach(
     body_goal: str,
     loop_var: str,
@@ -112,15 +178,7 @@ def expand_foreach(
     from llm.structured import invoke_structured
 
     if llm is None:
-        from langchain_openai import ChatOpenAI
-
-        from gui_agent.core.config import resolve_llm_config
-
-        cfg = resolve_llm_config("supervisor.decompose")
-        if not cfg.model:
-            cfg = resolve_llm_config("supervisor")
-        llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url,
-                         extra_body={"enable_thinking": False})
+        llm = _build_llm()
 
     row_fields = sorted({k for r in rows for k in r})
     human = (
@@ -136,16 +194,7 @@ def expand_foreach(
                                       _ExpandDraft, trace_sink=trace_sink, trace_label="foreach.expand")
         except Exception:  # noqa: BLE001 — expansion is an upgrade; any LLM failure → fallback
             return None
-        idx = [i for i in draft.member_row_indices if 0 <= i < len(rows)]
-        if len(idx) != len(set(idx)):
-            idx = list(dict.fromkeys(idx))
-        if not idx and draft.member_row_indices:
-            # Convention drift: some drafts answer with row 'id'-field VALUES instead of positions
-            # (observed on 185: [1478, 1182] — the correct members, wrong coordinate system). Map
-            # id-ish values back to positions instead of failing a correct selection.
-            wanted = {str(i) for i in draft.member_row_indices}
-            idx = [pos for pos, r in enumerate(rows)
-                   if any(str(r.get(k, "")) in wanted for k in ("id", "ID", "Id"))]
+        idx = _map_selection(draft.member_row_indices, rows)
         stmts, issues = _parse_and_validate(draft.body, loop_var, row_fields, goal or body_goal)
         if stmts is not None and not issues:
             note = f"检查点展开:圈选 {len(idx)}/{len(rows)} 行;body {len(stmts)} 步"
