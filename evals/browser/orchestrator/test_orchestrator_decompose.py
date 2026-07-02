@@ -1909,6 +1909,40 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "泛指「新值」会让 planner 现场瞎猜（回归 778：算出 86.50、实际填 150.00）。"
                     f"compute vars: {compute_vars}; 动作: {[r.name for r in seq if r.kind == 'action']}"
                 )
+        elif assertion == "membership_judgment_semantic":
+            # Skeleton-light principle (2026-07-02): member judgment must be delegated semantically
+            # (body_goal states INTENT, the runtime agent judges against the REAL row), never baked
+            # as a GUESSED literal predicate. Live 114429 wrote body_goal "若 SKU 不含 'size 28'
+            # 则跳过" — actual SKUs are WP02-28-Blue, every row skipped, 0 saves. Flag quoted
+            # multi-word literals used with containment mechanics against sku/name in body_goal
+            # texts and compute exprs ("是否为 size 28 的变体" semantic phrasing stays legal).
+            def _texts(stmts) -> list:
+                out = []
+                for s in stmts:
+                    if isinstance(s, ForEach):
+                        if getattr(s, "body_goal", ""):
+                            out.append(("body_goal", s.body_goal))
+                        out.extend(_texts(s.body))
+                    elif isinstance(s, Compute):
+                        out.append(("compute", s.expr))
+                    elif isinstance(s, If):
+                        out.extend(_texts(s.then))
+                        out.extend(_texts(s.otherwise))
+                return out
+
+            _mechanic = re.compile(
+                r"(不含|包含|含有|startswith|\bin\b|\bcontains?\b)\s*[（(]?\s*['\"]([^'\"]* [^'\"]*)['\"]"
+                r"|['\"]([^'\"]* [^'\"]*)['\"]\s*(不在|在|\bin\b|\bnot in\b)"
+            )
+            for where, text in _texts(program.statements):
+                m = _mechanic.search(text or "")
+                if m:
+                    lit = m.group(2) or m.group(3)
+                    details.append(
+                        f"{where} 把猜测的多词字面量谓词烤进了计划：用 {lit!r} 做包含性判定"
+                        "（回归 114429：SKU 实为 WP02-28-Blue，'size 28' 永不命中→全部跳过 0 保存）。"
+                        "成员判定必须写语义意图（「判断…是否为 size 28 的变体」），交给运行时看真实行的 agent 判。"
+                    )
         elif assertion == "multi_variant_price_iterates":
             # 778 is multi-target: "size 28 Sahara leggings" = the 3 colour variants of size 28 (eval
             # expects 3 saves). With the router marking cardinality=set, the plan MUST foreach over the
