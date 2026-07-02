@@ -170,6 +170,16 @@ def _finalize_response(resp: WAResponse, *, goal_completed: bool = True, intent:
             ),
         })
 
+    # Same honesty for MUTATE: goal_completed=False means the orchestrator KNOWS the run didn't do
+    # the work (a failed/incomplete foreach, a finish over empty reads). 778 live 114429: the
+    # body_goal foreach no-opped (rows=[], finish_incomplete) yet the response still said SUCCESS
+    # with zero saves — a false success that also poisons diagnostics.
+    if task_type == "MUTATE" and status == "SUCCESS" and not goal_completed:
+        updates.update({
+            "status": "UNKNOWN_ERROR",
+            "error_details": resp.error_details or "Run did not reach goal_completed (mutation not performed).",
+        })
+
     return resp.model_copy(update=updates)
 
 
@@ -696,6 +706,7 @@ def main() -> int:
                 run_max_turns = args.max_turns
                 preflight_blocked = False
                 _redecompose = None  # Feasibility Guard kick-back re-decompose closure (set in orchestrator branch)
+                _subdecompose = None  # per-row sub-goal decomposer (ForEach.body_goal; set in orchestrator branch)
                 with bundle.open_session() as platform:
                     _prime(platform)
                     device = getattr(platform, "client", None)
@@ -861,6 +872,19 @@ def main() -> int:
                                 context_reports=context_reports,
                             )))
 
+                        # Per-row agentic sub-goal (ForEach.body_goal): decompose a row-templated
+                        # sub-goal fresh at runtime (same knowledge/site as the main decompose;
+                        # depth guard in the interpreter enforces one-level-only). cli.py has wired
+                        # this since body_goal shipped; webarena.py hadn't — every body_goal foreach
+                        # silently no-opped (778 live 114429: rows=[], "body_goal 无法分解", then
+                        # flowed to finish and synthesized SUCCESS with zero saves).
+                        def _subdecompose(sub_goal: str, _know=knowledge, _site=cur_site):
+                            return normalize_precondition_gates(normalize_confirm_read_gates(
+                                decompose(sub_goal, knowledge=_know.navigation if _know else "",
+                                          current_site=_site,
+                                          prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
+                            ))
+
                         if not preflight_blocked and not args.no_dynamic_max_turns:
                             run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                             if run_max_turns != args.max_turns:
@@ -891,6 +915,7 @@ def main() -> int:
                                 knowledge=knowledge_summary,
                                 program=program,
                                 redecompose=_redecompose,
+                                subdecompose=_subdecompose,
                                 orchestrator_context_reports=[*orchestrator_context_reports, {
                                     "kind": "orchestrator_metrics",
                                     **orchestrator_metrics,
