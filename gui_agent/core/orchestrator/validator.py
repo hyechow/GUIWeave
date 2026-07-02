@@ -71,6 +71,7 @@ ALL_CODES: frozenset[str] = frozenset({
     # program shape / result source
     "EMPTY_PROGRAM",
     "NO_RESULT_SOURCE",
+    "MUTATE_GOAL_WITHOUT_ACTION",
     # {var[field]} template references (finish + result-then-reference run text)
     "TEMPLATE_VAR_NOT_IN_SCOPE",
     "TEMPLATE_FIELD_NOT_IN_RETURNS",
@@ -156,6 +157,42 @@ def _goal_expects_structured_answer(goal: str) -> bool:
         or any(k in goal for k in ("多少", "几个", "几条", "总数", "数量", "哪些", "谁", "什么", "找出", "列出", "返回", "显示"))
     )
 
+_MUTATE_GOAL_RE = re.compile(
+    r"\b(update|change|reduce|increase|delete|remove|create|add|edit|set|disable|enable|assign|mark|rename|cancel|approve)\b"
+)
+_MUTATE_CN = ("更新", "修改", "删除", "移除", "创建", "新增", "新建", "设置", "改成", "改为",
+              "降价", "涨价", "调价", "调整", "启用", "禁用", "标记", "重命名", "取消", "审核")
+_MUTATE_STEP_CN_RE = re.compile(
+    r"更新|修改|保存|删除|移除|设置|填(?:入|写)|改(?:成|为)|调价|降价|涨价|提交|创建|新增|启用|禁用"
+    r"|update|save|delete|remove|set\b|edit|change|submit|create"
+)
+
+
+def _goal_is_mutation(goal: str) -> bool:
+    text = (goal or "").lower()
+    return bool(_MUTATE_GOAL_RE.search(text)) or any(k in (goal or "") for k in _MUTATE_CN)
+
+
+def _has_mutation_step(stmts: list[Stmt], function_defs: dict | None = None) -> bool:
+    """Any action-kind Run, or a foreach body_goal whose text carries a mutation verb (the sub-goal
+    is re-decomposed at runtime, so its TEXT is what promises the mutation)."""
+    for s in stmts:
+        if isinstance(s, Run) and s.kind == "action":
+            return True
+        if isinstance(s, ForEach):
+            if getattr(s, "body_goal", "") and _MUTATE_STEP_CN_RE.search(s.body_goal.lower()):
+                return True
+            if _has_mutation_step(s.body, function_defs):
+                return True
+        elif isinstance(s, If):
+            if _has_mutation_step(s.then, function_defs) or _has_mutation_step(s.otherwise, function_defs):
+                return True
+    for fn in (function_defs or {}).values():
+        if _has_mutation_step(fn.body, None):
+            return True
+    return False
+
+
 def _has_result_source(stmts: list[Stmt], function_returns: dict[str, set[str]] | None = None) -> bool:
     function_returns = function_returns or {}
     for s in stmts:
@@ -189,10 +226,21 @@ def validate_program(program: Program) -> list[ValidationIssue]:
     function_defs = {fn.name: fn for fn in getattr(program, "functions", None) or []}
     function_returns = {name: {field for field in fn.returns if field} for name, fn in function_defs.items()}
     if _goal_expects_structured_answer(program.goal) and not _has_result_source(program.statements, function_returns):
-        issues.add("NO_RESULT_SOURCE", 
+        issues.add("NO_RESULT_SOURCE",
             "任务要求返回/查找/统计具体答案，但计划没有任何 returns 或 data_query 结果来源；"
             "不能用裸 finish 猜答案。请让产生结果的 navigation/filter/action 带 returns/read_spec，"
             "或在表格数据源准备好后使用 data_query，并让 finish 引用 {变量[字段]}。"
+        )
+    if _goal_is_mutation(program.goal) and not _has_mutation_step(program.statements, function_defs):
+        # Offline 778 v4: a "Reduce the price ..." goal decomposed into collect+classify ONLY — a
+        # foreach whose body_goal judged size-28 membership and returned action_url, with no step
+        # anywhere that opens/updates/saves. Structurally legal, semantically verb-less: the plan
+        # can only ever observe, never mutate.
+        issues.add("MUTATE_GOAL_WITHOUT_ACTION",
+            "任务是修改/写入类（改价/更新/删除/创建/设置…），但计划里没有任何 action 步、"
+            "也没有含改动动词（更新/保存/删除/设置/填…）的 body_goal——整个计划只在采集/判断，"
+            "永远不会执行任务要求的修改。请补上实际执行修改的 action 步骤（打开目标 → 修改字段 → 保存），"
+            "多目标时放进 foreach body 逐个执行。"
         )
 
     all_result_vars: set[str] = set()  # every result var anywhere — to spot botched bare refs

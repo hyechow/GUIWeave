@@ -71,6 +71,13 @@ SAMPLES: dict[str, Program] = {
         Compute(var="new_price", expr="round(75 * 0.865, 2)"),
         Run(name="将价格更新为新值并保存", kind="action"),
     ]),
+    # offline 778 v4: a "Reduce the price" (mutate) goal decomposed into collect+classify only — a
+    # foreach body_goal judging size-28 membership, no action step anywhere → can never mutate.
+    "MUTATE_GOAL_WITHOUT_ACTION": Program(goal="Reduce the price of size 28 Sahara leggings by 13.5%", statements=[
+        Run(name="进入产品列表", kind="navigation"),
+        ForEach(var="row", target="Sahara 行", returns=["sku", "action_url"],
+                body_goal="从 {row[sku]} 判断是否为 size 28 的变体；若是返回 action_url，否则标记为空"),
+    ]),
     "PRECONDITION_NOT_NAVIGATION": Program(statements=[Run(name="点击保存", kind="action", precondition=True)]),
     "READ_MISSING_RETURNS": Program(statements=[Run(var="v", name="读取", kind="read")]),
     "READ_MISSING_VAR": Program(statements=[Run(name="读取", kind="read", returns=["a"], read_spec="读")]),
@@ -282,3 +289,34 @@ def test_if_empty_guard_inverted_shapes():
         ),
     ])
     assert "IF_EMPTY_GUARD_INVERTED" not in codes(ambiguous)
+
+
+def test_mutate_goal_without_action_shapes():
+    def codes(prog):
+        return {i.code for i in validate_program(prog)}
+
+    # collect+classify only (offline 778 v4) → flagged
+    assert "MUTATE_GOAL_WITHOUT_ACTION" in codes(SAMPLES["MUTATE_GOAL_WITHOUT_ACTION"])
+
+    # mutate goal WITH an action inside the foreach body → not flagged
+    good = Program(goal="Reduce the price of size 28 Sahara leggings by 13.5%", statements=[
+        ForEach(var="p", target="size28 变体行", returns=["sku", "price"], body=[
+            Compute(var="new_price", expr="round({p[price]} * 0.865, 2)"),
+            Run(name="将价格更新为 {new_price} 并保存", kind="action"),
+        ]),
+    ])
+    assert "MUTATE_GOAL_WITHOUT_ACTION" not in codes(good)
+
+    # mutate goal whose body_goal TEXT carries the mutation verb → not flagged (re-decomposed at runtime)
+    good_bg = Program(goal="Reduce the price of size 28 Sahara leggings by 13.5%", statements=[
+        ForEach(var="p", target="size28 变体行", returns=["sku", "price"],
+                body_goal="打开 {p[sku]} 详情页，读当前价格、按 0.865 计算后更新价格并保存"),
+    ])
+    assert "MUTATE_GOAL_WITHOUT_ACTION" not in codes(good_bg)
+
+    # retrieve goal with no action → not flagged (not a mutation task)
+    retrieve = Program(goal="Get the total number of reviews", statements=[
+        Run(var="v", name="读取评论总数", kind="read", returns=["count"], read_spec="读 count"),
+        Finish(message="{v[count]}"),
+    ])
+    assert "MUTATE_GOAL_WITHOUT_ACTION" not in codes(retrieve)
