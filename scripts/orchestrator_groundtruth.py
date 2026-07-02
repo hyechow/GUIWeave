@@ -173,13 +173,33 @@ def grade_program(program: Program, gt: dict, resolution) -> list[str]:
 
 # ---------------------------------------------------------------- main loop
 
+def _is_rate_limit(e: Exception) -> bool:
+    s = f"{type(e).__name__}: {e}"
+    return "RateLimit" in type(e).__name__ or "429" in s or "Rate limit" in s
+
+
+def _with_backoff(fn, *args, **kwargs):
+    """Retry an LLM call through endpoint rate limits (429) — a throttled sample is measurement
+    noise, not a decompose failure (a 2-worker×k=2 burst blew a limit=10/min endpoint and produced
+    46 garbage DECOMPOSE_ERROR:RateLimitError samples). Other exceptions propagate."""
+    for attempt in range(5):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            if not _is_rate_limit(e) or attempt == 4:
+                raise
+            wait = 20 * (attempt + 1)
+            print(f"    [rate-limit] 429, {wait}s 后重试 ({attempt + 1}/4)", flush=True)
+            time.sleep(wait)
+
+
 def run_task(task: dict, knowledge_nav: str, current_site: str, k: int) -> dict:
     goal = task["intent"]
     gt = derive_ground_truth(task)
     resolution = None
     res_err = ""
     try:
-        resolution = resolve_intent(goal)
+        resolution = _with_backoff(resolve_intent, goal)
     except Exception as e:  # noqa: BLE001 — grade the samples without router coverage
         res_err = f"{type(e).__name__}: {e}"
 
@@ -187,7 +207,8 @@ def run_task(task: dict, knowledge_nav: str, current_site: str, k: int) -> dict:
     for _ in range(k):
         t0 = time.time()
         try:
-            program = decompose(
+            program = _with_backoff(
+                decompose,
                 goal,
                 knowledge=knowledge_nav,
                 current_site=current_site,
