@@ -120,10 +120,19 @@ def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBloc
     it's the first thing decompose reads. None when there are no entities."""
     if resolution is None or not resolution.entities:
         return None
-    lines = [
-        f"- 实体「{e.mention}」｜类型={e.type}｜{'允许模糊匹配，检索关键词：' + e.search_key if e.match_mode == 'approximate' else '精确匹配'}"
-        for e in resolution.entities
-    ]
+
+    def _line(e: EntityRef) -> str:
+        match = ("允许模糊匹配，检索关键词：" + e.search_key) if e.match_mode == "approximate" else "精确匹配"
+        # cardinality=set is authoritative: the reference denotes a SET (selector picks the members),
+        # not one entity — decompose MUST iterate (foreach over the members), not emit a single action.
+        if getattr(e, "cardinality", "single") == "set":
+            sel = (getattr(e, "selector", "") or "").strip()
+            card = f"｜**多目标(一组)**：这是一个规格，匹配多个实体" + (f"（筛选：{sel}）" if sel else "") + "，须对每个匹配到的成员逐个处理（foreach），不可当单个操作"
+        else:
+            card = "｜单目标"
+        return f"- 实体「{e.mention}」｜类型={e.type}｜{match}{card}"
+
+    lines = [_line(e) for e in resolution.entities]
     return ContextBlock(
         id="runtime.intent_resolution",
         budget="required",

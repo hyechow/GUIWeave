@@ -89,6 +89,21 @@ def _flatten_computes(stmts: list) -> list[Compute]:
     return out
 
 
+def _foreach_body_goals(stmts: list) -> list[str]:
+    """All ForEach.body_goal strings anywhere — the per-row sub-goal re-decomposed at runtime (so its
+    read→compute→fill is expressed as text here, not explicit Run/Compute nodes)."""
+    out: list[str] = []
+    for s in stmts:
+        if isinstance(s, ForEach):
+            if getattr(s, "body_goal", ""):
+                out.append(s.body_goal)
+            out.extend(_foreach_body_goals(s.body))
+        elif isinstance(s, If):
+            out.extend(_foreach_body_goals(s.then))
+            out.extend(_foreach_body_goals(s.otherwise))
+    return out
+
+
 def _has_finish(stmts: list) -> bool:
     for s in stmts:
         if isinstance(s, Finish):
@@ -1842,6 +1857,13 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # hardcode a number. Regression 778: milestone was "更新 Price 字段为 <空>" and the agent
             # submitted product[price]=100.00 (expected 64.88 = 75.00×0.865).
             seq = _flatten_runs(program.statements)
+            # A foreach body_goal defers the per-row read→compute→fill to a runtime re-decompose (which
+            # goes through THIS same decomposer + the value-binding rules), so its text — not explicit
+            # Run/Compute nodes — carries the requirement. Accept either shape.
+            body_goals = " ".join(_foreach_body_goals(program.statements))
+            bg_reads_price = (("price" in body_goals.lower() or "价" in body_goals)
+                              and any(m in body_goals for m in ("current", "现价", "当前", "读", "read"))
+                              and any(m in body_goals for m in ("计算", "算", "降", "×", "*", "percent", "%")))
 
             def _reads_current_price(r: Run) -> bool:
                 text = " ".join([r.name, r.read_spec, *(r.returns or [])]).lower()
@@ -1849,15 +1871,17 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 has_read = any(m in text for m in ("current", "现价", "当前", "read", "读"))
                 return has_price and has_read and bool((r.returns or []) or r.read_spec.strip())
 
-            if not any(_reads_current_price(r) for r in seq):
+            if not any(_reads_current_price(r) for r in seq) and not bg_reads_price:
                 details.append(
                     "百分比调价未先读取变体当前 Price → 会凭空填/留空目标价（回归 778：milestone「更新 Price 为 空」、"
-                    "实际提交 product[price]=100.00，期望 64.88=75.00×0.865）；计划应含「读当前 Price → 按系数算 → 填」。"
+                    "实际提交 product[price]=100.00，期望 64.88=75.00×0.865）；计划应含「读当前 Price → 按系数算 → 填」"
+                    "（显式 read+compute，或 foreach body_goal 里写明读现价+算）。"
                     f"当前步骤: {[(r.kind, r.name) for r in seq]}"
                 )
             # And the computed value must be WIRED into the fill action as a bare {var} template —
             # a generic name ("更新为新值") gives the planner no concrete value and it hallucinates
             # one (778 live: computed 86.50, planner typed 150.00). Mirrors COMPUTE_VAR_UNUSED.
+            # (Only for EXPLICIT computes; a body_goal defers this to the per-row re-decompose.)
             compute_vars = [c.var for c in _flatten_computes(program.statements) if c.var]
             if compute_vars and not any(
                 ("{" + v + "}") in (r.name or "") for v in compute_vars for r in seq
@@ -1866,6 +1890,45 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "算出的新价没有以 {var} 模板接进填值动作名（如「将价格更新为 {new_price} 并保存」）——"
                     "泛指「新值」会让 planner 现场瞎猜（回归 778：算出 86.50、实际填 150.00）。"
                     f"compute vars: {compute_vars}; 动作: {[r.name for r in seq if r.kind == 'action']}"
+                )
+        elif assertion == "multi_variant_price_iterates":
+            # 778 is multi-target: "size 28 Sahara leggings" = the 3 colour variants of size 28 (eval
+            # expects 3 saves). With the router marking cardinality=set, the plan MUST foreach over the
+            # matching variants — a single-variant linear plan updates at most 1/3 → score 0. And the
+            # per-variant price calc must live INSIDE the foreach (each variant read→compute→fill), not
+            # once at top level.
+            def _has_foreach(stmts: list) -> bool:
+                for s in stmts:
+                    if isinstance(s, ForEach):
+                        return True
+                    if isinstance(s, If) and (_has_foreach(s.then) or _has_foreach(s.otherwise)):
+                        return True
+                return False
+
+            def _compute_in_foreach(stmts: list, in_fe: bool = False) -> bool:
+                for s in stmts:
+                    if isinstance(s, Compute) and in_fe:
+                        return True
+                    if isinstance(s, ForEach) and _compute_in_foreach(s.body, True):
+                        return True
+                    if isinstance(s, If) and (
+                        _compute_in_foreach(s.then, in_fe) or _compute_in_foreach(s.otherwise, in_fe)
+                    ):
+                        return True
+                return False
+
+            if not _has_foreach(program.statements):
+                details.append(
+                    "cardinality=set 的变体改价必须 foreach 遍历所有匹配变体（778: size 28 = 3 个颜色变体，"
+                    f"期望 3 次 save）；当前是单变体线性计划、最多改 1/3→score 0。步骤: {[type(s).__name__ for s in program.statements]}"
+                )
+            elif (_flatten_computes(program.statements)
+                  and not _compute_in_foreach(program.statements)
+                  and not _foreach_body_goals(program.statements)):
+                # A body_goal foreach defers per-row read→compute→fill to runtime; only flag a
+                # top-level explicit compute (runs once) when there is no body_goal to carry it.
+                details.append(
+                    "价格 compute 在 foreach 外（只算一次）——应在 foreach body 内对每个变体各读现价、各算、各填、各存。"
                 )
         else:
             details.append(f"unknown assertion: {assertion}")
