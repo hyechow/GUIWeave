@@ -76,6 +76,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "TEMPLATE_FIELD_NOT_IN_RETURNS",
     "TEMPLATE_BARE_VAR",
     "TEMPLATE_UNSUPPORTED_EXPR",
+    "COMPUTE_VAR_UNUSED",
     # per-run shape
     "PRECONDITION_NOT_NAVIGATION",
     "READ_MISSING_RETURNS",
@@ -210,6 +211,57 @@ def validate_program(program: Program) -> list[ValidationIssue]:
     _collect_result_vars(program.statements)
     for fn in getattr(program, "functions", None) or []:
         _collect_result_vars(fn.body)
+
+    # Deterministic value binding: a Compute produces a SCALAR (e.g. new_price = current_price×0.865).
+    # Its ONLY path onto the page is a later action whose NAME references it as bare `{var}` — the
+    # runner (_render/_scalars) then types the EXACT computed value. If nothing downstream references
+    # it, the computed value is DEAD and the consuming fill action has no concrete target, so the
+    # action-level planner hallucinates one (WebArena 778: computed new_price but authored the action
+    # as「将价格更新为新值」and filled 150.00 instead of the 86.50 it computed). Require every Compute
+    # var to be consumed — as `{var}` in some run/finish text, or as an identifier in a later Compute.
+    _computes: list[tuple[str, str]] = []   # (var, expr) in program order
+    _consumer_text: list[str] = []
+    _consumed_names: set[str] = set()       # vars consumed by bare NAME (If cond.var — not {var} form)
+    def _collect_computes(stmts: list[Stmt]) -> None:
+        for s in stmts:
+            if isinstance(s, Compute) and s.var:
+                _computes.append((s.var, s.expr or ""))
+            elif isinstance(s, Run):
+                _consumer_text.extend([s.name or "", s.success_condition or "", s.read_spec or ""])
+            elif isinstance(s, Finish):
+                _consumer_text.append(s.message or "")
+            elif isinstance(s, Call):
+                _consumer_text.extend(str(v) for v in (s.args or {}).values())
+            if isinstance(s, If):
+                if s.cond is not None:
+                    if s.cond.var:
+                        _consumed_names.add(s.cond.var)
+                    _consumer_text.append(str(s.cond.value or ""))
+                    _consumer_text.extend(str(v) for v in (s.cond.values or []))
+                _collect_computes(s.then)
+                _collect_computes(s.otherwise)
+            elif isinstance(s, ForEach):
+                _collect_computes(s.body)
+    _collect_computes(program.statements)
+    for fn in getattr(program, "functions", None) or []:
+        # A Compute var named in the enclosing function's `returns` is consumed by the call
+        # mechanism (the caller reads it via {callvar[field]}).
+        _consumed_names.update(fn.returns or [])
+        _collect_computes(fn.body)
+    _text_blob = " ".join(_consumer_text)
+    for _i, (_cvar, _) in enumerate(_computes):
+        _in_text = ("{" + _cvar + "}") in _text_blob or _cvar in _consumed_names
+        _in_other_expr = any(
+            re.search(rf"\b{re.escape(_cvar)}\b", _e)
+            for _j, (_v, _e) in enumerate(_computes) if _j != _i
+        )
+        if not _in_text and not _in_other_expr:
+            issues.add("COMPUTE_VAR_UNUSED",
+                f"Compute 算出的「{_cvar}」没有被后续任何步骤引用——算出的值成了死值，消费它的动作（填值/保存）"
+                f"没有具体目标，执行时会被 planner 瞎猜（回归 778：算了 new_price 却把动作写成『更新为新值』、"
+                f"实际填 150.00 而非算出的值）。请在使用该值的动作名里写成 {{{_cvar}}}（如『将价格更新为 {{{_cvar}}} 并保存』），"
+                f"让运行时把算出的确切值确定性填进去；不要用『新值』这类泛指。"
+            )
 
 
     def _check_refs(text: str, where: str, scope: dict[str, set[str]]) -> None:

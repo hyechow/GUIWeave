@@ -241,14 +241,17 @@ def test_validator_flags_dead_conditional_in_function():
     from gui_agent.core.orchestrator import Cond, validate_program
 
     def _fn(self_read_var: str) -> FunctionDef:
-        return FunctionDef(name="resolve", params=["sku"], returns=["material"], body=[
+        # source_kind mirrors the production shape: computed in-branch and surfaced via the
+        # function's `returns` (its consumption channel — else COMPUTE_VAR_UNUSED rightly fires).
+        return FunctionDef(name="resolve", params=["sku"], returns=["material", "source_kind"], body=[
             Run(kind="filter", name="搜 {sku}", success_condition="出现 {sku}"),
             Run(kind="navigation", var=self_read_var, returns=["material"], read_spec="读 material",
                 name="开 {sku} 编辑页", success_condition="进入"),
             If(cond=Cond(var="self_d", field="material", cmp="exists"),
                then=[Compute(var="source_kind", expr="'self'")],
                otherwise=[Run(kind="navigation", var="pd", returns=["material"], read_spec="读",
-                              name="开父", success_condition="进父")]),
+                              name="开父", success_condition="进父"),
+                          Compute(var="source_kind", expr="'parent'")]),
         ])
 
     def _prog(fn: FunctionDef) -> Program:

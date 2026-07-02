@@ -65,6 +65,12 @@ SAMPLES: dict[str, Program] = {
     "TEMPLATE_FIELD_NOT_IN_RETURNS": Program(statements=[_read(returns=("a",)), Finish(message="{v[b]}")]),
     "TEMPLATE_BARE_VAR": Program(statements=[_read(returns=("a",)), Finish(message="值是 {v}")]),
     "TEMPLATE_UNSUPPORTED_EXPR": Program(statements=[Finish(message="结果 {x + y}")]),
+    # 778 regression: computed value never referenced downstream → the fill action has no concrete
+    # target and the planner hallucinates one (filled 150.00 instead of the computed 86.50).
+    "COMPUTE_VAR_UNUSED": Program(statements=[
+        Compute(var="new_price", expr="round(75 * 0.865, 2)"),
+        Run(name="将价格更新为新值并保存", kind="action"),
+    ]),
     "PRECONDITION_NOT_NAVIGATION": Program(statements=[Run(name="点击保存", kind="action", precondition=True)]),
     "READ_MISSING_RETURNS": Program(statements=[Run(var="v", name="读取", kind="read")]),
     "READ_MISSING_VAR": Program(statements=[Run(name="读取", kind="read", returns=["a"], read_spec="读")]),

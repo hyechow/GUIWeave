@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.orchestrator import Finish, ForEach, If, Run, decompose
+from gui_agent.core.orchestrator import Compute, Finish, ForEach, If, Run, decompose
 from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates, normalize_precondition_gates
 from gui_agent.core.orchestrator.program import TEMPLATE_RE
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
@@ -73,6 +73,19 @@ def _flatten_runs(stmts: list) -> list[Run]:
             out.extend(_flatten_runs(s.otherwise))
         elif isinstance(s, ForEach):
             out.extend(_flatten_runs(s.body))
+    return out
+
+
+def _flatten_computes(stmts: list) -> list[Compute]:
+    out: list[Compute] = []
+    for s in stmts:
+        if isinstance(s, Compute):
+            out.append(s)
+        elif isinstance(s, If):
+            out.extend(_flatten_computes(s.then))
+            out.extend(_flatten_computes(s.otherwise))
+        elif isinstance(s, ForEach):
+            out.extend(_flatten_computes(s.body))
     return out
 
 
@@ -1841,6 +1854,18 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "百分比调价未先读取变体当前 Price → 会凭空填/留空目标价（回归 778：milestone「更新 Price 为 空」、"
                     "实际提交 product[price]=100.00，期望 64.88=75.00×0.865）；计划应含「读当前 Price → 按系数算 → 填」。"
                     f"当前步骤: {[(r.kind, r.name) for r in seq]}"
+                )
+            # And the computed value must be WIRED into the fill action as a bare {var} template —
+            # a generic name ("更新为新值") gives the planner no concrete value and it hallucinates
+            # one (778 live: computed 86.50, planner typed 150.00). Mirrors COMPUTE_VAR_UNUSED.
+            compute_vars = [c.var for c in _flatten_computes(program.statements) if c.var]
+            if compute_vars and not any(
+                ("{" + v + "}") in (r.name or "") for v in compute_vars for r in seq
+            ):
+                details.append(
+                    "算出的新价没有以 {var} 模板接进填值动作名（如「将价格更新为 {new_price} 并保存」）——"
+                    "泛指「新值」会让 planner 现场瞎猜（回归 778：算出 86.50、实际填 150.00）。"
+                    f"compute vars: {compute_vars}; 动作: {[r.name for r in seq if r.kind == 'action']}"
                 )
         else:
             details.append(f"unknown assertion: {assertion}")
