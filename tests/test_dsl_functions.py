@@ -486,3 +486,29 @@ def test_compute_scope_exposes_read_fields_bare_and_dotted():
 
         drive(Interpreter(program), execute)
         assert seen[-1] == "将 Price 更新为 64.88 并保存", f"expr {expr!r} → {seen[-1]!r}"
+
+
+def test_compute_template_field_braces_in_foreach_body():
+    # Offline 778 v3 wrote the body compute as `{p[price]} * 0.865` (the SAME template convention as
+    # milestone names). To safe_eval that's a set literal → SafeEvalError → "". _compute normalizes
+    # `{var[field]}` → `var['field']`; with the loop var bound per row it must fill concrete values.
+    program = Program(goal="降价", statements=[
+        ForEach(var="p", target="size28 变体行", returns=["sku", "price"], body=[
+            Compute(var="new_price", expr="{p[price]} * 0.865"),
+            Run(kind="action", name="打开 {p[sku]} 并更新价格为 {new_price} 保存",
+                success_condition="已保存"),
+        ]),
+        Finish(message="done"),
+    ])
+    seen: list[str] = []
+
+    def execute(run: Run) -> RunResult:
+        seen.append(run.name)
+        return RunResult(completed=True)
+
+    rows = [{"sku": "WP09-28-Blue", "price": "75.00"}, {"sku": "WP09-28-Gray", "price": "$75.00"}]
+    drive(Interpreter(program, collect_fn=lambda target, cols, limit=None: rows), execute)
+    assert seen == [
+        "打开 WP09-28-Blue 并更新价格为 64.875 保存",
+        "打开 WP09-28-Gray 并更新价格为 64.875 保存",
+    ]

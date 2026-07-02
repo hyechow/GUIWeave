@@ -362,8 +362,11 @@ class Interpreter:
         decomposer reaches for `{sku}` (as it does in every milestone name) instead of bare `sku`,
         but to safe_eval `{sku}` is a one-element SET literal → SafeEvalError → silently-empty result
         (live 185: base_sku came out "", so the search milestone ran with an empty keyword). Strip the
-        braces around bare identifiers so `{sku}.rsplit(...)` and `sku.rsplit(...)` are equivalent."""
-        expr = BARE_REF_RE.sub(r"\1", c.expr)
+        braces around bare identifiers so `{sku}.rsplit(...)` and `sku.rsplit(...)` are equivalent.
+        Same for the field form: `{p[price]} * 0.865` (offline 778: parsed as a set literal →
+        SafeEvalError → "") normalizes to `p['price'] * 0.865`."""
+        expr = TEMPLATE_RE.sub(lambda m: f"{m.group(1)}[{m.group(2)!r}]", c.expr)
+        expr = BARE_REF_RE.sub(r"\1", expr)
         # Scope from env RunResults' reads, in BOTH shapes the decomposer nondeterministically writes:
         # the field name bare (`current_price`) AND the var-as-dict (`variant_row['current_price']`).
         # Without this, a numeric derivation from a read value raised 未知变量 → silently "" → the fill

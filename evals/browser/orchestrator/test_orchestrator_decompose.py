@@ -1871,7 +1871,25 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 has_read = any(m in text for m in ("current", "现价", "当前", "read", "读"))
                 return has_price and has_read and bool((r.returns or []) or r.read_spec.strip())
 
-            if not any(_reads_current_price(r) for r in seq) and not bg_reads_price:
+            def _grid_price_collected(stmts: list) -> bool:
+                # Third valid shape (offline 778 v3): the foreach COLLECTS the Price column off the
+                # grid (returns=['sku','price',...]) and a body compute derives from the loop var
+                # ({p[price]} * 0.865) — the grid Price of a simple-product variant row IS its
+                # current price, so this reads-then-computes without a separate read step.
+                for s in stmts:
+                    if isinstance(s, ForEach):
+                        has_price_col = any(("price" in f.lower() or "价" in f) for f in (s.returns or []))
+                        body_computes = [b for b in s.body if isinstance(b, Compute)]
+                        if has_price_col and any(s.var in c.expr for c in body_computes):
+                            return True
+                        if _grid_price_collected(s.body):
+                            return True
+                    elif isinstance(s, If) and (_grid_price_collected(s.then) or _grid_price_collected(s.otherwise)):
+                        return True
+                return False
+
+            if (not any(_reads_current_price(r) for r in seq) and not bg_reads_price
+                    and not _grid_price_collected(program.statements)):
                 details.append(
                     "百分比调价未先读取变体当前 Price → 会凭空填/留空目标价（回归 778：milestone「更新 Price 为 空」、"
                     "实际提交 product[price]=100.00，期望 64.88=75.00×0.865）；计划应含「读当前 Price → 按系数算 → 填」"
