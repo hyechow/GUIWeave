@@ -141,11 +141,60 @@ def validate_orchestration_preflight(
             )
         )
 
+    issues.extend(_check_purity_discipline(runs))
+
     if resolution is not None:
         issues.extend(_check_router_entity_coverage(resolution, program_text, foreach_stmts, program))
 
     ok = not any(issue.severity == "error" for issue in issues)
     return OrchestrationPreflightResult(ok=ok, issues=issues)
+
+
+# ── CQS / purity discipline（milestone=函数 的纯度合同）────────────────────────────
+# A precondition is an ensure-state GATE: the engine rewrites its success_condition to the
+# generic gate (normalize_precondition_gates), so any returns hanging on it would be read off
+# whatever frame satisfies that generic gate — a recipe for empty/garbage returns — and sql on
+# it is a category error. A query (read/data_query) is a pure primitive that cannot touch the
+# UI: a mutation verb in its name means the decomposer misclassified a command as a query, and
+# the "action" would silently never happen.
+
+_MUTATION_VERB_RE = re.compile(
+    r"点击|填写|填入|输入|提交|创建|新建|删除|保存|设置|勾选|切换|清除|拖动|滚动|展开|"
+    r"\bclick\b|\bsubmit\b|\bcreate\b|\bdelete\b|\bsave\b|\bfill\b|\btoggle\b|\bdrag\b",
+    re.IGNORECASE,
+)
+
+
+def _check_purity_discipline(runs: list[Run]) -> list[OrchestrationPreflightIssue]:
+    issues: list[OrchestrationPreflightIssue] = []
+    for run in runs:
+        if run.precondition and (run.returns or run.sql.strip()):
+            issues.append(
+                OrchestrationPreflightIssue(
+                    code="ORCH_PRECONDITION_IMPURE",
+                    message=(
+                        "A precondition run must be a pure ensure-state gate: its success_condition "
+                        "is rewritten to the generic gate, so returns/sql attached to it read the "
+                        "wrong frame. Move the read/query to its own step after the precondition."
+                    ),
+                    evidence=[_run_summary(run)],
+                )
+            )
+        if run.is_query and _MUTATION_VERB_RE.search(run.name or ""):
+            issues.append(
+                OrchestrationPreflightIssue(
+                    code="ORCH_QUERY_WITH_MUTATION_VERB",
+                    severity="warning",
+                    message=(
+                        "A read/data_query is a pure query primitive — it cannot click, fill, or "
+                        "submit anything; the mutation implied by its name would silently never "
+                        "happen. Author the mutation as a navigation/filter/action run (optionally "
+                        "with returns), then query."
+                    ),
+                    evidence=[_run_summary(run)],
+                )
+            )
+    return issues
 
 
 def _check_router_entity_coverage(

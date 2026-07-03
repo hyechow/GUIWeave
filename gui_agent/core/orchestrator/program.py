@@ -106,6 +106,19 @@ class Run(BaseModel):
     # in the checker's _check.md. The flag — not a string match — is the detection signal.
     precondition: bool = False
 
+    # ── CQS purity vocabulary（milestone=函数 的纯度维度）────────────────────────────
+    @property
+    def is_query(self) -> bool:
+        """纯查询：不触界面、只读当前帧/表格快照（read / data_query）。可安全重试、可被记忆化。"""
+        return self.kind in ("read", "data_query")
+
+    @property
+    def is_command(self) -> bool:
+        """命令：驱动界面、可能改变外部状态（navigation / filter / action）。带 returns 的命令
+        是「已发出 + 完成帧读值」的复合形态（dispatch gate 拥有验收、structured_read 拥有取值），
+        不是查询。"""
+        return not self.is_query
+
 
 
 class Cond(BaseModel):
