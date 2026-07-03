@@ -64,6 +64,12 @@ class _StepDraft(BaseModel):
         description="op=run 且 returns 非空：返回值读取说明——逐个说明每个 returns 字段在完成帧上看什么、"
                     "如何把信号(图标/颜色/文字/位置)判读成值、各取值含义。",
     )
+    return_domains: dict[str, str] = Field(
+        default_factory=dict,
+        description="op=run 可选：returns 字段的取值域声明 {字段: 域}，域 ∈ url | number | date | "
+                    "enum:值1|值2|... | text。运行时用它拒收出域返回值（读到垃圾→重试定位，不静默给错答）；"
+                    "枚举判定类字段（成功/失败、是/否、几种状态之一）强烈建议声明 enum 域。",
+    )
     sql: str = Field(
         default="",
         description=(
@@ -243,6 +249,13 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     kind=_to_kind(d.run_kind),
                     returns=[r for r in d.returns if r.strip()],
                     read_spec=d.read_spec,
+                    # Deterministic normalization: keep only domains whose field is actually declared
+                    # in returns (an unknown key is decomposer noise, not a contract).
+                    return_domains={
+                        k.strip(): v.strip()
+                        for k, v in (d.return_domains or {}).items()
+                        if k.strip() and v.strip() and k.strip() in {r.strip() for r in d.returns}
+                    },
                     sql=d.sql,
                     data_scope="current" if (d.data_scope or "").strip().lower() == "current" else "complete",
                     precondition=bool(d.precondition),

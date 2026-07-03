@@ -23,7 +23,9 @@ Marshalling 本身（Run→Milestone / RunResult 打包）住在 engine.py；本
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Optional
+import re
+from dataclasses import dataclass, field as dc_field
+from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
 from gui_agent.core.orchestrator.engine import task_type_for, to_milestone
 
@@ -98,7 +100,131 @@ def missing_ui_return_fields(run: object, reads: dict[str, str]) -> list[str]:
     return missing
 
 
-def tighten_ui_return_run(run: object, missing: list[str], reads: dict[str, str], *, attempt: int) -> object:
+# ── 返回值域校验（typed returns）─────────────────────────────────────────────────
+# 出参不只是「非空」，还要「在取值域内」：读到形似垃圾的值（URL 字段读到一句散文、计数字段
+# 读到无数字文本、枚举字段读到域外值）= 合同违约，走与空值相同的有界恢复，而不是静默给错答。
+# 域来源优先级：Run.return_domains 显式声明（decomposer 授权）> 字段名线索的保守推断。
+
+_DOMAIN_URL_NAME_RE = re.compile(r"url|href|链接", re.IGNORECASE)
+_DOMAIN_NUMBER_NAME_RE = re.compile(r"count|total|amount|price|数量|计数|金额|条数|行数|总数|数目", re.IGNORECASE)
+_DOMAIN_DATE_NAME_RE = re.compile(r"\bdate\b|\btime\b|日期|时间", re.IGNORECASE)
+_HAS_DIGIT_RE = re.compile(r"\d")
+
+
+def _value_fits_domain(value: str, domain: str) -> tuple[bool, str]:
+    """(fits, reason-if-not). Domain grammar: url | number | date | enum:a|b|c | text."""
+    text = str(value).strip()
+    kind = domain.strip().lower()
+    if kind.startswith("enum:"):
+        options = [opt.strip() for opt in domain.split(":", 1)[1].split("|") if opt.strip()]
+        normalized = {opt.casefold() for opt in options}
+        if text.casefold() in normalized:
+            return True, ""
+        return False, f"不在枚举域 {options} 内"
+    if kind == "url":
+        if " " not in text and ("://" in text or "/" in text):
+            return True, ""
+        return False, "不是 URL/路径形态"
+    if kind == "number":
+        if _HAS_DIGIT_RE.search(text):
+            return True, ""
+        return False, "不含任何数字，不是数值/计数"
+    if kind == "date":
+        if _HAS_DIGIT_RE.search(text):
+            return True, ""
+        return False, "不含任何数字，不是日期/时间"
+    return True, ""  # text / 未知域 = 不约束
+
+
+def _inferred_domain(field_name: str) -> str:
+    """Conservative field-name-cue inference, used only when no explicit domain is declared."""
+    if _DOMAIN_URL_NAME_RE.search(field_name):
+        return "url"
+    if _DOMAIN_NUMBER_NAME_RE.search(field_name):
+        return "number"
+    if _DOMAIN_DATE_NAME_RE.search(field_name):
+        return "date"
+    return ""
+
+
+@dataclass
+class DomainViolation:
+    """One non-empty return value that fell outside its declared/inferred domain."""
+
+    field: str
+    value: str
+    domain: str
+    reason: str
+
+    def describe(self) -> str:
+        return f"字段「{self.field}」读到「{self.value}」：{self.reason}（要求域 {self.domain}）"
+
+
+def out_of_domain_return_fields(run: object, reads: dict[str, str]) -> list[DomainViolation]:
+    """Check every NON-empty declared return value against its domain.
+
+    Empty values are the missing-check's business (``missing_ui_return_fields``); this only
+    rejects values that were read but are the WRONG SHAPE — the "抓垃圾静默给错答" class."""
+    if run is None or not getattr(run, "returns", None):
+        return []
+    if getattr(run, "kind", "") in {"read", "data_query"}:
+        return []
+    declared: dict[str, str] = {
+        str(k): str(v) for k, v in (getattr(run, "return_domains", None) or {}).items()
+    }
+    violations: list[DomainViolation] = []
+    for field_name in (str(f) for f in getattr(run, "returns", [])):
+        value = str(reads.get(field_name, "")).strip()
+        if not value:
+            continue
+        domain = declared.get(field_name) or _inferred_domain(field_name)
+        if not domain:
+            continue
+        fits, reason = _value_fits_domain(value, domain)
+        if not fits:
+            violations.append(DomainViolation(field=field_name, value=value, domain=domain, reason=reason))
+    return violations
+
+
+@dataclass
+class ReturnContractReport:
+    """The full return-contract verdict for one completed UI run: missing + out-of-domain."""
+
+    missing: list[str] = dc_field(default_factory=list)
+    out_of_domain: list[DomainViolation] = dc_field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.missing or self.out_of_domain)
+
+    @property
+    def violated_fields(self) -> list[str]:
+        return list(self.missing) + [v.field for v in self.out_of_domain]
+
+    def describe(self) -> str:
+        parts: list[str] = []
+        if self.missing:
+            parts.append("实际读取结果为空：" + "、".join(self.missing))
+        for violation in self.out_of_domain:
+            parts.append(violation.describe())
+        return "；".join(parts)
+
+
+def check_return_contract(run: object, reads: dict[str, str]) -> ReturnContractReport:
+    """The RETURN-CHECK op: does the extraction satisfy the declared output contract?"""
+    return ReturnContractReport(
+        missing=missing_ui_return_fields(run, reads),
+        out_of_domain=out_of_domain_return_fields(run, reads),
+    )
+
+
+def tighten_ui_return_run(
+    run: object,
+    missing: list[str],
+    reads: dict[str, str],
+    *,
+    attempt: int,
+    violations: Sequence[DomainViolation] = (),
+) -> object:
     """Make a returning UI run stricter after its completion frame read blanks.
 
     The decomposer may author a broad success condition such as "page loaded" while
@@ -110,6 +236,8 @@ def tighten_ui_return_run(run: object, missing: list[str], reads: dict[str, str]
     if run is None or not hasattr(run, "model_copy"):
         return run
     returns = [str(field) for field in getattr(run, "returns", [])]
+    bad_fields = list(missing) + [v.field for v in violations]
+    bad_text = "、".join(str(field) for field in bad_fields)
     missing_text = "、".join(str(field) for field in missing)
     present = {
         str(field): str(value).strip()
@@ -119,16 +247,21 @@ def tighten_ui_return_run(run: object, missing: list[str], reads: dict[str, str]
     present_text = "、".join(f"{field}={value}" for field, value in present.items()) or "无"
     base_success = str(getattr(run, "success_condition", "") or f"完成「{getattr(run, 'name', '当前子目标')}」")
     base_read_spec = str(getattr(run, "read_spec", "") or "")
+    violation_text = "".join(
+        f"字段「{v.field}」上次读到「{v.value}」但{v.reason}——那不是有效返回值，不要再读同一处；"
+        for v in violations
+    )
     recovery = (
-        f"返回字段恢复尝试 {attempt}: 当前完成帧未读到所有必需字段。"
-        f"已读非空值：{present_text}；缺失字段：{missing_text}。"
-        f"只有当这些字段都能从界面明确读取到非空值时才算完成：{'、'.join(returns)}。"
+        f"返回字段恢复尝试 {attempt}: 当前完成帧未读到所有必需字段的有效值。"
+        f"已读非空值：{present_text}；缺失字段：{missing_text or '无'}。"
+        f"{violation_text}"
+        f"只有当这些字段都能从界面明确读取到有效非空值时才算完成：{'、'.join(returns)}。"
         "如果当前屏幕不可见，不要验收完成；继续执行必要的页面内操作，例如等待、滚动、"
         "打开可见的详情/统计/菜单入口、或使用页面搜索，直到缺失字段的具体值可见。"
     )
     name = str(getattr(run, "name", "当前子目标"))
     return run.model_copy(update={
-        "name": f"{name}（继续定位返回字段：{missing_text}）",
+        "name": f"{name}（继续定位返回字段：{bad_text}）",
         "success_condition": f"{base_success}\n{recovery}",
         "read_spec": f"{base_read_spec}\n{recovery}".strip(),
     })
@@ -144,7 +277,8 @@ def force_interactive_return_recovery(program: object, directive: str) -> object
     scroll, expand sections, or navigate within the page before the structured
     return extraction runs.
     """
-    if "实际读取结果为空" not in directive or "返回字段" not in directive:
+    contract_failure = "实际读取结果为空" in directive or "返回字段合同未满足" in directive
+    if not contract_failure or "返回字段" not in directive:
         return program
     if not hasattr(program, "statements") or not hasattr(program, "model_copy"):
         return program

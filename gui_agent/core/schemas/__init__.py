@@ -495,6 +495,15 @@ class Milestone(BaseModel):
         default=False,
         description="True when this milestone ensures an entry state and may already be satisfied on the first frame.",
     )
+    returns: list[str] = Field(
+        default_factory=list,
+        description="声明的结构化返回字段（milestone=函数 的出参合同）；由编排器 Run.returns 填充，"
+                    "空 = 本 milestone 无出参。合同校验在 callframe 边界执行，此处为结构化通道。",
+    )
+    read_spec: str = Field(
+        default="",
+        description="返回字段的判读说明（对应 Run.read_spec）；与 returns 一起构成出参合同的结构化通道。",
+    )
     scroll_stop_condition: str = Field(
         default="",
         description=(

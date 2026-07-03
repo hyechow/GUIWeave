@@ -44,8 +44,9 @@ def _milestone_id(run: Run, index: int) -> str:
 def to_milestone(run: Run, index: int) -> Milestone:
     """Build a feat-android Milestone the supervisor can drive from a DSL Run spec.
 
-    `returns` (fields to read) are folded into the description so the read instruction
-    targets them; structured {field: value} extraction is a later step (#3)."""
+    `returns`/`read_spec` travel BOTH ways: structurally (Milestone.returns/read_spec — the
+    出参合同 channel a consumer can read without parsing prose) AND folded into the description
+    (so existing read-instruction prompts keep targeting them unchanged)."""
     kind, strategy = _KIND_MAP.get(run.kind, ("action", "visible_once"))
     desc = run.name
     if run.returns:
@@ -59,6 +60,8 @@ def to_milestone(run: Run, index: int) -> Milestone:
         kind=kind,  # type: ignore[arg-type]  # validated against MilestoneKind Literal
         completion_strategy=strategy,  # type: ignore[arg-type]
         precondition=run.precondition,  # entry-state gate: checker judges frame-1, no fresh-nav skip
+        returns=list(run.returns),
+        read_spec=run.read_spec or "",
     )
 
 

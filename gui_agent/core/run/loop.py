@@ -42,9 +42,9 @@ from gui_agent.core.orchestrator.callframe import (
     MAX_EMPTY_RETURN_RECOVERIES,
     MAX_KICKBACK_REPLANS,
     ReturnRecoveryLedger,
+    check_return_contract,
     extract_ui_returns,
     force_interactive_return_recovery as _force_interactive_return_recovery,
-    missing_ui_return_fields as _missing_ui_return_fields,
     open_call,
     should_kickback_replan,
     tighten_ui_return_run as _tighten_ui_return_run,
@@ -550,13 +550,14 @@ def run_agent_loop(
                 read_state.flush(turn_no=turn_no, say=_say)
                 _rows = []
                 _reads = _read_completed_run_returns(_cur_run, observation)
-                _missing_returns = _missing_ui_return_fields(_cur_run, _reads)
-                if _missing_returns:
+                _contract = check_return_contract(_cur_run, _reads)
+                if _contract:
                     _directive = (
-                        "上一子目标被验收为完成，但它声明必须读取返回字段 "
-                        f"{_missing_returns}，实际读取结果为空：{_reads}。"
-                        "这说明验收过早或页面不对。不要推进到会使用空值的后续步骤；"
-                        "请从当前页面继续或重规划，先真正定位目标数据并读取非空返回值。"
+                        "上一子目标被验收为完成，但它声明的返回字段合同未满足："
+                        f"{_contract.describe()}。已读取结果：{_reads}。"
+                        "这说明验收过早、页面不对、或读取落在了错误的信号上。"
+                        "不要推进到会使用空值/垃圾值的后续步骤；"
+                        "请从当前页面继续或重规划，先真正定位目标数据并读取有效的返回值。"
                     )
                     _handled, _r = _perform_replan(_directive, observation)
                     if _handled and _r is not None:
@@ -568,26 +569,27 @@ def run_agent_loop(
                         if _attempt is not None:
                             _cur_run = _tighten_ui_return_run(
                                 _cur_run,
-                                _missing_returns,
+                                _contract.missing,
                                 _reads,
                                 attempt=_attempt,
+                                violations=_contract.out_of_domain,
                             )
                             open_call(supervisor, _cur_run, _run_idx, fresh_advance=False)
                             _say(
-                                "  [Orchestrator] 返回字段为空，继续定位"
+                                "  [Orchestrator] 返回值合同未满足，继续定位"
                                 f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
-                                + "、".join(_missing_returns)
+                                + _contract.describe()
                             )
                             _did_return_recovery = True
                         else:
                             _say(
-                                "  [Orchestrator] 返回字段持续为空，停止推进："
-                                + "、".join(_missing_returns)
+                                "  [Orchestrator] 返回值合同持续未满足，停止推进："
+                                + _contract.describe()
                             )
                             _hand = package_result(
                                 _cur_run,
                                 completed=False,
-                                summary="必需返回字段为空：" + "、".join(_missing_returns),
+                                summary="返回值合同未满足：" + _contract.describe(),
                                 notes=context.content_notes[_notes_mark:],
                                 reads=_reads,
                             )

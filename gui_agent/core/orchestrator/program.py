@@ -86,6 +86,11 @@ class Run(BaseModel):
     # maps to). structured_read uses this as the primary judgment guidance; app knowledge is a
     # supplementary signal-convention reference.
     read_spec: str = Field(default="")
+    # Typed returns: optional domain declaration per `returns` field —
+    # {field: "url" | "number" | "date" | "enum:a|b|c" | "text"}. The callframe return-check
+    # rejects a NON-empty value that falls outside its domain (读到垃圾 → 走空值同款有界恢复，
+    # 而不是静默给错答)。Fields not listed fall back to conservative name-cue inference.
+    return_domains: dict[str, str] = Field(default_factory=dict)
     # Restricted SQL for kind="data_query". It runs against the current structured table snapshot
     # in an in-memory sqlite database. Only SELECT / WITH ... SELECT is accepted.
     sql: str = Field(default="")

@@ -677,7 +677,7 @@ def test_tighten_ui_return_run_requires_non_empty_fields():
     assert tightened is not run
     assert "继续定位返回字段：contributors_count" in tightened.name
     assert "目标详情页已打开" in tightened.success_condition
-    assert "只有当这些字段都能从界面明确读取到非空值时才算完成" in tightened.success_condition
+    assert "只有当这些字段都能从界面明确读取到有效非空值时才算完成" in tightened.success_condition
     assert "stars_count=10.7k" in tightened.success_condition
     assert "contributors_count" in tightened.read_spec
     assert "星标数" in tightened.read_spec
