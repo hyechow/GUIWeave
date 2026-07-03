@@ -38,11 +38,18 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.non_interactive import drive_pending_non_ui
-from gui_agent.core.orchestrator.engine import (
-    package_result,
-    task_type_for,
-    to_milestone,
+from gui_agent.core.orchestrator.callframe import (
+    MAX_EMPTY_RETURN_RECOVERIES,
+    MAX_KICKBACK_REPLANS,
+    ReturnRecoveryLedger,
+    extract_ui_returns,
+    force_interactive_return_recovery as _force_interactive_return_recovery,
+    missing_ui_return_fields as _missing_ui_return_fields,
+    open_call,
+    should_kickback_replan,
+    tighten_ui_return_run as _tighten_ui_return_run,
 )
+from gui_agent.core.orchestrator.engine import package_result
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
@@ -71,151 +78,10 @@ TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 # 加载是 App 渲染延迟、不是 agent 的一步操作，不该消耗轮数预算；但要设上限防页面永挂死循环。
 LOADING_WAIT_S = 0.6          # 每个加载帧重新观察前的等待，给页面渲染时间
 MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂、停止
-MAX_EMPTY_RETURN_RECOVERIES = 3  # 返回字段为空时，最多把当前 UI run 收紧后重新驱动几次
 
 # 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
 # MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
 # ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
-
-
-_EMPTY_RETURN_OK_CUES = (
-    "留空",
-    "未选中",
-    "selectedindex=-1",
-    "unselected",
-    "no selection",
-    "empty allowed",
-    "allow empty",
-)
-
-
-def _compact_text(text: str) -> str:
-    return "".join(ch.lower() for ch in str(text or "") if not ch.isspace())
-
-
-def _read_spec_fragments(text: str) -> list[str]:
-    spec = str(text or "")
-    for sep in ("；", ";", "\n", "。"):
-        spec = spec.replace(sep, "\n")
-    return [frag.strip() for frag in spec.splitlines() if frag.strip()]
-
-
-def _ui_return_field_allows_empty(run: object, field: str) -> bool:
-    """Whether this return field explicitly treats blank as a valid value."""
-    field_key = _compact_text(field)
-    if not field_key:
-        return False
-    for fragment in _read_spec_fragments(getattr(run, "read_spec", "") or ""):
-        compact = _compact_text(fragment)
-        if field_key not in compact:
-            continue
-        if any(_compact_text(cue) in compact for cue in _EMPTY_RETURN_OK_CUES):
-            return True
-    return False
-
-
-def _missing_ui_return_fields(run: object, reads: dict[str, str]) -> list[str]:
-    """Return UI-run fields that were declared but not actually read.
-
-    A navigation/action/filter run with ``returns`` is only complete for the
-    orchestrator once those fields have values. Empty values mean the milestone
-    was accepted too early or on the wrong page, so the plan should not advance
-    to later steps that interpolate blanks.
-    """
-    if run is None or not getattr(run, "returns", None):
-        return []
-    if getattr(run, "kind", "") in {"read", "data_query"}:
-        return []
-    missing: list[str] = []
-    for field in getattr(run, "returns", []):
-        field_name = str(field)
-        if str(reads.get(field_name, "")).strip():
-            continue
-        if field_name in reads and _ui_return_field_allows_empty(run, field_name):
-            continue
-        missing.append(field_name)
-    return missing
-
-
-def _tighten_ui_return_run(run: object, missing: list[str], reads: dict[str, str], *, attempt: int) -> object:
-    """Make a returning UI run stricter after its completion frame read blanks.
-
-    The decomposer may author a broad success condition such as "page loaded" while
-    the run also declares return fields. If the checker accepts the page before
-    those fields are visible, continue the same UI milestone with an explicit
-    non-empty return-field gate instead of advancing with blanks or waiting as if
-    the page were loading.
-    """
-    if run is None or not hasattr(run, "model_copy"):
-        return run
-    returns = [str(field) for field in getattr(run, "returns", [])]
-    missing_text = "、".join(str(field) for field in missing)
-    present = {
-        str(field): str(value).strip()
-        for field, value in reads.items()
-        if str(value).strip()
-    }
-    present_text = "、".join(f"{field}={value}" for field, value in present.items()) or "无"
-    base_success = str(getattr(run, "success_condition", "") or f"完成「{getattr(run, 'name', '当前子目标')}」")
-    base_read_spec = str(getattr(run, "read_spec", "") or "")
-    recovery = (
-        f"返回字段恢复尝试 {attempt}: 当前完成帧未读到所有必需字段。"
-        f"已读非空值：{present_text}；缺失字段：{missing_text}。"
-        f"只有当这些字段都能从界面明确读取到非空值时才算完成：{'、'.join(returns)}。"
-        "如果当前屏幕不可见，不要验收完成；继续执行必要的页面内操作，例如等待、滚动、"
-        "打开可见的详情/统计/菜单入口、或使用页面搜索，直到缺失字段的具体值可见。"
-    )
-    name = str(getattr(run, "name", "当前子目标"))
-    return run.model_copy(update={
-        "name": f"{name}（继续定位返回字段：{missing_text}）",
-        "success_condition": f"{base_success}\n{recovery}",
-        "read_spec": f"{base_read_spec}\n{recovery}".strip(),
-    })
-
-
-def _force_interactive_return_recovery(program: object, directive: str) -> object:
-    """Convert a mistaken current-frame read into a UI locating run after empty returns.
-
-    A kickback caused by empty UI return fields means the current frame did not
-    expose the required values. If the redecomposer responds with a scalar
-    ``read`` as the first step, that read can only repeat the same empty frame.
-    Treat it as an interactive page-location milestone so the supervisor can
-    scroll, expand sections, or navigate within the page before the structured
-    return extraction runs.
-    """
-    if "实际读取结果为空" not in directive or "返回字段" not in directive:
-        return program
-    if not hasattr(program, "statements") or not hasattr(program, "model_copy"):
-        return program
-
-    from gui_agent.core.orchestrator.program import Run
-
-    statements = list(getattr(program, "statements", []) or [])
-    if not statements:
-        return program
-    first = statements[0]
-    if (
-        not isinstance(first, Run)
-        or first.kind != "read"
-        or not first.returns
-    ):
-        return program
-
-    fields = "、".join(str(field) for field in first.returns)
-    recovery = (
-        "上一次已在当前完成帧尝试读取这些返回字段但结果为空。"
-        f"本步必须先通过界面定位让字段值可见，字段包括：{fields}。"
-        "如果当前屏幕看不到这些值，不要验收完成；继续滚动、展开页面内相关区域、"
-        "打开可见的统计/详情入口或使用页面搜索，直到所有字段都有非空可读值。"
-    )
-    success = str(first.success_condition or f"页面显示可读取的返回字段：{fields}")
-    read_spec = str(first.read_spec or "")
-    statements[0] = first.model_copy(update={
-        "kind": "navigation",
-        "success_condition": f"{success}\n{recovery}",
-        "read_spec": f"{read_spec}\n{recovery}".strip(),
-    })
-    return program.model_copy(update={"statements": statements})
 
 
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
@@ -243,27 +109,6 @@ def build_policy(name: str) -> "ActionPolicy":
 
 def build_supervisor(name: str) -> "SupervisorPolicy":
     return build_platform().make_supervisor(name)
-
-
-# Feasibility Guard: how many times a single run may re-decompose after a feasibility kick-back. Bounded
-# to avoid an infinite re-plan loop (the same dead-end milestone re-appearing). One is enough to
-# swap an infeasible route for the prescribed feasible one; a second kick-back ends the run.
-MAX_KICKBACK_REPLANS = 1
-
-
-def should_kickback_replan(sv_step, program, redecompose, replan_count: int) -> bool:
-    """Decide whether a stop step is a Feasibility Guard kick-back to re-decompose (vs a terminal stop).
-
-    True only when: we're in orchestrator mode (program), the supervisor attached a re-plan
-    directive (milestone judged infeasible), a redecompose callable is wired, and the per-run
-    budget is not yet spent. Otherwise the stop is handled normally (terminal)."""
-    return bool(
-        program is not None
-        and getattr(sv_step, "replan_directive", None)
-        and callable(redecompose)
-        and replan_count < MAX_KICKBACK_REPLANS
-    )
-
 
 
 def _make_collect_fn(bundle, platform, log_dir):
@@ -474,46 +319,14 @@ def run_agent_loop(
 
 
         def _read_completed_run_returns(run, observation) -> dict[str, str]:
-            """Extract a UI run's declared return fields from its completion frame."""
-            if run is None or not getattr(run, "returns", None):
-                return {}
-            if getattr(run, "kind", "") in {"read", "data_query"}:
-                return {}
-            from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
-
-            returns = list(run.returns)
-            read_spec = getattr(run, "read_spec", "") or ""
-            json_reads = read_json_url_returns(getattr(run, "name", "") or "", returns, read_spec)
-            if json_reads is not None and any(str(json_reads.get(field, "")).strip() for field in returns):
-                _say(f"  [Orchestrator] URL JSON 返回读取 {returns} → {json_reads}")
-                return json_reads
-            from gui_agent.core.orchestrator.structured_read import (
-                read_form_control_returns,
-                structured_read,
-            )
-
-            # DOM-first: a native <select>'s selected value is authoritative over a vision guess
-            # (live 185: vision read the first LISTED option Burlap instead of the selected Cotton;
-            # the DOM form control carries the real selection). An unselected native select is also
-            # authoritative empty, not "missing"; vision fills only fields the DOM did not match.
-            dom_reads = read_form_control_returns(getattr(observation, "form_controls", None), returns)
-            missing = [f for f in returns if f not in dom_reads]
-            if not missing:
-                _say(f"  [Orchestrator] DOM 表单返回读取 {returns} → {dom_reads}")
-                return dom_reads
-            reads = structured_read(
-                observation.png_bytes,
-                missing,
-                read_spec=read_spec,
+            """Extract a UI run's declared return fields from its completion frame (callframe RETURN op)."""
+            return extract_ui_returns(
+                run,
+                observation,
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                say=_say,
             )
-            merged = {**reads, **dom_reads}
-            if dom_reads:
-                _say(f"  [Orchestrator] 返回读取 {returns} → DOM {dom_reads} + 视觉 {reads}")
-            else:
-                _say(f"  [Orchestrator] 动作返回读取 {returns} → {reads}")
-            return merged
 
         def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
             """Drive pending non-UI primitives and sync the local interpreter cursor."""
@@ -581,7 +394,7 @@ def run_agent_loop(
                 return _finish(_orch_result(context, _interp, _reply))
 
         _kickback_replans = 0  # Feasibility Guard: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
-        _empty_return_recoveries: dict[tuple[int, str, tuple[str, ...]], int] = {}
+        _return_recovery = ReturnRecoveryLedger()  # per-call-site budget for the empty-returns contract violation
 
         def _perform_replan(directive: str, observation=None) -> "tuple[bool, str | None]":
             """Re-decompose the REMAINING plan with a kick-back directive + hot-swap the interpreter.
@@ -751,25 +564,15 @@ def run_agent_loop(
                     elif _handled:
                         _did_kickback_replan = True
                     else:
-                        _recovery_key = (
-                            _run_idx,
-                            str(getattr(_cur_run, "var", "") or getattr(_cur_run, "name", "")),
-                            tuple(str(field) for field in getattr(_cur_run, "returns", [])),
-                        )
-                        _attempt = _empty_return_recoveries.get(_recovery_key, 0) + 1
-                        if _attempt <= MAX_EMPTY_RETURN_RECOVERIES:
-                            _empty_return_recoveries[_recovery_key] = _attempt
+                        _attempt = _return_recovery.next_attempt(_run_idx, _cur_run)
+                        if _attempt is not None:
                             _cur_run = _tighten_ui_return_run(
                                 _cur_run,
                                 _missing_returns,
                                 _reads,
                                 attempt=_attempt,
                             )
-                            supervisor.reseed(
-                                to_milestone(_cur_run, _run_idx),
-                                task_type=task_type_for(_cur_run),
-                                fresh_advance=False,
-                            )
+                            open_call(supervisor, _cur_run, _run_idx, fresh_advance=False)
                             _say(
                                 "  [Orchestrator] 返回字段为空，继续定位"
                                 f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："

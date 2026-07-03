@@ -7,7 +7,7 @@ program drives cleanly via a fresh Interpreter (the hot-swap the loop performs).
 from gui_agent.core.orchestrator import Interpreter
 from gui_agent.core.orchestrator.program import Finish, Program, Run
 from gui_agent.core.orchestrator.runner import RunRecord, RunResult
-from gui_agent.core.run.loop import MAX_KICKBACK_REPLANS, should_kickback_replan
+from gui_agent.core.orchestrator.callframe import MAX_KICKBACK_REPLANS, should_kickback_replan
 from gui_agent.core.run.result import orchestration_result
 from gui_agent.core.schemas import PolicyContext, SupervisorStep
 

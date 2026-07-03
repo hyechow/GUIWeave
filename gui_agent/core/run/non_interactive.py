@@ -24,7 +24,8 @@ from typing import Any, Callable
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
-from gui_agent.core.orchestrator.engine import package_result, task_type_for, to_milestone
+from gui_agent.core.orchestrator.callframe import open_call
+from gui_agent.core.orchestrator.engine import package_result
 from gui_agent.core.orchestrator.program import Run
 from gui_agent.core.run.turns import make_non_ui_turn
 from gui_agent.core.schemas import Observation, PolicyContext
@@ -406,10 +407,10 @@ def drive_pending_non_ui(
         save_context()
 
     if cur_run is not None:
-        milestone = to_milestone(cur_run, run_index)
-        supervisor.reseed(
-            milestone,
-            task_type=task_type_for(cur_run),
+        milestone = open_call(
+            supervisor,
+            cur_run,
+            run_index,
             fresh_advance=done_observation is not None and not bool(getattr(cur_run, "returns", None)),
         )
         if not any(m.get("id") == milestone.id for m in context.milestones):

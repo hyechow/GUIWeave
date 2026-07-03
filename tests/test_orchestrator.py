@@ -604,7 +604,7 @@ def test_package_result_carries_structured_reads():
 
 
 def test_missing_ui_return_fields_blocks_empty_action_returns():
-    from gui_agent.core.run.loop import _missing_ui_return_fields
+    from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
 
     run = Run(
         var="repo",
@@ -619,7 +619,7 @@ def test_missing_ui_return_fields_blocks_empty_action_returns():
 
 
 def test_missing_ui_return_fields_allows_explicit_empty_select_value():
-    from gui_agent.core.run.loop import _missing_ui_return_fields
+    from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
 
     run = Run(
         var="self_d",
@@ -633,7 +633,7 @@ def test_missing_ui_return_fields_allows_explicit_empty_select_value():
 
 
 def test_missing_ui_return_fields_scopes_empty_allowance_to_the_field():
-    from gui_agent.core.run.loop import _missing_ui_return_fields
+    from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
 
     run = Run(
         var="probe",
@@ -647,7 +647,7 @@ def test_missing_ui_return_fields_scopes_empty_allowance_to_the_field():
 
 
 def test_missing_ui_return_fields_ignores_non_ui_reads():
-    from gui_agent.core.run.loop import _missing_ui_return_fields
+    from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
 
     read_run = Run(var="r", name="读取状态", kind="read", returns=["状态"])
     query_run = Run(var="q", name="查询状态", kind="data_query", returns=["状态"])
@@ -656,7 +656,7 @@ def test_missing_ui_return_fields_ignores_non_ui_reads():
 
 
 def test_tighten_ui_return_run_requires_non_empty_fields():
-    from gui_agent.core.run.loop import _tighten_ui_return_run
+    from gui_agent.core.orchestrator.callframe import tighten_ui_return_run as _tighten_ui_return_run
 
     run = Run(
         var="repo",
@@ -684,7 +684,7 @@ def test_tighten_ui_return_run_requires_non_empty_fields():
 
 
 def test_empty_return_replan_read_is_forced_interactive():
-    from gui_agent.core.run.loop import _force_interactive_return_recovery
+    from gui_agent.core.orchestrator.callframe import force_interactive_return_recovery as _force_interactive_return_recovery
 
     program = Program(statements=[
         Run(
@@ -711,7 +711,7 @@ def test_empty_return_replan_read_is_forced_interactive():
 
 
 def test_non_empty_return_replan_leaves_read_unchanged():
-    from gui_agent.core.run.loop import _force_interactive_return_recovery
+    from gui_agent.core.orchestrator.callframe import force_interactive_return_recovery as _force_interactive_return_recovery
 
     program = Program(statements=[
         Run(var="r", name="读取状态", kind="read", returns=["状态"])
