@@ -5,7 +5,8 @@ A milestone is a FUNCTION the program calls; this module owns the call boundary:
 - 入参   = 入口状态（Run.from_state，FROM）+ 目标规格（name / success_condition / read_spec）
 - 出参   = Run.returns —— 声明的返回字段，验收时必须读到非空值（合同，不是提示）
 - 后置条件 = success_condition（TO 状态），由执行器的 checker 判定
-- 纯度   = read / data_query 是纯查询；navigation / filter / action 是命令
+- 执行模式 = read / data_query 是非交互纯查询（解释器确定性执行）；navigation / filter /
+  action 是交互调用（跨进非确定性 GUI 世界的 FFI，本模块的合同全部压在这道边界上）
 - 异常   = infeasible（kickback directive → 重编排）/ 返回值空缺（有界恢复 → 诚实失败）
 
 调用方（DSL 解释器）与被调用方（milestone supervisor）互相不知道对方存在；agent loop

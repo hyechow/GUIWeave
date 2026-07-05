@@ -210,7 +210,7 @@ def test_preflight_accepts_membership_via_member_desc_or_bodygoal():
     assert validate_orchestration_preflight("Reduce ...", with_bg, resolution=resolution).ok
 
 
-# ── CQS / purity discipline（milestone=函数 的纯度合同）──────────────────────────────
+# ── 执行模式纪律（交互/非交互边界；脚本生成视角的 lint）──────────────────────────────
 
 
 def test_preflight_blocks_impure_precondition():
@@ -255,4 +255,4 @@ def test_run_purity_vocabulary():
     assert Run(kind="data_query", name="查", sql="SELECT 1").is_query
     for kind in ("navigation", "filter", "action"):
         run = Run(kind=kind, name="做")
-        assert run.is_command and not run.is_query
+        assert run.is_interactive and not run.is_query

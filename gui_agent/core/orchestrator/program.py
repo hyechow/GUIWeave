@@ -106,17 +106,23 @@ class Run(BaseModel):
     # in the checker's _check.md. The flag — not a string match — is the detection signal.
     precondition: bool = False
 
-    # ── CQS purity vocabulary（milestone=函数 的纯度维度）────────────────────────────
+    # ── 执行模式词汇（脚本生成视角：GUI 任务 = 混合脚本，交互/非交互是承重轴）──────────
+    # 一个 Run 要么是【非交互语句】（解释器确定性执行：消费当前帧/表格快照，不驱动 GUI，
+    # 可重试可记忆化），要么是【交互调用】（跨进非确定性 GUI 世界的 FFI：需要 checker 判后置、
+    # 恢复与合同都压在这道边界上）。分类轴是执行模式，不是数据方向——填表单和点链接同为交互
+    # 执行；一个名义上的 read 需要交互定位时会被【重新分类】为交互 run（升格路径），而不是
+    # 留在查询里"顺便"交互。
     @property
     def is_query(self) -> bool:
-        """纯查询：不触界面、只读当前帧/表格快照（read / data_query）。可安全重试、可被记忆化。"""
+        """非交互纯查询（read / data_query）：不驱动 GUI，只读当前帧/表格快照——这正是它们
+        能被解释器确定性执行的原因。可安全重试、可被记忆化。"""
         return self.kind in ("read", "data_query")
 
     @property
-    def is_command(self) -> bool:
-        """命令：驱动界面、可能改变外部状态（navigation / filter / action）。带 returns 的命令
-        是「已发出 + 完成帧读值」的复合形态（dispatch gate 拥有验收、structured_read 拥有取值），
-        不是查询。"""
+    def is_interactive(self) -> bool:
+        """交互调用（navigation / filter / action）：驱动界面的 FFI。带 returns 的交互 run
+        是「已发出 + 完成帧读值」的复合形态（dispatch gate 拥有验收、structured_read 拥有
+        取值），依然是一次交互调用，不按读/写再细分。"""
         return not self.is_query
 
 

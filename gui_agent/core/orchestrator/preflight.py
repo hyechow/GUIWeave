@@ -150,13 +150,13 @@ def validate_orchestration_preflight(
     return OrchestrationPreflightResult(ok=ok, issues=issues)
 
 
-# ── CQS / purity discipline（milestone=函数 的纯度合同）────────────────────────────
+# ── 执行模式纪律（交互/非交互边界；脚本生成视角的 lint）───────────────────────────────
 # A precondition is an ensure-state GATE: the engine rewrites its success_condition to the
 # generic gate (normalize_precondition_gates), so any returns hanging on it would be read off
 # whatever frame satisfies that generic gate — a recipe for empty/garbage returns — and sql on
-# it is a category error. A query (read/data_query) is a pure primitive that cannot touch the
-# UI: a mutation verb in its name means the decomposer misclassified a command as a query, and
-# the "action" would silently never happen.
+# it is a category error. A query (read/data_query) is a NON-INTERACTIVE primitive that cannot
+# touch the UI: a mutation verb in its name means the decomposer wrote an interactive step as a
+# query statement, and the "action" would silently never happen.
 
 _MUTATION_VERB_RE = re.compile(
     r"点击|填写|填入|输入|提交|创建|新建|删除|保存|设置|勾选|切换|清除|拖动|滚动|展开|"

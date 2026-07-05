@@ -1,12 +1,37 @@
-# milestone = 函数：调用合同的显式化
+# GUI 任务 = 脚本生成；milestone = 交互调用（FFI）
 
-> 分支 `feat/milestone-as-function` 的设计笔记。出发点（用户判断）：**milestone 的职能没定义清楚。
-> milestone 本质是一个 GUI 执行器——在页面上单向（读/写）的连续操作——应该把它当成工具/函数。**
-> 本分支把这个隐性合同显式化并交给机器强制，不重写执行器本身。
+> 分支 `feat/milestone-as-function` 的设计笔记。
+>
+> **总纲（用户拍板，2026-07-05 定稿）：用户诉求本质上是混合的——GUI 交互执行 + 非交互执行
+> （计算/查询）；所以 GUI 任务的本质是【代码生成，确切说是脚本生成】。** decomposer 生成一份
+> 混合脚本：非交互语句由解释器确定性执行，交互步骤是对 GUI 执行器的【函数调用】——一次跨进
+> 非确定性世界的 FFI。本分支把这道调用边界的隐性合同显式化并交给机器强制，不重写执行器本身。
+>
+> 演化脉络：最初表述是「milestone = 页面上单向（读/写）的连续操作」→ 修正一：「单页」放宽为
+> 「单边（FROM→TO，TO 可验证）」→ 修正二（本定稿）：「读/写」不是 GUI 层的本质轴——填表单和
+> 点链接同为交互执行，执行器从不按数据方向分类；承重轴是【交互/非交互】（执行模式），
+> 「纯度」的真义是【确定性】。中间一度以 CQS 语言描述 S3，已废弃该框架（机制保留，命名修正）。
 
-## 合同定义
+## 脚本生成视角下的工具链
 
-一个 milestone 是 DSL program 调用的一个**函数**：
+| 现有投资 | 身份 |
+|---|---|
+| decomposer | 编译器前端（自然语言 → 脚本） |
+| validator | 类型检查 / 引用检查 |
+| preflight | lint |
+| normalize passes（dispatch gate / precondition / chain_from_states） | 编译 pass |
+| sample-and-validate、groundtruth pass@K | 生成即测试 |
+| milestone call（callframe.py） | **FFI**——跨进非确定性 GUI 世界的外部调用 |
+| kickback + redecompose | 运行时异常触发的脚本热补丁 |
+| DSL 范例（worked examples） | 语言文档（范例传播 > 规则条文，return_domains 采纳实证） |
+
+**投资判据**：任何可靠性投入，要么把不确定性从脚本层挤出去（更多语句变成确定性执行：
+URL-direct、data_query、compute），要么在 FFI 边界上把剩余的不确定性合同化（returns 域、
+后置 gate、类型化异常）。两者之外（如让执行器更聪明）按「瓶颈在 program 层」的战略为低优先。
+
+## 交互调用的合同（FFI 边界）
+
+一次 milestone call 是脚本对 GUI 执行器的函数调用：
 
 | 函数概念 | 载体 | 强制点 |
 |---|---|---|
@@ -14,24 +39,25 @@
 | 目标规格 | `Run.name` / `success_condition` / `read_spec` | — |
 | 出参合同 | `Run.returns` + `Run.return_domains`（类型域） | `callframe.check_return_contract`：缺失或出域 = 违约 → 有界恢复 → 诚实失败 |
 | 后置条件 | `success_condition`（TO），checker 判定；dispatch gate 家族 = 确定性后置检查 | checker / FilterGate / url_changed |
-| 纯度 | `Run.is_query`（read/data_query）/ `is_command`（navigation/filter/action） | preflight CQS 规则 |
+| 执行模式 | `Run.is_query`（非交互：read/data_query）/ `is_interactive`（交互：navigation/filter/action） | S6 IR 分流 + `to_milestone` 边界类型强制 |
 | 异常 | kickback：`FeasibilityVerdict.dead_route/required_route`（类型化载荷） | `kickback_adherence_issues` 确定性服从校验 + 锐化重试 |
 
-注意两处对原始直觉的修正：
+执行模式的三条推论（代码已体现）：
 
-1. **「单页」放宽为「单边」**：写类函数经常合法跨页（点行→详情页→Edit），本质合同是
-   一条 FROM→TO 边、TO 可验证——页面数是实现细节。代码注释（program.py `from_state`）早已如此表述。
-2. **「读写单向」落地为 CQS 而非硬拆**：带 returns 的命令是被认可的复合形态
-   （dispatch gate 拥有验收、structured_read 拥有取值，engine `normalize_confirm_read_gates` 保证），
-   真正的纪律是：查询不得隐含动作、precondition 必须纯、违约不得静默推进。
+- **分类看执行模式，不看数据方向**：带 returns 的交互 run 是「已发出 + 完成帧读值」的复合形态
+  （dispatch gate 拥有验收、structured_read 拥有取值），仍是一次交互调用；
+- **升格 = 重新分类**：名义上的 read 需要交互定位时被重建为交互 run
+  （`force_interactive_return_recovery`），不是在查询里"顺便"交互；
+- **记忆化门槛按确定性划**：只有非交互语句 / precondition 入口保障步可被 frame-1 跳过豁免
+  （204 类教训的正确表述，无需读写语言）。
 
 ## 角色分工（三方协程）
 
 ```
-DSL 解释器(runner.py)      —— 调用方/定序器:yield Run,收 RunResult
+DSL 解释器(runner.py)      —— 脚本执行引擎:非交互语句自己跑,交互步骤 yield 出去
 agent loop(loop.py)        —— 调用栈/ABI 执行者:turn/帧控制流,边界决策全部取自 callframe
-milestone supervisor        —— 被调用方/函数体解释器:checker/planner react 把一个 milestone 开到 done
-orchestrator/callframe.py  —— 调用约定本身(本分支新增的显式 ABI)
+milestone supervisor        —— GUI 执行器(被调用方):checker/planner react 把一次交互调用开到 done
+orchestrator/callframe.py  —— FFI 调用约定(本分支新增的显式 ABI)
 ```
 
 `callframe.py` 的操作集：`open_call`（调用=marshal+reseed）、`extract_ui_returns`（返回值提取:
@@ -45,38 +71,53 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
   恢复预算字典化为 `ReturnRecoveryLedger`（按调用点隔离）。
 - **S2 `b373c7b`** 返回值合同：`Run.return_domains`（url|number|date|enum:a|b|c|text，
   decomposer 可声明，未声明字段用保守字段名线索推断）；出域值走与空值同款恢复路径——
-  杀「抓垃圾静默给错答」类（185 Burlap、Edit/Tee）。`Milestone.returns/read_spec` 结构化通道
-  （description 折叠保留，供既有 prompt）。
-- **S3 `41ccbb7`** 纯度纪律：`Run.is_query/is_command` 词汇；preflight
-  `ORCH_PRECONDITION_IMPURE`（error：precondition 挂 returns/sql = 读错误帧）、
-  `ORCH_QUERY_WITH_MUTATION_VERB`（warning：查询原语名字里的动作永远不会执行）。
-  task-63 的 foreach 采集列合同已在 runner.py（采集列缺失→诚实失败），未重复。
+  把「抓垃圾静默给错答」变成显式违约。`Milestone.returns/read_spec` 结构化通道
+  （description 折叠保留，供既有 prompt）。**适用边界**：显式 enum 只覆盖封闭判定域
+  （成功/失败、是/否、几种状态）；开放域字段（如 185 的 material，取值集是数据集内容、
+  分解时不可知）decomposer 写不出 enum——那族的真实防线是 DOM-first 读取 + 空值恢复，
+  不要高估 domain 校验对它的增益。
+- **S3 `41ccbb7`** 执行模式纪律（原命名 CQS，S7 修正）：`Run.is_query/is_interactive` 词汇；
+  preflight `ORCH_PRECONDITION_IMPURE`（error：precondition 挂 returns/sql = 读错误帧）、
+  `ORCH_QUERY_WITH_MUTATION_VERB`（warning：非交互原语名字里的动作永远不会执行）。
+  两条规则管的都是交互/非交互边界。task-63 的 foreach 采集列合同已在 runner.py，未重复。
 - **S4 `ea143ce`** kickback 类型化：`dead_route/required_route` 结构化载荷经
   `【死路｜禁止再用】/【规定路线】` 标记折叠进 directive 单通道；redecompose 输出过
   确定性服从校验（禁用机制再现/原 milestone 重现/规定路线未采用），违规→点名违规锐化重试一次。
   直击实测 ~1/3 的 directive-adherence 弱环节。inline directive（空返回/data_query 失败）
   无标记 = 校验自然 no-op（这类恢复合法重访相似步骤）。
-
 - **S6 非交互型从 milestone 剥离（`e665d07` + `0c3f13f`）** 运行时早已绕开（drive_pending_non_ui），
   这一步让类型系统跟上：
   - *S6a* `_chain_block`/`_func_exit_sc`：read/data_query 页面中立，FROM 链穿透（与 Compute 同款）——
     修「夹在两个 UI run 之间的 data_query 把后者 from_state 置空断链」的确定性缺陷；
   - *S6b* `Read`/`Query` 作为 Run 的窄化子类在 `_to_stmts` 构造时分流（wire 格式 op=run+kind 不变、
     LLM 面零改动、isinstance(s, Run) walker 零破坏）；`to_milestone`/`open_call` 对查询节点抛
-    ValueError（查询 marshal 进执行器 = 类型错误）；read→navigation 升格显式重建为命令 Run
+    ValueError（查询 marshal 进执行器 = 类型错误）；read→navigation 升格显式重建为交互 Run
     （升格=重新分类，不是字段改写）；drive 循环与 callframe 守卫统一走 `is_query` 单谓词。
+- **S7 `af78124` + 本次** 本体论定稿：脚本生成总纲；CQS 框架废弃（`is_command`→`is_interactive`，
+  机制不变）；return_domains 进 worked examples（规则条文 12 样本零采纳 → 范例后探针对自有字段
+  泛化出 `enum:是|否`，eval dump 渲染采纳可观测）。
 
-## 遗留项（后续分支）
+## 离线可靠性（2026-07-04 A/B）
 
-1. **Milestone.returns 的 prompt 消费方**：checker 验收「declared returns 可见」、planner 读取指令
+- 185 case-eval：分支 vs 基准 95137c3 各 6 样本 = **4/6 打平，无回归**；函数/内联形态选择是采样噪声。
+- 778 case-eval：分支 3/3；groundtruth(k=3)：185 pass@1 ✅、778 pass@3 ✅（1 样本被
+  `ROUTER_SET_SELECTOR_NOT_APPLIED` 拦→重试愈合，pass@K>pass@1 = sample-and-validate 的量化证据）。
+- 顺带修了评测装置两个 bug：嵌套 `_has_foreach` 遮蔽（185 case 必崩，`95b2c2d`）、back-nav 断言
+  只扫函数文本冤杀内联形态（`9531fcb`）。
+- 双侧同有的真实抖动（~1/3）：base_sku 显式派生偶发写进 read_spec 散文而非显式 compute 步。
+
+## 遗留项与风险（后续分支 / live 首跑清单）
+
+1. **enum 假违约风险（live 首跑第一优先）**：decomposer 声明 `enum:是|否` 但页面信号被读成
+   「已连通」→ 假违约 → 3 次收紧重试 → 把对的答案做成失败。read_spec 与域配套引导是缓解；
+   若出现，先放宽枚举匹配（包含/同义归一），不回退机制。
+2. **服从校验的 live 召回**：锚词判据故意保守（宁漏不误杀）；跑 kickback 任务族（212/204）看召回。
+3. **Milestone.returns 的 prompt 消费方**：checker 验收「declared returns 可见」、planner 读取指令
    改从结构化字段构建（现仍从 description 散文）。动 policy.py prompt，需 live 验证。
-2. **非 UI read 路径的域校验**：`non_interactive.py` 的 read/data_query 结果未过域检查
+4. **非交互路径的域校验**：`non_interactive.py` 的 read/data_query 结果未过域检查
    （改 completed=False 会影响 interp.failed→goal_completed，需配套设计）。
-3. **纯度驱动的记忆化门**：204 类「PreExisting-skip 给了有副作用的函数」——运行时规则
-   「只有 is_query/precondition 可被 frame-1 跳过判定豁免」，在 checker 侧落地。
-4. **return_domains 的 LLM 采纳率**：prompt 已写，需 live 跑量确认 decomposer 真的产出 enum 域；
-   不产出时推断兜底仍在。
-5. **服从校验的 live 调参**：锚词判据故意保守（宁漏不误杀）；跑 kickback 任务族（212/204）看召回。
+5. **确定性记忆化门**：204 类——「只有 is_query/precondition 可被 frame-1 跳过判定豁免」，
+   在 checker 侧落地。
 6. **IR 分流的终态**：Read/Query 目前是 Run 子类（wire 兼容、walker 零破坏的折中）；终态是与
    Compute 同级的独立 op（sql/data_scope 等字段下移、报表层撤伪 milestone 条目）——等 live 证明
    边界后再做大改。执行器侧 MilestoneKind 的 collection/verification 清理归跨平台专项
@@ -85,5 +126,5 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
 ## 回归状态
 
 基线 842 → 本分支 866 全绿（+24：callframe 合同测试 18、preflight 4、FROM 链穿透 2）。
-未跑 live（WebArena）；return_domains 推断、adherence 重试、查询节点边界会改变 live 行为，合入主线前需过
-778/63/113 族任务。
+未跑 live（WebArena）；return_domains（含范例采纳）、adherence 重试、查询节点边界会改变 live 行为，
+合入主线前需过 778/63/113 族任务。

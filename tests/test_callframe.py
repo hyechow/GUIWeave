@@ -295,4 +295,4 @@ def test_promotion_reclassifies_read_ir_node_to_command_run():
     first = out.statements[0]
     assert first.kind == "navigation"
     assert not isinstance(first, (Read, Query))
-    assert first.is_command
+    assert first.is_interactive
