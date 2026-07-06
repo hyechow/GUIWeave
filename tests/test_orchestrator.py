@@ -8,6 +8,10 @@ The driving scenario is the connectivity branch (检测→读判定→if 连通 
 
 from __future__ import annotations
 
+import io
+
+from PIL import Image
+
 from gui_agent.core.orchestrator import (
     Cond,
     Finish,
@@ -18,6 +22,16 @@ from gui_agent.core.orchestrator import (
     RunResult,
 )
 from gui_agent.core.orchestrator.program import Query, Read
+
+
+def _png_bytes(color: str = "white") -> bytes:
+    buf = io.BytesIO()
+    img = Image.new("RGB", (40, 40), color)
+    for i in range(10, 30):
+        img.putpixel((i, 20), (0, 0, 0))
+        img.putpixel((20, i), (0, 0, 0))
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _connectivity_program() -> Program:
@@ -414,6 +428,9 @@ def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
     assert result.reply == "done"
     assert platform.client.navigated == [detail_url, list_url]
     assert platform.client.back_calls == 0
+    assert result.observation is not None
+    assert result.observation.url == list_url
+    assert result.observation_url == "screenshot_back_1.png"
 
 
 def test_target_identity_hint_uses_url_only_for_runtime_target_gate():
@@ -572,6 +589,8 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     assert p._skip_initial_check is True                  # nav + 刚推进 → 跳 check
     p.reseed(to_milestone(Run(name="点按钮", kind="action"), 1), fresh_advance=True)
     assert p._skip_initial_check is False                 # action → 保留 check（防双执行）
+    assert to_milestone(Run(name="点按钮", kind="action"), 1).require_fresh_action is True
+    assert to_milestone(Run(name="进页", kind="navigation"), 2).require_fresh_action is False
     p.reseed(to_milestone(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
     # precondition 入口归一化门（kind=navigation 但 precondition=True）：必须让 checker 先判
@@ -598,6 +617,56 @@ def test_advance_persists_done_check_on_terminal_completion():
     step = p._advance(ms, Observation(png_bytes=b"x", source="test"), [])
     assert step.goal_completed is True                    # single milestone → terminal step
     assert p._milestone_done_checks[ms.id] is check       # done 判定已留存（验收面板有数据）
+
+
+def test_require_fresh_action_blocks_preexisting_done(monkeypatch):
+    # Mutation/write milestones must not complete solely because the current
+    # frame already contains the target value. They need an executed action in
+    # this milestone, otherwise dirty state can swallow the write.
+    from gui_agent.core.schemas import Milestone, Observation, SupervisorStep
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+
+    p = MilestoneSupervisorPolicy()
+    ms = Milestone(
+        id="m1",
+        name="将价格更新为 64.88 并保存",
+        description="将价格更新为 64.88 并保存",
+        kind="action",
+        success_condition="页面显示保存成功提示，Price 字段已更新为 64.88",
+        require_fresh_action=True,
+    )
+    p.reseed(ms)
+    monkeypatch.setattr(
+        p,
+        "_single_check",
+        lambda *_args, **_kwargs: _SingleCheckResult(
+            status="done",
+            reason="Price 字段已经是 64.88，且有保存成功提示。",
+            summary="看似已完成",
+        ),
+    )
+
+    def fake_plan(milestone, check, _observation, _history):
+        assert check.status == "in_progress"
+        assert "本轮产生写操作" in check.reason
+        return SupervisorStep(
+            should_act=True,
+            instruction="重新点击 Save 以产生本轮保存事件",
+            stop=False,
+            goal_completed=False,
+            summary=check.summary,
+            milestone_id=milestone.id,
+            milestone_kind=milestone.kind,
+            completion_strategy=milestone.completion_strategy,
+        )
+
+    monkeypatch.setattr(p, "_plan_single", fake_plan)
+    step = p._run_single_turn(ms, Observation(png_bytes=_png_bytes(), source="test"), [])
+
+    assert step.should_act is True
+    assert step.goal_completed is False
+    assert p._current_id == "m1"
 
 
 # ── #3 structured read: reads 进 RunResult，让 if 真分支 ──────────────────────────

@@ -102,6 +102,7 @@ def to_milestone(run: Run, index: int) -> Milestone:
         kind=kind,  # type: ignore[arg-type]  # validated against MilestoneKind Literal
         completion_strategy=strategy,  # type: ignore[arg-type]
         precondition=run.precondition,  # entry-state gate: checker judges frame-1, no fresh-nav skip
+        require_fresh_action=run.kind == "action",
         returns=list(run.returns),
         read_spec=run.read_spec or "",
     )

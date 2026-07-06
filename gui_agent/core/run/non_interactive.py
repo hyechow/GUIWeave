@@ -38,6 +38,8 @@ class NonUiDriveResult:
     run_index: int
     notes_mark: int
     reply: str | None = None
+    observation: Observation | None = None
+    observation_url: str | None = None
     # Feasibility Guard (non-UI kick-back): set when a data_query/read step FAILED in a re-plannable way
     # (data source empty / mismatched with the task intent) — the loop turns this into a re-decompose
     # directive instead of plainly ending the run. None = no re-plannable non-UI failure.
@@ -421,6 +423,8 @@ def drive_pending_non_ui(
                 run_index=run_index,
                 notes_mark=notes_mark,
                 reply=exc.value or "",
+                observation=obs,
+                observation_url=obs_url,
                 failure_evidence=failure_evidence,
             )
         run_index += 1
@@ -449,6 +453,8 @@ def drive_pending_non_ui(
         run_index=run_index,
         notes_mark=notes_mark,
         reply=None,
+        observation=obs,
+        observation_url=obs_url,
     )
 
 

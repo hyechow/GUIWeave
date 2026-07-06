@@ -335,7 +335,7 @@ def run_agent_loop(
 
         def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
             """Drive pending non-UI primitives and sync the local interpreter cursor."""
-            nonlocal _cur_run, _run_idx, _notes_mark, _nonui_failure
+            nonlocal _cur_run, _run_idx, _notes_mark, _nonui_failure, observation, observation_url_for_turn, prep_future
             result = drive_pending_non_ui(
                 current_run=_cur_run,
                 run_index=_run_idx,
@@ -363,6 +363,10 @@ def run_agent_loop(
             _run_idx = result.run_index
             _notes_mark = result.notes_mark
             _nonui_failure = result.failure_evidence
+            if result.observation is not None:
+                observation = result.observation
+                observation_url_for_turn = result.observation_url or observation_url_for_turn
+                prep_future = _PREP_POOL.submit(executor.prepare_frame, observation.png_bytes)
             return result.reply
 
         if program is not None:
@@ -556,7 +560,8 @@ def run_agent_loop(
             # on, preserving transient hints + saving a screenshot) is now done WITHIN the turn
             # by the decision-phase loop below — it no longer crosses a turn boundary.
             _status(turn_no, "截图分析中…")
-            perception = bundle.make_perception(platform, log_dir / f"screenshot_turn_{turn_no}.png")
+            observation_url_for_turn = f"screenshot_turn_{turn_no}.png"
+            perception = bundle.make_perception(platform, log_dir / observation_url_for_turn)
             observation = perception.observe()
             # YOLO + OCR run in the background, overlapping the decide below;
             # awaited just before execute (snap) so they add ~no latency.
@@ -674,7 +679,7 @@ def run_agent_loop(
                     context.turns.append(make_verdict_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,
-                        observation_url=f"screenshot_turn_{turn_no}.png",
+                        observation_url=observation_url_for_turn,
                         supervisor_step=sv_step,
                         supervisor=supervisor,
                         llm_calls=get_llm_call_count() - llm_calls_before,
@@ -685,7 +690,7 @@ def run_agent_loop(
                 # non-UI steps consume THIS verdict observation; reseed the next UI milestone.
                 _reply = _drive_pending_non_ui(
                     done_observation=observation,
-                    observation_url=f"screenshot_turn_{turn_no}.png",
+                    observation_url=observation_url_for_turn,
                 )
                 if _reply is not None:
                     _orch_reply = _reply
@@ -712,7 +717,7 @@ def run_agent_loop(
                     context.turns.append(make_verdict_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,
-                        observation_url=f"screenshot_turn_{turn_no}.png",
+                        observation_url=observation_url_for_turn,
                         supervisor_step=sv_step,
                         supervisor=supervisor,
                         llm_calls=get_llm_call_count() - llm_calls_before,
@@ -817,7 +822,7 @@ def run_agent_loop(
             turn = record_interactive_turn(
                 context=context,
                 observation_source=observation.source,
-                observation_url=f"screenshot_turn_{turn_no}.png",
+                observation_url=observation_url_for_turn,
                 supervisor_step=sv_step,
                 supervisor=supervisor,
                 action_decision=action_decision,

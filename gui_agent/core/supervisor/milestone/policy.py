@@ -874,6 +874,31 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         final_read: Optional[dict] = None,
     ) -> SupervisorStep:
         done_name = milestone.name
+        pre_existing = not any(
+            t.executed for t in history
+            if t.supervisor.milestone_id == milestone.id
+        )
+        if milestone.require_fresh_action and pre_existing:
+            print(
+                f"  [FreshActionRequired] 子目标「{done_name}」当前状态看似满足，"
+                "但本轮尚未执行写操作，覆盖 done → in_progress"
+            )
+            prior = self._last_check
+            check = (prior if isinstance(prior, _SingleCheckResult) else _SingleCheckResult(
+                status="in_progress",
+                reason="当前状态可能是历史残留，不能证明本轮写操作已执行。",
+                summary="需要执行本轮写操作。",
+            ))
+            check = check.model_copy(update={
+                "status": "in_progress",
+                "reason": (
+                    "当前状态可能已匹配目标值，但该 action milestone 要求本轮产生写操作；"
+                    "没有本轮执行记录时不能按 pre-existing 完成。"
+                ),
+                "summary": "目标状态疑似已存在，但仍需执行本轮写操作。",
+            })
+            self._last_check = check
+            return self._plan_single(milestone, check, observation, history)
         milestone.status = "done"
         # Persist this milestone's DONE verdict before _last_check is overwritten by the next
         # milestone's check (the report's 验收 panel renders it via context.milestones[id].
@@ -887,10 +912,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._monitor.clear_screenshots()
         print(f"  子目标「{done_name}」已完成")
 
-        pre_existing = not any(
-            t.executed for t in history
-            if t.supervisor.milestone_id == milestone.id
-        )
         if pre_existing:
             print(f"  [PreExisting] 子目标「{done_name}」未执行任何动作即判完成，目标状态在会话前已存在")
 

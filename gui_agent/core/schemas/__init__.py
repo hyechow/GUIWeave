@@ -495,6 +495,14 @@ class Milestone(BaseModel):
         default=False,
         description="True when this milestone ensures an entry state and may already be satisfied on the first frame.",
     )
+    require_fresh_action: bool = Field(
+        default=False,
+        description=(
+            "True when a done verdict is not sufficient unless this milestone has executed an "
+            "action in the current run. Used for mutation/write milestones so dirty existing "
+            "state cannot be mistaken for work performed by this task."
+        ),
+    )
     returns: list[str] = Field(
         default_factory=list,
         description="声明的结构化返回字段（milestone=函数 的出参合同）；由编排器 Run.returns 填充，"
