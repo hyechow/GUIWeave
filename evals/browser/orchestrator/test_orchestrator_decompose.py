@@ -1275,9 +1275,12 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "Type=Configurable Product 验证父行；不要把父 identity 建在产品名/品牌词上。"
                     f" all_text={all_text[:240]}"
                 )
-            if not any(m in fn_text_all for m in ("返回", "上一页", "go_back", "back")):
+            # Scan all_text (statement runs + foreach bodies + functions), not fn_text_all:
+            # the inline-body shape puts back-navs inside the foreach body, and a functions-only
+            # scan flunked structurally-correct inline plans (branch 185 A/B, 2026-07-04).
+            if not any(m in all_text for m in ("返回", "上一页", "go_back", "back")):
                 details.append(
-                    "逐行详情读取函数应在读完详情后显式返回上一页/Products 搜索结果列表，复用浏览器历史；"
+                    "逐行详情读取应在读完详情后显式返回上一页/Products 搜索结果列表，复用浏览器历史；"
                     "否则下一行会从前一条详情页开始，进入列表和搜索父产品会多烧多轮。"
                 )
             if len(foreaches) > 1:
@@ -1948,15 +1951,9 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # expects 3 saves). With the router marking cardinality=set, the plan MUST foreach over the
             # matching variants — a single-variant linear plan updates at most 1/3 → score 0. And the
             # per-variant price calc must live INSIDE the foreach (each variant read→compute→fill), not
-            # once at top level.
-            def _has_foreach(stmts: list) -> bool:
-                for s in stmts:
-                    if isinstance(s, ForEach):
-                        return True
-                    if isinstance(s, If) and (_has_foreach(s.then) or _has_foreach(s.otherwise)):
-                        return True
-                return False
-
+            # once at top level. NOTE: uses the MODULE-LEVEL _has_foreach — a nested redefinition
+            # here made `_has_foreach` local to this whole function, so the earlier
+            # uses_foreach_iteration branch hit UnboundLocalError (185 case crashed the eval).
             def _compute_in_foreach(stmts: list, in_fe: bool = False) -> bool:
                 for s in stmts:
                     if isinstance(s, Compute) and in_fe:
@@ -2030,7 +2027,11 @@ def _dump_program(program) -> None:
             if isinstance(s, Run):
                 fields = f" returns={s.returns!r}" if s.returns else ""
                 spec = f" read_spec={s.read_spec!r}" if s.read_spec else ""
-                print(f"{indent}[{s.kind}] {s.name}: {s.success_condition}{fields}{spec}")
+                domains = (
+                    f" return_domains={s.return_domains!r}"
+                    if getattr(s, "return_domains", None) else ""
+                )
+                print(f"{indent}[{s.kind}] {s.name}: {s.success_condition}{fields}{spec}{domains}")
             elif isinstance(s, If):
                 print(
                     f"{indent}[if] {s.cond.var}[{s.cond.field}] {s.cond.cmp} "
