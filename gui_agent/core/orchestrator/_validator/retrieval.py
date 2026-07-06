@@ -33,6 +33,13 @@ _RETRIEVAL_FIELD_STOPWORDS = {
     "使用", "输入", "提交", "页面", "the", "same", "target", "filter", "search",
 }
 
+# Known entity field roots. The greedy Chinese capture before 字段/列 can swallow preceding prose
+# (e.g. "清除精确值后在产品字段" extracts "清除精确值后在产品" instead of "产品"); reduce to the root.
+_KNOWN_FIELD_ROOTS = (
+    "产品", "商品", "product", "客户", "customer", "昵称", "nickname",
+    "标题", "title", "状态", "status", "订单", "order", "评论", "review",
+)
+
 _RETRIEVAL_FIELD_PREFIX_RE = re.compile(
     r"^(?:先用|使用|用|在|按|以|将|把|从|当前|目标|same|target|in|on|by|using)\s*",
     re.IGNORECASE,
@@ -48,6 +55,9 @@ def _normalize_retrieval_field(raw: str) -> str:
     lowered = field.lower()
     if not field or lowered in _RETRIEVAL_FIELD_STOPWORDS:
         return ""
+    for root in _KNOWN_FIELD_ROOTS:
+        if len(lowered) > len(root) and lowered.endswith(root):
+            return root
     return lowered
 
 
@@ -84,10 +94,14 @@ def _extract_retrieval_fields(text: str) -> list[str]:
 def _retrieval_fields_overlap(left: list[str], right: list[str]) -> bool:
     for a in left:
         aliases = _retrieval_field_aliases(a)
-        if not aliases:
-            continue
+        na = _normalize_retrieval_field(a)
         for b in right:
-            if aliases & _retrieval_field_aliases(b):
+            if aliases and (aliases & _retrieval_field_aliases(b)):
+                return True
+            # Suffix-tolerance for fields outside the bilingual dict: an over-captured prefix on
+            # one side ("…后订单") still overlaps the bare field ("订单"). Min-length guards trivials.
+            nb = _normalize_retrieval_field(b)
+            if na and nb and min(len(na), len(nb)) >= 2 and (na.endswith(nb) or nb.endswith(na)):
                 return True
     return False
 

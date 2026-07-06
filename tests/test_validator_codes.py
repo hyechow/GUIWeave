@@ -304,6 +304,29 @@ def test_foreach_row_url_policy_checks_runs_inside_if():
     assert "FOREACH_ROW_URL_NOT_USED" in _codes(program)
 
 
+def test_retrieval_retry_overlap_handles_chinese_prefix():
+    # Regression (live 113 run): the fallback step「清除精确值后**在产品字段**…」DOES name the same
+    # field as the exact step「在产品字段…」, but the greedy Chinese capture swallowed the preceding
+    # prose ("清除精确值后在产品") and the overlap check false-positived RETRIEVAL_RETRY_DROPS_FIELD.
+    from gui_agent.core.orchestrator._validator.retrieval import (
+        _extract_retrieval_fields, _retrieval_fields_overlap,
+    )
+    exact = _extract_retrieval_fields("在产品字段用精确值『Olivia zip jacket』筛选")
+    fallback = _extract_retrieval_fields("清除精确值后在产品字段用关键词『Olivia』重筛并提交")
+    assert exact == ["产品"]
+    assert fallback == ["产品"]                              # was ["清除精确值后在产品"]
+    assert _retrieval_fields_overlap(exact, fallback) is True   # same field → no false drop
+
+    # genuine field-drop is still caught
+    other = _extract_retrieval_fields("在客户字段用关键词『Olivia』重筛")
+    assert _retrieval_fields_overlap(exact, other) is False
+
+    # a field outside the bilingual dict is covered by the suffix-tolerance backstop
+    eo = _extract_retrieval_fields("在订单字段用精确值筛选")
+    fo = _extract_retrieval_fields("清除后订单字段用关键词重筛")
+    assert _retrieval_fields_overlap(eo, fo) is True
+
+
 def test_validation_issue_is_str_with_metadata():
     issue = ValidationIssue("SOME_CODE", "人类可读消息", evidence=("step",))
     assert isinstance(issue, str) and issue == "人类可读消息"
