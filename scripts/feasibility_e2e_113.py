@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from gui_agent.core.orchestrator.decomposer import decompose
-from gui_agent.core.orchestrator.program import Finish, If, Program, Run, Stmt
+from gui_agent.core.orchestrator.program import Finish, If, Program, Run, RunLike, Stmt
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 from gui_agent.core.supervisor.milestone.feasibility import control_presence_text, judge_feasibility
 
@@ -58,7 +58,7 @@ _REVIEWS_GRID = _Obs(
 def _runs(stmts: list[Stmt]) -> list[Run]:
     out: list[Run] = []
     for s in stmts:
-        if isinstance(s, Run):
+        if isinstance(s, RunLike):
             out.append(s)
         elif isinstance(s, If):
             out += _runs(s.then) + _runs(s.otherwise)
@@ -92,7 +92,7 @@ def direction_ok(p: Program) -> tuple[bool, list[str]]:
 def _fmt(p: Program) -> str:
     out = []
     for i, s in enumerate(p.statements):
-        if isinstance(s, Run):
+        if isinstance(s, RunLike):
             out.append(f"  [{i}] run/{s.kind} «{s.name}»" + (f" sql={s.sql!r}" if s.sql else ""))
         elif isinstance(s, If):
             out.append(f"  [{i}] if {s.cond.var}[{s.cond.field}]")

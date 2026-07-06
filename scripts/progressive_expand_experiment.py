@@ -42,7 +42,7 @@ from langchain_openai import ChatOpenAI  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from gui_agent.core.config import resolve_llm_config  # noqa: E402
-from gui_agent.core.orchestrator import Compute, ForEach, Program, Run, validate_program  # noqa: E402
+from gui_agent.core.orchestrator import Compute, ForEach, Program, Run, RunLike, validate_program  # noqa: E402
 from llm.structured import invoke_structured  # noqa: E402
 
 # ── real rows collected by run 20260702_124348 off the live site ─────────────
@@ -116,7 +116,7 @@ def grade(draft: ExpandDraft) -> list[str]:
         fails.append(f"VALIDATOR:{i.code}")
 
     body = program.statements[0].body
-    runs = [s for s in body if isinstance(s, Run)]
+    runs = [s for s in body if isinstance(s, RunLike)]
     computes = [s for s in body if isinstance(s, Compute)]
     reads_price = any(r.returns and any("price" in f.lower() or "价" in f for f in r.returns) for r in runs)
     # grid-collect source is equally valid: the row already carries the Price column
@@ -167,7 +167,7 @@ def grade_185(draft: ExpandDraft) -> list[str]:
     def _all_runs(stmts):
         out = []
         for s2 in stmts:
-            if isinstance(s2, Run): out.append(s2)
+            if isinstance(s2, RunLike): out.append(s2)
             elif hasattr(s2, "then"): out += _all_runs(s2.then) + _all_runs(s2.otherwise)
         return out
 

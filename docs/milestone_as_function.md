@@ -131,6 +131,22 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
   只扫函数文本冤杀内联形态（`9531fcb`）。
 - 双侧同有的真实抖动（~1/3）：base_sku 显式派生偶发写进 read_spec 散文而非显式 compute 步。
 
+## 离线全面评测（2026-07-06，S9+清理之后）
+
+- **groundtruth（生产门）**：778/185/63/113 **pass@1 全 100%**（07-04 时 778 pass@1 曾 50%）。
+- **feasibility 套件 7/7**——S4 的 schema/prompt 改动未伤判定质量。
+- **redecompose**：修复 S8 评测漏网后 13/18（基准 8/9）。唯一持续向下的信号 = **113 实体范围**
+  （分支 1/6 vs 基准 2/3）：foreach returns 丢实体列 / data_query 丢范围谓词——该规则只有 prompt
+  层（1a970f7），**无确定性兜底** → 候选 S10：resolution 有 lookup 实体 + 计划含 foreach+data_query
+  时，validator 强制实体列与谓词在场。
+- **29 例 case-eval**：分支 19/10 vs 基准 23/5，工艺层单跑噪声大。深挖了唯一跨样本一致的
+  「登录前置标注率下降」：受控实验先后否定 schema 字段邻接（挪位不恢复）与 return_domains 内容
+  （全量剥离到与基准字节相同仍 2/6 vs 6/8，p≈0.14 不显著）→ **不能归因于分支**，定性为观察项
+  （该 case 族有 checker `_check.md` 登录判据 L2 兜底）。
+- **过程产出**：S8 评测漏网第 2、3 批——redecompose eval + 实验脚本的 `isinstance(s, Run)`
+  walker（`f552303`）、case-eval 对全家族 run 的 `.sql` 直接访问（`88bc4f2`）。教训追加：
+  **IR 类型层次改动的消费方 = 全仓,evals/scripts 的 walker 与字段直取都算**。
+
 ## 遗留项与风险（后续分支 / live 首跑清单）
 
 1. **enum 假违约风险（live 首跑第一优先）**：decomposer 声明 `enum:是|否` 但页面信号被读成

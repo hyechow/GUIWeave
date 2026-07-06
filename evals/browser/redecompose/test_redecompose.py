@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.orchestrator import Finish, ForEach, If, Run, redecompose
+from gui_agent.core.orchestrator import Finish, ForEach, If, Run, RunLike, redecompose
 from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates, normalize_precondition_gates
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
 
@@ -62,7 +62,7 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
 def _flatten_runs(stmts: list) -> list[Run]:
     out: list[Run] = []
     for s in stmts:
-        if isinstance(s, Run):
+        if isinstance(s, RunLike):
             out.append(s)
         elif isinstance(s, If):
             out.extend(_flatten_runs(s.then))
@@ -159,7 +159,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     collection_fields += fe.returns  # new-style foreach: collects its own rows
             reads_entity_col = any("product" in f.lower() for f in collection_fields)
             dqs = [r for r in runs if r.kind == "data_query"]
-            dq_sql = " ".join((r.sql or "").lower() for r in dqs)
+            dq_sql = " ".join((getattr(r, 'sql', '') or '').lower() for r in dqs)
             scopes_dq = "product" in dq_sql and key in dq_sql
             if not foreaches:
                 details.append(f"未见 foreach 采集步，无从校验实体范围采集: names=[{names}]")
@@ -186,18 +186,18 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 fe = foreaches[0]
                 if fe.over:
                     over_is_read_var = any(
-                        isinstance(s, Run) and s.kind == "read" and s.var == fe.over
+                        isinstance(s, RunLike) and s.kind == "read" and s.var == fe.over
                         for s in program.statements
                     )
                     if not over_is_read_var:
                         details.append(f"foreach 的 over「{fe.over}」未指向任何 read 步")
-                body_reads = [b for b in fe.body if isinstance(b, Run) and b.returns]
+                body_reads = [b for b in fe.body if isinstance(b, RunLike) and b.returns]
                 body_text = " ".join(
                     (b.name + " " + " ".join(b.returns) + " " + (b.read_spec or "")).lower() for b in body_reads
                 )
                 if not any(k in body_text for k in ("rating", "评分", "星", "star")):
                     details.append("foreach body 未读取 rating/评分（应逐条进详情读评分）")
-                if not any(isinstance(s, Run) and s.kind == "data_query" for s in program.statements):
+                if not any(isinstance(s, RunLike) and s.kind == "data_query" for s in program.statements):
                     details.append("foreach 之后缺少 data_query（应对累积表筛 rating<=3）")
         elif assertion == "has_finish":
 
@@ -250,7 +250,7 @@ def _case_program(case: dict):
 def _dump_program(program) -> None:
     def _walk(stmts, indent="       "):
         for s in stmts:
-            if isinstance(s, Run):
+            if isinstance(s, RunLike):
                 extra = f" returns={s.returns!r}" if s.returns else ""
                 spec = f" read_spec={s.read_spec!r}" if s.read_spec else ""
                 print(f"{indent}[{s.kind}] {s.name}: {s.success_condition}{extra}{spec}")

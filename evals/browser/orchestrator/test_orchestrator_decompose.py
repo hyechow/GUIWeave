@@ -638,10 +638,10 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
         elif assertion == "data_query_sql_no_schema_mapping_text":
             seq = _flatten_runs(program.statements)
             offenders = [
-                (r.name, r.sql) for r in seq
+                (r.name, getattr(r, 'sql', '')) for r in seq
                 if r.kind == "data_query" and (
-                    "->" in (r.sql or "")
-                    or _sql_has_quoted_display_identifier(r.sql or "")
+                    "->" in (getattr(r, 'sql', '') or "")
+                    or _sql_has_quoted_display_identifier(getattr(r, 'sql', '') or "")
                 )
             ]
             if offenders:
@@ -653,8 +653,8 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
         elif assertion == "data_query_sql_no_template_refs":
             seq = _flatten_runs(program.statements)
             offenders = [
-                (r.name, r.sql) for r in seq
-                if r.kind == "data_query" and re.search(r"\{[^{}]+\}", r.sql or "")
+                (r.name, getattr(r, 'sql', '')) for r in seq
+                if r.kind == "data_query" and re.search(r"\{[^{}]+\}", getattr(r, 'sql', '') or "")
             ]
             if offenders:
                 details.append(
@@ -795,13 +795,13 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 continue
             offenders = []
             for r in data_queries:
-                sql = (r.sql or "").lower()
+                sql = (getattr(r, 'sql', '') or "").lower()
                 returns = [x.lower() for x in (r.returns or [])]
                 has_month_alias = bool(re.search(r"\bas\s+month\b", sql))
                 has_count_alias = bool(re.search(r"\bas\s+count\b", sql))
                 has_month_names = all(name in sql for name in ("january", "february", "march", "april", "may"))
                 if returns != ["result"] or not has_month_alias or not has_count_alias or not has_month_names:
-                    offenders.append((r.name, r.returns, r.sql))
+                    offenders.append((r.name, r.returns, getattr(r, 'sql', '')))
             if offenders:
                 details.append(
                     "最终要求 JSON 对象数组时，data_query 应 SELECT month/count 列并用 returns=['result']；"
@@ -815,7 +815,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             for r in seq:
                 if r.kind != "data_query":
                     continue
-                sql = (r.sql or "").lower()
+                sql = (getattr(r, 'sql', '') or "").lower()
                 repeats_page_filter = (
                     re.search(r"\bwhere\b.*\bstatus\b", sql, flags=re.DOTALL)
                     or "created_at >=" in sql
@@ -823,7 +823,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     or "between" in sql and "created_at" in sql
                 )
                 if repeats_page_filter:
-                    offenders.append((r.name, r.sql))
+                    offenders.append((r.name, getattr(r, 'sql', '')))
             if offenders:
                 details.append(
                     "页面 Filters 已经应用 Status=Complete 和 Purchase Date 范围后，data_query 应只对已筛选行做"
@@ -945,14 +945,14 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             }
             bad_sql = []
             for r in seq:
-                if r.kind != "data_query" or not re.search(r"\brating\b|\b评分\b", r.sql or "", flags=re.I):
+                if r.kind != "data_query" or not re.search(r"\brating\b|\b评分\b", getattr(r, 'sql', '') or "", flags=re.I):
                     continue
                 refs = {
                     raw.lower()
-                    for raw in re.findall(r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)\b", r.sql or "", flags=re.I)
+                    for raw in re.findall(r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)\b", getattr(r, 'sql', '') or "", flags=re.I)
                 }
                 if not (refs & foreach_tables):
-                    bad_sql.append((r.name, r.sql))
+                    bad_sql.append((r.name, getattr(r, 'sql', '')))
             if bad_sql:
                 details.append(
                     "当前列表 schema 无 Rating 列；只有先 foreach 产出详情 into 表后，data_query 才能使用 rating 字段；"
@@ -1520,7 +1520,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "（SQL 需引用 foreach into 表，并包含 SUM 与 LIMIT 2；金额显示文本必须用 "
                     "grand_total_purchased_num 一类 _num 影子列；若 SQL 按 Purchase Date 排序，"
                     "必须用 purchase_date_ts 一类 _ts 影子列，不能按原始日期文本排序）。"
-                    f" dqs={[(r.name, r.sql) for r in dqs]} into_names={sorted(into_names)}"
+                    f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]} into_names={sorted(into_names)}"
                 )
         elif assertion == "orders_total_payment_sorts_purchase_date_desc":
             # The SQL LIMIT 2 is only meaningful if the UI data source has first been
@@ -1544,12 +1544,12 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 )
         elif assertion == "orders_payment_difference_uses_both_status_filters":
             seq = _flatten_runs(program.statements)
-            text = " ".join(f"{r.kind} {r.name} {r.success_condition} {r.sql}" for r in seq).lower()
+            text = " ".join(f"{r.kind} {r.name} {r.success_condition} {getattr(r, 'sql', '')}" for r in seq).lower()
             if not re.search(r"\bcancell?ed\b|取消", text) or "complete" not in text:
                 details.append(
                     "task 196 必须分别取得 cancelled/canceled 与 completed/complete 两个订单状态口径；"
                     "当前计划没有同时体现这两个状态。"
-                    f" seq={[(r.kind, r.name, r.success_condition, r.sql) for r in seq]}"
+                    f" seq={[(r.kind, r.name, r.success_condition, getattr(r, 'sql', '')) for r in seq]}"
                 )
             clear_keywords = (
                 "清除", "残留", "无其它", "无其他", "无关", "仅保留", "只保留", "恰好等于",
@@ -1582,12 +1582,12 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     f" foreaches={[(fe.target, fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
                 )
             dqs = [r for r in _flatten_runs(program.statements) if r.kind == "data_query"]
-            combined_sql = "\n".join((r.sql or "").lower() for r in dqs)
+            combined_sql = "\n".join((getattr(r, 'sql', '') or "").lower() for r in dqs)
             bad_limit = [
-                r.sql for r in dqs
+                getattr(r, 'sql', '') for r in dqs
                 if re.search(
                     r"\bselect\s+sum\s*\([^)]*\)\s+(?:as\s+\w+\s+)?from\s+[a-z_][a-z0-9_]*\s+limit\s+4\b",
-                    (r.sql or "").lower(),
+                    (getattr(r, 'sql', '') or "").lower(),
                     flags=re.DOTALL,
                 )
             ]
@@ -1603,13 +1603,13 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     details.append(
                         "task 196 问的是 payment difference between A and B，未要求 A minus B；"
                         "应返回绝对差 ABS(a-b)，不能在 finish 中拼接可能为负的 a-b。"
-                        f" dqs={[(r.name, r.sql) for r in dqs]} finishes={[f.message for f in _flatten_finishes(program.statements)]}"
+                        f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]} finishes={[f.message for f in _flatten_finishes(program.statements)]}"
                     )
             if combined_sql.count("limit 4") < 2:
                 details.append(
                     "task 196 需要分别取最近 4 笔 cancelled 和最近 4 笔 completed；"
                     "SQL 应对两个状态口径各自 LIMIT 4。"
-                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                    f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]}"
                 )
             has_amount_num = "grand_total_purchased_num" in combined_sql
             has_date_ts = "purchase_date_ts" in combined_sql or "created_at_ts" in combined_sql
@@ -1617,7 +1617,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     "task 196 金额聚合必须用 grand_total_purchased_num 一类 _num 影子列，"
                     "最近订单排序必须用 purchase_date_ts/created_at_ts 一类 _ts 影子列。"
-                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                    f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]}"
                 )
         elif assertion == "orders_payment_difference_no_visual_row_aggregation":
             seq = _flatten_runs(program.statements)
@@ -1711,7 +1711,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     f" seq={[(r.kind, r.name, r.success_condition) for r in seq]}"
                 )
             dqs = [r for r in seq if r.kind == "data_query"]
-            combined_sql = "\n".join((r.sql or "").lower() for r in dqs)
+            combined_sql = "\n".join((getattr(r, 'sql', '') or "").lower() for r in dqs)
             has_status_exclusion = bool(
                 re.search(r"\bstatus\b.{0,80}(?:not\s+like|not\s+in|!=|<>).{0,80}cancell?ed|"
                           r"\bstatus\b.{0,80}(?:not\s+like|not\s+in|!=|<>).{0,80}cancel",
@@ -1723,23 +1723,23 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     "task 197 必须在 SQL 中按 Status 排除 Canceled/Cancelled（如 lower(status) NOT LIKE '%cancel%'），"
                     "不能只取 complete 或不处理 non-cancelled 口径。"
-                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                    f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]}"
                 )
             if "limit 5" not in combined_sql:
                 details.append(
                     "task 197 需要取最近 5 笔 non-cancelled orders；SQL 应包含 LIMIT 5。"
-                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                    f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]}"
                 )
             if "grand_total_purchased_num" not in combined_sql or "purchase_date_ts" not in combined_sql:
                 details.append(
                     "task 197 金额求和必须用 grand_total_purchased_num，最近排序必须用 purchase_date_ts。"
-                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                    f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]}"
                 )
             bad_limit = [
-                r.sql for r in dqs
+                getattr(r, 'sql', '') for r in dqs
                 if re.search(
                     r"\bselect\s+sum\s*\([^)]*\)\s+(?:as\s+\w+\s+)?from\s+[a-z_][a-z0-9_]*\s+limit\s+5\b",
-                    (r.sql or "").lower(),
+                    (getattr(r, 'sql', '') or "").lower(),
                     flags=re.DOTALL,
                 )
             ]
@@ -1761,7 +1761,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             seq = _flatten_runs(program.statements)
             foreaches = _flatten_foreaches(program.statements)
             dqs = [r for r in seq if r.kind == "data_query"]
-            combined_sql = "\n".join((r.sql or "").lower() for r in dqs)
+            combined_sql = "\n".join((getattr(r, 'sql', '') or "").lower() for r in dqs)
             grid_collect = [
                 fe for fe in foreaches
                 if any("_url" in str(ret).lower() or "action" in str(ret).lower() for ret in fe.returns)
@@ -1777,7 +1777,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     "task 204 选最新单必须用 purchase_date_ts/created_at_ts 影子列排序（grid Purchase Date），"
                     "绝不用详情页 Order Date。"
-                    f" dqs={[(r.name, r.sql) for r in dqs]}"
+                    f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]}"
                 )
             items_collect = [
                 fe for fe in foreaches
