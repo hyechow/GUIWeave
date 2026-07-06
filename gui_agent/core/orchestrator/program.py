@@ -46,6 +46,11 @@ BARE_REF_RE = re.compile(r"\{(\w+)\}")
 RunKind = Literal["navigation", "filter", "action", "read", "data_query"]
 CondCmp = Literal["==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"]
 
+# The interactive Run kinds (an action that drives the GUI), single-sourced here — both the
+# confirm-read pass (passes.py) and marshalling (callframe.py) key on this set. read/data_query
+# are the complementary non-interactive kinds.
+INTERACTIVE_KINDS = frozenset({"navigation", "filter", "action"})
+
 
 class RunResult(BaseModel):
     """Return contract of one ``run()`` = one milestone driven to a terminal state.
@@ -126,10 +131,6 @@ class Run(RunLike):
     # accepted on frame 1. App-specific "what that state looks like" stays in the checker's
     # _check.md. The flag — not a string match — is the detection signal.
     precondition: bool = False
-
-
-# 概念别名：编排层的正式名称是「交互 action」；Run 是它在 IR 里的历史类名（wire op="run"）。
-InteractiveAction = Run
 
 
 class Read(RunLike):

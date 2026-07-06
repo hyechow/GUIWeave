@@ -108,6 +108,20 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
   内部的载体格式（`to_milestone` 是 marshalling 的目标格式名），与 DAG/iphone/android 共享，
   其改名归跨平台专项。
 
+- **S9 `25e8733` + `bbe3b21`** 按脚本生成视角重构 orchestrator 包（用户「是时候了」）：
+  - *S9a* 退役 engine.py（两件事的合居）：AST normalize passes → `passes.py`（编译 middle-end）；
+    Run→Milestone marshalling → `callframe.py`（FFI 边界，它本就自述为 ABI）。全部进口方按符号
+    重指（production/tests/evals），867 绿，行为不变。
+  - *S9b* 三生成入口收敛：两个门规范化 pass 此前在 cli/webarena/mobileworld **7 处**各自手工
+    `normalize_precondition_gates(normalize_confirm_read_gates(...))` 包裹 decompose/redecompose/
+    subdecompose 输出。抽成 `passes.finalize_gates`，由 decompose/redecompose 作为管线末步应用一次
+    ——三入口现走同一管线（_invoke_plan LLM+validate/retry → to_program 结构 pass → sql-normalize
+    → finalize_gates），lint/门规范化统一覆盖。**关键约束**：门规范化必须在 validate 之后（它改写
+    kind/success_condition，会让按 kind 判定的 validator 规则失效——实测：折进 to_program 使
+    filter-returns 校验静默通过），所以它不进 to_program、而是 finalize 步。7 处 wrap + 冗余 import
+    全删。S4 kickback adherence 校验留在 loop（是 kickback 编排控制流，非生成）。
+  - *S9c* 包级地图写进 `orchestrator/__init__.py` docstring（每模块的编译器/运行时/FFI 身份）。
+
 ## 离线可靠性（2026-07-04 A/B）
 
 - 185 case-eval：分支 vs 基准 95137c3 各 6 样本 = **4/6 打平，无回归**；函数/内联形态选择是采样噪声。

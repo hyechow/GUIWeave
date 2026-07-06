@@ -45,11 +45,14 @@ from gui_agent.core.orchestrator.callframe import (
     check_return_contract,
     extract_ui_returns,
     force_interactive_return_recovery as _force_interactive_return_recovery,
+    kickback_adherence_issues,
     open_call,
+    package_result,
+    parse_kickback_directive,
+    sharpen_kickback_directive,
     should_kickback_replan,
     tighten_ui_return_run as _tighten_ui_return_run,
 )
-from gui_agent.core.orchestrator.engine import package_result
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
@@ -441,21 +444,12 @@ def run_agent_loop(
             # OBEYS them; on violation, ONE sharpened retry naming the violations (bounded — the
             # measured weak link is directive-adherence ~1/3, and a directive-violating plan just
             # re-enters the same dead end). Untyped directives no-op here.
-            from gui_agent.core.orchestrator.callframe import (
-                kickback_adherence_issues,
-                parse_kickback_directive,
-            )
             _kb = parse_kickback_directive(directive)
             _adherence_issues = kickback_adherence_issues(_new, _kb, failed_run=_cur_run)
             if _adherence_issues:
                 _say("  [Kickback] 重规划未服从纠正指令："
                      + "；".join(_adherence_issues) + " → 锐化重试一次")
-                _sharp = (
-                    directive
-                    + "\n\n⚠️ 你上一版重规划违反了纠正指令：" + "；".join(_adherence_issues)
-                    + "。必须完全避开【死路｜禁止再用】点名的机制（包括换说法重写它），"
-                      "并把【规定路线】作为新计划的主干路线。"
-                )
+                _sharp = sharpen_kickback_directive(directive, _adherence_issues)
                 try:
                     _retry = redecompose(
                         _sharp, _rd_reports,

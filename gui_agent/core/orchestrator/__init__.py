@@ -1,15 +1,47 @@
-"""DSL orchestrator (MVP): decompose a goal into a small program of milestone-level
-run() statements + control flow; a runner interprets it, driving each run() via the
-linear (single-milestone) executor and threading structured results through variables.
+"""DSL orchestrator — a compiler + runtime for the mixed script a GUI task decomposes into.
 
-Boundaries:
-  Program Decomposer  user goal -> DSL Program            (decomposer.py)
-  Program Runner      interpret Program; run() -> executor (runner.py)
-  Linear Executor     drive ONE milestone -> RunResult     (injected; real driver TODO)
+GUI task = script generation (see docs/milestone_as_function.md). The user's goal compiles to a
+small program of interactive actions (FFI calls into the nondeterministic GUI executor) and
+non-interactive statements (deterministic read/query/compute the interpreter runs itself). This
+package is that compiler + runtime; each module has one role in the toolchain:
+
+  ── language (AST + docs) ────────────────────────────────────────────────────────────
+  program.py        the IR: Run (interactive action) / Read·Query (non-interactive) / If /
+                    ForEach / Compute / Call / Finish. Wire-stable; the LLM draft is separate.
+  prompts/…/decomposer.md   the language documentation (worked examples > rule prose).
+
+  ── compiler frontend (AOT, LLM) ─────────────────────────────────────────────────────
+  decomposer.py     NL goal → draft → AST. Three entrances share ONE pipeline (_invoke_plan):
+                    decompose (AOT) / redecompose (kickback hot-patch) / subdecompose (per-row
+                    JIT). Pipeline = LLM → to_program (structural passes) → validate/retry →
+                    finalize_gates. So lint + gate-normalization cover all three uniformly.
+
+  ── compiler middle-end (deterministic) ──────────────────────────────────────────────
+  passes.py         AST normalize passes: collapse_foreach / insert_loop_entry_arrivals /
+                    chain_from_states (structural, pre-validate) + finalize_gates (confirm-read
+                    dispatch gate + precondition ensure-state gate, post-validate).
+
+  ── type-check / lint (deterministic) ────────────────────────────────────────────────
+  validator.py      reference/SQL/branch validation (type check). preflight.py    router-
+  preflight.py      coverage + execution-mode discipline (lint); sample-and-validate uses it.
+
+  ── non-interactive standard library (deterministic) ─────────────────────────────────
+  data_query.py     restricted SQL over the table snapshot. safe_eval.py  compute expressions.
+  url_json_read.py  deterministic URL-JSON reads. structured_read.py  vision field extraction.
+
+  ── runtime ──────────────────────────────────────────────────────────────────────────
+  runner.py         the interpreter: non-interactive statements run here; interactive actions
+                    yield out to the agent loop. budget.py  turn-cost estimate.
+
+  ── FFI boundary (the milestone-as-function call ABI) ────────────────────────────────
+  callframe.py      marshalling (to_milestone/package_result) + the call convention: return
+                    contract, bounded recovery, typed kickback exception. See its docstring.
+
+  Retired: engine.py (S9a) — its passes went to passes.py, its marshalling to callframe.py.
 """
 
 from .program import (
-    Call, Compute, Cond, CondCmp, Finish, ForEach, FunctionDef, If, InteractiveAction, Program, Query, Read, Run, RunLike, RunResult, Stmt,
+    Call, Compute, Cond, CondCmp, Finish, ForEach, FunctionDef, If, Program, Query, Read, Run, RunLike, RunResult, Stmt,
 )
 from .decomposer import decompose, redecompose, to_program
 from .validator import IssueList, ValidationIssue, validate_program
@@ -30,16 +62,17 @@ from .runner import (
     drive,
     summarize_progress,
 )
-from .engine import (
+from .passes import (
     chain_from_states,
     collapse_foreach_enrichment_passes,
+    finalize_gates,
     insert_loop_entry_arrivals,
     normalize_confirm_read_gates,
     normalize_precondition_gates,
 )
 
 __all__ = [
-    "Call", "Compute", "Cond", "CondCmp", "Finish", "ForEach", "FunctionDef", "If", "InteractiveAction", "Program", "Query", "Read", "Run", "RunLike", "RunResult", "Stmt",
+    "Call", "Compute", "Cond", "CondCmp", "Finish", "ForEach", "FunctionDef", "If", "Program", "Query", "Read", "Run", "RunLike", "RunResult", "Stmt",
     "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
     "RunRecord", "drive", "summarize_progress", "structured_read", "DataQueryError", "execute_data_query",
     "decompose", "redecompose", "to_program", "validate_program",
@@ -47,5 +80,5 @@ __all__ = [
     "OrchestrationPreflightIssue", "OrchestrationPreflightResult", "validate_orchestration_preflight",
     "estimate_program_turns",
     "normalize_confirm_read_gates", "normalize_precondition_gates", "chain_from_states",
-    "collapse_foreach_enrichment_passes", "insert_loop_entry_arrivals",
+    "collapse_foreach_enrichment_passes", "insert_loop_entry_arrivals", "finalize_gates",
 ]

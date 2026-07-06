@@ -308,10 +308,15 @@ def _to_functions(drafts: list["_FunctionDraft"]) -> list[FunctionDef]:
 
 
 def to_program(draft: _PlanDraft, goal: str) -> Program:
-    # lazy: engine→runner→… avoids an import cycle here. Run AST compiler normalizations before
-    # loop-entry arrivals, then chain from_state so inserted/normalized runs participate in
-    # FROM[i] := TO[i-1].
-    from .engine import chain_from_states, collapse_foreach_enrichment_passes, insert_loop_entry_arrivals
+    """Draft → AST + STRUCTURAL passes (collapse / insert-loop-arrival / chain_from_states).
+
+    Deliberately does NOT run the gate normalizations (confirm-read / precondition): those rewrite
+    a step's kind/success_condition and would defeat validator rules that key on what the LLM
+    actually wrote (e.g. "table-row fields on a filter's returns" — the confirm-read pass converts
+    that filter to an action, so validating AFTER it would silently swallow the guidance). Validate
+    sees this output; gate normalization is a separate post-validation finalize — see
+    passes.finalize_gates, applied once by decompose/redecompose (not re-wrapped per call site)."""
+    from .passes import chain_from_states, collapse_foreach_enrichment_passes, insert_loop_entry_arrivals
 
     return chain_from_states(insert_loop_entry_arrivals(collapse_foreach_enrichment_passes(Program(
         goal=draft.goal or goal,
@@ -605,7 +610,8 @@ def decompose(
         label="orchestrator.decompose",
         attempt_observer=attempt_observer,
     )
-    return _normalize_approximate_entity_sql(program, resolution)
+    from .passes import finalize_gates
+    return finalize_gates(_normalize_approximate_entity_sql(program, resolution))
 
 
 def _prior_experience_block(prior_experience: str) -> "ContextBlock | None":
@@ -696,7 +702,8 @@ def redecompose(
         context_reports=context_reports,
         label="orchestrator.redecompose",
     )
-    return _normalize_approximate_entity_sql(program, resolution)
+    from .passes import finalize_gates
+    return finalize_gates(_normalize_approximate_entity_sql(program, resolution))
 
 
 def _table_schema_prompt(tables: list[dict] | None) -> str:

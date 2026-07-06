@@ -12,6 +12,8 @@ A milestone is a FUNCTION the program calls; this module owns the call boundary:
 调用方（DSL 解释器）与被调用方（milestone supervisor）互相不知道对方存在；agent loop
 （core/run/loop.py）保留 turn/帧 的控制流，但每一个边界决策都从这里取：
 
+- ``to_milestone()`` / ``task_type_for()`` / ``package_result()`` —— marshalling：交互 action
+  ⇄ 执行器的 Milestone 载体格式（call 的入栈/返回打包，即 FFI 的调用/返回约定本身）
 - ``open_call()``                    —— 调用：把 Run marshal 进执行器（supervisor.reseed）
 - ``extract_ui_returns()``           —— 返回：从完成帧读取声明的返回字段（URL JSON → DOM → 视觉）
 - ``missing_ui_return_fields()``     —— 返回值合同检查（缺失 = 违约，不得带空值推进）
@@ -19,19 +21,107 @@ A milestone is a FUNCTION the program calls; this module owns the call boundary:
 - ``force_interactive_return_recovery()`` —— 空返回 kickback 后对新程序的入口修复
 - ``should_kickback_replan()``       —— infeasible 异常门（是否允许向上抛给重编排）
 
-Marshalling 本身（Run→Milestone / RunResult 打包）住在 engine.py；本模块是调用协议。
+编译期的 AST normalize passes（dispatch gate / precondition / chain_from_states 等）住在
+passes.py（编译 middle-end），不在这里——本模块只管 FFI 边界。retired: engine.py 已拆入这两处。
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field as dc_field
-from typing import TYPE_CHECKING, Callable, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, Literal, Optional, Sequence
 
-from gui_agent.core.orchestrator.engine import task_type_for, to_milestone
+from gui_agent.core.schemas import Milestone
+
+from .program import INTERACTIVE_KINDS, Run, RunLike
+from .runner import RunResult
 
 if TYPE_CHECKING:
-    from gui_agent.core.schemas import Milestone, Observation
+    from gui_agent.core.schemas import Observation
+
+
+# ── marshalling: Run → Milestone (the FFI call ABI) ──────────────────────────────────
+# Marshalling into the executor's Milestone carrier format IS the FFI boundary, so it lives
+# here with the rest of the call convention (moved from the retired engine.py). Only an
+# INTERACTIVE action becomes a Milestone; a query (read/data_query) is a non-interactive
+# statement driven by drive_pending_non_ui — marshalling one is a type error.
+
+# DSL RunKind -> executor (kind, completion_strategy).
+_KIND_MAP: dict[str, tuple[str, str]] = {
+    "navigation": ("navigation", "visible_once"),
+    "filter": ("filter", "visible_once"),
+    "action": ("action", "visible_once"),
+    "read": ("collection", "read_once"),
+    "data_query": ("collection", "read_once"),
+}
+
+
+def _milestone_id(run: Run, index: int) -> str:
+    base = run.var or f"m{index}_{run.kind}"
+    if run.var and run.kind in INTERACTIVE_KINDS and run.returns:
+        slug = re.sub(r"[^a-zA-Z0-9]+", "_", run.name).strip("_")[:32]
+        digest = hashlib.sha1(run.name.encode("utf-8")).hexdigest()[:8]
+        return f"{base}_{slug or digest}_{digest}"
+    return base
+
+
+def to_milestone(run: Run, index: int) -> Milestone:
+    """Marshal one interactive action into a Milestone the executor can drive.
+
+    `returns`/`read_spec` travel BOTH ways: structurally (Milestone.returns/read_spec — the
+    出参合同 channel a consumer can read without parsing prose) AND folded into the description
+    (so existing read-instruction prompts keep targeting them unchanged).
+
+    BOUNDARY: only interactive actions become milestones. A query (read/data_query) is a
+    non-interactive program-layer statement driven by drive_pending_non_ui — marshalling one into
+    the executor is a type error, not a fallback (a read that needs interaction must first be
+    PROMOTED to an interactive action, see force_interactive_return_recovery)."""
+    if run.is_query:
+        raise ValueError(
+            f"query run（kind={run.kind}）不是 milestone：非交互原语由 drive_pending_non_ui 驱动，"
+            "需要交互时应先升格为命令（kind=navigation）再 marshal。"
+        )
+    kind, strategy = _KIND_MAP.get(run.kind, ("action", "visible_once"))
+    desc = run.name
+    if run.returns:
+        desc = f"{run.name}（读取字段：{'、'.join(run.returns)}）"
+    success = run.success_condition or f"完成「{run.name}」"
+    return Milestone(
+        id=_milestone_id(run, index),
+        name=run.name,
+        description=desc,
+        success_condition=success,
+        kind=kind,  # type: ignore[arg-type]  # validated against MilestoneKind Literal
+        completion_strategy=strategy,  # type: ignore[arg-type]
+        precondition=run.precondition,  # entry-state gate: checker judges frame-1, no fresh-nav skip
+        returns=list(run.returns),
+        read_spec=run.read_spec or "",
+    )
+
+
+def task_type_for(run: RunLike) -> Literal["action", "analysis"]:
+    """A read/query -> 'analysis' so the supervisor's task_type-gated reader actually reads
+    (the executor gates reading on task_type; see policy._ctx / _default_read_instruction)."""
+    return "analysis" if run.kind in {"read", "data_query"} else "action"
+
+
+def package_result(
+    run: RunLike, *, completed: bool, summary: str, notes: list[str],
+    reads: dict[str, str] | None = None,
+    rows: list[dict[str, str]] | None = None,
+) -> RunResult:
+    """Package a finished statement's loop state into the RunResult contract. `reads` is the
+    structured {field: value} for a scalar read; `rows` is the LIST form for a foreach-accumulated
+    table (one dict per row); other statements pass none."""
+    return RunResult(
+        completed=completed,
+        failed=not completed,
+        reads=dict(reads) if reads else {},
+        rows=list(rows) if rows else [],
+        summary=summary,
+        evidence=list(notes),
+    )
 
 # 返回字段为空时，最多把当前 UI run 收紧后重新驱动几次
 MAX_EMPTY_RETURN_RECOVERIES = 3
@@ -54,12 +144,10 @@ _EMPTY_RETURN_OK_CUES = (
 
 
 def _is_query_run(run: object) -> bool:
-    """Non-interactive pure query (read/data_query)? Single predicate for every boundary guard.
-    Duck-safe: callframe takes `object`-typed runs; prefers Run.is_query, falls back to kind."""
-    is_query = getattr(run, "is_query", None)
-    if isinstance(is_query, bool):
-        return is_query
-    return getattr(run, "kind", "") in {"read", "data_query"}
+    """Non-interactive pure query (read/data_query)? Reads the RunLike.is_query property every IR
+    node carries; the getattr default keeps the boundary duck-safe for the `object`-typed callers
+    (a None/foreign value is treated as not-a-query)."""
+    return bool(getattr(run, "is_query", False))
 
 
 def _compact_text(text: str) -> str:
@@ -459,6 +547,20 @@ def kickback_adherence_issues(
         if req_tokens and not any(t in program_text for t in req_tokens):
             issues.append(f"规定路线未被采用：「{directive.required_route}」的关键机制词未出现在新计划中")
     return issues
+
+
+def sharpen_kickback_directive(directive: str, issues: Sequence[str]) -> str:
+    """Append an adherence-violation notice to a kickback directive for ONE sharpened retry.
+
+    Names the violations and re-states the ban/route rules using the ABI marker constants (so the
+    marker vocabulary never drifts from parse/compose). The caller owns the retry control-flow
+    (budget, re-check, pick-better); this only builds the sharpened prose."""
+    return (
+        directive
+        + "\n\n⚠️ 你上一版重规划违反了纠正指令：" + "；".join(issues)
+        + f"。必须完全避开{DEAD_ROUTE_MARKER}点名的机制（包括换说法重写它），"
+        + f"并把{REQUIRED_ROUTE_MARKER}作为新计划的主干路线。"
+    )
 
 
 class ReturnRecoveryLedger:

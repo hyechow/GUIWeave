@@ -322,8 +322,6 @@ def main() -> int:
                         from gui_agent.core.orchestrator import (
                             decompose,
                             estimate_program_turns,
-                            normalize_confirm_read_gates,
-                            normalize_precondition_gates,
                             redecompose,
                         )
                         from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
@@ -334,22 +332,19 @@ def main() -> int:
                         if resolution.entities:
                             print("[mobileworld] intent: " + "; ".join(
                                 f"{e.mention}→{e.type}/{e.match_mode}/key={e.search_key}" for e in resolution.entities))
-                        program = normalize_precondition_gates(
-                            normalize_confirm_read_gates(
-                                decompose(
-                                    intent,
-                                    knowledge=knowledge.navigation if knowledge else "",
-                                    file_section=file_section,
-                                    current_url="",
-                                    current_title="",
-                                    current_site=cur_site,
-                                    table_summaries=None,
-                                    png_bytes=initial_png,
-                                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                                    context_reports=orchestrator_context_reports,
-                                    resolution=resolution,
-                                )
-                            )
+                        # decompose finalizes gates centrally (passes.finalize_gates); no caller wrap.
+                        program = decompose(
+                            intent,
+                            knowledge=knowledge.navigation if knowledge else "",
+                            file_section=file_section,
+                            current_url="",
+                            current_title="",
+                            current_site=cur_site,
+                            table_summaries=None,
+                            png_bytes=initial_png,
+                            prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                            context_reports=orchestrator_context_reports,
+                            resolution=resolution,
                         )
                         if file_section and hasattr(supervisor, "_global_constraints"):
                             cap = 3000
@@ -364,7 +359,7 @@ def main() -> int:
                                          _goal=intent, _know=knowledge, _file=file_section,
                                          _site=cur_site, _png=initial_png, _res=resolution):
                             _cur_png = getattr(observation, "png_bytes", None) or _png
-                            return normalize_precondition_gates(normalize_confirm_read_gates(redecompose(
+                            return redecompose(
                                 _goal, knowledge=_know.navigation if _know else "", file_section=_file,
                                 current_url="", current_title="", current_site=_site,
                                 table_summaries=None, png_bytes=_cur_png,
@@ -372,7 +367,7 @@ def main() -> int:
                                 corrective_directive=directive, resolution=_res,
                                 prior_experience=prior_experience, remaining_plan=remaining_plan,
                                 context_reports=context_reports,
-                            )))
+                            )
 
                         if not args.no_dynamic_max_turns:
                             run_max_turns = estimate_program_turns(program, floor=args.max_turns)

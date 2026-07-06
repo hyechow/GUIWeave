@@ -1,102 +1,33 @@
-"""Bridge between the DSL orchestrator and the existing per-milestone executor (agent_loop).
+"""Compilation passes: AST-level normalizations over a decomposed DSL Program.
 
-The agent_loop IS the runner; this module only TRANSLATES between the DSL's Run/RunResult
-and the supervisor's Milestone, and packages a finished milestone's loop state into a
-RunResult. The agent_loop drives Interpreter.steps(), reseeds the supervisor per Run via
-to_milestone()/task_type_for(), and on milestone-done calls package_result().
-
-Branch note: on feat-android there is no `inspect`/`read_spec` (that's the parked
-feat-read-spec). So a `read` Run maps to collection + read_once and reads come back as
-unstructured content_notes text — structured {field: value} extraction is step #3.
+The orchestrator is a compiler frontend (decomposer) → these deterministic passes (compiler
+middle-end) → validator/preflight (type-check/lint). Each pass takes a Program and returns a NEW
+Program (inputs untouched); all are idempotent. Run order lives in decomposer.to_program:
+collapse_foreach_enrichment_passes → insert_loop_entry_arrivals → normalize_confirm_read_gates /
+normalize_precondition_gates → chain_from_states. Marshalling into the executor's Milestone format
+is NOT here — that is the FFI boundary and lives in callframe.py.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
-from typing import Literal, Optional
+from typing import Optional
 
-from gui_agent.core.schemas import Milestone
-
-from .program import TEMPLATE_RE, Call, Compute, Finish, ForEach, If, Program, Query, Read, Run, RunLike, Stmt
-from .runner import RunResult
-
-# DSL RunKind -> feat-android (kind, completion_strategy).
-_KIND_MAP: dict[str, tuple[str, str]] = {
-    "navigation": ("navigation", "visible_once"),
-    "filter": ("filter", "visible_once"),
-    "action": ("action", "visible_once"),
-    "read": ("collection", "read_once"),
-    "data_query": ("collection", "read_once"),
-}
-
-
-
-def _milestone_id(run: Run, index: int) -> str:
-    base = run.var or f"m{index}_{run.kind}"
-    if run.var and run.kind in _RETURN_READ_SOURCE_KINDS and run.returns:
-        slug = re.sub(r"[^a-zA-Z0-9]+", "_", run.name).strip("_")[:32]
-        digest = hashlib.sha1(run.name.encode("utf-8")).hexdigest()[:8]
-        return f"{base}_{slug or digest}_{digest}"
-    return base
-
-
-def to_milestone(run: Run, index: int) -> Milestone:
-    """Build a feat-android Milestone the supervisor can drive from a DSL Run spec.
-
-    `returns`/`read_spec` travel BOTH ways: structurally (Milestone.returns/read_spec — the
-    出参合同 channel a consumer can read without parsing prose) AND folded into the description
-    (so existing read-instruction prompts keep targeting them unchanged).
-
-    BOUNDARY: only COMMANDS become milestones. A query (read/data_query) is a non-interactive
-    program-layer primitive driven by drive_pending_non_ui — marshalling one into the milestone
-    executor is a type error, not a fallback (a read that needs interaction must first be
-    PROMOTED to a command, see callframe.force_interactive_return_recovery)."""
-    if run.is_query:
-        raise ValueError(
-            f"query run（kind={run.kind}）不是 milestone：非交互原语由 drive_pending_non_ui 驱动，"
-            "需要交互时应先升格为命令（kind=navigation）再 marshal。"
-        )
-    kind, strategy = _KIND_MAP.get(run.kind, ("action", "visible_once"))
-    desc = run.name
-    if run.returns:
-        desc = f"{run.name}（读取字段：{'、'.join(run.returns)}）"
-    success = run.success_condition or f"完成「{run.name}」"
-    return Milestone(
-        id=_milestone_id(run, index),
-        name=run.name,
-        description=desc,
-        success_condition=success,
-        kind=kind,  # type: ignore[arg-type]  # validated against MilestoneKind Literal
-        completion_strategy=strategy,  # type: ignore[arg-type]
-        precondition=run.precondition,  # entry-state gate: checker judges frame-1, no fresh-nav skip
-        returns=list(run.returns),
-        read_spec=run.read_spec or "",
-    )
-
-
-def task_type_for(run: Run) -> Literal["action", "analysis"]:
-    """A read Run -> 'analysis' so the supervisor's task_type-gated reader actually reads
-    (feat-android gates reading on task_type; see policy._ctx / _default_read_instruction)."""
-    return "analysis" if run.kind in {"read", "data_query"} else "action"
-
-
-def package_result(
-    run: RunLike, *, completed: bool, summary: str, notes: list[str],
-    reads: dict[str, str] | None = None,
-    rows: list[dict[str, str]] | None = None,
-) -> RunResult:
-    """Package a finished milestone's loop state into the RunResult contract. `reads` is the
-    structured {field: value} for a scalar read; `rows` is the LIST form for a foreach-accumulated
-    table (one dict per row); other milestones pass none."""
-    return RunResult(
-        completed=completed,
-        failed=not completed,
-        reads=dict(reads) if reads else {},
-        rows=list(rows) if rows else [],
-        summary=summary,
-        evidence=list(notes),
-    )
+from .program import (
+    INTERACTIVE_KINDS,
+    TEMPLATE_RE,
+    Call,
+    Compute,
+    Finish,
+    ForEach,
+    If,
+    Program,
+    Query,
+    Read,
+    Run,
+    RunLike,
+    Stmt,
+)
 
 
 # ── action return-read structural backstop (L2) ──────────────────────────────────────
@@ -171,8 +102,7 @@ def _trigger_success_condition(run: Run) -> str:
 
 
 _CONFIRM_READ_TRIGGER_KINDS = {"action", "filter"}
-_RETURN_READ_SOURCE_KINDS = {"navigation", "filter", "action"}
-_RETURN_READ_TARGET_KINDS = {"read"}
+_RETURN_READ_SOURCE_KINDS = INTERACTIVE_KINDS
 
 
 def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
@@ -362,6 +292,16 @@ def normalize_precondition_gates(program: Program) -> Program:
     antipattern → no stuck). Recurses into if-branches; returns a NEW Program (inputs untouched);
     idempotent. App-specific markers stay in the checker's _check.md, which judges this gate."""
     return program.model_copy(update={"statements": _normalize_precondition_stmts(program.statements)})
+
+
+def finalize_gates(program: Program) -> Program:
+    """Post-validation finalize: the two gate normalizations in the historical caller order
+    normalize_precondition_gates(normalize_confirm_read_gates(...)). These run AFTER validate (they
+    rewrite kind/success_condition and would defeat kind-keyed validator rules; see to_program's
+    docstring), so they belong here — applied ONCE by decompose/redecompose so every generation
+    entrance (AOT decompose / JIT subdecompose / kickback redecompose) gets them centrally, instead
+    of each of the 7 call sites re-wrapping the output by hand (S9b). Idempotent."""
+    return normalize_precondition_gates(normalize_confirm_read_gates(program))
 
 
 # ── foreach compiler normalization ────────────────────────────────────────────────

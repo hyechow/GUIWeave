@@ -39,7 +39,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.orchestrator import Compute, Finish, ForEach, If, Query, Read, Run, RunLike, decompose
-from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates, normalize_precondition_gates
+from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates, normalize_precondition_gates
 from gui_agent.core.orchestrator.program import TEMPLATE_RE
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
 

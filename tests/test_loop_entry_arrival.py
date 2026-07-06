@@ -12,7 +12,7 @@ from gui_agent.core.orchestrator import (
     Run,
     insert_loop_entry_arrivals,
 )
-from gui_agent.core.orchestrator.engine import _ENTRY_ARRIVAL_SC
+from gui_agent.core.orchestrator.passes import _ENTRY_ARRIVAL_SC
 from gui_agent.core.orchestrator.program import Query
 
 

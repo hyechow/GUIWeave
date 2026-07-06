@@ -201,7 +201,7 @@ def test_steppable_program_with_only_finish():
 def test_to_milestone_maps_runkind():
     import pytest
 
-    from gui_agent.core.orchestrator.engine import to_milestone
+    from gui_agent.core.orchestrator.callframe import to_milestone
     nav = to_milestone(Run(name="进入页", kind="navigation"), 0)
     assert nav.kind == "navigation" and nav.completion_strategy == "visible_once"
     # returns 折进 description + 结构化通道同行（milestone=函数 的出参合同）
@@ -216,7 +216,7 @@ def test_to_milestone_maps_runkind():
 
 
 def test_returning_ui_runs_get_target_specific_milestone_ids():
-    from gui_agent.core.orchestrator.engine import to_milestone
+    from gui_agent.core.orchestrator.callframe import to_milestone
 
     first = to_milestone(
         Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"]),
@@ -527,14 +527,14 @@ def test_approximate_entity_sql_uses_search_key():
 
 
 def test_task_type_for_non_ui_is_analysis():
-    from gui_agent.core.orchestrator.engine import task_type_for
+    from gui_agent.core.orchestrator.callframe import task_type_for
     assert task_type_for(Read(name="读",  returns=["x"])) == "analysis"
     assert task_type_for(Query(name="查",  returns=["x"], sql="SELECT 1")) == "analysis"
     assert task_type_for(Run(name="点", kind="action")) == "action"
 
 
 def test_package_result_contract():
-    from gui_agent.core.orchestrator.engine import package_result
+    from gui_agent.core.orchestrator.callframe import package_result
     ok = package_result(Run(name="x", kind="action"), completed=True, summary="成功", notes=["证据1"])
     assert ok.completed and not ok.failed and ok.evidence == ["证据1"]
     bad = package_result(Run(name="x", kind="action"), completed=False, summary="失败", notes=[])
@@ -543,7 +543,7 @@ def test_package_result_contract():
 
 def test_supervisor_reseed_single_milestone():
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.core.orchestrator.engine import to_milestone, task_type_for
+    from gui_agent.core.orchestrator.callframe import to_milestone, task_type_for
     p = MilestoneSupervisorPolicy()
     p._milestones = {"old": object()}  # type: ignore[dict-item]
     p._order = ["old", "x"]
@@ -566,7 +566,7 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     # DAG _advance parity: a freshly-advanced NAVIGATION milestone skips its first done-check
     # (in_progress by construction); action/filter keep it; a non-fresh reseed never skips.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.core.orchestrator.engine import to_milestone
+    from gui_agent.core.orchestrator.callframe import to_milestone
     p = MilestoneSupervisorPolicy()
     p.reseed(to_milestone(Run(name="进页", kind="navigation"), 0), fresh_advance=True)
     assert p._skip_initial_check is True                  # nav + 刚推进 → 跳 check
@@ -588,7 +588,7 @@ def test_advance_persists_done_check_on_terminal_completion():
     # seen in 20260615_113554 after the hand-off merge).
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
-    from gui_agent.core.orchestrator.engine import to_milestone
+    from gui_agent.core.orchestrator.callframe import to_milestone
     from gui_agent.core.schemas import Observation
     p = MilestoneSupervisorPolicy()
     ms = to_milestone(Run(name="进首页", kind="navigation"), 0)
@@ -604,7 +604,7 @@ def test_advance_persists_done_check_on_terminal_completion():
 
 
 def test_package_result_carries_structured_reads():
-    from gui_agent.core.orchestrator.engine import package_result
+    from gui_agent.core.orchestrator.callframe import package_result
     r = package_result(Read(var="d", name="读",  returns=["连通判定"]),
                        completed=True, summary="读完", notes=[],
                        reads={"连通判定": "连通"})
@@ -739,7 +739,7 @@ def test_structured_read_empty_returns_no_llm():
 def test_normalize_confirm_read_gates_rewrites_action_before_read():
     # L2 backstop: an action immediately followed by a scalar read is normalized into
     # an action return contract, with a lenient DISPATCH success_condition.
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="进页", kind="navigation", success_condition="页面已显示"),
         Run(name="设起终点并执行检测", kind="action",
@@ -767,7 +767,7 @@ def test_compound_form_fill_action_skips_dispatch_gate():
     # 并填写规则信息…") must NOT get the dispatch gate — its first url_changed is opening the form,
     # which would mark the milestone done on the empty form (创建状态=失败). It gets a real
     # filled+saved SC so the milestone drives fill→save→confirm.
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
     prog = Program(statements=[
         Run(var="m", kind="action", returns=["创建状态"], read_spec="创建状态：出现'规则已保存'→成功",
@@ -784,7 +784,7 @@ def test_compound_form_fill_action_skips_dispatch_gate():
 def test_single_dispatch_action_still_gets_dispatch_gate():
     # A single-click terminal dispatch (no form fill) keeps the dispatch gate: its url_changed IS
     # the conclusive done signal.
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
     prog = Program(statements=[
         Run(var="q", kind="action", returns=["报表"], read_spec="x", name="点击 Show Report 按钮"),
@@ -797,7 +797,7 @@ def test_fill_only_milestone_is_not_compound_create():
     # WebArena 702 split plan: a FILL-ONLY milestone (fills fields, no open/create cue) must NOT get
     # the "…and saved" SC — it can never be satisfied by filling, which forced a premature save +
     # re-create loop. Only a milestone that BOTH opens/creates a form AND fills it is compound.
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
     prog = Program(statements=[
         Run(var="m", kind="action", returns=["填写状态"], read_spec="x",
@@ -811,7 +811,7 @@ def test_fill_only_milestone_is_not_compound_create():
 def test_normalize_confirm_read_gates_recurses_into_if_branches():
     # confirm-read inside an if-branch (建单 action → 确认建单 read) is rewritten too;
     # the otherwise branch (no action→read pair) is untouched.
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Read(var="r", name="读判定",  returns=["是否可达"], read_spec="x"),
         If(cond=Cond(var="r", field="是否可达", value="可达"),
@@ -836,7 +836,7 @@ def test_normalize_confirm_read_converts_filter_before_read_to_action():
     # A filter whose only purpose is to produce a value for the next read is a trigger, not
     # the final acceptance target. Convert it to action so the filter checker doesn't
     # re-judge rows/counts that the read owns (WebArena admin grid count tasks).
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="提交 Review 列关键词 best 的筛选", kind="filter",
             success_condition="列表只显示 Review 包含 best 的记录"),
@@ -856,7 +856,7 @@ def test_normalize_confirm_read_converts_filter_before_read_to_action():
 
 
 def test_normalize_confirm_read_leaves_filter_before_data_query_strict():
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="提交订单筛选", kind="filter", success_condition="列表只显示匹配订单"),
         Query(var="q", name="统计邮箱",  returns=["emails"],
@@ -870,7 +870,7 @@ def test_normalize_confirm_read_leaves_filter_before_data_query_strict():
 
 
 def test_normalize_confirm_read_converts_filter_inside_if_branch():
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Read(var="d", name="读判定",  returns=["需要查询"], read_spec="x"),
         If(cond=Cond(var="d", field="需要查询", value="是"),
@@ -895,7 +895,7 @@ def test_normalize_precondition_gates_is_flag_based_not_keyword():
     # (login precondition with the 153314 form antipattern) gets the generic ensure-state gate; a
     # step that merely MENTIONS 登录 but isn't a precondition (查询登录日志) is left alone — the old
     # keyword pass would have mis-rewritten it. App-specific markers stay in _check.md.
-    from gui_agent.core.orchestrator.engine import normalize_precondition_gates
+    from gui_agent.core.orchestrator.passes import normalize_precondition_gates
     prog = Program(statements=[
         Run(name="确保已登录 RoboTeam", kind="navigation", precondition=True,
             success_condition="页面显示账号、密码输入框及登录按钮"),     # flagged + form antipattern
@@ -910,7 +910,7 @@ def test_normalize_precondition_gates_is_flag_based_not_keyword():
 
 
 def test_normalize_precondition_gates_recurses_and_idempotent():
-    from gui_agent.core.orchestrator.engine import normalize_precondition_gates
+    from gui_agent.core.orchestrator.passes import normalize_precondition_gates
     prog = Program(statements=[
         Read(var="d", name="读判定",  returns=["x"], read_spec="y"),
         If(cond=Cond(var="d", field="x", value="1"),
@@ -928,7 +928,7 @@ def test_normalize_precondition_gates_recurses_and_idempotent():
 
 def test_normalize_confirm_read_gates_action_without_following_read_unchanged():
     # 真正「action 后面不是 read」的场景：两个连续 action，第一个不应被改写。
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="第一步动作", kind="action", success_condition="第一步生效页"),
         Run(name="第二步动作", kind="action", success_condition="第二步生效页"),
@@ -944,7 +944,7 @@ def test_normalize_navigate_submit_gates_terminal_action():
     # 纯导航/展示任务（无 returns/data_query/foreach）且含 navigation run：终态提交 action 被改写为
     # navigate-submit dispatch gate，让确定性 url_changed 判 done、绕过会误读渲染 URL 的 LLM checker
     # (task 707「Show the sales order report」: 点 Show Report 落到 …/filter/<base64>/ 渲染页)。
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
     prog = Program(statements=[
         Run(name="进入 Reports>Sales>Orders 报表页", kind="navigation", success_condition="报表筛选页已显示"),
@@ -963,7 +963,7 @@ def test_normalize_navigate_submit_gates_terminal_action():
 
 def test_normalize_navigate_submit_gates_skips_when_no_navigation_run():
     # 无 navigation run 的纯 action 链不算到达类导航任务 → 终态 action 不被改写（守 707 修复不外溢）。
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="第一步动作", kind="action", success_condition="第一步生效页"),
         Run(name="第二步动作", kind="action", success_condition="第二步生效页"),
@@ -974,7 +974,7 @@ def test_normalize_navigate_submit_gates_skips_when_no_navigation_run():
 
 def test_normalize_navigate_submit_gates_skips_when_returns_present():
     # 带 returns（取数任务）→ 不是纯导航 → 终态 action 走原有 confirm-read 逻辑，不套 navigate-submit gate。
-    from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="进入列表页", kind="navigation", success_condition="列表已显示"),
         Run(var="r", name="筛选并读取计数", kind="action", returns=["count"], success_condition="结果已显示"),

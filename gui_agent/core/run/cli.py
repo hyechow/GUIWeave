@@ -223,10 +223,7 @@ def main(
             run_max_turns = args.max_turns
             _subdecompose = None  # per-row sub-goal decomposer; set inside the orchestrator block
             if args.orchestrator:
-                from gui_agent.core.orchestrator import (
-                    decompose, estimate_program_turns,
-                    normalize_confirm_read_gates, normalize_precondition_gates,
-                )
+                from gui_agent.core.orchestrator import decompose, estimate_program_turns
                 from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
                 # Resolve @<path> refs once (config field values the goal only points at) and feed
                 # them to the decomposer — mirrors the DAG path, which the orchestrator's decompose
@@ -235,21 +232,15 @@ def main(
                 orch_started = time.perf_counter()
                 orch_calls_before = get_llm_call_count()
                 orch_tokens_before = get_llm_token_usage()
-                # L2 structural backstops (deterministic, keyed on structural signals, not gate wording):
-                #  · confirm-read action gates → lenient dispatch gate (checker doesn't re-judge the
-                #    result the read owns) — signal = action→read adjacency;
-                #  · precondition gates (确保已登录/已进入某模式) → generic ensure-state gate so an
-                #    already-satisfied precondition is done on frame 1 (no form/data stuck; app-specific
-                #    markers live in the checker's _check.md) — signal = the run.precondition flag. See engine.
-                program = normalize_precondition_gates(normalize_confirm_read_gates(
-                    decompose(goal, knowledge=knowledge.navigation if knowledge else "",
-                              file_section=file_section,
-                              current_url=cur_url, current_title=cur_title,
-                              current_site=cur_site, table_summaries=initial_tables,
-                              png_bytes=initial_png,
-                              prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                              context_reports=orchestrator_context_reports)
-                ))
+                # decompose finalizes the L2 structural gates centrally (passes.finalize_gates:
+                # confirm-read dispatch gate + precondition ensure-state gate) — no caller wrap.
+                program = decompose(goal, knowledge=knowledge.navigation if knowledge else "",
+                                    file_section=file_section,
+                                    current_url=cur_url, current_title=cur_title,
+                                    current_site=cur_site, table_summaries=initial_tables,
+                                    png_bytes=initial_png,
+                                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                                    context_reports=orchestrator_context_reports)
                 orch_tokens_after = get_llm_token_usage()
                 orchestrator_metrics = {
                     "timings": {"orchestrator.decompose": time.perf_counter() - orch_started},
@@ -279,11 +270,9 @@ def main(
                 # search → disambiguate → open → read) instead of the decomposer pre-baking brittle
                 # micro-steps. See memory typed-returns-validation / webarena-185.
                 def _subdecompose(sub_goal: str):
-                    return normalize_precondition_gates(normalize_confirm_read_gates(
-                        decompose(sub_goal, knowledge=knowledge.navigation if knowledge else "",
-                                  current_site=cur_site,
-                                  prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
-                    ))
+                    return decompose(sub_goal, knowledge=knowledge.navigation if knowledge else "",
+                                     current_site=cur_site,
+                                     prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
                 if not args.no_dynamic_max_turns:
                     run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                     if run_max_turns != args.max_turns:

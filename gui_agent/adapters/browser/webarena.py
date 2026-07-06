@@ -742,8 +742,6 @@ def main() -> int:
                         from gui_agent.core.orchestrator import (
                             decompose,
                             estimate_program_turns,
-                            normalize_confirm_read_gates,
-                            normalize_precondition_gates,
                             redecompose,
                             validate_orchestration_preflight,
                         )
@@ -766,22 +764,19 @@ def main() -> int:
                         orch_started = time.perf_counter()
                         orch_calls_before = get_llm_call_count()
                         orch_tokens_before = get_llm_token_usage()
-                        program = normalize_precondition_gates(
-                            normalize_confirm_read_gates(
-                                decompose(
-                                    intent,
-                                    knowledge=knowledge.navigation if knowledge else "",
-                                    file_section=file_section,
-                                    current_url=cur_url,
-                                    current_title=cur_title,
-                                    current_site=cur_site,
-                                    table_summaries=initial_tables,
-                                    png_bytes=initial_png,
-                                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                                    context_reports=orchestrator_context_reports,
-                                    resolution=resolution,
-                                )
-                            )
+                        # decompose finalizes gates centrally (passes.finalize_gates); no caller wrap.
+                        program = decompose(
+                            intent,
+                            knowledge=knowledge.navigation if knowledge else "",
+                            file_section=file_section,
+                            current_url=cur_url,
+                            current_title=cur_title,
+                            current_site=cur_site,
+                            table_summaries=initial_tables,
+                            png_bytes=initial_png,
+                            prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                            context_reports=orchestrator_context_reports,
+                            resolution=resolution,
                         )
                         orch_tokens_after = get_llm_token_usage()
                         orchestrator_metrics = {
@@ -862,7 +857,7 @@ def main() -> int:
                             _cur_tables = getattr(observation, "tables", None) if observation else None
                             if _cur_tables is None:
                                 _cur_tables = _tables
-                            return normalize_precondition_gates(normalize_confirm_read_gates(redecompose(
+                            return redecompose(
                                 _goal, knowledge=_know.navigation if _know else "", file_section=_file,
                                 current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
                                 table_summaries=_cur_tables, png_bytes=_cur_png,
@@ -870,7 +865,7 @@ def main() -> int:
                                 corrective_directive=directive, resolution=_res,
                                 prior_experience=prior_experience, remaining_plan=remaining_plan,
                                 context_reports=context_reports,
-                            )))
+                            )
 
                         # Per-row agentic sub-goal (ForEach.body_goal): decompose a row-templated
                         # sub-goal fresh at runtime (same knowledge/site as the main decompose;
@@ -879,11 +874,9 @@ def main() -> int:
                         # silently no-opped (778 live 114429: rows=[], "body_goal 无法分解", then
                         # flowed to finish and synthesized SUCCESS with zero saves).
                         def _subdecompose(sub_goal: str, _know=knowledge, _site=cur_site):
-                            return normalize_precondition_gates(normalize_confirm_read_gates(
-                                decompose(sub_goal, knowledge=_know.navigation if _know else "",
-                                          current_site=_site,
-                                          prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
-                            ))
+                            return decompose(sub_goal, knowledge=_know.navigation if _know else "",
+                                             current_site=_site,
+                                             prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
 
                         if not preflight_blocked and not args.no_dynamic_max_turns:
                             run_max_turns = estimate_program_turns(program, floor=args.max_turns)

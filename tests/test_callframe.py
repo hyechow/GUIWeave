@@ -271,7 +271,7 @@ def test_to_milestone_rejects_query_runs():
     """边界类型强制：查询节点 marshal 成 milestone = 类型错误,不是静默兜底。"""
     import pytest
 
-    from gui_agent.core.orchestrator.engine import to_milestone
+    from gui_agent.core.orchestrator.callframe import to_milestone
     from gui_agent.core.orchestrator.program import Query, Read
 
     with pytest.raises(ValueError, match="query run"):
@@ -332,3 +332,16 @@ def test_wire_roundtrip_routes_legacy_dumps_to_sibling_nodes():
     # 交互 Run 的 kind 词汇收窄:read/data_query 不再是合法的交互 kind
     with pytest.raises(pydantic.ValidationError):
         Run(name="x", kind="read")  # type: ignore[arg-type]
+
+
+def test_sharpen_kickback_directive_uses_abi_markers():
+    """锐化文本必须用 ABI marker 常量拼接,不能硬编码字面量——防 compose/parse/sharpen 三处漂移。"""
+    from gui_agent.core.orchestrator.callframe import (
+        DEAD_ROUTE_MARKER,
+        REQUIRED_ROUTE_MARKER,
+        sharpen_kickback_directive,
+    )
+    out = sharpen_kickback_directive("原始纠正指令", ["被禁机制再现", "规定路线未被采用"])
+    assert "原始纠正指令" in out
+    assert "被禁机制再现" in out and "规定路线未被采用" in out
+    assert DEAD_ROUTE_MARKER in out and REQUIRED_ROUTE_MARKER in out
