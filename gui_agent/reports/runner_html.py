@@ -98,13 +98,6 @@ HTML_TEMPLATE = """\
   .prog-input {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; margin-bottom: 6px; border-bottom: 1px dashed var(--border); color: var(--text); }}
   .prog-input-label {{ font-weight: 600; color: #6366f1; font-size: 11px; padding: 1px 7px; background: #eef2ff; border-radius: 10px; }}
   .prog-input-arrow {{ color: #94a3b8; font-size: 11px; font-family: monospace; }}
-  .dataflow-lane {{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; margin:2px 0 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; }}
-  .dataflow-title {{ color:#64748b; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; margin-right:2px; }}
-  .dataflow-node {{ display:inline-flex; align-items:center; min-height:22px; padding:2px 8px; border-radius:999px; background:#fff; border:1px solid #cbd5e1; color:#334155; font-size:11px; font-family:ui-monospace, SFMono-Regular, monospace; max-width:100%; overflow-wrap:anywhere; }}
-  .dataflow-node-read {{ background:#ecfeff; border-color:#a5f3fc; color:#0e7490; }}
-  .dataflow-node-final {{ background:#ecfdf5; border-color:#a7f3d0; color:#047857; }}
-  .dataflow-node-answer {{ background:#eef2ff; border-color:#c7d2fe; color:#4338ca; }}
-  .dataflow-arrow {{ color:#94a3b8; font-family:ui-monospace, SFMono-Regular, monospace; }}
   .prog-step {{ display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }}
   .prog-n {{ display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 3px; border-radius: 9px; background: #eef2ff; color: #4338ca; font-weight: 700; font-size: 11px; flex-shrink: 0; }}
   .prog-name {{ color: var(--text); }}
@@ -476,7 +469,7 @@ function reportSearch(q) {{
     return;
   }}
   var nodes = Array.prototype.slice.call(document.querySelectorAll(
-    '.prompt-call,.prompt-part,.thumb,.dataflow-lane,.prog-step,.prog-finish,.nonui-row,.wa-card'
+    '.prompt-call,.prompt-part,.thumb,.prog-step,.prog-finish,.nonui-row,.wa-card'
   ));
   reportSearchHits = nodes.filter(function(n) {{
     var hay = ((n.dataset.searchIndex || '') + ' ' + (n.textContent || '')).toLowerCase();
@@ -1406,6 +1399,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         _rd_outside = "" if page.verify_url else rd_banner  # no 验收结果 box → fall back to the card body
         # (The infeasible-milestone kick-back verdict is rendered on its own turn's detail, above —
         # it's that turn's conclusion, not a milestone-level banner.)
+        turns_label = f"{len(page.steps)} turns" if page.steps else "无交互 turn"
         pages_html += f"""
         <div class="milestone" id="ms-{mid_safe}">
           <div class="milestone-header">
@@ -1413,7 +1407,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             <span class="milestone-name">{_safe(page.milestone_name)}</span>
             <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
             {checklist_badge}
-            <span class="milestone-time" title="{_safe(ms_time_title)}">{ms_time_html} · {len(page.steps)} turns{ms_tok_html}</span>
+            <span class="milestone-time" title="{_safe(ms_time_title)}">{ms_time_html} · {turns_label}{ms_tok_html}</span>
             {desc_html}
             {sc_html}
           </div>
@@ -1492,7 +1486,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         provenance_html=_render_provenance(data.raw_input, data.goal, data.router),
         webarena_html=_render_webarena_result(data.webarena),
         mobileworld_html=_render_mobileworld_result(data.mobileworld),
-        program_html=_render_program_section(data.orchestrator, data.webarena),
+        program_html=_render_program_section(data.orchestrator),
         run_status_badge=_render_run_status_badge(data),
         outline_title=("任务编排" if (data.orchestrator.get("program") or {}).get("statements") else "子目标分解"),
         outline_html=outline_html,

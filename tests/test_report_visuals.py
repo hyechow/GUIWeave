@@ -1,3 +1,4 @@
+from gui_agent.reports.builder import _group_steps_by_milestone
 from gui_agent.reports.models import ReportStep
 from gui_agent.reports.orchestrator_html import _render_program_section
 from gui_agent.reports.prompt_html import _render_module_io_html
@@ -91,50 +92,6 @@ def test_module_io_surfaces_selector_reports_from_legacy_logs():
     assert "旧日志没有记录该模块原始输出" not in html
 
 
-def test_orchestrator_program_renders_dataflow_lane():
-    html = _render_program_section(
-        {
-            "program": {
-                "goal": "count reviews",
-                "statements": [
-                    {
-                        "op": "run",
-                        "kind": "read",
-                        "var": "r",
-                        "name": "read count",
-                        "returns": ["total_count"],
-                    },
-                    {"op": "finish", "message": "{r[total_count]}"},
-                ],
-            },
-            "run_log": [
-                {
-                    "var": "r",
-                    "result": {"reads": {"total_count": "6"}},
-                }
-            ],
-            "context_reports": [],
-        },
-        {
-            "agent_response": {"retrieved_data": [6]},
-            "eval_result": {
-                "evaluators_results": [
-                    {
-                        "actual_normalized": {"retrieved_data": [6.0]},
-                        "expected": {"retrieved_data": [6.0]},
-                    }
-                ]
-            },
-        },
-    )
-
-    assert "Dataflow" in html
-    assert "read r.total_count=6" in html
-    assert "WebArena Response [6.0]" in html
-    assert "Answer [6.0]" in html
-    assert "旧日志缺 prompt snapshot" in html
-
-
 def test_orchestrator_program_renders_foreach_block_and_body():
     # A foreach program must render its loop block + indented body (not be silently dropped), with the
     # legacy list_read badge (still rendered for old logs) and the accumulated into-table row count.
@@ -160,7 +117,6 @@ def test_orchestrator_program_renders_foreach_block_and_body():
             ],
             "context_reports": [],
         },
-        None,
     )
     assert "foreach" in html
     assert "列表读取" in html          # the list_read badge
@@ -262,3 +218,59 @@ def test_milestone_elapsed_matches_turn_badge_elapsed_sum():
     assert first_kind == "first_turn_elapsed_estimate"
     assert second_kind == "wall_gap"
     assert round(first_elapsed + second_elapsed, 1) == 12.4
+
+
+# ── program-aligned milestone grouping (builder._group_steps_by_milestone) ───────
+def _gstep(mid: str, n: int = 1) -> ReportStep:
+    return ReportStep(
+        label=f"Turn {n}", action_type="tap", x=1.0, y=1.0,
+        description=mid, annotated_before_url="", milestone_id=mid,
+    )
+
+
+def test_group_merges_non_contiguous_revisit_into_one_card():
+    # Real run shape: m1 turns 1-9, then d 10-12, q 13, then m1 AGAIN at 14.
+    # The revisit must merge into ONE m1 card, not split into two.
+    steps = (
+        [_gstep("m1", i) for i in range(1, 10)]
+        + [_gstep("d", 10), _gstep("d", 11), _gstep("d", 12)]
+        + [_gstep("q", 13)]
+        + [_gstep("m1", 14)]
+    )
+    prog = [{"id": "m0_navigation"}, {"id": "m1"}, {"id": "d"}, {"id": "q"}]
+    pages = _group_steps_by_milestone(steps, prog, {})
+    assert [p.milestone_id for p in pages] == ["m0_navigation", "m1", "d", "q"]
+    m1 = next(p for p in pages if p.milestone_id == "m1")
+    assert len(m1.steps) == 10  # turns 1-9 + 14 merged into one card
+    assert [s.label for s in m1.steps] == [f"Turn {i}" for i in [*range(1, 10), 14]]
+
+
+def test_group_keeps_zero_step_milestone_card():
+    # A startup navigation that completes before the first interactive turn has 0 steps but
+    # must still get a card so the execution view lines up 1:1 with the #0 program card.
+    # (In production ms_lookup is built from ctx["milestones"], so it carries kind/name.)
+    steps = [_gstep("m1", 1)]
+    prog = [{"id": "m0_navigation"}, {"id": "m1"}]
+    ms_lookup = {"m0_navigation": {"kind": "navigation", "name": "进入评论页"}, "m1": {"kind": "filter"}}
+    pages = _group_steps_by_milestone(steps, prog, ms_lookup)
+    assert [p.milestone_id for p in pages] == ["m0_navigation", "m1"]
+    assert pages[0].steps == []                 # zero steps, but a card exists
+    assert pages[0].milestone_kind == "navigation"  # kind/meta come from ms_lookup
+    assert pages[0].milestone_name == "进入评论页"
+
+
+def test_group_orphans_to_trailing_card_in_first_seen_order():
+    # Steps whose milestone_id isn't a known program milestone → trailing uncategorized card,
+    # in first-seen order, so no turn is silently dropped.
+    steps = [_gstep("m1", 1), _gstep("non_ui_5", 2), _gstep("_no_milestone", 3)]
+    prog = [{"id": "m1"}]
+    pages = _group_steps_by_milestone(steps, prog, {})
+    assert [p.milestone_id for p in pages] == ["m1", "non_ui_5", "_no_milestone"]
+
+
+def test_group_uses_program_order_not_turn_order():
+    # d executes before m1 in the stream, but the program lists m1 before d → cards follow program.
+    steps = [_gstep("d", 1), _gstep("m1", 2)]
+    prog = [{"id": "m1"}, {"id": "d"}]
+    pages = _group_steps_by_milestone(steps, prog, {})
+    assert [p.milestone_id for p in pages] == ["m1", "d"]

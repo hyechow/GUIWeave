@@ -334,103 +334,6 @@ def _estimate_tokens(chars: int) -> int:
     return max(1, (chars + 3) // 4)
 
 
-def _render_dataflow_lane(orchestrator: dict, webarena: dict | None = None) -> str:
-    program = orchestrator.get("program") if isinstance(orchestrator.get("program"), dict) else {}
-    stmts = program.get("statements") or []
-    if not stmts:
-        return ""
-    env: dict[str, dict] = {}
-    for record in orchestrator.get("run_log") or []:
-        if not isinstance(record, dict):
-            continue
-        reads = (record.get("result") or {}).get("reads") or {}
-        if record.get("var") and reads:
-            env[str(record["var"])] = reads
-
-    def _resolve(text: str) -> str:
-        def _sub(m: "re.Match[str]") -> str:
-            vals = env.get(m.group(1))
-            return str(vals.get(m.group(2).strip().strip("'\""), m.group(0))) if vals else m.group(0)
-        return _PROG_TEMPLATE_RE.sub(_sub, text or "")
-
-    nodes: list[tuple[str, str]] = []
-    goal = str(program.get("goal") or "")
-    if goal:
-        nodes.append(("goal", "用户目标"))
-
-    run_items = _program_run_items(stmts)
-    for item in run_items:
-        if str(item.get("kind") or "") not in {"read", "data_query"}:
-            continue
-        var = str(item.get("var") or "")
-        reads = env.get(var) or {}
-        returns = [str(v) for v in (item.get("returns") or []) if str(v)]
-        fields = returns or list(reads.keys())
-        if not fields:
-            continue
-        pairs = []
-        for field in fields:
-            value = reads.get(field, "")
-            pairs.append(f"{field}={value}" if value not in ("", None) else field)
-        prefix = "query" if item.get("kind") == "data_query" else "read"
-        var_text = f" {var}." if var else " "
-        nodes.append(("read", f"{prefix}{var_text}{', '.join(pairs)}"))
-
-    def _finish_messages(items: list) -> list[str]:
-        out: list[str] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            op = item.get("op", "run")
-            if op == "finish":
-                msg = _resolve(str(item.get("message") or ""))
-                out.append(f"finish {msg}" if msg else "finish")
-            elif op == "if":
-                out.extend(_finish_messages(item.get("then", []) or []))
-                out.extend(_finish_messages(item.get("otherwise", []) or []))
-        return out
-
-    for msg in _finish_messages(stmts)[:2]:
-        nodes.append(("final", msg))
-
-    if isinstance(webarena, dict) and webarena:
-        eval_result = webarena.get("eval_result") if isinstance(webarena.get("eval_result"), dict) else {}
-        evaluator_items = [item for item in (eval_result.get("evaluators_results") or []) if isinstance(item, dict)]
-        primary_eval = evaluator_items[0] if evaluator_items else {}
-        actual_norm = (
-            primary_eval.get("actual_normalized")
-            if isinstance(primary_eval.get("actual_normalized"), dict)
-            else {}
-        )
-        expected = primary_eval.get("expected") if isinstance(primary_eval.get("expected"), dict) else {}
-        response = webarena.get("agent_response") if isinstance(webarena.get("agent_response"), dict) else {}
-        response_value = actual_norm.get("retrieved_data") if actual_norm else response.get("retrieved_data")
-        answer_value = expected.get("retrieved_data") if expected else None
-        if response_value is not None:
-            nodes.append(("answer", f"WebArena Response {_json_inline(response_value)}"))
-        if answer_value is not None:
-            nodes.append(("answer", f"Answer {_json_inline(answer_value)}"))
-
-    if len(nodes) <= 1:
-        return ""
-    bits: list[str] = ['<span class="dataflow-title">Dataflow</span>']
-    for idx, (kind, text) in enumerate(nodes):
-        if idx:
-            bits.append('<span class="dataflow-arrow">→</span>')
-        cls = {
-            "read": "dataflow-node-read",
-            "final": "dataflow-node-final",
-            "answer": "dataflow-node-answer",
-        }.get(kind, "")
-        bits.append(f'<span class="dataflow-node {cls}">{_safe(text)}</span>')
-    search_index = _attr(" ".join(text for _, text in nodes))
-    return f'<div class="dataflow-lane" data-search-index="{search_index}">{"".join(bits)}</div>'
-
-
-def _json_inline(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False)
-
-
 def _render_program_card(
     orchestrator: dict,
     program: dict,
@@ -599,7 +502,7 @@ def _render_program_card(
     )
 
 
-def _render_program_section(orchestrator: dict | None, webarena: dict | None = None) -> str:
+def _render_program_section(orchestrator: dict | None) -> str:
     """Render the ORIGINAL decomposed program as the #0 编排 card (before the executed milestones).
     Re-decompose cards are NOT here — each renders INLINE right after the milestone that triggered it
     (render_redecompose_card), so it sits where it actually fired. Empty (DAG mode) → no section."""
@@ -611,8 +514,7 @@ def _render_program_section(orchestrator: dict | None, webarena: dict | None = N
     return _render_program_card(
         orchestrator, prog0, "#0", "编排 · decompose → DSL program",
         metrics_html=_render_orchestrator_metrics(orchestrator),
-        extras_html=_render_dataflow_lane(orchestrator, webarena)
-        + _render_orchestrator_context_reports(orchestrator),
+        extras_html=_render_orchestrator_context_reports(orchestrator),
     )
 
 

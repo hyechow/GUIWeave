@@ -38,6 +38,59 @@ def _normalize_error(raw: str | dict | None) -> dict | None:
     return raw  # already a dict from ProbeAbortedError
 
 
+def _group_steps_by_milestone(
+    all_steps: list[ReportStep],
+    program_milestones: list[dict],
+    ms_lookup: dict[str, dict],
+) -> list[ReportPage]:
+    """One ReportPage per milestone in PROGRAM order (program_milestones), gathering ALL of that
+    milestone's steps from anywhere in the stream — a non-contiguous revisit (the supervisor
+    returns to a milestone after a later one) merges into ONE card instead of splitting.
+
+    A milestone with zero steps still gets a card, so the execution view lines up 1:1 with the
+    #0 program card (e.g. a startup navigation that completes before the first interactive turn).
+    Steps whose milestone_id is not a known program milestone (synthesized non_ui_N / empty id)
+    fall through to a trailing uncategorized card in first-seen order, so no turn is dropped.
+    """
+    def _page_for(mid: str, steps: list[ReportStep]) -> ReportPage:
+        ms_meta = ms_lookup.get(mid, {})
+        first = steps[0] if steps else None
+        return ReportPage(
+            title=ms_meta.get("name") or (first.description if first else f"Milestone {mid}"),
+            steps=steps,
+            milestone_id=mid,
+            milestone_kind=ms_meta.get("kind", "") or (first.milestone_kind if first else ""),
+            milestone_name=ms_meta.get("name", "") or (first.description if first else ""),
+            milestone_description=ms_meta.get("description", "") or (first.summary if first else ""),
+            success_condition=ms_meta.get("success_condition", ""),
+            checklist=ms_lookup.get(mid, {}).get("checklist", []) or [],
+        )
+
+    buckets: dict[str, list[ReportStep]] = {}
+    first_seen: list[str] = []
+    for step in all_steps:
+        mid = step.milestone_id or "_no_milestone"
+        if mid not in buckets:
+            buckets[mid] = []
+            first_seen.append(mid)
+        buckets[mid].append(step)
+
+    pages: list[ReportPage] = []
+    emitted: set[str] = set()
+    for ms in program_milestones:
+        mid = ms.get("id") or ""
+        if not mid or mid in emitted:
+            continue
+        emitted.add(mid)
+        pages.append(_page_for(mid, buckets.get(mid, [])))
+    for mid in first_seen:  # orphans → trailing, first-seen order
+        if mid in emitted:
+            continue
+        emitted.add(mid)
+        pages.append(_page_for(mid, buckets[mid]))
+    return pages
+
+
 # ── Recon builder ─────────────────────────────────────────────
 
 class ReconReportBuilder:
@@ -563,43 +616,12 @@ class RunnerReportBuilder:
             ms_lookup[mid] = merged
 
 
-        # Group steps by milestone
-        pages: list[ReportPage] = []
-        current_mid = ""
-        current_page_steps: list[ReportStep] = []
+        # Group steps by milestone — PROGRAM-ALIGNED: one card per milestone in program order
+        # (ctx["milestones"]), merging non-contiguous revisits and keeping zero-step milestones.
         milestones_info: list[dict] = []
-
-        for step in all_steps:
-            mid = step.milestone_id or "_no_milestone"
-            if mid != current_mid:
-                if current_page_steps:
-                    ms_meta = ms_lookup.get(current_mid, {})
-                    pages.append(ReportPage(
-                        title=ms_meta.get("name", f"Milestone {current_mid}"),
-                        steps=current_page_steps,
-                        milestone_id=current_mid,
-                        milestone_kind=ms_meta.get("kind", "") or current_page_steps[0].milestone_kind,
-                        milestone_name=ms_meta.get("name", "") or current_page_steps[0].description,
-                        milestone_description=ms_meta.get("description", "") or current_page_steps[0].summary,
-                        success_condition=ms_meta.get("success_condition", ""),
-                        checklist=ms_meta.get("checklist", []) or [],
-                    ))
-                current_mid = mid
-                current_page_steps = []
-            current_page_steps.append(step)
-
-        if current_page_steps:
-            ms_meta = ms_lookup.get(current_mid, {})
-            pages.append(ReportPage(
-                title=ms_meta.get("name", f"Milestone {current_mid}"),
-                steps=current_page_steps,
-                milestone_id=current_mid,
-                milestone_kind=ms_meta.get("kind", "") or current_page_steps[0].milestone_kind,
-                milestone_name=ms_meta.get("name", "") or current_page_steps[0].description,
-                milestone_description=ms_meta.get("description", "") or current_page_steps[0].summary,
-                success_condition=ms_meta.get("success_condition", ""),
-                checklist=ms_meta.get("checklist", []) or [],
-            ))
+        pages = _group_steps_by_milestone(
+            all_steps, list(ctx.get("milestones") or []), ms_lookup
+        )
 
         # Build milestones summary
         for page in pages:
@@ -623,7 +645,10 @@ class RunnerReportBuilder:
                 "retry_count": ms_state.get("retry_count", 0),
                 "reads": ms_state.get("reads", {}),
                 "checklist": ms_state.get("checklist", []),
-                "turns": f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}",
+                "turns": (
+                    f"{ms_steps[0].label.split()[-1]}-{ms_steps[-1].label.split()[-1]}"
+                    if ms_steps else "—"
+                ),
                 "total_time": sum(ms_timings.values()),
                 "timings": ms_timings,
                 "input_tokens": ms_in,
