@@ -24,8 +24,13 @@ from gui_agent.core.orchestrator import (
     to_program,
     validate_program,
 )
-from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, _table_schema_prompt
-from gui_agent.core.orchestrator.program import Query, Read
+from gui_agent.core.orchestrator.decomposer import (
+    _PlanDraft,
+    _StepDraft,
+    _normalize_data_query_display_identifiers,
+    _table_schema_prompt,
+)
+from gui_agent.core.orchestrator.program import ForEach, Query, Read
 
 
 def _fake_cfg():
@@ -348,6 +353,65 @@ def test_validate_data_query_rejects_quoted_display_labels_in_sql():
     )
     issues = validate_program(bad)
     assert any("quoted display label" in i or "UI 表头/标签" in i for i in issues)
+
+
+def test_decomposer_normalizes_foreach_display_labels_before_validation():
+    prog = Program(
+        goal="Get customer email(s) who completed the second most number of orders",
+        statements=[
+            ForEach(
+                var="row",
+                into="completed_orders",
+                row_fields=["ID", "Customer Email", "Status"],
+                body=[],
+            ),
+            Query(
+                var="q",
+                name="查询完成订单数排名第二的客户邮箱",
+                returns=["email"],
+                sql=(
+                    'WITH counts AS (SELECT "customer email" AS email, COUNT(*) AS cnt '
+                    'FROM completed_orders GROUP BY "customer email"), '
+                    'ranked AS (SELECT email, cnt, DENSE_RANK() OVER (ORDER BY cnt DESC) AS rnk FROM counts) '
+                    'SELECT email FROM ranked WHERE rnk = 2 ORDER BY email'
+                ),
+            ),
+            Finish(message="{q[email]}"),
+        ],
+    )
+    normalized = _normalize_data_query_display_identifiers(prog)
+    query = normalized.statements[1]
+    assert isinstance(query, Query)
+    assert '"customer_email"' in query.sql
+    assert validate_program(normalized) == []
+
+
+def test_email_query_cannot_alias_non_email_source_as_email():
+    prog = Program(
+        goal="Get customer email(s) who completed the second most number of orders",
+        statements=[
+            ForEach(
+                var="row",
+                into="completed_orders",
+                row_fields=["ID", "Billing Customer", "Status"],
+                body=[],
+            ),
+            Query(
+                var="q",
+                name="查询完成订单数排名第二的客户邮箱",
+                returns=["customer_email"],
+                sql=(
+                    'WITH counts AS (SELECT "Billing Customer" AS customer_email, COUNT(*) AS cnt '
+                    'FROM completed_orders GROUP BY "Billing Customer") '
+                    'SELECT customer_email FROM counts'
+                ),
+            ),
+            Finish(message="{q[customer_email]}"),
+        ],
+    )
+    normalized = _normalize_data_query_display_identifiers(prog)
+    issues = validate_program(normalized)
+    assert any(i.code == "EMAIL_RESULT_WITHOUT_EMAIL_SOURCE" for i in issues)
 
 
 def test_validate_ranked_data_query_rejects_limit_offset_tie_drop():

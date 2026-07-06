@@ -135,6 +135,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "FOREACH_DQ_DETAIL_FIELD_MISSING",
     "FOREACH_DQ_POST_FOREACH_FIELD_MISSING",
     "FOREACH_BODY_GOAL_QUERY_ROW_PREDICATE",
+    "EMAIL_RESULT_WITHOUT_EMAIL_SOURCE",
 })
 
 
@@ -660,7 +661,12 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
     for fn in getattr(program, "functions", None) or []:
         _walk(fn.body, {}, set(fn.params or []))  # params are the function's entry scalars
         _check_function_contract(fn, function_defs, function_returns, issues)
-    _check_foreach_data_query(program.statements, issues, function_returns)
+    _check_foreach_data_query(
+        program.statements,
+        issues,
+        function_returns,
+        goal_text=program.goal or "",
+    )
     _check_retrieval_retry_preserves_field(program.statements, issues)
     return issues
 
@@ -1074,11 +1080,32 @@ _BODY_GOAL_MEMBERSHIP_RE = re.compile(
     r"判断|是否|若是|如果|属于|匹配|目标集合|目标规格|筛选成员|\bif\b|\bwhether\b|\bmember\b|\bbelongs\b|\bmatching\b",
     re.IGNORECASE,
 )
+_EMAIL_RESULT_RE = re.compile(r"\b(?:e-?mail|mail)\b|邮箱", re.IGNORECASE)
+
+
+def _asks_for_email_source(goal_text: str, run: Run) -> bool:
+    text = "\n".join([
+        goal_text or "",
+        run.name or "",
+        run.success_condition or "",
+        " ".join(str(item or "") for item in (run.returns or [])),
+    ])
+    return bool(_EMAIL_RESULT_RE.search(text))
+
+
+def _has_email_field(fields: set[str]) -> bool:
+    for field in fields:
+        text = str(field or "").lower()
+        if "email" in text or "mail" in text or "邮箱" in text:
+            return True
+    return False
 
 def _check_foreach_data_query(
     stmts: list[Stmt],
     issues: IssueList,
     function_returns: dict[str, set[str]] | None = None,
+    *,
+    goal_text: str = "",
 ) -> None:
     """Guard foreach/data_query sequencing:
 
@@ -1216,6 +1243,16 @@ def _check_foreach_data_query(
                         table_label = table_info.label
                         fields = table_info.fields
                         body_empty = table_info.body_empty
+                        if _asks_for_email_source(goal_text, s) and not _has_email_field(fields):
+                            issues.add(
+                                "EMAIL_RESULT_WITHOUT_EMAIL_SOURCE",
+                                f"data_query 步「{s.name}」要返回 email/mail/邮箱 类结果，"
+                                f"但它查询的 foreach 表「{table_label}」没有任何 email/mail/邮箱 语义字段；"
+                                "不能把 customer/name/billing 等非邮箱列用 `AS customer_email` 冒充邮箱。"
+                                "请让 foreach row_fields/returns 包含真实邮箱字段，"
+                                "或在 foreach body 中打开详情读取真实邮箱后再查询。"
+                            )
+                            break
                         # Exclude data_query returns from the check: they are output aliases
                         # (e.g. "SUM(...) AS total"), not fields that must come from the foreach table.
                         returns_aliases = {str(r).strip().lower() for r in (s.returns or [])}

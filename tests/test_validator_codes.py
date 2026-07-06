@@ -229,6 +229,11 @@ SAMPLES: dict[str, Program] = {
         Query(var="q", name="求和",  returns=["total"],
             sql="SELECT SUM(grand_total_num) AS total FROM orders"),
     ]),
+    "EMAIL_RESULT_WITHOUT_EMAIL_SOURCE": Program(goal="Get customer email(s) by order count", statements=[
+        ForEach(var="o", returns=["ID", "Billing Customer", "Status"], into="orders", body=[]),
+        Query(var="q", name="查询 customer email",  returns=["customer_email"],
+            sql="SELECT billing_customer AS customer_email FROM orders"),
+    ]),
     "FOREACH_DQ_DETAIL_FIELD_MISSING": Program(statements=[
         ForEach(var="o", returns=["id"], into="orders",
                 body=[Read(var="d", name="打开详情",  returns=["x"], read_spec="读详情")]),
