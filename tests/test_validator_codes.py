@@ -15,22 +15,23 @@ import pytest
 from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Read, Query, Run
 from gui_agent.core.orchestrator.validator import ALL_CODES, IssueList, ValidationIssue, validate_program
 
-_VALIDATOR_SRC = Path("gui_agent/core/orchestrator/validator.py")
+_VALIDATOR_SRCS = tuple(sorted(Path("gui_agent/core/orchestrator").glob("validator*.py")))
 
 
 def _emitted_codes() -> set[str]:
     """Statically harvest every code literal passed to issues.add(...) / IssueList.one(...)."""
-    tree = ast.parse(_VALIDATOR_SRC.read_text())
     codes: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        if node.func.attr not in {"add", "one"}:
-            continue
-        if not node.args or not isinstance(node.args[0], ast.Constant):
-            continue
-        if isinstance(node.args[0].value, str):
-            codes.add(node.args[0].value)
+    for src in _VALIDATOR_SRCS:
+        tree = ast.parse(src.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr not in {"add", "one"}:
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Constant):
+                continue
+            if isinstance(node.args[0].value, str):
+                codes.add(node.args[0].value)
     return codes
 
 
