@@ -111,6 +111,7 @@ class TraceStep:
     state: str       # canonical URL (or a page-identity fallback)
     decision: str    # the action key from `state` — an NL instruction OR an action_signature
     interaction_state: str = ""  # optional DOM/form-state fingerprint for browser pages
+    scope: str = ""  # execution bucket: milestone:<id> or row:<identity>
 
 
 @dataclass
@@ -142,7 +143,14 @@ class ProgressMonitor:
         if dom_state is not None:
             self._last_dom_state = dom_state
 
-    def note(self, index: int, state: str, decision: str, interaction_state: str = "") -> None:
+    def note(
+        self,
+        index: int,
+        state: str,
+        decision: str,
+        interaction_state: str = "",
+        scope: str = "",
+    ) -> None:
         """Record an acting turn. `state` should already be a canonical_url (or page fallback);
         `decision` is the action key (an instruction, or `action_signature(action)`)."""
         self.turns.append(TraceStep(
@@ -150,41 +158,63 @@ class ProgressMonitor:
             state=state,
             decision=_norm_action(decision),
             interaction_state=interaction_state or "",
+            scope=scope or "",
         ))
 
-    def repeated(self, state: str, decision: str, interaction_state: str = "") -> Optional[TraceStep]:
+    def repeated(
+        self,
+        state: str,
+        decision: str,
+        interaction_state: str = "",
+        scope: str = "",
+    ) -> Optional[TraceStep]:
         """The earliest prior turn with this same (state, decision), or None. A hit = the agent is
         about to redo a move it already made in a page it already stood on (a loop)."""
         key = _norm_action(decision)
         ix = interaction_state or ""
         for t in self.turns:
+            if scope and t.scope != scope:
+                continue
             if t.state == state and t.decision == key and t.interaction_state == ix:
                 return t
         return None
 
-    def repeat_count(self, state: str, decision: str, interaction_state: str = "") -> int:
+    def repeat_count(
+        self,
+        state: str,
+        decision: str,
+        interaction_state: str = "",
+        scope: str = "",
+    ) -> int:
         """How many prior turns already executed this (state, decision)."""
         key = _norm_action(decision)
         ix = interaction_state or ""
         return sum(1 for t in self.turns
-                   if t.state == state and t.decision == key and t.interaction_state == ix)
+                   if t.state == state and t.decision == key and t.interaction_state == ix
+                   and not (scope and t.scope != scope))
 
     def check_loop(
-        self, index: int, state: str, decision: str, interaction_state: str = "",
+        self, index: int, state: str, decision: str, interaction_state: str = "", scope: str = "",
     ) -> Optional[TraceStep]:
         """Loop guard in one call: if this (state, decision) was already done here, return the prior
         turn (the agent is about to redo a move → a loop) and DON'T re-note it. Otherwise record it
         and return None. No-op when state/decision are empty (e.g. a visual platform with no url)."""
         if not state or not decision:
             return None
-        hit = self.repeated(state, decision, interaction_state)
+        hit = self.repeated(state, decision, interaction_state, scope)
         if hit is not None:
             return hit
-        self.note(index, state, decision, interaction_state)
+        self.note(index, state, decision, interaction_state, scope)
         return None
 
     @staticmethod
-    def check_action_repetition(history, milestone_id, *, min_repeats: int = 2) -> Optional[str]:
+    def check_action_repetition(
+        history,
+        milestone_id,
+        *,
+        execution_scope: str = "",
+        min_repeats: int = 2,
+    ) -> Optional[str]:
         """URL-independent type-repeat catch: within THIS milestone, has the most-recently executed
         `type` action already put the SAME concrete value into the SAME box ≥ min_repeats times?
         Returns that signature, else None.
@@ -202,7 +232,14 @@ class ProgressMonitor:
         for t in history:
             sv = getattr(t, "supervisor", None)
             ad = getattr(t, "action_decision", None)
-            if not (getattr(t, "executed", False) and sv and getattr(sv, "milestone_id", None) == milestone_id and ad):
+            same_milestone = sv and getattr(sv, "milestone_id", None) == milestone_id
+            same_scope = (
+                not execution_scope
+                or not sv
+                or not getattr(sv, "execution_scope", "")
+                or getattr(sv, "execution_scope", "") == execution_scope
+            )
+            if not (getattr(t, "executed", False) and same_milestone and same_scope and ad):
                 continue
             action = getattr(ad, "action", None)
             if action is not None and getattr(action, "action_type", "") == "type":
@@ -357,14 +394,18 @@ class ProgressMonitor:
     def distinct_states(self) -> int:
         return len({t.state for t in self.turns})
 
-    def render(self, recent_n: int = 8) -> str:
+    def render(self, recent_n: int = 8, scope: str = "") -> str:
         """A compact state→decision trace with repeat/stall markers, for the checker."""
-        if not self.turns:
+        turns = [
+            t for t in self.turns
+            if not scope or t.scope == scope
+        ]
+        if not turns:
             return ""
         seen: dict[tuple[str, str, str], int] = {}
         prev_state = ""
         lines: list[str] = []
-        for t in self.turns:
+        for t in turns:
             tag = ""
             k = (t.state, t.decision, t.interaction_state)
             if k in seen:
@@ -374,7 +415,8 @@ class ProgressMonitor:
             seen.setdefault(k, t.index)
             prev_state = t.state
             ix = f" | 交互:{t.interaction_state[:8]}" if t.interaction_state else ""
-            lines.append(f" T{t.index} 状态:{t.state or '?'}{ix} | 决策:{t.decision[:48]}{tag}")
+            scope_txt = f" | scope:{t.scope}" if t.scope and not scope else ""
+            lines.append(f" T{t.index} 状态:{t.state or '?'}{ix}{scope_txt} | 决策:{t.decision[:48]}{tag}")
         return "\n".join(lines[-recent_n:])
 
 

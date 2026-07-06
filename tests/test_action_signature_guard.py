@@ -42,9 +42,10 @@ def _ms() -> Milestone:
     )
 
 
-def _typed_turn(index: int) -> PolicyTurn:
+def _typed_turn(index: int, *, execution_scope: str = "") -> PolicyTurn:
     sv = SupervisorStep(should_act=True, instruction="在 Product 框输入 Olivia zip jacket", stop=False,
-                        goal_completed=False, milestone_id="m1", summary="")
+                        goal_completed=False, milestone_id="m1", execution_scope=execution_scope,
+                        summary="")
     ad = BrowserActionDecision.model_validate({"action": TYPE_ACTION})
     return PolicyTurn(index=index, observation_source="eval", supervisor=sv, action_decision=ad, executed=True)
 
@@ -65,5 +66,24 @@ def test_first_type_is_not_flagged():
     obs = Observation(png_bytes=b"png", source="browser", url=URL_PREFILTER)
     check = _SingleCheckResult(status="in_progress", reason="筛选未生效", summary="进行中")
     step = p._plan_single(_ms(), check, obs, [_typed_turn(3)])
+    assert step.summary != STUCK
+    assert step.should_act
+
+
+def test_same_type_template_in_different_row_scopes_is_not_flagged():
+    # Foreach detail flows legitimately repeat the same fill template on different rows/entities.
+    # Prior row scopes must not count as current-row type repetition.
+    p = _policy("在 Price 字段输入 64.88")
+    history = [
+        _typed_turn(3, execution_scope="row:admin/catalog/product/edit/id/1841"),
+        _typed_turn(6, execution_scope="row:admin/catalog/product/edit/id/1842"),
+    ]
+    obs = Observation(
+        png_bytes=b"png",
+        source="browser",
+        url="http://h:7780/admin/catalog/product/edit/id/1843/",
+    )
+    check = _SingleCheckResult(status="in_progress", reason="价格未保存", summary="进行中")
+    step = p._plan_single(_ms(), check, obs, history)
     assert step.summary != STUCK
     assert step.should_act

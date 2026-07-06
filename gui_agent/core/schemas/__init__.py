@@ -385,6 +385,13 @@ class SupervisorStep(BaseModel):
     )
     allow_read: bool = Field(default=False, description="是否允许 runner 将读取结果写入 content_notes")
     milestone_id: Optional[str] = Field(default=None, description="当前子目标 ID")
+    execution_scope: str = Field(
+        default="",
+        description=(
+            "当前执行上下文分桶 key；stuck/no-effect/history 等运行时记忆按此隔离。"
+            "普通任务通常为 milestone:<id>，逐行/逐实体任务可为 row:<identity>。"
+        ),
+    )
     milestone_kind: Optional[MilestoneKind] = Field(default=None, description="当前子目标类型")
     completion_strategy: Optional[CompletionStrategy] = Field(default=None, description="当前子目标完成策略")
     collection_scope: Optional[CollectionScope] = Field(default=None, description="当前内容采集范围")

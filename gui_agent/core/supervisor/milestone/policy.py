@@ -64,6 +64,16 @@ from .stuck import MilestoneStuckMixin
 _UNKNOWN_PAGE_MARKERS = ("未知", "未识别", "无法识别", "不确定", "unknown", "unidentified")
 _TARGET_IDENTITY_MARKER = "必须对应子目标指定对象"
 _TARGET_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,}")
+_URL_TEXT_RE = re.compile(r"https?://[^\s「」'\"<>]+")
+_RESOURCE_ID_MARKERS = (
+    "id",
+    "entity_id",
+    "product_id",
+    "item_id",
+    "order_id",
+    "customer_id",
+    "review_id",
+)
 
 
 def _page_known(page_identity: str) -> bool:
@@ -108,6 +118,48 @@ def _target_identity_hint(milestone: Milestone, observation: Observation) -> str
         "不得因为字段值（如名称、昵称、评分、状态）与预期筛选结果不同而否定对象身份。"
         "字段取值仍按当前页面可见内容和结构化读取判定，后续筛选/汇总步骤负责决定这些字段值是否符合最终任务条件。"
     )
+
+
+def _resource_identity_from_url(url: str | None) -> str:
+    """Return a generic row/entity identity from detail-style URLs.
+
+    This intentionally avoids app-specific words. It recognizes common resource-id routes
+    such as ``.../edit/id/1843`` and falls back to the last digit-bearing path token only on
+    detail-like routes. List/filter/paging URLs should not become row scopes.
+    """
+    path = canonical_url(url)
+    if not path:
+        return ""
+    parts = [part for part in path.split("/") if part]
+    if not parts:
+        return ""
+    lower = [part.lower() for part in parts]
+    for marker in _RESOURCE_ID_MARKERS:
+        for i, part in enumerate(lower[:-1]):
+            if part == marker and parts[i + 1]:
+                prefix = "/".join(parts[: i + 2])
+                return prefix.lower()
+    detail_like = any(part in {"edit", "view", "detail", "details", "show"} for part in lower)
+    if detail_like:
+        for i in range(len(parts) - 1, -1, -1):
+            token = parts[i]
+            if any(ch.isdigit() for ch in token):
+                return "/".join(parts[: i + 1]).lower()
+    return ""
+
+
+def _resource_identity_from_text(text: str) -> str:
+    """Extract a row/entity identity from rendered milestone text when it embeds a URL."""
+    for match in _URL_TEXT_RE.finditer(text or ""):
+        ident = _resource_identity_from_url(match.group(0))
+        if ident:
+            return ident
+    return ""
+
+
+def _turn_execution_scope(turn: PolicyTurn) -> str:
+    sv = getattr(turn, "supervisor", None)
+    return str(getattr(sv, "execution_scope", "") or "") if sv else ""
 
 
 class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin):
@@ -204,6 +256,49 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             },
         }
 
+    def _execution_scope_for(self, milestone: Milestone, observation: Observation) -> str:
+        """Bucket runtime memory by row/entity when visible, else by milestone.
+
+        Foreach/detail workflows often reuse the same action template on several rows. The
+        current detail URL is the most reliable row identity; rendered milestone text is a
+        fallback for direct navigation steps before the browser has moved.
+        """
+        identity = _resource_identity_from_url(getattr(observation, "url", None))
+        if not identity:
+            identity = _resource_identity_from_text(
+                f"{milestone.name}\n{milestone.description}\n{milestone.success_condition}"
+            )
+        if identity:
+            return f"row:{identity}"
+        return f"milestone:{milestone.id}"
+
+    def _history_for_scope(
+        self,
+        history: list[PolicyTurn],
+        milestone: Milestone,
+        observation: Observation,
+    ) -> list[PolicyTurn]:
+        scope = self._execution_scope_for(milestone, observation)
+        if any(_turn_execution_scope(t) for t in history):
+            return [t for t in history if _turn_execution_scope(t) == scope]
+        # Legacy tests / pre-scope contexts: preserve the old milestone-local behavior.
+        return [
+            t for t in history
+            if getattr(getattr(t, "supervisor", None), "milestone_id", None) == milestone.id
+        ]
+
+    def _history_for_current_milestone(
+        self,
+        history: list[PolicyTurn],
+        milestone: Milestone,
+        observation: Observation,
+    ) -> list[PolicyTurn]:
+        scoped = self._history_for_scope(history, milestone, observation)
+        return [
+            t for t in scoped
+            if getattr(getattr(t, "supervisor", None), "milestone_id", None) == milestone.id
+        ]
+
     def note_executed_action(
         self,
         *,
@@ -237,12 +332,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if not state or (not dom_state and not snap):
             return
         decision = action_signature(action)
-        hit = self._monitor.repeated(state, decision, dom_state)
-        self._monitor.note(index, state, decision, dom_state)
+        scope = getattr(supervisor_step, "execution_scope", "") or ""
+        hit = self._monitor.repeated(state, decision, dom_state, scope)
+        self._monitor.note(index, state, decision, dom_state, scope)
         if hit is not None:
             print(f"  [LoopGuard] 同 DOM 状态重复执行了 T{hit.index} 的同一动作签名 → 记录为打转事实")
             con = (
-                f"⚠️ 当前 DOM 状态下已经执行过同一具体动作（{decision}）且目标未达成。"
+                f"⚠️ 当前执行上下文下已经执行过同一具体动作（{decision}）且目标未达成。"
                 "必须换一个当前页面可见的新入口或新操作，禁止重复同一 DOM 目标。"
             )
             if con not in self._global_constraints:
@@ -273,6 +369,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             result = self._run_loop_turn(milestone, observation, history)
         else:
             result = self._run_single_turn(milestone, observation, history)
+        result_ms = self._milestones.get(result.milestone_id or "", milestone)
+        result.execution_scope = self._execution_scope_for(result_ms, observation)
 
         return result
 
@@ -329,6 +427,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 **_ctx(milestone, None),
             )
 
+        execution_scope = self._execution_scope_for(milestone, observation)
+        scoped_history = self._history_for_scope(history, milestone, observation)
+        milestone_history = self._history_for_current_milestone(history, milestone, observation)
+
         # Freshly entered navigation milestone (reseed fresh_advance, mirror DAG _advance):
         # skip the initial done-check and plan the first nav action directly — drops the 2nd
         # checker call on the milestone hand-off. One-shot.
@@ -342,10 +444,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             )
             self._last_check = synthetic
             self._last_page_identity[milestone.id] = ""
-            return self._plan_single(milestone, synthetic, observation, history)
+            return self._plan_single(milestone, synthetic, observation, scoped_history)
 
-        if history and history[-1].action_decision:
-            if history[-1].action_decision.action.action_type == "type":
+        if milestone_history and milestone_history[-1].action_decision:
+            if milestone_history[-1].action_decision.action.action_type == "type":
                 self._monitor.clear_screenshots()
 
         prev_page_id = self._last_page_identity.get(milestone.id, "")
@@ -413,7 +515,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             return self._advance(milestone, observation, history)
 
         with _Timer(self._timings, self._timings_order, "checker", self._token_usage):
-            check = self._single_check(milestone, observation, history)
+            check = self._single_check(
+                milestone,
+                observation,
+                scoped_history,
+                execution_scope=execution_scope,
+                effect_history=milestone_history,
+            )
         self._last_check = check
         print(f"  [SingleCheck] {check.status}: {check.reason}")
 
@@ -425,7 +533,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 **_ctx(milestone, None),
             )
 
-        if check.status == "done" and _type_only_search_filter_pending_submit(milestone, history):
+        if check.status == "done" and _type_only_search_filter_pending_submit(milestone, milestone_history):
             print("  [SubmitPending] 搜索/筛选只输入未提交，覆盖 done → in_progress")
             check = check.model_copy(update={
                 "status": "in_progress",
@@ -471,15 +579,15 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # replan + the early Feasibility probe — the same as the deterministic detectors.
         if check.status == "stuck":
             print(f"  [Checker] 判定无进展(stuck)：{check.stuck_reason or check.reason}")
-            return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
+            return self._handle_stuck(milestone, check, check.read_instruction, observation, scoped_history)
 
         if milestone.completion_strategy == "react_until_collected":
-            return self._plan_single(milestone, check, observation, history)
+            return self._plan_single(milestone, check, observation, scoped_history)
 
         # Off-target last action (post-action targeting verify said the tap missed) — and the
         # milestone is NOT done (checked above) → route straight into replan. Catches "screen
         # changed but to the wrong element" (e.g. 搜索框 tap hit 转账 tab), which SimStuck can't.
-        last_tv = history[-1].target_verify if history else None
+        last_tv = milestone_history[-1].target_verify if milestone_history else None
         if last_tv is not None and not last_tv.on_target:
             print(f"  [OffTarget] 上一步误中「{last_tv.actual_element}」，已先验收(未完成)→ replan")
             stuck = _SingleCheckResult(
@@ -488,7 +596,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 stuck_reason=f"上一步没有到达预期元素，当前显示「{last_tv.actual_element}」相关状态",
                 summary="",
             )
-            return self._handle_stuck(milestone, stuck, None, observation, history)
+            return self._handle_stuck(milestone, stuck, None, observation, scoped_history)
 
         # Ineffective last tap: target_verify said on_target (hit the intended element) yet
         # settle saw zero screen change → the tap did nothing (re-tapped an already-active tab
@@ -496,7 +604,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # ~3 frames for SimStuck. Complements off_target above (wrong-element vs
         # right-element-but-no-effect). Gated on tap so gestures (which legitimately may not
         # move much) never trigger it.
-        last_turn = history[-1] if history else None
+        last_turn = milestone_history[-1] if milestone_history else None
         if (
             last_turn is not None
             and getattr(last_turn, "no_effect", False)
@@ -514,9 +622,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 stuck_reason=f"点击「{tapped}」后仍未看到目标状态，应尝试其他可见入口",
                 summary="",
             )
-            return self._handle_stuck(milestone, stuck, None, observation, history)
+            return self._handle_stuck(milestone, stuck, None, observation, scoped_history)
 
-        prev_action = history[-1].action_decision.action if history and history[-1].action_decision else None
+        prev_action = (
+            milestone_history[-1].action_decision.action
+            if milestone_history and milestone_history[-1].action_decision
+            else None
+        )
 
         # 连续调值类（picker/步进器收敛）：重复同一列滚动是正常的，但动作区连续不动不是正常进展。
         # 因此保留 SimStuck 的「全局+动作局部均无变化」判据；只有指令重复类 RepStuck 被抑制。
@@ -526,7 +638,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             if sim_stuck is not None:
                 print(f"  [Stuck] {sim_stuck.status}: {sim_stuck.reason}")
                 return self._handle_stuck(
-                    milestone, sim_stuck, check.read_instruction, observation, history,
+                    milestone, sim_stuck, check.read_instruction, observation, scoped_history,
                     page_changed=False,
                     prev_page_id=prev_page_id, current_page_id=current_page_id,
                 )
@@ -534,11 +646,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             stall = self._monitor.check_value_stall(milestone, check)
             if stall is not None:
                 return self._handle_stuck(
-                    milestone, stall, check.read_instruction, observation, history,
+                    milestone, stall, check.read_instruction, observation, scoped_history,
                     page_changed=False,
                     prev_page_id=prev_page_id, current_page_id=current_page_id,
                 )
-            return self._plan_single(milestone, check, observation, history)
+            return self._plan_single(milestone, check, observation, scoped_history)
 
         sim_stuck = None if (self._monitor.url_changed or self._monitor.dom_changed) else self._monitor.check_screen_similarity(observation, self._monitor.action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
@@ -547,7 +659,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         rep_stuck = (
             None
             if sim_stuck or has_dom_state
-            else self._monitor.check_instruction_repetition(history, milestone.id)
+            else self._monitor.check_instruction_repetition(scoped_history, milestone.id)
         )
         # Stepping a picker / value means repeating the SAME column scroll. The two-tier
         # _check_screen_similarity already returns stuck when the touched region is NOT moving,
@@ -567,12 +679,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print(f"  [Stuck] {stuck.status}: {stuck.reason}")
             page_changed = sim_stuck is None
             return self._handle_stuck(
-                milestone, stuck, check.read_instruction, observation, history,
+                milestone, stuck, check.read_instruction, observation, scoped_history,
                 page_changed=page_changed,
                 prev_page_id=prev_page_id,
                 current_page_id=current_page_id,
             )
-        return self._plan_single(milestone, check, observation, history)
+        return self._plan_single(milestone, check, observation, scoped_history)
 
     def _plan_single(
         self,
@@ -581,6 +693,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
+        execution_scope = self._execution_scope_for(milestone, observation)
         with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
             plan = self._invoke_planner(milestone, check, observation, history)
         if self._is_sequence(plan.instruction):
@@ -673,7 +786,15 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # signature ALONE over this milestone's history, NOT on canonical_url: a filter/search/reset
         # cycle rewrites the url's path shape, so the url-keyed check_loop missed the re-types entirely
         # (regression 20260622_205544: the same long search value was typed 3×, guard never fired).
-        _sig = None if milestone.is_iterative else self._monitor.check_action_repetition(history, milestone.id)
+        _sig = (
+            None
+            if milestone.is_iterative
+            else self._monitor.check_action_repetition(
+                history,
+                milestone.id,
+                execution_scope=execution_scope,
+            )
+        )
         if _sig is not None:
             print(f"  [LoopGuard] 重复执行了同一输入动作（{_sig}）→ 打转，强制换新")
             _con = ("⚠️ 已经把同样的内容输入过同一个输入框且没带来进展(在打转)。"
@@ -685,7 +806,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         _hit = (
             None
             if milestone.is_iterative or _interaction_state
-            else self._monitor.check_loop(len(history) + 1, _state, plan.instruction, _interaction_state)
+            else self._monitor.check_loop(
+                len(history) + 1,
+                _state,
+                plan.instruction,
+                _interaction_state,
+                execution_scope,
+            )
         )
         if _hit is not None:
             print(f"  [LoopGuard] 同页面(canonical={_state})重复了 T{_hit.index} 做过的同一动作 → 打转，强制换新")
@@ -709,6 +836,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             stop=False,
             goal_completed=False,
             summary=plan.summary,
+            execution_scope=execution_scope,
             direction=plan.direction,
             drag_column=getattr(plan, "drag_column", None),
             drag_steps=drag_steps,
@@ -724,6 +852,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
+        scoped_history = self._history_for_scope(history, milestone, observation)
         self._scroll_counts[milestone.id] = self._scroll_counts.get(milestone.id, 0) + 1
         scroll_count = self._scroll_counts[milestone.id]
 
@@ -735,7 +864,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             budget = MAX_SCROLL_PER_MILESTONE
         if scroll_count > budget:
             print(f"  [Loop] 滚动预算耗尽（{scroll_count}/{budget}，observable={milestone.observable_boundary}）→ 结束收集")
-            if not _has_successful_scroll_for(history, milestone.id):
+            if not _has_successful_scroll_for(scoped_history, milestone.id):
                 stuck = _SingleCheckResult(
                     status="stuck",
                     reason="滚动预算耗尽，但尚未观测到任何成功执行的纵向滚动",
@@ -744,34 +873,34 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     summary="滚动未取得可验证进展",
                 )
                 read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
-                return self._handle_stuck(milestone, stuck, read_inst, observation, history)
+                return self._handle_stuck(milestone, stuck, read_inst, observation, scoped_history)
             return self._advance(milestone, observation, history)
 
         sim_stuck = self._monitor.check_screen_similarity(observation)
         last_read_added = bool(
-            history
-            and history[-1].supervisor.milestone_id == milestone.id
-            and history[-1].read_added_content
+            scoped_history
+            and scoped_history[-1].supervisor.milestone_id == milestone.id
+            and scoped_history[-1].read_added_content
         )
         if sim_stuck:
             if sim_stuck.frozen:
-                if not _has_successful_scroll_for(history, milestone.id):
+                if not _has_successful_scroll_for(scoped_history, milestone.id):
                     print("  [Loop] 屏幕冻结且无成功滚动证据 → 判为无效滚动，触发重规划")
                     read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
-                    return self._handle_stuck(milestone, sim_stuck, read_inst, observation, history)
+                    return self._handle_stuck(milestone, sim_stuck, read_inst, observation, scoped_history)
                 print("  [Loop] 屏幕冻结（≥99%），即使 reader 返回新内容也结束收集")
                 return self._advance(milestone, observation, history)
             if not last_read_added:
-                if not _has_successful_scroll_for(history, milestone.id):
+                if not _has_successful_scroll_for(scoped_history, milestone.id):
                     print("  [Loop] 截图连续无变化且无成功滚动证据 → 判为无效滚动，触发重规划")
                     read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
-                    return self._handle_stuck(milestone, sim_stuck, read_inst, observation, history)
+                    return self._handle_stuck(milestone, sim_stuck, read_inst, observation, scoped_history)
                 print("  [Loop] 截图连续无变化且无新增内容 → 判为边界，结束收集")
                 return self._advance(milestone, observation, history)
             print("  [Loop] 截图相似但上一轮读到了新内容，继续收集")
 
         with _Timer(self._timings, self._timings_order, "loop_check", self._token_usage):
-            frame = self._loop_check(milestone, observation, history)
+            frame = self._loop_check(milestone, observation, scoped_history)
         self._last_check = None  # loop milestones use _LoopFrameResult, not _SingleCheckResult
         print(f"  [LoopFrame] boundary={frame.boundary_reached}, should_stop={frame.should_stop}")
 
@@ -780,7 +909,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # stitch 基线钉在旧帧上，导致后续真实内容拼接错位、漏采中段（实测 20260607_105731：
         # 读了加载中的旧帧 → 漏掉 5/24-28、混入 5/29）。返回 is_loading 等待帧，由 runner 短路
         # 跳过本帧（不读、不喂 stitch、不计轮数）。一旦开始滚动，内容已确认渲染，不再判 loading。
-        if frame.loading and not _has_successful_scroll_for(history, milestone.id):
+        if frame.loading and not _has_successful_scroll_for(scoped_history, milestone.id):
             print("  [Loop] 采集启动帧仍在加载中 → 等待重渲染，不读取本帧")
             self._scroll_counts[milestone.id] -= 1  # 加载等待不计入滚动预算
             return SupervisorStep(
@@ -797,7 +926,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             read_inst = frame.read_instruction or _default_read_instruction(milestone)
 
         if frame.should_stop:
-            if _has_collected(history, milestone.id):
+            if _has_collected(scoped_history, milestone.id):
                 print("  [Loop] 已触发停止条件且有采集内容 → 结束收集")
                 final_read = _ctx(milestone, read_inst, frame.collection_scope)
                 if milestone.scroll_stop_condition:
@@ -810,7 +939,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     final_read=final_read,
                 )
             # 停止条件触发、但本采集子目标尚未采到任何内容。
-            if not _has_successful_scroll_for(history, milestone.id):
+            if not _has_successful_scroll_for(scoped_history, milestone.id):
                 # ⚠️ 还没滚动过就报"停止/到底"不可信：刚进入采集子目标的首帧，列表常一屏可见、
                 # 下方却还有内容（这正是 force_complete 误判、零采集即完成的根源——筛选结果一屏
                 # 显示完就被判 done，实则可滚）。强制先滚一次采集、用真实滚动验证边界，绝不在
@@ -823,19 +952,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     stuck_reason="停止条件触发且没有可用采集结果",
                     summary=frame.summary,
                 )
-                return self._handle_stuck(milestone, stuck, read_inst, observation, history)
+                return self._handle_stuck(milestone, stuck, read_inst, observation, scoped_history)
 
-        if frame.boundary_reached and _last_scroll_was_for(history, milestone.id):
+        if frame.boundary_reached and _last_scroll_was_for(scoped_history, milestone.id):
             print("  [Loop] 确认列表边界 → 结束收集")
             return self._advance(milestone, observation, history)
 
         milestone.status = "running"
         loop_summary_prefix = "继续滚动查找目标" if self.task_type == "action" else "继续滚动收集内容"
-        if _last_scroll_was_for(history, milestone.id):
+        if _last_scroll_was_for(scoped_history, milestone.id):
             return SupervisorStep(
                 should_act=True,
                 instruction="继续滚动",
-                preformed_action=history[-1].action_decision,
+                preformed_action=scoped_history[-1].action_decision,
                 stop=False,
                 goal_completed=False,
                 summary=f"{loop_summary_prefix}。{frame.summary}",
@@ -874,8 +1003,9 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         final_read: Optional[dict] = None,
     ) -> SupervisorStep:
         done_name = milestone.name
+        scoped_history = self._history_for_scope(history, milestone, observation)
         pre_existing = not any(
-            t.executed for t in history
+            t.executed for t in scoped_history
             if t.supervisor.milestone_id == milestone.id
         )
         if milestone.require_fresh_action and pre_existing:
@@ -898,7 +1028,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 "summary": "目标状态疑似已存在，但仍需执行本轮写操作。",
             })
             self._last_check = check
-            return self._plan_single(milestone, check, observation, history)
+            return self._plan_single(milestone, check, observation, scoped_history)
         milestone.status = "done"
         # Persist this milestone's DONE verdict before _last_check is overwritten by the next
         # milestone's check (the report's 验收 panel renders it via context.milestones[id].
@@ -1283,6 +1413,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         observation: Observation,
         history: list[PolicyTurn],
         extra: str = "",
+        execution_scope: str = "",
+        effect_history: Optional[list[PolicyTurn]] = None,
     ) -> _SingleCheckResult:
         app_name = self._app_name
         if not app_name:
@@ -1304,8 +1436,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             prompts=self._prompts,
             check_knowledge=self._check_knowledge,
             context_reports=self._context_reports,
-            state_trace_text=self._monitor.render(),
-            last_action_effect=self._last_action_effect_text(history),
+            state_trace_text=self._monitor.render(scope=execution_scope),
+            last_action_effect=self._last_action_effect_text(effect_history or history),
         )
 
     def _loop_check(
