@@ -30,12 +30,20 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field as dc_field
-from typing import TYPE_CHECKING, Callable, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, Literal, Sequence
 
 from gui_agent.core.schemas import Milestone
 
 from .program import INTERACTIVE_KINDS, Run, RunLike
 from .runner import RunResult
+
+# The empty-return retry budget + its ledger moved to recovery.py (exception-system Stage A: the
+# task-wide RecoveryLedger subsumes ReturnRecoveryLedger); explicit re-exports keep the callframe
+# ABI surface stable for existing importers.
+from .recovery import (
+    MAX_EMPTY_RETURN_RECOVERIES as MAX_EMPTY_RETURN_RECOVERIES,
+    ReturnRecoveryLedger as ReturnRecoveryLedger,
+)
 
 if TYPE_CHECKING:
     from gui_agent.core.schemas import Observation
@@ -121,9 +129,6 @@ def package_result(
         summary=summary,
         evidence=list(notes),
     )
-
-# 返回字段为空时，最多把当前 UI run 收紧后重新驱动几次
-MAX_EMPTY_RETURN_RECOVERIES = 3
 
 # Feasibility Guard: how many times a single run may re-decompose after a feasibility kick-back. Bounded
 # to avoid an infinite re-plan loop (the same dead-end milestone re-appearing). One is enough to
@@ -560,35 +565,6 @@ def sharpen_kickback_directive(directive: str, issues: Sequence[str]) -> str:
         + f"。必须完全避开{DEAD_ROUTE_MARKER}点名的机制（包括换说法重写它），"
         + f"并把{REQUIRED_ROUTE_MARKER}作为新计划的主干路线。"
     )
-
-
-class ReturnRecoveryLedger:
-    """Bounded retry budget for the empty-returns contract violation, keyed per call site.
-
-    每个调用点（run_index + var/name + returns 合同）独立计数：同一个 run 收紧重试最多
-    ``max_attempts`` 次，之后 ``next_attempt`` 返回 None —— 调用方必须打包 completed=False
-    的诚实失败，而不是带着空值推进。"""
-
-    def __init__(self, max_attempts: int = MAX_EMPTY_RETURN_RECOVERIES):
-        self.max_attempts = max_attempts
-        self._attempts: dict[tuple[int, str, tuple[str, ...]], int] = {}
-
-    @staticmethod
-    def _key(run_index: int, run: object) -> tuple[int, str, tuple[str, ...]]:
-        return (
-            run_index,
-            str(getattr(run, "var", "") or getattr(run, "name", "")),
-            tuple(str(field) for field in getattr(run, "returns", [])),
-        )
-
-    def next_attempt(self, run_index: int, run: object) -> Optional[int]:
-        """Consume one retry; returns the attempt number, or None when the budget is spent."""
-        key = self._key(run_index, run)
-        attempt = self._attempts.get(key, 0) + 1
-        if attempt > self.max_attempts:
-            return None
-        self._attempts[key] = attempt
-        return attempt
 
 
 def open_call(supervisor, run, index: int, *, fresh_advance: bool = False) -> "Milestone":

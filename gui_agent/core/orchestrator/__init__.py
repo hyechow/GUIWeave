@@ -36,6 +36,9 @@ package is that compiler + runtime; each module has one role in the toolchain:
   ── FFI boundary (the milestone-as-function call ABI) ────────────────────────────────
   callframe.py      marshalling (to_milestone/package_result) + the call convention: return
                     contract, bounded recovery, typed kickback exception. See its docstring.
+  recovery.py       exception-system Stage A: the four-class recovery taxonomy + the task-wide
+                    RecoveryLedger every recovery mechanism reports to (record-only for now;
+                    Stage B derives global budgets/escalation from the trace).
 
   Retired: engine.py (S9a) — its passes went to passes.py, its marshalling to callframe.py.
 """

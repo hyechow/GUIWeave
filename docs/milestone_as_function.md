@@ -129,6 +129,15 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
   ③ `ENTITY_SCOPE_PREDICATE_MISSING`——1a970f7 的实体范围规则此前仅 prompt 层（重排丢失率实测
   1/6-2/3）,现为 validate_program(resolution=...) 硬合同,经 _invoke_plan 三入口共享。
   四 code 全部进入注册表+触发样例；872 绿；185 实弹零误伤。
+- **S11 `49dd4a1`** 异常体系 Stage A（架构自检问题①的第一刀,用户拍板「分类+账本现在做,
+  预算+升级链 live 后做」）：`recovery.py` = 四分类（compile_error / contract_violation /
+  infeasible_route / data_source_error,作为类型不是控制流）+ 任务级 `RecoveryLedger`
+  （继承并吸收 ReturnRecoveryLedger,callframe re-export 保 ABI 面）。九种恢复机制中跨 FFI
+  的六种全部入账（kickback 重排/adherence 锐化/升格手术/tighten 重试/耗尽诚实失败/SQL 修复/
+  data_query 失败）,预算常数与控制流零改动;账本摘要折进 context.orchestrator["recovery"],
+  live 首跑即产出完整恢复轨迹 = Stage B 全局预算/升级链的设计数据。执行器内部重试留在 ABI 之下
+  （被调用方私有恢复对调用方不可见 = FFI 纪律）;编译期 validator 重试走既有 attempt_observer
+  观测路,Stage B 并账。867 绿（+7 账本契约测试）。
 
 ## 离线可靠性（2026-07-04 A/B）
 
@@ -181,6 +190,7 @@ S10 之前 compute 方言错误不被 validator 标记（row.sku 曾静默过检
    SQL 修复 LLM、action 级 replan、checker 重试）各有各的预算常数与触发条件,互不知情——
    预算乘积才是最坏成本,没人算过。S4 类型化了一个异常,异常【系统】仍是零售的。
    → live 后头号结构项：统一异常分类 + 单一恢复账本 + 显式升级链（载体=loop.py 状态机化）。
+   **Stage A（分类+账本,行为零变化）已交付 S11 `49dd4a1`;Stage B（预算+升级链）等 live 轨迹。**
 2. **规则堆积无退役机制**：validator 44 条 + decomposer.md 千字 bullet,「每败例一条规则」的
    增长函数不可持续（已有空转实证 SQL_QUOTED_DISPLAY_IDENTIFIER;规则间已现顺序耦合）。
    很多规则在补偿 draft 面太自由——S8 证明结构化预防碾压事后规则,但比例严重偏向后者。

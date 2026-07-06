@@ -41,7 +41,6 @@ from gui_agent.core.run.non_interactive import drive_pending_non_ui
 from gui_agent.core.orchestrator.callframe import (
     MAX_EMPTY_RETURN_RECOVERIES,
     MAX_KICKBACK_REPLANS,
-    ReturnRecoveryLedger,
     check_return_contract,
     extract_ui_returns,
     force_interactive_return_recovery as _force_interactive_return_recovery,
@@ -53,6 +52,7 @@ from gui_agent.core.orchestrator.callframe import (
     should_kickback_replan,
     tighten_ui_return_run as _tighten_ui_return_run,
 )
+from gui_agent.core.orchestrator.recovery import RecoveryLedger
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
@@ -206,7 +206,13 @@ def run_agent_loop(
         sync_milestone_states(supervisor, context)
         _save_context(context_path, context)
 
+    # 异常体系 Stage A：任务级恢复账本。既有的空返回预算（继承 ReturnRecoveryLedger）+ 每个
+    # 恢复机制触发时记一条事件；预算常数与控制流原样不动，Stage B 再用轨迹设计全局预算/升级链。
+    _recovery = RecoveryLedger()
+
     def _finish(result: dict) -> dict:
+        if _recovery.events and isinstance(context.orchestrator, dict):
+            context.orchestrator = {**context.orchestrator, "recovery": _recovery.summary()}
         sync_context_run_state(context, result)
         _save_ctx()
         return result
@@ -351,6 +357,7 @@ def run_agent_loop(
                 # a PROVIDER, not a snapshot: a foreach's into table is populated mid-drain (when the
                 # last body return completes), so the data_query must read it fresh — see drive_pending_non_ui.
                 materialized_tables=(lambda: _interp.materialized_tables()) if _interp is not None else None,
+                recovery=_recovery,  # 异常体系 Stage A:SQL 修复/数据源失败事件入账
             )
             _cur_run = result.current_run
             _run_idx = result.run_index
@@ -393,9 +400,9 @@ def run_agent_loop(
                 return _finish(_orch_result(context, _interp, _reply))
 
         _kickback_replans = 0  # Feasibility Guard: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
-        _return_recovery = ReturnRecoveryLedger()  # per-call-site budget for the empty-returns contract violation
 
-        def _perform_replan(directive: str, observation=None) -> "tuple[bool, str | None]":
+        def _perform_replan(directive: str, observation=None, *,
+                            cls: str = "infeasible_route") -> "tuple[bool, str | None]":
             """Re-decompose the REMAINING plan with a kick-back directive + hot-swap the interpreter.
             Returns (handled, reply): (False, None) = not applicable/failed → caller handles normally;
             (True, None) = re-planned & primed → caller should `continue`; (True, reply) = the new
@@ -410,6 +417,7 @@ def run_agent_loop(
                     and _kickback_replans < MAX_KICKBACK_REPLANS):
                 return (False, None)
             _kickback_replans += 1
+            _site = str(getattr(_cur_run, "var", "") or getattr(_cur_run, "name", "") or "program")
             _say(f"\n[Kickback] 重规划 ({_kickback_replans}/{MAX_KICKBACK_REPLANS})：{directive[:120]}")
             _rd_calls0 = get_llm_call_count()
             _rd_tok0 = get_llm_token_usage()
@@ -432,8 +440,11 @@ def run_agent_loop(
                 )  # type: ignore[operator]
             except Exception as _exc:  # noqa: BLE001 - a redecompose failure must not crash the run
                 _say(f"[Kickback] 重规划失败（{_exc}），按原结果收尾")
+                _recovery.record(cls, "kickback_redecompose", _site,
+                                 detail=str(_exc)[:200], outcome="redecompose_failed")
                 return (False, None)
             if _new is None or not _new.statements:
+                _recovery.record(cls, "kickback_redecompose", _site, outcome="no_plan")
                 return (False, None)
             # Typed-kickback adherence（kickback=异常,directive=异常载荷）: a feasibility kickback
             # carries machine-checkable 死路/规定路线 markers. Verify the re-decomposed program
@@ -456,14 +467,25 @@ def run_agent_loop(
                 except Exception as _exc:  # noqa: BLE001 - retry failure falls back to the first plan
                     _say(f"  [Kickback] 锐化重试失败（{_exc}），沿用第一版重规划")
                     _retry = None
+                _picked_retry = False
                 if _retry is not None and _retry.statements:
                     _retry_issues = kickback_adherence_issues(_retry, _kb, failed_run=_cur_run)
                     if len(_retry_issues) < len(_adherence_issues):
                         _new = _retry
                         _adherence_issues = _retry_issues
+                        _picked_retry = True
                     else:
                         _say("  [Kickback] 锐化重试未改善服从度，沿用第一版重规划")
-            _new = _force_interactive_return_recovery(_new, directive)
+                _recovery.record(cls, "adherence_sharpen", _site,
+                                 detail="；".join(_adherence_issues)[:200],
+                                 outcome="improved" if _picked_retry else "kept_first")
+            _promoted = _force_interactive_return_recovery(_new, directive)
+            if _promoted is not _new:  # surgery happened: leading Read rebuilt as a locating command
+                _recovery.record("contract_violation", "interactive_promotion", _site,
+                                 outcome="read_promoted_to_navigation")
+            _new = _promoted
+            _recovery.record(cls, "kickback_redecompose", _site,
+                             detail=directive[:160], outcome="replanned")
             _interp = Interpreter(_new, collect_fn=_collect_fn, subdecompose_fn=subdecompose,
                                   expand_fn=expand_foreach, select_fn=select_members)
             _interp.env = _prev_env            # carry forward completed reads (finish refs still resolve)
@@ -588,14 +610,18 @@ def run_agent_loop(
                         "不要推进到会使用空值/垃圾值的后续步骤；"
                         "请从当前页面继续或重规划，先真正定位目标数据并读取有效的返回值。"
                     )
-                    _handled, _r = _perform_replan(_directive, observation)
+                    _handled, _r = _perform_replan(_directive, observation, cls="contract_violation")
                     if _handled and _r is not None:
                         _orch_reply = _r
                     elif _handled:
                         _did_kickback_replan = True
                     else:
-                        _attempt = _return_recovery.next_attempt(_run_idx, _cur_run)
+                        _attempt = _recovery.next_attempt(_run_idx, _cur_run)
+                        _cv_site = str(getattr(_cur_run, "var", "") or getattr(_cur_run, "name", ""))
                         if _attempt is not None:
+                            _recovery.record("contract_violation", "tighten_return", _cv_site,
+                                             detail=_contract.describe()[:200],
+                                             outcome=f"tighten {_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}")
                             _cur_run = _tighten_ui_return_run(
                                 _cur_run,
                                 _contract.missing,
@@ -611,6 +637,9 @@ def run_agent_loop(
                             )
                             _did_return_recovery = True
                         else:
+                            _recovery.record("contract_violation", "tighten_return", _cv_site,
+                                             detail=_contract.describe()[:200],
+                                             outcome="exhausted_honest_fail")
                             _say(
                                 "  [Orchestrator] 返回值合同持续未满足，停止推进："
                                 + _contract.describe()
@@ -701,7 +730,7 @@ def run_agent_loop(
                         + "\n这说明取数路线不对（数据源为空或与任务口径不一致）。请改用能真正拿到目标数据的"
                           "路线重新规划，不要重复上面失败的取数方式。"
                     )
-                    _handled, _r = _perform_replan(_directive, observation)
+                    _handled, _r = _perform_replan(_directive, observation, cls="data_source_error")
                     if _handled and _r is not None:
                         return _finish(_orch_result(context, _interp, _r))
                     if _handled:

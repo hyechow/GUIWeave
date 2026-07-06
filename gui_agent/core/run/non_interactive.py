@@ -101,6 +101,7 @@ def drive_pending_non_ui(
     done_observation: Observation | None = None,
     observation_url: str | None = None,
     materialized_tables: "Callable[[], list[dict[str, Any]]] | None" = None,
+    recovery: Any = None,  # RecoveryLedger(异常体系 Stage A):SQL 修复/数据源失败事件入账;None=不记
 ) -> NonUiDriveResult:
     """Execute consecutive `read` / `data_query` runs and advance the interpreter.
 
@@ -292,6 +293,13 @@ def drive_pending_non_ui(
                     reason=repair.reason,
                 )
 
+            def _rec(outcome: str, detail: str = "") -> None:
+                # 恢复账本(Stage A):SQL 运行时修复是 data_source_error 类恢复机制,每次尝试入账。
+                if recovery is not None:
+                    recovery.record("data_source_error", "sql_repair",
+                                    str(getattr(cur_run, "var", "") or cur_run.name),
+                                    detail=detail[:200], outcome=outcome)
+
             try:
                 reads = execute_data_query(
                     query_tables,
@@ -305,11 +313,15 @@ def drive_pending_non_ui(
                         if repair_result.source_issue:
                             completed = False
                             summary = f"数据源与任务意图不一致: {repair_result.source_issue}"
+                            _rec("source_mismatch", repair_result.source_issue)
                             say(f"  [Orchestrator] 数据查询失败：{summary}")
                         elif repair_result.reads is not None and not _empty_query_result(repair_result.reads, cur_run.returns):
                             reads = repair_result.reads
                             executed_sql = repair_result.sql
+                            _rec("recovered", repair_result.reason)
                             say(f"  [Orchestrator] 数据查询运行时修复：{repair_result.reason}")
+                        else:
+                            _rec("no_improvement", repair_result.reason)
                 if completed:
                     summary = f"数据查询 {'、'.join(cur_run.returns) or cur_run.name}"
                     say(f"  [Orchestrator] 数据查询 {cur_run.returns} → {reads}")
@@ -325,6 +337,7 @@ def drive_pending_non_ui(
                 if repair_result is not None and repair_result.source_issue:
                     completed = False
                     summary = f"数据源与任务意图不一致: {repair_result.source_issue}"
+                    _rec("source_mismatch", repair_result.source_issue)
                     say(f"  [Orchestrator] 数据查询失败：{summary}")
                 elif (
                     repair_result is not None
@@ -334,14 +347,17 @@ def drive_pending_non_ui(
                     reads = repair_result.reads
                     executed_sql = repair_result.sql
                     summary = f"数据查询 {'、'.join(cur_run.returns) or cur_run.name}"
+                    _rec("recovered", repair_result.reason)
                     say(f"  [Orchestrator] 数据查询运行时修复：{repair_result.reason}")
                     say(f"  [Orchestrator] 数据查询 {cur_run.returns} → {reads}")
                 else:
                     completed = False
                     if repair_result is not None and repair_result.reads is not None:
                         summary = f"SQL 修复后仍返回空结果: {repair_result.reads}"
+                        _rec("no_improvement", summary)
                     elif repair_error:
                         summary = f"{exc}; SQL 修复也失败: {repair_error}"
+                        _rec("repair_failed", repair_error)
                     else:
                         summary = str(exc)
                     say(f"  [Orchestrator] 数据查询失败：{exc}")
@@ -350,6 +366,11 @@ def drive_pending_non_ui(
         # than end the run. (read failures are not routed — they're per-frame, not a plan-shape issue.)
         if not completed and run_for_turn.kind == "data_query":
             failure_evidence = summary
+            if recovery is not None:
+                # 恢复账本(Stage A):可重排的 data_query 失败证据,是非 UI kickback 的前因。
+                recovery.record("data_source_error", "data_query_failure",
+                                str(getattr(run_for_turn, "var", "") or run_for_turn.name),
+                                detail=str(summary)[:200], outcome="replan_candidate")
         result = package_result(
             run_for_turn,
             completed=completed,
