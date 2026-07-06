@@ -15,18 +15,19 @@ from gui_agent.core.orchestrator import (
     RunResult,
     drive,
 )
+from gui_agent.core.orchestrator.program import Query, Read
 
 
 def _review_program() -> Program:
     return Program(
         goal="找出 rating<=3 的昵称",
         statements=[
-            Run(var="r", name="读取候选 review 行", kind="read", returns=["id"]),
+            Read(var="r", name="读取候选 review 行",  returns=["id"]),
             ForEach(
                 var="row", over="r", into="reviews",
                 body=[
                     Run(name="打开 review {row[id]} 详情", kind="navigation"),
-                    Run(var="d", name="读取评分与昵称", kind="read", returns=["rating", "nickname"]),
+                    Read(var="d", name="读取评分与昵称",  returns=["rating", "nickname"]),
                 ],
             ),
             Finish(message="done"),
@@ -87,7 +88,7 @@ def test_foreach_accumulates_body_action_returns():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="读取候选行", kind="read", returns=["id"]),
+            Read(var="r", name="读取候选行",  returns=["id"]),
             ForEach(var="row", over="r", into="details", body=[
                 Run(
                     var="d",
@@ -120,7 +121,7 @@ def test_foreach_target_identity_is_added_to_success_condition():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="读取候选行", kind="read", returns=["id"]),
+            Read(var="r", name="读取候选行",  returns=["id"]),
             ForEach(var="row", over="r", into="details", body=[
                 Run(
                     name="打开评论 {row[id]} 的详情",
@@ -148,11 +149,11 @@ def test_row_source_is_not_exposed_as_data_query_table():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="读候选行", kind="read",
+            Read(var="r", name="读候选行", 
                 returns=["id", "nickname", "rating"]),
             ForEach(var="row", over="r", into="reviews", body=[
                 Run(name="打开 {row[id]}", kind="navigation"),
-                Run(var="d", name="读详情评分", kind="read", returns=["rating", "nickname"]),
+                Read(var="d", name="读详情评分",  returns=["rating", "nickname"]),
             ]),
         ],
     )
@@ -180,7 +181,7 @@ def test_foreach_empty_collection_publishes_empty_table():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="读取候选行", kind="read", returns=["id"]),
+            Read(var="r", name="读取候选行",  returns=["id"]),
             ForEach(var="row", over="r", into="reviews",
                     body=[Run(name="打开 {row[id]}", kind="navigation")]),
             Finish(message="done"),
@@ -206,11 +207,11 @@ def test_into_table_is_ready_when_data_query_is_yielded():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="行", kind="read", returns=["id"]),
+            Read(var="r", name="行",  returns=["id"]),
             ForEach(var="row", over="r", into="reviews", body=[
-                Run(var="d", name="读 {row[id]}", kind="read", returns=["rating"]),
+                Read(var="d", name="读 {row[id]}",  returns=["rating"]),
             ]),
-            Run(var="q", name="筛", kind="data_query", returns=["rating"],
+            Query(var="q", name="筛",  returns=["rating"],
                 sql="SELECT rating FROM reviews"),
         ],
     )
@@ -232,9 +233,9 @@ def test_foreach_into_defaults_to_var_plural():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="行", kind="read", returns=["id"]),
+            Read(var="r", name="行",  returns=["id"]),
             ForEach(var="row", over="r",  # no `into` → defaults to f"{var}s"
-                    body=[Run(var="d", name="读 {row[id]}", kind="read", returns=["v"])]),
+                    body=[Read(var="d", name="读 {row[id]}",  returns=["v"])]),
         ],
     )
 
@@ -258,7 +259,7 @@ def test_foreach_fails_honestly_when_declared_column_missing_from_all_rows():
     program = Program(
         goal="按 Customer Email 统计订单数",
         statements=[
-            Run(var="r", name="读取订单行", kind="read",
+            Read(var="r", name="读取订单行", 
                 returns=["ID", "Customer Email", "Status"]),
             ForEach(var="row", over="r", into="orders",
                     returns=["ID", "Customer Email", "Status"],
@@ -290,7 +291,7 @@ def test_foreach_does_not_misfire_on_present_but_blank_column():
     program = Program(
         goal="g",
         statements=[
-            Run(var="r", name="读取行", kind="read", returns=["ID", "Coupon"]),
+            Read(var="r", name="读取行",  returns=["ID", "Coupon"]),
             ForEach(var="row", over="r", into="orders", returns=["ID", "Coupon"],
                     body=[Run(name="noop {row[ID]}", kind="navigation")]),
             Finish(message="done"),

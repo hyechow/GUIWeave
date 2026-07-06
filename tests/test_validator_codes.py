@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Run
+from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Read, Query, Run
 from gui_agent.core.orchestrator.validator import ALL_CODES, IssueList, ValidationIssue, validate_program
 
 _VALIDATOR_SRC = Path("gui_agent/core/orchestrator/validator.py")
@@ -55,7 +55,7 @@ def _codes(program: Program) -> set[str]:
 # One minimal program per code that makes exactly that rule fire (others may co-fire; we assert
 # the target is among them — "at least one hitting sample" per the governance contract).
 def _read(var="v", returns=("a",), spec="读取字段", name="读取", **kw):
-    return Run(var=var, name=name, kind="read", returns=list(returns), read_spec=spec, **kw)
+    return Read(var=var, name=name,  returns=list(returns), read_spec=spec, **kw)
 
 
 SAMPLES: dict[str, Program] = {
@@ -79,17 +79,17 @@ SAMPLES: dict[str, Program] = {
                 body_goal="从 {row[sku]} 判断是否为 size 28 的变体；若是返回 action_url，否则标记为空"),
     ]),
     "PRECONDITION_NOT_NAVIGATION": Program(statements=[Run(name="点击保存", kind="action", precondition=True)]),
-    "READ_MISSING_RETURNS": Program(statements=[Run(var="v", name="读取", kind="read")]),
-    "READ_MISSING_VAR": Program(statements=[Run(name="读取", kind="read", returns=["a"], read_spec="读")]),
-    "DATA_QUERY_MISSING_RETURNS": Program(statements=[Run(var="q", name="查询", kind="data_query", sql="SELECT 1")]),
-    "DATA_QUERY_MISSING_VAR": Program(statements=[Run(name="查询", kind="data_query", returns=["a"], sql="SELECT 1")]),
-    "DATA_QUERY_MISSING_SQL": Program(statements=[Run(var="q", name="查询", kind="data_query", returns=["a"], sql="")]),
+    "READ_MISSING_RETURNS": Program(statements=[Read(var="v", name="读取")]),
+    "READ_MISSING_VAR": Program(statements=[Read(name="读取",  returns=["a"], read_spec="读")]),
+    "DATA_QUERY_MISSING_RETURNS": Program(statements=[Query(var="q", name="查询",  sql="SELECT 1")]),
+    "DATA_QUERY_MISSING_VAR": Program(statements=[Query(name="查询",  returns=["a"], sql="SELECT 1")]),
+    "DATA_QUERY_MISSING_SQL": Program(statements=[Query(var="q", name="查询",  returns=["a"], sql="")]),
     "DATA_QUERY_SQL_TEMPLATE_REF": Program(statements=[
-        Run(var="q", name="查询", kind="data_query", returns=["a"], sql="SELECT {x[y]} FROM data"),
+        Query(var="q", name="查询",  returns=["a"], sql="SELECT {x[y]} FROM data"),
     ]),
     "DATA_QUERY_VAR_AS_TABLE": Program(statements=[
         _read(var="orders", returns=("a",)),
-        Run(var="q", name="查询", kind="data_query", returns=["b"], sql="SELECT * FROM orders"),
+        Query(var="q", name="查询",  returns=["b"], sql="SELECT * FROM orders"),
     ]),
     "RETURNS_WITHOUT_VAR": Program(statements=[Run(name="点击", kind="action", returns=["a"], read_spec="读")]),
     "RETURNS_WITHOUT_READ_SPEC": Program(statements=[Run(var="v", name="点击", kind="action", returns=["a"])]),
@@ -109,33 +109,33 @@ SAMPLES: dict[str, Program] = {
         statements=[Call(func="f", args={"sku": "ABC", "detail_url": "https://example.test/detail"}, var="m")],
     ),
     "VISUAL_ROW_AGGREGATION": Program(statements=[
-        Run(var="v", name="把最近 3 笔订单的金额相加", kind="read", returns=["total"],
+        Read(var="v", name="把最近 3 笔订单的金额相加",  returns=["total"],
             read_spec="对最近 3 笔订单求和"),
     ]),
     "TABLE_ROW_FIELD_COLLECTION": Program(goal="统计最近订单总额", statements=[
-        Run(var="v", name="读取表格可见行的字段", kind="read", returns=["grand_total", "status"],
+        Read(var="v", name="读取表格可见行的字段",  returns=["grand_total", "status"],
             read_spec="读取每一行的金额和状态"),
     ]),
     "SQL_SCHEMA_MAPPING_TEXT": Program(statements=[
-        Run(var="q", name="查询", kind="data_query", returns=["a"], sql="SELECT Email->customer_email FROM data"),
+        Query(var="q", name="查询",  returns=["a"], sql="SELECT Email->customer_email FROM data"),
     ]),
     "SQL_QUOTED_DISPLAY_IDENTIFIER": Program(statements=[
-        Run(var="q", name="查询", kind="data_query", returns=["a"], sql='SELECT "Customer Email" FROM data'),
+        Query(var="q", name="查询",  returns=["a"], sql='SELECT "Customer Email" FROM data'),
     ]),
     "RANK_QUERY_DROPS_TIES": Program(goal="完成订单数第二多的客户", statements=[
-        Run(var="q", name="查询第二多", kind="data_query", returns=["email"],
+        Query(var="q", name="查询第二多",  returns=["email"],
             sql="SELECT email, COUNT(*) FROM data GROUP BY email ORDER BY 2 DESC LIMIT 1 OFFSET 1"),
     ]),
     "AGGREGATE_LIMIT_AFTER_AGGREGATION": Program(statements=[
-        Run(var="q", name="求和", kind="data_query", returns=["total"],
+        Query(var="q", name="求和",  returns=["total"],
             sql="SELECT SUM(amount_num) AS total FROM data LIMIT 2"),
     ]),
     "TEMPORAL_LIMIT_WITHOUT_ORDER": Program(goal="最近 2 笔订单", statements=[
-        Run(var="q", name="取最近2笔", kind="data_query", returns=["amount_num"],
+        Query(var="q", name="取最近2笔",  returns=["amount_num"],
             sql="SELECT amount_num FROM data LIMIT 2"),
     ]),
     "TEMPORAL_AGGREGATE_WITHOUT_ROW_LIMIT": Program(goal="最近 2 笔订单总额", statements=[
-        Run(var="q", name="最近2笔求和", kind="data_query", returns=["total"],
+        Query(var="q", name="最近2笔求和",  returns=["total"],
             sql="SELECT SUM(amount_num) AS total FROM data"),
     ]),
     "IF_COND_VAR_NOT_IN_SCOPE": Program(statements=[
@@ -198,29 +198,29 @@ SAMPLES: dict[str, Program] = {
            then=[Run(name="用关键词重新搜索", kind="filter", success_condition="0 条结果就放宽关键词")]),
     ]),
     "FOREACH_DQ_ROW_FIELD_MISSING": Program(statements=[
-        Run(var="rows", name="逐行采集订单", kind="read", returns=["id"], read_spec="逐行读取每条记录的 id"),
-        Run(var="q", name="求和", kind="data_query", returns=["total"],
+        Read(var="rows", name="逐行采集订单",  returns=["id"], read_spec="逐行读取每条记录的 id"),
+        Query(var="q", name="求和",  returns=["total"],
             sql="SELECT SUM(amount_num) AS total FROM data"),
     ]),
     "FOREACH_DQ_UNKNOWN_TABLE": Program(statements=[
-        Run(var="rows", name="逐行采集订单", kind="read", returns=["id"], read_spec="逐行读取每条记录的 id"),
-        Run(var="q", name="查询", kind="data_query", returns=["total"],
+        Read(var="rows", name="逐行采集订单",  returns=["id"], read_spec="逐行读取每条记录的 id"),
+        Query(var="q", name="查询",  returns=["total"],
             sql="SELECT SUM(amount_num) AS total FROM mystery_table"),
     ]),
     "FOREACH_DQ_GRID_FIELD_MISSING": Program(statements=[
         ForEach(var="o", returns=["id"], into="orders", body=[]),
-        Run(var="q", name="求和", kind="data_query", returns=["total"],
+        Query(var="q", name="求和",  returns=["total"],
             sql="SELECT SUM(grand_total_num) AS total FROM orders"),
     ]),
     "FOREACH_DQ_DETAIL_FIELD_MISSING": Program(statements=[
         ForEach(var="o", returns=["id"], into="orders",
-                body=[Run(var="d", name="打开详情", kind="read", returns=["x"], read_spec="读详情")]),
-        Run(var="q", name="筛选", kind="data_query", returns=["total"],
+                body=[Read(var="d", name="打开详情",  returns=["x"], read_spec="读详情")]),
+        Query(var="q", name="筛选",  returns=["total"],
             sql="SELECT SUM(amount_num) AS total FROM orders"),
     ]),
     "FOREACH_DQ_POST_FOREACH_FIELD_MISSING": Program(statements=[
         ForEach(var="o", returns=["id"], into="orders", body=[]),
-        Run(var="q", name="求和", kind="data_query", returns=["total"],
+        Query(var="q", name="求和",  returns=["total"],
             sql="SELECT SUM(amount_num) AS total FROM data"),
     ]),
 }
@@ -316,7 +316,7 @@ def test_mutate_goal_without_action_shapes():
 
     # retrieve goal with no action → not flagged (not a mutation task)
     retrieve = Program(goal="Get the total number of reviews", statements=[
-        Run(var="v", name="读取评论总数", kind="read", returns=["count"], read_spec="读 count"),
+        Read(var="v", name="读取评论总数",  returns=["count"], read_spec="读 count"),
         Finish(message="{v[count]}"),
     ])
     assert "MUTATE_GOAL_WITHOUT_ACTION" not in codes(retrieve)

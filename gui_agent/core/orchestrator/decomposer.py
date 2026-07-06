@@ -43,6 +43,7 @@ from .program import (
     Read,
     Run,
     RunKind,
+    RunLike,
     Stmt,
 )
 from .validator import (  # validator lives in its own module; decompose imports it back
@@ -254,20 +255,29 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     otherwise=_to_stmts(d.otherwise),
                 )
             )
-        else:  # run (default)
+        else:  # run family (default): construction-time split by execution mode (S8 sibling IR).
             kind = _to_kind(d.run_kind)
-            # IR-level query/command split at CONSTRUCTION time: read/data_query lower to the
-            # dedicated query node classes (wire format unchanged — op="run" + kind), so
-            # downstream structure checks are isinstance-based, not string dispatch.
-            run_cls = {"read": Read, "data_query": Query}.get(kind, Run)
-            out.append(
-                run_cls(
-                    var=(d.var.strip() or None),
-                    name=d.name,
-                    success_condition=d.success_condition,
-                    kind=kind,
-                    returns=[r for r in d.returns if r.strip()],
-                    read_spec=d.read_spec,
+            common = dict(
+                var=(d.var.strip() or None),
+                name=d.name,
+                success_condition=d.success_condition,
+                returns=[r for r in d.returns if r.strip()],
+                read_spec=d.read_spec,
+            )
+            if kind == "read":
+                # 非交互 frame read：只有共享形状字段（precondition/return_domains 是
+                # 交互专属概念，确定性丢弃）。
+                out.append(Read(**common))
+            elif kind == "data_query":
+                out.append(Query(
+                    **common,
+                    sql=d.sql,
+                    data_scope="current" if (d.data_scope or "").strip().lower() == "current" else "complete",
+                ))
+            else:
+                out.append(Run(
+                    **common,
+                    kind=kind,  # type: ignore[arg-type]  # narrowed to the interactive literals
                     # Deterministic normalization: keep only domains whose field is actually declared
                     # in returns (an unknown key is decomposer noise, not a contract).
                     return_domains={
@@ -275,11 +285,8 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                         for k, v in (d.return_domains or {}).items()
                         if k.strip() and v.strip() and k.strip() in {r.strip() for r in d.returns}
                     },
-                    sql=d.sql,
-                    data_scope="current" if (d.data_scope or "").strip().lower() == "current" else "complete",
                     precondition=bool(d.precondition),
-                )
-            )
+                ))
     return out
 
 
@@ -509,7 +516,7 @@ def _invoke_plan(
 
 def _iter_runs(stmts: list[Stmt]):
     for stmt in stmts:
-        if isinstance(stmt, Run):
+        if isinstance(stmt, RunLike):  # whole run family — the SQL rewrite targets Query nodes
             yield stmt
         elif isinstance(stmt, If):
             yield from _iter_runs(stmt.then)

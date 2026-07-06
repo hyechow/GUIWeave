@@ -17,6 +17,7 @@ from gui_agent.core.orchestrator import (
     Run,
     RunResult,
 )
+from gui_agent.core.orchestrator.program import Query, Read
 
 
 def _connectivity_program() -> Program:
@@ -26,7 +27,7 @@ def _connectivity_program() -> Program:
             Run(name="进入路径连通性工具页", kind="navigation"),
             Run(name="设置起点 s10、终点 s9", kind="filter"),
             Run(name="点击检测按钮执行连通性检测", kind="action"),
-            Run(var="d", name="读取连通判定结果", kind="read",
+            Read(var="d", name="读取连通判定结果", 
                 returns=["连通判定", "不可达原因"]),
             If(
                 cond=Cond(var="d", field="连通判定", value="连通"),
@@ -70,8 +71,8 @@ def test_unreachable_branch_finishes_with_reason():
 def test_reads_persist_across_runs():
     # 多个 run 的 reads 都进 env / run_log，不只看最后一个。
     prog = Program(statements=[
-        Run(var="a", name="读 A", kind="read", returns=["x"]),
-        Run(var="b", name="读 B", kind="read", returns=["y"]),
+        Read(var="a", name="读 A",  returns=["x"]),
+        Read(var="b", name="读 B",  returns=["y"]),
     ])
     def _exec(run: Run) -> RunResult:
         m = {"a": {"x": "X值"}, "b": {"y": "Y值"}}
@@ -102,7 +103,7 @@ def test_confirm_read_after_action_drives_final_answer():
     # 成败不再只信动作步被判完成（checker 可能幻觉），而是由 confirm read 的结构化值定。
     prog = Program(statements=[
         Run(name="建单 s10→s9", kind="action"),
-        Run(var="c", name="确认订单已创建", kind="read", returns=["建单结果"],
+        Read(var="c", name="确认订单已创建",  returns=["建单结果"],
             read_spec="建单结果：订单列表出现该行或成功提示→成功，否则失败"),
         Finish(message="建单结果：{c[建单结果]}"),
     ])
@@ -116,7 +117,7 @@ def test_confirm_read_after_action_drives_final_answer():
 
 def test_neq_condition():
     prog = Program(statements=[
-        Run(var="d", name="读状态", kind="read", returns=["状态"]),
+        Read(var="d", name="读状态",  returns=["状态"]),
         If(cond=Cond(var="d", field="状态", cmp="!=", value="正常"),
            then=[Finish(message="异常：{d[状态]}")],
            otherwise=[Finish(message="一切正常")]),
@@ -128,7 +129,7 @@ def test_neq_condition():
 def test_extended_condition_operators():
     def _reply(reads: dict[str, str], cond: Cond) -> str:
         prog = Program(statements=[
-            Run(var="r", name="读状态", kind="read", returns=["状态", "提示", "订单号", "错误"]),
+            Read(var="r", name="读状态",  returns=["状态", "提示", "订单号", "错误"]),
             If(cond=cond, then=[Finish(message="then")], otherwise=[Finish(message="else")]),
         ])
         res = ProgramRunner(lambda r: RunResult(completed=True, reads=reads)).run(prog)
@@ -209,9 +210,9 @@ def test_to_milestone_maps_runkind():
     assert ret_nav.returns == ["连通判定", "原因"]
     # S6b 边界：查询节点不是 milestone —— marshal = 类型错误（由 drive_pending_non_ui 驱动）
     with pytest.raises(ValueError, match="query run"):
-        to_milestone(Run(var="d", name="读结果", kind="read", returns=["连通判定"]), 3)
+        to_milestone(Read(var="d", name="读结果",  returns=["连通判定"]), 3)
     with pytest.raises(ValueError, match="query run"):
-        to_milestone(Run(var="q", name="统计订单", kind="data_query", returns=["emails"], sql="SELECT 1"), 4)
+        to_milestone(Query(var="q", name="统计订单",  returns=["emails"], sql="SELECT 1"), 4)
 
 
 def test_returning_ui_runs_get_target_specific_milestone_ids():
@@ -295,7 +296,7 @@ def test_direct_nav_url_gates_on_url_present_and_navigate_capability():
     assert _direct_nav_url(id_run, nav_capable) is None
 
     # Only navigation runs route here — a read carrying a URL in its name does not.
-    read_run = Run(var="r", name="读取 http://host/x 的值", kind="read", returns=["v"])
+    read_run = Read(var="r", name="读取 http://host/x 的值",  returns=["v"])
     assert _direct_nav_url(read_run, nav_capable) is None
 
 
@@ -334,7 +335,7 @@ def test_direct_back_gates_on_explicit_back_and_capability():
     assert _direct_back(run, capable) is True
     assert _direct_back(run, no_back) is False
     assert _direct_back(Run(name="进入 Catalog > Products", kind="navigation"), capable) is False
-    assert _direct_back(Run(name="返回上一页", kind="read"), capable) is False
+    assert _direct_back(Read(name="返回上一页"), capable) is False
 
 
 def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
@@ -500,9 +501,8 @@ def test_approximate_entity_sql_uses_search_key():
     from gui_agent.core.router import EntityRef, IntentResolution
 
     program = Program(statements=[
-        Run(
-            name="查询昵称",
-            kind="data_query",
+        Query(
+            name="查询昵称", 
             returns=["result"],
             sql=(
                 "SELECT customer_nickname AS result FROM detail_rows "
@@ -528,8 +528,8 @@ def test_approximate_entity_sql_uses_search_key():
 
 def test_task_type_for_non_ui_is_analysis():
     from gui_agent.core.orchestrator.engine import task_type_for
-    assert task_type_for(Run(name="读", kind="read", returns=["x"])) == "analysis"
-    assert task_type_for(Run(name="查", kind="data_query", returns=["x"], sql="SELECT 1")) == "analysis"
+    assert task_type_for(Read(name="读",  returns=["x"])) == "analysis"
+    assert task_type_for(Query(name="查",  returns=["x"], sql="SELECT 1")) == "analysis"
     assert task_type_for(Run(name="点", kind="action")) == "action"
 
 
@@ -551,7 +551,7 @@ def test_supervisor_reseed_single_milestone():
     p._scroll_counts = {"old": 5}             # 其余 per-milestone 态
     # S6b 后查询节点不再 marshal 成 milestone；reseed 的读取门用显式 task_type 验证
     # （task_type_for 对查询仍返回 analysis，此处直接断言该映射）
-    run = Run(var="d", name="读判定", kind="read", returns=["连通判定"])
+    run = Read(var="d", name="读判定",  returns=["连通判定"])
     assert task_type_for(run) == "analysis"
     nav = Run(var="d", name="开判定页", kind="navigation")
     p.reseed(to_milestone(nav, 0), task_type="analysis")
@@ -605,7 +605,7 @@ def test_advance_persists_done_check_on_terminal_completion():
 
 def test_package_result_carries_structured_reads():
     from gui_agent.core.orchestrator.engine import package_result
-    r = package_result(Run(var="d", name="读", kind="read", returns=["连通判定"]),
+    r = package_result(Read(var="d", name="读",  returns=["连通判定"]),
                        completed=True, summary="读完", notes=[],
                        reads={"连通判定": "连通"})
     assert r.reads == {"连通判定": "连通"} and r.completed
@@ -657,8 +657,8 @@ def test_missing_ui_return_fields_scopes_empty_allowance_to_the_field():
 def test_missing_ui_return_fields_ignores_non_ui_reads():
     from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
 
-    read_run = Run(var="r", name="读取状态", kind="read", returns=["状态"])
-    query_run = Run(var="q", name="查询状态", kind="data_query", returns=["状态"])
+    read_run = Read(var="r", name="读取状态",  returns=["状态"])
+    query_run = Query(var="q", name="查询状态",  returns=["状态"])
     assert _missing_ui_return_fields(read_run, {}) == []
     assert _missing_ui_return_fields(query_run, {}) == []
 
@@ -695,10 +695,9 @@ def test_empty_return_replan_read_is_forced_interactive():
     from gui_agent.core.orchestrator.callframe import force_interactive_return_recovery as _force_interactive_return_recovery
 
     program = Program(statements=[
-        Run(
+        Read(
             var="repo",
-            name="读取详情页统计",
-            kind="read",
+            name="读取详情页统计", 
             returns=["stars_count", "contributors_count"],
             success_condition="统计清晰可见",
             read_spec="stars_count: stars; contributors_count: contributors",
@@ -722,7 +721,7 @@ def test_non_empty_return_replan_leaves_read_unchanged():
     from gui_agent.core.orchestrator.callframe import force_interactive_return_recovery as _force_interactive_return_recovery
 
     program = Program(statements=[
-        Run(var="r", name="读取状态", kind="read", returns=["状态"])
+        Read(var="r", name="读取状态",  returns=["状态"])
     ])
 
     out = _force_interactive_return_recovery(program, "普通纠正")
@@ -745,7 +744,7 @@ def test_normalize_confirm_read_gates_rewrites_action_before_read():
         Run(name="进页", kind="navigation", success_condition="页面已显示"),
         Run(name="设起终点并执行检测", kind="action",
             success_condition="检测结果（连通标记或不可达提示）已显示在界面"),  # result gate
-        Run(var="r", name="读连通", kind="read", returns=["连通状态"], read_spec="看绿✓"),
+        Read(var="r", name="读连通",  returns=["连通状态"], read_spec="看绿✓"),
         Finish(message="{r[连通状态]}"),
     ])
     out = normalize_confirm_read_gates(prog)
@@ -814,11 +813,11 @@ def test_normalize_confirm_read_gates_recurses_into_if_branches():
     # the otherwise branch (no action→read pair) is untouched.
     from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
     prog = Program(statements=[
-        Run(var="r", name="读判定", kind="read", returns=["是否可达"], read_spec="x"),
+        Read(var="r", name="读判定",  returns=["是否可达"], read_spec="x"),
         If(cond=Cond(var="r", field="是否可达", value="可达"),
            then=[
                Run(name="建单", kind="action", success_condition="订单创建成功提示"),  # 后跟 confirm-read
-               Run(var="c", name="确认建单", kind="read", returns=["建单结果"], read_spec="y"),
+               Read(var="c", name="确认建单",  returns=["建单结果"], read_spec="y"),
                Finish(message="{c[建单结果]}"),
            ],
            otherwise=[Finish(message="不可达")]),
@@ -841,7 +840,7 @@ def test_normalize_confirm_read_converts_filter_before_read_to_action():
     prog = Program(statements=[
         Run(name="提交 Review 列关键词 best 的筛选", kind="filter",
             success_condition="列表只显示 Review 包含 best 的记录"),
-        Run(var="r", name="读取评论总数", kind="read", returns=["总数"],
+        Read(var="r", name="读取评论总数",  returns=["总数"],
             read_spec="总数：读取 grid 顶部 N records found 中的 N"),
     ])
     out = normalize_confirm_read_gates(prog)
@@ -860,7 +859,7 @@ def test_normalize_confirm_read_leaves_filter_before_data_query_strict():
     from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="提交订单筛选", kind="filter", success_condition="列表只显示匹配订单"),
-        Run(var="q", name="统计邮箱", kind="data_query", returns=["emails"],
+        Query(var="q", name="统计邮箱",  returns=["emails"],
             sql="SELECT customer_email FROM data"),
     ])
     out = normalize_confirm_read_gates(prog)
@@ -873,11 +872,11 @@ def test_normalize_confirm_read_leaves_filter_before_data_query_strict():
 def test_normalize_confirm_read_converts_filter_inside_if_branch():
     from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates
     prog = Program(statements=[
-        Run(var="d", name="读判定", kind="read", returns=["需要查询"], read_spec="x"),
+        Read(var="d", name="读判定",  returns=["需要查询"], read_spec="x"),
         If(cond=Cond(var="d", field="需要查询", value="是"),
            then=[
                Run(name="提交搜索条件", kind="filter", success_condition="搜索结果均匹配条件"),
-               Run(var="r", name="读取结果数", kind="read", returns=["结果数"], read_spec="读 records found"),
+               Read(var="r", name="读取结果数",  returns=["结果数"], read_spec="读 records found"),
            ],
            otherwise=[Finish(message="无需查询")]),
     ])
@@ -913,7 +912,7 @@ def test_normalize_precondition_gates_is_flag_based_not_keyword():
 def test_normalize_precondition_gates_recurses_and_idempotent():
     from gui_agent.core.orchestrator.engine import normalize_precondition_gates
     prog = Program(statements=[
-        Run(var="d", name="读判定", kind="read", returns=["x"], read_spec="y"),
+        Read(var="d", name="读判定",  returns=["x"], read_spec="y"),
         If(cond=Cond(var="d", field="x", value="1"),
            then=[Run(name="确保已进入编辑模式", kind="navigation", precondition=True,
                      success_condition="看到编辑面板")],
@@ -988,7 +987,7 @@ def test_normalize_navigate_submit_gates_skips_when_returns_present():
 def test_if_branches_on_structured_reads_end_to_end():
     # 串起来：read milestone 拿到结构化 {连通判定:连通} → if 走 then(建单)。
     prog = Program(statements=[
-        Run(var="d", name="读连通判定", kind="read", returns=["连通判定"]),
+        Read(var="d", name="读连通判定",  returns=["连通判定"]),
         If(cond=Cond(var="d", field="连通判定", value="连通"),
            then=[Run(name="建单", kind="action")],
            otherwise=[Finish(message="不可达")]),
@@ -1011,7 +1010,7 @@ def test_run_text_templated_from_prior_read_reaches_executor_filled():
     # entity even when the list holds siblings, not just whatever single row is on screen.
     prog = Program(statements=[
         Run(name="按配置新建机器人", kind="action"),
-        Run(var="r", name="读取实际名称", kind="read", returns=["实际名称"],
+        Read(var="r", name="读取实际名称",  returns=["实际名称"],
             read_spec="读列表新增行名称"),
         Run(name="编辑机器人 {r[实际名称]}，设预设站点 s10", kind="action",
             success_condition="{r[实际名称]} 的预设站点已为 s10"),
@@ -1042,7 +1041,7 @@ def test_run_target_template_empty_value_fails_fast_not_silent_gap():
     # 目标字段（name）的 {var[字段]} 在运行时读到空（read 读不到=当没有）→ 不能带空指代驱动动作，
     # 应 fail-fast 诚实报错，而不是把『编辑机器人 ，设…』静默送给 planner。
     prog = Program(statements=[
-        Run(var="r", name="读实际名称", kind="read", returns=["实际名称"], read_spec="x"),
+        Read(var="r", name="读实际名称",  returns=["实际名称"], read_spec="x"),
         Run(name="编辑机器人 {r[实际名称]}，设预设站点 s10", kind="action"),
     ])
     seen: list[str] = []
@@ -1060,7 +1059,7 @@ def test_run_acceptance_gate_template_empty_is_lenient():
     # 只有验收门（success_condition）的模板空，name 是具体的 → 动作目标没歧义，不该 fail-fast，
     # 门弱化可接受（与 finish 一样宽松）。
     prog = Program(statements=[
-        Run(var="r", name="读名称", kind="read", returns=["名称"], read_spec="x"),
+        Read(var="r", name="读名称",  returns=["名称"], read_spec="x"),
         Run(name="点击保存", kind="action", success_condition="{r[名称]} 已保存"),  # 仅门里有引用
     ])
     seen: list[str] = []
@@ -1078,23 +1077,23 @@ def test_validate_program_flags_forward_and_cross_branch_refs():
     # ① forward：先引用、后读取
     forward = Program(statements=[
         Run(name="编辑 {r[名称]}", kind="action"),
-        Run(var="r", name="读名称", kind="read", returns=["名称"], read_spec="x"),
+        Read(var="r", name="读名称",  returns=["名称"], read_spec="x"),
     ])
     assert any("尚未产生" in i for i in validate_program(forward))
     # ② cross-branch：一个分支读、另一个分支引用
     cross = Program(statements=[
-        Run(var="d", name="读判定", kind="read", returns=["判定"], read_spec="x"),
+        Read(var="d", name="读判定",  returns=["判定"], read_spec="x"),
         If(cond=Cond(var="d", field="判定", value="A"),
-           then=[Run(var="r", name="读名称", kind="read", returns=["名称"], read_spec="x")],
+           then=[Read(var="r", name="读名称",  returns=["名称"], read_spec="x")],
            otherwise=[Run(name="编辑 {r[名称]}", kind="action")]),
     ])
     assert any("尚未产生" in i for i in validate_program(cross))
     # ③ 两支都产生同一 var/字段 → 汇合后在 if 之后引用合法（dominance join）
     merged = Program(statements=[
-        Run(var="d", name="读判定", kind="read", returns=["判定"], read_spec="x"),
+        Read(var="d", name="读判定",  returns=["判定"], read_spec="x"),
         If(cond=Cond(var="d", field="判定", value="A"),
-           then=[Run(var="r", name="读名A", kind="read", returns=["名称"], read_spec="x")],
-           otherwise=[Run(var="r", name="读名B", kind="read", returns=["名称"], read_spec="x")]),
+           then=[Read(var="r", name="读名A",  returns=["名称"], read_spec="x")],
+           otherwise=[Read(var="r", name="读名B",  returns=["名称"], read_spec="x")]),
         Run(name="编辑 {r[名称]}", kind="action", success_condition="完成"),
     ])
     assert validate_program(merged) == []
@@ -1104,19 +1103,19 @@ def test_validate_program_flags_dangling_run_ref():
     from gui_agent.core.orchestrator.decomposer import validate_program
     # action 引用了 r 没 returns 的字段 → 悬空（会填空）
     bad_field = Program(statements=[
-        Run(var="r", name="读名称", kind="read", returns=["实际名称"], read_spec="x"),
+        Read(var="r", name="读名称",  returns=["实际名称"], read_spec="x"),
         Run(name="编辑 {r[不存在字段]}", kind="action"),
     ])
     assert any("不存在字段" in i for i in validate_program(bad_field))
     # 引用了不是任何 read 步 var 的变量 q → 指代落空
     bad_var = Program(statements=[
         Run(name="编辑 {q[名称]}", kind="action"),
-        Run(var="r", name="读", kind="read", returns=["名称"], read_spec="x"),
+        Read(var="r", name="读",  returns=["名称"], read_spec="x"),
     ])
     assert any("q" in i and "落空" in i for i in validate_program(bad_var))
     # 合法的 read-then-reference 不报悬空
     good = Program(statements=[
-        Run(var="r", name="读名称", kind="read", returns=["实际名称"], read_spec="x"),
+        Read(var="r", name="读名称",  returns=["实际名称"], read_spec="x"),
         Run(name="编辑机器人 {r[实际名称]}", kind="action", success_condition="完成"),
     ])
     assert validate_program(good) == []
@@ -1126,7 +1125,7 @@ def test_validate_program_flags_dangling_finish_ref():
     # docstring 一直声称「finish {var[field]} ref must resolve」，现在真校验了。
     from gui_agent.core.orchestrator.decomposer import validate_program
     prog = Program(statements=[
-        Run(var="r", name="读", kind="read", returns=["状态"], read_spec="x"),
+        Read(var="r", name="读",  returns=["状态"], read_spec="x"),
         Finish(message="结果：{r[不存在]}"),
     ])
     assert any("不存在" in i for i in validate_program(prog))
@@ -1137,13 +1136,13 @@ def test_validate_program_flags_bare_var_ref():
     # 字面量漏给 planner。校验要抓：{var} 里 var 是已知 read 的 var 却缺 [字段] → 坏引用、反馈重试。
     from gui_agent.core.orchestrator.decomposer import validate_program
     bad = Program(statements=[
-        Run(var="robot_name", name="读机器人名", kind="read", returns=["机器人名称"], read_spec="x"),
+        Read(var="robot_name", name="读机器人名",  returns=["机器人名称"], read_spec="x"),
         Run(name="编辑机器人 {robot_name}", kind="action", success_condition="完成"),
     ])
     assert any("裸" in i and "robot_name" in i for i in validate_program(bad))
     # 正确的 {var[field]} 不被裸校验误报；不是 read var 的 {x} 也不报（只盯已知 read var）
     ok = Program(statements=[
-        Run(var="r", name="读名", kind="read", returns=["实际名称"], read_spec="x"),
+        Read(var="r", name="读名",  returns=["实际名称"], read_spec="x"),
         Run(name="编辑 {r[实际名称]}，温度 {x} 档", kind="action", success_condition="完成"),
     ])
     assert not any("裸" in i for i in validate_program(ok))
@@ -1155,19 +1154,19 @@ def test_validate_program_branch_join_uses_field_intersection():
     # 时走到另一分支该字段缺失、模板静默填空（{r[名称]} 在只 returns 编号的那条路上落空）。
     from gui_agent.core.orchestrator.decomposer import validate_program
     diverge = Program(statements=[
-        Run(var="d", name="读判定", kind="read", returns=["判定"], read_spec="x"),
+        Read(var="d", name="读判定",  returns=["判定"], read_spec="x"),
         If(cond=Cond(var="d", field="判定", value="A"),
-           then=[Run(var="r", name="读名称", kind="read", returns=["名称"], read_spec="x")],
-           otherwise=[Run(var="r", name="读编号", kind="read", returns=["编号"], read_spec="x")]),
+           then=[Read(var="r", name="读名称",  returns=["名称"], read_spec="x")],
+           otherwise=[Read(var="r", name="读编号",  returns=["编号"], read_spec="x")]),
         Run(name="编辑 {r[名称]}", kind="action", success_condition="完成"),  # 名称只有 then 支产出
     ])
     assert any("名称" in i for i in validate_program(diverge))   # 字段并集会漏报，交集抓住
     # 双支共有字段（都 returns「标识」）则放过；各自独有的字段不进 scope
     common = Program(statements=[
-        Run(var="d", name="读判定", kind="read", returns=["判定"], read_spec="x"),
+        Read(var="d", name="读判定",  returns=["判定"], read_spec="x"),
         If(cond=Cond(var="d", field="判定", value="A"),
-           then=[Run(var="r", name="读A", kind="read", returns=["标识", "名称"], read_spec="x")],
-           otherwise=[Run(var="r", name="读B", kind="read", returns=["标识", "编号"], read_spec="x")]),
+           then=[Read(var="r", name="读A",  returns=["标识", "名称"], read_spec="x")],
+           otherwise=[Read(var="r", name="读B",  returns=["标识", "编号"], read_spec="x")]),
         Run(name="编辑 {r[标识]}", kind="action", success_condition="完成"),  # 标识双支都有 → 合法
     ])
     assert validate_program(common) == []
@@ -1197,7 +1196,7 @@ def test_finish_on_entirely_empty_read_is_incomplete():
     # off-screen / wrong page) feeds a finish. The program reached the end, but its answer
     # is hollow → finish_incomplete must be True so goal_completed stays False (result.py).
     prog = Program(statements=[
-        Run(var="r", name="读取前2个搜索词", kind="read", returns=["Top Search Terms"],
+        Read(var="r", name="读取前2个搜索词",  returns=["Top Search Terms"],
             read_spec="读 Last Search Terms 表格前两行"),
         Finish(message="商店的前 2 个搜索词是：{r[Top Search Terms]}"),
     ])
@@ -1215,7 +1214,7 @@ def test_finish_citing_blank_field_of_nonempty_read_not_incomplete():
     # blank field must NOT be flagged. This protects the otherwise-branch finish
     # "不可达原因：{d[不可达原因]}" from a per-ref rule that would mis-kill it.
     prog = Program(statements=[
-        Run(var="d", name="读连通判定", kind="read", returns=["连通判定", "不可达原因"],
+        Read(var="d", name="读连通判定",  returns=["连通判定", "不可达原因"],
             read_spec="连通判定看图标；不可达原因可达时留空"),
         Finish(message="不可达原因：{d[不可达原因]}"),   # 引用的恰好是空字段，但另一字段非空
     ])
@@ -1229,7 +1228,7 @@ def test_finish_citing_blank_field_of_nonempty_read_not_incomplete():
 def test_finish_with_no_refs_is_not_incomplete():
     # A plain-text finish (no {var[field]}) can't be hollowed by an empty read → never flagged.
     prog = Program(statements=[
-        Run(var="r", name="读", kind="read", returns=["x"], read_spec="y"),
+        Read(var="r", name="读",  returns=["x"], read_spec="y"),
         Finish(message="任务已完成"),   # 不引用任何 read
     ])
     res = ProgramRunner(lambda run: RunResult(completed=True, reads={"x": ""})).run(prog)

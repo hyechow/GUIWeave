@@ -18,6 +18,7 @@ from gui_agent.core.orchestrator import (
     drive,
 )
 from gui_agent.core.orchestrator.validator import validate_program
+from gui_agent.core.orchestrator.program import Read
 
 
 _MATERIAL_OF = {"Minerva": "Cotton", "Eos": "Fleece"}
@@ -54,7 +55,7 @@ def test_body_goal_decomposes_per_row_and_merges_contract():
     def subdecompose_fn(goal: str) -> Program:
         sub_goals_seen.append(goal)
         return Program(statements=[
-            Run(var="d", name=f"读父产品主材质::{goal}", kind="read", returns=["material"]),
+            Read(var="d", name=f"读父产品主材质::{goal}",  returns=["material"]),
         ])
 
     def execute(run: Run) -> RunResult:
@@ -88,7 +89,7 @@ def test_body_present_executes_body_not_subdecompose():
         statements=[ForEach(
             var="row", into="materials", returns=["Name"],
             body_goal="找 {row[Name]} 的父产品读主材质",  # docstring only
-            body=[Run(var="d", name="读 {row[Name]} 父产品材质", kind="read", returns=["material"])],
+            body=[Read(var="d", name="读 {row[Name]} 父产品材质",  returns=["material"])],
         )],
     )
     subcalls: list[str] = []
@@ -160,7 +161,7 @@ def test_validator_body_goal_with_body_is_docstring_ok():
     # The agentic-only checks (returns/template) don't apply because the body carries the steps.
     p = Program(statements=[ForEach(
         var="row", returns=["Name"], body_goal="找 {row[Name]} 的父产品读材质",
-        body=[Run(var="d", name="打开 {row[Name]} 的父产品", kind="read", returns=["material"])],
+        body=[Read(var="d", name="打开 {row[Name]} 的父产品",  returns=["material"])],
     )])
     codes = _codes(p)
     assert not any(c.startswith("FOREACH_BODY_GOAL") for c in codes), codes

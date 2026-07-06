@@ -8,6 +8,7 @@ from gui_agent.core.orchestrator import (
     Compute, Cond, Finish, ForEach, If, Interpreter, Program, Run, RunResult, drive,
 )
 from gui_agent.core.orchestrator.expansion import ForeachExpansion, _parse_and_validate
+from gui_agent.core.orchestrator.program import Read
 
 ROWS = [
     {"id": "1842", "sku": "WP05-28-Gray", "price": "$75.00"},
@@ -236,7 +237,7 @@ def test_subgoal_if_nested_finish_also_stripped():
     ])
     def subdecompose(goal):
         return Program(goal=goal, statements=[
-            Run(kind="read", var="v", name="读状态", returns=["s"], read_spec="读", success_condition="ok"),
+            Read( var="v", name="读状态", returns=["s"], read_spec="读", success_condition="ok"),
             If(cond=Cond(var="v", field="s", cmp="==", value="skip"),
                then=[Finish(message="跳过")],                   # nested finish
                otherwise=[Run(kind="action", name="处理", success_condition="ok")]),

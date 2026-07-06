@@ -155,7 +155,7 @@ def drive_pending_non_ui(
         rows: list[dict[str, str]] = []
         completed = True
         summary = f"读取 {'、'.join(cur_run.returns) or cur_run.name}"
-        executed_sql = cur_run.sql
+        executed_sql = getattr(cur_run, "sql", "")  # Query-only field (sibling IR)
         if cur_run.kind == "navigation" and _direct_back(cur_run, platform):
             nav_n += 1
             return_url = direct_return_stack.pop() if direct_return_stack else ""
@@ -266,7 +266,7 @@ def drive_pending_non_ui(
                     goal=context.goal or "",
                     run_name=cur_run.name,
                     requested_returns=list(cur_run.returns),
-                    original_sql=cur_run.sql,
+                    original_sql=getattr(cur_run, "sql", ""),
                     tables=query_tables,
                     failure=reason,
                     recent_ui_context=_recent_ui_context(context),
@@ -296,7 +296,7 @@ def drive_pending_non_ui(
             try:
                 reads = execute_data_query(
                     query_tables,
-                    cur_run.sql,
+                    getattr(cur_run, "sql", ""),
                     cur_run.returns,
                     require_complete=getattr(cur_run, "data_scope", "complete") != "current",
                 )

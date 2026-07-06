@@ -18,7 +18,7 @@ from typing import Literal, Optional
 
 from gui_agent.core.schemas import Milestone
 
-from .program import TEMPLATE_RE, Call, Compute, Finish, ForEach, If, Program, Run, Stmt
+from .program import TEMPLATE_RE, Call, Compute, Finish, ForEach, If, Program, Query, Read, Run, RunLike, Stmt
 from .runner import RunResult
 
 # DSL RunKind -> feat-android (kind, completion_strategy).
@@ -82,7 +82,7 @@ def task_type_for(run: Run) -> Literal["action", "analysis"]:
 
 
 def package_result(
-    run: Run, *, completed: bool, summary: str, notes: list[str],
+    run: RunLike, *, completed: bool, summary: str, notes: list[str],
     reads: dict[str, str] | None = None,
     rows: list[dict[str, str]] | None = None,
 ) -> RunResult:
@@ -197,9 +197,8 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
             continue
         if (
             isinstance(s, Run)
-            and isinstance(nxt, Run)
+            and isinstance(nxt, Read)
             and s.kind in _RETURN_READ_SOURCE_KINDS
-            and nxt.kind in _RETURN_READ_TARGET_KINDS
             and nxt.returns
             and (not s.var or not nxt.var or s.var == nxt.var)
         ):
@@ -224,7 +223,7 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
             i += 2
             continue
         if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
-            if isinstance(nxt, Run) and nxt.kind in _RETURN_READ_TARGET_KINDS:
+            if isinstance(nxt, Read):
                 update = {"success_condition": _trigger_success_condition(s)}
                 if s.kind == "filter":
                     update["kind"] = "action"
@@ -245,8 +244,8 @@ def _program_is_pure_navigate(stmts: list[Stmt]) -> bool:
     """A navigate/show program: no statement anywhere requests structured data — no Run with
     returns, no data_query, no foreach (collection). Such a task is judged purely by arrival."""
     for s in stmts:
-        if isinstance(s, Run):
-            if s.returns or s.kind == "data_query":
+        if isinstance(s, RunLike):
+            if s.returns or isinstance(s, Query):
                 return False
         elif isinstance(s, ForEach):
             return False
@@ -286,7 +285,7 @@ def _gate_terminal_navigate_submit(stmts: list[Stmt]) -> list[Stmt]:
                     update={"success_condition": _NAV_SUBMIT_GATE_TMPL.format(name=s.name)}
                 )
             break
-        if isinstance(s, Run):  # a navigation/read terminal — leave arrival checking to it
+        if isinstance(s, RunLike):  # a navigation/read terminal — leave arrival checking to it
             break
     return out
 
@@ -380,7 +379,7 @@ def normalize_precondition_gates(program: Program) -> Program:
 def _refs_to_loop_var(stmts: list[Stmt], loop_var: str) -> set[str]:
     refs: set[str] = set()
     for s in stmts:
-        if isinstance(s, Run):
+        if isinstance(s, RunLike):
             for text in (s.name, s.success_condition, s.read_spec):
                 refs.update(field.strip().strip("'\"") for var, field in TEMPLATE_RE.findall(text or "") if var == loop_var)
         elif isinstance(s, Call):
@@ -561,7 +560,7 @@ def _func_exit_sc(name: str, funcs: dict, _seen: frozenset = frozenset()) -> str
         return ""
     last_sc = ""
     for s in fn.body:
-        if isinstance(s, Run) and not s.is_query:
+        if isinstance(s, Run):  # interactive-only by type now; queries never move the page
             last_sc = s.success_condition
         elif isinstance(s, Call):
             last_sc = _func_exit_sc(s.func, funcs, _seen | {name})
@@ -577,11 +576,11 @@ def _chain_block(stmts: list[Stmt], entry_sc: str, funcs: dict) -> list[Stmt]:
     out: list[Stmt] = []
     prev = entry_sc
     for s in stmts:
-        if isinstance(s, Run) and s.is_query:
-            # Non-interactive pure query (read/data_query): consumes the current frame/table
-            # snapshot, never touches the UI, page unchanged → FROM carries through, same as
-            # Compute. Treating it as an ordinary Run broke the chain: a data_query typically
-            # has NO success_condition, so the NEXT UI run's from_state went blank.
+        if isinstance(s, (Read, Query)):
+            # Non-interactive pure query: consumes the current frame/table snapshot, never
+            # touches the UI, page unchanged → FROM carries through, same as Compute.
+            # (Treating it as an ordinary Run broke the chain: a data_query typically has NO
+            # success_condition, so the NEXT UI run's from_state went blank.)
             out.append(s)
         elif isinstance(s, Run):
             out.append(s.model_copy(update={"from_state": prev}))

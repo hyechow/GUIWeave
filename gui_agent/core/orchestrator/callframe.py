@@ -293,17 +293,13 @@ def force_interactive_return_recovery(program: object, directive: str) -> object
     if not hasattr(program, "statements") or not hasattr(program, "model_copy"):
         return program
 
-    from gui_agent.core.orchestrator.program import Run
+    from gui_agent.core.orchestrator.program import Read, Run
 
     statements = list(getattr(program, "statements", []) or [])
     if not statements:
         return program
     first = statements[0]
-    if (
-        not isinstance(first, Run)
-        or first.kind != "read"
-        or not first.returns
-    ):
+    if not isinstance(first, Read) or not first.returns:
         return program
 
     fields = "、".join(str(field) for field in first.returns)
@@ -394,14 +390,14 @@ def _anchor_tokens(text: str) -> list[str]:
 
 def _run_texts(program: object) -> list[tuple[str, str]]:
     """(kind, normalized name+success_condition+sql) for every Run in the program (recursive)."""
-    from gui_agent.core.orchestrator.program import ForEach, If, Run
+    from gui_agent.core.orchestrator.program import ForEach, If, RunLike
 
     out: list[tuple[str, str]] = []
 
     def walk(stmts) -> None:
         for s in stmts or []:
-            if isinstance(s, Run):
-                out.append((s.kind, _norm_text(f"{s.name} {s.success_condition} {s.sql}")))
+            if isinstance(s, RunLike):
+                out.append((s.kind, _norm_text(f"{s.name} {s.success_condition} {getattr(s, 'sql', '')}")))
             elif isinstance(s, If):
                 walk(s.then)
                 walk(s.otherwise)

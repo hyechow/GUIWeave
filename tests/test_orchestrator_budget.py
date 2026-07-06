@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gui_agent.core.orchestrator import Cond, Finish, If, Program, Run, estimate_program_turns
+from gui_agent.core.orchestrator import Cond, Finish, If, Program, Read, Query, Run, estimate_program_turns
 
 
 def test_simple_program_stays_under_default_floor():
@@ -46,18 +46,18 @@ def test_complex_order_action_expands_budget():
         Run(name="确保已登录并处于首页", kind="navigation", precondition=True),
         Run(name="进入路径连通性工具页面", kind="navigation"),
         Run(name="设置起点、终点并触发检测", kind="action"),
-        Run(var="r", name="读取路径连通性检测结果", kind="read", returns=["是否连通"]),
+        Read(var="r", name="读取路径连通性检测结果",  returns=["是否连通"]),
         If(
             cond=Cond(var="r", field="是否连通", value="连通"),
             then=[
                 Run(name="进入虚拟机器人列表页面", kind="navigation"),
-                Run(var="t", name="读取第一个虚拟机器人的名称", kind="read", returns=["机器人名称"]),
+                Read(var="t", name="读取第一个虚拟机器人的名称",  returns=["机器人名称"]),
                 Run(name="进入订单列表页面", kind="navigation"),
                 Run(
                     name="创建移动订单（机器人={t[机器人名称]}, 动作序列：移动到 s10 -> 移动到 s9）",
                     kind="action",
                 ),
-                Run(var="o", name="确认订单创建结果", kind="read", returns=["订单状态"]),
+                Read(var="o", name="确认订单创建结果",  returns=["订单状态"]),
                 Finish(message="{o[订单状态]}"),
             ],
             otherwise=[Finish(message="不可达")],
@@ -100,12 +100,12 @@ def test_foreach_program_budgets_body_per_iteration_and_lifts_cap():
     from gui_agent.core.orchestrator import ForEach
 
     prog = Program(statements=[
-        Run(var="r", name="读候选行", kind="read", returns=["id"]),  # list_read field removed
+        Read(var="r", name="读候选行",  returns=["id"]),  # list_read field removed
         ForEach(var="row", over="r", into="reviews", body=[
             Run(name="打开评论 {row[id]} 详情", kind="action"),
-            Run(var="d", name="读评分昵称", kind="read", returns=["rating", "nickname"]),
+            Read(var="d", name="读评分昵称",  returns=["rating", "nickname"]),
         ]),
-        Run(var="q", name="筛 rating<=3", kind="data_query", returns=["nickname"], sql="x"),
+        Query(var="q", name="筛 rating<=3",  returns=["nickname"], sql="x"),
         Finish(message="{q[nickname]}"),
     ])
 

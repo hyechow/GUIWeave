@@ -13,6 +13,7 @@ from gui_agent.core.orchestrator import (
     insert_loop_entry_arrivals,
 )
 from gui_agent.core.orchestrator.engine import _ENTRY_ARRIVAL_SC
+from gui_agent.core.orchestrator.program import Query
 
 
 def _resolve_fn() -> FunctionDef:
@@ -51,7 +52,7 @@ def test_no_arrival_when_body_stays_on_one_page():
     # filter then read on the SAME page (no later navigation) → re-entry == entry → no guard.
     fn = FunctionDef(name="f", params=[], returns=["x"], body=[
         Run(kind="filter", name="筛 X", success_condition="已筛"),
-        Run(kind="data_query", name="查", sql="SELECT 1"),
+        Query( name="查", sql="SELECT 1"),
     ])
     p = insert_loop_entry_arrivals(Program(goal="g", functions=[fn], statements=[]))
     assert p.functions[0].body[0].name == "筛 X"  # unchanged

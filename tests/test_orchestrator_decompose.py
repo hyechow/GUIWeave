@@ -20,6 +20,7 @@ from gui_agent.core.orchestrator import (
     validate_program,
 )
 from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, _table_schema_prompt
+from gui_agent.core.orchestrator.program import Query, Read
 
 
 def _connectivity_draft() -> _PlanDraft:
@@ -48,7 +49,7 @@ def test_to_program_maps_runs_kinds_and_var():
     nav, act, rd, branch = prog.statements
     assert isinstance(nav, Run) and nav.kind == "navigation" and nav.var is None  # 空 var → None
     assert isinstance(act, Run) and act.kind == "action"
-    assert isinstance(rd, Run) and rd.kind == "read" and rd.var == "d" and rd.returns == ["连通判定", "不可达原因"]
+    assert isinstance(rd, Read) and rd.var == "d" and rd.returns == ["连通判定", "不可达原因"]
     assert "绿✓=连通" in rd.read_spec          # 任务级读取说明从 draft 透传到 read Run
     assert isinstance(branch, If)
 
@@ -93,7 +94,7 @@ def test_to_program_maps_data_query_sql():
     ])
     prog = to_program(draft, "")
     query = prog.statements[0]
-    assert isinstance(query, Run)
+    assert isinstance(query, Query)
     assert query.kind == "data_query"
     assert query.var == "q"
     assert query.returns == ["emails"]
@@ -146,7 +147,7 @@ def test_validate_empty_program():
 
 def test_validate_if_references_unknown_var():
     prog = Program(statements=[
-        Run(var="d", name="读", kind="read", returns=["连通判定"]),
+        Read(var="d", name="读",  returns=["连通判定"]),
         If(cond=Cond(var="X", field="连通判定", value="连通"),
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
@@ -157,7 +158,7 @@ def test_validate_if_references_unknown_var():
 
 def test_validate_if_references_unknown_field():
     prog = Program(statements=[
-        Run(var="d", name="读", kind="read", returns=["连通判定"]),
+        Read(var="d", name="读",  returns=["连通判定"]),
         If(cond=Cond(var="d", field="别的字段", value="x"),
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
@@ -167,14 +168,14 @@ def test_validate_if_references_unknown_field():
 
 def test_validate_condition_operator_operands():
     missing_values = Program(statements=[
-        Run(var="r", name="读", kind="read", returns=["状态"]),
+        Read(var="r", name="读",  returns=["状态"]),
         If(cond=Cond(var="r", field="状态", cmp="in"),
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
     assert any("缺少 cond_values" in i for i in validate_program(missing_values))
 
     missing_value = Program(statements=[
-        Run(var="r", name="读", kind="read", returns=["提示"]),
+        Read(var="r", name="读",  returns=["提示"]),
         If(cond=Cond(var="r", field="提示", cmp="contains"),
            then=[Finish(message="a")], otherwise=[Finish(message="b")]),
     ])
@@ -220,18 +221,18 @@ def test_validate_fuzzy_retry_preserves_filter_field():
 
 
 def test_validate_read_without_returns_or_var():
-    no_returns = Program(statements=[Run(var="d", name="读", kind="read", returns=[])])
+    no_returns = Program(statements=[Read(var="d", name="读",  returns=[])])
     assert any("没有 returns 字段" in i for i in validate_program(no_returns))
-    no_var = Program(statements=[Run(name="读", kind="read", returns=["x"])])
+    no_var = Program(statements=[Read(name="读",  returns=["x"])])
     assert any("没有绑定 var" in i for i in validate_program(no_var))
 
 
 def test_validate_data_query_requires_var_returns_and_sql():
-    no_returns = Program(statements=[Run(var="q", name="查", kind="data_query", sql="SELECT 1")])
+    no_returns = Program(statements=[Query(var="q", name="查",  sql="SELECT 1")])
     assert any("data_query" in i and "returns" in i for i in validate_program(no_returns))
-    no_var = Program(statements=[Run(name="查", kind="data_query", returns=["x"], sql="SELECT 1")])
+    no_var = Program(statements=[Query(name="查",  returns=["x"], sql="SELECT 1")])
     assert any("data_query" in i and "绑定 var" in i for i in validate_program(no_var))
-    no_sql = Program(statements=[Run(var="q", name="查", kind="data_query", returns=["x"])])
+    no_sql = Program(statements=[Query(var="q", name="查",  returns=["x"])])
     assert any("data_query" in i and "没有 sql" in i for i in validate_program(no_sql))
 
 
@@ -239,10 +240,9 @@ def test_validate_data_query_rejects_schema_mapping_text_in_sql():
     bad = Program(
         goal="Find grouped records",
         statements=[
-            Run(
+            Query(
                 var="q",
-                name="查询分组结果",
-                kind="data_query",
+                name="查询分组结果", 
                 returns=["result"],
                 sql=(
                     "WITH counts AS (SELECT Customer->customer AS customer_email, COUNT(*) AS cnt "
@@ -258,10 +258,9 @@ def test_validate_data_query_rejects_schema_mapping_text_in_sql():
     good = Program(
         goal=bad.goal,
         statements=[
-            Run(
+            Query(
                 var="q",
-                name="查询分组结果",
-                kind="data_query",
+                name="查询分组结果", 
                 returns=["result"],
                 sql=(
                     "WITH counts AS (SELECT customer_email, COUNT(*) AS cnt "
@@ -278,10 +277,9 @@ def test_validate_data_query_rejects_quoted_display_labels_in_sql():
     bad = Program(
         goal="Find grouped records",
         statements=[
-            Run(
+            Query(
                 var="q",
-                name="查询分组结果",
-                kind="data_query",
+                name="查询分组结果", 
                 returns=["result"],
                 sql=(
                     'WITH counts AS (SELECT "Customer Email", COUNT(*) AS cnt '
@@ -299,10 +297,9 @@ def test_validate_ranked_data_query_rejects_limit_offset_tie_drop():
     bad = Program(
         goal="Get customer email(s) who completed the second most number of orders",
         statements=[
-            Run(
+            Query(
                 var="q",
-                name="查询完成订单数第二多的客户邮箱",
-                kind="data_query",
+                name="查询完成订单数第二多的客户邮箱", 
                 returns=["customer_email"],
                 sql=(
                     "SELECT customer_email FROM data WHERE status = 'Complete' "
@@ -317,10 +314,9 @@ def test_validate_ranked_data_query_rejects_limit_offset_tie_drop():
     good = Program(
         goal=bad.goal,
         statements=[
-            Run(
+            Query(
                 var="q",
-                name="查询完成订单数第二多的客户邮箱",
-                kind="data_query",
+                name="查询完成订单数第二多的客户邮箱", 
                 returns=["customer_email"],
                 sql=(
                     "WITH counts AS (SELECT customer_email, COUNT(*) AS cnt FROM data "
@@ -337,10 +333,10 @@ def test_validate_ranked_data_query_rejects_limit_offset_tie_drop():
 def test_validate_walks_into_branches():
     # read 嵌在 then 分支里也能被识别为 cond 来源
     prog = Program(statements=[
-        Run(var="top", name="读顶层", kind="read", returns=["flag"]),
+        Read(var="top", name="读顶层",  returns=["flag"]),
         If(cond=Cond(var="top", field="flag", value="1"),
            then=[
-               Run(var="inner", name="读分支内", kind="read", returns=["sub"]),
+               Read(var="inner", name="读分支内",  returns=["sub"]),
                If(cond=Cond(var="inner", field="sub", value="ok"),
                   then=[Finish(message="ok")], otherwise=[Finish(message="no")]),
            ],

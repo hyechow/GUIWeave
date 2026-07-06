@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.orchestrator import Compute, Finish, ForEach, If, Run, decompose
+from gui_agent.core.orchestrator import Compute, Finish, ForEach, If, Query, Read, Run, RunLike, decompose
 from gui_agent.core.orchestrator.engine import normalize_confirm_read_gates, normalize_precondition_gates
 from gui_agent.core.orchestrator.program import TEMPLATE_RE
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
@@ -66,7 +66,7 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
 def _flatten_runs(stmts: list) -> list[Run]:
     out: list[Run] = []
     for s in stmts:
-        if isinstance(s, Run):
+        if isinstance(s, RunLike):
             out.append(s)
         elif isinstance(s, If):
             out.extend(_flatten_runs(s.then))
@@ -182,9 +182,9 @@ def _confirm_read_actions(stmts: list) -> list[Run]:
     """
     out: list[Run] = []
     for i, s in enumerate(stmts):
-        if isinstance(s, Run) and s.kind == "action":
+        if isinstance(s, RunLike) and s.kind == "action":
             nxt = stmts[i + 1] if i + 1 < len(stmts) else None
-            if s.returns or (isinstance(nxt, Run) and nxt.kind == "read"):
+            if s.returns or (isinstance(nxt, RunLike) and nxt.kind == "read"):
                 out.append(s)
         elif isinstance(s, If):
             out.extend(_confirm_read_actions(s.then))
@@ -196,9 +196,9 @@ def _adjacent_run_pairs(stmts: list) -> list[tuple[Run, Run]]:
     """Adjacent Run pairs within each statement list, recursing into if branches."""
     out: list[tuple[Run, Run]] = []
     for i, s in enumerate(stmts):
-        if isinstance(s, Run):
+        if isinstance(s, RunLike):
             nxt = stmts[i + 1] if i + 1 < len(stmts) else None
-            if isinstance(nxt, Run):
+            if isinstance(nxt, RunLike):
                 out.append((s, nxt))
         elif isinstance(s, If):
             out.extend(_adjacent_run_pairs(s.then))
@@ -421,7 +421,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
 
             def _walk_gate(stmts, under):
                 for s in stmts:
-                    if isinstance(s, Run):
+                    if isinstance(s, RunLike):
                         if _order(s) and under:
                             gated.append(s)
                     elif isinstance(s, If):
@@ -429,7 +429,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                         _walk_gate(s.then, deeper)
                         _walk_gate(s.otherwise, deeper)
             _walk_gate(program.statements, False)
-            top_orders = [s for s in program.statements if isinstance(s, Run) and _order(s)]
+            top_orders = [s for s in program.statements if isinstance(s, RunLike) and _order(s)]
 
             if not conn_vars:
                 details.append("没有检测连通的返回值步骤（应先产生连通检测 returns，再据此 if 分支）")
@@ -492,12 +492,12 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             def _walk(stmts):
                 nonlocal ok
                 for i, s in enumerate(stmts):
-                    if isinstance(s, Run):
+                    if isinstance(s, RunLike):
                         nxt = stmts[i + 1] if i + 1 < len(stmts) else None
                         if (
                             s.kind == "action"
                             and any(k in s.name for k in ("订单", "建单", "下单"))
-                            and isinstance(nxt, Run)
+                            and isinstance(nxt, RunLike)
                             and nxt.kind == "read"
                         ):
                             ok = True
@@ -991,7 +991,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
 
             def _walk_template_texts(stmts):
                 for s in stmts:
-                    if isinstance(s, Run):
+                    if isinstance(s, RunLike):
                         for attr in ("name", "success_condition", "read_spec"):
                             yield f"{s.kind}:{s.name}:{attr}", getattr(s, attr, "") or ""
                     elif isinstance(s, If):
@@ -1065,7 +1065,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             body_open_id: list[str] = []
             for fe in foreaches:
                 for b in fe.body:
-                    if isinstance(b, Run) and any(k in b.name for k in ("打开", "open", "进入", "详情")):
+                    if isinstance(b, RunLike) and any(k in b.name for k in ("打开", "open", "进入", "详情")):
                         if re.search(r"\{row\[[^\]]*_url\]\}", b.name, re.I):
                             body_open_url = True
                         elif re.search(r"\{row\[", b.name):
@@ -1269,7 +1269,15 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "函数里的自身读取不能写成『当前结果列表点 SKU 那一行』；这是位置相关入口。应 foreach 采 "
                     "Action_url 并打开该 URL 直达自身详情，fallback 分支再单独回 Products 搜父。"
                 )
-            if not any(m in all_text for m in ("base_sku", "父 sku", "父sku", "sku={base", "sku = {base")):
+            # Accept any derived-parent-sku naming（base_sku / parent_sku / 父sku…）：the LLM's
+            # variable name is free; what matters is a DERIVED sku identity anchoring the parent
+            # search. A parent_sku-named textbook plan (compute rsplit → 搜索 {parent_sku} →
+            # SKU={parent_sku}+Type=Configurable) was flunked by the old base_sku-only tuple
+            # (2026-07-05 S8 smoke), inflating the "~1/3 base_sku flakiness" read on 07-04.
+            if not any(m in all_text for m in (
+                "base_sku", "parent_sku", "父 sku", "父sku",
+                "sku={base", "sku = {base", "sku={parent", "sku = {parent",
+            )):
                 details.append(
                     "父产品 fallback 应由 SKU 去 -SIZE-COLOR 后缀得到父 SKU，并以 SKU={base_sku} + "
                     "Type=Configurable Product 验证父行；不要把父 identity 建在产品名/品牌词上。"
@@ -2024,7 +2032,7 @@ def _case_program(case: dict):
 def _dump_program(program) -> None:
     def _dump_stmts(stmts, indent: str = "       ") -> None:
         for s in stmts:
-            if isinstance(s, Run):
+            if isinstance(s, RunLike):
                 fields = f" returns={s.returns!r}" if s.returns else ""
                 spec = f" read_spec={s.read_spec!r}" if s.read_spec else ""
                 domains = (

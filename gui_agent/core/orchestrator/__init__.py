@@ -9,7 +9,7 @@ Boundaries:
 """
 
 from .program import (
-    Call, Compute, Cond, CondCmp, Finish, ForEach, FunctionDef, If, Program, Query, Read, Run, RunResult, Stmt,
+    Call, Compute, Cond, CondCmp, Finish, ForEach, FunctionDef, If, InteractiveAction, Program, Query, Read, Run, RunLike, RunResult, Stmt,
 )
 from .decomposer import decompose, redecompose, to_program
 from .validator import IssueList, ValidationIssue, validate_program
@@ -39,7 +39,7 @@ from .engine import (
 )
 
 __all__ = [
-    "Call", "Compute", "Cond", "CondCmp", "Finish", "ForEach", "FunctionDef", "If", "Program", "Query", "Read", "Run", "RunResult", "Stmt",
+    "Call", "Compute", "Cond", "CondCmp", "Finish", "ForEach", "FunctionDef", "If", "InteractiveAction", "Program", "Query", "Read", "Run", "RunLike", "RunResult", "Stmt",
     "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
     "RunRecord", "drive", "summarize_progress", "structured_read", "DataQueryError", "execute_data_query",
     "decompose", "redecompose", "to_program", "validate_program",

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from .program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, Finish, ForEach, FunctionDef, If, Program, Run, Stmt
+from .program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, Finish, ForEach, FunctionDef, If, Program, Run, RunLike, Stmt
 
 # Severity is metadata for governance/measurement; today every rule equally triggers the one
 # repair-retry, so all issues are "error". Differentiating (e.g. "warn" advisory rules) is a
@@ -177,7 +177,7 @@ def _has_mutation_step(stmts: list[Stmt], function_defs: dict | None = None) -> 
     """Any action-kind Run, or a foreach body_goal whose text carries a mutation verb (the sub-goal
     is re-decomposed at runtime, so its TEXT is what promises the mutation)."""
     for s in stmts:
-        if isinstance(s, Run) and s.kind == "action":
+        if isinstance(s, RunLike) and s.kind == "action":
             return True
         if isinstance(s, ForEach):
             if getattr(s, "body_goal", "") and _MUTATE_STEP_CN_RE.search(s.body_goal.lower()):
@@ -196,7 +196,7 @@ def _has_mutation_step(stmts: list[Stmt], function_defs: dict | None = None) -> 
 def _has_result_source(stmts: list[Stmt], function_returns: dict[str, set[str]] | None = None) -> bool:
     function_returns = function_returns or {}
     for s in stmts:
-        if isinstance(s, Run) and (s.returns or s.kind == "data_query"):
+        if isinstance(s, RunLike) and (s.returns or s.kind == "data_query"):
             return True
         if isinstance(s, Call) and s.var and function_returns.get(s.func):
             return True
@@ -248,7 +248,7 @@ def validate_program(program: Program) -> list[ValidationIssue]:
 
     def _collect_result_vars(stmts: list[Stmt]) -> None:
         for s in stmts:
-            if isinstance(s, Run) and _produces_result(s):
+            if isinstance(s, RunLike) and _produces_result(s):
                 all_result_vars.add(s.var)
             elif isinstance(s, Call) and s.var and function_returns.get(s.func):
                 all_result_vars.add(s.var)
@@ -275,7 +275,7 @@ def validate_program(program: Program) -> list[ValidationIssue]:
         for s in stmts:
             if isinstance(s, Compute) and s.var:
                 _computes.append((s.var, s.expr or ""))
-            elif isinstance(s, Run):
+            elif isinstance(s, RunLike):
                 _consumer_text.extend([s.name or "", s.success_condition or "", s.read_spec or ""])
             elif isinstance(s, Finish):
                 _consumer_text.append(s.message or "")
@@ -355,11 +355,11 @@ def validate_program(program: Program) -> list[ValidationIssue]:
         # vars produced on BOTH branches survive past the join (a var read in one branch isn't
         # guaranteed downstream).
         for s in stmts:
-            if isinstance(s, Run):
+            if isinstance(s, RunLike):
                 # precondition is a state to ENSURE (确保已到达/已进入某状态) — only meaningful on a
                 # navigation step. On an action/read/filter it would be treated as already-satisfied
                 # and accepted on frame 1, prematurely passing a step that must actually run.
-                if s.precondition and s.kind != "navigation":
+                if getattr(s, "precondition", False) and s.kind != "navigation":
                     issues.add("PRECONDITION_NOT_NAVIGATION", 
                         f"步骤「{s.name}」标了 precondition=true 但 run_kind={s.kind}——"
                         "前置状态保障只能是 navigation 步（确保已到达/已进入某状态），"
@@ -675,7 +675,7 @@ def _retrieval_fields_overlap(left: list[str], right: list[str]) -> bool:
 def _flatten_branch_runs(stmts: list[Stmt]) -> list[Run]:
     out: list[Run] = []
     for item in stmts:
-        if isinstance(item, Run):
+        if isinstance(item, RunLike):
             out.append(item)
         elif isinstance(item, If):
             out.extend(_flatten_branch_runs(item.then))
@@ -727,7 +727,7 @@ def _function_opens_detail(fn: FunctionDef, function_defs: dict[str, FunctionDef
 
     def _walk(seq: list[Stmt]) -> bool:
         for item in seq:
-            if isinstance(item, Run) and _run_looks_like_detail_open(item):
+            if isinstance(item, RunLike) and _run_looks_like_detail_open(item):
                 return True
             if isinstance(item, If) and (_walk(item.then) or _walk(item.otherwise)):
                 return True
@@ -761,7 +761,7 @@ def _check_foreach_url_policy(
     url_keys = {_field_key(field) for field in url_fields}
 
     for item in loop.body:
-        if isinstance(item, Run) and _run_looks_like_detail_open(item):
+        if isinstance(item, RunLike) and _run_looks_like_detail_open(item):
             refs = _template_fields_for_var(_run_text(item), loop.var)
             ref_keys = {_field_key(field) for field in refs}
             if refs and not (ref_keys & url_keys):
@@ -790,7 +790,7 @@ def _check_foreach_url_policy(
 def _body_declared_fields(seq: list[Stmt], function_returns: dict[str, set[str]]) -> set[str]:
     fields: set[str] = set()
     for item in seq:
-        if isinstance(item, Run):
+        if isinstance(item, RunLike):
             fields.update(field for field in item.returns if field)
         elif isinstance(item, Compute):
             if item.var:
@@ -827,7 +827,7 @@ def _check_function_contract(
 
     def _walk(seq: list[Stmt]) -> None:
         for item in seq:
-            if isinstance(item, Run):
+            if isinstance(item, RunLike):
                 if (
                     item.returns
                     and _run_looks_like_detail_open(item)
@@ -864,7 +864,7 @@ def _check_retrieval_retry_preserves_field(stmts: list[Stmt], issues: IssueList)
         previous_fields: list[str] = []
         previous_label = ""
         for item in seq:
-            if isinstance(item, Run):
+            if isinstance(item, RunLike):
                 text = f"{item.name}\n{item.success_condition}\n{item.read_spec}"
                 field_text = f"{item.name}\n{item.success_condition}"
                 fields = _extract_retrieval_fields(field_text)
@@ -925,7 +925,7 @@ def _data_query_field_tokens(run: Run) -> set[str]:
     # '%Olivia%', or status = 'Complete'), not column identifiers — tokenizing through them would
     # mis-flag the value text as a missing/unknown column. (Double quotes are SQLite identifiers,
     # left intact so real column refs inside them are still validated.)
-    sql = re.sub(r"'[^']*'", " ", run.sql or "")
+    sql = re.sub(r"'[^']*'", " ", getattr(run, "sql", "") or "")
     ignored = _sql_derived_identifier_tokens(sql)
     for raw in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", sql):
         token = raw.lower()
@@ -1008,7 +1008,7 @@ def _check_foreach_data_query(
     def _body_result_fields(seq: list[Stmt], row_fields: set[str]) -> set[str]:
         fields = set(row_fields)
         for item in seq:
-            if isinstance(item, Run) and item.returns:
+            if isinstance(item, RunLike) and item.returns:
                 fields.update(field.lower() for field in item.returns)
             elif isinstance(item, Call):
                 fields.update(field.lower() for field in function_returns.get(item.func, set()))
@@ -1030,7 +1030,7 @@ def _check_foreach_data_query(
     def _walk_seq(seq: list[Stmt], pending: dict[str, tuple[str, set[str]]]) -> None:
         local = dict(pending)
         for s in seq:
-            if isinstance(s, Run):
+            if isinstance(s, RunLike):
                 if s.kind == "read" and s.var and s.returns:
                     # Track all read vars for foreach row_fields inference.
                     all_read_vars[s.var] = (s.name, {field.lower() for field in s.returns})
@@ -1131,7 +1131,7 @@ def _rank_query_drops_ties(goal_text: str, run: Run) -> bool:
     haystack = f"{goal_text}\n{run.name}\n{run.success_condition}".lower()
     if not re.search(r"\b(second|third|fourth|fifth|rank|most|least)\b|第[二三四五]|最多|最少|排名|并列", haystack):
         return False
-    sql = (run.sql or "").lower()
+    sql = (getattr(run, "sql", "") or "").lower()
     if not re.search(r"\b(count|group\s+by)\b", sql):
         return False
     return bool(re.search(r"\blimit\s+1\b", sql) or re.search(r"\boffset\s+\d+\b", sql))
@@ -1170,13 +1170,13 @@ def _temporal_limit_without_order(goal_text: str, run: Run) -> bool:
     haystack = f"{goal_text}\n{run.name}\n{run.success_condition}".lower()
     if not re.search(r"\b(last|recent|latest|newest|oldest)\b|最近|最后|最新|最旧|最早", haystack):
         return False
-    return _sql_has_limit_without_same_level_order(run.sql or "")
+    return _sql_has_limit_without_same_level_order(getattr(run, "sql", "") or "")
 
 def _temporal_aggregate_without_row_limit(goal_text: str, run: Run) -> bool:
     haystack = f"{goal_text}\n{run.name}\n{run.success_condition}".lower()
     if not re.search(r"\b(last|recent|latest|newest|oldest)\b|最近|最后|最新|最旧|最早", haystack):
         return False
-    sql = (run.sql or "").lower()
+    sql = (getattr(run, "sql", "") or "").lower()
     if not _AGGREGATE_FN_RE.search(sql):
         return False
     if re.search(r"\blimit\s+\d+\b", sql):

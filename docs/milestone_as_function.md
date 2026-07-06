@@ -93,9 +93,20 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
     LLM 面零改动、isinstance(s, Run) walker 零破坏）；`to_milestone`/`open_call` 对查询节点抛
     ValueError（查询 marshal 进执行器 = 类型错误）；read→navigation 升格显式重建为交互 Run
     （升格=重新分类，不是字段改写）；drive 循环与 callframe 守卫统一走 `is_query` 单谓词。
-- **S7 `af78124` + 本次** 本体论定稿：脚本生成总纲；CQS 框架废弃（`is_command`→`is_interactive`，
+- **S7 `af78124` + `f034c13`** 本体论定稿：脚本生成总纲；CQS 框架废弃（`is_command`→`is_interactive`，
   机制不变）；return_domains 进 worked examples（规则条文 12 样本零采纳 → 范例后探针对自有字段
   泛化出 `enum:是|否`，eval dump 渲染采纳可观测）。
+- **S8 `b327d9c`** 交互/非交互彻底拆离（用户指令：milestone = 连续交互操作，非交互 action 不再是
+  milestone）：`RunLike` = run 家族共享形状；`Run` = 交互 action（kind 收窄
+  navigation|filter|action，独有 from_state/return_domains/precondition；`InteractiveAction` 别名）；
+  `Read`/`Query` = 平级非交互语句（Query 独有 sql/data_scope）。Stmt 经 callable discriminator
+  按 op+kind 路由——wire 格式与 LLM draft 面零改动，旧序列化自动落到新类。每个 walker 逐点表态
+  （全家族 → RunLike；仅交互 → Run）；查询节点不再携带空白 from_state 而是根本没有该字段。
+  扫荡中抓到一个生产漏网：`decomposer._iter_runs` 供 approximate-entity SQL 重写，此前会漏掉
+  Query 节点。144 处测试构造迁移，+1 wire 往返合同测试（867 全绿）。
+  **milestone 一词至此退位**：编排层概念 = 交互 action + 非交互语句；Milestone 类只是执行器
+  内部的载体格式（`to_milestone` 是 marshalling 的目标格式名），与 DAG/iphone/android 共享，
+  其改名归跨平台专项。
 
 ## 离线可靠性（2026-07-04 A/B）
 
@@ -118,13 +129,13 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
    （改 completed=False 会影响 interp.failed→goal_completed，需配套设计）。
 5. **确定性记忆化门**：204 类——「只有 is_query/precondition 可被 frame-1 跳过判定豁免」，
    在 checker 侧落地。
-6. **IR 分流的终态**：Read/Query 目前是 Run 子类（wire 兼容、walker 零破坏的折中）；终态是与
-   Compute 同级的独立 op（sql/data_scope 等字段下移、报表层撤伪 milestone 条目）——等 live 证明
-   边界后再做大改。执行器侧 MilestoneKind 的 collection/verification 清理归跨平台专项
-   （iphone/android 采集仍依赖 collection milestone）。
+6. **IR 分流终态已由 S8 交付**（字段下移完成）。剩两件：报表层撤非交互伪 milestone 条目
+   （orchestrator_html 单列渲染 Read/Query 记录）；执行器侧 MilestoneKind 的
+   collection/verification 清理 + Milestone 类改名归跨平台专项（iphone/android 采集仍依赖
+   collection milestone）。
 
 ## 回归状态
 
-基线 842 → 本分支 866 全绿（+24：callframe 合同测试 18、preflight 4、FROM 链穿透 2）。
+基线 842 → 本分支 867 全绿（callframe 合同测试 19、preflight 4、FROM 链穿透 2 等）。
 未跑 live（WebArena）；return_domains（含范例采纳）、adherence 重试、查询节点边界会改变 live 行为，
 合入主线前需过 778/63/113 族任务。

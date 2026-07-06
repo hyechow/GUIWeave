@@ -12,6 +12,7 @@ from gui_agent.core.orchestrator import (
     Run,
     chain_from_states,
 )
+from gui_agent.core.orchestrator.program import Query, Read
 
 
 def _prog() -> Program:
@@ -30,7 +31,7 @@ def _prog() -> Program:
             ForEach(var="row", into="mats", returns=["Name", "SKU"], body=[
                 Call(func="resolve_parent_material", args={"sku": "{row[SKU]}"}, var="m"),
             ]),
-            Run(kind="data_query", var="q", returns=["material"], name="去重", sql="SELECT DISTINCT material FROM mats"),
+            Query( var="q", returns=["material"], name="去重", sql="SELECT DISTINCT material FROM mats"),
             Finish(message="材质：{q[material]}"),
         ],
     )
@@ -39,12 +40,12 @@ def _prog() -> Program:
 def test_main_sequence_chains_from_prior_success_condition():
     p = chain_from_states(_prog())
     runs = [s for s in p.statements if isinstance(s, Run)]
-    # statements: [nav 进入Products, filter 设Quantity, (foreach), data_query 去重]
+    # statements: [nav 进入Products, filter 设Quantity, (foreach), Query 去重] — 交互 Run 只有前两个
     assert runs[0].from_state == ""  # first step: block entry, unknown
     assert runs[1].from_state == "显示产品列表与筛选控件"  # FROM = prior nav's TO
-    # the data_query is a non-interactive pure query: it neither takes a FROM (no UI entry-state
-    # semantics) nor blanks the chain for whatever UI run might follow it.
-    assert runs[2].from_state == ""
+    # the Query is a non-interactive statement: it doesn't even HAVE from_state (S8 sibling IR)
+    query = next(s for s in p.statements if isinstance(s, Query))
+    assert not hasattr(query, "from_state")
 
 
 def test_function_body_chains_internally_first_step_empty():
@@ -109,15 +110,16 @@ def test_query_runs_are_page_neutral_from_carries_through():
     此前按普通 Run 处理：data_query 通常无 success_condition,会把后续 UI run 的 from_state 置空断链。"""
     prog = Program(goal="g", statements=[
         Run(kind="navigation", name="进入订单页", success_condition="在订单列表页"),
-        Run(kind="data_query", var="q", returns=["n"], name="数行", sql="SELECT COUNT(*) AS n FROM data"),
-        Run(kind="read", var="r", returns=["总数"], name="读页面计数"),
+        Query( var="q", returns=["n"], name="数行", sql="SELECT COUNT(*) AS n FROM data"),
+        Read( var="r", returns=["总数"], name="读页面计数"),
         Run(kind="action", name="点导出", success_condition="导出已触发"),
     ])
-    runs = [s for s in chain_from_states(prog).statements if isinstance(s, Run)]
-    # 夹在中间的 data_query + read 都不改变页面 → action 的 FROM 仍是导航的 TO
-    assert runs[3].from_state == "在订单列表页"
-    # 查询步自身不参与 FROM 标注（非 UI,无入口状态语义）
-    assert runs[1].from_state == "" and runs[2].from_state == ""
+    stmts = chain_from_states(prog).statements
+    runs = [s for s in stmts if isinstance(s, Run)]
+    # 夹在中间的 Query + Read 都不改变页面 → action（交互 Run 的第 2 个）的 FROM 仍是导航的 TO
+    assert runs[1].from_state == "在订单列表页"
+    # 查询步自身不参与 FROM 标注（S8 平级 IR：非交互节点没有 from_state 字段）
+    assert all(not hasattr(s, "from_state") for s in stmts if isinstance(s, (Read, Query)))
 
 
 def test_function_exit_state_skips_trailing_query():
@@ -126,7 +128,7 @@ def test_function_exit_state_skips_trailing_query():
         goal="g",
         functions=[FunctionDef(name="f", params=[], returns=["r"], body=[
             Run(kind="navigation", name="开详情页", success_condition="在详情页"),
-            Run(kind="read", var="r", returns=["r"], name="读取字段"),
+            Read( var="r", returns=["r"], name="读取字段"),
         ])],
         statements=[
             Call(func="f", args={}, var="m"),

@@ -13,6 +13,7 @@ from gui_agent.core.orchestrator import (
     RunResult,
     summarize_progress,
 )
+from gui_agent.core.orchestrator.program import Read
 
 
 def _program() -> Program:
@@ -22,7 +23,7 @@ def _program() -> Program:
             Run(name="进入 Reviews 页", success_condition="列表可见", kind="navigation"),
             Run(name="用 Olivia 筛选 Product 列", success_condition="筛出候选", kind="filter"),
             Run(name="添加筛选 Rating<=3", success_condition="只剩≤3", kind="filter"),
-            Run(var="r", name="读取昵称", success_condition="", kind="read", returns=["nickname"]),
+            Read(var="r", name="读取昵称", success_condition="",  returns=["nickname"]),
             Finish(message="{r[nickname]}"),
         ],
     )

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from gui_agent.core.router import IntentResolution
 
-from .program import Call, Finish, ForEach, If, Program, Run, Stmt
+from .program import Call, Finish, ForEach, If, Program, Run, RunLike, Stmt
 
 
 IssueSeverity = Literal["error", "warning"]
@@ -168,7 +168,7 @@ _MUTATION_VERB_RE = re.compile(
 def _check_purity_discipline(runs: list[Run]) -> list[OrchestrationPreflightIssue]:
     issues: list[OrchestrationPreflightIssue] = []
     for run in runs:
-        if run.precondition and (run.returns or run.sql.strip()):
+        if isinstance(run, Run) and run.precondition and run.returns:
             issues.append(
                 OrchestrationPreflightIssue(
                     code="ORCH_PRECONDITION_IMPURE",
@@ -315,10 +315,10 @@ def _check_router_entity_coverage(
     return issues
 
 
-def _iter_runs(stmts: list[Stmt]) -> list[Run]:
-    out: list[Run] = []
+def _iter_runs(stmts: list[Stmt]) -> list[RunLike]:
+    out: list[RunLike] = []
     for stmt in stmts:
-        if isinstance(stmt, Run):
+        if isinstance(stmt, RunLike):
             out.append(stmt)
         elif isinstance(stmt, If):
             out.extend(_iter_runs(stmt.then))

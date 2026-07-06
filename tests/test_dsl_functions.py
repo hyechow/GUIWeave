@@ -26,6 +26,7 @@ from gui_agent.core.orchestrator import (
     drive,
 )
 from gui_agent.core.orchestrator.safe_eval import SafeEvalError, safe_eval
+from gui_agent.core.orchestrator.program import Query, Read
 
 _MATERIAL_OF = {"Minerva": "Cotton", "Eos": "Fleece"}
 
@@ -38,7 +39,7 @@ def _185_program() -> Program:
                 # PURE compute (interpreter derives the base; NOT a GUI milestone the agent runs)
                 Compute(var="base", expr="re_sub('-[A-Za-z]+-[A-Za-z]+$', '', name)"),
                 # ONE linear GUI milestone (search base → open Configurable parent → read material)
-                Run(var="d", kind="read", returns=["material"],
+                Read(var="d",  returns=["material"],
                     name="在 Products 搜 {base}，打开 Type=Configurable 父产品，读 Material 主材质"),
             ])],
         statements=[
@@ -88,7 +89,7 @@ def test_compute_accepts_braced_scalar_refs():
         goal="g",
         functions=[FunctionDef(name="resolve", params=["sku"], returns=["base"], body=[
             Compute(var="base", expr="{sku}.rsplit('-', 2)[0]"),
-            Run(kind="read", name="搜 {base}"),
+            Read( name="搜 {base}"),
         ])],
         statements=[
             ForEach(var="row", into="out", returns=["SKU"], body=[
@@ -135,7 +136,7 @@ def _resolve_product_material_fn() -> FunctionDef:
                        success_condition="页面显示 Products 列表、顶部 Search by keyword 输入框和结果表格"),
                    Run(kind="filter", name="搜父 SKU={base_sku}、Type=Configurable",
                        success_condition="出现 SKU={base_sku}、Type=Configurable 行"),
-                   Run(kind="read", var="parent_d", returns=["material"],
+                   Read( var="parent_d", returns=["material"],
                        name="开父 SKU={base_sku} 编辑页读 Material"),
                    Run(kind="navigation", name="使用浏览器返回上一页，回到 Products 搜索结果列表",
                        success_condition="页面显示 Products 列表、Search by keyword 输入框和结果表格"),
@@ -258,7 +259,7 @@ def test_validator_flags_dead_conditional_in_function():
         return Program(goal="取材质", functions=[fn], statements=[
             ForEach(var="row", into="out", returns=["SKU"],
                     body=[Call(func="resolve", args={"sku": "{row[SKU]}"}, var="m")]),
-            Run(kind="data_query", var="q", returns=["material"], name="去重",
+            Query( var="q", returns=["material"], name="去重",
                 sql="SELECT DISTINCT material FROM out"),
             Finish(message="{q[material]}")])
 
@@ -282,7 +283,7 @@ def test_validator_accepts_function_returns_in_foreach_table_query():
             ForEach(var="row", into="out", returns=["SKU"], body=[
                 Call(func="resolve", args={"sku": "{row[SKU]}"}, var="m"),
             ]),
-            Run(kind="data_query", var="q", returns=["material"], name="去重 material",
+            Query( var="q", returns=["material"], name="去重 material",
                 sql="SELECT DISTINCT material FROM out"),
             Finish(message="{q[material]}"),
         ],
@@ -330,7 +331,7 @@ def test_validator_allows_row_url_capability_when_passed_and_used():
                     var="m",
                 ),
             ]),
-            Run(kind="data_query", var="q", returns=["material"], name="去重 material",
+            Query( var="q", returns=["material"], name="去重 material",
                 sql="SELECT DISTINCT material FROM out"),
             Finish(message="{q[material]}"),
         ],
@@ -523,7 +524,7 @@ def test_compute_single_field_read_var_usable_as_scalar():
                  "float(p) * 0.865",                      # lenient float on "$75.00"
                  "float(p['price']) * 0.865"):            # dict-style access still works
         program = Program(goal="降价", statements=[
-            Run(kind="read", var="p", returns=["price"], name="读价", read_spec="读",
+            Read( var="p", returns=["price"], name="读价", read_spec="读",
                 success_condition="ok"),
             Compute(var="np", expr=expr),
             Run(kind="action", name="更新为 {np} 保存", success_condition="ok"),

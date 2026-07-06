@@ -37,7 +37,7 @@ from __future__ import annotations
 import ast
 from typing import Optional
 
-from .program import Compute, Cond, Finish, ForEach, If, Program, Run, Stmt
+from .program import Compute, Cond, Finish, ForEach, If, Program, Query, Read, Run, Stmt
 from .safe_eval import SafeEvalError, safe_eval
 
 _RUN_FUNCS = {"navigate": "navigation", "filter": "filter", "action": "action",
@@ -105,15 +105,17 @@ def _compile_run(call: ast.Call, var: Optional[str]) -> Run:
             kw["precondition"] = k.value.value
         else:
             kw["sc" if k.arg == "sc" else k.arg] = _const_str(k.value, f"{k.arg} 参数")
-    return Run(
-        var=var, name=name, kind=kind,
+    common = dict(
+        var=var, name=name,
         success_condition=kw.pop("sc", ""),
         returns=kw.pop("returns", []),
         read_spec=kw.pop("read_spec", ""),
-        sql=kw.pop("sql", ""),
-        data_scope=kw.pop("data_scope", "complete"),
-        precondition=kw.pop("precondition", False),
     )
+    if kind == "read":
+        return Read(**common)
+    if kind == "data_query":
+        return Query(**common, sql=kw.pop("sql", ""), data_scope=kw.pop("data_scope", "complete"))
+    return Run(**common, kind=kind, precondition=kw.pop("precondition", False))
 
 
 def _compute_expr(node: ast.AST) -> str:

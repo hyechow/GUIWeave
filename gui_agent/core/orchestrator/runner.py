@@ -29,8 +29,8 @@ from typing import Any, Callable, Generator, Optional
 from pydantic import BaseModel, Field
 
 from .program import (
-    BARE_REF_RE, TEMPLATE_RE, Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Run,
-    RunResult,
+    BARE_REF_RE, TEMPLATE_RE, Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Query,
+    Run, RunLike, RunResult,
 )
 from .safe_eval import SafeEvalError, safe_eval
 
@@ -62,11 +62,12 @@ class RunRecord(BaseModel):
     result: RunResult
 
 
-def _flatten_runs(stmts: list) -> list["Run"]:
-    """Program order, DFS into if-branches; finishes/ifs themselves are not milestones."""
-    out: list[Run] = []
+def _flatten_runs(stmts: list) -> list["RunLike"]:
+    """Program order, DFS into if-branches; finishes/ifs themselves are not steps.
+    covers the whole run family（交互 Run + 非交互 Read/Query 都是被执行的步骤）."""
+    out: list[RunLike] = []
     for s in stmts:
-        if isinstance(s, Run):
+        if isinstance(s, RunLike):
             out.append(s)
         elif isinstance(s, If):
             out.extend(_flatten_runs(s.then))
@@ -191,7 +192,7 @@ class Interpreter:
         """Execute a block; returns a terminal reply (finish / failure) or None if it ran
         to the end of the block without terminating."""
         for s in stmts:
-            if isinstance(s, Run):
+            if isinstance(s, RunLike):
                 s, missing = self._fill(s)  # resolve {var[field]} from env BEFORE the planner sees it
                 if missing:
                     # The action TARGET (name) references a read value that came back empty —
@@ -580,7 +581,7 @@ class Interpreter:
         """Body result vars whose reads get auto-accumulated per iteration (program order)."""
         out: list[str] = []
         for s in stmts:
-            if isinstance(s, Run) and s.var and (s.kind == "data_query" or s.returns):
+            if isinstance(s, RunLike) and s.var and (isinstance(s, Query) or s.returns):
                 out.append(s.var)
             elif isinstance(s, Call) and s.var:
                 out.append(s.var)
@@ -619,7 +620,7 @@ class Interpreter:
             return actual not in values
         return False
 
-    def _fill(self, run: Run) -> tuple[Run, list[str]]:
+    def _fill(self, run: RunLike) -> tuple[RunLike, list[str]]:
         """Resolve {var[field]} refs in a Run's text from env BEFORE it reaches the planner.
 
         Read-then-reference (rule 10): an action the decomposer authored as『打开工单 {t[工单号]}』

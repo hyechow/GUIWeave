@@ -1,4 +1,4 @@
-from gui_agent.core.orchestrator import Finish, ForEach, Program, Run, validate_orchestration_preflight
+from gui_agent.core.orchestrator import Finish, ForEach, Program, Read, Query, Run, validate_orchestration_preflight
 from gui_agent.core.router import EntityRef, IntentResolution
 
 
@@ -37,7 +37,7 @@ def test_preflight_blocks_approximate_entity_when_search_key_is_missing():
     program = Program(
         statements=[
             Run(kind="filter", name="Search product Olivia zip jacket in Reviews grid"),
-            Run(kind="read", var="r", name="Read matching review", returns=["nickname"]),
+            Read( var="r", name="Read matching review", returns=["nickname"]),
             Finish(message="{r[nickname]}"),
         ]
     )
@@ -62,7 +62,7 @@ def test_preflight_accepts_approximate_entity_when_search_key_is_preserved():
     program = Program(
         statements=[
             Run(kind="filter", name="Search Product column by Olivia"),
-            Run(kind="read", var="r", name="Read matching review", returns=["nickname"]),
+            Read( var="r", name="Read matching review", returns=["nickname"]),
             Finish(message="{r[nickname]}"),
         ]
     )
@@ -235,14 +235,14 @@ def test_preflight_accepts_pure_precondition():
 def test_preflight_warns_query_with_mutation_verb():
     """read/data_query 是纯查询原语，名字里的动作永远不会被执行——误分类要浮出来。"""
     program = Program(statements=[
-        Run(kind="read", name="点击导出按钮并读取总数", var="t", returns=["总数"]),
+        Read( name="点击导出按钮并读取总数", var="t", returns=["总数"]),
     ])
     result = validate_orchestration_preflight("统计总数", program)
     warning = [i for i in result.issues if i.code == "ORCH_QUERY_WITH_MUTATION_VERB"]
     assert warning and warning[0].severity == "warning"
     # 纯读取名不误报
     clean = Program(statements=[
-        Run(kind="read", name="读取当前页面显示的记录总数", var="t", returns=["总数"]),
+        Read( name="读取当前页面显示的记录总数", var="t", returns=["总数"]),
     ])
     assert not any(
         i.code == "ORCH_QUERY_WITH_MUTATION_VERB"
@@ -251,8 +251,8 @@ def test_preflight_warns_query_with_mutation_verb():
 
 
 def test_run_purity_vocabulary():
-    assert Run(kind="read", name="读").is_query
-    assert Run(kind="data_query", name="查", sql="SELECT 1").is_query
+    assert Read( name="读").is_query
+    assert Query( name="查", sql="SELECT 1").is_query
     for kind in ("navigation", "filter", "action"):
         run = Run(kind=kind, name="做")
         assert run.is_interactive and not run.is_query

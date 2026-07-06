@@ -10,7 +10,7 @@ from gui_agent.core.orchestrator.callframe import (
     ReturnRecoveryLedger,
     open_call,
 )
-from gui_agent.core.orchestrator.program import Run
+from gui_agent.core.orchestrator.program import Read, Query, Run
 
 
 class _FakeSupervisor:
@@ -108,7 +108,7 @@ def test_empty_values_are_missing_not_domain_violations():
 def test_domain_check_exempts_pure_reads():
     from gui_agent.core.orchestrator.callframe import out_of_domain_return_fields
 
-    read_run = Run(name="读", kind="read", var="r", returns=["详情URL"],
+    read_run = Read(name="读",  var="r", returns=["详情URL"],
                    return_domains={"详情URL": "url"})
     assert out_of_domain_return_fields(read_run, {"详情URL": "不是链接"}) == []
 
@@ -150,7 +150,7 @@ def test_open_call_rejects_query_runs():
     import pytest
 
     sup = _FakeSupervisor()
-    read_run = Run(name="读取总数", kind="read", var="total", returns=["总数"])
+    read_run = Read(name="读取总数",  var="total", returns=["总数"])
     with pytest.raises(ValueError, match="query run"):
         open_call(sup, read_run, 0)
     assert sup.reseeds == []
@@ -237,7 +237,7 @@ def test_adherence_noop_for_untyped_directive():
 
     directive = parse_kickback_directive("上一子目标声明的返回字段合同未满足:...请重规划。")
     assert not directive.is_typed
-    program = Program(statements=[Run(kind="read", name="重读同一页面", returns=["x"])])
+    program = Program(statements=[Read( name="重读同一页面", returns=["x"])])
     assert kickback_adherence_issues(program, directive, failed_run=None) == []
 
 
@@ -256,10 +256,15 @@ def test_to_stmts_lowers_queries_to_ir_nodes():
     ])
     assert isinstance(read_stmt, Read) and isinstance(query_stmt, Query)
     assert not isinstance(action_stmt, (Read, Query))
-    # 子类仍是 Run：既有 walker 零破坏；wire 格式不变（op=run + kind）
-    assert isinstance(read_stmt, Run) and isinstance(query_stmt, Run)
+    # S8 平级 IR：查询节点不再是 Run 子类，共享形状经 RunLike；wire 格式不变（op=run + kind）
+    from gui_agent.core.orchestrator.program import RunLike
+    assert not isinstance(read_stmt, Run) and not isinstance(query_stmt, Run)
+    assert all(isinstance(s, RunLike) for s in (read_stmt, query_stmt, action_stmt))
     assert read_stmt.model_dump()["op"] == "run" and read_stmt.kind == "read"
     assert query_stmt.is_query and read_stmt.is_query and not action_stmt.is_query
+    # 字段各归其位：非交互节点没有交互专属字段
+    assert not hasattr(read_stmt, "precondition") and not hasattr(read_stmt, "sql")
+    assert hasattr(query_stmt, "sql") and not hasattr(query_stmt, "return_domains")
 
 
 def test_to_milestone_rejects_query_runs():
@@ -275,7 +280,7 @@ def test_to_milestone_rejects_query_runs():
         to_milestone(Query(var="q", name="查询", returns=["n"], sql="SELECT 1"), 0)
     # 兼容:直接构造的 base Run(kind=read) 同样被拒(旧测试/持久化形态)
     with pytest.raises(ValueError, match="query run"):
-        to_milestone(Run(kind="read", var="r", name="读", returns=["x"]), 0)
+        to_milestone(Read( var="r", name="读", returns=["x"]), 0)
     # 命令照常
     assert to_milestone(Run(kind="action", name="点击"), 0).name == "点击"
 
@@ -296,3 +301,34 @@ def test_promotion_reclassifies_read_ir_node_to_command_run():
     assert first.kind == "navigation"
     assert not isinstance(first, (Read, Query))
     assert first.is_interactive
+
+
+def test_wire_roundtrip_routes_legacy_dumps_to_sibling_nodes():
+    """旧序列化（op=run + kind=read/data_query,含 S6b 前全字段 Run dump）必须路由到平级新类;
+    多余的交互专属字段（from_state/precondition/旧 Run 的 sql 空串）被忽略,不炸解析。"""
+    import pydantic
+    import pytest
+
+    from gui_agent.core.orchestrator.program import Program, Query, Read
+
+    legacy = {
+        "goal": "g",
+        "statements": [
+            {"op": "run", "kind": "navigation", "name": "进入页", "success_condition": "在页"},
+            {"op": "run", "kind": "read", "var": "r", "name": "读", "returns": ["x"],
+             "from_state": "", "sql": "", "data_scope": "complete", "precondition": False},
+            {"op": "run", "kind": "data_query", "var": "q", "name": "查", "returns": ["n"],
+             "sql": "SELECT 1 AS n"},
+            {"op": "finish", "message": "{q[n]}"},
+        ],
+    }
+    prog = Program.model_validate(legacy)
+    nav, rd, q, _fin = prog.statements
+    assert isinstance(nav, Run) and isinstance(rd, Read) and isinstance(q, Query)
+    assert q.sql == "SELECT 1 AS n"
+    # wire 往返稳定：dump 仍是 op=run + kind,再解析回同样的类
+    again = Program.model_validate(prog.model_dump(mode="json"))
+    assert [type(s).__name__ for s in again.statements] == ["Run", "Read", "Query", "Finish"]
+    # 交互 Run 的 kind 词汇收窄:read/data_query 不再是合法的交互 kind
+    with pytest.raises(pydantic.ValidationError):
+        Run(name="x", kind="read")  # type: ignore[arg-type]

@@ -49,6 +49,7 @@ from gui_agent.core.orchestrator import (  # noqa: E402
     If,
     Program,
     Run,
+    RunLike,
     decompose,
     validate_orchestration_preflight,
     validate_program,
@@ -94,7 +95,7 @@ def derive_ground_truth(task: dict) -> dict:
 def _iter_runs(stmts: list) -> list[Run]:
     out: list[Run] = []
     for s in stmts:
-        if isinstance(s, Run):
+        if isinstance(s, RunLike):
             out.append(s)
         elif isinstance(s, If):
             out.extend(_iter_runs(s.then))

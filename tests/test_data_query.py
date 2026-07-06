@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gui_agent.core.orchestrator import Finish, Interpreter, Program, Run
+from gui_agent.core.orchestrator import Finish, Interpreter, Program, Query, Run
 from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
 from gui_agent.core.run.non_interactive import drive_pending_non_ui
 from gui_agent.core.schemas import Observation, PolicyContext
@@ -376,10 +376,9 @@ def test_non_ui_repairs_empty_data_query_with_actual_table_snapshot(tmp_path, mo
 
     prog = Program(
         statements=[
-            Run(
+            Query(
                 var="q",
-                name="统计月度订单数",
-                kind="data_query",
+                name="统计月度订单数", 
                 returns=["result"],
                 sql="""
                 SELECT strftime('%m', created_at) AS month_num, COUNT(*) AS count
@@ -459,10 +458,9 @@ def test_non_ui_repair_blocks_when_collected_source_conflicts_with_goal(tmp_path
 
     prog = Program(
         statements=[
-            Run(
+            Query(
                 var="q",
-                name="统计全量历史记录",
-                kind="data_query",
+                name="统计全量历史记录", 
                 returns=["result"],
                 sql="SELECT missing_column FROM data",
             ),
@@ -535,10 +533,9 @@ def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkey
 
     prog = Program(
         statements=[
-            Run(
+            Query(
                 var="q",
-                name="查询匹配记录",
-                kind="data_query",
+                name="查询匹配记录", 
                 returns=["result"],
                 sql="SELECT missing_column FROM data",
             ),
@@ -590,7 +587,7 @@ def test_non_ui_data_query_failure_sets_failure_evidence(tmp_path, monkeypatch):
 
     monkeypatch.setattr(dq, "execute_data_query", _raise)
     prog = Program(statements=[
-        Run(var="q", name="查询评分", kind="data_query", returns=["x"],
+        Query(var="q", name="查询评分",  returns=["x"],
             sql="SELECT rating FROM data", data_scope="current"),
         Finish(message="{q[x]}"),
     ])

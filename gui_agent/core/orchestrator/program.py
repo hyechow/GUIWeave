@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 # DSL data-flow template grammar: ``{var[field]}`` pulls a prior read's value out of the
 # variable environment. Used by finish messages (the original site) AND — since the
@@ -64,92 +64,106 @@ class RunResult(BaseModel):
     evidence: list[str] = Field(default_factory=list)
 
 
-class Run(BaseModel):
-    """Drive ONE linear milestone. `var` binds its RunResult; `returns` = fields to read from completion."""
+class RunLike(BaseModel):
+    """run 家族语句的共享形状（wire 上共用 op="run" + kind 区分）。
+
+    脚本生成视角：程序 = 混合脚本；run 家族有两种执行模式——
+    - 【交互 action】（Run：navigation/filter/action）= 对 GUI 执行器的函数调用，跨进
+      非确定性世界的 FFI；合同（入口/后置/出参域/异常）全部压在这道边界上。
+    - 【非交互查询】（Read/Query）= 解释器确定性执行的语句：消费当前帧/表格快照,
+      不驱动 GUI，可安全重试、可被记忆化。
+    分类轴是执行模式，不是数据方向——填表单和点链接同为交互执行；一个名义上的 read
+    需要交互定位时会被【重新分类】为交互 Run（callframe 升格路径），不是在查询里
+    "顺便"交互。三个节点在 IR 里平级（S8：字段各归其位），不再是子类关系。"""
 
     op: Literal["run"] = "run"
     var: Optional[str] = None
     name: str
     success_condition: str = ""
-    # Entry state of this milestone — the EXIT (success_condition) of the milestone that runs just
-    # before it in the same linear block: FROM[i] := TO[i-1]. Derived deterministically by
-    # `chain_from_states` (not authored by the LLM); empty at a block boundary (function/loop body
-    # entry, where the entry is the call-site / loop-carry state). A milestone is an edge FROM→TO;
-    # both endpoints are verifiable states (FROM via precondition entry-check, TO via the checker),
-    # only the traversal between them is dynamic. Used to ground instruction phrasing / continuity.
-    from_state: str = ""
     kind: RunKind = "action"
     returns: list[str] = Field(default_factory=list)
     # Task-level return-read instruction, authored by the decomposer from the user goal (not a
     # hardcoded prompt): when `returns` is present it says what each field means and how to
-    # judge it off the UI completion frame (which icon/colour/text carries it, what each value
-    # maps to). structured_read uses this as the primary judgment guidance; app knowledge is a
-    # supplementary signal-convention reference.
+    # judge it off the completion frame / query result. structured_read uses this as the primary
+    # judgment guidance; app knowledge is a supplementary signal-convention reference.
     read_spec: str = Field(default="")
+
+    @property
+    def is_query(self) -> bool:
+        """非交互纯查询（read / data_query）：不驱动 GUI——这正是它们能被解释器确定性执行的原因。"""
+        return self.kind in ("read", "data_query")
+
+    @property
+    def is_interactive(self) -> bool:
+        """交互 action（navigation / filter / action）：驱动界面的 FFI。带 returns 的交互 run
+        是「已发出 + 完成帧读值」的复合形态，依然是一次交互调用，不按读/写再细分。"""
+        return not self.is_query
+
+
+class Run(RunLike):
+    """【交互 action】：驱动一段连续的交互操作（一条 FROM→TO 边），由 GUI 执行器
+    （milestone react loop——milestone 仅是执行器的内部载体格式）开到 done。
+    `var` binds its RunResult; `returns` = fields to read from the completion frame."""
+
+    # 交互 action 的 kind 只剩交互词汇；read/data_query 是平级的 Read/Query 节点。
+    kind: Literal["navigation", "filter", "action"] = "action"  # type: ignore[assignment]
+    # Entry state of this interaction — the EXIT (success_condition) of the interaction that runs
+    # just before it in the same linear block: FROM[i] := TO[i-1]. Derived deterministically by
+    # `chain_from_states` (not authored by the LLM); empty at a block boundary (function/loop body
+    # entry, where the entry is the call-site / loop-carry state). An interaction is an edge
+    # FROM→TO; both endpoints are verifiable states (FROM via precondition entry-check, TO via the
+    # checker), only the traversal between them is dynamic.
+    from_state: str = ""
     # Typed returns: optional domain declaration per `returns` field —
     # {field: "url" | "number" | "date" | "enum:a|b|c" | "text"}. The callframe return-check
     # rejects a NON-empty value that falls outside its domain (读到垃圾 → 走空值同款有界恢复，
     # 而不是静默给错答)。Fields not listed fall back to conservative name-cue inference.
     return_domains: dict[str, str] = Field(default_factory=dict)
-    # Restricted SQL for kind="data_query". It runs against the current structured table snapshot
-    # in an in-memory sqlite database. Only SELECT / WITH ... SELECT is accepted.
-    sql: str = Field(default="")
-    # complete: reject partial table snapshots; current: explicitly query only currently
-    # rendered rows. The default protects "entire history" / full-dataset tasks.
-    data_scope: Literal["complete", "current"] = "complete"
     # STRUCTURAL marker for a precondition step ("确保已登录 / 已进入某模式"): a state to ENSURE,
     # not a fresh action. Set by the decomposer (an easy binary classification — far more reliable
     # than authoring a perfect gate). The engine rewrites a precondition's success_condition to a
-    # generic "ensure-state" gate keyed on THIS flag (not on milestone-name keywords), so an
-    # already-satisfied precondition (e.g. already logged in) is accepted on frame 1 instead of
-    # stuck on a login-form / business-data gate. App-specific "what that state looks like" stays
-    # in the checker's _check.md. The flag — not a string match — is the detection signal.
+    # generic "ensure-state" gate keyed on THIS flag, so an already-satisfied precondition is
+    # accepted on frame 1. App-specific "what that state looks like" stays in the checker's
+    # _check.md. The flag — not a string match — is the detection signal.
     precondition: bool = False
 
-    # ── 执行模式词汇（脚本生成视角：GUI 任务 = 混合脚本，交互/非交互是承重轴）──────────
-    # 一个 Run 要么是【非交互语句】（解释器确定性执行：消费当前帧/表格快照，不驱动 GUI，
-    # 可重试可记忆化），要么是【交互调用】（跨进非确定性 GUI 世界的 FFI：需要 checker 判后置、
-    # 恢复与合同都压在这道边界上）。分类轴是执行模式，不是数据方向——填表单和点链接同为交互
-    # 执行；一个名义上的 read 需要交互定位时会被【重新分类】为交互 run（升格路径），而不是
-    # 留在查询里"顺便"交互。
-    @property
-    def is_query(self) -> bool:
-        """非交互纯查询（read / data_query）：不驱动 GUI，只读当前帧/表格快照——这正是它们
-        能被解释器确定性执行的原因。可安全重试、可被记忆化。"""
-        return self.kind in ("read", "data_query")
 
-    @property
-    def is_interactive(self) -> bool:
-        """交互调用（navigation / filter / action）：驱动界面的 FFI。带 returns 的交互 run
-        是「已发出 + 完成帧读值」的复合形态（dispatch gate 拥有验收、structured_read 拥有
-        取值），依然是一次交互调用，不按读/写再细分。"""
-        return not self.is_query
+# 概念别名：编排层的正式名称是「交互 action」；Run 是它在 IR 里的历史类名（wire op="run"）。
+InteractiveAction = Run
 
 
-
-# ── 非交互查询节点（IR 层分流）────────────────────────────────────────────────────
-# read/data_query 在运行时早已绕开 milestone 执行器（drive_pending_non_ui 直接消费验收帧/
-# 表格快照），这两个子类让 IR 在【构造时】就把查询与命令分开：
-# - 序列化不变（op="run" + kind），LLM 面（decomposer 扁平 draft）零改动；
-# - isinstance(s, Run) 的既有 walker 全部继续命中（子类），零破坏；
-# - 结构性判别用 isinstance(s, Query/Read) 或 run.is_query；
-# - milestone 边界由 engine.to_milestone 强制：查询节点 marshal 成 milestone = 类型错误。
-# read 需要交互时（值不可见、要滚动/展开）不改 kind——由 callframe 的升格路径显式重建为
-# 命令 Run（kind=navigation），「查询升格为命令」是重新分类，不是字段改写。
-
-
-class Read(Run):
-    """Non-interactive frame read: extract `returns` off the CURRENT completion frame.
-    Pure query — no UI action, page unchanged, FROM chain passes through."""
+class Read(RunLike):
+    """【非交互查询】frame read: extract `returns` off the CURRENT completion frame.
+    解释器确定性执行——no UI action, page unchanged, FROM chain passes through."""
 
     kind: Literal["read"] = "read"  # type: ignore[assignment]
 
 
-class Query(Run):
-    """Non-interactive data query: restricted SELECT over the current structured table
-    snapshot (+ foreach-materialized tables). Pure query — page unchanged."""
+class Query(RunLike):
+    """【非交互查询】data query: restricted SELECT over the current structured table
+    snapshot (+ foreach-materialized tables). 解释器确定性执行——page unchanged."""
 
     kind: Literal["data_query"] = "data_query"  # type: ignore[assignment]
+    # Restricted SQL. It runs against the current structured table snapshot in an in-memory
+    # sqlite database. Only SELECT / WITH ... SELECT is accepted.
+    sql: str = Field(default="")
+    # complete: reject partial table snapshots; current: explicitly query only currently
+    # rendered rows. The default protects "entire history" / full-dataset tasks.
+    data_scope: Literal["complete", "current"] = "complete"
+
+
+def _stmt_tag(value: object) -> str | None:
+    """Callable discriminator: run-family ops share op="run" on the wire; route by kind.
+    旧序列化（op=run + kind=read/data_query）自动落到平级的 Read/Query 节点。"""
+    if isinstance(value, dict):
+        op = str(value.get("op", "run") or "run")
+        kind = str(value.get("kind", "action") or "action")
+    else:
+        op = str(getattr(value, "op", "run") or "run")
+        kind = str(getattr(value, "kind", "action") or "action")
+    if op != "run":
+        return op
+    return {"read": "read_stmt", "data_query": "query_stmt"}.get(kind, "run")
 
 
 class Cond(BaseModel):
@@ -241,7 +255,19 @@ class Call(BaseModel):
     var: Optional[str] = None                   # bind the function's returns here (a RunResult)
 
 
-Stmt = Annotated[Union[Run, If, Finish, ForEach, Compute, Call], Field(discriminator="op")]
+Stmt = Annotated[
+    Union[
+        Annotated[Run, Tag("run")],
+        Annotated[Read, Tag("read_stmt")],
+        Annotated[Query, Tag("query_stmt")],
+        Annotated[If, Tag("if")],
+        Annotated[Finish, Tag("finish")],
+        Annotated[ForEach, Tag("foreach")],
+        Annotated[Compute, Tag("compute")],
+        Annotated[Call, Tag("call")],
+    ],
+    Discriminator(_stmt_tag),
+]
 
 
 class FunctionDef(BaseModel):
