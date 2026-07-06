@@ -959,6 +959,32 @@ def test_normalize_confirm_read_converts_filter_inside_if_branch():
     assert out.statements[1].otherwise[0].message == "无需查询"
 
 
+def test_exact_to_fuzzy_fallback_is_structural_if():
+    # Rule 4b: an allow-fuzzy entity must decompose to a STRUCTURAL if — exact filter reads
+    # records-found into a var (returns+read_spec) → if count=="0" → keyword filter — NOT a single
+    # filter milestone with a prose conditional ("若0条则改用K"). Locks the structural form the prompt
+    # mandates, plus the two mechanics offline-verification pinned: read_spec is required (else
+    # RETURNS_WITHOUT_READ_SPEC), and the cmp must be =="0" — `empty` does NOT fire on the string "0".
+    from gui_agent.core.orchestrator import validate_program
+    from gui_agent.core.orchestrator.runner import Interpreter
+
+    prog = Program(statements=[
+        Run(op="run", var="f1", name="在目标列用精确值『X』筛选", kind="filter",
+            returns=["match_count"], read_spec="读 grid 顶部 records found 计数"),
+        If(cond=Cond(var="f1", field="match_count", cmp="==", value="0"), then=[
+            Run(op="run", name="清除精确值后在同一列用关键词『K』重筛", kind="filter"),
+        ]),
+        Finish(message="检索完成"),
+    ])
+    assert validate_program(prog) == []           # structural form validates (read_spec present)
+
+    interp = Interpreter(prog)
+    interp.env["f1"] = RunResult(reads={"match_count": "0"})
+    assert interp._eval(prog.statements[1].cond) is True    # 0 records → keyword fallback fires
+    interp.env["f1"] = RunResult(reads={"match_count": "3"})
+    assert interp._eval(prog.statements[1].cond) is False   # non-zero → skip fallback
+
+
 def test_normalize_precondition_gates_is_flag_based_not_keyword():
     # The L2 detection is the STRUCTURAL run.precondition flag, NOT name keywords. A flagged step
     # (login precondition with the 153314 form antipattern) gets the generic ensure-state gate; a
