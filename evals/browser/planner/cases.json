@@ -364,6 +364,159 @@
     "note": "真实 CDP run 20260624_182334 Turn6-8：精确词已返回 0 条，进入 fallback 子目标后仍被截图尾部和 checker 的含混 missing_evidence 牵回旧精确词，重复输入 'Olivia zip jacket' 多烧 3 轮。通用不变量：当当前子目标明确要求把字段改成新值时，planner 必须使用子目标/验收里的新目标值，不能用历史旧值或 checker 误写的旧值；DOM current 只证明当前旧值是什么，不是下一步应保留的目标。"
   },
   {
+    "label": "reviews-product-filter-visible-误标DOM控件时禁止横向滚动找Product（回归 20260706_173208 T5-T7）",
+    "screenshot": "evals/browser/planner/screenshots/webarena113_reviews_product_filter_visible_mislabel_20260706_173208.png",
+    "observation": {
+      "title": "Reviews / Customer Reviews",
+      "url": "http://h:7780/admin/review/product/index/filter/Y3JlYXRlZF9hdCU1QmxvY2FsZSU1RD1lbl9VUyZuYW1lPU9saXZpYSt6aXAramFja2V0/internal_reviews//form_key/xy/",
+      "dom_state": "records=0; Product visually visible; Administrator Customer Guest=Olivia zip jacket",
+      "applied_filters": {
+        "Product": "Olivia zip jacket"
+      },
+      "form_controls": [
+        {
+          "label": "search-global",
+          "kind": "text_input",
+          "rect": {
+            "x": 815,
+            "y": 98
+          }
+        },
+        {
+          "label": "Status",
+          "kind": "native_select",
+          "selected_text": "",
+          "options": [
+            "Approved",
+            "Pending",
+            "Not Approved"
+          ],
+          "rect": {
+            "x": 480,
+            "y": 428
+          }
+        },
+        {
+          "label": "nickname",
+          "kind": "text_input",
+          "rect": {
+            "x": 672,
+            "y": 428
+          }
+        },
+        {
+          "label": "detail",
+          "kind": "text_input",
+          "rect": {
+            "x": 767,
+            "y": 428
+          }
+        },
+        {
+          "label": "Default Store View",
+          "kind": "native_select",
+          "selected_text": "",
+          "options": [
+            "Administrator",
+            "Customer",
+            "Guest"
+          ],
+          "rect": {
+            "x": 969,
+            "y": 428
+          }
+        },
+        {
+          "label": "Administrator Customer Guest",
+          "kind": "text_input",
+          "value": "Olivia zip jacket",
+          "focused": true,
+          "rect": {
+            "x": 1047,
+            "y": 428
+          }
+        },
+        {
+          "label": "sku",
+          "kind": "text_input",
+          "rect": {
+            "x": 1143,
+            "y": 428
+          }
+        }
+      ]
+    },
+    "milestone": {
+      "name": "在产品字段先用精确值 'Olivia zip jacket' 筛选；若0条，改用关键词 'Olivia' 重筛",
+      "description": "当前精确词 'Olivia zip jacket' 已提交并返回 0 records found；Product 列在截图中可见，应改用关键词 'Olivia' 重新筛选。",
+      "success_condition": "Product 列筛选框已改为关键词 'Olivia' 并提交，列表显示 Olivia zip jacket 相关评论记录（非0条）",
+      "kind": "filter",
+      "task_type": "action"
+    },
+    "history": [
+      {
+        "index": 3,
+        "instruction": "在 Product 列的筛选输入框中输入 'Olivia zip jacket'",
+        "summary": "先按精确产品名筛选",
+        "action": {
+          "action_type": "type",
+          "x": 1047,
+          "y": 428,
+          "text": "Olivia zip jacket",
+          "description": "在 Product 列的筛选输入框中输入 'Olivia zip jacket'"
+        }
+      },
+      {
+        "index": 4,
+        "instruction": "按回车键提交 Product 筛选",
+        "summary": "提交精确筛选后返回 0 records found",
+        "action": {
+          "action_type": "press_enter",
+          "description": "按回车键提交 Product 筛选"
+        }
+      }
+    ],
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前筛选条件 'Olivia zip jacket' 导致 0 条记录，根据策略需改用关键词 'Olivia' 重筛；截图中 Product 列和其筛选框已可见，但 DOM 控件被误标为 Administrator Customer Guest。",
+      "issues": [],
+      "missing_evidence": [
+        "需要把当前可见 Product 列筛选框的值改为 'Olivia'",
+        "需要提交该 Product 筛选并看到非 0 条 Olivia 相关评论"
+      ],
+      "summary": "Reviews 网格显示 0 records found，Product 列筛选框可见且仍为精确词，下一步应改词或清除旧筛选，不能继续横向滚动找 Product。"
+    },
+    "expected": {
+      "any_of": [
+        {
+          "label": "直接改 Product 为 Olivia",
+          "must_match": [
+            "Product|产品",
+            "输入|填入|填写|改为|替换|清空"
+          ],
+          "must_contain_all": [
+            "Olivia"
+          ]
+        },
+        {
+          "label": "先清除旧筛选",
+          "must_match": [
+            "Reset Filter|清除|重置"
+          ]
+        }
+      ],
+      "must_not_contain": [
+        "横向",
+        "滚动",
+        "scroll",
+        "Administrator Customer Guest",
+        "显示.*Product.*列",
+        "显示.*产品.*列"
+      ]
+    },
+    "note": "真实 run 20260706_173208 T5-T7：Product 列和输入框在截图中已可见，且 0 records found 证明精确词已提交失败；但 form_controls 把 Product 文本框误命名为相邻 Type 下拉的选项串 'Administrator Customer Guest'。Planner 受「目标字段 DOM 不存在时先横向滚动」规则牵引，连续 3 次 scroll right，页面无变化后才 stuck/replan。该 case 锁住通用不变量：当目标列头/筛选框已在截图可见，DOM label 噪声不能触发横向滚动找列；应直接改用 fallback 关键词或清除旧筛选。"
+  },
+  {
     "label": "columns-panel-scroll-面板内目标不可见时应向下滚动面板而非关闭（回归 20260626_105002 T8-T18 打转）",
     "screenshot": "evals/browser/planner/screenshots/columns_panel_scroll_needed.png",
     "milestone": {
