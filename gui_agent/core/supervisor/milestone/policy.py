@@ -79,6 +79,48 @@ _RESOURCE_ID_MARKERS = (
     "customer_id",
     "review_id",
 )
+_PLAN_INPUT_LIKE_RE = re.compile(
+    r"(?:"
+    r"输入|填入|填写|录入|键入|重输|重新输入|覆盖输入|"
+    r"清空.*(?:输入|填入|填写|录入)|删除.*(?:输入|填入|填写|录入)|"
+    r"(?:type|fill|enter\s+(?:text|value)|replace\s+(?:text|value)?|set\s+.*(?:field|input|value))"
+    r")",
+    re.IGNORECASE,
+)
+_PLAN_QUOTED_VALUE_RE = re.compile(r"[「『“\"'`]([^」』”\"'`]{1,120})[」』”\"'`]")
+_PLAN_UNQUOTED_INPUT_VALUE_RE = re.compile(
+    r"(?:输入|填入|填写|录入|键入|重输|重新输入|覆盖输入)\s*([^，。；;]+)$",
+    re.IGNORECASE,
+)
+
+
+def _plan_is_input_like(instruction: str) -> bool:
+    """Whether the next planner instruction is another concrete text/value entry."""
+    return bool(_PLAN_INPUT_LIKE_RE.search(instruction or ""))
+
+
+def _norm_plan_input_value(value: str) -> str:
+    text = (value or "").lower()
+    text = re.sub(r"[\s，。、；;：:！!？?（）()「」『』\[\]【】\"'`’‘“”]+", "", text)
+    return text[:80]
+
+
+def _plan_input_value(instruction: str) -> str:
+    text = instruction or ""
+    quoted = [m.group(1).strip() for m in _PLAN_QUOTED_VALUE_RE.finditer(text) if m.group(1).strip()]
+    if quoted:
+        return _norm_plan_input_value(quoted[-1])
+    match = _PLAN_UNQUOTED_INPUT_VALUE_RE.search(text)
+    if match:
+        return _norm_plan_input_value(match.group(1).strip())
+    return ""
+
+
+def _type_repeat_matches_current_plan(signature: str, instruction: str) -> bool:
+    """True only when the repeated type signature is the value this plan is about to type again."""
+    repeated_value = (signature or "").rsplit("|", 1)[-1]
+    planned_value = _plan_input_value(instruction)
+    return not planned_value or planned_value == repeated_value
 
 
 def _page_known(page_identity: str) -> bool:
@@ -819,12 +861,17 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             )
         )
         if _sig is not None:
-            print(f"  [LoopGuard] 重复执行了同一输入动作（{_sig}）→ 打转，强制换新")
-            _con = ("⚠️ 已经把同样的内容输入过同一个输入框且没带来进展(在打转)。"
-                    "必须改用截图中其他可见入口/动作，禁止再把同样内容输进同一个框。")
-            if _con not in self._global_constraints:
-                self._global_constraints.append(_con)
-            return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
+            if _plan_is_input_like(plan.instruction) and _type_repeat_matches_current_plan(_sig, plan.instruction):
+                print(f"  [LoopGuard] 重复执行了同一输入动作（{_sig}）→ 打转，强制换新")
+                _con = ("⚠️ 已经把同样的内容输入过同一个输入框且没带来进展(在打转)。"
+                        "必须改用截图中其他可见入口/动作，禁止再把同样内容输进同一个框。")
+                if _con not in self._global_constraints:
+                    self._global_constraints.append(_con)
+                return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
+            print(
+                f"  [LoopGuard] 历史中有重复输入（{_sig}），"
+                "但当前计划不是同值重复输入，放行"
+            )
         _interaction_state = getattr(observation, "dom_state", None) or ""
         _hit = (
             None

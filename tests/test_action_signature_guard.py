@@ -60,6 +60,32 @@ def test_reworded_retype_is_caught_by_signature():
     assert step.summary == STUCK  # routed to stuck despite the reworded instruction + churning url
 
 
+def test_repeated_type_history_does_not_block_submit_plan():
+    # Regression 20260706_173208: after the repeated type guard has enough history, the planner may
+    # correctly switch to submitting the typed filter. The type guard must not block that click.
+    p = _policy("点击 Search 按钮应用筛选")
+    history = [_typed_turn(3), _typed_turn(6)]
+    obs = Observation(png_bytes=b"png", source="browser", url=URL_POSTRESET)
+    check = _SingleCheckResult(status="in_progress", reason="筛选词已输入但尚未提交", summary="进行中")
+    step = p._plan_single(_ms(), check, obs, history)
+    assert step.summary != STUCK
+    assert step.should_act
+    assert step.instruction == "点击 Search 按钮应用筛选"
+
+
+def test_repeated_old_value_does_not_block_new_fallback_value():
+    # Regression 20260706_174915 T6: repeated exact search 'Olivia zip jacket' should not block the
+    # fallback input 'Olivia'. The signature guard is same-value, not same-control-only.
+    p = _policy("在 Product 输入框填入 'Olivia'")
+    history = [_typed_turn(3), _typed_turn(6)]
+    obs = Observation(png_bytes=b"png", source="browser", url=URL_POSTRESET)
+    check = _SingleCheckResult(status="in_progress", reason="精确词 0 条，需改用关键词 Olivia", summary="进行中")
+    step = p._plan_single(_ms(), check, obs, history)
+    assert step.summary != STUCK
+    assert step.should_act
+    assert step.instruction == "在 Product 输入框填入 'Olivia'"
+
+
 def test_first_type_is_not_flagged():
     # Only ONE identical type executed → not yet a loop; the next attempt must go through.
     p = _policy("在 Product 列筛选框输入 'Olivia zip jacket'")
