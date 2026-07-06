@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from gui_agent.core.schemas import Observation
 
-from .traversal_controller import TraversalController
+from .controller import TraversalController
 
 
 Action = Literal[

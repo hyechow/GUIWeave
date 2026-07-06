@@ -596,7 +596,7 @@ def extract_ui_returns(
         return {}
     if _is_query_run(run):
         return {}
-    from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
+    from gui_agent.core.orchestrator.primitives.url_json_read import read_json_url_returns
 
     returns = list(run.returns)
     read_spec = getattr(run, "read_spec", "") or ""
@@ -604,7 +604,7 @@ def extract_ui_returns(
     if json_reads is not None and any(str(json_reads.get(field, "")).strip() for field in returns):
         say(f"  [Orchestrator] URL JSON 返回读取 {returns} → {json_reads}")
         return json_reads
-    from gui_agent.core.orchestrator.structured_read import (
+    from gui_agent.core.orchestrator.primitives.structured_read import (
         read_form_control_returns,
         structured_read,
     )

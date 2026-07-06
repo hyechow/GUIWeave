@@ -1,6 +1,6 @@
 """Tests for TraversalController stateful traversal logic."""
 
-from gui_agent.core.orchestrator.traversal_controller import TraversalController
+from gui_agent.core.orchestrator.traversal.controller import TraversalController
 
 
 def test_controller_initial_state():

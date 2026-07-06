@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-from .program import (
+from ..program import (
     Call,
     Compute,
     Cond,
@@ -317,7 +317,7 @@ def _to_functions(drafts: list["_FunctionDraft"]) -> list[FunctionDef]:
 
 def to_program(draft: _PlanDraft, goal: str) -> Program:
     """Draft -> AST + structural passes."""
-    from .passes import chain_from_states, collapse_foreach_enrichment_passes, insert_loop_entry_arrivals
+    from ..passes import chain_from_states, collapse_foreach_enrichment_passes, insert_loop_entry_arrivals
 
     return chain_from_states(insert_loop_entry_arrivals(collapse_foreach_enrichment_passes(Program(
         goal=draft.goal or goal,

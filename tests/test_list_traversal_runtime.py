@@ -1,4 +1,4 @@
-from gui_agent.core.orchestrator.list_traversal_runtime import ListTraversalRuntime
+from gui_agent.core.orchestrator.traversal.list_runtime import ListTraversalRuntime
 from gui_agent.core.schemas import Observation
 
 

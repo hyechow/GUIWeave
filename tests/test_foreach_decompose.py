@@ -5,7 +5,7 @@
   collect per-item detail, then filter/aggregate the set)."""
 
 from gui_agent.core.orchestrator import Call, ForEach, Interpreter, Program, Run, RunResult, drive
-from gui_agent.core.orchestrator.data_query import execute_data_query
+from gui_agent.core.orchestrator.primitives.data_query import execute_data_query
 from gui_agent.core.orchestrator.decomposer import _FunctionDraft, _PlanDraft, _StepDraft, to_program, validate_program
 
 

@@ -182,7 +182,7 @@ def drive_pending_non_ui(
             summary = "浏览器后退"
             executed_sql = ""
         elif cur_run.kind == "navigation":
-            from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
+            from gui_agent.core.orchestrator.primitives.url_json_read import read_json_url_returns
 
             nav_url = _direct_nav_url(cur_run, platform)  # non-None per the while condition
             nav_n += 1
@@ -223,7 +223,7 @@ def drive_pending_non_ui(
             summary = f"直达导航 {nav_url}"
             executed_sql = ""
         elif cur_run.kind == "read" and cur_run.returns:
-            from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
+            from gui_agent.core.orchestrator.primitives.url_json_read import read_json_url_returns
 
             _hud(f"读取验收帧 {'、'.join(cur_run.returns)}")
             json_reads = read_json_url_returns(cur_run.name, list(cur_run.returns), cur_run.read_spec)
@@ -246,8 +246,8 @@ def drive_pending_non_ui(
                 )
                 say(f"  [Orchestrator] 只读验收帧 {cur_run.returns} → {reads}")
         elif cur_run.kind == "data_query":
-            from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
-            from gui_agent.core.orchestrator.data_query_repair import repair_data_query_sql
+            from gui_agent.core.orchestrator.primitives.data_query import DataQueryError, execute_data_query
+            from gui_agent.core.orchestrator.primitives.data_query_repair import repair_data_query_sql
 
             _hud(f"数据查询 {'、'.join(cur_run.returns) or cur_run.name}")
             ensure_observation()

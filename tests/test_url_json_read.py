@@ -1,4 +1,4 @@
-from gui_agent.core.orchestrator.url_json_read import extract_json_api_reads, read_json_url_returns
+from gui_agent.core.orchestrator.primitives.url_json_read import extract_json_api_reads, read_json_url_returns
 
 
 def test_extract_stargazers_count_from_json_key():

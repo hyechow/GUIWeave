@@ -57,7 +57,7 @@ def test_unselected_multiselect_reads_empty_not_first_option():
 
 
 # ── core hand-off read: DOM authoritative over vision ──────────────────────────────
-from gui_agent.core.orchestrator.structured_read import read_form_control_returns
+from gui_agent.core.orchestrator.primitives.structured_read import read_form_control_returns
 
 
 def test_handoff_read_takes_dom_selected_over_vision():

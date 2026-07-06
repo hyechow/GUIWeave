@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from gui_agent.core.orchestrator import Finish, Interpreter, Program, Query, Run
-from gui_agent.core.orchestrator.data_query import DataQueryError, execute_data_query
+from gui_agent.core.orchestrator.primitives.data_query import DataQueryError, execute_data_query
 from gui_agent.core.run.non_interactive import drive_pending_non_ui
 from gui_agent.core.schemas import Observation, PolicyContext
 
@@ -370,7 +370,7 @@ def test_non_ui_repairs_empty_data_query_with_actual_table_snapshot(tmp_path, mo
         )
 
     monkeypatch.setattr(
-        "gui_agent.core.orchestrator.data_query_repair.repair_data_query_sql",
+        "gui_agent.core.orchestrator.primitives.data_query_repair.repair_data_query_sql",
         _fake_repair,
     )
 
@@ -452,7 +452,7 @@ def test_non_ui_repair_blocks_when_collected_source_conflicts_with_goal(tmp_path
         )
 
     monkeypatch.setattr(
-        "gui_agent.core.orchestrator.data_query_repair.repair_data_query_sql",
+        "gui_agent.core.orchestrator.primitives.data_query_repair.repair_data_query_sql",
         _fake_repair,
     )
 
@@ -527,7 +527,7 @@ def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkey
         )
 
     monkeypatch.setattr(
-        "gui_agent.core.orchestrator.data_query_repair.repair_data_query_sql",
+        "gui_agent.core.orchestrator.primitives.data_query_repair.repair_data_query_sql",
         _fake_repair,
     )
 
@@ -580,7 +580,7 @@ def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkey
 def test_non_ui_data_query_failure_sets_failure_evidence(tmp_path, monkeypatch):
     # Feasibility Guard non-UI kick-back: a data_query that fails carries failure_evidence so the loop can
     # re-decompose instead of ending the run.
-    import gui_agent.core.orchestrator.data_query as dq
+    import gui_agent.core.orchestrator.primitives.data_query as dq
 
     def _raise(*_a, **_k):
         raise dq.DataQueryError("SQL 引用了不存在的列 rating")

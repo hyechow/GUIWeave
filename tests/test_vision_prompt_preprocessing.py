@@ -73,7 +73,7 @@ def test_orchestrator_decompose_uses_injected_vision_preprocessor(monkeypatch):
 
 
 def test_structured_read_uses_injected_vision_preprocessor(monkeypatch):
-    mod = importlib.import_module("gui_agent.core.orchestrator.structured_read")
+    mod = importlib.import_module("gui_agent.core.orchestrator.primitives.structured_read")
 
     captured: dict[str, tuple[int, int]] = {}
 

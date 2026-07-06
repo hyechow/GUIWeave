@@ -25,7 +25,7 @@ from gui_agent.core.orchestrator import (
     RunResult,
     drive,
 )
-from gui_agent.core.orchestrator.safe_eval import SafeEvalError, safe_eval
+from gui_agent.core.orchestrator.primitives.safe_eval import SafeEvalError, safe_eval
 from gui_agent.core.orchestrator.program import Query, Read
 
 _MATERIAL_OF = {"Minerva": "Cotton", "Eos": "Fleece"}

@@ -6,9 +6,9 @@ import re
 
 from gui_agent.core.router import IntentResolution
 
-from .data_query import rewrite_quoted_display_identifiers
-from .program import Call, Compute, ForEach, If, Program, RunLike, Stmt
-from .sql_utils import sql_identifier
+from ..primitives.data_query import rewrite_quoted_display_identifiers
+from ..program import Call, Compute, ForEach, If, Program, RunLike, Stmt
+from ..sql_utils import sql_identifier
 
 
 def _normalize_data_query_display_identifiers(program: Program) -> Program:

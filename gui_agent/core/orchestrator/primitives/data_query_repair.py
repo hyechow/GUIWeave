@@ -22,7 +22,7 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-from .sql_utils import sql_identifier as _identifier
+from ..sql_utils import sql_identifier as _identifier
 
 
 class DataQueryRepair(BaseModel):
@@ -93,7 +93,7 @@ def repair_data_query_sql(
 
 
 def _tables_profile(tables: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    from gui_agent.core.orchestrator.data_query import _prepare_table_values as _ptv
+    from gui_agent.core.orchestrator.primitives.data_query import _prepare_table_values as _ptv
 
     out: list[dict[str, Any]] = []
     for idx, table in enumerate(tables or [], start=1):

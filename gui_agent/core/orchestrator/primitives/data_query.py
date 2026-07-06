@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from .sql_utils import sql_identifier as _identifier
+from ..sql_utils import sql_identifier as _identifier
 
 
 class DataQueryError(ValueError):

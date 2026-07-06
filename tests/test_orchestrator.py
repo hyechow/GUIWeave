@@ -801,7 +801,7 @@ def test_non_empty_return_replan_leaves_read_unchanged():
 
 def test_structured_read_empty_returns_no_llm():
     # 无 returns 直接返回 {}，不触 LLM（确定性）。read_spec/check_knowledge 都不影响。
-    from gui_agent.core.orchestrator.structured_read import structured_read
+    from gui_agent.core.orchestrator.primitives.structured_read import structured_read
     assert structured_read(b"x", [], read_spec="任务说明", check_knowledge="线索") == {}
 
 

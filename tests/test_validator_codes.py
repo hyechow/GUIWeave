@@ -15,7 +15,9 @@ import pytest
 from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Read, Query, Run
 from gui_agent.core.orchestrator.validator import ALL_CODES, IssueList, ValidationIssue, validate_program
 
-_VALIDATOR_SRCS = tuple(sorted(Path("gui_agent/core/orchestrator").glob("validator*.py")))
+_VALIDATOR_SRCS = tuple(sorted(Path("gui_agent/core/orchestrator").glob("validator*.py"))) + tuple(
+    sorted(Path("gui_agent/core/orchestrator/_validator").glob("*.py"))
+)
 
 
 def _emitted_codes() -> set[str]:

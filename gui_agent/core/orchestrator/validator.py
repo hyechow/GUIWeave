@@ -11,12 +11,12 @@ import ast
 import re
 
 from .program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, Finish, ForEach, FunctionDef, If, Program, Query, Run, RunLike, Stmt
-from .safe_eval import FUNC_NAMES, dry_check_expr, normalize_compute_expr
-from .validator_data_query import check_foreach_data_query
-from .validator_issue import ALL_CODES, IssueList, ValidationIssue
-from .validator_retrieval import check_retrieval_retry_preserves_field
+from .primitives.safe_eval import FUNC_NAMES, dry_check_expr, normalize_compute_expr
+from ._validator.data_query import check_foreach_data_query
+from ._validator.issue import ALL_CODES, IssueList, ValidationIssue
+from ._validator.retrieval import check_retrieval_retry_preserves_field
 from .sql_utils import sql_identifier as _sql_identifier
-from .validator_sql import (
+from ._validator.sql import (
     aggregate_query_limits_after_aggregation as _aggregate_query_limits_after_aggregation,
     rank_query_drops_ties as _rank_query_drops_ties,
     sql_contains_template_ref as _sql_contains_template_ref,
@@ -27,7 +27,7 @@ from .validator_sql import (
     temporal_aggregate_without_row_limit as _temporal_aggregate_without_row_limit,
     temporal_limit_without_order as _temporal_limit_without_order,
 )
-from .validator_url import check_foreach_url_policy, check_function_contract, template_fields_for_var
+from ._validator.url import check_foreach_url_policy, check_function_contract, template_fields_for_var
 
 
 def _produces_result(run: Run) -> bool:

@@ -29,15 +29,15 @@ from llm.structured import invoke_structured
 
 from gui_agent.core.router import IntentResolution, intent_block
 from .program import Program
-from .decomposer_draft import _FunctionDraft, _PlanDraft, _StepDraft, _to_stmts, to_program
-from .decomposer_context import (
+from ._decomposer.draft import _FunctionDraft, _PlanDraft, _StepDraft, _to_stmts, to_program
+from ._decomposer.context import (
     _corrective_directive_block,
     _page_and_table_blocks,
     _prior_experience_block,
     _remaining_plan_block,
     _table_schema_prompt,
 )
-from .decomposer_sql import _normalize_approximate_entity_sql, _normalize_data_query_display_identifiers
+from ._decomposer.sql import _normalize_approximate_entity_sql, _normalize_data_query_display_identifiers
 from .intent_contracts import IntentContractIssue, validate_intent_contracts
 from .validator import (  # validator lives in its own module; decompose imports it back
     ValidationIssue,

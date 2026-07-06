@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-from .program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, ForEach, FunctionDef, If, Run, RunLike, Stmt
-from .validator_issue import IssueList
+from ..program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, ForEach, FunctionDef, If, Run, RunLike, Stmt
+from .issue import IssueList
 
 _URL_CAPABILITY_RE = re.compile(r"(?:url|href|link|链接|网址|詳細連結|详情链接)", re.IGNORECASE)
 _DETAIL_OPEN_RE = re.compile(

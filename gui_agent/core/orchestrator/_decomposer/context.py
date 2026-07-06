@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from gui_agent.context import ContextBlock
 
-from .decomposer_sql import _schema_typed_shadow_candidates
-from .sql_utils import sql_identifier
+from ..sql_utils import sql_identifier
+from .sql import _schema_typed_shadow_candidates
 
 
 def _corrective_directive_block(corrective_directive: str) -> "ContextBlock | None":

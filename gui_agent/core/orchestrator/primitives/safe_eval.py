@@ -203,7 +203,7 @@ def normalize_compute_expr(expr: str) -> str:
     `{sku}.rsplit(...)` ≡ `sku.rsplit(...)`, `{p[price]} * 0.865` ≡ `p['price'] * 0.865`.
     Single source for runtime (runner._compute) AND compile time (validator), so what the
     validator parses is exactly what safe_eval will evaluate."""
-    from .program import BARE_REF_RE, TEMPLATE_RE
+    from ..program import BARE_REF_RE, TEMPLATE_RE
 
     expr = TEMPLATE_RE.sub(lambda m: f"{m.group(1)}[{m.group(2)!r}]", expr or "")
     return BARE_REF_RE.sub(r"\1", expr)

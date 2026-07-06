@@ -112,7 +112,7 @@ def scroll_until_read(
     Returns the best ``{field: value}`` found (partial if boundary hit first).
     Never raises.
     """
-    from gui_agent.core.orchestrator.structured_read import structured_read
+    from gui_agent.core.orchestrator.primitives.structured_read import structured_read
 
     client = getattr(platform, "client", None)
     is_browser = client is not None and hasattr(client, "viewport_size")
@@ -304,7 +304,7 @@ def read_page_complete(
         )
 
     # Path 3: single-frame vision fallback.
-    from gui_agent.core.orchestrator.structured_read import structured_read
+    from gui_agent.core.orchestrator.primitives.structured_read import structured_read
     ppv = prepare_vision_prompt_png
     if ppv is None:
         ppv = getattr(bundle, "prepare_vision_prompt_png", None)
@@ -450,7 +450,7 @@ def read_grid_complete(
         find_prev_page_ref,
         read_grid_from_tree,
     )
-    from gui_agent.core.orchestrator.traversal_controller import TraversalController
+    from gui_agent.core.orchestrator.traversal.controller import TraversalController
 
     semantic_tree = getattr(obs, "semantic_tree", None)
     rows = read_grid_from_tree(semantic_tree, returns) if semantic_tree else None
@@ -462,7 +462,7 @@ def read_grid_complete(
         # single-page projection is already complete (pagination below is AX-tree-driven and is
         # correctly skipped for this branch). rows_from_tables returns None when nothing matches
         # → caller still falls back to interactive react_until_collected.
-        from gui_agent.core.orchestrator.list_traversal_runtime import rows_from_tables
+        from gui_agent.core.orchestrator.traversal.list_runtime import rows_from_tables
 
         return rows_from_tables(getattr(obs, "tables", None), returns)
 

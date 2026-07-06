@@ -4,7 +4,7 @@ source_type: task_template
 platform: browser
 scope:
   - orchestrator_data_query_repair
-owner: gui_agent.core.orchestrator.data_query_repair
+owner: gui_agent.core.orchestrator.primitives.data_query_repair
 schema: DataQueryRepair
 eval_suites:
 version: 1

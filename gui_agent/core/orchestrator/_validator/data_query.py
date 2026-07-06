@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .program import TEMPLATE_RE, Call, Compute, ForEach, If, Run, RunLike, Stmt
-from .validator_issue import IssueList
-from .sql_utils import sql_identifier
-from .validator_sql import (
+from ..program import TEMPLATE_RE, Call, Compute, ForEach, If, Run, RunLike, Stmt
+from ..sql_utils import sql_identifier
+from .issue import IssueList
+from .sql import (
     SQL_NON_FIELD_TOKENS,
     data_query_field_tokens,
     missing_query_fields,
@@ -17,7 +17,7 @@ from .validator_sql import (
     sql_derived_identifier_tokens,
     sql_referenced_tables,
 )
-from .validator_url import template_fields_for_var
+from .url import template_fields_for_var
 
 _BODY_GOAL_MEMBERSHIP_RE = re.compile(
     r"判断|是否|若是|如果|属于|匹配|目标集合|目标规格|筛选成员|\bif\b|\bwhether\b|\bmember\b|\bbelongs\b|\bmatching\b",

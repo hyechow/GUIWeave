@@ -15,6 +15,8 @@ package is that compiler + runtime; each module has one role in the toolchain:
                     decompose (AOT) / redecompose (kickback hot-patch) / subdecompose (per-row
                     JIT). Pipeline = LLM → to_program (structural passes) → validate/retry →
                     finalize_gates. So lint + gate-normalization cover all three uniformly.
+  _decomposer/      private draft schema, context blocks, and SQL normalizations used by the
+                    frontend; the public names are re-exported through decomposer.py.
 
   ── compiler middle-end (deterministic) ──────────────────────────────────────────────
   passes.py         AST normalize passes: collapse_foreach / insert_loop_entry_arrivals /
@@ -24,10 +26,13 @@ package is that compiler + runtime; each module has one role in the toolchain:
   ── type-check / lint (deterministic) ────────────────────────────────────────────────
   validator.py      reference/SQL/branch validation (type check). preflight.py    router-
   preflight.py      coverage + execution-mode discipline (lint); sample-and-validate uses it.
+  _validator/       private validator rule families and issue registry; the public names are
+                    re-exported through validator.py.
 
   ── non-interactive standard library (deterministic) ─────────────────────────────────
-  data_query.py     restricted SQL over the table snapshot. safe_eval.py  compute expressions.
-  url_json_read.py  deterministic URL-JSON reads. structured_read.py  vision field extraction.
+  primitives/       restricted SQL, compute expressions, URL-JSON reads, and vision field
+                    extraction.
+  traversal/        foreach row-collection traversal controller/runtime.
 
   ── runtime ──────────────────────────────────────────────────────────────────────────
   runner.py         the interpreter: non-interactive statements run here; interactive actions
@@ -56,8 +61,8 @@ from .preflight import (
     OrchestrationPreflightResult,
     validate_orchestration_preflight,
 )
-from .structured_read import structured_read
-from .data_query import DataQueryError, execute_data_query
+from .primitives.structured_read import structured_read
+from .primitives.data_query import DataQueryError, execute_data_query
 from .budget import estimate_program_turns
 from .runner import (
     Interpreter,

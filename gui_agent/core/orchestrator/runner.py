@@ -32,7 +32,7 @@ from .program import (
     BARE_REF_RE, TEMPLATE_RE, Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Query,
     Run, RunLike, RunResult,
 )
-from .safe_eval import SafeEvalError, normalize_compute_expr, safe_eval
+from .primitives.safe_eval import SafeEvalError, normalize_compute_expr, safe_eval
 
 # Drive one milestone (one Run spec) to a terminal state and return its structured result.
 MilestoneExecutor = Callable[[Run], RunResult]

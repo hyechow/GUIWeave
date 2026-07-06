@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-from .program import Run
-from .sql_utils import sql_identifier
+from ..program import Run
+from ..sql_utils import sql_identifier
 
 SQL_NON_FIELD_TOKENS = {
     "abs", "all", "and", "as", "asc", "avg", "between", "by", "case", "cast", "count", "dense_rank",

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-from .program import ForEach, If, Run, RunLike, Stmt
-from .validator_issue import IssueList
+from ..program import ForEach, If, Run, RunLike, Stmt
+from .issue import IssueList
 
 _RETRIEVAL_FIELD_RE = re.compile(
     r"([A-Za-z][A-Za-z0-9 _/-]{0,30}|[\u4e00-\u9fff]{1,12})\s*"
