@@ -53,6 +53,21 @@ _REDECOMPOSE_SYSTEM = _SYSTEM + "\n\n" + load_prompt_text("task.orchestrator.red
 
 _MAX_RETRIES = 2
 
+__all__ = [
+    "OrchestratorCompileError",
+    "decompose",
+    "redecompose",
+    "to_program",
+    "validate_program",
+    "_FunctionDraft",
+    "_PlanDraft",
+    "_StepDraft",
+    "_to_stmts",
+    "_normalize_approximate_entity_sql",
+    "_normalize_data_query_display_identifiers",
+    "_table_schema_prompt",
+]
+
 
 class OrchestratorCompileError(RuntimeError):
     """Raised when LLM draft repair retries are exhausted with validator issues still present."""

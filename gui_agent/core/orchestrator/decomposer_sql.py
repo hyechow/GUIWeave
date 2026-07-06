@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from gui_agent.core.router import IntentResolution
+
 from .data_query import rewrite_quoted_display_identifiers
 from .program import Call, Compute, ForEach, If, Program, RunLike, Stmt
 from .sql_utils import sql_identifier
@@ -82,9 +84,9 @@ def _iter_runs(stmts: list[Stmt]):
             yield from _iter_runs(stmt.body)
 
 
-def _normalize_approximate_entity_sql(program: Program, resolution: object | None) -> Program:
+def _normalize_approximate_entity_sql(program: Program, resolution: IntentResolution | None) -> Program:
     """Use intent search keys, not approximate spoken mentions, inside SQL filters."""
-    if resolution is None or not getattr(resolution, "entities", None):
+    if resolution is None or not resolution.entities:
         return program
     replacements: list[tuple[str, str]] = []
     for entity in resolution.entities:
@@ -110,3 +112,20 @@ def _normalize_approximate_entity_sql(program: Program, resolution: object | Non
 
 def _norm_sql_text(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip().lower()
+
+
+def _schema_typed_shadow_candidates(headers: list[object], columns: list[str]) -> list[str]:
+    shadows: list[str] = []
+    numeric_hints = (
+        "amount", "total", "price", "cost", "qty", "quantity", "count", "number", "score",
+        "rating", "percent", "uses", "results", "subtotal", "tax", "shipping", "payment",
+        "paid", "grand", "%",
+    )
+    datetime_hints = ("date", "time", "created", "updated", "purchased", "ordered", "posted")
+    for header, column in zip(headers, columns):
+        text = f"{header} {column}".lower()
+        if any(hint in text for hint in datetime_hints):
+            shadows.append(f"{column}_ts")
+        if any(hint in text for hint in numeric_hints):
+            shadows.append(f"{column}_num")
+    return shadows[:24]

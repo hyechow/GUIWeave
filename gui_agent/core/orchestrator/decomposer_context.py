@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from gui_agent.context import ContextBlock
 
+from .decomposer_sql import _schema_typed_shadow_candidates
 from .sql_utils import sql_identifier
 
 
@@ -165,20 +164,3 @@ def _table_schema_prompt(tables: list[dict] | None) -> str:
         + "\n".join(lines)
         + "\n若这些表格已经是任务要求的数据源终态，可生成 data_query；否则先规划导航、筛选/搜索/排序、清除旧筛选或完整采集步骤。SQL 只能使用表名、sql columns 中列出的 snake_case 标识符，以及运行时可解析的 typed shadows。source labels 只是人类可读说明，不是 SQL 语法。"
     )
-
-
-def _schema_typed_shadow_candidates(headers: list[Any], columns: list[str]) -> list[str]:
-    shadows: list[str] = []
-    numeric_hints = (
-        "amount", "total", "price", "cost", "qty", "quantity", "count", "number", "score",
-        "rating", "percent", "uses", "results", "subtotal", "tax", "shipping", "payment",
-        "paid", "grand", "%",
-    )
-    datetime_hints = ("date", "time", "created", "updated", "purchased", "ordered", "posted")
-    for header, column in zip(headers, columns):
-        text = f"{header} {column}".lower()
-        if any(hint in text for hint in datetime_hints):
-            shadows.append(f"{column}_ts")
-        if any(hint in text for hint in numeric_hints):
-            shadows.append(f"{column}_num")
-    return shadows[:24]
