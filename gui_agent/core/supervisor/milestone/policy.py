@@ -25,7 +25,12 @@ from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm
 from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
 from .helpers import assemble_messages, _make_llm, run_loop_check, run_planner
 from .helpers import run_checker, run_selector, _default_milestone_prompts, is_dispatch_gate_sc
-from .helpers import filter_chips_clean, filter_state_satisfies_target, native_select_satisfies_target
+from .helpers import (
+    checkbox_toggle_satisfies_target,
+    filter_chips_clean,
+    filter_state_satisfies_target,
+    native_select_satisfies_target,
+)
 from .runtime import (
     EARLY_FEASIBILITY_AT,
     MAX_RETRIES,
@@ -511,6 +516,24 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 summary="native select value gate 满足",
             )
             print("  [NativeSelectGate] DOM selected_text 满足目标 → done（跳过 LLM 视觉误判）")
+            self._last_check = check
+            return self._advance(milestone, observation, history)
+
+        # Checkbox/switch value gate — panel overlays can hide the downstream visual result
+        # (e.g. a grid header) while the AX/DOM control state is already checked. Re-clicking an
+        # already-checked toggle can revert it, so treat a matched ON toggle as deterministic done
+        # for checkbox-focused enable/show/select milestones.
+        if checkbox_toggle_satisfies_target(
+            getattr(observation, "form_controls", None),
+            getattr(observation, "semantic_tree", None),
+            milestone,
+        ):
+            check = _SingleCheckResult(
+                status="done",
+                reason="目标 checkbox/switch 已处于选中状态（obs.dom/AX checked 状态权威，确定性信号）；浮层遮挡不应触发重复点击",
+                summary="checkbox toggle gate 满足",
+            )
+            print("  [CheckboxGate] DOM/AX checked 状态满足目标 → done（跳过 LLM 视觉误判）")
             self._last_check = check
             return self._advance(milestone, observation, history)
 
@@ -1008,7 +1031,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             t.executed for t in scoped_history
             if t.supervisor.milestone_id == milestone.id
         )
-        if milestone.require_fresh_action and pre_existing:
+        checkbox_pre_existing_ok = checkbox_toggle_satisfies_target(
+            getattr(observation, "form_controls", None),
+            getattr(observation, "semantic_tree", None),
+            milestone,
+        )
+        if milestone.require_fresh_action and pre_existing and not checkbox_pre_existing_ok:
             print(
                 f"  [FreshActionRequired] 子目标「{done_name}」当前状态看似满足，"
                 "但本轮尚未执行写操作，覆盖 done → in_progress"
@@ -1043,7 +1071,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         print(f"  子目标「{done_name}」已完成")
 
         if pre_existing:
-            print(f"  [PreExisting] 子目标「{done_name}」未执行任何动作即判完成，目标状态在会话前已存在")
+            if checkbox_pre_existing_ok:
+                print(
+                    f"  [PreExistingCheckbox] 子目标「{done_name}」未执行动作即判完成，"
+                    "目标 checkbox/toggle 已处于要求状态"
+                )
+            else:
+                print(f"  [PreExisting] 子目标「{done_name}」未执行任何动作即判完成，目标状态在会话前已存在")
 
         if self._current_id is None:
             # final_read(_ctx) 已含 milestone_id/kind/completion_strategy；显式再传会撞车

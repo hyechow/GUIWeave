@@ -423,6 +423,79 @@ def native_select_satisfies_target(
     return referenced > 0
 
 
+_CHECKBOX_TARGET_RE = re.compile(
+    r"复选框|checkbox|勾选|选中|启用|开启|显示|可见|enable|enabled|show|visible|checked|select",
+    re.IGNORECASE,
+)
+_CHECKBOX_NEGATIVE_RE = re.compile(
+    r"取消勾选|取消选中|禁用|关闭|隐藏|disable|disabled|hide|hidden|uncheck|unchecked|off",
+    re.IGNORECASE,
+)
+
+
+def checkbox_toggle_satisfies_target(
+    form_controls: Optional[list[dict]],
+    semantic_tree: Optional[list[dict]],
+    milestone: Milestone,
+) -> bool:
+    """True when a target checkbox/switch is already ON for a checkbox-focused milestone.
+
+    This mirrors the native-select gate: checkbox state is a DOM/AX fact. It is intentionally
+    conservative: only positive "enable/show/select/check" milestones are fast-pathed, never
+    compound save/submit milestones, and the target label must match a named field/column.
+    """
+    ctx = " ".join([milestone.name or "", milestone.description or "", milestone.success_condition or ""])
+    if (
+        not ctx
+        or not _CHECKBOX_TARGET_RE.search(ctx)
+        or _CHECKBOX_NEGATIVE_RE.search(ctx)
+        or re.search(r"保存|save|提交|submit|创建|create|apply|应用", ctx, re.IGNORECASE)
+    ):
+        return False
+
+    fields = _extract_target_fields(milestone)
+    if not fields:
+        return False
+    wanted = {_compact_norm(field) for field in fields if _compact_norm(field)}
+    if not wanted:
+        return False
+
+    def _label_matches(label: str) -> bool:
+        got = _compact_norm(label)
+        return bool(got) and any(got == want or want in got or got in want for want in wanted)
+
+    for node in semantic_tree or []:
+        if not isinstance(node, dict):
+            continue
+        role = str(node.get("role") or "").lower()
+        if role not in {"checkbox", "menuitemcheckbox", "switch", "menuitemradio"}:
+            continue
+        if not _label_matches(str(node.get("key") or "")):
+            continue
+        if _truthy_checked(node.get("value")):
+            return True
+
+    for item in form_controls or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").lower()
+        if not any(part in kind for part in ("checkbox", "radio", "switch")):
+            continue
+        if not _label_matches(_control_label(item)):
+            continue
+        if _truthy_checked(item.get("selected_text") or item.get("value") or item.get("current")):
+            return True
+    return False
+
+
+def _compact_norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(text or "").lower())
+
+
+def _truthy_checked(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "checked", "on", "yes", "selected"}
+
+
 def _guard_native_select_plan(
     plan: _PlanResult,
     milestone: Milestone,

@@ -147,6 +147,8 @@ def form_controls_js() -> str:
       const sm = el.closest('.selectmenu');
       const optEls = sm ? Array.from(sm.querySelectorAll('.selectmenu-items .selectmenu-item-action, .selectmenu-items button')) : [];
       item.options = optEls.map(o => cut(o.textContent || '', 80)).filter(Boolean).slice(0, 60);
+    } else if (['checkbox', 'radio'].includes((el.type || '').toLowerCase())) {
+      item.value = el.checked ? 'on' : 'off';
     } else if ((el.type || '').toLowerCase() === 'password') {
       item.value = el.value ? '(password set)' : '';
     } else {
