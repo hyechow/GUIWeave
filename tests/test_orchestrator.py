@@ -198,16 +198,20 @@ def test_steppable_program_with_only_finish():
 
 
 def test_to_milestone_maps_runkind():
+    import pytest
+
     from gui_agent.core.orchestrator.engine import to_milestone
     nav = to_milestone(Run(name="进入页", kind="navigation"), 0)
     assert nav.kind == "navigation" and nav.completion_strategy == "visible_once"
-    rd = to_milestone(Run(var="d", name="读结果", kind="read", returns=["连通判定", "原因"]), 3)
-    assert rd.kind == "collection" and rd.completion_strategy == "read_once"
-    assert rd.id == "d"                              # var → milestone id
-    assert "连通判定" in rd.description and "原因" in rd.description  # returns 折进 description
-    dq = to_milestone(Run(var="q", name="统计订单", kind="data_query", returns=["emails"], sql="SELECT 1"), 4)
-    assert dq.kind == "collection" and dq.completion_strategy == "read_once"
-    assert dq.id == "q"
+    # returns 折进 description + 结构化通道同行（milestone=函数 的出参合同）
+    ret_nav = to_milestone(Run(var="d", name="开详情", kind="navigation", returns=["连通判定", "原因"]), 3)
+    assert "连通判定" in ret_nav.description and "原因" in ret_nav.description
+    assert ret_nav.returns == ["连通判定", "原因"]
+    # S6b 边界：查询节点不是 milestone —— marshal = 类型错误（由 drive_pending_non_ui 驱动）
+    with pytest.raises(ValueError, match="query run"):
+        to_milestone(Run(var="d", name="读结果", kind="read", returns=["连通判定"]), 3)
+    with pytest.raises(ValueError, match="query run"):
+        to_milestone(Run(var="q", name="统计订单", kind="data_query", returns=["emails"], sql="SELECT 1"), 4)
 
 
 def test_returning_ui_runs_get_target_specific_milestone_ids():
@@ -545,10 +549,14 @@ def test_supervisor_reseed_single_milestone():
     p._order = ["old", "x"]
     p._monitor._recent_screenshots.append((b"frame", None))  # stuck 检测器帧历史
     p._scroll_counts = {"old": 5}             # 其余 per-milestone 态
+    # S6b 后查询节点不再 marshal 成 milestone；reseed 的读取门用显式 task_type 验证
+    # （task_type_for 对查询仍返回 analysis，此处直接断言该映射）
     run = Run(var="d", name="读判定", kind="read", returns=["连通判定"])
-    p.reseed(to_milestone(run, 0), task_type=task_type_for(run))
+    assert task_type_for(run) == "analysis"
+    nav = Run(var="d", name="开判定页", kind="navigation")
+    p.reseed(to_milestone(nav, 0), task_type="analysis")
     assert list(p._order) == ["d"] and p._current_id == "d"
-    assert p.task_type == "analysis"          # read → analysis（读取门）
+    assert p.task_type == "analysis"          # 读取门由 task_type 控制
     # 与 DAG 的 _advance 对齐：只清 _recent_screenshots，其余跨 milestone 态保留（不再过度清空）。
     assert list(p._monitor._recent_screenshots) == []
     assert p._scroll_counts == {"old": 5}

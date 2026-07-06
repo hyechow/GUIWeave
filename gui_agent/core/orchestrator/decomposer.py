@@ -30,7 +30,21 @@ from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
 from gui_agent.core.router import IntentResolution, intent_block
-from .program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Run, RunKind, Stmt
+from .program import (
+    Call,
+    Compute,
+    Cond,
+    Finish,
+    ForEach,
+    FunctionDef,
+    If,
+    Program,
+    Query,
+    Read,
+    Run,
+    RunKind,
+    Stmt,
+)
 from .validator import (  # validator lives in its own module; decompose imports it back
     ValidationIssue,
     validate_program,
@@ -241,12 +255,17 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                 )
             )
         else:  # run (default)
+            kind = _to_kind(d.run_kind)
+            # IR-level query/command split at CONSTRUCTION time: read/data_query lower to the
+            # dedicated query node classes (wire format unchanged — op="run" + kind), so
+            # downstream structure checks are isinstance-based, not string dispatch.
+            run_cls = {"read": Read, "data_query": Query}.get(kind, Run)
             out.append(
-                Run(
+                run_cls(
                     var=(d.var.strip() or None),
                     name=d.name,
                     success_condition=d.success_condition,
-                    kind=_to_kind(d.run_kind),
+                    kind=kind,
                     returns=[r for r in d.returns if r.strip()],
                     read_spec=d.read_spec,
                     # Deterministic normalization: keep only domains whose field is actually declared

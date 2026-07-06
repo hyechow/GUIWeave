@@ -52,6 +52,15 @@ _EMPTY_RETURN_OK_CUES = (
 )
 
 
+def _is_query_run(run: object) -> bool:
+    """Non-interactive pure query (read/data_query)? Single predicate for every boundary guard.
+    Duck-safe: callframe takes `object`-typed runs; prefers Run.is_query, falls back to kind."""
+    is_query = getattr(run, "is_query", None)
+    if isinstance(is_query, bool):
+        return is_query
+    return getattr(run, "kind", "") in {"read", "data_query"}
+
+
 def _compact_text(text: str) -> str:
     return "".join(ch.lower() for ch in str(text or "") if not ch.isspace())
 
@@ -87,7 +96,7 @@ def missing_ui_return_fields(run: object, reads: dict[str, str]) -> list[str]:
     """
     if run is None or not getattr(run, "returns", None):
         return []
-    if getattr(run, "kind", "") in {"read", "data_query"}:
+    if _is_query_run(run):
         return []
     missing: list[str] = []
     for field in getattr(run, "returns", []):
@@ -167,7 +176,7 @@ def out_of_domain_return_fields(run: object, reads: dict[str, str]) -> list[Doma
     rejects values that were read but are the WRONG SHAPE — the "抓垃圾静默给错答" class."""
     if run is None or not getattr(run, "returns", None):
         return []
-    if getattr(run, "kind", "") in {"read", "data_query"}:
+    if _is_query_run(run):
         return []
     declared: dict[str, str] = {
         str(k): str(v) for k, v in (getattr(run, "return_domains", None) or {}).items()
@@ -305,11 +314,17 @@ def force_interactive_return_recovery(program: object, directive: str) -> object
     )
     success = str(first.success_condition or f"页面显示可读取的返回字段：{fields}")
     read_spec = str(first.read_spec or "")
-    statements[0] = first.model_copy(update={
-        "kind": "navigation",
-        "success_condition": f"{success}\n{recovery}",
-        "read_spec": f"{read_spec}\n{recovery}".strip(),
-    })
+    # PROMOTION = re-classification, not a field rewrite: a read that needs interaction becomes a
+    # COMMAND. Rebuild as a base Run explicitly — model_copy(update={"kind": ...}) on a Read IR
+    # node would skip validation and yield a Read instance lying about its kind.
+    statements[0] = Run(
+        **{
+            **first.model_dump(),
+            "kind": "navigation",
+            "success_condition": f"{success}\n{recovery}",
+            "read_spec": f"{read_spec}\n{recovery}".strip(),
+        }
+    )
     return program.model_copy(update={"statements": statements})
 
 
@@ -504,7 +519,7 @@ def extract_ui_returns(
     是非 UI 纯查询，由 non_interactive 驱动）。"""
     if run is None or not getattr(run, "returns", None):
         return {}
-    if getattr(run, "kind", "") in {"read", "data_query"}:
+    if _is_query_run(run):
         return {}
     from gui_agent.core.orchestrator.url_json_read import read_json_url_returns
 

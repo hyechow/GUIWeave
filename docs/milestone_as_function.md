@@ -57,6 +57,15 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
   直击实测 ~1/3 的 directive-adherence 弱环节。inline directive（空返回/data_query 失败）
   无标记 = 校验自然 no-op（这类恢复合法重访相似步骤）。
 
+- **S6 非交互型从 milestone 剥离（`e665d07` + `0c3f13f`）** 运行时早已绕开（drive_pending_non_ui），
+  这一步让类型系统跟上：
+  - *S6a* `_chain_block`/`_func_exit_sc`：read/data_query 页面中立，FROM 链穿透（与 Compute 同款）——
+    修「夹在两个 UI run 之间的 data_query 把后者 from_state 置空断链」的确定性缺陷；
+  - *S6b* `Read`/`Query` 作为 Run 的窄化子类在 `_to_stmts` 构造时分流（wire 格式 op=run+kind 不变、
+    LLM 面零改动、isinstance(s, Run) walker 零破坏）；`to_milestone`/`open_call` 对查询节点抛
+    ValueError（查询 marshal 进执行器 = 类型错误）；read→navigation 升格显式重建为命令 Run
+    （升格=重新分类，不是字段改写）；drive 循环与 callframe 守卫统一走 `is_query` 单谓词。
+
 ## 遗留项（后续分支）
 
 1. **Milestone.returns 的 prompt 消费方**：checker 验收「declared returns 可见」、planner 读取指令
@@ -68,9 +77,13 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
 4. **return_domains 的 LLM 采纳率**：prompt 已写，需 live 跑量确认 decomposer 真的产出 enum 域；
    不产出时推断兜底仍在。
 5. **服从校验的 live 调参**：锚词判据故意保守（宁漏不误杀）；跑 kickback 任务族（212/204）看召回。
+6. **IR 分流的终态**：Read/Query 目前是 Run 子类（wire 兼容、walker 零破坏的折中）；终态是与
+   Compute 同级的独立 op（sql/data_scope 等字段下移、报表层撤伪 milestone 条目）——等 live 证明
+   边界后再做大改。执行器侧 MilestoneKind 的 collection/verification 清理归跨平台专项
+   （iphone/android 采集仍依赖 collection milestone）。
 
 ## 回归状态
 
-基线 842 → 本分支 861 全绿（+19 合同测试：`tests/test_callframe.py` 15、preflight 4）。
-未跑 live（WebArena）；上述机制中 return_domains 推断与 adherence 重试会改变 live 行为，合入主线前需过
+基线 842 → 本分支 866 全绿（+24：callframe 合同测试 18、preflight 4、FROM 链穿透 2）。
+未跑 live（WebArena）；return_domains 推断、adherence 重试、查询节点边界会改变 live 行为，合入主线前需过
 778/63/113 族任务。

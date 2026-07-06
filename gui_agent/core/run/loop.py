@@ -651,7 +651,7 @@ def run_agent_loop(
                     _orch_reply = _e.value or ""
                     break
                 _run_idx += 1
-                if _cur_run is not None and _cur_run.kind in {"read", "data_query"}:
+                if _cur_run is not None and _cur_run.is_query:
                     context.turns.append(make_verdict_turn(
                         index=len(context.turns) + 1,
                         observation_source=observation.source,

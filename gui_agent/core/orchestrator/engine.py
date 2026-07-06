@@ -46,7 +46,17 @@ def to_milestone(run: Run, index: int) -> Milestone:
 
     `returns`/`read_spec` travel BOTH ways: structurally (Milestone.returns/read_spec — the
     出参合同 channel a consumer can read without parsing prose) AND folded into the description
-    (so existing read-instruction prompts keep targeting them unchanged)."""
+    (so existing read-instruction prompts keep targeting them unchanged).
+
+    BOUNDARY: only COMMANDS become milestones. A query (read/data_query) is a non-interactive
+    program-layer primitive driven by drive_pending_non_ui — marshalling one into the milestone
+    executor is a type error, not a fallback (a read that needs interaction must first be
+    PROMOTED to a command, see callframe.force_interactive_return_recovery)."""
+    if run.is_query:
+        raise ValueError(
+            f"query run（kind={run.kind}）不是 milestone：非交互原语由 drive_pending_non_ui 驱动，"
+            "需要交互时应先升格为命令（kind=navigation）再 marshal。"
+        )
     kind, strategy = _KIND_MAP.get(run.kind, ("action", "visible_once"))
     desc = run.name
     if run.returns:
@@ -542,14 +552,16 @@ def insert_loop_entry_arrivals(program: Program) -> Program:
 
 
 def _func_exit_sc(name: str, funcs: dict, _seen: frozenset = frozenset()) -> str:
-    """Exit state of a function = success_condition of the last Run in its body (what the page looks
-    like when the call returns). Used to chain FROM across a Call. Bounded against cycles."""
+    """Exit state of a function = success_condition of the last COMMAND Run in its body (what the
+    page looks like when the call returns). Queries (read/data_query) never move the page, so a
+    trailing read must not blank the exit state. Used to chain FROM across a Call. Bounded against
+    cycles."""
     fn = funcs.get(name)
     if fn is None or name in _seen:
         return ""
     last_sc = ""
     for s in fn.body:
-        if isinstance(s, Run):
+        if isinstance(s, Run) and not s.is_query:
             last_sc = s.success_condition
         elif isinstance(s, Call):
             last_sc = _func_exit_sc(s.func, funcs, _seen | {name})
@@ -565,7 +577,13 @@ def _chain_block(stmts: list[Stmt], entry_sc: str, funcs: dict) -> list[Stmt]:
     out: list[Stmt] = []
     prev = entry_sc
     for s in stmts:
-        if isinstance(s, Run):
+        if isinstance(s, Run) and s.is_query:
+            # Non-interactive pure query (read/data_query): consumes the current frame/table
+            # snapshot, never touches the UI, page unchanged → FROM carries through, same as
+            # Compute. Treating it as an ordinary Run broke the chain: a data_query typically
+            # has NO success_condition, so the NEXT UI run's from_state went blank.
+            out.append(s)
+        elif isinstance(s, Run):
             out.append(s.model_copy(update={"from_state": prev}))
             prev = s.success_condition
         elif isinstance(s, Compute):

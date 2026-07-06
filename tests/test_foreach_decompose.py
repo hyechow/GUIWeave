@@ -24,11 +24,12 @@ def _good_draft() -> _PlanDraft:
 
 def test_foreach_draft_round_trips_and_validates_clean():
     program = to_program(_good_draft(), "g")
-    assert [type(s).__name__ for s in program.statements] == ["Run", "ForEach", "Run", "Finish"]
+    # read/data_query lower to dedicated IR query nodes at construction (S6b); wire op stays "run"
+    assert [type(s).__name__ for s in program.statements] == ["Read", "ForEach", "Query", "Finish"]
     fe = program.statements[1]
     assert isinstance(fe, ForEach)
     assert (fe.var, fe.over, fe.into) == ("row", "r", "reviews")
-    assert [type(b).__name__ for b in fe.body] == ["Run", "Run"]
+    assert [type(b).__name__ for b in fe.body] == ["Run", "Read"]
     assert validate_program(program) == []  # {row[id]} in-scope; over is a read var
 
 

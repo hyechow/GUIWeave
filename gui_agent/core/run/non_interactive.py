@@ -141,7 +141,7 @@ def drive_pending_non_ui(
 
     while cur_run is not None:
         if not (
-            cur_run.kind in {"read", "data_query"}
+            cur_run.is_query
             or _direct_nav_url(cur_run, platform) is not None
             or _direct_back(cur_run, platform)
         ):

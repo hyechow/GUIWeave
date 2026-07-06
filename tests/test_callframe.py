@@ -145,14 +145,15 @@ def test_decomposer_draft_maps_return_domains_only_for_declared_fields():
     assert run.return_domains == {"创建结果": "enum:成功|失败"}
 
 
-def test_open_call_read_run_gets_analysis_gate():
-    """read/data_query 是查询：task_type 必须是 analysis，否则执行器的读取门不开。"""
+def test_open_call_rejects_query_runs():
+    """S6b 边界：查询节点永不进入 milestone 执行器 —— open_call 对其抛类型错误。"""
+    import pytest
+
     sup = _FakeSupervisor()
     read_run = Run(name="读取总数", kind="read", var="total", returns=["总数"])
-    open_call(sup, read_run, 0)
-    _, task_type, fresh = sup.reseeds[0]
-    assert task_type == "analysis"
-    assert fresh is False
+    with pytest.raises(ValueError, match="query run"):
+        open_call(sup, read_run, 0)
+    assert sup.reseeds == []
 
 
 # ── kickback = 类型化异常（S4）────────────────────────────────────────────────────
@@ -238,3 +239,60 @@ def test_adherence_noop_for_untyped_directive():
     assert not directive.is_typed
     program = Program(statements=[Run(kind="read", name="重读同一页面", returns=["x"])])
     assert kickback_adherence_issues(program, directive, failed_run=None) == []
+
+
+# ── S6b: read/data_query = 独立 IR 查询节点（与命令在构造时分流）────────────────────
+
+
+def test_to_stmts_lowers_queries_to_ir_nodes():
+    from gui_agent.core.orchestrator.decomposer import _StepDraft, _to_stmts
+    from gui_agent.core.orchestrator.program import Query, Read
+
+    read_stmt, query_stmt, action_stmt = _to_stmts([
+        _StepDraft(op="run", run_kind="read", var="r", name="读计数", returns=["总数"]),
+        _StepDraft(op="run", run_kind="data_query", var="q", name="查询",
+                   returns=["n"], sql="SELECT COUNT(*) AS n FROM data"),
+        _StepDraft(op="run", run_kind="action", name="点击保存"),
+    ])
+    assert isinstance(read_stmt, Read) and isinstance(query_stmt, Query)
+    assert not isinstance(action_stmt, (Read, Query))
+    # 子类仍是 Run：既有 walker 零破坏；wire 格式不变（op=run + kind）
+    assert isinstance(read_stmt, Run) and isinstance(query_stmt, Run)
+    assert read_stmt.model_dump()["op"] == "run" and read_stmt.kind == "read"
+    assert query_stmt.is_query and read_stmt.is_query and not action_stmt.is_query
+
+
+def test_to_milestone_rejects_query_runs():
+    """边界类型强制：查询节点 marshal 成 milestone = 类型错误,不是静默兜底。"""
+    import pytest
+
+    from gui_agent.core.orchestrator.engine import to_milestone
+    from gui_agent.core.orchestrator.program import Query, Read
+
+    with pytest.raises(ValueError, match="query run"):
+        to_milestone(Read(var="r", name="读计数", returns=["总数"]), 0)
+    with pytest.raises(ValueError, match="query run"):
+        to_milestone(Query(var="q", name="查询", returns=["n"], sql="SELECT 1"), 0)
+    # 兼容:直接构造的 base Run(kind=read) 同样被拒(旧测试/持久化形态)
+    with pytest.raises(ValueError, match="query run"):
+        to_milestone(Run(kind="read", var="r", name="读", returns=["x"]), 0)
+    # 命令照常
+    assert to_milestone(Run(kind="action", name="点击"), 0).name == "点击"
+
+
+def test_promotion_reclassifies_read_ir_node_to_command_run():
+    """升格 = 重新分类:Read IR 节点升格后必须是 base Run 命令,不能是谎报 kind 的 Read。"""
+    from gui_agent.core.orchestrator.callframe import force_interactive_return_recovery
+    from gui_agent.core.orchestrator.program import Program, Query, Read
+
+    program = Program(statements=[
+        Read(var="r", name="读取统计", returns=["stars"], success_condition="统计可见"),
+    ])
+    out = force_interactive_return_recovery(
+        program,
+        "上一子目标被验收为完成，但它声明的返回字段合同未满足：实际读取结果为空：['stars']。",
+    )
+    first = out.statements[0]
+    assert first.kind == "navigation"
+    assert not isinstance(first, (Read, Query))
+    assert first.is_command

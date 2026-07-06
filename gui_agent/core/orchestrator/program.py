@@ -121,6 +121,31 @@ class Run(BaseModel):
 
 
 
+# ── 非交互查询节点（IR 层分流）────────────────────────────────────────────────────
+# read/data_query 在运行时早已绕开 milestone 执行器（drive_pending_non_ui 直接消费验收帧/
+# 表格快照），这两个子类让 IR 在【构造时】就把查询与命令分开：
+# - 序列化不变（op="run" + kind），LLM 面（decomposer 扁平 draft）零改动；
+# - isinstance(s, Run) 的既有 walker 全部继续命中（子类），零破坏；
+# - 结构性判别用 isinstance(s, Query/Read) 或 run.is_query；
+# - milestone 边界由 engine.to_milestone 强制：查询节点 marshal 成 milestone = 类型错误。
+# read 需要交互时（值不可见、要滚动/展开）不改 kind——由 callframe 的升格路径显式重建为
+# 命令 Run（kind=navigation），「查询升格为命令」是重新分类，不是字段改写。
+
+
+class Read(Run):
+    """Non-interactive frame read: extract `returns` off the CURRENT completion frame.
+    Pure query — no UI action, page unchanged, FROM chain passes through."""
+
+    kind: Literal["read"] = "read"  # type: ignore[assignment]
+
+
+class Query(Run):
+    """Non-interactive data query: restricted SELECT over the current structured table
+    snapshot (+ foreach-materialized tables). Pure query — page unchanged."""
+
+    kind: Literal["data_query"] = "data_query"  # type: ignore[assignment]
+
+
 class Cond(BaseModel):
     """A single comparison against a prior run's read: ``var["field"] cmp value``."""
 
