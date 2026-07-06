@@ -327,6 +327,128 @@ def should_kickback_replan(sv_step, program, redecompose, replan_count: int) -> 
     )
 
 
+# ── kickback = 类型化异常（infeasible 的结构化载荷 + 重规划服从校验）───────────────────
+# Feasibility 判死时,verdict 的 dead_route/required_route 以标记折叠进 directive 单通道
+# （supervisor/milestone/feasibility.compose_directive）;这里反解并对 redecompose 的输出做
+# 确定性服从校验——「禁用的机制不得再现、规定的路线必须出现」,不服从 = 调用方锐化重试。
+# 无标记的 directive（空返回/data_query 失败等 loop 内联指令）没有结构化载荷,校验自然 no-op。
+
+DEAD_ROUTE_MARKER = "【死路｜禁止再用】"
+REQUIRED_ROUTE_MARKER = "【规定路线】"
+
+_ANCHOR_TOKEN_RE = re.compile(r"[A-Za-z0-9_]{3,}")
+_TIGHTEN_SUFFIX_RE = re.compile(r"（继续定位返回字段：[^）]*）")
+
+
+@dataclass
+class KickbackDirective:
+    """The typed kickback exception, parsed back from the marked directive prose."""
+
+    dead_route: str = ""
+    required_route: str = ""
+    text: str = ""
+
+    @property
+    def is_typed(self) -> bool:
+        return bool(self.dead_route or self.required_route)
+
+
+def parse_kickback_directive(directive: str) -> KickbackDirective:
+    """Parse the 【死路｜禁止再用】/【规定路线】 markers out of a directive string."""
+    text = str(directive or "")
+    dead = ""
+    required = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(DEAD_ROUTE_MARKER):
+            dead = stripped[len(DEAD_ROUTE_MARKER):].strip()
+        elif stripped.startswith(REQUIRED_ROUTE_MARKER):
+            required = stripped[len(REQUIRED_ROUTE_MARKER):].strip()
+    return KickbackDirective(dead_route=dead, required_route=required, text=text)
+
+
+def _norm_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
+
+
+def _anchor_tokens(text: str) -> list[str]:
+    """Distinctive machine-comparable tokens (alnum, len>=3) — column/control/entity names."""
+    return [t.lower() for t in _ANCHOR_TOKEN_RE.findall(str(text or ""))]
+
+
+def _run_texts(program: object) -> list[tuple[str, str]]:
+    """(kind, normalized name+success_condition+sql) for every Run in the program (recursive)."""
+    from gui_agent.core.orchestrator.program import ForEach, If, Run
+
+    out: list[tuple[str, str]] = []
+
+    def walk(stmts) -> None:
+        for s in stmts or []:
+            if isinstance(s, Run):
+                out.append((s.kind, _norm_text(f"{s.name} {s.success_condition} {s.sql}")))
+            elif isinstance(s, If):
+                walk(s.then)
+                walk(s.otherwise)
+            elif isinstance(s, ForEach):
+                walk(s.body)
+
+    walk(getattr(program, "statements", None) or [])
+    for fn in getattr(program, "functions", None) or []:
+        walk(getattr(fn, "body", None) or [])
+    return out
+
+
+def kickback_adherence_issues(
+    program: object,
+    directive: KickbackDirective,
+    *,
+    failed_run: object = None,
+) -> list[str]:
+    """Deterministic adherence check of a re-decomposed program against a TYPED kickback.
+
+    Conservative by construction（只报高置信违规,宁漏不误杀）:
+    - dead-route reuse: the dead_route's anchor tokens (or its full normalized phrase) all land
+      in ONE run's text → the banned mechanism came back, possibly re-worded.
+    - failed-run reappearance: a run with the same kind and (normalized) name as the run that was
+      judged infeasible → the same dead milestone was re-planned verbatim.
+    - required-route ignored: the required route has anchor tokens and NONE of them appear
+      anywhere in the program.
+    Untyped directives (no markers) yield no issues — inline recovery directives (empty returns /
+    data_query failures) legitimately revisit similar steps."""
+    issues: list[str] = []
+    if not directive.is_typed:
+        return issues
+    run_texts = _run_texts(program)
+    program_text = " ".join(text for _, text in run_texts)
+
+    if directive.dead_route:
+        dead_norm = _norm_text(directive.dead_route)
+        # Discriminative tokens only: an anchor shared with the required route (e.g. the target
+        # attribute "rating" that BOTH the dead filter and the prescribed drill mention) cannot
+        # distinguish the two mechanisms and must not count as reuse evidence.
+        required_tokens = set(_anchor_tokens(directive.required_route))
+        dead_tokens = [t for t in _anchor_tokens(directive.dead_route) if t not in required_tokens]
+        for _, text in run_texts:
+            phrase_hit = len(dead_norm) >= 6 and dead_norm in text
+            token_hit = bool(dead_tokens) and all(t in text for t in dead_tokens)
+            if phrase_hit or token_hit:
+                issues.append(f"被禁机制再现：「{directive.dead_route}」仍出现在某个步骤中")
+                break
+        if failed_run is not None and getattr(failed_run, "kind", "") not in {"read", "data_query"}:
+            failed_name = _norm_text(_TIGHTEN_SUFFIX_RE.sub("", str(getattr(failed_run, "name", ""))))
+            if len(failed_name) >= 8:
+                for kind, text in run_texts:
+                    if kind == getattr(failed_run, "kind", "") and failed_name in text:
+                        issues.append(f"被判不可行的原 milestone「{failed_name[:40]}」原样重现")
+                        break
+
+    if directive.required_route:
+        req_tokens = _anchor_tokens(directive.required_route)
+        if req_tokens and not any(t in program_text for t in req_tokens):
+            issues.append(f"规定路线未被采用：「{directive.required_route}」的关键机制词未出现在新计划中")
+    return issues
+
+
 class ReturnRecoveryLedger:
     """Bounded retry budget for the empty-returns contract violation, keyed per call site.
 

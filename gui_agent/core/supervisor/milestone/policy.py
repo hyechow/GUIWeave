@@ -1088,7 +1088,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         a deliberate conservative-toward-feasible default so it never steals the action-level
         replanner's feasible-but-stuck cases, and naturally no-ops on visual-only platforms (no DOM
         form_controls). Only fires here, after MAX_RETRIES, so the control observation is mature."""
-        from .feasibility import control_presence_text, judge_feasibility
+        from .feasibility import compose_directive, control_presence_text, judge_feasibility
 
         control_text = control_presence_text(observation)
         if "无适配器可感知" in control_text:
@@ -1114,7 +1114,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             stop_reason=f"milestone 不可行，需重规划：{verdict.reason}",
             goal_completed=False,
             summary=verdict.reason,
-            replan_directive=verdict.directive or None,
+            replan_directive=compose_directive(verdict) or None,
             **_ctx(milestone, read_inst),
         )
 

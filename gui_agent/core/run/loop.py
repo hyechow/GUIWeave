@@ -436,6 +436,43 @@ def run_agent_loop(
                 return (False, None)
             if _new is None or not _new.statements:
                 return (False, None)
+            # Typed-kickback adherence（kickback=异常,directive=异常载荷）: a feasibility kickback
+            # carries machine-checkable 死路/规定路线 markers. Verify the re-decomposed program
+            # OBEYS them; on violation, ONE sharpened retry naming the violations (bounded — the
+            # measured weak link is directive-adherence ~1/3, and a directive-violating plan just
+            # re-enters the same dead end). Untyped directives no-op here.
+            from gui_agent.core.orchestrator.callframe import (
+                kickback_adherence_issues,
+                parse_kickback_directive,
+            )
+            _kb = parse_kickback_directive(directive)
+            _adherence_issues = kickback_adherence_issues(_new, _kb, failed_run=_cur_run)
+            if _adherence_issues:
+                _say("  [Kickback] 重规划未服从纠正指令："
+                     + "；".join(_adherence_issues) + " → 锐化重试一次")
+                _sharp = (
+                    directive
+                    + "\n\n⚠️ 你上一版重规划违反了纠正指令：" + "；".join(_adherence_issues)
+                    + "。必须完全避开【死路｜禁止再用】点名的机制（包括换说法重写它），"
+                      "并把【规定路线】作为新计划的主干路线。"
+                )
+                try:
+                    _retry = redecompose(
+                        _sharp, _rd_reports,
+                        observation=observation,
+                        prior_experience=_experience,
+                        remaining_plan=_remaining,
+                    )  # type: ignore[operator]
+                except Exception as _exc:  # noqa: BLE001 - retry failure falls back to the first plan
+                    _say(f"  [Kickback] 锐化重试失败（{_exc}），沿用第一版重规划")
+                    _retry = None
+                if _retry is not None and _retry.statements:
+                    _retry_issues = kickback_adherence_issues(_retry, _kb, failed_run=_cur_run)
+                    if len(_retry_issues) < len(_adherence_issues):
+                        _new = _retry
+                        _adherence_issues = _retry_issues
+                    else:
+                        _say("  [Kickback] 锐化重试未改善服从度，沿用第一版重规划")
             _new = _force_interactive_return_recovery(_new, directive)
             _interp = Interpreter(_new, collect_fn=_collect_fn, subdecompose_fn=subdecompose,
                                   expand_fn=expand_foreach, select_fn=select_members)
@@ -457,6 +494,8 @@ def run_agent_loop(
                 "kickback_n": _kickback_replans,
                 "directive": directive,
                 "at_turn": len(context.turns),
+                # typed-kickback adherence verdict on the ACCEPTED program (empty = obeyed / untyped)
+                "adherence_issues": list(_adherence_issues),
                 "program": _new.model_dump(mode="json"),
                 # the re-decompose's own LLM call metrics, so its report card shows 模型调用详情
                 "llm_calls": get_llm_call_count() - _rd_calls0,

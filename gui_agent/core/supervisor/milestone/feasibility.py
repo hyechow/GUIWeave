@@ -35,14 +35,54 @@ _SYSTEM = load_prompt_text("task.milestone.feasibility")
 
 
 class FeasibilityVerdict(BaseModel):
-    """Feasibility Guard output: is the stuck milestone feasible, and (if not) the kick-back directive."""
+    """Feasibility Guard output: is the stuck milestone feasible, and (if not) the kick-back directive.
+
+    kickback = milestone 函数抛出的类型化异常：``dead_route``/``required_route`` 是异常的结构化
+    载荷（禁用机制 + 规定路线），由 compose_directive 组装成带标记的 directive 文本单通道下行；
+    编排侧 callframe.parse_kickback_directive 反解并对重规划做确定性服从校验。"""
 
     feasible: bool = Field(description="目标在当前环境可否达成:true=可行(继续试),false=不可行(踢回重规划)")
     reason: str = Field(default="", description="一句话依据:点名必需控件 + 它是否在页面控件清单中")
+    dead_route: str = Field(
+        default="",
+        description="feasible=false 时填:被判死、禁止再用的机制,一段具体可比对的描述"
+                    "(点名控件/入口/查询方式,如「在列表层按 Rating 筛选」「data_query 查询不存在的 rating 列」)",
+    )
+    required_route: str = Field(
+        default="",
+        description="feasible=false 时填:规定的唯一可行路线,具体到页面/控件/机制"
+                    "(如「逐条打开每条评论详情读取 Rating 再本地筛选」);feasible=true 留空",
+    )
     directive: str = Field(
         default="",
         description="feasible=false 时填:给编排器的重规划指令(禁死路+规定唯一可行路线);feasible=true 时留空",
     )
+
+
+# Structured-exception markers: compose_directive folds the typed payload into the single
+# prose channel (sv_step.replan_directive); callframe.parse_kickback_directive re-parses them.
+# Single-sourced from the callframe ABI so composer and parser can never drift.
+from gui_agent.core.orchestrator.callframe import (  # noqa: E402
+    DEAD_ROUTE_MARKER,
+    REQUIRED_ROUTE_MARKER,
+)
+
+
+def compose_directive(verdict: FeasibilityVerdict) -> str:
+    """Fold the verdict's typed payload + prose into ONE marked directive string.
+
+    The markers make the ban/route machine-checkable downstream while staying natural for the
+    redecomposer prompt. A verdict without structured fields degrades to the plain prose."""
+    if verdict.feasible:
+        return ""
+    lines: list[str] = []
+    if verdict.dead_route.strip():
+        lines.append(f"{DEAD_ROUTE_MARKER}{verdict.dead_route.strip()}")
+    if verdict.required_route.strip():
+        lines.append(f"{REQUIRED_ROUTE_MARKER}{verdict.required_route.strip()}")
+    if verdict.directive.strip():
+        lines.append(verdict.directive.strip())
+    return "\n".join(lines)
 
 
 def _ui_facts_text(ui_facts: Optional[list[dict[str, Any]]]) -> str:

@@ -153,3 +153,88 @@ def test_open_call_read_run_gets_analysis_gate():
     _, task_type, fresh = sup.reseeds[0]
     assert task_type == "analysis"
     assert fresh is False
+
+
+# ── kickback = 类型化异常（S4）────────────────────────────────────────────────────
+
+
+def test_compose_and_parse_kickback_directive_roundtrip():
+    from gui_agent.core.orchestrator.callframe import parse_kickback_directive
+    from gui_agent.core.supervisor.milestone.feasibility import (
+        FeasibilityVerdict,
+        compose_directive,
+    )
+
+    verdict = FeasibilityVerdict(
+        feasible=False, reason="列表层无 Rating 筛选控件",
+        dead_route="在评论列表层按 Rating 筛选,以及 data_query 查询不存在的 rating 列",
+        required_route="逐条打开每条评论详情读取 Rating 再本地筛选",
+        directive="列表层没有 Rating 筛选控件;必须逐条打开评论详情读取 Rating。",
+    )
+    text = compose_directive(verdict)
+    parsed = parse_kickback_directive(text)
+    assert parsed.is_typed
+    assert parsed.dead_route == verdict.dead_route
+    assert parsed.required_route == verdict.required_route
+    # feasible=true → 空 directive
+    assert compose_directive(FeasibilityVerdict(feasible=True)) == ""
+
+
+def test_adherence_flags_dead_route_reuse():
+    from gui_agent.core.orchestrator.callframe import (
+        KickbackDirective,
+        kickback_adherence_issues,
+    )
+    from gui_agent.core.orchestrator.program import Program, Run
+
+    directive = KickbackDirective(
+        dead_route="按 Rating 列筛选评论",
+        required_route="逐条打开评论详情读取 Rating",
+    )
+    disobedient = Program(statements=[
+        Run(kind="filter", name="在评论列表按 Rating 列筛选评论,只留 1 星"),
+    ])
+    issues = kickback_adherence_issues(disobedient, directive)
+    assert any("被禁机制再现" in i for i in issues)
+    # 服从版:走规定路线,无违规
+    obedient = Program(statements=[
+        Run(kind="navigation", name="打开第一条评论详情读取 Rating 值", returns=["rating"]),
+    ])
+    assert kickback_adherence_issues(obedient, directive) == []
+
+
+def test_adherence_flags_failed_run_reappearance_and_ignored_route():
+    from gui_agent.core.orchestrator.callframe import (
+        KickbackDirective,
+        kickback_adherence_issues,
+    )
+    from gui_agent.core.orchestrator.program import Program, Run
+
+    failed = Run(kind="filter", name="在列表层按 Rating 筛选出 1 星评论（继续定位返回字段：数量）")
+    directive = KickbackDirective(dead_route="列表层 Rating 筛选", required_route="打开 review detail 逐条读取")
+    reappeared = Program(statements=[
+        Run(kind="filter", name="在列表层按 rating 筛选出 1 星评论"),
+    ])
+    issues = kickback_adherence_issues(reappeared, directive, failed_run=failed)
+    assert any("原样重现" in i for i in issues)
+    # 规定路线的锚词（detail）完全未出现 → 违规
+    ignoring = Program(statements=[
+        Run(kind="action", name="导出评论列表"),
+    ])
+    issues2 = kickback_adherence_issues(ignoring, directive, failed_run=None)
+    assert any("规定路线未被采用" in i for i in issues2)
+
+
+def test_adherence_noop_for_untyped_directive():
+    """无标记的 inline directive（空返回/data_query 失败）没有结构化载荷——不做服从校验,
+    因为这类恢复合法地重访相似步骤。"""
+    from gui_agent.core.orchestrator.callframe import (
+        kickback_adherence_issues,
+        parse_kickback_directive,
+    )
+    from gui_agent.core.orchestrator.program import Program, Run
+
+    directive = parse_kickback_directive("上一子目标声明的返回字段合同未满足:...请重规划。")
+    assert not directive.is_typed
+    program = Program(statements=[Run(kind="read", name="重读同一页面", returns=["x"])])
+    assert kickback_adherence_issues(program, directive, failed_run=None) == []

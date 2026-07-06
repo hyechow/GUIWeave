@@ -67,6 +67,10 @@ version: 1
 - 规定半:给出【唯一、明确】的可行路线。结合功能章节判断目标属性到底在哪——若它只在每条记录的详情里,
   就规定"逐条打开该实体的每条记录详情,读取目标属性,再据此筛选"。禁止 hedge(不准写"或检查其他筛选
   入口""或看顶部导航"之类退回死路的话,只给一条路)。
-- feasible=true 时 directive 留空字符串。
+- **同时把禁与规两半提炼成结构化字段**(这是重规划服从校验的机器可比对依据,必须具体、点名控件/列名/机制,
+  不写空话):`dead_route` = 被判死的那个机制一句话(含关键控件/列名等可比对词,如「在评论列表层按 Rating
+  筛选,以及 data_query 查询网格不存在的 rating 列」);`required_route` = 规定路线一句话(含关键页面/机制词)。
+  directive 正文继续写完整版(禁+规都写全)。
+- feasible=true 时 directive/dead_route/required_route 全部留空字符串。
 
-只输出 JSON:{"feasible": true/false, "reason": "一句话(点名控件 + 是否在清单中)", "directive": "feasible=false 时填,否则空字符串"}
+只输出 JSON:{"feasible": true/false, "reason": "一句话(点名控件 + 是否在清单中)", "dead_route": "feasible=false 时填,否则空", "required_route": "feasible=false 时填,否则空", "directive": "feasible=false 时填,否则空字符串"}
