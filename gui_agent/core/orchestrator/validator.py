@@ -15,12 +15,12 @@ from .safe_eval import FUNC_NAMES, dry_check_expr, normalize_compute_expr
 from .validator_data_query import check_foreach_data_query
 from .validator_issue import ALL_CODES, IssueList, ValidationIssue
 from .validator_retrieval import check_retrieval_retry_preserves_field
+from .sql_utils import sql_identifier as _sql_identifier
 from .validator_sql import (
     aggregate_query_limits_after_aggregation as _aggregate_query_limits_after_aggregation,
     rank_query_drops_ties as _rank_query_drops_ties,
     sql_contains_template_ref as _sql_contains_template_ref,
     sql_cte_names as _sql_cte_names,
-    sql_identifier as _sql_identifier,
     sql_referenced_tables as _sql_referenced_tables,
     sql_uses_quoted_display_identifier as _sql_uses_quoted_display_identifier,
     sql_uses_schema_mapping_text as _sql_uses_schema_mapping_text,

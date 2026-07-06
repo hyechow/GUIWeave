@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from .program import Run
+from .sql_utils import sql_identifier
 
 SQL_NON_FIELD_TOKENS = {
     "abs", "all", "and", "as", "asc", "avg", "between", "by", "case", "cast", "count", "dense_rank",
@@ -258,13 +259,3 @@ def sql_uses_quoted_display_identifier(sql: str) -> bool:
             if text and sql_identifier(text) != text:
                 return True
     return False
-
-
-def sql_identifier(value: object) -> str:
-    text = str(value or "").strip().lower()
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", text).strip("_")
-    if not text:
-        return ""
-    if text[0].isdigit():
-        text = "c_" + text
-    return text

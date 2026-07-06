@@ -22,6 +22,8 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
+from .sql_utils import sql_identifier as _identifier
+
 
 class DataQueryRepair(BaseModel):
     source_ok: bool = Field(
@@ -169,16 +171,6 @@ def _unique_identifiers(headers: list[Any]) -> list[str]:
         seen[base] = n
         out.append(base if n == 1 else f"{base}_{n}")
     return out
-
-
-def _identifier(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", text).strip("_")
-    if not text:
-        return ""
-    if text[0].isdigit():
-        text = "c_" + text
-    return text
 
 
 def _lookup(row: dict[str, Any], header: Any, column: str) -> Any:

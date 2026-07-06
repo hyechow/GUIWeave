@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from .program import TEMPLATE_RE, Call, Compute, ForEach, If, Run, RunLike, Stmt
 from .validator_issue import IssueList
+from .sql_utils import sql_identifier
 from .validator_sql import (
     SQL_NON_FIELD_TOKENS,
     data_query_field_tokens,
@@ -14,7 +15,6 @@ from .validator_sql import (
     query_field_available,
     sql_cte_names,
     sql_derived_identifier_tokens,
-    sql_identifier,
     sql_referenced_tables,
 )
 from .validator_url import template_fields_for_var

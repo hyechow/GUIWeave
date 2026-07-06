@@ -14,6 +14,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from .sql_utils import sql_identifier as _identifier
+
 
 class DataQueryError(ValueError):
     """A data query could not be safely executed."""
@@ -41,7 +43,7 @@ def execute_data_query(
     if not snapshots:
         raise DataQueryError("当前观察没有可查询的结构化表格数据")
     normalized_sql = _validate_select_sql(sql)
-    normalized_sql = _rewrite_quoted_display_identifiers(normalized_sql, snapshots)
+    normalized_sql = rewrite_quoted_display_identifiers(normalized_sql, snapshots)
     if require_complete:
         referenced = _referenced_snapshot_indexes(normalized_sql, snapshots)
         partial = [
@@ -280,7 +282,7 @@ def _table_alias_indexes(tables: list[dict[str, Any]]) -> dict[str, int]:
     return aliases
 
 
-def _rewrite_quoted_display_identifiers(sql: str, tables: list[dict[str, Any]]) -> str:
+def rewrite_quoted_display_identifiers(sql: str, tables: list[dict[str, Any]]) -> str:
     """Map quoted source labels to the normalized identifiers exposed to SQLite.
 
     The planner is expected to write normalized identifiers (`item_name`), but LLMs
@@ -559,16 +561,6 @@ def _unique_identifiers(headers: list[Any]) -> list[str]:
         seen[base] = n
         out.append(base if n == 1 else f"{base}_{n}")
     return out
-
-
-def _identifier(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", text).strip("_")
-    if not text:
-        return ""
-    if text[0].isdigit():
-        text = "c_" + text
-    return text
 
 
 def _quote_ident(identifier: str) -> str:
