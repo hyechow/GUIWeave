@@ -9,10 +9,12 @@ generator the live agent_loop drives.
 """
 
 from gui_agent.core.orchestrator import (
+    Compute,
     Finish,
     ForEach,
     Interpreter,
     Program,
+    Query,
     Run,
     RunResult,
     drive,
@@ -79,6 +81,178 @@ def test_body_goal_decomposes_per_row_and_merges_contract():
         {"Name": "Minerva LumaTech V-Tee-XS-Blue", "material": "Cotton"},
         {"Name": "Eos V-Neck Hoodie-S-Blue", "material": "Fleece"},
     ]
+
+
+def test_body_goal_explicit_row_and_output_fields_drive_contract():
+    program = Program(
+        goal="update selected rows and summarize",
+        statements=[
+            ForEach(
+                var="row",
+                into="price_updates",
+                row_fields=["sku", "detail_url", "current_price"],
+                output_fields=["sku", "old_price", "new_price", "status", "size"],
+                body_goal=(
+                    "判断 {row[sku]} 是否属于目标规格；若是打开 {row[detail_url]}，"
+                    "读取旧价、计算新价、保存并返回 old_price/new_price/status/size"
+                ),
+            ),
+            Query(
+                var="q",
+                name="汇总调价结果",
+                returns=["result"],
+                sql=(
+                    "SELECT sku, old_price, new_price, status "
+                    "FROM price_updates WHERE size = '28'"
+                ),
+            ),
+            Finish(message="{q[result]}"),
+        ],
+    )
+
+    codes = _codes(program)
+
+    assert "FOREACH_BODY_GOAL_MISSING_RETURNS" not in codes
+    assert "FOREACH_DQ_DETAIL_FIELD_MISSING" not in codes
+
+
+def test_body_goal_legacy_returns_do_not_hide_missing_output_fields():
+    program = Program(
+        statements=[
+            ForEach(
+                var="row",
+                into="sahara_size28_rows",
+                returns=["sku", "detail_url", "current_price"],
+                body_goal="判断 {row[sku]} 是否为目标规格；若是打开详情读价改价保存",
+            ),
+            Query(
+                var="q",
+                name="汇总调价结果",
+                returns=["results"],
+                sql=(
+                    "SELECT sku, old_price, new_price, status "
+                    "FROM sahara_size28_rows WHERE size = '28'"
+                ),
+            ),
+        ],
+    )
+
+    assert "FOREACH_DQ_DETAIL_FIELD_MISSING" in _codes(program)
+
+
+def test_explicit_body_output_fields_must_be_actually_produced():
+    program = Program(
+        statements=[
+            ForEach(
+                var="row",
+                into="updates",
+                row_fields=["sku", "price"],
+                output_fields=["old_price", "new_price", "status"],
+                body=[
+                    Compute(var="new_price", expr="round(float(row['price']) * 0.865, 2)"),
+                ],
+            ),
+            Query(
+                var="q",
+                name="汇总",
+                returns=["result"],
+                sql="SELECT sku, old_price, new_price, status FROM updates",
+            ),
+        ],
+    )
+
+    assert "FOREACH_DQ_DETAIL_FIELD_MISSING" in _codes(program)
+
+
+def test_body_goal_output_fields_collect_compute_scalars():
+    program = Program(
+        goal="compute per row",
+        statements=[
+            ForEach(
+                var="row",
+                into="updates",
+                row_fields=["sku", "price"],
+                output_fields=["new_price"],
+                body_goal="处理 {row[sku]}，按 {row[price]} 计算 new_price",
+            ),
+        ],
+    )
+
+    def collect_fn(target, returns, limit=None):
+        assert list(returns) == ["sku", "price"]
+        return [
+            {"sku": "A-28", "price": "100"},
+            {"sku": "B-28", "price": "80"},
+        ]
+
+    def subdecompose_fn(goal: str) -> Program:
+        return Program(statements=[
+            Compute(var="new_price", expr="round(float(row['price']) * 0.865, 2)"),
+        ])
+
+    interp = Interpreter(program, collect_fn=collect_fn, subdecompose_fn=subdecompose_fn)
+    drive(interp, lambda run: RunResult(completed=True))
+
+    assert interp.env["updates"].rows == [
+        {"sku": "A-28", "price": "100", "new_price": "86.5"},
+        {"sku": "B-28", "price": "80", "new_price": "69.2"},
+    ]
+
+
+def test_body_goal_query_must_filter_on_body_goal_outputs_not_row_guess():
+    program = Program(
+        statements=[
+            ForEach(
+                var="row",
+                into="sahara_leggings_28_rows",
+                row_fields=["sku", "name", "type", "action_url"],
+                output_fields=["sku", "old_price", "new_price"],
+                body_goal=(
+                    "判断 {row[sku]} 是否为 size 28 的 Sahara leggings 变体；若是，"
+                    "打开 {row[action_url]} 读当前价→计算新价→更新并保存→返回 old_price/new_price"
+                ),
+            ),
+            Query(
+                var="q",
+                name="确认所有 size 28 Sahara leggings 变体的价格更新结果",
+                returns=["result"],
+                sql=(
+                    "SELECT sku, old_price, new_price FROM sahara_leggings_28_rows "
+                    "WHERE sku LIKE '%Sahara%' AND sku LIKE '%28%'"
+                ),
+            ),
+        ],
+    )
+
+    assert "FOREACH_BODY_GOAL_QUERY_ROW_PREDICATE" in _codes(program)
+
+
+def test_body_goal_query_can_filter_on_nonempty_body_goal_outputs():
+    program = Program(
+        statements=[
+            ForEach(
+                var="row",
+                into="sahara_leggings_28_rows",
+                row_fields=["sku", "name", "type", "action_url"],
+                output_fields=["sku", "old_price", "new_price"],
+                body_goal=(
+                    "判断 {row[sku]} 是否为 size 28 的 Sahara leggings 变体；若是，"
+                    "打开 {row[action_url]} 读当前价→计算新价→更新并保存→返回 old_price/new_price"
+                ),
+            ),
+            Query(
+                var="q",
+                name="确认所有 size 28 Sahara leggings 变体的价格更新结果",
+                returns=["result"],
+                sql=(
+                    "SELECT sku, old_price, new_price FROM sahara_leggings_28_rows "
+                    "WHERE old_price != '' AND new_price != ''"
+                ),
+            ),
+        ],
+    )
+
+    assert "FOREACH_BODY_GOAL_QUERY_ROW_PREDICATE" not in _codes(program)
 
 
 def test_body_present_executes_body_not_subdecompose():

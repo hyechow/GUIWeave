@@ -485,13 +485,43 @@ def _print_webarena_outputs(
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
+_DIRECT_NAV_TEMPLATE_RE = re.compile(
+    r"https?://|\{[^{}]*(?:url|href|链接)[^{}]*\}",
+    re.IGNORECASE,
+)
+_DIRECT_BACK_RE = re.compile(r"返回|上一页|后退|\bback\b", re.IGNORECASE)
+
+
+def _program_step_tag(s) -> str:
+    """Human-facing execution category for the printed DSL program.
+
+    This is intentionally a little finer than the runtime ABI's ``interactive`` /
+    ``non_interactive`` split: direct browser navigation is state-changing but
+    bypasses the planner UI loop.
+    """
+    kind = str(getattr(s, "kind", "") or "")
+    name = str(getattr(s, "name", "") or "")
+    nm = type(s).__name__
+    if nm == "Run" and kind == "navigation" and _DIRECT_BACK_RE.search(name):
+        return "browser:navigation_back"
+    if nm == "Run" and kind == "navigation" and _DIRECT_NAV_TEMPLATE_RE.search(name):
+        return "browser:navigation_url"
+    if kind in {"read", "data_query"}:
+        return f"non-interactive:{kind}"
+    if nm == "Compute":
+        return "non-interactive:compute"
+    if kind in {"navigation", "filter", "action"}:
+        return f"interactive:{kind}"
+    return nm.lower()
+
+
 def _print_program(program) -> None:
     """Pretty-print the decomposed DSL program (functions + statements) to the terminal so the plan
     is visible before/while it runs. Robust to type via class name (no import coupling)."""
     def emit(s, indent: str = "  ") -> None:
         nm = type(s).__name__
         if nm == "Run":
-            line = f"{indent}[{s.kind}] {s.name}"
+            line = f"{indent}[{_program_step_tag(s)}] {s.name}"
             if getattr(s, "var", ""):
                 line += f"  → {s.var}"          # the bind var — what a later if/finish references
             if getattr(s, "returns", None):
@@ -499,25 +529,46 @@ def _print_program(program) -> None:
             print(line)
             if s.success_condition:
                 print(f"{indent}    ✓ {s.success_condition}")
+        elif nm in {"Read", "Query"}:
+            line = f"{indent}[{_program_step_tag(s)}] {s.name}"
+            if getattr(s, "var", ""):
+                line += f"  → {s.var}"
+            if getattr(s, "returns", None):
+                line += f"  returns={s.returns}"
+            print(line)
+            if getattr(s, "read_spec", ""):
+                print(f"{indent}    spec: {s.read_spec}")
+            if nm == "Query" and getattr(s, "sql", ""):
+                print(f"{indent}    SQL: {s.sql}")
         elif nm == "Compute":
-            print(f"{indent}[compute] {s.var} = {s.expr}")
+            print(f"{indent}[{_program_step_tag(s)}] {s.var} = {s.expr}")
         elif nm == "Call":
-            print(f"{indent}[call] {s.func}({s.args}) -> {s.var}")
+            print(f"{indent}[control:call] {s.func}({s.args}) -> {s.var}")
         elif nm == "If":
             c = s.cond
-            print(f"{indent}[if] {c.var}[{c.field}] {c.cmp} {c.value!r}{(' ' + str(c.values)) if c.values else ''}")
+            print(f"{indent}[control:if] {c.var}[{c.field}] {c.cmp} {c.value!r}{(' ' + str(c.values)) if c.values else ''}")
             for b in s.then:
                 emit(b, indent + "    then ")
             for b in s.otherwise:
                 emit(b, indent + "    else ")
         elif nm == "ForEach":
-            print(f"{indent}[foreach] {s.var} -> {s.into or s.var + 's'} returns={s.returns}")
+            parts = []
+            if getattr(s, "row_fields", None):
+                parts.append(f"row_fields={s.row_fields}")
+            if getattr(s, "output_fields", None):
+                parts.append(f"output_fields={s.output_fields}")
+            if getattr(s, "member_desc", ""):
+                parts.append(f"member_desc={s.member_desc!r}")
+            if getattr(s, "returns", None):
+                parts.append(f"returns={s.returns}")
+            suffix = (" " + " ".join(parts)) if parts else ""
+            print(f"{indent}[control:foreach] {s.var} -> {s.into or s.var + 's'}{suffix}")
             if getattr(s, "body_goal", ""):
                 print(f"{indent}    body_goal: {s.body_goal}")
             for b in s.body:
                 emit(b, indent + "    ")
         elif nm == "Finish":
-            print(f"{indent}[finish] {s.message}")
+            print(f"{indent}[control:finish] {s.message}")
         else:
             print(f"{indent}{nm}: {s}")
 
@@ -740,6 +791,7 @@ def main() -> int:
                             print(f"[webarena] initial observe failed; orchestrator decompose without screenshot ({exc})")
 
                         from gui_agent.core.orchestrator import (
+                            OrchestratorCompileError,
                             decompose,
                             estimate_program_turns,
                             redecompose,
@@ -765,19 +817,24 @@ def main() -> int:
                         orch_calls_before = get_llm_call_count()
                         orch_tokens_before = get_llm_token_usage()
                         # decompose finalizes gates centrally (passes.finalize_gates); no caller wrap.
-                        program = decompose(
-                            intent,
-                            knowledge=knowledge.navigation if knowledge else "",
-                            file_section=file_section,
-                            current_url=cur_url,
-                            current_title=cur_title,
-                            current_site=cur_site,
-                            table_summaries=initial_tables,
-                            png_bytes=initial_png,
-                            prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                            context_reports=orchestrator_context_reports,
-                            resolution=resolution,
-                        )
+                        compile_error: OrchestratorCompileError | None = None
+                        try:
+                            program = decompose(
+                                intent,
+                                knowledge=knowledge.navigation if knowledge else "",
+                                file_section=file_section,
+                                current_url=cur_url,
+                                current_title=cur_title,
+                                current_site=cur_site,
+                                table_summaries=initial_tables,
+                                png_bytes=initial_png,
+                                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                                context_reports=orchestrator_context_reports,
+                                resolution=resolution,
+                            )
+                        except OrchestratorCompileError as exc:
+                            compile_error = exc
+                            program = exc.program
                         orch_tokens_after = get_llm_token_usage()
                         orchestrator_metrics = {
                             "timings": {"orchestrator.decompose": time.perf_counter() - orch_started},
@@ -789,99 +846,151 @@ def main() -> int:
                             },
                             "llm_calls": get_llm_call_count() - orch_calls_before,
                         }
-                        if file_section and hasattr(supervisor, "_global_constraints"):
-                            cap = 3000
-                            supervisor._global_constraints.append(
-                                file_section if len(file_section) <= cap
-                                else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
+                        if compile_error is not None:
+                            summary = "; ".join(str(issue) for issue in compile_error.issues[:3])
+                            print(f"[webarena] orchestrator compile failed: {summary}")
+                            orchestrator_context_reports.append({
+                                "kind": "orchestrator_compile_error",
+                                "issues": [
+                                    {
+                                        "code": issue.code,
+                                        "severity": issue.severity,
+                                        "message": str(issue),
+                                        "evidence": list(issue.evidence),
+                                    }
+                                    for issue in compile_error.issues
+                                ],
+                            })
+                            preflight_blocked = True
+                            result = {
+                                "task_type": _guess_webarena_task_type(intent),
+                                "goal_completed": False,
+                                "stop_reason": f"orchestrator compile failed: {summary}",
+                                "result_summary": f"orchestrator compile failed: {summary}",
+                                "content_notes": None,
+                                "compile_failed": True,
+                            }
+                            _write_orchestration_preflight_context(
+                                log_dir / "context.json",
+                                intent=intent,
+                                action_policy=action_policy,
+                                supervisor=supervisor,
+                                knowledge_summary=knowledge_summary,
+                                program=program,
+                                max_turns=run_max_turns,
+                                orchestrator_context_reports=[*orchestrator_context_reports, {
+                                    "kind": "orchestrator_metrics",
+                                    **orchestrator_metrics,
+                                }],
+                                orchestrator_metrics=orchestrator_metrics,
+                                preflight_result={
+                                    "ok": False,
+                                    "issues": [
+                                        {
+                                            "code": issue.code,
+                                            "severity": issue.severity,
+                                            "message": str(issue),
+                                            "evidence": list(issue.evidence),
+                                        }
+                                        for issue in compile_error.issues
+                                    ],
+                                },
+                                result=result,
                             )
-                        print(f"[webarena] orchestrator: {len(program.statements)} statements"
-                              f"{(', ' + str(len(program.functions)) + ' functions') if program.functions else ''}")
-                        _print_program(program)
-
-                        preflight = validate_orchestration_preflight(intent, program, resolution=resolution)
-                        orchestrator_context_reports.append({
-                            "kind": "orchestrator_preflight",
-                            **preflight.model_dump(mode="json"),
-                        })
-                        if preflight.ok:
-                            print("[webarena] orchestrator preflight: ok")
                         else:
-                            for issue in preflight.blocking_issues:
-                                evidence = f" ({'; '.join(issue.evidence)})" if issue.evidence else ""
-                                print(f"[webarena] orchestrator preflight: {issue.code}: {issue.message}{evidence}")
-                            if not args.no_orchestrator_preflight:
-                                preflight_blocked = True
-                                summary = "; ".join(
-                                    f"{issue.code}: {issue.message}" for issue in preflight.blocking_issues[:3]
+                            if file_section and hasattr(supervisor, "_global_constraints"):
+                                cap = 3000
+                                supervisor._global_constraints.append(
+                                    file_section if len(file_section) <= cap
+                                    else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                                 )
-                                result = {
-                                    "task_type": _guess_webarena_task_type(intent),
-                                    "goal_completed": False,
-                                    "stop_reason": f"orchestrator preflight failed: {summary}",
-                                    "result_summary": f"orchestrator preflight failed: {summary}",
-                                    "content_notes": None,
-                                    "preflight_failed": True,
-                                }
-                                _write_orchestration_preflight_context(
-                                    log_dir / "context.json",
-                                    intent=intent,
-                                    action_policy=action_policy,
-                                    supervisor=supervisor,
-                                    knowledge_summary=knowledge_summary,
-                                    program=program,
-                                    max_turns=run_max_turns,
-                                    orchestrator_context_reports=[*orchestrator_context_reports, {
-                                        "kind": "orchestrator_metrics",
-                                        **orchestrator_metrics,
-                                    }],
-                                    orchestrator_metrics=orchestrator_metrics,
-                                    preflight_result=preflight,
-                                    result=result,
+                            print(f"[webarena] orchestrator: {len(program.statements)} statements"
+                                  f"{(', ' + str(len(program.functions)) + ' functions') if program.functions else ''}")
+                            _print_program(program)
+
+                            preflight = validate_orchestration_preflight(intent, program, resolution=resolution)
+                            orchestrator_context_reports.append({
+                                "kind": "orchestrator_preflight",
+                                **preflight.model_dump(mode="json"),
+                            })
+                            if preflight.ok:
+                                print("[webarena] orchestrator preflight: ok")
+                            else:
+                                for issue in preflight.blocking_issues:
+                                    evidence = f" ({'; '.join(issue.evidence)})" if issue.evidence else ""
+                                    print(f"[webarena] orchestrator preflight: {issue.code}: {issue.message}{evidence}")
+                                if not args.no_orchestrator_preflight:
+                                    preflight_blocked = True
+                                    summary = "; ".join(
+                                        f"{issue.code}: {issue.message}" for issue in preflight.blocking_issues[:3]
+                                    )
+                                    result = {
+                                        "task_type": _guess_webarena_task_type(intent),
+                                        "goal_completed": False,
+                                        "stop_reason": f"orchestrator preflight failed: {summary}",
+                                        "result_summary": f"orchestrator preflight failed: {summary}",
+                                        "content_notes": None,
+                                        "preflight_failed": True,
+                                    }
+                                    _write_orchestration_preflight_context(
+                                        log_dir / "context.json",
+                                        intent=intent,
+                                        action_policy=action_policy,
+                                        supervisor=supervisor,
+                                        knowledge_summary=knowledge_summary,
+                                        program=program,
+                                        max_turns=run_max_turns,
+                                        orchestrator_context_reports=[*orchestrator_context_reports, {
+                                            "kind": "orchestrator_metrics",
+                                            **orchestrator_metrics,
+                                        }],
+                                        orchestrator_metrics=orchestrator_metrics,
+                                        preflight_result=preflight,
+                                        result=result,
+                                    )
+
+                            # Feasibility Guard kick-back: re-decompose ONLY the remaining plan via the
+                            # dedicated redecompose() (NOT a fresh full-goal decompose). The page context
+                            # comes from the CURRENT observation at trigger time — the initial frame is just
+                            # a fallback when the loop has none — so the re-plan continues from where the run
+                            # actually is, not from the start screen. prior_experience / remaining_plan are
+                            # supplied by the loop (summarize_progress over the interpreter's run_log).
+                            def _redecompose(directive: str, context_reports=None, *, observation=None,
+                                             prior_experience="", remaining_plan="",
+                                             _goal=intent, _know=knowledge, _file=file_section,
+                                             _url=cur_url, _title=cur_title, _site=cur_site,
+                                             _tables=initial_tables, _png=initial_png, _res=resolution):
+                                _cur_png = getattr(observation, "png_bytes", None) or _png
+                                _cur_url2 = (getattr(observation, "url", None) or _url) if observation else _url
+                                _cur_title2 = (getattr(observation, "title", None) or _title) if observation else _title
+                                _cur_tables = getattr(observation, "tables", None) if observation else None
+                                if _cur_tables is None:
+                                    _cur_tables = _tables
+                                return redecompose(
+                                    _goal, knowledge=_know.navigation if _know else "", file_section=_file,
+                                    current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
+                                    table_summaries=_cur_tables, png_bytes=_cur_png,
+                                    prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                                    corrective_directive=directive, resolution=_res,
+                                    prior_experience=prior_experience, remaining_plan=remaining_plan,
+                                    context_reports=context_reports,
                                 )
 
-                        # Feasibility Guard kick-back: re-decompose ONLY the remaining plan via the
-                        # dedicated redecompose() (NOT a fresh full-goal decompose). The page context
-                        # comes from the CURRENT observation at trigger time — the initial frame is just
-                        # a fallback when the loop has none — so the re-plan continues from where the run
-                        # actually is, not from the start screen. prior_experience / remaining_plan are
-                        # supplied by the loop (summarize_progress over the interpreter's run_log).
-                        def _redecompose(directive: str, context_reports=None, *, observation=None,
-                                         prior_experience="", remaining_plan="",
-                                         _goal=intent, _know=knowledge, _file=file_section,
-                                         _url=cur_url, _title=cur_title, _site=cur_site,
-                                         _tables=initial_tables, _png=initial_png, _res=resolution):
-                            _cur_png = getattr(observation, "png_bytes", None) or _png
-                            _cur_url2 = (getattr(observation, "url", None) or _url) if observation else _url
-                            _cur_title2 = (getattr(observation, "title", None) or _title) if observation else _title
-                            _cur_tables = getattr(observation, "tables", None) if observation else None
-                            if _cur_tables is None:
-                                _cur_tables = _tables
-                            return redecompose(
-                                _goal, knowledge=_know.navigation if _know else "", file_section=_file,
-                                current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
-                                table_summaries=_cur_tables, png_bytes=_cur_png,
-                                prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
-                                corrective_directive=directive, resolution=_res,
-                                prior_experience=prior_experience, remaining_plan=remaining_plan,
-                                context_reports=context_reports,
-                            )
+                            # Per-row agentic sub-goal (ForEach.body_goal): decompose a row-templated
+                            # sub-goal fresh at runtime (same knowledge/site as the main decompose;
+                            # depth guard in the interpreter enforces one-level-only). cli.py has wired
+                            # this since body_goal shipped; webarena.py hadn't — every body_goal foreach
+                            # silently no-opped (778 live 114429: rows=[], "body_goal 无法分解", then
+                            # flowed to finish and synthesized SUCCESS with zero saves).
+                            def _subdecompose(sub_goal: str, _know=knowledge, _site=cur_site):
+                                return decompose(sub_goal, knowledge=_know.navigation if _know else "",
+                                                 current_site=_site,
+                                                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
 
-                        # Per-row agentic sub-goal (ForEach.body_goal): decompose a row-templated
-                        # sub-goal fresh at runtime (same knowledge/site as the main decompose;
-                        # depth guard in the interpreter enforces one-level-only). cli.py has wired
-                        # this since body_goal shipped; webarena.py hadn't — every body_goal foreach
-                        # silently no-opped (778 live 114429: rows=[], "body_goal 无法分解", then
-                        # flowed to finish and synthesized SUCCESS with zero saves).
-                        def _subdecompose(sub_goal: str, _know=knowledge, _site=cur_site):
-                            return decompose(sub_goal, knowledge=_know.navigation if _know else "",
-                                             current_site=_site,
-                                             prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
-
-                        if not preflight_blocked and not args.no_dynamic_max_turns:
-                            run_max_turns = estimate_program_turns(program, floor=args.max_turns)
-                            if run_max_turns != args.max_turns:
-                                print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
+                            if not preflight_blocked and not args.no_dynamic_max_turns:
+                                run_max_turns = estimate_program_turns(program, floor=args.max_turns)
+                                if run_max_turns != args.max_turns:
+                                    print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
                     else:
                         print("[webarena] orchestrator: disabled; using legacy milestone DAG")
 
@@ -926,7 +1035,7 @@ def main() -> int:
                 print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
 
             try:
-                if result.get("preflight_failed"):
+                if result.get("preflight_failed") or result.get("compile_failed"):
                     resp = _preflight_failure_response(intent, result or {})
                 else:
                     resp = _synthesize_response(intent, result or {}, log_dir / "context.json")

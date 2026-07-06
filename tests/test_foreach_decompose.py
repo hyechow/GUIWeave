@@ -33,6 +33,61 @@ def test_foreach_draft_round_trips_and_validates_clean():
     assert validate_program(program) == []  # {row[id]} in-scope; over is a read var
 
 
+def test_foreach_draft_round_trips_explicit_row_and_output_fields():
+    draft = _PlanDraft(goal="g", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            name="采集候选行",
+            row_fields=["sku", "detail_url", "current_price"],
+            output_fields=["old_price", "new_price", "status"],
+            into="updates",
+            body_goal="处理 {row[sku]}，打开 {row[detail_url]}，按 {row[current_price]} 改价并返回结果",
+        ),
+    ])
+
+    program = to_program(draft, "g")
+    fe = program.statements[0]
+
+    assert isinstance(fe, ForEach)
+    assert fe.row_fields == ["sku", "detail_url", "current_price"]
+    assert fe.output_fields == ["old_price", "new_price", "status"]
+    assert fe.returns == []
+    assert validate_program(program) == []
+
+
+def test_foreach_draft_round_trips_member_desc():
+    draft = _PlanDraft(goal="g", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            name="采集 Sahara 候选行",
+            row_fields=["sku", "name", "action_url"],
+            into="variant_rows",
+            member_desc="size 28 的 Sahara leggings 变体",
+            body=[
+                _StepDraft(
+                    op="run",
+                    run_kind="navigation",
+                    var="d",
+                    name="打开 {row[action_url]} 进入变体编辑页",
+                    returns=["current_price"],
+                    read_spec="读取价格字段当前值",
+                ),
+            ],
+        ),
+    ])
+
+    program = to_program(draft, "g")
+    fe = program.statements[0]
+
+    assert isinstance(fe, ForEach)
+    assert fe.member_desc == "size 28 的 Sahara leggings 变体"
+    assert fe.row_fields == ["sku", "name", "action_url"]
+    assert [type(b).__name__ for b in fe.body] == ["Run"]
+    assert validate_program(program) == []
+
+
 def test_validate_accepts_over_that_is_a_read_var():
     # over no longer requires list_read=True; any read var in scope is valid
     draft = _PlanDraft(goal="g", steps=[

@@ -14,7 +14,6 @@ import pytest
 
 from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Read, Query, Run
 from gui_agent.core.orchestrator.validator import ALL_CODES, IssueList, ValidationIssue, validate_program
-from gui_agent.core.router import EntityRef, IntentResolution
 
 _VALIDATOR_SRC = Path("gui_agent/core/orchestrator/validator.py")
 
@@ -78,19 +77,6 @@ SAMPLES: dict[str, Program] = {
         Compute(var="x", expr="ghost_field.strip()"),
         Run(name="使用 {x}", kind="action"),
     ]),
-    # S10c: entity-scoped collection whose into-table query lacks the entity predicate (113 class)
-    "ENTITY_SCOPE_PREDICATE_MISSING": (
-        Program(statements=[
-            Run(name="按产品 Olivia 过滤评论列表", kind="filter",
-                success_condition="Active filters 显示 Product: Olivia"),
-            ForEach(var="row", into="reviews", returns=["nickname", "rating"]),
-            Query(var="q", name="筛低分昵称", returns=["nickname"],
-                  sql="SELECT nickname FROM reviews WHERE CAST(rating AS INTEGER) <= 3"),
-            Finish(message="{q[nickname]}"),
-        ]),
-        IntentResolution(entities=[EntityRef(mention="Olivia zip jacket", match_mode="approximate",
-                                             search_key="Olivia")]),
-    ),
     "NO_RESULT_SOURCE": Program(goal="有多少订单", statements=[Run(name="进入页面", kind="navigation")]),
     "TEMPLATE_VAR_NOT_IN_SCOPE": Program(statements=[Finish(message="结果是 {x[f]}")]),
     "TEMPLATE_FIELD_NOT_IN_RETURNS": Program(statements=[_read(returns=("a",)), Finish(message="{v[b]}")]),
@@ -254,6 +240,27 @@ SAMPLES: dict[str, Program] = {
         Query(var="q", name="求和",  returns=["total"],
             sql="SELECT SUM(amount_num) AS total FROM data"),
     ]),
+    "FOREACH_BODY_GOAL_QUERY_ROW_PREDICATE": Program(statements=[
+        ForEach(
+            var="row",
+            into="sahara_leggings_28_rows",
+            row_fields=["sku", "name", "action_url"],
+            output_fields=["sku", "old_price", "new_price"],
+            body_goal=(
+                "判断 {row[sku]} 是否为 size 28 的 Sahara leggings 变体；若是，"
+                "打开 {row[action_url]} 读当前价、更新并返回 old_price/new_price"
+            ),
+        ),
+        Query(
+            var="q",
+            name="确认结果",
+            returns=["result"],
+            sql=(
+                "SELECT sku, old_price, new_price FROM sahara_leggings_28_rows "
+                "WHERE sku LIKE '%Sahara%' AND sku LIKE '%28%'"
+            ),
+        ),
+    ]),
 }
 
 
@@ -262,6 +269,31 @@ def test_every_code_has_triggering_sample(code):
     assert code in SAMPLES, f"no triggering sample registered for {code}"
     fired = _codes(SAMPLES[code])
     assert code in fired, f"sample for {code} fired {sorted(fired)} instead"
+
+
+def test_foreach_row_url_policy_checks_runs_inside_if():
+    program = Program(statements=[
+        ForEach(
+            var="row",
+            into="target_products",
+            row_fields=["sku", "action_url"],
+            body=[
+                If(
+                    cond=Cond(var="row", field="sku", cmp="contains", value="size 28"),
+                    then=[
+                        Run(
+                            kind="navigation",
+                            var="d",
+                            name="打开变体 {row[sku]} 的编辑页",
+                            returns=["current_price"],
+                        )
+                    ],
+                )
+            ],
+        )
+    ])
+
+    assert "FOREACH_ROW_URL_NOT_USED" in _codes(program)
 
 
 def test_validation_issue_is_str_with_metadata():

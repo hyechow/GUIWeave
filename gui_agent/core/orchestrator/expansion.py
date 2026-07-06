@@ -78,7 +78,8 @@ def _parse_and_validate(body_dicts: list[dict], loop_var: str, row_fields: list[
     _normalize(body_dicts)
     try:
         program = Program(goal=goal, statements=[
-            ForEach(var=loop_var, target="检查点已圈选的成员行", returns=list(row_fields),
+            ForEach(var=loop_var, target="检查点已圈选的成员行",
+                    returns=list(row_fields), row_fields=list(row_fields),
                     body=body_dicts),  # pydantic parses dicts through the Stmt union
         ])
     except Exception as e:  # noqa: BLE001

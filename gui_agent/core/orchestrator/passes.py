@@ -341,7 +341,8 @@ def _lower_set(values: list[str] | set[str]) -> set[str]:
 
 
 def _can_collapse_foreach_pair(first: ForEach, second: ForEach) -> bool:
-    if first.body or first.body_goal or not first.returns:
+    first_fields = first.row_fields or first.returns
+    if first.body or first.body_goal or not first_fields:
         return False
     if not second.body or second.body_goal:
         return False
@@ -351,7 +352,7 @@ def _can_collapse_foreach_pair(first: ForEach, second: ForEach) -> bool:
     refs = _refs_to_loop_var(second.body, second.var)
     if not refs:
         return False
-    return _lower_set(refs).issubset(_lower_set(first.returns))
+    return _lower_set(refs).issubset(_lower_set(first_fields))
 
 
 def _collapse_foreach_stmts(stmts: list[Stmt]) -> list[Stmt]:
@@ -361,10 +362,12 @@ def _collapse_foreach_stmts(stmts: list[Stmt]) -> list[Stmt]:
         s = stmts[i]
         nxt = stmts[i + 1] if i + 1 < len(stmts) else None
         if isinstance(s, ForEach) and isinstance(nxt, ForEach) and _can_collapse_foreach_pair(s, nxt):
+            row_fields = list(s.row_fields or s.returns)
             out.append(nxt.model_copy(update={
                 "over": "",
                 "target": s.target or nxt.target,
                 "returns": list(s.returns),
+                "row_fields": row_fields,
                 "limit": s.limit if s.limit is not None else nxt.limit,
             }))
             i += 2

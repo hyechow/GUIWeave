@@ -36,20 +36,27 @@ TEMPLATE_RE = re.compile(r"\{(\w+)\[([^\]]+)\]\}")
 # decomposer's validate flags it (when var is a read's var) so the repair pass fixes the form.
 BARE_REF_RE = re.compile(r"\{(\w+)\}")
 
-# The orchestrator's OWN linear-task vocabulary (decoupled from the executor's
-# MilestoneKind). These are the milestone-sized things the linear executor is good
-# at: 到某页 / 填一组表单 / 点一个按钮 / 对结构化数据做只读查询。
-# Any UI run may declare returns/read_spec; those values are extracted from the run's
+# The orchestrator's OWN command/query vocabulary (decoupled from the executor's
+# MilestoneKind). These are the statement-sized things the script can express:
+# navigate/filter/mutate through the GUI, or deterministically read/query structured data.
+# Any UI command may declare returns/read_spec; those values are extracted from the command's
 # completion frame. "read" remains as a compatibility/no-op current-frame primitive and for
 # row-collection reads (legacy `over=` source for foreach). "data_query" is a non-UI primitive
 # consumed directly by the orchestrator.
 RunKind = Literal["navigation", "filter", "action", "read", "data_query"]
 CondCmp = Literal["==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"]
 
-# The interactive Run kinds (an action that drives the GUI), single-sourced here — both the
-# confirm-read pass (passes.py) and marshalling (callframe.py) key on this set. read/data_query
-# are the complementary non-interactive kinds.
+# Program-level execution modes. `navigation`/`filter`/`action` are commands: they may cross the
+# GUI FFI boundary and can change page/state. `read`/`data_query`/`compute` are non-interactive
+# statements: the interpreter executes them without clicking/filling/navigating. A browser URL/back
+# navigation command may still be drained by a runtime non-UI fast path; its statement kind remains
+# navigation.
 INTERACTIVE_KINDS = frozenset({"navigation", "filter", "action"})
+NON_INTERACTIVE_KINDS = frozenset({"read", "data_query", "compute"})
+
+
+def execution_mode_for_kind(kind: str) -> Literal["interactive", "non_interactive"]:
+    return "non_interactive" if kind in NON_INTERACTIVE_KINDS else "interactive"
 
 
 class RunResult(BaseModel):
@@ -73,9 +80,9 @@ class RunLike(BaseModel):
     """run 家族语句的共享形状（wire 上共用 op="run" + kind 区分）。
 
     脚本生成视角：程序 = 混合脚本；run 家族有两种执行模式——
-    - 【交互 action】（Run：navigation/filter/action）= 对 GUI 执行器的函数调用，跨进
+    - 【交互命令】（Run：navigation/filter/action）= 对 GUI 执行器的函数调用，跨进
       非确定性世界的 FFI；合同（入口/后置/出参域/异常）全部压在这道边界上。
-    - 【非交互查询】（Read/Query）= 解释器确定性执行的语句：消费当前帧/表格快照,
+    - 【非交互语句】（Read/Query）= 解释器确定性执行的语句：消费当前帧/表格快照,
       不驱动 GUI，可安全重试、可被记忆化。
     分类轴是执行模式，不是数据方向——填表单和点链接同为交互执行；一个名义上的 read
     需要交互定位时会被【重新分类】为交互 Run（callframe 升格路径），不是在查询里
@@ -95,22 +102,26 @@ class RunLike(BaseModel):
 
     @property
     def is_query(self) -> bool:
-        """非交互纯查询（read / data_query）：不驱动 GUI——这正是它们能被解释器确定性执行的原因。"""
-        return self.kind in ("read", "data_query")
+        """非交互语句（read / data_query）：不驱动 GUI——这正是它们能被解释器确定性执行的原因。"""
+        return self.kind in {"read", "data_query"}
 
     @property
     def is_interactive(self) -> bool:
-        """交互 action（navigation / filter / action）：驱动界面的 FFI。带 returns 的交互 run
+        """交互命令（navigation / filter / action）：驱动界面的 FFI。带 returns 的交互 run
         是「已发出 + 完成帧读值」的复合形态，依然是一次交互调用，不按读/写再细分。"""
-        return not self.is_query
+        return self.kind in INTERACTIVE_KINDS
+
+    @property
+    def execution_mode(self) -> Literal["interactive", "non_interactive"]:
+        return execution_mode_for_kind(self.kind)
 
 
 class Run(RunLike):
-    """【交互 action】：驱动一段连续的交互操作（一条 FROM→TO 边），由 GUI 执行器
+    """【交互命令】：驱动一段连续的交互操作（一条 FROM→TO 边），由 GUI 执行器
     （milestone react loop——milestone 仅是执行器的内部载体格式）开到 done。
     `var` binds its RunResult; `returns` = fields to read from the completion frame."""
 
-    # 交互 action 的 kind 只剩交互词汇；read/data_query 是平级的 Read/Query 节点。
+    # 交互命令的 kind 只剩交互词汇；read/data_query 是平级的 Read/Query 节点。
     kind: Literal["navigation", "filter", "action"] = "action"  # type: ignore[assignment]
     # Entry state of this interaction — the EXIT (success_condition) of the interaction that runs
     # just before it in the same linear block: FROM[i] := TO[i-1]. Derived deterministically by
@@ -208,7 +219,17 @@ class ForEach(BaseModel):
     var: str                                    # loop variable bound to each row, referenced as {var[field]}
     over: str = ""                              # the row-collection read's var whose .rows are iterated (legacy path); empty = use collect_fn/target
     target: str = ""                            # browser path: collect target description (what table/collection to fetch)
-    returns: list[str] = Field(default_factory=list)  # browser path: fields to collect per row
+    # Legacy field kept for wire compatibility. For ordinary foreach/body=[] this is the row fields
+    # to collect from the current list/grid. For agentic body_goal it historically meant the per-row
+    # output contract. Prefer the explicit split below for new plans.
+    returns: list[str] = Field(default_factory=list)
+    # Explicit row-binding contract: fields collected from the current row before the body/body_goal
+    # runs. body_goal templates may reference only these fields (or legacy template-derived fields).
+    row_fields: list[str] = Field(default_factory=list)
+    # Explicit materialized-table contract: fields the body/body_goal promises to publish per row
+    # in addition to row_fields. data_query may only consume row_fields + output_fields (or legacy
+    # returns for body_goal) from the foreach into table.
+    output_fields: list[str] = Field(default_factory=list)
     body: list["Stmt"] = Field(default_factory=list)
     # Per-row SUB-GOAL (agentic body): when set, the body is NOT pre-baked Stmts — instead, for
     # each row, the sub-goal text (templated with `{var[field]}`) is decomposed fresh at runtime

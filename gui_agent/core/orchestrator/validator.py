@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import re
+from dataclasses import dataclass
 
 from .program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, Finish, ForEach, FunctionDef, If, Program, Query, Run, RunLike, Stmt
 from .safe_eval import FUNC_NAMES, dry_check_expr, normalize_compute_expr
@@ -111,8 +112,6 @@ ALL_CODES: frozenset[str] = frozenset({
     # compute compile-time contract（编译期强制运行时方言与作用域）
     "COMPUTE_UNSUPPORTED_EXPR",
     "COMPUTE_UNKNOWN_NAME",
-    # entity-scope predicate（实体范围谓词硬合同,resolution 在场时启用）
-    "ENTITY_SCOPE_PREDICATE_MISSING",
     # if-condition shape
     "IF_COND_VAR_NOT_IN_SCOPE",
     "IF_COND_FIELD_NOT_IN_RETURNS",
@@ -135,6 +134,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "FOREACH_DQ_GRID_FIELD_MISSING",
     "FOREACH_DQ_DETAIL_FIELD_MISSING",
     "FOREACH_DQ_POST_FOREACH_FIELD_MISSING",
+    "FOREACH_BODY_GOAL_QUERY_ROW_PREDICATE",
 })
 
 
@@ -212,6 +212,8 @@ def _has_result_source(stmts: list[Stmt], function_returns: dict[str, set[str]] 
         if isinstance(s, If) and (_has_result_source(s.then, function_returns) or _has_result_source(s.otherwise, function_returns)):
             return True
         if isinstance(s, ForEach) and _has_result_source(s.body, function_returns):
+            return True
+        if isinstance(s, ForEach) and (s.output_fields or s.row_fields or s.returns):
             return True
     return False
 
@@ -480,7 +482,7 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                     issues.add("TABLE_ROW_FIELD_COLLECTION", 
                         f"步骤「{s.name}」把表格行字段挂在 {s.kind} returns 上读取。"
                         "聚合/排序/top-N 类任务不能让 filter/action/read 读取当前可见网格行字段；"
-                        "这些字段应放在 foreach returns 中采集完整行集，然后用 data_query 分析。"
+                        "这些字段应放在 foreach row_fields（旧计划 returns）中采集完整行集，然后用 data_query 分析。"
                     )
                 if s.kind == "data_query" and _sql_uses_schema_mapping_text(s.sql):
                     issues.add("SQL_SCHEMA_MAPPING_TEXT", 
@@ -609,21 +611,24 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                     )
                 if not s.var:
                     issues.add("FOREACH_MISSING_LOOP_VAR", "foreach 缺少循环变量名（loop_var）——body 需要用 {循环变量[字段]} 引用当前行")
-                if s.body_goal and not s.body:
+                agentic_body_goal = bool(s.body_goal) and not s.body
+                if agentic_body_goal:
                     # Agentic per-row sub-goal (body_goal WITHOUT body): decomposed fresh at runtime,
                     # so it must template the row (else every row runs identically — live 215344) and
-                    # declare what to return per row. (body_goal WITH body = a docstring on a templated
-                    # sub-function — allowed; the body itself carries the steps.)
-                    if not s.returns:
-                        issues.add("FOREACH_BODY_GOAL_MISSING_RETURNS", f"foreach（循环变量「{s.var}」）的 body_goal 必须配 returns——"
+                    # declare what to return per row. New programs should split row_fields (current
+                    # grid/list row inputs) from output_fields (per-row sub-goal outputs); legacy
+                    # body_goal+returns still means output_fields. (body_goal WITH body = a docstring
+                    # on a templated sub-function — allowed; the body itself carries the steps.)
+                    if not (s.output_fields or s.returns):
+                        issues.add("FOREACH_BODY_GOAL_MISSING_RETURNS", f"foreach（循环变量「{s.var}」）的 body_goal 必须配 output_fields（旧计划可用 returns）——"
                                    "声明每行子目标要产出的字段（如 ['material']），否则结果汇不进 into 表供后续查询")
                     if ("{%s[" % s.var) not in s.body_goal:
                         issues.add("FOREACH_BODY_GOAL_NO_ROW_TEMPLATE", f"foreach 的 body_goal 必须**字面**引用循环变量模板 "
                                    f"`{{{s.var}[字段]}}`（如 `{{{s.var}[Name]}}`），运行时才按行代入；否则每行子目标都一样、"
                                    "只命中第一个（live 215344：两次都搜同一个名字）")
-                elif not s.body and not s.returns:
-                    issues.add("FOREACH_EMPTY_BODY_NO_RETURNS", f"foreach（循环变量「{s.var}」）的 body 为空且未设置 returns——"
-                                  "若目标列已在网格里，在 foreach 上设 returns（系统自动从网格直取这些字段）；"
+                elif not s.body and not (s.row_fields or s.returns):
+                    issues.add("FOREACH_EMPTY_BODY_NO_RETURNS", f"foreach（循环变量「{s.var}」）的 body 为空且未设置 row_fields/returns——"
+                                  "若目标列已在网格里，在 foreach 上设 row_fields（旧计划可用 returns，系统自动从网格直取这些字段）；"
                                   "若需逐行钻详情，在 body 里添加打开详情的步骤")
                 # body runs in a copied scope with the loop var bound to the over-read's row fields (if any),
                 # so {loop_var[field]} resolves. The loop's materialized `into` table is queried by a
@@ -631,10 +636,17 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                 # added to template scope here.
                 body_scope = dict(scope)
                 if s.over:
-                    body_scope[s.var] = set(scope.get(s.over, set()))
+                    body_scope[s.var] = set(scope.get(s.over, set())) | set(s.row_fields)
                 else:
-                    # new-style foreach: loop var fields come from foreach.returns (collect_fn provides them)
-                    body_scope[s.var] = set(s.returns) if s.returns else set()
+                    # Browser collect_fn path. New programs use row_fields for row inputs; old
+                    # non-body_goal programs used returns. A legacy body_goal without row_fields
+                    # derives row inputs from the literal templates it wrote.
+                    if s.row_fields:
+                        body_scope[s.var] = set(s.row_fields)
+                    elif agentic_body_goal:
+                        body_scope[s.var] = _template_fields_for_var(s.body_goal, s.var)
+                    else:
+                        body_scope[s.var] = set(s.returns) if s.returns else set()
                 _check_foreach_url_policy(s, body_scope.get(s.var, set()), function_defs, issues)
                 _walk(s.body, body_scope, set(scalars))
 
@@ -650,8 +662,6 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
         _check_function_contract(fn, function_defs, function_returns, issues)
     _check_foreach_data_query(program.statements, issues, function_returns)
     _check_retrieval_retry_preserves_field(program.statements, issues)
-    if resolution is not None:
-        _check_entity_scope_predicates(program, resolution, issues)
     return issues
 
 _RETRIEVAL_FIELD_RE = re.compile(
@@ -822,32 +832,40 @@ def _check_foreach_url_policy(
         return
     url_keys = {_field_key(field) for field in url_fields}
 
-    for item in loop.body:
-        if isinstance(item, RunLike) and _run_looks_like_detail_open(item):
-            refs = _template_fields_for_var(_run_text(item), loop.var)
-            ref_keys = {_field_key(field) for field in refs}
-            if refs and not (ref_keys & url_keys):
-                issues.add(
-                    "FOREACH_ROW_URL_NOT_USED",
-                    f"foreach 行「{loop.var}」提供了 URL/HREF/link 能力 {sorted(url_fields)}，"
-                    f"但详情打开步骤「{item.name}」只引用了当前行的非 URL 字段 {sorted(refs)}。"
-                    "逐行打开详情时必须直接使用行 URL/link（例如 {row[url]}），不要依赖当前列表仍停在同一结果集后再按文本点行。"
-                )
-        elif isinstance(item, Call):
-            fn = function_defs.get(item.func)
-            if fn is None or not _function_opens_detail(fn, function_defs):
-                continue
-            call_row_fields: set[str] = set()
-            for value in (item.args or {}).values():
-                call_row_fields.update(_template_fields_for_var(str(value), loop.var))
-            call_row_keys = {_field_key(field) for field in call_row_fields}
-            if call_row_fields and not (call_row_keys & url_keys):
-                issues.add(
-                    "FOREACH_CALL_DROPS_ROW_URL",
-                    f"foreach 行「{loop.var}」提供了 URL/HREF/link 能力 {sorted(url_fields)}，"
-                    f"但调用会打开详情的函数「{item.func}」时只传入了非 URL 行字段 {sorted(call_row_fields)}。"
-                    "请把 URL/link 字段作为函数参数传入，并在函数的详情打开步骤中使用它。"
-                )
+    def _walk(seq: list[Stmt]) -> None:
+        for item in seq:
+            if isinstance(item, RunLike) and _run_looks_like_detail_open(item):
+                refs = _template_fields_for_var(_run_text(item), loop.var)
+                ref_keys = {_field_key(field) for field in refs}
+                if refs and not (ref_keys & url_keys):
+                    issues.add(
+                        "FOREACH_ROW_URL_NOT_USED",
+                        f"foreach 行「{loop.var}」提供了 URL/HREF/link 能力 {sorted(url_fields)}，"
+                        f"但详情打开步骤「{item.name}」只引用了当前行的非 URL 字段 {sorted(refs)}。"
+                        "逐行打开详情时必须直接使用行 URL/link（例如 {row[url]}），不要依赖当前列表仍停在同一结果集后再按文本点行。"
+                    )
+            elif isinstance(item, Call):
+                fn = function_defs.get(item.func)
+                if fn is None or not _function_opens_detail(fn, function_defs):
+                    continue
+                call_row_fields: set[str] = set()
+                for value in (item.args or {}).values():
+                    call_row_fields.update(_template_fields_for_var(str(value), loop.var))
+                call_row_keys = {_field_key(field) for field in call_row_fields}
+                if call_row_fields and not (call_row_keys & url_keys):
+                    issues.add(
+                        "FOREACH_CALL_DROPS_ROW_URL",
+                        f"foreach 行「{loop.var}」提供了 URL/HREF/link 能力 {sorted(url_fields)}，"
+                        f"但调用会打开详情的函数「{item.func}」时只传入了非 URL 行字段 {sorted(call_row_fields)}。"
+                        "请把 URL/link 字段作为函数参数传入，并在函数的详情打开步骤中使用它。"
+                    )
+            elif isinstance(item, If):
+                _walk(item.then)
+                _walk(item.otherwise)
+            elif isinstance(item, ForEach):
+                _walk(item.body)
+
+    _walk(loop.body)
 
 def _body_declared_fields(seq: list[Stmt], function_returns: dict[str, set[str]]) -> set[str]:
     fields: set[str] = set()
@@ -1052,6 +1070,11 @@ def _read_looks_like_row_collection(run: Run) -> bool:
         )
     )
 
+_BODY_GOAL_MEMBERSHIP_RE = re.compile(
+    r"判断|是否|若是|如果|属于|匹配|目标集合|目标规格|筛选成员|\bif\b|\bwhether\b|\bmember\b|\bbelongs\b|\bmatching\b",
+    re.IGNORECASE,
+)
+
 def _check_foreach_data_query(
     stmts: list[Stmt],
     issues: IssueList,
@@ -1065,15 +1088,51 @@ def _check_foreach_data_query(
     """
 
     function_returns = function_returns or {}
-    foreach_tables: dict[str, tuple[str, set[str], bool]] = {}
+
+    @dataclass(frozen=True)
+    class _ForeachTableInfo:
+        label: str
+        fields: set[str]
+        body_empty: bool
+        conditional_body_goal: bool
+        row_fields: set[str]
+        output_fields: set[str]
+
+    foreach_tables: dict[str, _ForeachTableInfo] = {}
+
+    def _fields_to_sql(fields: list[str] | set[str] | tuple[str, ...]) -> set[str]:
+        return {
+            ident for field in fields
+            if (ident := _sql_identifier(field))
+        }
+
+    def _loop_template_fields(loop: ForEach) -> set[str]:
+        fields = _template_fields_for_var(loop.body_goal, loop.var)
+        if fields:
+            return fields
+        names = {v for v, _ in TEMPLATE_RE.findall(loop.body_goal or "")}
+        if len(names) == 1:
+            alias = next(iter(names))
+            return _template_fields_for_var(loop.body_goal, alias)
+        return set()
+
+    def _foreach_explicit_output_fields(loop: ForEach) -> set[str]:
+        if loop.body_goal and not loop.body and loop.output_fields:
+            return _fields_to_sql(loop.output_fields)
+        if loop.body_goal and not loop.body:
+            # Legacy body_goal plans used returns as the per-row output contract.
+            return _fields_to_sql(loop.returns)
+        return set()
 
     def _body_result_fields(seq: list[Stmt], row_fields: set[str]) -> set[str]:
         fields = set(row_fields)
         for item in seq:
             if isinstance(item, RunLike) and item.returns:
-                fields.update(field.lower() for field in item.returns)
+                fields.update(_fields_to_sql(item.returns))
+            elif isinstance(item, Compute):
+                fields.update(_fields_to_sql([item.var]))
             elif isinstance(item, Call):
-                fields.update(field.lower() for field in function_returns.get(item.func, set()))
+                fields.update(_fields_to_sql(function_returns.get(item.func, set())))
             elif isinstance(item, If):
                 fields.update(_body_result_fields(item.then, row_fields))
                 fields.update(_body_result_fields(item.otherwise, row_fields))
@@ -1085,6 +1144,32 @@ def _check_foreach_data_query(
             for raw in re.findall(r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)\b", sql or "", flags=re.I)
         }
 
+    def _where_field_tokens(sql: str, ignored: set[str] | None = None) -> set[str]:
+        match = re.search(
+            r"\bwhere\b(?P<body>.*?)(?:\bgroup\s+by\b|\border\s+by\b|\blimit\b|\boffset\b|$)",
+            sql or "",
+            flags=re.I | re.S,
+        )
+        if not match:
+            return set()
+        text = re.sub(r"'[^']*'", " ", match.group("body"))
+        ignored = ignored or set()
+        return {
+            token for raw in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", text)
+            if (token := raw.lower())
+            and token not in ignored
+            and token not in _SQL_NON_FIELD_TOKENS
+            and not re.fullmatch(r"table_\d+", token)
+        }
+
+    def _where_uses_output_field(sql: str, output_fields: set[str], ignored: set[str] | None = None) -> bool:
+        if not output_fields:
+            return False
+        return any(
+            _query_field_available(token, output_fields)
+            for token in _where_field_tokens(sql, ignored)
+        )
+
     # Track ALL read vars (list-like or not) for foreach row_fields inference.
     # list-like reads also trigger direct-query guards; plain reads only provide row fields.
     all_read_vars: dict[str, tuple[str, set[str]]] = {}
@@ -1095,9 +1180,9 @@ def _check_foreach_data_query(
             if isinstance(s, RunLike):
                 if s.kind == "read" and s.var and s.returns:
                     # Track all read vars for foreach row_fields inference.
-                    all_read_vars[s.var] = (s.name, {field.lower() for field in s.returns})
+                    all_read_vars[s.var] = (s.name, _fields_to_sql(s.returns))
                     if _read_looks_like_row_collection(s):
-                        local[s.var] = (s.name, {field.lower() for field in s.returns})
+                        local[s.var] = (s.name, _fields_to_sql(s.returns))
                         continue
                 if s.kind == "data_query":
                     needed = _data_query_field_tokens(s)
@@ -1127,7 +1212,10 @@ def _check_foreach_data_query(
                             "产出 into 表，再查询该表。"
                         )
                     for table in refs & set(foreach_tables):
-                        table_label, fields, body_empty = foreach_tables[table]
+                        table_info = foreach_tables[table]
+                        table_label = table_info.label
+                        fields = table_info.fields
+                        body_empty = table_info.body_empty
                         # Exclude data_query returns from the check: they are output aliases
                         # (e.g. "SUM(...) AS total"), not fields that must come from the foreach table.
                         returns_aliases = {str(r).strip().lower() for r in (s.returns or [])}
@@ -1136,30 +1224,48 @@ def _check_foreach_data_query(
                             if body_empty:
                                 issues.add("FOREACH_DQ_GRID_FIELD_MISSING", 
                                     f"data_query 步「{s.name}」查询 foreach body=[] 产出的网格表「{table_label}」，"
-                                    f"但 SQL 需要的字段 {sorted(missing)} 没有被该 foreach returns 采集；"
-                                    "请把这些字段的基础网格列加入 foreach returns（例如需要 *_ts 就采集对应日期/时间列，"
+                                    f"但 SQL 需要的字段 {sorted(missing)} 没有被该 foreach row_fields/returns 采集；"
+                                    "请把这些字段的基础网格列加入 foreach row_fields（旧计划可加入 foreach returns；例如需要 *_ts 就采集对应日期/时间列，"
                                     "需要 *_num 就采集对应金额/数字列），不要因此改成逐条钻取。"
                                 )
                             else:
                                 issues.add("FOREACH_DQ_DETAIL_FIELD_MISSING", 
                                     f"data_query 步「{s.name}」查询 foreach 产出的表「{table_label}」，"
                                     f"但使用/返回了 foreach body 没有通过 returns 产出的字段 {sorted(missing)}；"
-                                    "请在该 foreach body 里逐条打开详情，并让打开详情的 run 带 returns/read_spec 产出这些字段，"
+                                    "请在该 foreach body 里逐条打开详情，并让打开详情的 run 带 returns/read_spec 产出这些字段；"
+                                    "若该 foreach 使用 body_goal，请把每行子目标会返回/计算出的字段列入 output_fields，"
                                     "再对 into 表 data_query。"
                                 )
+                            break
+                        if table_info.conditional_body_goal and not _where_uses_output_field(
+                            s.sql,
+                            table_info.output_fields - table_info.row_fields,
+                            refs | returns_aliases | _sql_derived_identifier_tokens(s.sql),
+                        ):
+                            issues.add(
+                                "FOREACH_BODY_GOAL_QUERY_ROW_PREDICATE",
+                                f"data_query 步「{s.name}」查询 body_goal 产出的表「{table_label}」，"
+                                "但 WHERE 没有使用 body_goal 产出的结果字段，而是在 foreach 行字段上继续做成员筛选。"
+                                "body_goal 已负责运行时判断成员（如是否 size 28/是否匹配目标集合）；"
+                                "后续 SQL 应筛 body_goal 明确产出的字段，例如 `status = 'updated'`、"
+                                "`is_member = 'yes'`、`size = '28'`，或 `old_price != '' AND new_price != ''`。"
+                                "不要用 `sku LIKE '%28%'`、`name LIKE ...` 这类分解时猜出来的字面谓词二次筛选，"
+                                "否则会漏掉真实编码不含这些字面的成员。"
+                            )
                             break
                     if foreach_tables and not (refs & set(foreach_tables)):
                         produced: set[str] = set()
                         labels: list[str] = []
-                        for label, fields, _body_empty in foreach_tables.values():
-                            labels.append(label)
-                            produced.update(fields)
+                        for info in foreach_tables.values():
+                            labels.append(info.label)
+                            produced.update(info.fields)
                         missing = _missing_query_fields(needed, produced, refs)
                         if missing:
                             issues.add("FOREACH_DQ_POST_FOREACH_FIELD_MISSING", 
                                 f"data_query 步「{s.name}」位于 foreach 之后，但使用/返回了此前 foreach "
-                                f"没有通过 returns 产出的字段 {sorted(missing)}；已存在的 foreach 表为 {labels}。"
+                                f"没有通过 row_fields/returns/output_fields 产出的字段 {sorted(missing)}；已存在的 foreach 表为 {labels}。"
                                 "若要按每条记录详情字段筛选，请在 foreach body 中用打开详情的 run 返回这些字段，"
+                                "或在 body_goal 的 output_fields 中声明这些字段，"
                                 "并让 SQL 查询对应的 into 表。"
                             )
             elif isinstance(s, ForEach):
@@ -1169,16 +1275,30 @@ def _check_foreach_data_query(
                     row_fields = set(local[s.over][1])
                 elif s.over in all_read_vars:
                     row_fields = set(all_read_vars[s.over][1])
+                if s.row_fields:
+                    row_fields.update(_fields_to_sql(s.row_fields))
+                elif s.body_goal and not s.body:
+                    row_fields.update(_fields_to_sql(_loop_template_fields(s)))
                 elif s.returns:
                     # new-style foreach: collect_fn provides rows with these fields.
                     # Normalize with _sql_identifier (same as runtime) so "Grand Total (Purchased)"
                     # maps to "grand_total_purchased" and matches what data_query SQL writes.
-                    row_fields = {_sql_identifier(r) for r in s.returns}
+                    row_fields.update(_fields_to_sql(s.returns))
+                output_fields = _foreach_explicit_output_fields(s)
+                fields = _body_result_fields(s.body, row_fields)
+                fields.update(output_fields)
                 table_name = (s.into or f"{s.var}s").lower()
-                foreach_tables[table_name] = (
-                    s.into or f"{s.var}s",
-                    _body_result_fields(s.body, row_fields),
-                    not bool(s.body),
+                foreach_tables[table_name] = _ForeachTableInfo(
+                    label=s.into or f"{s.var}s",
+                    fields=fields,
+                    body_empty=not bool(s.body) and not bool(s.body_goal),
+                    conditional_body_goal=bool(
+                        s.body_goal
+                        and not s.body
+                        and _BODY_GOAL_MEMBERSHIP_RE.search(s.body_goal or "")
+                    ),
+                    row_fields=set(row_fields),
+                    output_fields=set(output_fields),
                 )
                 if s.over in local:
                     local.pop(s.over, None)
@@ -1407,67 +1527,3 @@ def _sql_identifier(value: object) -> str:
     if text[0].isdigit():
         text = "c_" + text
     return text
-
-
-# ── entity-scope predicate（1a970f7 的 prompt 规则 11⑤/重排规则 6 的确定性升格）────────────
-# 任务把记录圈定到某实体（某产品的评论/某客户的订单…）且计划用 foreach 采集 + data_query 汇总时，
-# 最终查询必须携带实体范围谓词（WHERE <实体列> LIKE '%K%' AND ...）——上游筛选可能被误触/Reset/
-# 翻页弄丢（113 live 曾采到错实体的行并把错实体昵称当答案）。此前该规则只有 prompt 层（离线实测
-# 重排丢失率 ~1/3-5/6），这里把它变成 validator 反馈重试的硬合同。resolution 缺席时静默跳过
-#（subdecompose / 无 router 的路径）。
-
-
-def _check_entity_scope_predicates(program: Program, resolution, issues: IssueList) -> None:
-    entities = getattr(resolution, "entities", None) or []
-    if not entities:
-        return
-
-    into_tables: set[str] = set()
-    scoped_queries: list[Query] = []
-    ui_text_parts: list[str] = []
-
-    def _collect(stmts: list[Stmt]) -> None:
-        for s in stmts:
-            if isinstance(s, ForEach):
-                into_tables.add((s.into or f"{s.var}s").strip().lower())
-                ui_text_parts.extend([s.target or "", s.member_desc or "", s.body_goal or ""])
-                _collect(s.body)
-            elif isinstance(s, Query):
-                scoped_queries.append(s)
-            elif isinstance(s, Run):
-                ui_text_parts.extend([s.name or "", s.success_condition or ""])
-            elif isinstance(s, If):
-                _collect(s.then)
-                _collect(s.otherwise)
-
-    _collect(program.statements)
-    for fn in getattr(program, "functions", None) or []:
-        _collect(fn.body)
-    if not into_tables:
-        return
-    into_queries = [
-        q for q in scoped_queries
-        if (_sql_referenced_tables(q.sql or "") - _sql_cte_names(q.sql or "")) & into_tables
-    ]
-    if not into_queries:
-        return
-
-    ui_text = " ".join(ui_text_parts).lower()
-    for entity in entities:
-        if str(getattr(entity, "role", "lookup") or "lookup").strip().lower() == "value":
-            continue
-        keys = [str(k).strip() for k in (getattr(entity, "search_key", ""), getattr(entity, "mention", ""))
-                if str(k or "").strip()]
-        if not keys:
-            continue
-        keys_lower = [k.lower() for k in keys]
-        if not any(k in ui_text for k in keys_lower):
-            continue  # 该实体没有圈定这份计划的采集（覆盖性问题归 preflight 的 ROUTER_* 检查）
-        if any(k in (q.sql or "").lower() for q in into_queries for k in keys_lower):
-            continue
-        issues.add("ENTITY_SCOPE_PREDICATE_MISSING",
-            f"任务把记录圈定到实体「{keys[0]}」，但查询 foreach 汇总表的 data_query 没带实体范围谓词——"
-            f"上游筛选可能被误触/Reset/翻页弄丢，会把别的实体的行当答案返回。请让 foreach returns 顺手"
-            f"包含实体标识列，并在该 data_query 的 SQL 里加 `WHERE <实体列> LIKE '%{keys[0]}%' AND ...`；"
-            "「前面已筛过」不构成省略理由（那可能是已失效的旧状态）。"
-        )

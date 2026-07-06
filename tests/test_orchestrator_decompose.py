@@ -8,6 +8,11 @@ through the interpreter. The live LLM decompose is exercised by tmp_scripts, not
 
 from __future__ import annotations
 
+import importlib
+from types import SimpleNamespace
+
+import pytest
+
 from gui_agent.core.orchestrator import (
     Cond,
     Finish,
@@ -21,6 +26,10 @@ from gui_agent.core.orchestrator import (
 )
 from gui_agent.core.orchestrator.decomposer import _PlanDraft, _StepDraft, _table_schema_prompt
 from gui_agent.core.orchestrator.program import Query, Read
+
+
+def _fake_cfg():
+    return SimpleNamespace(model="fake-model", api_key="fake-key", base_url="http://fake")
 
 
 def _connectivity_draft() -> _PlanDraft:
@@ -54,6 +63,28 @@ def test_to_program_maps_runs_kinds_and_var():
     assert isinstance(branch, If)
 
 
+def test_decompose_raises_after_validator_retries_exhausted(monkeypatch):
+    mod = importlib.import_module("gui_agent.core.orchestrator.decomposer")
+    calls = {"n": 0}
+
+    def fake_invoke(_llm, _messages, _schema, **_kwargs):
+        calls["n"] += 1
+        return mod._PlanDraft(goal="g", steps=[
+            mod._StepDraft(op="finish", message="answer: {q[result]}"),
+        ])
+
+    monkeypatch.setattr(mod, "resolve_llm_config", lambda _key: _fake_cfg())
+    monkeypatch.setattr(mod, "ChatOpenAI", lambda **_kwargs: object())
+    monkeypatch.setattr(mod, "invoke_structured", fake_invoke)
+
+    with pytest.raises(mod.OrchestratorCompileError) as raised:
+        mod.decompose("return the answer")
+
+    assert calls["n"] == mod._MAX_RETRIES + 1
+    assert any(issue.code == "TEMPLATE_VAR_NOT_IN_SCOPE" for issue in raised.value.issues)
+    assert raised.value.program.statements
+
+
 def test_to_program_builds_if_and_finish():
     prog = to_program(_connectivity_draft(), "")
     branch = prog.statements[-1]
@@ -77,6 +108,32 @@ def test_to_program_maps_extended_condition_values():
     branch = to_program(draft, "").statements[-1]
     assert isinstance(branch, If)
     assert branch.cond == Cond(var="r", field="状态", cmp="in", values=["待执行", "进行中"])
+
+
+def test_plan_draft_accepts_json_boolean_condition_value():
+    draft = _PlanDraft.model_validate({
+        "steps": [
+            {
+                "op": "run",
+                "run_kind": "read",
+                "var": "d",
+                "name": "读取判定",
+                "returns": ["is_size_28"],
+            },
+            {
+                "op": "if",
+                "cond_var": "d",
+                "cond_field": "is_size_28",
+                "cond_cmp": "==",
+                "cond_value": True,
+                "then": [{"op": "finish", "message": "ok"}],
+            },
+        ],
+    })
+
+    branch = to_program(draft, "").statements[-1]
+    assert isinstance(branch, If)
+    assert branch.cond == Cond(var="d", field="is_size_28", cmp="==", value="true")
 
 
 def test_to_program_maps_data_query_sql():

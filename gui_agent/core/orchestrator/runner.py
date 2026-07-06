@@ -38,6 +38,19 @@ from .safe_eval import SafeEvalError, normalize_compute_expr, safe_eval
 MilestoneExecutor = Callable[[Run], RunResult]
 
 
+def _unique_fields(fields: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for field in fields:
+        f = str(field or "").strip()
+        key = f.lower()
+        if not f or key in seen:
+            continue
+        out.append(f)
+        seen.add(key)
+    return out
+
+
 class _ScalarRead(str):
     """A single-field read var in compute scope: IS the value it read (str ops / arithmetic-coerce
     work directly) while still answering var['field'] subscripts. Multi-field vars stay plain dicts
@@ -263,17 +276,18 @@ class Interpreter:
         """
         # Two body shapes:
         #   • body_goal WITHOUT body  → agentic per-row sub-goal: decomposed fresh per row at
-        #     runtime. `returns` is the per-row CONTRACT (e.g. material), so the grid columns to
-        #     gather are the row fields the sub-goal templates (`{var[field]}`).
+        #     runtime. row_fields are the current row inputs; output_fields (or legacy returns)
+        #     are the per-row output CONTRACT (e.g. material).
         #   • body (with body_goal as an optional docstring) → a templated sub-function authored
         #     once in the main decompose; executed per row by {var[field]} substitution (no runtime
         #     decompose). This is the normal foreach: `returns` are the grid collect columns.
         agentic_subgoal = bool(loop.body_goal) and not loop.body
         alias_var: Optional[str] = None
         if agentic_subgoal:
-            collect_cols = sorted({
+            template_cols = sorted({
                 f.strip() for v, f in TEMPLATE_RE.findall(loop.body_goal) if v == loop.var
             })
+            collect_cols = _unique_fields([*loop.row_fields, *template_cols])
             if not collect_cols:
                 # Loop-var drift: the body_goal templates ONE consistent other name (var=item,
                 # body_goal writes {row[sku]}) — mechanically unambiguous, so alias instead of
@@ -282,9 +296,10 @@ class Interpreter:
                 _names = {v for v, _ in TEMPLATE_RE.findall(loop.body_goal)}
                 if len(_names) == 1:
                     alias_var = _names.pop()
-                    collect_cols = sorted({
+                    template_cols = sorted({
                         f.strip() for v, f in TEMPLATE_RE.findall(loop.body_goal) if v == alias_var
                     })
+                    collect_cols = _unique_fields([*loop.row_fields, *template_cols])
                     print(f"  [Foreach] 循环变量别名:body_goal 引用「{alias_var}」≠ 声明的「{loop.var}」,已机械对齐")
             if not collect_cols:
                 # No row binding at all — the per-row sub-goal would run IDENTICALLY for every row.
@@ -300,7 +315,11 @@ class Interpreter:
                     name=f"foreach {loop.var} (body_goal 无行绑定)", var=into0, result=self.env[into0]))
                 return None
         else:
-            collect_cols = list(loop.returns)
+            collect_cols = _unique_fields(loop.row_fields or loop.returns)
+        declared_output_fields = _unique_fields(
+            loop.output_fields or (loop.returns if agentic_subgoal else [])
+        )
+        fill_missing_declared_outputs = agentic_subgoal
         rows: list[dict[str, str]] = []
         src = self.env.get(loop.over) if loop.over else None
         if src is not None and src.rows:
@@ -339,6 +358,7 @@ class Interpreter:
                 ))
                 return None
         body_read_vars = self._read_vars(loop.body)
+        body_scalar_vars = self._compute_vars(loop.body)
         accumulated: list[dict[str, str]] = []
         if not rows:
             # Nothing discovered to iterate — publish an empty table so a following data_query sees an
@@ -380,7 +400,7 @@ class Interpreter:
         if agentic_subgoal and self._expand_fn is not None and self._subgoal_depth == 0:
             expansion = None
             try:
-                expansion = self._expand_fn(loop.body_goal, loop.var, rows, list(loop.returns))
+                expansion = self._expand_fn(loop.body_goal, loop.var, rows, list(declared_output_fields))
             except Exception:  # noqa: BLE001 — expansion must never be a new failure mode
                 expansion = None
             if expansion is not None:
@@ -397,6 +417,7 @@ class Interpreter:
                 agentic_subgoal = False           # body is now concrete; no per-row decompose
                 loop = loop.model_copy(update={"body": list(expansion.body), "body_goal": ""})
                 body_read_vars = self._read_vars(loop.body)
+                body_scalar_vars = self._compute_vars(loop.body)
         for row in rows:
             self.env[loop.var] = RunResult(completed=True, reads=dict(row))
             if alias_var:
@@ -416,6 +437,11 @@ class Interpreter:
                     self.run_log.append(RunRecord(
                         name=f"foreach {loop.var} (body_goal)", var=into, result=self.env[into]))
                     return None
+                sub_scalar_vars = self._compute_vars(sub_stmts)
+                for v in sub_read_vars:
+                    self.env.pop(v, None)
+                for v in set(sub_scalar_vars) | set(declared_output_fields):
+                    self._scalars.pop(v, None)
                 self._subgoal_depth += 1
                 try:
                     reply = yield from self._block(sub_stmts)
@@ -424,7 +450,12 @@ class Interpreter:
                 if reply is not None:
                     return reply
                 body_read_vars = sub_read_vars
+                body_scalar_vars = sub_scalar_vars
             else:
+                for v in body_read_vars:
+                    self.env.pop(v, None)
+                for v in set(body_scalar_vars) | set(declared_output_fields):
+                    self._scalars.pop(v, None)
                 reply = yield from self._block(loop.body)
                 if reply is not None:
                     return reply  # body finished/failed → terminate the program honestly
@@ -433,6 +464,12 @@ class Interpreter:
                 rv = self.env.get(v)
                 if rv is not None:
                     merged.update({k: val for k, val in rv.reads.items()})
+            for field in declared_output_fields:
+                if field in self._scalars:
+                    merged[field] = self._scalars[field]
+                    continue
+                if fill_missing_declared_outputs:
+                    merged.setdefault(field, "")
             accumulated.append(merged)
         self.env[into] = RunResult(completed=True, rows=accumulated,
                                    summary=f"采集 {len(accumulated)} 行（foreach {loop.var}）"
@@ -587,6 +624,18 @@ class Interpreter:
             elif isinstance(s, If):
                 out.extend(Interpreter._read_vars(s.then))
                 out.extend(Interpreter._read_vars(s.otherwise))
+        return out
+
+    @staticmethod
+    def _compute_vars(stmts: list) -> list[str]:
+        """Compute scalar vars that live only for the current iteration unless recomputed."""
+        out: list[str] = []
+        for s in stmts:
+            if isinstance(s, Compute) and s.var:
+                out.append(s.var)
+            elif isinstance(s, If):
+                out.extend(Interpreter._compute_vars(s.then))
+                out.extend(Interpreter._compute_vars(s.otherwise))
         return out
 
     def _eval(self, cond: Cond) -> bool:
