@@ -67,25 +67,25 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
 
 ## 各阶段落地（本分支提交序列）
 
-- **S1 `90aae41`** 调用约定从 loop.py/non_interactive.py 抽入 `callframe.py`，行为不变；
+- **S1 `f5bfb9c`** 调用约定从 loop.py/non_interactive.py 抽入 `callframe.py`，行为不变；
   恢复预算字典化为 `ReturnRecoveryLedger`（按调用点隔离）。
-- **S2 `b373c7b`** 返回值合同：`Run.return_domains`（url|number|date|enum:a|b|c|text，
+- **S2 `c2927a7`** 返回值合同：`Run.return_domains`（url|number|date|enum:a|b|c|text，
   decomposer 可声明，未声明字段用保守字段名线索推断）；出域值走与空值同款恢复路径——
   把「抓垃圾静默给错答」变成显式违约。`Milestone.returns/read_spec` 结构化通道
   （description 折叠保留，供既有 prompt）。**适用边界**：显式 enum 只覆盖封闭判定域
   （成功/失败、是/否、几种状态）；开放域字段（如 185 的 material，取值集是数据集内容、
   分解时不可知）decomposer 写不出 enum——那族的真实防线是 DOM-first 读取 + 空值恢复，
   不要高估 domain 校验对它的增益。
-- **S3 `41ccbb7`** 执行模式纪律（原命名 CQS，S7 修正）：`Run.is_query/is_interactive` 词汇；
+- **S3 `621ffcd`** 执行模式纪律（原命名 CQS，S7 修正）：`Run.is_query/is_interactive` 词汇；
   preflight `ORCH_PRECONDITION_IMPURE`（error：precondition 挂 returns/sql = 读错误帧）、
   `ORCH_QUERY_WITH_MUTATION_VERB`（warning：非交互原语名字里的动作永远不会执行）。
   两条规则管的都是交互/非交互边界。task-63 的 foreach 采集列合同已在 runner.py，未重复。
-- **S4 `ea143ce`** kickback 类型化：`dead_route/required_route` 结构化载荷经
+- **S4 `f60bcea`** kickback 类型化：`dead_route/required_route` 结构化载荷经
   `【死路｜禁止再用】/【规定路线】` 标记折叠进 directive 单通道；redecompose 输出过
   确定性服从校验（禁用机制再现/原 milestone 重现/规定路线未采用），违规→点名违规锐化重试一次。
   直击实测 ~1/3 的 directive-adherence 弱环节。inline directive（空返回/data_query 失败）
   无标记 = 校验自然 no-op（这类恢复合法重访相似步骤）。
-- **S6 非交互型从 milestone 剥离（`e665d07` + `0c3f13f`）** 运行时早已绕开（drive_pending_non_ui），
+- **S6 非交互型从 milestone 剥离（`2471b8e`）** 运行时早已绕开（drive_pending_non_ui），
   这一步让类型系统跟上：
   - *S6a* `_chain_block`/`_func_exit_sc`：read/data_query 页面中立，FROM 链穿透（与 Compute 同款）——
     修「夹在两个 UI run 之间的 data_query 把后者 from_state 置空断链」的确定性缺陷；
@@ -93,10 +93,10 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
     LLM 面零改动、isinstance(s, Run) walker 零破坏）；`to_milestone`/`open_call` 对查询节点抛
     ValueError（查询 marshal 进执行器 = 类型错误）；read→navigation 升格显式重建为交互 Run
     （升格=重新分类，不是字段改写）；drive 循环与 callframe 守卫统一走 `is_query` 单谓词。
-- **S7 `af78124` + `f034c13`** 本体论定稿：脚本生成总纲；CQS 框架废弃（`is_command`→`is_interactive`，
+- **S7 `4c76742`** 本体论定稿：脚本生成总纲；CQS 框架废弃（`is_command`→`is_interactive`，
   机制不变）；return_domains 进 worked examples（规则条文 12 样本零采纳 → 范例后探针对自有字段
   泛化出 `enum:是|否`，eval dump 渲染采纳可观测）。
-- **S8 `b327d9c`** 交互/非交互彻底拆离（用户指令：milestone = 连续交互操作，非交互 action 不再是
+- **S8 `76c5f8b`** 交互/非交互彻底拆离（用户指令：milestone = 连续交互操作，非交互 action 不再是
   milestone）：`RunLike` = run 家族共享形状；`Run` = 交互 action（kind 收窄
   navigation|filter|action，独有 from_state/return_domains/precondition；`InteractiveAction` 别名）；
   `Read`/`Query` = 平级非交互语句（Query 独有 sql/data_scope）。Stmt 经 callable discriminator
@@ -108,7 +108,7 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
   内部的载体格式（`to_milestone` 是 marshalling 的目标格式名），与 DAG/iphone/android 共享，
   其改名归跨平台专项。
 
-- **S9 `25e8733` + `bbe3b21`** 按脚本生成视角重构 orchestrator 包（用户「是时候了」）：
+- **S9 `839ab07`** 按脚本生成视角重构 orchestrator 包（用户「是时候了」）：
   - *S9a* 退役 engine.py（两件事的合居）：AST normalize passes → `passes.py`（编译 middle-end）；
     Run→Milestone marshalling → `callframe.py`（FFI 边界，它本就自述为 ABI）。全部进口方按符号
     重指（production/tests/evals），867 绿，行为不变。
@@ -121,7 +121,7 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
     filter-returns 校验静默通过），所以它不进 to_program、而是 finalize 步。7 处 wrap + 冗余 import
     全删。S4 kickback adherence 校验留在 loop（是 kickback 编排控制流，非生成）。
   - *S9c* 包级地图写进 `orchestrator/__init__.py` docstring（每模块的编译器/运行时/FFI 身份）。
-- **S10 `1ab706a`** 三条 prompt 规则升格为确定性合同（按投资判据：把不确定性挤出脚本层）：
+- **S10 `c74635f`** 三条 prompt 规则升格为确定性合同（按投资判据：把不确定性挤出脚本层）：
   ① `NOOP_FLOW_CONTROL_STEP`——交互步自述「无UI变化/仅用于流程控制」= LLM 发明的流程控制,
   行累积是运行时的事,checker 会对着它空转；② `COMPUTE_UNSUPPORTED_EXPR`/`COMPUTE_UNKNOWN_NAME`
   ——compute 方言与作用域的编译期强制（safe_eval 共享面:normalize_compute_expr 与 runner 单源、
@@ -129,7 +129,7 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
   ③ `ENTITY_SCOPE_PREDICATE_MISSING`——1a970f7 的实体范围规则此前仅 prompt 层（重排丢失率实测
   1/6-2/3）,现为 validate_program(resolution=...) 硬合同,经 _invoke_plan 三入口共享。
   四 code 全部进入注册表+触发样例；872 绿；185 实弹零误伤。
-- **S11 `49dd4a1`** 异常体系 Stage A（架构自检问题①的第一刀,用户拍板「分类+账本现在做,
+- **S11 `4456cb1`** 异常体系 Stage A（架构自检问题①的第一刀,用户拍板「分类+账本现在做,
   预算+升级链 live 后做」）：`recovery.py` = 四分类（compile_error / contract_violation /
   infeasible_route / data_source_error,作为类型不是控制流）+ 任务级 `RecoveryLedger`
   （继承并吸收 ReturnRecoveryLedger,callframe re-export 保 ABI 面）。九种恢复机制中跨 FFI
@@ -144,8 +144,8 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
 - 185 case-eval：分支 vs 基准 95137c3 各 6 样本 = **4/6 打平，无回归**；函数/内联形态选择是采样噪声。
 - 778 case-eval：分支 3/3；groundtruth(k=3)：185 pass@1 ✅、778 pass@3 ✅（1 样本被
   `ROUTER_SET_SELECTOR_NOT_APPLIED` 拦→重试愈合，pass@K>pass@1 = sample-and-validate 的量化证据）。
-- 顺带修了评测装置两个 bug：嵌套 `_has_foreach` 遮蔽（185 case 必崩，`95b2c2d`）、back-nav 断言
-  只扫函数文本冤杀内联形态（`9531fcb`）。
+- 顺带修了评测装置两个 bug：嵌套 `_has_foreach` 遮蔽（185 case 必崩，`f9d2e04`）、back-nav 断言
+  只扫函数文本冤杀内联形态（`f9d2e04`）。
 - 双侧同有的真实抖动（~1/3）：base_sku 显式派生偶发写进 read_spec 散文而非显式 compute 步。
 
 ## 离线全面评测（2026-07-06，S9+清理之后）
@@ -161,7 +161,7 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
   （全量剥离到与基准字节相同仍 2/6 vs 6/8，p≈0.14 不显著）→ **不能归因于分支**，定性为观察项
   （该 case 族有 checker `_check.md` 登录判据 L2 兜底）。
 - **过程产出**：S8 评测漏网第 2、3 批——redecompose eval + 实验脚本的 `isinstance(s, Run)`
-  walker（`f552303`）、case-eval 对全家族 run 的 `.sql` 直接访问（`88bc4f2`）。教训追加：
+  walker（`9d3c64d`）、case-eval 对全家族 run 的 `.sql` 直接访问（`9d3c64d`）。教训追加：
   **IR 类型层次改动的消费方 = 全仓,evals/scripts 的 walker 与字段直取都算**。
 
 ## 「直接用 Python 编排？」——量化裁决（2026-07-06）
@@ -190,7 +190,7 @@ S10 之前 compute 方言错误不被 validator 标记（row.sku 曾静默过检
    SQL 修复 LLM、action 级 replan、checker 重试）各有各的预算常数与触发条件,互不知情——
    预算乘积才是最坏成本,没人算过。S4 类型化了一个异常,异常【系统】仍是零售的。
    → live 后头号结构项：统一异常分类 + 单一恢复账本 + 显式升级链（载体=loop.py 状态机化）。
-   **Stage A（分类+账本,行为零变化）已交付 S11 `49dd4a1`;Stage B（预算+升级链）等 live 轨迹。**
+   **Stage A（分类+账本,行为零变化）已交付 S11 `4456cb1`;Stage B（预算+升级链）等 live 轨迹。**
 2. **规则堆积无退役机制**：validator 44 条 + decomposer.md 千字 bullet,「每败例一条规则」的
    增长函数不可持续（已有空转实证 SQL_QUOTED_DISPLAY_IDENTIFIER;规则间已现顺序耦合）。
    很多规则在补偿 draft 面太自由——S8 证明结构化预防碾压事后规则,但比例严重偏向后者。
