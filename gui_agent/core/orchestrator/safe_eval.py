@@ -193,7 +193,7 @@ def _ev(node: ast.AST, scope: dict[str, Any]) -> Any:
     raise SafeEvalError(f"不允许的表达式节点: {type(node).__name__}")
 
 
-# ── compile-time surface（validator / pysurface 共用的编译期检查件）────────────────────
+# ── compile-time surface（validator 的编译期检查件；曾与 pysurface 共用,该实验臂已删）────
 
 FUNC_NAMES = frozenset(_FUNCS)
 

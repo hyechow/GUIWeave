@@ -195,7 +195,7 @@ def _with_backoff(fn, *args, **kwargs):
 
 
 def run_task(task: dict, knowledge_nav: str, current_site: str, k: int,
-             surface: str = "json") -> dict:
+             surface: str = "json") -> dict:  # surface param kept for signature compat; json-only
     goal = task["intent"]
     gt = derive_ground_truth(task)
     resolution = None
@@ -205,16 +205,13 @@ def run_task(task: dict, knowledge_nav: str, current_site: str, k: int,
     except Exception as e:  # noqa: BLE001 — grade the samples without router coverage
         res_err = f"{type(e).__name__}: {e}"
 
-    if surface == "python":
-        from gui_agent.core.orchestrator.pysurface import decompose_py
-
-        def _decompose(goal, knowledge, current_site, resolution):
-            return decompose_py(goal, knowledge=knowledge, current_site=current_site,
-                                resolution=resolution)
-    else:
-        def _decompose(goal, knowledge, current_site, resolution):
-            return decompose(goal, knowledge=knowledge, current_site=current_site,
-                             resolution=resolution)
+    # The pysurface (--surface python) A/B arm was DELETED 2026-07-06 after the quantitative
+    # verdict (impedance share 3% of validator retries — the authoring surface is not the
+    # bottleneck; see docs/milestone_as_function.md). Resurrect from git history if the reopen
+    # criterion (impedance share climbing) ever fires.
+    def _decompose(goal, knowledge, current_site, resolution):
+        return decompose(goal, knowledge=knowledge, current_site=current_site,
+                         resolution=resolution)
 
     samples: list[dict] = []
     for _ in range(k):
@@ -265,8 +262,8 @@ def main() -> int:
     ap.add_argument("--k", type=int, default=1, help="decompose samples per task")
     ap.add_argument("--workers", type=int, default=1,
                     help="parallel tasks (LLM calls are IO-bound; 4-8 is safe)")
-    ap.add_argument("--surface", choices=["json", "python"], default="json",
-                    help="decompose front-end: json = production _PlanDraft; python = pysurface arm")
+    ap.add_argument("--surface", choices=["json"], default="json",
+                    help="decompose front-end (json = production _PlanDraft; the python/pysurface arm was deleted 2026-07-06, resurrect via git)")
     ap.add_argument("--limit", type=int, default=0, help="cap number of tasks (0 = no cap)")
     args = ap.parse_args()
 

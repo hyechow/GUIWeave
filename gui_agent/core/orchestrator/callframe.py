@@ -47,13 +47,12 @@ if TYPE_CHECKING:
 # INTERACTIVE action becomes a Milestone; a query (read/data_query) is a non-interactive
 # statement driven by drive_pending_non_ui — marshalling one is a type error.
 
-# DSL RunKind -> executor (kind, completion_strategy).
+# Interactive Run kind -> executor (kind, completion_strategy). Query kinds have no rows here:
+# to_milestone rejects them before lookup (queries never marshal into the executor).
 _KIND_MAP: dict[str, tuple[str, str]] = {
     "navigation": ("navigation", "visible_once"),
     "filter": ("filter", "visible_once"),
     "action": ("action", "visible_once"),
-    "read": ("collection", "read_once"),
-    "data_query": ("collection", "read_once"),
 }
 
 

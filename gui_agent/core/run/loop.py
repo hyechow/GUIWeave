@@ -82,10 +82,6 @@ TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 LOADING_WAIT_S = 0.6          # 每个加载帧重新观察前的等待，给页面渲染时间
 MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂、停止
 
-# 动作重试机制暂时关闭：每轮只做一次 action policy 决策和执行。
-# MAX_ACTION_RETRIES = 2        # 动作无效时最多重试次数
-# ACTION_EFFECT_THRESHOLD = 3.0  # mean_image_diff 低于此值视为动作未生效
-
 
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
 # settle wait (near-zero added latency). Daemon threads; finishes at process exit.

@@ -102,7 +102,6 @@ def _trigger_success_condition(run: Run) -> str:
 
 
 _CONFIRM_READ_TRIGGER_KINDS = {"action", "filter"}
-_RETURN_READ_SOURCE_KINDS = INTERACTIVE_KINDS
 
 
 def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
@@ -128,7 +127,7 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
         if (
             isinstance(s, Run)
             and isinstance(nxt, Read)
-            and s.kind in _RETURN_READ_SOURCE_KINDS
+            and s.kind in INTERACTIVE_KINDS
             and nxt.returns
             and (not s.var or not nxt.var or s.var == nxt.var)
         ):
