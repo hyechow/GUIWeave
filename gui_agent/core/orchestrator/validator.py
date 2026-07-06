@@ -10,9 +10,11 @@ codes/severity are layered on in a follow-up so each rule becomes measurable.)
 
 from __future__ import annotations
 
+import ast
 import re
 
-from .program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, Finish, ForEach, FunctionDef, If, Program, Run, RunLike, Stmt
+from .program import BARE_REF_RE, TEMPLATE_RE, Call, Compute, Finish, ForEach, FunctionDef, If, Program, Query, Run, RunLike, Stmt
+from .safe_eval import FUNC_NAMES, dry_check_expr, normalize_compute_expr
 
 # Severity is metadata for governance/measurement; today every rule equally triggers the one
 # repair-retry, so all issues are "error". Differentiating (e.g. "warn" advisory rules) is a
@@ -104,6 +106,13 @@ ALL_CODES: frozenset[str] = frozenset({
     "AGGREGATE_LIMIT_AFTER_AGGREGATION",
     "TEMPORAL_LIMIT_WITHOUT_ORDER",
     "TEMPORAL_AGGREGATE_WITHOUT_ROW_LIMIT",
+    # interactive-step hygiene（milestone=交互 action 的纪律）
+    "NOOP_FLOW_CONTROL_STEP",
+    # compute compile-time contract（编译期强制运行时方言与作用域）
+    "COMPUTE_UNSUPPORTED_EXPR",
+    "COMPUTE_UNKNOWN_NAME",
+    # entity-scope predicate（实体范围谓词硬合同,resolution 在场时启用）
+    "ENTITY_SCOPE_PREDICATE_MISSING",
     # if-condition shape
     "IF_COND_VAR_NOT_IN_SCOPE",
     "IF_COND_FIELD_NOT_IN_RETURNS",
@@ -206,7 +215,17 @@ def _has_result_source(stmts: list[Stmt], function_returns: dict[str, set[str]] 
             return True
     return False
 
-def validate_program(program: Program) -> list[ValidationIssue]:
+# A step whose own acceptance says "nothing changes" is a no-op the LLM invented for flow
+# control (185 sample:「保存当前行结果（逻辑上）: 无UI变化，仅用于流程控制」). Interactive steps
+# must drive the UI; per-row accumulation is the runtime's job. Checker would spin on it.
+_NOOP_STEP_RE = re.compile(
+    r"无\s*UI\s*变化|无界面变化|不执行任何操作|无实际操作|仅用于流程控制|仅作流程控制|"
+    r"（逻辑上）|\(逻辑上\)|no[- ]?op",
+    re.IGNORECASE,
+)
+
+
+def validate_program(program: Program, *, resolution=None) -> list[ValidationIssue]:
     """Deterministic shape guards — the high-value ones for the read-driven data-flow patterns.
 
     A result-producing run must request fields + bind a var; an if must branch on a field a prior result returns; a
@@ -350,15 +369,65 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                     "再让 finish 引用 data_query 返回字段。"
                 )
 
-    def _walk(stmts: list[Stmt], scope: dict[str, set[str]]) -> None:
+    def _check_compute(s: Compute, scope: dict[str, set[str]], scalars: set[str]) -> None:
+        # Compile-time enforcement of the runtime compute contract (mirrors runner._compute):
+        # same expr normalization, dialect dry-run under the probe scope, then a name check
+        # against the scalars/vars/fields actually visible at this point on this path.
+        expr = normalize_compute_expr(s.expr or "")
+        dialect_error = dry_check_expr(expr)
+        if dialect_error:
+            hint = ""
+            if "Attribute" in dialect_error or "方法调用" in dialect_error:
+                hint = "——行/结果字段要用下标 var['字段']（或裸字段名），不能用 var.字段 属性访问"
+            issues.add("COMPUTE_UNSUPPORTED_EXPR",
+                f"compute「{s.var} = {s.expr}」运行时不支持：{dialect_error}{hint}。"
+                "只允许：字符串方法、切片/下标、算术、比较、and/or、三元、re_sub/re_search/len/str/int/round/float/abs。"
+            )
+            return
+        try:
+            tree = ast.parse(expr, mode="eval")
+        except SyntaxError as exc:
+            issues.add("COMPUTE_UNSUPPORTED_EXPR", f"compute「{s.var} = {s.expr}」不是合法表达式：{exc.msg}")
+            return
+        legal = scalars | set(scope) | {f for fields in scope.values() for f in fields} | set(FUNC_NAMES)
+        unknown = sorted({
+            n.id for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and n.id not in legal
+            and not n.id.endswith("_url")  # runtime-folded URL capability columns are legal
+        })
+        if unknown:
+            issues.add("COMPUTE_UNKNOWN_NAME",
+                f"compute「{s.var} = {s.expr}」引用的名字 {unknown} 在此处不可见——"
+                "compute 作用域 = 函数参数、之前的 compute 变量、之前带 returns/data_query 步的 var 及其字段名"
+                "（同一执行路径上）。请改用作用域内的名字，或先让前序步骤产出该字段。"
+            )
+
+    def _walk(stmts: list[Stmt], scope: dict[str, set[str]], scalars: set[str] | None = None) -> None:
         # Sequential statements mutate `scope` in place; if-branches each get a copy, and only
         # vars produced on BOTH branches survive past the join (a var read in one branch isn't
-        # guaranteed downstream).
+        # guaranteed downstream). `scalars` tracks compute vars / function params the same way.
+        scalars = set() if scalars is None else scalars
         for s in stmts:
+            if isinstance(s, Compute):
+                # Compile-time expr contract (dialect + scope names), then bind: `scalars` for the
+                # compute-expr name check; scope[var]={var} keeps the ONE legal var[field] use of a
+                # compute scalar — the SELF-FIELD cond (field == var) the Python-surface compiles
+                # free-form `if <expr>:` into (the interpreter resolves it from the scalar scope).
+                _check_compute(s, scope, scalars)
+                if s.var:
+                    scalars.add(s.var)
+                    scope[s.var] = {s.var}
+                continue
             if isinstance(s, RunLike):
                 # precondition is a state to ENSURE (确保已到达/已进入某状态) — only meaningful on a
                 # navigation step. On an action/read/filter it would be treated as already-satisfied
                 # and accepted on frame 1, prematurely passing a step that must actually run.
+                if isinstance(s, Run) and _NOOP_STEP_RE.search(f"{s.name} {s.success_condition}"):
+                    issues.add("NOOP_FLOW_CONTROL_STEP",
+                        f"步骤「{s.name}」自述无 UI 变化/仅用于流程控制——交互步必须驱动真实界面操作。"
+                        "foreach 每行的读取结果会自动累积进 into 表，不需要任何「保存结果/流程控制」步；"
+                        "请直接删除这一步。"
+                    )
                 if getattr(s, "precondition", False) and s.kind != "navigation":
                     issues.add("PRECONDITION_NOT_NAVIGATION", 
                         f"步骤「{s.name}」标了 precondition=true 但 run_kind={s.kind}——"
@@ -473,15 +542,6 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                     )
                 if s.var and returns:
                     scope[s.var] = set(returns)
-            elif isinstance(s, Compute):
-                # Compute binds a scalar for runtime {name} substitution, not a RunResult; it is
-                # intentionally excluded from template scope because {var[field]} must come from a
-                # typed result value. Function return coverage is checked below. The ONE legal
-                # var[field] use of a compute scalar is a SELF-FIELD cond (field == var) — the
-                # Python-surface compiles a free-form `if <expr>:` to Compute + that cond shape,
-                # and the interpreter resolves it from the scalar scope.
-                scope[s.var] = {s.var}
-                continue
             elif isinstance(s, Finish):
                 _check_refs(s.message, "finish 模板", scope)
             elif isinstance(s, If):
@@ -525,8 +585,8 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                             "请交换两个分支：命中 0 的那支放「未找到」finish，另一支放实际工作"
                         )
                 then_scope, else_scope = dict(scope), dict(scope)
-                _walk(s.then, then_scope)
-                _walk(s.otherwise, else_scope)
+                _walk(s.then, then_scope, set(scalars))
+                _walk(s.otherwise, else_scope, set(scalars))
                 # join: a var is in scope downstream only if BOTH branches produced it AND they
                 # share a field — fields must INTERSECT, not union. (one branch returns 名称, the
                 # other 编号 → no field is guaranteed on every path → drop the var; a later
@@ -576,9 +636,9 @@ def validate_program(program: Program) -> list[ValidationIssue]:
                     # new-style foreach: loop var fields come from foreach.returns (collect_fn provides them)
                     body_scope[s.var] = set(s.returns) if s.returns else set()
                 _check_foreach_url_policy(s, body_scope.get(s.var, set()), function_defs, issues)
-                _walk(s.body, body_scope)
+                _walk(s.body, body_scope, set(scalars))
 
-    _walk(program.statements, {})
+    _walk(program.statements, {}, set())
     # Function bodies are validated under the SAME rules, each starting from an empty result-var
     # scope (params/computes are scalars, not result vars). This is what makes IF_COND_VAR_NOT_IN_SCOPE
     # catch a self-first resolution that degenerates to hardcoded-always-parent: an `if self_d[...]`
@@ -586,10 +646,12 @@ def validate_program(program: Program) -> list[ValidationIssue]:
     # row falls to else → always-parent (the "编排逻辑写死" root cause). Without walking functions, the
     # if inside resolve_product_material was never checked.
     for fn in getattr(program, "functions", None) or []:
-        _walk(fn.body, {})
+        _walk(fn.body, {}, set(fn.params or []))  # params are the function's entry scalars
         _check_function_contract(fn, function_defs, function_returns, issues)
     _check_foreach_data_query(program.statements, issues, function_returns)
     _check_retrieval_retry_preserves_field(program.statements, issues)
+    if resolution is not None:
+        _check_entity_scope_predicates(program, resolution, issues)
     return issues
 
 _RETRIEVAL_FIELD_RE = re.compile(
@@ -1345,3 +1407,67 @@ def _sql_identifier(value: object) -> str:
     if text[0].isdigit():
         text = "c_" + text
     return text
+
+
+# ── entity-scope predicate（1a970f7 的 prompt 规则 11⑤/重排规则 6 的确定性升格）────────────
+# 任务把记录圈定到某实体（某产品的评论/某客户的订单…）且计划用 foreach 采集 + data_query 汇总时，
+# 最终查询必须携带实体范围谓词（WHERE <实体列> LIKE '%K%' AND ...）——上游筛选可能被误触/Reset/
+# 翻页弄丢（113 live 曾采到错实体的行并把错实体昵称当答案）。此前该规则只有 prompt 层（离线实测
+# 重排丢失率 ~1/3-5/6），这里把它变成 validator 反馈重试的硬合同。resolution 缺席时静默跳过
+#（subdecompose / 无 router 的路径）。
+
+
+def _check_entity_scope_predicates(program: Program, resolution, issues: IssueList) -> None:
+    entities = getattr(resolution, "entities", None) or []
+    if not entities:
+        return
+
+    into_tables: set[str] = set()
+    scoped_queries: list[Query] = []
+    ui_text_parts: list[str] = []
+
+    def _collect(stmts: list[Stmt]) -> None:
+        for s in stmts:
+            if isinstance(s, ForEach):
+                into_tables.add((s.into or f"{s.var}s").strip().lower())
+                ui_text_parts.extend([s.target or "", s.member_desc or "", s.body_goal or ""])
+                _collect(s.body)
+            elif isinstance(s, Query):
+                scoped_queries.append(s)
+            elif isinstance(s, Run):
+                ui_text_parts.extend([s.name or "", s.success_condition or ""])
+            elif isinstance(s, If):
+                _collect(s.then)
+                _collect(s.otherwise)
+
+    _collect(program.statements)
+    for fn in getattr(program, "functions", None) or []:
+        _collect(fn.body)
+    if not into_tables:
+        return
+    into_queries = [
+        q for q in scoped_queries
+        if (_sql_referenced_tables(q.sql or "") - _sql_cte_names(q.sql or "")) & into_tables
+    ]
+    if not into_queries:
+        return
+
+    ui_text = " ".join(ui_text_parts).lower()
+    for entity in entities:
+        if str(getattr(entity, "role", "lookup") or "lookup").strip().lower() == "value":
+            continue
+        keys = [str(k).strip() for k in (getattr(entity, "search_key", ""), getattr(entity, "mention", ""))
+                if str(k or "").strip()]
+        if not keys:
+            continue
+        keys_lower = [k.lower() for k in keys]
+        if not any(k in ui_text for k in keys_lower):
+            continue  # 该实体没有圈定这份计划的采集（覆盖性问题归 preflight 的 ROUTER_* 检查）
+        if any(k in (q.sql or "").lower() for q in into_queries for k in keys_lower):
+            continue
+        issues.add("ENTITY_SCOPE_PREDICATE_MISSING",
+            f"任务把记录圈定到实体「{keys[0]}」，但查询 foreach 汇总表的 data_query 没带实体范围谓词——"
+            f"上游筛选可能被误触/Reset/翻页弄丢，会把别的实体的行当答案返回。请让 foreach returns 顺手"
+            f"包含实体标识列，并在该 data_query 的 SQL 里加 `WHERE <实体列> LIKE '%{keys[0]}%' AND ...`；"
+            "「前面已筛过」不构成省略理由（那可能是已失效的旧状态）。"
+        )

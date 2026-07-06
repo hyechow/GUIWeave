@@ -478,9 +478,12 @@ def _invoke_plan(
     context_reports: list[dict] | None,
     label: str,
     attempt_observer: "Callable[[int, list[ValidationIssue]], None] | None" = None,
+    resolution: "IntentResolution | None" = None,
 ) -> Program:
     """Shared LLM call + deterministic validate/feedback-retry. Both decompose() and redecompose()
-    assemble their own context blocks, then hand off here for the identical draft→AST→validate loop."""
+    assemble their own context blocks, then hand off here for the identical draft→AST→validate loop.
+    `resolution` (when the caller has one) additionally arms the entity-scope predicate contract
+    (ENTITY_SCOPE_PREDICATE_MISSING) inside validate_program — all generation entrances share it."""
     cfg = resolve_llm_config("supervisor.decompose")
     if not cfg.model:
         cfg = resolve_llm_config("supervisor")
@@ -503,7 +506,7 @@ def _invoke_plan(
         )
         draft = invoke_structured(llm, messages, _PlanDraft, trace_sink=context_reports, trace_label=label)
         program = to_program(draft, goal)
-        issues = validate_program(program)
+        issues = validate_program(program, resolution=resolution)
         if attempt_observer is not None:
             # Offline instrumentation only (default None ⇒ production path unchanged): record the
             # codes that fired on each draft so the retry-efficacy harness can measure, per code,
@@ -609,6 +612,7 @@ def decompose(
         context_reports=context_reports,
         label="orchestrator.decompose",
         attempt_observer=attempt_observer,
+        resolution=resolution,
     )
     from .passes import finalize_gates
     return finalize_gates(_normalize_approximate_entity_sql(program, resolution))
@@ -701,6 +705,7 @@ def redecompose(
         prepare_vision_prompt_png=prepare_vision_prompt_png,
         context_reports=context_reports,
         label="orchestrator.redecompose",
+        resolution=resolution,
     )
     from .passes import finalize_gates
     return finalize_gates(_normalize_approximate_entity_sql(program, resolution))

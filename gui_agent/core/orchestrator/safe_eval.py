@@ -191,3 +191,58 @@ def _ev(node: ast.AST, scope: dict[str, Any]) -> Any:
             return _FUNCS[f.id](*args, **kwargs)
         raise SafeEvalError("不允许的函数调用")
     raise SafeEvalError(f"不允许的表达式节点: {type(node).__name__}")
+
+
+# ── compile-time surface（validator / pysurface 共用的编译期检查件）────────────────────
+
+FUNC_NAMES = frozenset(_FUNCS)
+
+
+def normalize_compute_expr(expr: str) -> str:
+    """Accept the SAME `{name}` / `{var[field]}` template convention the rest of the DSL uses:
+    `{sku}.rsplit(...)` ≡ `sku.rsplit(...)`, `{p[price]} * 0.865` ≡ `p['price'] * 0.865`.
+    Single source for runtime (runner._compute) AND compile time (validator), so what the
+    validator parses is exactly what safe_eval will evaluate."""
+    from .program import BARE_REF_RE, TEMPLATE_RE
+
+    expr = TEMPLATE_RE.sub(lambda m: f"{m.group(1)}[{m.group(2)!r}]", expr or "")
+    return BARE_REF_RE.sub(r"\1", expr)
+
+
+class _Probe(str):
+    """A value stub that tolerates any subscript so dry-runs don't die on data access."""
+
+    def __new__(cls):
+        return super().__new__(cls, "0")
+
+    def __getitem__(self, item):  # noqa: D105
+        return _Probe()
+
+
+class ProbeScope(dict):
+    """Compile-time scope stub: every name resolves (to a probe), so safe_eval dry-runs exercise
+    the EXPRESSION DIALECT (which node types are allowed) without knowing runtime values."""
+
+    def __contains__(self, key: object) -> bool:  # noqa: D105
+        return True
+
+    def __getitem__(self, key: object):  # noqa: D105
+        return _Probe()
+
+
+def dry_check_expr(expr: str) -> str | None:
+    """Dialect-only dry run of an (already-normalized) compute expression.
+
+    Returns the SafeEvalError message for constructs the runtime dialect will NEVER accept
+    (bare attribute reads like `row.sku`, disallowed calls/nodes), or None when the expression
+    is dialect-clean. Unknown-name errors can't fire (the probe resolves every name); scope
+    checking is the caller's job."""
+    try:
+        safe_eval(expr, ProbeScope())
+    except SafeEvalError as e:
+        msg = str(e)
+        if "未知变量" not in msg:
+            return msg
+    except Exception as e:  # noqa: BLE001 — the probe must never crash compile-time validation
+        return str(e)
+    return None

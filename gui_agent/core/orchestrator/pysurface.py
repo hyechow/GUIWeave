@@ -38,7 +38,7 @@ import ast
 from typing import Optional
 
 from .program import Compute, Cond, Finish, ForEach, If, Program, Query, Read, Run, Stmt
-from .safe_eval import SafeEvalError, safe_eval
+from .safe_eval import ProbeScope, SafeEvalError, safe_eval
 
 _RUN_FUNCS = {"navigate": "navigation", "filter": "filter", "action": "action",
               "read": "read", "data_query": "data_query"}
@@ -133,34 +133,13 @@ def _compute_expr(node: ast.AST) -> str:
     else:
         expr = ast.unparse(node)
     try:
-        safe_eval(expr, _ProbeScope())
+        safe_eval(expr, ProbeScope())
     except SafeEvalError as e:
         msg = str(e)
         if "未知变量" not in msg:  # unknown names are fine at compile time; dialect errors are not
             raise CompileIssue(f"表达式「{expr}」运行时不支持：{msg}——只用 round/float/str/len/abs/re_sub/re_search、"
                                "算术、比较、and/or、三元、切片和字符串方法")
     return expr
-
-
-class _ProbeScope(dict):
-    """Compile-time scope stub: every name resolves (to ''), so safe_eval dry-runs exercise the
-    EXPRESSION DIALECT (which node types are allowed) without knowing runtime values."""
-
-    def __contains__(self, key: object) -> bool:  # noqa: D105
-        return True
-
-    def __getitem__(self, key: object):  # noqa: D105
-        return _Any()
-
-
-class _Any(str):
-    """A value stub that tolerates any subscript/method so dry-parse doesn't die on data access."""
-
-    def __new__(cls):
-        return super().__new__(cls, "0")
-
-    def __getitem__(self, item):  # noqa: D105
-        return _Any()
 
 
 _CMP_MAP = {ast.Eq: "==", ast.NotEq: "!="}

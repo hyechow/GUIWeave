@@ -14,6 +14,7 @@ import pytest
 
 from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Read, Query, Run
 from gui_agent.core.orchestrator.validator import ALL_CODES, IssueList, ValidationIssue, validate_program
+from gui_agent.core.router import EntityRef, IntentResolution
 
 _VALIDATOR_SRC = Path("gui_agent/core/orchestrator/validator.py")
 
@@ -46,8 +47,9 @@ def test_emitted_codes_match_registry():
     }
 
 
-def _codes(program: Program) -> set[str]:
-    issues = validate_program(program)
+def _codes(sample) -> set[str]:
+    program, resolution = sample if isinstance(sample, tuple) else (sample, None)
+    issues = validate_program(program, resolution=resolution)
     assert all(isinstance(i, ValidationIssue) for i in issues), "validate_program must return ValidationIssue"
     return {i.code for i in issues}
 
@@ -60,6 +62,35 @@ def _read(var="v", returns=("a",), spec="读取字段", name="读取", **kw):
 
 SAMPLES: dict[str, Program] = {
     "EMPTY_PROGRAM": Program(statements=[]),
+    # S10a: a step whose own acceptance says nothing changes — invented flow control (185 sample)
+    "NOOP_FLOW_CONTROL_STEP": Program(statements=[
+        Run(name="保存当前行结果（逻辑上）", kind="action",
+            success_condition="无UI变化，仅用于流程控制"),
+    ]),
+    # S10b: bare attribute access is runtime-fatal in the compute dialect (185 sample: row.sku)
+    "COMPUTE_UNSUPPORTED_EXPR": Program(statements=[
+        _read(var="row", returns=("sku",)),
+        Compute(var="base", expr="row.sku.rsplit('-', 2)[0]"),
+        Run(name="搜索 {base}", kind="filter"),
+    ]),
+    # S10b: name not visible at this point on this path
+    "COMPUTE_UNKNOWN_NAME": Program(statements=[
+        Compute(var="x", expr="ghost_field.strip()"),
+        Run(name="使用 {x}", kind="action"),
+    ]),
+    # S10c: entity-scoped collection whose into-table query lacks the entity predicate (113 class)
+    "ENTITY_SCOPE_PREDICATE_MISSING": (
+        Program(statements=[
+            Run(name="按产品 Olivia 过滤评论列表", kind="filter",
+                success_condition="Active filters 显示 Product: Olivia"),
+            ForEach(var="row", into="reviews", returns=["nickname", "rating"]),
+            Query(var="q", name="筛低分昵称", returns=["nickname"],
+                  sql="SELECT nickname FROM reviews WHERE CAST(rating AS INTEGER) <= 3"),
+            Finish(message="{q[nickname]}"),
+        ]),
+        IntentResolution(entities=[EntityRef(mention="Olivia zip jacket", match_mode="approximate",
+                                             search_key="Olivia")]),
+    ),
     "NO_RESULT_SOURCE": Program(goal="有多少订单", statements=[Run(name="进入页面", kind="navigation")]),
     "TEMPLATE_VAR_NOT_IN_SCOPE": Program(statements=[Finish(message="结果是 {x[f]}")]),
     "TEMPLATE_FIELD_NOT_IN_RETURNS": Program(statements=[_read(returns=("a",)), Finish(message="{v[b]}")]),

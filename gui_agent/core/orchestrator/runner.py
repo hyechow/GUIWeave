@@ -32,7 +32,7 @@ from .program import (
     BARE_REF_RE, TEMPLATE_RE, Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Query,
     Run, RunLike, RunResult,
 )
-from .safe_eval import SafeEvalError, safe_eval
+from .safe_eval import SafeEvalError, normalize_compute_expr, safe_eval
 
 # Drive one milestone (one Run spec) to a terminal state and return its structured result.
 MilestoneExecutor = Callable[[Run], RunResult]
@@ -494,8 +494,7 @@ class Interpreter:
         braces around bare identifiers so `{sku}.rsplit(...)` and `sku.rsplit(...)` are equivalent.
         Same for the field form: `{p[price]} * 0.865` (offline 778: parsed as a set literal →
         SafeEvalError → "") normalizes to `p['price'] * 0.865`."""
-        expr = TEMPLATE_RE.sub(lambda m: f"{m.group(1)}[{m.group(2)!r}]", c.expr)
-        expr = BARE_REF_RE.sub(r"\1", expr)
+        expr = normalize_compute_expr(c.expr)
         # Scope from env RunResults' reads, in BOTH shapes the decomposer nondeterministically writes:
         # the field name bare (`current_price`) AND the var-as-dict (`variant_row['current_price']`).
         # Without this, a numeric derivation from a read value raised 未知变量 → silently "" → the fill

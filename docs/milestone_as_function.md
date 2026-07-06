@@ -121,6 +121,14 @@ URL JSON→DOM→视觉）、`check_return_contract`（返回类型检查）、`
     filter-returns 校验静默通过），所以它不进 to_program、而是 finalize 步。7 处 wrap + 冗余 import
     全删。S4 kickback adherence 校验留在 loop（是 kickback 编排控制流，非生成）。
   - *S9c* 包级地图写进 `orchestrator/__init__.py` docstring（每模块的编译器/运行时/FFI 身份）。
+- **S10 `1ab706a`** 三条 prompt 规则升格为确定性合同（按投资判据：把不确定性挤出脚本层）：
+  ① `NOOP_FLOW_CONTROL_STEP`——交互步自述「无UI变化/仅用于流程控制」= LLM 发明的流程控制,
+  行累积是运行时的事,checker 会对着它空转；② `COMPUTE_UNSUPPORTED_EXPR`/`COMPUTE_UNKNOWN_NAME`
+  ——compute 方言与作用域的编译期强制（safe_eval 共享面:normalize_compute_expr 与 runner 单源、
+  ProbeScope 从 pysurface 搬家、dry_check_expr;`row.sku` 这类运行时必炸的属性访问带教练提示拦截）；
+  ③ `ENTITY_SCOPE_PREDICATE_MISSING`——1a970f7 的实体范围规则此前仅 prompt 层（重排丢失率实测
+  1/6-2/3）,现为 validate_program(resolution=...) 硬合同,经 _invoke_plan 三入口共享。
+  四 code 全部进入注册表+触发样例；872 绿；185 实弹零误伤。
 
 ## 离线可靠性（2026-07-04 A/B）
 
