@@ -46,13 +46,14 @@ version: 1
 
 ## skill：产品评论评分查询
 - 触发：rating/stars、customer nickname(s)、reviews for product、product reviews、低评分评论
-- 数据：All Reviews 评论行含 Product、Review ID、行详情链接列 **Action_url**；**Detailed Rating** 与 **Nickname** 在 Review Detail 详情页读取，不是 All Reviews grid/Columns 可直接启用的列；按产品查评论时，产品约束绑定 **Product** 字段/列。
+- 数据：评论数据源 = All Reviews，不要进入 Products List 或商品详情页找评论；All Reviews 评论行含 Product、**Title**、Review、行详情链接列 **Action_url**；**Detailed Rating**、**Nickname** 与 **Summary of Review** 在 Review Detail 详情页读取，不是 All Reviews grid/Columns 可直接启用的列；按产品查评论时，产品约束绑定 **Product** 字段/列；任务要 `title` 时优先用 All Reviews 的 **Title** 列；钻详情读 title 时才对应 **Summary of Review**，不是 Nickname，也不是页面标题 Edit Review。
 - 步骤：
 1. 到达 All Reviews 评论数据源。
 2. Product 字段先精确值、再关键词筛候选。
-3. 候选行采 ID、Product、Action_url。
-4. 打开 Action_url 读 Detailed Rating、Nickname。
-5. 按评分条件筛选并输出 Nickname。
+3. row_fields: Product、Title、Action_url。
+4. 打开 Action_url 读 Detailed Rating。
+5. SQL: `title AS title`。
+6. 按评分条件筛选，按任务输出 Nickname 或 title/rating。
 
 ## skill：按库存数量筛选产品并取某个属性（颜色/材质/尺码）
 - 触发：产品的颜色/材质/尺码、color/material/size of products、name and color、products with N units left 取某属性；凡是「按库存数量筛选产品、再取该产品某个属性」的任务

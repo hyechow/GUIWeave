@@ -270,6 +270,34 @@
     "platform": "browser"
   },
   {
+    "label": "WebArena shopping_admin task 214 review title+rating uses Summary of Review",
+    "goal": "Get the title and rating for all reviews with 3 stars or below for Erica Sports Bra. Return a list of objects with keys \"title\" and \"rating\".",
+    "knowledge_app": "shopping_admin",
+    "resolution": [
+      {
+        "mention": "Erica Sports Bra",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key": "Erica"
+      }
+    ],
+    "current_site": "shopping_admin",
+    "current_title": "Dashboard / Magento Admin",
+    "expected": {
+      "min_statements": 3,
+      "has_read": true
+    },
+    "assertions": [
+      "shopping_admin_review_rating_initial_uses_reviews_source",
+      "uses_foreach_iteration",
+      "shopping_admin_review_rating_drills_detail",
+      "shopping_admin_review_title_uses_summary",
+      "browser_drill_uses_url_direct"
+    ],
+    "note": "回归 logs/gui_agent/webarena/browser/20260707_122624：详情页读取 title 时误把 Nickname=Roxie 或页面标题 Edit Review 当成评论标题。任务要求的 title 在 Review Detail 中对应 Summary of Review；也可从 Reviews grid 的 Title/摘要列带出，但不得把 Nickname 当 title。",
+    "platform": "browser"
+  },
+  {
     "label": "WebArena shopping_admin task 113 re-decompose drills Review Detail for rating",
     "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
     "platform": "browser",

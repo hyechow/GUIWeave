@@ -32,7 +32,7 @@ version: 1
 - **reason**:一句话依据。
 
 规则:
-1. 只列**需要在系统里检索/定位的实体**和**要填入的值**;泛指词("评论"、"客户")、动作("筛选"、"查看")不要列。**筛选条件/排名口径也不要列**——"评分≤3"、"最近的/最旧的"、"completed 状态"、"last 2 completed orders" 这类是**对集合的约束**,不是实体;把它们抽成实体会让下游拿着 "completed" 当关键词去搜(搜不到)。约束交给下游的筛选/排序步骤表达。
+1. 只列**需要在系统里检索/定位的实体**和**要填入的值**;泛指词("评论"、"客户")、动作("筛选"、"查看")不要列。**筛选条件/排名口径也不要列**——"评分≤3"、"最近的/最旧的"、"completed 状态"、"last 2 completed orders" 这类是**对集合的约束**,不是实体;把它们抽成实体会让下游拿着 "completed"/"reviews" 当关键词去搜(搜不到)。约束交给下游的筛选/排序步骤表达。只读/查询任务里的 "all reviews with 3 stars or below" 是记录集合+条件,不是 lookup entity；只有删除/修改/审批这类要逐条操作该集合成员的任务,才把这类记录集合抽成 cardinality=set。
 2. 拿不准类型就填 `generic`;拿不准精确/近似,命名实体默认 `approximate`、码/号/ID 默认 `exact`。
 3. search_key 是**单个** token,不是短语(子串匹配里短语常因中间夹字而落空)。
 4. 没有需要检索的实体时,返回空列表。
@@ -57,6 +57,9 @@ version: 1
 
 目标:"Delete all pending reviews with less than 4 stars"
 {"entities":[{"mention":"all pending reviews with less than 4 stars","role":"lookup","type":"review_text","match_mode":"approximate","search_key":"pending","cardinality":"set","selector":"status=pending 且 rating<4","reason":"『所有…的评论』=一个条件匹配的集合(set),下游须逐条删除;selector 保留把成员筛出来的条件"}]}
+
+目标:"Get the title and rating for all reviews with 3 stars or below for Erica Sports Bra"
+{"entities":[{"mention":"Erica Sports Bra","type":"product","match_mode":"approximate","search_key":"Erica","cardinality":"single","selector":"","reason":"Erica Sports Bra 是需要按 Product 字段定位的产品实体；'all reviews with 3 stars or below' 是评论集合筛选条件,不是实体,不抽取"}]}
 
 目标:"Get the total payment amount of the last 2 completed orders"
 {"entities":[]}

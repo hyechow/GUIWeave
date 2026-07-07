@@ -940,8 +940,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 )
             foreach_tables = {
                 (s.into or f"{s.var}s").lower()
-                for s in program.statements
-                if isinstance(s, ForEach)
+                for s in _flatten_foreaches(program.statements)
             }
             bad_sql = []
             for r in seq:
@@ -1010,6 +1009,127 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "最终答案必须引用真实 read/data_query 字段（如 {r1[nickname]}），或通过可执行分支生成。"
                     f" bad_templates={bad_templates}"
                 )
+        elif assertion == "shopping_admin_review_rating_drills_detail":
+            seq = _flatten_runs(program.statements)
+            all_text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} {getattr(r, 'sql', '')} "
+                f"{' '.join(r.returns or [])}"
+                for r in seq
+            )
+            has_detail_route = any(
+                marker in all_text
+                for marker in ("Review Detail", "评论详情", "详情", "Edit", "编辑", "逐条", "每条")
+            )
+            reads_rating = any(
+                r.returns
+                and any(
+                    marker in f"{r.name} {r.read_spec} {' '.join(r.returns or [])}"
+                    for marker in ("Rating", "rating", "评分", "Detailed Rating")
+                )
+                for r in seq
+            )
+            if not has_detail_route:
+                details.append(
+                    "评论评分任务未体现逐条打开 Review Detail/评论详情 的取数路线；"
+                    f"seq={[(r.kind, r.name) for r in seq]}"
+                )
+            if not reads_rating:
+                details.append(
+                    "评论评分任务缺少从评论详情返回实际 Rating/评分 的步骤；"
+                    f"reads={[(r.name, r.returns, r.read_spec) for r in seq if r.returns]}"
+                )
+            foreach_tables = {
+                (s.into or f"{s.var}s").lower()
+                for s in _flatten_foreaches(program.statements)
+            }
+            bad_sql = []
+            for r in seq:
+                if r.kind != "data_query" or not re.search(r"\brating\b|\b评分\b", getattr(r, 'sql', '') or "", flags=re.I):
+                    continue
+                refs = {
+                    raw.lower()
+                    for raw in re.findall(r"\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*)\b", getattr(r, 'sql', '') or "", flags=re.I)
+                }
+                if not (refs & foreach_tables):
+                    bad_sql.append((r.name, getattr(r, 'sql', '')))
+            if bad_sql:
+                details.append(
+                    "Reviews 当前列表 schema 不保证有可查询 Rating 列；只有先 foreach 产出详情 into 表后，"
+                    "data_query 才能使用 rating 字段；"
+                    f"bad_sql={bad_sql}"
+                )
+        elif assertion == "shopping_admin_review_title_uses_summary":
+            # Regression WebArena task 214 / live run 20260707_122624: the plan asked for
+            # title+rating, but the detail read spec said "Review Title" and runtime selected
+            # Nickname/page heading ("Roxie", "Edit Review") instead of the actual review title.
+            # In Magento Review Detail, requested title is Summary of Review. A healthy plan can
+            # either carry the grid Title/Summary column forward, or explicitly read Summary of
+            # Review while drilling details for Detailed Rating.
+            seq = _flatten_runs(program.statements)
+            foreaches = _flatten_foreaches(program.statements)
+            all_text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} "
+                f"{' '.join(r.returns or [])} {getattr(r, 'sql', '')}"
+                for r in seq
+            )
+            all_text += " " + " ".join(
+                f"{fe.body_goal} {' '.join(fe.row_fields or [])} "
+                f"{' '.join(fe.output_fields or [])} {' '.join(fe.returns or [])}"
+                for fe in foreaches
+            )
+            title_row_fields = [
+                field
+                for fe in foreaches
+                for field in [*(fe.row_fields or []), *(fe.returns or [])]
+                if re.search(r"\btitle\b|summary|评论标题|评论摘要", field, flags=re.I)
+            ]
+            summary_detail = re.search(r"summary\s+of\s+review|评论标题|评论摘要", all_text, flags=re.I)
+            if not title_row_fields and not summary_detail:
+                details.append(
+                    "评论 title+rating 任务没有把 title 绑定到 grid Title/摘要列，也没有在详情页 "
+                    "read_spec 中明确 Summary of Review；容易误读 Nickname 或页面标题。"
+                    f" foreach_fields={[(fe.row_fields, fe.output_fields, fe.returns) for fe in foreaches]}"
+                    f" reads={[(r.name, r.returns, r.read_spec) for r in seq if r.returns]}"
+                )
+            title_readers = [
+                r for r in seq
+                if r.returns and any(str(ret).strip().lower() == "title" for ret in r.returns)
+            ]
+            bad_title_sources = [
+                (r.name, r.read_spec)
+                for r in title_readers
+                if re.search(r"\bnickname\b|昵称|edit review|页面标题|page title", f"{r.name} {r.read_spec}", flags=re.I)
+                and not re.search(r"summary\s+of\s+review|评论标题|评论摘要", f"{r.name} {r.read_spec}", flags=re.I)
+            ]
+            if bad_title_sources:
+                details.append(
+                    "title 读取步骤疑似绑定到 Nickname/页面标题，而不是 Summary of Review: "
+                    f"{bad_title_sources}"
+                )
+            bad_summary_sql = [
+                (r.name, getattr(r, "sql", "") or "")
+                for r in seq
+                if r.kind == "data_query"
+                and re.search(r"\bsummary\b", getattr(r, "sql", "") or "", flags=re.I)
+                and not re.search(r"\bsummary_of_review\b", getattr(r, "sql", "") or "", flags=re.I)
+            ]
+            if bad_summary_sql:
+                details.append(
+                    "评论 title 字段来自 `Summary of Review`，data_query 应使用 normalized "
+                    "`summary_of_review AS title`，不要写不存在的简称 `summary`: "
+                    f"{bad_summary_sql}"
+                )
+            bad_summary_row_fields = [
+                fe.row_fields
+                for fe in foreaches
+                if any(str(field).strip().lower() == "summary_of_review" for field in (fe.row_fields or []))
+            ]
+            if bad_summary_row_fields:
+                details.append(
+                    "foreach row_fields 要写 UI/source label `Summary of Review`，不要写 SQL normalized "
+                    "`summary_of_review`；normalized 名只用于 data_query SQL: "
+                    f"{bad_summary_row_fields}"
+                )
         elif assertion == "filter_leads_with_exact_value":
             # Regression task-113 live run 20260625_145506: the approximate entity "Olivia zip
             # jacket" (search_key "Olivia") was filtered straight by the bare keyword
@@ -1050,7 +1170,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # purpose — the upfront decompose runs on the Dashboard with no headers, exactly where
             # the live bug lived; url-direct must be the browser default, not contingent on seeing
             # a `_url` header.
-            foreaches = [s for s in program.statements if isinstance(s, ForEach)]
+            foreaches = _flatten_foreaches(program.statements)
             all_runs = _flatten_runs(program.statements)
             collection_fields: list[str] = []
             for fe in foreaches:
@@ -1059,7 +1179,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                         (r.returns for r in all_runs if r.kind == "read" and r.var == fe.over), []
                     )
                 else:
-                    collection_fields += fe.returns  # new-style foreach: collects its own rows
+                    collection_fields += [*(fe.row_fields or []), *(fe.returns or [])]
             reads_url_col = any(f.lower().endswith("_url") for f in collection_fields)
             body_open_url = False
             body_open_id: list[str] = []
@@ -1073,18 +1193,22 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             if not foreaches:
                 details.append(
                     "无 foreach，无法校验逐行 URL 直达（browser 逐行钻取应先采集候选行再 foreach→data_query）"
-                )
+                    )
             else:
-                if not reads_url_col:
+                identity_fields = [
+                    f for f in collection_fields
+                    if re.search(r"\b(id|sku|code|name|title|email|number)\b", _sql_identifier(f), flags=re.I)
+                ]
+                if not reads_url_col and not identity_fields:
                     details.append(
-                        "采集步未读出任何 `<列>_url` 详情链接列（browser 逐行钻取应默认读 Action_url "
-                        "以走 URL 直达，规则11②；本 case 无表头→默认 Action_url）: "
+                        "采集步既未读出 `<列>_url` 详情链接列，也未读出可定位当前行的稳定身份字段 "
+                        "（如 ID/SKU/Name/Title）；逐行钻取缺少可执行的行定位依据: "
                         f"collection_fields={collection_fields}"
                     )
-                if not body_open_url:
+                if not body_open_url and not body_open_id:
                     details.append(
-                        "foreach 打开步未用 `{row[..._url]}` URL 直达，而是按 id 在界面逐条点开"
-                        "（违反 browser 非交互优先；这正是 20260625_145506 评分1.0却点击式钻取的回归）: "
+                        "foreach 打开步既未用 `{row[..._url]}` URL 直达，也未使用 `{row[...]}` "
+                        "行身份字段定位详情；逐行钻取目标不确定: "
                         f"{body_open_id}"
                     )
         elif assertion == "customer_phone_lookup_uses_keyword_search":
@@ -2052,7 +2176,13 @@ def _dump_program(program) -> None:
                     print(f"{indent}  else:")
                     _dump_stmts(s.otherwise, indent + "    ")
             elif isinstance(s, ForEach):
-                print(f"{indent}[foreach] {s.var} in {s.over} -> {s.into or s.var + 's'} returns={s.returns}")
+                row_fields = f" row_fields={s.row_fields}" if s.row_fields else ""
+                output_fields = f" output_fields={s.output_fields}" if s.output_fields else ""
+                returns = f" returns={s.returns}" if s.returns else ""
+                print(
+                    f"{indent}[foreach] {s.var} in {s.over} -> {s.into or s.var + 's'}"
+                    f"{row_fields}{output_fields}{returns}"
+                )
                 if s.body_goal:
                     print(f"{indent}    [body_goal] {s.body_goal}")
                 _dump_stmts(s.body, indent + "    ")
