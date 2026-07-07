@@ -61,6 +61,39 @@ def load_site_tasks(site: str) -> list[dict]:
     return out
 
 
+_DATASET_TASK_META: dict[str, tuple[str, str]] | None = None
+
+
+def dataset_task_meta() -> dict[str, tuple[str, str]]:
+    """{task_id_str: (task_type, evaluator)} from the verified dataset's eval[0] block.
+
+    task_type (retrieve/mutate/navigate) is the authoritative per-task operation class and is
+    available for ALL tasks — unlike the run's agent_response.task_type, which only exists for
+    tasks that have actually been executed. evaluator (AgentResponse/NetworkEvent) shows how the
+    task is scored (answer text vs URL/network event). Cached after first read."""
+    global _DATASET_TASK_META
+    if _DATASET_TASK_META is not None:
+        return _DATASET_TASK_META
+    meta: dict[str, tuple[str, str]] = {}
+    fp = ROOT / "webarena-verified" / "assets" / "dataset" / "webarena-verified.json"
+    try:
+        data = json.loads(fp.read_text(encoding="utf-8", errors="replace"))
+    except Exception:  # noqa: BLE001
+        _DATASET_TASK_META = meta
+        return meta
+    items = data if isinstance(data, list) else (data.get("tasks") if isinstance(data, dict) else [])
+    for t in items:
+        tid = t.get("task_id")
+        ev = t.get("eval") or []
+        if tid is None or not ev or not isinstance(ev[0], dict):
+            continue
+        head = ev[0]
+        tt = (head.get("expected") or {}).get("task_type") or ""
+        meta[str(tid)] = (str(tt), str(head.get("evaluator") or ""))
+    _DATASET_TASK_META = meta
+    return meta
+
+
 def _run_dir_for_site(site: str) -> Path:
     return OUTPUT_ROOT / _RUN_DIR.get(site, f"{site}_run")
 
@@ -167,7 +200,7 @@ def _run_meta(d: Path) -> dict:
         "sites": sites,
         "goal": (goal or "")[:160],
         "score": score,
-        "score_str": f"{score:g}" if score is not None else "—",
+        "score_str": f"{score:.1f}" if score is not None else "—",
         "task_type": task_type or "",
         "agent_status": agent_status or "",
         "error": (error or "")[:200],
@@ -233,6 +266,10 @@ td.goal { color:#a9b0bd; max-width:420px; }
 .badge.fail { background:rgba(255,107,107,.14); color:#ff6b6b; }
 .badge.todo { background:rgba(245,166,35,.14); color:#f5a623; }
 .badge.crash { background:rgba(255,107,107,.14); color:#ff6b6b; }
+.badge.type-retrieve { background:rgba(98,182,255,.14); color:#62b6ff; }
+.badge.type-mutate { background:rgba(255,159,67,.14); color:#ff9f43; }
+.badge.type-navigate { background:rgba(166,119,255,.14); color:#a677ff; }
+.badge.type- { background:#20242c; color:#8a93a3; }
 a { color:#62b6ff; text-decoration:none; } a:hover { text-decoration:underline; }
 tr:hover { background:#1a1f27; }
 .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
@@ -301,10 +338,12 @@ def build_task_rows(site: str, runs: list[dict]) -> list[dict]:
                 badge, status = "crash", "💥 挂死"
             else:
                 badge, status = "fail", "❌ 失败"
+        ttype = dataset_task_meta().get(str(tid), ("", ""))[0]
         rows.append({
             "task_id": tid,
             "goal": t["intent"][:160],
-            "score_str": f"{score:g}" if score is not None else "—",
+            "task_type": ttype,
+            "score_str": f"{score:.1f}" if score is not None else "—",
             "badge": badge, "status": status,
             "run_id": lr["id"] if lr else None,
             "agent_status": (lr or {}).get("agent_status") or (off or {}).get("agent_status") or "",
@@ -337,15 +376,16 @@ def index(site: str | None = None):
         tabs.append(f"<a class='{cls}' href='/?site={s}'>{_html.escape(s)} <span class='pill'>{len(load_site_tasks(s))}</span></a>")
 
     trows = []
-    for i, t in enumerate(rows, 1):
+    _emo = {"pass": "✅", "fail": "❌", "crash": "💥", "todo": "⬜"}
+    for t in rows:
         tid = t["task_id"]
         runlink = f"<a href='/run/{t['run_id']}'>运行</a>" if t["run_id"] else "—"
         report = f"<a href='/report/{tid}'>报告</a>" if t["has_report"] else "—"
         trows.append(
             "<tr>"
-            f"<td class='task'>{i}. {tid}</td>"
-            f"<td class='score'>{t['score_str']}</td>"
-            f"<td><span class='badge {t['badge']}'>{_html.escape(t['status'])}</span></td>"
+            f"<td class='task'>{tid}</td>"
+            f"<td><span class='badge type-{t['task_type']}'>{_html.escape(t['task_type'] or '—')}</span></td>"
+            f"<td><span class='badge {t['badge']}' title='{_html.escape(t['status'])}'>{_emo.get(t['badge'], '')} {t['score_str']}</span></td>"
             f"<td><span class='pill'>{_html.escape(t['agent_status'] or '—')}</span></td>"
             f"<td class='goal' title='{_html.escape(t['goal'])}'>{_html.escape(t['goal'])}</td>"
             f"<td>{report}</td><td>{runlink}</td>"
@@ -381,7 +421,7 @@ def index(site: str | None = None):
       <section>
         <div class='hd'>📋 {_html.escape(site)} 全量任务 <span class='hint'>tasks-file 全部题目 · 评分优先最新 run,兜底官方 eval</span></div>
         <div class='bd'><table>
-          <tr><th>task</th><th>score</th><th>结果</th><th>agent</th><th>目标</th><th>报告</th><th>运行</th></tr>
+          <tr><th>task</th><th>类型</th><th>结果</th><th>agent</th><th>目标</th><th>报告</th><th>运行</th></tr>
           {''.join(trows) if trows else '<tr><td colspan=7 style="color:#8a93a3;padding:20px">无任务</td></tr>'}
         </table></div>
       </section>
