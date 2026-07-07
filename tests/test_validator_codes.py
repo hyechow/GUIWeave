@@ -111,7 +111,6 @@ SAMPLES: dict[str, Program] = {
         _read(var="orders", returns=("a",)),
         Query(var="q", name="查询",  returns=["b"], sql="SELECT * FROM orders"),
     ]),
-    "RETURNS_WITHOUT_VAR": Program(statements=[Run(name="点击", kind="action", returns=["a"], read_spec="读")]),
     "RETURNS_WITHOUT_READ_SPEC": Program(statements=[Run(var="v", name="点击", kind="action", returns=["a"])]),
     "CALL_FUNC_NOT_DEFINED": Program(statements=[Call(func="missing", args={}, var="m")]),
     "CALL_RETURNS_WITHOUT_VAR": Program(
@@ -197,6 +196,11 @@ SAMPLES: dict[str, Program] = {
     ]),
     "FOREACH_BODY_GOAL_NO_ROW_TEMPLATE": Program(statements=[
         ForEach(var="row", returns=["material"], body_goal="读这一行的材质"),
+    ]),
+    "FOREACH_DETAIL_OPEN_NO_ROW_REFERENCE": Program(statements=[
+        ForEach(var="row", returns=["SKU", "Action_url"], body=[
+            Run(name="打开评论详情页", kind="navigation"),
+        ]),
     ]),
     "FOREACH_CALL_DROPS_ROW_URL": Program(
         functions=[FunctionDef(name="f", params=["sku"], returns=["material"], body=[
@@ -301,7 +305,42 @@ def test_foreach_row_url_policy_checks_runs_inside_if():
         )
     ])
 
-    assert "FOREACH_ROW_URL_NOT_USED" in _codes(program)
+    issues = validate_program(program)
+    assert "FOREACH_ROW_URL_NOT_USED" in {issue.code for issue in issues}
+    assert [issue.severity for issue in issues if issue.code == "FOREACH_ROW_URL_NOT_USED"] == ["warn"]
+
+
+def test_foreach_detail_open_must_reference_current_row():
+    issues = validate_program(SAMPLES["FOREACH_DETAIL_OPEN_NO_ROW_REFERENCE"])
+    assert [issue.severity for issue in issues if issue.code == "FOREACH_DETAIL_OPEN_NO_ROW_REFERENCE"] == ["error"]
+
+
+def test_url_capability_advisories_are_warnings():
+    for code in ("FUNCTION_URL_PARAM_NOT_USED", "FOREACH_CALL_DROPS_ROW_URL", "FOREACH_ROW_URL_NOT_USED"):
+        issues = validate_program(SAMPLES[code])
+        severities = [issue.severity for issue in issues if issue.code == code]
+        assert severities == ["warn"]
+
+
+def test_unused_compute_blocks_mutations_but_only_warns_for_read_only_tasks():
+    read_only = Program(
+        goal="Return matching records",
+        statements=[
+            Compute(var="filtered_rows", expr="'unused'"),
+            Query(var="q", name="查询", returns=["result"], sql="SELECT result FROM data"),
+            Finish(message="{q[result]}"),
+        ],
+    )
+    mutation = Program(
+        goal="Reduce the price",
+        statements=[
+            Compute(var="new_price", expr="round(100 * 0.865, 2)"),
+            Run(name="将价格更新为新值并保存", kind="action"),
+        ],
+    )
+
+    assert [i.severity for i in validate_program(read_only) if i.code == "COMPUTE_VAR_UNUSED"] == ["warn"]
+    assert [i.severity for i in validate_program(mutation) if i.code == "COMPUTE_VAR_UNUSED"] == ["error"]
 
 
 def test_retrieval_retry_overlap_handles_chinese_prefix():
@@ -383,6 +422,90 @@ def test_if_empty_guard_inverted_shapes():
         ),
     ])
     assert "IF_EMPTY_GUARD_INVERTED" not in codes(ambiguous)
+
+
+def test_compute_scalar_condition_may_use_empty_field():
+    program = Program(statements=[
+        Compute(var="is_target", expr="1 == 1"),
+        If(
+            cond=Cond(var="is_target", field="", cmp="==", value="true"),
+            then=[Finish(message="ok")],
+        ),
+    ])
+
+    codes = _codes(program)
+    assert "IF_COND_VAR_NOT_IN_SCOPE" not in codes
+    assert "IF_COND_FIELD_NOT_IN_RETURNS" not in codes
+    assert "COMPUTE_VAR_UNUSED" not in codes
+
+
+def test_unbound_returns_do_not_count_as_result_source():
+    program = Program(
+        goal="Return customer email",
+        statements=[
+            Run(name="点击并读一个值但不绑定", kind="action", returns=["answer"], read_spec="读 answer"),
+        ],
+    )
+
+    assert "NO_RESULT_SOURCE" in _codes(program)
+
+
+def test_compute_consumed_by_foreach_output_and_sql_is_not_dead():
+    program = Program(statements=[
+        ForEach(
+            var="row",
+            into="updates",
+            row_fields=["price"],
+            output_fields=["new_price"],
+            body=[
+                Compute(var="new_price", expr="round(float(row['price']) * 0.865, 2)"),
+            ],
+        ),
+        Query(
+            var="q",
+            name="汇总新价格",
+            returns=["new_price"],
+            sql="SELECT new_price FROM updates",
+        ),
+        Finish(message="{q[new_price]}"),
+    ])
+
+    codes = _codes(program)
+    assert "COMPUTE_VAR_UNUSED" not in codes
+    assert not any(code.startswith("FOREACH_DQ") for code in codes)
+
+
+def test_sql_function_like_tokens_are_not_required_foreach_fields():
+    program = Program(statements=[
+        ForEach(
+            var="row",
+            into="review_rows",
+            row_fields=["Product", "Summary of Review", "Action_url"],
+            body=[
+                Run(
+                    kind="navigation",
+                    var="d",
+                    name="打开 {row[Action_url]} 进入评论详情页",
+                    returns=["rating"],
+                    read_spec="rating：读取 Detailed Rating 数值",
+                ),
+            ],
+        ),
+        Query(
+            var="q",
+            name="查询低分评论",
+            returns=["result"],
+            sql=(
+                "SELECT summary_of_review AS title, int(rating) AS rating "
+                "FROM review_rows WHERE product LIKE '%Erica%' AND int(rating) <= 3"
+            ),
+        ),
+        Finish(message="{q[result]}"),
+    ])
+
+    codes = _codes(program)
+    assert "FOREACH_DQ_DETAIL_FIELD_MISSING" not in codes
+    assert "FOREACH_DQ_GRID_FIELD_MISSING" not in codes
 
 
 def test_mutate_goal_without_action_shapes():

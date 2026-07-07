@@ -31,6 +31,10 @@ from ._validator.url import check_foreach_url_policy, check_function_contract, t
 
 
 def _produces_result(run: Run) -> bool:
+    # A run/read step may carry returns as an immediate read/acceptance shape without exporting
+    # dataflow. Only var-bound returns enter scope; otherwise later if/finish/data_query cannot
+    # address them deterministically. Function calls are stricter below because a declared function
+    # return is explicitly a reusable structured value and must be bound by the caller.
     return bool(run.var) and (run.kind == "data_query" or bool(run.returns))
 
 # navigate-shape intents: "go to / open / view / show / display the <X> (report|page|...)" with NO
@@ -97,7 +101,7 @@ def _has_mutation_step(stmts: list[Stmt], function_defs: dict | None = None) -> 
 def _has_result_source(stmts: list[Stmt], function_returns: dict[str, set[str]] | None = None) -> bool:
     function_returns = function_returns or {}
     for s in stmts:
-        if isinstance(s, RunLike) and (s.returns or s.kind == "data_query"):
+        if isinstance(s, RunLike) and s.var and (s.returns or s.kind == "data_query"):
             return True
         if isinstance(s, Call) and s.var and function_returns.get(s.func):
             return True
@@ -189,7 +193,12 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
             if isinstance(s, Compute) and s.var:
                 _computes.append((s.var, s.expr or ""))
             elif isinstance(s, RunLike):
-                _consumer_text.extend([s.name or "", s.success_condition or "", s.read_spec or ""])
+                _consumer_text.extend([
+                    s.name or "",
+                    s.success_condition or "",
+                    s.read_spec or "",
+                    getattr(s, "sql", "") or "",
+                ])
             elif isinstance(s, Finish):
                 _consumer_text.append(s.message or "")
             elif isinstance(s, Call):
@@ -203,6 +212,9 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                 _collect_computes(s.then)
                 _collect_computes(s.otherwise)
             elif isinstance(s, ForEach):
+                _consumed_names.update(s.output_fields or [])
+                if s.body_goal and not s.body:
+                    _consumed_names.update(s.returns or [])
                 _collect_computes(s.body)
     _collect_computes(program.statements)
     for fn in getattr(program, "functions", None) or []:
@@ -218,11 +230,14 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
             for _j, (_v, _e) in enumerate(_computes) if _j != _i
         )
         if not _in_text and not _in_other_expr:
+            severity = "error" if _goal_is_mutation(program.goal) else "warn"
             issues.add("COMPUTE_VAR_UNUSED",
-                f"Compute 算出的「{_cvar}」没有被后续任何步骤引用——算出的值成了死值，消费它的动作（填值/保存）"
-                f"没有具体目标，执行时会被 planner 瞎猜（回归 778：算了 new_price 却把动作写成『更新为新值』、"
-                f"实际填 150.00 而非算出的值）。请在使用该值的动作名里写成 {{{_cvar}}}（如『将价格更新为 {{{_cvar}}} 并保存』），"
-                f"让运行时把算出的确切值确定性填进去；不要用『新值』这类泛指。"
+                f"Compute 算出的「{_cvar}」没有被后续步骤消费——它既没有作为 {{{_cvar}}} "
+                "出现在后续 run/finish/call 文本里，也没有被后续 compute、data_query SQL、"
+                "function returns 或 foreach output_fields 使用。若它是要写入界面的值，"
+                f"消费它的动作名必须写 {{{_cvar}}}（如『将价格更新为 {{{_cvar}}} 并保存』）；"
+                "若它只是为了筛选/重命名多行结果，请删除这个 compute，改在 data_query 的 WHERE/SELECT AS 中完成。",
+                severity=severity,
             )
 
 
@@ -354,8 +369,6 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                             "SQL 不能查询 read/action/data_query 的 var；只能查询当前表格 data/table_N/caption，"
                             "或 foreach 产出的 into 表。若要组合多个聚合结果，把这些聚合写进同一个 SQL/CTE。"
                         )
-                if s.returns and s.kind != "data_query" and not s.var:
-                    issues.add("RETURNS_WITHOUT_VAR", f"步骤「{s.name}」声明了 returns 但没有绑定 var——返回值无法被后续 if/finish/foreach 引用")
                 if s.returns and s.kind not in {"read", "data_query"} and not s.read_spec.strip():
                     issues.add("RETURNS_WITHOUT_READ_SPEC", f"步骤「{s.name}」声明了 returns 但没有 read_spec——必须说明这些返回字段在完成帧上如何读取")
                 if s.returns and s.kind != "data_query" and _run_looks_like_visual_row_aggregation(s):
@@ -439,13 +452,16 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
             elif isinstance(s, Finish):
                 _check_refs(s.message, "finish 模板", scope)
             elif isinstance(s, If):
-                if s.cond.var not in scope:
+                scalar_cond = s.cond.var in scalars and (
+                    not s.cond.field or s.cond.field == s.cond.var
+                )
+                if s.cond.var not in scope and not scalar_cond:
                     issues.add("IF_COND_VAR_NOT_IN_SCOPE", 
                         f"if 条件引用的变量「{s.cond.var}」在此处尚未产生"
                         "（不是任何在它之前、且在当前执行路径上的返回值/data_query 步的 var）"
                         f"——请在这个 if 之前（同一执行路径上）让某个步骤通过 returns 或 data_query 产生「{s.cond.var}」"
                     )
-                elif s.cond.field not in scope[s.cond.var]:
+                elif not scalar_cond and s.cond.field not in scope[s.cond.var]:
                     issues.add("IF_COND_FIELD_NOT_IN_RETURNS", 
                         f"if 条件字段「{s.cond.var}[{s.cond.field}]」不在该步骤返回的字段（returns）里"
                         f"——请把 cond_field 改成该步 returns 里已有的字段名，或在该步 returns 里补上「{s.cond.field}」"

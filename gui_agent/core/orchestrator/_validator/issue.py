@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-# Severity is metadata for governance/measurement; today every rule equally triggers the one
-# repair-retry, so all issues are "error". Differentiating (e.g. "warn" advisory rules) is a
-# later behavior change — keep it uniform here to stay a pure refactor.
+# Severity is metadata for governance/measurement and decomposer gating. Only "error" blocks
+# compile/retry; "warn" is advisory feedback that can be reported or measured without rejecting a
+# structurally executable program.
 _SEVERITIES = frozenset({"error", "warn"})
 
 
@@ -76,7 +76,6 @@ ALL_CODES: frozenset[str] = frozenset({
     "DATA_QUERY_MISSING_SQL",
     "DATA_QUERY_SQL_TEMPLATE_REF",
     "DATA_QUERY_VAR_AS_TABLE",
-    "RETURNS_WITHOUT_VAR",
     "RETURNS_WITHOUT_READ_SPEC",
     # function / capability data-flow
     "CALL_FUNC_NOT_DEFINED",
@@ -110,6 +109,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "FOREACH_EMPTY_BODY_NO_RETURNS",
     "FOREACH_BODY_GOAL_MISSING_RETURNS",
     "FOREACH_BODY_GOAL_NO_ROW_TEMPLATE",
+    "FOREACH_DETAIL_OPEN_NO_ROW_REFERENCE",
     "FOREACH_CALL_DROPS_ROW_URL",
     "FOREACH_ROW_URL_NOT_USED",
     # retrieval exact->fuzzy retry must keep the same field

@@ -554,7 +554,10 @@ class Interpreter:
         scope.update(self._scalars)
         try:
             val = safe_eval(expr, scope)
-            self._scalars[c.var] = "" if val is None else str(val)
+            if isinstance(val, bool):
+                self._scalars[c.var] = "true" if val else "false"
+            else:
+                self._scalars[c.var] = "" if val is None else str(val)
         except SafeEvalError as e:
             self._scalars[c.var] = ""
             self.run_log.append(RunRecord(

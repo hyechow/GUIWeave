@@ -9,9 +9,10 @@ from ..sql_utils import sql_identifier
 
 SQL_NON_FIELD_TOKENS = {
     "abs", "all", "and", "as", "asc", "avg", "between", "by", "case", "cast", "count", "dense_rank",
-    "coalesce", "desc", "distinct", "else", "end", "from", "group", "having", "in", "integer", "is",
-    "like", "limit", "max", "min", "not", "null", "offset", "on", "or", "order", "over", "partition",
-    "real", "select", "str", "strftime", "sum", "text", "then", "where", "when", "with",
+    "coalesce", "desc", "distinct", "else", "end", "from", "group", "having", "in", "int",
+    "integer", "is", "like", "limit", "max", "min", "not", "null", "numeric", "offset", "on",
+    "or", "order", "over", "partition", "real", "select", "str", "strftime", "sum", "text",
+    "then", "where", "when", "with",
     "data", "result",
     # SQL scalar/string/numeric/window FUNCTIONS — never grid columns. Cleaning a collected cell
     # (e.g. strip "SKU: ..." off a Product name, cast "$45.00"→number) naturally uses these; without
@@ -32,7 +33,11 @@ def data_query_field_tokens(run: Run) -> set[str]:
     # mis-flag the value text as a missing/unknown column. (Double quotes are SQLite identifiers,
     # left intact so real column refs inside them are still validated.)
     sql = re.sub(r"'[^']*'", " ", getattr(run, "sql", "") or "")
-    ignored = sql_derived_identifier_tokens(sql)
+    function_like = {
+        raw.lower()
+        for raw in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", sql)
+    }
+    ignored = sql_derived_identifier_tokens(sql) | function_like
     for raw in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", sql):
         token = raw.lower()
         if token in ignored or token in SQL_NON_FIELD_TOKENS or re.fullmatch(r"table_\d+", token):

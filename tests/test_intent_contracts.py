@@ -108,6 +108,28 @@ def test_intent_contract_blocks_missing_entity_scope_predicate_on_foreach_query(
     assert "ENTITY_SCOPE_PREDICATE_MISSING" in _codes(program, resolution)
 
 
+def test_intent_contract_accepts_real_entity_scope_predicate_on_foreach_query():
+    program = Program(statements=[
+        Run(name="按产品 Erica 过滤评论列表", kind="filter",
+            success_condition="Active filters 显示 Product: Erica"),
+        ForEach(var="row", into="review_rows", row_fields=["Product", "Title", "Action_url", "rating"]),
+        Query(
+            var="q",
+            name="筛低分评论",
+            returns=["result"],
+            sql=(
+                "SELECT summary_of_review AS title, rating FROM review_rows "
+                "WHERE product LIKE '%Erica%' AND CAST(rating AS INTEGER) <= 3"
+            ),
+        ),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(mention="Erica Sports Bra", type="product", match_mode="approximate", search_key="Erica"),
+    ])
+
+    assert "ENTITY_SCOPE_PREDICATE_MISSING" not in _codes(program, resolution)
+
+
 def test_intent_contract_skips_value_role_entities():
     program = Program(statements=[
         Run(kind="navigation", name="进入 Cart Price Rules 页面"),

@@ -6,8 +6,11 @@ Drives the interpreter synchronously with a mock executor — the same generator
 drives, so body Runs being yielded one-per-row is exactly the production path."""
 
 from gui_agent.core.orchestrator import (
+    Compute,
+    Cond,
     Finish,
     ForEach,
+    If,
     Interpreter,
     Program,
     ProgramRunner,
@@ -16,6 +19,21 @@ from gui_agent.core.orchestrator import (
     drive,
 )
 from gui_agent.core.orchestrator.program import Query, Read
+
+
+def test_compute_bool_scalar_condition_compares_lowercase_true():
+    program = Program(statements=[
+        Compute(var="ok", expr="1 == 1"),
+        If(
+            cond=Cond(var="ok", field="", cmp="==", value="true"),
+            then=[Finish(message="then")],
+            otherwise=[Finish(message="else")],
+        ),
+    ])
+
+    interp = Interpreter(program)
+    reply = drive(interp, lambda run: RunResult(completed=True))
+    assert reply == "then"
 
 
 def _review_program() -> Program:

@@ -79,11 +79,17 @@ def check_foreach_url_policy(
     function_defs: dict[str, FunctionDef],
     issues: IssueList,
 ) -> None:
-    """Typed row capability policy: if a row exposes URL/HREF/link, detail opening must use it."""
+    """Typed row capability policy.
 
-    url_fields = {field for field in row_fields if _is_url_capability(field)}
-    if not url_fields:
+    A per-row detail-open step must identify the current row somehow. A row URL/link is the most
+    deterministic way to drill into a detail page, but using a stable row identity such as ID/SKU is
+    still an executable strategy for runtimes that can locate the row. Treat URL omissions as
+    advisory feedback; treat missing row references as structural errors.
+    """
+
+    if not row_fields:
         return
+    url_fields = {field for field in row_fields if _is_url_capability(field)}
     url_keys = {_field_key(field) for field in url_fields}
 
     def _walk(seq: list[Stmt]) -> None:
@@ -91,12 +97,22 @@ def check_foreach_url_policy(
             if isinstance(item, RunLike) and _run_looks_like_detail_open(item):
                 refs = template_fields_for_var(_run_text(item), loop.var)
                 ref_keys = {_field_key(field) for field in refs}
-                if refs and not (ref_keys & url_keys):
+                if not refs:
+                    issues.add(
+                        "FOREACH_DETAIL_OPEN_NO_ROW_REFERENCE",
+                        f"foreach 行「{loop.var}」提供了字段 {sorted(row_fields)}，"
+                        f"但逐行详情打开步骤「{item.name}」没有引用当前行模板。"
+                        f"请在该步骤中使用 {{{loop.var}[<字段>]}} 来定位本轮行；"
+                        "可以用 URL/link，也可以用稳定的 ID/SKU/名称等行身份字段。",
+                    )
+                elif url_fields and not (ref_keys & url_keys):
                     issues.add(
                         "FOREACH_ROW_URL_NOT_USED",
                         f"foreach 行「{loop.var}」提供了 URL/HREF/link 能力 {sorted(url_fields)}，"
                         f"但详情打开步骤「{item.name}」只引用了当前行的非 URL 字段 {sorted(refs)}。"
-                        "逐行打开详情时必须直接使用行 URL/link（例如 {row[url]}），不要依赖当前列表仍停在同一结果集后再按文本点行。"
+                        "逐行打开详情时优先直接使用行 URL/link（例如 {row[url]}）会更稳定；"
+                        "按 ID/SKU/名称定位行也是可执行策略，但依赖当前列表和执行器定位能力。",
+                        severity="warn",
                     )
             elif isinstance(item, Call):
                 fn = function_defs.get(item.func)
@@ -106,12 +122,22 @@ def check_foreach_url_policy(
                 for value in (item.args or {}).values():
                     call_row_fields.update(template_fields_for_var(str(value), loop.var))
                 call_row_keys = {_field_key(field) for field in call_row_fields}
-                if call_row_fields and not (call_row_keys & url_keys):
+                if not call_row_fields:
+                    issues.add(
+                        "FOREACH_DETAIL_OPEN_NO_ROW_REFERENCE",
+                        f"foreach 行「{loop.var}」提供了字段 {sorted(row_fields)}，"
+                        f"但调用会打开详情的函数「{item.func}」时没有把任何当前行字段传入。"
+                        f"请把 {{{loop.var}[<字段>]}} 作为函数参数传入，用来定位本轮行；"
+                        "可以用 URL/link，也可以用稳定的 ID/SKU/名称等行身份字段。",
+                    )
+                elif url_fields and not (call_row_keys & url_keys):
                     issues.add(
                         "FOREACH_CALL_DROPS_ROW_URL",
                         f"foreach 行「{loop.var}」提供了 URL/HREF/link 能力 {sorted(url_fields)}，"
                         f"但调用会打开详情的函数「{item.func}」时只传入了非 URL 行字段 {sorted(call_row_fields)}。"
-                        "请把 URL/link 字段作为函数参数传入，并在函数的详情打开步骤中使用它。"
+                        "建议把 URL/link 字段作为函数参数传入，并在函数的详情打开步骤中优先使用它；"
+                        "按行身份字段定位详情也是可执行 fallback。",
+                        severity="warn",
                     )
             elif isinstance(item, If):
                 _walk(item.then)
@@ -174,7 +200,8 @@ def check_function_contract(
                         "FUNCTION_URL_PARAM_NOT_USED",
                         f"函数「{fn.name}」有 URL/HREF/link 参数 {sorted(url_params)}，"
                         f"但详情打开/读取步骤「{item.name}」用非 URL 参数定位且没有使用 URL 参数。"
-                        "如果调用方已经传入行 URL/link，详情入口必须打开该 URL/link；其它字段只应用于验收或 fallback 判别。"
+                        "建议详情入口优先打开该 URL/link；其它字段定位也是可执行 fallback，但更依赖当前页面状态。",
+                        severity="warn",
                     )
             elif isinstance(item, If):
                 _walk(item.then)
