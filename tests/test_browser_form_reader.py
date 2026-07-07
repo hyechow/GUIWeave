@@ -96,6 +96,15 @@ def test_browser_perception_reads_form_controls(tmp_path):
         def read_form_controls(self):
             return [{"label": "Status", "kind": "native_select"}]
 
+        def read_applied_filter_state(self):
+            return {
+                "Product": "Olivia",
+            }, {
+                "source": "adapter_state",
+                "indicator_channel": "absent",
+                "fallback_channel": "present",
+            }
+
     client = _Client()
     obs = BrowserPerception(
         types.SimpleNamespace(client=client, screenshot=client.screenshot),
@@ -103,4 +112,10 @@ def test_browser_perception_reads_form_controls(tmp_path):
     ).observe()
 
     assert obs.form_controls == [{"label": "Status", "kind": "native_select"}]
+    assert obs.applied_filters == {"Product": "Olivia"}
+    assert obs.applied_filter_meta == {
+        "source": "adapter_state",
+        "indicator_channel": "absent",
+        "fallback_channel": "present",
+    }
     assert obs.title == "Orders"

@@ -9,6 +9,7 @@ clear→reset loop.
 
 from gui_agent.adapters.browser.filter_state import (
     applied_filters_js,
+    normalize_applied_filter_state,
     normalize_applied_filters,
 )
 from gui_agent.core.schemas import Milestone
@@ -18,6 +19,7 @@ from gui_agent.core.supervisor.milestone.helpers import (
     filter_state_satisfies_target,
     parse_filter_target,
 )
+from gui_agent.context.runtime import applied_filter_state_block
 
 
 def _filter_ms(name: str, sc: str = "") -> Milestone:
@@ -42,6 +44,25 @@ def test_normalize_empty_or_garbage_is_none():
     assert normalize_applied_filters(None) is None
 
 
+def test_normalize_legacy_state_shape():
+    raw = {
+        "filters": {"Product": "Olivia"},
+        "meta": {
+            "source": "legacy_grid",
+            "indicator_channel": "absent",
+            "fallback_channel": "present",
+            "chip_container": "absent",
+            "legacy_grid": "present",
+        },
+    }
+    filters, meta = normalize_applied_filter_state(raw)
+    assert filters == {"Product": "Olivia"}
+    assert meta["source"] == "legacy_grid"
+    assert meta["indicator_channel"] == "absent"
+    assert meta["fallback_channel"] == "present"
+    assert normalize_applied_filters(raw) == {"Product": "Olivia"}
+
+
 def test_applied_filters_js_targets_active_filter_chips():
     # Selector grounded against live Magento 2.4.6 DOM (probe_chips): ul.admin__current-filters-list
     # > li, label in span[data-bind*="label"], Remove button stripped.
@@ -49,6 +70,7 @@ def test_applied_filters_js_targets_active_filter_chips():
     assert "admin__current-filters-list" in js
     assert 'data-bind*=\\"label\\"' in js or "data-bind*=" in js
     assert "button" in js  # the Remove button is stripped from the value
+    assert "filter" in js and "legacy_grid" in js  # legacy Mage_Adminhtml grid fallback
 
 
 # ── parse_filter_target ─────────────────────────────────────────────────────────
@@ -71,6 +93,17 @@ def test_parse_single_column_value():
     assert parse_filter_target(_filter_ms("应用 Status: Complete 筛选")) == (
         "Status",
         ["complete"],
+    )
+
+
+def test_parse_chinese_keyword_filter_target():
+    assert parse_filter_target(_filter_ms("清除精确值筛选，在产品/Product列使用关键词'Olivia'进行筛选")) == (
+        "Product",
+        ["olivia"],
+    )
+    assert parse_filter_target(_filter_ms("可见筛选状态显示已应用 Product包含'Olivia'筛选")) == (
+        "Product",
+        ["olivia"],
     )
 
 
@@ -178,8 +211,51 @@ def test_strong_gate_fires_done_without_invoking_checker(monkeypatch):
     assert step is not None and step.goal_completed is True
 
 
+def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
+    ms = _filter_ms(
+        "清除精确值筛选，在产品/Product列使用关键词'Olivia'进行筛选",
+        "可见筛选状态显示已应用 Product包含'Olivia'筛选，列表已刷新且非0条记录",
+    )
+    import os
+
+    png = open(_FIXTURE_PNG, "rb").read() if os.path.exists(_FIXTURE_PNG) else b"\x89PNG\r\n\x1a\n"
+    checker_calls: list[int] = []
+
+    def _spy_run_checker(*a, **k):
+        checker_calls.append(1)
+        raise _CheckerReached()
+
+    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
+    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+
+    pol = policy_mod.MilestoneSupervisorPolicy()
+    pol.reseed(ms)
+    obs = Observation(
+        png_bytes=png,
+        source="test",
+        applied_filters={"Product": "Olivia"},
+        applied_filter_meta={"source": "legacy_grid", "indicator_channel": "absent", "fallback_channel": "present"},
+    )
+    step = pol.step(obs, goal="reviews for Olivia zip jacket", history=[])
+    assert checker_calls == []
+    assert ms.status == "done"
+    assert step.goal_completed is True
+
+
+def test_chip_absent_channel_block_warns_not_to_wait_for_chips():
+    block = applied_filter_state_block(
+        None,
+        {"source": "none", "indicator_channel": "absent", "fallback_channel": "present"},
+    )
+    assert block is not None
+    text = block.render()
+    assert "缺少某种常见的筛选状态指示通道" in text
+    assert "不能把" in text
+    assert "重复提交同一动作" in text
+
+
 def test_no_chips_falls_through_to_checker(monkeypatch):
-    # No applied_filters → gate cannot fire → step() must reach the LLM checker (control).
+    # No applied_filters signal from any adapter mechanism → gate cannot fire → checker runs.
     _ms, _step, checker_calls = _run_step(monkeypatch, None)
     assert checker_calls == [1], "without applied_filters the gate must not fire; checker runs"
 

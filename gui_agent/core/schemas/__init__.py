@@ -233,7 +233,7 @@ class BaseAction(BaseModel):
             # The model frequently emits `type` with empty text to mean "clear the field"
             # (description like 「清空输入框」). `clear_text` is the proper action for that — coerce
             # to it instead of raising, which otherwise crashes the whole run on one malformed
-            # action decision (live: type x=247 text="" 「清空 Search by keyword」 → ValidationError).
+            # action decision (observed as: type with empty text for "clear a filter input").
             self.action_type = "clear_text"
         # value_direction is an iphone-only field (picker); getattr keeps this base
         # validator correct for both the base and the iphone subclass.
@@ -315,12 +315,22 @@ class Observation(BaseModel):
     applied_filters: Optional[dict[str, str]] = Field(
         default=None,
         description=(
-            "平台感知层提供的「当前已生效筛选」结构状态（如某些浏览器后台网格的 Active filters "
-            "chips：{列名/维度: 值}，例 {'<字段A>': '<范围值>', '<字段B>': '<枚举值>'}）。"
+            "平台感知层提供的「当前已生效筛选」结构状态（{列名/维度: 值}，例 "
+            "{'<字段A>': '<范围值>', '<字段B>': '<枚举值>'}）。"
             "这是筛选控件自身的权威状态——筛选「是否已生效」的确定性信号，与表格里展示了哪些行/列"
             "无关。filter 类里程碑据此判「动作已生效」(action-applied)，与「行内容是否符合期望」"
             "(effect) 解耦，避免 checker 拿表格展示列(某个由被筛字段派生/相邻的展示列)推翻一个已正确生效的筛选。"
-            "None=该平台不提供或当前页无已生效筛选。"
+            "各 adapter 负责把本平台/页面的筛选状态表示（状态指示器、地址/状态编码、筛选控件状态等）"
+            "翻译成这个平台中性契约。None=该平台不提供、当前页无已生效筛选，或当前页没有可判定的筛选状态。"
+        ),
+    )
+    applied_filter_meta: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "平台感知层提供的已生效筛选取数元信息。字段由 adapter 定义，但应表达取数来源、"
+            "状态指示通道是否存在、是否存在可替代的筛选状态通道等。"
+            "用于区分「证据通道不存在」和「证据通道存在但为空」，避免 checker 把缺少某种 UI 形态"
+            "误读成任务未完成。"
         ),
     )
 

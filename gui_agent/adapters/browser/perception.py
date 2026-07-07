@@ -146,7 +146,10 @@ class BrowserPerception:
         if client is not None and hasattr(client, "read_semantic_tree"):
             semantic_tree = client.read_semantic_tree() or None
         applied_filters = None
-        if client is not None and hasattr(client, "read_applied_filters"):
+        applied_filter_meta = None
+        if client is not None and hasattr(client, "read_applied_filter_state"):
+            applied_filters, applied_filter_meta = client.read_applied_filter_state()
+        elif client is not None and hasattr(client, "read_applied_filters"):
             applied_filters = client.read_applied_filters()
         return Observation(
             png_bytes=png_bytes, source="browser", loading=loading,
@@ -156,4 +159,5 @@ class BrowserPerception:
             viewport=viewport or None,
             semantic_tree=semantic_tree,
             applied_filters=applied_filters or None,
+            applied_filter_meta=applied_filter_meta or None,
         )

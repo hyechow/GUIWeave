@@ -61,35 +61,39 @@ def is_dispatch_gate_sc(success_condition: str) -> bool:
 
 # ── filter "action-applied" gate ──────────────────────────────────────────────
 # A `filter` milestone's job is to APPLY a filter; its success is "the intended filter is in
-# effect" — which the grid reports authoritatively via its Active-filters chips
-# (Observation.applied_filters), NOT by re-reading row/cell values. Generalizes the dispatch
-# gate: there `url_changed` is the deterministic "the action took effect" signal; here it is
-# "the target chip is present". Decouples action-applied from effect-judgment so the checker
-# can't reject a correctly-applied filter on display-column grounds (e.g. Magento Salable
-# Quantity ≠ the filtered Quantity → clear→reset loop, live run 20260629_173028).
+# effect" — which the adapter reports authoritatively through Observation.applied_filters
+# (whatever platform-native evidence channel produced it), NOT by re-reading row/cell values.
+# Decouples action-applied from effect-judgment so the checker can't reject a correctly-applied
+# filter on display-column grounds.
 
-# A capitalized English attribute word (Quantity, Price, Status, …) is the filter column the
-# chips key on. `From=N … To=M` is decompose's canonical range phrasing; `Column: value` covers
-# the single-value SC ("…显示 Quantity: 3…").
+# A capitalized English field name is the filter column the applied-filter state keys on.
+# `From=N … To=M` is decompose's canonical range phrasing; `Column: value` and
+# `Column 包含/关键词 Value` cover single-value filters.
 _FILTER_RANGE_RE = re.compile(
     r"([A-Z][A-Za-z ]{1,20}?)\s*From\s*[=:：]?\s*([\w.\-]+)"
     r".{0,8}?To\s*[=:：]?\s*([\w.\-]+)",
     re.IGNORECASE,
 )
 _FILTER_SINGLE_RE = re.compile(r"\b([A-Z][A-Za-z]{2,20})\s*[:：=]\s*([A-Za-z0-9][\w.\-]{0,24})")
+_FILTER_CONTAINS_RE = re.compile(
+    r"\b([A-Z][A-Za-z ]{1,30})(?:\s*(?:列|字段|field|column))?"
+    r".{0,18}?(?:包含|含|contains|关键词|keyword|使用关键词|筛选为|设为|等于|为)\s*"
+    r"['\"「“]?([A-Za-z0-9][\w .\-]{0,40})",
+    re.IGNORECASE,
+)
 
 
 def _value_tokens(s: str) -> list[str]:
-    """Alphanumeric tokens of a chip value, lowercased (drops separators like ' - ', ':')."""
+    """Alphanumeric tokens of a filter value, lowercased (drops separators like ' - ', ':')."""
     return [t.lower() for t in re.findall(r"[A-Za-z0-9.]+", s or "")]
 
 
 def parse_filter_target(milestone: Milestone) -> Optional[tuple[str, list[str]]]:
     """The filter this `filter` milestone intends to apply, as `(column, value_tokens)` matched
-    against the applied chip's value as an exact token-multiset. None when not confidently
+    against the applied filter's value as an exact token-multiset. None when not confidently
     parseable — the gate then stays out of the way (falls back to the checker). Reads the
-    milestone name (decompose writes structured "设置 Quantity From=3 To=3") and SC. The range
-    form keeps BOTH bounds (From=3,To=3 → ['3','3']) so a '2 - 3' chip does NOT satisfy a
+    milestone name and SC. The range
+    form keeps BOTH bounds (From=3,To=3 → ['3','3']) so a '2 - 3' value does NOT satisfy a
     '3 - 3' target."""
     text = f"{milestone.name or ''}\n{milestone.success_condition or ''}"
     m = _FILTER_RANGE_RE.search(text)
@@ -102,6 +106,12 @@ def parse_filter_target(milestone: Milestone) -> Optional[tuple[str, list[str]]]
     if m:
         col = m.group(1).strip()
         val = m.group(2).strip()
+        if col and val and col.lower() not in ("from", "to"):
+            return col, _value_tokens(val)
+    m = _FILTER_CONTAINS_RE.search(text)
+    if m:
+        col = m.group(1).strip()
+        val = m.group(2).strip().strip("'\"「」“”")
         if col and val and col.lower() not in ("from", "to"):
             return col, _value_tokens(val)
     return None
@@ -117,7 +127,7 @@ _BENIGN_FILTER_LABELS = {"store view"}
 def filter_chips_clean(
     applied_filters: Optional[dict[str, str]], milestone: Milestone
 ) -> bool:
-    """True when no applied chip is an unrelated residual — every chip is either the milestone's
+    """True when no applied filter is an unrelated residual — every filter is either the milestone's
     target column or a benign always-on system filter. Conservative: unparseable target → False."""
     target = parse_filter_target(milestone)
     if target is None:
@@ -191,10 +201,10 @@ def filter_residual_labels(
 def filter_state_satisfies_target(
     applied_filters: Optional[dict[str, str]], milestone: Milestone
 ) -> bool:
-    """True when the grid's applied-filter chips already contain this milestone's target filter —
+    """True when the grid's applied-filter state already contains this milestone's target filter —
     i.e. the filter ACTION took effect, authoritatively, regardless of the rendered rows. Match =
-    the target column appears as a chip label AND that chip's value tokens are an exact multiset
-    of the target's. Returns False when there are no chips or the target can't be parsed (stay
+    the target column appears as an applied-filter label AND that filter's value tokens are an exact multiset
+    of the target's. Returns False when there are no applied filters or the target can't be parsed (stay
     conservative: never false-`done` a milestone whose intent we couldn't pin down)."""
     if not applied_filters:
         return False
@@ -576,8 +586,17 @@ _GENERIC_CONTROL_LABELS = {
 }
 
 
+def _normalize_field_name(field: str) -> str:
+    text = str(field or "").strip(" '\"「」『』")
+    # Chinese field mentions often include a leading syntactic marker before the actual label:
+    # "在产品列" / "按状态字段" should match Product / Status, not a literal "在产品" field.
+    while len(text) >= 3 and text[0] in {"在", "按", "用", "以", "把", "将", "给", "对"}:
+        text = text[1:].strip()
+    return text
+
+
 def _field_aliases(field: str) -> set[str]:
-    norm = _norm_text(field)
+    norm = _norm_text(_normalize_field_name(field))
     aliases = {norm} if norm else set()
     bilingual = {
         "产品": {"product", "产品"},
@@ -605,7 +624,7 @@ def _extract_target_fields(milestone: Milestone) -> list[str]:
     text = _RUNTIME_ANNOTATION_RE.sub(" ", text)
     fields: list[str] = []
     for raw in _FIELD_SUFFIX_RE.findall(text):
-        field = str(raw or "").strip(" '\"「」『』")
+        field = _normalize_field_name(str(raw or ""))
         norm = _norm_text(field)
         if not norm or norm in {"当前", "目标", "搜索", "筛选", "关键词", "读取"}:
             continue
@@ -1164,7 +1183,10 @@ def run_checker(
                 None,
             ),
             active_filters_block(getattr(observation, "form_controls", None)),
-            applied_filter_state_block(getattr(observation, "applied_filters", None)),
+            applied_filter_state_block(
+                getattr(observation, "applied_filters", None),
+                getattr(observation, "applied_filter_meta", None),
+            ),
             filter_residual_block(
                 filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
                 getattr(observation, "applied_filters", None),
@@ -1407,7 +1429,10 @@ def run_planner(
         ],
         human_blocks=[
             active_filters_block(getattr(observation, "form_controls", None)),
-            applied_filter_state_block(getattr(observation, "applied_filters", None)),
+            applied_filter_state_block(
+                getattr(observation, "applied_filters", None),
+                getattr(observation, "applied_filter_meta", None),
+            ),
             filter_residual_block(
                 filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
                 getattr(observation, "applied_filters", None),

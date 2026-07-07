@@ -356,11 +356,10 @@ def knowledge_block(kind: str, content: str | None, *, source: str = "knowledge_
 def grid_status_block(tables: list[dict] | None) -> ContextBlock | None:
     """Inject DOM-derived grid record count into the checker context.
 
-    Checker LLMs sometimes hallucinate 'count unchanged / filter not applied' when
-    the screenshot lacks an 'Active filters' chip (e.g. a listing page that renders no
-    chip even when filtered). Passing
-    the DOM-authoritative total_records as structured text gives the checker an
-    unambiguous textual signal — no screenshot reading required.
+    Checker LLMs sometimes hallucinate "count unchanged / filter not applied" when the screenshot
+    lacks a familiar filter-state indicator. Passing the DOM-authoritative total_records as
+    structured text gives the checker an unambiguous textual signal — no screenshot reading
+    required.
     """
     if not tables:
         return None
@@ -438,26 +437,60 @@ def active_filters_block(form_controls: list[dict] | None) -> ContextBlock | Non
     )
 
 
-def applied_filter_state_block(applied_filters: dict[str, str] | None) -> ContextBlock | None:
-    """Inject the grid's currently-APPLIED filters (Active-filters chips) as a deterministic fact.
+def applied_filter_state_block(
+    applied_filters: dict[str, str] | None,
+    applied_filter_meta: dict[str, Any] | None = None,
+) -> ContextBlock | None:
+    """Inject the currently-APPLIED filters as a deterministic fact.
 
     Distinct from ``active_filters_block`` (which reads filter INPUT-box values, framed as
-    residuals to clear): this is the post-Apply chip state — the authoritative answer to "which
-    filters are in EFFECT right now". A filter chip is the control's own state; whether the
-    filtered field equals its target is what that chip already encodes. So the checker must judge a filter
-    milestone's progress from these chips, NOT by re-reading a table display column (e.g. a display
+    residuals to clear): this is the post-Apply state — the authoritative answer to "which
+    filters are in EFFECT right now". Adapter-specific evidence may be a status indicator,
+    encoded navigation state, filter-row state, or another platform-native mechanism. Whether the
+    filtered field equals its target is what this state already encodes. So the checker must judge a filter
+    milestone's progress from this state, NOT by re-reading a table display column (e.g. a display
     column derived from the filtered field, or a same-named neighbor computed on a different basis,
-    which is a SEPARATE column) — conflating the two rejected a correctly-applied range filter and
-    drove a clear→reset loop (run 20260629_173028). None when there are no applied filters."""
+    which is a SEPARATE column)."""
+    meta = applied_filter_meta or {}
+    indicator_channel = str(meta.get("indicator_channel") or "").strip()
+    fallback_channel = str(meta.get("fallback_channel") or "").strip()
     if not applied_filters:
-        return None
+        if indicator_channel != "absent" or fallback_channel != "present":
+            return None
+        content = (
+            "## 已生效筛选证据通道\n"
+            "当前页面缺少某种常见的筛选状态指示通道（这是适配器提供的 DOM 确定性事实），"
+            "因此不能把“没看到该通道的证据”当作筛选未完成。\n"
+            "判断筛选是否已生效时，请改用本页可用的确定性信号：筛选控件的 DOM 当前值、"
+            "地址/状态编码、网格记录数/刷新结果。若这些信号显示目标筛选已经提交并产生非 0 结果，"
+            "不要为了等待某个特定 UI 指示器而重复提交同一动作。"
+        )
+        return ContextBlock(
+            id="runtime.observation.applied_filter_channel",
+            budget="high",
+            source_type="obs.dom",
+            source="platform_adapter",
+            ttl="turn",
+            priority=27,
+            authoritative_for=("filter.evidence_channel",),
+            freshness="turn",
+            coverage="complete",
+            metadata={
+                "state_indicator_channel": "absent",
+                "state_fallback_channel": fallback_channel,
+            },
+            content=content,
+        )
     lines = [f"- {label}: {value!r}" for label, value in applied_filters.items()]
+    source_line = "来源：平台 adapter 的已生效筛选状态。"
     content = (
-        "## 当前已生效筛选（Active filters，筛选控件权威状态）\n"
+        "## 当前已生效筛选（筛选控件权威状态）\n"
         "以下是网格筛选器**当前已应用**的条件（筛选已生效的确定性信号）：\n"
         + "\n".join(lines)
-        + "\n⚠️ 判断要点：'筛选是否已生效'由上面这些 chip 决定，**不是**由表格里展示了哪些行/列决定。"
-        "若本步骤要求的筛选已出现在上面，则筛选动作**已成功生效**；行/单元格里某个**展示列**的值"
+        + f"\n{source_line}"
+        + "\n⚠️ 判断要点：'筛选是否已生效'由上面这些筛选控件状态决定，**不是**由表格里展示了哪些行/列决定。"
+        "若本步骤要求的筛选已出现在上面，则筛选动作**已成功生效**；不要因为页面没有某种特定 UI 形态而否定它。"
+        "行/单元格里某个**展示列**的值"
         "（如某个由被筛字段派生、或与之相邻同名却按不同口径计算的展示列，是另一列）**不得**用来推翻"
         "已生效的筛选、或据此要求重设/清除筛选——那只会打转。"
     )
@@ -468,12 +501,13 @@ def applied_filter_state_block(applied_filters: dict[str, str] | None) -> Contex
         source="platform_adapter",
         ttl="turn",
         priority=28,
-        # The Active-filters chips are authoritative for WHICH filters are applied — NOT for which
-        # rows are currently rendered (a display column ≠ the filtered field).
+        # The adapter-normalized applied-filter state is authoritative for WHICH filters are
+        # applied — NOT for which rows are currently rendered (a display column ≠ the filtered field).
         authoritative_for=("filter.applied",),
         not_authoritative_for=("table.rendered_rows",),
         freshness="turn",
         coverage="complete",
+        metadata={},
         content=content,
     )
 
@@ -482,19 +516,19 @@ def filter_residual_block(
     residuals: list[str], applied_filters: dict[str, str] | None
 ) -> ContextBlock | None:
     """Inject the PRECISE set of unrelated residual filters to clear — computed at runtime by
-    diffing the live Active-filters chips against this milestone's intended filter set (see
+    diffing the live applied-filter state against this milestone's intended filter set (see
     helpers.filter_residual_labels). This replaces the old blanket "always clear ALL filters"
     decompose-prompt rule, which — written before the page is seen — could only be unconditional
     and so taught the model to wipe legitimate filters wholesale (一刀切). Here we name exactly the
-    chips to remove, so the agent clears the leaked residual (e.g. a stale `<field>: <value>` chip) and KEEPS the
+    filters to remove, so the agent clears the leaked residual (e.g. a stale `<field>: <value>`) and KEEPS the
     task's own filter. None when there are no residuals."""
     if not residuals:
         return None
     af = applied_filters or {}
     lines = [f"- {label}: {af.get(label, '')!r}" for label in residuals]
     content = (
-        "## 需要清除的【无关残留筛选】（运行时按 live chip 与本任务意图 state-diff 算出）\n"
-        "当前 Active filters 里有**与本任务无关的残留**（来自上一个任务/会话，会悄悄缩小结果集）：\n"
+        "## 需要清除的【无关残留筛选】（运行时按已生效筛选状态与本任务意图 state-diff 算出）\n"
+        "当前已生效筛选里有**与本任务无关的残留**（来自上一个任务/会话，会悄悄缩小结果集）：\n"
         + "\n".join(lines)
         + "\n👉 **只清除上面这几条残留**（点各自的 ✕，或 Clear all 后**重新设置本任务自己的筛选**）；"
         "**不要**因为'要清残留'就把本任务自己要的筛选也一并清掉不重设。没列在上面的筛选都该保留。"

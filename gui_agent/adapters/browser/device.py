@@ -496,15 +496,16 @@ class PlaywrightDevice:
 
         return hashlib.md5(val.encode("utf-8")).hexdigest()[:16]
 
-    def read_applied_filters(self) -> dict[str, str] | None:
-        """The grid's currently-applied filters as `{label: value}` (Active-filters chips) — the
-        deterministic "which filters are in effect" signal behind Observation.applied_filters.
-        A `filter` milestone uses this to judge "filter已生效" (action-applied) independent of the
-        rendered rows (effect). Raw CDP (page.evaluate is broken over connect_over_cdp). None on
-        any failure / no applied-filters bar."""
+    def read_applied_filter_state(self) -> tuple[dict[str, str] | None, dict[str, object] | None]:
+        """The grid's currently-applied filters as `{label: value}` plus extraction metadata.
+
+        This is the deterministic "which filters are in effect" signal behind
+        Observation.applied_filters. Browser-specific extraction details are normalized to the
+        platform-neutral metadata contract before leaving this adapter. Raw CDP is used because
+        page.evaluate is broken over connect_over_cdp."""
         from gui_agent.adapters.browser.filter_state import (
             applied_filters_js,
-            normalize_applied_filters,
+            normalize_applied_filter_state,
         )
 
         try:
@@ -514,8 +515,17 @@ class PlaywrightDevice:
             )
             val = (res.get("result", {}) or {}).get("value")
         except Exception:
-            return None
-        return normalize_applied_filters(val)
+            return None, {
+                "source": "read_failed",
+                "indicator_channel": "unknown",
+                "fallback_channel": "unknown",
+            }
+        return normalize_applied_filter_state(val)
+
+    def read_applied_filters(self) -> dict[str, str] | None:
+        """Compatibility wrapper returning only the platform-neutral applied-filter mapping."""
+        filters, _meta = self.read_applied_filter_state()
+        return filters
 
     def read_tables(self) -> list[dict]:
         """Return structured DOM table/grid snapshots from the current page.
