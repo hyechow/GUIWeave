@@ -595,6 +595,39 @@ def _confirm_to_run(enabled: bool) -> bool:
         return False
 
 
+def _canonical_page_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url.rstrip("/")
+    path = parts.path.rstrip("/") or "/"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
+def _warn_if_pre_loop_page_changed(device, *, initial_url: str, initial_title: str = "") -> None:
+    """Surface out-of-band browser changes between initial observe and the first agent turn."""
+    if not initial_url or device is None or not hasattr(device, "page_info"):
+        return
+    try:
+        current_url, current_title = device.page_info()
+    except Exception:  # noqa: BLE001 - diagnostic only; never block a run
+        return
+    if not current_url:
+        return
+    if _canonical_page_url(current_url) == _canonical_page_url(initial_url):
+        return
+    initial_label = f" ({initial_title})" if initial_title else ""
+    current_label = f" ({current_title})" if current_title else ""
+    print(
+        "[webarena] pre-loop page changed after initial observe: "
+        f"{initial_url}{initial_label} -> {current_url}{current_label}"
+    )
+    print("[webarena] 这通常表示人工点击或外部 CDP 控制在编排后改动了页面；本次将以当前页继续执行。")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a WebArena-Verified task on the browser agent")
     parser.add_argument("--tasks-file", type=Path, required=True, help="agent-input-get output JSON")
@@ -758,6 +791,8 @@ def main() -> int:
                 preflight_blocked = False
                 _redecompose = None  # Feasibility Guard kick-back re-decompose closure (set in orchestrator branch)
                 _subdecompose = None  # per-row sub-goal decomposer (ForEach.body_goal; set in orchestrator branch)
+                initial_observed_url = ""
+                initial_observed_title = ""
                 with bundle.open_session() as platform:
                     _prime(platform)
                     device = getattr(platform, "client", None)
@@ -779,6 +814,8 @@ def main() -> int:
                             ).observe()
                             cur_url = initial_obs.url or ""
                             cur_title = initial_obs.title or ""
+                            initial_observed_url = cur_url
+                            initial_observed_title = cur_title
                             initial_png = initial_obs.png_bytes
                             initial_tables = getattr(initial_obs, "tables", None)
                             if not cur_site and cur_url:
@@ -997,6 +1034,11 @@ def main() -> int:
                     if not preflight_blocked:
                         if not _confirm_to_run(args.confirm):
                             return 1
+                        _warn_if_pre_loop_page_changed(
+                            device,
+                            initial_url=initial_observed_url,
+                            initial_title=initial_observed_title,
+                        )
                         with EscStopSignal(enabled=True) as esc_stop:
                             if esc_stop.enabled:
                                 print("[webarena] Interrupt: 按 ESC 将在当前 turn 收尾后停止")

@@ -7,6 +7,7 @@ from gui_agent.adapters.browser.webarena import (
     _preflight_failure_response,
     _run_official_eval,
     _official_eval_summary,
+    _warn_if_pre_loop_page_changed,
     _write_webarena_report_context,
 )
 
@@ -175,6 +176,37 @@ def test_preflight_failure_response_is_deterministic_error():
     assert resp.status == "DATA_VALIDATION_ERROR"
     assert resp.retrieved_data is None
     assert "ROUTER_ENTITY_DROPPED" in (resp.error_details or "")
+
+
+def test_pre_loop_page_drift_warns(capsys):
+    class _Device:
+        def page_info(self):
+            return "http://localhost/admin/review/product/index/", "Reviews"
+
+    _warn_if_pre_loop_page_changed(
+        _Device(),
+        initial_url="http://localhost/admin/admin/dashboard/",
+        initial_title="Dashboard",
+    )
+
+    out = capsys.readouterr().out
+    assert "pre-loop page changed after initial observe" in out
+    assert "/admin/admin/dashboard/" in out
+    assert "/admin/review/product/index/" in out
+
+
+def test_pre_loop_page_drift_ignores_same_url(capsys):
+    class _Device:
+        def page_info(self):
+            return "http://localhost/admin/admin/dashboard", "Dashboard"
+
+    _warn_if_pre_loop_page_changed(
+        _Device(),
+        initial_url="http://localhost/admin/admin/dashboard/",
+        initial_title="Dashboard",
+    )
+
+    assert capsys.readouterr().out == ""
 
 
 def test_report_context_includes_official_eval(tmp_path):
