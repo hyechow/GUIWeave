@@ -13,6 +13,7 @@ i.e. when the result is visible), so the verdict is read at exactly the right mo
 from __future__ import annotations
 
 import base64
+import re
 from collections.abc import Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -32,8 +33,71 @@ def _norm_label(s: str) -> str:
     return "".join(ch for ch in (s or "").strip().lower() if ch.isalnum())
 
 
+def read_spec_label_candidates(read_spec: str, field: str) -> list[str]:
+    """Return explicit UI label candidates mentioned by ``read_spec`` for ``field``.
+
+    The DSL field can be semantic (for example ``title``) while the page label is concrete
+    (for example ``Summary of Review``). When the decomposer spells that mapping out in the
+    read spec, DOM readers should use it before falling back to vision.
+    """
+    if not read_spec or not field:
+        return []
+
+    field_norm = _norm_label(field)
+    contexts: list[str] = []
+    for raw in re.split(r"[\n;；]+", read_spec):
+        segment = raw.strip()
+        if not segment:
+            continue
+        head, sep, tail = segment.partition("：")
+        if not sep:
+            head, sep, tail = segment.partition(":")
+        if not sep:
+            head, sep, tail = segment.partition("=")
+        if sep and _norm_label(head) == field_norm:
+            contexts.append(tail.strip())
+            continue
+        if _norm_label(segment).startswith(field_norm):
+            contexts.append(segment)
+
+    if not contexts:
+        return []
+
+    out: list[str] = []
+
+    def add(candidate: str) -> None:
+        text = re.sub(r"\s+", " ", candidate or "").strip(" `\"'「」[]()（）")
+        if not text or _norm_label(text) == field_norm:
+            return
+        if text not in out:
+            out.append(text)
+
+    label_suffix = r"(?:字段|field|输入框|控件|下拉|列|区域|section|textarea|select)"
+    for context in contexts:
+        for quoted in re.findall(r"[`\"'「『]([^`\"'」』]{1,80})[`\"'」』]", context):
+            add(quoted)
+        for match in re.finditer(
+            rf"([A-Za-z][A-Za-z0-9_ /&().-]{{1,80}}?)\s*{label_suffix}",
+            context,
+            flags=re.I,
+        ):
+            add(match.group(1))
+
+    return out
+
+
+def _field_label_candidates(field: str, read_spec: str = "") -> list[str]:
+    out = [field]
+    for candidate in read_spec_label_candidates(read_spec, field):
+        if candidate not in out:
+            out.append(candidate)
+    return out
+
+
 def read_form_control_returns(
-    form_controls: list[dict] | None, returns: list[str]
+    form_controls: list[dict] | None,
+    returns: list[str],
+    read_spec: str = "",
 ) -> dict[str, str]:
     """Read declared return fields from the platform-neutral ``obs.form_controls`` (DOM-captured
     select/input values), BEFORE any vision guess. A native ``<select>``'s selected option text is
@@ -50,17 +114,22 @@ def read_form_control_returns(
         return {}
     out: dict[str, str] = {}
     for field in returns:
-        nf = _norm_label(field)
-        if not nf:
+        candidates = [(raw, _norm_label(raw)) for raw in _field_label_candidates(field, read_spec)]
+        candidates = [(raw, norm) for raw, norm in candidates if norm]
+        if not candidates:
             continue
         best: dict | None = None
-        for fc in form_controls:
-            nl = _norm_label(fc.get("label") or fc.get("name") or fc.get("id") or "")
-            if not nl:
-                continue
-            if nl == nf or nf in nl or nl in nf:
-                best = fc
-                if nl == nf:
+        for _, nf in candidates:
+            for fc in form_controls:
+                nl = _norm_label(fc.get("label") or fc.get("name") or fc.get("id") or "")
+                if not nl:
+                    continue
+                if nl == nf or nf in nl or nl in nf:
+                    best = fc
+                    if nl == nf:
+                        break
+            if best is not None:
+                if _norm_label(best.get("label") or best.get("name") or best.get("id") or "") == nf:
                     break
         if best is None:
             continue

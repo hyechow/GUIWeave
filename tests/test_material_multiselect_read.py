@@ -19,6 +19,7 @@ the first option.
 """
 
 from gui_agent.adapters.browser.page_read import _read_from_form_controls
+from gui_agent.adapters.browser import page_read as page_read_mod
 
 
 def _material_control(selected_text: str) -> dict:
@@ -56,6 +57,49 @@ def test_unselected_multiselect_reads_empty_not_first_option():
     assert out["material"] != "Burlap"
 
 
+def test_form_read_uses_read_spec_label_for_semantic_field():
+    controls = [
+        {"kind": "text", "label": "Nickname", "value": "Roxie"},
+        {"kind": "textarea", "label": "Summary of Review", "value": "Doesn't fit me. Luma fail."},
+    ]
+    out = _read_from_form_controls(
+        controls,
+        ["title"],
+        read_spec="title：读取 Summary of Review 字段文字，不要读取 Nickname。",
+    )
+    assert out == {"title": "Doesn't fit me. Luma fail."}
+
+
+def test_page_read_keeps_partial_dom_reads_for_visual_fallback(monkeypatch):
+    class Obs:
+        form_controls = [
+            {"kind": "textarea", "label": "Summary of Review", "value": "Doesn't fit me. Luma fail."},
+        ]
+        semantic_tree = None
+        png_bytes = b"x"
+
+    calls: list[list[str]] = []
+
+    def fake_structured_read(png_bytes, returns, **kwargs):
+        calls.append(list(returns))
+        return {"rating": "2"}
+
+    import gui_agent.core.orchestrator.primitives.structured_read as structured_read_mod
+
+    monkeypatch.setattr(structured_read_mod, "structured_read", fake_structured_read)
+    out = page_read_mod.read_page_complete(
+        Obs(),
+        ["title", "rating"],
+        read_spec=(
+            "title：读取 Summary of Review 字段文字；"
+            "rating：读取 Detailed Rating 区域的星级数值。"
+        ),
+    )
+
+    assert out == {"rating": "2", "title": "Doesn't fit me. Luma fail."}
+    assert calls == [["rating"]]
+
+
 # ── core hand-off read: DOM authoritative over vision ──────────────────────────────
 from gui_agent.core.orchestrator.primitives.structured_read import read_form_control_returns
 
@@ -81,3 +125,15 @@ def test_handoff_read_returns_empty_native_select_without_vision_fallback():
     assert read_form_control_returns(None, ["material"]) == {}
     assert read_form_control_returns([{"kind": "native_select", "label": "Status",
                                        "selected_text": "Complete"}], ["material"]) == {}
+
+
+def test_handoff_read_uses_read_spec_label_for_semantic_field():
+    controls = [
+        {"kind": "text", "label": "Nickname", "value": "Roxie"},
+        {"kind": "textarea", "label": "Summary of Review", "value": "Doesn't fit me. Luma fail."},
+    ]
+    assert read_form_control_returns(
+        controls,
+        ["title"],
+        read_spec="title：读取 Summary of Review 字段文字，不要读取 Nickname。",
+    ) == {"title": "Doesn't fit me. Luma fail."}

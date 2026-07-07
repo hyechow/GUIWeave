@@ -613,7 +613,11 @@ def extract_ui_returns(
     # (live 185: vision read the first LISTED option Burlap instead of the selected Cotton;
     # the DOM form control carries the real selection). An unselected native select is also
     # authoritative empty, not "missing"; vision fills only fields the DOM did not match.
-    dom_reads = read_form_control_returns(getattr(observation, "form_controls", None), returns)
+    dom_reads = read_form_control_returns(
+        getattr(observation, "form_controls", None),
+        returns,
+        read_spec=read_spec,
+    )
     missing = [f for f in returns if f not in dom_reads]
     if not missing:
         say(f"  [Orchestrator] DOM 表单返回读取 {returns} → {dom_reads}")

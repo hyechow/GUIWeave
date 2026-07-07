@@ -196,12 +196,15 @@ def scroll_until_read(
 def _read_from_form_controls(
     form_controls: list[dict],
     returns: list[str],
+    read_spec: str = "",
+    *,
+    require_all: bool = True,
 ) -> dict[str, str] | None:
     """Match ``returns`` field names against form_controls labels → current DOM values.
 
-    Returns a complete ``{field: value}`` dict only when ALL fields are found.
-    Returns ``None`` if any field has no matching form control (caller falls through
-    to the AX tree or visual path).
+    By default returns a complete ``{field: value}`` dict only when ALL fields are found.
+    With ``require_all=False``, returns the partial DOM reads and lets the caller send only
+    missing fields to AX/vision fallback.
 
     ``selected_text`` is preferred over ``value`` for native selects (human-readable
     option text vs the numeric option id stored in ``value``).
@@ -209,27 +212,39 @@ def _read_from_form_controls(
     from difflib import SequenceMatcher
 
     from gui_agent.adapters.browser.semantic_page import _normalize
+    from gui_agent.core.orchestrator.primitives.structured_read import read_spec_label_candidates
 
     result: dict[str, str] = {}
     for field in returns:
-        nf = _normalize(field)
+        candidates = [field]
+        for candidate in read_spec_label_candidates(read_spec, field):
+            if candidate not in candidates:
+                candidates.append(candidate)
         best: dict | None = None
         best_score = 0.0
-        for fc in form_controls:
-            label = fc.get("label") or fc.get("name") or fc.get("id") or ""
-            nl = _normalize(label)
-            if not nl:
+        for candidate in candidates:
+            nf = _normalize(candidate)
+            if not nf:
                 continue
-            if nl == nf:
-                best = fc
-                best_score = 1.0
+            for fc in form_controls:
+                label = fc.get("label") or fc.get("name") or fc.get("id") or ""
+                nl = _normalize(label)
+                if not nl:
+                    continue
+                if nl == nf:
+                    best = fc
+                    best_score = 1.0
+                    break
+                score = SequenceMatcher(None, nf, nl).ratio()
+                if score >= 0.75 and score > best_score:
+                    best = fc
+                    best_score = score
+            if best_score >= 1.0:
                 break
-            score = SequenceMatcher(None, nf, nl).ratio()
-            if score >= 0.75 and score > best_score:
-                best = fc
-                best_score = score
         if best is None:
-            return None
+            if require_all:
+                return None
+            continue
         if (best.get("kind") or "") == "native_select":
             # The SELECTED option text is authoritative for a <select>/<select multiple> (WebArena
             # task 185 Material). The primary value is the FIRST selected option — never the numeric
@@ -275,46 +290,58 @@ def read_page_complete(
         return {}
 
     # Path 1: form controls — exact DOM values for standard editable fields.
+    dom_reads: dict[str, str] = {}
     form_controls = getattr(obs, "form_controls", None)
     if form_controls:
-        result = _read_from_form_controls(form_controls, returns)
-        if result is not None:
-            return result
+        dom_reads = _read_from_form_controls(
+            form_controls,
+            returns,
+            read_spec=read_spec,
+            require_all=False,
+        ) or {}
+        if all(field in dom_reads for field in returns):
+            return dom_reads
+
+    remaining = [field for field in returns if field not in dom_reads]
 
     # Path 2: AX semantic tree — non-form structural content (cells, headings).
     semantic_tree = getattr(obs, "semantic_tree", None)
     if semantic_tree:
         from gui_agent.adapters.browser.semantic_page import read_from_tree
-        result = read_from_tree(semantic_tree, returns, read_spec=read_spec)
+        result = read_from_tree(semantic_tree, remaining, read_spec=read_spec)
         if result is not None:
-            return result
+            merged = {**result, **dom_reads}
+            if all(field in merged for field in returns):
+                return merged
 
     # Path 2: visual scroll loop.
     if bundle is not None and platform is not None and log_dir is not None:
         ppv = prepare_vision_prompt_png
         if ppv is None:
             ppv = getattr(bundle, "prepare_vision_prompt_png", None)
-        return scroll_until_read(
-            bundle, platform, log_dir, returns,
+        visual_reads = scroll_until_read(
+            bundle, platform, log_dir, remaining,
             read_spec=read_spec,
             check_knowledge=check_knowledge,
             prepare_vision_prompt_png=ppv,
             context_reports=context_reports,
             max_scrolls=max_scrolls,
         )
+        return {**visual_reads, **dom_reads}
 
     # Path 3: single-frame vision fallback.
     from gui_agent.core.orchestrator.primitives.structured_read import structured_read
     ppv = prepare_vision_prompt_png
     if ppv is None:
         ppv = getattr(bundle, "prepare_vision_prompt_png", None)
-    return structured_read(
-        obs.png_bytes, returns,
+    visual_reads = structured_read(
+        obs.png_bytes, remaining,
         read_spec=read_spec,
         check_knowledge=check_knowledge,
         prepare_vision_prompt_png=ppv,
         context_reports=context_reports,
     )
+    return {**visual_reads, **dom_reads}
 
 
 _DEFAULT_MAX_PAGES = 20
