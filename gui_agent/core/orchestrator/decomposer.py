@@ -37,7 +37,10 @@ from ._decomposer.context import (
     _remaining_plan_block,
     _table_schema_prompt,
 )
-from ._decomposer.sql import _normalize_approximate_entity_sql, _normalize_data_query_display_identifiers
+from ._decomposer.sql import (
+    _normalize_approximate_entity_sql,
+    _normalize_data_query_display_identifiers,
+)
 from .intent_contracts import IntentContractIssue, validate_intent_contracts
 from .validator import (  # validator lives in its own module; decompose imports it back
     ValidationIssue,
@@ -89,6 +92,28 @@ def _contract_issue_to_validation_issue(issue: IntentContractIssue) -> Validatio
     )
 
 
+def _merge_feedback_issues(
+    prior: list[ValidationIssue],
+    current: list[ValidationIssue],
+) -> list[ValidationIssue]:
+    """Carry validator feedback forward across repair attempts.
+
+    Repair prompts are constraints, not one-shot hints. If attempt N fixes issue A but attempt N+1
+    drops it while fixing issue B, a "last attempt only" feedback block creates validator
+    whack-a-mole. Keep the small de-duplicated history for the current compile call so later
+    retries preserve earlier repairs without adding any production normalizer.
+    """
+    out: list[ValidationIssue] = []
+    seen: set[tuple[str, str]] = set()
+    for issue in [*prior, *current]:
+        key = (issue.code, str(issue))
+        if key in seen:
+            continue
+        out.append(issue)
+        seen.add(key)
+    return out
+
+
 def _invoke_plan(
     *,
     system_prompt: str,
@@ -114,12 +139,13 @@ def _invoke_plan(
         extra_body={"enable_thinking": False},
     )
     issues: list[ValidationIssue] = []
+    feedback_issues: list[ValidationIssue] = []
     program = Program(goal=goal, statements=[])
     for attempt in range(_MAX_RETRIES + 1):
         messages = assemble_messages(
             system_prompt,
             png_bytes,
-            human_blocks=[*context_blocks, feedback_block(issues)],
+            human_blocks=[*context_blocks, feedback_block(feedback_issues)],
             image_resize="none",
             prepare_vision_prompt_png=prepare_vision_prompt_png,
             label=label,
@@ -129,20 +155,22 @@ def _invoke_plan(
         draft = invoke_structured(llm, messages, _PlanDraft, trace_sink=context_reports, trace_label=label)
         program = to_program(draft, goal)
         program = _normalize_data_query_display_identifiers(program)
-        issues = list(validate_program(program))
+        all_issues = list(validate_program(program))
         if resolution is not None:
-            issues.extend(
+            all_issues.extend(
                 _contract_issue_to_validation_issue(issue)
                 for issue in validate_intent_contracts(program, resolution)
             )
+        issues = [issue for issue in all_issues if getattr(issue, "severity", "error") == "error"]
         if attempt_observer is not None:
             # Offline instrumentation only (default None ⇒ production path unchanged): record the
             # codes that fired on each draft so the retry-efficacy harness can measure, per code,
             # whether feeding it back actually clears it on the next attempt. See
             # scripts/validator_retry_efficacy.py.
-            attempt_observer(attempt, list(issues))
+            attempt_observer(attempt, list(all_issues))
         if not issues:
             break
+        feedback_issues = _merge_feedback_issues(feedback_issues, issues)
         if attempt < _MAX_RETRIES:
             print(f"  [Orchestrator] 程序分解校验发现 {len(issues)} 项问题，重试 ({attempt+1}/{_MAX_RETRIES})...")
             for i in issues:

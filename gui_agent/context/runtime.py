@@ -692,7 +692,7 @@ def feedback_block(issues: Iterable[str]) -> ContextBlock | None:
         ttl="turn",
         priority=20,
         metadata={"count": len(issue_list)},
-        content=f"上一轮分解存在以下问题，请修正：\n{body}",
+        content=f"此前分解存在以下问题，请修正并保持已修复约束：\n{body}",
     )
 
 
