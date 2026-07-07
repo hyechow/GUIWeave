@@ -36,6 +36,34 @@ def test_named_field_guard_does_not_substitute_visible_other_field():
     assert guarded.direction == "right"
 
 
+def test_named_field_guard_treats_chinese_product_column_as_product_control():
+    """Regression 20260707_115911: "在产品列" was extracted as the literal field "在产品",
+    so the guard rewrote a correct Product-input plan into a horizontal-scroll hunt."""
+    milestone = Milestone.model_validate({
+        "id": "m",
+        "name": "在产品列用精确值「Olivia zip jacket」筛选",
+        "description": "在产品列用精确值「Olivia zip jacket」筛选",
+        "success_condition": "已应用 Product 精确筛选",
+        "kind": "action",
+    })
+    observation = Observation(
+        png_bytes=b"png",
+        source="browser",
+        form_controls=[
+            {"label": "Product", "kind": "text_input", "value": "Olivia"},
+        ],
+    )
+    plan = _PlanResult(
+        instruction="在 Product 输入框填入 'Olivia zip jacket'",
+        summary="当前 Product 筛选器仅包含 Olivia，需要更新为完整目标值",
+    )
+
+    guarded = _guard_named_field_substitution_plan(plan, milestone, _check(), observation)
+
+    assert guarded.instruction == plan.instruction
+    assert guarded.direction is None
+
+
 def test_named_field_guard_retargets_when_target_control_is_visible():
     milestone = Milestone.model_validate({
         "id": "m",

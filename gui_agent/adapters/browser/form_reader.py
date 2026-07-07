@@ -80,6 +80,27 @@ def form_controls_js() -> str:
     if (prevText && prevText.length <= 80) return prevText;
     return clean(el.getAttribute('placeholder') || el.name || el.id);
   };
+  const gridHeaderLabelOf = (el) => {
+    const table = el.closest('table');
+    if (!table) return '';
+    const er = el.getBoundingClientRect();
+    const cx = er.left + er.width / 2;
+    const candidates = Array.from(table.querySelectorAll('th')).map(th => {
+      const r = th.getBoundingClientRect();
+      const text = clean(th.innerText || th.textContent || '')
+        .replace(/[↑↓↕]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return {th, r, text};
+    }).filter(c =>
+      c.text && c.r.width > 0 && c.r.height > 0
+      && c.r.left - 2 <= cx && cx <= c.r.right + 2
+      && c.r.bottom <= er.top + 4
+      && !c.th.querySelector('input,select,textarea')
+    );
+    candidates.sort((a, b) => b.r.bottom - a.r.bottom);
+    return candidates[0] ? candidates[0].text : '';
+  };
   const kindOf = (el) => {
     const tag = el.tagName;
     const role = clean(el.getAttribute('role')).toLowerCase();
@@ -117,8 +138,9 @@ def form_controls_js() -> str:
       || !!el.closest('[data-role="filter-form"]')
       || !!el.closest('.admin__data-grid-filters');
     const isDatepicker = el.classList && el.classList.contains('_has-datepicker');
+    const label = isFilter ? (gridHeaderLabelOf(el) || labelOf(el)) : labelOf(el);
     const item = {
-      label: cut(labelOf(el), 80),
+      label: cut(label, 80),
       kind,
       name: cut(el.getAttribute('name') || '', 80),
       id: cut(el.id || '', 80),
