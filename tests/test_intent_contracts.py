@@ -7,6 +7,10 @@ def _codes(program: Program, resolution: IntentResolution) -> set[str]:
     return {issue.code for issue in validate_intent_contracts(program, resolution)}
 
 
+def _issues(program: Program, resolution: IntentResolution):
+    return validate_intent_contracts(program, resolution)
+
+
 def test_intent_contract_blocks_approximate_key_drop():
     program = Program(statements=[
         Run(kind="filter", name="Search product Olivia zip jacket in Reviews grid"),
@@ -21,6 +25,110 @@ def test_intent_contract_blocks_approximate_key_drop():
     ])
 
     assert "ROUTER_APPROXIMATE_KEY_DROPPED" in _codes(program, resolution)
+
+
+def test_intent_contract_blocks_approximate_mention_drop():
+    program = Program(statements=[
+        Run(kind="filter", name="在 Bill-to Name 字段用关键词 Nguyen 筛选客户"),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Grace Nguyen",
+            type="customer",
+            match_mode="approximate",
+            search_key="Nguyen",
+        ),
+    ])
+
+    assert "ROUTER_APPROXIMATE_MENTION_DROPPED" in _codes(program, resolution)
+
+
+def test_approximate_mention_feedback_names_exact_and_fallback_values():
+    program = Program(statements=[
+        Run(kind="filter", name="在顶部搜索框输入客户名『Grace』并提交搜索"),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Grace Nguyen",
+            type="customer",
+            match_mode="approximate",
+            search_key="Grace",
+        ),
+    ])
+
+    issue = next(i for i in _issues(program, resolution) if i.code == "ROUTER_APPROXIMATE_MENTION_DROPPED")
+
+    assert "Grace Nguyen" in str(issue)
+    assert "Grace" in str(issue)
+    assert "K-only" in str(issue)
+    assert "count == '0'" in str(issue)
+
+
+def test_intent_contract_does_not_count_query_name_as_approximate_retrieval():
+    program = Program(statements=[
+        Run(kind="filter", name="在 Bill-to Name 字段用关键词 Grace 筛选客户"),
+        ForEach(var="row", into="orders", row_fields=["bill_to_name", "status", "purchase_date", "action_url"]),
+        Query(
+            var="q",
+            name="选出 Grace Nguyen 最近一笔 pending 订单",
+            returns=["action_url"],
+            sql="SELECT action_url FROM orders WHERE bill_to_name LIKE '%Grace%' ORDER BY purchase_date_ts DESC LIMIT 1",
+        ),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Grace Nguyen",
+            type="customer",
+            match_mode="approximate",
+            search_key="Grace",
+        ),
+    ])
+
+    assert "ROUTER_APPROXIMATE_MENTION_DROPPED" in _codes(program, resolution)
+
+
+def test_intent_contract_accepts_approximate_exact_then_fallback():
+    program = Program(statements=[
+        Run(kind="filter", name="在 Bill-to Name 字段用精确值『Grace Nguyen』筛选"),
+        Run(kind="filter", name="若 0 条，在同一 Bill-to Name 字段用关键词『Nguyen』重筛"),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Grace Nguyen",
+            type="customer",
+            match_mode="approximate",
+            search_key="Nguyen",
+        ),
+    ])
+
+    codes = _codes(program, resolution)
+    assert "ROUTER_APPROXIMATE_MENTION_DROPPED" not in codes
+    assert "ROUTER_APPROXIMATE_KEY_DROPPED" not in codes
+
+
+def test_intent_contract_accepts_set_entity_split_into_key_and_selector():
+    program = Program(statements=[
+        Run(kind="filter", name="搜索 Sahara 候选记录"),
+        ForEach(
+            var="row",
+            target="Sahara 行",
+            row_fields=["sku"],
+            member_desc="size 28 的变体",
+            body=[Run(kind="action", name="处理 {row[sku]}")],
+        ),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="size 28 Sahara leggings",
+            type="product",
+            match_mode="approximate",
+            search_key="Sahara",
+            cardinality="set",
+            selector="size 28",
+        ),
+    ])
+
+    assert "ROUTER_APPROXIMATE_MENTION_DROPPED" not in _codes(program, resolution)
 
 
 def test_intent_contract_requires_foreach_for_set_entity():

@@ -43,6 +43,7 @@ def validate_intent_contracts(
 
 def _check_router_entity_coverage(program: Program, resolution: IntentResolution) -> list[IntentContractIssue]:
     program_text = _program_text(program)
+    retrieval_text = _retrieval_text(program)
     foreach_stmts = _iter_foreaches(program.statements)
     issues: list[IntentContractIssue] = []
 
@@ -56,21 +57,52 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
         search_key = str(entity.search_key or "").strip()
         match_mode = str(entity.match_mode or "").strip().lower()
         cardinality = str(getattr(entity, "cardinality", "") or "").strip().lower()
+        selector = str(getattr(entity, "selector", "") or "").strip()
 
         mention_present = _contains(program_text, mention)
+        mention_present_in_retrieval = _contains(retrieval_text, mention)
         key_present = _contains(program_text, search_key)
         key_present_as_own_strategy = key_present
         if mention and search_key and _norm(mention) != _norm(search_key):
-            key_present_as_own_strategy = _contains(_remove_norm_phrase(program_text, mention), search_key)
+            key_present_as_own_strategy = _contains(_remove_norm_phrase(retrieval_text, mention), search_key)
+        set_scope_decomposed = (
+            cardinality == "set"
+            and bool(selector)
+            and (not search_key or _contains(retrieval_text, search_key))
+            and _contains(retrieval_text, selector)
+        )
 
         if mention or search_key:
             if match_mode == "approximate":
+                if (
+                    mention
+                    and search_key
+                    and _norm(mention) != _norm(search_key)
+                    and not mention_present_in_retrieval
+                    and not set_scope_decomposed
+                ):
+                    issues.append(IntentContractIssue(
+                        code="ROUTER_APPROXIMATE_MENTION_DROPPED",
+                        message=(
+                            f"Router marked entity「{mention}」as approximate with search_key"
+                            f"「{search_key}」, but the retrieval/filter/navigation steps do not "
+                            f"include the original mention「{mention}」. Approximate lookup must first "
+                            f"try the full original value「{mention}」as the exact trial, read a "
+                            "match_count/result count, and only in an explicit if count == '0' "
+                            f"fallback to search_key「{search_key}」. A K-only first search is invalid "
+                            "even when the search_key is a token inside the original mention."
+                        ),
+                        evidence=(f"mention={mention}", f"search_key={search_key}"),
+                    ))
                 if search_key and not key_present_as_own_strategy:
                     issues.append(IntentContractIssue(
                         code="ROUTER_APPROXIMATE_KEY_DROPPED",
                         message=(
-                            "Router marked an entity as approximate, but the decomposed program "
-                            "does not include its search_key."
+                            f"Router marked entity「{mention}」as approximate with search_key"
+                            f"「{search_key}」, but after removing the original mention from retrieval "
+                            f"steps the program does not include search_key「{search_key}」as its own "
+                            "fallback/search-scope strategy. Keep the exact trial with the full "
+                            "mention, and add an explicit fallback retrieval step using the search_key."
                         ),
                         evidence=(f"mention={mention}", f"search_key={search_key}"),
                     ))
@@ -93,8 +125,7 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
                 message="Router marked an entity as a set, but the program has no foreach iteration.",
                 evidence=(f"mention={mention}", f"selector={getattr(entity, 'selector', '') or ''}"),
             ))
-        elif cardinality == "set" and str(getattr(entity, "selector", "") or "").strip():
-            selector = str(getattr(entity, "selector", "") or "").strip()
+        elif cardinality == "set" and selector:
             if (
                 not any(_foreach_has_membership(fe) for fe in foreach_stmts)
                 and not _program_has_if(program)
@@ -180,6 +211,26 @@ def _entity_role(entity: object) -> str:
 
 def _program_text(program: Program) -> str:
     return program.model_dump_json(exclude_none=True)
+
+
+def _retrieval_text(program: Program) -> str:
+    parts: list[str] = []
+
+    def _collect(stmts: list[Stmt]) -> None:
+        for stmt in stmts:
+            if isinstance(stmt, RunLike) and stmt.kind in {"filter", "navigation"}:
+                parts.extend([stmt.name or "", stmt.success_condition or "", getattr(stmt, "read_spec", "") or ""])
+            elif isinstance(stmt, ForEach):
+                parts.extend([stmt.target or "", stmt.member_desc or "", stmt.body_goal or ""])
+                _collect(stmt.body)
+            elif isinstance(stmt, If):
+                _collect(stmt.then)
+                _collect(stmt.otherwise)
+
+    _collect(program.statements)
+    for fn in (getattr(program, "functions", None) or []):
+        _collect(fn.body)
+    return "\n".join(parts)
 
 
 def _contains(haystack: str, needle: str) -> bool:

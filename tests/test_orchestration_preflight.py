@@ -61,7 +61,8 @@ def test_preflight_blocks_approximate_entity_when_search_key_is_missing():
 def test_preflight_accepts_approximate_entity_when_search_key_is_preserved():
     program = Program(
         statements=[
-            Run(kind="filter", name="Search Product column by Olivia"),
+            Run(kind="filter", name="Search Product column by Olivia zip jacket"),
+            Run(kind="filter", name="If no match, search Product column by Olivia"),
             Read( var="r", name="Read matching review", returns=["nickname"]),
             Finish(message="{r[nickname]}"),
         ]

@@ -54,7 +54,10 @@ _SYSTEM = load_prompt_text("task.orchestrator.decomposer")
 _REDECOMPOSE_SYSTEM = _SYSTEM + "\n\n" + load_prompt_text("task.orchestrator.redecomposer")
 
 
-_MAX_RETRIES = 2
+# Validator repairs can cascade: fixing one structural issue can expose a second issue that was
+# previously masked by the invalid draft. Keep a small bounded extra attempt so the LLM sees the
+# newly surfaced validator feedback once, without turning compile into an open-ended loop.
+_MAX_RETRIES = 3
 
 __all__ = [
     "OrchestratorCompileError",
@@ -155,7 +158,7 @@ def _invoke_plan(
         draft = invoke_structured(llm, messages, _PlanDraft, trace_sink=context_reports, trace_label=label)
         program = to_program(draft, goal)
         program = _normalize_data_query_display_identifiers(program)
-        all_issues = list(validate_program(program))
+        all_issues = list(validate_program(program, resolution=resolution))
         if resolution is not None:
             all_issues.extend(
                 _contract_issue_to_validation_issue(issue)
