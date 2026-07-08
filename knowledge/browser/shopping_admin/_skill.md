@@ -17,10 +17,10 @@ version: 1
 
 ## skill：订单邮箱数量聚合
 - 触发：customer email(s)、completed orders、any-state orders、most/second/fifth number of orders、have N orders
-- 数据：订单数据源 = Sales > Orders。**口径判别看 intent 有没有 "completed"**：含 `completed`（`who completed the most/second/Nth number of orders`、`who completed N orders`、`completed orders`）→ 按 **`Status = Complete`** 计数，先清残留筛选、只筛 Status=Complete 后采全量 Complete 行；字面 `any state` / 只说 `have N orders` → **不筛 Status**，清掉所有残留筛选（含残留的 `Status: Complete`）后采全量。**计数单位是「每一笔订单」**：同一客户的多笔订单是多笔、不能并成一笔，因此要采到订单的唯一标识（Orders grid 的 **ID** 列）以及 **Customer Email**、**Status**，否则同客户多笔订单会被并行折叠、人均计数偏小、排名错乱。
+- 数据：订单数据源 = Sales > Orders。**口径判别看 intent 有没有 "completed"**：含 `completed`（`who completed the most/second/Nth number of orders`、`who completed N orders`、`completed orders`）→ 按 **`Status = Complete`** 计数，先清掉已生效的无关筛选、只筛 Status=Complete 后采全量 Complete 行；字面 `any state` / 只说 `have N orders` → **不筛 Status**，清掉所有已生效筛选（含已生效的 `Status: Complete`）后采全量。**计数单位是「每一笔订单」**：同一客户的多笔订单是多笔、不能并成一笔，因此要采到订单的唯一标识（Orders grid 的 **ID** 列）以及 **Customer Email**、**Status**，否则同客户多笔订单会被并行折叠、人均计数偏小、排名错乱。
 - 步骤：
 1. 进入 Sales > Orders 订单数据源
-2. 按口径设状态约束：含 completed→清残留后只筛 Status=Complete；字面 any state→清残留后不筛状态
+2. 按口径设状态约束：含 completed→清无关筛选后只筛 Status=Complete；字面 any state→清所有筛选后不筛状态
 3. 采全量订单行，含 Order ID（逐笔唯一）、Customer Email、Status
 4. 按 Customer Email 聚合订单数
 5. 输出满足排名或数量条件的邮箱
@@ -59,7 +59,7 @@ version: 1
 - 触发：产品的颜色/材质/尺码、color/material/size of products、name and color、products with N units left 取某属性；凡是「按库存数量筛选产品、再取该产品某个属性」的任务
 - 数据：Products grid 行可采 **SKU** 与行详情链接列 **Action_url**；Products Columns 面板可选列含 **Color**，**不含 Material / Size**；Size/Color 是变体自身属性，变体名后缀 `-SIZE-COLOR` 即来源；**Material** 常由父 **Configurable Product** 承载，简单变体自身常为空；父产品 identity 是 **SKU**：变体 SKU 去 `-SIZE-COLOR` 后缀，如 `WS08-XS-Blue → WS08`；找父产品必须验证 **SKU=父SKU** 且 **Type=Configurable Product**；Material 是 multiselect，任务问单数材质时取首个已选值。
 - 步骤：
-1. 进入 Products；清残留；按 Quantity 筛候选。
+1. 进入 Products；清掉已生效的无关筛选；按 Quantity 筛候选。
 2. Color：启用 Columns/Color 后从 grid 读。
 3. Material：候选 foreach 采 SKU + Action_url。
 4. Material：必须打开 `{row[Action_url]}` 读自身，禁止按 SKU 点行。
@@ -72,17 +72,27 @@ version: 1
 - 触发：increase/reduce/change the price of [white/blue/size L/XS] [product] by N%/$N；改某颜色/尺寸变体的价格、给某商品某变体调价
 - 数据：某个 size/color 变体是**独立的 Simple Product**（SKU=`基础SKU-SIZE-COLOR`），它自己有 **Price** 字段——改变体价 = 打开那个 Simple 变体的编辑页改 Price 并 Save。定位变体：Catalog > Products 用**基础商品名关键词**搜（**剥掉颜色/尺寸/类别词**，如 "white Ingrid Running"→搜 `Ingrid`、"blue running tshirt"→搜 `tshirt`），grid 里找 SKU/name 含目标 size+color 的 **Type=Simple Product** 变体行并打开；或从配置型父产品（`Type=Configurable Product`）的 **Configurations** 变体网格定位那一行。**关键纠正**：① "running"/"tshirt" 是名字/类目、**不是 `Type` 筛选**（`Type` 选项只有 Simple/Virtual/Bundle/Configurable/Grouped/Downloadable 商品类型，选 `Running` 必然 option not found）；② **颜色/尺寸是变体属性、绝不能进商品名搜索**（否则 0 records）；③ **绝不用变体页上的 Size/Pattern/Color 属性下拉去"切换变体"**——那不导航到别的变体，还会展开遮挡下方 Price 框。百分比调价按变体**现价**算（降 13.5% = 现价×0.865；涨 N% = 现价×(1+N/100)），$N 定额直接加减。**目标价依赖变体运行时的当前 Price、绝不能 upfront 定死或留空**——价格步骤必须写成「**先读该变体 Price 字段的当前值 → 按系数算新值 → 再把算出的新值填入 Price**」（如现价 75.00、降 13.5% → 填 64.88）；decompose 别把 Price 目标写成空或凭空猜一个数。批量（"size L 及以上"/"所有蓝色 XS"）：对每个匹配变体逐个打开、逐个读现价算新价改 Save。
 - 步骤：
-1. Catalog > Products，清残留筛选。
+1. Catalog > Products，清掉已生效的无关筛选。
 2. 按基础商品名关键词搜（剥颜色/尺寸/类别词）。
 3. 定位目标 size/color 的 Simple 变体行并打开。
 4. 读该变体 Price 当前值，按系数算新值，填入 Price。
 5. Save；多个变体则逐个重复。
 
+## skill：把商品标记为缺货 / 上架（改 Stock Status，不是改 Quantity）
+- 触发：mark/make [product] (as) out of stock、set [product] out of stock/in stock、把某商品标记为缺货/下架/上架、设为有货/无货
+- 数据：**「缺货/有货」是 Stock Status 字段（In Stock / Out of Stock 下拉），提交后 POST `catalog/product/save/id/<id>/...`，post_data 含 `product[quantity_and_stock_status][is_in_stock]`（`0`=Out of Stock，`1`=In Stock）**。这与「库存数量 Quantity」是**两个不同字段**：`mark out of stock / 缺货 / 下架 / 上架`→改 **Stock Status 下拉**；`set quantity/stock to N / 库存改为 N`→才是改 **Quantity 数值框**。**绝不要用 Quantity=0 去替代 out of stock**（产生的不是 `is_in_stock=0`，任务不算完成）。**配置型商品（Type=Configurable Product）**：在**父产品**编辑页改一次 Stock Status 即标记整个商品——`Mark all <某商品> out of stock` 的 "all" 指的是**这一个商品整体**（父产品一次保存覆盖全部变体），**不是** foreach 逐个变体改；父产品自己通常没有可编辑的 Quantity，只有 Stock Status 下拉。简单商品（Simple）就在该商品自己的编辑页改。**定位必须锁定单个目标行，绝不能对匹配集做 foreach 逐行改**（这是 mutation，不是 lookup——过匹配会把无关商品也改掉）：Catalog > Products 用 **Filters 面板的 Name 列**（不是顶部 Search by keyword——keyword 会连描述一起搜、跨产品线过匹配），按**『精确原值 → 0 条回退产品线词』的标准阶梯**检索（两步都在同一 Name 列）：先用任务给的原值精确筛并读计数；商品名常带 **® / ™**（如真实名 `Gobi HeatTec® Tee`）会让精确 0 命中——**这不是失败，是触发回退**，回退时用**产品线/品牌词**（如 `Gobi`、`Aeon`），**不要选跨多个产品共用的面料/技术词**（如 `HeatTec` 会同时命中 `Gobi HeatTec®`、`Logan HeatTec®`… 几十条）。**易错点：绝不把回退结果集喂给 foreach**——模糊词一旦跨产品线，foreach 会批量误改并超时；回退后仍锁定**单行**。**行判别子 = Type=Configurable Product 且 Name 含产品线词**（产品线词筛选下父产品只有一行；跨系列词回退时 Type=Configurable 会剩多行——如 HeatTec 下 Gobi/Logan 两个父产品——必须再按 Name 锁定，选错行=改错商品）。**不要用 SKU 编行条件**——SKU 是内部编码（`MT06`、变体 `MT06-XS-Black`），不含产品名，「SKU 含 <产品词>」对任何行都不成立。**纯 mutate（无返回/确认诉求）**：Stock Status 那步不绑 returns、不读 current 值，finish 静态；成没成由 durable 验收（保存成功提示/返回列表）判定。**编排形态**：即使实体被标为多目标（"all …"），配置型商品也走**单次线性动作**——在「改 Stock Status 并保存」那一步声明 `covers_set=<实体提及原文>`（父产品一次保存即聚合覆盖全部变体），不写 foreach。
+- 步骤：
+1. Catalog > Products，清无关已生效筛选；Name 列精确原值筛选并读计数。
+2. 计数为 0 时同一 Name 列改用产品线/品牌词重筛。
+3. 按行判别子锁定唯一父产品行并进入编辑（禁 foreach、禁 SKU 谓词）。
+4. Stock Status 设为目标值，该步声明 covers_set=实体提及。
+5. Save，durable 验收；父产品一次保存覆盖全部变体。
+
 ## skill：按电话号查客户
 - 触发：phone number、电话号查客户、find customer with phone、customer name/email/与电话相关的客户查找
 - 数据：Customers grid 顶部 **Search by keyword**（全文**子串**匹配），不是 Filters 面板的 **Phone 列**精确筛选。电话在 Magento 存为带分隔符格式如 `(555) 229-3326`（括号区号 + 空格），任务给的 `555-229-3326` 这类纯连字符整串**不是存储值的连续子串**，整串搜（无论 keyword 还是 Phone 列）都 0 命中。能稳定命中的是去掉区号的**本地号段**（后 7 位，如 `229-3326`），它在各种分隔符格式下都连续。
 - 步骤：
-1. 进入 Customers > All Customers，先清除残留筛选
+1. 进入 Customers > All Customers，先清掉已生效的无关筛选
 2. 用顶部 Search by keyword 搜本地号段（去区号后 7 位，如 `229-3326`）
 3. 命中行读所需字段（Name、Email 等）输出
 

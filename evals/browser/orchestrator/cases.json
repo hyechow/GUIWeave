@@ -1,609 +1,637 @@
 [
-  {
-    "label": "检测查询-confirm-read 撑腰的 action 应写 dispatch 门（回归 20260615_100753 双判绿✓多烧2帧）",
-    "goal": "在 RoboTeam 中使用路径连通性工具检测站点 s10-站点10 到 s9-站点9 的连通性，并记录检测结果",
-    "expected": {
-      "min_statements": 3,
-      "has_read": true
-    },
-    "assertions": [
-      "key_action_has_confirm_read",
-      "confirm_read_action_uses_dispatch_gate",
-      "read_has_spec"
-    ],
-    "note": "回归 20260615_100753：分解产出 [navigation 进检测页 / action 设起终点并执行检测 / read 读连通状态 / finish]。结构对，但 action 验收抄了旧 prompt 示例的『检测结果（连通标记/不可达提示）已显示』——把结果判读塞回执行期 checker，与紧随其后的 read 双判同一个绿✓：T12 点检测即生效→T13 checker 看到绿✓却不信(『处理中』)→冗余重点击→T14 把同一个绿✓幻觉成『灰色问号』→replan/等待→T15 才 done，比应有多烧 2 帧。两帧截图核验绿✓常驻=非提示消失，是 checker 判读非确定性。根因=action success_condition 把结果写成终态，与规则8(confirm-read)对结果双判。修法分两层：L1 改 prompt(success_condition 加例外+示例改 dispatch 门，软)；L2 engine.normalize_confirm_read_gates 确定性兜底——凡 action 紧跟 read 就把验收改写成 dispatch 门(硬保证，词表无关，覆盖 create/submit/delete/检测全类)。本 case 测 L1 原始产出。"
+ {
+  "label": "检测查询-confirm-read 撑腰的 action 应写 dispatch 门（回归 20260615_100753 双判绿✓多烧2帧）",
+  "goal": "在 RoboTeam 中使用路径连通性工具检测站点 s10-站点10 到 s9-站点9 的连通性，并记录检测结果",
+  "expected": {
+   "min_statements": 3,
+   "has_read": true
   },
-  {
-    "label": "创建-confirm-read 撑腰的 action 应写 dispatch 门（泛化：非连通专用）",
-    "goal": "在 RoboTeam 新建一台虚拟机器人，并确认是否创建成功",
-    "expected": {
-      "min_statements": 3,
-      "has_read": true
-    },
-    "assertions": [
-      "key_action_has_confirm_read",
-      "confirm_read_action_uses_dispatch_gate",
-      "read_has_spec"
-    ],
-    "note": "泛化样本：把同一条不变量(confirm-read 撑腰的 action 验收=dispatch/defer 门，不把结果当终态)放到『创建』这种状态变更动作上，验证修法不是连通专用。期望分解：进虚拟机器人页(navigation)→新建(action，验收写『已提交创建/弹出提示/列表更新，成败由后续 read 判读』而非『创建成功提示已显示』)→确认创建结果(read，returns 含 创建结果，read_spec 写清成功/失败各看什么信号)→finish。断言词表无关：只看 action 验收是否含 dispatch(已点击/已提交/出现响应) 或 defer(成败由后续 read 判读) 信号。"
+  "assertions": [
+   "key_action_has_confirm_read",
+   "confirm_read_action_uses_dispatch_gate",
+   "read_has_spec"
+  ],
+  "note": "回归 20260615_100753：分解产出 [navigation 进检测页 / action 设起终点并执行检测 / read 读连通状态 / finish]。结构对，但 action 验收抄了旧 prompt 示例的『检测结果（连通标记/不可达提示）已显示』——把结果判读塞回执行期 checker，与紧随其后的 read 双判同一个绿✓：T12 点检测即生效→T13 checker 看到绿✓却不信(『处理中』)→冗余重点击→T14 把同一个绿✓幻觉成『灰色问号』→replan/等待→T15 才 done，比应有多烧 2 帧。两帧截图核验绿✓常驻=非提示消失，是 checker 判读非确定性。根因=action success_condition 把结果写成终态，与规则8(confirm-read)对结果双判。修法分两层：L1 改 prompt(success_condition 加例外+示例改 dispatch 门，软)；L2 engine.normalize_confirm_read_gates 确定性兜底——凡 action 紧跟 read 就把验收改写成 dispatch 门(硬保证，词表无关，覆盖 create/submit/delete/检测全类)。本 case 测 L1 原始产出。"
+ },
+ {
+  "label": "创建-confirm-read 撑腰的 action 应写 dispatch 门（泛化：非连通专用）",
+  "goal": "在 RoboTeam 新建一台虚拟机器人，并确认是否创建成功",
+  "expected": {
+   "min_statements": 3,
+   "has_read": true
   },
-  {
-    "label": "登录前置-验收用与数据无关的认证标志，别要登录表单/也别要业务数据（回归 153314+162312 卡死）",
-    "goal": "在 RoboTeam 中登录并进入地图列表页面",
-    "expected": {
-      "min_statements": 1
-    },
-    "assertions": [
-      "auth_milestone_terminal_state"
-    ],
-    "note": "两次登录卡死回归合一。①153314：登录建成『打开登录页』，验收=账号密码框——已登录回不去登录页，永不成立、死第一步。②162312：登录建成终态步了，但验收写成『首页主内容含机器人/订单监控卡片』——卡片要等地图上传(后面的步骤)才有，没数据时为空，循环依赖、仍不可达。【软信号·有生产兜底】「登录后长什么样」是 app 特定事实，已下放 per-app 知识库：RoboTeam _check.md 加了登录判据(看到左侧导航/功能页标题=已登录、无业务数据也算、且明确『验收门写成登录页/业务数据但已显示导航就判 done』)，checker 权威能盖过写错的登录门→生产不会卡死。decomposer 的 rule 9 已缩成通用原则(别写登录表单、别拿业务数据当标志，具体标志以应用知识为准)，不再枚举 app 特定标志。故本断言 FAIL = decompose 门可更干净(软)，不是生产 bug(同 confirm-read 由 L2 兜底)。断言仍查：登录 milestone 验收不得含 账号/密码/登录按钮，也不得含 卡片/监控/订单/统计。"
+  "assertions": [
+   "key_action_has_confirm_read",
+   "confirm_read_action_uses_dispatch_gate",
+   "read_has_spec"
+  ],
+  "note": "泛化样本：把同一条不变量(confirm-read 撑腰的 action 验收=dispatch/defer 门，不把结果当终态)放到『创建』这种状态变更动作上，验证修法不是连通专用。期望分解：进虚拟机器人页(navigation)→新建(action，验收写『已提交创建/弹出提示/列表更新，成败由后续 read 判读』而非『创建成功提示已显示』)→确认创建结果(read，returns 含 创建结果，read_spec 写清成功/失败各看什么信号)→finish。断言词表无关：只看 action 验收是否含 dispatch(已点击/已提交/出现响应) 或 defer(成败由后续 read 判读) 信号。"
+ },
+ {
+  "label": "登录前置-验收用与数据无关的认证标志，别要登录表单/也别要业务数据（回归 153314+162312 卡死）",
+  "goal": "在 RoboTeam 中登录并进入地图列表页面",
+  "expected": {
+   "min_statements": 1
   },
-  {
-    "label": "登录前置-已知当前站点和首页时应作为 precondition 而非重新登录（生产形态）",
-    "goal": "在 RoboTeam 中登录并进入地图列表页面",
-    "platform": "browser",
-    "knowledge_app": "RoboTeam",
-    "current_site": "RoboTeam",
-    "current_url": "http://192.168.31.57:22000/",
-    "current_title": "RoboTeam 首页",
-    "expected": {
-      "min_statements": 1
-    },
-    "assertions": [
-      "auth_milestone_terminal_state",
-      "current_context_no_login_action"
-    ],
-    "note": "生产链路会在 decompose 前注入当前前台 tab 的站点/URL/title。该上下文足以说明当前已在 RoboTeam 系统内，『登录』应被建模为确保态 precondition（初始若已满足则第一帧 done），而不是重新输入 admin/admin 的 action。这个 case 与上一条无上下文软信号区分：无上下文时 planner 可能保守；有 current_site/current_url/current_title 时应避免重新登录动作。"
+  "assertions": [
+   "auth_milestone_terminal_state"
+  ],
+  "note": "两次登录卡死回归合一。①153314：登录建成『打开登录页』，验收=账号密码框——已登录回不去登录页，永不成立、死第一步。②162312：登录建成终态步了，但验收写成『首页主内容含机器人/订单监控卡片』——卡片要等地图上传(后面的步骤)才有，没数据时为空，循环依赖、仍不可达。【软信号·有生产兜底】「登录后长什么样」是 app 特定事实，已下放 per-app 知识库：RoboTeam _check.md 加了登录判据(看到左侧导航/功能页标题=已登录、无业务数据也算、且明确『验收门写成登录页/业务数据但已显示导航就判 done』)，checker 权威能盖过写错的登录门→生产不会卡死。decomposer 的 rule 9 已缩成通用原则(别写登录表单、别拿业务数据当标志，具体标志以应用知识为准)，不再枚举 app 特定标志。故本断言 FAIL = decompose 门可更干净(软)，不是生产 bug(同 confirm-read 由 L2 兜底)。断言仍查：登录 milestone 验收不得含 账号/密码/登录按钮，也不得含 卡片/监控/订单/统计。"
+ },
+ {
+  "label": "登录前置-已知当前站点和首页时应作为 precondition 而非重新登录（生产形态）",
+  "goal": "在 RoboTeam 中登录并进入地图列表页面",
+  "platform": "browser",
+  "knowledge_app": "RoboTeam",
+  "current_site": "RoboTeam",
+  "current_url": "http://192.168.31.57:22000/",
+  "current_title": "RoboTeam 首页",
+  "expected": {
+   "min_statements": 1
   },
-  {
-    "label": "读了就引用-新建后编辑系统命名的实体应用 {var[字段]} 接力（回归 20260615_163258 单机器人才侥幸对）",
-    "goal": "在 RoboTeam 新建一台虚拟机器人并启用加入调度，再把这台机器人的预设站点设为 s10",
-    "expected": {
-      "min_statements": 3,
-      "has_read": true
-    },
-    "assertions": [
-      "key_action_has_confirm_read",
-      "read_has_spec",
-      "action_targets_read_entity"
-    ],
-    "note": "回归 20260615_163258 的数据流缺口。该 run 分解=[nav / action 新建+启用 / read 读实际名称(var=r,returns=[实际名称]) / action 编辑设站点 / read 确认]。read 确实把『实际名称=lucas-10003』读进了 env，但『编辑机器人…』那步是裸名词、没用 {r[实际名称]} 引用——planner 是从屏幕上拿到的名字(列表当时只有这一台)，不是从 m2 的 read 接力来的。所以数据流到了 if/finish/answer，却没到『下一步动作的目标选取』；列表里有同类兄弟就会指错，这次只是侥幸。修法=规则10『读了就引用』：后续 action 操作前面 read 识别出的系统生成实体时，name 用 {var[字段]} 引用，解释器(runner._fill)执行前用 env 真实值填好(『编辑机器人 {r[实际名称]}』→『编辑机器人 lucas-10003』)，精确指向该行。断言 action_targets_read_entity=存在某 action 的 name 含一个解析得到真实 read 字段的 {var[字段]} 引用。"
+  "assertions": [
+   "auth_milestone_terminal_state",
+   "current_context_no_login_action"
+  ],
+  "note": "生产链路会在 decompose 前注入当前前台 tab 的站点/URL/title。该上下文足以说明当前已在 RoboTeam 系统内，『登录』应被建模为确保态 precondition（初始若已满足则第一帧 done），而不是重新输入 admin/admin 的 action。这个 case 与上一条无上下文软信号区分：无上下文时 planner 可能保守；有 current_site/current_url/current_title 时应避免重新登录动作。"
+ },
+ {
+  "label": "读了就引用-新建后编辑系统命名的实体应用 {var[字段]} 接力（回归 20260615_163258 单机器人才侥幸对）",
+  "goal": "在 RoboTeam 新建一台虚拟机器人并启用加入调度，再把这台机器人的预设站点设为 s10",
+  "expected": {
+   "min_statements": 3,
+   "has_read": true
   },
-  {
-    "label": "连通检测门控建单-禁止幻觉新建机器人/编辑预设站点（回归 20260615_194320 幻觉造实体葬送整 run）",
-    "goal": "在 RoboTeam 中使用路径连通性工具检测站点 s10-站点10 到 s9-站点9 的连通性，如果联通，就给机器人一个移动订单，先移动到 s10-站点10，再移动到 s9-站点9",
-    "expected": {
-      "has_read": true,
-      "min_statements": 3
-    },
-    "assertions": [
-      "connectivity_gates_order_no_robot_creation",
-      "read_has_spec"
-    ],
-    "note": "回归 20260615_194320：目标=检测 s10→s9 连通性，连通则给【现成】机器人下一个移动订单(先到 s10 再到 s9)。分解器 ~1/4 概率幻觉——把它读成『先新建一台虚拟机器人 → 编辑设预设站点 s10 → 再下单』，把 4 步目标没要求的造实体前置块塞在连通检测之前。该 run 因此 turn 1-13 全耗在幻觉机器人上(填新建表单、选预设地图)，turn 14 才去真任务、误点进『服务器监控』失败，连通检测一步没做成；而页面本来就有现成 lucas-10003。放大因素：①知识选择器因 goal 含『机器人』喂进了 s15『如何创建虚拟机器人』章节；②decompose 不传截图、看不到现成机器人只能猜。read-then-reference 本身没错(trial 2/4 都正确地『读现有机器人→引用』)，错在分解器有概率选『新建』而非『读现有』。断言两条不变量：① 建订单 action 必须在『连通』read 的 if 分支内(受门控)、顶层不得有无条件建单；② 连通检测之前不得出现 新建/创建机器人 或 编辑预设站点 的造实体步骤。修向=分解保真规则(目标要操作某实体时默认它已存在，用 read 从现有列表选取，绝不臆造新建/创建/配置步骤，除非目标动词本身就是新建/创建)。"
+  "assertions": [
+   "key_action_has_confirm_read",
+   "read_has_spec",
+   "action_targets_read_entity"
+  ],
+  "note": "回归 20260615_163258 的数据流缺口。该 run 分解=[nav / action 新建+启用 / read 读实际名称(var=r,returns=[实际名称]) / action 编辑设站点 / read 确认]。read 确实把『实际名称=lucas-10003』读进了 env，但『编辑机器人…』那步是裸名词、没用 {r[实际名称]} 引用——planner 是从屏幕上拿到的名字(列表当时只有这一台)，不是从 m2 的 read 接力来的。所以数据流到了 if/finish/answer，却没到『下一步动作的目标选取』；列表里有同类兄弟就会指错，这次只是侥幸。修法=规则10『读了就引用』：后续 action 操作前面 read 识别出的系统生成实体时，name 用 {var[字段]} 引用，解释器(runner._fill)执行前用 env 真实值填好(『编辑机器人 {r[实际名称]}』→『编辑机器人 lucas-10003』)，精确指向该行。断言 action_targets_read_entity=存在某 action 的 name 含一个解析得到真实 read 字段的 {var[字段]} 引用。"
+ },
+ {
+  "label": "连通检测门控建单-禁止幻觉新建机器人/编辑预设站点（回归 20260615_194320 幻觉造实体葬送整 run）",
+  "goal": "在 RoboTeam 中使用路径连通性工具检测站点 s10-站点10 到 s9-站点9 的连通性，如果联通，就给机器人一个移动订单，先移动到 s10-站点10，再移动到 s9-站点9",
+  "expected": {
+   "has_read": true,
+   "min_statements": 3
   },
-  {
-    "label": "连通后建单要先导航·不读列表挑第N个（回归 20260615_211634 建单落连通面板上空判完成）",
-    "goal": "在 RoboTeam 中使用路径连通性工具检测站点 s10-站点10 到 s9-站点9 的连通性，如果联通，则给机器人发送移动订单，先移动到 s10-站点10，再移动到 s9-站点9",
-    "expected": {
-      "has_read": true,
-      "min_statements": 3
-    },
-    "assertions": [
-      "cross_page_action_navigates_no_list_pick",
-      "order_action_has_confirm_read",
-      "read_has_spec"
-    ],
-    "note": "回归 20260615_211634（幻觉已修后暴露的下一层 bug）。这次分解干净(连通→if 连通→建单，无新建机器人幻觉)、连通也检测对了(是否连通=是)，但建单仍失败：THEN 分支是 read 机器人列表 → action 建单，全程没有『导航到机器人/订单页』。后果①read 落在连通检测面板上读『机器人名称列表』→ 读空；②建单 action 也留在连通面板上，它的 confirm-read 宽松 dispatch 门被上一步遗留的连通绿✓蹭中(『界面给出响应』)→ 未执行任何动作就被空判完成(静默假成功)→ 订单状态=失败。根因=read 读当前帧、action 操作当前帧，分解器漏了换页导航 + 误把规则10 套到集合(读列表挑『第1台』，集合索引表达不了)。修法两条 prompt：规则3 加上下文/导航保真(读某页数据/操作某页元素前先 navigation 到目标页)、规则10 收口(只接力单个实体，别读列表挑第N个)。断言：A1 连通检测之后、建单 action 之前要有 navigation；A2 不得 read『*列表』字段。注：导航保真 ~50% 软信号(decompose 通用可靠性)，没补导航时由 runtime _fill 的 fail-fast 兜底(读空→诚实报错，不再静默假成功)。"
+  "assertions": [
+   "connectivity_gates_order_no_robot_creation",
+   "read_has_spec"
+  ],
+  "note": "回归 20260615_194320：目标=检测 s10→s9 连通性，连通则给【现成】机器人下一个移动订单(先到 s10 再到 s9)。分解器 ~1/4 概率幻觉——把它读成『先新建一台虚拟机器人 → 编辑设预设站点 s10 → 再下单』，把 4 步目标没要求的造实体前置块塞在连通检测之前。该 run 因此 turn 1-13 全耗在幻觉机器人上(填新建表单、选预设地图)，turn 14 才去真任务、误点进『服务器监控』失败，连通检测一步没做成；而页面本来就有现成 lucas-10003。放大因素：①知识选择器因 goal 含『机器人』喂进了 s15『如何创建虚拟机器人』章节；②decompose 不传截图、看不到现成机器人只能猜。read-then-reference 本身没错(trial 2/4 都正确地『读现有机器人→引用』)，错在分解器有概率选『新建』而非『读现有』。断言两条不变量：① 建订单 action 必须在『连通』read 的 if 分支内(受门控)、顶层不得有无条件建单；② 连通检测之前不得出现 新建/创建机器人 或 编辑预设站点 的造实体步骤。修向=分解保真规则(目标要操作某实体时默认它已存在，用 read 从现有列表选取，绝不臆造新建/创建/配置步骤，除非目标动词本身就是新建/创建)。"
+ },
+ {
+  "label": "连通后建单要先导航·不读列表挑第N个（回归 20260615_211634 建单落连通面板上空判完成）",
+  "goal": "在 RoboTeam 中使用路径连通性工具检测站点 s10-站点10 到 s9-站点9 的连通性，如果联通，则给机器人发送移动订单，先移动到 s10-站点10，再移动到 s9-站点9",
+  "expected": {
+   "has_read": true,
+   "min_statements": 3
   },
-  {
-    "label": "条件操作符-empty-错误提示原文为空才继续",
-    "goal": "在 RoboTeam 创建订单后读取「错误提示」原文；如果「错误提示」为空，则读取订单状态并汇报，否则直接汇报这个错误提示",
-    "expected": {
-      "has_read": true,
-      "has_finish": true,
-      "min_statements": 2
-    },
-    "assertions": [
-      "condition_uses_empty",
-      "read_has_spec"
-    ],
-    "note": "条件扩展回归：读取字段本身是原文错误提示，分支语义是『字段为空/非空』，不应只能靠 ==/!=。期望 decompose 生成 read(错误提示) + if cond_cmp=empty；错误提示为空走继续读取订单状态，否则 finish 报错。"
+  "assertions": [
+   "cross_page_action_navigates_no_list_pick",
+   "order_action_has_confirm_read",
+   "read_has_spec"
+  ],
+  "note": "回归 20260615_211634（幻觉已修后暴露的下一层 bug）。这次分解干净(连通→if 连通→建单，无新建机器人幻觉)、连通也检测对了(是否连通=是)，但建单仍失败：THEN 分支是 read 机器人列表 → action 建单，全程没有『导航到机器人/订单页』。后果①read 落在连通检测面板上读『机器人名称列表』→ 读空；②建单 action 也留在连通面板上，它的 confirm-read 宽松 dispatch 门被上一步遗留的连通绿✓蹭中(『界面给出响应』)→ 未执行任何动作就被空判完成(静默假成功)→ 订单状态=失败。根因=read 读当前帧、action 操作当前帧，分解器漏了换页导航 + 误把规则10 套到集合(读列表挑『第1台』，集合索引表达不了)。修法两条 prompt：规则3 加上下文/导航保真(读某页数据/操作某页元素前先 navigation 到目标页)、规则10 收口(只接力单个实体，别读列表挑第N个)。断言：A1 连通检测之后、建单 action 之前要有 navigation；A2 不得 read『*列表』字段。注：导航保真 ~50% 软信号(decompose 通用可靠性)，没补导航时由 runtime _fill 的 fail-fast 兜底(读空→诚实报错，不再静默假成功)。"
+ },
+ {
+  "label": "条件操作符-empty-错误提示原文为空才继续",
+  "goal": "在 RoboTeam 创建订单后读取「错误提示」原文；如果「错误提示」为空，则读取订单状态并汇报，否则直接汇报这个错误提示",
+  "expected": {
+   "has_read": true,
+   "has_finish": true,
+   "min_statements": 2
   },
-  {
-    "label": "条件操作符-contains-toast原文包含创建成功",
-    "goal": "在 RoboTeam 创建订单后读取「页面提示文案」原文；如果「页面提示文案」包含「创建成功」，则汇报创建成功，否则读取错误提示并汇报失败原因",
-    "expected": {
-      "has_read": true,
-      "has_finish": true,
-      "min_statements": 2
-    },
-    "assertions": [
-      "condition_uses_contains",
-      "read_has_spec"
-    ],
-    "note": "条件扩展回归：toast/提示文案常带编号、时间或附加说明，精确 == 过脆。期望 decompose 对原文提示字段使用 cond_cmp=contains、cond_value=创建成功。"
+  "assertions": [
+   "condition_uses_empty",
+   "read_has_spec"
+  ],
+  "note": "条件扩展回归：读取字段本身是原文错误提示，分支语义是『字段为空/非空』，不应只能靠 ==/!=。期望 decompose 生成 read(错误提示) + if cond_cmp=empty；错误提示为空走继续读取订单状态，否则 finish 报错。"
+ },
+ {
+  "label": "条件操作符-contains-toast原文包含创建成功",
+  "goal": "在 RoboTeam 创建订单后读取「页面提示文案」原文；如果「页面提示文案」包含「创建成功」，则汇报创建成功，否则读取错误提示并汇报失败原因",
+  "expected": {
+   "has_read": true,
+   "has_finish": true,
+   "min_statements": 2
   },
-  {
-    "label": "条件操作符-in-订单状态多候选视为已创建",
-    "goal": "在 RoboTeam 读取新订单的「订单状态」原文；如果「订单状态」是「待执行」「进行中」「已完成」中的任一值，则汇报订单已创建，否则汇报异常状态",
-    "expected": {
-      "has_read": true,
-      "has_finish": true,
-      "min_statements": 2
-    },
-    "assertions": [
-      "condition_uses_in_values",
-      "read_has_spec"
-    ],
-    "note": "条件扩展回归：一个业务成功态可能对应多个状态枚举。期望 decompose 使用 cond_cmp=in 且 cond_values 包含待执行/进行中/已完成，而不是堆多个 if 或把多个候选塞进单个字符串。"
+  "assertions": [
+   "condition_uses_contains",
+   "read_has_spec"
+  ],
+  "note": "条件扩展回归：toast/提示文案常带编号、时间或附加说明，精确 == 过脆。期望 decompose 对原文提示字段使用 cond_cmp=contains、cond_value=创建成功。"
+ },
+ {
+  "label": "条件操作符-in-订单状态多候选视为已创建",
+  "goal": "在 RoboTeam 读取新订单的「订单状态」原文；如果「订单状态」是「待执行」「进行中」「已完成」中的任一值，则汇报订单已创建，否则汇报异常状态",
+  "expected": {
+   "has_read": true,
+   "has_finish": true,
+   "min_statements": 2
   },
-  {
-    "label": "WebArena shopping_admin review count-筛选只是触发器，计数由 read 读取（回归 task 15）",
-    "goal": "Get the total number of reviews that our store received so far that mention term \"best\"",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://localhost:7780/admin/",
-    "current_title": "Magento Admin",
-    "normalize": true,
-    "expected": {
-      "has_read": true,
-      "min_statements": 2
-    },
-    "assertions": [
-      "shopping_admin_review_count_uses_action_read",
-      "read_has_spec"
-    ],
-    "note": "回归 WebArena task 15：目标是统计 Review 含 best 的评论总数。Magento Admin 的 grid 在筛选后会显示 N records found，这个计数才是权威输出；行标题/摘要不一定包含 best，不能让 filter checker 用可见行内容重判筛选成败。本 case 按 WebArena 生产链路固定注入 shopping_admin 知识和当前站点元信息，并启用 normalize=true，期望形态为：导航/确保进入 Reviews 页 → action 执行 Review 搜索/筛选 best（dispatch/defer 门）→ read 从 grid summary 读取记录数 → finish/汇报。若 raw decompose 生成 filter→read，normalize_confirm_read_gates 应把它转成 action→read。"
+  "assertions": [
+   "condition_uses_in_values",
+   "read_has_spec"
+  ],
+  "note": "条件扩展回归：一个业务成功态可能对应多个状态枚举。期望 decompose 使用 cond_cmp=in 且 cond_values 包含待执行/进行中/已完成，而不是堆多个 if 或把多个候选塞进单个字符串。"
+ },
+ {
+  "label": "WebArena shopping_admin review count-筛选只是触发器，计数由 read 读取（回归 task 15）",
+  "goal": "Get the total number of reviews that our store received so far that mention term \"best\"",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://localhost:7780/admin/",
+  "current_title": "Magento Admin",
+  "normalize": true,
+  "expected": {
+   "has_read": true,
+   "min_statements": 2
   },
-  {
-    "label": "WebArena shopping_admin top 2 search terms-当前视口未见目标时先定位再 read（回归 task 42）",
-    "goal": "Get the top 2 search term(s) in my store",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "screenshot": "evals/browser/orchestrator/screenshots/42_dashboard.png",
-    "normalize": true,
-    "expected": {
-      "has_read": true,
-      "min_statements": 2
-    },
-    "assertions": [
-      "shopping_admin_top_terms_locates_before_read",
-      "shopping_admin_top_terms_does_not_read_last_terms",
-      "shopping_admin_top_terms_not_unsorted_report",
-      "read_has_spec"
-    ],
-    "note": "回归 WebArena task 42：目标是商店前 2 个搜索词（按热度 Top）。失败 run（20260617_134651/140640）的 decompose 被 dashboard 截图和知识库中的 Dashboard snapshot 描述误导，把当前视口里的 'Last Search Terms' 摘要小部件（按时间/最近）当成目标，产了裸 read（无前置 navigation/定位）→ 提交 ['tanks','nike']，官方 GT 为 ['hollister','joust bag']。后续 run（20260617_143128）已导航到 Search Terms Report，但直接读默认前两行，仍得到 ['tanks','nike']，说明报表默认顺序不能假定为 Top。期望形态：read 前必须先有 navigation，用于在当前 Dashboard 中滚动/定位到同口径的 Top Search Terms 区块；若使用 Search Terms Report，则必须先按 Uses/Count 降序排序再 read。read_spec 不得指向 Last Search Terms。截图 gitignore 不入库，缺失时 eval 自动 SKIP。"
+  "assertions": [
+   "shopping_admin_review_count_uses_action_read",
+   "read_has_spec"
+  ],
+  "note": "回归 WebArena task 15：目标是统计 Review 含 best 的评论总数。Magento Admin 的 grid 在筛选后会显示 N records found，这个计数才是权威输出；行标题/摘要不一定包含 best，不能让 filter checker 用可见行内容重判筛选成败。本 case 按 WebArena 生产链路固定注入 shopping_admin 知识和当前站点元信息，并启用 normalize=true，期望形态为：导航/确保进入 Reviews 页 → action 执行 Review 搜索/筛选 best（dispatch/defer 门）→ read 从 grid summary 读取记录数 → finish/汇报。若 raw decompose 生成 filter→read，normalize_confirm_read_gates 应把它转成 action→read。"
+ },
+ {
+  "label": "WebArena shopping_admin top 2 search terms-当前视口未见目标时先定位再 read（回归 task 42）",
+  "goal": "Get the top 2 search term(s) in my store",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "screenshot": "evals/browser/orchestrator/screenshots/42_dashboard.png",
+  "normalize": true,
+  "expected": {
+   "has_read": true,
+   "min_statements": 2
   },
-  {
-    "label": "WebArena shopping_admin order-count emails- completed second most uses Orders grid source (task 63)",
-    "goal": "Get customer email(s) who completed the second most number of orders in the entire history",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 2
-    },
-    "assertions": [
-      "shopping_admin_order_count_uses_orders_grid_source",
-      "shopping_admin_order_count_uses_data_query",
-      "data_query_sql_no_schema_mapping_text",
-      "shopping_admin_completed_order_count_filters_complete",
-      "shopping_admin_completed_order_count_clears_unrequested_filters"
-    ],
-    "note": "回归 WebArena task 63。**口径定论（实测 live run 20260629_123909：foreach 采 ID+Customer Email+Status 全量后离线分两种口径核对）**：intent 'who completed the second most number of orders' 必须按 **Status = Complete** 计数——期望答案 helloworld@yahoo.com + michael.nguyen@yahoo.com 这两人**只有在 Complete 口径下计数才相等（各 8）**，any-state 下是 14 vs 12 永远凑不齐；Complete 口径『第二多』正是这两人（全量下 janesmith456 唯一第一）。前一会话『completed=动词=any-state』的判断被实测推翻，已翻回 Complete。步骤：进入 Sales > Orders，先 Clear all 清掉残留 Active filters（Magento 跨会话保留上次筛选），再只应用 Status = Complete，采全量原始订单行（筛后约 155 行，必须采全否则个位数计数的名次会乱），data_query 按实际 normalized column identifiers 做 group/count/rank/tie，不把 Header->column 映射文本或 quoted UI 表头写进 SQL。与 task 64 区分：task 64 字面 'in any state' 才不筛 Status。早期回归（20260617_145312/224236/230650）：曾错走 Reports>Customers>Order Count（缺 Customer Email）、SQL 误用 schema 映射文本 / quoted UI 表头返回空。**运行期 bad case（live 20260629_130033，decompose 抓不到）**：Complete plan 正确、采到 153 行,但 Magento Orders 网格未渲染 Customer Email 列,采集器静默丢列（rows 仅 ID+Status）→ data_query 出空、无答案。需在 foreach 前显式用 Columns 控件启用 Customer Email 列（别依赖残留网格状态），且采集器应对『声明 returns 但网格缺列』报错而非静默丢列。详见 memory webarena-63-customer-email-column-not-collected。"
+  "assertions": [
+   "shopping_admin_top_terms_locates_before_read",
+   "shopping_admin_top_terms_does_not_read_last_terms",
+   "shopping_admin_top_terms_not_unsorted_report",
+   "read_has_spec"
+  ],
+  "note": "回归 WebArena task 42：目标是商店前 2 个搜索词（按热度 Top）。失败 run（20260617_134651/140640）的 decompose 被 dashboard 截图和知识库中的 Dashboard snapshot 描述误导，把当前视口里的 'Last Search Terms' 摘要小部件（按时间/最近）当成目标，产了裸 read（无前置 navigation/定位）→ 提交 ['tanks','nike']，官方 GT 为 ['hollister','joust bag']。后续 run（20260617_143128）已导航到 Search Terms Report，但直接读默认前两行，仍得到 ['tanks','nike']，说明报表默认顺序不能假定为 Top。期望形态：read 前必须先有 navigation，用于在当前 Dashboard 中滚动/定位到同口径的 Top Search Terms 区块；若使用 Search Terms Report，则必须先按 Uses/Count 降序排序再 read。read_spec 不得指向 Last Search Terms。截图 gitignore 不入库，缺失时 eval 自动 SKIP。"
+ },
+ {
+  "label": "WebArena shopping_admin order-count emails- completed second most uses Orders grid source (task 63)",
+  "goal": "Get customer email(s) who completed the second most number of orders in the entire history",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 2
   },
-  {
-    "label": "WebArena shopping_admin order-count emails- any-state exact N uses Orders grid source (task 64)",
-    "goal": "Get customer email(s) who have 2 orders in any state in the entire history",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 2
-    },
-    "assertions": [
-      "shopping_admin_order_count_uses_orders_grid_source",
-      "shopping_admin_order_count_uses_data_query",
-      "shopping_admin_any_state_order_count_no_complete_filter",
-      "shopping_admin_any_state_order_count_clears_active_filters"
-    ],
-    "note": "回归 WebArena task 64 / logs/gui_agent/webarena/browser/20260617_145751：失败分解选择 Customers grid，并尝试依赖不可靠的 Total Orders 列。二次回归 logs/gui_agent/webarena/browser/20260617_211252：分解已用 Orders grid + data_query，但浏览器会话继承了 task 63 的 Active filters: Status Complete，导致 any-state 统计仍只数 completed orders。期望使用 Sales > Orders / Orders grid 作为原始订单行数据源，不加 Status = Complete 过滤，并先确保清掉已有 Active filters（如点击 Clear all），采集或导出完整行后 data_query 按 Customer Email 计数，返回 count exactly 2 的全部邮箱。"
+  "assertions": [
+   "shopping_admin_order_count_uses_orders_grid_source",
+   "shopping_admin_order_count_uses_data_query",
+   "data_query_sql_no_schema_mapping_text",
+   "shopping_admin_completed_order_count_filters_complete",
+   "shopping_admin_completed_order_count_clears_unrequested_filters"
+  ],
+  "note": "回归 WebArena task 63。**口径定论（实测 live run 20260629_123909：foreach 采 ID+Customer Email+Status 全量后离线分两种口径核对）**：intent 'who completed the second most number of orders' 必须按 **Status = Complete** 计数——期望答案 helloworld@yahoo.com + michael.nguyen@yahoo.com 这两人**只有在 Complete 口径下计数才相等（各 8）**，any-state 下是 14 vs 12 永远凑不齐；Complete 口径『第二多』正是这两人（全量下 janesmith456 唯一第一）。前一会话『completed=动词=any-state』的判断被实测推翻，已翻回 Complete。步骤：进入 Sales > Orders，先 Clear all 清掉残留 Active filters（Magento 跨会话保留上次筛选），再只应用 Status = Complete，采全量原始订单行（筛后约 155 行，必须采全否则个位数计数的名次会乱），data_query 按实际 normalized column identifiers 做 group/count/rank/tie，不把 Header->column 映射文本或 quoted UI 表头写进 SQL。与 task 64 区分：task 64 字面 'in any state' 才不筛 Status。早期回归（20260617_145312/224236/230650）：曾错走 Reports>Customers>Order Count（缺 Customer Email）、SQL 误用 schema 映射文本 / quoted UI 表头返回空。**运行期 bad case（live 20260629_130033，decompose 抓不到）**：Complete plan 正确、采到 153 行,但 Magento Orders 网格未渲染 Customer Email 列,采集器静默丢列（rows 仅 ID+Status）→ data_query 出空、无答案。需在 foreach 前显式用 Columns 控件启用 Customer Email 列（别依赖残留网格状态），且采集器应对『声明 returns 但网格缺列』报错而非静默丢列。详见 memory webarena-63-customer-email-column-not-collected。"
+ },
+ {
+  "label": "WebArena shopping_admin order-count emails- any-state exact N uses Orders grid source (task 64)",
+  "goal": "Get customer email(s) who have 2 orders in any state in the entire history",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 2
   },
-  {
-    "label": "WebArena shopping_admin monthly completed order count uses page filters before data_query (task 65)",
-    "goal": "Get the monthly count of completed orders from January 2023 through May 2023, inclusive. Return a list of objects with keys \"month\" (month name) and \"count\" (as integer) only, without any additional details.",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 2
-    },
-    "assertions": [
-      "shopping_admin_order_count_uses_orders_grid_source",
-      "shopping_admin_order_count_uses_data_query",
-      "data_query_sql_no_schema_mapping_text",
-      "shopping_admin_monthly_orders_filters_page_first",
-      "shopping_admin_monthly_orders_returns_result_objects",
-      "shopping_admin_monthly_orders_query_uses_filtered_rows"
-    ],
-    "note": "回归 logs/gui_agent/webarena/browser/20260618_100104：UI 只筛了 Status=Complete，没有先用页面 Purchase Date 范围筛选；data_query 又用 status='Complete'（实际 provider 为 lowercase complete）和 month_key/cnt 别名，最终 returns month/count 被静默填空。期望：进入 Sales > Orders 后先通过页面 Filters 设置 Status=Complete 与 Purchase Date 01/01/2023-05/31/2023，再读取完整 Orders grid，用 data_query 按 created_at 的月份聚合，SQL 输出 month/count 对象列，returns=['result']，finish 直接返回对象数组。"
+  "assertions": [
+   "shopping_admin_order_count_uses_orders_grid_source",
+   "shopping_admin_order_count_uses_data_query",
+   "shopping_admin_any_state_order_count_no_complete_filter",
+   "shopping_admin_any_state_order_count_clears_active_filters"
+  ],
+  "note": "回归 WebArena task 64 / logs/gui_agent/webarena/browser/20260617_145751：失败分解选择 Customers grid，并尝试依赖不可靠的 Total Orders 列。二次回归 logs/gui_agent/webarena/browser/20260617_211252：分解已用 Orders grid + data_query，但浏览器会话继承了 task 63 的 Active filters: Status Complete，导致 any-state 统计仍只数 completed orders。期望使用 Sales > Orders / Orders grid 作为原始订单行数据源，不加 Status = Complete 过滤，并先确保清掉已有 Active filters（如点击 Clear all），采集或导出完整行后 data_query 按 Customer Email 计数，返回 count exactly 2 的全部邮箱。"
+ },
+ {
+  "label": "WebArena shopping_admin monthly completed order count uses page filters before data_query (task 65)",
+  "goal": "Get the monthly count of completed orders from January 2023 through May 2023, inclusive. Return a list of objects with keys \"month\" (month name) and \"count\" (as integer) only, without any additional details.",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 2
   },
-  {
-    "label": "意图解析→产品评论评分查询:使用 Reviews 数据源且产品约束绑定 Product 字段（回归 task-113）",
-    "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
-    "knowledge_app": "shopping_admin",
-    "resolution": [
-      {
-        "mention": "Olivia zip jacket",
-        "type": "product",
-        "match_mode": "approximate",
-        "search_key": "Olivia"
-      }
-    ],
-    "expected": {
-      "min_statements": 3,
-      "has_read": true
-    },
-    "assertions": [
-      "product_lookup_uses_product_field",
-      "shopping_admin_review_rating_initial_uses_reviews_source",
-      "uses_foreach_iteration",
-      "shopping_admin_review_rating_reorch_drills_detail",
-      "filter_leads_with_exact_value",
-      "browser_drill_uses_url_direct"
-    ],
-    "note": "活跑 124258 三连错：编排器把产品词当评论关键词筛进 Review 文本列、或退化成 Catalog > Products 商品详情路线，导致读不到评论评分。这个 eval 不再规定『先精确后放宽』，因为那是运行策略，不是应用知识；只锁住通用边界：以 Reviews/All Reviews 评论集合为数据源，涉及产品约束时绑定 Product 字段/列，随后 list_read 候选评论行，foreach 逐条打开 Review Detail 读取 Detailed Rating + Nickname，再 data_query 筛 rating<=3。",
-    "platform": "browser"
+  "assertions": [
+   "shopping_admin_order_count_uses_orders_grid_source",
+   "shopping_admin_order_count_uses_data_query",
+   "data_query_sql_no_schema_mapping_text",
+   "shopping_admin_monthly_orders_filters_page_first",
+   "shopping_admin_monthly_orders_returns_result_objects",
+   "shopping_admin_monthly_orders_query_uses_filtered_rows"
+  ],
+  "note": "回归 logs/gui_agent/webarena/browser/20260618_100104：UI 只筛了 Status=Complete，没有先用页面 Purchase Date 范围筛选；data_query 又用 status='Complete'（实际 provider 为 lowercase complete）和 month_key/cnt 别名，最终 returns month/count 被静默填空。期望：进入 Sales > Orders 后先通过页面 Filters 设置 Status=Complete 与 Purchase Date 01/01/2023-05/31/2023，再读取完整 Orders grid，用 data_query 按 created_at 的月份聚合，SQL 输出 month/count 对象列，returns=['result']，finish 直接返回对象数组。"
+ },
+ {
+  "label": "意图解析→产品评论评分查询:使用 Reviews 数据源且产品约束绑定 Product 字段（回归 task-113）",
+  "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
+  "knowledge_app": "shopping_admin",
+  "resolution": [
+   {
+    "mention": "Olivia zip jacket",
+    "type": "product",
+    "match_mode": "approximate",
+    "search_key": "Olivia"
+   }
+  ],
+  "expected": {
+   "min_statements": 3,
+   "has_read": true
   },
-  {
-    "label": "WebArena shopping_admin task 214 review title+rating uses Summary of Review",
-    "goal": "Get the title and rating for all reviews with 3 stars or below for Erica Sports Bra. Return a list of objects with keys \"title\" and \"rating\".",
-    "knowledge_app": "shopping_admin",
-    "resolution": [
-      {
-        "mention": "Erica Sports Bra",
-        "type": "product",
-        "match_mode": "approximate",
-        "search_key": "Erica"
-      }
-    ],
-    "current_site": "shopping_admin",
-    "current_title": "Dashboard / Magento Admin",
-    "expected": {
-      "min_statements": 3,
-      "has_read": true
-    },
-    "assertions": [
-      "shopping_admin_review_rating_initial_uses_reviews_source",
-      "uses_foreach_iteration",
-      "shopping_admin_review_rating_drills_detail",
-      "shopping_admin_review_title_uses_summary",
-      "browser_drill_uses_url_direct"
-    ],
-    "note": "回归 logs/gui_agent/webarena/browser/20260707_122624：详情页读取 title 时误把 Nickname=Roxie 或页面标题 Edit Review 当成评论标题。任务要求的 title 在 Review Detail 中对应 Summary of Review；也可从 Reviews grid 的 Title/摘要列带出，但不得把 Nickname 当 title。",
-    "platform": "browser"
+  "assertions": [
+   "product_lookup_uses_product_field",
+   "shopping_admin_review_rating_initial_uses_reviews_source",
+   "uses_foreach_iteration",
+   "shopping_admin_review_rating_reorch_drills_detail",
+   "filter_leads_with_exact_value",
+   "browser_drill_uses_url_direct"
+  ],
+  "note": "活跑 124258 三连错：编排器把产品词当评论关键词筛进 Review 文本列、或退化成 Catalog > Products 商品详情路线，导致读不到评论评分。这个 eval 不再规定『先精确后放宽』，因为那是运行策略，不是应用知识；只锁住通用边界：以 Reviews/All Reviews 评论集合为数据源，涉及产品约束时绑定 Product 字段/列，随后 list_read 候选评论行，foreach 逐条打开 Review Detail 读取 Detailed Rating + Nickname，再 data_query 筛 rating<=3。",
+  "platform": "browser"
+ },
+ {
+  "label": "WebArena shopping_admin task 214 review title+rating uses Summary of Review",
+  "goal": "Get the title and rating for all reviews with 3 stars or below for Erica Sports Bra. Return a list of objects with keys \"title\" and \"rating\".",
+  "knowledge_app": "shopping_admin",
+  "resolution": [
+   {
+    "mention": "Erica Sports Bra",
+    "type": "product",
+    "match_mode": "approximate",
+    "search_key": "Erica"
+   }
+  ],
+  "current_site": "shopping_admin",
+  "current_title": "Dashboard / Magento Admin",
+  "expected": {
+   "min_statements": 3,
+   "has_read": true
   },
-  {
-    "label": "WebArena shopping_admin task 113 re-decompose drills Review Detail for rating",
-    "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin/review/product/index/filter/Y3JlYXRlZF9hdCU1QmxvY2FsZSU1RD1lbl9VUyZuYW1lPU9saXZpYQ==/internal_reviews//form_key/vjgQMdDxPmv0BSUV/",
-    "current_title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
-    "corrective_directive": "上一份计划在 data_query 步失败：数据源与任务意图不一致: 表格标记为 partial (partial: true)，且 row_count 仅为 3，无法代表全量数据。任务要求查询所有评分<=3的客户昵称，当前采集的数据不完整，可能导致遗漏符合条件的记录。随后 Feasibility 判定当前 Reviews 列表页 DOM 控件清单中不存在用于筛选 Rating (评分) 的输入框或下拉选择控件，仅存在 Product 和 Status 等字段控件，无法直接执行 Rating <= 3 的筛选条件。禁止在当前列表层尝试按不存在的 Rating 列进行筛选，禁止对 data_query 使用不存在的 Rating 列；唯一可行路线：保留/使用当前 Product=Olivia 的 3 条候选结果，逐条打开每条记录的 Review Detail，读取其实际 Detailed Rating 与 Nickname，在本地逻辑中筛选出 Rating<=3 的客户昵称并返回。",
-    "table_summaries": [
-      {
-        "caption": "Reviews",
-        "headers": [
-          "ID",
-          "Created",
-          "Status",
-          "Title",
-          "Nickname",
-          "Review",
-          "Visibility",
-          "Type",
-          "Product",
-          "SKU",
-          "Action"
-        ],
-        "row_count": 3,
-        "partial": true
-      }
+  "assertions": [
+   "shopping_admin_review_rating_initial_uses_reviews_source",
+   "uses_foreach_iteration",
+   "shopping_admin_review_rating_drills_detail",
+   "shopping_admin_review_title_uses_summary",
+   "browser_drill_uses_url_direct"
+  ],
+  "note": "回归 logs/gui_agent/webarena/browser/20260707_122624：详情页读取 title 时误把 Nickname=Roxie 或页面标题 Edit Review 当成评论标题。任务要求的 title 在 Review Detail 中对应 Summary of Review；也可从 Reviews grid 的 Title/摘要列带出，但不得把 Nickname 当 title。",
+  "platform": "browser"
+ },
+ {
+  "label": "WebArena shopping_admin task 113 re-decompose drills Review Detail for rating",
+  "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin/review/product/index/filter/Y3JlYXRlZF9hdCU1QmxvY2FsZSU1RD1lbl9VUyZuYW1lPU9saXZpYQ==/internal_reviews//form_key/vjgQMdDxPmv0BSUV/",
+  "current_title": "Reviews / Customer Reviews / User Content / Marketing / Magento Admin",
+  "corrective_directive": "上一份计划在 data_query 步失败：数据源与任务意图不一致: 表格标记为 partial (partial: true)，且 row_count 仅为 3，无法代表全量数据。任务要求查询所有评分<=3的客户昵称，当前采集的数据不完整，可能导致遗漏符合条件的记录。随后 Feasibility 判定当前 Reviews 列表页 DOM 控件清单中不存在用于筛选 Rating (评分) 的输入框或下拉选择控件，仅存在 Product 和 Status 等字段控件，无法直接执行 Rating <= 3 的筛选条件。禁止在当前列表层尝试按不存在的 Rating 列进行筛选，禁止对 data_query 使用不存在的 Rating 列；唯一可行路线：保留/使用当前 Product=Olivia 的 3 条候选结果，逐条打开每条记录的 Review Detail，读取其实际 Detailed Rating 与 Nickname，在本地逻辑中筛选出 Rating<=3 的客户昵称并返回。",
+  "table_summaries": [
+   {
+    "caption": "Reviews",
+    "headers": [
+     "ID",
+     "Created",
+     "Status",
+     "Title",
+     "Nickname",
+     "Review",
+     "Visibility",
+     "Type",
+     "Product",
+     "SKU",
+     "Action"
     ],
-    "expected": {
-      "min_statements": 2,
-      "has_read": true
-    },
-    "assertions": [
-      "shopping_admin_review_rating_reorch_drills_detail",
-      "read_has_spec"
-    ],
-    "note": "回归 logs/gui_agent/webarena/browser/20260622_142614：初始计划精确搜 Olivia zip jacket 得 0 条，放宽到 Olivia 得 3 条候选；data_query 失败，因为当前 Reviews grid 是 partial 且没有 rating 列。随后重编排错误地产出『设置筛选条件：Product='Olivia zip jacket' 且 Rating<=3』，在没有 Rating 控件的列表页反复输入/搜索，最终 UNKNOWN_ERROR。此 case 用当时的 kickback 文案、当前 URL/title 和 Reviews 表格 schema 固定重编排输入，期望新计划遵守上层纠正：不要再做列表 Rating 筛选/SQL rating 查询，而是逐条打开 Review Detail 读取 Detailed Rating + Nickname。"
+    "row_count": 3,
+    "partial": true
+   }
+  ],
+  "expected": {
+   "min_statements": 2,
+   "has_read": true
   },
-  {
-    "label": "WebArena shopping_admin task 184 — qty=0 filter + Color列启用 + 网格采集（无需foreach钻详情）",
-    "goal": "Give me the name and color of the products that have 0 units left. Return a list of objects with keys \"name\" and \"color\".",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://localhost:8023/admin/",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 3,
-      "has_read": true,
-      "has_finish": true
-    },
-    "assertions": [
-      "products_qty_zero_uses_ui_filter_before_data_query",
-      "products_qty_zero_enables_color_column",
-      "data_query_sql_no_schema_mapping_text",
-      "products_qty_zero_uses_foreach_collect"
-    ],
-    "note": "task 184 正确路径：① filter Quantity From=0, To=0（精确匹配，约150条简单+可配置产品）② Columns 按钮启用 Color 列（Color 不在默认列里）③ foreach（body 留空，returns=[Name,Color]，into=products）采集过滤后的全量网格（~150行/~8页，collect_fn 自动翻页，产出 complete into 表）④ data_query SELECT name, color WHERE color IS NOT NULL → 只剩 Color 有值的简单产品（答案：Cronus Yoga Pant -33-Blue / Blue）。不需要 foreach 钻产品详情页——Color 列直接在网格里。失败根因历史：① filter 只设 From=0 不设 To=0（=≥0=全量2040条）② Checker 误判 filter 已生效 → PreExisting 跳过 filter 步骤 ③ partial=true → data_query 拒绝 ④ list_read 已在 19b63e5 移除，正确用 foreach 而非 list_read。"
+  "assertions": [
+   "shopping_admin_review_rating_reorch_drills_detail",
+   "read_has_spec"
+  ],
+  "note": "回归 logs/gui_agent/webarena/browser/20260622_142614：初始计划精确搜 Olivia zip jacket 得 0 条，放宽到 Olivia 得 3 条候选；data_query 失败，因为当前 Reviews grid 是 partial 且没有 rating 列。随后重编排错误地产出『设置筛选条件：Product='Olivia zip jacket' 且 Rating<=3』，在没有 Rating 控件的列表页反复输入/搜索，最终 UNKNOWN_ERROR。此 case 用当时的 kickback 文案、当前 URL/title 和 Reviews 表格 schema 固定重编排输入，期望新计划遵守上层纠正：不要再做列表 Rating 筛选/SQL rating 查询，而是逐条打开 Review Detail 读取 Detailed Rating + Nickname。"
+ },
+ {
+  "label": "WebArena shopping_admin task 184 — qty=0 filter + Color列启用 + 网格采集（无需foreach钻详情）",
+  "goal": "Give me the name and color of the products that have 0 units left. Return a list of objects with keys \"name\" and \"color\".",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://localhost:8023/admin/",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 3,
+   "has_read": true,
+   "has_finish": true
   },
-  {
-    "label": "WebArena shopping_admin task 185 — Material 非网格列，foreach 采 URL 后 self-first/fallback 读 Material",
-    "goal": "Give me the material of the products that have 3 units left.",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://localhost:8023/admin/",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 3,
-      "has_read": true,
-      "has_finish": true
-    },
-    "assertions": [
-      "products_qty_zero_uses_ui_filter_before_data_query",
-      "uses_foreach_iteration",
-      "shopping_admin_material_drills_parent_configurable"
-    ],
-    "note": "task 185 当前约束：① filter Quantity From=3, To=3 命中简单变体；Material 不在 Products 网格列。② 编排应按证据解析属性来源：先 foreach 采 SKU + Action_url，用 Action_url 直达该产品自身详情读 Material；自身非空就用自身。③ 详情读完必须用浏览器返回上一页/Products 搜索结果列表，复用连续操作历史，避免下一行从前一条详情页重新走侧边栏。④ 仅自身为空时才派生父 SKU（如 WS08-XS-Blue → WS08），在 Products keyword 搜父 SKU，再选 SKU=父SKU 且 Type=Configurable Product 的父产品；父产品 identity 是 SKU，不是产品名。⑤ fallback 搜父会改变 Products 列表状态，因此自身读取不能写成“当前 qty 结果列表点 SKU 那一行”，必须 URL 直达。⑥ Material 多选只报第一个已选项/value，期望 [cotton, fleece]。"
+  "assertions": [
+   "products_qty_zero_uses_ui_filter_before_data_query",
+   "products_qty_zero_enables_color_column",
+   "data_query_sql_no_schema_mapping_text",
+   "products_qty_zero_uses_foreach_collect"
+  ],
+  "note": "task 184 正确路径：① filter Quantity From=0, To=0（精确匹配，约150条简单+可配置产品）② Columns 按钮启用 Color 列（Color 不在默认列里）③ foreach（body 留空，returns=[Name,Color]，into=products）采集过滤后的全量网格（~150行/~8页，collect_fn 自动翻页，产出 complete into 表）④ data_query SELECT name, color WHERE color IS NOT NULL → 只剩 Color 有值的简单产品（答案：Cronus Yoga Pant -33-Blue / Blue）。不需要 foreach 钻产品详情页——Color 列直接在网格里。失败根因历史：① filter 只设 From=0 不设 To=0（=≥0=全量2040条）② Checker 误判 filter 已生效 → PreExisting 跳过 filter 步骤 ③ partial=true → data_query 拒绝 ④ list_read 已在 19b63e5 移除，正确用 foreach 而非 list_read。"
+ },
+ {
+  "label": "WebArena shopping_admin task 185 — Material 非网格列，foreach 采 URL 后 self-first/fallback 读 Material",
+  "goal": "Give me the material of the products that have 3 units left.",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://localhost:8023/admin/",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 3,
+   "has_read": true,
+   "has_finish": true
   },
-  {
-    "label": "WebArena shopping_admin task 186 — qty 2-3 区间筛选必须清除跨任务残留筛选（Keyword 污染）",
-    "goal": "Give me the product names and the sizes of the products that have 2-3 units left. Return a list of objects with keys \"name\" and \"size\".",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://localhost:8023/admin/",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 3,
-      "has_read": true,
-      "has_finish": true
-    },
-    "assertions": [
-      "products_qty_zero_uses_ui_filter_before_data_query",
-      "filter_step_clears_residual_filters"
-    ],
-    "note": "task 186 正确路径：① filter 步骤先清除任务未要求的残留筛选/搜索/关键词（Magento 后台 grid 筛选按账号持久化、跨任务残留），再设 Quantity From=2, To=3；filter 的 success_condition 要求可见 active filters 恰好等于任务要求（无 WS08 之类残留）② 启用/读取 Size 列 ③ foreach 采集过滤后网格 ④ data_query 输出 name+size。失败根因（live run 1 score 0.0）：继承了 task 185 的 `Keyword: WS08` 残留筛选，结果只剩 WS08 名下 1 个产品，漏掉另一个，数据被污染却报 done。这个 case 锁的就是 decomposer 必须为具体筛选任务也规划清残留步骤（不限 any/all）——见 decomposer.md 规则 4 的「这条不限于 any/all 任务」段。区间 From/To 落框问题已由 dom_snap 身份吸附在 ec4597c 修复（见 tests/test_browser_dom_snap.py），不在本 eval 范围。"
+  "assertions": [
+   "products_qty_zero_uses_ui_filter_before_data_query",
+   "uses_foreach_iteration",
+   "shopping_admin_material_drills_parent_configurable"
+  ],
+  "note": "task 185 当前约束：① filter Quantity From=3, To=3 命中简单变体；Material 不在 Products 网格列。② 编排应按证据解析属性来源：先 foreach 采 SKU + Action_url，用 Action_url 直达该产品自身详情读 Material；自身非空就用自身。③ 详情读完必须用浏览器返回上一页/Products 搜索结果列表，复用连续操作历史，避免下一行从前一条详情页重新走侧边栏。④ 仅自身为空时才派生父 SKU（如 WS08-XS-Blue → WS08），在 Products keyword 搜父 SKU，再选 SKU=父SKU 且 Type=Configurable Product 的父产品；父产品 identity 是 SKU，不是产品名。⑤ fallback 搜父会改变 Products 列表状态，因此自身读取不能写成“当前 qty 结果列表点 SKU 那一行”，必须 URL 直达。⑥ Material 多选只报第一个已选项/value，期望 [cotton, fleece]。"
+ },
+ {
+  "label": "WebArena shopping_admin task 186 — qty 2-3 区间筛选必须清除跨任务残留筛选（Keyword 污染）",
+  "goal": "Give me the product names and the sizes of the products that have 2-3 units left. Return a list of objects with keys \"name\" and \"size\".",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://localhost:8023/admin/",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 3,
+   "has_read": true,
+   "has_finish": true
   },
-  {
-    "label": "WebArena shopping_admin task 193 — last 2 completed orders total payment uses grid Grand Total (no drill)",
-    "goal": "Get the total payment amount of the last 2 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 2,
-      "has_finish": true
-    },
-    "assertions": [
-      "orders_total_payment_no_detail_drill",
-      "orders_total_payment_filters_complete_clears_residual",
-      "orders_total_payment_sorts_purchase_date_desc",
-      "orders_total_payment_uses_foreach_collect_and_data_query"
-    ],
-    "note": "task 193 正确路径：① navigate → Sales > Orders ② filter Status=Complete，并清除无关残留筛选 ③ 明确按 Purchase Date 降序（最新在前）④ foreach body=[] 从 Orders 网格直接采集 Purchase Date 与 Grand Total (Purchased)，into 产出完整 completed_orders 类表 ⑤ data_query 对该完整表按 purchase_date_ts 取最近 2 行，并用 grand_total_purchased_num 求和后 finish。历史失败一（live run score N/A，被 kill）：decomposer 生成 foreach drill，逐条打开订单详情页读 total_amount，部分详情读成 $0.00；Grand Total 已是 Orders 网格默认列，不应钻详情。历史失败二 logs/gui_agent/webarena/browser/20260626_195323：planner 改成 foreach body=[] + data_query 后，checker 又把 Status 列排序误判为 Purchase Date 降序；随后 runtime 把 foreach 产出的 complete into 表和当前 Orders DOM partial 表一起传给 data_query，旧完整性检查因未被 SQL 引用的 partial DOM sibling 拒绝查询。历史失败三 logs/gui_agent/webarena/browser/20260626_201607：data_query 对 `$106.00` 这类金额显示文本直接 SUM 得 0.0，并按 `Feb 3, 2023 ...` 这类日期文本字典序排序；必须使用运行时 typed shadows（金额 _num、日期 _ts）。此 case 锁定分解形态：必须用网格采集+data_query 引用 foreach into 表，并把金额/日期类型化查询写对。"
+  "assertions": [
+   "products_qty_zero_uses_ui_filter_before_data_query",
+   "filter_step_clears_residual_filters"
+  ],
+  "note": "task 186 正确路径：① filter 步骤先清除任务未要求的残留筛选/搜索/关键词（Magento 后台 grid 筛选按账号持久化、跨任务残留），再设 Quantity From=2, To=3；filter 的 success_condition 要求可见 active filters 恰好等于任务要求（无 WS08 之类残留）② 启用/读取 Size 列 ③ foreach 采集过滤后网格 ④ data_query 输出 name+size。失败根因（live run 1 score 0.0）：继承了 task 185 的 `Keyword: WS08` 残留筛选，结果只剩 WS08 名下 1 个产品，漏掉另一个，数据被污染却报 done。这个 case 锁的就是 decomposer 必须为具体筛选任务也规划清残留步骤（不限 any/all）——见 decomposer.md 规则 4 的「这条不限于 any/all 任务」段。区间 From/To 落框问题已由 dom_snap 身份吸附在 ec4597c 修复（见 tests/test_browser_dom_snap.py），不在本 eval 范围。"
+ },
+ {
+  "label": "WebArena shopping_admin task 193 — last 2 completed orders total payment uses grid Grand Total (no drill)",
+  "goal": "Get the total payment amount of the last 2 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 2,
+   "has_finish": true
   },
-  {
-    "label": "WebArena shopping_admin task 196 — last 4 cancelled/completed payment difference uses ordered subqueries",
-    "goal": "Get the payment difference between the last 4 cancelled orders and the last 4 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 2,
-      "has_finish": true
-    },
-    "assertions": [
-      "orders_total_payment_no_detail_drill",
-      "orders_payment_difference_uses_both_status_filters",
-      "data_query_sql_no_template_refs",
-      "orders_payment_difference_uses_abs_last4_subqueries",
-      "orders_payment_difference_no_visual_row_aggregation"
-    ],
-    "note": "task 196 正确路径：① navigate → Sales > Orders ② 分别准备 cancelled/canceled 与 completed/complete 两个 Orders grid 状态口径（每次切换状态前清除上一状态和无关残留筛选）③ foreach body=[] 从网格采集可见列 Purchase Date 与 Grand Total (Purchased)，into 产出完整状态表；不要把内部字段名 created_at 写进 foreach returns，collect_fn 读不到 ④ 单个 data_query 用 CTE 分别 `ORDER BY purchase_date_ts DESC LIMIT 4` 后 `SUM(grand_total_purchased_num)`，最终返回 `ABS(cancelled_total - completed_total)`。历史失败 logs/gui_agent/webarena/browser/20260626_205652：SQL 写成 `SELECT SUM(grand_total_purchased_num) AS total FROM cancelled_orders LIMIT 4` / completed 同形，LIMIT 在聚合之后生效，实际求了两个状态的全表总和；finish 又输出 `cancelled_total - completed_total`，得到 -3217.43，官方期望 194.25。历史失败 logs/gui_agent/webarena/browser/20260626_213426：初始计划 foreach returns 写 `created_at`，运行时采集表只剩 id + grand_total_purchased、缺时间列，data_query repair 正确拒绝并返回 DATA_VALIDATION_ERROR。后续 decomposer eval 曾退化为 action returns `total_canceled/total_completed`，read_spec 目测前 4 行求和，再在 SQL 写 `{c1[total_canceled]}` 模板；这同样非法，必须由 foreach/data_query 完成多行聚合。"
+  "assertions": [
+   "orders_total_payment_no_detail_drill",
+   "orders_total_payment_filters_complete_clears_residual",
+   "orders_total_payment_sorts_purchase_date_desc",
+   "orders_total_payment_uses_foreach_collect_and_data_query"
+  ],
+  "note": "task 193 正确路径：① navigate → Sales > Orders ② filter Status=Complete，并清除无关残留筛选 ③ 明确按 Purchase Date 降序（最新在前）④ foreach body=[] 从 Orders 网格直接采集 Purchase Date 与 Grand Total (Purchased)，into 产出完整 completed_orders 类表 ⑤ data_query 对该完整表按 purchase_date_ts 取最近 2 行，并用 grand_total_purchased_num 求和后 finish。历史失败一（live run score N/A，被 kill）：decomposer 生成 foreach drill，逐条打开订单详情页读 total_amount，部分详情读成 $0.00；Grand Total 已是 Orders 网格默认列，不应钻详情。历史失败二 logs/gui_agent/webarena/browser/20260626_195323：planner 改成 foreach body=[] + data_query 后，checker 又把 Status 列排序误判为 Purchase Date 降序；随后 runtime 把 foreach 产出的 complete into 表和当前 Orders DOM partial 表一起传给 data_query，旧完整性检查因未被 SQL 引用的 partial DOM sibling 拒绝查询。历史失败三 logs/gui_agent/webarena/browser/20260626_201607：data_query 对 `$106.00` 这类金额显示文本直接 SUM 得 0.0，并按 `Feb 3, 2023 ...` 这类日期文本字典序排序；必须使用运行时 typed shadows（金额 _num、日期 _ts）。此 case 锁定分解形态：必须用网格采集+data_query 引用 foreach into 表，并把金额/日期类型化查询写对。"
+ },
+ {
+  "label": "WebArena shopping_admin task 196 — last 4 cancelled/completed payment difference uses ordered subqueries",
+  "goal": "Get the payment difference between the last 4 cancelled orders and the last 4 completed orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 2,
+   "has_finish": true
   },
-  {
-    "label": "WebArena shopping_admin task 197 — last 5 non-cancelled orders total uses status exclusion",
-    "goal": "Get the total payment amount of the last 5 non-cancelled orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 2,
-      "has_finish": true
-    },
-    "assertions": [
-      "orders_total_payment_no_detail_drill",
-      "data_query_sql_no_template_refs",
-      "orders_non_cancelled_total_uses_status_exclusion"
-    ],
-    "note": "task 197 正确路径：① navigate → Sales > Orders ② 清除所有无关/残留筛选，尤其不能继承 task 196 的 Status=Canceled/Complete；non-cancelled 不是 Complete，页面不应只筛单一状态 ③ foreach body=[] 从 Orders 网格采集完整订单行的可见列 Status、Purchase Date、Grand Total (Purchased) ④ data_query 在 SQL 中排除 Canceled/Cancelled（如 lower(status) NOT LIKE '%cancel%'），再按 purchase_date_ts DESC LIMIT 5，外层 SUM(grand_total_purchased_num)。官方 GT 为 778.2（annotation: 219.4+210+166.4+93.4+89）。"
+  "assertions": [
+   "orders_total_payment_no_detail_drill",
+   "orders_payment_difference_uses_both_status_filters",
+   "data_query_sql_no_template_refs",
+   "orders_payment_difference_uses_abs_last4_subqueries",
+   "orders_payment_difference_no_visual_row_aggregation"
+  ],
+  "note": "task 196 正确路径：① navigate → Sales > Orders ② 分别准备 cancelled/canceled 与 completed/complete 两个 Orders grid 状态口径（每次切换状态前清除上一状态和无关残留筛选）③ foreach body=[] 从网格采集可见列 Purchase Date 与 Grand Total (Purchased)，into 产出完整状态表；不要把内部字段名 created_at 写进 foreach returns，collect_fn 读不到 ④ 单个 data_query 用 CTE 分别 `ORDER BY purchase_date_ts DESC LIMIT 4` 后 `SUM(grand_total_purchased_num)`，最终返回 `ABS(cancelled_total - completed_total)`。历史失败 logs/gui_agent/webarena/browser/20260626_205652：SQL 写成 `SELECT SUM(grand_total_purchased_num) AS total FROM cancelled_orders LIMIT 4` / completed 同形，LIMIT 在聚合之后生效，实际求了两个状态的全表总和；finish 又输出 `cancelled_total - completed_total`，得到 -3217.43，官方期望 194.25。历史失败 logs/gui_agent/webarena/browser/20260626_213426：初始计划 foreach returns 写 `created_at`，运行时采集表只剩 id + grand_total_purchased、缺时间列，data_query repair 正确拒绝并返回 DATA_VALIDATION_ERROR。后续 decomposer eval 曾退化为 action returns `total_canceled/total_completed`，read_spec 目测前 4 行求和，再在 SQL 写 `{c1[total_canceled]}` 模板；这同样非法，必须由 foreach/data_query 完成多行聚合。"
+ },
+ {
+  "label": "WebArena shopping_admin task 197 — last 5 non-cancelled orders total uses status exclusion",
+  "goal": "Get the total payment amount of the last 5 non-cancelled orders. Return the value as a number (e.g., 10.99) only, without any additional details.",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 2,
+   "has_finish": true
   },
-  {
-    "label": "WebArena shopping_admin task 212 — 按电话查客户走 keyword search 子串+本地号段（非 Phone 列精确筛选）",
-    "goal": "Find the customer name and email with phone number 555-229-3326. Return a list of objects with keys \"name\" and \"email\".",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 2,
-      "has_finish": true
-    },
-    "assertions": [
-      "customer_phone_lookup_uses_keyword_search"
-    ],
-    "note": "task 212 正确路径：① Customers > All Customers，清除跨任务残留筛选 ② 用顶部 Search by keyword（全文子串 LIKE）搜电话的本地号段 229-3326（不是 Filters 的 Phone 列精确筛选，也不是整串 555-229-3326）③ 命中行读 Name+Email 输出。失败根因（live run 20260626_233039 score 0.0）：用 Phone 列精确筛 555-229-3326 → 0 records → NOT_FOUND。Ground truth(CDP)：电话存为 (555) 229-3326，keyword search 是字面子串，整串 555-229-3326 不是其连续子串、任何控件都 0 命中；229-3326 命中 1 条 = Veronica Costello / roni_cost@example.com。修复见 knowledge _skill.md「按电话号查客户」。"
+  "assertions": [
+   "orders_total_payment_no_detail_drill",
+   "data_query_sql_no_template_refs",
+   "orders_non_cancelled_total_uses_status_exclusion"
+  ],
+  "note": "task 197 正确路径：① navigate → Sales > Orders ② 清除所有无关/残留筛选，尤其不能继承 task 196 的 Status=Canceled/Complete；non-cancelled 不是 Complete，页面不应只筛单一状态 ③ foreach body=[] 从 Orders 网格采集完整订单行的可见列 Status、Purchase Date、Grand Total (Purchased) ④ data_query 在 SQL 中排除 Canceled/Cancelled（如 lower(status) NOT LIKE '%cancel%'），再按 purchase_date_ts DESC LIMIT 5，外层 SUM(grand_total_purchased_num)。官方 GT 为 778.2（annotation: 219.4+210+166.4+93.4+89）。"
+ },
+ {
+  "label": "WebArena shopping_admin task 212 — 按电话查客户走 keyword search 子串+本地号段（非 Phone 列精确筛选）",
+  "goal": "Find the customer name and email with phone number 555-229-3326. Return a list of objects with keys \"name\" and \"email\".",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 2,
+   "has_finish": true
   },
-  {
-    "label": "WebArena shopping_admin task 204 — 最近已完成订单的商品名+价格：grid Purchase Date 选最新 + 钻取读全部明细行",
-    "goal": "Get the product name and final price (low to high) of the most recent completed order. Return a list of objects with keys \"name\" (product name) and \"price\" (as number, e.g., 10.99) only, without any additional details",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 4,
-      "has_finish": true
-    },
-    "assertions": [
-      "most_recent_order_drills_and_reads_all_items"
-    ],
-    "note": "task 204 正确路径：① Sales>Orders 清残留筛选+Status=Complete+按 Purchase Date 降序 ② foreach 全量采 Action_url+Purchase Date ③ data_query 按 purchase_date_ts DESC LIMIT 1 选最新单的 Action_url（绝不靠列表第一行、绝不硬编码 order_id、绝不用详情页 Order Date）④ URL 直达钻取 ⑤ 第二个 foreach 采 Items Ordered 表 Product+Price 读全部商品行（一单常多商品，rowspan 会有空 Price 幻影行）⑥ data_query WHERE Price!='' 滤幻影、SUBSTR 剥 SKU 取名、CAST 转价、ORDER BY price ASC 输出列表。期望 order 230 = Ida Workout Parachute Pant 38.4 + Proteus Fitness Jackshirt 45.0。"
+  "assertions": [
+   "customer_phone_lookup_uses_keyword_search"
+  ],
+  "note": "task 212 正确路径：① Customers > All Customers，清除跨任务残留筛选 ② 用顶部 Search by keyword（全文子串 LIKE）搜电话的本地号段 229-3326（不是 Filters 的 Phone 列精确筛选，也不是整串 555-229-3326）③ 命中行读 Name+Email 输出。失败根因（live run 20260626_233039 score 0.0）：用 Phone 列精确筛 555-229-3326 → 0 records → NOT_FOUND。Ground truth(CDP)：电话存为 (555) 229-3326，keyword search 是字面子串，整串 555-229-3326 不是其连续子串、任何控件都 0 命中；229-3326 命中 1 条 = Veronica Costello / roni_cost@example.com。修复见 knowledge _skill.md「按电话号查客户」。"
+ },
+ {
+  "label": "WebArena shopping_admin task 204 — 最近已完成订单的商品名+价格：grid Purchase Date 选最新 + 钻取读全部明细行",
+  "goal": "Get the product name and final price (low to high) of the most recent completed order. Return a list of objects with keys \"name\" (product name) and \"price\" (as number, e.g., 10.99) only, without any additional details",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 4,
+   "has_finish": true
   },
-  {
-    "label": "WebArena shopping_admin task 493 — 客户最近 pending 订单：保留客户 scope + data_query 选 URL",
-    "goal": "Notify Grace Nguyen in their most recent pending order with message \"the order is ready to be shipped soon!\"",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 4
-    },
-    "assertions": [
-      "customer_recent_pending_order_preserves_scope_and_selects_url",
-      "orders_keyword_search_submits_top_box",
-      "order_notify_customer_comment_action",
-      "read_has_spec"
-    ],
-    "resolution": [
-      {
-        "mention": "Grace Nguyen",
-        "type": "customer",
-        "match_mode": "approximate",
-        "search_key": "Grace"
-      }
-    ],
-    "note": "回归 491/493：先按客户筛出 Sarah/Grace 后，后续追加 Status=Pending 时曾把客户 Keyword 当 residual 清掉，导致打开的是全站 pending 第一行；另一个坏形态是 foreach body=[] 采 pending_orders 后不经 data_query 消费，又写『打开最近一笔』让 planner 目测；20260707_223317 又暴露出『客户字段/Customer Name』在 Orders grid 不可操作，执行器进 Columns 面板找不存在的 Customer Name filter。期望：客户 scope 用顶部 Search by keyword 或 Bill-to Name/Ship-to Name/Customer Email 这类实际入口；追加 Pending 时保留具体客户值；foreach 采 customer/status/Purchase Date/Action_url；data_query WHERE 客户+Pending ORDER BY purchase_date_ts DESC LIMIT 1；navigation 用 {q[detail_url/action_url]} 打开。"
+  "assertions": [
+   "most_recent_order_drills_and_reads_all_items"
+  ],
+  "note": "task 204 正确路径：① Sales>Orders 清残留筛选+Status=Complete+按 Purchase Date 降序 ② foreach 全量采 Action_url+Purchase Date ③ data_query 按 purchase_date_ts DESC LIMIT 1 选最新单的 Action_url（绝不靠列表第一行、绝不硬编码 order_id、绝不用详情页 Order Date）④ URL 直达钻取 ⑤ 第二个 foreach 采 Items Ordered 表 Product+Price 读全部商品行（一单常多商品，rowspan 会有空 Price 幻影行）⑥ data_query WHERE Price!='' 滤幻影、SUBSTR 剥 SKU 取名、CAST 转价、ORDER BY price ASC 输出列表。期望 order 230 = Ida Workout Parachute Pant 38.4 + Proteus Fitness Jackshirt 45.0。"
+ },
+ {
+  "label": "WebArena shopping_admin task 493 — 客户最近 pending 订单：保留客户 scope + data_query 选 URL",
+  "goal": "Notify Grace Nguyen in their most recent pending order with message \"the order is ready to be shipped soon!\"",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 4
   },
-  {
-    "label": "WebArena shopping_admin task 375 — Magento Luma 主题设置页：经 Content›Design›Themes(非 System)",
-    "goal": "Go to the Magento Luma theme settings page",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "expected": {
-      "min_statements": 1
-    },
-    "assertions": [
-      "shopping_admin_theme_settings_via_content_design"
-    ],
-    "note": "task 375 是 network-event 导航任务：评测要 GET admin/system_design_theme/edit/id/3。主题设置在 Content › Design › Themes(点 Magento Luma 行=theme id 3),不在 System/Stores 菜单——旧失败计划去 SYSTEM 找 Design → NOT_FOUND。断言锁定计划经 Content/Design/Themes 路径。"
+  "assertions": [
+   "customer_recent_pending_order_preserves_scope_and_selects_url",
+   "orders_keyword_search_submits_top_box",
+   "order_notify_customer_comment_action",
+   "read_has_spec"
+  ],
+  "resolution": [
+   {
+    "mention": "Grace Nguyen",
+    "type": "customer",
+    "match_mode": "approximate",
+    "search_key": "Grace"
+   }
+  ],
+  "note": "回归 491/493：先按客户筛出 Sarah/Grace 后，后续追加 Status=Pending 时曾把客户 Keyword 当 residual 清掉，导致打开的是全站 pending 第一行；另一个坏形态是 foreach body=[] 采 pending_orders 后不经 data_query 消费，又写『打开最近一笔』让 planner 目测；20260707_223317 又暴露出『客户字段/Customer Name』在 Orders grid 不可操作，执行器进 Columns 面板找不存在的 Customer Name filter。期望：客户 scope 用顶部 Search by keyword 或 Bill-to Name/Ship-to Name/Customer Email 这类实际入口；追加 Pending 时保留具体客户值；foreach 采 customer/status/Purchase Date/Action_url；data_query WHERE 客户+Pending ORDER BY purchase_date_ts DESC LIMIT 1；navigation 用 {q[detail_url/action_url]} 打开。"
+ },
+ {
+  "label": "WebArena shopping_admin task 375 — Magento Luma 主题设置页：经 Content›Design›Themes(非 System)",
+  "goal": "Go to the Magento Luma theme settings page",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "expected": {
+   "min_statements": 1
   },
-  {
-    "label": "WebArena shopping_admin task 707 — Show 销售订单报表(去年)：纯导航,不绑 returns",
-    "goal": "Show the sales order report for last year. Today is March 15, 2023.",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 1
-    },
-    "assertions": [
-      "shopping_admin_show_report_is_navigate_no_returns"
-    ],
-    "note": "task 707 是 network-event 导航任务：NetworkEvent 已通过(Show Report 触发 GET reports/report_sales/sales/filter?report_type=created_at_order&from=2022-01-01&to=2022-12-31)。失败根因 = decompose 误当取数任务,给计划绑 returns ['total_orders','total_revenue'] → 空读→kickback 死循环→自报 RETRIEVE/DATA_VALIDATION_ERROR(期望 navigate/success)。断言锁定计划纯导航(无 returns/data_query)+ 含 Show Report 渲染动作。'last year' 相对 Mar 15 2023 = 2022 全年(From 01/01/2022,To 12/31/2022)。"
+  "assertions": [
+   "shopping_admin_theme_settings_via_content_design"
+  ],
+  "note": "task 375 是 network-event 导航任务：评测要 GET admin/system_design_theme/edit/id/3。主题设置在 Content › Design › Themes(点 Magento Luma 行=theme id 3),不在 System/Stores 菜单——旧失败计划去 SYSTEM 找 Design → NOT_FOUND。断言锁定计划经 Content/Design/Themes 路径。"
+ },
+ {
+  "label": "WebArena shopping_admin task 707 — Show 销售订单报表(去年)：纯导航,不绑 returns",
+  "goal": "Show the sales order report for last year. Today is March 15, 2023.",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 1
   },
-  {
-    "label": "WebArena shopping_admin task 708 — Show 税务报表(今年)：纯导航,选 Tax 报表 + this-year 截到 today",
-    "goal": "Show the tax report for this year. Today is March 15, 2023.",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.31.57:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 1
-    },
-    "assertions": [
-      "shopping_admin_show_report_is_navigate_no_returns"
-    ],
-    "note": "task 708 = 707 的兄弟,同 navigate-submit dispatch gate 机制。bad case(live run 20260629_155936 score 0):decompose/执行打错 NetworkEvent GET 两处——(1) 进了 Orders 报表 report_sales/sales/filter 而非 Tax 报表 report_sales/tax/filter('tax report' 必须进 Reports › Sales › Tax);(2) 'this year' 日期填成全年 to=2023-12-31,正确应截到 today=2023-03-15(期望 GET reports/report_sales/tax/filter?report_type=created_at_order&from=2023-01-01&to=2023-03-15)。修法纯知识层(_app.md 报表子类型→URL 映射 + 相对日期换算 this-year 截到 today)。此断言只锁离线可验的部分(纯导航/无 returns/含 Show Report 渲染动作);报表子类型与日期正确性靠 live run 验。"
+  "assertions": [
+   "shopping_admin_show_report_is_navigate_no_returns"
+  ],
+  "note": "task 707 是 network-event 导航任务：NetworkEvent 已通过(Show Report 触发 GET reports/report_sales/sales/filter?report_type=created_at_order&from=2022-01-01&to=2022-12-31)。失败根因 = decompose 误当取数任务,给计划绑 returns ['total_orders','total_revenue'] → 空读→kickback 死循环→自报 RETRIEVE/DATA_VALIDATION_ERROR(期望 navigate/success)。断言锁定计划纯导航(无 returns/data_query)+ 含 Show Report 渲染动作。'last year' 相对 Mar 15 2023 = 2022 全年(From 01/01/2022,To 12/31/2022)。"
+ },
+ {
+  "label": "WebArena shopping_admin task 708 — Show 税务报表(今年)：纯导航,选 Tax 报表 + this-year 截到 today",
+  "goal": "Show the tax report for this year. Today is March 15, 2023.",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.31.57:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 1
   },
-  {
-    "label": "变体百分比调价必须先读现价再算，不得凭空填/留空目标价（回归 778 product[price]=100.00）",
-    "goal": "Reduce the price of size 28 Sahara leggings by 13.5%",
-    "platform": "browser",
-    "knowledge_app": "shopping_admin",
-    "current_site": "shopping_admin",
-    "current_url": "http://192.168.1.13:7780/admin",
-    "current_title": "Dashboard / Magento Admin",
-    "normalize": true,
-    "expected": {
-      "min_statements": 2
-    },
-    "assertions": [
-      "variant_price_reads_current_before_set",
-      "multi_variant_price_iterates",
-      "membership_judgment_semantic"
-    ],
-    "note": "回归 live 20260701_234527/778：改配置型商品变体价，机制修对后（skill：搜基础名→定位 Simple 变体→改 Price→Save）仍 score 0，因目标价凭空填 100.00（期望 64.88=现价75×0.865）。百分比调价的目标价依赖变体运行时现价，decompose 不能 upfront 定死/留空——价格步骤须写成「读该变体当前 Price → 按系数算 → 填」。skill 已强化此点，本 case 离线锁住 decompose 产出含读现价步骤。 【多变体链】router 判 cardinality=set(pin 在 resolution),decompose 须 foreach 遍历 size 28 的所有变体、body 内逐个 读现价→算→改→存(778 期望 3 次 save,单变体计划最多 1/3→0)。",
-    "resolution": [
-      {
-        "mention": "size 28 Sahara leggings",
-        "type": "product",
-        "match_mode": "approximate",
-        "search_key": "Sahara",
-        "cardinality": "set",
-        "selector": "size 28",
-        "reason": "配置型产品 Sahara 下 size 28 的所有颜色变体=一组"
-      }
-    ]
-  }
+  "assertions": [
+   "shopping_admin_show_report_is_navigate_no_returns"
+  ],
+  "note": "task 708 = 707 的兄弟,同 navigate-submit dispatch gate 机制。bad case(live run 20260629_155936 score 0):decompose/执行打错 NetworkEvent GET 两处——(1) 进了 Orders 报表 report_sales/sales/filter 而非 Tax 报表 report_sales/tax/filter('tax report' 必须进 Reports › Sales › Tax);(2) 'this year' 日期填成全年 to=2023-12-31,正确应截到 today=2023-03-15(期望 GET reports/report_sales/tax/filter?report_type=created_at_order&from=2023-01-01&to=2023-03-15)。修法纯知识层(_app.md 报表子类型→URL 映射 + 相对日期换算 this-year 截到 today)。此断言只锁离线可验的部分(纯导航/无 returns/含 Show Report 渲染动作);报表子类型与日期正确性靠 live run 验。"
+ },
+ {
+  "label": "变体百分比调价必须先读现价再算，不得凭空填/留空目标价（回归 778 product[price]=100.00）",
+  "goal": "Reduce the price of size 28 Sahara leggings by 13.5%",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.1.13:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 2
+  },
+  "assertions": [
+   "variant_price_reads_current_before_set",
+   "multi_variant_price_iterates",
+   "membership_judgment_semantic"
+  ],
+  "note": "回归 live 20260701_234527/778：改配置型商品变体价，机制修对后（skill：搜基础名→定位 Simple 变体→改 Price→Save）仍 score 0，因目标价凭空填 100.00（期望 64.88=现价75×0.865）。百分比调价的目标价依赖变体运行时现价，decompose 不能 upfront 定死/留空——价格步骤须写成「读该变体当前 Price → 按系数算 → 填」。skill 已强化此点，本 case 离线锁住 decompose 产出含读现价步骤。 【多变体链】router 判 cardinality=set(pin 在 resolution),decompose 须 foreach 遍历 size 28 的所有变体、body 内逐个 读现价→算→改→存(778 期望 3 次 save,单变体计划最多 1/3→0)。",
+  "resolution": [
+   {
+    "mention": "size 28 Sahara leggings",
+    "type": "product",
+    "match_mode": "approximate",
+    "search_key": "Sahara",
+    "cardinality": "set",
+    "selector": "size 28",
+    "reason": "配置型产品 Sahara 下 size 28 的所有颜色变体=一组"
+   }
+  ]
+ },
+ {
+  "label": "配置型商品标缺货=父产品单次聚合保存（covers_set，无 foreach；回归 505/502 K-only 退行与 175322 批量误改）",
+  "goal": "Mark all Aeon capri as out of stock",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.1.13:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 3
+  },
+  "assertions": [
+   "out_of_stock_configurable_single_aggregate_mutation"
+  ],
+  "note": "回归 live 20260708 505/502 家族：router 标 approximate/key=Aeon + cardinality=set。正确形态=精确『Aeon capri』试探读计数 → if 0 条在同一 Name 列回退产品线词 → 锁定 Type=Configurable 父行 → 改 Stock Status 并保存（该步声明 covers_set）→ 静态 finish。三类历史坏形：① K-only 首搜（194311 三轮夹死，知识旧文言诱导）；② 回退喂 foreach 批量误改（175322 事故）；③ 编译期 set⇒foreach 与知识矛盾（183100）。检索阶梯由 intent contracts 编译期强制，本 case 断言聚合形态三不变量。",
+  "resolution": [
+   {
+    "mention": "Aeon capri",
+    "type": "product",
+    "match_mode": "approximate",
+    "search_key": "Aeon",
+    "cardinality": "set",
+    "selector": "Aeon capri",
+    "reason": "'all Aeon capri' 匹配父产品+全部变体=一组；Magento 配置型父产品一次保存聚合覆盖"
+   }
+  ]
+ }
 ]

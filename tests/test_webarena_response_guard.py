@@ -3,7 +3,9 @@ import types
 
 from gui_agent.adapters.browser.webarena import (
     WAResponse,
+    _completed_mutate_response,
     _finalize_response,
+    _guess_webarena_task_type,
     _preflight_failure_response,
     _run_official_eval,
     _official_eval_summary,
@@ -55,6 +57,66 @@ def test_mutate_success_can_have_no_retrieved_data():
 
     assert resp.status == "SUCCESS"
     assert resp.retrieved_data is None
+
+
+def test_completed_mutate_response_trusts_runtime_completion_without_recounting_rows():
+    # Task 505 shape: "all Aeon capri" is satisfied by one aggregate parent-product save
+    # (covers_set in the program). Response synthesis must not see "7 records found" and invent
+    # "remaining 6 unprocessed" after runtime already reached goal_completed.
+    resp = _completed_mutate_response(
+        "Mark all Aeon capri as out of stock",
+        {
+            "task_type": "MUTATE",
+            "goal_completed": True,
+            "stop_reason": (
+                "match_count：7；action_url：http://host/admin/catalog/product/edit/id/1861/；"
+                "stock_status：In Stock"
+            ),
+            "result_summary": "",
+        },
+    )
+
+    assert resp == WAResponse(
+        task_type="MUTATE",
+        status="SUCCESS",
+        retrieved_data=None,
+        error_details=None,
+    )
+
+
+def test_completed_mutate_response_does_not_mask_explicit_failure_text():
+    resp = _completed_mutate_response(
+        "Update product",
+        {
+            "task_type": "MUTATE",
+            "goal_completed": True,
+            "result_summary": "未找到目标产品，无法继续操作",
+        },
+    )
+
+    assert resp is None
+
+
+def test_completed_mutate_response_ignores_non_webarena_task_type_field():
+    resp = _completed_mutate_response(
+        "Mark all Aeon capri as out of stock",
+        {
+            "task_type": "browser",
+            "goal_completed": True,
+            "stop_reason": "match_count：7；stock_status：Out of Stock",
+        },
+    )
+
+    assert resp == WAResponse(
+        task_type="MUTATE",
+        status="SUCCESS",
+        retrieved_data=None,
+        error_details=None,
+    )
+
+
+def test_mark_intent_is_classified_as_mutate():
+    assert _guess_webarena_task_type("Mark all Aeon capri as out of stock") == "MUTATE"
 
 
 def test_retrieve_success_goal_not_completed_is_not_found():

@@ -129,11 +129,20 @@ def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBloc
         if getattr(e, "role", "lookup") == "value":
             return f"- 待填入值「{e.mention}」｜类型={e.type}｜原样填写（不检索、不改拼写）"
         match = ("允许模糊匹配，检索关键词：" + e.search_key) if e.match_mode == "approximate" else "精确匹配"
-        # cardinality=set is authoritative: the reference denotes a SET (selector picks the members),
-        # not one entity — decompose MUST iterate (foreach over the members), not emit a single action.
+        # cardinality=set is authoritative for the DECISION (the reference denotes a SET, not one
+        # entity) — but NOT for the strategy: HOW the set gets covered is decompose's call (foreach
+        # per member, or a single aggregate action declared with covers_set when app knowledge says
+        # one mechanism covers the whole group). Dictating "foreach" here overrode correct knowledge
+        # (a parent record whose one save covers all members) and produced per-member mutations.
         if getattr(e, "cardinality", "single") == "set":
             sel = (getattr(e, "selector", "") or "").strip()
-            card = f"｜**多目标(一组)**：这是一个规格，匹配多个实体" + (f"（筛选：{sel}）" if sel else "") + "，须对每个匹配到的成员逐个处理（foreach），不可当单个操作"
+            card = (
+                "｜**多目标(一组)**：这是一个规格，匹配多个实体"
+                + (f"（筛选：{sel}）" if sel else "")
+                + "，不可只处理其中一个就完事；覆盖方式二选一（规则 4c）："
+                "foreach 逐成员处理，或当应用知识明确指出存在单一聚合对象/批量机制一次覆盖全组时，"
+                "单步聚合动作并在该步声明 covers_set"
+            )
         else:
             card = "｜单目标"
         return f"- 实体「{e.mention}」｜类型={e.type}｜{match}{card}"

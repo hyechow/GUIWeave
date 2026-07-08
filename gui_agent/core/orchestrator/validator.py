@@ -447,7 +447,7 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                             f"筛选步骤「{s.name}」声称要保留/追加上游实体范围，但没有在本步骤 name/SC 里写出"
                             f"具体实体值或检索关键词（例如 {examples}）。运行时只能按 live active-filter 的"
                             "具体值做 state-diff；只写「保留客户筛选/保留实体范围/保留搜索结果」无法区分"
-                            "应保留的任务 scope 和上一题残留筛选。请把本步改成类似「保留 <具体实体值或关键词> "
+                            "应保留的任务 scope 和任务开始前就已生效的无关筛选。请把本步改成类似「保留 <具体实体值或关键词> "
                             "结果范围，追加 <新筛选>」，并在 success_condition 里写明 active filters 同时包含"
                             "该具体值和新筛选。"
                         )

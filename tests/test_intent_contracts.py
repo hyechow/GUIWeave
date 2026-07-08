@@ -150,6 +150,90 @@ def test_intent_contract_requires_foreach_for_set_entity():
     assert "ROUTER_SET_ENTITY_WITHOUT_FOREACH" in _codes(program, resolution)
 
 
+def test_intent_contract_accepts_covers_set_aggregate_without_foreach():
+    """Live trigger (WebArena 502): 'Mark all Gobi HeatTec Tee as out of stock' — router marks the
+    entity as a set, but Magento's configurable PARENT save covers all variants at once. The
+    covers_set declaration on the single mutation step satisfies the set contract without foreach."""
+    program = Program(statements=[
+        Run(kind="filter", name="在 Filters 面板的 Name 字段用精确值『Gobi HeatTec Tee』筛选，叠加 Type=Configurable Product"),
+        Run(kind="navigation", name="打开 SKU=父SKU 的那一行编辑页"),
+        Run(kind="action", name="将 Stock Status 下拉改为 Out of Stock 并保存",
+            covers_set="Gobi HeatTec Tee"),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Gobi HeatTec Tee",
+            type="product",
+            match_mode="approximate",
+            search_key="HeatTec",
+            cardinality="set",
+            selector="Gobi HeatTec Tee",
+        ),
+    ])
+
+    codes = _codes(program, resolution)
+    assert "ROUTER_SET_ENTITY_WITHOUT_FOREACH" not in codes
+    assert "ROUTER_SET_SELECTOR_NOT_APPLIED" not in codes
+
+
+def test_intent_contract_covers_set_requires_entity_scope_in_retrieval():
+    """covers_set alone is not enough: the retrieval steps must still scope to the entity,
+    otherwise the aggregate mutation may act on the wrong group."""
+    program = Program(statements=[
+        Run(kind="filter", name="按 Type=Configurable Product 筛选"),
+        Run(kind="action", name="将 Stock Status 改为 Out of Stock 并保存",
+            covers_set="Gobi HeatTec Tee"),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Gobi HeatTec Tee",
+            type="product",
+            match_mode="approximate",
+            search_key="HeatTec",
+            cardinality="set",
+        ),
+    ])
+
+    assert "ROUTER_SET_ENTITY_WITHOUT_FOREACH" in _codes(program, resolution)
+
+
+def test_intent_contract_key_dropped_accepts_name_like_mention_token_fallback():
+    """Knowledge may pick a better-discriminating token of the mention (Gobi, the product-line
+    word) than the router's search_key (HeatTec, a fabric brand shared across families)."""
+    program = Program(statements=[
+        Run(kind="filter", name="在 Filters 面板的 Name 字段用精确值『Gobi HeatTec Tee』筛选"),
+        Run(kind="filter", name="若 0 条，在同一 Name 字段用关键词『Gobi』重筛"),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Gobi HeatTec Tee",
+            type="product",
+            match_mode="approximate",
+            search_key="HeatTec",
+        ),
+    ])
+
+    assert "ROUTER_APPROXIMATE_KEY_DROPPED" not in _codes(program, resolution)
+
+
+def test_intent_contract_key_dropped_ignores_generic_lowercase_tokens():
+    """A generic lowercase mention token appearing in retrieval prose must not count as a
+    fallback strategy — only name-like (uppercase-bearing or CJK) tokens qualify."""
+    program = Program(statements=[
+        Run(kind="filter", name="在 Orders grid 用精确值『pending orders report』筛选"),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="pending orders report",
+            type="order",
+            match_mode="approximate",
+            search_key="pending",
+        ),
+    ])
+
+    assert "ROUTER_APPROXIMATE_KEY_DROPPED" in _codes(program, resolution)
+
+
 def test_intent_contract_requires_membership_mechanism_for_set_selector():
     program = Program(statements=[
         Run(kind="filter", name="搜索 Sahara"),

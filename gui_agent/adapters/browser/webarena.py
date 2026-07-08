@@ -183,6 +183,47 @@ def _finalize_response(resp: WAResponse, *, goal_completed: bool = True, intent:
     return resp.model_copy(update=updates)
 
 
+_MUTATION_FAILURE_SUMMARY_RE = re.compile(
+    r"未找到|未完成|无法|失败|错误|异常|"
+    r"\bnot\s+found\b|\bincomplete\b|\bfailed\b|\bfailure\b|\berror\b|"
+    r"\bunknown_error\b|\bnot\s+performed\b",
+    re.IGNORECASE,
+)
+
+
+def _webarena_task_type_from_result(intent: str, result: dict) -> str:
+    task_type = str(result.get("task_type") or "").strip().upper()
+    if task_type in _TASK_TYPES:
+        return task_type
+    return _guess_webarena_task_type(intent)
+
+
+def _completed_mutate_response(intent: str, result: dict) -> WAResponse | None:
+    """Deterministically submit SUCCESS for completed WebArena mutate runs.
+
+    The agent loop's ``goal_completed`` is the runtime success signal. For MUTATE tasks WebArena
+    expects no retrieved data; letting a second response-synthesis LLM infer from incidental traces
+    such as "N records found" can turn a completed aggregate mutation into UNKNOWN_ERROR. This does
+    not read evaluator expected values; it only trusts the agent's own completed run unless the
+    result text explicitly says the mutation failed or the target was not found.
+    """
+    task_type = _webarena_task_type_from_result(intent, result)
+    if task_type != "MUTATE" or not bool(result.get("goal_completed")):
+        return None
+    result_text = " ".join(
+        str(result.get(key) or "")
+        for key in ("stop_reason", "result_summary", "error_details")
+    )
+    if _MUTATION_FAILURE_SUMMARY_RE.search(result_text):
+        return None
+    return WAResponse(
+        task_type="MUTATE",
+        status="SUCCESS",
+        retrieved_data=None,
+        error_details=None,
+    )
+
+
 def _guess_webarena_task_type(intent: str) -> str:
     text = (intent or "").strip().lower()
     retrieve_markers = (
@@ -193,6 +234,7 @@ def _guess_webarena_task_type(intent: str) -> str:
     mutate_markers = (
         "create", "add", "edit", "update", "change", "delete", "remove",
         "set ", "submit", "place", "enable", "disable", "assign", "save",
+        "mark", "rename", "notify", "send",
     )
     navigate_markers = ("open ", "go to", "navigate", "visit")
     if any(marker in text for marker in retrieve_markers):
@@ -345,6 +387,10 @@ def _synthesize_response(intent: str, result: dict, context_path: Path | None = 
     structured call — the intent carries the required output format (e.g. an object
     with keys min/max), so the model emits retrieved_data in exactly that shape
     (fixing the human-questionnaire failure mode of a string-instead-of-object)."""
+    completed_mutate = _completed_mutate_response(intent, result)
+    if completed_mutate is not None:
+        return completed_mutate
+
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
 
@@ -356,7 +402,7 @@ def _synthesize_response(intent: str, result: dict, context_path: Path | None = 
     evidence_text = _run_evidence_text(context_path)
     human = _WEBARENA_HUMAN.render(
         intent=intent,
-        task_type_guess=result.get("task_type"),
+        task_type_guess=_webarena_task_type_from_result(intent, result),
         goal_completed=result.get("goal_completed"),
         stop_reason=result.get("stop_reason"),
         result_summary=result.get("result_summary"),

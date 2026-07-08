@@ -43,6 +43,30 @@ TEXTUAL_FALLBACK_HEURISTIC_SAMPLES: tuple[dict[str, object], ...] = (
         "retire_when": "retrieval target fields are typed in the DSL instead of inferred from prose",
     },
     {
+        # Live trigger (WebArena 502, run 20260708_183100): "Filters 面板的 Name 字段" extracted
+        # ['面板的'] — `name` matched as designator and swallowed the real field "Name", making the
+        # RETRIEVAL_RETRY_DROPS_FIELD feedback unsatisfiable across all 3 decompose retries.
+        "id": "retrieval.field_regex.name_column_literal",
+        "kind": "retrieval_field_extract",
+        "owner": "gui_agent.core.orchestrator._validator.retrieval",
+        "trigger": "清除残留筛选，在 Filters 面板的 Name 字段用精确值『Gobi HeatTec Tee』筛选",
+        "expected": ["name"],
+        "validator_code": "RETRIEVAL_RETRY_DROPS_FIELD",
+        "retire_when": "retrieval target fields are typed in the DSL instead of inferred from prose",
+    },
+    {
+        # Same run: the fallback step said 「在同一 Name 字段用关键词重筛」 but the same-target
+        # escape only accepted 同一 directly followed by a designator, so the explicit
+        # same-field declaration did not count.
+        "id": "retrieval.same_target.field_name_between",
+        "kind": "retrieval_same_target",
+        "owner": "gui_agent.core.orchestrator._validator.retrieval",
+        "trigger": "清除精确值后在同一 Name 字段用关键词『HeatTec』重筛并提交",
+        "expected": True,
+        "validator_code": "RETRIEVAL_RETRY_DROPS_FIELD",
+        "retire_when": "exact/fuzzy retries carry a structured target_field",
+    },
+    {
         "id": "retrieval.stopword.input_exact_overcapture",
         "kind": "retrieval_field_normalize",
         "owner": "gui_agent.core.orchestrator._validator.retrieval",

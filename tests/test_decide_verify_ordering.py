@@ -148,8 +148,21 @@ def test_no_url_change_keeps_no_effect_replan(monkeypatch):
     assert calls == ["stuck"]  # URL unchanged => no_effect stands => replan
 
 
+def _submit_milestone_policy():
+    # TerminalDispatchGate only arms when the MILESTONE itself declares a dispatch terminal
+    # (…提交/保存…) — an arrival milestone must not be force-done'd by a stray dispatch-verb click.
+    p = MilestoneSupervisorPolicy()
+    m = Milestone.model_validate(
+        {"id": "m1", "name": "提交评论", "description": "d", "success_condition": "评论出现在历史中", "kind": "action"}
+    )
+    p._milestones = {"m1": m}
+    p._current_id = "m1"
+    p._order = ["m1"]
+    return p, m
+
+
 def test_terminal_dispatch_advances_without_visible_feedback(monkeypatch):
-    p, m = _policy()
+    p, m = _submit_milestone_policy()
     calls = _wire_check(
         monkeypatch,
         p,
@@ -167,7 +180,7 @@ def test_terminal_dispatch_advances_without_visible_feedback(monkeypatch):
 
 
 def test_terminal_dispatch_gate_respects_negative_feedback(monkeypatch):
-    p, m = _policy()
+    p, m = _submit_milestone_policy()
     calls = _wire_check(
         monkeypatch,
         p,
@@ -267,6 +280,162 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
     p._advance(m, obs, [_shipment_submit_turn()])
     assert plan_calls == ["plan"]      # negative feedback overrides the dispatch-succeeded skip
+    assert m.status != "done"
+
+
+# ── WebArena 502 (20260708_185657) regression pair ──────────────────────────────
+# Turn 20: FreshActionRequired fired on an ARRIVAL action milestone (click row → edit page); the
+# planner invented a stray Save whose success banner persisted. Turn 22: the checker credited that
+# leftover banner to the NEXT milestone ("set Stock Status … and save") whose own Save was never
+# clicked → the mutation silently never happened, score 0.
+
+
+def _arrival_click_turn(milestone_id: str = "m1") -> PolicyTurn:
+    act = BaseAction(action_type="tap", x=400, y=500, description="点击列表中目标产品行")
+    return PolicyTurn(
+        index=1,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True, instruction="点击列表中目标产品行",
+            stop=False, goal_completed=False, summary="", milestone_id=milestone_id,
+        ),
+        action_decision=BaseActionDecision(action=act),
+        target_verify=TargetVerify(on_target=True, actual_element="产品行"),
+        executed=True,
+    )
+
+
+def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
+    # Arrival action (no terminal-dispatch verb in the name): the row click navigated, so its turn
+    # dropped out of the destination page scope. Full-history execution must count — no stray
+    # "write" may be demanded.
+    p = MilestoneSupervisorPolicy()
+    m = Milestone.model_validate({
+        "id": "m1", "name": "点击列表中 Type=Configurable 的那一行打开编辑页", "description": "d",
+        "success_condition": "已进入该产品编辑页", "kind": "action",
+        "require_fresh_action": True,
+    })
+    p._milestones = {"m1": m}
+    p._current_id = "m1"
+    p._order = ["m1"]
+    plan_calls = _no_redemand_wire(monkeypatch, p)
+    p._last_check = _SingleCheckResult(status="done", reason="已进入编辑页", summary="ok")
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
+    step = p._advance(m, obs, [_arrival_click_turn()])
+    assert plan_calls == []            # no FreshActionRequired override, no stray write demanded
+    assert m.status == "done"
+    assert step.goal_completed is True
+
+
+def _select_option_turn(milestone_id: str = "m1") -> PolicyTurn:
+    act = BaseAction(action_type="tap", x=369, y=874, description="选择下拉选项 Out of Stock")
+    return PolicyTurn(
+        index=2,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True, instruction="在 Stock Status 下拉框选择 Out of Stock",
+            stop=False, goal_completed=False, summary="", milestone_id=milestone_id,
+        ),
+        action_decision=BaseActionDecision(action=act),
+        target_verify=TargetVerify(on_target=True, actual_element="Stock Status 下拉"),
+        executed=True,
+    )
+
+
+def _save_milestone_policy():
+    p = MilestoneSupervisorPolicy()
+    m = Milestone.model_validate({
+        "id": "m1", "name": "将 Stock Status 下拉设为 Out of Stock 并保存", "description": "d",
+        "success_condition": "页面显示保存成功提示", "kind": "action",
+        "require_fresh_action": True,
+    })
+    p._milestones = {"m1": m}
+    p._current_id = "m1"
+    p._order = ["m1"]
+    return p, m
+
+
+def test_dispatch_ledger_blocks_done_on_residual_banner(monkeypatch):
+    # The select_option executed (so pre_existing is False and FreshActionRequired stays quiet),
+    # the checker sees a leftover success banner and says done — but this milestone's own Save
+    # was never dispatched. The ledger must veto done.
+    p, m = _save_milestone_policy()
+    plan_calls: list[str] = []
+    monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
+    p._last_check = _SingleCheckResult(
+        status="done", reason="页面顶部显示 'You saved the product.'，Stock Status 为 Out of Stock", summary="ok",
+    )
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
+    p._advance(m, obs, [_select_option_turn()])
+    assert plan_calls == ["plan"]      # done vetoed → re-plan (click this milestone's Save)
+    assert m.status != "done"
+
+
+def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
+    # Same milestone, but the Save WAS clicked within this milestone → done stands.
+    p, m = _save_milestone_policy()
+    plan_calls: list[str] = []
+    monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
+    p._last_check = _SingleCheckResult(status="done", reason="保存成功提示可见", summary="ok")
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
+    # Verb-class agreement: the milestone says 保存 (save class) → the dispatch must be a Save
+    # click, not just any dispatch-verb action (an Apply Filters click must not count).
+    act = BaseAction(action_type="tap", x=896, y=180, description="点击右上角 Save 按钮保存")
+    save = PolicyTurn(
+        index=3,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True, instruction="点击右上角 Save 按钮保存",
+            stop=False, goal_completed=False, summary="", milestone_id="m1",
+        ),
+        action_decision=BaseActionDecision(action=act),
+        target_verify=TargetVerify(on_target=True, actual_element="Save button"),
+        executed=True,
+    )
+    step = p._advance(m, obs, [_select_option_turn(), save])
+    assert plan_calls == []
+    assert m.status == "done"
+    assert step.goal_completed is True
+
+
+# ── WebArena 505 (20260708_194754/195215): TerminalDispatchGate verb-class misfire ──────────────
+def test_terminal_dispatch_gate_ignores_arrival_milestone(monkeypatch):
+    # Arrival milestone (click a row to open its edit page) declares NO dispatch verb: a
+    # mid-milestone "Apply Filters" click (apply class) must not force-done it.
+    p = MilestoneSupervisorPolicy()
+    m = Milestone.model_validate({
+        "id": "m1", "name": "点选 Type=Configurable Product 的产品行，打开其编辑页", "description": "d",
+        "success_condition": "已进入该产品编辑页", "kind": "action",
+    })
+    p._milestones = {"m1": m}
+    p._current_id = "m1"
+    p._order = ["m1"]
+    calls = _wire_check(
+        monkeypatch, p,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="筛选已应用并显示目标行，但尚未点击进入编辑页",
+            summary="仍在列表页",
+        ),
+    )
+    p._monitor._last_url = "http://x/admin/catalog/product/"
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/")
+    apply_turn = _submit_turn(no_effect=False, reason="点击 'Apply Filters' 按钮以应用筛选条件")
+    p._run_single_turn(m, obs, [apply_turn])
+    assert calls == ["plan"]  # gate must NOT force done — keep planning toward the row click
+
+
+def test_dispatch_ledger_rejects_wrong_verb_class(monkeypatch):
+    # Save milestone (…并保存): an Apply Filters dispatch (apply class) in history must not
+    # satisfy the ledger — only a save-class dispatch counts.
+    p, m = _save_milestone_policy()
+    plan_calls: list[str] = []
+    monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
+    p._last_check = _SingleCheckResult(status="done", reason="成功提示可见", summary="ok")
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
+    apply_turn = _submit_turn(no_effect=False, reason="点击 'Apply Filters' 按钮以应用筛选条件")
+    p._advance(m, obs, [apply_turn])
+    assert plan_calls == ["plan"]      # apply ≠ save → done vetoed
     assert m.status != "done"
 
 

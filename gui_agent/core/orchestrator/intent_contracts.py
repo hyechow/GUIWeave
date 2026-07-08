@@ -64,7 +64,14 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
         key_present = _contains(program_text, search_key)
         key_present_as_own_strategy = key_present
         if mention and search_key and _norm(mention) != _norm(search_key):
-            key_present_as_own_strategy = _contains(_remove_norm_phrase(retrieval_text, mention), search_key)
+            retrieval_wo_mention = _remove_norm_phrase(retrieval_text, mention)
+            key_present_as_own_strategy = (
+                _contains(retrieval_wo_mention, search_key)
+                # Relaxed anchor: any substantive token of the mention as the fallback key also
+                # satisfies the contract — knowledge may pick a better-discriminating token than
+                # the router's choice; the invariant is fallback-anchored-to-mention.
+                or _mention_token_fallback_present(retrieval_wo_mention, mention)
+            )
         set_scope_decomposed = (
             cardinality == "set"
             and bool(selector)
@@ -100,9 +107,11 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
                         message=(
                             f"Router marked entity「{mention}」as approximate with search_key"
                             f"「{search_key}」, but after removing the original mention from retrieval "
-                            f"steps the program does not include search_key「{search_key}」as its own "
-                            "fallback/search-scope strategy. Keep the exact trial with the full "
-                            "mention, and add an explicit fallback retrieval step using the search_key."
+                            f"steps the program does not include search_key「{search_key}」(or another "
+                            f"substantive token of「{mention}」) as its own fallback/search-scope "
+                            "strategy. Keep the exact trial with the full mention, and add an explicit "
+                            "fallback retrieval step using the search_key — or, when app knowledge "
+                            "identifies a better-discriminating token of the same mention, that token."
                         ),
                         evidence=(f"mention={mention}", f"search_key={search_key}"),
                     ))
@@ -119,13 +128,29 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
                     evidence=(f"mention={mention}", f"search_key={search_key}"),
                 ))
 
-        if cardinality == "set" and not foreach_stmts:
+        # Aggregate escape: a set may be realized WITHOUT iteration when a single interactive step
+        # structurally declares it covers the whole set (covers_set=<mention>) — parent record whose
+        # save cascades to members, select-all + mass action, bulk edit. The declaration comes from
+        # app knowledge via the decomposer; the contract only checks the declaration exists and the
+        # entity scope still appears in retrieval (the aggregate must act on the right group).
+        set_covered_by_aggregate = (
+            cardinality == "set"
+            and _set_covered_by_aggregate(program, mention)
+            and (mention_present_in_retrieval or _contains(retrieval_text, search_key) or _contains(retrieval_text, selector))
+        )
+
+        if cardinality == "set" and not foreach_stmts and not set_covered_by_aggregate:
             issues.append(IntentContractIssue(
                 code="ROUTER_SET_ENTITY_WITHOUT_FOREACH",
-                message="Router marked an entity as a set, but the program has no foreach iteration.",
+                message=(
+                    "Router marked an entity as a set, but the program has no foreach iteration. "
+                    "Either iterate the matched members (foreach), or — ONLY when app knowledge "
+                    "states a single aggregate object/bulk mechanism covers all members at once — "
+                    "declare covers_set=<entity mention> on that single mutation step."
+                ),
                 evidence=(f"mention={mention}", f"selector={getattr(entity, 'selector', '') or ''}"),
             ))
-        elif cardinality == "set" and selector:
+        elif cardinality == "set" and selector and not set_covered_by_aggregate:
             if (
                 not any(_foreach_has_membership(fe) for fe in foreach_stmts)
                 and not _program_has_if(program)
@@ -245,6 +270,44 @@ def _norm(text: str) -> str:
 
 def _remove_norm_phrase(text: str, phrase: str) -> str:
     return _norm(text).replace(_norm(phrase), " ")
+
+
+def _set_covered_by_aggregate(program: Program, mention: str) -> bool:
+    """True when some interactive step declares covers_set for this entity (normalized match)."""
+    target = _norm(mention)
+    if not target:
+        return False
+
+    def _scan(stmts: list[Stmt]) -> bool:
+        for stmt in stmts:
+            declared = _norm(getattr(stmt, "covers_set", "") or "")
+            if declared and (declared == target or declared in target or target in declared):
+                return True
+            if isinstance(stmt, ForEach) and _scan(stmt.body):
+                return True
+            if isinstance(stmt, If) and (_scan(stmt.then) or _scan(stmt.otherwise)):
+                return True
+        return False
+
+    if _scan(program.statements):
+        return True
+    return any(_scan(fn.body) for fn in (getattr(program, "functions", None) or []))
+
+
+def _mention_token_fallback_present(retrieval_wo_mention: str, mention: str) -> bool:
+    """A fallback anchored to ANY substantive token of the original mention counts as a
+    fallback strategy: the router's search_key is one valid anchor, but app knowledge may know a
+    better discriminating token of the same mention (e.g. the product-line word instead of a
+    fabric brand shared across families). The invariant preserved is anchoring-to-the-mention,
+    not which token the router happened to pick. Only NAME-LIKE tokens qualify (contains an
+    uppercase letter, or CJK): a generic lowercase word ("orders") appearing anywhere in retrieval
+    prose must not silence the contract."""
+    for token in re.findall(r"[A-Za-z0-9]{3,}|[一-鿿]{2,}", mention or ""):
+        if not any(ch.isupper() for ch in token) and token.isascii():
+            continue
+        if _contains(retrieval_wo_mention, token):
+            return True
+    return False
 
 
 def _iter_foreaches(stmts: list[Stmt]) -> list[ForEach]:

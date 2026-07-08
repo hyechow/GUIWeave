@@ -1300,6 +1300,7 @@ def run_checker(
     context_reports: list[dict] | None = None,
     state_trace_text: str = "",
     last_action_effect: str = "",
+    initial_filters: dict[str, str] | None = None,
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals.
 
@@ -1378,6 +1379,7 @@ def run_checker(
             applied_filter_state_block(
                 getattr(observation, "applied_filters", None),
                 getattr(observation, "applied_filter_meta", None),
+                initial_filters=initial_filters,
             ),
             filter_residual_block(
                 filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
@@ -1577,6 +1579,7 @@ def run_planner(
     elements_knowledge: Optional[str] = None,
     prompts: Optional[MilestonePrompts] = None,
     context_reports: list[dict] | None = None,
+    initial_filters: dict[str, str] | None = None,
 ) -> _PlanResult:
     """Run the step planner. Used by both production and evals."""
     if prompts is None:
@@ -1624,6 +1627,7 @@ def run_planner(
             applied_filter_state_block(
                 getattr(observation, "applied_filters", None),
                 getattr(observation, "applied_filter_meta", None),
+                initial_filters=initial_filters,
             ),
             filter_residual_block(
                 filter_residual_labels(getattr(observation, "applied_filters", None), milestone),

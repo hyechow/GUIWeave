@@ -2292,6 +2292,33 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     "价格 compute 在 foreach 外（只算一次）——应在 foreach body 内对每个变体各读现价、各算、各填、各存。"
                 )
+        elif assertion == "out_of_stock_configurable_single_aggregate_mutation":
+            # 505/502 家族："Mark all <配置型商品> as out of stock" = 对父产品的一次保存。
+            # router 标 set；知识用 covers_set 把 set 坍缩成单次聚合 mutation。语义不变量：
+            # ① 无 foreach（模糊回退结果集喂 foreach 会跨产品线批量误改——live 175322 事故）；
+            # ② 恰有交互 action 步声明 covers_set（聚合覆盖的结构化声明，不是文字描述）；
+            # ③ 纯 mutate：covers_set 那步不带 returns（静态 finish，durable 验收）。
+            # 检索阶梯（精确原值→0 条回退 mention token）由 intent contracts 在编译期强制，
+            # 本 case 能编译出厂本身就断言了它。
+            if _has_foreach(program.statements):
+                details.append(
+                    "配置型商品标缺货不得 foreach 遍历匹配行（父产品一次保存覆盖全部变体；"
+                    "模糊回退集喂 foreach 会跨产品线批量误改并超时——live 175322）。"
+                )
+            covers = [
+                s for s in _flatten_runs(program.statements)
+                if isinstance(s, Run) and getattr(s, "covers_set", "")
+            ]
+            if not covers:
+                details.append(
+                    "没有任何 mutation 步声明 covers_set——router 标 set 时，单次线性计划必须在"
+                    "执行聚合动作（改 Stock Status 并保存）那一步上声明 covers_set=<实体提及>，"
+                    "否则 set 契约会强制 foreach。"
+                )
+            elif any(s.returns for s in covers):
+                details.append(
+                    f"covers_set 聚合 mutation 步不应带 returns（纯 mutate 静态收尾）：{[s.name for s in covers if s.returns]}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

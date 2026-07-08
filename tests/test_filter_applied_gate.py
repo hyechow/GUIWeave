@@ -254,6 +254,66 @@ def test_chip_absent_channel_block_warns_not_to_wait_for_chips():
     assert "重复提交同一动作" in text
 
 
+def test_filter_provenance_annotates_task_set_vs_initial_state():
+    # WebArena 505 (20260708_195215): the checker labeled the chips set by THIS run's earlier
+    # milestones "残留" and cleared them every step. With the run-start baseline, initial-state
+    # chips and task-set chips get distinct deterministic annotations. NO provenance guessing:
+    # initial-state chips are just "how the environment was", not attributed to any prior task.
+    block = applied_filter_state_block(
+        {"Keyword": "Gobi", "Name": "Aeon capri"},
+        None,
+        initial_filters={"Keyword": "Gobi"},
+    )
+    assert block is not None
+    text = block.render()
+    assert "任务开始时已生效" in text            # Keyword: Gobi — observed initial environment state
+    assert "本任务步骤设置" in text              # Name: Aeon capri — this run's own scope
+    assert "不改动筛选状态" in text              # non-filter milestones leave filter state alone
+    assert "上一任务" not in text                # no attribution to a "previous task"
+    assert "残留" not in text                    # no hygiene framing
+
+
+def test_filter_provenance_absent_without_baseline():
+    # No baseline captured yet → keep the legacy rendering, no state-attribution claims.
+    block = applied_filter_state_block({"Name": "Aeon capri"}, None)
+    assert block is not None
+    text = block.render()
+    assert "任务开始时已生效" not in text
+    assert "本任务步骤设置" not in text
+
+
+def test_policy_captures_first_applied_filters_snapshot(monkeypatch):
+    from gui_agent.core.schemas import SupervisorStep
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+
+    pol = MilestoneSupervisorPolicy()
+    ms = Milestone.model_validate({
+        "id": "m1", "name": "进入 Products 页", "description": "", "success_condition": "列表可见",
+        "kind": "navigation",
+    })
+    pol._milestones = {"m1": ms}
+    pol._order = ["m1"]
+    pol._current_id = "m1"
+    monkeypatch.setattr(pol, "_run_single_turn", lambda *a, **k: SupervisorStep(
+        should_act=False, instruction=None, stop=False, goal_completed=False, summary="", milestone_id="m1",
+    ))
+    # Turn 1: no applied-filters channel (dashboard) → baseline not captured.
+    pol.step(Observation(png_bytes=b"x", source="browser"), goal="g", history=[])
+    assert pol._initial_filters is None
+    # Turn 2: first grid observation with residue chips → baseline captured once.
+    pol.step(
+        Observation(png_bytes=b"x", source="browser", applied_filters={"Keyword": "Gobi"}),
+        goal="g", history=[],
+    )
+    assert pol._initial_filters == {"Keyword": "Gobi"}
+    # Turn 3: task's own filter appears — baseline must NOT be overwritten.
+    pol.step(
+        Observation(png_bytes=b"x", source="browser", applied_filters={"Name": "Aeon capri"}),
+        goal="g", history=[],
+    )
+    assert pol._initial_filters == {"Keyword": "Gobi"}
+
+
 def test_no_chips_falls_through_to_checker(monkeypatch):
     # No applied_filters signal from any adapter mechanism → gate cannot fire → checker runs.
     _ms, _step, checker_calls = _run_step(monkeypatch, None)

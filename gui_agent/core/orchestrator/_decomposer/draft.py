@@ -50,6 +50,13 @@ class _StepDraft(BaseModel):
         description="op=run：该步是否为【前置状态保障】（确保已登录 / 已进入某模式或某页，初始往往已满足）。"
                     "是→true 且 run_kind 用 navigation；普通去某页/做某操作就留 false。",
     )
+    covers_set: str = Field(
+        default="",
+        description="op=run 可选：当任务实体是【多目标(一组)】、但应用知识明确指出这组成员由单一聚合对象/"
+                    "批量机制一次覆盖（父记录一次保存级联全部子记录、全选+批量动作、bulk edit）时，"
+                    "在执行该聚合动作的 mutation 步上填被覆盖的实体提及原文，程序可以不用 foreach。"
+                    "没有知识依据时禁止填写——那等于漏改其余成员。",
+    )
     returns: list[str] = Field(default_factory=list, description="op=run：该步完成后要返回的结果字段；data_query 也必须填")
     read_spec: str = Field(
         default="",
@@ -294,6 +301,7 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                         if k.strip() and v.strip() and k.strip() in {r.strip() for r in d.returns}
                     },
                     precondition=bool(d.precondition),
+                    covers_set=(d.covers_set or "").strip(),
                 ))
     return out
 

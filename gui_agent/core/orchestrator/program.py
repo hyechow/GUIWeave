@@ -142,6 +142,13 @@ class Run(RunLike):
     # accepted on frame 1. App-specific "what that state looks like" stays in the checker's
     # _check.md. The flag — not a string match — is the detection signal.
     precondition: bool = False
+    # STRUCTURAL declaration for set-realization: this single interactive step covers ALL members
+    # of the named set entity via an aggregate mechanism the app provides (a parent record whose
+    # save cascades to children, a select-all + mass action, a bulk-edit form). Value = the entity
+    # mention it covers. The intent contract accepts a router-marked set WITHOUT a foreach when a
+    # step declares coverage — knowledge decides WHEN aggregate coverage exists; this flag — not a
+    # text pattern — is how the program states it.
+    covers_set: str = ""
 
 
 class Read(RunLike):

@@ -104,6 +104,26 @@ _CHECKBOX_OR_TOGGLE_RE = re.compile(
     r"(?:复选框|勾选|取消勾选|选中|开关|checkbox|toggle|switch)",
     re.IGNORECASE,
 )
+# Bilingual verb CLASSES for terminal dispatch. When the milestone itself names a dispatch verb
+# (…并保存), the executed dispatch must be the SAME class — an "Apply Filters" click (apply) must
+# not stand in for a Save (save). WebArena 505 (20260708_194754/195215): a mid-milestone Apply
+# Filters matched the flat verb regex and TerminalDispatchGate force-done'd an arrival milestone
+# that never opened its edit page.
+_DISPATCH_VERB_CLASS_RES: dict[str, "re.Pattern[str]"] = {
+    "submit": re.compile(r"提交|submit", re.IGNORECASE),
+    "save": re.compile(r"保存|save", re.IGNORECASE),
+    "send": re.compile(r"发送|发出|send", re.IGNORECASE),
+    "publish": re.compile(r"发布|publish|\bpost\b", re.IGNORECASE),
+    "confirm": re.compile(r"确认|confirm", re.IGNORECASE),
+    "apply": re.compile(r"应用|apply", re.IGNORECASE),
+    "finish": re.compile(r"完成|finish", re.IGNORECASE),
+    "comment": re.compile(r"添加备注|提交评论|add\s+comment|submit\s+comment", re.IGNORECASE),
+}
+
+
+def _dispatch_verb_classes(text: str) -> set[str]:
+    t = text or ""
+    return {name for name, rx in _DISPATCH_VERB_CLASS_RES.items() if rx.search(t)}
 _NEGATIVE_ACTION_FEEDBACK_RE = re.compile(
     r"(?:"
     r"错误|失败|校验|必填|无效|被拒绝|权限不足|"
@@ -182,7 +202,15 @@ def _is_terminal_dispatch_turn(turn: PolicyTurn | None, milestone: Milestone) ->
     text = _turn_action_text(turn)
     if not text or _CHECKBOX_OR_TOGGLE_RE.search(text):
         return False
-    return bool(_TERMINAL_DISPATCH_RE.search(text))
+    if not _TERMINAL_DISPATCH_RE.search(text):
+        return False
+    # When the milestone names its own dispatch verb (…并保存 / 提交…), the executed dispatch
+    # must be the same verb class; a milestone with no dispatch verb keeps the action-side-only
+    # behavior (legacy fire-and-forget submits).
+    milestone_classes = _dispatch_verb_classes(milestone.name or "")
+    if milestone_classes:
+        return bool(milestone_classes & _dispatch_verb_classes(text))
+    return True
 
 
 def _has_negative_action_feedback(check: _SingleCheckResult) -> bool:
@@ -336,6 +364,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._last_check: Optional[_SingleCheckResult] = None
         self._collection_progress: str = ""
         self._collection_done: bool = False
+        # Run-level filter provenance ledger: the FIRST applied-filters snapshot this run observed.
+        # Chips already present there were inherited (candidate cross-task residue); chips that
+        # appear later were set by this run's own steps — task scope, not residue. Rendered into
+        # the checker/planner applied-filter block so "清除残留" can no longer destroy upstream scope.
+        self._initial_filters: Optional[dict[str, str]] = None
         self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
@@ -495,6 +528,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # on them persisting across turns (unlike _last_check, which is cross-turn memory).
         self._last_plan = None
         self._last_replan = None
+
+        # Filter provenance baseline: first observation that carries the applied-filters channel.
+        # Chips present here predate any of this run's grid actions → inherited/residue candidates.
+        if self._initial_filters is None:
+            applied_now = getattr(observation, "applied_filters", None)
+            if applied_now is not None:
+                self._initial_filters = dict(applied_now)
 
         if not self._order:
             with _Timer(self._timings, self._timings_order, "decompose", self._token_usage):
@@ -737,6 +777,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if (
             milestone.kind == "action"
             and check.status != "done"
+            # The gate exists for fire-and-forget submits whose backend effect renders no visible
+            # toast — it only applies when the MILESTONE's own terminal is a dispatch. An arrival
+            # milestone (click a row to open its edit page) must never be force-done'd by a
+            # mid-milestone Apply/搜索 click that happens to contain a dispatch verb (WebArena 505).
+            and _TERMINAL_DISPATCH_RE.search(milestone.name or "")
             and _is_terminal_dispatch_turn(last_terminal_dispatch, milestone)
             and not _has_negative_action_feedback(check)
         ):
@@ -1238,7 +1283,24 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 _milestone_terminal_dispatch_succeeded(history, milestone)
                 and not (prior_check is not None and _has_negative_action_feedback(prior_check))
             )
-            if not terminal_dispatch_ok:
+            # An action milestone with NO terminal-dispatch intent (click a row to open, expand,
+            # sort) navigates by construction: its executed turn drops out of the destination
+            # page scope, so pre_existing is structurally True on arrival. Any executed on-target
+            # turn for this milestone in the FULL history IS the fresh action. Without this escape
+            # the planner is told to invent a "write" on an already-satisfied arrival milestone
+            # (WebArena 502: stray Save on the edit page, whose success banner then poisoned the
+            # NEXT milestone's verification).
+            arrival_action_ok = (
+                not _TERMINAL_DISPATCH_RE.search(milestone.name or "")
+                and any(
+                    t.executed
+                    and t.supervisor is not None
+                    and t.supervisor.milestone_id == milestone.id
+                    and (t.target_verify is None or t.target_verify.on_target)
+                    for t in history
+                )
+            )
+            if not (terminal_dispatch_ok or arrival_action_ok):
                 print(
                     f"  [FreshActionRequired] 子目标「{done_name}」当前状态看似满足，"
                     "但本轮尚未执行写操作，覆盖 done → in_progress"
@@ -1259,9 +1321,40 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 self._last_check = check
                 return self._plan_single(milestone, check, observation, scoped_history)
             print(
-                f"  [FreshActionRequired] 跳过：子目标「{done_name}」的终端提交已 on-target 派发且无负反馈"
-                "（提交成功后跳转使当前页 scope 看不到写操作）→ 按 done 收尾，不重复提交。"
+                f"  [FreshActionRequired] 跳过：子目标「{done_name}」的"
+                + ("终端提交已 on-target 派发且无负反馈" if terminal_dispatch_ok
+                   else "点击动作已在全量历史中执行（到达型动作跳转后脱离本页 scope）")
+                + "→ 按 done 收尾，不重复动作。"
             )
+        # Execution-evidence gate — the dual of the escape above: a milestone whose NAME declares
+        # a terminal dispatch (…并保存 / 提交…) may not be marked done on effect evidence alone.
+        # A success banner can be residue of an earlier stray save on the same page (WebArena 502:
+        # the previous milestone's banner was credited to a Stock Status change whose own Save was
+        # never clicked → the mutation silently never happened). The deterministic dispatch
+        # ledger — not the checker's visual claim — decides whether THIS milestone submitted.
+        if (
+            milestone.kind == "action"
+            and _TERMINAL_DISPATCH_RE.search(milestone.name or "")
+            and not _milestone_terminal_dispatch_succeeded(history, milestone)
+        ):
+            print(
+                f"  [DispatchLedger] 子目标「{done_name}」声明了终端提交，但本里程碑内未派发过"
+                "提交/保存动作；可见的成功提示可能是先前操作的残留，覆盖 done → in_progress"
+            )
+            prior = self._last_check
+            prior_check = prior if isinstance(prior, _SingleCheckResult) else None
+            check = (prior_check if prior_check is not None else _SingleCheckResult(
+                status="in_progress", reason="", summary="",
+            )).model_copy(update={
+                "status": "in_progress",
+                "reason": (
+                    "目标值可能已在界面上设置好，但该里程碑要求的提交/保存动作尚未在本里程碑内执行；"
+                    "当前的成功提示可能是先前操作的残留。请执行该里程碑自己的提交/保存（点击对应按钮）。"
+                ),
+                "summary": "值已设置但本里程碑的提交/保存尚未派发。",
+            })
+            self._last_check = check
+            return self._plan_single(milestone, check, observation, scoped_history)
         milestone.status = "done"
         # Persist this milestone's DONE verdict before _last_check is overwritten by the next
         # milestone's check (the report's 验收 panel renders it via context.milestones[id].
@@ -1709,6 +1802,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             context_reports=self._context_reports,
             state_trace_text=self._monitor.render(scope=execution_scope),
             last_action_effect=self._last_action_effect_text(effect_history or history),
+            initial_filters=self._initial_filters,
         )
 
     def _loop_check(
@@ -1866,6 +1960,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             elements_knowledge=elements,
             prompts=self._prompts,
             context_reports=self._context_reports,
+            initial_filters=self._initial_filters,
         )
 
     def _invoke_loop_scroll(

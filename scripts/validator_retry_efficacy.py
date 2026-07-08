@@ -36,6 +36,7 @@ import argparse
 import json
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +56,12 @@ from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, lo
 CASES_FILE = PROJECT_ROOT / "evals" / "browser" / "orchestrator" / "cases.json"
 
 
+@dataclass
+class CaseTrace:
+    attempts: list[list[str]]
+    error: str | None = None
+
+
 def _case_knowledge(case: dict):
     platform = case.get("platform", "browser")
     app = case.get("knowledge_app") or case.get("site")
@@ -63,43 +70,51 @@ def _case_knowledge(case: dict):
     return auto_discover_knowledge(case["goal"], platform)
 
 
-def _decompose_with_trace(case: dict) -> list[list[str]]:
+def _decompose_with_trace(case: dict) -> CaseTrace:
     """Run one case through decompose, returning the per-attempt list of fired codes
-    (attempts[0] = codes on the first draft, attempts[-1] = codes on the shipped draft)."""
+    (attempts[0] = codes on the first draft, attempts[-1] = codes on the final draft).
+
+    If decompose raises after the observer has seen validator attempts, keep those attempts. A
+    compile failure is exactly the case where the final fired codes matter most; treating it as an
+    empty trace makes the rule look unobserved and hides failed repairs.
+    """
     attempts: list[list[str]] = []
 
     def observer(_attempt: int, issues: list[ValidationIssue]) -> None:
         attempts.append([i.code for i in issues])
 
-    k = _case_knowledge(case)
-    screenshot = case.get("screenshot")
-    png_bytes = None
-    if screenshot:
-        p = PROJECT_ROOT / screenshot
-        if not p.exists():
-            return []  # gitignored fixture absent on this checkout — skip (mirrors the eval)
-        png_bytes = p.read_bytes()
+    try:
+        k = _case_knowledge(case)
+        screenshot = case.get("screenshot")
+        png_bytes = None
+        if screenshot:
+            p = PROJECT_ROOT / screenshot
+            if not p.exists():
+                return CaseTrace(attempts, error=f"missing screenshot fixture: {screenshot}")
+            png_bytes = p.read_bytes()
 
-    resolution = None
-    if case.get("resolution"):
-        from gui_agent.core.router import EntityRef, IntentResolution
+        resolution = None
+        if case.get("resolution"):
+            from gui_agent.core.router import EntityRef, IntentResolution
 
-        resolution = IntentResolution(entities=[EntityRef(**e) for e in case["resolution"]])
+            resolution = IntentResolution(entities=[EntityRef(**e) for e in case["resolution"]])
 
-    decompose(
-        case["goal"],
-        png_bytes=png_bytes,
-        knowledge=k.navigation if k else "",
-        current_url=case.get("current_url", ""),
-        current_title=case.get("current_title", ""),
-        current_site=case.get("current_site")
-        or (k.app_name if k and case.get("use_knowledge_app_as_current_site") else ""),
-        table_summaries=case.get("table_summaries"),
-        corrective_directive=case.get("corrective_directive", ""),
-        resolution=resolution,
-        attempt_observer=observer,
-    )
-    return attempts
+        decompose(
+            case["goal"],
+            png_bytes=png_bytes,
+            knowledge=k.navigation if k else "",
+            current_url=case.get("current_url", ""),
+            current_title=case.get("current_title", ""),
+            current_site=case.get("current_site")
+            or (k.app_name if k and case.get("use_knowledge_app_as_current_site") else ""),
+            table_summaries=case.get("table_summaries"),
+            corrective_directive=case.get("corrective_directive", ""),
+            resolution=resolution,
+            attempt_observer=observer,
+        )
+    except Exception as exc:  # one bad case shouldn't sink the batch; preserve observed attempts
+        return CaseTrace(attempts, error=f"{type(exc).__name__}: {exc}")
+    return CaseTrace(attempts)
 
 
 class CodeStat:
@@ -136,11 +151,12 @@ def aggregate(traces: list[list[list[str]]]) -> dict[str, CodeStat]:
     return stats
 
 
-def _report(traces: list[list[list[str]]], stats: dict[str, CodeStat]) -> None:
+def _report(traces: list[CaseTrace], stats: dict[str, CodeStat]) -> None:
     total = len(traces)
-    with_retry = sum(1 for t in traces if len(t) > 1)
-    clean = sum(1 for t in traces if t and not t[0])
-    print(f"\ncases: {total}   first-draft-clean: {clean}   needed≥1 retry: {with_retry}")
+    with_retry = sum(1 for t in traces if len(t.attempts) > 1)
+    clean = sum(1 for t in traces if t.attempts and not t.attempts[0])
+    failed = sum(1 for t in traces if t.error)
+    print(f"\ncases: {total}   first-draft-clean: {clean}   needed≥1 retry: {with_retry}   raised: {failed}")
     if not stats:
         print("\nNo validation issues fired across the corpus — nothing to measure.")
         print("→ This corpus is built to pass on the first draft; to measure retry efficacy")
@@ -177,21 +193,23 @@ def main() -> int:
     if args.limit:
         cases = cases[: args.limit]
 
-    traces: list[list[list[str]]] = []
+    traces: list[CaseTrace] = []
     for idx, c in enumerate(cases, 1):
         print(f"[{idx}/{len(cases)}] {c['label'][:70]}", flush=True)
-        try:
-            traces.append(_decompose_with_trace(c))
-        except Exception as e:  # one bad case shouldn't sink the batch
-            print(f"    ! decompose raised: {type(e).__name__}: {e}")
-            traces.append([])
+        trace = _decompose_with_trace(c)
+        if trace.error:
+            print(f"    ! decompose raised: {trace.error}")
+        traces.append(trace)
 
-    stats = aggregate(traces)
+    stats = aggregate([trace.attempts for trace in traces])
     _report(traces, stats)
 
     if args.json:
         out = {
-            "cases": [{"label": c["label"], "attempts": t} for c, t in zip(cases, traces)],
+            "cases": [
+                {"label": c["label"], "attempts": t.attempts, "error": t.error}
+                for c, t in zip(cases, traces)
+            ],
             "stats": {
                 code: {"fired": s.fired, "fed_back": s.fed_back, "cleared": s.cleared,
                        "shipped": s.shipped, "clear_rate": s.clear_rate}

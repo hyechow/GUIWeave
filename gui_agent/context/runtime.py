@@ -440,6 +440,7 @@ def active_filters_block(form_controls: list[dict] | None) -> ContextBlock | Non
 def applied_filter_state_block(
     applied_filters: dict[str, str] | None,
     applied_filter_meta: dict[str, Any] | None = None,
+    initial_filters: dict[str, str] | None = None,
 ) -> ContextBlock | None:
     """Inject the currently-APPLIED filters as a deterministic fact.
 
@@ -481,7 +482,29 @@ def applied_filter_state_block(
             },
             content=content,
         )
-    lines = [f"- {label}: {value!r}" for label, value in applied_filters.items()]
+    # State-attribution annotation (deterministic run-level ledger): a chip present in the run's
+    # FIRST applied-filters snapshot is the environment's INITIAL STATE — an observed fact with no
+    # claim about where it came from; a chip that appeared DURING this run was established by this
+    # task's own earlier steps — deliberate task scope. Without this fact the checker/planner
+    # free-guess which chips are "unrelated" and clear upstream scope every step (live run
+    # 20260708_195215). No hygiene framing: the desired filter state is DEFINED by the current
+    # milestone; initial-state chips get reconciled to it, never "cleaned" for their own sake.
+    provenance_note = ""
+    if initial_filters is not None:
+        def _prov(label: str, value: str) -> str:
+            if initial_filters.get(label) == value:
+                return "【任务开始时已生效——初始环境状态】"
+            return "【本任务步骤设置——任务作用域】"
+        lines = [f"- {label}: {value!r} {_prov(label, value)}" for label, value in applied_filters.items()]
+        provenance_note = (
+            "\n⚠️ 状态归属（确定性事实，不要自行推断来源）：『初始环境状态』只是任务开始时环境本来的样子，"
+            "既不是垃圾也不代表意图——应该有什么筛选由**当前子目标**定义：筛选类子目标把已生效状态调整到"
+            "它要求的终态（与终态冲突的初始条目在调整中被替换/清除，这是达成目标状态，不是打扫卫生）；"
+            "非筛选类子目标（打开行/编辑/保存等）**不改动筛选状态**。"
+            "『任务作用域』条目是本任务前序步骤特意建立的，任何子目标都不得当作无关条目清除。"
+        )
+    else:
+        lines = [f"- {label}: {value!r}" for label, value in applied_filters.items()]
     source_line = "来源：平台 adapter 的已生效筛选状态。"
     content = (
         "## 当前已生效筛选（筛选控件权威状态）\n"
@@ -493,6 +516,7 @@ def applied_filter_state_block(
         "行/单元格里某个**展示列**的值"
         "（如某个由被筛字段派生、或与之相邻同名却按不同口径计算的展示列，是另一列）**不得**用来推翻"
         "已生效的筛选、或据此要求重设/清除筛选——那只会打转。"
+        + provenance_note
     )
     return ContextBlock(
         id="runtime.observation.applied_filter_state",

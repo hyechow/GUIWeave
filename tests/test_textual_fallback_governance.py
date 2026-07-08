@@ -47,6 +47,13 @@ def test_retrieval_field_stopword_extract_samples(sample):
     assert _extract_retrieval_fields(str(sample["trigger"])) == sample["expected"]
 
 
+@pytest.mark.parametrize("sample", _samples("retrieval_same_target"), ids=lambda s: str(s["id"]))
+def test_retrieval_same_target_samples(sample):
+    from gui_agent.core.orchestrator._validator.retrieval import _mentions_same_retrieval_target
+
+    assert _mentions_same_retrieval_target(str(sample["trigger"])) is sample["expected"]
+
+
 @pytest.mark.parametrize("sample", _samples("retrieval_field_normalize"), ids=lambda s: str(s["id"]))
 def test_retrieval_field_stopword_normalize_samples(sample):
     from gui_agent.core.orchestrator._validator.retrieval import _normalize_retrieval_field
