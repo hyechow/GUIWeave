@@ -129,10 +129,10 @@ version: 1
 
 ## skill：按订单号/客户定位订单（订单类改写的前置检索）
 - 触发：order #N、update order #、notify … in their … order、订单 #、给某客户的订单做某操作
-- 数据：Sales > Orders grid 顶部搜索框/筛选。**订单引用「#N」（如 `#304`）搜索时必须去掉「#」，直接搜数字 `304`**（Orders grid 按订单号 increment id 匹配，带「#」会 0 命中，499 就是搜 `#304` 空手而归）；找「某客户最近的 pending 订单」先按客户姓名检索 + Status 筛 `Pending`，再按 Purchase Date 取最新一笔，姓名精确 0 命中时退回姓/名关键词。**Orders grid 里不要写泛称「客户字段」或 `Customer Name` 作为筛选控件**：筛选面板实际可操作的是 `Bill-to Name`、`Ship-to Name`、`Customer Email`，顶部还有 `Search by keyword`；`Customer Name` 可能只是 Columns 里的可见列，不等于有文本筛选框。客户名定位优先用顶部 `Search by keyword` 搜完整姓名/关键词，或明确用 `Bill-to Name`/`Ship-to Name` 字段；不要通过 Columns 面板去“添加 Customer Name 筛选器”。**顶部 `Search by keyword` 的提交方式是按 Enter 或点击输入框内放大镜；Filters / Apply Filters 只提交展开面板里的列筛选，不能提交顶部 keyword。**
+- 数据：Sales > Orders grid 顶部搜索框/筛选。**按订单号「#N」（如 `#304`）定位订单必须用 Filters 面板展开后的 `ID` 字段搜纯数字 `304`（去掉「#」），不要用顶部 `Search by keyword`**——increment id 存为零填充 `000000304`、顶部 keyword 是整词/fulltext 匹配，搜 `304` 或 `#304` 都 0 命中，会被误判成「订单不存在」而错误终止（499 实测：`#304`、keyword `304` 均空手而归，改用 **Filters → `ID` 字段搜 `304`** 才命中）。**订单号 0 命中不等于订单不存在**：MUTATE/改写类任务的目标订单几乎必然存在，先换 Filters→ID（或直达订单 view URL）确认，别据单次 keyword 0 命中就报 not found。找「某客户最近的 pending 订单」先按客户姓名检索 + Status 筛 `Pending`，再按 Purchase Date 取最新一笔，姓名精确 0 命中时退回姓/名关键词。**Orders grid 里不要写泛称「客户字段」或 `Customer Name` 作为筛选控件**：筛选面板实际可操作的是 `Bill-to Name`、`Ship-to Name`、`Customer Email`，顶部还有 `Search by keyword`；`Customer Name` 可能只是 Columns 里的可见列，不等于有文本筛选框。客户名定位优先用顶部 `Search by keyword` 搜完整姓名/关键词，或明确用 `Bill-to Name`/`Ship-to Name` 字段；不要通过 Columns 面板去“添加 Customer Name 筛选器”。**顶部 `Search by keyword` 的提交方式是按 Enter 或点击输入框内放大镜；Filters / Apply Filters 只提交展开面板里的列筛选，不能提交顶部 keyword。**
 - 步骤：
 1. 进 Sales > Orders
-2. 按订单号时去掉 #，直接搜数字
+2. 按订单号时展开 Filters 面板、在 `ID` 字段填纯数字（去 #）后 Apply Filters；不要用顶部 keyword 搜订单号；0 命中先换法（Filters→ID / 直达 URL）再判不存在
 3. 客户订单先搜完整姓名；0 命中再搜姓/名关键词
 4. 追加 Status=Pending 时保留客户全名/关键词具体值
 5. 按 Purchase Date 降序
@@ -142,6 +142,18 @@ version: 1
 9. data_query 用客户关键词 + Status=Pending 过滤
 10. 最近一笔用 `purchase_date_ts DESC LIMIT 1`
 11. 打开 `Action_url` 执行改写（填单号 / 发通知）
+
+## skill：给订单添加物流/追踪单号（update order with tracking number）
+- 触发：update order # with (the) tracking number、add tracking (number)、USPS/UPS/FedEx/DHL tracking、给订单加物流单号/追踪号
+- 数据：**追踪号挂在发货单（Shipment）上，不是订单 Comment**。提交后 POST `admin/order_shipment/save/order_id/<id>`，post_data 含 `tracking[k][carrier_code]` + `tracking[k][number]`。**绝不要把追踪号写进 Notes for this Order 的 Comment / 勾 Notify Customer**——那是客户通知（走 `sales/order/commentsHistory`），不产生 shipment，任务不算完成。路径（Method 1，订单尚无发货单，即有 **Ship** 按钮）：订单详情页 → 点顶部按钮栏 **Ship**（不是「Shipments 标签页」，也**没有**「Add New Shipment」按钮）→ New Shipment 页滚到 **Payment & Shipping Method** 区 → 点 **Add Tracking Number** 展开一行 → **Carrier** 选承运商全称（USPS=`United States Postal Service`、UPS=`United Parcel Service`、FedEx=`Federal Express`、`DHL`；任务写 "USPS" 时选 `United States Postal Service`，**别填字面 "USPS"**）→ 填 **Number**=追踪号（Title 可留承运商名默认）→ 点 **Submit Shipment** 保存。Method 2（订单已发货、无 Ship 按钮）：Sales > Shipments 打开该发货单编辑页 → Add Tracking Number → 选 Carrier + 填 Number → 点 **Add** → 保存。
+- 步骤：
+1. 先按订单号定位并打开订单详情（见上一条 skill：Filters→ID）
+2. 有 Ship 按钮 → 点 **Ship** 进新建发货单页；无 Ship（已发货）→ 去 Sales > Shipments 打开该发货单编辑页
+3. 滚到 Payment & Shipping Method 区，点 **Add Tracking Number**
+4. Carrier 选承运商全称（USPS=United States Postal Service），Number 填追踪号
+5. Ship 流点 **Submit Shipment**；已有发货单流点 **Add** 再保存
+6. 验收：保存成功/跳转，且发货单里出现该追踪号——**不是** Comments History 里多一条备注
+- 编排形态：这是**纯状态变更（无返回值诉求）**——意图只说「加追踪号」，没有「确认/返回/是否成功」这类取值要求。**Submit Shipment 这步不要绑 returns**（尤其别造 `submit_status`/`成功|失败` 这类验证返回：提交成功即跳回订单页，那里没有这种字段，只会读到订单 Status 列而出域打转）；成没成由该步的 durable 验收（保存成功/跳转+发货单出现追踪号）判定。**finish 用静态确认句**（如「已为订单 #N 添加追踪号 X」），不要写 `{...[submit_status]}` 之类读返回值的模板。仅当意图明确要求「确认是否成功/返回某值」时才另加 confirm-read。
 
 ## skill：给订单客户发送订单备注/通知
 - 触发：notify/send/message customer in order、给订单客户发消息、通知某客户某订单
