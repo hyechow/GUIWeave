@@ -64,3 +64,45 @@ def test_plain_get_still_recorded_once():
     rec._on_finished({"requestId": "R2", "timestamp": 2.0})
     entries = _dump(rec)["log"]["entries"]
     assert len(entries) == 1 and entries[0]["request"]["method"] == "GET"
+
+
+def test_extra_info_content_type_backfills_post_data_mime_type():
+    rec = HarRecorder(device=object())
+    rec._on_request({
+        "requestId": "R3", "wallTime": 1.0, "timestamp": 1.0,
+        "request": {
+            "method": "POST",
+            "url": "http://host/admin/sales/order/addComment/order_id/65/?isAjax=true",
+            "headers": {},
+            "postData": "history%5Bcomment%5D=hello&history%5Bis_customer_notified%5D=1",
+        },
+    })
+    rec._on_request_extra_info({
+        "requestId": "R3",
+        "headers": {"Content-type": "application/x-www-form-urlencoded; charset=UTF-8"},
+    })
+
+    entry = _dump(rec)["log"]["entries"][0]
+
+    assert entry["request"]["postData"]["mimeType"] == "application/x-www-form-urlencoded; charset=UTF-8"
+
+
+def test_pending_extra_info_backfills_post_data_mime_type():
+    rec = HarRecorder(device=object())
+    rec._on_request_extra_info({
+        "requestId": "R4",
+        "headers": {"Content-type": "application/x-www-form-urlencoded; charset=UTF-8"},
+    })
+    rec._on_request({
+        "requestId": "R4", "wallTime": 1.0, "timestamp": 1.0,
+        "request": {
+            "method": "POST",
+            "url": "http://host/admin/sales/order/addComment/order_id/65/?isAjax=true",
+            "headers": {},
+            "postData": "history%5Bcomment%5D=hello&history%5Bis_customer_notified%5D=1",
+        },
+    })
+
+    entry = _dump(rec)["log"]["entries"][0]
+
+    assert entry["request"]["postData"]["mimeType"] == "application/x-www-form-urlencoded; charset=UTF-8"

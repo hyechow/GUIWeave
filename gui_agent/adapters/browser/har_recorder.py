@@ -53,6 +53,22 @@ def _merge_headers(existing: list[dict], extra: dict) -> list[dict]:
     return existing
 
 
+def _header_value(headers: list[dict], name: str) -> str:
+    for header in headers:
+        if str(header.get("name") or "").lower() == name.lower():
+            return str(header.get("value") or "")
+    return ""
+
+
+def _backfill_post_data_mime_type(request: dict) -> None:
+    post_data = request.get("postData")
+    if not isinstance(post_data, dict) or post_data.get("mimeType"):
+        return
+    content_type = _header_value(request.get("headers") or [], "Content-Type")
+    if content_type:
+        post_data["mimeType"] = content_type
+
+
 def _query_list(url: str) -> list[dict]:
     try:
         return [{"name": k, "value": v} for k, v in parse_qsl(urlsplit(url).query, keep_blank_values=True)]
@@ -167,6 +183,7 @@ class HarRecorder:
             extra = self._pending_extra_headers.pop(rid, None)
             if extra:
                 _merge_headers(entry["request"]["headers"], extra)
+                _backfill_post_data_mime_type(entry["request"])
         except Exception:
             pass
 
@@ -179,6 +196,7 @@ class HarRecorder:
             entry = self._reqs.get(rid)
             if entry is not None:
                 _merge_headers(entry["request"]["headers"], headers)
+                _backfill_post_data_mime_type(entry["request"])
             else:
                 # requestWillBeSent hasn't arrived yet — stash for when it does.
                 self._pending_extra_headers[rid] = headers
