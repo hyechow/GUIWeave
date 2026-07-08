@@ -190,11 +190,25 @@ Additional columns available:
 
 The Search box in the upper left of the Orders grid can be used to find specific orders by keyword, or by filtering the order records in the grid.
 
+For customer-name order lookup, do not rely on a generic `Customer Name`
+filter. In this Magento Orders grid, the filter panel exposes `Bill-to Name`,
+`Ship-to Name`, and `Customer Email`, plus the top `Search by keyword` box.
+`Customer Name` can appear as an optional column in the Columns menu, but that
+does not make it a usable text filter. To find a customer's pending/latest
+order, use the top keyword search with the full name or fallback keyword, or
+filter explicitly by `Bill-to Name` / `Ship-to Name`; then add `Status=Pending`
+and sort/collect by `Purchase Date`.
+
+When using the top `Search by keyword` box, submit that keyword with Enter or
+the magnifying-glass button inside the search box. The **Filters** panel and its
+**Apply Filters** button only apply the expanded column-filter fields; they do
+not submit the top keyword search box.
+
 ### Search for a match
 
 1. Enter a search term into the page search box.
 
-1. To display the results, click _Search_ (  ).
+1. To display the results, press Enter or click _Search_ (  ) inside that box.
 
 ### Filter the search
 

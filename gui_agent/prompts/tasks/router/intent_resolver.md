@@ -64,3 +64,6 @@ version: 1
 目标:"Get the total payment amount of the last 2 completed orders"
 {"entities":[]}
 (解释:'last 2 completed orders' 是筛选条件+排名口径(状态=completed、按时间取 2 条),不是要检索定位的具名实体——不抽取,约束交给下游的筛选/排序步骤。)
+
+目标:"Notify Grace Nguyen in their most recent pending order with message \"sorry we are bankrupt\""
+{"entities":[{"mention":"Grace Nguyen","type":"customer","match_mode":"approximate","search_key":"Grace","cardinality":"single","selector":"","reason":"Grace Nguyen 是要先在系统里定位的客户；'most recent pending order' 是订单集合上的 Status=Pending + 按时间最近取 1 条的筛选/排序口径，不抽成 order 实体"}]}

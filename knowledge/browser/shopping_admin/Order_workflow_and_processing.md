@@ -58,7 +58,7 @@ The left panel for an open order provides access to different types of informati
 
 When a customer places an order, a sales order is created as a temporary record of the transaction. The sales order has a status of `Pending` until payment is received. While in `Pending` status, orders can be edited or canceled up until the time that payment is received and an invoice is generated. An easy way to think of it is that orders become invoices, and invoices become shipments. The Orders grid lists all orders, regardless of where they are in the workflow. To learn how to help customers with an order, see Update an order.
 
-To open a `Pending` order, click **Edit** in the upper-right corner.
+To modify a `Pending` order's items, addresses, or account details, click **Edit** in the upper-right corner. For tasks that add an order comment, notify the customer, send a message, or contact the customer, do **not** click **Edit**; stay on the order detail/view page and use the **Comments History / Notes for this Order** area.
 
 **NOTE:**
 Orders can be edited only while in `Pending` status. The Edit button is not visible for orders in a different status or for orders that are based on a negotiated quote.
@@ -73,7 +73,7 @@ Review the following sections in the sales order, using the field descriptions f
 |Invoices|Lists each invoice that is associated with the order.|
 |Credit Memos|Lists each credit memo that is associated with the order.|
 |Shipments|Lists each shipment record that is associated with the order.|
-|Comments History|Lists all notes that are related to the order.|
+|Comments History|Lists all notes that are related to the order and is also the page area used to reach the **Notes for this Order** form. To add a new customer notification, stay on the order detail/view page, locate **Comments History / Notes for this Order**, then use the **Comment** field, **Notify Customer by Email** checkbox, and **Update** button. Do not enter Edit Order for this task.|
 
 **NOTE:**
 An Admin user must have **Sales / Archive** permissions for their role scope to see the _Invoices_, _Credit Memos_, and _Shipments_ order tabs.
@@ -190,6 +190,8 @@ In the **Order Total** section, do the following:
 |--- |--- |
 |Status|Displays the status of the sales order.|
 |Comment|A text box that is used to enter a comment to the customer that accompanies the order.  **Notify Customer by Email** - Select the checkbox if you want to send the comment to the customer as a separate email.  **Visible on Storefront** - Select the checkbox if you want the comment to be visible from the customer's account.  **Update** - Adds the comment and sends an email, if applicable.|
+
+For tasks that say to notify, send a message to, or contact the customer about an order, do not add an internal-only note and do not click **Edit**. Stay on the order detail/view page, locate **Comments History / Notes for this Order**, fill the **Comment** field, select **Notify Customer by Email**, and click **Update** (or **Submit Comment**) so the request posts to the order comment endpoint with customer notification enabled.
 
 #### Order Totals
 

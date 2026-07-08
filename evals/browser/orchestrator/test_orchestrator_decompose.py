@@ -1923,6 +1923,187 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "task 204 钻取必须 URL 直达 data_query 选出的链接（{var[字段]} 模板），绝不硬编码 order_id。"
                     f" hardcoded={hardcoded}"
                 )
+        elif assertion == "customer_recent_pending_order_preserves_scope_and_selects_url":
+            # WebArena 491/493 class: locate a customer's most recent pending order before attempting
+            # a mutation. The status/date narrowing must preserve the customer scope, and "most
+            # recent" must be selected from collected row data, not by eyeballing the current first row.
+            seq = _flatten_runs(program.statements)
+            foreaches = _flatten_foreaches(program.statements)
+            dqs = [r for r in seq if r.kind == "data_query"]
+            filter_texts = [
+                f"{r.name} {r.success_condition}".lower()
+                for r in seq
+                if r.kind == "filter"
+            ]
+            scope_keys = ("grace", "miller", "sarah")
+            preserve_words = ("保留", "同时", "追加", "keep", "retain", "preserve", "with")
+            pending_filters = [text for text in filter_texts if "pending" in text]
+            if not any(
+                any(key in text for key in scope_keys)
+                and any(word in text for word in preserve_words)
+                for text in pending_filters
+            ):
+                details.append(
+                    "追加 Pending/状态筛选的同一个 filter milestone 必须显式点名要保留的客户实体值"
+                    "（如 Grace/Sarah Miller），不能只写『保留客户筛选结果范围』，否则运行时无法按值"
+                    "保留上游 scope，会把客户筛选当残留清掉。"
+                    f" filters={[(r.name, r.success_condition) for r in seq if r.kind == 'filter']}"
+                )
+            customer_scope_filters = [
+                text for text in filter_texts
+                if any(key in text for key in scope_keys)
+            ]
+            concrete_order_customer_sources = (
+                "search by keyword",
+                "keyword box",
+                "top search",
+                "顶部搜索",
+                "搜索框",
+                "bill-to name",
+                "ship-to name",
+                "customer email",
+                "bill_to_name",
+                "ship_to_name",
+                "customer_email",
+            )
+            if customer_scope_filters and not any(
+                any(source in text for source in concrete_order_customer_sources)
+                for text in customer_scope_filters
+            ):
+                details.append(
+                    "Orders grid 里按客户定位订单必须点名实际可用入口：顶部 Search by keyword，"
+                    "或 Bill-to Name / Ship-to Name / Customer Email；不能只写泛称『客户字段』。"
+                    f" filters={[(r.name, r.success_condition) for r in seq if r.kind == 'filter']}"
+                )
+            if any("customer name" in text or "客户字段" in text for text in customer_scope_filters):
+                details.append(
+                    "Orders grid 的 Customer Name 不是可靠筛选控件，『客户字段』会被执行器误解成"
+                    "不存在的 Customer Name input。请改用顶部 Search by keyword 或 Bill-to/Ship-to Name。"
+                    f" filters={[(r.name, r.success_condition) for r in seq if r.kind == 'filter']}"
+                )
+
+            def _fe_fields(fe: ForEach) -> list[str]:
+                return [str(x) for x in (fe.row_fields or fe.returns or [])]
+
+            grid_collect = [
+                fe for fe in foreaches
+                if any(("url" in f.lower() or "action" in f.lower() or "link" in f.lower()) for f in _fe_fields(fe))
+                and any(("date" in f.lower() or "time" in f.lower() or "purchase" in f.lower()) for f in _fe_fields(fe))
+            ]
+            if not grid_collect:
+                details.append(
+                    "最近一笔订单必须 foreach body=[] 采集详情入口 URL/link/action_url 和 Purchase Date/时间列，"
+                    "不能只采 order_id 后让 planner 点第一行。"
+                    f" foreaches={[(fe.row_fields, fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
+                )
+            combined_sql = "\n".join((getattr(r, "sql", "") or "").lower() for r in dqs)
+            if not (
+                "order by" in combined_sql
+                and "_ts" in combined_sql
+                and "limit 1" in combined_sql
+                and "pending" in combined_sql
+                and any(key in combined_sql for key in ("grace", "miller", "sarah"))
+            ):
+                details.append(
+                    "最近 pending 订单必须由 data_query 在 collected table 上按客户+Pending 过滤，"
+                    "并 ORDER BY <date>_ts DESC LIMIT 1。"
+                    f" dqs={[(r.name, getattr(r, 'sql', '')) for r in dqs]}"
+                )
+            nav_text = "\n".join(r.name for r in seq if r.kind == "navigation")
+            if not re.search(r"\{q\[[^\]]*(?:url|link|action)[^\]]*\]\}", nav_text, re.IGNORECASE):
+                details.append(
+                    "打开目标订单详情页必须使用 data_query 选出的 URL/link 字段（如 {q[detail_url]}），"
+                    "不要写成『打开最近一笔』让 planner 猜当前第一行。"
+                    f" navs={[r.name for r in seq if r.kind == 'navigation']}"
+                )
+        elif assertion == "order_notify_customer_comment_action":
+            # WebArena 493: "Notify <customer> ... with message ..." is not an internal note.
+            # The final mutation must use the order comment form, enable customer notification,
+            # and submit/update it. Otherwise the official evaluator will miss
+            # sales/order/addComment with history[is_customer_notified]=1.
+            seq = _flatten_runs(program.statements)
+            action_text = "\n".join(
+                f"{r.name} {r.success_condition}".lower()
+                for r in seq
+                if r.kind == "action"
+            )
+            has_comment_message = any(
+                token in action_text
+                for token in ("comment", "message", "备注", "消息")
+            )
+            has_customer_notify = any(
+                token in action_text
+                for token in ("notify customer", "customer by email", "email", "通知客户", "客户通知", "邮件")
+            )
+            has_submit = any(
+                token in action_text
+                for token in ("update", "submit comment", "submit", "保存", "提交")
+            )
+            has_detail_notes_route = any(
+                token in action_text
+                for token in (
+                    "comments history",
+                    "notes for this order",
+                    "order detail",
+                    "detail page",
+                    "详情页",
+                    "评论历史",
+                    "备注区域",
+                    "notes 区域",
+                )
+            )
+            internal_only = any(
+                token in action_text
+                for token in ("internal note", "internal-only", "内部备注", "内部 note")
+            )
+            edit_route = any(
+                token in action_text
+                for token in ("edit order", "order_edit", "点击 edit", "进入 edit", "编辑订单")
+            )
+            if (
+                not (has_comment_message and has_customer_notify and has_submit and has_detail_notes_route)
+                or internal_only
+                or edit_route
+            ):
+                details.append(
+                    "Notify customer 订单任务最后一步必须使用订单 Notes/Comment 表单：填写 message/comment，"
+                    "勾选 Notify Customer by Email，并点击 Update/Submit Comment；路线必须定位到订单详情页的 "
+                    "Comments History / Notes for this Order 区域，不能进入 Edit Order，也不能写成内部备注。"
+                    f" actions={[(r.name, r.success_condition) for r in seq if r.kind == 'action']}"
+                )
+        elif assertion == "orders_keyword_search_submits_top_box":
+            # WebArena 493 live 20260708_123304: after typing Grace Nguyen into the Orders
+            # top Search by keyword box, the planner repeatedly clicked Filters / Apply Filters.
+            # That only submits expanded column filters; the top keyword box needs Enter or the
+            # inline magnifying-glass search button. If the plan uses top keyword search, make the
+            # submission mechanism explicit so runtime does not infer the wrong control.
+            seq = _flatten_runs(program.statements)
+            filter_steps = [r for r in seq if r.kind == "filter"]
+            top_keyword_steps = [
+                r for r in filter_steps
+                if any(
+                    token in f"{r.name} {r.success_condition}".lower()
+                    for token in ("search by keyword", "顶部搜索", "搜索框", "keyword")
+                )
+                and any(
+                    key in f"{r.name} {r.success_condition}".lower()
+                    for key in ("grace", "miller", "sarah")
+                )
+            ]
+            submit_tokens = (
+                "enter", "press enter", "回车", "提交", "submit", "search icon",
+                "magnifying", "放大镜", "搜索图标", "搜索按钮", "点搜索",
+            )
+            bad_steps = [
+                r for r in top_keyword_steps
+                if not any(token in f"{r.name} {r.success_condition}".lower() for token in submit_tokens)
+            ]
+            if bad_steps:
+                details.append(
+                    "Orders 顶部 Search by keyword 路径必须显式写提交方式：按 Enter 或点击输入框内"
+                    "放大镜/搜索图标；不能只写填入关键词，否则执行层容易误点 Filters/Apply Filters。"
+                    f" keyword_filters={[(r.name, r.success_condition) for r in bad_steps]}"
+                )
         elif assertion == "shopping_admin_theme_settings_via_content_design":
             # task 375「Go to the Magento Luma theme settings page」: 主题设置在
             # Content › Design › Themes(点 Magento Luma 行 → system_design_theme/edit/id/3),

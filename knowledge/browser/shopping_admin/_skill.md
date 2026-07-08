@@ -129,8 +129,26 @@ version: 1
 
 ## skill：按订单号/客户定位订单（订单类改写的前置检索）
 - 触发：order #N、update order #、notify … in their … order、订单 #、给某客户的订单做某操作
-- 数据：Sales > Orders grid 顶部搜索框/筛选。**订单引用「#N」（如 `#304`）搜索时必须去掉「#」，直接搜数字 `304`**（Orders grid 按订单号 increment id 匹配，带「#」会 0 命中，499 就是搜 `#304` 空手而归）；找「某客户最近的 pending 订单」先按客户姓名检索 + Status 筛 `Pending`，再按 Purchase Date 取最新一笔，姓名精确 0 命中时退回姓/名关键词。
+- 数据：Sales > Orders grid 顶部搜索框/筛选。**订单引用「#N」（如 `#304`）搜索时必须去掉「#」，直接搜数字 `304`**（Orders grid 按订单号 increment id 匹配，带「#」会 0 命中，499 就是搜 `#304` 空手而归）；找「某客户最近的 pending 订单」先按客户姓名检索 + Status 筛 `Pending`，再按 Purchase Date 取最新一笔，姓名精确 0 命中时退回姓/名关键词。**Orders grid 里不要写泛称「客户字段」或 `Customer Name` 作为筛选控件**：筛选面板实际可操作的是 `Bill-to Name`、`Ship-to Name`、`Customer Email`，顶部还有 `Search by keyword`；`Customer Name` 可能只是 Columns 里的可见列，不等于有文本筛选框。客户名定位优先用顶部 `Search by keyword` 搜完整姓名/关键词，或明确用 `Bill-to Name`/`Ship-to Name` 字段；不要通过 Columns 面板去“添加 Customer Name 筛选器”。**顶部 `Search by keyword` 的提交方式是按 Enter 或点击输入框内放大镜；Filters / Apply Filters 只提交展开面板里的列筛选，不能提交顶部 keyword。**
 - 步骤：
 1. 进 Sales > Orders
-2. 按订单号（去掉 #）或客户姓名 + Status=Pending 检索定位目标订单
-3. 打开该订单执行改写（填 USPS 单号 / 发通知等）
+2. 按订单号时去掉 #，直接搜数字
+3. 客户订单先搜完整姓名；0 命中再搜姓/名关键词
+4. 追加 Status=Pending 时保留客户全名/关键词具体值
+5. 按 Purchase Date 降序
+6. 最近/最旧订单不要直接点当前第一行
+7. foreach 采集客户名列、Status、Purchase Date
+8. 同时采集 `Action_url` 作为详情入口
+9. data_query 用客户关键词 + Status=Pending 过滤
+10. 最近一笔用 `purchase_date_ts DESC LIMIT 1`
+11. 打开 `Action_url` 执行改写（填单号 / 发通知）
+
+## skill：给订单客户发送订单备注/通知
+- 触发：notify/send/message customer in order、给订单客户发消息、通知某客户某订单
+- 数据：订单详情页 view/detail 的 **Comments History / Notes for this Order** 区域包含写入表单；**不要点击 Edit 进入 `order_edit`**，Edit Order 是修改订单商品/地址/账号的页面，不是客户通知备注入口。`Comments History` 可作为定位入口/历史区；发给客户必须在 **Notes for this Order** 表单填写 **Comment**，勾选 **Notify Customer by Email**，然后点 **Update**（或 Submit Comment）。不要写“内部备注”，内部备注不会触发客户通知；任务说 notify/send/message customer 时必须产生客户通知。
+- 步骤：
+1. 打开目标订单详情页
+2. 留在详情页，定位 **Comments History / Notes** 表单
+3. **Comment** = 消息正文
+4. **Notify Customer by Email** = yes
+5. **Update** / **Submit Comment** 后出现成功提示

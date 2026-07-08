@@ -100,5 +100,21 @@
       "completed"
     ],
     "note": "'last 2 completed orders' 是状态筛选+按时间取 2 条的口径,不是具名实体;抽成 approximate/key=completed 会让下游拿 'completed' 当关键词搜(preflight 误报 KEY_DROPPED ×4)。应返回空实体表。"
+  },
+  {
+    "label": "客户最近 pending 订单：只抽客户，不抽 pending order（回归 493）",
+    "goal": "Notify Grace Nguyen in their most recent pending order with message \"sorry we are bankrupt, please contact our customer service for refund\"",
+    "expected_entities": [
+      {
+        "mention_contains": "Grace Nguyen",
+        "type": "customer",
+        "match_mode": "approximate"
+      }
+    ],
+    "not_expected_mentions": [
+      "pending order",
+      "most recent pending order"
+    ],
+    "note": "'Grace Nguyen' 是要定位的客户实体；'most recent pending order' 是 Status=Pending + Purchase Date 排序取 1 条的筛选/排名口径，不是 approximate order 实体，不能抽成 key=pending。"
   }
 ]

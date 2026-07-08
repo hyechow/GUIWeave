@@ -499,6 +499,34 @@
     "note": "task 204 正确路径：① Sales>Orders 清残留筛选+Status=Complete+按 Purchase Date 降序 ② foreach 全量采 Action_url+Purchase Date ③ data_query 按 purchase_date_ts DESC LIMIT 1 选最新单的 Action_url（绝不靠列表第一行、绝不硬编码 order_id、绝不用详情页 Order Date）④ URL 直达钻取 ⑤ 第二个 foreach 采 Items Ordered 表 Product+Price 读全部商品行（一单常多商品，rowspan 会有空 Price 幻影行）⑥ data_query WHERE Price!='' 滤幻影、SUBSTR 剥 SKU 取名、CAST 转价、ORDER BY price ASC 输出列表。期望 order 230 = Ida Workout Parachute Pant 38.4 + Proteus Fitness Jackshirt 45.0。"
   },
   {
+    "label": "WebArena shopping_admin task 493 — 客户最近 pending 订单：保留客户 scope + data_query 选 URL",
+    "goal": "Notify Grace Nguyen in their most recent pending order with message \"the order is ready to be shipped soon!\"",
+    "platform": "browser",
+    "knowledge_app": "shopping_admin",
+    "current_site": "shopping_admin",
+    "current_url": "http://192.168.31.57:7780/admin",
+    "current_title": "Dashboard / Magento Admin",
+    "normalize": true,
+    "expected": {
+      "min_statements": 4
+    },
+    "assertions": [
+      "customer_recent_pending_order_preserves_scope_and_selects_url",
+      "orders_keyword_search_submits_top_box",
+      "order_notify_customer_comment_action",
+      "read_has_spec"
+    ],
+    "resolution": [
+      {
+        "mention": "Grace Nguyen",
+        "type": "customer",
+        "match_mode": "approximate",
+        "search_key": "Grace"
+      }
+    ],
+    "note": "回归 491/493：先按客户筛出 Sarah/Grace 后，后续追加 Status=Pending 时曾把客户 Keyword 当 residual 清掉，导致打开的是全站 pending 第一行；另一个坏形态是 foreach body=[] 采 pending_orders 后不经 data_query 消费，又写『打开最近一笔』让 planner 目测；20260707_223317 又暴露出『客户字段/Customer Name』在 Orders grid 不可操作，执行器进 Columns 面板找不存在的 Customer Name filter。期望：客户 scope 用顶部 Search by keyword 或 Bill-to Name/Ship-to Name/Customer Email 这类实际入口；追加 Pending 时保留具体客户值；foreach 采 customer/status/Purchase Date/Action_url；data_query WHERE 客户+Pending ORDER BY purchase_date_ts DESC LIMIT 1；navigation 用 {q[detail_url/action_url]} 打开。"
+  },
+  {
     "label": "WebArena shopping_admin task 375 — Magento Luma 主题设置页：经 Content›Design›Themes(非 System)",
     "goal": "Go to the Magento Luma theme settings page",
     "platform": "browser",
