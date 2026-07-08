@@ -123,3 +123,51 @@ def test_target_affordance_gate_stays_out_when_all_target_controls_are_visible()
     }
 
     assert target_affordance_scroll_plan(controls, _notify_milestone()) is None
+
+
+def _return_location_milestone() -> Milestone:
+    # After a terminal Submit succeeded and redirected, the return-contract recovery re-opens the
+    # milestone to locate the return field, leaking the field name into the milestone text.
+    return Milestone(
+        id="m_submit",
+        name="点 Submit Shipment（继续定位返回字段：submit_status）",
+        description="提交发货单后读取 submit_status",
+        success_condition="发货已保存",
+        kind="action",
+    )
+
+
+def _order_status_control() -> list[dict]:
+    # The order/comment "Status" dropdown, offscreen. Its label "Status" is a SUBSTRING of the
+    # milestone's return-field token "submit_status" — must NOT be treated as a named target.
+    return [
+        {
+            "kind": "native_select",
+            "label": "Status",
+            "rect": {"x": 349, "y": 1558, "w": 200, "h": 32},
+            "in_viewport": False,
+            "viewport_pos": "below",
+        },
+    ]
+
+
+def test_acquire_gate_ignores_status_substring_of_submit_status() -> None:
+    # Regression for WebArena 499 (20260708_165316): AcquireGate matched "Status" against the
+    # return-field token "submit_status" and scrolled to the order Status dropdown, amplifying a
+    # return-contract violation into a stuck loop. Word-boundary matching must reject it.
+    plan = target_affordance_scroll_plan(_order_status_control(), _return_location_milestone())
+    assert plan is None
+
+
+def test_acquire_gate_still_matches_standalone_status_control() -> None:
+    # But a milestone that genuinely targets a standalone "Status" control still acquires it.
+    ms = Milestone(
+        id="m_status",
+        name="将 Status 下拉设为 Processing",
+        description="",
+        success_condition="Status 已设为 Processing",
+        kind="action",
+    )
+    plan = target_affordance_scroll_plan(_order_status_control(), ms)
+    assert plan is not None
+    assert plan.direction == "down"

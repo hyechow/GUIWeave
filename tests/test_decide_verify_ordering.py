@@ -191,3 +191,123 @@ def test_checker_stuck_status_routes_to_handle_stuck(monkeypatch):
     calls = _wire(monkeypatch, p, "stuck")
     p._run_single_turn(m, Observation(png_bytes=b"x", source="test"), [_tap_turn(on_target=True)])
     assert calls == ["stuck"]
+
+
+# ── require_fresh_action must not re-demand a write after a successful terminal submit ──────────
+# Regression for WebArena 499 (logs/.../20260708_161248): "fill tracking + Submit Shipment" is one
+# require_fresh_action milestone. Submit POSTed order_shipment/save (302) and REDIRECTED to the
+# order view, so the submit's executed record fell out of the new page-scope → pre_existing turned
+# True → FreshActionRequired flipped done→in_progress and the agent hunted the vanished tracking
+# form until it reported ACTION_NOT_ALLOWED_ERROR — even though the mutation already succeeded.
+def _fresh_action_policy():
+    p = MilestoneSupervisorPolicy()
+    m = Milestone.model_validate({
+        "id": "m1", "name": "填入追踪号并提交发货", "description": "d",
+        "success_condition": "发货已保存，订单出现追踪号", "kind": "action",
+        "require_fresh_action": True,
+    })
+    p._milestones = {"m1": m}
+    p._current_id = "m1"
+    p._order = ["m1"]
+    return p, m
+
+
+def _shipment_submit_turn() -> PolicyTurn:
+    act = BaseAction(action_type="tap", x=896, y=798, description="点击页面右下角的 Submit Shipment 按钮")
+    return PolicyTurn(
+        index=1,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True, instruction="点击页面右下角的 Submit Shipment 按钮",
+            stop=False, goal_completed=False, summary="", milestone_id="m1",
+        ),
+        action_decision=BaseActionDecision(action=act),
+        target_verify=TargetVerify(on_target=True, actual_element="Submit Shipment button"),
+        executed=True,
+    )
+
+
+def _no_redemand_wire(monkeypatch, p):
+    """Force post-redirect scope reset (pre_existing True) and record any re-demand plan call."""
+    monkeypatch.setattr(p, "_history_for_scope", lambda *a, **k: [])
+    plan_calls: list[str] = []
+    monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
+    return plan_calls
+
+
+def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
+    p, m = _fresh_action_policy()
+    plan_calls = _no_redemand_wire(monkeypatch, p)
+    p._last_check = _SingleCheckResult(status="done", reason="发货已保存，已跳回订单详情页", summary="ok")
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
+    step = p._advance(m, obs, [_shipment_submit_turn()])
+    assert plan_calls == []            # FreshActionRequired suppressed — no re-demand
+    assert m.status == "done"
+    assert step.goal_completed is True
+
+
+def test_fresh_action_still_redemands_when_nothing_dispatched(monkeypatch):
+    # Control: genuinely pre-existing (no write for this milestone) → must still re-demand.
+    p, m = _fresh_action_policy()
+    plan_calls = _no_redemand_wire(monkeypatch, p)
+    p._last_check = _SingleCheckResult(status="done", reason="状态疑似已满足", summary="ok")
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
+    p._advance(m, obs, [])             # empty history: nothing dispatched
+    assert plan_calls == ["plan"]      # FreshActionRequired fires → require a fresh write
+    assert m.status != "done"
+
+
+def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch):
+    # Submit dispatched but the frame reports a validation failure → must NOT swallow as done.
+    p, m = _fresh_action_policy()
+    plan_calls = _no_redemand_wire(monkeypatch, p)
+    p._last_check = _SingleCheckResult(
+        status="done", reason="提交时页面提示 validation failed: required field missing", summary="ok",
+    )
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
+    p._advance(m, obs, [_shipment_submit_turn()])
+    assert plan_calls == ["plan"]      # negative feedback overrides the dispatch-succeeded skip
+    assert m.status != "done"
+
+
+# ── Feasibility kickback must not re-decompose a milestone whose terminal submit already succeeded ──
+# Regression for WebArena 499 (20260708_165316): after the shipment Submit succeeded and redirected,
+# the return-location recovery re-opened the milestone; Feasibility then judged the vanished form
+# infeasible and kicked back → 25-turn re-decompose loop. A completed mutation must degrade to a
+# clean bounded fail, not a re-decompose.
+def _obs() -> Observation:
+    return Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
+
+
+def test_maybe_kickback_suppressed_after_successful_terminal_submit(monkeypatch):
+    import gui_agent.core.supervisor.milestone.feasibility as feas
+
+    def _boom(*a, **k):
+        raise AssertionError("judge_feasibility must not run once the terminal submit has succeeded")
+
+    monkeypatch.setattr(feas, "judge_feasibility", _boom)
+    monkeypatch.setattr(feas, "control_presence_text", lambda obs: "Add Tracking Number 缺失")
+
+    p, m = _fresh_action_policy()
+    p._last_check = _SingleCheckResult(status="stuck", reason="表单不见了", summary="stuck")
+    step = p._maybe_kickback(m, _obs(), None, [_shipment_submit_turn()])
+    assert step is None            # suppressed → falls through to a clean bounded fail, no re-decompose
+
+
+def test_maybe_kickback_still_fires_when_no_dispatch_and_control_absent(monkeypatch):
+    import gui_agent.core.supervisor.milestone.feasibility as feas
+    from gui_agent.core.supervisor.milestone.feasibility import FeasibilityVerdict
+
+    monkeypatch.setattr(feas, "control_presence_text", lambda obs: "required control 缺失")
+    monkeypatch.setattr(
+        feas, "judge_feasibility",
+        lambda *a, **k: FeasibilityVerdict(feasible=False, reason="控件确实缺失", dead_end="x", directive="重规划"),
+    )
+    monkeypatch.setattr(feas, "compose_directive", lambda v: "重规划指令")
+
+    p, m = _fresh_action_policy()
+    p._last_check = _SingleCheckResult(status="stuck", reason="控件缺失", summary="stuck")
+    step = p._maybe_kickback(m, _obs(), None, [])   # empty history: nothing dispatched
+    assert step is not None
+    assert step.replan_directive == "重规划指令"
+    assert m.status == "failed"

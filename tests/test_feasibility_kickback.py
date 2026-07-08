@@ -86,7 +86,7 @@ def test_early_feasibility_probe_fires_at_threshold(monkeypatch):
     at MAX — but only ONCE early (not every retry)."""
     seen: list[int] = []
     p = MilestoneSupervisorPolicy()
-    monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri: (seen.append(ms.retry_count), None)[1])
+    monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri, hist=None: (seen.append(ms.retry_count), None)[1])
     monkeypatch.setattr(p, "_invoke_replanner",
                         lambda *a, **k: _ReplanResult(diagnosis="d", strategy="local_replan", instruction="x"))
     ms = _ms_action()
@@ -103,7 +103,7 @@ def test_early_feasibility_probe_fires_at_threshold(monkeypatch):
 def test_no_early_probe_below_threshold(monkeypatch):
     seen: list[int] = []
     p = MilestoneSupervisorPolicy()
-    monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri: (seen.append(ms.retry_count), None)[1])
+    monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri, hist=None: (seen.append(ms.retry_count), None)[1])
     monkeypatch.setattr(p, "_invoke_replanner",
                         lambda *a, **k: _ReplanResult(diagnosis="d", strategy="local_replan", instruction="x"))
     ms = _ms_action()

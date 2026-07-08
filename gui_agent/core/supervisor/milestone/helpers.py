@@ -598,10 +598,18 @@ def _control_is_named_in_milestone(item: dict, milestone: Milestone) -> bool:
             or not _compact_has_enough_signal(label)
         ):
             continue
-        if label_norm and label_norm in ctx_norm:
-            return True
-        if label_compact and label_compact in ctx_compact:
-            return True
+        if label_norm.isascii():
+            # ASCII controls: require a WORD-BOUNDARY match, not an arbitrary substring, so a control
+            # labeled "Status" does not match the compound token "submit_status" (a return-field name
+            # that leaks into the milestone text during return-location) and send AcquireGate scrolling
+            # to the order Status dropdown. `\b` treats `_` as a word char, so `\bstatus\b` correctly
+            # rejects "submit_status" while still matching "order status" / a standalone "Status".
+            if re.search(r"\b" + re.escape(label_norm) + r"\b", ctx_norm):
+                return True
+        else:
+            # CJK labels have no word delimiters; keep exact-then-compact substring matching.
+            if (label_norm and label_norm in ctx_norm) or (label_compact and label_compact in ctx_compact):
+                return True
     return False
 
 

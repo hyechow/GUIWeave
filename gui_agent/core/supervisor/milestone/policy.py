@@ -199,6 +199,22 @@ def _has_negative_action_feedback(check: _SingleCheckResult) -> bool:
     return bool(_NEGATIVE_ACTION_FEEDBACK_RE.search(claims))
 
 
+def _milestone_terminal_dispatch_succeeded(
+    history: list[PolicyTurn], milestone: Milestone
+) -> bool:
+    """True if this milestone's terminal submit/save already dispatched on-target.
+
+    A successful terminal submit (Submit Shipment / Save / Send…) usually redirects to a new
+    page, so its executed record drops out of the destination page-scope and ``pre_existing``
+    turns True there — making ``require_fresh_action`` wrongly re-demand a write the milestone
+    already performed (WebArena 499: shipment saved, then agent hunts the vanished tracking
+    form). Scan the FULL (unscoped) history so the pre-redirect submit turn still counts;
+    ``_is_terminal_dispatch_turn`` already filters by milestone_id, executed, on-target, tap/
+    press kind, terminal-dispatch verbs, and excludes checkbox toggles.
+    """
+    return any(_is_terminal_dispatch_turn(turn, milestone) for turn in history)
+
+
 def _page_known(page_identity: str) -> bool:
     n = _norm_page(page_identity)
     return bool(n) and not any(marker in n for marker in _UNKNOWN_PAGE_MARKERS)
@@ -1211,26 +1227,41 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             milestone,
         )
         if milestone.require_fresh_action and pre_existing and not checkbox_pre_existing_ok:
-            print(
-                f"  [FreshActionRequired] 子目标「{done_name}」当前状态看似满足，"
-                "但本轮尚未执行写操作，覆盖 done → in_progress"
-            )
             prior = self._last_check
-            check = (prior if isinstance(prior, _SingleCheckResult) else _SingleCheckResult(
-                status="in_progress",
-                reason="当前状态可能是历史残留，不能证明本轮写操作已执行。",
-                summary="需要执行本轮写操作。",
-            ))
-            check = check.model_copy(update={
-                "status": "in_progress",
-                "reason": (
-                    "当前状态可能已匹配目标值，但该 action milestone 要求本轮产生写操作；"
-                    "没有本轮执行记录时不能按 pre-existing 完成。"
-                ),
-                "summary": "目标状态疑似已存在，但仍需执行本轮写操作。",
-            })
-            self._last_check = check
-            return self._plan_single(milestone, check, observation, scoped_history)
+            prior_check = prior if isinstance(prior, _SingleCheckResult) else None
+            # A terminal submit that already dispatched on-target (and redirected, which is WHY
+            # pre_existing is True on this destination page) IS the fresh write — don't re-demand
+            # another one on a page that no longer holds the form. Skip only when no negative
+            # feedback (validation/error) is present, else the submit did not take and we must
+            # still re-drive it.
+            terminal_dispatch_ok = (
+                _milestone_terminal_dispatch_succeeded(history, milestone)
+                and not (prior_check is not None and _has_negative_action_feedback(prior_check))
+            )
+            if not terminal_dispatch_ok:
+                print(
+                    f"  [FreshActionRequired] 子目标「{done_name}」当前状态看似满足，"
+                    "但本轮尚未执行写操作，覆盖 done → in_progress"
+                )
+                check = (prior_check if prior_check is not None else _SingleCheckResult(
+                    status="in_progress",
+                    reason="当前状态可能是历史残留，不能证明本轮写操作已执行。",
+                    summary="需要执行本轮写操作。",
+                ))
+                check = check.model_copy(update={
+                    "status": "in_progress",
+                    "reason": (
+                        "当前状态可能已匹配目标值，但该 action milestone 要求本轮产生写操作；"
+                        "没有本轮执行记录时不能按 pre-existing 完成。"
+                    ),
+                    "summary": "目标状态疑似已存在，但仍需执行本轮写操作。",
+                })
+                self._last_check = check
+                return self._plan_single(milestone, check, observation, scoped_history)
+            print(
+                f"  [FreshActionRequired] 跳过：子目标「{done_name}」的终端提交已 on-target 派发且无负反馈"
+                "（提交成功后跳转使当前页 scope 看不到写操作）→ 按 done 收尾，不重复提交。"
+            )
         milestone.status = "done"
         # Persist this milestone's DONE verdict before _last_check is overwritten by the next
         # milestone's check (the report's 验收 panel renders it via context.milestones[id].
@@ -1359,14 +1390,14 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             and milestone.id not in self._early_feasibility_probed
         ):
             self._early_feasibility_probed.add(milestone.id)
-            kick = self._maybe_kickback(milestone, observation, read_inst)
+            kick = self._maybe_kickback(milestone, observation, read_inst, history)
             if kick:
                 return kick
 
         if milestone.retry_count >= MAX_RETRIES:
             # Feasibility Guard: before giving up, judge if the milestone is INFEASIBLE (required control
             # absent) and, if so, kick back to the orchestrator with a re-plan directive.
-            kick = self._maybe_kickback(milestone, observation, read_inst)
+            kick = self._maybe_kickback(milestone, observation, read_inst, history)
             if kick:
                 return kick
             fallback = self._try_filter_fallback(milestone, can_degrade=True, read_inst=read_inst)
@@ -1402,7 +1433,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             # The replanner can give up EARLY (before MAX_RETRIES) by escalating — another give-up
             # path. Give the Feasibility Guard a chance here too: if the milestone is infeasible (required
             # control absent), kick back to the orchestrator with a directive instead of escalating.
-            kick = self._maybe_kickback(milestone, observation, read_inst)
+            kick = self._maybe_kickback(milestone, observation, read_inst, history)
             if kick:
                 return kick
             fallback = self._try_filter_fallback(
@@ -1437,6 +1468,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
     def _maybe_kickback(
         self, milestone: Milestone, observation: Observation, read_inst: Optional[str],
+        history: Optional[list[PolicyTurn]] = None,
     ) -> Optional[SupervisorStep]:
         """Feasibility Guard (goal level): at give-up time, judge whether the milestone is INFEASIBLE —
         i.e. the required UI control is ABSENT from the page's actual control inventory — vs merely
@@ -1448,6 +1480,23 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         replanner's feasible-but-stuck cases, and naturally no-ops on visual-only platforms (no DOM
         form_controls). Only fires here, after MAX_RETRIES, so the control observation is mature."""
         from .feasibility import compose_directive, control_presence_text, judge_feasibility
+
+        # Don't kick back a milestone whose terminal submit/save already dispatched successfully:
+        # the write is done and the required control is "absent" only because we already used it and
+        # the page redirected away. Re-decomposing here sends the agent to redo a completed mutation
+        # (WebArena 499: submit succeeded → return-location re-opened the milestone → Feasibility
+        # judged the vanished form infeasible → 25-turn re-decompose loop). Degrade to a clean
+        # bounded fail instead. Skipped when the frame shows negative feedback (the submit didn't take).
+        if (
+            history is not None
+            and _milestone_terminal_dispatch_succeeded(history, milestone)
+            and not (
+                isinstance(self._last_check, _SingleCheckResult)
+                and _has_negative_action_feedback(self._last_check)
+            )
+        ):
+            print("  [Feasibility] 跳过踢回：该里程碑的终端提交已成功派发，不把已完成的 mutation 送去重规划")
+            return None
 
         control_text = control_presence_text(observation)
         if "无适配器可感知" in control_text:
