@@ -34,9 +34,10 @@ from .program import (
 # A UI milestone whose result must be read should carry that read as its return contract,
 # not as the next UI action. Older decompositions may still produce the legacy shape
 # action/filter/navigation -> scalar read; normalize it into one UI Run with
-# returns/read_spec so the engine extracts structured values from the action's completion
-# frame. For action/filter triggers we also rewrite the gate to "dispatched/responded" so
-# the checker does not re-adjudicate the result value that structured_read owns.
+# returns/read_spec so the engine extracts structured values from the command's completion
+# frame. Only action triggers get a "dispatched/responded" gate. Filters keep filter kind and
+# their authored filter-state gate so FilterGate/applied_filters remains the source of truth for
+# whether the data-source constraint is in effect.
 #
 # `data_query` is deliberately excluded: it analyzes the current structured table snapshot, so
 # the preceding UI milestone must still verify the page data source is in the intended
@@ -49,20 +50,30 @@ _DISPATCH_GATE_TMPL = (
     "具体结果由本步完成帧的结构化返回值读取判定。"
 )
 
-# Navigate/show tasks (no returns / data_query anywhere) end in a terminal submit whose only
-# purpose is to NAVIGATE to a destination/render page — e.g. "click Show Report" lands on
-# Magento's `…/reports/.../filter/<base64>/` render URL. Without returns, the confirm-read gate
-# above never fires, so the LLM checker is left to adjudicate "did we arrive?" — and it misreads
-# Magento render URLs that still contain "filter" / keep the submit button visible as "not yet
-# submitted", looping the same click. The submit's effect is a navigation, which url_changed
-# answers deterministically; gate it like a dispatch gate so the conclusive url_changed marks it
-# done and the LLM checker (and its false "filter == config page" prior) is bypassed. Carries the
-# dispatch-gate marker so is_dispatch_gate_sc() recognizes it.
+# Navigate/show tasks (no returns / data_query anywhere) sometimes end in a terminal submit whose
+# only purpose is to NAVIGATE to a destination/render page — e.g. "click Show Report" lands on a
+# report render URL. Without returns, the confirm-read gate above never fires, so the LLM checker
+# is left to adjudicate "did we arrive?" and can loop the same click. Only explicit arrival/display
+# submits get this deterministic gate. Mutating terminal actions (save/update/delete/enable/...)
+# must keep their authored success condition so the checker verifies durable write evidence.
 _NAV_SUBMIT_GATE_TMPL = (
     "已执行「{name}」：动作已发出且界面给出响应"
     "（页面跳转/URL 变化/出现结果区或加载，任一即可）；"
     "本步是纯导航/展示意图的终态，只判动作是否已触发页面跳转，"
     "不要求出现具体数据行/统计表（报表/结果可能为空）。"
+)
+
+_MUTATING_TERMINAL_RE = re.compile(
+    r"保存|更新|修改|改为|改成|删除|移除|发布|启用|禁用|"
+    r"\bsave\b|\bsaved\b|\bupdate\b|\bedit\b|\bmodify\b|\bchange\b|"
+    r"\bdelete\b|\bremove\b|\benable\b|\bdisable\b|\bpublish\b|\bunpublish\b",
+    re.IGNORECASE,
+)
+_ARRIVAL_SUBMIT_RE = re.compile(
+    r"show\s+report|view\s+report|display\s+report|run\s+report|"
+    r"\bshow\b|\bview\b|\bdisplay\b|\brender\b|\bsearch\b|"
+    r"查看|展示|显示|渲染|查询|搜索|筛选|报表|报告",
+    re.IGNORECASE,
 )
 
 
@@ -101,7 +112,7 @@ def _trigger_success_condition(run: Run) -> str:
     return _DISPATCH_GATE_TMPL.format(name=run.name)
 
 
-_CONFIRM_READ_TRIGGER_KINDS = {"action", "filter"}
+_CONFIRM_READ_TRIGGER_KINDS = {"action"}
 
 
 def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
@@ -116,11 +127,6 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
             and s.returns
         ):
             update = {"success_condition": _trigger_success_condition(s)}
-            if s.kind == "filter":
-                # A filter with returns is a trigger whose returned values own the count/value
-                # judgment. Execute it as an action so the filter checker does not re-judge the
-                # same result fields.
-                update["kind"] = "action"
             out.append(s.model_copy(update=update))
             i += 1
             continue
@@ -143,19 +149,12 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
                     "returns": list(nxt.returns),
                     "read_spec": nxt.read_spec,
                 })
-                if s.kind == "filter":
-                    # A filter that is immediately read is a trigger, not a final acceptance
-                    # target. Convert it to action so the filter checker doesn't re-judge the
-                    # eventual visible value/count; the following read owns that result.
-                    update["kind"] = "action"
             out.append(s.model_copy(update=update))
             i += 2
             continue
         if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
             if isinstance(nxt, Read):
                 update = {"success_condition": _trigger_success_condition(s)}
-                if s.kind == "filter":
-                    update["kind"] = "action"
                 s = s.model_copy(update=update)
             out.append(s)
         elif isinstance(s, If):
@@ -200,16 +199,20 @@ def _has_navigation_run(stmts: list[Stmt]) -> bool:
 
 
 def _gate_terminal_navigate_submit(stmts: list[Stmt]) -> list[Stmt]:
-    """For a pure-navigate program, rewrite the LAST top-level action/filter Run's gate to the
-    navigate-submit dispatch gate so its conclusive url_changed marks the milestone done (the
-    LLM checker is bypassed). Navigation-kind runs keep their own arrival checker untouched."""
+    """For a pure navigate/show program, rewrite the LAST top-level arrival-submit action's gate
+    so conclusive url_changed marks the milestone done. Navigation-kind runs and mutating actions
+    keep their own checker-authored gates."""
     from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
+
+    def _is_arrival_submit(run: Run) -> bool:
+        text = " ".join([run.name or "", run.success_condition or "", run.read_spec or ""])
+        return bool(_ARRIVAL_SUBMIT_RE.search(text)) and not _MUTATING_TERMINAL_RE.search(text)
 
     out = list(stmts)
     for i in range(len(out) - 1, -1, -1):
         s = out[i]
         if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
-            if not is_dispatch_gate_sc(s.success_condition):
+            if _is_arrival_submit(s) and not is_dispatch_gate_sc(s.success_condition):
                 out[i] = s.model_copy(
                     update={"success_condition": _NAV_SUBMIT_GATE_TMPL.format(name=s.name)}
                 )
@@ -225,13 +228,14 @@ def normalize_confirm_read_gates(program: Program) -> Program:
     Older plans express result extraction as a scalar read Run immediately after a UI Run.
     Newer plans put ``returns``/``read_spec`` on that UI Run directly. This pass makes both
     shapes execute the same way: scalar read pairs are merged into the UI Run when the vars
-    are compatible, and action/filter trigger gates are made lenient dispatch gates so the
-    checker accepts on response while structured_read owns the returned value. A following
-    data_query is not treated as a return read; the preceding UI step must still verify the
-    data source state before SQL analyzes it. For pure-navigate programs (no returns/
-    data_query/foreach), the terminal submit action is additionally gated as a navigate-submit
-    dispatch gate so url_changed deterministically marks arrival (the LLM checker's false
-    "render URL still contains 'filter' == not submitted" prior is bypassed). Recurses into
+    are compatible, and action trigger gates are made lenient dispatch gates so the checker
+    accepts on response while structured_read owns the returned value. Filter commands keep their
+    filter-state gates; the returned value is extracted only after the filter is applied. A
+    following data_query is not treated as a return read; the preceding UI step must still verify
+    the data source state before SQL analyzes it. For pure-navigate programs (no returns/
+    data_query/foreach), an explicit arrival/display terminal submit action is additionally gated
+    as a navigate-submit dispatch gate so url_changed deterministically marks arrival; mutating
+    save/update/delete actions keep their authored durable-result gate. Recurses into
     if-branches; returns a NEW Program (inputs untouched); idempotent."""
     stmts = _normalize_stmts(program.statements)
     if _program_is_pure_navigate(stmts) and _has_navigation_run(stmts):

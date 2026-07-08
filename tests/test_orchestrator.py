@@ -21,7 +21,7 @@ from gui_agent.core.orchestrator import (
     Run,
     RunResult,
 )
-from gui_agent.core.orchestrator.program import Query, Read
+from gui_agent.core.orchestrator.program import Compute, Query, Read
 
 
 def _png_bytes(color: str = "white") -> bytes:
@@ -901,10 +901,9 @@ def test_normalize_confirm_read_gates_recurses_into_if_branches():
     assert out.statements[1].otherwise[0].message == "不可达"  # otherwise 不受影响
 
 
-def test_normalize_confirm_read_converts_filter_before_read_to_action():
-    # A filter whose only purpose is to produce a value for the next read is a trigger, not
-    # the final acceptance target. Convert it to action so the filter checker doesn't
-    # re-judge rows/counts that the read owns (WebArena admin grid count tasks).
+def test_normalize_confirm_read_keeps_filter_before_read_as_filter():
+    # A filter that returns a count/value must still be a filter milestone. The filter gate owns
+    # "is the data source constrained as requested"; returns are read only after that state holds.
     from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="提交 Review 列关键词 best 的筛选", kind="filter",
@@ -914,14 +913,36 @@ def test_normalize_confirm_read_converts_filter_before_read_to_action():
     ])
     out = normalize_confirm_read_gates(prog)
     trigger = out.statements[0]
-    assert trigger.kind == "action"
-    assert "不判定结果取值" in trigger.success_condition
-    assert "列表只显示" not in trigger.success_condition
+    assert trigger.kind == "filter"
+    assert trigger.success_condition == "列表只显示 Review 包含 best 的记录"
     assert trigger.var == "r"
     assert trigger.returns == ["总数"]
     assert trigger.read_spec == "总数：读取 grid 顶部 N records found 中的 N"
     assert len(out.statements) == 1
     assert prog.statements[0].kind == "filter"  # 原 Program 不就地改
+
+
+def test_normalize_confirm_read_keeps_filter_with_direct_returns_as_filter():
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
+
+    prog = Program(statements=[
+        Run(
+            name="在搜索框输入 Home Page 并提交筛选",
+            kind="filter",
+            var="search_result",
+            success_condition="可见筛选状态显示 Home Page，列表已刷新",
+            returns=["match_count"],
+            read_spec="读取 grid 顶部 records found 数量",
+        ),
+    ])
+
+    out = normalize_confirm_read_gates(prog)
+    trigger = out.statements[0]
+    assert trigger.kind == "filter"
+    assert trigger.var == "search_result"
+    assert trigger.success_condition == "可见筛选状态显示 Home Page，列表已刷新"
+    assert trigger.returns == ["match_count"]
+    assert trigger.read_spec == "读取 grid 顶部 records found 数量"
 
 
 def test_normalize_confirm_read_leaves_filter_before_data_query_strict():
@@ -938,7 +959,7 @@ def test_normalize_confirm_read_leaves_filter_before_data_query_strict():
     assert query.kind == "data_query" and query.returns == ["emails"]
 
 
-def test_normalize_confirm_read_converts_filter_inside_if_branch():
+def test_normalize_confirm_read_keeps_filter_inside_if_branch():
     from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Read(var="d", name="读判定",  returns=["需要查询"], read_spec="x"),
@@ -951,8 +972,8 @@ def test_normalize_confirm_read_converts_filter_inside_if_branch():
     ])
     out = normalize_confirm_read_gates(prog)
     then_filter = out.statements[1].then[0]
-    assert then_filter.kind == "action"
-    assert "不判定结果取值" in then_filter.success_condition
+    assert then_filter.kind == "filter"
+    assert then_filter.success_condition == "搜索结果均匹配条件"
     assert then_filter.var == "r"
     assert then_filter.returns == ["结果数"]
     assert len(out.statements[1].then) == 1
@@ -1054,6 +1075,26 @@ def test_normalize_navigate_submit_gates_terminal_action():
     again = normalize_confirm_read_gates(out)
     assert is_dispatch_gate_sc(again.statements[1].success_condition)
     assert again.statements[1].success_condition == out.statements[1].success_condition
+
+
+def test_normalize_navigate_submit_does_not_gate_terminal_mutation_save():
+    # Task 489 shape: despite being structurally "navigation + no returns/data_query", the terminal
+    # action mutates state. It must keep a real save-success/value gate, not the pure display gate.
+    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
+    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
+
+    save_sc = "页面显示保存成功提示，且 Page Title 字段值为 {new_title}"
+    prog = Program(statements=[
+        Run(name="进入 CMS Pages 列表页", kind="navigation", success_condition="页面显示 CMS Pages 列表"),
+        Run(name="打开 Privacy Policy 编辑页", kind="action", success_condition="已进入编辑表单页"),
+        Compute(var="new_title", expr="'No privacy policy is needed in this dystopian world'"),
+        Run(name="将 Page Title 字段更新为 {new_title} 并保存", kind="action", success_condition=save_sc),
+    ])
+
+    out = normalize_confirm_read_gates(prog)
+    save = out.statements[-1]
+    assert save.success_condition == save_sc
+    assert not is_dispatch_gate_sc(save.success_condition)
 
 
 def test_normalize_navigate_submit_gates_skips_when_no_navigation_run():
