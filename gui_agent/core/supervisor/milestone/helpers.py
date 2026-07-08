@@ -122,6 +122,62 @@ def parse_filter_target(milestone: Milestone) -> Optional[tuple[str, list[str]]]
 # `Keyword`), so the gate must NOT fire `done` (the milestone's "clear unrelated filters" duty
 # is unmet); fall back to the checker/planner to drive the clear.
 _BENIGN_FILTER_LABELS = {"store view"}
+_PRESERVE_SCOPE_INTENT_RE = re.compile(
+    r"保留|保持|继续沿用|追加|叠加|同时(?:包含|保留|应用|满足)|"
+    r"\bkeep\b|\bretain\b|\bpreserve\b|\bwith\b|\balongside\b",
+    re.IGNORECASE,
+)
+# Textual fallback debt: generic words removed when deciding whether an already-applied filter chip
+# is an intentional preserved upstream scope. This is a runtime guard around free-text milestone
+# wording, not an app ontology. Prefer a future structured "preserved_scope_filters" field over
+# growing this token list.
+_GENERIC_SCOPE_VALUE_TOKENS = {
+    "field",
+    "filter",
+    "item",
+    "items",
+    "keyword",
+    "order",
+    "orders",
+    "page",
+    "pages",
+    "product",
+    "record",
+    "records",
+    "result",
+    "results",
+    "status",
+    "the",
+}
+
+
+def _scope_value_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in _value_tokens(value)
+        if len(token) >= 3 and token not in _GENERIC_SCOPE_VALUE_TOKENS
+    }
+
+
+def _mentions_filter_value(text: str, value: str, *, exclude_tokens: set[str] | None = None) -> bool:
+    value_tokens = _scope_value_tokens(value)
+    if not value_tokens:
+        return False
+    text_tokens = set(_value_tokens(text))
+    overlap = value_tokens & text_tokens
+    if exclude_tokens:
+        overlap -= exclude_tokens
+    return bool(overlap)
+
+
+def _is_preserved_scope_filter(_label: str, value: str, milestone: Milestone) -> bool:
+    """True when an already-applied chip is an intentional upstream scope, not pollution."""
+    text = f"{milestone.name or ''} {milestone.success_condition or ''} {milestone.description or ''}"
+    if not _PRESERVE_SCOPE_INTENT_RE.search(text):
+        return False
+    target = parse_filter_target(milestone)
+    target_tokens = set(target[1]) if target else set()
+    return _mentions_filter_value(text, value, exclude_tokens=target_tokens)
 
 
 def filter_chips_clean(
@@ -138,6 +194,8 @@ def filter_chips_clean(
         if col_l in ll or ll in col_l:
             continue
         if ll in _BENIGN_FILTER_LABELS:
+            continue
+        if _is_preserved_scope_filter(label, applied_filters[label], milestone):
             continue
         return False  # an unrelated residual filter is still applied
     return True
@@ -194,6 +252,8 @@ def filter_residual_labels(
             continue  # the intended target filter — keep it
         if ll in _BENIGN_FILTER_LABELS:
             continue  # benign always-on system filter — keep it
+        if _is_preserved_scope_filter(label, applied_filters[label], milestone):
+            continue  # explicitly retained upstream entity scope — keep it
         out.append(label)
     return out
 
@@ -498,6 +558,110 @@ def checkbox_toggle_satisfies_target(
     return False
 
 
+_TARGET_AFFORDANCE_KINDS = (
+    "input",
+    "select",
+    "textarea",
+    "combobox",
+    "listbox",
+    "checkbox",
+    "radio",
+    "switch",
+)
+
+
+def _compact_has_enough_signal(text: str) -> bool:
+    value = _compact_norm(text)
+    if not value:
+        return False
+    if re.search(r"[\u4e00-\u9fff]", value):
+        return len(value) >= 2
+    return len(value) >= 4
+
+
+def _control_is_named_in_milestone(item: dict, milestone: Milestone) -> bool:
+    ctx = " ".join([milestone.name or "", milestone.description or "", milestone.success_condition or ""])
+    ctx_norm = _norm_text(ctx)
+    ctx_compact = _compact_norm(ctx)
+    for raw in (
+        item.get("label"),
+        item.get("name"),
+        item.get("id"),
+        item.get("placeholder"),
+    ):
+        label = str(raw or "").strip()
+        label_norm = _norm_text(label)
+        label_compact = _compact_norm(label)
+        if (
+            not label_compact
+            or label_compact in _GENERIC_CONTROL_LABELS
+            or not _compact_has_enough_signal(label)
+        ):
+            continue
+        if label_norm and label_norm in ctx_norm:
+            return True
+        if label_compact and label_compact in ctx_compact:
+            return True
+    return False
+
+
+def target_affordance_scroll_plan(
+    form_controls: Optional[list[dict]],
+    milestone: Milestone,
+) -> Optional[_PlanResult]:
+    """Return a deterministic acquire scroll when target controls already exist offscreen.
+
+    This is the form-control sibling of FilterGate / CheckboxGate: if the adapter has already
+    reported a target affordance in ``obs.form_controls`` with an off-viewport direction, the next
+    operation is a deterministic page-internal acquire action. Do not let the vision checker turn
+    "not visible in screenshot" into a speculative route change. Conservative boundary: only
+    action/filter milestones, only named controls mentioned by the milestone, and only while at
+    least one matched target control remains outside the viewport in a single known direction.
+    """
+    if milestone.kind not in {"action", "filter"}:
+        return None
+    controls = _visible_field_controls(form_controls)
+    if not controls:
+        return None
+    matched: list[dict] = []
+    for item in controls:
+        kind = str(item.get("kind") or "").lower()
+        if not any(part in kind for part in _TARGET_AFFORDANCE_KINDS):
+            continue
+        if _control_is_named_in_milestone(item, milestone):
+            matched.append(item)
+    if not matched:
+        return None
+    offscreen = [
+        item
+        for item in matched
+        if item.get("in_viewport") is False and item.get("viewport_pos") in {"above", "below"}
+    ]
+    if not offscreen:
+        return None
+    directions = {
+        "up" if item.get("viewport_pos") == "above" else "down"
+        for item in offscreen
+    }
+    if len(directions) != 1:
+        return None
+    direction = next(iter(directions))
+    target = offscreen[0]
+    label = _control_label(target)
+    rect = target.get("rect") if isinstance(target.get("rect"), dict) else {}
+    y = rect.get("y") if isinstance(rect, dict) else None
+    direction_text = "向上" if direction == "up" else "向下"
+    suffix = f"（DOM center y={y}）" if isinstance(y, int) else ""
+    return _PlanResult(
+        instruction=f"{direction_text}滚动到「{label}」控件附近{suffix}",
+        summary=(
+            f"目标控件「{label}」已由 DOM 确认存在但不在当前视口；"
+            f"先{direction_text}滚动完成页内 acquire，不切换页面模式。"
+        ),
+        direction=direction,
+    )
+
+
 def _compact_norm(text: str) -> str:
     return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(text or "").lower())
 
@@ -584,6 +748,18 @@ _GENERIC_CONTROL_LABELS = {
     "selectall",
     "unselectall",
 }
+_AMBIGUOUS_SEMANTIC_FIELDS = {
+    "customer",
+    "record",
+    "entity",
+    "item",
+    "客户",
+    "顾客",
+    "用户",
+    "记录",
+    "实体",
+    "对象",
+}
 
 
 def _normalize_field_name(field: str) -> str:
@@ -627,6 +803,8 @@ def _extract_target_fields(milestone: Milestone) -> list[str]:
         field = _normalize_field_name(str(raw or ""))
         norm = _norm_text(field)
         if not norm or norm in {"当前", "目标", "搜索", "筛选", "关键词", "读取"}:
+            continue
+        if norm in _AMBIGUOUS_SEMANTIC_FIELDS:
             continue
         if field not in fields:
             fields.append(field)
@@ -1159,14 +1337,20 @@ def run_checker(
                          "据此判断任务是在推进(不断到达新状态)还是在少数状态里打转。\n" + state_trace_text),
             ) if state_trace_text.strip() else None),
             (ContextBlock(
-                id="runtime.last_action_effect", budget="high", source_type="obs.effect",
+                id="runtime.last_action_effect", budget="high", source_type="rt.execution",
                 source="progress_monitor", ttl="turn", priority=29,
                 # Deterministic post-action effect (url/dom delta): authoritative for whether the
-                # last action produced a navigation/DOM change — NOT for whether the RESULT is
-                # correct. freshness=post_action: it describes the just-executed action's effect.
+                # last action was dispatched and whether it produced a navigation/DOM change —
+                # NOT for whether the business RESULT is correct. freshness=post_action: it
+                # describes the just-executed action's execution/effect signals.
                 authoritative_for=(
-                    "action.effect.url_changed", "action.effect.dom_changed", "action.effect.no_effect",
+                    "action.execution.dispatched",
+                    "action.execution.not_dispatched",
+                    "action.effect.url_changed",
+                    "action.effect.dom_changed",
+                    "action.effect.no_effect",
                 ),
+                not_authoritative_for=("business.result", "target.state"),
                 freshness="post_action",
                 coverage="complete",
                 content=last_action_effect,

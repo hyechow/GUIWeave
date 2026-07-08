@@ -187,6 +187,64 @@ def test_keyword_search_on_list_page_not_hijacked_to_column_filter():
     assert "Search by keyword" in (guarded.instruction or "")
 
 
+def test_semantic_customer_field_does_not_hijack_keyword_search():
+    """Regression 20260707_225437: a milestone saying generic「客户字段」made the guard reject the
+    Orders grid Search by keyword box and spin on horizontal scrolling. Generic entity nouns are
+    not concrete UI fields; concrete labels such as Bill-to Name remain guardable."""
+    from gui_agent.core.supervisor.milestone.helpers import _extract_target_fields
+
+    milestone = Milestone.model_validate({
+        "id": "m",
+        "name": "在客户字段用关键词『Nguyen』筛选候选记录",
+        "description": "在客户字段用关键词『Nguyen』筛选候选记录",
+        "success_condition": "客户关键词筛选已应用且匹配记录非 0 条",
+        "kind": "filter",
+    })
+    observation = Observation(
+        png_bytes=b"png",
+        source="browser",
+        form_controls=[
+            {"label": "Search by keyword", "kind": "text_input", "value": ""},
+        ],
+    )
+    plan = _PlanResult(
+        instruction="在 Search by keyword 输入框输入 Nguyen 并提交搜索",
+        summary="用 Orders grid 顶部关键词搜索定位客户",
+    )
+
+    assert _extract_target_fields(milestone) == []
+    guarded = _guard_named_field_substitution_plan(plan, milestone, _check(), observation)
+
+    assert guarded.instruction == plan.instruction
+    assert guarded.direction is None
+
+
+def test_semantic_customer_field_does_not_hijack_bill_to_name_filter():
+    milestone = Milestone.model_validate({
+        "id": "m",
+        "name": "在客户字段用关键词『Nguyen』筛选候选记录",
+        "description": "在客户字段用关键词『Nguyen』筛选候选记录",
+        "success_condition": "客户关键词筛选已应用且匹配记录非 0 条",
+        "kind": "filter",
+    })
+    observation = Observation(
+        png_bytes=b"png",
+        source="browser",
+        form_controls=[
+            {"label": "Bill-to Name", "kind": "text_input", "value": ""},
+        ],
+    )
+    plan = _PlanResult(
+        instruction="在 Bill-to Name 输入框填入 'Nguyen'",
+        summary="用账单姓名字段筛选客户",
+    )
+
+    guarded = _guard_named_field_substitution_plan(plan, milestone, _check(), observation)
+
+    assert guarded.instruction == plan.instruction
+    assert guarded.direction is None
+
+
 def test_runtime_retry_annotation_not_extracted_as_field():
     """The orchestrator's empty-returns retry annotation `（继续定位返回字段：material）` must NOT be
     parsed as a「继续定位返回」column (live 120601: it hijacked a read into a column-filter scroll)."""

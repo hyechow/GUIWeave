@@ -53,6 +53,26 @@ def _tap_turn(*, on_target: bool, no_effect: bool = False) -> PolicyTurn:
     )
 
 
+def _submit_turn(*, no_effect: bool = True, reason: str = "点击 Submit Comment 按钮") -> PolicyTurn:
+    act = BaseAction(action_type="tap", x=640, y=820, description=reason)
+    return PolicyTurn(
+        index=1,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True,
+            instruction=reason,
+            stop=False,
+            goal_completed=False,
+            summary="",
+            milestone_id="m1",
+        ),
+        action_decision=BaseActionDecision(action=act),
+        target_verify=TargetVerify(on_target=True, actual_element="Submit Comment button"),
+        no_effect=no_effect,
+        executed=True,
+    )
+
+
 def _wire(monkeypatch, p, check_status: str) -> list[str]:
     """Mock the LLM checker + the two terminal branches; record which fired."""
     monkeypatch.setattr(P, "is_loading_frame", lambda obs: False)
@@ -63,6 +83,17 @@ def _wire(monkeypatch, p, check_status: str) -> list[str]:
     calls: list[str] = []
     monkeypatch.setattr(p, "_advance", lambda *a, **k: (calls.append("advance"), "ADV")[1])
     monkeypatch.setattr(p, "_handle_stuck", lambda *a, **k: (calls.append("stuck"), "STK")[1])
+    return calls
+
+
+def _wire_check(monkeypatch, p, check: _SingleCheckResult) -> list[str]:
+    monkeypatch.setattr(P, "is_loading_frame", lambda obs: False)
+    monkeypatch.setattr(p, "_single_check", lambda *a, **k: check)
+    calls: list[str] = []
+    monkeypatch.setattr(p, "_advance", lambda *a, **k: (calls.append("advance"), "ADV")[1])
+    monkeypatch.setattr(p, "_handle_stuck", lambda *a, **k: (calls.append("stuck"), "STK")[1])
+    monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (calls.append("plan"), "PLAN")[1])
+    monkeypatch.setattr(p._monitor, "check_instruction_repetition", lambda *a, **k: None)
     return calls
 
 
@@ -115,6 +146,42 @@ def test_no_url_change_keeps_no_effect_replan(monkeypatch):
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/orders")  # unchanged
     p._run_single_turn(m, obs, [_tap_turn(on_target=True, no_effect=True)])
     assert calls == ["stuck"]  # URL unchanged => no_effect stands => replan
+
+
+def test_terminal_dispatch_advances_without_visible_feedback(monkeypatch):
+    p, m = _policy()
+    calls = _wire_check(
+        monkeypatch,
+        p,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="未看到成功提示或新评论出现在历史中",
+            summary="提交后页面没有明显反馈",
+            missing_evidence=["缺少成功提示"],
+        ),
+    )
+    p._monitor._last_url = "http://x/order/view/65"
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/order/view/65")
+    p._run_single_turn(m, obs, [_submit_turn(no_effect=True)])
+    assert calls == ["advance"]  # terminal dispatch is enough when only visible feedback is missing
+
+
+def test_terminal_dispatch_gate_respects_negative_feedback(monkeypatch):
+    p, m = _policy()
+    calls = _wire_check(
+        monkeypatch,
+        p,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="页面显示 validation failed: required field missing",
+            summary="提交失败",
+            missing_evidence=["需要修正表单错误"],
+        ),
+    )
+    p._monitor._last_url = "http://x/order/view/65"
+    obs = Observation(png_bytes=b"x", source="browser", url="http://x/order/view/65")
+    p._run_single_turn(m, obs, [_submit_turn(no_effect=True)])
+    assert calls == ["stuck"]  # explicit failure must not be swallowed by dispatch completion
 
 
 def test_checker_stuck_status_routes_to_handle_stuck(monkeypatch):

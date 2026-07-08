@@ -30,6 +30,7 @@ from .helpers import (
     filter_chips_clean,
     filter_state_satisfies_target,
     native_select_satisfies_target,
+    target_affordance_scroll_plan,
 )
 from .runtime import (
     EARLY_FEASIBILITY_AT,
@@ -92,6 +93,24 @@ _PLAN_UNQUOTED_INPUT_VALUE_RE = re.compile(
     r"(?:输入|填入|填写|录入|键入|重输|重新输入|覆盖输入)\s*([^，。；;]+)$",
     re.IGNORECASE,
 )
+_TERMINAL_DISPATCH_RE = re.compile(
+    r"(?:"
+    r"提交|保存|发送|发出|发布|确认|应用|完成|添加备注|提交评论|"
+    r"submit|save|send|post|publish|confirm|apply|finish|add\s+comment|submit\s+comment"
+    r")",
+    re.IGNORECASE,
+)
+_CHECKBOX_OR_TOGGLE_RE = re.compile(
+    r"(?:复选框|勾选|取消勾选|选中|开关|checkbox|toggle|switch)",
+    re.IGNORECASE,
+)
+_NEGATIVE_ACTION_FEEDBACK_RE = re.compile(
+    r"(?:"
+    r"错误|失败|校验|必填|无效|被拒绝|权限不足|"
+    r"error|failed|failure|validation|required|invalid|denied|forbidden"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _plan_is_input_like(instruction: str) -> bool:
@@ -121,6 +140,63 @@ def _type_repeat_matches_current_plan(signature: str, instruction: str) -> bool:
     repeated_value = (signature or "").rsplit("|", 1)[-1]
     planned_value = _plan_input_value(instruction)
     return not planned_value or planned_value == repeated_value
+
+
+def _turn_action_text(turn: PolicyTurn | None) -> str:
+    if turn is None:
+        return ""
+    supervisor = turn.supervisor
+    action = turn.action_decision.action if turn.action_decision else None
+    return " ".join(
+        part.strip()
+        for part in (
+            getattr(supervisor, "instruction", "") if supervisor else "",
+            getattr(action, "description", "") if action else "",
+            getattr(action, "text", "") if action else "",
+        )
+        if isinstance(part, str) and part.strip()
+    )
+
+
+def _is_terminal_dispatch_turn(turn: PolicyTurn | None, milestone: Milestone) -> bool:
+    """Whether the last executed UI action is the terminal submit/save/send for this milestone.
+
+    This is deliberately narrower than "any action was executed": text entry, checkbox toggles,
+    scrolling, and ordinary navigation still require their normal state/effect evidence. The gate
+    exists for fire-and-forget submit/save buttons whose backend effect may not render a visible
+    toast/history row in the next frame.
+    """
+    if turn is None or not turn.executed:
+        return False
+    supervisor = turn.supervisor
+    if not supervisor or supervisor.milestone_id != milestone.id:
+        return False
+    action = turn.action_decision.action if turn.action_decision else None
+    if action is None:
+        return False
+    if action.action_type not in {"tap", "click", "press_enter"}:
+        return False
+    tv = turn.target_verify
+    if tv is not None and not tv.on_target:
+        return False
+    text = _turn_action_text(turn)
+    if not text or _CHECKBOX_OR_TOGGLE_RE.search(text):
+        return False
+    return bool(_TERMINAL_DISPATCH_RE.search(text))
+
+
+def _has_negative_action_feedback(check: _SingleCheckResult) -> bool:
+    claims = " ".join(
+        [
+            check.reason or "",
+            check.summary or "",
+            check.stuck_reason or "",
+            " ".join(check.visible_evidence or []),
+            " ".join(check.missing_evidence or []),
+            " ".join(check.issues or []),
+        ]
+    )
+    return bool(_NEGATIVE_ACTION_FEEDBACK_RE.search(claims))
 
 
 def _page_known(page_identity: str) -> bool:
@@ -577,6 +653,38 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             self._last_check = check
             return self._advance(milestone, observation, history)
 
+        # Target-affordance acquire gate — if obs.dom already reports target controls offscreen,
+        # the next step is deterministic page-internal acquisition (scroll toward the control).
+        # This keeps checker free text from converting "target exists below the fold" into a
+        # speculative mode switch or route change.
+        acquire_plan = target_affordance_scroll_plan(
+            getattr(observation, "form_controls", None),
+            milestone,
+        )
+        if acquire_plan is not None:
+            check = _SingleCheckResult(
+                status="in_progress",
+                reason=acquire_plan.summary,
+                summary=acquire_plan.summary,
+                missing_evidence=["目标控件已在 DOM 中定位，需先滚动到视口内再执行操作。"],
+            )
+            self._last_check = check
+            self._last_plan = acquire_plan
+            milestone.status = "running"
+            print(f"  [AcquireGate] {acquire_plan.summary}")
+            print(f"  [Planner] {acquire_plan.instruction}")
+            return SupervisorStep(
+                should_act=True,
+                instruction=acquire_plan.instruction,
+                stop=False,
+                goal_completed=False,
+                summary=acquire_plan.summary,
+                execution_scope=execution_scope,
+                direction=acquire_plan.direction,
+                is_home_screen=False,
+                **_ctx(milestone, None),
+            )
+
         with _Timer(self._timings, self._timings_order, "checker", self._token_usage):
             check = self._single_check(
                 milestone,
@@ -607,6 +715,27 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 "summary": "搜索/筛选条件已填写，但还需要提交/应用。",
                 "missing_evidence": ["需要点击页面上的提交/搜索/应用筛选控件，或按回车提交搜索/筛选。"],
             })
+            self._last_check = check
+
+        last_terminal_dispatch = milestone_history[-1] if milestone_history else None
+        if (
+            milestone.kind == "action"
+            and check.status != "done"
+            and _is_terminal_dispatch_turn(last_terminal_dispatch, milestone)
+            and not _has_negative_action_feedback(check)
+        ):
+            action_text = _turn_action_text(last_terminal_dispatch)[:120]
+            check = _SingleCheckResult(
+                status="done",
+                reason=(
+                    "终端动作已派发执行，当前帧未出现错误/校验失败；"
+                    "缺失的是可见成功反馈通道，不应重复提交同一动作。"
+                ),
+                summary=f"terminal dispatch accepted: {action_text}",
+                visible_evidence=["runtime.execution_signal=dispatched"],
+                page_identity=check.page_identity,
+            )
+            print("  [TerminalDispatchGate] 终端动作已执行且无负反馈 → done（跳过重复提交）")
             self._last_check = check
 
         current_page_id = check.page_identity or ""
@@ -1452,7 +1581,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._collection_done = bool(done)
 
     def _last_action_effect_text(self, history: list[PolicyTurn]) -> str:
-        """Deterministic "did the last action execute / change the page" fact for the checker.
+        """Deterministic execution/effect fact for the checker.
 
         Task-63复盘核心: "动作是否执行成功"与"动作效果是否达成"是两个独立判断——不能用效果
         (如某列是否出现)反推动作有没有执行。这里只报告动作执行的确定性事实(URL/交互指纹
@@ -1466,24 +1595,38 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         executed = bool(getattr(last, "executed", True))
         no_effect = bool(getattr(last, "no_effect", False))
         if not executed:
+            execution_signal = "not_dispatched"
+            effect_signal = "none"
             fact = "上一步动作未被执行(动作未发出)。"
         elif self._monitor.url_changed:
-            fact = "页面 URL 已变化——上一步动作确定性地产生了导航效果(动作已执行成功)。"
+            execution_signal = "dispatched"
+            effect_signal = "url_changed"
+            fact = "页面 URL 已变化——上一步动作确定性地产生了导航效果。"
         elif self._monitor.dom_changed:
+            execution_signal = "dispatched"
+            effect_signal = "dom_changed"
             fact = ("页面交互状态指纹已变化(dom_changed)——上一步动作确定性地改变了表单/焦点等"
-                    "交互状态,即动作本身已成功执行(不是没点中)。")
+                    "交互状态。")
         elif no_effect:
-            fact = "动作已发出,但 settle 全程页面零变化(no_effect)——这一击对当前页面无任何效果。"
+            execution_signal = "dispatched"
+            effect_signal = "no_visible_effect"
+            fact = "动作已发出,但 settle 全程页面零变化(no_effect)——未观察到可见/DOM 反馈。"
         else:
-            return ""  # executed 但无 url/dom/no_effect 信号 → 无确定性事实,不注入
+            execution_signal = "dispatched"
+            effect_signal = "unknown"
+            fact = "动作已发出,但当前平台没有提供可判定的 URL/DOM/视觉反馈信号。"
         return (
-            "## 上一步动作的确定性执行结果(运行时事实,非视觉推断)\n"
-            f"上一步动作「{instr_brief}」:{fact}\n"
-            "⚠️ 判断要点: '动作是否执行成功'与'动作效果是否达成'是两个独立判断。上面的信号只"
-            "说明动作是否执行/是否改变了界面状态,**不直接等于验收效果**。若动作已执行"
-            "(dom_changed/URL 变化)但验收目标(如主网格出现某列、某值已设置)未达成,应判 in_progress "
-            "并指出'动作已执行但效果未现、需换方式(换控件/滚动/换路径)',**不得**归因为"
-            "'动作没点中/需重复点击同一控件'——重复一个已执行的动作不会产生新效果,只会打转。"
+            "## 上一步动作信号(运行时事实,非视觉推断)\n"
+            f"- action: {instr_brief}\n"
+            f"- execution_signal: {execution_signal}\n"
+            f"- effect_signal: {effect_signal}\n"
+            f"- detail: {fact}\n"
+            "裁决规则：execution_signal 只回答“动作是否已派发/执行”，effect_signal 只回答"
+            "“派发后是否观察到 URL/DOM/视觉反馈”，二者都不直接等于业务目标状态。"
+            "若 execution_signal=dispatched 而 effect_signal=no_visible_effect/unknown，不能写成"
+            "“动作没点中/未执行/需要重复点击同一控件”；只能说“动作已执行但当前反馈通道未提供"
+            "目标状态证据”。对提交/保存/发送这类终端派发动作，若页面没有错误/校验失败，"
+            "不要仅因缺少成功 toast/历史新增可见反馈而要求重复提交。"
         )
 
     def _single_check(

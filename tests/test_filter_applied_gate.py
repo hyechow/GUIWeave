@@ -280,6 +280,43 @@ def test_no_residuals_when_only_target_and_benign():
     assert filter_residual_labels({"Quantity": "3 - 3", "Store View": "x"}, ms) == []
 
 
+def test_preserved_entity_scope_filter_is_not_residual_when_adding_filter():
+    ms = _filter_ms(
+        "保留 Sarah Miller 客户结果范围，追加 Status=Pending 筛选",
+        "可见筛选状态同时包含 Keyword: Sarah Miller 和 Status: Pending",
+    )
+    applied = {"Keyword": "Sarah Miller", "Status": "Pending"}
+    assert filter_residual_labels(applied, ms) == []
+    assert filter_chips_clean(applied, ms) is True
+
+
+def test_preserved_scope_can_match_distinctive_partial_token():
+    ms = _filter_ms(
+        "保留 Grace 客户结果范围，追加 Status=Pending 筛选",
+        "可见筛选状态同时包含 Grace 客户范围和 Status: Pending",
+    )
+    applied = {"Keyword": "Grace Nguyen", "Status": "Pending"}
+    assert filter_residual_labels(applied, ms) == []
+    assert filter_chips_clean(applied, ms) is True
+
+
+def test_preserved_scope_does_not_keep_residual_by_target_value_overlap_only():
+    ms = _filter_ms(
+        "保留客户结果范围，追加 Status=Pending 筛选",
+        "可见筛选状态包含 Status: Pending",
+    )
+    applied = {"Keyword": "Pending", "Status": "Pending"}
+    assert filter_residual_labels(applied, ms) == ["Keyword"]
+    assert filter_chips_clean(applied, ms) is False
+
+
+def test_unmentioned_keyword_scope_remains_residual_when_setting_column_filter():
+    ms = _filter_ms("设置 Status=Pending 筛选")
+    applied = {"Keyword": "Sarah Miller", "Status": "Pending"}
+    assert filter_residual_labels(applied, ms) == ["Keyword"]
+    assert filter_chips_clean(applied, ms) is False
+
+
 def test_no_filter_intent_makes_every_chip_residual():
     # "any state / 全量" task: the intent is NO filter, so every non-benign chip is residual.
     ms = _filter_ms("清除筛选，准备全量 all orders 数据源（不限状态）")
