@@ -628,3 +628,41 @@ def test_mutate_goal_without_action_shapes():
         Finish(message="{v[count]}"),
     ])
     assert "MUTATE_GOAL_WITHOUT_ACTION" not in codes(retrieve)
+
+
+def _codes_of(program: Program) -> set[str]:
+    return {i.code for i in validate_program(program)}
+
+
+def test_no_result_source_not_tripped_by_noun_tracking_number():
+    # Regression for WebArena 499 (20260708_173020): "tracking number" is a NOUN phrase; the bare
+    # word "number" must not classify a pure mutation as an answer-task and force a phantom returns.
+    from gui_agent.core.orchestrator.validator import _goal_expects_structured_answer
+
+    goal = "Update order #304 with the USPS tracking number 13849373987"
+    assert _goal_expects_structured_answer(goal) is False
+    prog = Program(
+        goal=goal,
+        statements=[
+            Run(name="进入订单 #304 详情页", kind="navigation", success_condition="订单详情页已显示"),
+            Run(name="点 Ship 填入追踪号后 Submit Shipment", kind="action", success_condition="发货已保存，列表出现该追踪号"),
+            Finish(message="已为订单 #304 添加 USPS 追踪号 13849373987。"),
+        ],
+    )
+    assert "NO_RESULT_SOURCE" not in _codes_of(prog)
+
+
+def test_no_result_source_still_fires_for_number_of_count_ask():
+    # But "number of X" IS a count ask — a bare finish with no result source is still rejected.
+    from gui_agent.core.orchestrator.validator import _goal_expects_structured_answer
+
+    goal = "Report the number of pending orders"
+    assert _goal_expects_structured_answer(goal) is True
+    prog = Program(
+        goal=goal,
+        statements=[
+            Run(name="进入 Orders 列表并筛 Pending", kind="filter", success_condition="Status=Pending 已应用"),
+            Finish(message="答案：若干。"),
+        ],
+    )
+    assert "NO_RESULT_SOURCE" in _codes_of(prog)

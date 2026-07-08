@@ -58,7 +58,11 @@ def _goal_expects_structured_answer(goal: str) -> bool:
     if _NAV_SHAPE_RE.search(text) and not _RETRIEVE_KW_RE.search(text) and " of " not in text:
         return False
     return bool(
-        re.search(r"\b(how many|count|number|total|which|who|what|find|list|return|show)\b", text)
+        re.search(r"\b(how many|count|total|which|who|what|find|list|return|show)\b", text)
+        # "number of X" = a count ask; but bare "number" is usually a NOUN (tracking/phone/order/
+        # serial number) — matching it wrongly trips NO_RESULT_SOURCE on pure mutations like
+        # "update order with the tracking number 123", forcing a phantom returns onto the write.
+        or re.search(r"\bnumber of\b", text)
         or any(k in goal for k in ("多少", "几个", "几条", "总数", "数量", "哪些", "谁", "什么", "找出", "列出", "返回", "显示"))
     )
 
