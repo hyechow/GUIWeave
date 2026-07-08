@@ -608,60 +608,47 @@ def run_agent_loop(
                 _reads = _read_completed_run_returns(_cur_run, observation)
                 _contract = check_return_contract(_cur_run, _reads)
                 if _contract:
-                    _directive = (
-                        "上一子目标被验收为完成，但它声明的返回字段合同未满足："
-                        f"{_contract.describe()}。已读取结果：{_reads}。"
-                        "这说明验收过早、页面不对、或读取落在了错误的信号上。"
-                        "不要推进到会使用空值/垃圾值的后续步骤；"
-                        "请从当前页面继续或重规划，先真正定位目标数据并读取有效的返回值。"
-                    )
-                    _handled, _r = _perform_replan(_directive, observation, cls="contract_violation")
-                    if _handled and _r is not None:
-                        _orch_reply = _r
-                    elif _handled:
-                        _did_kickback_replan = True
+                    _attempt = _recovery.next_attempt(_run_idx, _cur_run)
+                    _cv_site = str(getattr(_cur_run, "var", "") or getattr(_cur_run, "name", ""))
+                    if _attempt is not None:
+                        _recovery.record("contract_violation", "tighten_return", _cv_site,
+                                         detail=_contract.describe()[:200],
+                                         outcome=f"tighten {_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}")
+                        _cur_run = _tighten_ui_return_run(
+                            _cur_run,
+                            _contract.missing,
+                            _reads,
+                            attempt=_attempt,
+                            violations=_contract.out_of_domain,
+                        )
+                        open_call(supervisor, _cur_run, _run_idx, fresh_advance=False)
+                        _say(
+                            "  [Orchestrator] 返回值合同未满足，继续定位"
+                            f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
+                            + _contract.describe()
+                        )
+                        _did_return_recovery = True
                     else:
-                        _attempt = _recovery.next_attempt(_run_idx, _cur_run)
-                        _cv_site = str(getattr(_cur_run, "var", "") or getattr(_cur_run, "name", ""))
-                        if _attempt is not None:
-                            _recovery.record("contract_violation", "tighten_return", _cv_site,
-                                             detail=_contract.describe()[:200],
-                                             outcome=f"tighten {_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}")
-                            _cur_run = _tighten_ui_return_run(
-                                _cur_run,
-                                _contract.missing,
-                                _reads,
-                                attempt=_attempt,
-                                violations=_contract.out_of_domain,
-                            )
-                            open_call(supervisor, _cur_run, _run_idx, fresh_advance=False)
-                            _say(
-                                "  [Orchestrator] 返回值合同未满足，继续定位"
-                                f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
-                                + _contract.describe()
-                            )
-                            _did_return_recovery = True
+                        _recovery.record("contract_violation", "tighten_return", _cv_site,
+                                         detail=_contract.describe()[:200],
+                                         outcome="exhausted_honest_fail")
+                        _say(
+                            "  [Orchestrator] 返回值合同持续未满足，停止推进："
+                            + _contract.describe()
+                        )
+                        _hand = package_result(
+                            _cur_run,
+                            completed=False,
+                            summary="返回值合同未满足：" + _contract.describe(),
+                            notes=context.content_notes[_notes_mark:],
+                            reads=_reads,
+                        )
+                        try:
+                            _cur_run = _gen.send(_hand)
+                        except StopIteration as _e:
+                            _orch_reply = _e.value or ""
                         else:
-                            _recovery.record("contract_violation", "tighten_return", _cv_site,
-                                             detail=_contract.describe()[:200],
-                                             outcome="exhausted_honest_fail")
-                            _say(
-                                "  [Orchestrator] 返回值合同持续未满足，停止推进："
-                                + _contract.describe()
-                            )
-                            _hand = package_result(
-                                _cur_run,
-                                completed=False,
-                                summary="返回值合同未满足：" + _contract.describe(),
-                                notes=context.content_notes[_notes_mark:],
-                                reads=_reads,
-                            )
-                            try:
-                                _cur_run = _gen.send(_hand)
-                            except StopIteration as _e:
-                                _orch_reply = _e.value or ""
-                            else:
-                                _did_return_recovery = True
+                            _did_return_recovery = True
                     break
                 _hand = package_result(
                     _cur_run, completed=True, summary=sv_step.summary or "完成",
