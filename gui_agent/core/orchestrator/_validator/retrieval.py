@@ -27,10 +27,16 @@ _RETRIEVAL_ACTION_CUE_RE = re.compile(
     r"搜索|筛选|检索|查找|重筛|重搜|filter|search|query",
     re.IGNORECASE,
 )
+_SAME_RETRIEVAL_TARGET_RE = re.compile(
+    r"同一(?:字段|列|输入框|筛选框|搜索框|下拉框)|"
+    r"same\s+(?:field|column|input|filter|search\s*box|dropdown)",
+    re.IGNORECASE,
+)
 
 _RETRIEVAL_FIELD_STOPWORDS = {
     "当前", "目标", "搜索", "筛选", "关键", "关键词", "记录", "列表", "结果", "相关",
-    "使用", "输入", "提交", "页面", "the", "same", "target", "filter", "search",
+    "使用", "输入", "提交", "页面", "顶部", "底部", "上方", "下方", "左侧", "右侧",
+    "同一", "同一个", "the", "same", "target", "filter", "search",
 }
 
 # Known entity field roots. The greedy Chinese capture before 字段/列 can swallow preceding prose
@@ -55,6 +61,11 @@ def _normalize_retrieval_field(raw: str) -> str:
     lowered = field.lower()
     if not field or lowered in _RETRIEVAL_FIELD_STOPWORDS:
         return ""
+    if "输入精确" in field and any(root in field for root in ("客户", "产品", "商品", "订单", "记录")):
+        return ""
+    for stopword in _RETRIEVAL_FIELD_STOPWORDS:
+        if stopword and len(lowered) > len(stopword) and lowered.endswith(stopword):
+            return ""
     for root in _KNOWN_FIELD_ROOTS:
         if len(lowered) > len(root) and lowered.endswith(root):
             return root
@@ -123,6 +134,10 @@ def _looks_like_fuzzy_retry(text: str) -> bool:
     return bool(_RETRIEVAL_RETRY_CUE_RE.search(text or "") and _RETRIEVAL_ACTION_CUE_RE.search(text or ""))
 
 
+def _mentions_same_retrieval_target(text: str) -> bool:
+    return bool(_SAME_RETRIEVAL_TARGET_RE.search(text or ""))
+
+
 def check_retrieval_retry_preserves_field(stmts: list[Stmt], issues: IssueList) -> None:
     """Exact->fuzzy retry branches must keep the same target field/column.
 
@@ -158,6 +173,8 @@ def check_retrieval_retry_preserves_field(stmts: list[Stmt], issues: IssueList) 
                             if not _looks_like_fuzzy_retry(text):
                                 continue
                             fields = _extract_retrieval_fields(field_text)
+                            if _mentions_same_retrieval_target(field_text):
+                                continue
                             if not _retrieval_fields_overlap(previous_fields, fields):
                                 issues.add(
                                     "RETRIEVAL_RETRY_DROPS_FIELD",

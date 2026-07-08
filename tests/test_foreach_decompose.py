@@ -241,6 +241,51 @@ def test_validate_accepts_typed_shadow_fields_from_foreach_columns():
     assert issues == []
 
 
+def test_validate_rejects_unused_bodyless_foreach_collection():
+    draft = _PlanDraft(goal="打开最近一笔订单", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            name="采集最近一笔 Pending 订单的详情链接",
+            row_fields=["order_id", "detail_url"],
+            into="pending_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="navigation",
+            name="打开最近一笔 Pending 订单详情页",
+        ),
+    ])
+
+    issues = validate_program(to_program(draft, "g"))
+
+    assert any(getattr(issue, "code", "") == "FOREACH_COLLECTION_UNUSED" for issue in issues)
+    assert any("没有被后续 data_query 查询" in issue for issue in issues)
+
+
+def test_validate_accepts_bodyless_foreach_when_data_query_consumes_table():
+    draft = _PlanDraft(goal="打开最近一笔订单", steps=[
+        _StepDraft(
+            op="foreach",
+            loop_var="row",
+            row_fields=["order_id", "purchase_date", "detail_url"],
+            into="pending_orders",
+            body=[],
+        ),
+        _StepDraft(
+            op="run",
+            run_kind="data_query",
+            var="q",
+            name="取最近订单",
+            returns=["detail_url"],
+            sql="SELECT detail_url FROM pending_orders ORDER BY purchase_date_ts DESC LIMIT 1",
+        ),
+    ])
+
+    assert validate_program(to_program(draft, "g")) == []
+
+
 def test_validate_rejects_aggregate_limit_after_aggregation():
     draft = _PlanDraft(goal="返回最近四笔取消订单金额总和", steps=[
         _StepDraft(

@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Read, Query, Run
+from gui_agent.core.orchestrator._validator.governance import TEXTUAL_FALLBACK_VALIDATOR_CODES
 from gui_agent.core.orchestrator.validator import ALL_CODES, IssueList, ValidationIssue, validate_program
 
 _VALIDATOR_SRCS = tuple(sorted(Path("gui_agent/core/orchestrator").glob("validator*.py"))) + tuple(
@@ -135,6 +137,18 @@ SAMPLES: dict[str, Program] = {
         Read(var="v", name="读取表格可见行的字段",  returns=["grand_total", "status"],
             read_spec="读取每一行的金额和状态"),
     ]),
+    "PRESERVED_SCOPE_FILTER_MISSING_VALUE": (
+        Program(statements=[
+            Run(
+                name="保留客户筛选结果范围，追加 Status=Pending",
+                kind="filter",
+                success_condition="Active filters 同时包含客户筛选和 Status=Pending",
+            ),
+        ]),
+        SimpleNamespace(entities=[
+            SimpleNamespace(mention="Grace Nguyen", search_key="Grace", type="customer"),
+        ]),
+    ),
     "SQL_SCHEMA_MAPPING_TEXT": Program(statements=[
         Query(var="q", name="查询",  returns=["a"], sql="SELECT Email->customer_email FROM data"),
     ]),
@@ -196,6 +210,10 @@ SAMPLES: dict[str, Program] = {
     ]),
     "FOREACH_BODY_GOAL_NO_ROW_TEMPLATE": Program(statements=[
         ForEach(var="row", returns=["material"], body_goal="读这一行的材质"),
+    ]),
+    "FOREACH_COLLECTION_UNUSED": Program(statements=[
+        ForEach(var="row", row_fields=["order_id", "detail_url"], into="pending_orders", body=[]),
+        Run(name="打开最近一笔 Pending 订单详情页", kind="navigation"),
     ]),
     "FOREACH_DETAIL_OPEN_NO_ROW_REFERENCE": Program(statements=[
         ForEach(var="row", returns=["SKU", "Action_url"], body=[
@@ -283,6 +301,11 @@ def test_every_code_has_triggering_sample(code):
     assert code in fired, f"sample for {code} fired {sorted(fired)} instead"
 
 
+def test_textual_fallback_validator_codes_are_registered_and_sampled():
+    assert TEXTUAL_FALLBACK_VALIDATOR_CODES <= set(ALL_CODES)
+    assert TEXTUAL_FALLBACK_VALIDATOR_CODES <= set(SAMPLES)
+
+
 def test_foreach_row_url_policy_checks_runs_inside_if():
     program = Program(statements=[
         ForEach(
@@ -320,6 +343,41 @@ def test_url_capability_advisories_are_warnings():
         issues = validate_program(SAMPLES[code])
         severities = [issue.severity for issue in issues if issue.code == code]
         assert severities == ["warn"]
+
+
+def test_preserved_scope_filter_accepts_concrete_entity_value():
+    program = Program(statements=[
+        Run(
+            name="保留 Grace 客户结果范围，追加 Status=Pending",
+            kind="filter",
+            success_condition="Active filters 同时包含 Grace 和 Status=Pending",
+        ),
+    ])
+    resolution = SimpleNamespace(entities=[
+        SimpleNamespace(mention="Grace Nguyen", search_key="Grace", type="customer"),
+    ])
+
+    assert "PRESERVED_SCOPE_FILTER_MISSING_VALUE" not in {
+        issue.code for issue in validate_program(program, resolution=resolution)
+    }
+
+
+def test_preserved_scope_filter_requires_lookup_value_with_multiple_entities():
+    program = Program(statements=[
+        Run(
+            name="保留客户筛选结果范围，追加 Status=Pending",
+            kind="filter",
+            success_condition="Active filters 同时包含客户筛选和 Status=Pending",
+        ),
+    ])
+    resolution = SimpleNamespace(entities=[
+        SimpleNamespace(mention="Grace Nguyen", search_key="Grace", type="customer"),
+        SimpleNamespace(mention="most recent pending order", search_key="pending", type="order"),
+    ])
+
+    assert "PRESERVED_SCOPE_FILTER_MISSING_VALUE" in {
+        issue.code for issue in validate_program(program, resolution=resolution)
+    }
 
 
 def test_unused_compute_blocks_mutations_but_only_warns_for_read_only_tasks():
@@ -364,6 +422,39 @@ def test_retrieval_retry_overlap_handles_chinese_prefix():
     eo = _extract_retrieval_fields("在订单字段用精确值筛选")
     fo = _extract_retrieval_fields("清除后订单字段用关键词重筛")
     assert _retrieval_fields_overlap(eo, fo) is True
+
+
+def test_retrieval_field_extraction_ignores_search_box_location_words():
+    from gui_agent.core.orchestrator._validator.retrieval import _extract_retrieval_fields
+
+    assert _extract_retrieval_fields("在顶部搜索框输入精确值『Grace Nguyen』进行筛选") == []
+    assert _extract_retrieval_fields("在顶部搜索框输入精确客户名『Grace Nguyen』并提交搜索") == []
+    assert _extract_retrieval_fields("清除精确值后在同一搜索框用关键词『Grace』重筛") == []
+
+
+def test_retrieval_retry_accepts_same_field_anaphora():
+    program = Program(statements=[
+        Run(
+            var="f1",
+            kind="filter",
+            name="在 Bill-to Name 字段输入精确值『Grace Nguyen』并提交筛选",
+            returns=["match_count"],
+            read_spec="match_count：读取记录数",
+        ),
+        If(
+            cond=Cond(var="f1", field="match_count", cmp="==", value="0"),
+            then=[
+                Run(
+                    kind="filter",
+                    name="清除精确值后在同一字段输入关键词『Grace』并提交筛选",
+                ),
+            ],
+        ),
+    ])
+
+    assert "RETRIEVAL_RETRY_DROPS_FIELD" not in {
+        issue.code for issue in validate_program(program)
+    }
 
 
 def test_validation_issue_is_str_with_metadata():

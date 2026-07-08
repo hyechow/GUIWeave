@@ -85,6 +85,7 @@ ALL_CODES: frozenset[str] = frozenset({
     # table aggregation must go through data_query, not UI eyeballing
     "VISUAL_ROW_AGGREGATION",
     "TABLE_ROW_FIELD_COLLECTION",
+    "PRESERVED_SCOPE_FILTER_MISSING_VALUE",
     # data_query SQL hygiene
     "SQL_SCHEMA_MAPPING_TEXT",
     "SQL_QUOTED_DISPLAY_IDENTIFIER",
@@ -109,6 +110,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "FOREACH_EMPTY_BODY_NO_RETURNS",
     "FOREACH_BODY_GOAL_MISSING_RETURNS",
     "FOREACH_BODY_GOAL_NO_ROW_TEMPLATE",
+    "FOREACH_COLLECTION_UNUSED",
     "FOREACH_DETAIL_OPEN_NO_ROW_REFERENCE",
     "FOREACH_CALL_DROPS_ROW_URL",
     "FOREACH_ROW_URL_NOT_USED",

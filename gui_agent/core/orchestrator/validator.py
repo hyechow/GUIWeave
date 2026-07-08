@@ -113,6 +113,104 @@ def _has_result_source(stmts: list[Stmt], function_returns: dict[str, set[str]] 
             return True
     return False
 
+
+def _foreach_into_name(loop: ForEach) -> str:
+    return (loop.into or f"{loop.var}s").strip()
+
+
+def _pure_collection_foreaches(stmts: list[Stmt]) -> list[ForEach]:
+    out: list[ForEach] = []
+    for s in stmts:
+        if isinstance(s, ForEach):
+            if not s.body and not s.body_goal and (s.row_fields or s.returns):
+                out.append(s)
+            out.extend(_pure_collection_foreaches(s.body))
+        elif isinstance(s, If):
+            out.extend(_pure_collection_foreaches(s.then))
+            out.extend(_pure_collection_foreaches(s.otherwise))
+    return out
+
+
+def _query_referenced_materialized_tables(stmts: list[Stmt]) -> set[str]:
+    out: set[str] = set()
+    for s in stmts:
+        if isinstance(s, Query):
+            out.update(_sql_referenced_tables(s.sql) - _sql_cte_names(s.sql))
+        elif isinstance(s, If):
+            out.update(_query_referenced_materialized_tables(s.then))
+            out.update(_query_referenced_materialized_tables(s.otherwise))
+        elif isinstance(s, ForEach):
+            out.update(_query_referenced_materialized_tables(s.body))
+    return {name.lower() for name in out}
+
+
+_PRESERVE_SCOPE_FILTER_RE = re.compile(
+    r"保留|保持|继续沿用|追加|叠加|同时(?:包含|保留|应用|满足)|"
+    r"\bkeep\b|\bretain\b|\bpreserve\b|\bwith\b|\balongside\b",
+    re.IGNORECASE,
+)
+# Textual fallback debt: these are NOT platform-neutral ontology. They suppress false scope tokens
+# when the router/resolution still exposes status/ranking/page words as plain entity text
+# (WebArena/Magento pressure: pending/complete/reviews/status). Prefer replacing this with a
+# structured router contract that marks which entity refs are preserved lookup scope.
+_NON_SCOPE_ENTITY_TOKENS = {
+    "all",
+    "any",
+    "canceled",
+    "cancelled",
+    "closed",
+    "complete",
+    "completed",
+    "disabled",
+    "enabled",
+    "filter",
+    "first",
+    "item",
+    "items",
+    "keyword",
+    "last",
+    "latest",
+    "least",
+    "most",
+    "newest",
+    "open",
+    "order",
+    "orders",
+    "page",
+    "pages",
+    "pending",
+    "processing",
+    "record",
+    "records",
+    "recent",
+    "result",
+    "results",
+    "review",
+    "reviews",
+    "second",
+    "status",
+    "the",
+}
+
+
+def _distinctive_scope_tokens(value: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9.]+", value or "")
+        if len(token) >= 3 and token.lower() not in _NON_SCOPE_ENTITY_TOKENS
+    }
+
+
+def _resolution_scope_token_sets(resolution) -> list[set[str]]:
+    out: list[set[str]] = []
+    for ent in getattr(resolution, "entities", []) or []:
+        tokens: set[str] = set()
+        for attr in ("search_key", "key", "mention"):
+            tokens.update(_distinctive_scope_tokens(str(getattr(ent, attr, "") or "")))
+        if tokens:
+            out.append(tokens)
+    return out
+
 # A step whose own acceptance says "nothing changes" is a no-op the LLM invented for flow
 # control (185 sample:「保存当前行结果（逻辑上）: 无UI变化，仅用于流程控制」). Interactive steps
 # must drive the UI; per-row accumulation is the runtime's job. Checker would spin on it.
@@ -162,6 +260,7 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
 
     all_result_vars: set[str] = set()  # every result var anywhere — to spot botched bare refs
     rank_goal_text = (program.goal or "").lower()
+    scope_value_token_sets = _resolution_scope_token_sets(resolution)
 
     def _collect_result_vars(stmts: list[Stmt]) -> None:
         for s in stmts:
@@ -331,6 +430,23 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                 # precondition is a state to ENSURE (确保已到达/已进入某状态) — only meaningful on a
                 # navigation step. On an action/read/filter it would be treated as already-satisfied
                 # and accepted on frame 1, prematurely passing a step that must actually run.
+                if (
+                    s.kind == "filter"
+                    and scope_value_token_sets
+                    and _PRESERVE_SCOPE_FILTER_RE.search(f"{s.name} {s.success_condition}")
+                ):
+                    text_tokens = set(re.findall(r"[A-Za-z0-9.]+", f"{s.name} {s.success_condition}".lower()))
+                    if not any(tokens & text_tokens for tokens in scope_value_token_sets):
+                        examples = sorted({token for tokens in scope_value_token_sets for token in tokens})[:4]
+                        issues.add(
+                            "PRESERVED_SCOPE_FILTER_MISSING_VALUE",
+                            f"筛选步骤「{s.name}」声称要保留/追加上游实体范围，但没有在本步骤 name/SC 里写出"
+                            f"具体实体值或检索关键词（例如 {examples}）。运行时只能按 live active-filter 的"
+                            "具体值做 state-diff；只写「保留客户筛选/保留实体范围/保留搜索结果」无法区分"
+                            "应保留的任务 scope 和上一题残留筛选。请把本步改成类似「保留 <具体实体值或关键词> "
+                            "结果范围，追加 <新筛选>」，并在 success_condition 里写明 active filters 同时包含"
+                            "该具体值和新筛选。"
+                        )
                 if isinstance(s, Run) and _NOOP_STEP_RE.search(f"{s.name} {s.success_condition}"):
                     issues.add("NOOP_FLOW_CONTROL_STEP",
                         f"步骤「{s.name}」自述无 UI 变化/仅用于流程控制——交互步必须驱动真实界面操作。"
@@ -574,6 +690,18 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
         function_returns,
         goal_text=program.goal or "",
     )
+    referenced_tables = _query_referenced_materialized_tables(program.statements)
+    for loop in _pure_collection_foreaches(program.statements):
+        into_name = _foreach_into_name(loop)
+        if into_name and into_name.lower() not in referenced_tables:
+            issues.add(
+                "FOREACH_COLLECTION_UNUSED",
+                f"foreach「{loop.target or into_name}」是 body=[] 的纯采集，产出的表「{into_name}」"
+                "没有被后续 data_query 查询。纯采集本身不打开详情、不点击、不修改，也不会把 row 暴露给后续"
+                "navigation/action；如果要选最近/最旧/top-N，请在 foreach 后用 data_query 查询该 into 表，"
+                "再用查询结果中的 URL/ID 打开目标；如果只是依赖 UI 排序点第一行，请删除这个 foreach，"
+                "并把后续导航明确写成打开当前已筛选排序列表的第一行。"
+            )
     check_retrieval_retry_preserves_field(program.statements, issues)
     return issues
 _VISUAL_ROW_AGG_RE = re.compile(

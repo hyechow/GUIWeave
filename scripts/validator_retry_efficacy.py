@@ -46,6 +46,10 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.orchestrator import ValidationIssue, decompose
+from gui_agent.core.orchestrator._validator.governance import (
+    TEXTUAL_FALLBACK_HEURISTIC_SAMPLES,
+    TEXTUAL_FALLBACK_VALIDATOR_CODES,
+)
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
 
 CASES_FILE = PROJECT_ROOT / "evals" / "browser" / "orchestrator" / "cases.json"
@@ -153,6 +157,11 @@ def _report(traces: list[list[list[str]]], stats: dict[str, CodeStat]) -> None:
         elif st.shipped:
             flag = "  ← shipped with flaw"
         print(f"  {code:<38} {st.fired:>5} {st.fed_back:>7} {st.cleared:>7} {rate:>6} {st.shipped:>7}{flag}")
+    watched_missing = sorted(code for code in TEXTUAL_FALLBACK_VALIDATOR_CODES if code not in stats)
+    if watched_missing:
+        print("\ntextual-fallback validator codes not observed in this run:")
+        for code in watched_missing:
+            print(f"  {code}  ← add retry-stress cases before trusting this rule's feedback")
 
 
 def main() -> int:
@@ -188,6 +197,10 @@ def main() -> int:
                        "shipped": s.shipped, "clear_rate": s.clear_rate}
                 for code, s in stats.items()
             },
+            "textual_fallback_validator_codes": sorted(TEXTUAL_FALLBACK_VALIDATOR_CODES),
+            "textual_fallback_heuristic_samples": sorted(
+                str(sample.get("id") or "") for sample in TEXTUAL_FALLBACK_HEURISTIC_SAMPLES
+            ),
         }
         Path(args.json).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\nwrote {args.json}")
