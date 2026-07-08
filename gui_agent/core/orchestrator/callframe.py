@@ -213,15 +213,75 @@ _DOMAIN_NUMBER_NAME_RE = re.compile(r"count|total|amount|price|数量|计数|金
 _DOMAIN_DATE_NAME_RE = re.compile(r"\bdate\b|\btime\b|日期|时间", re.IGNORECASE)
 _HAS_DIGIT_RE = re.compile(r"\d")
 
+_ENUM_SUCCESS_WORDS = {
+    "success", "successful", "succeeded", "saved", "done", "ok", "okay", "passed", "true", "yes",
+    "成功", "已成功", "保存成功", "已保存", "完成", "已完成", "通过", "是",
+}
+_ENUM_FAILURE_WORDS = {
+    "fail", "failed", "failure", "error", "invalid", "false", "no",
+    "失败", "保存失败", "错误", "报错", "无效", "未完成", "否",
+}
+
+
+def _enum_options(domain: str) -> list[str]:
+    kind = str(domain or "").strip()
+    if not kind.lower().startswith("enum:"):
+        return []
+    return [opt.strip() for opt in kind.split(":", 1)[1].split("|") if opt.strip()]
+
+
+def _enum_alias_matches(compact: str, alias: str) -> bool:
+    if not alias:
+        return False
+    if alias.isascii() and len(alias) <= 3:
+        return compact == alias
+    return compact == alias or alias in compact
+
+
+def _enum_bucket(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+    compact = re.sub(r"[\s_\-:：,，.!！。]+", "", text)
+    for word in _ENUM_SUCCESS_WORDS:
+        key = re.sub(r"[\s_\-:：,，.!！。]+", "", word.casefold())
+        if _enum_alias_matches(compact, key):
+            return "success"
+    for word in _ENUM_FAILURE_WORDS:
+        key = re.sub(r"[\s_\-:：,，.!！。]+", "", word.casefold())
+        if _enum_alias_matches(compact, key):
+            return "failure"
+    return ""
+
+
+def canonicalize_return_value(value: str, domain: str) -> str:
+    """Canonicalize read values to the declared enum option when there is a clear outcome alias.
+
+    This is intentionally narrow: it only maps values such as ``success`` to a declared option like
+    ``成功`` when both sides are recognizable outcome words. Arbitrary enums remain exact.
+    """
+    text = str(value or "").strip()
+    options = _enum_options(domain)
+    if not text or not options:
+        return text
+    for option in options:
+        if text.casefold() == option.casefold():
+            return option
+    bucket = _enum_bucket(text)
+    if not bucket:
+        return text
+    for option in options:
+        if _enum_bucket(option) == bucket:
+            return option
+    return text
+
 
 def _value_fits_domain(value: str, domain: str) -> tuple[bool, str]:
     """(fits, reason-if-not). Domain grammar: url | number | date | enum:a|b|c | text."""
     text = str(value).strip()
     kind = domain.strip().lower()
     if kind.startswith("enum:"):
-        options = [opt.strip() for opt in domain.split(":", 1)[1].split("|") if opt.strip()]
+        options = _enum_options(domain)
         normalized = {opt.casefold() for opt in options}
-        if text.casefold() in normalized:
+        if canonicalize_return_value(text, domain).casefold() in normalized:
             return True, ""
         return False, f"不在枚举域 {options} 内"
     if kind == "url":
@@ -287,6 +347,23 @@ def out_of_domain_return_fields(run: object, reads: dict[str, str]) -> list[Doma
         if not fits:
             violations.append(DomainViolation(field=field_name, value=value, domain=domain, reason=reason))
     return violations
+
+
+def normalize_return_reads(run: object, reads: dict[str, str]) -> dict[str, str]:
+    """Apply typed-return canonicalization to raw UI reads before contract checks/branching."""
+    if run is None or not getattr(run, "returns", None) or not reads:
+        return dict(reads or {})
+    declared: dict[str, str] = {
+        str(k): str(v) for k, v in (getattr(run, "return_domains", None) or {}).items()
+    }
+    out = dict(reads)
+    for field_name in (str(f) for f in getattr(run, "returns", [])):
+        if field_name not in out:
+            continue
+        domain = declared.get(field_name) or _inferred_domain(field_name)
+        if domain:
+            out[field_name] = canonicalize_return_value(str(out.get(field_name, "")), domain)
+    return out
 
 
 @dataclass
@@ -602,6 +679,7 @@ def extract_ui_returns(
     read_spec = getattr(run, "read_spec", "") or ""
     json_reads = read_json_url_returns(getattr(run, "name", "") or "", returns, read_spec)
     if json_reads is not None and any(str(json_reads.get(field, "")).strip() for field in returns):
+        json_reads = normalize_return_reads(run, json_reads)
         say(f"  [Orchestrator] URL JSON 返回读取 {returns} → {json_reads}")
         return json_reads
     from gui_agent.core.orchestrator.primitives.structured_read import (
@@ -620,6 +698,7 @@ def extract_ui_returns(
     )
     missing = [f for f in returns if f not in dom_reads]
     if not missing:
+        dom_reads = normalize_return_reads(run, dom_reads)
         say(f"  [Orchestrator] DOM 表单返回读取 {returns} → {dom_reads}")
         return dom_reads
     reads = structured_read(
@@ -629,7 +708,7 @@ def extract_ui_returns(
         check_knowledge=check_knowledge,
         prepare_vision_prompt_png=prepare_vision_prompt_png,
     )
-    merged = {**reads, **dom_reads}
+    merged = normalize_return_reads(run, {**reads, **dom_reads})
     if dom_reads:
         say(f"  [Orchestrator] 返回读取 {returns} → DOM {dom_reads} + 视觉 {reads}")
     else:

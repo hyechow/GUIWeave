@@ -78,6 +78,46 @@ def test_enum_domain_rejects_out_of_domain_value():
     assert not check_return_contract(run, {"创建结果": "成功"})
 
 
+def test_enum_return_aliases_are_canonicalized_to_declared_option():
+    from gui_agent.core.orchestrator.callframe import check_return_contract, normalize_return_reads
+
+    run = Run(
+        name="点击保存", kind="action", var="s",
+        returns=["save_status"],
+        return_domains={"save_status": "enum:成功|失败"},
+    )
+
+    reads = normalize_return_reads(run, {"save_status": "success"})
+    assert reads == {"save_status": "成功"}
+    assert not check_return_contract(run, reads)
+
+
+def test_enum_return_aliases_do_not_rewrite_arbitrary_enums():
+    from gui_agent.core.orchestrator.callframe import normalize_return_reads
+
+    run = Run(
+        name="设置状态", kind="action", var="s",
+        returns=["status"],
+        return_domains={"status": "enum:Open|Closed"},
+    )
+
+    assert normalize_return_reads(run, {"status": "success"}) == {"status": "success"}
+
+
+def test_unknown_enum_outcome_is_not_canonicalized_by_short_alias_substring():
+    from gui_agent.core.orchestrator.callframe import check_return_contract, normalize_return_reads
+
+    run = Run(
+        name="点击保存", kind="action", var="s",
+        returns=["save_status"],
+        return_domains={"save_status": "enum:成功|失败"},
+    )
+
+    reads = normalize_return_reads(run, {"save_status": "unknown"})
+    assert reads == {"save_status": "unknown"}
+    assert check_return_contract(run, reads)
+
+
 def test_inferred_url_and_number_domains():
     from gui_agent.core.orchestrator.callframe import check_return_contract
 
