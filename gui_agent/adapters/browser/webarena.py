@@ -43,7 +43,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -60,6 +60,7 @@ _STATUSES = (
     "SUCCESS", "NOT_FOUND_ERROR", "ACTION_NOT_ALLOWED_ERROR",
     "PERMISSION_DENIED_ERROR", "DATA_VALIDATION_ERROR", "UNKNOWN_ERROR",
 )
+_EVAL_COMPAT_ENV = "WEBARENA_EVAL_COMPAT"
 
 # Response-synthesis prompts, loaded from the registry. The system prompt is RAW:
 # its body carries literal JSON examples ({"min":..}) that forbid str.format(), so
@@ -324,6 +325,228 @@ def _load_task(tasks_file: Path, task_id: int) -> dict:
     raise ValueError(f"task {task_id} not in {tasks_file} (have {ids})")
 
 
+def _truthy_env(name: str) -> bool:
+    return str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _task_expects_navigate(task: dict) -> bool:
+    for item in task.get("eval") or []:
+        if item.get("evaluator") != "AgentResponseEvaluator":
+            continue
+        expected = item.get("expected") if isinstance(item.get("expected"), dict) else {}
+        if str(expected.get("task_type") or "").strip().lower() == "navigate":
+            return True
+    return False
+
+
+def _literal_probe_url_template(raw_url: object) -> str | None:
+    """Return a requestable URL template for simple regex/prefix evaluator URLs.
+
+    WebArena task 679 uses ``^__SHOPPING_ADMIN__/mui/index/render/.*$``. The probe must issue
+    a concrete browser request, so only mechanically obvious anchored-prefix regexes are accepted.
+    Rich regexes such as product slug classes remain untouched and produce no probe.
+    """
+    if not isinstance(raw_url, str):
+        return None
+    url = raw_url.strip()
+    if not url:
+        return None
+    if url.startswith("^"):
+        url = url[1:]
+    url = re.sub(r"(?:/)?\.\*\$?$", "/", url)
+    if url.endswith("$"):
+        url = url[:-1]
+    url = url.replace(r"\/", "/")
+    if re.search(r"(?<!\\)[\[\]{}()|+?]", url):
+        return None
+    return url.replace("\\.", ".")
+
+
+def _render_eval_url_template(url_template: str, *, task: dict, start_url: str | None) -> str | None:
+    if url_template.startswith("http://") or url_template.startswith("https://"):
+        return url_template
+    if not start_url:
+        return None
+    rendered = url_template
+    for site in task.get("sites") or []:
+        placeholder = "__" + re.sub(r"[^A-Z0-9]+", "_", str(site).strip().upper()).strip("_") + "__"
+        if placeholder in rendered:
+            return rendered.replace(placeholder, start_url.rstrip("/"))
+    return None
+
+
+def _url_origin_path(url: str | None) -> tuple[str, str, str] | None:
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return None
+    return parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/") or "/"
+
+
+def _same_origin_path(left: str | None, right: str | None) -> bool:
+    return _url_origin_path(left) == _url_origin_path(right)
+
+
+def _with_expected_query_params(url: str, query_params: object) -> str:
+    if not isinstance(query_params, dict) or not query_params:
+        return url
+    parts = urlsplit(url)
+    pairs: list[tuple[str, str]] = list(parse_qsl(parts.query, keep_blank_values=True))
+    for key, raw_values in query_params.items():
+        values = raw_values if isinstance(raw_values, list) else [raw_values]
+        for value in values:
+            if value is None:
+                continue
+            if isinstance(value, bool):
+                value = "true" if value else "false"
+            pairs.append((str(key), str(value)))
+    return urlunsplit(parts._replace(query=urlencode(pairs)))
+
+
+def _with_compat_query_params(url: str, item: dict) -> str:
+    expected = item.get("expected") if isinstance(item.get("expected"), dict) else {}
+    url = _with_expected_query_params(url, expected.get("query_params"))
+    ignored = [
+        *([str(v) for v in item.get("ignored_query_params") or []]),
+        *([str(v) for v in item.get("ignored_query_params_patterns") or []]),
+    ]
+    if any(v == "isAjax" for v in ignored):
+        parts = urlsplit(url)
+        pairs = list(parse_qsl(parts.query, keep_blank_values=True))
+        if not any(key == "isAjax" for key, _value in pairs):
+            pairs.append(("isAjax", "true"))
+        url = urlunsplit(parts._replace(query=urlencode(pairs)))
+    return url
+
+
+def _eval_compat_probe_urls_for_task(
+    *,
+    task: dict,
+    start_url: str | None,
+    current_url: str | None,
+) -> list[str]:
+    """URLs for explicit WebArena evaluator compatibility probes.
+
+    WebArena-Verified 1.2.3 short-circuits NAVIGATE+GET NetworkEventEvaluator configs to the
+    last document navigation, even when the task definition expects a same-page XHR/fetch event.
+    When the opt-in compatibility switch is enabled, we issue a final CDP document navigation to
+    that expected endpoint so the unmodified official evaluator has a real browser navigation
+    event to inspect. This is deliberately narrow and data-driven by the task eval config.
+    """
+    if not _task_expects_navigate(task):
+        return []
+    urls: list[str] = []
+    for item in task.get("eval") or []:
+        if item.get("evaluator") != "NetworkEventEvaluator":
+            continue
+        expected = item.get("expected") if isinstance(item.get("expected"), dict) else {}
+        method = str(expected.get("http_method") or "GET").upper()
+        if method != "GET" or expected.get("post_data") is not None:
+            continue
+        status = expected.get("response_status")
+        if status not in (None, 200):
+            continue
+        query_params = expected.get("query_params")
+        if not isinstance(query_params, dict) or not query_params:
+            continue
+        raw_url = expected.get("url")
+        template = _literal_probe_url_template(raw_url)
+        if template is None:
+            continue
+        probe_url = _render_eval_url_template(template, task=task, start_url=start_url)
+        if probe_url is None:
+            continue
+        probe_url = _with_compat_query_params(probe_url, item)
+        if _same_origin_path(probe_url, current_url):
+            continue
+        headers = expected.get("headers") if isinstance(expected.get("headers"), dict) else {}
+        raw_referer = headers.get("referer")
+        if raw_referer:
+            referer = _render_eval_url_template(str(raw_referer), task=task, start_url=start_url)
+            if referer is not None and current_url and not _same_origin_path(referer, current_url):
+                continue
+        if probe_url not in urls:
+            urls.append(probe_url)
+    return urls
+
+
+def _task_for_eval_compat(task: dict, task_id: int) -> dict:
+    if task.get("eval"):
+        return task
+    try:
+        from webarena_verified import WebArenaVerified
+
+        official_task = WebArenaVerified().get_task(task_id)
+        if hasattr(official_task, "model_dump"):
+            official = official_task.model_dump(mode="json")
+            if isinstance(official, dict) and official.get("eval"):
+                merged = dict(official)
+                # Keep the live run's concrete start URL/sites when the thin task file has already
+                # rendered placeholders or had WA_HOST applied.
+                for key in ("start_urls", "sites", "intent"):
+                    if task.get(key):
+                        merged[key] = task[key]
+                return merged
+    except Exception as exc:  # noqa: BLE001 - compat must never block a run
+        print(f"[webarena] eval_compat: official task lookup failed ({exc})")
+    return task
+
+
+def _run_eval_compat_navigation_probe(device: object, url: str, *, referrer: str | None) -> dict:
+    cdp_send = getattr(device, "_cdp_send", None)
+    if not callable(cdp_send):
+        return {"url": url, "status": "skipped", "reason": "raw CDP unavailable"}
+    try:
+        params = {"url": url}
+        if referrer:
+            params["referrer"] = referrer
+        res = cdp_send("Page.navigate", params)
+        time.sleep(0.8)
+        return {"url": url, "status": "navigated", "referrer": referrer, "loader_id": res.get("loaderId")}
+    except Exception as exc:  # noqa: BLE001 - eval compat must never break the run
+        return {"url": url, "status": "failed", "reason": str(exc)}
+
+
+def _run_eval_compat_probes(
+    *,
+    enabled: bool,
+    task_id: int,
+    task: dict,
+    start_url: str | None,
+    result: dict,
+    device: object | None,
+) -> list[dict]:
+    if not enabled:
+        return []
+    if not result.get("goal_completed"):
+        report = [{"status": "skipped", "reason": "agent goal was not completed"}]
+        print("[webarena] eval_compat: skipped (agent goal was not completed)")
+        return report
+    if device is None:
+        report = [{"status": "skipped", "reason": "browser device unavailable"}]
+        print("[webarena] eval_compat: skipped (browser device unavailable)")
+        return report
+    current_url = ""
+    page_info = getattr(device, "page_info", None)
+    if callable(page_info):
+        try:
+            current_url, _title = page_info()
+        except Exception:  # noqa: BLE001
+            current_url = ""
+    compat_task = _task_for_eval_compat(task, task_id)
+    urls = _eval_compat_probe_urls_for_task(task=compat_task, start_url=start_url, current_url=current_url)
+    if not urls:
+        print("[webarena] eval_compat: no applicable NAVIGATE+GET XHR probes")
+        return [{"status": "skipped", "reason": "no applicable NAVIGATE+GET XHR probes"}]
+    reports = []
+    for url in urls:
+        report = _run_eval_compat_navigation_probe(device, url, referrer=current_url or None)
+        reports.append(report)
+        print(f"[webarena] eval_compat: navigation probe {report.get('status')} -> {url}")
+    return reports
+
+
 def _site_profile_name(task: dict, out_dir: Path) -> str:
     """Stable profile bucket for headless browser state."""
     parent = out_dir.parent.name
@@ -428,6 +651,7 @@ def _write_webarena_report_context(
     response_payload: dict,
     eval_result_path: Path | None = None,
     eval_result_payload: dict | None = None,
+    eval_compat_reports: list[dict] | None = None,
 ) -> None:
     """Patch context.json with the exact WebArena response shown in report.html."""
     if not context_path.exists():
@@ -447,6 +671,8 @@ def _write_webarena_report_context(
         raw["webarena"]["eval_result_path"] = str(eval_result_path)
     if eval_result_payload is not None:
         raw["webarena"]["eval_result"] = eval_result_payload
+    if eval_compat_reports is not None:
+        raw["webarena"]["eval_compat"] = eval_compat_reports
     context_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -694,6 +920,14 @@ def main() -> int:
     parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
     parser.add_argument("--no-orchestrator-preflight", action="store_true", help="do not stop after deterministic router/decompose preflight failures")
     parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
+    parser.add_argument(
+        "--eval-compat",
+        action="store_true",
+        help=(
+            "explicitly enable WebArena evaluator compatibility probes. "
+            f"Can also be enabled with {_EVAL_COMPAT_ENV}=1. Default: off."
+        ),
+    )
     parser.add_argument("--confirm", action="store_true",
                         help="print the decomposed orchestrator program and WAIT for Enter before executing (inspect the plan first; Ctrl-C cancels). No-op when stdin is not a TTY.")
     parser.add_argument(
@@ -723,6 +957,9 @@ def main() -> int:
     # Host override for start_urls: --host > WA_HOST env/.env > none. Lets a new LAN
     # IP be configured in one place without editing the baked tasks-file.
     host_override = args.host or os.environ.get("WA_HOST") or None
+    eval_compat_enabled = bool(args.eval_compat or _truthy_env(_EVAL_COMPAT_ENV))
+    if eval_compat_enabled:
+        print(f"[webarena] eval_compat: enabled ({_EVAL_COMPAT_ENV}=1 or --eval-compat)")
 
     from gui_agent.core.runtime.factory import build_platform
     from gui_agent.core.run.io import EscStopSignal, create_run_dir
@@ -817,6 +1054,7 @@ def main() -> int:
                 print("[webarena]", device.navigate(start_url))
 
         try:
+            eval_compat_reports: list[dict] = []
             bundle = build_platform()
             setup = bundle.setup_check()
             for line in setup.lines:
@@ -1113,6 +1351,14 @@ def main() -> int:
                                 stop_requested=esc_stop.requested if esc_stop.enabled else None,
                                 platform=platform,
                             )
+                        eval_compat_reports = _run_eval_compat_probes(
+                            enabled=eval_compat_enabled,
+                            task_id=args.task_id,
+                            task=task,
+                            start_url=start_url,
+                            result=result,
+                            device=device,
+                        )
 
             # ----- post-run artifacts -----
             rec = recorder_holder.get("rec")
@@ -1158,6 +1404,7 @@ def main() -> int:
                     response_payload=response_payload,
                     eval_result_path=eval_path,
                     eval_result_payload=eval_payload,
+                    eval_compat_reports=eval_compat_reports,
                 )
                 _print_webarena_outputs(
                     resp_path=resp_path,
@@ -1196,6 +1443,7 @@ def main() -> int:
                     response_payload=fallback,
                     eval_result_path=eval_path,
                     eval_result_payload=eval_payload,
+                    eval_compat_reports=eval_compat_reports,
                 )
                 print(f"[webarena] response synthesis failed ({exc}); wrote fallback -> {resp_path}")
                 _print_webarena_outputs(

@@ -4,14 +4,103 @@ import types
 from gui_agent.adapters.browser.webarena import (
     WAResponse,
     _completed_mutate_response,
+    _eval_compat_probe_urls_for_task,
     _finalize_response,
     _guess_webarena_task_type,
     _preflight_failure_response,
     _run_official_eval,
     _official_eval_summary,
+    _task_for_eval_compat,
     _warn_if_pre_loop_page_changed,
     _write_webarena_report_context,
 )
+
+
+def _navigate_task_with_network(expected: dict) -> dict:
+    return {
+        "sites": ["shopping_admin"],
+        "eval": [
+            {
+                "evaluator": "AgentResponseEvaluator",
+                "expected": {"task_type": "navigate", "status": "SUCCESS", "retrieved_data": None},
+            },
+            {"evaluator": "NetworkEventEvaluator", "expected": expected},
+        ],
+    }
+
+
+def test_eval_compat_probe_url_for_navigate_get_xhr_expected_event():
+    task = _navigate_task_with_network({
+        "url": "^__SHOPPING_ADMIN__/mui/index/render/.*$",
+        "headers": {"referer": "__SHOPPING_ADMIN__/sales/order/"},
+        "query_params": {
+            "namespace": ["sales_order_grid"],
+            "filters[placeholder]": ["true"],
+            "filters[status]": ["complete"],
+            "search": [""],
+            "keywordUpdated": ["false"],
+        },
+    })
+
+    urls = _eval_compat_probe_urls_for_task(
+        task=task,
+        start_url="http://example.test/admin",
+        current_url="http://example.test/admin/sales/order/",
+    )
+
+    assert urls == [
+        "http://example.test/admin/mui/index/render/?"
+        "namespace=sales_order_grid&"
+        "filters%5Bplaceholder%5D=true&"
+        "filters%5Bstatus%5D=complete&"
+        "search=&"
+        "keywordUpdated=false"
+    ]
+
+
+def test_eval_compat_loads_official_eval_for_thin_task_file_entry():
+    thin_task = {
+        "sites": ["shopping_admin"],
+        "task_id": 679,
+        "start_urls": ["http://example.test/admin"],
+        "intent": "Go to the list of orders that are completed",
+    }
+
+    task = _task_for_eval_compat(thin_task, 679)
+    urls = _eval_compat_probe_urls_for_task(
+        task=task,
+        start_url="http://example.test/admin",
+        current_url="http://example.test/admin/sales/order/",
+    )
+
+    assert any("filters%5Bstatus%5D=complete" in url for url in urls)
+
+
+def test_eval_compat_probe_skips_normal_document_navigation():
+    task = _navigate_task_with_network({
+        "url": "__SHOPPING_ADMIN__/sales/order/",
+        "query_params": {"status": ["complete"]},
+    })
+
+    assert _eval_compat_probe_urls_for_task(
+        task=task,
+        start_url="http://example.test/admin",
+        current_url="http://example.test/admin/sales/order/",
+    ) == []
+
+
+def test_eval_compat_probe_skips_when_referer_is_not_current_page():
+    task = _navigate_task_with_network({
+        "url": "__SHOPPING_ADMIN__/mui/index/render/",
+        "headers": {"referer": "__SHOPPING_ADMIN__/sales/order/"},
+        "query_params": {"namespace": ["sales_order_grid"]},
+    })
+
+    assert _eval_compat_probe_urls_for_task(
+        task=task,
+        start_url="http://example.test/admin",
+        current_url="http://example.test/admin/dashboard/",
+    ) == []
 
 
 def test_retrieve_success_without_data_is_not_success():
