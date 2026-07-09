@@ -821,3 +821,39 @@ def test_compute_external_sql_error_points_to_data_query():
     assert comp, {i.code for i in issues}
     assert "data_query" in str(comp[0]), str(comp[0])
     assert "外部代码" in str(comp[0]), str(comp[0])
+
+
+def test_table_row_field_collection_exempts_drill_inside_function_body():
+    # Review finding S6: the foreach-body exemption must also cover a drill FACTORED INTO A
+    # FUNCTION (the preferred `op=call drill_fn(row)` shape). Before threading in_foreach_body into
+    # the function-body walk, a factored drill returning ≥2 fields (or a marker field) tripped
+    # TABLE_ROW_FIELD_COLLECTION while the identical inline foreach body was exempt — inconsistent.
+    drill = FunctionDef(
+        name="drill",
+        params=["row"],
+        returns=["product_name", "rating"],
+        body=[
+            Run(
+                kind="navigation",
+                var="d",
+                name="打开 {row[action_url]} 读取该行详情",
+                returns=["product_name", "rating"],
+                read_spec="product_name/rating：读取详情页字段",
+                success_condition="已进入详情页",
+            ),
+        ],
+    )
+    program = Program(
+        goal="统计每行评分并汇总",  # triggers _goal_needs_table_analysis
+        functions=[drill],
+        statements=[
+            ForEach(
+                var="row",
+                into="rows",
+                row_fields=["action_url"],
+                body=[Call(func="drill", args={"row": "{row}"}, var="m")],
+            ),
+            Query(var="q", name="汇总", returns=["n"], sql="SELECT COUNT(*) AS n FROM rows"),
+        ],
+    )
+    assert "TABLE_ROW_FIELD_COLLECTION" not in _codes(program)

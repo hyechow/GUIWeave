@@ -749,7 +749,12 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
     # row falls to else → always-parent (the "编排逻辑写死" root cause). Without walking functions, the
     # if inside resolve_product_material was never checked.
     for fn in getattr(program, "functions", None) or []:
-        _walk(fn.body, {}, set(fn.params or []))  # params are the function's entry scalars
+        # A DSL function is a per-row/per-entity subroutine — the preferred drill shape is a foreach
+        # body doing `op=call drill_fn(row)` (the 185 material lineage). Its body runs逐行, not a
+        # top-level read of the visible grid for aggregation, so it gets the SAME foreach-body
+        # exemption from TABLE_ROW_FIELD_COLLECTION; otherwise a factored drill returning ≥2 fields
+        # (or a marker field) trips the rule while the identical inline foreach body is exempt.
+        _walk(fn.body, {}, set(fn.params or []), in_foreach_body=True)  # params = entry scalars
         check_function_contract(fn, function_defs, function_returns, issues)
     check_foreach_data_query(
         program.statements,
