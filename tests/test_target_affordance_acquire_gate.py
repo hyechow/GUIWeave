@@ -238,6 +238,25 @@ def test_target_section_acquire_plan_expands_named_visible_section() -> None:
     assert plan.direction is None
 
 
+def test_target_section_acquire_plan_skips_named_section_with_unknown_state() -> None:
+    # Review M1/M2: a section whose expanded-state is UNKNOWN ('' from form_reader — a custom
+    # accordion with no aria-expanded/recognizable class) must NOT be clicked. Clicking a possibly
+    # already-open section collapses it and hides the target, and re-firing every turn on an
+    # unrecognized state is a toggle loop. Only an explicitly-collapsed section (value 'false',
+    # covered by the test above) is clicked.
+    plan = target_section_acquire_plan(
+        [{
+            "kind": "section_toggle",
+            "label": "Content",
+            # no value/selected_text → expanded-state unknown
+            "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
+        }],
+        _description_milestone(),
+    )
+
+    assert plan is None
+
+
 def test_target_section_acquire_plan_stays_out_when_target_editor_visible() -> None:
     plan = target_section_acquire_plan(
         [

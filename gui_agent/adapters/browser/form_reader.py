@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 MAX_CONTROLS = 25
+# Reserved slots for rendered-but-off-screen controls when the total exceeds MAX_CONTROLS, so a
+# large in-viewport set can't fully evict off-viewport fields the planner needs to scroll toward.
+OFF_VIEWPORT_RESERVE = 8
 MAX_OPTIONS = 30
 MAX_TEXT = 80
 
@@ -176,8 +179,8 @@ def form_controls_js() -> str:
       }
     }
     const cls = clean([el.className || '', holder && holder.className || ''].join(' ')).toLowerCase();
-    if (/\b(open|active|expanded|_show|show)\b/.test(cls)) return 'true';
-    if (/\b(closed|collapsed|_hide|hide)\b/.test(cls)) return 'false';
+    if (cls.includes('_show') || /\b(open|active|expanded|show)\b/.test(cls)) return 'true';
+    if (cls.includes('_hide') || /\b(closed|collapsed|hide|hidden)\b/.test(cls)) return 'false';
     return '';
   };
   const richEditorLabelOf = (el) => {
@@ -386,6 +389,16 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
             priority = 2
         ranked.append((priority, index, norm))
     ranked.sort(key=lambda row: (row[0], row[1]))
+    if len(ranked) > MAX_CONTROLS:
+        # Guarantee off-viewport controls (priority 3) a reserved share of the cap: a large
+        # in-viewport set must not fully evict rendered-but-off-screen fields, or the planner can't
+        # scroll to a target that scrolled off-screen (the 702/703 regression this off-viewport
+        # reporting exists to fix). section_toggle/rich_textarea are priority 0/1, never in this pool.
+        off_view = [row for row in ranked if row[0] == 3]
+        if off_view:
+            off_keep = off_view[:OFF_VIEWPORT_RESERVE]
+            on_keep = [row for row in ranked if row[0] != 3][:MAX_CONTROLS - len(off_keep)]
+            ranked = sorted(on_keep + off_keep, key=lambda row: (row[0], row[1]))
     return [norm for _, _, norm in ranked[:MAX_CONTROLS]]
 
 

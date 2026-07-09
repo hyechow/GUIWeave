@@ -699,6 +699,15 @@ def target_section_acquire_plan(
         value = str(item.get("selected_text") or item.get("value") or "").strip().lower()
         return value in {"1", "true", "yes", "open", "opened", "expanded", "on"}
 
+    def _is_collapsed(item: dict) -> bool:
+        # Explicit collapsed signal ONLY — an UNKNOWN state ('' from form_reader, e.g. a custom
+        # accordion with no aria-expanded/recognizable class) is NOT collapsed. The acquire click
+        # must fire only on a definitely-collapsed section: clicking an unknown (possibly already
+        # open) section would collapse it and hide the target, and re-firing every turn on an
+        # unrecognized state is a toggle loop (review findings M1/M2).
+        value = str(item.get("selected_text") or item.get("value") or "").strip().lower()
+        return value in {"0", "false", "no", "closed", "collapsed", "off", "hidden"}
+
     def _click_section_plan(item: dict) -> _PlanResult:
         label = _control_label(item)
         return _PlanResult(
@@ -760,11 +769,13 @@ def target_section_acquire_plan(
     if not candidates:
         return None
 
-    # Prefer a visible collapsed/unknown section: clicking it can reveal the target controls.
+    # Prefer a visible EXPLICITLY-collapsed section: clicking it reveals the target controls. An
+    # unknown-state section is skipped here (not clicked) — see _is_collapsed: clicking a possibly
+    # already-open section would collapse it / loop (M1/M2).
     for item in candidates:
         if item.get("in_viewport") is False:
             continue
-        if _is_expanded(item):
+        if not _is_collapsed(item):
             continue
         return _click_section_plan(item)
 

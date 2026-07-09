@@ -357,7 +357,11 @@ def _literal_probe_url_template(raw_url: object) -> str | None:
     if url.endswith("$"):
         url = url[:-1]
     url = url.replace(r"\/", "/")
-    if re.search(r"(?<!\\)[\[\]{}()|+?]", url):
+    # Reject any UNESCAPED regex metachar — including `*` and `.` — so a mid-path wildcard like
+    # `/x/.*/render` (interior `.*` the trailing-strip above doesn't remove) yields no probe rather
+    # than a bogus URL containing a literal `.*` (W3 review finding). `\.` (escaped literal dot) is
+    # excluded by the `(?<!\\)` lookbehind, so real literal-dot paths still pass.
+    if re.search(r"(?<!\\)[\[\]{}()|+?*.]", url):
         return None
     return url.replace("\\.", ".")
 

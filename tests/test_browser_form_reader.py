@@ -170,3 +170,20 @@ def test_browser_perception_reads_form_controls(tmp_path):
         "fallback_channel": "present",
     }
     assert obs.title == "Orders"
+
+
+def test_normalize_form_controls_reserves_slots_for_offscreen_controls():
+    # Review F1: a large in-viewport set must not fully evict rendered-but-off-screen fields, or the
+    # planner can't scroll to a target that scrolled off-screen. Off-viewport controls get a reserved
+    # share of the cap (section_toggle/rich_textarea are priority 0/1 and kept regardless).
+    from gui_agent.adapters.browser.form_reader import normalize_form_controls, MAX_CONTROLS
+    raw = [
+        {"kind": "input", "label": f"onscreen_{i}", "in_viewport": True,
+         "rect": {"x": 0, "y": i, "w": 100, "h": 20}}
+        for i in range(MAX_CONTROLS + 10)
+    ]
+    raw.append({"kind": "input", "label": "offscreen_target", "in_viewport": False,
+                "viewport_pos": "below", "rect": {"x": 0, "y": 9999, "w": 100, "h": 20}})
+    controls = normalize_form_controls({"controls": raw})
+    assert len(controls) == MAX_CONTROLS
+    assert "offscreen_target" in [c.get("label") for c in controls]

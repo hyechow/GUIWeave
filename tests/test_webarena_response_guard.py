@@ -462,3 +462,14 @@ def test_official_eval_summary_shows_benchmark_verdict():
             }
         ],
     }
+
+
+def test_literal_probe_url_template_rejects_interior_wildcard():
+    # Review W1: a trailing `.*` is stripped to a prefix, but an INTERIOR `.*` (or bare `*`/`.`)
+    # must yield NO probe rather than a URL containing a literal `.*` that Page.navigate can't reach.
+    # `\d+` was already rejected via the `+` metachar.
+    from gui_agent.adapters.browser.webarena import _literal_probe_url_template
+    assert _literal_probe_url_template("^__X__/mui/index/render/.*$") == "__X__/mui/index/render/"
+    assert _literal_probe_url_template("^__X__/mui/x/.*/render$") is None
+    assert _literal_probe_url_template(r"^__X__/save/id/1/set/\d+/edit$") is None
+    assert _literal_probe_url_template("^__X__/catalog/product/view$") == "__X__/catalog/product/view"
