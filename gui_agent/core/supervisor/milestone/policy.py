@@ -655,6 +655,35 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             self._last_check = check
             return self._advance(milestone, observation, history)
 
+        # Terminal submit/save redirect gate. A compound mutation milestone may have a visible
+        # success SC ("toast or return to list"), but the strongest generic signal after its own
+        # Save/Submit is often the redirect itself. Run this before affordance-acquire: after a
+        # successful save the target field can be below the fold again, and reacquiring it would
+        # waste turns or hit max_turns despite the backend mutation already being dispatched.
+        if (
+            milestone.kind == "action"
+            and self._monitor.url_changed
+            and _TERMINAL_DISPATCH_RE.search(milestone.name or "")
+            and history
+            and _is_terminal_dispatch_turn(history[-1], milestone)
+        ):
+            prior = self._last_check
+            prior_check = prior if isinstance(prior, _SingleCheckResult) else None
+            if not (prior_check is not None and _has_negative_action_feedback(prior_check)):
+                action_text = _turn_action_text(history[-1])[:120]
+                check = _SingleCheckResult(
+                    status="done",
+                    reason=(
+                        "本里程碑的终端保存/提交动作已派发，且下一帧 URL 确定变化；"
+                        "这是提交响应信号，不应回到页面内重新 acquire 字段或区域。"
+                    ),
+                    summary=f"terminal dispatch redirect accepted: {action_text}",
+                    visible_evidence=["runtime.execution_signal=dispatched", "runtime.effect_signal=url_changed"],
+                )
+                print("  [TerminalDispatchGate] 终端动作触发 URL 变化 → done（跳过 acquire/checker）")
+                self._last_check = check
+                return self._advance(milestone, observation, history)
+
         # Filter "action-applied" gate — generalizes the dispatch gate to filter milestones.
         # A `filter` milestone's job is to APPLY a filter; Observation.applied_filters reports
         # authoritatively whether the intended filter is in effect, independent of which adapter

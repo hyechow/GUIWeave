@@ -398,6 +398,70 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
     assert step.goal_completed is True
 
 
+def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
+    # WebArena 545 (20260709_173419): after clicking Save, Magento redirected back to the edit URL
+    # and the backend POST was already correct, but the next frame still exposed Content/Short
+    # Description below the fold. The acquire gate ran first and kept scrolling until max_turns.
+    # A terminal Save + URL change is stronger than "field is offscreen again" and must close.
+    p, m = _save_milestone_policy()
+    monkeypatch.setattr(P, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(P, "run_checker", lambda *a, **k: (_ for _ in ()).throw(AssertionError("checker should not run")))
+    p._monitor._last_url = "http://x/admin/catalog/product/edit/id/1556/"
+    p._last_check = _SingleCheckResult(
+        status="in_progress",
+        reason="Short Description 已更新，但尚未点击保存按钮",
+        summary="等待保存",
+    )
+    save = PolicyTurn(
+        index=3,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True,
+            instruction="点击页面右上角的「Save」按钮",
+            stop=False,
+            goal_completed=False,
+            summary="",
+            milestone_id="m1",
+        ),
+        action_decision=BaseActionDecision(action=BaseAction(
+            action_type="tap",
+            x=1165,
+            y=39,
+            description="点击页面右上角的 Save 按钮",
+        )),
+        target_verify=TargetVerify(on_target=True, actual_element="Save button"),
+        executed=True,
+    )
+    obs = Observation(
+        png_bytes=b"x",
+        source="browser",
+        url="http://x/admin/catalog/product/edit/id/1556/set/9/type/configurable/store/0/back/edit/",
+        form_controls=[
+            {
+                "kind": "section_toggle",
+                "label": "Content",
+                "value": "false",
+                "rect": {"x": 528, "y": 1400, "w": 1118, "h": 62},
+                "in_viewport": False,
+                "viewport_pos": "below",
+            },
+            {
+                "kind": "rich_textarea",
+                "label": "Short Description",
+                "rect": {"x": 528, "y": 1800, "w": 542, "h": 402},
+                "in_viewport": False,
+                "viewport_pos": "below",
+            },
+        ],
+    )
+
+    step = p._run_single_turn(m, obs, [_select_option_turn(), save])
+
+    assert m.status == "done"
+    assert step.goal_completed is True
+    assert step.should_act is False
+
+
 # ── WebArena 505 (20260708_194754/195215): TerminalDispatchGate verb-class misfire ──────────────
 def test_terminal_dispatch_gate_ignores_arrival_milestone(monkeypatch):
     # Arrival milestone (click a row to open its edit page) declares NO dispatch verb: a
