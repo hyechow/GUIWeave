@@ -44,7 +44,7 @@ version: 1
   **foreach row_fields 写页面可采集的列名/source label，而不是后端/internal 字段名**：row_fields（旧计划 returns）会交给浏览器从当前网格/语义树读取，所以要写界面表头、Columns 面板列名、或当前结构化表格里 `source labels` 的文字；不要把 provider/SQL 字段名当作 row_fields/returns（除非当前表格 schema 明确显示该字段就是可采集列）。output_fields 写循环体/子目标真实会产出的稳定字段名；data_query 阶段才使用 normalized sql columns 和 `_num/_ts` 影子列。
   **⚠️ 「取前 N 行的目标列值」高频陷阱**：若任务只要排序/筛选后网格的「前 N / 最近 N / 最旧 N」条记录的某列（如「最近 N 条记录的某金额列」「最旧 1 条记录的某名称列」），**先查知识库该网格的 Column descriptions 确认该列是否已在默认列**（例如，列表网格的默认列常含金额、名称、日期、状态等字段——这些列**不需要钻详情页**），若确认在网格里：用 foreach body=`[]` + row_fields（旧计划 returns）含目标列；若“前 N”依赖日期/金额等排序，也把排序字段一起放进 row_fields，data_query 用 `_ts`/`_num` 排序或聚合后 LIMIT N。**绝不要**以「任务只要 N 条」为由把 body 里写成 navigation 去逐条打开详情——每条 = 1 次额外导航，N=2 时效率低 10 倍，且详情页字段名常与网格列名不一致导致字段读错。只有知识库明确说目标字段**只在详情页、网格无此列**时才用带 body 的 drill。
 - op="finish"：产出最终答复。message 是模板，可用 {变量[字段]} 引用某步骤返回的值或 data_query 结果。
-- op="compute"：**纯计算**（解释器确定性求值，**不是 GUI milestone**）。从已有标量派生新值：var=结果标量名（后续 milestone/参数里用 `{var}` 引用），expr=受限表达式（字符串方法 rsplit/split/strip/replace/lower、切片/索引、`+`、re_sub/re_search/len/str/int），裸名引用作用域里的标量。**派生类（去后缀、取前缀、拆分、正则提取）一律用 compute，绝不塞进 milestone 让 agent 现场算**——那会让一个 milestone 既要操作又要心算、卡死。例：`{"op":"compute","var":"base","expr":"re_sub('-[A-Za-z]+-[A-Za-z]+$','',name)"}`。**算出的值要填进页面时，消费它的 milestone name 必须写 `{var}` 模板**（如「将价格更新为 {new_price} 并保存」）——运行时把算出的确切值确定性替换进去；**绝不能写「更新为新值」这类泛指**（planner 拿不到具体值会现场瞎猜一个填进去）。
+- op="compute"：**纯计算**（解释器确定性求值，**不是 GUI milestone**）。从已有标量派生新值：var=结果标量名（后续 milestone/参数里用 `{var}` 引用），expr=受限表达式（字符串方法 rsplit/split/strip/replace/lower、切片/索引、`+`、re_sub/re_search/len/str/int），裸名引用作用域里的标量。**compute 是 Python 表达式，不是模板字符串/f-string**：字段值要用 `q['count']` 或 `{q[count]}` 参与表达式并显式拼接，例如 `str(q['count']) + ' items'`；不要写 `'{q[count]} items'`。字符串字面量里若含单引号/apostrophe（如英文缩写），用双引号包住该字符串或转义单引号。**compute 不能遍历 foreach 表，不能执行外部代码或 SQL**：不得写 list comprehension、generator、`next(row ... for row in rows)`、`__import__`、SQLAlchemy/engine/cursor 之类来选行/计数/聚合；集合筛选、取第一行、count/sum/top-N 都必须用 `data_query`。**派生类（去后缀、取前缀、拆分、正则提取）一律用 compute，绝不塞进 milestone 让 agent 现场算**——那会让一个 milestone 既要操作又要心算、卡死。例：`{"op":"compute","var":"base","expr":"re_sub('-[A-Za-z]+-[A-Za-z]+$','',name)"}`。**算出的值要填进页面时，消费它的 milestone name 必须写 `{var}` 模板**（如「将价格更新为 {new_price} 并保存」）——运行时把算出的确切值确定性替换进去；**绝不能写「更新为新值」这类泛指**（planner 拿不到具体值会现场瞎猜一个填进去）。
 - op="call"：调用一个**函数**（见下方 functions）。func=函数名，call_args=参数名→取值模板（`{row[字段]}`/`{标量}`/字面量，在调用处作用域解析），var=接函数返回值（一个 RunResult，后续 `{var[返回字段]}`）。**函数与循环无关**，可在 main / if / foreach body 任意处调用。
 
 **functions（顶层函数定义，与 main 一次产出）**：把 DSL 程序当成**一个普通代码文件**——main 是主流程，functions 是可复用的子函数。当某个子过程要被 foreach **逐行调用**、或多处复用、或本身是**多跳实体查找**（从行字段**派生**键 → **搜**关联实体 → 按谓词**判别**正确的行 → 打开**读**属性）时，**写成一个函数**：`{"name":..., "params":["..."], "body":[...], "returns":["..."]}`。body 和 main 一样由 milestone/compute/call/if 组成；params 是标量、体里用 `{参数名}` 引用；returns 列出对外暴露的字段（compute 标量名 或 体内 milestone 的 returns 字段）。若函数参数里有 `detail_url` / `action_url` / `*_url` / `url` 这类行详情链接，函数内部打开自身详情的 navigation 必须用这个 URL 参数模板，不能改用 id/name/key 在界面里点行。**函数只分解一次、被 call 多次**（不是每行重新分解）。
@@ -132,6 +132,24 @@ version: 1
  {"op":"foreach","loop_var":"row","row_fields":["customer","status","date","detail_url"],"into":"candidate_rows","body":[]},
  {"op":"run","run_kind":"data_query","var":"q","name":"选出该客户最近一笔 pending 记录","returns":["detail_url"],"sql":"SELECT detail_url FROM candidate_rows WHERE customer LIKE '%客户关键词%' AND status LIKE '%Pending%' ORDER BY date_ts DESC LIMIT 1"},
  {"op":"run","run_kind":"navigation","name":"打开 {q[detail_url]} 进入目标记录详情页","success_condition":"已进入目标记录详情页"}]}
+
+示例（先统计子记录，再把统计生成的文本写回父实体字段）——
+{"reasoning":"目标值依赖父实体 E 下的子记录统计，但最终 mutation 发生在父实体字段上，所以拆成两段数据源：先到子记录集合，以父实体字段筛选 E，foreach 采子记录的父实体标识和详情 URL，钻详情补统计字段，再用 data_query count；compute 只把 count 标量组装成文本。然后回父实体列表，按 E 精确→关键词检索，foreach body=[] 采父候选的 name/type/detail_url，用 data_query 按实体谓词和应用知识给出的父行区分字段选唯一父行，最后打开父行 URL 并 action 写字段保存。修复前序查询问题时必须保留最后的写入 action。","goal":"根据父实体 E 的子记录评分统计更新父实体摘要字段","steps":[
+ {"op":"run","run_kind":"navigation","name":"进入子记录列表页","success_condition":"页面显示子记录列表和筛选控件"},
+ {"op":"run","run_kind":"filter","var":"f1","name":"在父实体字段用精确值『E』筛选","success_condition":"父实体精确筛选已应用，records-found 计数可读","returns":["match_count"],"read_spec":"match_count：读取 records found 计数","return_domains":{"match_count":"number"}},
+ {"op":"if","cond_var":"f1","cond_field":"match_count","cond_cmp":"==","cond_value":"0","then":[
+   {"op":"run","run_kind":"filter","name":"清除精确值后在同一父实体字段用关键词『K』重筛","success_condition":"父实体关键词筛选已应用且匹配记录非 0 条"}]},
+ {"op":"foreach","loop_var":"row","row_fields":["parent_label","detail_url"],"into":"child_rows","body":[
+   {"op":"run","run_kind":"navigation","var":"d","name":"打开 {row[detail_url]} 进入子记录详情页","success_condition":"已进入该子记录详情页","returns":["metric"],"read_spec":"metric：读取详情里的统计条件字段数值"}
+ ]},
+ {"op":"run","run_kind":"data_query","var":"q_count","name":"统计满足条件的子记录数","returns":["count"],"sql":"SELECT COUNT(*) AS count FROM child_rows WHERE parent_label LIKE '%K%' AND metric_num >= 4"},
+ {"op":"compute","var":"target_text","expr":"str(q_count['count']) + ' items matched' if int(q_count['count']) > 0 else \"no matching items\""},
+ {"op":"run","run_kind":"navigation","name":"进入父实体列表页","success_condition":"页面显示父实体列表和筛选控件"},
+ {"op":"run","run_kind":"filter","name":"在父实体名称字段用精确值『E』筛选","success_condition":"父实体精确筛选已应用"},
+ {"op":"foreach","loop_var":"parent","row_fields":["parent_name","parent_kind","detail_url"],"into":"parent_rows","body":[]},
+ {"op":"run","run_kind":"data_query","var":"q_parent","name":"选出唯一父实体入口","returns":["detail_url"],"sql":"SELECT detail_url FROM parent_rows WHERE parent_name LIKE '%K%' AND parent_kind = 'primary' LIMIT 1"},
+ {"op":"run","run_kind":"navigation","name":"打开 {q_parent[detail_url]} 进入父实体编辑页","success_condition":"已进入父实体编辑页"},
+ {"op":"run","run_kind":"action","name":"将摘要字段更新为 {target_text} 并保存","success_condition":"页面显示保存成功提示或返回列表"}]}
 
 示例（界面筛选优先 + 多行对象数组结果）——
 {"reasoning":"目标要求按时间维度统计满足若干约束的记录，且列表页提供对应筛选控件。先进入含完整原始行的列表，用页面筛选控件设置这些约束（日期值按应用知识要求的 UI 输入格式填写，不照抄存储/SQL 日期格式），验收看已应用筛选标记/控件值/结果计数；再对已筛选的完整表只做 group/count。最终答案是对象数组，所以 data_query 用 returns=[\"result\"]，SQL 输出列 alias 为对象 key，finish 直接返回 {q[result]}。","goal":"返回某日期范围内某类记录的月度计数对象数组","steps":[

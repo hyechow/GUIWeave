@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field, field_validator
 
 from ..program import (
@@ -108,7 +110,7 @@ class _StepDraft(BaseModel):
     )
     limit: int | None = Field(default=None, description="op=foreach：采集行数上限（None=全量）；对已排序 grid 取 topK 时填 K，避免全量翻页")
     # --- op=compute（纯计算：解释器确定性求值，不是 GUI milestone；用于从已有标量派生新值）---
-    expr: str = Field(default="", description="op=compute：受限表达式，对作用域内标量（函数参数 + 之前的 compute 结果，用裸名引用）求值，结果绑到 var（标量，后续 milestone/参数里用 {var} 引用）。只允许：字符串方法(rsplit/split/strip/replace/lower…)、切片/索引、`+`、以及 re_sub(pattern,repl,s)/re_search(pattern,s)/len/str/int。例：re_sub('-[^-]+$','',entity_key) 去掉最后一段后缀得到父实体标识；entity_key.rsplit('-',1)[0] 同理。**派生类计算用它，别塞进 milestone 让 agent 现场算。**")
+    expr: str = Field(default="", description="op=compute：受限 Python 表达式，对作用域内标量（函数参数 + 之前的 compute 结果，用裸名引用）求值，结果绑到 var（标量，后续 milestone/参数里用 {var} 引用）。字段值用 q['field'] 或 {q[field]} 参与表达式并显式拼接；不要写 '{q[field]} text' 这种模板字符串/f-string。字符串里含单引号/apostrophe 时用双引号或转义。只允许：字符串方法(rsplit/split/strip/replace/lower…)、切片/索引、算术/比较/三元、re_sub/re_search/len/str/int/float/round/abs；禁止 list comprehension、generator、next(row ... for row in rows)、__import__、SQLAlchemy/engine/cursor 等集合遍历或外部执行，选行/计数/聚合/SQL 必须用 data_query。例：re_sub('-[^-]+$','',entity_key) 去掉最后一段后缀得到父实体标识；entity_key.rsplit('-',1)[0] 同理。**派生类计算用它，别塞进 milestone 让 agent 现场算。**")
     # --- op=call（调用一个函数定义；可出现在 main / if / foreach body 任意处，函数与循环无关）---
     func: str = Field(default="", description="op=call：要调用的函数名（必须是 functions 里定义过的）")
     call_args: dict[str, str] = Field(default_factory=dict, description="op=call：参数名→取值模板（在调用处作用域解析：{row[字段]} 取当前行、{标量} 取标量、或字面量）。函数返回值绑到 var（一个 RunResult，后续用 {var[返回字段]} 引用）")
@@ -175,6 +177,18 @@ _StepDraft.model_rebuild()
 
 _VALID_KINDS = {"navigation", "filter", "action", "read", "data_query"}
 _VALID_CMPS = {"==", "!=", "exists", "empty", "contains", "not_contains", "in", "not_in"}
+_URL_OPEN_TEMPLATE_RE = re.compile(
+    r"\{[^{}]*(?:url|href|link|链接|网址)[^{}]*\}|\{url\}",
+    re.IGNORECASE,
+)
+_URL_OPEN_VERB_RE = re.compile(
+    r"打开|进入|前往|访问|跳转|到达|\b(open|navigate|go to|visit|view|edit)\b",
+    re.IGNORECASE,
+)
+_URL_VALUE_MUTATION_RE = re.compile(
+    r"设置|填入|填写|输入|更新|保存|提交|\b(set|fill|type|update|save|submit)\b",
+    re.IGNORECASE,
+)
 _CMP_ALIASES = {
     "=": "==",
     "eq": "==",
@@ -201,6 +215,19 @@ _CMP_ALIASES = {
 def _to_kind(raw: str) -> RunKind:
     k = (raw or "").strip().lower()
     return k if k in _VALID_KINDS else "action"  # type: ignore[return-value]
+
+
+def _normalize_run_kind(kind: RunKind, name: str) -> RunKind:
+    """URL-capability opens are page navigation even if the model labels them as action/filter."""
+    text = name or ""
+    if (
+        kind in {"action", "filter"}
+        and _URL_OPEN_TEMPLATE_RE.search(text)
+        and _URL_OPEN_VERB_RE.search(text)
+        and not _URL_VALUE_MUTATION_RE.search(text)
+    ):
+        return "navigation"
+    return kind
 
 
 def _to_cmp(raw: str):
@@ -276,7 +303,7 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                 )
             )
         else:  # run family (default): construction-time split by execution mode (S8 sibling IR).
-            kind = _to_kind(d.run_kind)
+            kind = _normalize_run_kind(_to_kind(d.run_kind), d.name)
             common = dict(
                 var=(d.var.strip() or None),
                 name=d.name,

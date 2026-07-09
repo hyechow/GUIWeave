@@ -20,20 +20,23 @@ version: 1
 - 数据：订单数据源 = Sales > Orders。**口径判别看 intent 有没有 "completed"**：含 `completed`（`who completed the most/second/Nth number of orders`、`who completed N orders`、`completed orders`）→ 按 **`Status = Complete`** 计数，先清掉已生效的无关筛选、只筛 Status=Complete 后采全量 Complete 行；字面 `any state` / 只说 `have N orders` → **不筛 Status**，清掉所有已生效筛选（含已生效的 `Status: Complete`）后采全量。**计数单位是「每一笔订单」**：同一客户的多笔订单是多笔、不能并成一笔，因此要采到订单的唯一标识（Orders grid 的 **ID** 列）以及 **Customer Email**、**Status**，否则同客户多笔订单会被并行折叠、人均计数偏小、排名错乱。
 - 步骤：
 1. 进入 Sales > Orders 订单数据源
-2. 按口径设状态约束：含 completed→清无关筛选后只筛 Status=Complete；字面 any state→清所有筛选后不筛状态
-3. 采全量订单行，含 Order ID（逐笔唯一）、Customer Email、Status
-4. 按 Customer Email 聚合订单数
-5. 输出满足排名或数量条件的邮箱
+2. completed 口径只保留 Status=Complete
+3. any-state 口径不保留 Status 筛选
+4. 采全量订单行，含 ID、Customer Email、Status
+5. 按 Customer Email 聚合订单数
+6. 输出满足排名或数量条件的邮箱
 
 ## skill：订单支付金额/最近 N 订单聚合
 - 触发：payment amount、Grand Total、last N orders、completed/canceled/cancelled orders、non-cancelled orders、payment difference
 - 数据：Orders grid；可见列含 `Status`、`Purchase Date`、`Grand Total (Purchased)`。Status 是**单值**筛选。**non-cancelled / 非取消口径** = 排除 Status=Canceled 的订单：单值下拉选不出「非某值」，所以**不要**用 UI Status 下拉去近似，也**不要**用 Complete 近似 non-cancelled——清掉状态筛选采全量后，分析时排除 Canceled。
 - 步骤：
 1. 进入 Sales > Orders
-2. non-cancelled：不用 UI Status 单值下拉，清筛后采全量、分析时排除 Canceled
-3. 采集订单的 Status、Purchase Date、Grand Total
-4. 按 Purchase Date 选出口径要求的订单（如最近 N 笔），再对 Grand Total 做求和/平均/差值
-5. 多个口径对比（差值/比例）时分别备好各口径数据再统一比较
+2. non-cancelled：清状态筛选后采全量
+3. non-cancelled：分析时排除 Canceled
+4. 采集 Status、Purchase Date、Grand Total
+5. 先按 Purchase Date 取目标订单
+6. 再对 Grand Total 求和/平均/差值
+7. 多口径对比时分别备好数据再比较
 
 ## skill：Dashboard 搜索词读取
 - 触发：top search terms、most-used search terms、recent search terms、dashboard search terms
@@ -75,12 +78,12 @@ version: 1
 - 步骤：
 1. 进入 Products；清掉已生效的无关筛选；按 Quantity 筛候选。
 2. Color：启用 Columns/Color 后从 grid 读。
-3. Material：候选 foreach 采 SKU + Action_url。
-4. Material：必须打开 `{row[Action_url]}` 读自身，禁止按 SKU 点行。
+3. Material：候选行需要 SKU 与 Action_url。
+4. Material：自身详情入口用 Action_url，禁止只按 SKU 文本点行。
 5. 父 SKU = `sku.rsplit('-', 2)[0]`，去掉尺码和颜色两段。
 6. 搜父 SKU 后必须选 SKU=父SKU 且 Type=Configurable Product。
 7. 不得只读自身后过滤空值；Material 空值必须回退父产品。
-8. foreach/call 后必须汇总 material，过滤空值、去重输出。
+8. 输出时过滤空值并去重。
 
 ## skill：改配置型商品某（些）变体的价格
 - 触发：increase/reduce/change the price of [white/blue/size L/XS] [product] by N%/$N；改某颜色/尺寸变体的价格、给某商品某变体调价
@@ -94,12 +97,12 @@ version: 1
 
 ## skill：把商品标记为缺货 / 上架（改 Stock Status，不是改 Quantity）
 - 触发：mark/make [product] (as) out of stock、set [product] out of stock/in stock、把某商品标记为缺货/下架/上架、设为有货/无货
-- 数据：**「缺货/有货」是 Stock Status 字段（In Stock / Out of Stock 下拉），提交后 POST `catalog/product/save/id/<id>/...`，post_data 含 `product[quantity_and_stock_status][is_in_stock]`（`0`=Out of Stock，`1`=In Stock）**。这与「库存数量 Quantity」是**两个不同字段**：`mark out of stock / 缺货 / 下架 / 上架`→改 **Stock Status 下拉**；`set quantity/stock to N / 库存改为 N`→才是改 **Quantity 数值框**。**绝不要用 Quantity=0 去替代 out of stock**（产生的不是 `is_in_stock=0`，任务不算完成）。**配置型商品（Type=Configurable Product）**：在**父产品**编辑页改一次 Stock Status 即标记整个商品——`Mark all <某商品> out of stock` 的 "all" 指的是**这一个商品整体**（父产品一次保存覆盖全部变体），**不是** foreach 逐个变体改；父产品自己通常没有可编辑的 Quantity，只有 Stock Status 下拉。简单商品（Simple）就在该商品自己的编辑页改。**定位必须锁定单个目标行，绝不能对匹配集做 foreach 逐行改**（这是 mutation，不是 lookup——过匹配会把无关商品也改掉）：Catalog > Products 用 **Filters 面板的 Name 列**（不是顶部 Search by keyword——keyword 会连描述一起搜、跨产品线过匹配），按**『精确原值 → 0 条回退产品线词』的标准阶梯**检索（两步都在同一 Name 列）：先用任务给的原值精确筛并读计数；商品名常带 **® / ™**（如真实名 `Gobi HeatTec® Tee`）会让精确 0 命中——**这不是失败，是触发回退**，回退时用**产品线/品牌词**（如 `Gobi`、`Aeon`），**不要选跨多个产品共用的面料/技术词**（如 `HeatTec` 会同时命中 `Gobi HeatTec®`、`Logan HeatTec®`… 几十条）。**易错点：绝不把回退结果集喂给 foreach**——模糊词一旦跨产品线，foreach 会批量误改并超时；回退后仍锁定**单行**。**行判别子 = Type=Configurable Product 且 Name 含产品线词**（产品线词筛选下父产品只有一行；跨系列词回退时 Type=Configurable 会剩多行——如 HeatTec 下 Gobi/Logan 两个父产品——必须再按 Name 锁定，选错行=改错商品）。**不要用 SKU 编行条件**——SKU 是内部编码（`MT06`、变体 `MT06-XS-Black`），不含产品名，「SKU 含 <产品词>」对任何行都不成立。**纯 mutate（无返回/确认诉求）**：Stock Status 那步不绑 returns、不读 current 值，finish 静态；成没成由 durable 验收（保存成功提示/返回列表）判定。**编排形态**：即使实体被标为多目标（"all …"），配置型商品也走**单次线性动作**——在「改 Stock Status 并保存」那一步声明 `covers_set=<实体提及原文>`（父产品一次保存即聚合覆盖全部变体），不写 foreach。
+- 数据：**「缺货/有货」是 Stock Status 字段（In Stock / Out of Stock 下拉），提交后 POST `catalog/product/save/id/<id>/...`，post_data 含 `product[quantity_and_stock_status][is_in_stock]`（`0`=Out of Stock，`1`=In Stock）**。这与「库存数量 Quantity」是**两个不同字段**：`mark out of stock / 缺货 / 下架 / 上架`→改 **Stock Status 下拉**；`set quantity/stock to N / 库存改为 N`→才是改 **Quantity 数值框**。**绝不要用 Quantity=0 去替代 out of stock**（产生的不是 `is_in_stock=0`，任务不算完成）。**配置型商品（Type=Configurable Product）**：在**父产品**编辑页改一次 Stock Status 即标记整个商品——`Mark all <某商品> out of stock` 的 "all" 指的是**这一个商品整体**（父产品一次保存覆盖全部变体），不是逐个变体改；父产品自己通常没有可编辑的 Quantity，只有 Stock Status 下拉。简单商品（Simple）就在该商品自己的编辑页改。**定位必须锁定单个目标行，绝不能批量改匹配集**（这是 mutation，不是 lookup——过匹配会把无关商品也改掉）：Catalog > Products 用 **Filters 面板的 Name 列**（不是顶部 Search by keyword——keyword 会连描述一起搜、跨产品线过匹配），按**『精确原值 → 0 条回退产品线词』的标准阶梯**检索（两步都在同一 Name 列）：先用任务给的原值精确筛并读计数；商品名常带 **® / ™**（如真实名 `Gobi HeatTec® Tee`）会让精确 0 命中——**这不是失败，是触发回退**，回退时用**产品线/品牌词**（如 `Gobi`、`Aeon`），**不要选跨多个产品共用的面料/技术词**（如 `HeatTec` 会同时命中 `Gobi HeatTec®`、`Logan HeatTec®`… 几十条）。回退后仍要锁定**单行**。**行判别子 = Type=Configurable Product 且 Name 含产品线词**（产品线词筛选下父产品只有一行；跨系列词回退时 Type=Configurable 会剩多行——如 HeatTec 下 Gobi/Logan 两个父产品——必须再按 Name 锁定，选错行=改错商品）。**不要用 SKU 编行条件**——SKU 是内部编码（`MT06`、变体 `MT06-XS-Black`），不含产品名，「SKU 含 <产品词>」对任何行都不成立。Stock Status 修改是纯状态变更；页面不会提供额外业务返回字段，保存成功/跳转是确认信号。
 - 步骤：
 1. Catalog > Products，清无关已生效筛选；Name 列精确原值筛选并读计数。
 2. 计数为 0 时同一 Name 列改用产品线/品牌词重筛。
-3. 按行判别子锁定唯一父产品行并进入编辑（禁 foreach、禁 SKU 谓词）。
-4. Stock Status 设为目标值，该步声明 covers_set=实体提及。
+3. 按行判别子锁定唯一父产品行并进入编辑（禁 SKU 谓词）。
+4. Stock Status 设为目标值。
 5. Save，durable 验收；父产品一次保存覆盖全部变体。
 
 ## skill：按电话号查客户
@@ -148,7 +151,7 @@ version: 1
 2. 填 Rule Name、Active=Yes、Websites 选 Main Website
 3. 在 Customer Groups 逐个选中对应客户组
 4. Conditions 留空（作用于全部商品）
-5. 展开 Actions 折叠区，设 Apply（percentage/fixed）+ Discount Amount
+5. Actions：Apply=percentage/fixed，Discount Amount=数值
 6. Save
 
 ## skill：按订单号/客户定位订单（订单类改写的前置检索）
@@ -156,28 +159,33 @@ version: 1
 - 数据：Sales > Orders grid 顶部搜索框/筛选。**按订单号「#N」（如 `#304`）定位订单必须用 Filters 面板展开后的 `ID` 字段搜纯数字 `304`（去掉「#」），不要用顶部 `Search by keyword`**——increment id 存为零填充 `000000304`、顶部 keyword 是整词/fulltext 匹配，搜 `304` 或 `#304` 都 0 命中，会被误判成「订单不存在」而错误终止（499 实测：`#304`、keyword `304` 均空手而归，改用 **Filters → `ID` 字段搜 `304`** 才命中）。**订单号 0 命中不等于订单不存在**：MUTATE/改写类任务的目标订单几乎必然存在，先换 Filters→ID（或直达订单 view URL）确认，别据单次 keyword 0 命中就报 not found。找「某客户最近的 pending 订单」先按客户姓名检索 + Status 筛 `Pending`，再按 Purchase Date 取最新一笔，姓名精确 0 命中时退回姓/名关键词。**Orders grid 里不要写泛称「客户字段」或 `Customer Name` 作为筛选控件**：筛选面板实际可操作的是 `Bill-to Name`、`Ship-to Name`、`Customer Email`，顶部还有 `Search by keyword`；`Customer Name` 可能只是 Columns 里的可见列，不等于有文本筛选框。客户名定位优先用顶部 `Search by keyword` 搜完整姓名/关键词，或明确用 `Bill-to Name`/`Ship-to Name` 字段；不要通过 Columns 面板去“添加 Customer Name 筛选器”。**顶部 `Search by keyword` 的提交方式是按 Enter 或点击输入框内放大镜；Filters / Apply Filters 只提交展开面板里的列筛选，不能提交顶部 keyword。**
 - 步骤：
 1. 进 Sales > Orders
-2. 按订单号时展开 Filters 面板、在 `ID` 字段填纯数字（去 #）后 Apply Filters；不要用顶部 keyword 搜订单号；0 命中先换法（Filters→ID / 直达 URL）再判不存在
-3. 客户订单先搜完整姓名；0 命中再搜姓/名关键词
-4. 追加 Status=Pending 时保留客户全名/关键词具体值
-5. 按 Purchase Date 降序
-6. 最近/最旧订单不要直接点当前第一行
-7. foreach 采集客户名列、Status、Purchase Date
-8. 同时采集 `Action_url` 作为详情入口
-9. data_query 用客户关键词 + Status=Pending 过滤
-10. 最近一笔用 `purchase_date_ts DESC LIMIT 1`
-11. 打开 `Action_url` 执行改写（填单号 / 发通知）
+2. 订单号用 Filters 的 `ID` 字段填纯数字
+3. 不要用顶部 keyword 搜订单号
+4. 0 命中先换法再判不存在
+5. 客户订单先搜完整姓名；0 命中再搜姓/名关键词
+6. 追加 Status=Pending 时保留客户具体值
+7. 按 Purchase Date 降序
+8. 最近/最旧订单不要直接点当前第一行
+9. 候选订单行需要客户名列、Status、Purchase Date
+10. 候选订单行的详情入口是 `Action_url`
+11. 客户关键词 + Status=Pending 是目标订单口径
+12. 最近一笔按 Purchase Date 降序确定
+13. 打开目标订单详情执行改写
 
 ## skill：给订单添加物流/追踪单号（update order with tracking number）
 - 触发：update order # with (the) tracking number、add tracking (number)、USPS/UPS/FedEx/DHL tracking、给订单加物流单号/追踪号
 - 数据：**追踪号挂在发货单（Shipment）上，不是订单 Comment**。提交后 POST `admin/order_shipment/save/order_id/<id>`，post_data 含 `tracking[k][carrier_code]` + `tracking[k][number]`。**绝不要把追踪号写进 Notes for this Order 的 Comment / 勾 Notify Customer**——那是客户通知（走 `sales/order/commentsHistory`），不产生 shipment，任务不算完成。路径（Method 1，订单尚无发货单，即有 **Ship** 按钮）：订单详情页 → 点顶部按钮栏 **Ship**（不是「Shipments 标签页」，也**没有**「Add New Shipment」按钮）→ New Shipment 页滚到 **Payment & Shipping Method** 区 → 点 **Add Tracking Number** 展开一行 → **Carrier** 选承运商全称（USPS=`United States Postal Service`、UPS=`United Parcel Service`、FedEx=`Federal Express`、`DHL`；任务写 "USPS" 时选 `United States Postal Service`，**别填字面 "USPS"**）→ 填 **Number**=追踪号（Title 可留承运商名默认）→ 点 **Submit Shipment** 保存。Method 2（订单已发货、无 Ship 按钮）：Sales > Shipments 打开该发货单编辑页 → Add Tracking Number → 选 Carrier + 填 Number → 点 **Add** → 保存。
 - 步骤：
 1. 先按订单号定位并打开订单详情（见上一条 skill：Filters→ID）
-2. 有 Ship 按钮 → 点 **Ship** 进新建发货单页；无 Ship（已发货）→ 去 Sales > Shipments 打开该发货单编辑页
-3. 滚到 Payment & Shipping Method 区，点 **Add Tracking Number**
-4. Carrier 选承运商全称（USPS=United States Postal Service），Number 填追踪号
-5. Ship 流点 **Submit Shipment**；已有发货单流点 **Add** 再保存
-6. 验收：保存成功/跳转，且发货单里出现该追踪号——**不是** Comments History 里多一条备注
-- 编排形态：这是**纯状态变更（无返回值诉求）**——意图只说「加追踪号」，没有「确认/返回/是否成功」这类取值要求。**Submit Shipment 这步不要绑 returns**（尤其别造 `submit_status`/`成功|失败` 这类验证返回：提交成功即跳回订单页，那里没有这种字段，只会读到订单 Status 列而出域打转）；成没成由该步的 durable 验收（保存成功/跳转+发货单出现追踪号）判定。**finish 用静态确认句**（如「已为订单 #N 添加追踪号 X」），不要写 `{...[submit_status]}` 之类读返回值的模板。仅当意图明确要求「确认是否成功/返回某值」时才另加 confirm-read。
+2. 有 Ship → 新建发货单页
+3. 无 Ship → Sales > Shipments 发货单编辑页
+4. Tracking 区域在 Payment & Shipping Method
+5. Carrier=承运商全称；Number=追踪号
+6. Ship 流保存入口是 **Submit Shipment**
+7. 已有发货单流先 **Add** 再保存
+8. 确认信号=保存成功/跳转 + 发货单出现追踪号
+9. Comments History 备注不是有效追踪号
+- 数据补充：这是**纯状态变更（无返回值诉求）**——意图只说「加追踪号」时，提交成功通常跳回订单页，不会出现额外业务状态字段；确认信号是保存成功/跳转以及发货单里出现追踪号。仅当意图明确要求「确认是否成功/返回某值」时才需要额外读取结果。
 
 ## skill：给订单客户发送订单备注/通知
 - 触发：notify/send/message customer in order、给订单客户发消息、通知某客户某订单

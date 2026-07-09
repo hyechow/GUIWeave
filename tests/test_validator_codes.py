@@ -652,6 +652,21 @@ def test_no_result_source_not_tripped_by_noun_tracking_number():
     assert "NO_RESULT_SOURCE" not in _codes_of(prog)
 
 
+def test_no_result_source_not_tripped_by_navigation_to_filtered_list():
+    from gui_agent.core.orchestrator.validator import _goal_expects_structured_answer
+
+    goal = "Go to the list of orders that are completed"
+    assert _goal_expects_structured_answer(goal) is False
+    prog = Program(
+        goal=goal,
+        statements=[
+            Run(name="进入 Sales > Orders 订单列表页", kind="navigation", success_condition="订单列表页已显示"),
+            Run(name="设置 Status=Complete 并应用筛选", kind="filter", success_condition="Status=Complete 已应用"),
+        ],
+    )
+    assert "NO_RESULT_SOURCE" not in _codes_of(prog)
+
+
 def test_no_result_source_still_fires_for_number_of_count_ask():
     # But "number of X" IS a count ask — a bare finish with no result source is still rejected.
     from gui_agent.core.orchestrator.validator import _goal_expects_structured_answer

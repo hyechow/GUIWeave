@@ -47,15 +47,16 @@ _NAV_SHAPE_RE = re.compile(
     re.IGNORECASE,
 )
 _RETRIEVE_KW_RE = re.compile(
-    r"\b(how many|count|number|total|top|most|least|rank|average|sum|which|who|whose|find|get)\b",
+    r"\b(how many|count|number of|total|top|most|least|rank|average|sum|which|who|whose|find|get|return)\b",
     re.IGNORECASE,
 )
 
 def _goal_expects_structured_answer(goal: str) -> bool:
     text = (goal or "").lower()
-    # navigate-shape destination intent with no retrieve/aggregation keyword and no "... of <field>"
-    # extraction tail → just reach/render the page; do NOT demand a returns/data_query result source.
-    if _NAV_SHAPE_RE.search(text) and not _RETRIEVE_KW_RE.search(text) and " of " not in text:
+    # navigate-shape destination intent with no retrieve/aggregation keyword → just reach/render the
+    # page; do NOT demand a returns/data_query result source. Do not treat every "of ..." as value
+    # extraction: "Go to the list of completed orders" names a destination list, not an answer list.
+    if _NAV_SHAPE_RE.search(text) and not _RETRIEVE_KW_RE.search(text):
         return False
     return bool(
         re.search(r"\b(how many|count|total|which|who|what|find|list|return|show)\b", text)

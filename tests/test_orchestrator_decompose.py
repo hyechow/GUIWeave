@@ -199,6 +199,16 @@ def test_to_program_unknown_kind_defaults_action():
     assert to_program(draft, "").statements[0].kind == "action"
 
 
+def test_to_program_url_template_open_normalizes_to_navigation():
+    draft = _PlanDraft(steps=[
+        _StepDraft(op="run", run_kind="action", name="打开 {q[detail_url]} 进入详情页"),
+        _StepDraft(op="run", run_kind="filter", name="打开 {row[Action_url]} 进入编辑页"),
+        _StepDraft(op="run", run_kind="action", name="将 Callback URL 字段更新为 {callback_url} 并保存"),
+    ])
+    prog = to_program(draft, "")
+    assert [s.kind for s in prog.statements] == ["navigation", "navigation", "action"]
+
+
 def test_validate_clean_program_has_no_issues():
     assert validate_program(to_program(_connectivity_draft(), "")) == []
 
