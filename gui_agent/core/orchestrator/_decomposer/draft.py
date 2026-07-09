@@ -23,10 +23,12 @@ from ..program import (
 )
 
 
-def _draft_scalar_to_str(value: object) -> str:
+def _draft_scalar_to_str(value: object, *, python_bool: bool = False) -> str:
     if value is None:
         return ""
     if isinstance(value, bool):
+        if python_bool:
+            return "True" if value else "False"
         return "true" if value else "false"
     return str(value)
 
@@ -128,15 +130,21 @@ class _StepDraft(BaseModel):
     # --- op=finish ---
     message: str = Field(default="", description="op=finish：最终答复模板，可用 {变量[字段]} 引用某步返回值")
 
-    @field_validator("cond_value", "expr", mode="before")
+    @field_validator("cond_value", mode="before")
     @classmethod
     def _coerce_cond_value(cls, value: object) -> str:
         # The model occasionally emits a bare JSON scalar where a string field is declared — a
-        # compute `expr: false` (bool) or a numeric cond_value. Coerce it so the PRIMARY json_object
-        # parse still validates instead of dropping to the slow plain-text fallback (webarena 544:
-        # steps.N.expr = False → ValidationError). A nonsense expr like "false" then surfaces a
-        # specific COMPUTE_* error the retry can act on — far better than an opaque type failure.
+        # numeric cond_value. Coerce it so the PRIMARY json_object parse still validates instead of
+        # dropping to the slow plain-text fallback.
         return _draft_scalar_to_str(value)
+
+    @field_validator("expr", mode="before")
+    @classmethod
+    def _coerce_expr(cls, value: object) -> str:
+        # Compute expressions are Python-surface expressions. If structured output sends a JSON bool
+        # (expr: false), preserve that scalar as the Python literal False rather than converting it
+        # to the unknown name "false" and trapping the repair loop in a language-boundary error.
+        return _draft_scalar_to_str(value, python_bool=True)
 
     @field_validator("cond_values", mode="before")
     @classmethod

@@ -399,6 +399,17 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                 "再让后续动作名用 `{计算变量}` 消费这个 compute 结果。"
             )
             return
+        json_scalar = raw_expr.strip()
+        if json_scalar in {"true", "false", "null"}:
+            issues.add(
+                "COMPUTE_UNSUPPORTED_EXPR",
+                f"compute「{s.var} = {s.expr}」使用了 JSON 字面量 `{json_scalar}`。"
+                "compute 是 Python 表达式：布尔/空值常量要写 `True`/`False`/`None`。"
+                "但如果这个变量后续要写入标题、描述、消息或文本字段，不要用布尔值当占位；"
+                "运行时才知道的分支必须先用 read/data_query 产出字段，再写三元表达式，"
+                "例如 `str(q['count']) + ' text' if int(q['count']) > 0 else \"fallback text\"`。",
+            )
+            return
         expr = normalize_compute_expr(raw_expr)
         dialect_error = dry_check_expr(expr)
         if dialect_error:

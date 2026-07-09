@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from gui_agent.core.orchestrator.program import Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Read, Query, Run
+from gui_agent.core.orchestrator._decomposer.draft import _StepDraft
 from gui_agent.core.orchestrator._validator.governance import TEXTUAL_FALLBACK_VALIDATOR_CODES
 from gui_agent.core.orchestrator.validator import ALL_CODES, IssueList, ValidationIssue, validate_program
 
@@ -780,6 +781,29 @@ def test_compute_apostrophe_string_error_points_to_double_quotes():
     comp = [i for i in issues if i.code == "COMPUTE_UNSUPPORTED_EXPR"]
     assert comp, {i.code for i in issues}
     assert "双引号" in str(comp[0]), str(comp[0])
+
+
+def test_draft_bool_compute_expr_uses_python_literal():
+    # Structured JSON can send expr:false as a real JSON bool. The compute dialect is Python, so the
+    # lossless spelling is False; turning it into "false" creates an unknown-name error that teaches
+    # the model the wrong thing.
+    step = _StepDraft.model_validate({"op": "compute", "var": "x", "expr": False})
+    assert step.expr == "False"
+
+
+def test_lowercase_json_bool_compute_error_points_to_text_derivation():
+    program = Program(
+        statements=[
+            Compute(var="description", expr="false"),
+            Run(name="写入 {description}", kind="action"),
+        ],
+    )
+    issues = validate_program(program)
+    comp = [i for i in issues if i.code == "COMPUTE_UNSUPPORTED_EXPR"]
+    assert comp, {i.code for i in issues}
+    assert "JSON 字面量" in str(comp[0]), str(comp[0])
+    assert "data_query" in str(comp[0]), str(comp[0])
+    assert "fallback text" in str(comp[0]), str(comp[0])
 
 
 def test_compute_external_sql_error_points_to_data_query():
