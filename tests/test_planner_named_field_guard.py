@@ -64,6 +64,33 @@ def test_named_field_guard_treats_chinese_product_column_as_product_control():
     assert guarded.direction is None
 
 
+def test_named_field_guard_treats_chinese_name_field_as_name_control():
+    milestone = Milestone.model_validate({
+        "id": "m",
+        "name": "在名称字段用精确值『Selene Yoga Hoodie』筛选",
+        "description": "在名称字段用精确值『Selene Yoga Hoodie』筛选",
+        "success_condition": "名称精确筛选已应用",
+        "kind": "filter",
+    })
+    observation = Observation(
+        png_bytes=b"png",
+        source="browser",
+        form_controls=[
+            {"label": "Search by keyword", "kind": "text_input", "value": ""},
+            {"label": "Name", "kind": "text_input", "value": ""},
+        ],
+    )
+    plan = _PlanResult(
+        instruction="在 Search by keyword 输入框输入 Selene Yoga Hoodie",
+        summary="误指向全局搜索框",
+    )
+
+    guarded = _guard_named_field_substitution_plan(plan, milestone, _check(), observation)
+
+    assert guarded.instruction == "在 Name 输入框输入 Selene Yoga Hoodie"
+    assert guarded.direction is None
+
+
 def test_named_field_guard_retargets_when_target_control_is_visible():
     milestone = Milestone.model_validate({
         "id": "m",

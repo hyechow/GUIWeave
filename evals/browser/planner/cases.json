@@ -586,5 +586,226 @@
       ]
     },
     "note": "实跑陷阱 20260626_110802 T4-T21：Planner 看到 checker 说「需要关闭/确认面板」，生成「点击 Apply 按钮（或关闭面板以应用更改）」——Columns 面板没有 Apply 按钮（只有 Cancel + Reset），点 Cancel 只关闭面板 UI，不会让网格出现新列。正确动作：在面板内找到 Color checkbox 并点击（即使 DOM 已显示 on，也要重新点击以触发本次会话的即时更新）。must_contain 要求 instruction 提及 checkbox/点击/勾选，must_not_contain 守住禁止把 Cancel 当 Apply 这一核心回归点。 must_contain 含 scroll/滚动，因为面板 Color 不在视口时先滚动也是正确的第一步——核心回归点只是禁止把 Cancel/Apply 当提交操作。"
+  },
+  {
+    "label": "products-name-filter-visible-禁止横向滚动找名称列（回归 20260709_115620 T14-T16）",
+    "screenshot": "evals/browser/planner/screenshots/webarena544_products_filters_name_visible_20260709_115620.png",
+    "observation": {
+      "title": "Products / Inventory / Catalog",
+      "url": "http://h:7780/admin/catalog/product/",
+      "dom_state": "Products grid with Filters panel open; Name text_input is visible and empty; records count is visible.",
+      "form_controls": [
+        {
+          "label": "Search by keyword",
+          "kind": "text_input",
+          "value": "",
+          "placeholder": "Search by keyword",
+          "rect": {
+            "x": 245,
+            "y": 322
+          }
+        },
+        {
+          "label": "Name",
+          "kind": "text_input",
+          "value": "",
+          "rect": {
+            "x": 487,
+            "y": 535
+          }
+        },
+        {
+          "label": "SKU",
+          "kind": "text_input",
+          "value": "",
+          "rect": {
+            "x": 487,
+            "y": 585
+          }
+        },
+        {
+          "label": "Price",
+          "kind": "text_input",
+          "value": "",
+          "rect": {
+            "x": 487,
+            "y": 635
+          }
+        }
+      ]
+    },
+    "milestone": {
+      "name": "在名称字段用精确值『Selene Yoga Hoodie』筛选",
+      "description": "Products 的 Filters 面板已展开，Name 输入框可见且为空。下一步应在 Name 输入框填入 Selene Yoga Hoodie，而不是横向滚动表格。",
+      "success_condition": "名称精确筛选已应用，records-found 计数可读",
+      "kind": "filter",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "Filters 面板已展开，Name 筛选框可见且可输入，但尚未输入目标值 Selene Yoga Hoodie 并应用筛选。",
+      "issues": [],
+      "missing_evidence": [
+        "需在 Name 输入框中输入 Selene Yoga Hoodie",
+        "需点击 Apply Filters 应用筛选"
+      ],
+      "summary": "Products 页面，Filters 面板处于展开状态，Name 字段为空，等待输入筛选条件。"
+    },
+    "expected": {
+      "must_match": [
+        "Name|名称",
+        "输入|填入|填写|type"
+      ],
+      "must_contain_all": [
+        "Selene Yoga Hoodie"
+      ],
+      "must_not_contain": [
+        "横向",
+        "滚动",
+        "scroll",
+        "显示.*名称.*列",
+        "显示.*Name.*列",
+        "Search by keyword"
+      ]
+    },
+    "note": "真实 run 20260709_115620 T14-T16：run_planner 原始指令已经是「在 Name 输入框填入 Selene Yoga Hoodie」，但后续 named-field guard/action policy 链路把它转成横向滚动找名称列，导致页面无进展。该 case 锁住 planner 侧不变量：当 Filters 面板里的目标字段已可见时，下一步必须是填写该字段，不能退回横向滚动找列。"
+  },
+  {
+    "label": "product-edit-content-section-visible-应展开Content而非继续滚动（回归 20260709_112751 T23）",
+    "screenshot": "evals/browser/planner/screenshots/webarena544_product_edit_content_section_visible_20260709_112751.png",
+    "observation": {
+      "title": "Selene Yoga Hoodie / Products / Catalog",
+      "url": "http://h:7780/admin/catalog/product/edit/id/1108/",
+      "dom_state": "Product edit page; Content section is visible and collapsed; Short Description is not rendered yet.",
+      "form_controls": [
+        {
+          "label": "Content",
+          "kind": "section_toggle",
+          "value": "false",
+          "rect": {
+            "x": 525,
+            "y": 786,
+            "w": 1000,
+            "h": 40
+          }
+        },
+        {
+          "label": "Climate",
+          "kind": "native_select",
+          "selected_text": "Indoor",
+          "rect": {
+            "x": 500,
+            "y": 240
+          }
+        },
+        {
+          "label": "Color",
+          "kind": "selectmenu",
+          "value": "",
+          "rect": {
+            "x": 470,
+            "y": 370
+          }
+        }
+      ]
+    },
+    "milestone": {
+      "name": "展开 Content 区域，将 Short Description 更新为 3 customer(s) love it! 并保存",
+      "description": "当前父商品编辑页已打开，Content 区标题可见但尚未展开；Short Description 位于 Content 区。",
+      "success_condition": "页面显示保存成功提示或返回列表",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面为产品编辑页，Content 区域可见但未展开，Short Description 字段尚未出现。",
+      "issues": [],
+      "missing_evidence": [
+        "需要展开 Content 区域",
+        "需要在 Short Description 中输入 3 customer(s) love it! 并保存"
+      ],
+      "summary": "产品编辑页底部可见 Content 折叠区，下一步应展开 Content。"
+    },
+    "expected": {
+      "must_match": [
+        "Content",
+        "展开|点击|打开"
+      ],
+      "must_not_contain": [
+        "继续.*滚动",
+        "向下滚动",
+        "scroll down",
+        "不可行",
+        "不存在",
+        "Edit"
+      ]
+    },
+    "note": "真实 run 20260709_112751 T23：目标字段 Short Description 位于可见但折叠的 Content 区。该 case 约束 planner 在目标区域 affordance 已可见时先展开区域，而不是继续滚动、宣称字段不存在，或跳去其它路线。"
+  },
+  {
+    "label": "product-edit-short-description-visible-应填写编辑器而非再点Content（回归 20260709_121257 T31）",
+    "screenshot": "evals/browser/planner/screenshots/webarena544_short_description_editor_visible_20260709_121257.png",
+    "observation": {
+      "title": "Selene Yoga Hoodie / Products / Catalog",
+      "url": "http://h:7780/admin/catalog/product/edit/id/1108/",
+      "dom_state": "Product edit page; Content section is expanded; Short Description rich text editor is visible and empty.",
+      "form_controls": [
+        {
+          "label": "Content",
+          "kind": "section_toggle",
+          "value": "true",
+          "rect": {
+            "x": 525,
+            "y": 586,
+            "w": 1000,
+            "h": 40
+          }
+        },
+        {
+          "label": "Short Description",
+          "kind": "rich_textarea",
+          "value": "",
+          "rect": {
+            "x": 530,
+            "y": 760,
+            "w": 540,
+            "h": 260
+          }
+        }
+      ]
+    },
+    "milestone": {
+      "name": "展开 Content 区域并将 Short Description 更新为 3 customer(s) love it!",
+      "description": "当前父商品编辑页的 Content 区已展开，Short Description 富文本编辑器可见且为空。",
+      "success_condition": "Content 区域已展开，Short Description 输入框中已填入目标文本",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "Content 区域已经展开，Short Description 编辑器已可见，但目标文本尚未填入。",
+      "issues": [],
+      "missing_evidence": [
+        "需要在 Short Description 编辑器中输入 3 customer(s) love it!"
+      ],
+      "summary": "Short Description 富文本编辑器可见且为空，下一步应输入目标文案。"
+    },
+    "expected": {
+      "must_match": [
+        "Short Description",
+        "输入|填入|填写|更新|type"
+      ],
+      "must_contain_all": [
+        "3 customer(s) love it!"
+      ],
+      "must_not_contain": [
+        "点击.*Content",
+        "展开.*Content",
+        "滚动",
+        "scroll",
+        "不存在"
+      ]
+    },
+    "note": "真实 run 20260709_121257 T31：页面已经显示 Short Description 富文本编辑器，但 acquire gate 仍输出「点击或展开 Content」，导致把已展开区域折叠，后续偏航到 Configurations。本 case 锁住 planner 侧不变量：最终输入控件可见时，下一步应填写目标字段，不再执行 section acquire。生产修复在 form_controls rich_textarea + section acquire gate 单测。"
   }
 ]
