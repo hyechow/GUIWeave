@@ -37,6 +37,7 @@ dependencies = [
     "adbutils>=2",
     "pypdf>=6.13.2",
     "pymupdf>=1.27.2.3",
+    "json-repair>=0.53.1",
 ]
 
 [dependency-groups]

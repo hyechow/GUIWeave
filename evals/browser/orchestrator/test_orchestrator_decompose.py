@@ -2319,6 +2319,87 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     f"covers_set 聚合 mutation 步不应带 returns（纯 mutate 静态收尾）：{[s.name for s in covers if s.returns]}"
                 )
+        elif assertion == "shopping_admin_review_count_writes_configurable_parent_short_description":
+            # WebArena task-544 family (live 20260708_205937): the plan drifted into the product
+            # edit page's own "Product Reviews" section and got stuck scrolling for it — reviews
+            # are a child-record collection and must come from Reviews/All Reviews (see the
+            # shopping_admin_review_rating_* assertions), not from inside the parent product's
+            # detail page. Separately, webarena-verified's oracle for this task targets product
+            # id=1108 type=configurable, field `product[short_description]`: Products retrieval by
+            # name returns BOTH the configurable parent and its simple variants, and "product
+            # description" in this app is the Short Description field, not the long Description
+            # field. A plan that writes to whichever row a bare name search lands on, or to the
+            # wrong field, mutates the wrong entity/field and the network-event evaluator finds no
+            # matching POST.
+            seq = _flatten_runs(program.statements)
+            all_text = " ".join(
+                f"{r.kind} {r.name} {r.success_condition} {r.read_spec} {getattr(r, 'sql', '')} "
+                f"{' '.join(r.returns or [])}"
+                for r in seq
+            )
+            stuck_in_product_detail = re.search(
+                r"产品详情|商品详情|product\s+detail|product\s+workspace|滚动.*product\s+reviews|"
+                r"滚动.*产品评论|scroll.*product\s+reviews",
+                all_text,
+                flags=re.I,
+            )
+            if stuck_in_product_detail:
+                details.append(
+                    "计划里出现『滚动/进入产品详情页找 Product Reviews』的路线；评论是子记录集合，"
+                    "必须以 Reviews/All Reviews 为主数据源，产品详情页不是评论入口。"
+                    f" seq={[(r.kind, r.name) for r in seq]}"
+                )
+            # NOTE (known DSL debt): "writes Short Description, not the long Description" can only be
+            # asserted on step TEXT here — a DSL action step has no structured target_field slot, so
+            # there is no dataflow identifier to key on (unlike the configurable filter below, which
+            # keys on the data_query SQL). Tightening this needs a DSL change (a target_field on
+            # mutation steps); until then it stays a text match — the weakest assertion in this case.
+            mutates_description = [
+                r for r in seq
+                if r.kind == "action"
+                and re.search(r"description|描述", f"{r.name} {r.success_condition}", flags=re.I)
+            ]
+            if not mutates_description:
+                details.append(
+                    "计划里没有看到写商品描述的 action 步；"
+                    f"seq={[(r.kind, r.name) for r in seq]}"
+                )
+            elif not any(
+                re.search(
+                    r"short\s*description|short_description|简短描述|短描述",
+                    f"{r.name} {r.success_condition}",
+                    flags=re.I,
+                )
+                for r in mutates_description
+            ):
+                details.append(
+                    "写商品描述必须点名 Short Description 字段（保存后是 product[short_description]），"
+                    "不是通用的长 Description 字段；当前写描述步没有点名 Short Description。"
+                    f" mutates_description={[(r.name, r.success_condition) for r in mutates_description]}"
+                )
+            # Dataflow judgment (NOT a name-text match): parent/child disambiguation is REALIZED
+            # by a data_query that filters the normalized `type` column to Configurable
+            # (=/LIKE/IN against a 'Configurable…' value). A step whose free-text name merely says
+            # "configurable" is not evidence the plan acts on it — the LLM rephrases and the literal
+            # word-list misses it (the exact字面词表 failure CLAUDE.md warns about). The SQL column
+            # name + value are the deterministic dataflow identifiers, so assert on those.
+            selects_configurable_parent = any(
+                r.kind == "data_query"
+                and re.search(
+                    r"type\w*\s*(?:=|like|in)\s*\(?\s*['\"%]*configurable",
+                    getattr(r, "sql", "") or "",
+                    flags=re.I,
+                )
+                for r in seq
+            )
+            if not selects_configurable_parent:
+                details.append(
+                    "Products 按产品名检索命中的行常同时含配置型父商品与其简单变体；写描述前必须有一个 "
+                    "data_query 对 type 列施加 Configurable 过滤（如 `WHERE type LIKE '%Configurable%'`）"
+                    "来消歧锁定父行，而不能靠 step 描述里写“配置型”字样、或对检索结果 LIMIT 1 随意选一行——"
+                    "选中变体会写错实体，evaluator 判定的目标行是配置型父商品。"
+                    f" data_query_sql={[(getattr(r, 'sql', '') or '')[:80] for r in seq if r.kind == 'data_query']}"
+                )
         else:
             details.append(f"unknown assertion: {assertion}")
     return details

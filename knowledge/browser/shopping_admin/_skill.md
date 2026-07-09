@@ -50,10 +50,24 @@ version: 1
 - 步骤：
 1. 到达 All Reviews 评论数据源。
 2. Product 字段先精确值、再关键词筛候选。
-3. row_fields: Product、Title、Action_url。
-4. 打开 Action_url 读 Detailed Rating。
-5. SQL: `title AS title`。
-6. 按评分条件筛选，按任务输出 Nickname 或 title/rating。
+3. 评论详情入口来自行链接 Action_url。
+4. 评分口径取 Review Detail 的 Detailed Rating。
+5. title 优先取 All Reviews 的 Title。
+6. 按任务输出 Nickname、title 或 rating。
+
+## skill：按评论统计结果更新商品描述（写 Short Description，不是 Description）
+- 触发：update the (product) description ... reviews with N stars、highlight positive reviews、"{count} customer(s) love it"、根据评论数/评分更新商品描述
+- 数据：评论统计走【产品评论评分查询】技能（数据源 = All Reviews，不进 Products 列表或商品详情页找评论——商品详情页的 Product Reviews 区块在有较多属性字段的表单里滚动很深，容易卡死在滚动无进展）。**"product description" 在这类任务里落地字段是 Short Description（保存后 POST 字段 `product[short_description]`），不是 Content 标签页下的主 Description 富文本框**——两者是两个不同输入框，写错字段 evaluator 判空。**Short Description 在商品编辑页的 Content 区，写入前先打开/展开 Content 区。**写回目标商品行时，Products 按产品名精确/关键词检索命中的往往是**父商品与其简单变体混在一起的多行**（同名前缀）；**必须选 Type=Configurable Product 的父行写入**（父商品保存代表"这个商品"的描述，简单变体是它的某个颜色/尺寸档），选中 simple variant 写的是错误实体，evaluator 判定的目标行是父商品。
+- 步骤：
+1. 评论统计来源是 All Reviews。
+2. 产品约束绑定评论 Product 字段。
+3. 星级来自 Review Detail 的 Detailed Rating。
+4. 目标文案按任务给定格式生成。
+5. 商品写回入口是 Products。
+6. 商品检索字段是 Name。
+7. 父商品判别字段是 Type=Configurable Product。
+8. 先打开商品编辑页的 Content 区。
+9. 描述落地字段是 Short Description。
 
 ## skill：按库存数量筛选产品并取某个属性（颜色/材质/尺码）
 - 触发：产品的颜色/材质/尺码、color/material/size of products、name and color、products with N units left 取某属性；凡是「按库存数量筛选产品、再取该产品某个属性」的任务

@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable, MutableSequence
 from typing import Any, TypeVar
 
+from json_repair import loads as _repair_json_loads
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from openai import BadRequestError
@@ -285,8 +286,17 @@ def _message_text(content: object) -> str:
 
 
 def _parse_structured_response(text: str, schema: type[ModelT]) -> ModelT:
-    json_text = _extract_json_object(text)
-    data = json.loads(json_text)
+    try:
+        data: object = json.loads(_extract_json_object(text))
+    except ValueError:
+        # 高频结构化失败:任务文案含字面双引号(如描述要设为 "3 customer(s) love it!"),模型在
+        # JSON 字符串字段里转义不干净 → json.loads 直接崩、decompose 抛异常、整个 run traceback 退出
+        # (webarena 544)。json_repair 是确定性修复器,对未转义内层引号/尾随逗号/轻度截断尽力恢复,
+        # 把"必崩"变"尽力恢复"。修复结果可能有轻微失真,所以只在严格解析失败时才走此兜底。
+        data = _repair_json_object(text)
+        if data is None:
+            raise
+        print("  json.loads 失败,json_repair 确定性修复兜底成功(修复结果可能有轻微失真)")
     if _looks_like_schema_echo(data, schema):
         raise ValueError("模型返回了 JSON Schema，而不是业务结果对象")
     return schema.model_validate(data)
@@ -303,7 +313,8 @@ def _looks_like_schema_echo(data: object, schema: type[BaseModel]) -> bool:
     return False
 
 
-def _extract_json_object(text: str) -> str:
+def _strip_code_fence(text: str) -> str:
+    """Drop a leading ```/```json fence and its closing ``` so the JSON body is bare."""
     stripped = text.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()
@@ -312,10 +323,30 @@ def _extract_json_object(text: str) -> str:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         stripped = "\n".join(lines).strip()
+    return stripped
 
+
+def _extract_json_object(text: str) -> str:
+    stripped = _strip_code_fence(text)
     decoder = json.JSONDecoder()
     start = stripped.find("{")
     if start < 0:
         raise ValueError(f"LLM response did not contain a JSON object: {text}")
     _, end = decoder.raw_decode(stripped[start:])
     return stripped[start : start + end]
+
+
+def _repair_json_object(text: str) -> dict | None:
+    """Deterministically salvage a malformed LLM JSON object → parsed dict, or None if
+    nothing recoverable. Only called after strict json.loads has already failed. Rejects a
+    non-dict or empty result so a hopeless payload still surfaces the original parse error
+    (an empty {} would otherwise be silently validated into a defaults-only object)."""
+    stripped = _strip_code_fence(text)
+    start = stripped.find("{")
+    if start < 0:
+        return None
+    try:
+        repaired = _repair_json_loads(stripped[start:])
+    except Exception:
+        return None
+    return repaired if isinstance(repaired, dict) and repaired else None

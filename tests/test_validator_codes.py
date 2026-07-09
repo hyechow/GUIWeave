@@ -666,3 +666,119 @@ def test_no_result_source_still_fires_for_number_of_count_ask():
         ],
     )
     assert "NO_RESULT_SOURCE" in _codes_of(prog)
+
+
+def _review_drill_body_run() -> Run:
+    # A per-row detail drill: opens THIS row's detail via {row[action_url]} and reads a field
+    # (rating) that is absent from the grid. Its name contains the `{row[...]}` template — so the
+    # `\brow\b` heuristic in _run_looks_like_table_row_field_collection matches — and it returns
+    # ≥2 fields, i.e. it looks exactly like a "grid row field collection" to the text heuristic.
+    return Run(
+        kind="navigation",
+        var="d",
+        name="打开 {row[action_url]} 进入评论详情页",
+        returns=["rating", "product"],
+        read_spec="rating：读取 Detailed Rating 数值；product：读取产品名",
+        success_condition="已进入评论详情页",
+    )
+
+
+def test_table_row_field_collection_exempts_drill_inside_foreach_body():
+    # webarena 544 deadlock: the CORRECT plan for "aggregate a detail-only field (rating) then
+    # act" must drill each review's detail inside a foreach body. That drill is the sanctioned
+    # full-set collection shape, not the visible-row shortcut the rule forbids — foreach already
+    # traverses every row. Before the structural exemption the rule fired on the loop-body drill
+    # and no valid plan could ship. Same run at TOP LEVEL must still fire (the shortcut it guards).
+    inside_foreach = Program(
+        goal="统计 4 星及以上的评论数量并更新描述",  # triggers _goal_needs_table_analysis (统计/数量)
+        statements=[
+            ForEach(
+                var="row",
+                into="review_rows",
+                row_fields=["action_url"],
+                body=[_review_drill_body_run()],
+            ),
+            Query(var="q", name="统计4星以上评论", returns=["count"],
+                  sql="SELECT COUNT(*) AS count FROM review_rows WHERE rating_num >= 4"),
+        ],
+    )
+    assert "TABLE_ROW_FIELD_COLLECTION" not in _codes(inside_foreach)
+
+    # Control: the identical row-field read as a standalone top-level step is still the forbidden
+    # visible-row shortcut and must keep firing.
+    top_level = Program(
+        goal="统计 4 星及以上的评论数量并更新描述",
+        statements=[_review_drill_body_run()],
+    )
+    assert "TABLE_ROW_FIELD_COLLECTION" in _codes(top_level)
+
+
+def test_compute_comprehension_error_points_to_data_query():
+    # webarena 544 deadlock: the model reached for a list comprehension in compute to COUNT the
+    # rating>=4 rows of a foreach into table. compute is scalar-only and rejects comprehensions —
+    # correct — but the bare "ListComp not allowed" message let the model just try another
+    # comprehension spelling (len([...]) → [...].__len__() → len([...])) across all 3 retries and
+    # never converge. The error must name the right tool so retries turn to data_query instead.
+    program = Program(
+        goal="统计评分 4 星及以上的评论数量",
+        statements=[
+            ForEach(var="row", into="review_rows", row_fields=["rating"], body=[]),
+            Compute(var="count_4_plus", expr="len([x for x in review_rows if int(x['rating']) >= 4])"),
+        ],
+    )
+    issues = validate_program(program)
+    comp = [i for i in issues if i.code == "COMPUTE_UNSUPPORTED_EXPR"]
+    assert comp, {i.code for i in issues}
+    assert "data_query" in str(comp[0]), str(comp[0])
+
+
+def test_compute_quoted_template_error_points_to_concat():
+    # A compute expr is Python, not a template/f-string surface. Putting {q[count]} inside a quoted
+    # string used to normalize into invalid Python and produced an unhelpful syntax error.
+    program = Program(
+        statements=[
+            Query(var="q", name="统计", returns=["count"], sql="SELECT 3 AS count"),
+            Compute(var="description", expr="'{q[count]} customer(s) love it!'"),
+            Run(name="写入 {description}", kind="action"),
+        ],
+    )
+    issues = validate_program(program)
+    comp = [i for i in issues if i.code == "COMPUTE_UNSUPPORTED_EXPR"]
+    assert comp, {i.code for i in issues}
+    assert "str(q['count'])" in str(comp[0]), str(comp[0])
+
+
+def test_compute_apostrophe_string_error_points_to_double_quotes():
+    # webarena 544 retry collapsed to an otherwise valid scalar ternary, but used single quotes
+    # around "don't ...", making the compute expression fail all retries.
+    program = Program(
+        statements=[
+            Query(var="q", name="统计", returns=["count"], sql="SELECT 0 AS count"),
+            Compute(
+                var="description",
+                expr="'don't miss out' if int(q['count']) == 0 else str(q['count']) + ' customer(s) love it!'",
+            ),
+            Run(name="写入 {description}", kind="action"),
+        ],
+    )
+    issues = validate_program(program)
+    comp = [i for i in issues if i.code == "COMPUTE_UNSUPPORTED_EXPR"]
+    assert comp, {i.code for i in issues}
+    assert "双引号" in str(comp[0]), str(comp[0])
+
+
+def test_compute_external_sql_error_points_to_data_query():
+    program = Program(
+        statements=[
+            Compute(
+                var="count",
+                expr="(q := __import__('sqlalchemy').create_engine('sqlite://').execute('SELECT 1'))",
+            ),
+            Run(name="使用 {count}", kind="action"),
+        ],
+    )
+    issues = validate_program(program)
+    comp = [i for i in issues if i.code == "COMPUTE_UNSUPPORTED_EXPR"]
+    assert comp, {i.code for i in issues}
+    assert "data_query" in str(comp[0]), str(comp[0])
+    assert "外部代码" in str(comp[0]), str(comp[0])

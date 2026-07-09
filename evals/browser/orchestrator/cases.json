@@ -633,5 +633,35 @@
     "reason": "'all Aeon capri' 匹配父产品+全部变体=一组；Magento 配置型父产品一次保存聚合覆盖"
    }
   ]
+ },
+ {
+  "label": "评论 4 星以上计数驱动商品描述更新：评论走 All Reviews，写回 Short Description 且锁定配置型父行（回归 task-544）",
+  "goal": "Update the product description of Selene Yoga Hoodie to \"{count} customer(s) love it!\" where count is the number of reviews with 4 stars or above, or \"don't miss out on this amazing product\" when there are no such reviews.",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.1.13:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 4,
+   "has_read": true
+  },
+  "assertions": [
+   "shopping_admin_review_rating_initial_uses_reviews_source",
+   "uses_foreach_iteration",
+   "shopping_admin_review_rating_drills_detail",
+   "shopping_admin_review_count_writes_configurable_parent_short_description"
+  ],
+  "note": "回归 live 20260708_205937：编排把评论当成 Product 编辑页底部 Product Reviews 区块，五次滚动都够不到、卡死失败（子记录集合被误当父详情页附属，违反规则11『子记录集合以子记录集合为主数据源』）。webarena-verified 的官方期望是 product id=1108 type=configurable 的 POST，字段是 product[short_description]；Products 按名检索会同时命中该配置型父行与其简单变体，必须按 Type=Configurable Product 消歧，不能 LIMIT 1 随意选一行，也不能写进通用 Description 字段。",
+  "resolution": [
+   {
+    "mention": "Selene Yoga Hoodie",
+    "type": "product",
+    "match_mode": "approximate",
+    "search_key": "Selene",
+    "reason": "产品名可能含特殊符号/子串不稳定命中，按标准 exact→fuzzy 检索阶梯处理"
+   }
+  ]
  }
 ]

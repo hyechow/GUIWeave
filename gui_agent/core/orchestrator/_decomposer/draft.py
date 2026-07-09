@@ -126,9 +126,14 @@ class _StepDraft(BaseModel):
     # --- op=finish ---
     message: str = Field(default="", description="op=finish：最终答复模板，可用 {变量[字段]} 引用某步返回值")
 
-    @field_validator("cond_value", mode="before")
+    @field_validator("cond_value", "expr", mode="before")
     @classmethod
     def _coerce_cond_value(cls, value: object) -> str:
+        # The model occasionally emits a bare JSON scalar where a string field is declared — a
+        # compute `expr: false` (bool) or a numeric cond_value. Coerce it so the PRIMARY json_object
+        # parse still validates instead of dropping to the slow plain-text fallback (webarena 544:
+        # steps.N.expr = False → ValidationError). A nonsense expr like "false" then surfaces a
+        # specific COMPUTE_* error the retry can act on — far better than an opaque type failure.
         return _draft_scalar_to_str(value)
 
     @field_validator("cond_values", mode="before")

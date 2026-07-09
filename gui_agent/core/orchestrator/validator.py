@@ -385,12 +385,54 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
         # Compile-time enforcement of the runtime compute contract (mirrors runner._compute):
         # same expr normalization, dialect dry-run under the probe scope, then a name check
         # against the scalars/vars/fields actually visible at this point on this path.
-        expr = normalize_compute_expr(s.expr or "")
+        raw_expr = s.expr or ""
+        quoted_templates = re.findall(
+            r"(['\"])(?:(?!\1).)*\{\w+\[[^\[\]{}]+\]\}(?:(?!\1).)*\1",
+            raw_expr,
+        )
+        if quoted_templates:
+            issues.add("COMPUTE_UNSUPPORTED_EXPR",
+                f"compute「{s.var} = {s.expr}」把模板引用放进了字符串字面量。"
+                "compute 是 Python 表达式，不是模板/f-string；不要写 `'{q[count]} text'`。"
+                "请改成拼接或格式化表达式，例如 `str(q['count']) + ' text'`，"
+                "再让后续动作名用 `{计算变量}` 消费这个 compute 结果。"
+            )
+            return
+        expr = normalize_compute_expr(raw_expr)
         dialect_error = dry_check_expr(expr)
         if dialect_error:
             hint = ""
             if "Attribute" in dialect_error or "方法调用" in dialect_error:
                 hint = "——行/结果字段要用下标 var['字段']（或裸字段名），不能用 var.字段 属性访问"
+            elif "unterminated string literal" in dialect_error:
+                hint = (
+                    "——字符串字面量引号不合法；若文本里含单引号/apostrophe（如 don't），"
+                    "请用双引号包住该字符串，或把单引号写成转义形式。"
+                    "compute 表达式里拼接返回字段请写 `str(q['count']) + ' text'`，"
+                    "不要把 `{q[count]}` 放进引号里当模板字符串"
+                )
+            elif (
+                "NamedExpr" in dialect_error
+                or "__import__" in raw_expr
+                or "sqlalchemy" in raw_expr.lower()
+                or "不允许的函数调用" in dialect_error
+            ):
+                hint = (
+                    "——compute 不能执行外部代码、import、SQLAlchemy/engine/cursor，也不能用海象表达式绕过。"
+                    "凡是查询 foreach 表、计数、筛选、取第一行，都必须改成 data_query；"
+                    "compute 只接收 data_query 已返回的标量并做字符串/数值派生"
+                )
+            elif any(comp in dialect_error for comp in ("ListComp", "SetComp", "DictComp", "GeneratorExp")):
+                # The compute engine rejecting a comprehension almost always means the model reached
+                # for compute to AGGREGATE a collection (count/sum/filter rows of a foreach into
+                # table) — compute is scalar-derivation only. Without naming the right tool the model
+                # just tries another comprehension spelling and the retries never converge (webarena
+                # 544: len([...]) → [...].__len__() → len([...]) across all 3 attempts → compile fail).
+                hint = (
+                    "——这是在对集合做聚合/计数（如统计某表里满足条件的行数）。compute 只做标量派生、"
+                    "不支持列表/集合推导；请改用 data_query 查询 foreach 的 into 表，例如 "
+                    "`SELECT COUNT(*) AS n FROM <into表> WHERE <条件>`，再由后续 compute/finish 引用该查询结果"
+                )
             issues.add("COMPUTE_UNSUPPORTED_EXPR",
                 f"compute「{s.var} = {s.expr}」运行时不支持：{dialect_error}{hint}。"
                 "只允许：字符串方法、切片/下标、算术、比较、and/or、三元、re_sub/re_search/len/str/int/round/float/abs。"
@@ -414,7 +456,7 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                 "（同一执行路径上）。请改用作用域内的名字，或先让前序步骤产出该字段。"
             )
 
-    def _walk(stmts: list[Stmt], scope: dict[str, set[str]], scalars: set[str] | None = None) -> None:
+    def _walk(stmts: list[Stmt], scope: dict[str, set[str]], scalars: set[str] | None = None, in_foreach_body: bool = False) -> None:
         # Sequential statements mutate `scope` in place; if-branches each get a copy, and only
         # vars produced on BOTH branches survive past the join (a var read in one branch isn't
         # guaranteed downstream). `scalars` tracks compute vars / function params the same way.
@@ -501,10 +543,19 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                 if (
                     s.returns
                     and s.kind != "data_query"
+                    # A step INSIDE a foreach body is the loop's per-row drill — it reads THIS row's
+                    # detail (opened via {loop_var[...url]}), not "the currently-visible grid rows".
+                    # foreach already guarantees the full row set is traversed, so this is exactly the
+                    # sanctioned collection shape, not the visible-row shortcut this rule forbids. The
+                    # rule's own text-heuristic can't tell them apart (the `{row[...]}` template makes
+                    # the name contain "row"), so the exemption must be structural. Without it the
+                    # correct plan for "aggregate a detail-only field then act" is impossible to ship
+                    # — the drill is the only way to read a field absent from the grid (webarena 544).
+                    and not in_foreach_body
                     and _goal_needs_table_analysis(program.goal)
                     and _run_looks_like_table_row_field_collection(s)
                 ):
-                    issues.add("TABLE_ROW_FIELD_COLLECTION", 
+                    issues.add("TABLE_ROW_FIELD_COLLECTION",
                         f"步骤「{s.name}」把表格行字段挂在 {s.kind} returns 上读取。"
                         "聚合/排序/top-N 类任务不能让 filter/action/read 读取当前可见网格行字段；"
                         "这些字段应放在 foreach row_fields（旧计划 returns）中采集完整行集，然后用 data_query 分析。"
@@ -615,8 +666,8 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                             "请交换两个分支：命中 0 的那支放「未找到」finish，另一支放实际工作"
                         )
                 then_scope, else_scope = dict(scope), dict(scope)
-                _walk(s.then, then_scope, set(scalars))
-                _walk(s.otherwise, else_scope, set(scalars))
+                _walk(s.then, then_scope, set(scalars), in_foreach_body)
+                _walk(s.otherwise, else_scope, set(scalars), in_foreach_body)
                 # join: a var is in scope downstream only if BOTH branches produced it AND they
                 # share a field — fields must INTERSECT, not union. (one branch returns 名称, the
                 # other 编号 → no field is guaranteed on every path → drop the var; a later
@@ -676,7 +727,7 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                     else:
                         body_scope[s.var] = set(s.returns) if s.returns else set()
                 check_foreach_url_policy(s, body_scope.get(s.var, set()), function_defs, issues)
-                _walk(s.body, body_scope, set(scalars))
+                _walk(s.body, body_scope, set(scalars), in_foreach_body=True)
 
     _walk(program.statements, {}, set())
     # Function bodies are validated under the SAME rules, each starting from an empty result-var
