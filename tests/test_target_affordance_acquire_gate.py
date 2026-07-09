@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import gui_agent.core.supervisor.milestone.policy as policy_mod
 from gui_agent.core.schemas import Milestone, Observation
-from gui_agent.core.supervisor.milestone.helpers import target_affordance_scroll_plan
+from gui_agent.core.supervisor.milestone.helpers import (
+    target_affordance_scroll_plan,
+    target_section_acquire_plan,
+)
 
 
 class _CheckerReached(Exception):
@@ -125,6 +128,31 @@ def test_target_affordance_gate_stays_out_when_all_target_controls_are_visible()
     assert target_affordance_scroll_plan(controls, _notify_milestone()) is None
 
 
+def test_target_affordance_scrolls_to_offscreen_rich_editor_after_section_expanded() -> None:
+    controls = [
+        {
+            "kind": "section_toggle",
+            "label": "Content",
+            "value": "true",
+            "rect": {"x": 528, "y": 931, "w": 1118, "h": 62},
+        },
+        {
+            "kind": "rich_textarea",
+            "label": "Short Description",
+            "id": "product_form_short_description_ifr",
+            "in_viewport": False,
+            "viewport_pos": "below",
+            "rect": {"x": 528, "y": 1335, "w": 542, "h": 402},
+        },
+    ]
+
+    plan = target_affordance_scroll_plan(controls, _description_milestone())
+
+    assert plan is not None
+    assert plan.direction == "down"
+    assert "Short Description" in plan.instruction
+
+
 def _return_location_milestone() -> Milestone:
     # After a terminal Submit succeeded and redirected, the return-contract recovery re-opens the
     # milestone to locate the return field, leaking the field name into the milestone text.
@@ -171,3 +199,169 @@ def test_acquire_gate_still_matches_standalone_status_control() -> None:
     plan = target_affordance_scroll_plan(_order_status_control(), ms)
     assert plan is not None
     assert plan.direction == "down"
+
+
+def _description_milestone() -> Milestone:
+    return Milestone(
+        id="m_description",
+        name="在 Content 区将 Short Description 字段更新为 3 customer(s) love it! 并保存",
+        description="",
+        success_condition="页面显示保存成功提示或返回列表",
+        kind="action",
+    )
+
+
+def _description_without_section_milestone() -> Milestone:
+    return Milestone(
+        id="m_description",
+        name="将 Short Description 更新为 3 customer(s) love it! 并保存",
+        description="",
+        success_condition="页面显示保存成功提示或返回列表",
+        kind="action",
+    )
+
+
+def test_target_section_acquire_plan_expands_named_visible_section() -> None:
+    plan = target_section_acquire_plan(
+        [{
+            "kind": "section_toggle",
+            "label": "Content",
+            "value": "false",
+            "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
+        }],
+        _description_milestone(),
+    )
+
+    assert plan is not None
+    assert "Content" in plan.instruction
+    assert "展开" in plan.instruction
+    assert plan.direction is None
+
+
+def test_target_section_acquire_plan_stays_out_when_target_editor_visible() -> None:
+    plan = target_section_acquire_plan(
+        [
+            {
+                "kind": "section_toggle",
+                "label": "Content",
+                "value": "false",
+                "rect": {"x": 525, "y": 586, "w": 1000, "h": 40},
+            },
+            {
+                "kind": "rich_textarea",
+                "label": "Short Description",
+                "value": "",
+                "in_viewport": True,
+                "viewport_pos": "in",
+                "rect": {"x": 530, "y": 760, "w": 540, "h": 260},
+            },
+        ],
+        _description_milestone(),
+    )
+
+    assert plan is None
+
+
+def test_target_section_acquire_plan_expands_sole_visible_section_for_unrendered_field() -> None:
+    plan = target_section_acquire_plan(
+        [{
+            "kind": "section_toggle",
+            "label": "Content",
+            "value": "false",
+            "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
+        }],
+        _description_without_section_milestone(),
+    )
+
+    assert plan is not None
+    assert "Content" in plan.instruction
+    assert "展开" in plan.instruction
+
+
+def test_target_section_acquire_plan_does_not_guess_among_multiple_sections() -> None:
+    plan = target_section_acquire_plan(
+        [
+            {
+                "kind": "section_toggle",
+                "label": "Content",
+                "value": "false",
+                "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
+            },
+            {
+                "kind": "section_toggle",
+                "label": "Advanced Settings",
+                "value": "false",
+                "rect": {"x": 525, "y": 830, "w": 1000, "h": 40},
+            },
+        ],
+        _description_without_section_milestone(),
+    )
+
+    assert plan is None
+
+
+def test_target_section_acquire_plan_scrolls_to_named_offscreen_section() -> None:
+    plan = target_section_acquire_plan(
+        [{
+            "kind": "section_toggle",
+            "label": "Content",
+            "value": "false",
+            "in_viewport": False,
+            "viewport_pos": "below",
+            "rect": {"x": 525, "y": 1300, "w": 1000, "h": 40},
+        }],
+        _description_milestone(),
+    )
+
+    assert plan is not None
+    assert plan.direction == "down"
+    assert "Content" in plan.instruction
+
+
+def test_target_section_acquire_plan_does_not_scroll_to_expanded_offscreen_section() -> None:
+    plan = target_section_acquire_plan(
+        [{
+            "kind": "section_toggle",
+            "label": "Content",
+            "value": "true",
+            "in_viewport": False,
+            "viewport_pos": "above",
+            "rect": {"x": 525, "y": -120, "w": 1000, "h": 40},
+        }],
+        _description_milestone(),
+    )
+
+    assert plan is None
+
+
+def test_policy_section_acquire_gate_bypasses_checker_for_named_section(monkeypatch) -> None:
+    checker_calls: list[int] = []
+
+    def _spy_run_checker(*_args, **_kwargs):
+        checker_calls.append(1)
+        raise _CheckerReached()
+
+    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
+    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+
+    policy = policy_mod.MilestoneSupervisorPolicy()
+    policy.reseed(_description_milestone())
+    obs = Observation(
+        png_bytes=b"\x89PNG\r\n\x1a\n",
+        source="browser",
+        url="http://example.test/admin/catalog/product/edit/id/1108/",
+        form_controls=[{
+            "kind": "section_toggle",
+            "label": "Content",
+            "value": "false",
+            "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
+        }],
+        dom_state="product-edit-content-collapsed",
+    )
+
+    step = policy.step(obs, goal="update short description", history=[])
+
+    assert checker_calls == []
+    assert step.should_act is True
+    assert step.instruction and "Content" in step.instruction
+    assert "Edit" not in step.instruction

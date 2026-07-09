@@ -31,6 +31,7 @@ from .helpers import (
     filter_state_satisfies_target,
     native_select_satisfies_target,
     target_affordance_scroll_plan,
+    target_section_acquire_plan,
 )
 from .runtime import (
     EARLY_FEASIBILITY_AT,
@@ -737,6 +738,38 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 summary=acquire_plan.summary,
                 execution_scope=execution_scope,
                 direction=acquire_plan.direction,
+                is_home_screen=False,
+                **_ctx(milestone, None),
+            )
+
+        # Section-affordance acquire gate — if the target field is hidden behind a named
+        # section/tab/accordion, the field will be absent from form_controls until that page-local
+        # affordance is opened. Expand/scroll to the named section before the checker can upgrade
+        # "not rendered yet" into an infeasible route.
+        section_plan = target_section_acquire_plan(
+            getattr(observation, "form_controls", None),
+            milestone,
+        )
+        if section_plan is not None:
+            check = _SingleCheckResult(
+                status="in_progress",
+                reason=section_plan.summary,
+                summary=section_plan.summary,
+                missing_evidence=["目标字段所在页内区域需先展开或滚动到位。"],
+            )
+            self._last_check = check
+            self._last_plan = section_plan
+            milestone.status = "running"
+            print(f"  [AcquireGate] {section_plan.summary}")
+            print(f"  [Planner] {section_plan.instruction}")
+            return SupervisorStep(
+                should_act=True,
+                instruction=section_plan.instruction,
+                stop=False,
+                goal_completed=False,
+                summary=section_plan.summary,
+                execution_scope=execution_scope,
+                direction=section_plan.direction,
                 is_home_screen=False,
                 **_ctx(milestone, None),
             )

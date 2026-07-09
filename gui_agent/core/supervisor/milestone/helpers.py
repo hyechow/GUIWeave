@@ -568,6 +568,12 @@ _TARGET_AFFORDANCE_KINDS = (
     "radio",
     "switch",
 )
+_SECTION_TOGGLE_KINDS = (
+    "section_toggle",
+    "accordion",
+    "tab",
+    "treeitem",
+)
 
 
 def _compact_has_enough_signal(text: str) -> bool:
@@ -668,6 +674,120 @@ def target_affordance_scroll_plan(
         ),
         direction=direction,
     )
+
+
+def target_section_acquire_plan(
+    form_controls: Optional[list[dict]],
+    milestone: Milestone,
+) -> Optional[_PlanResult]:
+    """Return a deterministic acquire action for a named section/tab/accordion.
+
+    Some pages render fields only after their containing section is expanded, so the target field
+    is legitimately absent from ``form_controls`` until the section is opened. This is the same
+    acquire phase as offscreen-control scrolling, but the affordance is a section header instead
+    of the final input. The rule is intentionally structural and conservative: the milestone must
+    explicitly name the section/toggle, and the adapter must expose that toggle as a DOM fact.
+    """
+    if milestone.kind not in {"action", "filter"}:
+        return None
+
+    def _is_section_toggle(item: dict) -> bool:
+        kind = str(item.get("kind") or "").lower()
+        return any(part in kind for part in _SECTION_TOGGLE_KINDS)
+
+    def _is_expanded(item: dict) -> bool:
+        value = str(item.get("selected_text") or item.get("value") or "").strip().lower()
+        return value in {"1", "true", "yes", "open", "opened", "expanded", "on"}
+
+    def _click_section_plan(item: dict) -> _PlanResult:
+        label = _control_label(item)
+        return _PlanResult(
+            instruction=f"点击或展开「{label}」区域",
+            summary=(
+                f"目标字段尚未作为控件出现，但页面暴露了页内区域「{label}」；"
+                "先展开该区域完成 affordance acquire。"
+            ),
+        )
+
+    def _scroll_section_plan(item: dict) -> _PlanResult:
+        direction = "up" if item.get("viewport_pos") == "above" else "down"
+        label = _control_label(item)
+        direction_text = "向上" if direction == "up" else "向下"
+        return _PlanResult(
+            instruction=f"{direction_text}滚动到「{label}」区域",
+            summary=(
+                f"目标相关区域「{label}」已由 DOM 确认存在但不在当前视口；"
+                f"先{direction_text}滚动到该页内入口。"
+            ),
+            direction=direction,
+        )
+
+    toggles = [
+        item
+        for item in form_controls or []
+        if isinstance(item, dict) and _is_section_toggle(item) and _control_label(item)
+    ]
+    candidates: list[dict] = []
+    for item in toggles:
+        if _control_is_named_in_milestone(item, milestone):
+            candidates.append(item)
+    target_fields = _extract_target_fields(milestone)
+    target_controls: list[dict] = []
+    if target_fields:
+        controls = _visible_field_controls(form_controls)
+        for field in target_fields:
+            match = _find_matching_control(field, controls)
+            if match is not None:
+                target_controls.append(match)
+    # Once the final target field/editor is already in the current viewport, acquire is done.
+    # Do not keep clicking its containing section: section headers are often toggles, so a second
+    # acquire click can collapse the target back out of the DOM.
+    if any(item.get("in_viewport") is not False for item in target_controls):
+        return None
+    target_control_present = bool(target_controls)
+    # If the milestone did not name a section, but it names a target field that is not rendered
+    # and there is exactly one collapsed/unknown section affordance, opening that affordance is
+    # the safest page-local acquire step. This handles forms where the field only exists after a
+    # section is expanded, without encoding any app-specific section names.
+    if not candidates and target_fields and not target_control_present:
+        collapsed = [item for item in toggles if not _is_expanded(item)]
+        visible = [item for item in collapsed if item.get("in_viewport") is not False]
+        if len(visible) == 1:
+            candidates = visible
+        elif len(collapsed) == 1 and collapsed[0].get("in_viewport") is False:
+            candidates = collapsed
+
+    if not candidates:
+        return None
+
+    # Prefer a visible collapsed/unknown section: clicking it can reveal the target controls.
+    for item in candidates:
+        if item.get("in_viewport") is False:
+            continue
+        if _is_expanded(item):
+            continue
+        return _click_section_plan(item)
+
+    # If the named section exists but is offscreen, scroll toward the section before asking the
+    # planner/checker to invent another route.
+    offscreen = [
+        item
+        for item in candidates
+        if (
+            item.get("in_viewport") is False
+            and item.get("viewport_pos") in {"above", "below"}
+            and not _is_expanded(item)
+        )
+    ]
+    if not offscreen:
+        return None
+    directions = {
+        "up" if item.get("viewport_pos") == "above" else "down"
+        for item in offscreen
+    }
+    if len(directions) != 1:
+        return None
+    return _scroll_section_plan(offscreen[0])
 
 
 def _compact_norm(text: str) -> str:
@@ -791,6 +911,8 @@ def _field_aliases(field: str) -> set[str]:
         "可见性": {"visibility", "visiblein", "可见性"},
         "类型": {"type", "类型"},
         "标题": {"title", "标题"},
+        "名称": {"name", "名称"},
+        "名字": {"name", "名字"},
     }
     aliases.update(bilingual.get(norm, set()))
     return {_norm_text(a) for a in aliases if _norm_text(a)}
@@ -801,21 +923,39 @@ def _field_aliases(field: str) -> set[str]:
 # extraction so they don't get parsed as a "继续定位返回" column and hijack the planner (live 120601:
 # the retry annotation drove a 横向 scroll hunt for a「继续定位返回」column filter on the edit page).
 _RUNTIME_ANNOTATION_RE = re.compile(r"[（(]继续定位[^）)]*[）)]")
+_IMPLICIT_ASCII_TARGET_FIELD_RES = (
+    re.compile(
+        r"(?:将|把)\s*([A-Za-z][A-Za-z0-9 _/-]{2,60}?)\s*"
+        r"(?:更新|改为|改成|设置|设为|填写|填入|输入)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:update|set|write|fill)\s+(?:the\s+)?([A-Z][A-Za-z0-9 _/-]{2,60}?)\s+"
+        r"(?:field\s+)?(?:to|with|as|=)",
+        re.IGNORECASE,
+    ),
+)
 
 
 def _extract_target_fields(milestone: Milestone) -> list[str]:
     text = " ".join([milestone.name or "", milestone.description or ""])
     text = _RUNTIME_ANNOTATION_RE.sub(" ", text)
     fields: list[str] = []
-    for raw in _FIELD_SUFFIX_RE.findall(text):
+    def _add(raw: object) -> None:
         field = _normalize_field_name(str(raw or ""))
         norm = _norm_text(field)
         if not norm or norm in {"当前", "目标", "搜索", "筛选", "关键词", "读取"}:
-            continue
+            return
         if norm in _AMBIGUOUS_SEMANTIC_FIELDS:
-            continue
+            return
         if field not in fields:
             fields.append(field)
+
+    for raw in _FIELD_SUFFIX_RE.findall(text):
+        _add(raw)
+    for rx in _IMPLICIT_ASCII_TARGET_FIELD_RES:
+        for match in rx.finditer(text):
+            _add(match.group(1))
     return fields[:3]
 
 
