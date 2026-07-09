@@ -66,6 +66,45 @@ def test_plain_get_still_recorded_once():
     assert len(entries) == 1 and entries[0]["request"]["method"] == "GET"
 
 
+def test_dump_orders_finished_entries_by_cdp_timestamp_not_arrival_order():
+    rec = HarRecorder(device=object())
+    rec._on_request({
+        "requestId": "NEWER",
+        "wallTime": 20.0,
+        "timestamp": 20.0,
+        "request": {
+            "method": "GET",
+            "url": (
+                "http://host/admin/mui/index/render/?namespace=sales_order_grid"
+                "&filters%5Bstatus%5D=complete"
+            ),
+            "headers": {"Accept": "*/*"},
+        },
+    })
+    rec._on_finished({"requestId": "NEWER", "timestamp": 21.0})
+    rec._on_request({
+        "requestId": "OLDER",
+        "wallTime": 10.0,
+        "timestamp": 10.0,
+        "request": {
+            "method": "GET",
+            "url": "http://host/admin",
+            "headers": {"Accept": "text/html"},
+        },
+    })
+    rec._on_finished({"requestId": "OLDER", "timestamp": 11.0})
+
+    first_dump = _dump(rec)["log"]["entries"]
+    second_dump = _dump(rec)["log"]["entries"]
+
+    assert [e["request"]["url"] for e in first_dump] == [
+        "http://host/admin",
+        "http://host/admin/mui/index/render/?namespace=sales_order_grid&filters%5Bstatus%5D=complete",
+    ]
+    assert [e["request"]["url"] for e in second_dump] == [e["request"]["url"] for e in first_dump]
+    assert all("_t0" not in e and "_seq" not in e for e in first_dump)
+
+
 def test_extra_info_content_type_backfills_post_data_mime_type():
     rec = HarRecorder(device=object())
     rec._on_request({

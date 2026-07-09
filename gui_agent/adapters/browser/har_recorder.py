@@ -94,6 +94,7 @@ class HarRecorder:
         # requestId -> partial entry dict (request filled first, response merged in).
         self._reqs: dict[str, dict] = {}
         self._order: list[str] = []
+        self._seq = 0
         # A redirect (POST → 302 → GET) reuses ONE requestId and fires requestWillBeSent again
         # with a redirectResponse. The pre-redirect request (e.g. the Magento save POST the
         # NetworkEventEvaluator matches on) must be archived here BEFORE it is overwritten by the
@@ -136,6 +137,7 @@ class HarRecorder:
             entry = {
                 "startedDateTime": _iso(params.get("wallTime")),
                 "_t0": params.get("timestamp"),
+                "_seq": self._seq,
                 "time": 0,
                 "request": {
                     "method": req.get("method", "GET"),
@@ -163,6 +165,7 @@ class HarRecorder:
             }
             if isinstance(post_text, str) and post_text:
                 entry["request"]["postData"] = {"mimeType": content_type, "text": post_text}
+            self._seq += 1
             # A redirect (e.g. save POST → 302 → GET) reuses the same requestId and re-fires
             # requestWillBeSent with a redirectResponse. Archive the PRE-redirect request with that
             # 302 response instead of overwriting it — otherwise the POST the evaluator matches on is
@@ -227,7 +230,7 @@ class HarRecorder:
             entry = self._reqs.get(rid) if rid is not None else None
             if entry is None:
                 return
-            t0 = entry.pop("_t0", None)
+            t0 = entry.get("_t0")
             t1 = params.get("timestamp")
             if isinstance(t0, (int, float)) and isinstance(t1, (int, float)):
                 entry["time"] = max(0.0, (t1 - t0) * 1000.0)
@@ -237,15 +240,21 @@ class HarRecorder:
     # ----- output ----------------------------------------------------------
     def dump(self, path: str) -> str:
         """Serialize buffered events to a HAR 1.2 file (no live session needed)."""
+        import copy
         import json
 
         collected = list(self._redirected) + [
             self._reqs[rid] for rid in self._order if self._reqs.get(rid)
         ]
-        collected.sort(key=lambda e: float(e["_t0"]) if isinstance(e.get("_t0"), (int, float)) else 0.0)
+        collected = [copy.deepcopy(e) for e in collected]
+        collected.sort(key=lambda e: (
+            float(e["_t0"]) if isinstance(e.get("_t0"), (int, float)) else float("inf"),
+            int(e["_seq"]) if isinstance(e.get("_seq"), int) else 0,
+        ))
         entries = []
         for e in collected:
             e.pop("_t0", None)
+            e.pop("_seq", None)
             entries.append(e)
         har = {
             "log": {
