@@ -127,11 +127,119 @@ def form_controls_js() -> str:
     };
   };
   const controls = [];
-  const seen = new Set();
+  const sectionControls = [];
+  const seenElements = new Set();
+  const seenKeys = new Set();
+  const pushControl = (item, bucket = controls) => {
+    const r = item.rect || {};
+    const key = [item.kind, item.label, item.name, item.id, r.x, r.y, r.w, r.h].join('|');
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    bucket.push(item);
+  };
+  const expandedState = (el) => {
+    if (el.tagName === 'SUMMARY' && el.parentElement && el.parentElement.tagName === 'DETAILS') {
+      return el.parentElement.open ? 'true' : 'false';
+    }
+    const attr = clean(el.getAttribute('aria-expanded'));
+    if (attr) return attr.toLowerCase();
+    const holder = el.closest('[aria-expanded],details,[class*="collapsible"],[class*="accordion"],[class*="fieldset-wrapper"]');
+    if (holder && holder !== el) {
+      if (holder.tagName === 'DETAILS') return holder.open ? 'true' : 'false';
+      const holderAttr = clean(holder.getAttribute('aria-expanded'));
+      if (holderAttr) return holderAttr.toLowerCase();
+    }
+    const sectionTitle = el.closest('.fieldset-wrapper-title') || el;
+    const wrapper = sectionTitle.closest('.fieldset-wrapper, .admin__collapsible-block-wrapper');
+    if (wrapper) {
+      const content = Array.from(wrapper.children || []).find(child => {
+        if (child === sectionTitle) return false;
+        const childCls = clean(child.className || '').toLowerCase();
+        return childCls.includes('fieldset-wrapper-content') || childCls.includes('collapsible-content');
+      });
+      if (content) {
+        const cr = content.getBoundingClientRect();
+        const cst = getComputedStyle(content);
+        const contentCls = clean(content.className || '').toLowerCase();
+        if (
+          contentCls.includes('_hide')
+          || /\b(closed|collapsed|hide|hidden)\b/.test(contentCls)
+          || cst.visibility === 'hidden'
+          || cst.display === 'none'
+          || cr.height <= 1
+        ) return 'false';
+        if (
+          contentCls.includes('_show')
+          || /\b(open|active|expanded|show)\b/.test(contentCls)
+          || cr.height > 1
+        ) return 'true';
+      }
+    }
+    const cls = clean([el.className || '', holder && holder.className || ''].join(' ')).toLowerCase();
+    if (/\b(open|active|expanded|_show|show)\b/.test(cls)) return 'true';
+    if (/\b(closed|collapsed|_hide|hide)\b/.test(cls)) return 'false';
+    return '';
+  };
+  const richEditorLabelOf = (el) => {
+    const id = clean(el.id || '');
+    const candidates = [];
+    if (id) {
+      candidates.push(id.replace(/_ifr$/i, '').replace(/_iframe$/i, ''));
+      candidates.push(id);
+    }
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const css = window.CSS && CSS.escape ? CSS.escape(candidate) : candidate.replace(/"/g, '\\"');
+      const lbl = document.querySelector(`label[for="${css}"]`);
+      const labelText = clean(lbl && (lbl.innerText || lbl.textContent));
+      if (labelText) return labelText;
+      const source = document.getElementById(candidate) || document.querySelector(`[name="${css}"]`);
+      const sourceLabel = source && labelFromContainer(source);
+      if (sourceLabel) return sourceLabel;
+    }
+    return labelOf(el);
+  };
+  const richEditorValue = (el) => {
+    try {
+      if (el.tagName === 'IFRAME' && el.contentDocument && el.contentDocument.body) {
+        return el.contentDocument.body.innerText || el.contentDocument.body.textContent || '';
+      }
+    } catch (e) {}
+    return el.innerText || el.textContent || '';
+  };
+  // Generic section/accordion affordances. These are not editable fields, but they are the
+  // deterministic way to acquire fields hidden in collapsed sections. Keep this browser-widget
+  // level: ARIA/summary plus common data-role/class patterns, with no site/task vocabulary.
+  const sectionSelector = [
+    'button[aria-expanded]',
+    '[role="button"][aria-expanded]',
+    'summary',
+    '[data-role="title"]',
+    '[class*="accordion"][class*="title"]',
+    '[class*="collapsible"][class*="title"]',
+    '[class*="fieldset-wrapper-title"]',
+  ].join(',');
+  for (const el of Array.from(document.querySelectorAll(sectionSelector))) {
+    if (seenElements.has(el) || !rendered(el)) continue;
+    seenElements.add(el);
+    const text = cut(el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || el.textContent, 80);
+    if (!text) continue;
+    pushControl({
+      label: text,
+      kind: 'section_toggle',
+      name: cut(el.getAttribute('name') || '', 80),
+      id: cut(el.id || '', 80),
+      value: expandedState(el),
+      rect: rectOf(el),
+      in_viewport: inViewport(el),
+      viewport_pos: viewportPos(el),
+    }, sectionControls);
+    if (sectionControls.length >= 12) break;
+  }
   const selector = 'input,select,textarea,[role=combobox],[role=listbox]';
   for (const el of Array.from(document.querySelectorAll(selector))) {
-    if (seen.has(el) || !rendered(el)) continue;
-    seen.add(el);
+    if (seenElements.has(el) || !rendered(el)) continue;
+    seenElements.add(el);
     if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'hidden') continue;
     const kind = kindOf(el);
     const isFilter = el.id.includes('_filter_')
@@ -176,10 +284,36 @@ def form_controls_js() -> str:
     } else {
       item.value = cut(el.value || el.textContent || '', 80);
     }
-    controls.push(item);
+    pushControl(item);
     if (controls.length >= 40) break;
   }
-  return JSON.stringify({controls});
+  const richSelector = [
+    '[contenteditable="true"]',
+    'iframe[id$="_ifr"]',
+    'iframe[id$="_iframe"]',
+    'iframe.tox-edit-area__iframe',
+    '.tox-edit-area iframe',
+    'iframe[title*="Rich Text" i]',
+  ].join(',');
+  for (const el of Array.from(document.querySelectorAll(richSelector))) {
+    if (seenElements.has(el) || !rendered(el)) continue;
+    seenElements.add(el);
+    const label = richEditorLabelOf(el);
+    if (!clean(label)) continue;
+    pushControl({
+      label: cut(label, 80),
+      kind: 'rich_textarea',
+      name: cut(el.getAttribute('name') || '', 80),
+      id: cut(el.id || '', 80),
+      value: cut(richEditorValue(el), 80),
+      focused: el === document.activeElement,
+      rect: rectOf(el),
+      in_viewport: inViewport(el),
+      viewport_pos: viewportPos(el),
+    });
+    if (controls.length >= 60) break;
+  }
+  return JSON.stringify({controls: sectionControls.concat(controls)});
 })()
 """
 
@@ -189,8 +323,8 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
     controls = raw.get("controls") if isinstance(raw, dict) else raw
     if not isinstance(controls, list):
         return []
-    out: list[dict[str, Any]] = []
-    for item in controls[:MAX_CONTROLS]:
+    ranked: list[tuple[int, int, dict[str, Any]]] = []
+    for index, item in enumerate(controls):
         if not isinstance(item, dict):
             continue
         kind = _text(item.get("kind"), 40)
@@ -240,8 +374,19 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
             vp = item.get("viewport_pos")
             if vp in ("above", "below"):
                 norm["viewport_pos"] = vp
-        out.append(norm)
-    return out
+        if kind == "section_toggle":
+            priority = 0
+        elif kind == "rich_textarea":
+            priority = 1
+        elif item.get("in_viewport") is True:
+            priority = 2
+        elif item.get("in_viewport") is False:
+            priority = 3
+        else:
+            priority = 2
+        ranked.append((priority, index, norm))
+    ranked.sort(key=lambda row: (row[0], row[1]))
+    return [norm for _, _, norm in ranked[:MAX_CONTROLS]]
 
 
 def _text(value: Any, limit: int) -> str:

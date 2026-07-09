@@ -15,6 +15,12 @@ def test_form_controls_js_is_serialized_expression():
     assert "querySelectorAll" in js
     assert "input,select,textarea" in js
     assert "native_select" in js
+    assert "section_toggle" in js
+    assert "rich_textarea" in js
+    assert "contenteditable" in js
+    assert "iframe[id$=\"_ifr\"]" in js
+    assert "fieldset-wrapper-content" in js
+    assert "_hide" in js
 
 
 def test_form_controls_js_reads_below_fold_selects_and_multiselect():
@@ -65,6 +71,51 @@ def test_normalize_form_controls_keeps_native_select_options():
         "focused": True,
         "rect": {"x": 856, "y": 509, "w": 246, "h": 32},
     }]
+
+
+def test_normalize_form_controls_keeps_section_toggle_affordance():
+    controls = normalize_form_controls({
+        "controls": [{
+            "label": "Content",
+            "kind": "section_toggle",
+            "value": "false",
+            "rect": {"x": 525.0, "y": 786.0, "w": 1000, "h": 40},
+            "in_viewport": True,
+            "viewport_pos": "in",
+        }]
+    })
+
+    assert controls == [{
+        "kind": "section_toggle",
+        "label": "Content",
+        "value": "false",
+        "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
+    }]
+
+
+def test_normalize_form_controls_prioritizes_visible_rich_text_editor():
+    raw_controls = [
+        {
+            "label": f"Offscreen {i}",
+            "kind": "text_input",
+            "rect": {"x": 500.0, "y": 1800.0, "w": 200, "h": 32},
+            "in_viewport": False,
+            "viewport_pos": "below",
+        }
+        for i in range(40)
+    ]
+    raw_controls.append({
+        "label": "Short Description",
+        "kind": "rich_textarea",
+        "value": "",
+        "rect": {"x": 530.0, "y": 760.0, "w": 540, "h": 260},
+        "in_viewport": True,
+        "viewport_pos": "in",
+    })
+
+    controls = normalize_form_controls({"controls": raw_controls})
+
+    assert any(c["kind"] == "rich_textarea" and c["label"] == "Short Description" for c in controls)
 
 
 def test_observation_accepts_optional_form_controls():
