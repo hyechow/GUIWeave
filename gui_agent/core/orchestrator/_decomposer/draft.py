@@ -39,14 +39,27 @@ class _StepDraft(BaseModel):
     op: str = Field(default="run", description='"run" | "if" | "finish" | "foreach" | "compute" | "call"')
     # --- op=run ---
     var: str = Field(default="", description="把该步结果绑定到的变量名；带 returns/data_query 或后续要引用时填，否则留空")
-    name: str = Field(default="", description="op=run：该 milestone 的一句话操作指令")
-    success_condition: str = Field(default="", description="op=run：完成后界面应处于的唯一可截图确认终态")
+    name: str = Field(
+        default="",
+        description=(
+            "op=run：该 interactive run 的一句话语义指令。action 写一次持久化业务状态变更，不写展开、"
+            "选择、继续、保存等向导手势序列；这些是该 run 内部的执行细节。"
+        ),
+    )
+    success_condition: str = Field(
+        default="",
+        description=(
+            "op=run：完成后界面应处于的唯一可截图确认终态。action 必须写业务状态已经持久化后的终态；"
+            "弹出面板、进入向导、出现下一步按钮等只表示过程开始，不能作为独立 action 的终态。"
+        ),
+    )
     run_kind: str = Field(
         default="action",
         description=(
-            "op=run：先判执行模式再选 kind。交互命令=navigation/filter/action（会改变页面、设置控件、"
-            "点击/提交/保存，或进入 GUI/浏览器执行边界）；非交互语句=read/data_query（解释器本地读取/查询，"
-            "不能点击、填写、保存、提交）。"
+            "op=run：先判执行模式再选 kind。navigation=到达列表/详情/编辑器/管理页或页内区域，"
+            "即使需要点击入口也仍是 navigation；filter=应用检索/筛选状态；action=完成一个独立资源的"
+            "一次持久化业务状态变更，向导内部手势不拆 action；read/data_query=解释器本地读取/查询，"
+            "不能点击、填写、保存、提交。"
         ),
     )
     precondition: bool = Field(
@@ -111,8 +124,8 @@ class _StepDraft(BaseModel):
         ),
     )
     limit: int | None = Field(default=None, description="op=foreach：采集行数上限（None=全量）；对已排序 grid 取 topK 时填 K，避免全量翻页")
-    # --- op=compute（纯计算：解释器确定性求值，不是 GUI milestone；用于从已有标量派生新值）---
-    expr: str = Field(default="", description="op=compute：受限 Python 表达式，对作用域内标量（函数参数 + 之前的 compute 结果，用裸名引用）求值，结果绑到 var（标量，后续 milestone/参数里用 {var} 引用）。字段值用 q['field'] 或 {q[field]} 参与表达式并显式拼接；不要写 '{q[field]} text' 这种模板字符串/f-string。字符串里含单引号/apostrophe 时用双引号或转义。只允许：字符串方法(rsplit/split/strip/replace/lower…)、切片/索引、算术/比较/三元、re_sub/re_search/len/str/int/float/round/abs；禁止 list comprehension、generator、next(row ... for row in rows)、__import__、SQLAlchemy/engine/cursor 等集合遍历或外部执行，选行/计数/聚合/SQL 必须用 data_query。例：re_sub('-[^-]+$','',entity_key) 去掉最后一段后缀得到父实体标识；entity_key.rsplit('-',1)[0] 同理。**派生类计算用它，别塞进 milestone 让 agent 现场算。**")
+    # --- op=compute（纯计算：解释器确定性求值，不进入 GUI；用于从已有标量派生新值）---
+    expr: str = Field(default="", description="op=compute：受限 Python 表达式，对作用域内标量（函数参数 + 之前的 compute 结果，用裸名引用）求值，结果绑到 var（标量，后续 step/参数里用 {var} 引用）。字段值用 q['field'] 或 {q[field]} 参与表达式并显式拼接；不要写 '{q[field]} text' 这种模板字符串/f-string。字符串里含单引号/apostrophe 时用双引号或转义。只允许：字符串方法(rsplit/split/strip/replace/lower…)、切片/索引、算术/比较/三元、re_sub/re_search/len/str/int/float/round/abs；禁止 list comprehension、generator、next(row ... for row in rows)、__import__、SQLAlchemy/engine/cursor 等集合遍历或外部执行，选行/计数/聚合/SQL 必须用 data_query。例：re_sub('-[^-]+$','',entity_key) 去掉最后一段后缀得到父实体标识；entity_key.rsplit('-',1)[0] 同理。派生计算用 compute，不要塞进 interactive run 让执行层现场推导。")
     # --- op=call（调用一个函数定义；可出现在 main / if / foreach body 任意处，函数与循环无关）---
     func: str = Field(default="", description="op=call：要调用的函数名（必须是 functions 里定义过的）")
     call_args: dict[str, str] = Field(default_factory=dict, description="op=call：参数名→取值模板（在调用处作用域解析：{row[字段]} 取当前行、{标量} 取标量、或字面量）。函数返回值绑到 var（一个 RunResult，后续用 {var[返回字段]} 引用）")
@@ -157,26 +170,29 @@ class _StepDraft(BaseModel):
 
 
 class _FunctionDraft(BaseModel):
-    """A reusable function — a parameterized sub-program, decoupled from any loop. Decomposed ONCE
-    with main (one LLM call, like writing a code file), called N times via op=call."""
+    """A reusable function: a parameterized step sequence, decoupled from any loop."""
 
     name: str = Field(default="", description="函数名（main 或别的步骤用 op=call 调用它）")
     params: list[str] = Field(default_factory=list, description="参数名列表；函数体里用 {参数名} 引用（参数是标量）")
-    body: list[_StepDraft] = Field(default_factory=list, description="函数体步骤（run milestone / compute / call / if / finish）；与 main 一样写")
-    returns: list[str] = Field(default_factory=list, description="函数对外返回的字段名（compute 标量名，或体内某 milestone returns 的字段名）")
+    body: list[_StepDraft] = Field(default_factory=list, description="函数体步骤（run / compute / call / if / finish）；与 main 一样写")
+    returns: list[str] = Field(default_factory=list, description="函数对外返回的字段名（compute 标量名，或体内某 run returns 的字段名）")
 
 
 class _PlanDraft(BaseModel):
     reasoning: str = Field(
         default="",
-        description="先分析任务：要到哪些页、做什么操作、读什么结果、是否需要条件分支；再据此写 steps",
+        description=(
+            "先列出任务涉及的持久化资源、各资源的所有者类型、明确的资源依赖，并拓扑排序完整资源阶段；"
+            "再分析要到哪些页、做什么操作、读什么结果、是否需要条件分支。若采集所有者判别字段，必须在"
+            "选唯一目标的 member_desc、if 条件或 data_query WHERE 中实际消费，最后再写 steps。"
+        ),
     )
     goal: str = Field(default="", description="任务一句话描述")
     functions: list[_FunctionDraft] = Field(
         default_factory=list,
         description="可复用函数定义（顶层，与循环无关）。当某个子过程要被 foreach 逐行调用、或在多处复用、"
                     "或本身是多跳实体查找（派生→搜→判别→读）时，把它写成一个函数，main 里用 op=call 调用。"
-                    "整份程序（main steps + functions）一次产出，像写一个代码文件。",
+                    "整份 DSL 输出（main steps + functions）一次产出。",
     )
     steps: list[_StepDraft] = Field(default_factory=list)
 

@@ -478,7 +478,7 @@
   "assertions": [
    "customer_phone_lookup_uses_keyword_search"
   ],
-  "note": "task 212 正确路径：① Customers > All Customers，清除跨任务残留筛选 ② 用顶部 Search by keyword（全文子串 LIKE）搜电话的本地号段 229-3326（不是 Filters 的 Phone 列精确筛选，也不是整串 555-229-3326）③ 命中行读 Name+Email 输出。失败根因（live run 20260626_233039 score 0.0）：用 Phone 列精确筛 555-229-3326 → 0 records → NOT_FOUND。Ground truth(CDP)：电话存为 (555) 229-3326，keyword search 是字面子串，整串 555-229-3326 不是其连续子串、任何控件都 0 命中；229-3326 命中 1 条 = Veronica Costello / roni_cost@example.com。修复见 knowledge _skill.md「按电话号查客户」。"
+  "note": "task 212 正确路径：Customers 功能说明声明顶部 keyword 做字面子串检索，Phone 列是精确字段筛选。电话存为 (555) 229-3326，任务给的 555-229-3326 不是连续子串；本地号段 229-3326 可以稳定匹配。该 case 验证 decomposer 从功能语义推导检索策略，不依赖 skill 步骤模板。"
  },
  {
   "label": "WebArena shopping_admin task 204 — 最近已完成订单的商品名+价格：grid Purchase Date 选最新 + 钻取读全部明细行",
@@ -593,7 +593,7 @@
    "multi_variant_price_iterates",
    "membership_judgment_semantic"
   ],
-  "note": "回归 live 20260701_234527/778：改配置型商品变体价，机制修对后（skill：搜基础名→定位 Simple 变体→改 Price→Save）仍 score 0，因目标价凭空填 100.00（期望 64.88=现价75×0.865）。百分比调价的目标价依赖变体运行时现价，decompose 不能 upfront 定死/留空——价格步骤须写成「读该变体当前 Price → 按系数算 → 填」。skill 已强化此点，本 case 离线锁住 decompose 产出含读现价步骤。 【多变体链】router 判 cardinality=set(pin 在 resolution),decompose 须 foreach 遍历 size 28 的所有变体、body 内逐个 读现价→算→改→存(778 期望 3 次 save,单变体计划最多 1/3→0)。",
+  "note": "回归 live 20260701_234527/778：Product Workspace 功能说明声明 Simple 变体拥有自己的 Price，百分比变化依赖运行时现价。decompose 必须据此生成读现价→compute→持久化，而不能 upfront 猜值。多目标由 router cardinality=set 驱动 foreach；该 case 验证功能语义到通用 DSL 的推导，不依赖 skill。",
   "resolution": [
    {
     "mention": "size 28 Sahara leggings",
@@ -663,5 +663,49 @@
     "reason": "产品名可能含特殊符号/子串不稳定命中，按标准 exact→fuzzy 检索阶梯处理"
    }
   ]
+ },
+ {
+  "label": "配置型商品新增选项与指定组合（shopping_admin task-549）",
+  "goal": "Add a new size XXXL to green Minerva LumaTech V-Tee",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "knowledge_profile": "functional_only",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.1.13:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 4
+  },
+  "assertions": [
+   "shopping_admin_configurable_variant_two_phase_mutation"
+  ],
+  "resolution": [
+   {
+    "mention": "Minerva LumaTech V-Tee",
+    "role": "lookup",
+    "type": "product",
+    "match_mode": "approximate",
+    "search_key": "Minerva",
+    "cardinality": "single",
+    "selector": "",
+    "reason": "green 与 XXXL 是配置维度；Minerva 是父商品检索词"
+   },
+   {
+    "mention": "green",
+    "role": "value",
+    "type": "generic",
+    "match_mode": "exact",
+    "search_key": "green"
+   },
+   {
+    "mention": "XXXL",
+    "role": "value",
+    "type": "generic",
+    "match_mode": "exact",
+    "search_key": "XXXL"
+   }
+  ],
+  "note": "冷启动验证：不注入 _skill.md，只使用应用功能说明。颜色不进入父商品 Name；Size option 与父 Configurations 是有顺序的两个独立 mutation；配置向导内部 HOW 不展开为多个 DSL action。"
  }
 ]

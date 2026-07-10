@@ -1219,7 +1219,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # is a literal substring LIKE, so the full '555-229-3326' is never a contiguous
             # substring (the ') ' breaks it) and matches nothing by ANY control. The stable hit is
             # the local-number fragment '229-3326' via the top "Search by keyword" box (see
-            # knowledge _skill.md「按电话号查客户」). So the phone-lookup filter/action step must
+            # Customers functional knowledge). So the phone-lookup filter/action step must
             # (a) use keyword search, not the Phone column filter, and (b) search the local
             # fragment '229-3326', not the full '555-229-3326'.
             seq = _flatten_runs(program.statements)
@@ -1316,7 +1316,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # variants, (c) for each, RESOLVE TO THE PARENT CONFIGURABLE — strip the -SIZE-COLOR
             # suffix, keyword-search the base name in the Products grid, pick the Type=Configurable
             # row — and read Material there (primary/first selected value only). See memory
-            # webarena-185-material-multiselect-read and knowledge _skill.md "按库存数量筛选产品".
+            # webarena-185-material-multiselect-read and Products functional knowledge.
             # Accepts BOTH the agentic body_goal shape (preferred — per-row sub-goal decomposed at
             # runtime) AND the legacy pre-baked body shape. The 185 lineage of live failures is
             # encoded as guards: material must actually LAND per row (214011 DATA_VALIDATION_ERROR),
@@ -1601,7 +1601,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 fe for fe in foreaches
                 if not fe.body and any(
                     "grand" in str(ret).lower() and "total" in str(ret).lower()
-                    for ret in fe.returns
+                    for ret in (fe.row_fields or fe.returns)
                 )
             ]
             if not grid_collects:
@@ -1609,7 +1609,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "task 193 应用 foreach body=[] 从 Orders 网格直接采集 Grand Total (Purchased)，"
                     "让 collect_fn 自动翻页并产出 complete into 表；不能直接 data_query 当前 DOM "
                     "partial 表，也不能钻详情页。"
-                    f" foreaches={[(fe.target, fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
+                    f" foreaches={[(fe.target, fe.row_fields or fe.returns, len(fe.body), fe.into) for fe in foreaches]}"
                 )
             dqs = [r for r in _flatten_runs(program.statements) if r.kind == "data_query"]
             into_names = {
@@ -1875,7 +1875,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 )
         elif assertion == "most_recent_order_drills_and_reads_all_items":
             # WebArena task 204: product name + price (low to high) of the most-recent completed order.
-            # Robust shape (knowledge skill「最近/最旧某状态订单的商品明细」+ memory webarena-204-most-recent-order):
+            # Robust shape (Orders/Order Detail functional knowledge + memory webarena-204-most-recent-order):
             #   filter Status + Purchase Date sort → foreach collect [Action_url, Purchase Date]
             #   → data_query ORDER BY purchase_date_ts LIMIT 1 (pick the latest order's detail url)
             #   → URL-direct drill → SECOND foreach collect [Product, Price] (read ALL line items)
@@ -2319,6 +2319,96 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     f"covers_set 聚合 mutation 步不应带 returns（纯 mutate 静态收尾）：{[s.name for s in covers if s.returns]}"
                 )
+        elif assertion == "shopping_admin_configurable_variant_two_phase_mutation":
+            seq = _flatten_runs(program.statements)
+            texts = [
+                f"{run.name} {run.success_condition} {run.read_spec}".lower()
+                for run in seq
+            ]
+
+            bad_name_filters = [
+                run.name
+                for run, text in zip(seq, texts)
+                if run.kind == "filter"
+                and "green" in text
+                and "minerva" in text
+                and any(token in text for token in ("name", "名称", "产品名"))
+            ]
+            if bad_name_filters:
+                details.append(
+                    "颜色是变体维度，不能并入配置型父商品 Name 筛选："
+                    f"{bad_name_filters}"
+                )
+
+            attribute_mutation_indexes = [
+                index
+                for index, (run, text) in enumerate(zip(seq, texts))
+                if run.kind == "action"
+                and "xxxl" in text
+                and any(token in text for token in ("size", "attribute", "属性", "option", "选项"))
+                and any(token in text for token in ("保存", "持久化", "包含", "persist", "save"))
+            ]
+            config_mutation_indexes = [
+                index
+                for index, (run, text) in enumerate(zip(seq, texts))
+                if run.kind == "action"
+                and "xxxl" in text
+                and any(token in text for token in ("green", "绿色", "绿 色"))
+                and any(token in text for token in ("configuration", "matrix", "配置", "矩阵", "组合"))
+                and any(token in text for token in ("保存", "持久化", "包含", "persist", "save"))
+            ]
+            if not attribute_mutation_indexes:
+                details.append(
+                    "缺少独立的 Size option mutation：应先让 Size 属性选项集合持久化包含 XXXL。"
+                )
+            if not config_mutation_indexes:
+                details.append(
+                    "缺少父商品 Configurations mutation：应让 Green/XXXL 组合生成并持久化。"
+                )
+            if (
+                attribute_mutation_indexes
+                and config_mutation_indexes
+                and min(attribute_mutation_indexes) >= min(config_mutation_indexes)
+            ):
+                details.append("Size option mutation 必须先于父商品 Configurations mutation。")
+
+            parent_editor_indexes = [
+                index
+                for index, (run, text) in enumerate(zip(seq, texts))
+                if run.kind == "navigation"
+                and any(token in text for token in ("product edit", "product workspace", "商品编辑", "产品编辑", "父商品"))
+            ]
+            if (
+                attribute_mutation_indexes
+                and parent_editor_indexes
+                and min(parent_editor_indexes) < min(attribute_mutation_indexes)
+            ):
+                details.append(
+                    "资源阶段没有按依赖拓扑排序：必须先持久化 Size option，再进入父商品编辑阶段。"
+                )
+
+            first_attribute = min(attribute_mutation_indexes, default=-1)
+            config_stage_start = min(parent_editor_indexes, default=first_attribute)
+            config_related_actions = [
+                run.name
+                for index, (run, text) in enumerate(zip(seq, texts))
+                if index > config_stage_start
+                and run.kind == "action"
+                and any(token in text for token in ("configuration", "matrix", "green", "xxxl", "配置", "矩阵"))
+            ]
+            if len(config_related_actions) > 1:
+                details.append(
+                    "同一 Configurations 向导应是一个语义 mutation，展开/选择/保存由 Milestone 渐进执行；"
+                    f"当前拆成了 {config_related_actions}"
+                )
+
+            scope_text = " ".join(
+                f"{run.name} {run.success_condition} {getattr(run, 'sql', '')}".lower()
+                for run in seq
+            )
+            if "configurable product" not in scope_text and "配置型" not in scope_text:
+                details.append("父商品选择没有锁定 Type=Configurable Product。")
+
         elif assertion == "shopping_admin_review_count_writes_configurable_parent_short_description":
             # WebArena task-544 family (live 20260708_205937): the plan drifted into the product
             # edit page's own "Product Reviews" section and got stuck scrolling for it — reviews
@@ -2408,9 +2498,14 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
 def _load_case_knowledge(case: dict):
     platform = case.get("platform", "browser")
     app = case.get("knowledge_app") or case.get("site")
+    include_skills = case.get("knowledge_profile") == "with_skills"
     if app:
-        return load_knowledge_for_app(app, platform)
-    return auto_discover_knowledge(case["goal"], platform)
+        return load_knowledge_for_app(app, platform, include_skills=include_skills)
+    return auto_discover_knowledge(
+        case["goal"],
+        platform,
+        include_skills=include_skills,
+    )
 
 
 def _case_program(case: dict):
@@ -2429,7 +2524,7 @@ def _case_program(case: dict):
     program = decompose(
         case["goal"],
         png_bytes=png_bytes,
-        knowledge=k.navigation if k else "",
+        knowledge=k.decompose_context(case["goal"]) if k else "",
         current_url=case.get("current_url", ""),
         current_title=case.get("current_title", ""),
         current_site=case.get("current_site") or (k.app_name if k and case.get("use_knowledge_app_as_current_site") else ""),

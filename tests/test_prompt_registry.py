@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 
@@ -57,6 +58,25 @@ def test_render_rejects_raw_prompts():
         pass
     else:
         raise AssertionError("render() must refuse a raw prompt")
+
+
+def test_decomposer_contract_hides_runtime_architecture_terms():
+    """The decomposer sees its DSL surface, not downstream runtime class names."""
+    from gui_agent.core.orchestrator._decomposer.draft import _PlanDraft
+
+    prompt = load_prompt_text("task.orchestrator.decomposer")
+    schema = json.dumps(_PlanDraft.model_json_schema(), ensure_ascii=False)
+    forbidden = ("milestone", "checker", "planner", "replanner", "selector", "program")
+
+    for source_name, source in (("prompt", prompt), ("schema", schema)):
+        for term in forbidden:
+            assert not re.search(rf"\b{term}\b", source, flags=re.IGNORECASE), (
+                f"decomposer {source_name} leaks runtime term {term!r}"
+            )
+
+    for dsl_term in ("data_query", "body_goal", "covers_set"):
+        assert dsl_term in prompt
+        assert dsl_term in schema
 
 
 def test_prompt_eval_suites_point_to_existing_paths():

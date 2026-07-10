@@ -234,7 +234,7 @@ def _case_program(case: dict):
         remaining_plan=case.get("remaining_plan", ""),
         prior_experience=case.get("prior_experience", ""),
         corrective_directive=case.get("corrective_directive", ""),
-        knowledge=k.navigation if k else "",
+        knowledge=k.decompose_context(case["goal"]) if k else "",
         current_url=case.get("current_url", ""),
         current_title=case.get("current_title", ""),
         current_site=case.get("current_site")
