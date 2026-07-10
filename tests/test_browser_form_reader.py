@@ -4,10 +4,12 @@ import types
 
 from gui_agent.adapters.browser.form_reader import (
     form_controls_js,
+    normalize_form_control_snapshot,
     normalize_form_controls,
 )
 from gui_agent.adapters.browser.perception import BrowserPerception
-from gui_agent.core.schemas import Observation
+from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.supervisor.milestone.helpers import required_group_field_gaps
 
 
 def test_form_controls_js_is_serialized_expression():
@@ -93,6 +95,46 @@ def test_normalize_form_controls_keeps_section_toggle_affordance():
     }]
 
 
+def test_normalize_form_controls_keeps_repeated_row_field_association():
+    controls = normalize_form_controls({
+        "controls": [
+            {
+                "label": "Swatch",
+                "kind": "text_input",
+                "name": "swatchtext[value][option_1][0]",
+                "value": "",
+                "required": True,
+                "group_id": "manage-swatch:21",
+                "group_index": 21,
+                "group_field": "Admin",
+            },
+            {
+                "label": "Default Store View",
+                "kind": "text_input",
+                "name": "optiontext[value][option_1][0]",
+                "value": "XXXL",
+                "group_id": "manage-swatch:21",
+                "group_index": 21,
+                "group_field": "Default Store View",
+            },
+        ]
+    })
+
+    assert controls[0]["group_id"] == controls[1]["group_id"]
+    assert controls[0]["required"] is True
+    assert controls[0]["group_field"] == "Admin"
+    assert controls[1]["group_field"] == "Default Store View"
+
+    milestone = Milestone(
+        id="m-option",
+        name="添加选项 'XXXL' 并保存",
+        description="添加选项 'XXXL' 并保存",
+        success_condition="保存后的集合包含 'XXXL'",
+        kind="action",
+    )
+    assert required_group_field_gaps(controls, milestone) == ["Admin"]
+
+
 def test_normalize_form_controls_prioritizes_visible_rich_text_editor():
     raw_controls = [
         {
@@ -147,6 +189,15 @@ def test_browser_perception_reads_form_controls(tmp_path):
         def read_form_controls(self):
             return [{"label": "Status", "kind": "native_select"}]
 
+        def read_form_controls_meta(self):
+            return {
+                "total_rendered": 1,
+                "returned": 1,
+                "truncated": False,
+                "coverage": "complete",
+                "raw_limit_hit": False,
+            }
+
         def read_applied_filter_state(self):
             return {
                 "Product": "Olivia",
@@ -163,6 +214,7 @@ def test_browser_perception_reads_form_controls(tmp_path):
     ).observe()
 
     assert obs.form_controls == [{"label": "Status", "kind": "native_select"}]
+    assert obs.form_controls_meta["coverage"] == "complete"
     assert obs.applied_filters == {"Product": "Olivia"}
     assert obs.applied_filter_meta == {
         "source": "adapter_state",
@@ -187,3 +239,39 @@ def test_normalize_form_controls_reserves_slots_for_offscreen_controls():
     controls = normalize_form_controls({"controls": raw})
     assert len(controls) == MAX_CONTROLS
     assert "offscreen_target" in [c.get("label") for c in controls]
+
+
+def test_snapshot_keeps_bottom_repeated_row_atomic_and_reports_truncation():
+    raw: list[dict] = []
+    for row in range(20):
+        for field, value in (("Admin", ""), ("Label", f"value-{row}"), ("Store", "")):
+            raw.append({
+                "kind": "text_input",
+                "label": field,
+                "value": value,
+                "group_id": f"collection:{row}",
+                "group_index": row,
+                "group_field": field,
+                "in_viewport": row >= 17,
+            })
+
+    controls, meta = normalize_form_control_snapshot({
+        "controls": raw,
+        "total_rendered": len(raw),
+        "raw_limit_hit": False,
+    })
+
+    bottom = [item for item in controls if item.get("group_id") == "collection:19"]
+    assert {item.get("group_field") for item in bottom} == {"Admin", "Label", "Store"}
+    from gui_agent.context.runtime import format_form_controls_text
+    rendered = format_form_controls_text(controls, meta)
+    assert "collection:19" in rendered
+    assert 'field="Admin"' in rendered
+    assert meta == {
+        "total_rendered": 60,
+        # The cap is not allowed to split a three-field row, so one slot remains unused.
+        "returned": 39,
+        "truncated": True,
+        "coverage": "partial",
+        "raw_limit_hit": False,
+    }

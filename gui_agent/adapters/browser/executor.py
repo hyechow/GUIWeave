@@ -190,7 +190,49 @@ class BrowserExecutor(VisionExecutor):
         # Stash the action so _tap can record its DOM snap on it (the report / runtime visualizer
         # read action.snap to draw original→snapped, the same as iphone YOLO/OCR).
         self._cur_action = decision.action
+        self._prepare_scroll_anchor(decision.action)
         return super().execute(decision, app_name, png_bytes, is_home_screen)
+
+    def execute_scroll(self, action, *, ticks: int = 0, delta_px: int = 0) -> None:
+        """Resolve omitted browser wheel coordinates before the cached-scroll path dispatches."""
+        self._prepare_scroll_anchor(action)
+        super().execute_scroll(action, ticks=ticks, delta_px=delta_px)
+
+    def _prepare_scroll_anchor(self, action) -> None:
+        """Put coordinate-free region/page scrolling on a non-control DOM surface.
+
+        Explicit x/y means the policy intentionally targeted a local scroll container and is left
+        untouched. Coordinate-free scrolling is page/region scrolling; using the viewport center
+        blindly can land on a form control that consumes the wheel without moving the page.
+        """
+        if getattr(action, "action_type", "") != "scroll":
+            return
+        if action.x is not None and action.y is not None:
+            return
+        client = self._client()
+        resolver = getattr(client, "safe_scroll_anchor", None)
+        if not callable(resolver):
+            return
+        try:
+            width, height = client.viewport_size
+            preferred_x = width * 0.5
+            preferred_y = height * 0.5
+            resolved = resolver(
+                preferred_x,
+                preferred_y,
+                getattr(action, "target_area", "main_content") or "main_content",
+            )
+            if resolved is None:
+                return
+            px, py, info = resolved
+            action.x = max(0.0, min(1000.0, px / width * 1000.0))
+            action.y = max(0.0, min(1000.0, py / height * 1000.0))
+            print(
+                f"  [ScrollAnchor] 视口中心 → 非控件落点 ({px:.0f},{py:.0f})"
+                + (f" [{info}]" if info else "")
+            )
+        except Exception:  # noqa: BLE001 — fallback to the neutral center anchor
+            return
 
     def _tap(self, px: float, py: float) -> bool:
         """DOM-snap the click point to the clickable element under it, then click. The DOM

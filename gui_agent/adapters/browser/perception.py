@@ -140,8 +140,11 @@ class BrowserPerception:
             if hasattr(client, "read_viewport"):
                 viewport = client.read_viewport()
         form_controls = []
+        form_controls_meta = None
         if client is not None and hasattr(client, "read_form_controls"):
             form_controls = client.read_form_controls()
+            if hasattr(client, "read_form_controls_meta"):
+                form_controls_meta = client.read_form_controls_meta()
         semantic_tree = None
         if client is not None and hasattr(client, "read_semantic_tree"):
             semantic_tree = client.read_semantic_tree() or None
@@ -156,6 +159,7 @@ class BrowserPerception:
             url=url or None, title=title or None, dom_state=dom_state,
             tables=tables or None,
             form_controls=form_controls or None,
+            form_controls_meta=form_controls_meta,
             viewport=viewport or None,
             semantic_tree=semantic_tree,
             applied_filters=applied_filters or None,

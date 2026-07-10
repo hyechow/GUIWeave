@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-MAX_CONTROLS = 25
+MAX_CONTROLS = 40
 # Reserved slots for rendered-but-off-screen controls when the total exceeds MAX_CONTROLS, so a
 # large in-viewport set can't fully evict off-viewport fields the planner needs to scroll toward.
 OFF_VIEWPORT_RESERVE = 8
@@ -104,6 +104,40 @@ def form_controls_js() -> str:
     candidates.sort((a, b) => b.r.bottom - a.r.bottom);
     return candidates[0] ? candidates[0].text : '';
   };
+  const repeatedGroupOf = (el) => {
+    // Preserve field association inside repeated form collections. Flat control text cannot tell
+    // whether a value belongs to the intended column of an option/line-item row. This is generic
+    // DOM structure (table/grid/field-option), not an application vocabulary.
+    const row = el.closest('tr,[role="row"],[data-role="row"],.admin__field-option');
+    if (!row) return null;
+    const owner = row.closest('table,[role="grid"],fieldset,.admin__fieldset');
+    const siblings = row.parentElement ? Array.from(row.parentElement.children) : [];
+    const index = Math.max(0, siblings.indexOf(row));
+    const ownerKey = clean(
+      (owner && (owner.id || owner.getAttribute('data-index') || owner.getAttribute('data-role')))
+      || (row.parentElement && row.parentElement.id)
+      || 'collection'
+    );
+    const field = gridHeaderLabelOf(el) || labelOf(el);
+    return {
+      id: cut(`${ownerKey}:${index}`, 80),
+      index,
+      field: cut(field, 80),
+    };
+  };
+  const requiredOf = (el) => {
+    const own = clean(el.getAttribute('aria-required')).toLowerCase();
+    const dataValidate = clean(el.getAttribute('data-validate')).toLowerCase();
+    const cls = clean(el.className || '').toLowerCase();
+    const holder = el.closest('._required,[aria-required="true"],[data-validate*="required"],.required-entry');
+    return Boolean(
+      el.required
+      || own === 'true'
+      || dataValidate.includes('required')
+      || cls.includes('required-entry')
+      || holder
+    );
+  };
   const kindOf = (el) => {
     const tag = el.tagName;
     const role = clean(el.getAttribute('role')).toLowerCase();
@@ -131,6 +165,9 @@ def form_controls_js() -> str:
   };
   const controls = [];
   const sectionControls = [];
+  const rawControlLimit = 500;
+  let totalRendered = 0;
+  let rawLimitHit = false;
   const seenElements = new Set();
   const seenKeys = new Set();
   const pushControl = (item, bucket = controls) => {
@@ -227,6 +264,11 @@ def form_controls_js() -> str:
     seenElements.add(el);
     const text = cut(el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || el.textContent, 80);
     if (!text) continue;
+    totalRendered += 1;
+    if (sectionControls.length + controls.length >= rawControlLimit) {
+      rawLimitHit = true;
+      continue;
+    }
     pushControl({
       label: text,
       kind: 'section_toggle',
@@ -237,13 +279,17 @@ def form_controls_js() -> str:
       in_viewport: inViewport(el),
       viewport_pos: viewportPos(el),
     }, sectionControls);
-    if (sectionControls.length >= 12) break;
   }
   const selector = 'input,select,textarea,[role=combobox],[role=listbox]';
   for (const el of Array.from(document.querySelectorAll(selector))) {
     if (seenElements.has(el) || !rendered(el)) continue;
     seenElements.add(el);
     if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'hidden') continue;
+    totalRendered += 1;
+    if (sectionControls.length + controls.length >= rawControlLimit) {
+      rawLimitHit = true;
+      continue;
+    }
     const kind = kindOf(el);
     const isFilter = el.id.includes('_filter_')
       || !!el.closest('[data-role="filter-form"]')
@@ -263,8 +309,15 @@ def form_controls_js() -> str:
       in_viewport: inViewport(el),
       viewport_pos: viewportPos(el),
     };
+    const repeatedGroup = repeatedGroupOf(el);
+    if (repeatedGroup) {
+      item.group_id = repeatedGroup.id;
+      item.group_index = repeatedGroup.index;
+      item.group_field = repeatedGroup.field;
+    }
     if (isFilter) item.is_filter = true;
     if (isDatepicker) item.is_datepicker = true;
+    if (requiredOf(el)) item.required = true;
     if (el.tagName === 'SELECT') {
       const opts = Array.from(el.options || []);
       // 取「全部已选项」(multiple 时可能多选)而非仅第一个选中项,join 成可读文本;
@@ -288,7 +341,6 @@ def form_controls_js() -> str:
       item.value = cut(el.value || el.textContent || '', 80);
     }
     pushControl(item);
-    if (controls.length >= 40) break;
   }
   const richSelector = [
     '[contenteditable="true"]',
@@ -303,6 +355,11 @@ def form_controls_js() -> str:
     seenElements.add(el);
     const label = richEditorLabelOf(el);
     if (!clean(label)) continue;
+    totalRendered += 1;
+    if (sectionControls.length + controls.length >= rawControlLimit) {
+      rawLimitHit = true;
+      continue;
+    }
     pushControl({
       label: cut(label, 80),
       kind: 'rich_textarea',
@@ -314,18 +371,34 @@ def form_controls_js() -> str:
       in_viewport: inViewport(el),
       viewport_pos: viewportPos(el),
     });
-    if (controls.length >= 60) break;
   }
-  return JSON.stringify({controls: sectionControls.concat(controls)});
+  return JSON.stringify({
+    controls: sectionControls.concat(controls),
+    total_rendered: totalRendered,
+    raw_limit_hit: rawLimitHit,
+  });
 })()
 """
 
 
-def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
-    """Normalize raw JS form-control snapshots into compact dictionaries."""
+def normalize_form_control_snapshot(
+    raw: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Normalize controls and report whether the returned inventory is complete.
+
+    Repeated collection rows are selection units: once a row is chosen, every control from that
+    row is retained.  This prevents a cap boundary from returning only the value column while
+    dropping the sibling field that makes the row valid or invalid.
+    """
     controls = raw.get("controls") if isinstance(raw, dict) else raw
     if not isinstance(controls, list):
-        return []
+        return [], {
+            "total_rendered": 0,
+            "returned": 0,
+            "truncated": False,
+            "coverage": "unknown",
+            "raw_limit_hit": False,
+        }
     ranked: list[tuple[int, int, dict[str, Any]]] = []
     for index, item in enumerate(controls):
         if not isinstance(item, dict):
@@ -361,6 +434,16 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
             norm["is_filter"] = True
         if item.get("is_datepicker") is True:
             norm["is_datepicker"] = True
+        if item.get("required") is True:
+            norm["required"] = True
+        group_id = _text(item.get("group_id"), MAX_TEXT)
+        group_field = _text(item.get("group_field"), MAX_TEXT)
+        if group_id:
+            norm["group_id"] = group_id
+            if isinstance(item.get("group_index"), (int, float)):
+                norm["group_index"] = int(item["group_index"])
+            if group_field:
+                norm["group_field"] = group_field
         rect = item.get("rect")
         if isinstance(rect, dict):
             norm["rect"] = {
@@ -388,18 +471,78 @@ def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
         else:
             priority = 2
         ranked.append((priority, index, norm))
-    ranked.sort(key=lambda row: (row[0], row[1]))
-    if len(ranked) > MAX_CONTROLS:
-        # Guarantee off-viewport controls (priority 3) a reserved share of the cap: a large
-        # in-viewport set must not fully evict rendered-but-off-screen fields, or the planner can't
-        # scroll to a target that scrolled off-screen (the 702/703 regression this off-viewport
-        # reporting exists to fix). section_toggle/rich_textarea are priority 0/1, never in this pool.
-        off_view = [row for row in ranked if row[0] == 3]
-        if off_view:
-            off_keep = off_view[:OFF_VIEWPORT_RESERVE]
-            on_keep = [row for row in ranked if row[0] != 3][:MAX_CONTROLS - len(off_keep)]
-            ranked = sorted(on_keep + off_keep, key=lambda row: (row[0], row[1]))
-    return [norm for _, _, norm in ranked[:MAX_CONTROLS]]
+    units: dict[str, list[tuple[int, int, dict[str, Any]]]] = {}
+    for row in ranked:
+        norm = row[2]
+        group_id = str(norm.get("group_id") or "")
+        key = f"group:{group_id}" if group_id else f"control:{row[1]}"
+        units.setdefault(key, []).append(row)
+
+    def unit_rank(unit: list[tuple[int, int, dict[str, Any]]]) -> tuple[int, int]:
+        first_index = min(item[1] for item in unit)
+        kinds = {str(item[2].get("kind") or "") for item in unit}
+        focused = any(item[2].get("focused") is True for item in unit)
+        grouped = any(item[2].get("group_id") for item in unit)
+        in_view = any(item[2].get("in_viewport") is not False for item in unit)
+        if "section_toggle" in kinds:
+            return (0, first_index)
+        if "rich_textarea" in kinds:
+            return (1, first_index)
+        if focused:
+            return (2, first_index)
+        if grouped and in_view:
+            # Bottom-most rendered rows are commonly the newly-added/incomplete rows.  Prefer
+            # them over older rows while retaining the whole row atomically.
+            return (3, -first_index)
+        if in_view:
+            return (4, first_index)
+        return (5, first_index)
+
+    ordered_units = sorted(units.values(), key=unit_rank)
+    selected: list[tuple[int, int, dict[str, Any]]] = []
+    deferred_offscreen: list[list[tuple[int, int, dict[str, Any]]]] = []
+    has_offscreen = any(unit_rank(unit)[0] == 5 for unit in ordered_units)
+    on_view_limit = MAX_CONTROLS - (OFF_VIEWPORT_RESERVE if has_offscreen else 0)
+    for unit in ordered_units:
+        if unit_rank(unit)[0] == 5:
+            deferred_offscreen.append(unit)
+            continue
+        if len(selected) + len(unit) <= on_view_limit:
+            selected.extend(unit)
+    offscreen_budget = min(OFF_VIEWPORT_RESERVE, MAX_CONTROLS - len(selected))
+    for unit in deferred_offscreen:
+        if len(unit) <= offscreen_budget:
+            selected.extend(unit)
+            offscreen_budget -= len(unit)
+    # Fill any remaining room from omitted units without splitting a repeated group.
+    selected_ids = {id(item) for item in selected}
+    for unit in ordered_units:
+        if any(id(item) in selected_ids for item in unit):
+            continue
+        if len(selected) + len(unit) <= MAX_CONTROLS:
+            selected.extend(unit)
+            selected_ids.update(id(item) for item in unit)
+
+    selected.sort(key=lambda row: row[1])
+    normalized = [norm for _, _, norm in selected]
+    raw_total = raw.get("total_rendered") if isinstance(raw, dict) else None
+    total_rendered = int(raw_total) if isinstance(raw_total, (int, float)) else len(ranked)
+    raw_limit_hit = bool(isinstance(raw, dict) and raw.get("raw_limit_hit"))
+    truncated = raw_limit_hit or len(normalized) < total_rendered
+    metadata = {
+        "total_rendered": total_rendered,
+        "returned": len(normalized),
+        "truncated": truncated,
+        "coverage": "partial" if truncated else "complete",
+        "raw_limit_hit": raw_limit_hit,
+    }
+    return normalized, metadata
+
+
+def normalize_form_controls(raw: Any) -> list[dict[str, Any]]:
+    """Backward-compatible controls-only view of :func:`normalize_form_control_snapshot`."""
+    controls, _metadata = normalize_form_control_snapshot(raw)
+    return controls
 
 
 def _text(value: Any, limit: int) -> str:

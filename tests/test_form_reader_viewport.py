@@ -32,3 +32,35 @@ def test_context_block_annotates_off_viewport_control():
     text = format_form_controls_text(controls)
     assert "Rule Name" in text
     assert "需先滚动到视口" in text  # planner is told to scroll to it, not treat it as absent
+
+
+def test_context_block_keeps_same_row_fields_distinct():
+    controls = normalize_form_controls({"controls": [
+        {
+            "kind": "text_input",
+            "label": "Swatch",
+            "name": "swatch_value",
+            "value": "",
+            "required": True,
+            "group_id": "options:4",
+            "group_index": 4,
+            "group_field": "Admin Swatch",
+        },
+        {
+            "kind": "text_input",
+            "label": "Label",
+            "name": "option_label",
+            "value": "XXXL",
+            "group_id": "options:4",
+            "group_index": 4,
+            "group_field": "Store View Label",
+        },
+    ]})
+
+    text = format_form_controls_text(controls)
+
+    assert 'field="Admin Swatch"' in text
+    assert "required=true" in text
+    assert 'field="Store View Label"' in text
+    assert 'current="XXXL"' in text
+    assert "另一个字段" in text

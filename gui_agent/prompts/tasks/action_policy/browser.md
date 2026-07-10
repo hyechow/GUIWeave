@@ -24,7 +24,8 @@ version: 1
 - press_enter：提交搜索或确认当前输入。单输入框搜索通常用 press_enter；如果页面有明确的「保存/提交/确定」按钮且指令要求点击它，则使用 tap。
 - clear_text：清空当前聚焦输入框的内容，无需坐标。
 - scroll：滚动页面以显示更多内容。填写 direction（down 看下方、up 看上方、right 看右侧、left 看左侧）、amount（small/medium/large）；
-  局部滚动容器需填写 x/y 作为滚动锚点，落在要滚动的区域内。
+  普通整页/区域滚动不要填写 x/y，执行层会在 target_area 内选择不会被控件消费 wheel 的非交互落点；
+  只有明确要滚动局部容器时才填写 x/y，且滚动锚点必须落在该容器的空白表面，不能落在 input/select/textarea/button 等控件上。
 - drag：拖动滑块、调整控件、拖拽元素。填写起点 x/y。
 - navigate：直接让浏览器跳转到某个网址。只要指令意图是「打开/进入/前往某网站」「访问/在地址栏输入某网址」
   「导航到 X」，且你知道目标网址（如 feishu.cn），就一律用 navigate、填 url（可省略 https://）、无需坐标。

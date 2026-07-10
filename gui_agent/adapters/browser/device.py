@@ -568,7 +568,7 @@ class PlaywrightDevice:
         """Return visible form controls with DOM type/value/option metadata."""
         from gui_agent.adapters.browser.form_reader import (
             form_controls_js,
-            normalize_form_controls,
+            normalize_form_control_snapshot,
         )
 
         try:
@@ -579,9 +579,16 @@ class PlaywrightDevice:
             )
             val = (res.get("result", {}) or {}).get("value")
             raw = json.loads(val) if isinstance(val, str) else val
-            return normalize_form_controls(raw)
+            controls, metadata = normalize_form_control_snapshot(raw)
+            self._last_form_controls_meta = metadata
+            return controls
         except Exception:
+            self._last_form_controls_meta = None
             return []
+
+    def read_form_controls_meta(self) -> dict | None:
+        """Return coverage metadata from the last form-control snapshot."""
+        return getattr(self, "_last_form_controls_meta", None)
 
     def read_semantic_tree(self) -> list[dict]:
         """Return a pruned flat AX-tree snapshot of the current page.
@@ -992,6 +999,77 @@ class PlaywrightDevice:
         except Exception as exc:  # noqa: BLE001
             return f"failed: {exc}"
         return "OK select_all"
+
+    def safe_scroll_anchor(
+        self,
+        x: float,
+        y: float,
+        target_area: str = "main_content",
+    ) -> tuple[float, float, str] | None:
+        """Find a non-control wheel anchor near the requested browser region.
+
+        Wheel events are delivered to the element under the pointer. If a default point lands on
+        a select, textarea, listbox, or another control, that control can consume the wheel while
+        the page remains fixed. This read-only DOM probe chooses a visible non-control point.
+        """
+        self._follow_active_tab()
+        page = self._require_page()
+        try:
+            result = page.evaluate(
+                """({preferredX, preferredY, area}) => {
+                  const ranges = {
+                    main_content: [0.18, 0.94, 0.12, 0.88],
+                    left_panel: [0.02, 0.45, 0.12, 0.88],
+                    right_panel: [0.55, 0.98, 0.12, 0.88],
+                    top_content: [0.10, 0.90, 0.05, 0.48],
+                    bottom_content: [0.10, 0.90, 0.52, 0.95],
+                  };
+                  const [x0, x1, y0, y1] = ranges[area] || ranges.main_content;
+                  const unsafe = [
+                    'a', 'button', 'input', 'textarea', 'select', 'option',
+                    '[contenteditable="true"]', '[draggable="true"]',
+                    '[role="button"]', '[role="checkbox"]', '[role="combobox"]',
+                    '[role="listbox"]', '[role="menu"]', '[role="menuitem"]',
+                    '[role="option"]', '[role="radio"]', '[role="scrollbar"]',
+                    '[role="slider"]', '[role="spinbutton"]', '[role="switch"]',
+                    '[role="tab"]', '[role="textbox"]'
+                  ].join(',');
+                  const candidates = [[preferredX, preferredY]];
+                  for (const yf of [0.5, 0.35, 0.65, 0.2, 0.8]) {
+                    for (const xf of [0.82, 0.68, 0.54, 0.40, 0.26]) {
+                      const px = innerWidth * (x0 + (x1 - x0) * xf);
+                      const py = innerHeight * (y0 + (y1 - y0) * yf);
+                      candidates.push([px, py]);
+                    }
+                  }
+                  let best = null;
+                  for (const [px, py] of candidates) {
+                    const el = document.elementFromPoint(px, py);
+                    if (!el || el.closest(unsafe)) continue;
+                    const style = getComputedStyle(el);
+                    if (style.visibility === 'hidden' || style.display === 'none') continue;
+                    const score = Math.hypot(px - preferredX, py - preferredY);
+                    if (!best || score < best.score) {
+                      best = {x: Math.round(px), y: Math.round(py),
+                              tag: (el.tagName || '').toLowerCase(), score};
+                    }
+                  }
+                  return best;
+                }""",
+                {
+                    "preferredX": float(x),
+                    "preferredY": float(y),
+                    "area": target_area or "main_content",
+                },
+            )
+        except Exception:
+            return None
+        if not isinstance(result, dict):
+            return None
+        try:
+            return float(result["x"]), float(result["y"]), str(result.get("tag") or "")
+        except (KeyError, TypeError, ValueError):
+            return None
 
     def scroll(
         self,
