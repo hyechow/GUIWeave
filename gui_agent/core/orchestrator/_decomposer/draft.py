@@ -184,7 +184,9 @@ class _PlanDraft(BaseModel):
         description=(
             "先列出任务涉及的持久化资源、各资源的所有者类型、明确的资源依赖，并拓扑排序完整资源阶段；"
             "再分析要到哪些页、做什么操作、读什么结果、是否需要条件分支。若采集所有者判别字段，必须在"
-            "选唯一目标的 member_desc、if 条件或 data_query WHERE 中实际消费，最后再写 steps。"
+            "选唯一目标的 member_desc、if 条件或 data_query WHERE 中实际消费。向既有 owner 的集合增加"
+            "member 时，先用 navigation/filter 定位并打开既有 owner，再执行成员集合 mutation；不得误建"
+            "一个同名 owner。最后再写 steps。"
         ),
     )
     goal: str = Field(default="", description="任务一句话描述")

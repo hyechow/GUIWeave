@@ -2361,6 +2361,38 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     "缺少独立的 Size option mutation：应先让 Size 属性选项集合持久化包含 XXXL。"
                 )
+            else:
+                first_attribute = min(attribute_mutation_indexes)
+                owner_navigation = [
+                    run
+                    for index, (run, text) in enumerate(zip(seq, texts))
+                    if index < first_attribute
+                    and run.kind in {"navigation", "filter"}
+                    and "size" in text
+                    and any(token in text for token in ("attribute", "属性"))
+                    and any(
+                        token in text
+                        for token in (
+                            "既有", "现有", "打开", "定位", "编辑", "attribute code",
+                        )
+                    )
+                ]
+                if not owner_navigation:
+                    details.append(
+                        "Size option mutation 前没有定位并打开既有 Size attribute owner；"
+                        "在属性列表页直接写『创建 Size 选项』会误点 Add New Attribute、创建重复属性。"
+                    )
+                attribute_run = seq[first_attribute]
+                terminal = (attribute_run.success_condition or "").lower()
+                if not (
+                    "xxxl" in terminal
+                    and any(token in terminal for token in ("option", "选项", "values", "swatch"))
+                    and ("size" in terminal or owner_navigation)
+                ):
+                    details.append(
+                        "Size option mutation 的 success_condition 没有验收 member=XXXL，且前序也没有"
+                        "锁定 owner=Size；泛化成『动作有响应/status』会让保存了错误属性也通过验收。"
+                    )
             if not config_mutation_indexes:
                 details.append(
                     "缺少父商品 Configurations mutation：应让 Green/XXXL 组合生成并持久化。"
@@ -2408,6 +2440,19 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             )
             if "configurable product" not in scope_text and "配置型" not in scope_text:
                 details.append("父商品选择没有锁定 Type=Configurable Product。")
+            ambiguous_parent_queries = [
+                run.name
+                for run, text in zip(seq, texts)
+                if run.kind == "data_query"
+                and any(token in text for token in ("configurable product", "配置型", "父商品"))
+                and re.search(r"\blimit\s+1\b", getattr(run, "sql", "") or "", flags=re.I)
+                and not re.search(r"\border\s+by\b", getattr(run, "sql", "") or "", flags=re.I)
+            ]
+            if ambiguous_parent_queries:
+                details.append(
+                    "父商品入口查询用裸 LIMIT 1 隐藏多候选歧义；应返回 match_count，"
+                    f"仅在唯一时使用 URL：{ambiguous_parent_queries}"
+                )
 
         elif assertion == "shopping_admin_review_count_writes_configurable_parent_short_description":
             # WebArena task-544 family (live 20260708_205937): the plan drifted into the product

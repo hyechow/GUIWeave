@@ -27,9 +27,10 @@ version: 1
 - op="run"：声明一个命令或查询 primitive。
     · 粒度 = 到达某页 / 完成一个可持久化的业务状态变更 / 得到一个动作结果——**不是整个任务，也不是单次点击**；多步导航合并成一个 run。同一资源编辑器内为完成一次状态变更所需的展开、选择、填写、继续、提交等 UI 手势属于该 run 的运行时 HOW，不要在初始程序里按手势拆成多个 action。
     · **按资源依赖规划 mutation**：写 steps 之前，先从目标、应用功能说明和当前观察中列出本任务要改变的持久化资源、每个资源的所有者类型，以及资源间的前置依赖；再按依赖做拓扑排序，最后才为每个资源选择页面和导航。若目标资源会消费另一个必须先存在/先持久化的资源或选项，整个前置资源阶段（到达→修改→保存）必须排在进入目标资源编辑阶段之前；不能先打开消费者，再离开补依赖后返回。没有明确知识或观察依据时，不得臆造额外前置资源。
+    · **向既有 owner 的集合添加 member，先锁 owner 再 mutation**：当目标是给一个已经存在的容器/定义/记录增加子项、选项或成员，而当前入口同时提供“新建 owner”和“编辑既有 owner”两类能力时，必须先用独立 navigation/filter 明确定位并打开既有 owner，再写一条 action 持久化其成员集合。navigation 的 name/SC 要写 owner 的稳定身份；action 的 name/SC 要同时写 owner 身份和目标 member。禁止把“给 owner X 新增 member V”含糊写成“创建 X 的 V”，否则执行层可能误点“新建 X”并创建重复 owner。只有用户目标明确要求创建 owner 本身时才走新建 owner 路线。
     · **一个持久化边界只写一个 action**：每个独立资源的最终 mutation 用一条 action 表达，name 写期望的业务状态变更，success_condition 写保存后的持久化终态。展开区域、打开向导、选择值、继续、生成、点击保存等都是该 interactive run 内部的执行细节，不能各自变成 action。纯粹进入某列表、详情、编辑器或管理页属于 navigation，不得因为需要点击入口就标 action。
-    · **期望状态 mutation 保持幂等**：当目标是“集合包含 V / 字段等于 V / 对象不存在”等可直接描述的终态，steps 只写一条确保该终态并持久化的 action。不要先造 `has_v`/`save_status` returns 再用 if 决定是否执行；当前是否已满足、动作是否发出、保存后是否生效由执行层按运行时证据处理。只有任务后续控制流或最终答案确实需要某个结果值时才声明 returns。
-    · **按能力所有者消歧**：若功能说明表明某能力/集合只属于特定父级、容器或记录类型，而同名检索会同时命中父子/多种类型，候选采集必须包含 type/kind/层级等可用判别字段，并在打开前选出唯一的能力所有者；不得按同名结果任取第一条。把判别字段列进 row_fields 但不在后续 `member_desc`、`if` 条件或 `data_query WHERE` 中消费，等于没有消歧；最终选入口的谓词必须实际约束该字段。
+    · **期望状态 mutation 保持幂等**：当目标是“集合包含 V / 字段等于 V / 对象不存在”等可直接描述的终态，steps 只写一条确保该终态并持久化的 action。不要先造 `has_v`/`save_status` returns 再用 if 决定是否执行；也不要读取整个 options/members 集合后用 compute/list comprehension 算 `option_exists`。当前是否已满足、动作是否发出、保存后是否生效由 interactive Run 按实时页面证据处理。只有任务后续控制流或最终答案确实需要某个结果值时才声明 returns；没有后续消费者的 action 禁止声明 var/returns/read_spec。
+    · **按能力所有者消歧**：若功能说明表明某能力/集合只属于特定父级、容器或记录类型，而同名检索会同时命中父子/多种类型，候选采集必须包含 type/kind/层级等可用判别字段，并在打开前选出唯一的能力所有者；不得按同名结果任取第一条。把判别字段列进 row_fields 但不在后续 `member_desc`、`if` 条件或 `data_query WHERE` 中消费，等于没有消歧；最终选入口的谓词必须实际约束该字段。**`LIMIT 1` 只能实现“任取一行”，不能证明唯一**：当查询结果将作为单个 mutation owner 的入口时，不得用裸 `LIMIT 1` 隐藏歧义；查询应返回 `COUNT(*) AS match_count`，仅在 count=1 时返回/使用 URL，0 条或多条走显式分支或类型化失败。只有任务语义本来就是按明确排序取 top-1 时，才可用 `ORDER BY ... LIMIT 1`。
     · name：该 interactive run 的一句话语义指令。
     · run_kind：navigation（到达/打开某页面，或在当前页滚动/切换 tab/展开区域以定位目标，不改业务状态；**凡 name 含 URL 模板如 `{q[url]}`、`{row[detail_url]}` 的打开/到达步，一律 navigation——browser 运行时可确定性直达，不走视觉点击，但它仍改变页面，不是 read/data_query**）| filter（设搜索/筛选条件）| action（执行一次改变业务状态的操作：提交/发送/创建/删除/设置/保存）| read（纯当前帧读取；不要把普通动作后的读取拆成独立 read）| data_query（非 UI 数据处理：对当前已采集/已渲染的结构化表格执行只读 SQL）。
     · success_condition：完成后界面应处于的【唯一可截图确认】终态——写终态不写增量；action 类通常写操作生效后的可见结果（成功提示/结果页），不是「按钮可见」「已聚焦」。**若本步带 returns 来判读结果值，它只验收“动作已发出且界面有响应/进入结果态”，不要在 success_condition 里重复判具体结果值；具体取值由本步完成帧上的结构化返回值读取判定。若后面紧跟的是 data_query，不适用这个例外：data_query 只分析当前结构化数据，前一 UI 步仍必须把筛选/搜索/排序/范围等数据源状态验收到位。** **⚠️ filter（设筛选/搜索）类 step 的 success_condition 只写【筛选控件自身的终态】——可见的已应用筛选标记（active filters）、控件值、结果计数或列表已刷新；这是“筛选是否已生效”的权威信号，由筛选控件状态决定。绝不要在 filter 的 SC 里写“列表显示满足条件的行/产品”这类要求逐行复核行内容的措辞（如「显示库存为 3 的产品」「列表只剩 X 的记录」）：行/单元格里常有与被筛列同名或相邻的展示列（例如“可销售/已预留/可用”量是库存量的派生列，与被筛的库存列是不同列），这会让验收误判、把一个已正确生效的筛选反复清除重设而打转。筛对了 = active filters 等于任务要求的筛选集，不靠数行。** 搜索框/keyword box 这类 free-text search 的 filter step，name 必须写成“输入/填入 X 并提交搜索”（按 Enter、点击搜索图标/放大镜，或按应用知识指定的搜索按钮）；只写“填入 X”或“搜索 X”不够，运行时可能只改了输入框 current 值而没有应用筛选。
@@ -108,15 +109,17 @@ interactive run 不是单次点击、也不是整段任务；派生计算切给 
 只输出与任务相关的步骤，不加多余前置（已在工作区就别加「打开网站」）。**忠于目标、别臆造实体**：目标要操作/选择/处理某实体（某条记录/对象/条目…）时默认它已存在——用已知名称或 read 选现有再引用（规则10），别补「新建/创建/配置」前置；只有目标动词本身就是新建/创建/添加时才建 create 步。先在 reasoning 里想清楚：要到哪些页、做什么操作、读什么结果、关键动作做完怎么确认、是否需要分支，再写 steps。
 
 示例（功能依赖决定资源阶段；不是站点工作流）——
-应用功能说明：配置集合 C 由 `container` 类型记录持有，只能消费注册表 R 中已经持久化的选项。目标要求把新选项 V 加入 C。因此先完成 R 的独立 mutation，再定位唯一 container 所有者，最后用一条 action 完成 C 的 mutation；打开编辑器是 navigation，向导手势不展开成 action。
-{"reasoning":"持久化资源有注册表 R 和配置集合 C；C 依赖 R[V] 已存在，所以阶段顺序是 R→C。C 的能力所有者类型是 container，同名候选必须按 kind 消歧。每个资源只有一个持久化 action。","goal":"把新选项 V 加入实体 E 的配置集合 C","steps":[
- {"op":"run","run_kind":"navigation","name":"进入注册表 R 的选项编辑页","success_condition":"页面显示 R 的选项集合"},
- {"op":"run","run_kind":"action","name":"将注册表 R 的选项集合持久化包含 V","success_condition":"保存后的 R 选项集合包含 V"},
+应用功能说明：配置集合 C 由 `container` 类型记录持有，只能消费既有注册表 owner R 中已经持久化的选项。目标要求把新选项 V 加入 C。因此先定位并打开既有 R（不能新建另一份 R），完成 R 的独立 mutation，再定位唯一 container 所有者，最后用一条 action 完成 C 的 mutation；打开编辑器是 navigation，向导手势不展开成 action。
+{"reasoning":"持久化资源有既有注册表 owner R 和配置集合 C；C 依赖 R[V] 已存在，所以阶段顺序是 locate R→mutate R→locate C owner→mutate C。C 的能力所有者类型是 container，同名候选必须按 kind 消歧。每个资源只有一个持久化 action。","goal":"把新选项 V 加入实体 E 的配置集合 C","steps":[
+ {"op":"run","run_kind":"navigation","name":"在注册表列表定位并打开既有 owner R 的选项编辑页","success_condition":"页面显示稳定身份为 R 的既有 owner 及其选项集合"},
+ {"op":"run","run_kind":"action","name":"将既有 owner R 的选项集合持久化包含 V","success_condition":"保存后的 owner R 选项集合包含 V"},
  {"op":"run","run_kind":"navigation","name":"进入实体列表页","success_condition":"页面显示实体列表和筛选控件"},
  {"op":"foreach","loop_var":"row","row_fields":["name","kind","detail_url"],"into":"candidates","body":[]},
- {"op":"run","run_kind":"data_query","var":"q","name":"选出配置集合 C 的唯一所有者入口","returns":["detail_url"],"sql":"SELECT detail_url FROM candidates WHERE name LIKE '%E%' AND kind = 'container' LIMIT 1"},
- {"op":"run","run_kind":"navigation","name":"打开 {q[detail_url]} 进入配置集合 C 的编辑页","success_condition":"页面显示配置集合 C"},
- {"op":"run","run_kind":"action","name":"将配置集合 C 持久化包含选项 V","success_condition":"保存后的配置集合 C 包含 V"}]}
+ {"op":"run","run_kind":"data_query","var":"q","name":"验证并选出配置集合 C 的唯一所有者入口","returns":["match_count","detail_url"],"sql":"SELECT COUNT(*) AS match_count, CASE WHEN COUNT(*) = 1 THEN MAX(detail_url) ELSE '' END AS detail_url FROM candidates WHERE name LIKE '%E%' AND kind = 'container'"},
+ {"op":"if","cond_var":"q","cond_field":"match_count","cond_cmp":"==","cond_value":"1","then":[
+   {"op":"run","run_kind":"navigation","name":"打开 {q[detail_url]} 进入配置集合 C 的编辑页","success_condition":"页面显示配置集合 C 的唯一 owner"},
+   {"op":"run","run_kind":"action","name":"将配置集合 C 持久化包含选项 V","success_condition":"保存后的配置集合 C 包含 V"}],
+  "otherwise":[{"op":"finish","message":"配置集合 C 的 owner 候选为空或不唯一，未执行 mutation。"}]}]}
 
 示例（条件任务 + 关键动作返回确认）——
 {"reasoning":"先进路线规划页(navigation)，填起终点触发检测(action)，检测动作自身返回连通结果(字段=是否可达)，据此分支：可达则创建行程、创建动作自身返回创建结果再答复，不可达则直接答复。","goal":"查询 A 到 B 是否可达，可达则创建行程","steps":[

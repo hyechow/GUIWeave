@@ -115,6 +115,16 @@ SAMPLES: dict[str, Program] = {
         Query(var="q", name="查询",  returns=["b"], sql="SELECT * FROM orders"),
     ]),
     "RETURNS_WITHOUT_READ_SPEC": Program(statements=[Run(var="v", name="点击", kind="action", returns=["a"])]),
+    "MUTATION_RESULT_UNUSED": Program(goal="更新现有记录", statements=[
+        Run(
+            var="save_result",
+            name="更新字段并保存",
+            kind="action",
+            returns=["status"],
+            read_spec="status：读取保存状态",
+        ),
+        Finish(message="操作结束"),
+    ]),
     "CALL_FUNC_NOT_DEFINED": Program(statements=[Call(func="missing", args={}, var="m")]),
     "CALL_RETURNS_WITHOUT_VAR": Program(
         functions=[FunctionDef(name="f", returns=["x"], body=[Compute(var="x", expr="'1'")])],
@@ -171,6 +181,15 @@ SAMPLES: dict[str, Program] = {
     "TEMPORAL_AGGREGATE_WITHOUT_ROW_LIMIT": Program(goal="最近 2 笔订单总额", statements=[
         Query(var="q", name="最近2笔求和",  returns=["total"],
             sql="SELECT SUM(amount_num) AS total FROM data"),
+    ]),
+    "SINGLE_TARGET_LIMIT_HIDES_AMBIGUITY": Program(statements=[
+        Query(
+            var="q",
+            name="选出目标入口",
+            returns=["detail_url"],
+            sql="SELECT detail_url FROM candidates WHERE kind = 'owner' LIMIT 1",
+        ),
+        Run(name="打开 {q[detail_url]} 进入编辑页", kind="navigation"),
     ]),
     "IF_COND_VAR_NOT_IN_SCOPE": Program(statements=[
         If(cond=Cond(var="x", field="f", cmp="==", value="1"), then=[Finish(message="ok")]),
@@ -857,3 +876,44 @@ def test_table_row_field_collection_exempts_drill_inside_function_body():
         ],
     )
     assert "TABLE_ROW_FIELD_COLLECTION" not in _codes(program)
+
+
+def test_consumed_mutation_result_is_allowed():
+    program = Program(
+        goal="更新记录并按保存结果回复",
+        statements=[
+            Run(
+                var="save_result",
+                name="更新字段并保存",
+                kind="action",
+                returns=["status"],
+                read_spec="status：读取保存状态",
+            ),
+            If(
+                cond=Cond(var="save_result", field="status", cmp="==", value="ok"),
+                then=[Finish(message="保存成功")],
+                otherwise=[Finish(message="保存失败")],
+            ),
+        ],
+    )
+
+    assert "MUTATION_RESULT_UNUSED" not in _codes(program)
+
+
+def test_ordered_top_one_url_query_is_not_treated_as_owner_ambiguity():
+    program = Program(
+        statements=[
+            Query(
+                var="q",
+                name="选出最近记录入口",
+                returns=["detail_url"],
+                sql=(
+                    "SELECT detail_url FROM candidates "
+                    "ORDER BY created_at_ts DESC LIMIT 1"
+                ),
+            ),
+            Run(name="打开 {q[detail_url]} 进入详情页", kind="navigation"),
+        ],
+    )
+
+    assert "SINGLE_TARGET_LIMIT_HIDES_AMBIGUITY" not in _codes(program)

@@ -149,6 +149,63 @@ def _query_referenced_materialized_tables(stmts: list[Stmt]) -> set[str]:
     return {name.lower() for name in out}
 
 
+def _iter_main_statements(stmts: list[Stmt]):
+    """Yield main-program statements recursively, excluding function definitions."""
+    for stmt in stmts:
+        yield stmt
+        if isinstance(stmt, If):
+            yield from _iter_main_statements(stmt.then)
+            yield from _iter_main_statements(stmt.otherwise)
+        elif isinstance(stmt, ForEach):
+            yield from _iter_main_statements(stmt.body)
+
+
+def _consumed_result_vars(stmts: list[Stmt]) -> set[str]:
+    consumed: set[str] = set()
+    for stmt in _iter_main_statements(stmts):
+        texts: list[str] = []
+        if isinstance(stmt, RunLike):
+            texts.extend(
+                [
+                    stmt.name or "",
+                    stmt.success_condition or "",
+                    stmt.read_spec or "",
+                    getattr(stmt, "sql", "") or "",
+                ]
+            )
+            if isinstance(stmt, Query):
+                consumed.update(_sql_referenced_tables(stmt.sql))
+        elif isinstance(stmt, Compute):
+            consumed.update(re.findall(r"\b[A-Za-z_]\w*\b", stmt.expr or ""))
+        elif isinstance(stmt, Finish):
+            texts.append(stmt.message or "")
+        elif isinstance(stmt, Call):
+            texts.extend(str(value) for value in (stmt.args or {}).values())
+        elif isinstance(stmt, ForEach):
+            if stmt.over:
+                consumed.add(stmt.over)
+            texts.extend([stmt.target or "", stmt.body_goal or "", stmt.member_desc or ""])
+        elif isinstance(stmt, If) and stmt.cond is not None and stmt.cond.var:
+            consumed.add(stmt.cond.var)
+        for text in texts:
+            consumed.update(match.group(1) for match in TEMPLATE_RE.finditer(text))
+    return consumed
+
+
+def _interactive_url_result_vars(stmts: list[Stmt]) -> set[str]:
+    """Result vars whose URL-like field is used to open a single interactive target."""
+    used: set[str] = set()
+    for stmt in _iter_main_statements(stmts):
+        if not isinstance(stmt, Run) or stmt.kind not in {"navigation", "action"}:
+            continue
+        text = f"{stmt.name}\n{stmt.success_condition}"
+        for match in TEMPLATE_RE.finditer(text):
+            field = match.group(2).strip().strip("'\"").lower()
+            if any(token in field for token in ("url", "href", "link", "链接", "网址")):
+                used.add(match.group(1))
+    return used
+
+
 _PRESERVE_SCOPE_FILTER_RE = re.compile(
     r"保留|保持|继续沿用|追加|叠加|同时(?:包含|保留|应用|满足)|"
     r"\bkeep\b|\bretain\b|\bpreserve\b|\bwith\b|\balongside\b",
@@ -263,9 +320,30 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
             "多目标时放进 foreach body 逐个执行。"
         )
 
+    consumed_result_vars = _consumed_result_vars(program.statements)
+    for stmt in _iter_main_statements(program.statements):
+        if (
+            isinstance(stmt, Run)
+            and stmt.kind == "action"
+            and stmt.var
+            and stmt.returns
+            and stmt.var not in consumed_result_vars
+        ):
+            issues.add(
+                "MUTATION_RESULT_UNUSED",
+                f"action 步「{stmt.name}」声明了 var={stmt.var!r} / returns={list(stmt.returns)}，"
+                "但后续 if/compute/query/run/finish 没有消费该结果。未消费的 save_status/status "
+                "会迫使 success_condition 退化成『动作有响应』，即使保存了错误对象也可能通过。"
+                "请直接删除该 action 的 var/returns/read_spec，并让 success_condition 验收 owner 身份"
+                "与保存后的业务终态。禁止为了消耗这个状态而新增 if、compute、额外 read 或 option_exists；"
+                "当前状态检查与幂等跳过由 interactive Run 在实时页面中处理，不属于 Program 控制流。",
+                evidence=(stmt.var, tuple(stmt.returns)),
+            )
+
     all_result_vars: set[str] = set()  # every result var anywhere — to spot botched bare refs
     rank_goal_text = (program.goal or "").lower()
     scope_value_token_sets = _resolution_scope_token_sets(resolution)
+    interactive_url_result_vars = _interactive_url_result_vars(program.statements)
 
     def _collect_result_vars(stmts: list[Stmt]) -> None:
         for s in stmts:
@@ -607,6 +685,21 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                         f"data_query 步「{s.name}」在回答最近/最旧/last/latest/oldest N 行的聚合任务时，"
                         "SQL 直接对整张表 SUM/AVG/COUNT，没有先按日期/时间 ORDER BY 后 LIMIT N。"
                         "请先用子查询或 CTE 选出目标 N 行，再聚合。"
+                    )
+                if (
+                    s.kind == "data_query"
+                    and s.var in interactive_url_result_vars
+                    and re.search(r"\blimit\s+1\b", s.sql or "", flags=re.IGNORECASE)
+                    and not re.search(r"\border\s+by\b", s.sql or "", flags=re.IGNORECASE)
+                ):
+                    issues.add(
+                        "SINGLE_TARGET_LIMIT_HIDES_AMBIGUITY",
+                        f"data_query 步「{s.name}」的结果 URL 被后续 navigation/action 当作单个目标入口，"
+                        "但 SQL 用无 ORDER BY 的 LIMIT 1 任取一行；这不能证明 owner 唯一，会静默改错对象。"
+                        "请让查询返回 COUNT(*) AS match_count，并仅在 match_count=1 时返回/使用 URL；"
+                        "0 条或多条必须显式失败或继续消歧。只有按任务要求明确排序取 top-1 时才使用 "
+                        "ORDER BY ... LIMIT 1。",
+                        evidence=(s.var or "", s.sql or ""),
                     )
                 # check this run's refs BEFORE binding its own var (a read can't reference its own
                 # value — env[var] isn't set until the read completes)

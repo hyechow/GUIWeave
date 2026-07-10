@@ -77,6 +77,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "DATA_QUERY_SQL_TEMPLATE_REF",
     "DATA_QUERY_VAR_AS_TABLE",
     "RETURNS_WITHOUT_READ_SPEC",
+    "MUTATION_RESULT_UNUSED",
     # function / capability data-flow
     "CALL_FUNC_NOT_DEFINED",
     "CALL_RETURNS_WITHOUT_VAR",
@@ -93,6 +94,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "AGGREGATE_LIMIT_AFTER_AGGREGATION",
     "TEMPORAL_LIMIT_WITHOUT_ORDER",
     "TEMPORAL_AGGREGATE_WITHOUT_ROW_LIMIT",
+    "SINGLE_TARGET_LIMIT_HIDES_AMBIGUITY",
     # interactive-step hygiene（milestone=交互 action 的纪律）
     "NOOP_FLOW_CONTROL_STEP",
     # compute compile-time contract（编译期强制运行时方言与作用域）
