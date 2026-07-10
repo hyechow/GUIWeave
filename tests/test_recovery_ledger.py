@@ -1,12 +1,10 @@
 """恢复账本(异常体系 Stage A)契约测试。
 
-RecoveryLedger = 继承的空返回预算(原 callframe ReturnRecoveryLedger,行为必须逐字节不变)
-+ append-only 事件账。callframe 的 re-export 面必须保持稳定(既有进口方不换行)。
+RecoveryLedger = 按 statement 位置隔离的空返回预算 + append-only 事件账。
 """
 
 from types import SimpleNamespace
 
-from gui_agent.core.orchestrator import callframe
 from gui_agent.core.orchestrator.recovery import (
     MAX_EMPTY_RETURN_RECOVERIES,
     RecoveryEvent,
@@ -19,7 +17,7 @@ def _run(var="m1", name="读取统计", returns=("total",)):
     return SimpleNamespace(var=var, name=name, returns=list(returns))
 
 
-# ── inherited empty-return budget: behavior identical to the old callframe ledger ──
+# ── inherited empty-return budget ────────────────────────────────────────────────────
 
 
 def test_return_budget_consumes_then_exhausts():
@@ -40,12 +38,8 @@ def test_return_budget_isolated_per_call_site():
     assert ledger.next_attempt(1, a) == 1          # same run, different index = different site
 
 
-def test_callframe_reexport_is_the_same_class():
-    # The ABI surface stays put: existing `from callframe import ReturnRecoveryLedger` importers
-    # get the moved class, and a RecoveryLedger satisfies the old budget contract.
-    assert callframe.ReturnRecoveryLedger is ReturnRecoveryLedger
-    assert callframe.MAX_EMPTY_RETURN_RECOVERIES == MAX_EMPTY_RETURN_RECOVERIES
-    assert isinstance(RecoveryLedger(), callframe.ReturnRecoveryLedger)
+def test_recovery_ledger_implements_return_budget():
+    assert isinstance(RecoveryLedger(), ReturnRecoveryLedger)
 
 
 # ── event log ────────────────────────────────────────────────────────────────────────

@@ -270,7 +270,7 @@ def turn_callback_entry(
     return entry
 
 
-def make_non_ui_turn(
+def make_immediate_statement_turn(
     *,
     index: int,
     observation_source: str,
@@ -292,7 +292,11 @@ def make_non_ui_turn(
     output_tokens: int = 0,
     llm_context: list[dict] | None = None,
 ) -> PolicyTurn:
-    """Build a non-interactive primitive turn (`read` / `data_query`)."""
+    """Record a statement completed without a Milestone decision loop.
+
+    The persisted ``operation_mode=non_interactive`` value is a compatibility/budget label: it
+    means no supervisor turn was consumed, not that every statement is free of GUI side effects.
+    """
     elapsed = max(0.0, time.perf_counter() - started_at) if started_at is not None else 0.0
     return PolicyTurn(
         index=index,

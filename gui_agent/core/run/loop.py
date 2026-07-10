@@ -37,22 +37,21 @@ from gui_agent.core.run.flow import (
     finish_terminal_step,
     handle_loading_frame,
 )
-from gui_agent.core.run.non_interactive import drive_pending_non_ui
-from gui_agent.core.orchestrator.callframe import (
+from gui_agent.core.run.statements import drain_immediate_statements
+from gui_agent.core.orchestrator.contracts import check_return_contract
+from gui_agent.core.orchestrator.recovery import (
     MAX_EMPTY_RETURN_RECOVERIES,
     MAX_KICKBACK_REPLANS,
-    check_return_contract,
-    extract_ui_returns,
     force_interactive_return_recovery as _force_interactive_return_recovery,
     kickback_adherence_issues,
-    open_call,
-    package_result,
     parse_kickback_directive,
+    RecoveryLedger,
     sharpen_kickback_directive,
     should_kickback_replan,
     tighten_ui_return_run as _tighten_ui_return_run,
 )
-from gui_agent.core.orchestrator.recovery import RecoveryLedger
+from gui_agent.core.orchestrator.runner import make_run_result
+from gui_agent.core.run.interactive import extract_run_returns, start_milestone
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
@@ -319,13 +318,13 @@ def run_agent_loop(
                 return _finish(_orch_result(context, _interp, f"{reason}（任务未完成）", current=_cur_run))
             return _finish(_make_result(context, reason))
 
-        _nonui_failure: "str | None" = None  # last re-plannable non-UI (data_query) failure evidence
+        _immediate_failure: "str | None" = None
 
 
 
         def _read_completed_run_returns(run, observation) -> dict[str, str]:
-            """Extract a UI run's declared return fields from its completion frame (callframe RETURN op)."""
-            return extract_ui_returns(
+            """Extract an interactive statement's declared fields from its terminal frame."""
+            return extract_run_returns(
                 run,
                 observation,
                 check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
@@ -333,40 +332,57 @@ def run_agent_loop(
                 say=_say,
             )
 
-        def _drive_pending_non_ui(done_observation=None, observation_url: str | None = None) -> "str | None":
-            """Drive pending non-UI primitives and sync the local interpreter cursor."""
-            nonlocal _cur_run, _run_idx, _notes_mark, _nonui_failure, observation, observation_url_for_turn, prep_future
-            result = drive_pending_non_ui(
-                current_run=_cur_run,
-                run_index=_run_idx,
-                notes_mark=_notes_mark,
+        def _drain_immediate(observation_for_statements=None, observation_url: str | None = None) -> "str | None":
+            """Execute inline statements, then seed the next Milestone-backed Run."""
+            nonlocal _cur_run, _run_idx, _notes_mark, _immediate_failure, observation, observation_url_for_turn, prep_future
+            result = drain_immediate_statements(
+                current_statement=_cur_run,
+                statement_index=_run_idx,
                 interpreter_steps=_gen,
                 bundle=bundle,
                 platform=platform,
                 log_dir=log_dir,
-                supervisor=supervisor,
+                check_knowledge=getattr(supervisor, "_check_knowledge", "") or "",
                 context=context,
                 save_context=_save_ctx,
                 say=_say,
-                # Surface drill progress on the HUD: non-UI primitives run inside a hand-off (no
+                # Surface immediate-statement progress on the HUD: these run inside a hand-off (no
                 # top-level `--- Turn N ---`), so the HUD would otherwise freeze through a long drill.
                 # Use the interactive-turn count (not a turn_no var that isn't in scope at every call site).
                 status=lambda msg: _status(_interactive_turn_count(context), msg),
-                done_observation=done_observation,
+                observation=observation_for_statements,
                 observation_url=observation_url,
                 # a PROVIDER, not a snapshot: a foreach's into table is populated mid-drain (when the
-                # last body return completes), so the data_query must read it fresh — see drive_pending_non_ui.
+                # last body return completes), so the data_query must read it fresh.
                 materialized_tables=(lambda: _interp.materialized_tables()) if _interp is not None else None,
                 recovery=_recovery,  # 异常体系 Stage A:SQL 修复/数据源失败事件入账
             )
-            _cur_run = result.current_run
-            _run_idx = result.run_index
-            _notes_mark = result.notes_mark
-            _nonui_failure = result.failure_evidence
+            _cur_run = result.current_statement
+            _run_idx = result.statement_index
+            _immediate_failure = result.failure_evidence
             if result.observation is not None:
                 observation = result.observation
                 observation_url_for_turn = result.observation_url or observation_url_for_turn
                 prep_future = _PREP_POOL.submit(executor.prepare_frame, observation.png_bytes)
+            if _cur_run is not None:
+                milestone = start_milestone(
+                    supervisor,
+                    _cur_run,
+                    _run_idx,
+                    fresh_advance=(
+                        observation_for_statements is not None
+                        and not bool(getattr(_cur_run, "returns", None))
+                    ),
+                )
+                if not any(item.get("id") == milestone.id for item in context.milestones):
+                    context.milestones.append({
+                        "id": milestone.id,
+                        "name": milestone.name,
+                        "description": milestone.description,
+                        "kind": milestone.kind,
+                        "success_condition": milestone.success_condition,
+                    })
+                _notes_mark = len(context.content_notes)
             return result.reply
 
         if program is not None:
@@ -399,7 +415,7 @@ def run_agent_loop(
                 _cur_run = next(_gen)
             except StopIteration as _e:  # program with no run() (just finish / empty)
                 return _finish(_orch_result(context, _interp, _e.value or ""))
-            _reply = _drive_pending_non_ui()  # leading non-UI step(s) + reseed the first UI run
+            _reply = _drain_immediate()
             if _reply is not None:
                 return _finish(_orch_result(context, _interp, _reply))
 
@@ -532,7 +548,7 @@ def run_agent_loop(
                 _cur_run = next(_gen)
             except StopIteration as _e:
                 return (True, _e.value or "")
-            _reply2 = _drive_pending_non_ui()  # reseed first run of the new program
+            _reply2 = _drain_immediate()
             return (True, _reply2) if _reply2 is not None else (True, None)
 
         while True:
@@ -574,7 +590,7 @@ def run_agent_loop(
             # milestone, and re-decide on the SAME frame — so a pure milestone hand-off never
             # costs its own action-less turn (the old behavior spent one). Only an action, a
             # DAG-mode completion, or a stop ends the turn. The next milestone's nav skip-check
-            # is set by the reseed inside _drive_pending_non_ui (fresh_advance). Behaviorally the
+            # is set when _drain_immediate seeds the next Milestone. Behaviorally the
             # next milestone is decided on the exact frame the prior one was accepted on — same
             # as the verdict-frame carry-forward, just merged into this turn instead of the next.
             _orch_reply: "str | None" = None    # set if the program ended during a hand-off
@@ -621,7 +637,7 @@ def run_agent_loop(
                             attempt=_attempt,
                             violations=_contract.out_of_domain,
                         )
-                        open_call(supervisor, _cur_run, _run_idx, fresh_advance=False)
+                        start_milestone(supervisor, _cur_run, _run_idx, fresh_advance=False)
                         _say(
                             "  [Orchestrator] 返回值合同未满足，继续定位"
                             f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
@@ -636,7 +652,7 @@ def run_agent_loop(
                             "  [Orchestrator] 返回值合同持续未满足，停止推进："
                             + _contract.describe()
                         )
-                        _hand = package_result(
+                        _hand = make_run_result(
                             _cur_run,
                             completed=False,
                             summary="返回值合同未满足：" + _contract.describe(),
@@ -650,7 +666,7 @@ def run_agent_loop(
                         else:
                             _did_return_recovery = True
                     break
-                _hand = package_result(
+                _hand = make_run_result(
                     _cur_run, completed=True, summary=sv_step.summary or "完成",
                     notes=context.content_notes[_notes_mark:],
                     reads=_reads,
@@ -674,9 +690,9 @@ def run_agent_loop(
                         output_tokens=get_llm_token_usage()[1] - tokens_before[1],
                     ))
                     _terminal_verdict_recorded = True
-                # non-UI steps consume THIS verdict observation; reseed the next UI milestone.
-                _reply = _drive_pending_non_ui(
-                    done_observation=observation,
+                # Immediate statements consume this verdict frame before the next Milestone starts.
+                _reply = _drain_immediate(
+                    observation_for_statements=observation,
                     observation_url=observation_url_for_turn,
                 )
                 if _reply is not None:
@@ -713,12 +729,12 @@ def run_agent_loop(
                     ))
                 # Sync the last milestone's done verdict into context (no later turn body runs).
                 sync_milestone_states(supervisor, context)
-                # Feasibility Guard non-UI kick-back: the program ended because a data_query failed with a
+                # Feasibility Guard query kick-back: the program ended because a data_query failed with a
                 # re-plannable data-source issue (source empty / mismatched with the task). Re-decompose
                 # with that evidence as the directive instead of finishing on the failure.
-                if _nonui_failure:
+                if _immediate_failure:
                     _directive = (
-                        "上一份计划在 data_query 步失败：" + _nonui_failure
+                        "上一份计划在 data_query 步失败：" + _immediate_failure
                         + "\n这说明取数路线不对（数据源为空或与任务口径不一致）。请改用能真正拿到目标数据的"
                           "路线重新规划，不要重复上面失败的取数方式。"
                     )
@@ -726,7 +742,7 @@ def run_agent_loop(
                     if _handled and _r is not None:
                         return _finish(_orch_result(context, _interp, _r))
                     if _handled:
-                        _nonui_failure = None
+                        _immediate_failure = None
                         continue
                 return _finish(_orch_result(context, _interp, _orch_reply))
 

@@ -209,34 +209,36 @@ def test_steppable_program_with_only_finish():
     assert ei.value.value == "直接结束"
 
 
-# ── engine glue: Run -> Milestone / task_type / RunResult packaging ──────────────
+# ── statement executors: interactive adapter + common RunResult protocol ─────────
 
 
-def test_to_milestone_maps_runkind():
+def test_milestone_adapter_maps_interactive_kind():
     import pytest
 
-    from gui_agent.core.orchestrator.callframe import to_milestone
-    nav = to_milestone(Run(name="进入页", kind="navigation"), 0)
+    from gui_agent.core.run.interactive import milestone_for_run
+    nav = milestone_for_run(Run(name="进入页", kind="navigation"), 0)
     assert nav.kind == "navigation" and nav.completion_strategy == "visible_once"
     # returns 折进 description + 结构化通道同行（milestone=函数 的出参合同）
-    ret_nav = to_milestone(Run(var="d", name="开详情", kind="navigation", returns=["连通判定", "原因"]), 3)
+    ret_nav = milestone_for_run(
+        Run(var="d", name="开详情", kind="navigation", returns=["连通判定", "原因"]), 3
+    )
     assert "连通判定" in ret_nav.description and "原因" in ret_nav.description
     assert ret_nav.returns == ["连通判定", "原因"]
-    # S6b 边界：查询节点不是 milestone —— marshal = 类型错误（由 drive_pending_non_ui 驱动）
+    # 查询节点不是 milestone：它由 immediate statement dispatcher 执行。
     with pytest.raises(ValueError, match="query run"):
-        to_milestone(Read(var="d", name="读结果",  returns=["连通判定"]), 3)
+        milestone_for_run(Read(var="d", name="读结果", returns=["连通判定"]), 3)
     with pytest.raises(ValueError, match="query run"):
-        to_milestone(Query(var="q", name="统计订单",  returns=["emails"], sql="SELECT 1"), 4)
+        milestone_for_run(Query(var="q", name="统计订单", returns=["emails"], sql="SELECT 1"), 4)
 
 
 def test_returning_ui_runs_get_target_specific_milestone_ids():
-    from gui_agent.core.orchestrator.callframe import to_milestone
+    from gui_agent.core.run.interactive import milestone_for_run
 
-    first = to_milestone(
+    first = milestone_for_run(
         Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"]),
         0,
     )
-    second = to_milestone(
+    second = milestone_for_run(
         Run(var="d", name="打开评论 347 的详情", kind="navigation", returns=["rating"]),
         0,
     )
@@ -246,8 +248,8 @@ def test_returning_ui_runs_get_target_specific_milestone_ids():
     assert second.id.startswith("d_")
 
 
-def test_returning_ui_handoff_does_not_skip_initial_check(tmp_path):
-    from gui_agent.core.run.non_interactive import drive_pending_non_ui
+def test_immediate_dispatcher_returns_milestone_statement_to_caller(tmp_path):
+    from gui_agent.core.run.statements import drain_immediate_statements
     from gui_agent.core.schemas import Observation, PolicyContext
 
     class Supervisor:
@@ -260,31 +262,26 @@ def test_returning_ui_handoff_does_not_skip_initial_check(tmp_path):
     supervisor = Supervisor()
     run = Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"])
 
-    result = drive_pending_non_ui(
-        current_run=run,
-        run_index=0,
-        notes_mark=0,
+    result = drain_immediate_statements(
+        current_statement=run,
+        statement_index=0,
         interpreter_steps=None,
         bundle=None,
         platform=None,
         log_dir=tmp_path,
-        supervisor=supervisor,
+        check_knowledge="",
         context=PolicyContext(goal="g", supervisor_policy_name="test", action_policy_name="test"),
         save_context=lambda: None,
         say=lambda _msg: None,
-        done_observation=Observation(png_bytes=b"x", source="test"),
+        observation=Observation(png_bytes=b"x", source="test"),
     )
 
-    assert result.current_run is run
-    assert supervisor.calls
-    milestone, task_type, fresh_advance = supervisor.calls[0]
-    assert milestone.name == "打开评论 351 的详情"
-    assert task_type == "action"
-    assert fresh_advance is False
+    assert result.current_statement is run
+    assert supervisor.calls == []
 
 
 def test_direct_nav_url_gates_on_url_present_and_navigate_capability():
-    from gui_agent.core.run.non_interactive import _direct_nav_url
+    from gui_agent.core.run.statements.navigation import direct_navigation_url
 
     class NavClient:
         def navigate(self, url):  # browser-only extra
@@ -300,22 +297,22 @@ def test_direct_nav_url_gates_on_url_present_and_navigate_capability():
     # A foreach drill whose target was templated to a concrete URL on a navigate-capable device:
     # deterministic jump.
     run = Run(var="d", name="打开 http://host/admin/review/edit/id/5 详情", kind="navigation", returns=["rating"])
-    assert _direct_nav_url(run, nav_capable) == "http://host/admin/review/edit/id/5"
+    assert direct_navigation_url(run, nav_capable) == "http://host/admin/review/edit/id/5"
 
     # Same run, device can't navigate by URL → fall through to the supervisor's interactive drill.
-    assert _direct_nav_url(run, no_nav) is None
+    assert direct_navigation_url(run, no_nav) is None
 
     # A navigation with no URL (id-based interactive open) is never a direct jump.
     id_run = Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"])
-    assert _direct_nav_url(id_run, nav_capable) is None
+    assert direct_navigation_url(id_run, nav_capable) is None
 
     # Only navigation runs route here — a read carrying a URL in its name does not.
     read_run = Read(var="r", name="读取 http://host/x 的值",  returns=["v"])
-    assert _direct_nav_url(read_run, nav_capable) is None
+    assert direct_navigation_url(read_run, nav_capable) is None
 
 
 def test_direct_nav_url_extracts_clean_url_across_cjk_and_punctuation():
-    from gui_agent.core.run.non_interactive import _direct_nav_url
+    from gui_agent.core.run.statements.navigation import direct_navigation_url
 
     class Plat:
         class client:
@@ -326,14 +323,14 @@ def test_direct_nav_url_extracts_clean_url_across_cjk_and_punctuation():
     plat = Plat()
     # URL ends at the CJK that wraps it — no trailing Chinese leaks into the URL.
     cjk = Run(name="打开 https://h/a?b=1&c=2 的详情页", kind="navigation")
-    assert _direct_nav_url(cjk, plat) == "https://h/a?b=1&c=2"
+    assert direct_navigation_url(cjk, plat) == "https://h/a?b=1&c=2"
     # Trailing prose punctuation is trimmed.
     punct = Run(name="跳转到 https://h/item/5）", kind="navigation")
-    assert _direct_nav_url(punct, plat) == "https://h/item/5"
+    assert direct_navigation_url(punct, plat) == "https://h/item/5"
 
 
 def test_direct_back_gates_on_explicit_back_and_capability():
-    from gui_agent.core.run.non_interactive import _direct_back
+    from gui_agent.core.run.statements.navigation import is_direct_back
 
     class BackClient:
         def go_back(self):
@@ -346,14 +343,14 @@ def test_direct_back_gates_on_explicit_back_and_capability():
     capable = Plat(BackClient())
     no_back = Plat(object())
     run = Run(name="使用浏览器返回上一页，回到 Products 列表", kind="navigation")
-    assert _direct_back(run, capable) is True
-    assert _direct_back(run, no_back) is False
-    assert _direct_back(Run(name="进入 Catalog > Products", kind="navigation"), capable) is False
-    assert _direct_back(Read(name="返回上一页"), capable) is False
+    assert is_direct_back(run, capable) is True
+    assert is_direct_back(run, no_back) is False
+    assert is_direct_back(Run(name="进入 Catalog > Products", kind="navigation"), capable) is False
+    assert is_direct_back(Read(name="返回上一页"), capable) is False
 
 
 def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
-    from gui_agent.core.run.non_interactive import drive_pending_non_ui
+    from gui_agent.core.run.statements import drain_immediate_statements
     from gui_agent.core.schemas import Observation, PolicyContext
 
     list_url = "http://host/admin/catalog/product/?filters=wh11"
@@ -394,7 +391,7 @@ def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
         _check_knowledge = ""
 
         def reseed(self, *args, **kwargs):
-            raise AssertionError("all non-UI runs should complete")
+            raise AssertionError("all immediate statements should complete")
 
     nav = Run(name=f"打开 {detail_url} 详情", kind="navigation")
     back = Run(name="浏览器返回上一页，回到 Products 列表", kind="navigation")
@@ -410,19 +407,18 @@ def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
     first_run = next(gen)
     platform = Platform()
 
-    result = drive_pending_non_ui(
-        current_run=first_run,
-        run_index=0,
-        notes_mark=0,
+    result = drain_immediate_statements(
+        current_statement=first_run,
+        statement_index=0,
         interpreter_steps=gen,
         bundle=Bundle(),
         platform=platform,
         log_dir=tmp_path,
-        supervisor=Supervisor(),
+        check_knowledge="",
         context=PolicyContext(goal="g", supervisor_policy_name="test", action_policy_name="test"),
         save_context=lambda: None,
         say=lambda _msg: None,
-        done_observation=Observation(png_bytes=b"x", source="browser", url=list_url),
+        observation=Observation(png_bytes=b"x", source="browser", url=list_url),
     )
 
     assert result.reply == "done"
@@ -544,34 +540,38 @@ def test_approximate_entity_sql_uses_search_key():
 
 
 def test_task_type_for_non_ui_is_analysis():
-    from gui_agent.core.orchestrator.callframe import task_type_for
-    assert task_type_for(Read(name="读",  returns=["x"])) == "analysis"
-    assert task_type_for(Query(name="查",  returns=["x"], sql="SELECT 1")) == "analysis"
-    assert task_type_for(Run(name="点", kind="action")) == "action"
+    from gui_agent.core.run.interactive import task_type_for_run
+    assert task_type_for_run(Read(name="读", returns=["x"])) == "analysis"
+    assert task_type_for_run(Query(name="查", returns=["x"], sql="SELECT 1")) == "analysis"
+    assert task_type_for_run(Run(name="点", kind="action")) == "action"
 
 
-def test_package_result_contract():
-    from gui_agent.core.orchestrator.callframe import package_result
-    ok = package_result(Run(name="x", kind="action"), completed=True, summary="成功", notes=["证据1"])
+def test_make_run_result_contract():
+    from gui_agent.core.orchestrator.runner import make_run_result
+    ok = make_run_result(
+        Run(name="x", kind="action"), completed=True, summary="成功", notes=["证据1"]
+    )
     assert ok.completed and not ok.failed and ok.evidence == ["证据1"]
-    bad = package_result(Run(name="x", kind="action"), completed=False, summary="失败", notes=[])
+    bad = make_run_result(
+        Run(name="x", kind="action"), completed=False, summary="失败", notes=[]
+    )
     assert bad.failed and not bad.completed
 
 
 def test_supervisor_reseed_single_milestone():
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.core.orchestrator.callframe import to_milestone, task_type_for
+    from gui_agent.core.run.interactive import milestone_for_run, task_type_for_run
     p = MilestoneSupervisorPolicy()
     p._milestones = {"old": object()}  # type: ignore[dict-item]
     p._order = ["old", "x"]
     p._monitor._recent_screenshots.append((b"frame", None))  # stuck 检测器帧历史
     p._scroll_counts = {"old": 5}             # 其余 per-milestone 态
     # S6b 后查询节点不再 marshal 成 milestone；reseed 的读取门用显式 task_type 验证
-    # （task_type_for 对查询仍返回 analysis，此处直接断言该映射）
+    # （task_type_for_run 对查询仍返回 analysis，此处直接断言该映射）
     run = Read(var="d", name="读判定",  returns=["连通判定"])
-    assert task_type_for(run) == "analysis"
+    assert task_type_for_run(run) == "analysis"
     nav = Run(var="d", name="开判定页", kind="navigation")
-    p.reseed(to_milestone(nav, 0), task_type="analysis")
+    p.reseed(milestone_for_run(nav, 0), task_type="analysis")
     assert list(p._order) == ["d"] and p._current_id == "d"
     assert p.task_type == "analysis"          # 读取门由 task_type 控制
     # 与 DAG 的 _advance 对齐：只清 _recent_screenshots，其余跨 milestone 态保留（不再过度清空）。
@@ -583,19 +583,19 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     # DAG _advance parity: a freshly-advanced NAVIGATION milestone skips its first done-check
     # (in_progress by construction); action/filter keep it; a non-fresh reseed never skips.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.core.orchestrator.callframe import to_milestone
+    from gui_agent.core.run.interactive import milestone_for_run
     p = MilestoneSupervisorPolicy()
-    p.reseed(to_milestone(Run(name="进页", kind="navigation"), 0), fresh_advance=True)
+    p.reseed(milestone_for_run(Run(name="进页", kind="navigation"), 0), fresh_advance=True)
     assert p._skip_initial_check is True                  # nav + 刚推进 → 跳 check
-    p.reseed(to_milestone(Run(name="点按钮", kind="action"), 1), fresh_advance=True)
+    p.reseed(milestone_for_run(Run(name="点按钮", kind="action"), 1), fresh_advance=True)
     assert p._skip_initial_check is False                 # action → 保留 check（防双执行）
-    assert to_milestone(Run(name="点按钮", kind="action"), 1).require_fresh_action is True
-    assert to_milestone(Run(name="进页", kind="navigation"), 2).require_fresh_action is False
-    p.reseed(to_milestone(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
+    assert milestone_for_run(Run(name="点按钮", kind="action"), 1).require_fresh_action is True
+    assert milestone_for_run(Run(name="进页", kind="navigation"), 2).require_fresh_action is False
+    p.reseed(milestone_for_run(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
     # precondition 入口归一化门（kind=navigation 但 precondition=True）：必须让 checker 先判
     # （满足→done、不动作），不能跳 check 把分支决策泄漏给 planner（live 185 stop / 错域 selector）。
-    p.reseed(to_milestone(Run(name="确保在列表页", kind="navigation", precondition=True), 3),
+    p.reseed(milestone_for_run(Run(name="确保在列表页", kind="navigation", precondition=True), 3),
              fresh_advance=True)
     assert p._skip_initial_check is False
 
@@ -607,10 +607,10 @@ def test_advance_persists_done_check_on_terminal_completion():
     # seen in 20260615_113554 after the hand-off merge).
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
-    from gui_agent.core.orchestrator.callframe import to_milestone
+    from gui_agent.core.run.interactive import milestone_for_run
     from gui_agent.core.schemas import Observation
     p = MilestoneSupervisorPolicy()
-    ms = to_milestone(Run(name="进首页", kind="navigation"), 0)
+    ms = milestone_for_run(Run(name="进首页", kind="navigation"), 0)
     p.reseed(ms)                                          # single milestone, orchestrator style
     check = _SingleCheckResult(status="done", reason="已进入首页", summary="首页")
     p._last_check = check
@@ -672,16 +672,16 @@ def test_require_fresh_action_blocks_preexisting_done(monkeypatch):
 # ── #3 structured read: reads 进 RunResult，让 if 真分支 ──────────────────────────
 
 
-def test_package_result_carries_structured_reads():
-    from gui_agent.core.orchestrator.callframe import package_result
-    r = package_result(Read(var="d", name="读",  returns=["连通判定"]),
+def test_make_run_result_carries_structured_reads():
+    from gui_agent.core.orchestrator.runner import make_run_result
+    r = make_run_result(Read(var="d", name="读", returns=["连通判定"]),
                        completed=True, summary="读完", notes=[],
                        reads={"连通判定": "连通"})
     assert r.reads == {"连通判定": "连通"} and r.completed
 
 
 def test_missing_ui_return_fields_blocks_empty_action_returns():
-    from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
+    from gui_agent.core.orchestrator.contracts import missing_ui_return_fields as _missing_ui_return_fields
 
     run = Run(
         var="repo",
@@ -696,7 +696,7 @@ def test_missing_ui_return_fields_blocks_empty_action_returns():
 
 
 def test_missing_ui_return_fields_allows_explicit_empty_select_value():
-    from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
+    from gui_agent.core.orchestrator.contracts import missing_ui_return_fields as _missing_ui_return_fields
 
     run = Run(
         var="self_d",
@@ -710,7 +710,7 @@ def test_missing_ui_return_fields_allows_explicit_empty_select_value():
 
 
 def test_missing_ui_return_fields_scopes_empty_allowance_to_the_field():
-    from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
+    from gui_agent.core.orchestrator.contracts import missing_ui_return_fields as _missing_ui_return_fields
 
     run = Run(
         var="probe",
@@ -724,7 +724,7 @@ def test_missing_ui_return_fields_scopes_empty_allowance_to_the_field():
 
 
 def test_missing_ui_return_fields_ignores_non_ui_reads():
-    from gui_agent.core.orchestrator.callframe import missing_ui_return_fields as _missing_ui_return_fields
+    from gui_agent.core.orchestrator.contracts import missing_ui_return_fields as _missing_ui_return_fields
 
     read_run = Read(var="r", name="读取状态",  returns=["状态"])
     query_run = Query(var="q", name="查询状态",  returns=["状态"])
@@ -733,7 +733,7 @@ def test_missing_ui_return_fields_ignores_non_ui_reads():
 
 
 def test_tighten_ui_return_run_requires_non_empty_fields():
-    from gui_agent.core.orchestrator.callframe import tighten_ui_return_run as _tighten_ui_return_run
+    from gui_agent.core.orchestrator.recovery import tighten_ui_return_run as _tighten_ui_return_run
 
     run = Run(
         var="repo",
@@ -761,7 +761,9 @@ def test_tighten_ui_return_run_requires_non_empty_fields():
 
 
 def test_empty_return_replan_read_is_forced_interactive():
-    from gui_agent.core.orchestrator.callframe import force_interactive_return_recovery as _force_interactive_return_recovery
+    from gui_agent.core.orchestrator.recovery import (
+        force_interactive_return_recovery as _force_interactive_return_recovery,
+    )
 
     program = Program(statements=[
         Read(
@@ -787,7 +789,9 @@ def test_empty_return_replan_read_is_forced_interactive():
 
 
 def test_non_empty_return_replan_leaves_read_unchanged():
-    from gui_agent.core.orchestrator.callframe import force_interactive_return_recovery as _force_interactive_return_recovery
+    from gui_agent.core.orchestrator.recovery import (
+        force_interactive_return_recovery as _force_interactive_return_recovery,
+    )
 
     program = Program(statements=[
         Read(var="r", name="读取状态",  returns=["状态"])

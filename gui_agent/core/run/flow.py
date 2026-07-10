@@ -154,9 +154,9 @@ def finish_terminal_step(
         say(f"\n任务未完成：{reason}")
 
     if program is not None:
-        from gui_agent.core.orchestrator.callframe import package_result
+        from gui_agent.core.orchestrator.runner import make_run_result
 
-        result = package_result(
+        result = make_run_result(
             current_run,
             completed=False,
             summary=sv_step.summary or reason,

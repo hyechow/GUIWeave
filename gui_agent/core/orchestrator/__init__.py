@@ -1,6 +1,6 @@
 """DSL orchestrator — a compiler + runtime for the mixed script a GUI task decomposes into.
 
-GUI task = script generation (see docs/milestone_as_function.md). The user's goal compiles to a
+GUI task = script generation (see docs/dsl_runtime_architecture.md). The user's goal compiles to a
 small program of interactive actions (FFI calls into the nondeterministic GUI executor) and
 non-interactive statements (deterministic read/query/compute the interpreter runs itself). This
 package is that compiler + runtime; each module has one role in the toolchain:
@@ -35,17 +35,18 @@ package is that compiler + runtime; each module has one role in the toolchain:
   traversal/        foreach row-collection traversal controller/runtime.
 
   ── runtime ──────────────────────────────────────────────────────────────────────────
-  runner.py         the interpreter: non-interactive statements run here; interactive actions
-                    yield out to the agent loop. budget.py  turn-cost estimate.
+  runner.py         the interpreter: control flow + scalar evaluation + the common RunResult
+                    protocol. Interactive statements yield to the agent loop; statements that do
+                    not need a Milestone loop are drained by core/run/statements/dispatch.py.
+  core/run/interactive.py   the interactive statement executor adapter: Run → Milestone loop,
+                    then terminal-observation return extraction.
+  contracts.py      executor-result validation only; no execution or recovery decisions.
+  recovery.py       cross-statement recovery taxonomy, budgets, kickback protocol, and Program
+                    repair helpers. Milestone-local retries remain inside the Milestone loop.
+  budget.py         turn-cost estimate.
 
-  ── FFI boundary (the milestone-as-function call ABI) ────────────────────────────────
-  callframe.py      marshalling (to_milestone/package_result) + the call convention: return
-                    contract, bounded recovery, typed kickback exception. See its docstring.
-  recovery.py       exception-system Stage A: the four-class recovery taxonomy + the task-wide
-                    RecoveryLedger every recovery mechanism reports to (record-only for now;
-                    Stage B derives global budgets/escalation from the trace).
-
-  Retired: engine.py (S9a) — its passes went to passes.py, its marshalling to callframe.py.
+  Retired: the old engine/FFI facades. Statement dispatch now names the actual executor; there is
+  no separate invocation-frame architecture layer.
 """
 
 from .program import (

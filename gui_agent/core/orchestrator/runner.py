@@ -38,6 +38,30 @@ from .primitives.safe_eval import SafeEvalError, normalize_compute_expr, safe_ev
 MilestoneExecutor = Callable[[Run], RunResult]
 
 
+def make_run_result(
+    run: RunLike,
+    *,
+    completed: bool,
+    summary: str,
+    notes: list[str],
+    reads: dict[str, str] | None = None,
+    rows: list[dict[str, str]] | None = None,
+) -> RunResult:
+    """Build the uniform result consumed by the statement interpreter.
+
+    Interactive and deterministic executors differ in how they obtain evidence and values, but
+    both resume the interpreter through the same ``RunResult`` protocol.
+    """
+    return RunResult(
+        completed=completed,
+        failed=not completed,
+        reads=dict(reads) if reads else {},
+        rows=list(rows) if rows else [],
+        summary=summary,
+        evidence=list(notes),
+    )
+
+
 def _unique_fields(fields: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()

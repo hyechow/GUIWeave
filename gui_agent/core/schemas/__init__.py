@@ -522,8 +522,8 @@ class Milestone(BaseModel):
     )
     returns: list[str] = Field(
         default_factory=list,
-        description="声明的结构化返回字段（milestone=函数 的出参合同）；由编排器 Run.returns 填充，"
-                    "空 = 本 milestone 无出参。合同校验在 callframe 边界执行，此处为结构化通道。",
+        description="声明的结构化返回字段；由编排器 Run.returns 填充，空 = 本 milestone 无出参。"
+                    "Milestone 返回后由 statement result contract 校验。",
     )
     read_spec: str = Field(
         default="",

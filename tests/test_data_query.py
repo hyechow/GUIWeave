@@ -6,7 +6,7 @@ import pytest
 
 from gui_agent.core.orchestrator import Finish, Interpreter, Program, Query, Run
 from gui_agent.core.orchestrator.primitives.data_query import DataQueryError, execute_data_query
-from gui_agent.core.run.non_interactive import drive_pending_non_ui
+from gui_agent.core.run.statements import drain_immediate_statements
 from gui_agent.core.schemas import Observation, PolicyContext
 
 
@@ -332,7 +332,7 @@ def test_execute_data_query_allows_complete_materialized_table_with_partial_dom_
     assert reads == {"total": "265.4"}
 
 
-def test_non_ui_repairs_empty_data_query_with_actual_table_snapshot(tmp_path, monkeypatch):
+def test_query_executor_repairs_empty_result_with_actual_table_snapshot(tmp_path, monkeypatch):
     table = [
         {
             "index": 1,
@@ -400,19 +400,18 @@ def test_non_ui_repairs_empty_data_query_with_actual_table_snapshot(tmp_path, mo
         action_policy_name="action",
     )
 
-    result = drive_pending_non_ui(
-        current_run=current_run,
-        run_index=0,
-        notes_mark=0,
+    result = drain_immediate_statements(
+        current_statement=current_run,
+        statement_index=0,
         interpreter_steps=steps,
         bundle=None,
         platform=_Platform(),
         log_dir=tmp_path,
-        supervisor=None,
+        check_knowledge="",
         context=context,
         save_context=lambda: None,
         say=lambda _msg: None,
-        done_observation=Observation(
+        observation=Observation(
             png_bytes=b"png",
             source="browser",
             tables=table,
@@ -428,7 +427,7 @@ def test_non_ui_repairs_empty_data_query_with_actual_table_snapshot(tmp_path, mo
     }
 
 
-def test_non_ui_repair_blocks_when_collected_source_conflicts_with_goal(tmp_path, monkeypatch):
+def test_query_executor_blocks_when_collected_source_conflicts_with_goal(tmp_path, monkeypatch):
     table = [
         {
             "index": 1,
@@ -476,19 +475,18 @@ def test_non_ui_repair_blocks_when_collected_source_conflicts_with_goal(tmp_path
         action_policy_name="action",
     )
 
-    result = drive_pending_non_ui(
-        current_run=current_run,
-        run_index=0,
-        notes_mark=0,
+    result = drain_immediate_statements(
+        current_statement=current_run,
+        statement_index=0,
         interpreter_steps=steps,
         bundle=None,
         platform=_Platform(),
         log_dir=tmp_path,
-        supervisor=None,
+        check_knowledge="",
         context=context,
         save_context=lambda: None,
         say=lambda _msg: None,
-        done_observation=Observation(
+        observation=Observation(
             png_bytes=b"png",
             source="browser",
             tables=table,
@@ -504,7 +502,7 @@ def test_non_ui_repair_blocks_when_collected_source_conflicts_with_goal(tmp_path
     assert context.turns[-1].non_ui["reads"] == {}
 
 
-def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkeypatch):
+def test_query_executor_empty_repair_after_sql_error_still_fails(tmp_path, monkeypatch):
     table = [
         {
             "index": 1,
@@ -551,19 +549,18 @@ def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkey
         action_policy_name="action",
     )
 
-    result = drive_pending_non_ui(
-        current_run=current_run,
-        run_index=0,
-        notes_mark=0,
+    result = drain_immediate_statements(
+        current_statement=current_run,
+        statement_index=0,
         interpreter_steps=steps,
         bundle=None,
         platform=_Platform(),
         log_dir=tmp_path,
-        supervisor=None,
+        check_knowledge="",
         context=context,
         save_context=lambda: None,
         say=lambda _msg: None,
-        done_observation=Observation(
+        observation=Observation(
             png_bytes=b"png",
             source="browser",
             tables=table,
@@ -577,8 +574,8 @@ def test_non_ui_repair_empty_result_after_sql_error_still_fails(tmp_path, monkey
     assert context.turns[-1].non_ui["failed"] is True
 
 
-def test_non_ui_data_query_failure_sets_failure_evidence(tmp_path, monkeypatch):
-    # Feasibility Guard non-UI kick-back: a data_query that fails carries failure_evidence so the loop can
+def test_query_failure_sets_replan_evidence(tmp_path, monkeypatch):
+    # A failed query carries evidence so Program runtime can recompile instead of silently ending.
     # re-decompose instead of ending the run.
     import gui_agent.core.orchestrator.primitives.data_query as dq
 
@@ -594,13 +591,13 @@ def test_non_ui_data_query_failure_sets_failure_evidence(tmp_path, monkeypatch):
     steps = Interpreter(prog).steps()
     cur = next(steps)
     ctx = PolicyContext(goal="g", supervisor_policy_name="milestone", action_policy_name="action")
-    result = drive_pending_non_ui(
-        current_run=cur, run_index=0, notes_mark=0, interpreter_steps=steps,
-        bundle=None, platform=None, log_dir=tmp_path, supervisor=None, context=ctx,
+    result = drain_immediate_statements(
+        current_statement=cur, statement_index=0, interpreter_steps=steps,
+        bundle=None, platform=None, log_dir=tmp_path, check_knowledge="", context=ctx,
         save_context=lambda: None, say=lambda _m: None,
-        done_observation=Observation(png_bytes=b"png", source="browser", tables=[]),
+        observation=Observation(png_bytes=b"png", source="browser", tables=[]),
         observation_url="x.png",
     )
-    assert result.current_run is None           # program ended on the failure
+    assert result.current_statement is None     # program ended on the failure
     assert result.failure_evidence is not None   # ... but carries re-plannable evidence
     assert "rating" in result.failure_evidence

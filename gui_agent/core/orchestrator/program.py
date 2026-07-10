@@ -49,7 +49,7 @@ CondCmp = Literal["==", "!=", "exists", "empty", "contains", "not_contains", "in
 # Program-level execution modes. `navigation`/`filter`/`action` are commands: they may cross the
 # GUI FFI boundary and can change page/state. `read`/`data_query`/`compute` are non-interactive
 # statements: the interpreter executes them without clicking/filling/navigating. A browser URL/back
-# navigation command may still be drained by a runtime non-UI fast path; its statement kind remains
+# navigation command may still be drained by an immediate runtime fast path; its statement kind remains
 # navigation.
 INTERACTIVE_KINDS = frozenset({"navigation", "filter", "action"})
 NON_INTERACTIVE_KINDS = frozenset({"read", "data_query", "compute"})
@@ -85,7 +85,7 @@ class RunLike(BaseModel):
     - 【非交互语句】（Read/Query）= 解释器确定性执行的语句：消费当前帧/表格快照,
       不驱动 GUI，可安全重试、可被记忆化。
     分类轴是执行模式，不是数据方向——填表单和点链接同为交互执行；一个名义上的 read
-    需要交互定位时会被【重新分类】为交互 Run（callframe 升格路径），不是在查询里
+      需要交互定位时会被【重新分类】为交互 Run（recovery 升格路径），不是在查询里
     "顺便"交互。三个节点在 IR 里平级（S8：字段各归其位），不再是子类关系。"""
 
     op: Literal["run"] = "run"
@@ -131,7 +131,7 @@ class Run(RunLike):
     # checker), only the traversal between them is dynamic.
     from_state: str = ""
     # Typed returns: optional domain declaration per `returns` field —
-    # {field: "url" | "number" | "date" | "enum:a|b|c" | "text"}. The callframe return-check
+    # {field: "url" | "number" | "date" | "enum:a|b|c" | "text"}. The result-contract check
     # rejects a NON-empty value that falls outside its domain (读到垃圾 → 走空值同款有界恢复，
     # 而不是静默给错答)。Fields not listed fall back to conservative name-cue inference.
     return_domains: dict[str, str] = Field(default_factory=dict)

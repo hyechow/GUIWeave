@@ -105,6 +105,11 @@ def main(
         help="DSL 编排器模式：先把目标 decompose 成 run/if/finish 程序，由解释器排序驱动各 milestone"
              "（默认走 DAG 路径）",
     )
+    parser.add_argument(
+        "--include-skills",
+        action="store_true",
+        help="显式启用可选的 _skill.md 编排提示；默认仅使用应用功能说明",
+    )
     args = parser.parse_args()
 
     # Unified headless switch (--headless flag OR env AGENT_HEADLESS): suppress the HUD and the
@@ -195,9 +200,17 @@ def main(
             # match / load lines land in stdout.log (they used to print before the tee and vanish);
             # the summary is also persisted to context.json (context.knowledge) for offline analysis.
             knowledge_summary: dict | None = None
-            knowledge = auto_discover_knowledge(goal, bundle.platform)
+            knowledge = auto_discover_knowledge(
+                goal,
+                bundle.platform,
+                include_skills=args.include_skills,
+            )
             if knowledge is None and cur_site:
-                knowledge = load_knowledge_for_app(cur_site, bundle.platform)
+                knowledge = load_knowledge_for_app(
+                    cur_site,
+                    bundle.platform,
+                    include_skills=args.include_skills,
+                )
             if knowledge and hasattr(supervisor, "set_app_knowledge"):
                 supervisor.set_app_knowledge(
                     knowledge.navigation,
@@ -211,8 +224,13 @@ def main(
                     f"Knowledge: auto-loaded app={knowledge_summary['app_name']} "
                     f"(nav={knowledge_summary['nav_chars']} chars, "
                     f"elements={knowledge_summary['elements_chars']} chars, "
-                    f"sections={knowledge_summary['section_count']})"
+                    f"sections={knowledge_summary['section_count']}, "
+                    f"profile={knowledge_summary['profile']})"
                 )
+                if args.orchestrator:
+                    selected = knowledge.decompose_sections(goal)
+                    knowledge_summary["decompose_sections"] = selected
+                    print(f"Knowledge: decompose sections={selected or ['<app-overview-only>']}")
 
             # DSL orchestrator mode (opt-in): decompose the goal into a run/if/finish program; the
             # interpreter sequences milestones instead of the supervisor's DAG walker. program=None
@@ -234,7 +252,7 @@ def main(
                 orch_tokens_before = get_llm_token_usage()
                 # decompose finalizes the L2 structural gates centrally (passes.finalize_gates:
                 # confirm-read dispatch gate + precondition ensure-state gate) — no caller wrap.
-                program = decompose(goal, knowledge=knowledge.navigation if knowledge else "",
+                program = decompose(goal, knowledge=knowledge.decompose_context(goal) if knowledge else "",
                                     file_section=file_section,
                                     current_url=cur_url, current_title=cur_title,
                                     current_site=cur_site, table_summaries=initial_tables,
@@ -270,7 +288,7 @@ def main(
                 # search → disambiguate → open → read) instead of the decomposer pre-baking brittle
                 # micro-steps. See memory typed-returns-validation / webarena-185.
                 def _subdecompose(sub_goal: str):
-                    return decompose(sub_goal, knowledge=knowledge.navigation if knowledge else "",
+                    return decompose(sub_goal, knowledge=knowledge.decompose_context(sub_goal) if knowledge else "",
                                      current_site=cur_site,
                                      prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
                 if not args.no_dynamic_max_turns:

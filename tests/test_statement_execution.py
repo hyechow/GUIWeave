@@ -1,16 +1,24 @@
-"""callframe = milestone-as-function 调用约定的合同测试。
+"""Statement execution boundaries: result contracts, recovery, and Milestone adaptation."""
 
-搬迁自 loop.py 的函数（missing/tighten/force_recovery/should_kickback）已由
-test_orchestrator.py / test_feasibility_replan.py 覆盖；这里锁定新增的调用协议件：
-ReturnRecoveryLedger（违约重试预算按调用点隔离）与 open_call（call 派发的 marshalling 口径）。
-"""
-
-from gui_agent.core.orchestrator.callframe import (
+from gui_agent.core.orchestrator.contracts import (
+    check_return_contract,
+    normalize_return_reads,
+    out_of_domain_return_fields,
+)
+from gui_agent.core.orchestrator.recovery import (
+    DEAD_ROUTE_MARKER,
     MAX_EMPTY_RETURN_RECOVERIES,
+    REQUIRED_ROUTE_MARKER,
+    KickbackDirective,
     ReturnRecoveryLedger,
-    open_call,
+    force_interactive_return_recovery,
+    kickback_adherence_issues,
+    parse_kickback_directive,
+    sharpen_kickback_directive,
+    tighten_ui_return_run,
 )
 from gui_agent.core.orchestrator.program import Read, Query, Run
+from gui_agent.core.run.interactive import milestone_for_run, start_milestone
 
 
 class _FakeSupervisor:
@@ -50,10 +58,10 @@ def test_ledger_key_follows_contract_not_name_suffix():
     assert ledger.next_attempt(3, tightened) == 2
 
 
-def test_open_call_marshals_run_and_reseeds():
+def test_start_milestone_translates_run_and_reseeds():
     sup = _FakeSupervisor()
     ui_run = Run(name="点击保存", kind="action", success_condition="出现保存成功提示")
-    milestone = open_call(sup, ui_run, 2, fresh_advance=True)
+    milestone = start_milestone(sup, ui_run, 2, fresh_advance=True)
     assert len(sup.reseeds) == 1
     seeded, task_type, fresh = sup.reseeds[0]
     assert seeded is milestone
@@ -64,8 +72,6 @@ def test_open_call_marshals_run_and_reseeds():
 
 def test_enum_domain_rejects_out_of_domain_value():
     """185 类 bug 的合同化：Material 读到列表首项而非已选项 → 出域拒收，不静默给错答。"""
-    from gui_agent.core.orchestrator.callframe import check_return_contract
-
     run = Run(
         name="读取创建结果", kind="action", var="c",
         returns=["创建结果"],
@@ -79,8 +85,6 @@ def test_enum_domain_rejects_out_of_domain_value():
 
 
 def test_enum_return_aliases_are_canonicalized_to_declared_option():
-    from gui_agent.core.orchestrator.callframe import check_return_contract, normalize_return_reads
-
     run = Run(
         name="点击保存", kind="action", var="s",
         returns=["save_status"],
@@ -93,8 +97,6 @@ def test_enum_return_aliases_are_canonicalized_to_declared_option():
 
 
 def test_enum_return_aliases_do_not_rewrite_arbitrary_enums():
-    from gui_agent.core.orchestrator.callframe import normalize_return_reads
-
     run = Run(
         name="设置状态", kind="action", var="s",
         returns=["status"],
@@ -105,8 +107,6 @@ def test_enum_return_aliases_do_not_rewrite_arbitrary_enums():
 
 
 def test_unknown_enum_outcome_is_not_canonicalized_by_short_alias_substring():
-    from gui_agent.core.orchestrator.callframe import check_return_contract, normalize_return_reads
-
     run = Run(
         name="点击保存", kind="action", var="s",
         returns=["save_status"],
@@ -119,8 +119,6 @@ def test_unknown_enum_outcome_is_not_canonicalized_by_short_alias_substring():
 
 
 def test_inferred_url_and_number_domains():
-    from gui_agent.core.orchestrator.callframe import check_return_contract
-
     run = Run(
         name="读取行详情", kind="navigation", var="d",
         returns=["详情URL", "记录总数", "备注"],
@@ -138,27 +136,18 @@ def test_inferred_url_and_number_domains():
 
 
 def test_empty_values_are_missing_not_domain_violations():
-    from gui_agent.core.orchestrator.callframe import check_return_contract
-
     run = Run(name="读取", kind="action", var="r", returns=["详情URL"])
     report = check_return_contract(run, {"详情URL": ""})
     assert report.missing == ["详情URL"] and report.out_of_domain == []
 
 
 def test_domain_check_exempts_pure_reads():
-    from gui_agent.core.orchestrator.callframe import out_of_domain_return_fields
-
     read_run = Read(name="读",  var="r", returns=["详情URL"],
                    return_domains={"详情URL": "url"})
     assert out_of_domain_return_fields(read_run, {"详情URL": "不是链接"}) == []
 
 
 def test_tighten_carries_domain_violation_context():
-    from gui_agent.core.orchestrator.callframe import (
-        check_return_contract,
-        tighten_ui_return_run,
-    )
-
     run = Run(
         name="触发检测", kind="action", var="p",
         returns=["是否可达"], success_condition="已触发",
@@ -185,14 +174,14 @@ def test_decomposer_draft_maps_return_domains_only_for_declared_fields():
     assert run.return_domains == {"创建结果": "enum:成功|失败"}
 
 
-def test_open_call_rejects_query_runs():
-    """S6b 边界：查询节点永不进入 milestone 执行器 —— open_call 对其抛类型错误。"""
+def test_start_milestone_rejects_query_runs():
+    """查询节点永不进入 Milestone 执行器。"""
     import pytest
 
     sup = _FakeSupervisor()
     read_run = Read(name="读取总数",  var="total", returns=["总数"])
     with pytest.raises(ValueError, match="query run"):
-        open_call(sup, read_run, 0)
+        start_milestone(sup, read_run, 0)
     assert sup.reseeds == []
 
 
@@ -200,7 +189,6 @@ def test_open_call_rejects_query_runs():
 
 
 def test_compose_and_parse_kickback_directive_roundtrip():
-    from gui_agent.core.orchestrator.callframe import parse_kickback_directive
     from gui_agent.core.supervisor.milestone.feasibility import (
         FeasibilityVerdict,
         compose_directive,
@@ -222,10 +210,6 @@ def test_compose_and_parse_kickback_directive_roundtrip():
 
 
 def test_adherence_flags_dead_route_reuse():
-    from gui_agent.core.orchestrator.callframe import (
-        KickbackDirective,
-        kickback_adherence_issues,
-    )
     from gui_agent.core.orchestrator.program import Program, Run
 
     directive = KickbackDirective(
@@ -245,10 +229,6 @@ def test_adherence_flags_dead_route_reuse():
 
 
 def test_adherence_flags_failed_run_reappearance_and_ignored_route():
-    from gui_agent.core.orchestrator.callframe import (
-        KickbackDirective,
-        kickback_adherence_issues,
-    )
     from gui_agent.core.orchestrator.program import Program, Run
 
     failed = Run(kind="filter", name="在列表层按 Rating 筛选出 1 星评论（继续定位返回字段：数量）")
@@ -269,10 +249,6 @@ def test_adherence_flags_failed_run_reappearance_and_ignored_route():
 def test_adherence_noop_for_untyped_directive():
     """无标记的 inline directive（空返回/data_query 失败）没有结构化载荷——不做服从校验,
     因为这类恢复合法地重访相似步骤。"""
-    from gui_agent.core.orchestrator.callframe import (
-        kickback_adherence_issues,
-        parse_kickback_directive,
-    )
     from gui_agent.core.orchestrator.program import Program, Run
 
     directive = parse_kickback_directive("上一子目标声明的返回字段合同未满足:...请重规划。")
@@ -307,27 +283,25 @@ def test_to_stmts_lowers_queries_to_ir_nodes():
     assert hasattr(query_stmt, "sql") and not hasattr(query_stmt, "return_domains")
 
 
-def test_to_milestone_rejects_query_runs():
-    """边界类型强制：查询节点 marshal 成 milestone = 类型错误,不是静默兜底。"""
+def test_milestone_adapter_rejects_query_runs():
+    """边界类型强制：查询节点不能交给 Milestone executor。"""
     import pytest
 
-    from gui_agent.core.orchestrator.callframe import to_milestone
     from gui_agent.core.orchestrator.program import Query, Read
 
     with pytest.raises(ValueError, match="query run"):
-        to_milestone(Read(var="r", name="读计数", returns=["总数"]), 0)
+        milestone_for_run(Read(var="r", name="读计数", returns=["总数"]), 0)
     with pytest.raises(ValueError, match="query run"):
-        to_milestone(Query(var="q", name="查询", returns=["n"], sql="SELECT 1"), 0)
+        milestone_for_run(Query(var="q", name="查询", returns=["n"], sql="SELECT 1"), 0)
     # 兼容:直接构造的 base Run(kind=read) 同样被拒(旧测试/持久化形态)
     with pytest.raises(ValueError, match="query run"):
-        to_milestone(Read( var="r", name="读", returns=["x"]), 0)
+        milestone_for_run(Read(var="r", name="读", returns=["x"]), 0)
     # 命令照常
-    assert to_milestone(Run(kind="action", name="点击"), 0).name == "点击"
+    assert milestone_for_run(Run(kind="action", name="点击"), 0).name == "点击"
 
 
 def test_promotion_reclassifies_read_ir_node_to_command_run():
     """升格 = 重新分类:Read IR 节点升格后必须是 base Run 命令,不能是谎报 kind 的 Read。"""
-    from gui_agent.core.orchestrator.callframe import force_interactive_return_recovery
     from gui_agent.core.orchestrator.program import Program, Query, Read
 
     program = Program(statements=[
@@ -374,13 +348,8 @@ def test_wire_roundtrip_routes_legacy_dumps_to_sibling_nodes():
         Run(name="x", kind="read")  # type: ignore[arg-type]
 
 
-def test_sharpen_kickback_directive_uses_abi_markers():
-    """锐化文本必须用 ABI marker 常量拼接,不能硬编码字面量——防 compose/parse/sharpen 三处漂移。"""
-    from gui_agent.core.orchestrator.callframe import (
-        DEAD_ROUTE_MARKER,
-        REQUIRED_ROUTE_MARKER,
-        sharpen_kickback_directive,
-    )
+def test_sharpen_kickback_directive_uses_protocol_markers():
+    """compose/parse/sharpen share the recovery protocol markers."""
     out = sharpen_kickback_directive("原始纠正指令", ["被禁机制再现", "规定路线未被采用"])
     assert "原始纠正指令" in out
     assert "被禁机制再现" in out and "规定路线未被采用" in out

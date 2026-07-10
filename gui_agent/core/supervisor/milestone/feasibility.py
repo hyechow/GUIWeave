@@ -39,7 +39,7 @@ class FeasibilityVerdict(BaseModel):
 
     kickback = milestone 函数抛出的类型化异常：``dead_route``/``required_route`` 是异常的结构化
     载荷（禁用机制 + 规定路线），由 compose_directive 组装成带标记的 directive 文本单通道下行；
-    编排侧 callframe.parse_kickback_directive 反解并对重规划做确定性服从校验。"""
+    编排侧 recovery.parse_kickback_directive 反解并对重规划做确定性服从校验。"""
 
     feasible: bool = Field(description="目标在当前环境可否达成:true=可行(继续试),false=不可行(踢回重规划)")
     reason: str = Field(default="", description="一句话依据:点名必需控件 + 它是否在页面控件清单中")
@@ -60,9 +60,9 @@ class FeasibilityVerdict(BaseModel):
 
 
 # Structured-exception markers: compose_directive folds the typed payload into the single
-# prose channel (sv_step.replan_directive); callframe.parse_kickback_directive re-parses them.
-# Single-sourced from the callframe ABI so composer and parser can never drift.
-from gui_agent.core.orchestrator.callframe import (  # noqa: E402
+# prose channel (sv_step.replan_directive); recovery.parse_kickback_directive re-parses them.
+# Single-sourced from the recovery protocol so composer and parser cannot drift.
+from gui_agent.core.orchestrator.recovery import (  # noqa: E402
     DEAD_ROUTE_MARKER,
     REQUIRED_ROUTE_MARKER,
 )

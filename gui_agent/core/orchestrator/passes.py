@@ -5,7 +5,7 @@ middle-end) → validator/preflight (type-check/lint). Each pass takes a Program
 Program (inputs untouched); all are idempotent. Run order lives in decomposer.to_program:
 collapse_foreach_enrichment_passes → insert_loop_entry_arrivals → normalize_confirm_read_gates /
 normalize_precondition_gates → chain_from_states. Marshalling into the executor's Milestone format
-is NOT here — that is the FFI boundary and lives in callframe.py.
+is NOT here — interactive execution belongs to core/run/interactive.py.
 """
 
 from __future__ import annotations

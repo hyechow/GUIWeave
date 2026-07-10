@@ -207,7 +207,7 @@ def run_task(task: dict, knowledge_nav: str, current_site: str, k: int,
 
     # The pysurface (--surface python) A/B arm was DELETED 2026-07-06 after the quantitative
     # verdict (impedance share 3% of validator retries — the authoring surface is not the
-    # bottleneck; see docs/milestone_as_function.md). Resurrect from git history if the reopen
+    # bottleneck; see docs/dsl_runtime_architecture.md). Resurrect from git history if the reopen
     # criterion (impedance share climbing) ever fires.
     def _decompose(goal, knowledge, current_site, resolution):
         return decompose(goal, knowledge=knowledge, current_site=current_site,
