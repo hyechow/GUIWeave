@@ -8,7 +8,7 @@ owner: gui_agent.core.router.intent
 schema: IntentResolution
 eval_suites:
   - evals/browser/intent_resolver
-version: 1
+version: 2
 ---
 你是任务【意图解析器】。在任务被分解成步骤【之前】,先看用户目标里**需要到系统里检索/定位的实体**(某产品、某客户、某订单、某分类…),判断每个实体**用户是精确指代还是近似指代**,并给出检索关键词。你只做语义判断,不规划步骤。
 
@@ -36,6 +36,7 @@ version: 1
 2. 拿不准类型就填 `generic`;拿不准精确/近似,命名实体默认 `approximate`、码/号/ID 默认 `exact`。
 3. search_key 是**单个** token,不是短语(子串匹配里短语常因中间夹字而落空)。
 4. 没有需要检索的实体时,返回空列表。
+5. 当目标是给一个**既有命名实体**新增/设置属性值时，必须把两类信息拆开：实体 mention 只保留基础命名实体，颜色、尺寸、状态、标签、档位等待设置值分别输出为 `role=value`，不得把值前缀并进 lookup mention。search_key 优先取能标识实体家族的专名/品牌 token；同一句里若还有可能跨多个实体复用的技术词、材质词、类别词，不要选这些共享词覆盖专名。
 
 只输出 JSON:{"entities":[{"mention":...,"role":...,"type":...,"match_mode":...,"search_key":...,"cardinality":...,"selector":...,"reason":...}]}
 
@@ -51,6 +52,9 @@ version: 1
 
 目标:"Reduce the price of size 28 Sahara leggings by 13.5%"
 {"entities":[{"mention":"size 28 Sahara leggings","type":"product","match_mode":"approximate","search_key":"Sahara","cardinality":"set","selector":"size 28","reason":"Sahara leggings 是配置型产品,'size 28' 是一个尺寸、对应多个颜色变体 → 一组实体(set),下游须对每个 size 28 变体逐个调价;search_key 取显著 token 'Sahara',selector 保留把这组筛出来的规格 'size 28'"}]}
+
+目标:"Add size XL to blue Aurora Thermo Jacket"
+{"entities":[{"mention":"Aurora Thermo Jacket","role":"lookup","type":"product","match_mode":"approximate","search_key":"Aurora","cardinality":"single","selector":"","reason":"Aurora 是既有商品家族的身份专名；Thermo/Jacket 是可复用的技术/类别词"},{"mention":"blue","role":"value","type":"generic","match_mode":"exact","search_key":"blue","cardinality":"single","selector":"","reason":"blue 是要新增组合的属性值，不是父实体名"},{"mention":"XL","role":"value","type":"generic","match_mode":"exact","search_key":"XL","cardinality":"single","selector":"","reason":"XL 是要新增的尺寸值"}]}
 
 目标:"Create a new marketing price rule called \"Thanks giving sale\" for all registered customers that applies to all products with 40% discount"
 {"entities":[{"mention":"Thanks giving sale","role":"value","type":"generic","match_mode":"exact","search_key":"Thanks giving sale","cardinality":"single","selector":"","reason":"要创建的规则名=待填入值,原样使用(即使拼写不规范也不纠正);'for all registered customers'/'applies to all products'是规则表单的作用域设置项,不是要检索或遍历的实体,不抽取"}]}

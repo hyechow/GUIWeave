@@ -322,10 +322,10 @@ def test_intent_contract_accepts_real_entity_scope_predicate_on_foreach_query():
     assert "ENTITY_SCOPE_PREDICATE_MISSING" not in _codes(program, resolution)
 
 
-def test_intent_contract_skips_value_role_entities():
+def test_intent_contract_accepts_consumed_value_role_entities():
     program = Program(statements=[
         Run(kind="navigation", name="进入 Cart Price Rules 页面"),
-        Run(kind="action", name='填写 Rule Name 为 "Thanks giving sale"，Customer Groups 全选，保存'),
+        Run(kind="action", name='填写 Rule Name 为 "Thanks giving sale"，Customer Groups 选择 all registered customers，保存'),
     ])
     resolution = IntentResolution(entities=[
         EntityRef(mention="Thanks giving sale", role="value", match_mode="approximate",
@@ -335,3 +335,22 @@ def test_intent_contract_skips_value_role_entities():
     ])
 
     assert validate_intent_contracts(program, resolution) == []
+
+
+def test_intent_contract_blocks_value_only_present_in_goal_or_navigation():
+    program = Program(
+        goal="Add size XXXL to green product",
+        statements=[
+            Run(kind="navigation", name="进入 green product 编辑页"),
+            Run(kind="action", name="添加 Size=XXXL 并保存"),
+        ],
+    )
+    resolution = IntentResolution(entities=[
+        EntityRef(mention="green", role="value", match_mode="exact", search_key="green"),
+        EntityRef(mention="XXXL", role="value", match_mode="exact", search_key="XXXL"),
+    ])
+
+    issues = validate_intent_contracts(program, resolution)
+
+    assert {issue.code for issue in issues} == {"ROUTER_VALUE_DROPPED"}
+    assert "green" in str(issues[0])

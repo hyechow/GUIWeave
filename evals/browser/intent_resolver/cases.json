@@ -1,5 +1,31 @@
 [
   {
+    "label": "既有父实体与待设置属性值分离（回归 task-549 shared-token fallback）",
+    "goal": "Add a new size XXXL to green Minerva LumaTech V-Tee",
+    "expected_entities": [
+      {
+        "mention_contains": "Minerva",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key_any": [
+          "Minerva"
+        ]
+      },
+      {
+        "mention_contains": "XXXL",
+        "role": "value",
+        "search_key_any": [
+          "XXXL"
+        ]
+      }
+    ],
+    "not_expected_mentions": [
+      "green",
+      "XXXL"
+    ],
+    "note": "既有父实体与待设置的颜色/尺寸值必须拆开；search_key 选身份专名 Minerva，不能选跨产品复用的技术词 LumaTech。"
+  },
+  {
     "label": "近似产品名 → product / approximate / 单 token 关键词（回归 20260622_124258 task-113）",
     "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
     "expected_entities": [

@@ -14,7 +14,7 @@ from typing import Literal
 
 from gui_agent.core.router import IntentResolution
 
-from .program import ForEach, If, Program, Query, Run, RunLike, Stmt
+from .program import Call, Compute, ForEach, If, Program, Query, Run, RunLike, Stmt
 
 IssueSeverity = Literal["error", "warning"]
 
@@ -37,8 +37,70 @@ def validate_intent_contracts(
         return []
     issues: list[IntentContractIssue] = []
     issues.extend(_check_router_entity_coverage(program, resolution))
+    issues.extend(_check_value_entity_consumption(program, resolution))
     issues.extend(_check_entity_scope_predicates(program, resolution))
     return issues
+
+
+def _check_value_entity_consumption(
+    program: Program,
+    resolution: IntentResolution,
+) -> list[IntentContractIssue]:
+    """Every router value must reach an executable consumer, not merely survive in the goal.
+
+    Values are not lookup entities, so they intentionally skip retrieval coverage. They are still
+    part of the task contract: dropping a color, message, target state, rule name, or form scope can
+    produce a structurally valid program that mutates the wrong state. Only mutation/data-flow nodes
+    count as consumers; navigation, filters, finish prose, and Program.goal do not.
+    """
+
+    consumer_text = _value_consumer_text(program)
+    issues: list[IntentContractIssue] = []
+    for entity in resolution.entities:
+        if _entity_role(entity) != "value":
+            continue
+        mention = str(getattr(entity, "mention", "") or "").strip()
+        search_key = str(getattr(entity, "search_key", "") or "").strip()
+        if not mention and not search_key:
+            continue
+        if _contains(consumer_text, mention) or _contains(consumer_text, search_key):
+            continue
+        value = mention or search_key
+        issues.append(IntentContractIssue(
+            code="ROUTER_VALUE_DROPPED",
+            message=(
+                f"Router marked「{value}」as role=value, but no action, compute, call argument, or "
+                "foreach body_goal consumes that value. A value appearing only in the user goal, "
+                "navigation/filter text, or finish message does not change application state. "
+                f"Carry「{value}」verbatim into the mutation/data-flow node that sets or creates it."
+            ),
+            evidence=(f"mention={mention}", f"search_key={search_key}"),
+        ))
+    return issues
+
+
+def _value_consumer_text(program: Program) -> str:
+    parts: list[str] = []
+
+    def _collect(stmts: list[Stmt]) -> None:
+        for stmt in stmts:
+            if isinstance(stmt, RunLike) and stmt.kind == "action":
+                parts.extend([stmt.name or "", stmt.success_condition or "", stmt.read_spec or ""])
+            elif isinstance(stmt, Compute):
+                parts.append(stmt.expr or "")
+            elif isinstance(stmt, Call):
+                parts.extend(str(value) for value in (stmt.args or {}).values())
+            elif isinstance(stmt, ForEach):
+                parts.append(stmt.body_goal or "")
+                _collect(stmt.body)
+            elif isinstance(stmt, If):
+                _collect(stmt.then)
+                _collect(stmt.otherwise)
+
+    _collect(program.statements)
+    for fn in getattr(program, "functions", None) or []:
+        _collect(fn.body)
+    return "\n".join(parts)
 
 
 def _check_router_entity_coverage(program: Program, resolution: IntentResolution) -> list[IntentContractIssue]:
