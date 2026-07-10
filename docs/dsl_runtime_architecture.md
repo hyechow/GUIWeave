@@ -66,6 +66,7 @@ Interpreter 是所有 DSL statement 的统一运行时：
 RunResult:
   completed
   failed
+  completion_status: confirmed | accepted_unverified | failed | in_progress
   reads
   rows
   summary
@@ -119,24 +120,59 @@ turn、LLM 统计和 recovery ledger。
 `core/run/interactive.py` 是一个薄适配器：把其余交互 Run 转成 Supervisor 使用的 Milestone
 结构，启动 Milestone loop，并从终态 observation 提取声明返回值。它不拥有恢复策略。
 
-## 执行信号与效果信号
+## 动作信号与完成状态
 
-交互完成不能压缩成单一的“看见反馈/没看见反馈”。Milestone 必须区分：
+交互动作不能压缩成单一的“成功/失败”或“看见反馈/没看见反馈”。每次原子动作记录四条
+相互独立的信号：
 
 ```text
 execution: not_attempted | dispatched | dispatch_failed
-effect:    confirmed | contradicted | unobservable | unknown
+target:    on_target | off_target | unknown
+response:  observed | none_observed | unobservable | unknown
+outcome:   confirmed | contradicted | unverified
+```
+
+其中 `execution` 回答“执行器是否可靠派发”，`target` 回答“动作是否落在预期对象”，
+`response` 只描述页面是否给出响应，`outcome` 才回答业务终态是否得到证明。URL 变化、toast、
+列表刷新等都属于 response channel；它们可能帮助确认 outcome，但二者不能互相代替。
+
+Milestone 的完成状态另行记录：
+
+```text
+completion_status: confirmed | accepted_unverified | failed | in_progress
 ```
 
 验收信号按任务和可用证据降级：
 
 1. 目标业务状态或权威结构化状态已确认；
 2. 新鲜效果证据，例如 URL、列表、字段值或成功记录发生变化；
-3. 动作已可靠 dispatch，且页面明确没有效果反馈通道；
+3. 终端副作用已可靠 dispatch，且没有明确的拒绝证据；
 4. 弱视觉推断只能辅助，不能覆盖相反的结构化证据。
 
-`effect=contradicted` 时不能凭 dispatch 宣告成功；反馈通道不存在时，也不能因没有 toast
-而重复提交。`require_fresh_action` 的写操作不能被 PreExisting 状态吞掉。
+第三档只能产生 `accepted_unverified`：Interpreter 可以继续执行后续 statement，但最终结果层
+不得把它表述为“已确认成功”。`outcome=contradicted` 时不能凭 dispatch 推进；没有 toast 也
+不能据此重复提交。`require_fresh_action` 的写操作不能被 PreExisting 状态吞掉。
+
+## 动作账本与重复提交
+
+Planner 为每个原子动作声明 `atomic_role`：
+
+```text
+prepare | commit | iterate
+```
+
+- `prepare` 改变输入、选择或局部页面状态；
+- `commit` 触发保存、提交、发送等不可安全重复的副作用；
+- `iterate` 是允许重复并由边界/目标值终止的调节动作。
+
+执行器在真正调用平台 adapter 之前，用 `execution_scope + milestone_id + atomic_role` 形成语义
+动作键并查询 run-scoped `ActionLedger`。同一 scope 的 commit 已经 `dispatched` 且未被
+`contradicted` 时，后续同义 commit 必须在 dispatch 前被抑制；坐标漂移或按钮文案轻微变化不应
+绕过此门。若 outcome 明确 contradicted，只有先出现新的 prepare 修正动作，才允许再次 commit。
+foreach 的不同 row identity 属于不同 scope，因此不会互相误伤。
+
+旧字段 `executed`、`no_effect` 和 `target_verify` 只承担持久化上下文兼容；新决策不得再把它们
+拼成单一“动作成功”结论。
 
 ## 恢复边界
 
