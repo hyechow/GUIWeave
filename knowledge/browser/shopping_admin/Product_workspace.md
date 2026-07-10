@@ -67,6 +67,11 @@ specific color/size combination therefore changes that Simple Product's current 
 parent's Price and not an attribute selector on another variation. Percentage changes are derived
 from the variation's live current Price.
 
+Adding one requested color/size combination and saving the configurable parent form one durable
+Configurations mutation. The DSL should use one action whose terminal state says the saved
+Configurations collection contains the exact combination; opening the section, using its wizard,
+generating the row, and clicking the final Save remain runtime steps inside that action.
+
 Size and Color belong to the variation. Material can be inherited/owned by the configurable parent
 and may be empty on a Simple child. Variation SKUs commonly append size and color segments to the
 parent SKU; the parent record is identified by the base SKU together with

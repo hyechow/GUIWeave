@@ -80,7 +80,7 @@ version: 2
 ### 系统配置 (Stores & System)
 *   **Configuration (form)**: 全局系统配置中心，包含商店设置、税务、货币、属性集等。
 *   **Attribute Sets (list/form)**: 产品属性集的定义与管理。
-*   **Product Attributes (list/form)**: 全局产品属性及其可选值的管理入口。Configurations 生成组合时只能消费此前已经保存的属性选项；引入新的 Size/Color 值时，Product Attributes 的选项保存是前置资源阶段，完成后才能进入配置型父商品并保存其 Configurations 集合。两者是独立的持久化边界。
+*   **Product Attributes (list/form)**: 全局产品属性及其可选值的管理入口。Configurations 生成组合时只能消费此前已经保存的属性选项；引入新的 Size/Color 值时，先按 Attribute Code 定位并打开**既有属性**，再向其 Options/Values 集合添加并保存 option。`Add New Attribute` 会新建另一份属性定义，不能用于给既有 Size/Color 添加 option。Product Attribute option 保存完成后才能进入配置型父商品并保存其 Configurations 集合；两者是独立的持久化边界。
 *   **Extensions Marketplace (external link)**: 合作伙伴与扩展程序市场入口。
 
 ### 内容与设计 (Content)

@@ -70,6 +70,12 @@ Product** before generating the combination in the parent product. Saving an att
 saving the parent product's Configurations collection are two independent persistent changes; the
 attribute option must be durable before Configurations can consume it.
 
+Generating a requested color/size combination and saving the configurable parent are one
+Configurations mutation boundary. In the DSL, express them as one action whose terminal state is
+the saved Configurations collection containing that exact combination. Expanding Configurations,
+starting the wizard, selecting attributes, generating rows, and clicking the final product Save are
+runtime steps inside that action; do not split generation and Save into separate action statements.
+
 ## Advanced pricing and inventory
 
 To access the advanced pricing and inventory settings, click the link below **Price** and **Quantity**. For more information, see Managing Pricing and Inventory Management.
