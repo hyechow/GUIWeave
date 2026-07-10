@@ -9,11 +9,31 @@ from gui_agent.core.schemas import PolicyTurn, SupervisorStep
 from .progress_monitor import action_signature
 
 
+_COMMIT_CAPABLE_ACTION_TYPES = frozenset({"tap", "click", "press_enter"})
+_ITERATIVE_ACTION_TYPES = frozenset({"scroll", "drag"})
+
+
+def effective_action_role(supervisor_step: SupervisorStep, action: Any) -> str:
+    """Resolve lifecycle role from the concrete action crossing the GUI boundary.
+
+    The planner's role is advisory until action policy has produced a concrete
+    primitive. A scroll or drag cannot consume a milestone's at-most-once commit
+    slot even when an LLM mislabeled it; other non-dispatch primitives are
+    preparation actions.
+    """
+    action_type = str(getattr(action, "action_type", "") or "").lower()
+    if action_type in _ITERATIVE_ACTION_TYPES:
+        return "iterate"
+    if action_type not in _COMMIT_CAPABLE_ACTION_TYPES:
+        return "prepare"
+    return supervisor_step.atomic_role or "prepare"
+
+
 def semantic_action_key(supervisor_step: SupervisorStep, action: Any) -> str:
     """Return a stable action identity within one milestone execution scope."""
     scope = supervisor_step.execution_scope or ""
     milestone_id = supervisor_step.milestone_id or ""
-    role = supervisor_step.atomic_role or "prepare"
+    role = effective_action_role(supervisor_step, action)
     prefix = f"{scope}|{milestone_id}|{role}"
     # A commit is the persistence boundary of its interactive Run. Coordinates and button
     # wording must not create a second key for the same side effect.
@@ -34,7 +54,12 @@ class ActionLedger:
         if action is None:
             return True, "", ""
         key = semantic_action_key(supervisor_step, action)
-        if supervisor_step.atomic_role != "commit":
+        if str(getattr(action, "action_type", "") or "").lower() == "stop":
+            # Completion belongs to the milestone supervisor. An action-policy ``stop`` emitted
+            # while the supervisor is still asking for work is only a no-op opinion; dispatching
+            # it as success creates a contradictory turn (checker=in_progress, action=done).
+            return False, key, "action policy 无权用 stop 完成仍处于 in_progress 的 milestone"
+        if effective_action_role(supervisor_step, action) != "commit":
             return True, key, ""
 
         turns = list(history)

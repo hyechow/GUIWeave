@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "source": {
+    "run": "20260711_012347",
+    "task": "549",
+    "description": "Applied filter evidence was present, but a free-text parser miss caused duplicate commit suppression to be counted as executor failure.",
+    "turns": {
+      "4": "099643080f10d1fe6f3e8eaa98327fd63cb96c85",
+      "5": "9e7bd7546b58c479eece0dc5e6e802da857fae7c",
+      "6": "9e7bd7546b58c479eece0dc5e6e802da857fae7c",
+      "7": "9e7bd7546b58c479eece0dc5e6e802da857fae7c"
+    }
+  },
+  "cases": [
+    {
+      "id": "t5_structural_filter_pair_completes",
+      "kind": "filter_completion",
+      "source_turns": [4, 5],
+      "milestone": {
+        "id": "attribute-code-filter",
+        "name": "在 Attribute Code 列用精确值'size'筛选",
+        "description": "在 Attribute Code 列用精确值'size'筛选（读取字段：match_count）",
+        "success_condition": "Attribute Code 精确筛选已应用，records-found 计数可读",
+        "kind": "filter",
+        "returns": ["match_count"]
+      },
+      "observation": {
+        "png_bytes": "fixture",
+        "source": "browser",
+        "loading": false,
+        "dom_state": "legacy-grid-filter-applied",
+        "applied_filters": {
+          "Attribute Code": "size"
+        },
+        "applied_filter_meta": {
+          "source": "legacy_grid",
+          "indicator_channel": "absent",
+          "fallback_channel": "present"
+        },
+        "tables": [
+          {
+            "total_records": 1
+          }
+        ]
+      },
+      "history": [
+        {
+          "index": 4,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "Click Search to apply the filter",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "Submit the entered filter",
+            "milestone_id": "attribute-code-filter",
+            "execution_scope": "milestone:attribute-code-filter",
+            "atomic_role": "commit",
+            "action_family": "activate"
+          },
+          "action_decision": {
+            "action": {
+              "action_type": "tap",
+              "x": 156,
+              "y": 278,
+              "description": "Click Search"
+            }
+          },
+          "executed": true,
+          "action_signal": {
+            "action_key": "milestone:attribute-code-filter|attribute-code-filter|commit",
+            "role": "commit",
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "response_channels": ["url"],
+            "outcome": "unverified"
+          }
+        }
+      ],
+      "expected": {
+        "goal_completed": true,
+        "completion_status": "confirmed",
+        "milestone_status": "done",
+        "pre_existing": false
+      }
+    },
+    {
+      "id": "t5_t7_suppression_is_not_executor_failure",
+      "kind": "suppression_progress",
+      "source_turns": [5, 6, 7],
+      "step": {
+        "should_act": true,
+        "instruction": "Click Search",
+        "stop": false,
+        "goal_completed": false,
+        "summary": "Attempted duplicate filter submit",
+        "milestone_id": "attribute-code-filter",
+        "execution_scope": "milestone:attribute-code-filter",
+        "atomic_role": "commit",
+        "action_family": "activate"
+      },
+      "action_decision": {
+        "action": {
+          "action_type": "tap",
+          "x": 156,
+          "y": 278,
+          "description": "Click Search"
+        }
+      },
+      "suppressed_reason": "commit already dispatched",
+      "expected": {
+        "first_message": "动作被执行协议抑制，重新观察并调整计划",
+        "third_stop_reason": "连续 3 轮动作被执行协议抑制"
+      }
+    }
+  ]
+}

@@ -248,12 +248,20 @@ def _no_redemand_wire(monkeypatch, p):
     return plan_calls
 
 
+def _completion_decision(p, m, obs, history):
+    assert p._last_check is not None
+    return p._completion_decision_from_check(m, obs, history, p._last_check)
+
+
 def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
     p, m = _fresh_action_policy()
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(status="done", reason="发货已保存，已跳回订单详情页", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
-    step = p._advance(m, obs, [_shipment_submit_turn()])
+    history = [_shipment_submit_turn()]
+    decision = _completion_decision(p, m, obs, history)
+    assert decision.action == "complete"
+    step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # FreshActionRequired suppressed — no re-demand
     assert m.status == "done"
     assert step.goal_completed is True
@@ -265,8 +273,10 @@ def test_fresh_action_still_redemands_when_nothing_dispatched(monkeypatch):
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(status="done", reason="状态疑似已满足", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
-    p._advance(m, obs, [])             # empty history: nothing dispatched
-    assert plan_calls == ["plan"]      # FreshActionRequired fires → require a fresh write
+    decision = _completion_decision(p, m, obs, [])
+    assert decision.action == "continue"
+    assert "终端提交尚未派发" in decision.reason
+    assert plan_calls == []
     assert m.status != "done"
 
 
@@ -278,8 +288,9 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
         status="done", reason="提交时页面提示 validation failed: required field missing", summary="ok",
     )
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
-    p._advance(m, obs, [_shipment_submit_turn()])
-    assert plan_calls == ["plan"]      # negative feedback overrides the dispatch-succeeded skip
+    decision = _completion_decision(p, m, obs, [_shipment_submit_turn()])
+    assert decision.action == "replan"
+    assert plan_calls == []
     assert m.status != "done"
 
 
@@ -321,7 +332,10 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(status="done", reason="已进入编辑页", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
-    step = p._advance(m, obs, [_arrival_click_turn()])
+    history = [_arrival_click_turn()]
+    decision = _completion_decision(p, m, obs, history)
+    assert decision.action == "complete"
+    step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # no FreshActionRequired override, no stray write demanded
     assert m.status == "done"
     assert step.goal_completed is True
@@ -366,8 +380,10 @@ def test_dispatch_ledger_blocks_done_on_residual_banner(monkeypatch):
         status="done", reason="页面顶部显示 'You saved the product.'，Stock Status 为 Out of Stock", summary="ok",
     )
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
-    p._advance(m, obs, [_select_option_turn()])
-    assert plan_calls == ["plan"]      # done vetoed → re-plan (click this milestone's Save)
+    decision = _completion_decision(p, m, obs, [_select_option_turn()])
+    assert decision.action == "continue"
+    assert "终端提交尚未派发" in decision.reason
+    assert plan_calls == []
     assert m.status != "done"
 
 
@@ -392,7 +408,10 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
         target_verify=TargetVerify(on_target=True, actual_element="Save button"),
         executed=True,
     )
-    step = p._advance(m, obs, [_select_option_turn(), save])
+    history = [_select_option_turn(), save]
+    decision = _completion_decision(p, m, obs, history)
+    assert decision.action == "complete"
+    step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []
     assert m.status == "done"
     assert step.goal_completed is True
@@ -402,10 +421,22 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
     # WebArena 545 (20260709_173419): after clicking Save, Magento redirected back to the edit URL
     # and the backend POST was already correct, but the next frame still exposed Content/Short
     # Description below the fold. The acquire gate ran first and kept scrolling until max_turns.
-    # A terminal Save + URL change is stronger than "field is offscreen again" and must close.
+    # A terminal Save + URL change is stronger than "field is offscreen again": skip reacquire,
+    # but still let checker consume any result feedback before falling back to accepted_unverified.
     p, m = _save_milestone_policy()
     monkeypatch.setattr(P, "is_loading_frame", lambda _obs: False)
-    monkeypatch.setattr(P, "run_checker", lambda *a, **k: (_ for _ in ()).throw(AssertionError("checker should not run")))
+    checker_calls: list[int] = []
+
+    def _unverified_checker(*_args, **_kwargs):
+        checker_calls.append(1)
+        return _SingleCheckResult(
+            status="in_progress",
+            reason="保存请求已响应，但当前帧没有直接展示目标字段",
+            summary="提交已响应，结果未完全确认",
+            outcome_status="unverified",
+        )
+
+    monkeypatch.setattr(P, "run_checker", _unverified_checker)
     p._monitor._last_url = "http://x/admin/catalog/product/edit/id/1556/"
     p._last_check = _SingleCheckResult(
         status="in_progress",
@@ -460,6 +491,8 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
     assert m.status == "done"
     assert step.goal_completed is True
     assert step.should_act is False
+    assert step.completion_status == "accepted_unverified"
+    assert checker_calls == [1]
 
 
 # ── WebArena 505 (20260708_194754/195215): TerminalDispatchGate verb-class misfire ──────────────
@@ -498,8 +531,9 @@ def test_dispatch_ledger_rejects_wrong_verb_class(monkeypatch):
     p._last_check = _SingleCheckResult(status="done", reason="成功提示可见", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
     apply_turn = _submit_turn(no_effect=False, reason="点击 'Apply Filters' 按钮以应用筛选条件")
-    p._advance(m, obs, [apply_turn])
-    assert plan_calls == ["plan"]      # apply ≠ save → done vetoed
+    decision = _completion_decision(p, m, obs, [apply_turn])
+    assert decision.action == "continue"
+    assert plan_calls == []
     assert m.status != "done"
 
 

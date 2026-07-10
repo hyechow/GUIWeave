@@ -191,3 +191,31 @@ def test_duplicate_commit_is_suppressed_before_executor_call(tmp_path):
     assert result.action_key == "scope|m1|commit"
     assert result.suppressed_reason == "commit already dispatched"
     assert executor.calls == []
+
+
+def test_action_family_mismatch_is_rejected_before_executor_call(tmp_path):
+    decision = BaseActionDecision(
+        action=BaseAction(action_type="tap", x=10, y=20, description="点击输入框")
+    )
+    step = _step(decision).model_copy(update={"action_family": "input"})
+    executor = _Executor()
+
+    result = ActionExecutionState().run(
+        sv_step=step,
+        observation=Observation(png_bytes=b"png", source="test"),
+        action_policy=object(),
+        supervisor=object(),
+        executor=executor,
+        bundle=object(),
+        platform=object(),
+        prep_future=_Future(),
+        log_dir=tmp_path,
+        turn_no=6,
+        flash=lambda _action: None,
+        status=lambda _turn_no, _message: None,
+        say=lambda _message: None,
+    )
+
+    assert result.executed is False
+    assert "动作族 input" in result.suppressed_reason
+    assert executor.calls == []

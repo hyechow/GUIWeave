@@ -14,7 +14,7 @@ from typing import Any, Callable
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.run.action_ledger import semantic_action_key
+from gui_agent.core.run.action_ledger import effective_action_role, semantic_action_key
 from gui_agent.core.run.context import extract_checker, extract_plan, extract_replan
 from gui_agent.core.run.result import print_timings, print_turn_stats
 from gui_agent.core.run.state import sync_milestone_states
@@ -65,7 +65,11 @@ def make_interactive_turn(
 ) -> PolicyTurn:
     """Build a normal UI turn."""
     action = action_decision.action if action_decision else None
-    role = supervisor_step.atomic_role
+    role = (
+        effective_action_role(supervisor_step, action)
+        if action is not None
+        else supervisor_step.atomic_role
+    )
     if not action_key and action is not None:
         action_key = semantic_action_key(supervisor_step, action)
     if executed:

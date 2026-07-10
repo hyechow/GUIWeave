@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "source": {
+    "run": "20260711_015402",
+    "task": "549",
+    "description": "A contradicted global-search commit was downgraded to unverified, blocking the corrected column-filter commit; same-value inputs on different controls were also conflated before dispatch.",
+    "turns": {
+      "16": "f2c463a8b5db4de18416c6756fe44c95e2ab4265",
+      "17": "37afbc66c22d04ba4b6cfc7e0eea5bad3cc923b7",
+      "18": "f1f41768d9cff818430153d131c774c1d2d1e80d",
+      "20": "c6dc42ffff284173ceca0d01411e601dd0bac7e5",
+      "22": "ac5ccc3066b43503228c0add2bb095f21b7622b6",
+      "23": "045db3ae84faa44d9bf960c52cc65092ed1d619a"
+    }
+  },
+  "cases": [
+    {
+      "id": "t17_t23_contradiction_survives_until_corrected_commit",
+      "kind": "lifecycle_monotonic",
+      "source_turns": [17, 18, 22, 23],
+      "milestone": {
+        "id": "product-filter",
+        "name": "Apply exact Name filter",
+        "description": "",
+        "success_condition": "Name filter is applied",
+        "kind": "filter"
+      },
+      "dispatched_turn": {
+        "index": 17,
+        "observation_source": "browser",
+        "supervisor": {
+          "should_act": true,
+          "instruction": "Press Enter to submit global search",
+          "stop": false,
+          "goal_completed": false,
+          "summary": "Submit first route",
+          "milestone_id": "product-filter",
+          "execution_scope": "milestone:product-filter",
+          "atomic_role": "commit",
+          "action_family": "activate"
+        },
+        "action_decision": {
+          "action": {
+            "action_type": "press_enter",
+            "description": "Submit global search"
+          }
+        },
+        "executed": true,
+        "action_signal": {
+          "action_key": "milestone:product-filter|product-filter|commit",
+          "role": "commit",
+          "execution": "dispatched",
+          "target": "unknown",
+          "response": "observed",
+          "outcome": "unverified"
+        }
+      },
+      "contradiction_check": {
+        "status": "in_progress",
+        "reason": "The submitted global search produced the wrong filter dimension and zero matches.",
+        "summary": "First route failed.",
+        "outcome_status": "contradicted"
+      },
+      "later_unverified_check": {
+        "status": "in_progress",
+        "reason": "The corrected Name field is filled but not submitted.",
+        "summary": "Awaiting corrected commit.",
+        "outcome_status": "unverified"
+      },
+      "correction_turn": {
+        "index": 22,
+        "observation_source": "browser",
+        "supervisor": {
+          "should_act": true,
+          "instruction": "Type target value into Name",
+          "stop": false,
+          "goal_completed": false,
+          "summary": "Correct filter route",
+          "milestone_id": "product-filter",
+          "execution_scope": "milestone:product-filter",
+          "atomic_role": "prepare",
+          "action_family": "input"
+        },
+        "action_decision": {
+          "action": {
+            "action_type": "type",
+            "x": 939,
+            "y": 491,
+            "text": "Minerva LumaTech V-Tee",
+            "description": "Type target into Name"
+          }
+        },
+        "executed": true,
+        "action_signal": {
+          "action_key": "milestone:product-filter|product-filter|prepare|type|input@18,9|minervalumatechv-tee",
+          "role": "prepare",
+          "execution": "dispatched",
+          "target": "unknown",
+          "response": "observed",
+          "outcome": "unverified"
+        }
+      },
+      "candidate_step": {
+        "should_act": true,
+        "instruction": "Click Apply Filters",
+        "stop": false,
+        "goal_completed": false,
+        "summary": "Submit corrected route",
+        "milestone_id": "product-filter",
+        "execution_scope": "milestone:product-filter",
+        "atomic_role": "commit",
+        "action_family": "activate"
+      },
+      "candidate_action": {
+        "action": {
+          "action_type": "tap",
+          "x": 938,
+          "y": 750,
+          "description": "Click Apply Filters"
+        }
+      },
+      "expected": {
+        "preserved_outcome": "contradicted",
+        "allowed": true,
+        "reason": ""
+      }
+    },
+    {
+      "id": "t16_t22_same_value_different_dom_control",
+      "kind": "proposal",
+      "source_turns": [16, 20, 22],
+      "milestone": {
+        "id": "product-filter",
+        "name": "在 Name 列用精确值 'Minerva LumaTech V-Tee' 筛选",
+        "description": "",
+        "success_condition": "Name 精确筛选已应用",
+        "kind": "filter"
+      },
+      "observation": {
+        "png_bytes": "fixture",
+        "source": "browser",
+        "url": "http://example.test/products",
+        "dom_state": "filters-panel-name-empty",
+        "form_controls": [
+          {
+            "label": "Name",
+            "kind": "text_input",
+            "value": "",
+            "in_viewport": true
+          }
+        ]
+      },
+      "check": {
+        "status": "in_progress",
+        "reason": "The Name field is visible and empty.",
+        "summary": "Use the corrected field."
+      },
+      "history": [
+        {
+          "index": 16,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "Type into global search",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "First route",
+            "milestone_id": "product-filter",
+            "execution_scope": "milestone:product-filter"
+          },
+          "action_decision": {
+            "action": {
+              "action_type": "type",
+              "x": 346,
+              "y": 310,
+              "text": "Minerva LumaTech V-Tee",
+              "description": "Type into global search",
+              "snap": {
+                "snapped": [346, 310],
+                "info": "input 455x33"
+              }
+            }
+          },
+          "executed": true
+        },
+        {
+          "index": 20,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "Retype into global search",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "Repeated first route",
+            "milestone_id": "product-filter",
+            "execution_scope": "milestone:product-filter"
+          },
+          "action_decision": {
+            "action": {
+              "action_type": "type",
+              "x": 346,
+              "y": 310,
+              "text": "Minerva LumaTech V-Tee",
+              "description": "Retype into global search",
+              "snap": {
+                "snapped": [346, 310],
+                "info": "input 455x33"
+              }
+            }
+          },
+          "executed": true
+        }
+      ],
+      "planner_outputs": [
+        {
+          "source": "recorded",
+          "plan": {
+            "instruction": "Type 'Minerva LumaTech V-Tee' into Name",
+            "summary": "Use corrected column filter",
+            "action_family": "input"
+          }
+        }
+      ],
+      "expected": {
+        "planner_calls": 1,
+        "should_act": true,
+        "action_family": "input",
+        "instruction_contains": "Name"
+      }
+    }
+  ]
+}

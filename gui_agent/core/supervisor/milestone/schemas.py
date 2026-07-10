@@ -161,6 +161,15 @@ class _PlanResult(BaseModel):
             "commit=提交/保存/发送等最终副作用边界；iterate=滚动/picker 等有进展时可重复动作。"
         ),
     )
+    action_family: Literal[
+        "input", "select", "activate", "navigate", "iterate", "commit", "unknown"
+    ] = Field(
+        default="unknown",
+        description=(
+            "本轮指令的动作族：input=输入/清空，select=选择值，activate=点击普通控件，"
+            "navigate=页面/标签跳转，iterate=滚动/拖动，commit=保存/提交，unknown=无法判断。"
+        ),
+    )
     direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
         default=None,
         description=(

@@ -1,0 +1,120 @@
+[
+  {
+    "label": "exact filter with zero rows hands fallback to interpreter",
+    "contract": {
+      "statement_id": "filter_exact",
+      "kind": "filter",
+      "output_fields": ["match_count"],
+      "completion_mode": "filter_state_with_result"
+    },
+    "scope": "milestone:filter_exact",
+    "claims": [
+      {"domain": "filter.state", "value": "confirmed", "source_type": "obs.applied_filters", "authoritative": true},
+      {"domain": "result.availability", "value": "confirmed", "source_type": "obs.tables", "evidence": "match_count=0", "authoritative": true}
+    ],
+    "expected": {"action": "complete", "completion_status": "confirmed"}
+  },
+  {
+    "label": "commit response without business feedback is provisional",
+    "contract": {
+      "statement_id": "save",
+      "kind": "action",
+      "require_fresh_action": true,
+      "require_terminal_dispatch": true,
+      "completion_mode": "mutation"
+    },
+    "scope": "row:7",
+    "claims": [
+      {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.commit_dispatch", "authoritative": true},
+      {"domain": "business.outcome", "value": "unverified", "source_type": "checker"}
+    ],
+    "expected": {"action": "complete", "completion_status": "accepted_unverified"}
+  },
+  {
+    "label": "page response alone cannot prove arrival",
+    "contract": {
+      "statement_id": "open",
+      "kind": "navigation",
+      "completion_mode": "arrival"
+    },
+    "scope": "milestone:open",
+    "claims": [
+      {"domain": "page.response", "value": "confirmed", "source_type": "runtime.effect_monitor", "authoritative": true}
+    ],
+    "expected": {"action": "continue", "completion_status": "in_progress"}
+  },
+  {
+    "label": "partial control inventory does not prove target absence",
+    "contract": {
+      "statement_id": "edit",
+      "kind": "action",
+      "completion_mode": "mutation"
+    },
+    "scope": "milestone:edit",
+    "claims": [
+      {"domain": "inventory.coverage", "value": "partial", "source_type": "obs.dom", "authoritative": true, "coverage": "partial"}
+    ],
+    "expected": {"action": "continue", "completion_status": "in_progress"}
+  },
+  {
+    "label": "confirmed destination state survives stale off-target verifier",
+    "contract": {
+      "statement_id": "open_record",
+      "kind": "navigation",
+      "completion_mode": "arrival"
+    },
+    "scope": "milestone:open_record",
+    "claims": [
+      {"domain": "action.target", "value": "contradicted", "source_type": "runtime.target_verify", "authoritative": true},
+      {"domain": "business.outcome", "value": "confirmed", "source_type": "checker", "evidence": "destination identity is visible"}
+    ],
+    "expected": {"action": "complete", "completion_status": "confirmed"}
+  },
+  {
+    "label": "explicit business contradiction blocks provisional commit success",
+    "contract": {
+      "statement_id": "save_rejected",
+      "kind": "action",
+      "require_fresh_action": true,
+      "require_terminal_dispatch": true,
+      "completion_mode": "mutation"
+    },
+    "scope": "row:9",
+    "claims": [
+      {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.commit_dispatch", "authoritative": true},
+      {"domain": "business.outcome", "value": "contradicted", "source_type": "checker", "evidence": "validation error"}
+    ],
+    "expected": {"action": "replan", "completion_status": "in_progress"}
+  },
+  {
+    "label": "ordinary preparation dispatch cannot stand in for commit",
+    "contract": {
+      "statement_id": "save_pending",
+      "kind": "action",
+      "require_fresh_action": true,
+      "require_terminal_dispatch": true,
+      "completion_mode": "mutation"
+    },
+    "scope": "row:11",
+    "claims": [
+      {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.action_dispatch", "authoritative": true},
+      {"domain": "business.outcome", "value": "confirmed", "source_type": "checker", "evidence": "stale success banner"}
+    ],
+    "expected": {"action": "continue", "completion_status": "in_progress"}
+  },
+  {
+    "label": "fresh mutation cannot finish from pre-existing state alone",
+    "contract": {
+      "statement_id": "fresh_write",
+      "kind": "action",
+      "require_fresh_action": true,
+      "require_terminal_dispatch": true,
+      "completion_mode": "mutation"
+    },
+    "scope": "milestone:fresh_write",
+    "claims": [
+      {"domain": "business.outcome", "value": "confirmed", "source_type": "checker", "evidence": "target value already visible"}
+    ],
+    "expected": {"action": "continue", "completion_status": "in_progress"}
+  }
+]

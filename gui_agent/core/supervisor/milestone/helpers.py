@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
@@ -36,6 +37,7 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     split_acceptance_items,
 )
+from gui_agent.core.run.execution_signals import ActionConstraint
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
@@ -81,6 +83,10 @@ _FILTER_CONTAINS_RE = re.compile(
     r"['\"「“]?([A-Za-z0-9][\w .\-]{0,40})",
     re.IGNORECASE,
 )
+_KEYWORD_SEARCH_INTENT_RE = re.compile(
+    r"search\s+by\s+keyword|search\s+(?:box|field)|搜索框|检索框|关键词|keyword",
+    re.IGNORECASE,
+)
 
 
 def _value_tokens(s: str) -> list[str]:
@@ -114,7 +120,80 @@ def parse_filter_target(milestone: Milestone) -> Optional[tuple[str, list[str]]]
         val = m.group(2).strip().strip("'\"「」“”")
         if col and val and col.lower() not in ("from", "to"):
             return col, _value_tokens(val)
+    # Global/free-text search has no named grid column in the DSL. The adapter exposes its
+    # applied state under the semantic ``Keyword`` dimension, so recover the target from the
+    # quoted search value instead of forcing the planner to invent a column. This is what lets an
+    # exact trial that legitimately returns zero finish and hand its count to an explicit fallback.
+    if _KEYWORD_SEARCH_INTENT_RE.search(text):
+        for source in (milestone.name or "", milestone.description or ""):
+            quoted = _QUOTED_RE.findall(source)
+            if quoted:
+                value = quoted[-1].strip()
+                tokens = _value_tokens(value)
+                if tokens:
+                    return "Keyword", tokens
     return None
+
+
+def _compact_filter_phrase(text: str) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(text or "").lower())
+
+
+def _state_filter_pair_is_declared(
+    label: str,
+    value: str,
+    milestone: Milestone,
+) -> bool:
+    """Whether one adapter-reported filter pair is explicitly present in the contract text.
+
+    This is the structural fallback for free-text phrasings the legacy parser does not recognize.
+    Both the adapter label and its exact value token multiset must be present, so a visible but
+    unrelated filter cannot complete the statement merely because its value appears elsewhere.
+    """
+    text = " ".join(
+        part
+        for part in (
+            milestone.name,
+            milestone.description,
+            milestone.success_condition,
+        )
+        if part
+    )
+    compact_text = _compact_filter_phrase(text)
+    compact_label = _compact_filter_phrase(label)
+    if not compact_label or compact_label not in compact_text:
+        return False
+
+    wanted_tokens = Counter(_value_tokens(value))
+    if wanted_tokens:
+        available_tokens = Counter(_value_tokens(text))
+        return all(available_tokens[token] >= count for token, count in wanted_tokens.items())
+    compact_value = _compact_filter_phrase(value)
+    return bool(compact_value and compact_value in compact_text)
+
+
+def _matched_applied_filter_labels(
+    applied_filters: Optional[dict[str, str]],
+    milestone: Milestone,
+) -> set[str]:
+    if not applied_filters:
+        return set()
+    target = parse_filter_target(milestone)
+    if target is not None:
+        column, values = target
+        col_l = column.lower()
+        wanted = sorted(values)
+        return {
+            label
+            for label, value in applied_filters.items()
+            if (col_l in label.lower() or label.lower() in col_l)
+            and sorted(_value_tokens(value)) == wanted
+        }
+    return {
+        label
+        for label, value in applied_filters.items()
+        if _state_filter_pair_is_declared(label, value, milestone)
+    }
 
 
 # Always-on system filters that are not task pollution and never need clearing — a chip outside
@@ -184,14 +263,14 @@ def filter_chips_clean(
     applied_filters: Optional[dict[str, str]], milestone: Milestone
 ) -> bool:
     """True when no applied filter is an unrelated residual — every filter is either the milestone's
-    target column or a benign always-on system filter. Conservative: unparseable target → False."""
-    target = parse_filter_target(milestone)
-    if target is None:
+    target column or a benign always-on system filter. A parsed target is preferred; otherwise an
+    adapter-reported label/value pair must both be explicitly present in the milestone contract."""
+    matched_labels = _matched_applied_filter_labels(applied_filters, milestone)
+    if not matched_labels:
         return False
-    col_l = target[0].lower()
     for label in (applied_filters or {}):
         ll = label.lower()
-        if col_l in ll or ll in col_l:
+        if label in matched_labels:
             continue
         if ll in _BENIGN_FILTER_LABELS:
             continue
@@ -214,9 +293,6 @@ _NO_FILTER_INTENT_RE = re.compile(
 # residual that must be cleared, else keyword+column AND together return the wrong rows (live
 # 114706: searching WS08 with a leftover Quantity:3-3 returned the qty=3 child, not the qty=0
 # Configurable parent → "no Configurable found").
-_KEYWORD_SEARCH_INTENT_RE = re.compile(r"search\s+by\s+keyword|关键词|keyword", re.IGNORECASE)
-
-
 def filter_residual_labels(
     applied_filters: Optional[dict[str, str]], milestone: Milestone
 ) -> list[str]:
@@ -232,10 +308,11 @@ def filter_residual_labels(
     if not applied_filters:
         return []
     target = parse_filter_target(milestone)
+    matched_labels = _matched_applied_filter_labels(applied_filters, milestone)
     text = f"{milestone.name or ''} {milestone.success_condition or ''} {milestone.description or ''}"
     no_filter_intent = bool(_NO_FILTER_INTENT_RE.search(text))
     keyword_intent = bool(_KEYWORD_SEARCH_INTENT_RE.search(text))
-    if target is None and not no_filter_intent and not keyword_intent:
+    if target is None and not matched_labels and not no_filter_intent and not keyword_intent:
         return []
     # intended-filter column: a parsed column target wins; else a keyword search keeps only the
     # `Keyword` chip; else (no-filter intent) nothing is intended → every non-benign chip residual.
@@ -248,7 +325,7 @@ def filter_residual_labels(
     out: list[str] = []
     for label in applied_filters:
         ll = label.lower()
-        if col_l and (col_l in ll or ll in col_l):
+        if label in matched_labels or (col_l and (col_l in ll or ll in col_l)):
             continue  # the intended target filter — keep it
         if ll in _BENIGN_FILTER_LABELS:
             continue  # benign always-on system filter — keep it
@@ -263,25 +340,38 @@ def filter_state_satisfies_target(
 ) -> bool:
     """True when the grid's applied-filter state already contains this milestone's target filter —
     i.e. the filter ACTION took effect, authoritatively, regardless of the rendered rows. Match =
-    the target column appears as an applied-filter label AND that filter's value tokens are an exact multiset
-    of the target's. Returns False when there are no applied filters or the target can't be parsed (stay
-    conservative: never false-`done` a milestone whose intent we couldn't pin down)."""
-    if not applied_filters:
-        return False
-    target = parse_filter_target(milestone)
-    if target is None:
-        return False
-    column, values = target
-    if not values:
-        return False
-    col_l = column.lower()
-    want = sorted(values)
-    for label, value in applied_filters.items():
-        ll = label.lower()
-        if col_l in ll or ll in col_l:
-            if sorted(_value_tokens(value)) == want:
-                return True
-    return False
+    the target column appears as an applied-filter label AND that filter's value tokens are an exact
+    multiset of the target's. When the syntax parser cannot classify the free text, the adapter's
+    exact label/value pair must both occur in the milestone contract; otherwise remain conservative."""
+    return bool(_matched_applied_filter_labels(applied_filters, milestone))
+
+
+_NONZERO_FILTER_RESULT_RE = re.compile(
+    r"非\s*0\s*条|非零|至少\s*[1-9]\d*\s*条|"
+    r"(?:records?|results?|matches?)\s*(?:>|>=)\s*0|non[- ]?zero",
+    re.IGNORECASE,
+)
+
+
+def filter_result_requirement_satisfied(
+    tables: Optional[list[dict]], milestone: Milestone
+) -> bool:
+    """Honor an explicit non-zero result clause without coupling every filter to row content.
+
+    Applied-filter state remains authoritative for whether the filter action took effect. When the
+    success contract additionally requires a non-empty result and the adapter authoritatively
+    reports zero records, the fast gate must stay open for fallback/recovery instead of declaring
+    the whole filter milestone done. Unknown counts remain neutral.
+    """
+    text = f"{milestone.success_condition or ''} {milestone.description or ''}"
+    if not _NONZERO_FILTER_RESULT_RE.search(text):
+        return True
+    totals = [
+        table.get("total_records")
+        for table in tables or []
+        if isinstance(table, dict) and isinstance(table.get("total_records"), int)
+    ]
+    return not totals or any(total > 0 for total in totals)
 
 
 def _default_milestone_prompts() -> MilestonePrompts:
@@ -672,6 +762,8 @@ def target_affordance_scroll_plan(
             f"目标控件「{label}」已由 DOM 确认存在但不在当前视口；"
             f"先{direction_text}滚动完成页内 acquire，不切换页面模式。"
         ),
+        atomic_role="iterate",
+        action_family="iterate",
         direction=direction,
     )
 
@@ -716,6 +808,7 @@ def target_section_acquire_plan(
                 f"目标字段尚未作为控件出现，但页面暴露了页内区域「{label}」；"
                 "先展开该区域完成 affordance acquire。"
             ),
+            action_family="activate",
         )
 
     def _scroll_section_plan(item: dict) -> _PlanResult:
@@ -728,6 +821,8 @@ def target_section_acquire_plan(
                 f"目标相关区域「{label}」已由 DOM 确认存在但不在当前视口；"
                 f"先{direction_text}滚动到该页内入口。"
             ),
+            atomic_role="iterate",
+            action_family="iterate",
             direction=direction,
         )
 
@@ -748,10 +843,19 @@ def target_section_acquire_plan(
             match = _find_matching_control(field, controls)
             if match is not None:
                 target_controls.append(match)
-    # Once the final target field/editor is already in the current viewport, acquire is done.
-    # Do not keep clicking its containing section: section headers are often toggles, so a second
-    # acquire click can collapse the target back out of the DOM.
-    if any(item.get("in_viewport") is not False for item in target_controls):
+    # Once the final target field/editor is already in the current viewport, acquire is normally
+    # done. An explicitly named section BELOW the viewport is the exception: a visible same-name
+    # field appears before that section in DOM order and therefore cannot be its descendant. In
+    # that case the container identity wins, preventing a flat control inventory from confusing a
+    # parent-form field with a field inside the requested section/wizard. A section header above
+    # the viewport may legitimately contain a currently visible descendant, so keep the old
+    # short-circuit for that direction.
+    target_visible = any(item.get("in_viewport") is not False for item in target_controls)
+    named_section_below = any(
+        item.get("in_viewport") is False and item.get("viewport_pos") == "below"
+        for item in candidates
+    )
+    if target_visible and not named_section_below:
         return None
     target_control_present = bool(target_controls)
     # If the milestone did not name a section, but it names a target field that is not rendered
@@ -780,14 +884,15 @@ def target_section_acquire_plan(
         return _click_section_plan(item)
 
     # If the named section exists but is offscreen, scroll toward the section before asking the
-    # planner/checker to invent another route.
+    # planner/checker to invent another route. Expanded only describes disclosure state; it does
+    # not mean the header/content is in the viewport, so expanded offscreen sections still need
+    # acquire scrolling.
     offscreen = [
         item
         for item in candidates
         if (
             item.get("in_viewport") is False
             and item.get("viewport_pos") in {"above", "below"}
-            and not _is_expanded(item)
         )
     ]
     if not offscreen:
@@ -903,6 +1008,12 @@ _AMBIGUOUS_SEMANTIC_FIELDS = {
 
 def _normalize_field_name(field: str) -> str:
     text = str(field or "").strip(" '\"「」『』")
+    # ``同一搜索框`` / ``the same search box`` identifies the previously used control; ``同一``
+    # is not a field label. A greedy free-text suffix match can otherwise turn
+    # ``清除精确值后在同一搜索框`` into a fictional column named ``清除精确值后在同一`` and send the
+    # planner horizontally hunting for it. Keep this as a syntax rule, not a page vocabulary.
+    if re.search(r"(?:同一|同一个|相同的)\s*$", text, re.IGNORECASE):
+        return ""
     # Chinese field mentions often include a leading syntactic marker before the actual label:
     # "在产品列" / "按状态字段" should match Product / Status, not a literal "在产品" field.
     while len(text) >= 3 and text[0] in {"在", "按", "用", "以", "把", "将", "给", "对"}:
@@ -988,6 +1099,158 @@ def _visible_field_controls(form_controls: list[dict] | None) -> list[dict]:
             continue
         out.append(item)
     return out
+
+
+def required_group_field_gaps(
+    form_controls: list[dict] | None,
+    milestone: Milestone,
+) -> list[str]:
+    """Required empty fields in a repeated row that already contains a target value.
+
+    This is a DOM-validity invariant, not an application schema: if a target value appears in one
+    control of a repeated row while another control in that same row is explicitly required and
+    empty, the row cannot yet satisfy a collection mutation. It prevents flat screenshot text from
+    turning a partially filled line item/option into a completed member.
+    """
+    target_values = {
+        _norm_text(value)
+        for text in (
+            milestone.name or "",
+            milestone.description or "",
+            milestone.success_condition or "",
+        )
+        for value in _QUOTED_RE.findall(text)
+        if _norm_text(value)
+    }
+    if not target_values:
+        return []
+    groups: dict[str, list[dict]] = {}
+    for item in form_controls or []:
+        if not isinstance(item, dict):
+            continue
+        group_id = str(item.get("group_id") or "").strip()
+        if group_id:
+            groups.setdefault(group_id, []).append(item)
+    gaps: list[str] = []
+    for items in groups.values():
+        values = {
+            _norm_text(str(item.get("selected_text") or item.get("value") or ""))
+            for item in items
+        }
+        if not (values & target_values):
+            continue
+        for item in items:
+            if item.get("required") is not True:
+                continue
+            current = str(item.get("selected_text") or item.get("value") or "").strip()
+            if current:
+                continue
+            label = str(
+                item.get("group_field")
+                or item.get("label")
+                or item.get("name")
+                or "required field"
+            ).strip()
+            if label and label not in gaps:
+                gaps.append(label)
+    return gaps
+
+
+def proposal_action_constraints(
+    form_controls: list[dict] | None,
+    milestone: Milestone,
+    *,
+    scope: str,
+) -> list[ActionConstraint]:
+    """Derive safe next-action constraints from current structural control facts.
+
+    The rules are widget-structural: an incomplete required collection row blocks persistence;
+    an explicitly named text control that is ready and still lacks its target value requires an
+    input action. No application field names or workflow vocabulary are encoded here.
+    """
+    constraints: list[ActionConstraint] = []
+    gaps = required_group_field_gaps(form_controls, milestone)
+    if gaps:
+        constraints.append(ActionConstraint(
+            scope=scope,
+            source_type="obs.dom.form_validity",
+            blocked_families=("commit",),
+            evidence=(
+                "重复集合中目标值所在行仍有必填字段为空："
+                + "、".join(gaps)
+                + "；在修正前禁止提交/保存。"
+            ),
+        ))
+
+    text = " ".join(
+        part
+        for part in (
+            milestone.name,
+            milestone.description,
+            milestone.success_condition,
+        )
+        if part
+    )
+    quoted_values = [value.strip() for value in _QUOTED_RE.findall(text) if value.strip()]
+    for item in _visible_field_controls(form_controls):
+        if not _control_is_named_in_milestone(item, milestone):
+            continue
+        kind = str(item.get("kind") or "").lower()
+        if item.get("in_viewport") is False:
+            constraints.append(ActionConstraint(
+                scope=scope,
+                source_type="obs.dom.control_position",
+                allowed_families=("iterate",),
+                evidence=f"目标控件「{_control_label(item)}」已存在但尚未进入视口。",
+            ))
+            break
+        if "input" not in kind and "textarea" not in kind:
+            continue
+        label_norm = _norm_text(_control_label(item))
+        candidates = [
+            value
+            for value in quoted_values
+            if _norm_text(value) and _norm_text(value) != label_norm
+        ]
+        if not candidates:
+            continue
+        target = candidates[-1]
+        if _norm_text(_control_current_value(item)) == _norm_text(target):
+            continue
+        constraints.append(ActionConstraint(
+            scope=scope,
+            source_type="obs.dom.control_ready",
+            allowed_families=("input",),
+            evidence=(
+                f"目标文本控件「{_control_label(item)}」已在当前视口且当前值尚非目标值；"
+                "下一原子动作必须输入目标值，不能继续滚动或提交。"
+            ),
+        ))
+        break
+    return constraints
+
+
+def _apply_required_group_checker_guard(
+    result: _SingleCheckResult,
+    milestone: Milestone,
+    observation: Observation,
+) -> _SingleCheckResult:
+    gaps = required_group_field_gaps(
+        getattr(observation, "form_controls", None), milestone
+    )
+    if not gaps:
+        return result
+    gap_text = "、".join(gaps)
+    return result.model_copy(update={
+        "status": "in_progress",
+        "outcome_status": "unverified",
+        "reason": (
+            "DOM 表单约束显示：目标值虽然出现在重复集合的一行中，但同一行仍有"
+            f"必填字段为空（{gap_text}）；该集合成员尚未完成，不能提交或判定成功。"
+        ),
+        "summary": f"重复集合行仍缺少必填字段：{gap_text}",
+        "missing_evidence": [f"先填写同一集合行的必填字段：{gap_text}"],
+    })
 
 
 def _instruction_mentions_control(instruction: str, controls: list[dict]) -> dict | None:
@@ -1156,14 +1419,12 @@ def _guard_named_field_substitution_plan(
                     "已改为目标字段。"
                 ),
             })
-        return plan.model_copy(update={
-            "instruction": f"横向滚动表格或筛选行，显示「{field}」列的筛选框",
-            "summary": (
-                f"子目标要求操作「{field}」字段，当前可见 DOM 控件未提供该字段；"
-                f"不能把值填入「{_control_label(mentioned)}」，需先定位目标列。"
-            ),
-            "direction": "right",
-        })
+        # Absence from a sampled control inventory is not proof that the field is absent. More
+        # importantly, a post-planner guard must not invent a different route (historically it
+        # rewrote a correct global-keyword input into horizontal scrolling). Leave the proposal
+        # intact; TargetVerify/action-family validation can reject a bad concrete dispatch, while
+        # an actually partial inventory is allowed to improve on the next frame.
+        return plan
     return plan
 
 
@@ -1465,6 +1726,16 @@ def run_checker(
         prompts = _default_milestone_prompts()
     if constraints is None:
         constraints = []
+    section_plan = target_section_acquire_plan(
+        getattr(observation, "form_controls", None), milestone
+    )
+    if section_plan is not None:
+        return _SingleCheckResult(
+            status="in_progress",
+            reason=section_plan.summary,
+            summary=section_plan.summary,
+            missing_evidence=["目标命名区域需先滚动到视口或展开，再验收区域内业务状态。"],
+        )
     kind_section = prompts.check_kind_sections.get(milestone.kind, prompts.check_section_default)
     # 连续调值类（picker 收敛）在 kind 段之上叠加专用段：当前值以滚轮中心带为准、强制输出
     # 当前值/目标值。这是连续操作进展传感器的基础——避免把已推进的拖动误读为"没动"。
@@ -1536,7 +1807,10 @@ def run_checker(
                 filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
                 getattr(observation, "applied_filters", None),
             ),
-            form_controls_block(getattr(observation, "form_controls", None)),
+            form_controls_block(
+                getattr(observation, "form_controls", None),
+                getattr(observation, "form_controls_meta", None),
+            ),
             grid_status_block(getattr(observation, "tables", None)),
         ],
         image_resize=prompts.image_resize,
@@ -1562,6 +1836,7 @@ def run_checker(
 
     _strip_progress_evidence(result)
     result = _apply_route_identity_checker_guard(result, milestone, observation)
+    result = _apply_required_group_checker_guard(result, milestone, observation)
 
     claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
     if result.status == "in_progress" and not _is_retry and _BUTTON_CLAIM_RE.search(claims_text):
@@ -1582,6 +1857,7 @@ def run_checker(
         )
         _strip_progress_evidence(result)
         result = _apply_route_identity_checker_guard(result, milestone, observation)
+        result = _apply_required_group_checker_guard(result, milestone, observation)
 
     # Validate a done verdict in two stages, because the retry and the force-stuck
     # play different roles:
@@ -1633,6 +1909,7 @@ def run_checker(
         )
         _strip_progress_evidence(result)
         result = _apply_route_identity_checker_guard(result, milestone, observation)
+        result = _apply_required_group_checker_guard(result, milestone, observation)
     if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
             status="stuck",
@@ -1737,6 +2014,11 @@ def run_planner(
         prompts = _default_milestone_prompts()
     if constraints is None:
         constraints = []
+    section_plan = target_section_acquire_plan(
+        getattr(observation, "form_controls", None), milestone
+    )
+    if section_plan is not None:
+        return section_plan
     if milestone.retry_count > 0 and not extra:
         tried = sorted({
             t.supervisor.instruction
@@ -1784,7 +2066,10 @@ def run_planner(
                 filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
                 getattr(observation, "applied_filters", None),
             ),
-            form_controls_block(getattr(observation, "form_controls", None)),
+            form_controls_block(
+                getattr(observation, "form_controls", None),
+                getattr(observation, "form_controls_meta", None),
+            ),
             knowledge_block("app_navigation", app_knowledge),
             knowledge_block("page_elements", elements_knowledge),
         ],

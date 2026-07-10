@@ -568,8 +568,11 @@ def filter_residual_block(
     )
 
 
-def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None:
-    text = format_form_controls_text(form_controls)
+def form_controls_block(
+    form_controls: list[dict] | None,
+    metadata: dict | None = None,
+) -> ContextBlock | None:
+    text = format_form_controls_text(form_controls, metadata)
     if not text:
         return None
     return ContextBlock(
@@ -585,18 +588,21 @@ def form_controls_block(form_controls: list[dict] | None) -> ContextBlock | None
         authoritative_for=("control.value", "control.selected"),
         not_authoritative_for=("modal.visibility", "layout.visible_structure"),
         freshness="turn",
-        coverage="rendered_only",
-        metadata={"count": len(form_controls or [])},
+        coverage=str((metadata or {}).get("coverage") or "rendered_only"),
+        metadata={"count": len(form_controls or []), **(metadata or {})},
         content=text,
     )
 
 
-def format_form_controls_text(form_controls: list[dict] | None) -> str:
+def format_form_controls_text(
+    form_controls: list[dict] | None,
+    metadata: dict | None = None,
+) -> str:
     """Compact structured form-control inventory supplied by a platform adapter."""
     if not form_controls:
         return ""
     lines: list[str] = []
-    for item in form_controls[:25]:
+    for item in form_controls:
         if not isinstance(item, dict):
             continue
         label = str(
@@ -610,6 +616,19 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
         current = str(item.get("selected_text") or item.get("value") or "").strip()
         placeholder = str(item.get("placeholder") or "").strip()
         bits = [f"{label}: {kind}"]
+        name = str(item.get("name") or "").strip()
+        if name and name != label:
+            bits.append(f'name="{name}"')
+        group_id = str(item.get("group_id") or "").strip()
+        if group_id:
+            group_field = str(item.get("group_field") or "").strip()
+            group_index = item.get("group_index")
+            group_bits = [f"row={group_id}"]
+            if isinstance(group_index, int):
+                group_bits.append(f"index={group_index}")
+            if group_field:
+                group_bits.append(f'field="{group_field}"')
+            bits.append("group(" + ", ".join(group_bits) + ")")
         if kind == "native_select":
             # A native <select> (incl. <select multiple>): its SELECTION is DOM-authoritative and
             # is what the checker must judge on — say so explicitly so the model doesn't read the
@@ -624,6 +643,8 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
             bits.append("[日期 MM/DD/YYYY]")
         if item.get("focused") is True:
             bits.append("focused=true")
+        if item.get("required") is True:
+            bits.append("required=true(DOM权威)")
         if item.get("in_viewport") is False:
             vp = item.get("viewport_pos")
             if vp == "above":
@@ -643,15 +664,23 @@ def format_form_controls_text(form_controls: list[dict] | None) -> str:
         lines.append("- " + "; ".join(bits))
     if not lines:
         return ""
+    inventory_claim = (
+        "这些控件是当前页已渲染控件的**部分采样**；清单缺少某控件不能证明页面不存在该控件。"
+        if (metadata or {}).get("coverage") == "partial" or (metadata is None and len(form_controls) >= 40)
+        else "这些控件涵盖当前页适配器本轮返回的已渲染可编辑控件。"
+    )
     return (
         "## 浏览器 DOM 表单控件（适配器感知，不是截图文本）\n"
-        "这些控件涵盖当前页**所有已渲染**的可编辑控件（含需滚动才进入视口的），给出类型、当前值和候选项。"
+        + inventory_claim
+        + "给出类型、当前值和候选项。"
         "标 `[需向上滚动到视口]` / `[需向下滚动到视口]` / `[需先滚动到视口]` 的控件**确实存在于表单中**，只是不在当前视口——"
         "要操作它先按标注的方向滚动到它（`[需向上滚动到视口]`=控件在视口上方，向上滚；`[需向下滚动到视口]`=在下方，向下滚），"
         "**不要因为它不在当前截图里就判它「不存在」/「缺失」，也不要盲目往一个方向滚**。\n"
         "⚠️ `*_input` 文本框的 `current=` 是它**实际内容的权威，优先级高于截图像素**："
         "窄文本框在截图里可能只显示滚动后的尾部（已输入完整目标词时，框窄可能只显示尾部片段）——"
         "**只要某 `*_input` 文本框的 `current=` 等于目标值，就是已正确输入完整内容，判该输入已达成；不要据截图把它判成「输入不完整/缺前缀/被截断/需重输」**。\n"
+        "⚠️ 带 `group(row=..., field=...)` 的控件属于重复表单集合。集合成员必须按**同一 row 内的具体 field/name**判断；"
+        "目标文本出现在同一行的另一个字段，不能证明目标字段已经填写。\n"
         + "\n".join(lines)
     )
 

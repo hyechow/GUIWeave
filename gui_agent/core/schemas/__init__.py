@@ -56,6 +56,9 @@ CompletionStrategy = Literal[
     "human_escalation",
 ]
 AtomicRole = Literal["prepare", "commit", "iterate"]
+ActionFamily = Literal[
+    "input", "select", "activate", "navigate", "iterate", "commit", "unknown"
+]
 ActionExecutionStatus = Literal["not_attempted", "dispatched", "dispatch_failed"]
 ActionTargetStatus = Literal["on_target", "off_target", "unknown"]
 ActionResponseStatus = Literal["observed", "none_observed", "unobservable", "unknown"]
@@ -316,6 +319,13 @@ class Observation(BaseModel):
             "不包含表格行数据。None=该平台不提供或当前页无表单控件。"
         ),
     )
+    form_controls_meta: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "form_controls 结构清单的覆盖率元数据：total_rendered/returned/truncated/coverage/"
+            "raw_limit_hit。用于区分『清单中没有』与『清单截断后未返回』；不提供该传感器的平台留空。"
+        ),
+    )
     viewport: Optional[dict[str, Any]] = Field(
         default=None,
         description=(
@@ -432,6 +442,13 @@ class SupervisorStep(BaseModel):
     atomic_role: AtomicRole = Field(
         default="prepare",
         description="当前原子动作在交互 Run 中的角色：prepare=准备状态，commit=最终副作用派发，iterate=允许有进展地重复。",
+    )
+    action_family: ActionFamily = Field(
+        default="unknown",
+        description=(
+            "planner 指令要求的原子动作族。runner 在派发前校验 concrete primitive；"
+            "unknown 保持旧调用方兼容。"
+        ),
     )
     completion_status: CompletionStatus = Field(
         default="in_progress",

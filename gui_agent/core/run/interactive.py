@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Callable, Literal
 from gui_agent.core.orchestrator.contracts import normalize_return_reads
 from gui_agent.core.orchestrator.program import INTERACTIVE_KINDS, Run, RunLike
 from gui_agent.core.schemas import Milestone
+from gui_agent.core.run.execution_signals import ExecutionContract
 
 if TYPE_CHECKING:
     from gui_agent.core.schemas import Observation
@@ -68,6 +69,9 @@ def task_type_for_run(run: RunLike) -> Literal["action", "analysis"]:
 def start_milestone(supervisor, run: Run, index: int, *, fresh_advance: bool = False) -> Milestone:
     """Seed the supervisor with the Milestone for one interactive statement."""
     milestone = milestone_for_run(run, index)
+    set_contract = getattr(supervisor, "set_execution_contract", None)
+    if callable(set_contract):
+        set_contract(ExecutionContract.from_milestone(milestone))
     supervisor.reseed(
         milestone,
         task_type=task_type_for_run(run),

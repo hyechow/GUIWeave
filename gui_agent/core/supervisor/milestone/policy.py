@@ -1,6 +1,7 @@
 """MilestoneSupervisorPolicy: two-machine milestone supervisor."""
 
 import re
+from dataclasses import replace
 from typing import Literal, Optional
 
 from langchain_openai import ChatOpenAI
@@ -20,7 +21,6 @@ from gui_agent.context.runtime import (
 from llm.structured import invoke_structured
 from gui_agent.core.vision.frame_analysis import is_loading_frame
 from gui_agent.core.schemas import (
-    CompletionStatus,
     Milestone,
     Observation,
     PolicyTurn,
@@ -35,8 +35,10 @@ from .helpers import run_checker, run_selector, _default_milestone_prompts, is_d
 from .helpers import (
     checkbox_toggle_satisfies_target,
     filter_chips_clean,
+    filter_result_requirement_satisfied,
     filter_state_satisfies_target,
     native_select_satisfies_target,
+    proposal_action_constraints,
     target_affordance_scroll_plan,
     target_section_acquire_plan,
 )
@@ -69,6 +71,17 @@ from .schemas import (
     _StopConditionPatch,
 )
 from .stuck import MilestoneStuckMixin
+from gui_agent.core.run.execution_signals import (
+    ActionFamily,
+    ConstraintLedger,
+    EvidenceClaim,
+    ExecutionContract,
+    FusionDecision,
+    ProvisionalOutcome,
+    ProvisionalOutcomeLedger,
+    SignalFusionArbiter,
+    claim,
+)
 
 
 # ── Main class ────────────────────────────────────────────────────────
@@ -123,7 +136,7 @@ _CHECKBOX_OR_TOGGLE_RE = re.compile(
 # that never opened its edit page.
 _DISPATCH_VERB_CLASS_RES: dict[str, "re.Pattern[str]"] = {
     "submit": re.compile(r"提交|submit", re.IGNORECASE),
-    "save": re.compile(r"保存|save", re.IGNORECASE),
+    "save": re.compile(r"保存|持久化|save|persist", re.IGNORECASE),
     "send": re.compile(r"发送|发出|send", re.IGNORECASE),
     "publish": re.compile(r"发布|publish|\bpost\b", re.IGNORECASE),
     "confirm": re.compile(r"确认|confirm", re.IGNORECASE),
@@ -136,6 +149,23 @@ _DISPATCH_VERB_CLASS_RES: dict[str, "re.Pattern[str]"] = {
 def _dispatch_verb_classes(text: str) -> set[str]:
     t = text or ""
     return {name for name, rx in _DISPATCH_VERB_CLASS_RES.items() if rx.search(t)}
+
+
+def _milestone_dispatch_classes(milestone: Milestone) -> set[str]:
+    """Terminal verb classes declared by the milestone contract.
+
+    The statement name is a concise intent label and need not repeat the concrete Save/Submit
+    gesture. The success condition is the other half of the static contract (for example
+    ``保存后的集合包含 X``), so both participate. Runtime dispatch still has to carry a structured
+    commit role and match the declared class in ``_is_terminal_dispatch_turn``.
+    """
+    return _dispatch_verb_classes(
+        " ".join(
+            part
+            for part in (milestone.name, milestone.success_condition)
+            if part
+        )
+    )
 _NEGATIVE_ACTION_FEEDBACK_RE = re.compile(
     r"(?:"
     r"错误|失败|校验|必填|无效|被拒绝|权限不足|"
@@ -148,6 +178,38 @@ _NEGATIVE_ACTION_FEEDBACK_RE = re.compile(
 def _plan_is_input_like(instruction: str) -> bool:
     """Whether the next planner instruction is another concrete text/value entry."""
     return bool(_PLAN_INPUT_LIKE_RE.search(instruction or ""))
+
+
+def _resolved_plan_action_family(
+    plan: _PlanResult,
+    milestone: Milestone,
+) -> tuple[Literal["prepare", "commit", "iterate"], ActionFamily]:
+    """Resolve legacy planner omissions before proposal and primitive validation.
+
+    Structured planner fields remain authoritative when present. The small compatibility
+    fallback derives only mechanically obvious families already represented by structured
+    fields or an existing input classifier; it does not infer application workflows.
+    """
+    atomic_role = getattr(plan, "atomic_role", "prepare")
+    if milestone.is_iterative:
+        atomic_role = "iterate"
+    elif (
+        atomic_role == "prepare"
+        and milestone.kind == "action"
+        and _TERMINAL_DISPATCH_RE.search(plan.instruction or "")
+    ):
+        atomic_role = "commit"
+
+    action_family = getattr(plan, "action_family", "unknown")
+    if action_family == "unknown" and _plan_is_input_like(plan.instruction):
+        action_family = "input"
+    elif action_family == "unknown" and plan.direction in {
+        "up", "down", "left", "right", "increase", "decrease"
+    }:
+        action_family = "iterate"
+    elif action_family == "unknown" and atomic_role == "commit":
+        action_family = "commit"
+    return atomic_role, action_family
 
 
 def _norm_plan_input_value(value: str) -> str:
@@ -220,7 +282,7 @@ def _is_terminal_dispatch_turn(turn: PolicyTurn | None, milestone: Milestone) ->
     # When the milestone names its own dispatch verb (…并保存 / 提交…), the executed dispatch
     # must be the same verb class; a milestone with no dispatch verb keeps the action-side-only
     # behavior (legacy fire-and-forget submits).
-    milestone_classes = _dispatch_verb_classes(milestone.name or "")
+    milestone_classes = _milestone_dispatch_classes(milestone)
     if milestone_classes:
         return bool(milestone_classes & _dispatch_verb_classes(text))
     return True
@@ -376,6 +438,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # loops the frame guards miss. NOT reset per milestone (a loop can span milestone boundaries).
         self._monitor = ProgressMonitor()
         self._action_ledger = ActionLedger()
+        self._constraint_ledger = ConstraintLedger()
+        self._provisional_outcomes = ProvisionalOutcomeLedger()
+        self._signal_arbiter = SignalFusionArbiter()
+        self._execution_contract: ExecutionContract | None = None
+        self._current_execution_scope: str = ""
         self._early_feasibility_probed: set[str] = set()  # milestone ids given an early Feasibility probe
         self._last_check: Optional[_SingleCheckResult] = None
         self._collection_progress: str = ""
@@ -442,7 +509,199 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 mid: list(values)
                 for mid, values in self._monitor._progress_values.items()
             },
+            "provisional_outcomes": [
+                {
+                    "statement_id": item.statement_id,
+                    "scope": item.scope,
+                    "status": item.status,
+                    "evidence": list(item.evidence),
+                }
+                for item in self._provisional_outcomes.entries
+            ],
         }
+
+    def set_execution_contract(self, contract: ExecutionContract) -> None:
+        """Install the internal contract for the next reseeded interactive statement."""
+        self._execution_contract = contract
+
+    def _add_runtime_constraint(
+        self,
+        text: str,
+        *,
+        scope: str | None = None,
+        source: str = "runtime",
+    ) -> None:
+        actual_scope = scope or self._current_execution_scope or "task"
+        self._constraint_ledger.add(text, scope=actual_scope, source=source)
+        # Keep the legacy inspection surface stable for reports/tests. Prompt consumers call
+        # _constraints_for_scope(), which removes out-of-scope runtime entries.
+        if text not in self._global_constraints:
+            self._global_constraints.append(text)
+
+    def _constraints_for_scope(self, scope: str | None = None) -> list[str]:
+        actual_scope = scope or self._current_execution_scope
+        runtime_texts = {entry.text for entry in self._constraint_ledger.entries}
+        static = [text for text in self._global_constraints if text not in runtime_texts]
+        return [*static, *self._constraint_ledger.visible(actual_scope)]
+
+    def _contract_for(self, milestone: Milestone) -> ExecutionContract:
+        contract = self._execution_contract
+        if contract is None or contract.statement_id != milestone.id:
+            contract = ExecutionContract.from_milestone(milestone)
+        require_terminal = bool(
+            milestone.kind == "action" and _milestone_dispatch_classes(milestone)
+        )
+        if contract.require_terminal_dispatch != require_terminal:
+            contract = replace(
+                contract,
+                require_terminal_dispatch=require_terminal,
+            )
+        return contract
+
+    def _action_lifecycle_claims(
+        self,
+        milestone: Milestone,
+        history: list[PolicyTurn],
+        *,
+        scope: str,
+    ) -> list[EvidenceClaim]:
+        """Translate persisted action lifecycle state into domain claims.
+
+        This is the only bridge from PolicyTurn/ActionLedger to completion arbitration. It may
+        describe execution, response, and target independently; it never emits a business outcome.
+        """
+        claims: list[EvidenceClaim] = []
+        if self._monitor.url_changed:
+            claims.append(claim(
+                "page.response",
+                "confirmed",
+                source_type="runtime.effect_monitor",
+                scope=scope,
+                evidence="URL changed after the previous action",
+                authoritative=True,
+            ))
+        latest = self._action_ledger.latest_dispatched(history, milestone.id)
+        if latest is None:
+            return claims
+        terminal = bool(
+            _milestone_dispatch_classes(milestone)
+            and _is_terminal_dispatch_turn(latest, milestone)
+        )
+        claims.append(claim(
+            "action.execution",
+            "confirmed",
+            source_type=("runtime.commit_dispatch" if terminal else "runtime.action_dispatch"),
+            scope=scope,
+            evidence="runtime action ledger records a dispatched event",
+            authoritative=True,
+        ))
+        target_verify = latest.target_verify
+        if target_verify is not None:
+            claims.append(claim(
+                "action.target",
+                "confirmed" if target_verify.on_target else "contradicted",
+                source_type="runtime.target_verify",
+                scope=scope,
+                evidence=(
+                    "action target verified"
+                    if target_verify.on_target
+                    else f"off target: {target_verify.actual_element}"
+                ),
+                authoritative=True,
+            ))
+        return claims
+
+    @staticmethod
+    def _checker_claim(check: _SingleCheckResult, *, scope: str) -> EvidenceClaim:
+        if _has_negative_action_feedback(check):
+            value = "contradicted"
+        elif check.outcome_status == "confirmed":
+            value = "confirmed"
+        else:
+            value = "unverified"
+        return claim(
+            "business.outcome",
+            value,
+            source_type="checker",
+            scope=scope,
+            evidence=check.reason or check.summary,
+            coverage="visible_frame",
+        )
+
+    def _controller_completion_decision(
+        self,
+        milestone: Milestone,
+        *,
+        scope: str,
+        source_type: str,
+        evidence: str,
+        history: list[PolicyTurn] | None = None,
+    ) -> FusionDecision:
+        claims = self._action_lifecycle_claims(
+            milestone,
+            history or [],
+            scope=scope,
+        )
+        claims.append(claim(
+            "business.outcome",
+            "confirmed",
+            source_type=source_type,
+            scope=scope,
+            evidence=evidence,
+            authoritative=True,
+        ))
+        return self._signal_arbiter.decide(
+            self._contract_for(milestone),
+            claims,
+            scope=scope,
+        )
+
+    def _completion_decision_from_check(
+        self,
+        milestone: Milestone,
+        observation: Observation,
+        history: list[PolicyTurn],
+        check: _SingleCheckResult,
+    ) -> FusionDecision:
+        """Arbitrate a checker verdict together with persisted lifecycle evidence."""
+        scope = self._execution_scope_for(milestone, observation)
+        claims = self._action_lifecycle_claims(milestone, history, scope=scope)
+        claims.append(self._checker_claim(check, scope=scope))
+        return self._signal_arbiter.decide(
+            self._contract_for(milestone),
+            claims,
+            scope=scope,
+        )
+
+    def _advance_from_controller(
+        self,
+        milestone: Milestone,
+        observation: Observation,
+        history: list[PolicyTurn],
+        *,
+        source_type: str,
+        evidence: str,
+        final_read: Optional[dict] = None,
+    ) -> SupervisorStep:
+        scope = self._execution_scope_for(milestone, observation)
+        decision = self._controller_completion_decision(
+            milestone,
+            scope=scope,
+            source_type=source_type,
+            evidence=evidence,
+            history=history,
+        )
+        if decision.action != "complete":
+            raise RuntimeError(
+                f"controller attempted completion rejected by execution contract: {decision.reason}"
+            )
+        return self._advance(
+            milestone,
+            observation,
+            history,
+            decision=decision,
+            final_read=final_read,
+        )
 
     def _execution_scope_for(self, milestone: Milestone, observation: Observation) -> str:
         """Bucket runtime memory by row/entity when visible, else by milestone.
@@ -530,7 +789,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 "必须换一个当前页面可见的新入口或新操作，禁止重复同一 DOM 目标。"
             )
             if con not in self._global_constraints:
-                self._global_constraints.append(con)
+                self._add_runtime_constraint(con, scope=scope, source="loop_guard")
 
     def authorize_action_dispatch(
         self,
@@ -573,10 +832,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         declared = getattr(check, "outcome_status", "unverified")
         if declared == "contradicted" or _has_negative_action_feedback(check):
             signal.outcome = "contradicted"
-        elif declared == "confirmed":
+        elif declared == "confirmed" and signal.outcome != "contradicted":
             signal.outcome = "confirmed"
-        else:
-            signal.outcome = "unverified"
+        # ``unverified`` carries no new information and must not erase a confirmed/contradicted
+        # outcome from the same dispatch. A contradiction is terminal for that dispatch; only a
+        # later corrected commit creates a new lifecycle record that can succeed.
         evidence = [*(check.visible_evidence or []), check.reason or ""]
         for item in evidence:
             if item and item not in signal.evidence:
@@ -639,6 +899,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._order = [milestone.id]
         self._current_id = milestone.id
         self.task_type = task_type  # 读取门：read milestone 须为 'analysis' 才读
+        if (
+            self._execution_contract is None
+            or self._execution_contract.statement_id != milestone.id
+        ):
+            self._execution_contract = ExecutionContract.from_milestone(milestone)
         self._monitor.clear_screenshots()  # 唯一要清的，和 _advance 一致
         # DAG `_advance` 的 nav 跳 check 镜像：fresh_advance=刚从上一个 milestone 推进过来（同帧），
         # 此时若新 milestone 是 navigation，它「in_progress by construction」，跳过首次验收直接规划
@@ -673,6 +938,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             )
 
         execution_scope = self._execution_scope_for(milestone, observation)
+        self._current_execution_scope = execution_scope
         scoped_history = self._history_for_scope(history, milestone, observation)
         milestone_history = self._history_for_current_milestone(history, milestone, observation)
 
@@ -701,154 +967,134 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # url_changed / dom_changed feed both the dispatch gate check below and the
         # stuck/no_effect suppression further down.
         self._monitor.observe_effect(observation.url, observation.dom_state)
-        self._update_latest_action_response(milestone_history, milestone)
+        # A Save/navigation response commonly lands on a different URL, so the source-page turn
+        # is absent from ``milestone_history`` by design. Bridge only the immediately preceding
+        # action of this milestone into the response update; older rows/scopes remain isolated.
+        response_history = milestone_history
+        if (
+            history
+            and history[-1].supervisor is not None
+            and history[-1].supervisor.milestone_id == milestone.id
+            and history[-1].executed
+        ):
+            response_history = [history[-1]]
+        self._update_latest_action_response(response_history, milestone)
         if self._monitor.url_changed:
             print(f"  [URLChanged] {observation.url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
         if self._monitor.dom_changed and not self._monitor.url_changed:
             print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
 
-        # Dispatch gate: success_condition asks only "did the action produce any UI response?"
-        # That is a deterministic question — url_changed is conclusive (page navigation is
-        # unambiguous). dom_changed alone is NOT used: it fires on any form fill / datepicker
-        # set / focus change, which would short-circuit before the submit action runs.
-        if is_dispatch_gate_sc(milestone.success_condition) and self._monitor.url_changed:
-            check = _SingleCheckResult(
-                status="done",
-                reason="动作已发出且界面响应已确认（URL/DOM 状态变化，确定性信号）",
-                summary="dispatch gate 满足",
-            )
-            print("  [DispatchGate] 确定性响应信号 → done（跳过 LLM 验收）")
-            self._last_check = check
-            return self._advance(milestone, observation, history)
+        contract = self._contract_for(milestone)
+        fusion_claims = self._action_lifecycle_claims(
+            milestone,
+            response_history,
+            scope=execution_scope,
+        )
+        latest_dispatched = self._action_ledger.latest_dispatched(
+            response_history, milestone.id
+        )
 
-        # Terminal submit/save redirect gate. A compound mutation milestone may have a visible
-        # success SC ("toast or return to list"), but the strongest generic signal after its own
-        # Save/Submit is often the redirect itself. Run this before affordance-acquire: after a
-        # successful save the target field can be below the fold again, and reacquiring it would
-        # waste turns or hit max_turns despite the backend mutation already being dispatched.
-        if (
+        terminal_response_pending = bool(
             milestone.kind == "action"
             and self._monitor.url_changed
-            and _TERMINAL_DISPATCH_RE.search(milestone.name or "")
-            and history
-            and _is_terminal_dispatch_turn(history[-1], milestone)
-        ):
-            prior = self._last_check
-            prior_check = prior if isinstance(prior, _SingleCheckResult) else None
-            if not (prior_check is not None and _has_negative_action_feedback(prior_check)):
-                action_text = _turn_action_text(history[-1])[:120]
-                check = _SingleCheckResult(
-                    status="done",
-                    reason=(
-                        "本里程碑的终端保存/提交动作已派发，且下一帧 URL 确定变化；"
-                        "这是提交响应信号，不应回到页面内重新 acquire 字段或区域。"
-                    ),
-                    summary=f"terminal dispatch redirect accepted: {action_text}",
-                    visible_evidence=["runtime.execution_signal=dispatched", "runtime.effect_signal=url_changed"],
-                )
-                print("  [TerminalDispatchGate] 终端动作触发 URL 变化 → done（跳过 acquire/checker）")
-                self._last_check = check
-                return self._advance(
-                    milestone,
-                    observation,
-                    history,
-                    completion_status="accepted_unverified",
-                )
+            and latest_dispatched is not None
+            and _is_terminal_dispatch_turn(latest_dispatched, milestone)
+        )
 
-        # Filter "action-applied" gate — generalizes the dispatch gate to filter milestones.
-        # A `filter` milestone's job is to APPLY a filter; Observation.applied_filters reports
-        # authoritatively whether the intended filter is in effect, independent of which adapter
-        # evidence channel produced it. So "动作是否生效" is decided by the control's own state,
-        # NOT by re-reading row content.
-        # `filter_chips_clean` keeps the gate from masking an unrelated residual the milestone
-        # still owes a clear for (task 186 class). Skips the LLM checker like the dispatch gate.
+        # Existing deterministic Gates now produce typed claims.  Only the arbiter owns the
+        # completion decision, so a checker cannot override an authoritative state in the same
+        # domain and a generic page response cannot masquerade as a business outcome.
         applied_filters = getattr(observation, "applied_filters", None)
-        if (
+        filter_applied = bool(
             milestone.kind == "filter"
             and filter_state_satisfies_target(applied_filters, milestone)
             and filter_chips_clean(applied_filters, milestone)
-        ):
-            check = _SingleCheckResult(
-                status="done",
-                reason="目标筛选已生效（applied_filters 命中，确定性状态信号）；行内容由筛选编码，无需逐行复核",
-                summary="filter applied gate 满足",
+        )
+        if filter_applied:
+            fusion_claims.append(claim(
+                "filter.state",
+                "confirmed",
+                source_type="obs.applied_filters",
+                scope=execution_scope,
+                evidence=f"target filter is active: {applied_filters}",
+                authoritative=True,
+                coverage="declared_filter_state",
+            ))
+            result_requirement_met = filter_result_requirement_satisfied(
+                getattr(observation, "tables", None), milestone
             )
-            print(f"  [FilterGate] 目标筛选已生效 {applied_filters} → done（跳过 LLM 验收）")
-            self._last_check = check
-            return self._advance(milestone, observation, history)
+            if result_requirement_met:
+                fusion_claims.append(claim(
+                    "business.outcome",
+                    "confirmed",
+                    source_type="runtime.filter_result_gate",
+                    scope=execution_scope,
+                    evidence="filter result requirement is satisfied",
+                    authoritative=True,
+                ))
 
-        # Native-select value gate — same signal protocol as the filter gate, on obs.dom. A native
-        # <select>'s selection is DOM-authoritative (form_controls.selected_text); the vision checker
-        # provably loops "still-open list box = not selected" despite the DOM even with the labeled
-        # arbitration protocol (WebArena 702 Customer Groups). When a select-focused milestone's
-        # target value is already selected, that is deterministic ground truth.
-        if native_select_satisfies_target(getattr(observation, "form_controls", None), milestone):
-            check = _SingleCheckResult(
-                status="done",
-                reason="目标 native select 的已选值已满足（obs.dom selected_text 权威，确定性信号）；列表框常开不代表未选中",
-                summary="native select value gate 满足",
+        native_selected = bool(
+            not terminal_response_pending
+            and native_select_satisfies_target(
+                getattr(observation, "form_controls", None), milestone
             )
-            print("  [NativeSelectGate] DOM selected_text 满足目标 → done（跳过 LLM 视觉误判）")
-            self._last_check = check
-            return self._advance(milestone, observation, history)
-
-        # Checkbox/switch value gate — panel overlays can hide the downstream visual result
-        # (e.g. a grid header) while the AX/DOM control state is already checked. Re-clicking an
-        # already-checked toggle can revert it, so treat a matched ON toggle as deterministic done
-        # for checkbox-focused enable/show/select milestones.
-        if checkbox_toggle_satisfies_target(
+        )
+        checkbox_selected = checkbox_toggle_satisfies_target(
             getattr(observation, "form_controls", None),
             getattr(observation, "semantic_tree", None),
             milestone,
-        ):
+        )
+        if native_selected or checkbox_selected:
+            source = "obs.dom.selected_text" if native_selected else "obs.dom_ax.checked"
+            fusion_claims.append(claim(
+                "control.state",
+                "confirmed",
+                source_type=source,
+                scope=execution_scope,
+                evidence="target control value is already selected",
+                authoritative=True,
+                coverage="matched_control",
+            ))
+
+        if is_dispatch_gate_sc(milestone.success_condition) and self._monitor.url_changed:
+            fusion_claims.append(claim(
+                "business.outcome",
+                "confirmed",
+                source_type="runtime.dispatch_response_contract",
+                scope=execution_scope,
+                evidence="the statement contract requires only an observable dispatch response",
+                authoritative=True,
+            ))
+
+        pre_fusion = self._signal_arbiter.decide(
+            contract, fusion_claims, scope=execution_scope
+        )
+        if pre_fusion.action == "complete" and pre_fusion.completion_status == "confirmed":
             check = _SingleCheckResult(
                 status="done",
-                reason="目标 checkbox/switch 已处于选中状态（obs.dom/AX checked 状态权威，确定性信号）；浮层遮挡不应触发重复点击",
-                summary="checkbox toggle gate 满足",
+                reason=pre_fusion.reason,
+                summary="structured signal fusion confirmed completion",
+                outcome_status="confirmed",
             )
-            print("  [CheckboxGate] DOM/AX checked 状态满足目标 → done（跳过 LLM 视觉误判）")
+            print(f"  [SignalFusion] confirmed → done（{pre_fusion.reason}）")
             self._last_check = check
-            return self._advance(milestone, observation, history)
-
-        # Target-affordance acquire gate — if obs.dom already reports target controls offscreen,
-        # the next step is deterministic page-internal acquisition (scroll toward the control).
-        # This keeps checker free text from converting "target exists below the fold" into a
-        # speculative mode switch or route change.
-        acquire_plan = target_affordance_scroll_plan(
-            getattr(observation, "form_controls", None),
-            milestone,
-        )
-        if acquire_plan is not None:
-            check = _SingleCheckResult(
-                status="in_progress",
-                reason=acquire_plan.summary,
-                summary=acquire_plan.summary,
-                missing_evidence=["目标控件已在 DOM 中定位，需先滚动到视口内再执行操作。"],
-            )
-            self._last_check = check
-            self._last_plan = acquire_plan
-            milestone.status = "running"
-            print(f"  [AcquireGate] {acquire_plan.summary}")
-            print(f"  [Planner] {acquire_plan.instruction}")
-            return SupervisorStep(
-                should_act=True,
-                instruction=acquire_plan.instruction,
-                stop=False,
-                goal_completed=False,
-                summary=acquire_plan.summary,
-                execution_scope=execution_scope,
-                direction=acquire_plan.direction,
-                is_home_screen=False,
-                **_ctx(milestone, None),
+            return self._advance(
+                milestone,
+                observation,
+                history,
+                decision=pre_fusion,
             )
 
-        # Section-affordance acquire gate — if the target field is hidden behind a named
-        # section/tab/accordion, the field will be absent from form_controls until that page-local
-        # affordance is opened. Expand/scroll to the named section before the checker can upgrade
-        # "not rendered yet" into an infeasible route.
-        section_plan = target_section_acquire_plan(
-            getattr(observation, "form_controls", None),
-            milestone,
+        # A named section/container owns the target search space. Resolve it before matching flat
+        # same-name controls elsewhere on the page; otherwise a parent-form Color/Size field can
+        # steal a Configurations-wizard milestone while the named section is still below the fold.
+        section_plan = (
+            None
+            if terminal_response_pending
+            else target_section_acquire_plan(
+                getattr(observation, "form_controls", None),
+                milestone,
+            )
         )
         if section_plan is not None:
             check = _SingleCheckResult(
@@ -870,6 +1116,41 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 summary=section_plan.summary,
                 execution_scope=execution_scope,
                 direction=section_plan.direction,
+                action_family=getattr(section_plan, "action_family", "unknown"),
+                is_home_screen=False,
+                **_ctx(milestone, None),
+            )
+
+        # No named container blocks acquisition: fall back to a target control reported offscreen.
+        acquire_plan = (
+            None
+            if terminal_response_pending
+            else target_affordance_scroll_plan(
+                getattr(observation, "form_controls", None),
+                milestone,
+            )
+        )
+        if acquire_plan is not None:
+            check = _SingleCheckResult(
+                status="in_progress",
+                reason=acquire_plan.summary,
+                summary=acquire_plan.summary,
+                missing_evidence=["目标控件已在 DOM 中定位，需先滚动到视口内再执行操作。"],
+            )
+            self._last_check = check
+            self._last_plan = acquire_plan
+            milestone.status = "running"
+            print(f"  [AcquireGate] {acquire_plan.summary}")
+            print(f"  [Planner] {acquire_plan.instruction}")
+            return SupervisorStep(
+                should_act=True,
+                instruction=acquire_plan.instruction,
+                stop=False,
+                goal_completed=False,
+                summary=acquire_plan.summary,
+                execution_scope=execution_scope,
+                direction=acquire_plan.direction,
+                action_family=getattr(acquire_plan, "action_family", "unknown"),
                 is_home_screen=False,
                 **_ctx(milestone, None),
             )
@@ -880,7 +1161,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 observation,
                 scoped_history,
                 execution_scope=execution_scope,
-                effect_history=milestone_history,
+                effect_history=response_history,
             )
         self._last_check = check
         print(f"  [SingleCheck] {check.status}: {check.reason}")
@@ -906,38 +1187,47 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             })
             self._last_check = check
 
-        self._update_latest_action_outcome(milestone_history, milestone, check)
-
-        last_terminal_dispatch = self._action_ledger.latest_dispatched(
-            milestone_history, milestone.id
+        self._update_latest_action_outcome(response_history, milestone, check)
+        fusion_claims.append(self._checker_claim(check, scope=execution_scope))
+        post_fusion = self._signal_arbiter.decide(
+            contract, fusion_claims, scope=execution_scope
         )
-        accepted_unverified = False
-        if (
-            milestone.kind == "action"
-            # The gate exists for fire-and-forget submits whose backend effect renders no visible
-            # toast — it only applies when the MILESTONE's own terminal is a dispatch. An arrival
-            # milestone (click a row to open its edit page) must never be force-done'd by a
-            # mid-milestone Apply/搜索 click that happens to contain a dispatch verb (WebArena 505).
-            and _TERMINAL_DISPATCH_RE.search(milestone.name or "")
-            and _is_terminal_dispatch_turn(last_terminal_dispatch, milestone)
-            and not _has_negative_action_feedback(check)
-            and check.outcome_status == "unverified"
-        ):
-            action_text = _turn_action_text(last_terminal_dispatch)[:120]
-            if check.status != "done":
-                check = _SingleCheckResult(
-                    status="done",
-                    reason=(
-                        "终端动作已派发执行，当前帧未出现错误/校验失败；"
-                        "缺失的是可见成功反馈通道，不应重复提交同一动作。"
+        accepted_unverified = post_fusion.completion_status == "accepted_unverified"
+        if post_fusion.action == "complete":
+            if check.status != "done" or accepted_unverified:
+                check = check.model_copy(update={
+                    "status": "done",
+                    "reason": post_fusion.reason,
+                    "summary": (
+                        "signal fusion accepted dispatched terminal without outcome feedback"
+                        if accepted_unverified
+                        else "signal fusion confirmed completion"
                     ),
-                    summary=f"terminal dispatch accepted: {action_text}",
-                    visible_evidence=["runtime.execution_signal=dispatched"],
-                    page_identity=check.page_identity,
-                    outcome_status="unverified",
+                    "outcome_status": (
+                        "unverified" if accepted_unverified else "confirmed"
+                    ),
+                })
+            if accepted_unverified:
+                evidence = tuple(
+                    item.evidence for item in post_fusion.used_claims if item.evidence
                 )
-            accepted_unverified = True
-            print("  [TerminalDispatchGate] 终端动作已执行且无负反馈 → accepted_unverified（跳过重复提交）")
+                self._provisional_outcomes.record(ProvisionalOutcome(
+                    statement_id=contract.statement_id,
+                    scope=execution_scope,
+                    evidence=evidence,
+                ))
+                print("  [SignalFusion] commit 已派发且无矛盾 → accepted_unverified")
+            else:
+                print(f"  [SignalFusion] confirmed → done（{post_fusion.reason}）")
+            self._last_check = check
+        elif check.status == "done":
+            # A model-level done is only one non-authoritative claim.  Keep executing when the
+            # contract still requires a fresh dispatch or a stronger state signal.
+            check = check.model_copy(update={
+                "status": "in_progress",
+                "reason": post_fusion.reason,
+                "summary": "checker done was insufficient for the execution contract",
+            })
             self._last_check = check
 
         current_page_id = check.page_identity or ""
@@ -949,7 +1239,14 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 if self.task_type != "action":
                     read_inst = check.read_instruction or _default_read_instruction(milestone)
                     final_read = _ctx(milestone, read_inst)
-                return self._advance(milestone, observation, history, final_read=final_read)
+                return self._advance_from_controller(
+                    milestone,
+                    observation,
+                    history,
+                    source_type="runtime.collection_controller",
+                    evidence="collection controller reports all requested rows completed",
+                    final_read=final_read,
+                )
             if check.status in {"done", "stuck"}:
                 print(f"  [Collect] controller 未完成，覆盖 checker {check.status} → in_progress")
                 check = check.model_copy(update={"status": "in_progress"})
@@ -970,8 +1267,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 milestone,
                 observation,
                 history,
+                decision=post_fusion,
                 final_read=final_read,
-                completion_status=("accepted_unverified" if accepted_unverified else "confirmed"),
             )
 
         # The checker itself judged NO PROGRESS (status=stuck) from the 任务进展轨迹 (PROGRESS half of
@@ -1172,6 +1469,56 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 plan.drag_current_value = None
                 plan.drag_target_value = None
                 drag_steps = None
+
+        atomic_role, action_family = _resolved_plan_action_family(plan, milestone)
+        proposal_constraints = proposal_action_constraints(
+            getattr(observation, "form_controls", None),
+            milestone,
+            scope=execution_scope,
+        )
+        proposal_decision = self._signal_arbiter.validate_proposal(
+            action_family,
+            proposal_constraints,
+            scope=execution_scope,
+        )
+        if proposal_decision.action == "reject_action":
+            print(f"  [ProposalGate] {proposal_decision.reason}，重试一次...")
+            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                plan = self._invoke_planner(
+                    milestone,
+                    check,
+                    observation,
+                    history,
+                    extra=(
+                        "上一 proposal 与当前页面的结构化动作约束冲突："
+                        f"{proposal_decision.reason} "
+                        "请只返回一个满足约束的原子动作；不得重复被拒绝的动作族。"
+                    ),
+                )
+            drag_steps = self._picker_drag_steps(plan)
+            drag_column = getattr(plan, "drag_column", None)
+            atomic_role, action_family = _resolved_plan_action_family(plan, milestone)
+            proposal_decision = self._signal_arbiter.validate_proposal(
+                action_family,
+                proposal_constraints,
+                scope=execution_scope,
+            )
+            if proposal_decision.action == "reject_action":
+                print(f"  [ProposalGate] 重试仍冲突：{proposal_decision.reason}")
+                stuck_check = _SingleCheckResult(
+                    status="stuck",
+                    reason="连续两个 planner proposal 都违反当前结构化动作约束",
+                    stuck_reason=proposal_decision.reason,
+                    issues=list(proposal_decision.conflicts),
+                    summary=check.summary,
+                )
+                return self._handle_stuck(
+                    milestone,
+                    stuck_check,
+                    check.read_instruction,
+                    observation,
+                    history,
+                )
         print(f"  [Planner] {plan.instruction}")
         # Action-Loop Guard (task-level repeat catch): the frame-level guards are defeated by a
         # Reset→search→Reset oscillation (every turn changes url/DOM → looks like progress). Key on
@@ -1186,9 +1533,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # signature ALONE over this milestone's history, NOT on canonical_url: a filter/search/reset
         # cycle rewrites the url's path shape, so the url-keyed check_loop missed the re-types entirely
         # (regression 20260622_205544: the same long search value was typed 3×, guard never fired).
+        # DOM-backed platforms are excluded here: before action_policy resolves a concrete control,
+        # the same value may legitimately move from one input to another during route correction.
+        # Their post-dispatch action signatures include the snapped target and own repeat detection.
         _sig = (
             None
-            if milestone.is_iterative
+            if milestone.is_iterative or _has_dom_state
             else self._monitor.check_action_repetition(
                 history,
                 milestone.id,
@@ -1201,7 +1551,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 _con = ("⚠️ 已经把同样的内容输入过同一个输入框且没带来进展(在打转)。"
                         "必须改用截图中其他可见入口/动作，禁止再把同样内容输进同一个框。")
                 if _con not in self._global_constraints:
-                    self._global_constraints.append(_con)
+                    self._add_runtime_constraint(_con, scope=execution_scope, source="loop_guard")
                 return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
             print(
                 f"  [LoopGuard] 历史中有重复输入（{_sig}），"
@@ -1224,7 +1574,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             _con = (f"⚠️ 在当前页面已经做过「{plan.instruction}」且没带来进展(在打转)。"
                     "必须换一个【没在该页面试过】的新动作或新入口，禁止再重复该操作。")
             if _con not in self._global_constraints:
-                self._global_constraints.append(_con)
+                self._add_runtime_constraint(_con, scope=execution_scope, source="loop_guard")
             return self._handle_stuck(milestone, check, check.read_instruction, observation, history)
         drag_column = getattr(plan, "drag_column", None)
         if drag_steps is not None and drag_column:
@@ -1233,16 +1583,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print(f"  [Planner] hints: direction={plan.direction} column={drag_column}")
         if plan.direction in ("increase", "decrease") and drag_column:
             self._fix_picker_direction(plan)
-        atomic_role = getattr(plan, "atomic_role", "prepare")
-        if milestone.is_iterative:
-            atomic_role = "iterate"
-        elif (
-            atomic_role == "prepare"
-            and milestone.kind == "action"
-            and _TERMINAL_DISPATCH_RE.search(plan.instruction or "")
-        ):
-            # Compatibility for old planner outputs that predate the structured role.
-            atomic_role = "commit"
         self._last_plan = plan
         milestone.status = "running"
         return SupervisorStep(
@@ -1253,6 +1593,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             summary=plan.summary,
             execution_scope=execution_scope,
             atomic_role=atomic_role,
+            action_family=action_family,
             direction=plan.direction,
             drag_column=getattr(plan, "drag_column", None),
             drag_steps=drag_steps,
@@ -1290,7 +1631,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
                 read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
                 return self._handle_stuck(milestone, stuck, read_inst, observation, scoped_history)
-            return self._advance(milestone, observation, history)
+            return self._advance_from_controller(
+                milestone, observation, history,
+                source_type="runtime.collection_controller",
+                evidence="collection scroll budget exhausted after successful traversal",
+            )
 
         sim_stuck = self._monitor.check_screen_similarity(observation)
         last_read_added = bool(
@@ -1305,14 +1650,22 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
                     return self._handle_stuck(milestone, sim_stuck, read_inst, observation, scoped_history)
                 print("  [Loop] 屏幕冻结（≥99%），即使 reader 返回新内容也结束收集")
-                return self._advance(milestone, observation, history)
+                return self._advance_from_controller(
+                    milestone, observation, history,
+                    source_type="runtime.collection_controller",
+                    evidence="collection viewport is frozen after successful traversal",
+                )
             if not last_read_added:
                 if not _has_successful_scroll_for(scoped_history, milestone.id):
                     print("  [Loop] 截图连续无变化且无成功滚动证据 → 判为无效滚动，触发重规划")
                     read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
                     return self._handle_stuck(milestone, sim_stuck, read_inst, observation, scoped_history)
                 print("  [Loop] 截图连续无变化且无新增内容 → 判为边界，结束收集")
-                return self._advance(milestone, observation, history)
+                return self._advance_from_controller(
+                    milestone, observation, history,
+                    source_type="runtime.collection_controller",
+                    evidence="collection reached a stable boundary with no new content",
+                )
             print("  [Loop] 截图相似但上一轮读到了新内容，继续收集")
 
         with _Timer(self._timings, self._timings_order, "loop_check", self._token_usage):
@@ -1350,8 +1703,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                         f"停止条件「{milestone.scroll_stop_condition}」已触发"
                         f"（{frame.stop_reason}）"
                     )
-                return self._advance(
+                return self._advance_from_controller(
                     milestone, observation, history,
+                    source_type="runtime.collection_controller",
+                    evidence=f"collection stop condition satisfied: {frame.stop_reason}",
                     final_read=final_read,
                 )
             # 停止条件触发、但本采集子目标尚未采到任何内容。
@@ -1372,7 +1727,11 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
         if frame.boundary_reached and _last_scroll_was_for(scoped_history, milestone.id):
             print("  [Loop] 确认列表边界 → 结束收集")
-            return self._advance(milestone, observation, history)
+            return self._advance_from_controller(
+                milestone, observation, history,
+                source_type="runtime.collection_controller",
+                evidence="collection boundary reached after a successful scroll",
+            )
 
         milestone.status = "running"
         loop_summary_prefix = "继续滚动查找目标" if self.task_type == "action" else "继续滚动收集内容"
@@ -1416,106 +1775,40 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         milestone: Milestone,
         observation: Observation,
         history: list[PolicyTurn],
+        *,
+        decision: FusionDecision,
         final_read: Optional[dict] = None,
-        completion_status: CompletionStatus = "confirmed",
     ) -> SupervisorStep:
+        """Commit an arbiter-approved completion; this method performs no adjudication."""
+        if decision.action != "complete":
+            raise ValueError(
+                f"cannot advance without a complete FusionDecision: {decision.action}"
+            )
         done_name = milestone.name
         scoped_history = self._history_for_scope(history, milestone, observation)
-        pre_existing = not any(
+        executed_in_scope = any(
             t.executed for t in scoped_history
             if t.supervisor.milestone_id == milestone.id
         )
+        # Source-page action -> destination-page verdict is one lifecycle transition even though
+        # the execution scopes differ. Bridge only the immediately preceding on-target action
+        # while URL change is fresh; this does not let an earlier foreach row satisfy a later row.
+        executed_in_transition = bool(
+            self._monitor.url_changed
+            and history
+            and history[-1].executed
+            and history[-1].supervisor is not None
+            and history[-1].supervisor.milestone_id == milestone.id
+            and (history[-1].target_verify is None or history[-1].target_verify.on_target)
+        )
+        pre_existing = not (executed_in_scope or executed_in_transition)
         checkbox_pre_existing_ok = checkbox_toggle_satisfies_target(
             getattr(observation, "form_controls", None),
             getattr(observation, "semantic_tree", None),
             milestone,
         )
-        if milestone.require_fresh_action and pre_existing and not checkbox_pre_existing_ok:
-            prior = self._last_check
-            prior_check = prior if isinstance(prior, _SingleCheckResult) else None
-            # A terminal submit that already dispatched on-target (and redirected, which is WHY
-            # pre_existing is True on this destination page) IS the fresh write — don't re-demand
-            # another one on a page that no longer holds the form. Skip only when no negative
-            # feedback (validation/error) is present, else the submit did not take and we must
-            # still re-drive it.
-            terminal_dispatch_ok = (
-                _milestone_terminal_dispatch_succeeded(history, milestone)
-                and not (prior_check is not None and _has_negative_action_feedback(prior_check))
-            )
-            # An action milestone with NO terminal-dispatch intent (click a row to open, expand,
-            # sort) navigates by construction: its executed turn drops out of the destination
-            # page scope, so pre_existing is structurally True on arrival. Any executed on-target
-            # turn for this milestone in the FULL history IS the fresh action. Without this escape
-            # the planner is told to invent a "write" on an already-satisfied arrival milestone
-            # (WebArena 502: stray Save on the edit page, whose success banner then poisoned the
-            # NEXT milestone's verification).
-            arrival_action_ok = (
-                not _TERMINAL_DISPATCH_RE.search(milestone.name or "")
-                and any(
-                    t.executed
-                    and t.supervisor is not None
-                    and t.supervisor.milestone_id == milestone.id
-                    and (t.target_verify is None or t.target_verify.on_target)
-                    for t in history
-                )
-            )
-            if not (terminal_dispatch_ok or arrival_action_ok):
-                print(
-                    f"  [FreshActionRequired] 子目标「{done_name}」当前状态看似满足，"
-                    "但本轮尚未执行写操作，覆盖 done → in_progress"
-                )
-                check = (prior_check if prior_check is not None else _SingleCheckResult(
-                    status="in_progress",
-                    reason="当前状态可能是历史残留，不能证明本轮写操作已执行。",
-                    summary="需要执行本轮写操作。",
-                ))
-                check = check.model_copy(update={
-                    "status": "in_progress",
-                    "reason": (
-                        "当前状态可能已匹配目标值，但该 action milestone 要求本轮产生写操作；"
-                        "没有本轮执行记录时不能按 pre-existing 完成。"
-                    ),
-                    "summary": "目标状态疑似已存在，但仍需执行本轮写操作。",
-                })
-                self._last_check = check
-                return self._plan_single(milestone, check, observation, scoped_history)
-            print(
-                f"  [FreshActionRequired] 跳过：子目标「{done_name}」的"
-                + ("终端提交已 on-target 派发且无负反馈" if terminal_dispatch_ok
-                   else "点击动作已在全量历史中执行（到达型动作跳转后脱离本页 scope）")
-                + "→ 按 done 收尾，不重复动作。"
-            )
-        # Execution-evidence gate — the dual of the escape above: a milestone whose NAME declares
-        # a terminal dispatch (…并保存 / 提交…) may not be marked done on effect evidence alone.
-        # A success banner can be residue of an earlier stray save on the same page (WebArena 502:
-        # the previous milestone's banner was credited to a Stock Status change whose own Save was
-        # never clicked → the mutation silently never happened). The deterministic dispatch
-        # ledger — not the checker's visual claim — decides whether THIS milestone submitted.
-        if (
-            milestone.kind == "action"
-            and _TERMINAL_DISPATCH_RE.search(milestone.name or "")
-            and not _milestone_terminal_dispatch_succeeded(history, milestone)
-        ):
-            print(
-                f"  [DispatchLedger] 子目标「{done_name}」声明了终端提交，但本里程碑内未派发过"
-                "提交/保存动作；可见的成功提示可能是先前操作的残留，覆盖 done → in_progress"
-            )
-            prior = self._last_check
-            prior_check = prior if isinstance(prior, _SingleCheckResult) else None
-            check = (prior_check if prior_check is not None else _SingleCheckResult(
-                status="in_progress", reason="", summary="",
-            )).model_copy(update={
-                "status": "in_progress",
-                "reason": (
-                    "目标值可能已在界面上设置好，但该里程碑要求的提交/保存动作尚未在本里程碑内执行；"
-                    "当前的成功提示可能是先前操作的残留。请执行该里程碑自己的提交/保存（点击对应按钮）。"
-                ),
-                "summary": "值已设置但本里程碑的提交/保存尚未派发。",
-            })
-            self._last_check = check
-            return self._plan_single(milestone, check, observation, scoped_history)
         milestone.status = "done"
-        milestone.completion_status = completion_status
+        milestone.completion_status = decision.completion_status
         # Persist this milestone's DONE verdict before _last_check is overwritten by the next
         # milestone's check (the report's 验收 panel renders it via context.milestones[id].
         # done_check). Must be here, not only in the nav-skip branch below: the terminal path
@@ -1677,11 +1970,33 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if replan.diagnosis:
             path_constraint = f"⚠️ 之前未达成目标的路径：{replan.diagnosis}。除非当前截图出现新的明确证据，否则不要重复。"
             if path_constraint not in self._global_constraints:
-                self._global_constraints.append(path_constraint)
+                self._add_runtime_constraint(path_constraint, source="replan")
 
         if replan.strategy == "force_complete":
-            print(f"  [Replan] replanner 判定验收条件已满足，强制完成")
-            return self._advance(milestone, observation, history)
+            scope = self._execution_scope_for(milestone, observation)
+            decision = self._controller_completion_decision(
+                milestone,
+                scope=scope,
+                source_type="replanner.force_complete",
+                evidence=replan.diagnosis or "replanner judged the goal already satisfied",
+                history=history,
+            )
+            if decision.action == "complete":
+                print("  [Replan] force_complete 经 SignalFusion 验证通过")
+                return self._advance(
+                    milestone,
+                    observation,
+                    history,
+                    decision=decision,
+                )
+            print(f"  [Replan] force_complete 被执行契约拒绝：{decision.reason}")
+            check = check.model_copy(update={
+                "status": "in_progress",
+                "reason": decision.reason,
+                "summary": "replanner completion rejected by execution contract",
+            })
+            self._last_check = check
+            return self._plan_single(milestone, check, observation, history)
 
         if replan.strategy == "escalate_human":
             # The replanner can give up EARLY (before MAX_RETRIES) by escalating — another give-up
@@ -1755,6 +2070,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         control_text = control_presence_text(observation)
         if "无适配器可感知" in control_text:
             return None  # no DOM control inventory (visual platform) → can't confirm absence
+        controls_meta = getattr(observation, "form_controls_meta", None) or {}
+        if controls_meta.get("coverage") == "partial":
+            print("  [Feasibility] 控件清单 coverage=partial，缺失不能证明不存在 → 默认可行")
+            return None
         goal = f"{milestone.name} —— {milestone.success_condition}"
         try:
             with _Timer(self._timings, self._timings_order, "feasibility", self._token_usage):
@@ -1835,6 +2154,25 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             )
             dependent.observable_boundary = False
             dependent.scroll_budget = 15
+        scope = self._current_execution_scope or f"milestone:{milestone.id}"
+        decision = self._signal_arbiter.decide(
+            self._contract_for(milestone),
+            [claim(
+                "execution.delegation",
+                "confirmed",
+                source_type="runtime.filter_fallback",
+                scope=scope,
+                evidence=(
+                    f"filter execution delegated to dependent collection {dependent.id}"
+                ),
+                authoritative=True,
+            )],
+            scope=scope,
+        )
+        if decision.action != "delegate":
+            return None
+        # ``done`` here means the superseded node is consumed for dependency scheduling; its
+        # requested effect is explicitly delegated, not claimed as confirmed completion.
         milestone.status = "done"
         self._current_id = dependent.id
         self._monitor.clear_screenshots()
@@ -1842,7 +2180,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             f"子目标「{milestone.name}」无法精确筛选，已降级为在「{dependent.name}」阶段收集并过滤。"
         )
         if msg not in self._global_constraints:
-            self._global_constraints.append(msg)
+            self._add_runtime_constraint(msg, scope="task", source="fallback")
         print(f"  [Fallback] {msg}")
         return SupervisorStep(
             should_act=False, stop=False, goal_completed=False, summary=msg,
@@ -1875,7 +2213,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         instruction = last_action.supervisor.instruction
         constraint = f"指令「{instruction}」未达成目标：{reason}。优先尝试当前截图中不同的可见入口。"
         if constraint not in self._global_constraints:
-            self._global_constraints.append(constraint)
+            self._add_runtime_constraint(constraint, source="no_effect")
             print(f"  [Constraint] {constraint}")
 
     def note_collection_progress(self, text: str, *, done: bool = False) -> None:
@@ -1965,7 +2303,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             milestone, observation, history,
             app_name=app_name,
             task_type=self.task_type,
-            constraints=self._global_constraints,
+            constraints=self._constraints_for_scope(execution_scope),
             extra=extra,
             prompts=self._prompts,
             check_knowledge=self._check_knowledge,
@@ -1982,7 +2320,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         history: list[PolicyTurn],
     ) -> _LoopFrameResult:
         return run_loop_check(
-            milestone, observation, history, constraints=self._global_constraints,
+            milestone, observation, history, constraints=self._constraints_for_scope(),
             prompts=self._prompts,
             context_reports=self._context_reports,
         )
@@ -2124,7 +2462,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             extra = f"{extra}\n{self._collection_progress}".strip()
         return run_planner(
             milestone, check, observation, history,
-            constraints=self._global_constraints,
+            constraints=self._constraints_for_scope(),
             extra=extra,
             app_knowledge=self._app_knowledge,
             elements_knowledge=elements,
@@ -2148,7 +2486,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 observation,
                 system_blocks=[
                     milestone_block(milestone),
-                    constraints_block(self._global_constraints),
+                    constraints_block(self._constraints_for_scope()),
                     loop_frame_summary_block(frame.summary),
                 ],
                 image_resize=self._prompts.image_resize,
@@ -2185,7 +2523,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     retry_count=milestone.retry_count,
                     failure_hints=milestone.failure_hints,
                 ),
-                constraints_block(self._global_constraints),
+                constraints_block(self._constraints_for_scope()),
                 completed_milestones_block(self._milestones.values(), current_id=milestone.id),
                 history_block(history, current_milestone_id=milestone.id),
                 tried_instructions_block(tried),
@@ -2196,7 +2534,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 knowledge_block("page_elements", self._elements_for(milestone, check)),
                 # DOM control inventory (incl. each input's authoritative `current=` value) — so the
                 # replanner doesn't misdiagnose a narrow scrolled input as truncated from the screenshot.
-                form_controls_block(getattr(observation, "form_controls", None)),
+                form_controls_block(
+                    getattr(observation, "form_controls", None),
+                    getattr(observation, "form_controls_meta", None),
+                ),
             ],
             image_resize=self._prompts.image_resize,
             label="replanner",

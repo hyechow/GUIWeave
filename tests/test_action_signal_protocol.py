@@ -4,7 +4,7 @@ import pytest
 
 from gui_agent.core.orchestrator.program import Finish, Program, Run, RunResult
 from gui_agent.core.orchestrator.runner import Interpreter, RunRecord, make_run_result
-from gui_agent.core.run.action_ledger import semantic_action_key
+from gui_agent.core.run.action_ledger import effective_action_role, semantic_action_key
 from gui_agent.core.run.result import orchestration_result
 from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.schemas import (
@@ -74,6 +74,38 @@ def test_commit_key_ignores_button_coordinate_within_same_resource():
     )
 
 
+def test_concrete_scroll_cannot_consume_commit_slot():
+    policy = MilestoneSupervisorPolicy()
+    mislabeled_scroll = BaseActionDecision(
+        action=BaseAction(
+            action_type="scroll",
+            direction="down",
+            description="滚动查看下方选项",
+        )
+    )
+    step = _step(role="commit")
+    scroll_turn = make_interactive_turn(
+        index=1,
+        observation_source="browser",
+        supervisor_step=step,
+        action_decision=mislabeled_scroll,
+        executed=True,
+    )
+
+    assert effective_action_role(step, mislabeled_scroll.action) == "iterate"
+    assert scroll_turn.action_signal is not None
+    assert scroll_turn.action_signal.role == "iterate"
+    assert scroll_turn.action_signal.action_key.endswith("|iterate|scroll|down|@-")
+
+    allowed, key, reason = policy.authorize_action_dispatch(
+        step, _decision(), [scroll_turn]
+    )
+
+    assert allowed is True
+    assert key.endswith("|commit")
+    assert reason == ""
+
+
 def test_make_turn_records_execution_separately_from_outcome():
     turn = make_interactive_turn(
         index=1,
@@ -98,6 +130,19 @@ def test_duplicate_commit_is_suppressed_before_second_dispatch():
 
     assert allowed is False
     assert "禁止" in reason
+
+
+def test_action_policy_stop_cannot_complete_an_in_progress_milestone():
+    policy = MilestoneSupervisorPolicy()
+    step = _step(role="prepare")
+    stop = BaseActionDecision(
+        action=BaseAction(action_type="stop", description="等待并验证结果")
+    )
+
+    allowed, _key, reason = policy.authorize_action_dispatch(step, stop, [])
+
+    assert allowed is False
+    assert "无权" in reason
 
 
 def test_same_commit_template_is_allowed_for_different_foreach_row():
@@ -126,6 +171,53 @@ def test_contradicted_commit_requires_intervening_correction():
         commit, _decision(), [rejected, corrected]
     )
     assert allowed is True
+
+
+def test_unverified_feedback_does_not_erase_a_known_commit_contradiction():
+    policy = MilestoneSupervisorPolicy()
+    milestone = Milestone(
+        id="m1",
+        name="apply target filter",
+        description="",
+        success_condition="target filter is applied",
+        kind="filter",
+    )
+    commit = _step(scope="milestone:m1")
+    dispatched = _turn(index=1, step=commit)
+    signal = dispatched.action_signal
+    assert signal is not None
+
+    policy._update_latest_action_outcome(
+        [dispatched],
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="the attempted route produced the wrong result",
+            summary="route rejected",
+            outcome_status="contradicted",
+        ),
+    )
+    policy._update_latest_action_outcome(
+        [dispatched],
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="the corrected form is not submitted yet",
+            summary="awaiting corrected commit",
+            outcome_status="unverified",
+        ),
+    )
+
+    assert signal.outcome == "contradicted"
+
+    correction = _turn(index=2, step=_step(scope="milestone:m1", role="prepare"))
+    allowed, _key, reason = policy.authorize_action_dispatch(
+        commit,
+        _decision(),
+        [dispatched, correction],
+    )
+    assert allowed is True
+    assert reason == ""
 
 
 @pytest.mark.parametrize("checker_status", ["in_progress", "done"])
@@ -169,6 +261,108 @@ def test_terminal_dispatch_advances_as_accepted_unverified(
     assert result.goal_completed is True
     assert result.completion_status == "accepted_unverified"
     assert milestone.completion_status == "accepted_unverified"
+
+
+def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypatch):
+    policy = MilestoneSupervisorPolicy()
+    milestone = Milestone(
+        id="m1",
+        name="将选项集合持久化包含 XXXL",
+        description="",
+        success_condition="保存后的选项集合包含 XXXL",
+        kind="action",
+        require_fresh_action=True,
+    )
+    policy._milestones = {"m1": milestone}
+    policy._current_id = "m1"
+    policy._order = ["m1"]
+    source_step = _step(scope="row:attribute/144")
+    history = [_turn(index=1, step=source_step)]
+    policy._monitor.observe_effect("http://x/attribute/144", "draft")
+    monkeypatch.setattr(
+        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
+        lambda _obs: False,
+    )
+    checker_calls: list[int] = []
+
+    def _unverified_feedback(*_args, **_kwargs):
+        checker_calls.append(1)
+        return _SingleCheckResult(
+            status="in_progress",
+            reason="保存请求已响应，但当前帧不能直接读取集合成员",
+            summary="提交有响应，结果尚未完全确认",
+            outcome_status="unverified",
+        )
+
+    monkeypatch.setattr(policy, "_single_check", _unverified_feedback)
+
+    result = policy._run_single_turn(
+        milestone,
+        Observation(
+            png_bytes=b"x",
+            source="browser",
+            url="http://x/attributes",
+            dom_state="list-with-success-toast",
+        ),
+        history,
+    )
+
+    assert result.goal_completed is True
+    assert result.completion_status == "accepted_unverified"
+    assert result.pre_existing is False
+    assert checker_calls == [1]
+    assert history[0].action_signal is not None
+    assert history[0].action_signal.response == "observed"
+    assert set(history[0].action_signal.response_channels) == {"url", "dom"}
+
+
+def test_redirected_commit_prefers_confirmed_outcome_feedback(monkeypatch):
+    policy = MilestoneSupervisorPolicy()
+    milestone = Milestone(
+        id="m1",
+        name="保存记录",
+        description="",
+        success_condition="记录已保存",
+        kind="action",
+        require_fresh_action=True,
+    )
+    policy._milestones = {"m1": milestone}
+    policy._current_id = "m1"
+    policy._order = ["m1"]
+    history = [_turn(index=1, step=_step(scope="row:record/65"))]
+    policy._monitor.observe_effect("http://x/record/65", "draft")
+    monkeypatch.setattr(
+        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
+        lambda _obs: False,
+    )
+    monkeypatch.setattr(
+        policy,
+        "_single_check",
+        lambda *_args, **_kwargs: _SingleCheckResult(
+            status="done",
+            reason="当前帧显示保存成功且目标记录状态正确",
+            summary="保存结果已确认",
+            visible_evidence=["保存成功"],
+            outcome_status="confirmed",
+        ),
+    )
+
+    result = policy._run_single_turn(
+        milestone,
+        Observation(
+            png_bytes=b"x",
+            source="browser",
+            url="http://x/records",
+            dom_state="success",
+        ),
+        history,
+    )
+
+    assert result.goal_completed is True
+    assert result.completion_status == "confirmed"
+    assert result.pre_existing is False
+    assert history[0].action_signal is not None
+    assert history[0].action_signal.outcome == "confirmed"
 
 
 def test_accepted_unverified_run_result_advances_interpreter_but_is_not_verified():

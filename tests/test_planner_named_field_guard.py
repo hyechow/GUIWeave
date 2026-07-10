@@ -31,9 +31,11 @@ def test_named_field_guard_does_not_substitute_visible_other_field():
 
     guarded = _guard_named_field_substitution_plan(plan, milestone, _check(), observation)
 
-    assert "产品" in guarded.instruction
-    assert "Nickname" not in guarded.instruction
-    assert guarded.direction == "right"
+    # A post-planner guard may reject/retarget only when the target control is actually observed.
+    # Missing from a sampled inventory is not proof of absence and must not invent a horizontal
+    # scrolling route. The original proposal remains visible to action/target validation.
+    assert guarded.instruction == plan.instruction
+    assert guarded.direction is None
 
 
 def test_named_field_guard_treats_chinese_product_column_as_product_control():

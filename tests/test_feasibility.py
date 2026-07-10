@@ -18,6 +18,7 @@ from gui_agent.core.supervisor.milestone.feasibility import (
 @dataclass
 class _Obs:
     form_controls: Optional[list[dict[str, Any]]] = None
+    form_controls_meta: Optional[dict[str, Any]] = None
     ui_facts: Optional[list[dict[str, Any]]] = field(default=None)
 
 
@@ -44,6 +45,16 @@ def test_control_presence_text_includes_grid_facts():
     obs = _Obs(ui_facts=[{"kind": "grid", "record_count": 0, "active_filters": ["Product: X"]}])
     text = control_presence_text(obs)
     assert "record_count=0" in text and "active_filters" in text
+
+
+def test_partial_control_inventory_explicitly_disclaims_absence():
+    text = control_presence_text(_Obs(
+        form_controls=[{"label": "Known", "kind": "input"}],
+        form_controls_meta={"coverage": "partial", "truncated": True},
+    ))
+
+    assert "部分采样" in text
+    assert "不能证明" in text
 
 
 def test_control_presence_text_sentinel_when_visual_only():

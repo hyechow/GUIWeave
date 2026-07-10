@@ -14,8 +14,10 @@ from gui_agent.adapters.browser.filter_state import (
 )
 from gui_agent.core.schemas import Milestone
 from gui_agent.core.supervisor.milestone.helpers import (
+    _extract_target_fields,
     filter_chips_clean,
     filter_residual_labels,
+    filter_result_requirement_satisfied,
     filter_state_satisfies_target,
     parse_filter_target,
 )
@@ -107,6 +109,77 @@ def test_parse_chinese_keyword_filter_target():
     )
 
 
+def test_parse_global_search_box_target_without_inventing_a_column():
+    milestone = _filter_ms(
+        "在搜索框输入精确值 'Minerva LumaTech V-Tee' 并提交搜索",
+        "精确筛选已应用，records-found 计数可读",
+    )
+
+    assert parse_filter_target(milestone) == (
+        "Keyword",
+        ["minerva", "lumatech", "v", "tee"],
+    )
+    assert filter_state_satisfies_target(
+        {"Keyword": "Minerva LumaTech V-Tee"}, milestone
+    ) is True
+
+
+def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatch):
+    milestone = _filter_ms(
+        "在搜索框输入精确值 'Minerva LumaTech V-Tee' 并提交搜索",
+        "精确筛选已应用，records-found 计数可读",
+    )
+    checker_calls: list[int] = []
+
+    def _spy_run_checker(*_args, **_kwargs):
+        checker_calls.append(1)
+        raise _CheckerReached()
+
+    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
+    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+
+    policy = policy_mod.MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+    step = policy.step(
+        Observation(
+            png_bytes=b"x",
+            source="browser",
+            applied_filters={"Keyword": "Minerva LumaTech V-Tee"},
+            tables=[{"record_count": 0}],
+        ),
+        goal="find product",
+        history=[],
+    )
+
+    assert checker_calls == []
+    assert milestone.status == "done"
+    assert step.goal_completed is True
+
+
+def test_same_search_box_is_deictic_not_a_named_column():
+    milestone = _filter_ms(
+        "清除精确值后在同一搜索框用关键词 'Minerva' 重筛",
+        "关键词筛选已应用且匹配记录非 0 条",
+    )
+
+    assert _extract_target_fields(milestone) == []
+    assert parse_filter_target(milestone) == ("Keyword", ["minerva"])
+
+
+def test_explicit_nonzero_fallback_does_not_fast_complete_on_known_zero():
+    milestone = _filter_ms(
+        "清除精确值后在同一搜索框用关键词 'Minerva' 重筛",
+        "关键词筛选已应用且匹配记录非 0 条",
+    )
+
+    assert filter_result_requirement_satisfied(
+        [{"total_records": 0}], milestone
+    ) is False
+    assert filter_result_requirement_satisfied(
+        [{"total_records": 2}], milestone
+    ) is True
+
+
 def test_parse_unparseable_is_none():
     assert parse_filter_target(_filter_ms("进入产品列表页并打开筛选面板")) is None
 
@@ -141,6 +214,41 @@ def test_gate_false_when_no_chips():
 def test_gate_false_when_target_unparseable():
     ms = _filter_ms("打开筛选面板")
     assert filter_state_satisfies_target({"Quantity": "3 - 3"}, ms) is False
+
+
+def test_gate_matches_adapter_pair_when_free_text_parser_has_no_syntax_rule():
+    # Live 20260711_012347: the adapter authoritatively returned this exact pair, but the
+    # historical mini-parser did not recognize the generic "用精确值 ... 筛选" phrasing.
+    ms = _filter_ms(
+        "在 Attribute Code 列用精确值'size'筛选",
+        "Attribute Code 精确筛选已应用，records-found 计数可读",
+    )
+
+    assert parse_filter_target(ms) is None
+    assert filter_state_satisfies_target({"Attribute Code": "size"}, ms) is True
+    assert filter_chips_clean({"Attribute Code": "size"}, ms) is True
+
+
+def test_structural_filter_pair_fallback_requires_both_label_and_exact_value():
+    ms = _filter_ms(
+        "在 Attribute Code 列用精确值'size'筛选",
+        "Attribute Code 精确筛选已应用",
+    )
+
+    assert filter_state_satisfies_target({"Attribute Code": "color"}, ms) is False
+    assert filter_state_satisfies_target({"Default Label": "size"}, ms) is False
+
+
+def test_structural_filter_pair_still_rejects_unrelated_residual_filter():
+    ms = _filter_ms(
+        "在 Attribute Code 列用精确值'size'筛选",
+        "Attribute Code 精确筛选已应用",
+    )
+    applied = {"Attribute Code": "size", "Default Label": "shoe"}
+
+    assert filter_state_satisfies_target(applied, ms) is True
+    assert filter_chips_clean(applied, ms) is False
+    assert filter_residual_labels(applied, ms) == ["Default Label"]
 
 
 # ── filter_chips_clean (residual-pollution guard, cf. task 186) ─────────────────

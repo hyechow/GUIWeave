@@ -614,7 +614,10 @@ def test_advance_persists_done_check_on_terminal_completion():
     p.reseed(ms)                                          # single milestone, orchestrator style
     check = _SingleCheckResult(status="done", reason="已进入首页", summary="首页")
     p._last_check = check
-    step = p._advance(ms, Observation(png_bytes=b"x", source="test"), [])
+    obs = Observation(png_bytes=b"x", source="test")
+    decision = p._completion_decision_from_check(ms, obs, [], check)
+    assert decision.action == "complete"
+    step = p._advance(ms, obs, [], decision=decision)
     assert step.goal_completed is True                    # single milestone → terminal step
     assert p._milestone_done_checks[ms.id] is check       # done 判定已留存（验收面板有数据）
 

@@ -11,6 +11,7 @@ from typing import Any, Callable
 from llm.structured import get_llm_token_usage
 
 from gui_agent.core.schemas import ActionDecision, Observation, SupervisorStep, action_label
+from gui_agent.core.run.execution_signals import validate_action_family
 from gui_agent.core.vision.frame_analysis import STABLE_MEAN_THR, frame_changed, frame_diff
 from gui_agent.core.vision.target_verify import verify_target
 from gui_agent.core.vision.visualize import print_decision
@@ -199,6 +200,15 @@ class ActionExecutionState:
             return result
 
         action = action_decision.action
+        family_ok, family_reason = validate_action_family(
+            sv_step.action_family,
+            str(getattr(action, "action_type", "") or ""),
+        )
+        if not family_ok:
+            result.suppressed_reason = family_reason
+            say(f"  [ActionContract] 派发前拒绝：{family_reason}")
+            status(turn_no, "动作类型与 planner 指令不匹配")
+            return result
         authorize = getattr(supervisor, "authorize_action_dispatch", None)
         if callable(authorize):
             allowed, action_key, reason = authorize(

@@ -337,7 +337,7 @@ def test_target_section_acquire_plan_scrolls_to_named_offscreen_section() -> Non
     assert "Content" in plan.instruction
 
 
-def test_target_section_acquire_plan_does_not_scroll_to_expanded_offscreen_section() -> None:
+def test_target_section_acquire_plan_scrolls_to_expanded_offscreen_section() -> None:
     plan = target_section_acquire_plan(
         [{
             "kind": "section_toggle",
@@ -350,7 +350,96 @@ def test_target_section_acquire_plan_does_not_scroll_to_expanded_offscreen_secti
         _description_milestone(),
     )
 
-    assert plan is None
+    assert plan is not None
+    assert plan.direction == "up"
+    assert "Content" in plan.instruction
+
+
+def test_named_section_below_wins_over_visible_same_name_fields() -> None:
+    plan = target_section_acquire_plan(
+        [
+            {
+                "kind": "section_toggle",
+                "label": "Configurations",
+                "value": "true",
+                "in_viewport": False,
+                "viewport_pos": "below",
+                "rect": {"x": 528, "y": 2021},
+            },
+            {
+                "kind": "native_select",
+                "label": "Size",
+                "selected_text": "",
+                "options": ["XS", "XXXL"],
+                "rect": {"x": 356, "y": 834},
+            },
+        ],
+        Milestone(
+            id="m-config",
+            name="在 Configurations 区域生成 green + XXXL 组合并保存",
+            description="在 Configurations 区域生成 green + XXXL 组合并保存",
+            success_condition="Configurations 集合包含 green + XXXL 组合",
+            kind="action",
+        ),
+    )
+
+    assert plan is not None
+    assert plan.direction == "down"
+    assert "Configurations" in plan.instruction
+
+
+def test_policy_named_section_precedes_flat_target_affordance(monkeypatch) -> None:
+    checker_calls: list[int] = []
+
+    def _spy_run_checker(*_args, **_kwargs):
+        checker_calls.append(1)
+        raise _CheckerReached()
+
+    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
+    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+
+    milestone = Milestone(
+        id="m-config",
+        name="在 Configurations 区域生成 green + XXXL 组合并保存",
+        description="在 Configurations 区域生成 green + XXXL 组合并保存",
+        success_condition="Configurations 集合包含 green + XXXL 组合",
+        kind="action",
+    )
+    policy = policy_mod.MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+    obs = Observation(
+        png_bytes=b"\x89PNG\r\n\x1a\n",
+        source="browser",
+        url="http://example.test/admin/catalog/product/edit/id/1492/",
+        form_controls=[
+            {
+                "kind": "section_toggle",
+                "label": "Configurations",
+                "value": "true",
+                "in_viewport": False,
+                "viewport_pos": "below",
+                "rect": {"x": 528, "y": 2021},
+            },
+            {
+                "kind": "native_select",
+                "label": "Color",
+                "selected_text": "",
+                "options": ["Green"],
+                "in_viewport": False,
+                "viewport_pos": "below",
+                "rect": {"x": 356, "y": 1495},
+            },
+        ],
+        dom_state="product-parent-fields",
+    )
+
+    step = policy.step(obs, goal="create variation", history=[])
+
+    assert checker_calls == []
+    assert step.should_act is True
+    assert step.direction == "down"
+    assert step.instruction and "Configurations" in step.instruction
+    assert "Color" not in step.instruction
 
 
 def test_policy_section_acquire_gate_bypasses_checker_for_named_section(monkeypatch) -> None:

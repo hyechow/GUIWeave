@@ -107,7 +107,10 @@ def control_presence_text(observation: Any) -> str:
     """The page's actual control inventory (DOM form_controls + grid facts) — the direct
     observation the Feasibility Guard judges against. Empty/visual-only platforms yield a clear sentinel."""
     parts = [
-        format_form_controls_text(getattr(observation, "form_controls", None)),
+        format_form_controls_text(
+            getattr(observation, "form_controls", None),
+            getattr(observation, "form_controls_meta", None),
+        ),
         _ui_facts_text(getattr(observation, "ui_facts", None)),
     ]
     body = "\n\n".join(p for p in parts if p)
