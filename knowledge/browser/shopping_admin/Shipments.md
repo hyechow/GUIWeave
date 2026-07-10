@@ -4,21 +4,29 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
-selector_when: 当需要查看已准备发货的发票记录、创建订单发货或管理部分及完整订单发货时查阅本节
-when: 当需要查看已准备发货的发票记录、创建订单发货或管理部分及完整订单发货时查阅本节
+selector_when: 当需要创建订单发货、添加 USPS/UPS/FedEx/DHL tracking number/物流追踪号，或管理 Shipment 时查阅本节
+when: 当需要创建订单发货、添加 USPS/UPS/FedEx/DHL tracking number/物流追踪号，或管理 Shipment 时查阅本节
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Shipments
 
 The _Shipments_ grid lists the shipment record of all invoices that have been prepared for shipping. A shipment record can be generated when an order is invoiced or later.
 
 Adobe Commerce and Magento Open Source support partial and complete order shipment, with additional options available from Inventory Management and third-party extensions.
+
+A tracking number belongs to a **Shipment** resource, not to an order comment. Adding text under
+Notes for this Order does not create shipment tracking. If the order can create a shipment, the
+order detail's **Ship** capability opens the New Shipment resource; once a shipment already exists,
+its tracking is edited from **Sales > Shipments**. Carrier values use the full select labels shown
+by the form, such as `United States Postal Service`, `United Parcel Service`, and
+`Federal Express`.
 
 ## Column descriptions
 

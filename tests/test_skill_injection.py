@@ -1,8 +1,4 @@
-"""_skill.md is a hand-maintained, `_`-prefixed knowledge sibling holding reusable
-multi-step orchestrations. Like _deploy.md it must be folded into the always-on
-Supervisor navigation context (so the decomposer follows a registered skill), and like
-every `_`-prefixed file it must NOT leak into the retrievable per-section bodies.
-"""
+"""Optional `_skill.md` orchestration overlays never participate in the default baseline."""
 
 from __future__ import annotations
 
@@ -34,19 +30,28 @@ def _make_app(tmp_path, *, with_skill: bool, with_update: bool = False, with_che
     return app_dir
 
 
-def test_skill_md_folded_into_navigation(tmp_path, monkeypatch):
+def test_skill_md_folded_into_navigation_when_explicitly_enabled(tmp_path, monkeypatch):
     _make_app(tmp_path, with_skill=True)
     monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
-    k = app_summary.auto_discover_knowledge("在 testapp 做联调实验", "browser")
+    k = app_summary.auto_discover_knowledge(
+        "在 testapp 做联调实验",
+        "browser",
+        include_skills=True,
+    )
     assert k is not None
     assert "联调实验" in k.navigation  # skill folded into the always-on nav context
     assert "左侧菜单" in k.navigation  # nav structure still present alongside it
+    assert k.summary()["profile"] == "with-skills"
 
 
-def test_skill_md_not_loaded_as_retrievable_section(tmp_path, monkeypatch):
+def test_enabled_skill_md_not_loaded_as_retrievable_section(tmp_path, monkeypatch):
     _make_app(tmp_path, with_skill=True)
     monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
-    k = app_summary.auto_discover_knowledge("在 testapp 做联调实验", "browser")
+    k = app_summary.auto_discover_knowledge(
+        "在 testapp 做联调实验",
+        "browser",
+        include_skills=True,
+    )
     assert k is not None
     # `_`-prefixed files are excluded from per-section bodies; only real pages remain
     assert "_skill" not in k.sections
@@ -70,6 +75,49 @@ def test_navigation_unaffected_when_no_skill(tmp_path, monkeypatch):
     assert k is not None
     assert "联调实验" not in k.navigation
     assert "左侧菜单" in k.navigation
+
+
+def test_skill_md_excluded_by_default_for_functional_cold_start(tmp_path, monkeypatch):
+    _make_app(tmp_path, with_skill=True)
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+
+    k = app_summary.auto_discover_knowledge("在 testapp 做联调实验", "browser")
+
+    assert k is not None
+    assert "联调实验" not in k.navigation
+    assert "左侧菜单" in k.navigation
+    assert "_skill" not in k.overlays
+    assert k.summary()["profile"] == "functional-only"
+
+
+def test_decompose_context_selects_only_goal_matched_functional_sections(tmp_path, monkeypatch):
+    app_dir = _make_app(tmp_path, with_skill=True)
+    (app_dir / "客户电话.md").write_text(
+        "---\nscope:\n  - decompose\nselector_when: 按客户 phone/电话号码查找时\n---\n"
+        "电话使用本地号段检索",
+        encoding="utf-8",
+    )
+    (app_dir / "订单发货.md").write_text(
+        "---\nscope:\n  - decompose\nselector_when: 创建 shipment/发货时\n---\n"
+        "发货功能说明",
+        encoding="utf-8",
+    )
+    (app_dir / "仅执行期.md").write_text(
+        "---\nscope:\n  - planner\nselector_when: 按客户 phone/电话号码查找时\n---\n"
+        "不应进入初始编排",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_summary, "KNOWLEDGE_DIR", tmp_path)
+
+    k = app_summary.auto_discover_knowledge("在 testapp 按电话号码查客户", "browser")
+
+    assert k is not None
+    assert k.decompose_sections("按电话号码查客户") == ["客户电话"]
+    context = k.decompose_context("按电话号码查客户")
+    assert "电话使用本地号段检索" in context
+    assert "发货功能说明" not in context
+    assert "不应进入初始编排" not in context
+    assert "联调实验" not in context
 
 
 # ── _check.md（Checker 专用动态验收知识：静态 prompt 留通用原则,app 显示形态按 app 注入）──

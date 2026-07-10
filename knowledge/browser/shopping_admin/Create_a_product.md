@@ -4,15 +4,16 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
-selector_when: 当需要选择产品类型或了解简单、复杂、可配置、分组、虚拟、捆绑、可下载及礼品卡等术语时查阅本节
-when: 当需要选择产品类型或了解简单、复杂、可配置、分组、虚拟、捆绑、可下载及礼品卡等术语时查阅本节
+selector_when: 当需要创建产品、给 Configurable Product 添加 size/color/XXXL/XXS 变体组合，或理解产品类型时查阅本节
+when: 当需要创建产品、给 Configurable Product 添加 size/color/XXXL/XXS 变体组合，或理解产品类型时查阅本节
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Create a product
 
@@ -55,6 +56,19 @@ The most frequently used product settings and attributes are displayed at the to
 |Gift options|Used to enable or disable a gift message option during checkout at the product level.|
 |Product In Shared Catalogs |  (Available with Adobe Commerce B2B only) Enables the ability to maintain shared catalogs with custom pricing for different companies.|
 |Downloadable Information|Used to define the parameters for product download.|
+
+## Configurable product variation dependencies
+
+The **Configurations** collection belongs to the configurable parent product. Each generated
+color/size combination is a variation represented by a separate simple product.
+Product-name search can return both the parent and its simple variations, so use the product Type
+to select the unique **Configurable Product** owner before editing Configurations.
+
+Configuration values come from the globally defined product attribute options. If a requested
+Size or Color value does not exist yet, create and save that option under **Stores > Attributes >
+Product** before generating the combination in the parent product. Saving an attribute option and
+saving the parent product's Configurations collection are two independent persistent changes; the
+attribute option must be durable before Configurations can consume it.
 
 ## Advanced pricing and inventory
 

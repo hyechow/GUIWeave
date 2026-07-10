@@ -4,15 +4,16 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
-selector_when: 在 Products 页面或 Admin 中需要创建、编辑产品，管理多站点产品选择，配置产品网格显示限制及分页排序过滤时查阅
-when: 在 Products 页面或 Admin 中需要创建、编辑产品，管理多站点产品选择，配置产品网格显示限制及分页排序过滤时查阅
+selector_when: 在 Products 页面需要按 Name/Quantity/Color/Material/Size 查找产品、区分 Configurable 父商品与 Simple 变体、创建或编辑产品时查阅
+when: 在 Products 页面需要按 Name/Quantity/Color/Material/Size 查找产品、区分 Configurable 父商品与 Simple 变体、创建或编辑产品时查阅
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Products list
 
@@ -21,6 +22,17 @@ All products in the catalog are accessible from the _Products_ page in the Admin
 The _Products_ list includes all products in the catalog, indicates the websites where they are available, and if they are currently enabled for sale. In Adobe Commerce B2B installations with shared catalogs enabled, the grid includes a column that indicates which products have alternate discount pricing in a shared catalog.
 
 You can browse through the list page by page, or search for specific products. Use the standard controls to sort and filter the list, and apply actions to selected products.
+
+The list can contain both a **Configurable Product** parent and its **Simple Product** variations.
+Mutations must use the Type column to select the record that owns the requested capability:
+Configurations and aggregate product state belong to the configurable parent; a variation's Price,
+Quantity, Size, and Color belong to the simple child. Each row's Action/Edit link is its stable
+detail entry.
+
+The Columns control can expose **Color**, but this grid does not expose Material or Size as optional
+columns in this environment. Material/Size requests that are absent from the grid require the
+relevant product detail; an empty child Material can require resolving the configurable parent by
+base SKU and Type.
 
 ## Limit product display
 

@@ -335,7 +335,7 @@ def main() -> int:
                         # decompose finalizes gates centrally (passes.finalize_gates); no caller wrap.
                         program = decompose(
                             intent,
-                            knowledge=knowledge.navigation if knowledge else "",
+                            knowledge=knowledge.decompose_context(intent) if knowledge else "",
                             file_section=file_section,
                             current_url="",
                             current_title="",
@@ -360,7 +360,7 @@ def main() -> int:
                                          _site=cur_site, _png=initial_png, _res=resolution):
                             _cur_png = getattr(observation, "png_bytes", None) or _png
                             return redecompose(
-                                _goal, knowledge=_know.navigation if _know else "", file_section=_file,
+                                _goal, knowledge=_know.decompose_context(_goal) if _know else "", file_section=_file,
                                 current_url="", current_title="", current_site=_site,
                                 table_summaries=None, png_bytes=_cur_png,
                                 prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,

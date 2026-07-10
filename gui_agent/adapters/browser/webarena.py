@@ -925,6 +925,11 @@ def main() -> int:
     parser.add_argument("--no-orchestrator-preflight", action="store_true", help="do not stop after deterministic router/decompose preflight failures")
     parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
     parser.add_argument(
+        "--include-skills",
+        action="store_true",
+        help="explicitly include optional _skill.md orchestration hints; default: functional docs only",
+    )
+    parser.add_argument(
         "--eval-compat",
         action="store_true",
         help=(
@@ -1026,7 +1031,11 @@ def main() -> int:
         knowledge = None
         knowledge_summary: Optional[dict] = None  # persisted to context.json so the report renders it
         for site in (task.get("sites") or []):
-            knowledge = load_knowledge_for_app(site, "browser")
+            knowledge = load_knowledge_for_app(
+                site,
+                "browser",
+                include_skills=args.include_skills,
+            )
             if knowledge and knowledge.navigation and hasattr(supervisor, "set_app_knowledge"):
                 supervisor.set_app_knowledge(
                     knowledge.navigation,
@@ -1038,7 +1047,14 @@ def main() -> int:
                 knowledge_summary = knowledge.summary()
                 print(f"[webarena] knowledge: bound site={site} "
                       f"(nav={knowledge_summary['nav_chars']} chars, "
-                      f"sections={knowledge_summary['section_count']})")
+                      f"sections={knowledge_summary['section_count']}, "
+                      f"profile={knowledge_summary['profile']})")
+                selected = knowledge.decompose_sections(intent)
+                knowledge_summary["decompose_sections"] = selected
+                print(
+                    "[webarena] knowledge: decompose sections="
+                    f"{selected or ['<app-overview-only>']}"
+                )
                 break
         else:
             if task.get("sites"):
@@ -1146,7 +1162,7 @@ def main() -> int:
                         try:
                             program = decompose(
                                 intent,
-                                knowledge=knowledge.navigation if knowledge else "",
+                                knowledge=knowledge.decompose_context(intent) if knowledge else "",
                                 file_section=file_section,
                                 current_url=cur_url,
                                 current_title=cur_title,
@@ -1292,7 +1308,7 @@ def main() -> int:
                                 if _cur_tables is None:
                                     _cur_tables = _tables
                                 return redecompose(
-                                    _goal, knowledge=_know.navigation if _know else "", file_section=_file,
+                                    _goal, knowledge=_know.decompose_context(_goal) if _know else "", file_section=_file,
                                     current_url=_cur_url2, current_title=_cur_title2, current_site=_site,
                                     table_summaries=_cur_tables, png_bytes=_cur_png,
                                     prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
@@ -1308,7 +1324,7 @@ def main() -> int:
                             # silently no-opped (778 live 114429: rows=[], "body_goal 无法分解", then
                             # flowed to finish and synthesized SUCCESS with zero saves).
                             def _subdecompose(sub_goal: str, _know=knowledge, _site=cur_site):
-                                return decompose(sub_goal, knowledge=_know.navigation if _know else "",
+                                return decompose(sub_goal, knowledge=_know.decompose_context(sub_goal) if _know else "",
                                                  current_site=_site,
                                                  prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
 

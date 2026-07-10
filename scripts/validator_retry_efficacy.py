@@ -102,7 +102,7 @@ def _decompose_with_trace(case: dict) -> CaseTrace:
         decompose(
             case["goal"],
             png_bytes=png_bytes,
-            knowledge=k.navigation if k else "",
+            knowledge=k.decompose_context(case["goal"]) if k else "",
             current_url=case.get("current_url", ""),
             current_title=case.get("current_title", ""),
             current_site=case.get("current_site")

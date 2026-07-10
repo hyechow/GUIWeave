@@ -4,19 +4,26 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
-selector_when: 在 Admin 中查看 Customers grid、管理 customer accounts 或更新 customer information 时
-when: 在 Admin 中查看 Customers grid、管理 customer accounts 或更新 customer information 时
+selector_when: 在 Admin 中按 customer phone/电话号码、姓名或邮箱查找 Customers grid，或管理 customer accounts 时
+when: 在 Admin 中按 customer phone/电话号码、姓名或邮箱查找 Customers grid，或管理 customer accounts 时
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Customers list
 
 In the Admin, the Customers grid lists all customers who have registered for an account with your store or were added by the administrator. Use the standard grid controls to filter the list and adjust the column layout. To learn more, see Manage customer accounts.
+
+Phone values are displayed in formatted form, for example `(555) 229-3326`. The top **Search by
+keyword** capability performs literal substring matching across customer data. A differently
+punctuated input such as `555-229-3326` is not a contiguous substring of that stored display value;
+the local seven-digit segment `229-3326` is. The Phone column filter is an exact field filter and is
+not a normalization service for alternate punctuation.
 
 ## Update customer information
 

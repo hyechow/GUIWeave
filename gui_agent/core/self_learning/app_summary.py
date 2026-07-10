@@ -5,10 +5,9 @@ platform with per-page recon today):
 - _app.md: Navigation structure for Supervisor (task decomposition)
 - _elements.md: UI element details for Planner (instruction generation)
 
-Hand-maintained `_`-prefixed siblings (not generated here, survive re-ingest, folded into the
-always-on Supervisor context): _deploy.md (environment/access facts), _update.md (current-version
-updates over the older distilled base — trusted over conflicting sections), and _skill.md
-(reusable multi-step orchestrations the decomposer follows when the goal matches a skill).
+Hand-maintained `_`-prefixed siblings survive re-ingest. `_deploy.md` and `_update.md` are folded
+into the always-on Supervisor context. `_skill.md` is an optional orchestration accelerator and is
+loaded only when a caller explicitly opts in; correctness must come from functional knowledge.
 
 Usage:
     uv run python -m gui_agent.core.self_learning.app_summary 微信
@@ -52,14 +51,46 @@ class AppKnowledge:
     check: str = ""  # _check.md content → Checker-only observable completion rules
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)  # channel/stem -> frontmatter
     # Hand-maintained overlay channels actually present this run → {"_check"|"_deploy"|"_skill"|
-    # "_update": char_count}. _deploy/_update/_skill are folded into `navigation`; tracked here
+    # "_update": char_count}. _deploy/_update are always-on; _skill is explicit opt-in. Tracked here
     # purely so the report can show each channel's loaded state. Absent file → key absent.
     overlays: dict[str, int] = field(default_factory=dict)
+
+    def decompose_sections(self, goal: str) -> list[str]:
+        """Pick functional sections relevant to initial Program decomposition.
+
+        Only sections explicitly scoped to ``decompose`` participate. This keeps page-level HOW
+        out of the initial Program while making resource ownership, field semantics, and stable
+        capability constraints available before execution.
+        """
+        from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
+
+        eligible: dict[str, str] = {}
+        for stem, text in self.sections.items():
+            meta, _ = _split_knowledge_frontmatter(text)
+            scope = meta.get("scope") or []
+            if isinstance(scope, str):
+                scope = [scope]
+            if "decompose" in {str(item).strip() for item in scope}:
+                eligible[stem] = text
+        if not eligible:
+            return []
+        return ProgressiveKnowledge(eligible).match_signals([goal])
+
+    def decompose_context(self, goal: str) -> str:
+        """Application overview plus a small goal-matched functional knowledge slice."""
+        from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
+
+        stems = self.decompose_sections(goal)
+        if not stems:
+            return self.navigation
+        selected = ProgressiveKnowledge({stem: self.sections[stem] for stem in stems}).bodies(stems)
+        return f"{self.navigation}\n\n{selected}" if selected else self.navigation
 
     def summary(self) -> dict[str, object]:
         """Compact, log-friendly description of what got injected (→ context.json knowledge)."""
         return {
             "app_name": self.app_name,
+            "profile": "with-skills" if "_skill" in self.overlays else "functional-only",
             "nav_chars": len(self.navigation),
             "elements_chars": len(self.elements),
             "check_chars": len(self.check),
@@ -334,7 +365,7 @@ def _read_dir_aliases(d: Path) -> list[str]:
     return []
 
 
-def load_app_dir(d: Path) -> AppKnowledge | None:
+def load_app_dir(d: Path, *, include_skills: bool = False) -> AppKnowledge | None:
     """Load an app's knowledge (nav + overlays + sections) from its dir, or None if no _app.md.
 
     Shared by goal-substring discovery (``auto_discover_knowledge``) and exact-name binding
@@ -366,10 +397,10 @@ def load_app_dir(d: Path) -> AppKnowledge | None:
                 overlays.append(text)
     if overlays:
         nav = "\n\n".join(overlays + [nav])
-    # Reusable multi-step orchestrations (skills): appended after the nav so the decomposer sees
-    # both the layout and the workflows. Hand-maintained, _-prefixed (not a retrievable section).
+    # Optional reusable orchestrations. They are deliberately excluded by default so a cold-start
+    # app with functional documentation remains the correctness baseline.
     skill_path = d / "_skill.md"
-    if skill_path.exists():
+    if include_skills and skill_path.exists():
         meta, skill = _read_knowledge_markdown(skill_path)
         if meta:
             metadata["_skill"] = meta
@@ -402,17 +433,27 @@ def load_app_dir(d: Path) -> AppKnowledge | None:
                         sections=sections, check=check, overlays=channels, metadata=metadata)
 
 
-def load_knowledge_for_app(app: str, platform: str = "browser") -> AppKnowledge | None:
+def load_knowledge_for_app(
+    app: str,
+    platform: str = "browser",
+    *,
+    include_skills: bool = False,
+) -> AppKnowledge | None:
     """Load knowledge by EXACT app/dir name (no goal-substring match).
 
     Some benchmark/task-file entries bind knowledge by metadata such as a ``sites`` tag while the
     intent never names the site, so they need a direct loader keyed on ``knowledge/<platform>/<app>/`` rather than
     ``auto_discover_knowledge``'s substring match against the goal text."""
     d = KNOWLEDGE_DIR / platform / app
-    return load_app_dir(d) if d.is_dir() else None
+    return load_app_dir(d, include_skills=include_skills) if d.is_dir() else None
 
 
-def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge | None:
+def auto_discover_knowledge(
+    goal: str,
+    platform: str = "iphone",
+    *,
+    include_skills: bool = False,
+) -> AppKnowledge | None:
     """Match goal against knowledge/<platform>/<app>/ dir names and load both layers.
 
     Knowledge is **platform-scoped**: a manual / recon captures ONE platform's UI &
@@ -459,7 +500,7 @@ def auto_discover_knowledge(goal: str, platform: str = "iphone") -> AppKnowledge
             canonical = _APP_ALIASES.get(name, name)
             print(f"  [Knowledge] 识别到应用「{canonical}」，但暂无知识库")
             return AppKnowledge(navigation="", elements="", app_name=canonical)
-        knowledge = load_app_dir(d)
+        knowledge = load_app_dir(d, include_skills=include_skills)
         if knowledge is not None:
             return knowledge
         # Directory exists but no knowledge file yet

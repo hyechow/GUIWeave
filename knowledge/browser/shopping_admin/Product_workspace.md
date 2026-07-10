@@ -4,15 +4,16 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
-selector_when: 当需要管理Product workspace中的产品状态、属性集、字段展开折叠或保存选项时查阅本节
-when: 当需要管理Product workspace中的产品状态、属性集、字段展开折叠或保存选项时查阅本节
+selector_when: 当需要管理 Product workspace 的 Configurations/变体、Price、Quantity、Stock Status、Material、Short Description/Description 或保存产品状态时查阅本节
+when: 当需要管理 Product workspace 的 Configurations/变体、Price、Quantity、Stock Status、Material、Short Description/Description 或保存产品状态时查阅本节
 source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Product workspace
 
@@ -45,6 +46,40 @@ The _Save_ menu includes several options that let you save and continue, save an
 |Save & New|Save and close the current product, and begin a new product based on the same product type and template.|
 |Save & Duplicate|Save and close the current product, and open a new duplicate copy.|
 |Save & Close|Save the current product and return to the _Products_ workspace.|
+
+## Content, variants, and inventory ownership
+
+The expandable **Content** section contains two different text resources: **Short Description**
+and the main **Description**. They are not aliases. Product-summary tasks that target the short
+catalog description must write Short Description; changing the main Description does not update it.
+In this admin's product data contract, an unqualified request to update the catalog-facing
+"product description" refers to **Short Description**. The main **Description** is the long-form
+content resource and should only be selected when the request explicitly asks for the main, full,
+or long description.
+When a product-name lookup returns a configurable family, the catalog-facing Short Description is
+owned by its **Configurable Product** parent rather than by an arbitrary Simple variation. Candidate
+rows therefore need the Type discriminator, and selecting the write target must actually constrain
+that discriminator instead of taking an unspecified first match.
+
+A configurable parent owns the **Configurations** collection, while every generated color/size
+combination is a separate **Simple Product** with its own SKU and Price. Changing the price of a
+specific color/size combination therefore changes that Simple Product's current Price, not the
+parent's Price and not an attribute selector on another variation. Percentage changes are derived
+from the variation's live current Price.
+
+Size and Color belong to the variation. Material can be inherited/owned by the configurable parent
+and may be empty on a Simple child. Variation SKUs commonly append size and color segments to the
+parent SKU; the parent record is identified by the base SKU together with
+`Type=Configurable Product`.
+
+**Stock Status** (`In Stock` / `Out of Stock`) and **Quantity** are distinct resources. Marking a
+product out of stock changes Stock Status; setting Quantity to zero is not equivalent. For a
+configurable product, the parent workspace owns the aggregate Stock Status for the product, while
+individual Simple products own their quantities and variation prices.
+Consequently, a request to mark all of one configurable product out of stock targets that single
+parent-owned aggregate state. It does not mean applying the same mutation independently to every
+Simple variation. Per-variation iteration is appropriate for fields owned by variations, such as
+their Price or Quantity, not for this parent aggregate Stock Status.
 
 ## Default field values
 

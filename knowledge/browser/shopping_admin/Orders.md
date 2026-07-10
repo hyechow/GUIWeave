@@ -4,6 +4,7 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
 selector_when: 当需要查看、创建或编辑订单，管理 Orders 网格布局和视图，或按订单历史统计 customer email(s)、completed/any-state orders、most/second/fifth number of orders、have N orders 等订单数聚合任务时查阅本节
@@ -12,7 +13,7 @@ source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # Orders
 
@@ -73,6 +74,24 @@ aggregate the complete raw rows by `Customer Email`, counting one per order. Two
 business semantics: for most / second / fifth, tied emails share a rank — return
 **all** emails tied at the requested rank; "have N orders" means a count of
 **exactly N**, not N-or-more.
+
+The `Status` filter accepts one positive status at a time. A request for
+**non-cancelled** orders therefore cannot be represented by selecting another positive status:
+clear the Status filter, collect rows with `Status`, `Purchase Date`, and `Grand Total
+(Purchased)`, and exclude `Canceled` during structured analysis. For recent/oldest payment
+questions, `Purchase Date` is the ordering field and `Grand Total (Purchased)` is the payment
+measure; the grid's current/default row order is not a recency guarantee.
+
+Order-number lookup and keyword lookup are different capabilities. The order number shown as
+`#304` is stored as a zero-padded increment ID such as `000000304`; use the Filters panel's **ID**
+field with the numeric value `304`. The top **Search by keyword** box is intended for text lookup
+and does not reliably match either `#304` or `304`. Customer lookup may use the top keyword box or
+the explicit `Bill-to Name`, `Ship-to Name`, or `Customer Email` filters.
+
+Each order row provides its `Purchase Date` and a detail entry. The detail page's **Items Ordered**
+table is the source for line-level Product and Price values. Product cells can include a `SKU:`
+suffix, and subtotal/summary rows can have no Price; consumers of this table should treat only rows
+with a line-item Price as products and remove the SKU suffix when a plain product name is requested.
 
 If downloads/exports are not allowed, collect the raw rows by combining grid
 pagination with within-page vertical scrolling. This is not infinite-scroll

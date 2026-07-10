@@ -4,10 +4,11 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
-selector_when: 当需要查看 Admin dashboard 实时销售数据、配置图表显示或更改 Admin 启动页面时查阅本节
-when: 当需要查看 Admin dashboard 实时销售数据、配置图表显示或更改 Admin 启动页面时查阅本节
+selector_when: 当需要查看 Admin dashboard 的 top/most-used/recent search terms、实时销售数据、图表或启动页面时查阅本节
+when: 当需要查看 Admin dashboard 的 top/most-used/recent search terms、实时销售数据、图表或启动页面时查阅本节
 source: manual_distilled
 confidence: medium
 sensitivity: internal

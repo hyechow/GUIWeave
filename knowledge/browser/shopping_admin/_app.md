@@ -11,7 +11,7 @@ source: manual_distilled
 confidence: medium
 sensitivity: internal
 ttl: session
-version: 1
+version: 2
 ---
 # 应用级导航概览：shopping_admin
 
@@ -25,8 +25,8 @@ version: 1
 *   **Admin Sidebar (navigation hub)**: 左侧主菜单，作为所有功能模块的导航枢纽。
 
 ### 商品与目录管理 (Catalog)
-*   **Products List (list)**: 展示所有产品列表，支持搜索、筛选、批量操作及创建新产品。
-*   **Product Workspace (form/detail)**: 单个产品的编辑详情页，包含属性集、价格、库存、SEO 等配置。
+*   **Products List (list)**: 展示配置型父商品与 Simple 变体，支持搜索、筛选、列选择、批量操作及创建产品。Color 可作为可选列启用；Material/Size 不属于本环境的网格可选列。行内 Action/Edit 是该记录的详情入口。
+*   **Product Workspace (form/detail)**: 单个产品的编辑详情页，包含 Content、价格、库存、属性集及 SEO。配置型父商品拥有 Configurations、聚合 Stock Status 和目录侧 Short Description；Simple 变体拥有自己的 Price、Quantity、Size、Color。未限定长/主描述的商品 description 请求对应 Short Description，主 Description 是独立的长内容字段。Products 按名称检索可能同时出现父子记录；必须用 Type 选择实际能力所有者。逻辑范围包含整组变体时，执行次数仍由目标字段的所有权决定：父级聚合字段只改父级一次，成员字段才逐变体处理。
 *   **Create a Product (form)**: 专门用于初始化新产品的向导式表单页面。
 *   **Categories List (list)**: 以树状结构展示分类层级，支持拖拽排序和子分类创建。
 *   **Category Workspace (form/detail)**: 单个分类的编辑页，包含内容、显示设置、SEO 及权限配置。
@@ -34,12 +34,12 @@ version: 1
 *   **Product Reviews (list)**: 查看所有已发布或历史的产品评论记录。
 
 ### 销售与订单处理 (Sales)
-*   **Orders List (list)**: 所有销售订单的主列表，按状态（Pending / Processing / Complete / Canceled 等）追踪订单进度。按订单历史统计 customer email(s) 的聚合任务（most/second/fifth number of orders、have N orders、completed orders、按月统计等）以此为权威 UI 数据源：进入 **Sales > Orders**（不要走 Customer Reports 或 Customers grid 的 `Total Orders` 列）。业务口径：intent 含 "completed" → 按 `Status = Complete` 计数；字面 "any state" / 只说 "have N orders" → 不筛状态（口径判别与计数证据要求见编排技能、验收规则见 `_check.md`）。Magento 跨会话保留上次筛选，先 `Clear all` 清残留再设本任务约束。Purchase Date 等日期范围筛选按 **MM/DD/YYYY** 输入（`2023-01-01` 写成 `01/01/2023`），不用 ISO 格式。
-*   **Order Detail (detail/form)**: 单个订单的详情页，包含信息、发票、退款、发货及评论历史标签页。
+*   **Orders List (list)**: 所有销售订单的主列表，也是订单历史聚合的权威原始行源，含 ID、Customer Email、Status、Purchase Date、Grand Total 与详情入口。completed 口径使用 Status=Complete；any-state 不保留 Status；non-cancelled 需要采集 Status 后排除 Canceled，不能用另一个正状态近似。订单号 `#N` 用 Filters 的 ID 字段填数字 N，顶部 keyword 不可靠。Magento 跨会话保留筛选，先清除无关条件；日期筛选使用 **MM/DD/YYYY**。
+*   **Order Detail (detail/form)**: 单个订单的详情页，包含 Items Ordered、发票、退款、发货及 Comments History / Notes。客户通知属于 Notes 表单；物流追踪属于 Shipment，不能用订单 Comment 代替。
 *   **Invoices List (list)**: 所有已生成的发票列表。
 *   **Invoice Detail (detail/form)**: 单个发票的编辑与打印详情页。
-*   **Shipments List (list)**: 所有发货记录列表。
-*   **Shipment Detail (detail/form)**: 单个发货单的编辑页，支持添加物流单号。
+*   **Shipments List (list)**: 所有发货记录列表；订单已有 Shipment 时从这里进入其追踪信息。
+*   **Shipment Detail (detail/form)**: 单个发货单的编辑页，拥有 Carrier 与 Tracking Number。订单尚无 Shipment 时由订单详情的 Ship 能力先创建发货单。
 *   **Credit Memos List (list)**: 所有贷项通知单（退款）列表。
 *   **Credit Memo Detail (detail/form)**: 单个退款单的生成与编辑页。
 *   **Quotes List (list)**: B2B 报价请求列表（如适用）。
@@ -49,7 +49,7 @@ version: 1
 *   **Archive (list)**: 归档的历史订单与文档列表。
 
 ### 客户管理 (Customers)
-*   **All Customers List (list)**: 注册客户及管理员添加客户的完整列表。
+*   **All Customers List (list)**: 注册客户及管理员添加客户的完整列表。Phone 以带括号/空格的格式显示；顶部 keyword 是字面子串检索，格式不同的整串号码可能不匹配，而连续的本地号段可以匹配。
 *   **Customer Group List (list)**: 客户分组列表（如普通、批发商）。
 *   **Customer Group Workspace (form)**: 新建或编辑客户分组的表单页。
 *   **Now Online (list)**: 当前在线的客户和访客列表。
@@ -57,9 +57,10 @@ version: 1
 *   **Companies (list/form)**: B2B 公司账户管理列表及详情。
 
 ### 营销与用户内容 (Marketing)
-*   **Cart Price Rules (list/form)**: 购物车价格规则列表及配置页。
+*   **Cart Price Rules (list/form)**: 作用于购物车、结账或整单购买的折扣规则；有 Coupon 字段。
+*   **Catalog Price Rules (list/form)**: 作用于目录商品的折扣规则；无 Coupon，Conditions 为空表示全部商品。
 *   **Pending Reviews (list)**: 待审核的用户评论列表。
-*   **All Reviews (list)**: 所有用户评论的管理列表。
+*   **All Reviews (list)**: 所有用户评论的权威记录源，网格含 Product、Title、Review 和详情入口；Detailed Rating、Nickname、Summary of Review 属于单条评论详情，不能把 Rating 声明成网格行字段，按评分分析前必须从各评论详情补齐。
 *   **Ratings (list/form)**: 自定义评分标准（如质量、价格）的配置页。
 
 ### 报表与分析 (Reports)
@@ -79,6 +80,7 @@ version: 1
 ### 系统配置 (Stores & System)
 *   **Configuration (form)**: 全局系统配置中心，包含商店设置、税务、货币、属性集等。
 *   **Attribute Sets (list/form)**: 产品属性集的定义与管理。
+*   **Product Attributes (list/form)**: 全局产品属性及其可选值的管理入口。Configurations 生成组合时只能消费此前已经保存的属性选项；引入新的 Size/Color 值时，Product Attributes 的选项保存是前置资源阶段，完成后才能进入配置型父商品并保存其 Configurations 集合。两者是独立的持久化边界。
 *   **Extensions Marketplace (external link)**: 合作伙伴与扩展程序市场入口。
 
 ### 内容与设计 (Content)
@@ -102,6 +104,7 @@ version: 1
     *   `Product Workspace` -> `Product Reviews` 区域: 进入 **Moderate Product Reviews** 或 **Product Reviews**。
     *   `Sidebar` -> `Catalog` -> `Categories`: 进入 **Categories List**。
     *   `Categories List` -> `Add Subcategory` / `Edit`: 进入 **Category Workspace**。
+    *   `Sidebar` -> `Stores` -> `Attributes` -> `Product`: 进入 **Product Attributes**；选择属性后管理其全局选项。
 *   **Sales 模块**:
     *   `Sidebar` -> `Sales` -> `Orders`: 进入 **Orders List**。
     *   `Orders List` -> `View` / `Action`: 进入 **Order Detail**。
@@ -126,20 +129,3 @@ version: 1
 *   **Order Detail** -> **Product Details**: 点击订单中的产品名称跳转至 **Product Workspace**。
 *   **Product Workspace** -> **Reviews**: 滚动至底部进入评论管理区域。
 *   **Configuration** -> **Cache Management**: 保存配置后提示刷新缓存（系统级操作）。
-
-## 4. 关键操作路径
-
-1.  **创建并上架新产品**:
-    `Admin Dashboard` -> `Sidebar (Catalog)` -> `Products List` -> `Add Product` -> `Product Workspace` (填写属性/价格) -> `Save` -> `Enable Product` -> 返回 `Products List`。
-
-2.  **处理新订单流程**:
-    `Sidebar (Sales)` -> `Orders List` -> `View` (选中 Pending 订单) -> `Order Detail` -> `Invoice` (生成发票) -> `Ship` (生成发货单) -> `Submit Shipment` -> 更新状态为 Complete。
-
-3.  **管理客户分组与权限**:
-    `Sidebar (Customers)` -> `Customer Groups` -> `Add New Customer Group` -> `Customer Group Workspace` (设置税类和网站排除) -> `Save` -> `All Customers List` -> 选中客户 -> `Actions` -> `Assign a Customer Group`。
-
-4.  **查看销售绩效与报表**:
-    `Admin Dashboard` -> `Sidebar (Reports)` -> `Reports Menu` -> `Sales` -> `Orders Report`(tax report 则选 `Tax`,见「报表子类型 → URL 映射」)-> (在 From/To 选日期范围,相对日期按「相对日期换算」)-> `Show Report`,进入 `…/reports/report_sales/<subtype>/filter/…` 渲染页即到达。报表区可能为空(正常结果)。不要用 `Export`/下载 CSV——下载的文件读不回来。
-
-5.  **审核用户评论**:
-    `Sidebar (Marketing)` -> `User Content` -> `Pending Reviews` -> `List` -> `Click Review` -> `Moderate Product Reviews` (Status: Approved/Not Approved) -> `Save Review`。

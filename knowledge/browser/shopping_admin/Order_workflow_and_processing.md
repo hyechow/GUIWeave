@@ -4,10 +4,11 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
-selector_when: 当需要查看订单工作流、处理销售订单状态或管理待处理订单时查阅本节
-when: 当需要查看订单工作流、处理销售订单状态或管理待处理订单时查阅本节
+selector_when: 当需要查看订单 Items Ordered 商品/价格、给客户发送 Comment/Notify Customer 消息、处理订单状态或待处理订单时查阅本节
+when: 当需要查看订单 Items Ordered 商品/价格、给客户发送 Comment/Notify Customer 消息、处理订单状态或待处理订单时查阅本节
 source: manual_distilled
 confidence: medium
 sensitivity: internal

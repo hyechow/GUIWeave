@@ -4,6 +4,7 @@ source_type: knowledge_section
 platform: browser
 app: shopping_admin
 scope:
+  - decompose
   - planner
   - replanner
 selector_when: 在 Admin pages 中需要排序、分页、过滤、导出 CSV 或 XML 数据，以及调整 grid 列布局或保存 view 时

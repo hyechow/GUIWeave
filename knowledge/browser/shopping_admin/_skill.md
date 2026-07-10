@@ -7,6 +7,7 @@ scope:
   - decompose
   - planner
   - replanner
+activation: explicit
 source: manual_curated
 confidence: medium
 sensitivity: internal
