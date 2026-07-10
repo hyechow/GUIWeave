@@ -671,6 +671,7 @@ def run_agent_loop(
                     notes=context.content_notes[_notes_mark:],
                     reads=_reads,
                     rows=_rows,
+                    completion_status=sv_step.completion_status,
                 )
                 try:
                     _cur_run = _gen.send(_hand)
@@ -795,6 +796,7 @@ def run_agent_loop(
                 observation=observation,
                 action_policy=action_policy,
                 supervisor=supervisor,
+                history=context.turns,
                 executor=executor,
                 bundle=bundle,
                 platform=platform,
@@ -830,6 +832,8 @@ def run_agent_loop(
                 supervisor=supervisor,
                 action_decision=action_decision,
                 executed=executed,
+                action_key=action_result.action_key,
+                suppressed_reason=action_result.suppressed_reason,
                 llm_calls_before=llm_calls_before,
                 tokens_before=tokens_before,
                 turn_started_at=turn_started_at,

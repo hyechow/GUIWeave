@@ -158,9 +158,10 @@ def finish_terminal_step(
 
         result = make_run_result(
             current_run,
-            completed=False,
+            completed=sv_step.goal_completed,
             summary=sv_step.summary or reason,
             notes=context.content_notes[notes_mark:],
+            completion_status=sv_step.completion_status,
         )
         try:
             next_run = interpreter_steps.send(result)

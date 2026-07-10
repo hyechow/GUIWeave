@@ -120,6 +120,8 @@ def has_snapped_point(action_decision: ActionDecision | None) -> bool:
 class ActionRunResult:
     action_decision: Any = None
     executed: bool = False
+    action_key: str = ""
+    suppressed_reason: str = ""
     probe_failed: bool = False
     branch_settle_s: float | None = None
 
@@ -138,6 +140,7 @@ class ActionExecutionState:
         observation: Observation,
         action_policy,
         supervisor,
+        history: list[Any] | None = None,
         executor,
         bundle,
         platform,
@@ -196,6 +199,17 @@ class ActionExecutionState:
             return result
 
         action = action_decision.action
+        authorize = getattr(supervisor, "authorize_action_dispatch", None)
+        if callable(authorize):
+            allowed, action_key, reason = authorize(
+                sv_step, action_decision, history or []
+            )
+            result.action_key = action_key
+            if not allowed:
+                result.suppressed_reason = reason or "duplicate action suppressed"
+                say(f"  [ActionLedger] 抑制重复动作：{result.suppressed_reason}")
+                status(turn_no, "重复动作已抑制")
+                return result
         if action_decision.action:
             status(turn_no, f"[{action_label(action.action_type)}] {action.description}")
 
@@ -445,12 +459,23 @@ def finalize_auto_continue_turn(
             center=settle_center,
         )
 
+    signal = getattr(turn, "action_signal", None)
     if verify_future is None:
+        if signal is not None:
+            signal.response = "none_observed" if turn.no_effect else "observed"
+            if not turn.no_effect:
+                signal.response_channels = ["visual"]
         return
     try:
         turn.target_verify = verify_future.result(timeout=VERIFY_TIMEOUT_S)
         tv = turn.target_verify
+        if tv is not None and signal is not None:
+            signal.target = "on_target" if tv.on_target else "off_target"
         if tv is not None and not tv.on_target:
             say(f"  [TargetVerify] off_target：标记落在「{tv.actual_element}」")
     except Exception as exc:
         say(f"  [TargetVerify] 校验失败（忽略）：{exc}")
+    if signal is not None:
+        signal.response = "none_observed" if turn.no_effect else "observed"
+        if not turn.no_effect:
+            signal.response_channels = ["visual"]

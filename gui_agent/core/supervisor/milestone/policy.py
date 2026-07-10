@@ -19,8 +19,15 @@ from gui_agent.context.runtime import (
 )
 from llm.structured import invoke_structured
 from gui_agent.core.vision.frame_analysis import is_loading_frame
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import (
+    CompletionStatus,
+    Milestone,
+    Observation,
+    PolicyTurn,
+    SupervisorStep,
+)
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm as _norm_page
+from gui_agent.core.run.action_ledger import ActionLedger
 
 from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
 from .helpers import assemble_messages, _make_llm, run_loop_check, run_planner
@@ -47,7 +54,11 @@ from .runtime import (
     _last_scroll_was_for,
     _type_only_search_filter_pending_submit,
 )
-from gui_agent.core.run.progress_monitor import ProgressMonitor, action_signature, canonical_url
+from gui_agent.core.run.progress_monitor import (
+    ProgressMonitor,
+    action_signature,
+    canonical_url,
+)
 from .schemas import (
     MilestonePrompts,
     _DecomposeResponse,
@@ -203,7 +214,8 @@ def _is_terminal_dispatch_turn(turn: PolicyTurn | None, milestone: Milestone) ->
     text = _turn_action_text(turn)
     if not text or _CHECKBOX_OR_TOGGLE_RE.search(text):
         return False
-    if not _TERMINAL_DISPATCH_RE.search(text):
+    structured_commit = getattr(supervisor, "atomic_role", "prepare") == "commit"
+    if not structured_commit and not _TERMINAL_DISPATCH_RE.search(text):
         return False
     # When the milestone names its own dispatch verb (…并保存 / 提交…), the executed dispatch
     # must be the same verb class; a milestone with no dispatch verb keeps the action-side-only
@@ -215,6 +227,8 @@ def _is_terminal_dispatch_turn(turn: PolicyTurn | None, milestone: Milestone) ->
 
 
 def _has_negative_action_feedback(check: _SingleCheckResult) -> bool:
+    if getattr(check, "outcome_status", "unverified") == "contradicted":
+        return True
     claims = " ".join(
         [
             check.reason or "",
@@ -361,6 +375,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # Action-Loop Guard: run-scoped (state, action) memory keyed on canonical URL — catches task-level
         # loops the frame guards miss. NOT reset per milestone (a loop can span milestone boundaries).
         self._monitor = ProgressMonitor()
+        self._action_ledger = ActionLedger()
         self._early_feasibility_probed: set[str] = set()  # milestone ids given an early Feasibility probe
         self._last_check: Optional[_SingleCheckResult] = None
         self._collection_progress: str = ""
@@ -517,6 +532,56 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             if con not in self._global_constraints:
                 self._global_constraints.append(con)
 
+    def authorize_action_dispatch(
+        self,
+        supervisor_step: SupervisorStep,
+        action_decision,
+        history: list[PolicyTurn],
+    ) -> tuple[bool, str, str]:
+        return self._action_ledger.authorize(
+            supervisor_step, action_decision, history
+        )
+
+    def _update_latest_action_response(
+        self, history: list[PolicyTurn], milestone: Milestone
+    ) -> None:
+        turn = self._action_ledger.latest_dispatched(history, milestone.id)
+        if turn is None or turn.action_signal is None:
+            return
+        signal = turn.action_signal
+        if self._monitor.url_changed:
+            signal.response = "observed"
+            if "url" not in signal.response_channels:
+                signal.response_channels.append("url")
+        if self._monitor.dom_changed:
+            signal.response = "observed"
+            if "dom" not in signal.response_channels:
+                signal.response_channels.append("dom")
+        if turn.no_effect and signal.response == "unknown":
+            signal.response = "none_observed"
+
+    def _update_latest_action_outcome(
+        self,
+        history: list[PolicyTurn],
+        milestone: Milestone,
+        check: _SingleCheckResult,
+    ) -> None:
+        turn = self._action_ledger.latest_dispatched(history, milestone.id)
+        if turn is None or turn.action_signal is None:
+            return
+        signal = turn.action_signal
+        declared = getattr(check, "outcome_status", "unverified")
+        if declared == "contradicted" or _has_negative_action_feedback(check):
+            signal.outcome = "contradicted"
+        elif declared == "confirmed":
+            signal.outcome = "confirmed"
+        else:
+            signal.outcome = "unverified"
+        evidence = [*(check.visible_evidence or []), check.reason or ""]
+        for item in evidence:
+            if item and item not in signal.evidence:
+                signal.evidence.append(item)
+
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
         self._timings.clear()
         self._timings_order.clear()
@@ -636,6 +701,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # url_changed / dom_changed feed both the dispatch gate check below and the
         # stuck/no_effect suppression further down.
         self._monitor.observe_effect(observation.url, observation.dom_state)
+        self._update_latest_action_response(milestone_history, milestone)
         if self._monitor.url_changed:
             print(f"  [URLChanged] {observation.url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
         if self._monitor.dom_changed and not self._monitor.url_changed:
@@ -682,7 +748,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
                 print("  [TerminalDispatchGate] 终端动作触发 URL 变化 → done（跳过 acquire/checker）")
                 self._last_check = check
-                return self._advance(milestone, observation, history)
+                return self._advance(
+                    milestone,
+                    observation,
+                    history,
+                    completion_status="accepted_unverified",
+                )
 
         # Filter "action-applied" gate — generalizes the dispatch gate to filter milestones.
         # A `filter` milestone's job is to APPLY a filter; Observation.applied_filters reports
@@ -835,10 +906,14 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             })
             self._last_check = check
 
-        last_terminal_dispatch = milestone_history[-1] if milestone_history else None
+        self._update_latest_action_outcome(milestone_history, milestone, check)
+
+        last_terminal_dispatch = self._action_ledger.latest_dispatched(
+            milestone_history, milestone.id
+        )
+        accepted_unverified = False
         if (
             milestone.kind == "action"
-            and check.status != "done"
             # The gate exists for fire-and-forget submits whose backend effect renders no visible
             # toast — it only applies when the MILESTONE's own terminal is a dispatch. An arrival
             # milestone (click a row to open its edit page) must never be force-done'd by a
@@ -846,19 +921,23 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             and _TERMINAL_DISPATCH_RE.search(milestone.name or "")
             and _is_terminal_dispatch_turn(last_terminal_dispatch, milestone)
             and not _has_negative_action_feedback(check)
+            and check.outcome_status == "unverified"
         ):
             action_text = _turn_action_text(last_terminal_dispatch)[:120]
-            check = _SingleCheckResult(
-                status="done",
-                reason=(
-                    "终端动作已派发执行，当前帧未出现错误/校验失败；"
-                    "缺失的是可见成功反馈通道，不应重复提交同一动作。"
-                ),
-                summary=f"terminal dispatch accepted: {action_text}",
-                visible_evidence=["runtime.execution_signal=dispatched"],
-                page_identity=check.page_identity,
-            )
-            print("  [TerminalDispatchGate] 终端动作已执行且无负反馈 → done（跳过重复提交）")
+            if check.status != "done":
+                check = _SingleCheckResult(
+                    status="done",
+                    reason=(
+                        "终端动作已派发执行，当前帧未出现错误/校验失败；"
+                        "缺失的是可见成功反馈通道，不应重复提交同一动作。"
+                    ),
+                    summary=f"terminal dispatch accepted: {action_text}",
+                    visible_evidence=["runtime.execution_signal=dispatched"],
+                    page_identity=check.page_identity,
+                    outcome_status="unverified",
+                )
+            accepted_unverified = True
+            print("  [TerminalDispatchGate] 终端动作已执行且无负反馈 → accepted_unverified（跳过重复提交）")
             self._last_check = check
 
         current_page_id = check.page_identity or ""
@@ -887,7 +966,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             if milestone.kind in {"collection", "verification"} and self.task_type != "action":
                 read_inst = check.read_instruction or _default_read_instruction(milestone)
                 final_read = _ctx(milestone, read_inst)
-            return self._advance(milestone, observation, history, final_read=final_read)
+            return self._advance(
+                milestone,
+                observation,
+                history,
+                final_read=final_read,
+                completion_status=("accepted_unverified" if accepted_unverified else "confirmed"),
+            )
 
         # The checker itself judged NO PROGRESS (status=stuck) from the 任务进展轨迹 (PROGRESS half of
         # the checker): the agent is looping / dead-ending, not advancing. Route to the stuck path —
@@ -1148,6 +1233,16 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print(f"  [Planner] hints: direction={plan.direction} column={drag_column}")
         if plan.direction in ("increase", "decrease") and drag_column:
             self._fix_picker_direction(plan)
+        atomic_role = getattr(plan, "atomic_role", "prepare")
+        if milestone.is_iterative:
+            atomic_role = "iterate"
+        elif (
+            atomic_role == "prepare"
+            and milestone.kind == "action"
+            and _TERMINAL_DISPATCH_RE.search(plan.instruction or "")
+        ):
+            # Compatibility for old planner outputs that predate the structured role.
+            atomic_role = "commit"
         self._last_plan = plan
         milestone.status = "running"
         return SupervisorStep(
@@ -1157,6 +1252,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             goal_completed=False,
             summary=plan.summary,
             execution_scope=execution_scope,
+            atomic_role=atomic_role,
             direction=plan.direction,
             drag_column=getattr(plan, "drag_column", None),
             drag_steps=drag_steps,
@@ -1321,6 +1417,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         observation: Observation,
         history: list[PolicyTurn],
         final_read: Optional[dict] = None,
+        completion_status: CompletionStatus = "confirmed",
     ) -> SupervisorStep:
         done_name = milestone.name
         scoped_history = self._history_for_scope(history, milestone, observation)
@@ -1418,6 +1515,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             self._last_check = check
             return self._plan_single(milestone, check, observation, scoped_history)
         milestone.status = "done"
+        milestone.completion_status = completion_status
         # Persist this milestone's DONE verdict before _last_check is overwritten by the next
         # milestone's check (the report's 验收 panel renders it via context.milestones[id].
         # done_check). Must be here, not only in the nav-skip branch below: the terminal path
@@ -1447,6 +1545,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 "milestone_id": milestone.id,
                 "milestone_kind": milestone.kind,
                 "completion_strategy": milestone.completion_strategy,
+                "completion_status": milestone.completion_status,
                 **(final_read or {}),
             }
             return SupervisorStep(
@@ -1796,9 +1895,17 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         last = history[-1]
         instr = ((last.supervisor.instruction if last.supervisor else "") or "").strip().replace("\n", " ")
         instr_brief = instr[:80]
+        signal = getattr(last, "action_signal", None)
         executed = bool(getattr(last, "executed", True))
         no_effect = bool(getattr(last, "no_effect", False))
-        if not executed:
+        if signal is not None:
+            execution_signal = signal.execution
+            effect_signal = signal.response
+            fact = (
+                f"结构化动作信号：target={signal.target}, response={signal.response}, "
+                f"outcome={signal.outcome}."
+            )
+        elif not executed:
             execution_signal = "not_dispatched"
             effect_signal = "none"
             fact = "上一步动作未被执行(动作未发出)。"
@@ -1824,6 +1931,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             f"- action: {instr_brief}\n"
             f"- execution_signal: {execution_signal}\n"
             f"- effect_signal: {effect_signal}\n"
+            f"- outcome_signal: {(signal.outcome if signal is not None else 'unverified')}\n"
             f"- detail: {fact}\n"
             "裁决规则：execution_signal 只回答“动作是否已派发/执行”，effect_signal 只回答"
             "“派发后是否观察到 URL/DOM/视觉反馈”，二者都不直接等于业务目标状态。"

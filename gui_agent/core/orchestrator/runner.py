@@ -46,6 +46,7 @@ def make_run_result(
     notes: list[str],
     reads: dict[str, str] | None = None,
     rows: list[dict[str, str]] | None = None,
+    completion_status: str | None = None,
 ) -> RunResult:
     """Build the uniform result consumed by the statement interpreter.
 
@@ -55,6 +56,7 @@ def make_run_result(
     return RunResult(
         completed=completed,
         failed=not completed,
+        completion_status=completion_status,
         reads=dict(reads) if reads else {},
         rows=list(rows) if rows else [],
         summary=summary,
@@ -165,6 +167,13 @@ class OrchestratorResult(BaseModel):
     finish_incomplete: bool = False
     env: dict[str, RunResult] = Field(default_factory=dict)
     run_log: list[RunRecord] = Field(default_factory=list)
+
+    @property
+    def accepted_unverified(self) -> bool:
+        return any(
+            record.result.completion_status == "accepted_unverified"
+            for record in self.run_log
+        )
 
 
 class Interpreter:

@@ -19,8 +19,15 @@ def make_result(
 ) -> dict:
     last_summary = context.turns[-1].supervisor.summary if context.turns else stop_reason
     turns_detail = []
+    accepted_unverified = any(
+        getattr(turn.supervisor, "completion_status", "in_progress") == "accepted_unverified"
+        for turn in context.turns
+    )
     for t in context.turns:
         entry: dict = {"no": t.index, "summary": t.supervisor.summary, "executed": t.executed}
+        entry["completion_status"] = t.supervisor.completion_status
+        if t.action_signal is not None:
+            entry["action_signal"] = t.action_signal.model_dump(mode="json")
         if t.action_decision:
             a = t.action_decision.action
             entry["action_type"] = a.action_type
@@ -32,7 +39,19 @@ def make_result(
         "goal": context.goal,
         "result_summary": last_summary,
         "stop_reason": stop_reason,
-        "goal_completed": any(t.supervisor.goal_completed for t in context.turns),
+        "goal_completed": (
+            any(t.supervisor.goal_completed for t in context.turns)
+            and not accepted_unverified
+        ),
+        "goal_status": (
+            "accepted_unverified"
+            if accepted_unverified
+            else (
+                "confirmed"
+                if any(t.supervisor.goal_completed for t in context.turns)
+                else "incomplete"
+            )
+        ),
         "turns_count": len(context.turns),
         "turns_detail": turns_detail,
         "task_type": context.task_type,
@@ -54,6 +73,7 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
             "name": r.name,
             "completed": r.result.completed,
             "failed": r.result.failed,
+            "completion_status": r.result.completion_status,
             "reads": dict(r.result.reads),
             "summary": r.result.summary,
         }
@@ -69,12 +89,27 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
     # A program that reached finish but answered on an entirely-empty read produced no real
     # answer (the read found nothing on the frame) — do not let it masquerade as success.
     finish_incomplete = getattr(interp, "finish_incomplete", False)
-    base["goal_completed"] = (current is None) and not interp.failed and not finish_incomplete
+    accepted_unverified = any(
+        r.result.completion_status == "accepted_unverified"
+        for r in interp.run_log
+    )
+    base["goal_completed"] = (
+        (current is None)
+        and not interp.failed
+        and not finish_incomplete
+        and not accepted_unverified
+    )
+    base["goal_status"] = (
+        "accepted_unverified"
+        if accepted_unverified
+        else ("confirmed" if base["goal_completed"] else "incomplete")
+    )
     base["orchestrator"] = {
         "reply": reply,
         "failed": interp.failed,
         "terminal": terminal,
         "run_log": run_log,
+        "accepted_unverified": accepted_unverified,
     }
     return base
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic import BaseModel, Discriminator, Field, Tag, model_validator
 
 # DSL data-flow template grammar: ``{var[field]}`` pulls a prior read's value out of the
 # variable environment. Used by finish messages (the original site) AND — since the
@@ -70,10 +70,29 @@ class RunResult(BaseModel):
 
     completed: bool = False
     failed: bool = False
+    completion_status: Optional[
+        Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
+    ] = None
     reads: dict[str, str] = Field(default_factory=dict)
     rows: list[dict[str, str]] = Field(default_factory=list)
     summary: str = ""
     evidence: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _infer_completion_status(self) -> "RunResult":
+        """Keep old serialized/results constructors compatible with the richer status."""
+        if self.completion_status is None:
+            if self.failed:
+                self.completion_status = "failed"
+            elif self.completed:
+                self.completion_status = "confirmed"
+            else:
+                self.completion_status = "in_progress"
+        return self
+
+    @property
+    def verified(self) -> bool:
+        return self.completion_status == "confirmed"
 
 
 class RunLike(BaseModel):

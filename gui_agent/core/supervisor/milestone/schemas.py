@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from gui_agent.core.schemas import CollectionScope, Milestone
 
@@ -97,6 +97,24 @@ class _SingleCheckResult(BaseModel):
     )
     frozen: bool = Field(default=False, description="屏幕是否冻结（相似度≥99%，即使 reader 返回新内容也应停止）")
     loading: bool = Field(default=False, description="页面正在加载（骨架屏/启动屏/转场动画），应等待下一帧而非立即规划动作")
+    outcome_status: Literal["confirmed", "contradicted", "unverified"] = Field(
+        default="unverified",
+        description=(
+            "业务后置状态：confirmed=目标状态已有证据；contradicted=明确错误/拒绝/目标不符；"
+            "unverified=缺少结果证据。不得用动作已派发替代 confirmed。"
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_legacy_outcome_status(cls, value):
+        """Old checker payloads used status=done as their only outcome signal."""
+        if isinstance(value, dict) and "outcome_status" not in value:
+            value = dict(value)
+            value["outcome_status"] = (
+                "confirmed" if value.get("status") == "done" else "unverified"
+            )
+        return value
 
     @field_validator("issues", "visible_evidence", "missing_evidence", mode="before")
     @classmethod
@@ -136,6 +154,13 @@ class _LoopFrameResult(BaseModel):
 class _PlanResult(BaseModel):
     instruction: str = Field(description="下一步精确操作指令")
     summary: str = Field(description="规划依据一句话摘要")
+    atomic_role: Literal["prepare", "commit", "iterate"] = Field(
+        default="prepare",
+        description=(
+            "当前原子动作角色：prepare=填写/选择/展开/导航等准备动作；"
+            "commit=提交/保存/发送等最终副作用边界；iterate=滚动/picker 等有进展时可重复动作。"
+        ),
+    )
     direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
         default=None,
         description=(

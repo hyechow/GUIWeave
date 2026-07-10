@@ -55,6 +55,12 @@ CompletionStrategy = Literal[
     "repeat_until_satisfied",
     "human_escalation",
 ]
+AtomicRole = Literal["prepare", "commit", "iterate"]
+ActionExecutionStatus = Literal["not_attempted", "dispatched", "dispatch_failed"]
+ActionTargetStatus = Literal["on_target", "off_target", "unknown"]
+ActionResponseStatus = Literal["observed", "none_observed", "unobservable", "unknown"]
+ActionOutcomeStatus = Literal["confirmed", "contradicted", "unverified"]
+CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
 
 # 「连续操作」轴（与 kind 正交）：靠重复调整逼近目标的策略，区别于单步达成。
 #   - repeat_until_satisfied：收敛到目标值（picker 调日期/时间、步进器、滑块）
@@ -68,6 +74,25 @@ ITERATIVE_STRATEGIES: tuple[str, ...] = (
     "scroll_until_boundary",
     "react_until_collected",
 )
+
+
+class ActionSignal(BaseModel):
+    """Structured lifecycle of one atomic UI action.
+
+    Execution answers whether the event crossed the GUI boundary; response answers whether the
+    page visibly reacted; outcome answers whether the requested business postcondition is known.
+    These axes must not be inferred from each other.
+    """
+
+    action_key: str = ""
+    role: AtomicRole = "prepare"
+    execution: ActionExecutionStatus = "not_attempted"
+    target: ActionTargetStatus = "unknown"
+    response: ActionResponseStatus = "unknown"
+    response_channels: list[str] = Field(default_factory=list)
+    outcome: ActionOutcomeStatus = "unverified"
+    evidence: list[str] = Field(default_factory=list)
+    suppressed_reason: str = ""
 
 
 class CollectionScope(BaseModel):
@@ -404,6 +429,14 @@ class SupervisorStep(BaseModel):
     )
     milestone_kind: Optional[MilestoneKind] = Field(default=None, description="当前子目标类型")
     completion_strategy: Optional[CompletionStrategy] = Field(default=None, description="当前子目标完成策略")
+    atomic_role: AtomicRole = Field(
+        default="prepare",
+        description="当前原子动作在交互 Run 中的角色：prepare=准备状态，commit=最终副作用派发，iterate=允许有进展地重复。",
+    )
+    completion_status: CompletionStatus = Field(
+        default="in_progress",
+        description="本步终态的确认级别；accepted_unverified 会停止重复副作用但不宣称业务结果已确认。",
+    )
     collection_scope: Optional[CollectionScope] = Field(default=None, description="当前内容采集范围")
     pre_existing: bool = Field(
         default=False,
@@ -520,6 +553,10 @@ class Milestone(BaseModel):
             "state cannot be mistaken for work performed by this task."
         ),
     )
+    completion_status: CompletionStatus = Field(
+        default="in_progress",
+        description="交互 Run 的终态确认级别。",
+    )
     returns: list[str] = Field(
         default_factory=list,
         description="声明的结构化返回字段；由编排器 Run.returns 填充，空 = 本 milestone 无出参。"
@@ -593,6 +630,10 @@ class PolicyTurn(BaseModel):
     planner: Optional[dict] = Field(default=None, description="Planner 原始结果：instruction, summary, direction, drag_column")
     replan: Optional[dict] = Field(default=None, description="Replan 原始结果：diagnosis, strategy, instruction")
     executed: bool = False
+    action_signal: Optional[ActionSignal] = Field(
+        default=None,
+        description="动作派发、页面响应与业务结果的结构化信号；旧日志可为空。",
+    )
     llm_calls: int = 0
     input_tokens: int = Field(default=0, description="本轮 LLM 调用累计输入 tokens（与 llm_calls 同口径），用于成本核算")
     output_tokens: int = Field(default=0, description="本轮 LLM 调用累计输出 tokens（与 llm_calls 同口径），用于成本核算")

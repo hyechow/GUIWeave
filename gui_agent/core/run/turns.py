@@ -14,10 +14,11 @@ from typing import Any, Callable
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.run.action_ledger import semantic_action_key
 from gui_agent.core.run.context import extract_checker, extract_plan, extract_replan
 from gui_agent.core.run.result import print_timings, print_turn_stats
 from gui_agent.core.run.state import sync_milestone_states
-from gui_agent.core.schemas import PolicyContext, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import ActionSignal, PolicyContext, PolicyTurn, SupervisorStep
 
 MODEL_KEYS = (
     "supervisor",
@@ -50,6 +51,8 @@ def make_interactive_turn(
     planner: dict | None = None,
     replan: dict | None = None,
     executed: bool = False,
+    action_key: str = "",
+    suppressed_reason: str = "",
     llm_calls: int = 0,
     input_tokens: int = 0,
     output_tokens: int = 0,
@@ -61,6 +64,23 @@ def make_interactive_turn(
     llm_context: list[dict] | None = None,
 ) -> PolicyTurn:
     """Build a normal UI turn."""
+    action = action_decision.action if action_decision else None
+    role = supervisor_step.atomic_role
+    if not action_key and action is not None:
+        action_key = semantic_action_key(supervisor_step, action)
+    if executed:
+        execution = "dispatched"
+    elif action_decision is not None and not action_decision.not_found_reason and not suppressed_reason:
+        execution = "dispatch_failed"
+    else:
+        execution = "not_attempted"
+    action_signal = ActionSignal(
+        action_key=action_key,
+        role=role,
+        execution=execution,
+        suppressed_reason=suppressed_reason,
+        evidence=([suppressed_reason] if suppressed_reason else []),
+    ) if action_decision is not None or suppressed_reason else None
     return PolicyTurn(
         index=index,
         operation_mode="interactive",
@@ -72,6 +92,7 @@ def make_interactive_turn(
         planner=planner,
         replan=replan,
         executed=executed,
+        action_signal=action_signal,
         llm_calls=llm_calls,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -211,6 +232,8 @@ def record_interactive_turn(
     supervisor: Any,
     action_decision: Any,
     executed: bool,
+    action_key: str = "",
+    suppressed_reason: str = "",
     llm_calls_before: int,
     tokens_before: tuple[int, int],
     turn_started_at: float,
@@ -232,6 +255,8 @@ def record_interactive_turn(
         planner=extract_plan(supervisor),
         replan=extract_replan(supervisor),
         executed=executed,
+        action_key=action_key,
+        suppressed_reason=suppressed_reason,
         llm_calls=get_llm_call_count() - llm_calls_before,
         input_tokens=tokens_after[0] - tokens_before[0],
         output_tokens=tokens_after[1] - tokens_before[1],

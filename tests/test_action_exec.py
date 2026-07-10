@@ -42,6 +42,11 @@ class _SnappingExecutor(_Executor):
         return ok
 
 
+class _DenyingSupervisor:
+    def authorize_action_dispatch(self, _step, _decision, _history):
+        return False, "scope|m1|commit", "commit already dispatched"
+
+
 def _step(decision: BaseActionDecision) -> SupervisorStep:
     return SupervisorStep(
         should_act=True,
@@ -154,4 +159,35 @@ def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
     assert result.executed is False
     assert result.probe_failed is False
     assert statuses == [(4, "未找到目标元素")]
+    assert executor.calls == []
+
+
+def test_duplicate_commit_is_suppressed_before_executor_call(tmp_path):
+    action = BaseAction(action_type="tap", x=10, y=20, description="点击保存")
+    decision = BaseActionDecision(action=action)
+    step = _step(decision).model_copy(
+        update={"atomic_role": "commit", "milestone_id": "m1"}
+    )
+    executor = _Executor()
+
+    result = ActionExecutionState().run(
+        sv_step=step,
+        observation=Observation(png_bytes=b"png", source="test"),
+        action_policy=object(),
+        supervisor=_DenyingSupervisor(),
+        history=[object()],
+        executor=executor,
+        bundle=object(),
+        platform=object(),
+        prep_future=_Future(),
+        log_dir=tmp_path,
+        turn_no=5,
+        flash=lambda _action: None,
+        status=lambda _turn_no, _message: None,
+        say=lambda _message: None,
+    )
+
+    assert result.executed is False
+    assert result.action_key == "scope|m1|commit"
+    assert result.suppressed_reason == "commit already dispatched"
     assert executor.calls == []

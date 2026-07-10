@@ -85,7 +85,12 @@ def compose_orchestration_reply(
     )
     lines = []
     for i, r in enumerate(run_log, 1):
-        mark = "✗ 未完成" if r.get("failed") else ("✓ 完成" if r.get("completed") else "· 进行中")
+        status = r.get("completion_status")
+        mark = (
+            "△ 已派发，结果未验证"
+            if status == "accepted_unverified"
+            else ("✗ 未完成" if r.get("failed") else ("✓ 完成" if r.get("completed") else "· 进行中"))
+        )
         lines.append(f"{i}. {r.get('name', '')} — {mark}")
         reads = {k: v for k, v in (r.get("reads") or {}).items() if v}
         if reads:
@@ -165,6 +170,7 @@ def _action_messages(goal: str, result: dict) -> list:
         "goal": goal,
         "stop_reason": result.get("stop_reason", ""),
         "goal_completed": result.get("goal_completed", False),
+        "goal_status": result.get("goal_status", ""),
         "turn_count": result.get("turns_count", 0),
         "summary": result.get("result_summary", ""),
         "turns": result.get("turns_detail", []),
