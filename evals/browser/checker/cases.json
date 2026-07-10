@@ -595,5 +595,244 @@
     },
     "note": "回归 live run 20260701_212514：702 是 Catalog Price Rule（'45% off on all products'→catalog_rule/promo_catalog/save）。agent 正确进 Catalog 表单、填了 Rule Name/Active/Customer Groups，但漏选了视口上方的 Websites → 卡住。此时 checker 的 stuck 恢复把「字段漏填」误诊为「规则类型错，应去 Cart Price Rules」，把 agent 从正确的 Catalog 表单赶去了错误的 Cart 页，推翻了正确进展。规则类型在 decompose 已定、不是当前状态维度，checker 不得据 stuck 二次翻转类型；缺 Websites 应判 in_progress/stuck 并指向补选 Websites，而非换规则类型。",
     "with_app_check": false
+  },
+  {
+    "label": "同一任务第二段页内下翻仍在接近目标，不得被前一 milestone 的滚动失败污染（回归 20260710_220309 T19）",
+    "screenshot": "evals/browser/checker/screenshots/webarena549_configurations_scroll_progress_20260710.png",
+    "attempts": 3,
+    "observation": {
+      "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/",
+      "title": "Minerva LumaTech V-Tee / Products / Inventory / Catalog / Magento Admin",
+      "dom_state": "product-edit-scroll-y-652",
+      "form_controls": [
+        {
+          "kind": "section_toggle",
+          "label": "Configurations",
+          "value": "true",
+          "in_viewport": false,
+          "viewport_pos": "below",
+          "rect": {
+            "x": 528,
+            "y": 2644
+          }
+        },
+        {
+          "kind": "text_input",
+          "label": "Product Name",
+          "value": "Minerva LumaTech V-Tee",
+          "in_viewport": false,
+          "viewport_pos": "above",
+          "rect": {
+            "x": 528,
+            "y": -198
+          }
+        },
+        {
+          "kind": "native_select",
+          "label": "Size",
+          "selected_text": "",
+          "options": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL",
+            "XXXL"
+          ],
+          "in_viewport": false,
+          "viewport_pos": "below",
+          "rect": {
+            "x": 356,
+            "y": 1457
+          }
+        }
+      ]
+    },
+    "milestone": {
+      "name": "在 Configurations 区域生成包含 Color=green 和 Size=XXXL 的变体组合并保存产品",
+      "description": "在 Configurations 区域生成包含 Color=green 和 Size=XXXL 的变体组合并保存产品",
+      "success_condition": "页面显示保存成功提示，且 Configurations 集合中包含 green-XXXL 的组合",
+      "kind": "action",
+      "app_name": "shopping_admin"
+    },
+    "constraints": [
+      "⚠️ 当前执行上下文下已经执行过同一具体动作（scroll|down|@10,10）且目标未达成。必须换一个当前页面可见的新入口或新操作，禁止重复同一 DOM 目标。",
+      "指令「在 Manage Swatch 表格中向下滚动以找到 'Add New Option' 按钮」未达成目标：连续两轮执行相同的向下滚动操作(T6和T7)，仍未找到'Add New Option'按钮，任务在少数状态间打转。优先尝试当前截图中不同的可见入口。",
+      "⚠️ 之前未达成目标的路径：连续两轮向下滚动操作(T6和T7)均未找到'Add New Option'按钮，当前截图显示表格底部已出现'Add Swatch'按钮而非预期的'Add New Option'按钮，说明继续向下滚动无法达成目标，路径错误。。除非当前截图出现新的明确证据，否则不要重复。"
+    ],
+    "history": [
+      {
+        "index": 18,
+        "instruction": "向下滚动页面以查看 Configurations 区域",
+        "summary": "Configurations 位于当前视口下方，继续页内定位。",
+        "action": {
+          "action_type": "scroll",
+          "direction": "down",
+          "amount": "large",
+          "description": "向下滚动页面以查看 Configurations 区域"
+        }
+      }
+    ],
+    "state_trace": "T18 状态:/admin/catalog/product/edit/id/1492 | 交互:7cb5b38c | 决策:scroll|down|@10,10",
+    "last_action_effect": "## 上一步动作信号(运行时事实,非视觉推断)\n- action: 向下滚动页面以查看 Configurations 区域\n- execution_signal: dispatched\n- effect_signal: observed\n- outcome_signal: unverified\n- detail: 页面滚动后 DOM/视觉位置发生变化，Configurations 仍在视口下方。",
+    "expected": {
+      "status": "in_progress",
+      "reason_contains": [
+        "Configurations",
+        "视口",
+        "滚动"
+      ],
+      "must_not_claim": [
+        "T6",
+        "T7",
+        "Add New Option",
+        "历史.{0,12}(证明|表明).{0,12}滚动.{0,12}(无效|无法)",
+        "路径.{0,4}错误",
+        "连续.{0,12}打转"
+      ]
+    },
+    "note": "task 549 同一任务包含两段合法的页内下翻：T6/T7 在 size 属性页寻找 Add Swatch，T18 起在产品编辑页寻找 Configurations。生产运行给 checker 的 scoped history 与 state trace 都只有 T18，但 task-TTL 的旧 recovery constraints 泄漏了 T6/T7，导致 checker 把两段无关滚动拼成 T6-T7-T18 的循环。实际上 DOM 中 Configurations center 随滚动从 3296→2644→2021→1398，持续接近视口，属于确定性进展。本 case 要求 stale constraint 只能作为非权威背景，不能推翻当前 scope 的轨迹；当前应判 in_progress，继续定位 Configurations。"
+  },
+  {
+    "label": "Configurations 仍在视口下方时不得把父商品顶层 Color/Size 当作变体向导（回归 20260710_222453 T18）",
+    "screenshot": "evals/browser/planner/screenshots/webarena549_parent_attributes_not_configurations_20260710.png",
+    "attempts": 3,
+    "observation": {
+      "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/",
+      "title": "Minerva LumaTech V-Tee / Products / Inventory / Catalog / Magento Admin",
+      "form_controls": [
+        {
+          "kind": "section_toggle",
+          "label": "Configurations",
+          "value": "true",
+          "in_viewport": false,
+          "viewport_pos": "below",
+          "rect": {
+            "x": 528,
+            "y": 2021
+          }
+        },
+        {
+          "kind": "native_select",
+          "label": "Size",
+          "selected_text": "",
+          "options": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL",
+            "XXXL"
+          ],
+          "rect": {
+            "x": 356,
+            "y": 834
+          }
+        },
+        {
+          "kind": "native_select",
+          "label": "Color",
+          "selected_text": "",
+          "options": [
+            "Black",
+            "Blue",
+            "Green",
+            "Red"
+          ],
+          "in_viewport": false,
+          "viewport_pos": "below",
+          "rect": {
+            "x": 356,
+            "y": 1495
+          }
+        }
+      ]
+    },
+    "milestone": {
+      "name": "在 Configurations 区域生成 green + XXXL 组合并保存",
+      "description": "在 Configurations 区域生成 green + XXXL 组合并保存",
+      "success_condition": "保存成功提示出现，且 Configurations 集合中包含 green + XXXL 组合",
+      "kind": "action",
+      "app_name": "shopping_admin"
+    },
+    "expected": {
+      "status": "in_progress",
+      "reason_contains": [
+        "Configurations",
+        "视口",
+        "下方",
+        "滚动"
+      ],
+      "must_not_claim": [
+        "当前.{0,8}(处于|位于|进入).{0,8}Configurations",
+        "Configurations.{0,8}(区域|界面).{0,8}(当前)?可见",
+        "正在.{0,8}Configurations",
+        "选择.{0,8}(Color|Green|Size|XXXL)",
+        "设置.{0,8}(Color|Green|Size|XXXL)"
+      ]
+    },
+    "note": "生产 T18 的 DOM 明确给出 Configurations section_toggle current=true 但 center=2021、仍需向下滚动。截图中可见的是父商品基础属性（Style General、Material、Sleeve、Size 等），不是 Configurations 变体集合。旧 checker 把 expanded=true 错读成当前已进入该区域，并把扁平控件清单里的顶层 Color/Size 当成向导字段，导致 planner 修改父商品属性而没有创建 Simple Product 变体。"
+  },
+  {
+    "label": "Text Swatch 同行其他字段出现 XXXL 不代表目标 swatch 字段已填写（回归 20260710_225109 T6）",
+    "screenshot": "evals/browser/checker/screenshots/webarena549_incomplete_text_swatch_20260710.png",
+    "attempts": 3,
+    "observation": {
+      "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/",
+      "title": "size / Product Attributes / Attributes / Stores / Magento Admin",
+      "form_controls": [
+        {
+          "kind": "text_input",
+          "label": "Swatch",
+          "name": "swatchtext[value][215][0]",
+          "placeholder": "Swatch",
+          "required": true,
+          "group_id": "manage-swatch:21",
+          "group_index": 21,
+          "group_field": "Admin Swatch"
+        },
+        {
+          "kind": "text_input",
+          "label": "Default Store View",
+          "name": "optiontext[value][215][0]",
+          "value": "XXXL",
+          "group_id": "manage-swatch:21",
+          "group_index": 21,
+          "group_field": "Option Label"
+        },
+        {
+          "kind": "text_input",
+          "label": "Store View Swatch",
+          "name": "swatchtext[value][215][1]",
+          "placeholder": "Swatch",
+          "group_id": "manage-swatch:21",
+          "group_index": 21,
+          "group_field": "Store View Swatch"
+        }
+      ]
+    },
+    "milestone": {
+      "name": "将选项 'XXXL' 添加到 size 属性的 Options/Values 集合并保存",
+      "description": "将选项 'XXXL' 添加到 size 属性的 Options/Values 集合并保存",
+      "success_condition": "保存后的 size 属性选项集合包含 'XXXL'",
+      "kind": "action",
+      "app_name": "shopping_admin"
+    },
+    "expected": {
+      "status": "in_progress",
+      "reason_contains": [
+        "Swatch",
+        "字段",
+        "XXXL"
+      ],
+      "must_not_claim": [
+        "XXXL.{0,10}(已存在|已添加|完整)",
+        "选项.{0,8}(已存在|已完成)",
+        "可以.{0,6}保存",
+        "点击.{0,10}Save Attribute"
+      ]
+    },
+    "note": "同一重复表单行里，Option Label=XXXL，但 Admin Swatch 和 Store View Swatch 仍为空。旧 checker 只看到截图里出现 XXXL 就声称选项已存在并要求 Save，提交后 payload 的 swatchtext 为空。集合成员必须按 row+field 判断，不能把同行其他字段的文本当成目标字段状态。",
+    "with_app_check": true
   }
 ]

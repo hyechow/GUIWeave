@@ -807,5 +807,89 @@
       ]
     },
     "note": "真实 run 20260709_121257 T31：页面已经显示 Short Description 富文本编辑器，但 acquire gate 仍输出「点击或展开 Content」，导致把已展开区域折叠，后续偏航到 Configurations。本 case 锁住 planner 侧不变量：最终输入控件可见时，下一步应填写目标字段，不再执行 section acquire。生产修复在 form_controls rich_textarea + section acquire gate 单测。"
+  },
+  {
+    "label": "目标命名容器仍在视口下方时优先定位容器，不操作父表单同名字段（回归 20260710_222453 T18）",
+    "screenshot": "evals/browser/planner/screenshots/webarena549_parent_attributes_not_configurations_20260710.png",
+    "observation": {
+      "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/",
+      "title": "Minerva LumaTech V-Tee / Products / Inventory / Catalog / Magento Admin",
+      "form_controls": [
+        {
+          "kind": "section_toggle",
+          "label": "Configurations",
+          "value": "true",
+          "in_viewport": false,
+          "viewport_pos": "below",
+          "rect": {
+            "x": 528,
+            "y": 2021
+          }
+        },
+        {
+          "kind": "native_select",
+          "label": "Size",
+          "selected_text": "",
+          "options": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL",
+            "XXXL"
+          ],
+          "rect": {
+            "x": 356,
+            "y": 834
+          }
+        },
+        {
+          "kind": "native_select",
+          "label": "Color",
+          "selected_text": "",
+          "options": [
+            "Black",
+            "Blue",
+            "Green",
+            "Red"
+          ],
+          "in_viewport": false,
+          "viewport_pos": "below",
+          "rect": {
+            "x": 356,
+            "y": 1495
+          }
+        }
+      ]
+    },
+    "milestone": {
+      "name": "在 Configurations 区域生成 green + XXXL 组合并保存",
+      "description": "在 Configurations 区域生成 green + XXXL 组合并保存",
+      "success_condition": "保存成功提示出现，且 Configurations 集合中包含 green + XXXL 组合",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前页面处于 Configurations 区域，但尚未生成 green + XXXL 组合，且未看到保存成功提示。需要继续操作以添加属性组合并保存。",
+      "issues": [],
+      "missing_evidence": [
+        "需要选择 Color=Green 和 Size=XXXL 并生成组合"
+      ],
+      "summary": "当前正在配置 Configurations 区域。"
+    },
+    "expected": {
+      "must_match": [
+        "滚动|scroll",
+        "Configurations"
+      ],
+      "must_not_contain": [
+        "选择.{0,12}(Color|Green|Size|XXXL)",
+        "设置.{0,12}(Color|Green|Size|XXXL)",
+        "点击.{0,12}Save",
+        "保存"
+      ]
+    },
+    "note": "即使 checker 错称当前已在 Configurations，Planner 仍拿到 fresh DOM：目标 section center=2021 且标记需向下滚动；可见 Size 和稍下方 Color 是父商品基础属性，不能据名字相同就当作变体生成器。下一步必须继续把命名容器 Configurations 定位进视口，再在其内部寻找 Add Configuration/向导入口。"
   }
 ]

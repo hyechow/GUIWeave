@@ -86,6 +86,40 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
     print(line)
 
 
+def _check_result(result, expected: dict) -> list[str]:
+    details = []
+    # status：单值用 "status"；当一个轨迹对多个状态都合理时（如 0 条结果 + 同时在打转，
+    # stuck/in_progress 都不误判成功），用 "status_in" 接受一个集合，真正的锚点交给 must_not_claim。
+    if "status_in" in expected:
+        if result.status not in expected["status_in"]:
+            details.append(
+                f'status: expected one of {expected["status_in"]!r}, got {result.status!r}'
+            )
+    elif result.status != expected["status"]:
+        details.append(f'status: expected {expected["status"]!r}, got {result.status!r}')
+    if "reason_contains" in expected and not any(
+        kw in result.reason for kw in expected["reason_contains"]
+    ):
+        details.append(f'reason should contain one of {expected["reason_contains"]}')
+    for kw in expected.get("missing_contains", []):
+        if not any(kw in item for item in result.missing_evidence):
+            details.append(
+                f"missing_evidence 应包含未决字段「{kw}」, got: {result.missing_evidence}"
+            )
+    # missing_not_contains：已完成的字段绝不能再进 missing_evidence——checker 的
+    # 假阴性会把 planner 推回去「补救」一个不存在的问题（重开下拉框自证循环）
+    for kw in expected.get("missing_not_contains", []):
+        hits = [item for item in result.missing_evidence if kw in item]
+        if hits:
+            details.append(f"missing_evidence 不得再含已完成字段「{kw}」, got: {hits}")
+    # must_not_claim 同时覆盖 missing_evidence——「索要页面上不存在的控件」正是写在那里
+    claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
+    for pattern in expected.get("must_not_claim", []):
+        if re.search(pattern, claims_text):
+            details.append(f"不得宣称/索要 /{pattern}/")
+    return details
+
+
 def test_checker() -> None:
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     skipped = 0
@@ -109,55 +143,38 @@ def test_checker() -> None:
             hint = _target_identity_hint(milestone, observation)
             extra = f"{extra}\n{hint}".strip()
 
-        buf = io.StringIO()
-        try:
-            with redirect_stdout(buf):
-                result = run_checker(
-                    milestone, observation, _build_history(c.get("history", [])),
-                    app_name=m.get("app_name", ""),
-                    task_type=m.get("task_type", "action"),
-                    constraints=c.get("constraints", []),
-                    extra=extra,
-                    prompts=BROWSER_MILESTONE_PROMPTS,
-                    check_knowledge=_app_check_knowledge(c),
-                    state_trace_text=c.get("state_trace", ""),
-                    last_action_effect=c.get("last_action_effect", ""),
-                )
-        except Exception as e:  # noqa: BLE001
-            _report(c["label"], False, f"exception: {e}")
-            continue
-
         expected = c["expected"]
-        details = []
-        # status：单值用 "status"；当一个轨迹对多个状态都合理时（如 0 条结果 + 同时在打转，
-        # stuck/in_progress 都不误判成功），用 "status_in" 接受一个集合，真正的锚点交给 must_not_claim。
-        if "status_in" in expected:
-            if result.status not in expected["status_in"]:
-                details.append(f'status: expected one of {expected["status_in"]!r}, got {result.status!r}')
-        elif result.status != expected["status"]:
-            details.append(f'status: expected {expected["status"]!r}, got {result.status!r}')
-        if "reason_contains" in expected and not any(kw in result.reason for kw in expected["reason_contains"]):
-            details.append(f'reason should contain one of {expected["reason_contains"]}')
-        for kw in expected.get("missing_contains", []):
-            if not any(kw in item for item in result.missing_evidence):
-                details.append(f"missing_evidence 应包含未决字段「{kw}」, got: {result.missing_evidence}")
-        # missing_not_contains：已完成的字段绝不能再进 missing_evidence——checker 的
-        # 假阴性会把 planner 推回去「补救」一个不存在的问题（重开下拉框自证循环）
-        for kw in expected.get("missing_not_contains", []):
-            hits = [item for item in result.missing_evidence if kw in item]
-            if hits:
-                details.append(f"missing_evidence 不得再含已完成字段「{kw}」, got: {hits}")
-        # must_not_claim 同时覆盖 missing_evidence——「索要页面上不存在的控件」正是写在那里
-        claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
-        for pattern in expected.get("must_not_claim", []):
-            if re.search(pattern, claims_text):
-                details.append(f"不得宣称/索要 /{pattern}/")
+        failures: list[str] = []
+        result = None
+        attempts = max(1, int(c.get("attempts", 1)))
+        for attempt in range(1, attempts + 1):
+            buf = io.StringIO()
+            try:
+                with redirect_stdout(buf):
+                    result = run_checker(
+                        milestone, observation, _build_history(c.get("history", [])),
+                        app_name=m.get("app_name", ""),
+                        task_type=m.get("task_type", "action"),
+                        constraints=c.get("constraints", []),
+                        extra=extra,
+                        prompts=BROWSER_MILESTONE_PROMPTS,
+                        check_knowledge=_app_check_knowledge(c),
+                        state_trace_text=c.get("state_trace", ""),
+                        last_action_effect=c.get("last_action_effect", ""),
+                    )
+            except Exception as e:  # noqa: BLE001
+                failures.append(f"attempt {attempt}: exception: {e}")
+                continue
+            details = _check_result(result, expected)
+            if details:
+                failures.append(f"attempt {attempt}: " + "; ".join(details))
 
-        ok = len(details) == 0
-        _report(c["label"], ok, "; ".join(details) if details else "")
+        ok = not failures
+        _report(c["label"], ok, " | ".join(failures))
         if not ok:
-            print(f"       reason: {result.reason[:160]}")
-            print(f"       missing: {result.missing_evidence}")
+            if result is not None:
+                print(f"       reason: {result.reason[:160]}")
+                print(f"       missing: {result.missing_evidence}")
     if skipped:
         print(f"  ({skipped} skipped — screenshots not committed to git)")
 
