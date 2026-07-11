@@ -893,6 +893,7 @@ def run_agent_loop(
                 executed=executed,
                 action_decision=action_decision,
                 probe_failed=probe_failed,
+                suppressed_reason=action_result.suppressed_reason,
             )
             noop_count = progress.noop_count
             prev_milestone_id = progress.prev_milestone_id

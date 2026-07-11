@@ -69,9 +69,16 @@ def evaluate_turn_progress(
     executed: bool,
     action_decision: Any,
     probe_failed: bool,
+    suppressed_reason: str = "",
 ) -> ProgressDecision:
     """Update noop accounting and decide whether the loop should continue or stop."""
     if not executed and sv_step.should_act:
+        if suppressed_reason:
+            return _increment_or_stop(
+                noop_count,
+                stop_kind="动作被执行协议抑制",
+                continue_message="动作被执行协议抑制，重新观察并调整计划",
+            )
         if probe_failed:
             return _increment_or_stop(
                 noop_count,

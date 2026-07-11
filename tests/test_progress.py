@@ -75,6 +75,31 @@ def test_action_execution_failure_replans_until_third_failure():
     assert decision.message == "动作执行失败，进入下一轮重新规划"
 
 
+def test_protocol_suppression_is_not_reported_as_executor_failure():
+    first = evaluate_turn_progress(
+        noop_count=0,
+        prev_milestone_id="m1",
+        sv_step=_step(),
+        executed=False,
+        action_decision=_decision(),
+        probe_failed=False,
+        suppressed_reason="commit already dispatched",
+    )
+    third = evaluate_turn_progress(
+        noop_count=2,
+        prev_milestone_id="m1",
+        sv_step=_step(),
+        executed=False,
+        action_decision=_decision(),
+        probe_failed=False,
+        suppressed_reason="commit already dispatched",
+    )
+
+    assert first.continue_loop is True
+    assert first.message == "动作被执行协议抑制，重新观察并调整计划"
+    assert third.stop_reason == "连续 3 轮动作被执行协议抑制"
+
+
 def test_milestone_change_resets_noop_count():
     decision = evaluate_turn_progress(
         noop_count=2,
