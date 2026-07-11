@@ -113,3 +113,32 @@ def test_same_type_template_in_different_row_scopes_is_not_flagged():
     step = p._plan_single(_ms(), check, obs, history)
     assert step.summary != STUCK
     assert step.should_act
+
+
+def test_dom_backed_route_correction_may_type_same_value_into_a_different_control():
+    # Live 20260711_015402: the failed global keyword route typed the same product name twice;
+    # after opening the column Filters panel, typing that value into Name is a different concrete
+    # target. Before action_policy resolves the target, only DOM-backed post-dispatch signatures
+    # can distinguish those controls, so the pre-action value-only guard must stay out.
+    p = _policy("在 Name 输入框填入 'Olivia zip jacket'")
+    history = [
+        _typed_turn(3, execution_scope="milestone:m1"),
+        _typed_turn(6, execution_scope="milestone:m1"),
+    ]
+    obs = Observation(
+        png_bytes=b"png",
+        source="browser",
+        url=URL_POSTRESET,
+        dom_state="filters-panel-name-empty",
+    )
+    check = _SingleCheckResult(
+        status="in_progress",
+        reason="Name field is visible and empty",
+        summary="corrected route",
+    )
+
+    step = p._plan_single(_ms(), check, obs, history)
+
+    assert step.summary != STUCK
+    assert step.should_act
+    assert "Name" in (step.instruction or "")
