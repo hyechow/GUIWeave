@@ -133,6 +133,14 @@ TEXTUAL_FALLBACK_HEURISTIC_SAMPLES: tuple[dict[str, object], ...] = (
         "retire_when": "checker emits structured failure categories instead of free-text issues",
     },
     {
+        "id": "runtime.negative_action_feedback_regex.required_column_is_not_error",
+        "kind": "negative_action_feedback",
+        "owner": "gui_agent.core.supervisor.milestone.policy",
+        "trigger": "Attribute Code, Default Label, Required, System, Visible, Scope",
+        "expected": False,
+        "retire_when": "checker emits structured failure categories instead of free-text issues",
+    },
+    {
         "id": "runtime.preserve_scope_regex.keep_entity_keyword",
         "kind": "runtime_preserved_scope_filter",
         "owner": "gui_agent.core.supervisor.milestone.helpers",
