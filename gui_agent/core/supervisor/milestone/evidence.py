@@ -47,15 +47,6 @@ def action_lifecycle_claims(
 ) -> list[EvidenceClaim]:
     """Translate persisted action lifecycle state into typed evidence claims."""
     claims: list[EvidenceClaim] = []
-    if monitor.url_changed:
-        claims.append(claim(
-            "page.response",
-            "confirmed",
-            source_type="runtime.effect_monitor",
-            scope=scope,
-            evidence="URL changed after the previous action",
-            authoritative=True,
-        ))
     scoped_history = [
         turn
         for turn in history
@@ -73,12 +64,23 @@ def action_lifecycle_claims(
     if latest is None:
         return claims
     lifecycle_scope = getattr(latest.supervisor, "execution_scope", "") or scope
+    if monitor.url_changed:
+        claims.append(claim(
+            "page.response",
+            "confirmed",
+            source_type="runtime.effect_monitor",
+            scope=scope,
+            subject_scope=lifecycle_scope,
+            evidence="URL changed after the previous action",
+            authoritative=True,
+        ))
     terminal = is_commit_turn(latest, milestone)
     claims.append(claim(
         "action.execution",
         "confirmed",
         source_type=("runtime.commit_dispatch" if terminal else "runtime.action_dispatch"),
         scope=scope,
+        subject_scope=lifecycle_scope,
         evidence="runtime action ledger records a dispatched event",
         authoritative=True,
     ))
@@ -104,6 +106,9 @@ def action_lifecycle_claims(
             "confirmed",
             source_type="runtime.write_dispatch",
             scope=scope,
+            subject_scope=(
+                getattr(write_turn.supervisor, "execution_scope", "") or lifecycle_scope
+            ),
             evidence="runtime action ledger records an on-target target write",
             authoritative=True,
         ))
@@ -114,6 +119,7 @@ def action_lifecycle_claims(
             "confirmed" if target_verify.on_target else "contradicted",
             source_type="runtime.target_verify",
             scope=scope,
+            subject_scope=lifecycle_scope,
             evidence=(
                 "action target verified"
                 if target_verify.on_target
@@ -147,6 +153,7 @@ def target_value_claims(
             "confirmed",
             source_type="obs.dom.target_values",
             scope=scope,
+            subject_scope=scope,
             evidence=state.evidence,
             authoritative=True,
             coverage="matched_structural_unit",
@@ -157,6 +164,7 @@ def target_value_claims(
             "contradicted",
             source_type="obs.dom.target_values",
             scope=scope,
+            subject_scope=scope,
             evidence=state.evidence,
             authoritative=True,
             coverage="matched_structural_unit",
@@ -180,7 +188,12 @@ def target_value_claims(
     return claims
 
 
-def checker_claim(check: _SingleCheckResult, *, scope: str) -> EvidenceClaim:
+def checker_claim(
+    check: _SingleCheckResult,
+    *,
+    scope: str,
+    subject_scope: str = "",
+) -> EvidenceClaim:
     """Translate a probabilistic checker result without granting it control-flow authority."""
     if check.outcome_status == "contradicted":
         value = "contradicted"
@@ -193,6 +206,7 @@ def checker_claim(check: _SingleCheckResult, *, scope: str) -> EvidenceClaim:
         value,
         source_type="checker",
         scope=scope,
+        subject_scope=subject_scope or scope,
         evidence=check.reason or check.summary,
         coverage="visible_frame",
     )
@@ -246,6 +260,7 @@ def observation_state_claims(
             "confirmed",
             source_type="obs.applied_filters",
             scope=scope,
+            subject_scope=scope,
             evidence=f"target filter is active: {applied_filters}",
             authoritative=True,
             coverage="declared_filter_state",

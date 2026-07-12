@@ -273,6 +273,8 @@ def _render_turn_lines(turns: list[PolicyTurn]) -> str:
                 lifecycle += f"; target_value={signal.target_value}"
             if signal.suppressed_reason:
                 lifecycle += f"; suppressed={signal.suppressed_reason}"
+            if signal.binding:
+                lifecycle += f"; binding={signal.binding.status}"
         if turn.action_decision and turn.executed:
             action = turn.action_decision.action
             lines.append(

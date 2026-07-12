@@ -8,10 +8,10 @@ platform-neutral. Site facts belong in knowledge; platform mechanics belong in a
 - `policy.py`: owns milestone state transitions. It may consume typed evidence, request one
   proposal, advance, recover, or fail. It must not classify instruction prose or implement a
   platform control mechanism.
-- `action_protocol.py`: interprets structured planner and executor receipts (`atomic_role`,
-  `action_family`, dispatch, target verification). It contains no action-verb vocabulary.
+- `action_protocol.py`: records structured executor receipts (response and arbitrated outcome).
+  It contains no action-verb vocabulary and cannot advance execution.
 - `evidence.py`: converts observations and receipts into `EvidenceClaim` values. It never changes
-  milestone state.
+  milestone state. Statement scope and evidence subject/resource are separate dimensions.
 - `execution_scope.py`: isolates history by observable resource identity or milestone identity.
   It does not know application routes or entity names.
 - `helpers.py`: assembles model calls and implements structural target-state/acquire helpers over
@@ -39,3 +39,16 @@ Core execution code must not contain:
 
 When a live failure exposes a missing concept, add a neutral contract or adapter evidence channel.
 If the behavior cannot be stated without application vocabulary, keep it in knowledge or remove it.
+
+## Target Binding
+
+Write/select dispatch uses the platform-neutral binding protocol in
+`gui_agent/core/run/target_binding.py`. A concrete visual point is the baseline capability and has
+one-shot scope. Adapters may upgrade it to a structural identity or provide a direct identity
+contradiction. A missing optional structural capability may fall back to visual binding. Positive
+structural ambiguity never does. A unique concrete point may derive its structural unit directly;
+an explicit unit is required only when the point itself cannot distinguish multiple candidates.
+
+Binding authorizes one write dispatch only. It does not mark a milestone complete, choose a
+recovery route, or maintain a second execution ledger. Completion remains owned by `policy.py`
+and must be supported by post-action evidence associated with the same binding token.

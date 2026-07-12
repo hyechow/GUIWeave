@@ -18,6 +18,98 @@ from gui_agent.core.supervisor.milestone.action_protocol import (
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult
 
 
+def _redirected_mutation_contract() -> ExecutionContract:
+    return ExecutionContract(
+        statement_id="save",
+        kind="action",
+        require_terminal_dispatch=True,
+        completion_mode="mutation",
+    )
+
+
+def test_destination_page_state_cannot_contradict_source_resource_mutation() -> None:
+    scope = "milestone:save"
+    decision = CompletionEvaluator().decide(
+        _redirected_mutation_contract(),
+        [
+            claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope=scope,
+                subject_scope="row:record/65",
+                authoritative=True,
+            ),
+            claim(
+                "action.execution",
+                "confirmed",
+                source_type="runtime.commit_dispatch",
+                scope=scope,
+                subject_scope="row:record/65",
+                authoritative=True,
+            ),
+            claim(
+                "control.state",
+                "contradicted",
+                source_type="obs.dom.target_values",
+                scope=scope,
+                subject_scope="milestone:save",
+                evidence="destination list has no source form controls",
+                authoritative=True,
+            ),
+            claim(
+                "business.outcome",
+                "contradicted",
+                source_type="checker",
+                scope=scope,
+                subject_scope="milestone:save",
+                evidence="source form is no longer visible",
+            ),
+        ],
+        scope=scope,
+    )
+
+    assert decision.status == "satisfied"
+    assert decision.completion_status == "accepted_unverified"
+
+
+def test_authoritative_operation_failure_for_source_resource_wins_after_redirect() -> None:
+    scope = "milestone:save"
+    decision = CompletionEvaluator().decide(
+        _redirected_mutation_contract(),
+        [
+            claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope=scope,
+                subject_scope="row:record/65",
+                authoritative=True,
+            ),
+            claim(
+                "action.execution",
+                "confirmed",
+                source_type="runtime.commit_dispatch",
+                scope=scope,
+                subject_scope="row:record/65",
+                authoritative=True,
+            ),
+            claim(
+                "business.outcome",
+                "contradicted",
+                source_type="adapter.persistence_result",
+                scope=scope,
+                subject_scope="row:record/65",
+                evidence="the operation was rejected",
+                authoritative=True,
+            ),
+        ],
+        scope=scope,
+    )
+
+    assert decision.status == "contradicted"
+
+
 def test_action_metadata_preserves_structured_commit_role_and_family():
     plan = _PlanResult(
         instruction="按回车提交当前字段",
@@ -224,6 +316,77 @@ def test_commit_cannot_be_accepted_while_declared_target_values_are_incomplete()
     assert decision.status == "pending"
     assert decision.completion_status == "in_progress"
     assert decision.conflicts == ("target.values.incomplete",)
+
+
+def test_authoritative_field_state_overrides_checker_pixel_contradiction():
+    decision = CompletionEvaluator().decide(
+        ExecutionContract(
+            statement_id="save",
+            kind="action",
+            require_fresh_action=True,
+            require_terminal_dispatch=True,
+            completion_mode="mutation",
+        ),
+        [
+            claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope="row:7",
+                authoritative=True,
+            ),
+            claim(
+                "control.state",
+                "confirmed",
+                source_type="obs.structured.target_values",
+                scope="row:7",
+                evidence="all declared fields match in one unit",
+                authoritative=True,
+            ),
+            claim(
+                "business.outcome",
+                "contradicted",
+                source_type="checker",
+                scope="row:7",
+                evidence="the screenshot appears to show placeholder text",
+            ),
+        ],
+        scope="row:7",
+    )
+
+    assert decision.status == "pending"
+    assert decision.conflicts == ("action.commit.required",)
+
+
+def test_authoritative_business_failure_still_overrides_field_state():
+    decision = CompletionEvaluator().decide(
+        ExecutionContract(
+            statement_id="save",
+            kind="action",
+            require_terminal_dispatch=True,
+            completion_mode="mutation",
+        ),
+        [
+            claim(
+                "control.state",
+                "confirmed",
+                source_type="obs.structured.target_values",
+                scope="row:7",
+                authoritative=True,
+            ),
+            claim(
+                "business.outcome",
+                "contradicted",
+                source_type="adapter.validation_error",
+                scope="row:7",
+                evidence="the persistence endpoint rejected the value",
+                authoritative=True,
+            ),
+        ],
+        scope="row:7",
+    )
+
+    assert decision.status == "contradicted"
 
 
 def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():

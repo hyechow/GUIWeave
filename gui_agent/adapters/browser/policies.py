@@ -26,6 +26,7 @@ from gui_agent.adapters.browser.control_grounding import (
     resolve_native_control_action,
 )
 from gui_agent.adapters.browser.executor import _range_field_label
+from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.policies.base import BaseActionPolicy
 from gui_agent.prompts import load_prompt_text
 
@@ -87,6 +88,10 @@ class BrowserActionPolicy(BaseActionPolicy):
     name = "browser_vision"
     SYSTEM_PROMPT = SYSTEM_PROMPT
     decision_schema = BrowserActionDecision
+    _target_binder = BrowserTargetBinder()
+
+    def bind(self, step, observation, action_decision):
+        return self._target_binder.bind(step, observation, action_decision)
 
     def _prepare_png(self, png_bytes: bytes) -> bytes:
         return _prepare_browser_png(png_bytes)

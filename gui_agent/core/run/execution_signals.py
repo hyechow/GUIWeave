@@ -102,6 +102,7 @@ class EvidenceClaim:
     value: ClaimValue
     source_type: str
     scope: str
+    subject_scope: str = ""
     evidence: str = ""
     authoritative_for: tuple[str, ...] = ()
     freshness: str = "turn"
@@ -177,6 +178,7 @@ def claim(
     *,
     source_type: str,
     scope: str,
+    subject_scope: str = "",
     evidence: str = "",
     authoritative: bool = False,
     freshness: str = "turn",
@@ -188,6 +190,7 @@ def claim(
         value=value,
         source_type=source_type,
         scope=scope,
+        subject_scope=subject_scope,
         evidence=evidence,
         authoritative_for=(domain,) if authoritative else (),
         freshness=freshness,
@@ -233,24 +236,61 @@ class CompletionEvaluator:
         scope: str,
     ) -> CompletionEvaluation:
         scoped = tuple(item for item in claims if item.scope == scope)
-        outcome = self._best(self._claims(scoped, "business.outcome", scope))
-        if outcome is not None and outcome.value == "contradicted":
-            return CompletionEvaluation(
-                status="contradicted",
-                reason=outcome.evidence or "业务后置状态已被明确证伪",
-                used_claims=(outcome,),
-            )
-
         execution = self._best(self._claims(scoped, "action.execution", scope))
         write = self._best(self._claims(scoped, "action.write", scope))
+        expected_subject = ""
+        if contract.completion_mode == "mutation":
+            expected_subject = (
+                (write.subject_scope if write is not None else "")
+                or (execution.subject_scope if execution is not None else "")
+            )
+
+        def covers_expected_subject(item: EvidenceClaim) -> bool:
+            return bool(
+                not expected_subject
+                or not item.subject_scope
+                or item.subject_scope == expected_subject
+            )
+
+        outcome = self._best(
+            item
+            for item in self._claims(scoped, "business.outcome", scope)
+            if covers_expected_subject(item)
+        )
         response = self._best(self._claims(scoped, "page.response", scope))
         target = self._best(self._claims(scoped, "action.target", scope))
         filter_state = self._best(self._claims(scoped, "filter.state", scope))
-        control_state = self._best(self._claims(scoped, "control.state", scope))
+        control_state = self._best(
+            item
+            for item in self._claims(scoped, "control.state", scope)
+            if covers_expected_subject(item)
+        )
         result = self._best(self._claims(scoped, "result.availability", scope))
         delegation = self._best(
             self._claims(scoped, "execution.delegation", scope)
         )
+
+        # A probabilistic checker cannot overrule an authoritative reading of the exact declared
+        # controls. This is common for narrow inputs whose screenshot shows a placeholder or
+        # clipped text while the adapter reports the actual value. The checker remains decisive
+        # when no stronger field-state evidence exists, and authoritative business failures always
+        # remain contradictions.
+        if outcome is not None and outcome.value == "contradicted":
+            field_state_overrides_checker = bool(
+                contract.completion_mode == "mutation"
+                and not outcome.authoritative
+                and control_state is not None
+                and control_state.value == "confirmed"
+                and control_state.authoritative
+            )
+            if field_state_overrides_checker:
+                outcome = None
+            else:
+                return CompletionEvaluation(
+                    status="contradicted",
+                    reason=outcome.evidence or "业务后置状态已被明确证伪",
+                    used_claims=(outcome,),
+                )
 
         if delegation is not None and delegation.value == "confirmed":
             return CompletionEvaluation(
@@ -316,6 +356,20 @@ class CompletionEvaluator:
                 and execution.value == "confirmed"
                 and execution.source_type == "runtime.commit_dispatch"
             )
+            if (
+                contract.require_terminal_dispatch
+                and write_confirmed
+                and control_state is not None
+                and control_state.value == "confirmed"
+                and not commit_confirmed
+            ):
+                return CompletionEvaluation(
+                    "pending",
+                    "声明的目标字段已达到目标值，但终端提交尚未派发；"
+                    "当前控件值仍是草稿状态，下一步只应执行持久化提交",
+                    conflicts=("action.commit.required",),
+                    used_claims=(write, control_state),
+                )
             # ``ensure`` may accept a genuinely pre-existing terminal state without touching it.
             # Once this execution scope has written a target field, however, the observed control
             # values are only draft state until the statement's declared persistence boundary is

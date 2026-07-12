@@ -52,6 +52,7 @@ from gui_agent.core.run.progress_monitor import (
     action_signature,
     canonical_url,
 )
+from gui_agent.core.run.target_binding import validate_target_spec
 from .schemas import (
     MilestonePrompts,
     _DecomposeResponse,
@@ -71,13 +72,18 @@ from gui_agent.core.run.execution_signals import (
     CompletionEvaluator,
     claim,
 )
-from .action_protocol import action_metadata, is_commit_turn, milestone_commit_succeeded
+from .action_protocol import (
+    action_metadata,
+    is_commit_turn,
+    milestone_commit_succeeded,
+    record_action_outcome,
+    record_action_response,
+)
 from .evidence import (
     action_lifecycle_claims,
     checker_claim,
     execution_contract_for,
     observation_state_claims,
-    runtime_filter_intent,
     target_value_claims,
 )
 from .execution_scope import (
@@ -278,6 +284,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             "confirmed",
             source_type=source_type,
             scope=scope,
+            subject_scope=scope,
             evidence=evidence,
             authoritative=True,
         ))
@@ -300,7 +307,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         claims.extend(self._target_value_claims(
             milestone, observation, scope=scope
         ))
-        claims.append(self._checker_claim(check, scope=scope))
+        claims.append(self._checker_claim(check, scope=scope, subject_scope=scope))
         return self._completion_evaluator.decide(
             self._contract_for(milestone),
             claims,
@@ -400,63 +407,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             )
             if con not in self._global_constraints:
                 self._add_runtime_constraint(con, scope=scope, source="loop_guard")
-
-    def _update_latest_action_response(
-        self, history: list[PolicyTurn], milestone: Milestone
-    ) -> None:
-        turn = self._action_ledger.latest_pending(history, milestone.id)
-        if turn is None or turn.action_signal is None:
-            return
-        signal = turn.action_signal
-        if self._monitor.url_changed:
-            signal.response = "observed"
-            if "url" not in signal.response_channels:
-                signal.response_channels.append("url")
-        if self._monitor.dom_changed:
-            signal.response = "observed"
-            if "dom" not in signal.response_channels:
-                signal.response_channels.append("dom")
-        if turn.no_effect and signal.response == "unknown":
-            signal.response = "none_observed"
-
-    def _update_latest_action_outcome(
-        self,
-        history: list[PolicyTurn],
-        milestone: Milestone,
-        check: _SingleCheckResult,
-    ) -> None:
-        turn = self._action_ledger.latest_pending(history, milestone.id)
-        if turn is None or turn.action_signal is None:
-            return
-        signal = turn.action_signal
-        declared = getattr(check, "outcome_status", "unverified")
-        negative = declared == "contradicted"
-        if negative:
-            signal.outcome = "contradicted"
-        elif declared == "confirmed" and signal.outcome != "contradicted":
-            signal.outcome = "confirmed"
-        # ``unverified`` carries no new information and must not erase a confirmed/contradicted
-        # outcome from the same dispatch. A contradiction is terminal for that dispatch; only a
-        # later corrected commit creates a new lifecycle record that can succeed.
-        if negative or declared == "confirmed":
-            evidence = [*(check.visible_evidence or []), check.reason or ""]
-            for item in evidence:
-                if item and item not in signal.outcome_evidence:
-                    signal.outcome_evidence.append(item)
-
-    def _runtime_filter_intent(
-        self,
-        milestone: Milestone,
-        history: list[PolicyTurn],
-        *,
-        scope: str,
-    ):
-        return runtime_filter_intent(
-            milestone,
-            history,
-            scope=scope,
-            ledger=self._action_ledger,
-        )
 
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
         self._timings.clear()
@@ -607,7 +557,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             and history[-1].executed
         ):
             response_history = [history[-1]]
-        self._update_latest_action_response(response_history, milestone)
+        record_action_response(
+            response_history,
+            milestone,
+            monitor=self._monitor,
+            ledger=self._action_ledger,
+        )
         if self._monitor.url_changed:
             print(f"  [URLChanged] {observation.url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
         if self._monitor.dom_changed and not self._monitor.url_changed:
@@ -619,17 +574,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             history,
             scope=execution_scope,
         )
-        latest_dispatched = self._action_ledger.latest_dispatched(
-            response_history, milestone.id
-        )
-
-        terminal_response_pending = bool(
-            milestone.kind == "action"
-            and self._monitor.url_changed
-            and latest_dispatched is not None
-            and is_commit_turn(latest_dispatched, milestone)
-        )
-
         evidence_claims.extend(observation_state_claims(
             milestone,
             observation,
@@ -637,11 +581,26 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             scope=execution_scope,
             ledger=self._action_ledger,
         ))
+        latest_dispatched = self._action_ledger.latest_dispatched(
+            response_history, milestone.id
+        )
+        terminal_response_pending = bool(
+            milestone.kind == "action"
+            and self._monitor.url_changed
+            and latest_dispatched is not None
+            and is_commit_turn(latest_dispatched, milestone)
+        )
 
         pre_completion = self._completion_evaluator.decide(
             contract, evidence_claims, scope=execution_scope
         )
         if pre_completion.status == "satisfied" and pre_completion.completion_status == "confirmed":
+            record_action_outcome(
+                response_history,
+                milestone,
+                pre_completion,
+                ledger=self._action_ledger,
+            )
             check = _SingleCheckResult(
                 status="done",
                 reason=pre_completion.reason,
@@ -746,10 +705,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 **_ctx(milestone, None),
             )
 
-        self._update_latest_action_outcome(response_history, milestone, check)
-        evidence_claims.append(self._checker_claim(check, scope=execution_scope))
+        evidence_claims.append(self._checker_claim(
+            check,
+            scope=execution_scope,
+            subject_scope=execution_scope,
+        ))
         post_completion = self._completion_evaluator.decide(
             contract, evidence_claims, scope=execution_scope
+        )
+        record_action_outcome(
+            response_history,
+            milestone,
+            post_completion,
+            ledger=self._action_ledger,
         )
         if (
             post_completion.status == "pending"
@@ -761,6 +729,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 "reason": post_completion.reason,
                 "summary": "execution contract requires a target write before commit",
                 "missing_evidence": ["先写入声明的业务目标字段，再执行终端提交。"],
+            })
+            self._last_check = check
+        elif (
+            post_completion.status == "pending"
+            and "action.commit.required" in post_completion.conflicts
+        ):
+            check = check.model_copy(update={
+                "status": "in_progress",
+                "outcome_status": "unverified",
+                "reason": post_completion.reason,
+                "summary": "execution contract requires terminal persistence",
+                "missing_evidence": ["目标字段已就绪；执行声明的保存/提交边界。"],
             })
             self._last_check = check
         accepted_unverified = post_completion.completion_status == "accepted_unverified"
@@ -995,6 +975,37 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     milestone, check, observation, history,
                     extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
                 )
+        raw_action_family = getattr(plan, "action_family", "unknown")
+        atomic_role, action_family = action_metadata(plan, milestone)
+        target_error = ""
+        if (
+            (milestone.target_controls or milestone.target_values)
+            and (atomic_role == "write" or action_family in {"input", "select"})
+        ):
+            target_error = validate_target_spec(
+                control=getattr(plan, "target_control", ""),
+                value=getattr(plan, "target_value", ""),
+                milestone=milestone,
+            )
+        if target_error:
+            print(f"  [TargetContract] {target_error}")
+            stuck = _SingleCheckResult(
+                status="stuck",
+                reason=f"planner target contract is invalid: {target_error}",
+                stuck_reason=target_error,
+                summary="写目标未能绑定到 milestone 合同",
+                outcome_status="unverified",
+            )
+            return self._handle_stuck(
+                milestone,
+                stuck,
+                check.read_instruction,
+                observation,
+                history,
+                page_changed=False,
+                prev_page_id=check.page_identity,
+                current_page_id=check.page_identity,
+            )
         # 结构化 drag 距离：当 planner 给出本列的当前值/目标值时，按差几格算出 drag_steps，
         # 让 action policy 据此放大拖动幅度（差 20 格用 large 粗调、接近后自动收回 small 精调）。
         # 这条结构化通路绕开「从 instruction 文本正则抠数字」的脆弱性——指令只写了目标值
@@ -1026,8 +1037,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 plan.drag_target_value = None
                 drag_steps = None
 
-        raw_action_family = getattr(plan, "action_family", "unknown")
-        atomic_role, action_family = action_metadata(plan, milestone)
         if raw_action_family != action_family:
             print(
                 "  [ActionContract] normalize "

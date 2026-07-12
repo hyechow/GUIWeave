@@ -10,7 +10,15 @@ from typing import Any, Callable
 
 from llm.structured import get_llm_token_usage
 
-from gui_agent.core.schemas import ActionDecision, Observation, SupervisorStep, action_label
+from gui_agent.core.schemas import (
+    ActionDecision,
+    Observation,
+    SupervisorStep,
+    TargetBinding,
+    action_label,
+)
+from gui_agent.core.run.action_ledger import effective_action_role
+from gui_agent.core.run.target_binding import bind_action_target
 from gui_agent.core.vision.frame_analysis import STABLE_MEAN_THR, frame_changed, frame_diff
 from gui_agent.core.vision.target_verify import verify_target
 from gui_agent.core.vision.visualize import print_decision
@@ -124,6 +132,7 @@ class ActionRunResult:
     suppressed_reason: str = ""
     probe_failed: bool = False
     branch_settle_s: float | None = None
+    binding: TargetBinding | None = None
 
 
 class ActionExecutionState:
@@ -199,6 +208,26 @@ class ActionExecutionState:
             return result
 
         action = action_decision.action
+        if effective_action_role(sv_step, action) == "write":
+            binder = action_policy if callable(getattr(action_policy, "bind", None)) else None
+            result.binding = bind_action_target(
+                binder=binder,
+                step=sv_step,
+                observation=observation,
+                action_decision=action_decision,
+            )
+            if result.binding.status != "bound":
+                result.suppressed_reason = (
+                    "target binding failed before dispatch: "
+                    f"{result.binding.status}: {result.binding.reason}"
+                )
+                say(f"  [TargetBinding] {result.suppressed_reason}")
+                status(turn_no, "目标绑定失败，未派发写动作")
+                return result
+            say(
+                "  [TargetBinding] "
+                f"{result.binding.source}:{result.binding.unit_id or 'control'}"
+            )
         if action_decision.action:
             status(turn_no, f"[{action_label(action.action_type)}] {action.description}")
 

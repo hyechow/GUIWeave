@@ -24,7 +24,7 @@ def _control_aliases(control: dict) -> set[str]:
     return {_norm(value) for value in values if _norm(value)}
 
 
-def _matches_target(control: dict, target: str) -> bool:
+def matches_target_control(control: dict, target: str) -> bool:
     target_key = _norm(target)
     aliases = _control_aliases(control)
     if target_key in aliases:
@@ -64,7 +64,7 @@ def rendered_target_evidence(
         for control in controls or []
         if isinstance(control, dict)
         and _in_group(control, target_group_id)
-        and _matches_target(control, target_control)
+        and matches_target_control(control, target_control)
     ]
     if len(candidates) != 1:
         return ""
@@ -121,7 +121,7 @@ def resolve_native_control_action(
             continue
         if target_group_id and not _in_group(control, target_group_id):
             continue
-        if not _matches_target(control, target_control):
+        if not matches_target_control(control, target_control):
             continue
         kind = str(control.get("kind") or "").lower()
         if kind != "native_select":
@@ -186,7 +186,7 @@ def ground_rendered_action(
             continue
         if not _in_group(control, target_group_id):
             continue
-        if not _matches_target(control, target_control):
+        if not matches_target_control(control, target_control):
             continue
         kind = str(control.get("kind") or "").lower()
         if not any(token in kind for token in ("input", "textarea")):

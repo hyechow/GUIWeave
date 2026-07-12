@@ -5,6 +5,7 @@ import pytest
 from gui_agent.core.orchestrator.program import Finish, Program, Run, RunResult
 from gui_agent.core.orchestrator.runner import Interpreter, RunRecord, make_run_result
 from gui_agent.core.run.action_ledger import effective_action_role, semantic_action_key
+from gui_agent.core.run.execution_signals import CompletionEvaluation
 from gui_agent.core.run.loop import _needs_terminal_reconciliation, _turn_budget_mode
 from gui_agent.core.run.result import orchestration_result
 from gui_agent.core.run.turns import interactive_turn_count, make_interactive_turn, make_verdict_turn
@@ -19,6 +20,7 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.supervisor.milestone import policy as policy_module
+from gui_agent.core.supervisor.milestone.action_protocol import record_action_outcome
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
@@ -353,25 +355,23 @@ def test_unverified_feedback_does_not_erase_a_known_commit_contradiction():
     signal = dispatched.action_signal
     assert signal is not None
 
-    policy._update_latest_action_outcome(
+    record_action_outcome(
         [dispatched],
         milestone,
-        _SingleCheckResult(
-            status="in_progress",
+        CompletionEvaluation(
+            status="contradicted",
             reason="the attempted route produced the wrong result",
-            summary="route rejected",
-            outcome_status="contradicted",
         ),
+        ledger=policy._action_ledger,
     )
-    policy._update_latest_action_outcome(
+    record_action_outcome(
         [dispatched],
         milestone,
-        _SingleCheckResult(
-            status="in_progress",
+        CompletionEvaluation(
+            status="pending",
             reason="the corrected form is not submitted yet",
-            summary="awaiting corrected commit",
-            outcome_status="unverified",
         ),
+        ledger=policy._action_ledger,
     )
 
     assert signal.outcome == "contradicted"
@@ -480,24 +480,32 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
     assert set(history[-1].action_signal.response_channels) == {"url", "dom"}
 
 
-def test_redirected_commit_prefers_confirmed_outcome_feedback(monkeypatch):
+def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
+    """A destination page cannot disprove source-local fields that disappeared on Save."""
     policy = MilestoneSupervisorPolicy()
     milestone = Milestone(
         id="m1",
-        name="保存记录",
+        name="persist one record",
         description="",
-        success_condition="记录已保存",
+        success_condition="the saved record contains the requested values",
         kind="action",
         require_fresh_action=True,
+        requires_commit=True,
+        target_controls=["record_fields"],
+        target_values={"Primary Value": "A", "Secondary Value": "B"},
     )
     policy._milestones = {"m1": milestone}
     policy._current_id = "m1"
     policy._order = ["m1"]
     history = [
-        _turn(index=1, step=_step(scope="row:record/65", role="write"), role="write"),
-        _turn(index=2, step=_step(scope="row:record/65")),
+        _turn(
+            index=1,
+            step=_step(scope="row:record/7", role="write"),
+            role="write",
+        ),
+        _turn(index=2, step=_step(scope="row:record/7")),
     ]
-    policy._monitor.observe_effect("http://x/record/65", "draft")
+    policy._monitor.observe_effect("http://x/record/7", "draft")
     monkeypatch.setattr(
         "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
         lambda _obs: False,
@@ -506,30 +514,36 @@ def test_redirected_commit_prefers_confirmed_outcome_feedback(monkeypatch):
         policy,
         "_single_check",
         lambda *_args, **_kwargs: _SingleCheckResult(
-            status="done",
-            reason="当前帧显示保存成功且目标记录状态正确",
-            summary="保存结果已确认",
-            visible_evidence=["保存成功"],
-            outcome_status="confirmed",
+            status="in_progress",
+            reason="the destination list does not render the source form fields",
+            summary="source-local state is outside this frame",
+            missing_evidence=["source form fields"],
+            visible_evidence=[],
+            outcome_status="contradicted",
         ),
     )
 
     result = policy._run_single_turn(
         milestone,
         Observation(
-            png_bytes=b"x",
+            png_bytes=b"destination",
             source="browser",
             url="http://x/records",
-            dom_state="success",
+            dom_state="destination-list",
+            form_controls_meta={"coverage": "complete"},
+            form_controls=[{
+                "label": "Destination Search",
+                "kind": "text_input",
+                "value": "",
+            }],
         ),
         history,
     )
 
     assert result.goal_completed is True
-    assert result.completion_status == "confirmed"
-    assert result.pre_existing is False
+    assert result.completion_status == "accepted_unverified"
     assert history[-1].action_signal is not None
-    assert history[-1].action_signal.outcome == "confirmed"
+    assert history[-1].action_signal.outcome == "unverified"
 
 
 def test_accepted_unverified_run_result_advances_interpreter_but_is_not_verified():

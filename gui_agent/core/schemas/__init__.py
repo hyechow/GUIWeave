@@ -64,6 +64,8 @@ ActionTargetStatus = Literal["on_target", "off_target", "unknown"]
 ActionResponseStatus = Literal["observed", "none_observed", "unobservable", "unknown"]
 ActionOutcomeStatus = Literal["confirmed", "contradicted", "unverified"]
 CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
+BindingSource = Literal["visual", "structural"]
+BindingStatus = Literal["bound", "unresolved", "contradicted"]
 
 # 「连续操作」轴（与 kind 正交）：靠重复调整逼近目标的策略，区别于单步达成。
 #   - repeat_until_satisfied：收敛到目标值（picker 调日期/时间、步进器、滑块）
@@ -79,6 +81,15 @@ ITERATIVE_STRATEGIES: tuple[str, ...] = (
 )
 
 
+class TargetBinding(BaseModel):
+    """One-shot result of binding a concrete write to a target identity."""
+
+    status: BindingStatus
+    source: Optional[BindingSource] = None
+    unit_id: str = ""
+    reason: str = ""
+
+
 class ActionSignal(BaseModel):
     """Structured lifecycle of one atomic UI action.
 
@@ -91,6 +102,7 @@ class ActionSignal(BaseModel):
     role: AtomicRole = "prepare"
     target_control: str = ""
     target_value: str = ""
+    binding: Optional[TargetBinding] = None
     execution: ActionExecutionStatus = "not_attempted"
     target: ActionTargetStatus = "unknown"
     response: ActionResponseStatus = "unknown"

@@ -1,8 +1,7 @@
-"""Offline replay of critical execution timing from a real browser run.
+"""Offline replay of execution fixtures.
 
-The fixture contains only distilled structural observations and recorded policy outputs. Cases
-that asserted retired pre-dispatch gates are ignored; completion, lifecycle, grounding, and
-scope evidence remain replayed without a browser, LLM, site knowledge, or evaluator oracle.
+Version 2 fixtures preserve recorded turn payloads and adapter observations from a live run.
+Version 1 remains readable while older distilled fixtures are migrated.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from gui_agent.core.run.execution_signals import (
+    CompletionEvaluation,
     CompletionEvaluator,
     ConstraintLedger,
     EvidenceClaim,
@@ -38,6 +38,7 @@ from gui_agent.core.schemas import (
 )
 from gui_agent.core.supervisor.milestone import policy as policy_module
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.milestone.action_protocol import record_action_outcome
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
@@ -46,6 +47,8 @@ from gui_agent.adapters.browser.control_grounding import (
 )
 from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.adapters.browser.policies import BrowserActionPolicy
+from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
+from gui_agent.core.run.target_binding import bind_action_target
 from gui_agent.adapters.browser.supervisor.milestone.prompts import BrowserPlanResult
 from gui_agent.core.supervisor.milestone.feasibility import semantic_target_present
 
@@ -134,11 +137,17 @@ def _lifecycle_monotonic_case(case: dict[str, Any]) -> None:
     contradiction = _SingleCheckResult.model_validate(case["contradiction_check"])
     later_unverified = _SingleCheckResult.model_validate(case["later_unverified_check"])
 
-    policy._update_latest_action_outcome(
-        [dispatched], milestone, contradiction
+    record_action_outcome(
+        [dispatched],
+        milestone,
+        _fused_result(contradiction),
+        ledger=policy._action_ledger,
     )
-    policy._update_latest_action_outcome(
-        [dispatched], milestone, later_unverified
+    record_action_outcome(
+        [dispatched],
+        milestone,
+        _fused_result(later_unverified),
+        ledger=policy._action_ledger,
     )
     signal = dispatched.action_signal
     assert signal is not None
@@ -159,12 +168,27 @@ def _lifecycle_closed_case(case: dict[str, Any]) -> None:
     milestone = Milestone.model_validate(case["milestone"])
     dispatched = PolicyTurn.model_validate(case["dispatched_turn"])
     for payload in case["checks"]:
-        policy._update_latest_action_outcome(  # noqa: SLF001
-            [dispatched], milestone, _SingleCheckResult.model_validate(payload)
+        record_action_outcome(
+            [dispatched],
+            milestone,
+            _fused_result(_SingleCheckResult.model_validate(payload)),
+            ledger=policy._action_ledger,
         )
     signal = dispatched.action_signal
     assert signal is not None
     assert signal.outcome == case["expected"]["outcome"]
+
+
+def _fused_result(check: _SingleCheckResult) -> CompletionEvaluation:
+    if check.outcome_status == "contradicted":
+        return CompletionEvaluation(status="contradicted", reason=check.reason)
+    if check.outcome_status == "confirmed":
+        return CompletionEvaluation(
+            status="satisfied",
+            reason=check.reason,
+            completion_status="confirmed",
+        )
+    return CompletionEvaluation(status="pending", reason=check.reason)
 
 
 def _native_action_case(case: dict[str, Any]) -> None:
@@ -256,6 +280,22 @@ def _signal_fusion_case(case: dict[str, Any]) -> None:
         assert list(decision.conflicts) == case["expected"]["conflicts"]
 
 
+def _target_binding_case(case: dict[str, Any]) -> None:
+    recorded = case.get("recorded_turn") or {}
+    outcome = bind_action_target(
+        binder=BrowserTargetBinder(),
+        step=SupervisorStep.model_validate(recorded.get("supervisor") or case["step"]),
+        observation=Observation.model_validate(case["observation"]),
+        action_decision=BrowserActionDecision.model_validate(
+            recorded.get("action_decision") or case["action_decision"]
+        ),
+    )
+    expected = case["expected"]
+    assert outcome.status == expected["status"]
+    if "source" in expected:
+        assert outcome.source == expected["source"]
+
+
 def _rendered_target_evidence_case(case: dict[str, Any]) -> None:
     evidence = rendered_target_evidence(
         case["form_controls"],
@@ -277,6 +317,8 @@ def _terminal_reconcile_case(case: dict[str, Any]) -> None:
     policy = MilestoneSupervisorPolicy()
     policy.reseed(milestone)
     policy._monitor._last_dom_state = case["previous_dom_state"]  # noqa: SLF001
+    if case.get("previous_url"):
+        policy._monitor._last_url = case["previous_url"]  # noqa: SLF001
     policy._single_check = (  # type: ignore[method-assign]
         lambda *_args, **_kwargs: _SingleCheckResult.model_validate(case["check"])
     )
@@ -314,6 +356,10 @@ def _terminal_reconcile_case(case: dict[str, Any]) -> None:
     assert signal.execution == "dispatched"
     assert signal.response == expected["response"]
     assert signal.outcome == expected["outcome"]
+    if "goal_completed" in expected:
+        assert step.goal_completed is expected["goal_completed"]
+    if "completion_status" in expected:
+        assert step.completion_status == expected["completion_status"]
     assert interactive_turn_count(context) == len(history)
     assert _needs_terminal_reconciliation(context) is False
 
@@ -334,6 +380,7 @@ def run_replay() -> list[str]:
         "browser_action_postprocess": _browser_action_postprocess_case,
         "semantic_target_presence": _semantic_target_presence_case,
         "signal_fusion": _signal_fusion_case,
+        "target_binding": _target_binding_case,
         "rendered_target_evidence": _rendered_target_evidence_case,
         "terminal_reconcile": _terminal_reconcile_case,
     }
@@ -345,13 +392,17 @@ def run_replay() -> list[str]:
     }
     for trace_path in TRACES:
         trace = json.loads(trace_path.read_text(encoding="utf-8"))
-        assert trace["version"] == 1
-        known_turns = trace["source"]["turns"]
-        assert all(len(digest) == 40 for digest in known_turns.values())
+        assert trace["version"] in {1, 2}
+        known_turns = trace["source"].get("turns", {})
+        if trace["version"] == 1:
+            assert all(len(digest) == 40 for digest in known_turns.values())
         for case in trace["cases"]:
             try:
-                for turn in case["source_turns"]:
-                    assert str(turn) in known_turns
+                if trace["version"] == 1:
+                    for turn in case["source_turns"]:
+                        assert str(turn) in known_turns
+                else:
+                    assert case["recorded_turn"]["index"] > 0
                 if case["kind"] in retired_gate_cases:
                     continue
                 handlers[case["kind"]](case)

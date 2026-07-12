@@ -919,6 +919,7 @@ def run_agent_loop(
                 executed=executed,
                 action_key=action_result.action_key,
                 suppressed_reason=action_result.suppressed_reason,
+                binding=action_result.binding,
                 llm_calls_before=llm_calls_before,
                 tokens_before=tokens_before,
                 turn_started_at=turn_started_at,

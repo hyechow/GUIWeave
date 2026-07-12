@@ -18,7 +18,13 @@ from gui_agent.core.run.action_ledger import effective_action_role, semantic_act
 from gui_agent.core.run.context import extract_checker, extract_plan, extract_replan
 from gui_agent.core.run.result import print_timings, print_turn_stats
 from gui_agent.core.run.state import sync_milestone_states
-from gui_agent.core.schemas import ActionSignal, PolicyContext, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import (
+    ActionSignal,
+    PolicyContext,
+    PolicyTurn,
+    SupervisorStep,
+    TargetBinding,
+)
 
 MODEL_KEYS = (
     "supervisor",
@@ -53,6 +59,7 @@ def make_interactive_turn(
     executed: bool = False,
     action_key: str = "",
     suppressed_reason: str = "",
+    binding: TargetBinding | None = None,
     llm_calls: int = 0,
     input_tokens: int = 0,
     output_tokens: int = 0,
@@ -87,6 +94,7 @@ def make_interactive_turn(
             if role == "write" and action is not None
             else ""
         ),
+        binding=binding,
         execution=execution,
         suppressed_reason=suppressed_reason,
         evidence=([suppressed_reason] if suppressed_reason else []),
@@ -249,6 +257,7 @@ def record_interactive_turn(
     executed: bool,
     action_key: str = "",
     suppressed_reason: str = "",
+    binding: TargetBinding | None = None,
     llm_calls_before: int,
     tokens_before: tuple[int, int],
     turn_started_at: float,
@@ -272,6 +281,7 @@ def record_interactive_turn(
         executed=executed,
         action_key=action_key,
         suppressed_reason=suppressed_reason,
+        binding=binding,
         llm_calls=get_llm_call_count() - llm_calls_before,
         input_tokens=tokens_after[0] - tokens_before[0],
         output_tokens=tokens_after[1] - tokens_before[1],
