@@ -103,8 +103,7 @@ else
 fi
 
 # headless 是唯一可见性开关:headed 模式默认显示状态 HUD + 光标覆盖,--headless 则全关。
-# "$@" 在后,额外参数可覆盖其它默认。
+# max-turns 等默认值由 Python CLI 定义；wrapper 只透传用户参数，避免重复参数覆盖用户输入。
 exec uv run python -m gui_agent.adapters.browser.webarena \
   --tasks-file "$tasks_file" --task-id "$task_id" \
-  --task-output-dir "$out_dir" "${headless_arg[@]}" "$@" \
-  --max-turns 25
+  --task-output-dir "$out_dir" "${headless_arg[@]}" "$@"

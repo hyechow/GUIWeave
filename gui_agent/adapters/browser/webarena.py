@@ -316,6 +316,31 @@ def _rewrite_url_host(url: str, host_override: str) -> str:
     return urlunsplit(parts._replace(netloc=new_netloc))
 
 
+def _rebase_deployment_origin(navigation: str, start_url: str | None) -> str:
+    """Bind a deployment overlay's entry origin to this run's effective start URL.
+
+    ``WA_HOST`` rewrites task URLs at runtime, while `_deploy.md` intentionally remains local
+    environment knowledge. Rebase only the explicitly labelled entry URL's origin; unrelated
+    external URLs in functional navigation knowledge remain untouched.
+    """
+    if not navigation or not start_url:
+        return navigation
+    match = re.search(
+        r"入口地址[^\n：:]*[：:]\s*(https?://[^\s)]+)",
+        navigation,
+        re.IGNORECASE,
+    )
+    if not match:
+        return navigation
+    old = urlsplit(match.group(1).rstrip("。,."))
+    current = urlsplit(start_url)
+    if not old.scheme or not old.netloc or not current.scheme or not current.netloc:
+        return navigation
+    old_origin = f"{old.scheme}://{old.netloc}"
+    current_origin = f"{current.scheme}://{current.netloc}"
+    return navigation.replace(old_origin, current_origin)
+
+
 def _load_task(tasks_file: Path, task_id: int) -> dict:
     tasks = json.loads(tasks_file.read_text())
     for t in tasks:
@@ -1048,6 +1073,19 @@ def main() -> int:
                 "browser",
                 include_skills=args.include_skills,
             )
+            if (
+                knowledge
+                and host_override
+                and start_url
+                and "_deploy" in knowledge.overlays
+            ):
+                rebased = _rebase_deployment_origin(knowledge.navigation, start_url)
+                if rebased != knowledge.navigation:
+                    knowledge.navigation = rebased
+                    print(
+                        "[webarena] knowledge: deployment origin rebased to "
+                        f"{urlsplit(start_url).scheme}://{urlsplit(start_url).netloc}"
+                    )
             if knowledge and knowledge.navigation and hasattr(supervisor, "set_app_knowledge"):
                 supervisor.set_app_knowledge(
                     knowledge.navigation,
