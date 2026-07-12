@@ -74,6 +74,27 @@ class _StepDraft(BaseModel):
                     "在执行该聚合动作的 mutation 步上填被覆盖的实体提及原文，程序可以不用 foreach。"
                     "没有知识依据时禁止填写——那等于漏改其余成员。",
     )
+    mutation_mode: str = Field(
+        default="change",
+        description=(
+            "op=run 且 run_kind=action：ensure | change。ensure=用户只要求维持/确保终态，"
+            "既有状态可直接满足；change=用户要求新增/创建/修改/删除，本轮必须真实产生变化。"
+        ),
+    )
+    target_controls: list[str] = Field(
+        default_factory=list,
+        description=(
+            "op=run 且为交互步骤：该步必须命中的字段、控件或集合能力名称。"
+            "例如命名列筛选填写列名；mutation 填业务字段或集合名，不写 CSS/坐标。"
+        ),
+    )
+    target_values: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "op=run 且 run_kind=action：业务写入目标 {字段/集合行字段: 目标值}。"
+            "应用说明明确一行需多个字段时必须全部列出；不得把 Save/Submit 按钮列为业务字段。"
+        ),
+    )
     returns: list[str] = Field(default_factory=list, description="op=run：该步完成后要返回的结果字段；data_query 也必须填")
     read_spec: str = Field(
         default="",
@@ -360,6 +381,21 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     },
                     precondition=bool(d.precondition),
                     covers_set=(d.covers_set or "").strip(),
+                    mutation_mode=(
+                        "ensure"
+                        if (d.mutation_mode or "").strip().lower() == "ensure"
+                        else "change"
+                    ),
+                    target_controls=[
+                        value.strip()
+                        for value in (d.target_controls or [])
+                        if value.strip()
+                    ],
+                    target_values={
+                        str(key).strip(): str(value).strip()
+                        for key, value in (d.target_values or {}).items()
+                        if str(key).strip() and str(value).strip()
+                    },
                 ))
     return out
 

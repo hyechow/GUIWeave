@@ -590,6 +590,20 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     p.reseed(milestone_for_run(Run(name="点按钮", kind="action"), 1), fresh_advance=True)
     assert p._skip_initial_check is False                 # action → 保留 check（防双执行）
     assert milestone_for_run(Run(name="点按钮", kind="action"), 1).require_fresh_action is True
+    ensure = milestone_for_run(
+        Run(
+            name="确保通知已开启",
+            kind="action",
+            mutation_mode="ensure",
+            target_controls=["Notifications"],
+            target_values={"Notifications": "on"},
+        ),
+        2,
+    )
+    assert ensure.require_fresh_action is False
+    assert ensure.mutation_mode == "ensure"
+    assert ensure.target_controls == ["Notifications"]
+    assert ensure.target_values == {"Notifications": "on"}
     assert milestone_for_run(Run(name="进页", kind="navigation"), 2).require_fresh_action is False
     p.reseed(milestone_for_run(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳

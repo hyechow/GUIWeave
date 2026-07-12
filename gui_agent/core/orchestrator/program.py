@@ -168,6 +168,27 @@ class Run(RunLike):
     # step declares coverage — knowledge decides WHEN aggregate coverage exists; this flag — not a
     # text pattern — is how the program states it.
     covers_set: str = ""
+    mutation_mode: Literal["ensure", "change"] = Field(
+        default="change",
+        description=(
+            "action 的 mutation 语义：ensure 允许权威确认的既有目标状态直接完成；"
+            "change 要求本轮产生目标写入。非 action 留默认值。"
+        ),
+    )
+    target_controls: list[str] = Field(
+        default_factory=list,
+        description=(
+            "该交互必须操作的字段、控件或集合能力名称。执行层用它阻止把命名字段"
+            "替换成相邻控件；值来自任务/应用能力说明，不包含选择器。"
+        ),
+    )
+    target_values: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "action 要实现的结构化字段终态 {语义控件名: 目标值}。重复集合行可用"
+            "group field + control label 命名；不写 DOM selector。"
+        ),
+    )
 
 
 class Read(RunLike):

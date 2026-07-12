@@ -68,7 +68,7 @@
           "plan": {
             "instruction": "Type 'XXXL' into the Admin field of the target option row",
             "summary": "Complete the required field first",
-            "atomic_role": "prepare",
+            "atomic_role": "write",
             "action_family": "input"
           }
         }
@@ -83,7 +83,7 @@
     {
       "id": "t9_commit_without_outcome_feedback",
       "kind": "completion",
-      "source_turns": [9],
+      "source_turns": [8, 9],
       "milestone": {
         "id": "add-option",
         "name": "Persist option collection and save",
@@ -98,6 +98,40 @@
         "dom_state": "post-save"
       },
       "history": [
+        {
+          "index": 8,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "Type XXXL into the required option field",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "Complete the option row",
+            "milestone_id": "add-option",
+            "execution_scope": "milestone:add-option",
+            "atomic_role": "write",
+            "action_family": "input"
+          },
+          "action_decision": {
+            "action": {
+              "action_type": "type",
+              "x": 620,
+              "y": 640,
+              "text": "XXXL",
+              "description": "Type XXXL into the required option field"
+            }
+          },
+          "executed": true,
+          "action_signal": {
+            "action_key": "milestone:add-option|add-option|write|type|input|xxxl",
+            "role": "write",
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "response_channels": ["dom_state"],
+            "outcome": "unverified"
+          }
+        },
         {
           "index": 9,
           "observation_source": "browser",

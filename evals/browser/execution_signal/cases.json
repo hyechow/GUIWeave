@@ -25,10 +25,42 @@
     },
     "scope": "row:7",
     "claims": [
+      {"domain": "action.write", "value": "confirmed", "source_type": "runtime.write_dispatch", "authoritative": true},
       {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.commit_dispatch", "authoritative": true},
       {"domain": "business.outcome", "value": "unverified", "source_type": "checker"}
     ],
     "expected": {"action": "complete", "completion_status": "accepted_unverified"}
+  },
+  {
+    "label": "change commit without target write stays in progress",
+    "contract": {
+      "statement_id": "save_without_write",
+      "kind": "action",
+      "require_fresh_action": true,
+      "require_terminal_dispatch": true,
+      "completion_mode": "mutation",
+      "mutation_mode": "change"
+    },
+    "scope": "milestone:save_without_write",
+    "claims": [
+      {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.commit_dispatch", "authoritative": true},
+      {"domain": "business.outcome", "value": "unverified", "source_type": "checker"}
+    ],
+    "expected": {"action": "continue", "completion_status": "in_progress"}
+  },
+  {
+    "label": "ensure accepts an already confirmed target state",
+    "contract": {
+      "statement_id": "ensure_state",
+      "kind": "action",
+      "completion_mode": "mutation",
+      "mutation_mode": "ensure"
+    },
+    "scope": "milestone:ensure_state",
+    "claims": [
+      {"domain": "business.outcome", "value": "confirmed", "source_type": "checker", "evidence": "target already exists"}
+    ],
+    "expected": {"action": "complete", "completion_status": "confirmed"}
   },
   {
     "label": "page response alone cannot prove arrival",

@@ -50,9 +50,9 @@ from pydantic import BaseModel, Field  # noqa: E402
 class BrowserPlanResult(BaseModel):
     instruction: str = Field(description="下一步精确操作指令；输入/选择具名值时必须包含子目标要求的目标原文")
     summary: str = Field(description="规划依据一句话摘要")
-    atomic_role: Literal["prepare", "commit", "iterate"] = Field(
+    atomic_role: Literal["prepare", "write", "commit", "iterate"] = Field(
         default="prepare",
-        description="prepare=填写/展开/导航；commit=保存/提交；iterate=滚动/拖动。",
+        description="prepare=展开/定位；write=填写/选择目标值；commit=保存/提交；iterate=滚动/拖动。",
     )
     action_family: Literal[
         "input", "select", "activate", "navigate", "iterate", "commit", "unknown"
@@ -61,6 +61,10 @@ class BrowserPlanResult(BaseModel):
         description=(
             "指令要求的原子动作族；必须按指令本身填写，不能按猜测的 action-policy 输出填写。"
         ),
+    )
+    target_control: str = Field(
+        default="",
+        description="本轮动作实际要命中的控件或字段名称；必须与子目标声明目标一致。",
     )
     direction: Optional[Literal["up", "down", "left", "right"]] = Field(
         default=None,

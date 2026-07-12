@@ -31,13 +31,21 @@ class ImmediateDispatchResult:
     failure_evidence: str | None = None
 
 
-def is_immediate_statement(statement: RunLike | None, platform: Any) -> bool:
+def is_immediate_statement(
+    statement: RunLike | None,
+    platform: Any,
+    *,
+    allow_navigation: bool = True,
+) -> bool:
     """Whether a statement can complete now without entering the Milestone loop."""
     return bool(
         statement is not None
         and (
             statement.is_query
-            or can_execute_navigation_immediately(statement, platform)
+            or (
+                allow_navigation
+                and can_execute_navigation_immediately(statement, platform)
+            )
         )
     )
 
@@ -59,6 +67,7 @@ def drain_immediate_statements(
     observation_url: str | None = None,
     materialized_tables: "Callable[[], list[dict[str, Any]]] | None" = None,
     recovery: Any = None,
+    allow_navigation: bool = True,
 ) -> ImmediateDispatchResult:
     """Execute immediate statements and stop at the next Milestone-backed Run.
 
@@ -81,7 +90,11 @@ def drain_immediate_statements(
         if status is not None:
             status(message)
 
-    while is_immediate_statement(statement, platform):
+    while is_immediate_statement(
+        statement,
+        platform,
+        allow_navigation=allow_navigation,
+    ):
         assert statement is not None
         started_at = time.perf_counter()
         calls_before = get_llm_call_count()

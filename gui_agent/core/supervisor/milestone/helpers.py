@@ -1,8 +1,9 @@
 import re
 from collections import Counter
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -37,7 +38,7 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     split_acceptance_items,
 )
-from gui_agent.core.run.execution_signals import ActionConstraint
+from gui_agent.core.run.execution_signals import ActionConstraint, target_matches_declared
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
@@ -87,6 +88,14 @@ _KEYWORD_SEARCH_INTENT_RE = re.compile(
     r"search\s+by\s+keyword|search\s+(?:box|field)|搜索框|检索框|关键词|keyword",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class RuntimeFilterIntent:
+    """The concrete control/value pair actually written for the current filter attempt."""
+
+    target_control: str
+    target_value: str
 
 
 def _value_tokens(s: str) -> list[str]:
@@ -175,9 +184,19 @@ def _state_filter_pair_is_declared(
 def _matched_applied_filter_labels(
     applied_filters: Optional[dict[str, str]],
     milestone: Milestone,
+    runtime_intent: RuntimeFilterIntent | None = None,
 ) -> set[str]:
     if not applied_filters:
         return set()
+    if runtime_intent is not None:
+        wanted = sorted(_value_tokens(runtime_intent.target_value))
+        if runtime_intent.target_control and wanted:
+            return {
+                label
+                for label, value in applied_filters.items()
+                if target_matches_declared(label, (runtime_intent.target_control,))
+                and sorted(_value_tokens(value)) == wanted
+            }
     target = parse_filter_target(milestone)
     if target is not None:
         column, values = target
@@ -260,12 +279,16 @@ def _is_preserved_scope_filter(_label: str, value: str, milestone: Milestone) ->
 
 
 def filter_chips_clean(
-    applied_filters: Optional[dict[str, str]], milestone: Milestone
+    applied_filters: Optional[dict[str, str]],
+    milestone: Milestone,
+    runtime_intent: RuntimeFilterIntent | None = None,
 ) -> bool:
     """True when no applied filter is an unrelated residual — every filter is either the milestone's
     target column or a benign always-on system filter. A parsed target is preferred; otherwise an
     adapter-reported label/value pair must both be explicitly present in the milestone contract."""
-    matched_labels = _matched_applied_filter_labels(applied_filters, milestone)
+    matched_labels = _matched_applied_filter_labels(
+        applied_filters, milestone, runtime_intent
+    )
     if not matched_labels:
         return False
     for label in (applied_filters or {}):
@@ -336,14 +359,18 @@ def filter_residual_labels(
 
 
 def filter_state_satisfies_target(
-    applied_filters: Optional[dict[str, str]], milestone: Milestone
+    applied_filters: Optional[dict[str, str]],
+    milestone: Milestone,
+    runtime_intent: RuntimeFilterIntent | None = None,
 ) -> bool:
     """True when the grid's applied-filter state already contains this milestone's target filter —
     i.e. the filter ACTION took effect, authoritatively, regardless of the rendered rows. Match =
     the target column appears as an applied-filter label AND that filter's value tokens are an exact
     multiset of the target's. When the syntax parser cannot classify the free text, the adapter's
     exact label/value pair must both occur in the milestone contract; otherwise remain conservative."""
-    return bool(_matched_applied_filter_labels(applied_filters, milestone))
+    return bool(_matched_applied_filter_labels(
+        applied_filters, milestone, runtime_intent
+    ))
 
 
 _NONZERO_FILTER_RESULT_RE = re.compile(
@@ -1156,11 +1183,113 @@ def required_group_field_gaps(
     return gaps
 
 
+@dataclass(frozen=True)
+class TargetValueState:
+    status: Literal["complete", "incomplete", "unknown"]
+    group_id: str = ""
+    missing_fields: tuple[str, ...] = ()
+    writable_fields: tuple[str, ...] = ()
+    evidence: str = ""
+
+
+def _control_semantic_names(item: dict) -> set[str]:
+    label = _control_label(item)
+    group_field = str(item.get("group_field") or "").strip()
+    names = {label}
+    if label and group_field:
+        names.add(f"{group_field} {label}")
+        names.add(f"{label} {group_field}")
+    elif group_field:
+        names.add(group_field)
+    return {_norm_text(value) for value in names if _norm_text(value)}
+
+
+def target_value_state(
+    form_controls: list[dict] | None,
+    milestone: Milestone,
+) -> TargetValueState:
+    """Match declared field/value targets within one repeated row or one flat form.
+
+    Positive matches remain valid with a partial inventory. Negative absence never becomes a
+    contradiction here: without a row containing at least one declared target value the result is
+    unknown. Repeated rows are retained atomically by the browser adapter.
+    """
+    targets = {
+        _norm_text(field): (field, _norm_text(value))
+        for field, value in (milestone.target_values or {}).items()
+        if _norm_text(field) and _norm_text(value)
+    }
+    if not targets:
+        return TargetValueState("unknown")
+
+    groups: dict[str, list[dict]] = {}
+    flat: list[dict] = []
+    for item in form_controls or []:
+        if not isinstance(item, dict):
+            continue
+        group_id = str(item.get("group_id") or "").strip()
+        if group_id:
+            groups.setdefault(group_id, []).append(item)
+        else:
+            flat.append(item)
+    if flat:
+        groups["__form__"] = flat
+
+    for group_id, items in groups.items():
+        matched: dict[str, dict] = {}
+        for target_key in targets:
+            for item in items:
+                aliases = _control_semantic_names(item)
+                if any(
+                    target_key == alias or target_key in alias or alias in target_key
+                    for alias in aliases
+                ):
+                    matched[target_key] = item
+                    break
+        equal_fields = {
+            target_key
+            for target_key, item in matched.items()
+            if _norm_text(_control_current_value(item)) == targets[target_key][1]
+        }
+        if not equal_fields:
+            continue
+        missing = tuple(
+            targets[target_key][0]
+            for target_key in targets
+            if target_key not in equal_fields
+        )
+        if not missing:
+            return TargetValueState(
+                "complete",
+                group_id=group_id,
+                evidence=f"目标字段在同一结构单元 {group_id} 中均已达到声明值",
+            )
+        writable = tuple(
+            targets[target_key][0]
+            for target_key, item in matched.items()
+            if target_key not in equal_fields
+            and any(token in str(item.get("kind") or "").lower() for token in ("input", "select", "textarea"))
+            and item.get("in_viewport") is not False
+        )
+        return TargetValueState(
+            "incomplete",
+            group_id=group_id,
+            missing_fields=missing,
+            writable_fields=writable,
+            evidence=(
+                f"目标结构单元 {group_id} 已定位，但字段未达到声明值："
+                + "、".join(missing)
+            ),
+        )
+    return TargetValueState("unknown")
+
+
 def proposal_action_constraints(
     form_controls: list[dict] | None,
     milestone: Milestone,
     *,
     scope: str,
+    has_write: bool = True,
 ) -> list[ActionConstraint]:
     """Derive safe next-action constraints from current structural control facts.
 
@@ -1169,6 +1298,35 @@ def proposal_action_constraints(
     input action. No application field names or workflow vocabulary are encoded here.
     """
     constraints: list[ActionConstraint] = []
+    declared_targets = tuple(dict.fromkeys([
+        *(milestone.target_controls or []),
+        *(milestone.target_values or {}).keys(),
+    ]))
+    if milestone.kind == "filter" and milestone.target_controls:
+        constraints.append(ActionConstraint(
+            scope=scope,
+            source_type="contract.target_controls",
+            required_targets=tuple(milestone.target_controls),
+            evidence="筛选动作必须命中 DSL 声明的目标字段，不能替换为相邻搜索控件。",
+        ))
+    if milestone.kind == "action" and declared_targets and not has_write:
+        constraints.append(ActionConstraint(
+            scope=scope,
+            source_type="contract.write_lineage",
+            required_targets=declared_targets,
+            commit_requires_write=True,
+            evidence="mutation commit requires a prior target write",
+        ))
+    value_state = target_value_state(form_controls, milestone)
+    if value_state.status == "incomplete":
+        allowed = ("input", "select") if value_state.writable_fields else ()
+        constraints.append(ActionConstraint(
+            scope=scope,
+            source_type="obs.dom.target_values",
+            allowed_families=allowed,
+            blocked_families=("commit",),
+            evidence=value_state.evidence,
+        ))
     gaps = required_group_field_gaps(form_controls, milestone)
     if gaps:
         constraints.append(ActionConstraint(
@@ -1235,9 +1393,33 @@ def _apply_required_group_checker_guard(
     milestone: Milestone,
     observation: Observation,
 ) -> _SingleCheckResult:
+    value_state = target_value_state(
+        getattr(observation, "form_controls", None), milestone
+    )
+    coverage = str(
+        (getattr(observation, "form_controls_meta", None) or {}).get("coverage") or ""
+    ).lower()
+    if (
+        value_state.status == "unknown"
+        and coverage == "partial"
+        and milestone.target_values
+        and (result.status == "stuck" or result.outcome_status == "contradicted")
+    ):
+        return result.model_copy(update={
+            "status": "in_progress",
+            "outcome_status": "unverified",
+            "reason": (
+                "当前 DOM 控件清单覆盖不完整，未返回声明目标不能证明目标不存在或执行失败；"
+                "应继续在当前执行单元内获取目标控件或等待完整状态。"
+            ),
+            "summary": "目标状态未知：当前控件清单为 partial coverage",
+            "missing_evidence": ["需要完整控件清单或声明目标字段的正向状态证据。"],
+        })
     gaps = required_group_field_gaps(
         getattr(observation, "form_controls", None), milestone
     )
+    if value_state.status == "incomplete":
+        gaps = list(dict.fromkeys([*value_state.missing_fields, *gaps]))
     if not gaps:
         return result
     gap_text = "、".join(gaps)

@@ -36,7 +36,7 @@ def interactive_turn_count(context: PolicyContext) -> int:
     return sum(
         1
         for turn in context.turns
-        if getattr(turn, "operation_mode", "interactive") != "non_interactive"
+        if getattr(turn, "operation_mode", "interactive") == "interactive"
     )
 
 
@@ -81,6 +81,12 @@ def make_interactive_turn(
     action_signal = ActionSignal(
         action_key=action_key,
         role=role,
+        target_control=supervisor_step.target_control,
+        target_value=(
+            str(getattr(action, "text", "") or "")
+            if role == "write" and action is not None
+            else ""
+        ),
         execution=execution,
         suppressed_reason=suppressed_reason,
         evidence=([suppressed_reason] if suppressed_reason else []),
@@ -120,9 +126,10 @@ def make_verdict_turn(
     input_tokens: int = 0,
     output_tokens: int = 0,
     llm_context: list[dict] | None = None,
+    observation_only: bool = False,
 ) -> PolicyTurn:
     """Build an action-less UI verdict turn from the current supervisor state."""
-    return make_interactive_turn(
+    turn = make_interactive_turn(
         index=index,
         observation_source=observation_source,
         observation_url=observation_url,
@@ -144,6 +151,10 @@ def make_verdict_turn(
             else getattr(supervisor, "_context_reports", []) or []
         ),
     )
+    if observation_only:
+        turn.operation_mode = "observation"
+        turn.action_signal = None
+    return turn
 
 
 class SupervisorTimingCarry:

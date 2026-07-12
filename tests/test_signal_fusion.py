@@ -6,6 +6,58 @@ from gui_agent.core.run.execution_signals import (
     claim,
     validate_action_family,
 )
+from gui_agent.core.schemas import Milestone
+from gui_agent.core.supervisor.milestone.policy import _resolved_plan_action_family
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult
+
+
+def test_commit_role_normalizes_input_family_before_primitive_validation():
+    plan = _PlanResult(
+        instruction="按回车提交当前字段",
+        summary="submit",
+        atomic_role="commit",
+        action_family="input",
+    )
+
+    role, family = _resolved_plan_action_family(
+        plan,
+        Milestone(
+            id="filter",
+            name="submit filter",
+            description="",
+            success_condition="filter is applied",
+            kind="filter",
+        ),
+    )
+
+    assert role == "commit"
+    assert family == "commit"
+    assert validate_action_family(family, "press_enter") == (True, "")
+
+
+def test_write_role_does_not_widen_input_family_to_terminal_primitives():
+    plan = _PlanResult(
+        instruction="在目标字段输入 value",
+        summary="write",
+        atomic_role="write",
+        action_family="commit",
+    )
+
+    role, family = _resolved_plan_action_family(
+        plan,
+        Milestone(
+            id="write",
+            name="write value",
+            description="",
+            success_condition="value is written",
+            kind="action",
+        ),
+    )
+
+    assert role == "write"
+    assert family == "input"
+    allowed, _reason = validate_action_family(family, "press_enter")
+    assert allowed is False
 
 
 def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
@@ -18,6 +70,13 @@ def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
     decision = SignalFusionArbiter().decide(
         contract,
         [
+            claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope="row:7",
+                authoritative=True,
+            ),
             claim(
                 "filter.state",
                 "confirmed",
@@ -53,6 +112,13 @@ def test_commit_dispatch_without_outcome_feedback_is_provisional():
         contract,
         [
             claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope="row:7",
+                authoritative=True,
+            ),
+            claim(
                 "action.execution",
                 "confirmed",
                 source_type="runtime.commit_dispatch",
@@ -85,6 +151,13 @@ def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():
         contract,
         [
             claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope="row:7",
+                authoritative=True,
+            ),
+            claim(
                 "action.execution",
                 "confirmed",
                 source_type="runtime.action_dispatch",
@@ -104,6 +177,104 @@ def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():
 
     assert decision.action == "continue"
     assert "终端提交尚未派发" in decision.reason
+
+
+def test_change_mutation_cannot_complete_from_commit_without_write():
+    decision = SignalFusionArbiter().decide(
+        ExecutionContract(
+            statement_id="save",
+            kind="action",
+            require_fresh_action=True,
+            require_terminal_dispatch=True,
+            completion_mode="mutation",
+            mutation_mode="change",
+        ),
+        [
+            claim(
+                "action.execution",
+                "confirmed",
+                source_type="runtime.commit_dispatch",
+                scope="milestone:save",
+                authoritative=True,
+            ),
+            claim(
+                "business.outcome",
+                "unverified",
+                source_type="checker",
+                scope="milestone:save",
+            ),
+        ],
+        scope="milestone:save",
+    )
+
+    assert decision.action == "continue"
+    assert decision.completion_status == "in_progress"
+
+
+def test_ensure_mutation_accepts_authoritative_preexisting_outcome():
+    decision = SignalFusionArbiter().decide(
+        ExecutionContract(
+            statement_id="ensure",
+            kind="action",
+            completion_mode="mutation",
+            mutation_mode="ensure",
+        ),
+        [
+            claim(
+                "business.outcome",
+                "confirmed",
+                source_type="checker",
+                scope="milestone:ensure",
+                evidence="target state already exists",
+            )
+        ],
+        scope="milestone:ensure",
+    )
+
+    assert decision.action == "complete"
+    assert decision.completion_status == "confirmed"
+
+
+def test_commit_without_target_write_returns_typed_recovery_conflict():
+    decision = SignalFusionArbiter().decide(
+        ExecutionContract(
+            statement_id="ensure",
+            kind="action",
+            require_terminal_dispatch=True,
+            completion_mode="mutation",
+            mutation_mode="ensure",
+        ),
+        [claim(
+            "action.execution",
+            "confirmed",
+            source_type="runtime.commit_dispatch",
+            scope="milestone:ensure",
+            authoritative=True,
+        )],
+        scope="milestone:ensure",
+    )
+
+    assert decision.action == "continue"
+    assert decision.conflicts == ("action.write.required",)
+
+
+def test_named_target_rejects_adjacent_input_control():
+    decision = SignalFusionArbiter().validate_proposal(
+        "input",
+        [
+            ActionConstraint(
+                scope="milestone:filter",
+                source_type="contract.target_controls",
+                evidence="named field",
+                required_targets=("Name",),
+            )
+        ],
+        scope="milestone:filter",
+        target_control="Search by keyword",
+    )
+
+    assert decision.action == "reject_action"
+    assert "相邻控件" in decision.reason
 
 
 def test_generic_page_response_cannot_complete_navigation():

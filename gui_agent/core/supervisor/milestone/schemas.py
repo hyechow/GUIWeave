@@ -154,10 +154,10 @@ class _LoopFrameResult(BaseModel):
 class _PlanResult(BaseModel):
     instruction: str = Field(description="下一步精确操作指令")
     summary: str = Field(description="规划依据一句话摘要")
-    atomic_role: Literal["prepare", "commit", "iterate"] = Field(
+    atomic_role: Literal["prepare", "write", "commit", "iterate"] = Field(
         default="prepare",
         description=(
-            "当前原子动作角色：prepare=填写/选择/展开/导航等准备动作；"
+            "当前原子动作角色：prepare=展开/定位/导航等获取动作；write=输入/选择/切换目标值；"
             "commit=提交/保存/发送等最终副作用边界；iterate=滚动/picker 等有进展时可重复动作。"
         ),
     )
@@ -169,6 +169,10 @@ class _PlanResult(BaseModel):
             "本轮指令的动作族：input=输入/清空，select=选择值，activate=点击普通控件，"
             "navigate=页面/标签跳转，iterate=滚动/拖动，commit=保存/提交，unknown=无法判断。"
         ),
+    )
+    target_control: str = Field(
+        default="",
+        description="本轮原子动作要命中的控件、字段或集合能力；必须与 milestone 合同一致。",
     )
     direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
         default=None,

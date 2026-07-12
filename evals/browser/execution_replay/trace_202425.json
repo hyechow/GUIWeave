@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "source": {
+    "run": "20260711_202425",
+    "task": "549",
+    "description": "An exact keyword trial was successfully applied with zero rows, but a prose-only filter contract missed the applied state and kept retyping the exact value instead of returning zero to the Program fallback.",
+    "turns": {
+      "13": "569d51f70cf886f36fb0a116d031bb3256b075e2",
+      "14": "37b0f981c7e7fd187774f9bfbd738d96bb9f501d",
+      "15": "4ca3d20faceaf0ac6e5222f21e6b50f3bcfe8b6c"
+    }
+  },
+  "cases": [
+    {
+      "id": "t13_t15_runtime_filter_intent_returns_zero_before_checker",
+      "kind": "filter_completion",
+      "source_turns": [13, 14, 15],
+      "milestone": {
+        "id": "prod-search-exact",
+        "name": "在产品名称字段用精确值『Minerva LumaTech V-Tee』筛选",
+        "description": "在产品名称字段用精确值『Minerva LumaTech V-Tee』筛选（读取字段：match_count）",
+        "success_condition": "产品名称精确筛选已应用，records-found 计数可读",
+        "kind": "filter",
+        "returns": ["match_count"]
+      },
+      "observation": {
+        "png_bytes": "fixture",
+        "source": "browser",
+        "loading": false,
+        "dom_state": "exact-keyword-filter-zero",
+        "applied_filters": {
+          "Keyword": "Minerva LumaTech V-Tee"
+        },
+        "tables": [
+          {
+            "total_records": 0,
+            "columns": []
+          }
+        ]
+      },
+      "history": [
+        {
+          "index": 13,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "在 Search by keyword 输入框填入 Minerva LumaTech V-Tee",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "write exact value",
+            "milestone_id": "prod-search-exact",
+            "execution_scope": "milestone:prod-search-exact",
+            "milestone_kind": "filter",
+            "atomic_role": "write",
+            "action_family": "input",
+            "target_control": "Search by keyword"
+          },
+          "action_decision": {
+            "action": {
+              "action_type": "type",
+              "x": 345,
+              "y": 310,
+              "text": "Minerva LumaTech V-Tee",
+              "description": "type exact keyword"
+            }
+          },
+          "executed": true,
+          "action_signal": {
+            "action_key": "milestone:prod-search-exact|prod-search-exact|write|type",
+            "role": "write",
+            "target_control": "Search by keyword",
+            "target_value": "Minerva LumaTech V-Tee",
+            "execution": "dispatched",
+            "target": "unknown",
+            "response": "observed",
+            "response_channels": ["dom"],
+            "outcome": "unverified"
+          }
+        },
+        {
+          "index": 14,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "按回车键提交",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "submit exact filter",
+            "milestone_id": "prod-search-exact",
+            "execution_scope": "milestone:prod-search-exact",
+            "milestone_kind": "filter",
+            "atomic_role": "commit",
+            "action_family": "commit",
+            "target_control": "Search by keyword"
+          },
+          "action_decision": {
+            "action": {
+              "action_type": "press_enter",
+              "description": "submit exact filter"
+            }
+          },
+          "executed": true,
+          "action_signal": {
+            "action_key": "milestone:prod-search-exact|prod-search-exact|commit",
+            "role": "commit",
+            "target_control": "Search by keyword",
+            "execution": "dispatched",
+            "target": "unknown",
+            "response": "observed",
+            "response_channels": ["dom"],
+            "outcome": "unverified"
+          }
+        }
+      ],
+      "expected": {
+        "goal_completed": true,
+        "completion_status": "confirmed",
+        "milestone_status": "done"
+      }
+    }
+  ]
+}

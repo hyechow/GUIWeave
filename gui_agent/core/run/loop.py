@@ -7,7 +7,7 @@ import time
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -80,6 +80,33 @@ TURN_HEADER = "\033[1;36m--- Turn {turn_no} ---\033[0m"
 # 加载是 App 渲染延迟、不是 agent 的一步操作，不该消耗轮数预算；但要设上限防页面永挂死循环。
 LOADING_WAIT_S = 0.6          # 每个加载帧重新观察前的等待，给页面渲染时间
 MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂、停止
+
+
+def _needs_terminal_reconciliation(context: PolicyContext) -> bool:
+    """Whether the hard limit landed immediately after an unresolved GUI dispatch."""
+    if not context.turns:
+        return False
+    latest = context.turns[-1]
+    signal = latest.action_signal
+    return bool(
+        latest.operation_mode == "interactive"
+        and latest.executed
+        and signal is not None
+        and signal.execution == "dispatched"
+        and signal.outcome == "unverified"
+    )
+
+
+def _turn_budget_mode(
+    context: PolicyContext,
+    max_turns: int,
+) -> Literal["normal", "reconcile", "stop"]:
+    """Choose the next loop mode without ever increasing the caller's hard limit."""
+    if _interactive_turn_count(context) + 1 <= max_turns:
+        return "normal"
+    if _needs_terminal_reconciliation(context):
+        return "reconcile"
+    return "stop"
 
 
 # Post-action targeting verify runs in this 1-worker pool so it overlaps the
@@ -332,7 +359,12 @@ def run_agent_loop(
                 say=_say,
             )
 
-        def _drain_immediate(observation_for_statements=None, observation_url: str | None = None) -> "str | None":
+        def _drain_immediate(
+            observation_for_statements=None,
+            observation_url: str | None = None,
+            *,
+            allow_navigation: bool = True,
+        ) -> "str | None":
             """Execute inline statements, then seed the next Milestone-backed Run."""
             nonlocal _cur_run, _run_idx, _notes_mark, _immediate_failure, observation, observation_url_for_turn, prep_future
             result = drain_immediate_statements(
@@ -356,6 +388,7 @@ def run_agent_loop(
                 # last body return completes), so the data_query must read it fresh.
                 materialized_tables=(lambda: _interp.materialized_tables()) if _interp is not None else None,
                 recovery=_recovery,  # 异常体系 Stage A:SQL 修复/数据源失败事件入账
+                allow_navigation=allow_navigation,
             )
             _cur_run = result.current_statement
             _run_idx = result.statement_index
@@ -557,13 +590,20 @@ def run_agent_loop(
                 return interrupted
 
             turn_no = len(context.turns) + 1
-            if _interactive_turn_count(context) + 1 > max_turns:
+            _budget_mode = _turn_budget_mode(context, max_turns)
+            _budget_reconcile = _budget_mode == "reconcile"
+            if _budget_mode == "stop":
                 read_state.drain_pending(say=_say)
                 read_state.flush(turn_no=turn_no - 1, say=_say)
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
                 if program is not None:  # orchestrator: summarize the whole program so far
                     return _finish(_orch_result(context, _interp, f"达到最大轮数 {max_turns}（任务未完成）", current=_cur_run))
                 return _finish(_make_result(context, f"达到最大轮数 {max_turns}"))
+            if _budget_reconcile:
+                _say(
+                    f"\n达到最大轮数 {max_turns}；末次动作尚无后续观察，"
+                    "执行一次无动作终态仲裁"
+                )
 
             turn_started_at = time.perf_counter()
             llm_calls_before = get_llm_call_count()
@@ -606,7 +646,12 @@ def run_agent_loop(
             while True:
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
-                sv_step = supervisor.step(observation, context.goal, context.turns)
+                if _budget_reconcile:
+                    sv_step = supervisor.reconcile(
+                        observation, context.goal, context.turns
+                    )
+                else:
+                    sv_step = supervisor.step(observation, context.goal, context.turns)
                 _say(f"监督者: {sv_step.summary}")
                 _status(turn_no, sv_step.summary)
 
@@ -689,12 +734,14 @@ def run_agent_loop(
                         llm_calls=get_llm_call_count() - llm_calls_before,
                         input_tokens=get_llm_token_usage()[0] - tokens_before[0],
                         output_tokens=get_llm_token_usage()[1] - tokens_before[1],
+                        observation_only=_budget_reconcile,
                     ))
                     _terminal_verdict_recorded = True
                 # Immediate statements consume this verdict frame before the next Milestone starts.
                 _reply = _drain_immediate(
                     observation_for_statements=observation,
                     observation_url=observation_url_for_turn,
+                    allow_navigation=not _budget_reconcile,
                 )
                 if _reply is not None:
                     _orch_reply = _reply
@@ -727,6 +774,7 @@ def run_agent_loop(
                         llm_calls=get_llm_call_count() - llm_calls_before,
                         input_tokens=get_llm_token_usage()[0] - tokens_before[0],
                         output_tokens=get_llm_token_usage()[1] - tokens_before[1],
+                        observation_only=_budget_reconcile,
                     ))
                 # Sync the last milestone's done verdict into context (no later turn body runs).
                 sync_milestone_states(supervisor, context)
@@ -746,6 +794,43 @@ def run_agent_loop(
                         _immediate_failure = None
                         continue
                 return _finish(_orch_result(context, _interp, _orch_reply))
+
+            if _budget_reconcile:
+                context.turns.append(make_verdict_turn(
+                    index=len(context.turns) + 1,
+                    observation_source=observation.source,
+                    observation_url=observation_url_for_turn,
+                    supervisor_step=sv_step,
+                    supervisor=supervisor,
+                    llm_calls=get_llm_call_count() - llm_calls_before,
+                    input_tokens=get_llm_token_usage()[0] - tokens_before[0],
+                    output_tokens=get_llm_token_usage()[1] - tokens_before[1],
+                    observation_only=True,
+                ))
+                sync_milestone_states(supervisor, context)
+                _save_ctx()
+                if sv_step.stop or sv_step.goal_completed:
+                    return finish_terminal_step(
+                        sv_step=sv_step,
+                        read_state=read_state,
+                        turn_no=turn_no,
+                        program=program,
+                        current_run=_cur_run,
+                        interpreter_steps=_gen,
+                        interpreter=_interp,
+                        context=context,
+                        notes_mark=_notes_mark,
+                        finish=_finish,
+                        say=_say,
+                    )
+                reason = (
+                    f"达到最大轮数 {max_turns}；末次动作已派发并完成最终观察，"
+                    f"但当前执行单元仍未完成：{sv_step.summary}"
+                )
+                _say(f"\n{reason}")
+                if program is not None:
+                    return _finish(_orch_result(context, _interp, reason, current=_cur_run))
+                return _finish(_make_result(context, reason))
 
             if _did_kickback_replan or _did_return_recovery:
                 continue

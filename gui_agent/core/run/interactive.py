@@ -55,7 +55,10 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
         kind=kind,  # type: ignore[arg-type]
         completion_strategy=strategy,  # type: ignore[arg-type]
         precondition=run.precondition,
-        require_fresh_action=run.kind == "action",
+        require_fresh_action=(run.kind == "action" and run.mutation_mode == "change"),
+        mutation_mode=run.mutation_mode,
+        target_controls=list(run.target_controls),
+        target_values=dict(run.target_values),
         returns=list(run.returns),
         read_spec=run.read_spec or "",
     )

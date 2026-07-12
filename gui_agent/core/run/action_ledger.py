@@ -11,6 +11,7 @@ from .progress_monitor import action_signature
 
 _COMMIT_CAPABLE_ACTION_TYPES = frozenset({"tap", "click", "press_enter"})
 _ITERATIVE_ACTION_TYPES = frozenset({"scroll", "drag"})
+_WRITE_ACTION_TYPES = frozenset({"type", "clear_text", "select_option"})
 
 
 def effective_action_role(supervisor_step: SupervisorStep, action: Any) -> str:
@@ -24,6 +25,8 @@ def effective_action_role(supervisor_step: SupervisorStep, action: Any) -> str:
     action_type = str(getattr(action, "action_type", "") or "").lower()
     if action_type in _ITERATIVE_ACTION_TYPES:
         return "iterate"
+    if action_type in _WRITE_ACTION_TYPES:
+        return "write"
     if action_type not in _COMMIT_CAPABLE_ACTION_TYPES:
         return "prepare"
     return supervisor_step.atomic_role or "prepare"
@@ -61,6 +64,10 @@ class ActionLedger:
             return False, key, "action policy 无权用 stop 完成仍处于 in_progress 的 milestone"
         if effective_action_role(supervisor_step, action) != "commit":
             return True, key, ""
+        if supervisor_step.milestone_kind not in {None, "action"}:
+            # Navigation/filter commits update reversible UI state. At-most-once protects only
+            # persistent business mutations; loop/stuck detection owns ineffective UI retries.
+            return True, key, ""
 
         turns = list(history)
         matching = [
@@ -83,7 +90,17 @@ class ActionLedger:
         corrected = any(
             turn.index > latest.index
             and turn.action_signal is not None
-            and turn.action_signal.role == "prepare"
+            and (
+                turn.action_signal.role == "write"
+                or str(
+                    getattr(
+                        getattr(turn.action_decision, "action", None),
+                        "action_type",
+                        "",
+                    )
+                ).lower()
+                in _WRITE_ACTION_TYPES
+            )
             and turn.action_signal.execution == "dispatched"
             and getattr(turn.supervisor, "execution_scope", "")
             == supervisor_step.execution_scope
@@ -91,7 +108,7 @@ class ActionLedger:
         )
         if corrected:
             return True, key, ""
-        return False, key, "上次 commit 已被明确拒绝，但尚未执行修正输入，禁止重复提交"
+        return False, key, "上次 commit 已被明确拒绝，但尚未执行新的目标写入，禁止重复提交"
 
     @staticmethod
     def latest_dispatched(
@@ -119,6 +136,80 @@ class ActionLedger:
                 if turn.executed
                 and turn.supervisor is not None
                 and turn.supervisor.milestone_id == milestone_id
+            ),
+            None,
+        )
+
+    @staticmethod
+    def latest_pending(
+        history: Iterable[PolicyTurn], milestone_id: str
+    ) -> PolicyTurn | None:
+        """Return the newest unresolved dispatch; closed outcomes cannot absorb later checks."""
+        return next(
+            (
+                turn
+                for turn in reversed(list(history))
+                if turn.supervisor is not None
+                and turn.supervisor.milestone_id == milestone_id
+                and turn.action_signal is not None
+                and turn.action_signal.execution == "dispatched"
+                and turn.action_signal.outcome == "unverified"
+            ),
+            None,
+        )
+
+    @staticmethod
+    def latest_write(
+        history: Iterable[PolicyTurn], milestone_id: str, *, scope: str = ""
+    ) -> PolicyTurn | None:
+        """Return the newest on-target write in this interactive statement."""
+        turns = list(history)
+        structured = next(
+            (
+                turn
+                for turn in reversed(turns)
+                if turn.supervisor is not None
+                and turn.supervisor.milestone_id == milestone_id
+                and turn.action_signal is not None
+                and turn.action_signal.execution == "dispatched"
+                and turn.action_signal.role == "write"
+                and turn.action_signal.target != "off_target"
+                and (
+                    not scope
+                    or getattr(turn.supervisor, "execution_scope", "") == scope
+                )
+            ),
+            None,
+        )
+        if structured is not None:
+            return structured
+        # Persisted contexts created before ActionSignal existed still carry the concrete
+        # primitive and supervisor role. Accept only mechanically evident writes.
+        return next(
+            (
+                turn
+                for turn in reversed(turns)
+                if turn.executed
+                and turn.supervisor is not None
+                and turn.supervisor.milestone_id == milestone_id
+                and (
+                    getattr(turn.supervisor, "atomic_role", "prepare") == "write"
+                    or str(
+                        getattr(
+                            getattr(turn.action_decision, "action", None),
+                            "action_type",
+                            "",
+                        )
+                    ).lower()
+                    in _WRITE_ACTION_TYPES
+                )
+                and (
+                    not scope
+                    or getattr(turn.supervisor, "execution_scope", "") in {"", scope}
+                )
+                and (
+                    turn.target_verify is None or turn.target_verify.on_target
+                )
             ),
             None,
         )

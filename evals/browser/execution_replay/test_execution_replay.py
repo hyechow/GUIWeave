@@ -17,17 +17,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from gui_agent.core.run.action_exec import ActionExecutionState
-from gui_agent.core.run.execution_signals import ConstraintLedger
+from gui_agent.core.run.execution_signals import ConstraintLedger, validate_action_family
 from gui_agent.core.run.flow import evaluate_turn_progress
+from gui_agent.core.run.loop import _needs_terminal_reconciliation
+from gui_agent.core.run.turns import interactive_turn_count, make_verdict_turn
 from gui_agent.core.schemas import (
     BaseActionDecision,
     Milestone,
     Observation,
+    PolicyContext,
     PolicyTurn,
     SupervisorStep,
 )
 from gui_agent.core.supervisor.milestone import policy as policy_module
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.milestone.policy import (
+    _resolved_plan_action_family,
+    MilestoneSupervisorPolicy,
+)
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
@@ -73,6 +79,8 @@ def _proposal_case(case: dict[str, Any]) -> None:
     assert step.should_act is expected["should_act"]
     assert step.action_family == expected["action_family"]
     assert expected["instruction_contains"] in (step.instruction or "")
+    if "target_control" in expected:
+        assert step.target_control == expected["target_control"]
 
 
 def _completion_case(case: dict[str, Any]) -> None:
@@ -91,6 +99,8 @@ def _completion_case(case: dict[str, Any]) -> None:
     expected = case["expected"]
     assert decision.action == expected["action"]
     assert decision.completion_status == expected["completion_status"]
+    if "conflicts" in expected:
+        assert list(decision.conflicts) == expected["conflicts"]
 
 
 def _filter_completion_case(case: dict[str, Any]) -> None:
@@ -196,6 +206,86 @@ def _lifecycle_monotonic_case(case: dict[str, Any]) -> None:
     assert reason == expected["reason"]
 
 
+def _checker_feedback_case(case: dict[str, Any]) -> None:
+    check = _SingleCheckResult.model_validate(case["check"])
+    claim = MilestoneSupervisorPolicy._checker_claim(  # noqa: SLF001
+        check, scope=case["scope"]
+    )
+    assert claim.value == case["expected"]["claim_value"]
+
+
+def _lifecycle_closed_case(case: dict[str, Any]) -> None:
+    policy = MilestoneSupervisorPolicy()
+    milestone = Milestone.model_validate(case["milestone"])
+    dispatched = PolicyTurn.model_validate(case["dispatched_turn"])
+    for payload in case["checks"]:
+        policy._update_latest_action_outcome(  # noqa: SLF001
+            [dispatched], milestone, _SingleCheckResult.model_validate(payload)
+        )
+    signal = dispatched.action_signal
+    assert signal is not None
+    assert signal.outcome == case["expected"]["outcome"]
+
+
+def _role_family_case(case: dict[str, Any]) -> None:
+    role, family = _resolved_plan_action_family(
+        _PlanResult.model_validate(case["plan"]),
+        Milestone.model_validate(case["milestone"]),
+    )
+    allowed, _reason = validate_action_family(family, case["primitive"])
+    assert role == case["expected"]["role"]
+    assert family == case["expected"]["family"]
+    assert allowed is case["expected"]["allowed"]
+
+
+def _terminal_reconcile_case(case: dict[str, Any]) -> None:
+    milestone = Milestone.model_validate(case["milestone"])
+    observation = Observation.model_validate(case["observation"])
+    history = [PolicyTurn.model_validate(item) for item in case["history"]]
+    policy = MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+    policy._monitor._last_dom_state = case["previous_dom_state"]  # noqa: SLF001
+    policy._single_check = (  # type: ignore[method-assign]
+        lambda *_args, **_kwargs: _SingleCheckResult.model_validate(case["check"])
+    )
+    policy._invoke_planner = (  # type: ignore[method-assign]
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("terminal reconciliation invoked planner")
+        )
+    )
+    context = PolicyContext(
+        goal="replay",
+        supervisor_policy_name="milestone",
+        action_policy_name="action",
+        turns=history,
+    )
+
+    assert _needs_terminal_reconciliation(context) is True
+    original = policy_module.is_loading_frame
+    policy_module.is_loading_frame = lambda _observation: False
+    try:
+        step = policy.reconcile(observation, "replay", history)
+    finally:
+        policy_module.is_loading_frame = original
+    context.turns.append(make_verdict_turn(
+        index=len(context.turns) + 1,
+        observation_source=observation.source,
+        supervisor_step=step,
+        supervisor=policy,
+        observation_only=True,
+    ))
+
+    signal = history[-1].action_signal
+    assert signal is not None
+    expected = case["expected"]
+    assert step.should_act is False
+    assert signal.execution == "dispatched"
+    assert signal.response == expected["response"]
+    assert signal.outcome == expected["outcome"]
+    assert interactive_turn_count(context) == len(history)
+    assert _needs_terminal_reconciliation(context) is False
+
+
 def run_replay() -> list[str]:
     failures: list[str] = []
     handlers = {
@@ -205,6 +295,10 @@ def run_replay() -> list[str]:
         "scope_isolation": _scope_case,
         "suppression_progress": _suppression_progress_case,
         "lifecycle_monotonic": _lifecycle_monotonic_case,
+        "checker_feedback": _checker_feedback_case,
+        "lifecycle_closed": _lifecycle_closed_case,
+        "role_family": _role_family_case,
+        "terminal_reconcile": _terminal_reconcile_case,
     }
     with tempfile.TemporaryDirectory(prefix="execution-replay-") as tmp:
         temp_dir = Path(tmp)

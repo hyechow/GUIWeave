@@ -75,6 +75,15 @@ def milestone_block(
         lines.append(f"- 子目标类型：{milestone.kind}")
     if milestone.completion_strategy:
         lines.append(f"- 完成策略：{milestone.completion_strategy}")
+    if milestone.kind == "action":
+        lines.append(f"- Mutation mode：{milestone.mutation_mode}")
+    if milestone.target_controls:
+        lines.append(f"- 目标控件/能力：{', '.join(milestone.target_controls)}")
+    if milestone.target_values:
+        rendered_targets = ", ".join(
+            f"{field}={value}" for field, value in milestone.target_values.items()
+        )
+        lines.append(f"- 目标字段终态：{rendered_targets}")
     if task_type:
         lines.append(f"- 任务类型：{task_type}")
     if retry_count is not None:
@@ -245,37 +254,38 @@ def _completed_milestones_text(turns: list[PolicyTurn]) -> str:
 
 def _render_turn_lines(turns: list[PolicyTurn]) -> str:
     lines = []
-    for idx, turn in enumerate(turns):
+    for turn in turns:
         sv = turn.supervisor
-        next_sv = turns[idx + 1].supervisor if idx + 1 < len(turns) else None
-        result = next_sv.summary if next_sv else "（结果尚未记录）"
-        unmet = (
-            turn.executed
-            and next_sv
-            and next_sv.milestone_id == sv.milestone_id
-            and (
-                "卡住" in (next_sv.summary or "")
-                or "重试" in (next_sv.summary or "")
-                or "尚未达成" in (next_sv.summary or "")
-                or "调整策略" in (next_sv.summary or "")
+        signal = turn.action_signal
+        lifecycle = ""
+        if signal is not None:
+            channels = ",".join(signal.response_channels) or "none"
+            lifecycle = (
+                f" | role={signal.role}; execution={signal.execution}; "
+                f"target={signal.target}; response={signal.response}({channels}); "
+                f"outcome={signal.outcome}"
             )
-        )
-        prefix = "⚠️ " if unmet else ""
+            if signal.target_control:
+                lifecycle += f"; target_control={signal.target_control}"
+            if signal.target_value:
+                lifecycle += f"; target_value={signal.target_value}"
+            if signal.suppressed_reason:
+                lifecycle += f"; suppressed={signal.suppressed_reason}"
         if turn.action_decision and turn.executed:
             action = turn.action_decision.action
-            outcome = f"未达成: {result}" if unmet else f"结果: {result}"
             lines.append(
-                f"{turn.index}. {prefix}指令=「{sv.instruction}」"
+                f"{turn.index}. 指令=「{sv.instruction}」"
                 f" → [{action.action_type}] {action.description}"
-                f" → {outcome}"
+                f"{lifecycle}"
             )
         elif turn.action_decision and not turn.executed:
             action = turn.action_decision.action
             lines.append(
-                f"{turn.index}. {prefix}指令=「{sv.instruction}」 → [未执行] [{action.action_type}] {action.description}"
+                f"{turn.index}. 指令=「{sv.instruction}」 → [未执行] "
+                f"[{action.action_type}] {action.description}{lifecycle}"
             )
         else:
-            lines.append(f"{turn.index}. [跳过动作] {sv.summary} → 结果: {result}")
+            lines.append(f"{turn.index}. [无动作] {sv.summary}{lifecycle}")
     return "\n".join(lines)
 
 

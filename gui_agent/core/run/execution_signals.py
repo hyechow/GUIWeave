@@ -22,6 +22,7 @@ CompletionMode = Literal[
 ]
 ClaimDomain = Literal[
     "action.execution",
+    "action.write",
     "action.target",
     "page.response",
     "filter.state",
@@ -64,6 +65,9 @@ class ExecutionContract:
     require_fresh_action: bool = False
     require_terminal_dispatch: bool = False
     completion_mode: CompletionMode = "verification"
+    mutation_mode: Literal["ensure", "change"] = "change"
+    target_controls: tuple[str, ...] = ()
+    target_values: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_milestone(cls, milestone: Milestone) -> "ExecutionContract":
@@ -84,6 +88,9 @@ class ExecutionContract:
             read_spec=milestone.read_spec or "",
             require_fresh_action=bool(milestone.require_fresh_action),
             completion_mode=mode,
+            mutation_mode=milestone.mutation_mode,
+            target_controls=tuple(milestone.target_controls or ()),
+            target_values=tuple((milestone.target_values or {}).items()),
         )
 
 
@@ -130,6 +137,8 @@ class ActionConstraint:
     evidence: str
     allowed_families: tuple[ActionFamily, ...] = ()
     blocked_families: tuple[ActionFamily, ...] = ()
+    required_targets: tuple[str, ...] = ()
+    commit_requires_write: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,6 +256,7 @@ class SignalFusionArbiter:
             )
 
         execution = self._best(self._claims(scoped, "action.execution", scope))
+        write = self._best(self._claims(scoped, "action.write", scope))
         response = self._best(self._claims(scoped, "page.response", scope))
         target = self._best(self._claims(scoped, "action.target", scope))
         filter_state = self._best(self._claims(scoped, "filter.state", scope))
@@ -310,6 +320,13 @@ class SignalFusionArbiter:
 
         if contract.completion_mode == "mutation":
             if outcome is not None and outcome.value == "confirmed":
+                if contract.mutation_mode == "ensure":
+                    return FusionDecision(
+                        "complete",
+                        outcome.evidence or "幂等目标状态已确认",
+                        "confirmed",
+                        (outcome,),
+                    )
                 if contract.require_terminal_dispatch and not (
                     execution is not None
                     and execution.value == "confirmed"
@@ -319,6 +336,13 @@ class SignalFusionArbiter:
                         "continue",
                         "目标状态看似满足，但该执行单元要求的终端提交尚未派发；"
                         "因此缺少本轮产生写操作的执行证据",
+                        conflicts=("action.commit.required",),
+                    )
+                if write is None or write.value != "confirmed":
+                    return FusionDecision(
+                        "continue",
+                        "目标状态看似满足，但 change mutation 缺少本轮产生写操作的目标写入证据",
+                        conflicts=("action.write.required",),
                     )
                 if contract.require_fresh_action and not (
                     execution is not None and execution.value == "confirmed"
@@ -326,14 +350,31 @@ class SignalFusionArbiter:
                     return FusionDecision(
                         "continue",
                         "当前目标状态看似已存在，但缺少本轮产生写操作的执行证据",
+                        conflicts=("action.execution.required",),
                     )
                 return FusionDecision(
-                    "complete", outcome.evidence or "业务后置状态已确认", "confirmed", (outcome,)
+                    "complete",
+                    outcome.evidence or "业务后置状态已确认",
+                    "confirmed",
+                    tuple(item for item in (write, execution, outcome) if item is not None),
                 )
             if (
                 execution is not None
                 and execution.value == "confirmed"
                 and execution.source_type == "runtime.commit_dispatch"
+                and (write is None or write.value != "confirmed")
+            ):
+                return FusionDecision(
+                    "continue",
+                    "终端提交已派发，但当前执行作用域缺少目标写入；提交不能代替业务字段写入",
+                    conflicts=("action.write.required",),
+                )
+            if (
+                execution is not None
+                and execution.value == "confirmed"
+                and execution.source_type == "runtime.commit_dispatch"
+                and write is not None
+                and write.value == "confirmed"
             ):
                 if response is None or response.value != "contradicted":
                     return FusionDecision(
@@ -372,6 +413,7 @@ class SignalFusionArbiter:
         constraints: Iterable[ActionConstraint],
         *,
         scope: str,
+        target_control: str = "",
     ) -> FusionDecision:
         """Validate one planner action family against fresh scoped constraints."""
         scoped = tuple(item for item in constraints if item.scope == scope)
@@ -398,10 +440,57 @@ class SignalFusionArbiter:
                     conflicts=tuple(reasons),
                 )
 
+        required_targets = {
+            _normalize_target(value)
+            for item in scoped
+            for value in item.required_targets
+            if _normalize_target(value)
+        }
+        if family == "commit" and any(item.commit_requires_write for item in scoped):
+            if not target_matches_declared(target_control, required_targets):
+                return FusionDecision(
+                    action="reject_action",
+                    reason=(
+                        "当前 mutation 尚无本轮目标写入；终端提交不能代替填写/选择业务目标。"
+                        "请先执行一个 write 动作。"
+                    ),
+                    conflicts=("action.write.required",),
+                )
+        if required_targets and family in {"input", "select"}:
+            target_matches = target_matches_declared(target_control, required_targets)
+            if not target_matches:
+                expected = ", ".join(sorted(required_targets))
+                return FusionDecision(
+                    action="reject_action",
+                    reason=(
+                        f"当前动作必须命中声明目标 [{expected}]，"
+                        f"proposal_target={target_control or '<missing>'}；不得改用相邻控件。"
+                    ),
+                    conflicts=(target_control or "<missing>",),
+                )
+
         return FusionDecision(
             action="allow_action",
             reason="planner proposal satisfies current action constraints",
         )
+
+
+def _normalize_target(value: str) -> str:
+    return "".join(ch.lower() for ch in (value or "") if ch.isalnum())
+
+
+def target_matches_declared(target: str, declared: Iterable[str]) -> bool:
+    proposed = _normalize_target(target)
+    expected_targets = {_normalize_target(value) for value in declared if _normalize_target(value)}
+    return bool(
+        proposed
+        and any(
+            proposed == expected
+            or proposed in expected
+            or expected in proposed
+            for expected in expected_targets
+        )
+    )
 
 
 _ACTION_FAMILY_TYPES: dict[ActionFamily, frozenset[str]] = {

@@ -18,6 +18,14 @@ class SupervisorPolicy(Protocol):
     ) -> SupervisorStep:
         """Given current screen, goal, and full history, decide what to do next."""
 
+    def reconcile(
+        self,
+        observation: Observation,
+        goal: str,
+        history: list[PolicyTurn],
+    ) -> SupervisorStep:
+        """Observe and arbitrate once without proposing or dispatching another action."""
+
     def runtime_state_snapshot(self) -> dict:
         """Return supervisor-owned runtime state for persistence."""
         ...

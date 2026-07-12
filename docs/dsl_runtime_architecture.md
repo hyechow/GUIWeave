@@ -151,28 +151,49 @@ completion_status: confirmed | accepted_unverified | failed | in_progress
 
 第三档只能产生 `accepted_unverified`：Interpreter 可以继续执行后续 statement，但最终结果层
 不得把它表述为“已确认成功”。`outcome=contradicted` 时不能凭 dispatch 推进；没有 toast 也
-不能据此重复提交。`require_fresh_action` 的写操作不能被 PreExisting 状态吞掉。
+不能据此重复提交。`mutation_mode=change` 的写操作不能被 PreExisting 状态吞掉。
 
 ## 动作账本与重复提交
 
 Planner 为每个原子动作声明 `atomic_role`：
 
 ```text
-prepare | commit | iterate
+prepare | write | commit | iterate
 ```
 
-- `prepare` 改变输入、选择或局部页面状态；
+- `prepare` 只负责展开、定位、切换入口等 acquire 过程；
+- `write` 输入、选择或切换目标值，形成当前 mutation 的因果写入证据；
 - `commit` 触发保存、提交、发送等不可安全重复的副作用；
 - `iterate` 是允许重复并由边界/目标值终止的调节动作。
+
+交互 Run 还声明 `target_controls`；input/select proposal 必须命中这些字段或控件，不能在目标控件
+尚未渲染时改用相邻的全局搜索框。action 通过 `mutation_mode` 区分幂等 `ensure` 与要求本轮变化的
+`change`：ensure 可由权威既有状态完成；change 必须先有同 scope 的 write，存在持久化边界时再有
+commit。只有滚动和保存不能证明本轮产生了目标变化。
 
 执行器在真正调用平台 adapter 之前，用 `execution_scope + milestone_id + atomic_role` 形成语义
 动作键并查询 run-scoped `ActionLedger`。同一 scope 的 commit 已经 `dispatched` 且未被
 `contradicted` 时，后续同义 commit 必须在 dispatch 前被抑制；坐标漂移或按钮文案轻微变化不应
-绕过此门。若 outcome 明确 contradicted，只有先出现新的 prepare 修正动作，才允许再次 commit。
+绕过此门。若 outcome 明确 contradicted，只有先出现新的 write 修正动作，才允许再次 commit。
 foreach 的不同 row identity 属于不同 scope，因此不会互相误伤。
 
 旧字段 `executed`、`no_effect` 和 `target_verify` 只承担持久化上下文兼容；新决策不得再把它们
 拼成单一“动作成功”结论。
+
+## 执行预算与终态观察
+
+`max_turns` 是 interactive decision/action turn 的严格硬上限。运行器不得为了完成复杂 Program
+静默提高它；DSL 静态复杂度估算只能通过显式 `--dynamic-max-turns` 启用。复杂任务需要调用方明确
+提供足够预算，不能让估算器成为执行正确性的隐含依赖。
+
+若最后一个额度恰好派发了动作，循环在停止前允许一次 `operation_mode=observation` 的只读仲裁：
+重新观察页面并运行 checker、结构化 Gate 和 SignalFusion，但禁止 planner、replanner 和 action
+dispatch。该观察不消耗 interactive budget，且最多发生一次。它只能确认末次动作效果、推进纯
+控制/查询/finish，不能借预算外观察执行下一个 GUI 动作。
+
+`atomic_role` 描述动作生命周期，`action_family` 描述执行机制。生命周期角色优先：commit 只能映射
+到 commit/activate，write 只能映射到 input/select，iterate 只能映射到 iterate。协议归一化发生在
+primitive 校验之前；不能通过扩大 input 等动作族的 primitive 白名单掩盖角色冲突。
 
 ## 恢复边界
 

@@ -29,6 +29,7 @@ def test_direct_navigation_is_immediate_but_remains_interactive():
     run = Run(kind="navigation", name="打开 https://example.test/item/1")
     assert run.is_interactive
     assert is_immediate_statement(run, Platform())
+    assert not is_immediate_statement(run, Platform(), allow_navigation=False)
 
 
 def test_read_executor_returns_one_outcome_without_dispatch_state(tmp_path):

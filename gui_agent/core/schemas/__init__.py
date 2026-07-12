@@ -55,7 +55,7 @@ CompletionStrategy = Literal[
     "repeat_until_satisfied",
     "human_escalation",
 ]
-AtomicRole = Literal["prepare", "commit", "iterate"]
+AtomicRole = Literal["prepare", "write", "commit", "iterate"]
 ActionFamily = Literal[
     "input", "select", "activate", "navigate", "iterate", "commit", "unknown"
 ]
@@ -89,12 +89,15 @@ class ActionSignal(BaseModel):
 
     action_key: str = ""
     role: AtomicRole = "prepare"
+    target_control: str = ""
+    target_value: str = ""
     execution: ActionExecutionStatus = "not_attempted"
     target: ActionTargetStatus = "unknown"
     response: ActionResponseStatus = "unknown"
     response_channels: list[str] = Field(default_factory=list)
     outcome: ActionOutcomeStatus = "unverified"
     evidence: list[str] = Field(default_factory=list)
+    outcome_evidence: list[str] = Field(default_factory=list)
     suppressed_reason: str = ""
 
 
@@ -450,6 +453,10 @@ class SupervisorStep(BaseModel):
             "unknown 保持旧调用方兼容。"
         ),
     )
+    target_control: str = Field(
+        default="",
+        description="planner 声明的本轮控件/字段目标；执行前与 milestone target_controls 对齐。",
+    )
     completion_status: CompletionStatus = Field(
         default="in_progress",
         description="本步终态的确认级别；accepted_unverified 会停止重复副作用但不宣称业务结果已确认。",
@@ -570,6 +577,18 @@ class Milestone(BaseModel):
             "state cannot be mistaken for work performed by this task."
         ),
     )
+    mutation_mode: Literal["ensure", "change"] = Field(
+        default="change",
+        description="mutation 的幂等语义；ensure 可接受既有终态，change 要求本轮目标写入。",
+    )
+    target_controls: list[str] = Field(
+        default_factory=list,
+        description="该执行单元必须命中的字段、控件或集合能力名称。",
+    )
+    target_values: dict[str, str] = Field(
+        default_factory=dict,
+        description="该执行单元要求实现的结构化字段终态。",
+    )
     completion_status: CompletionStatus = Field(
         default="in_progress",
         description="交互 Run 的终态确认级别。",
@@ -631,9 +650,12 @@ class PolicyTurn(BaseModel):
 
     index: int
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
-    operation_mode: Literal["interactive", "non_interactive"] = Field(
+    operation_mode: Literal["interactive", "observation", "non_interactive"] = Field(
         default="interactive",
-        description="本轮是 UI 交互执行，还是非 UI primitive（如 structured read / data_query）",
+        description=(
+            "本轮是 UI 交互执行、无动作观察仲裁，还是非 UI primitive"
+            "（如 structured read / data_query）"
+        ),
     )
     observation_source: str
     observation_url: str = Field(default="", description="本轮观察帧对应的截图文件名；为空时报告层按 turn index 回退推断")

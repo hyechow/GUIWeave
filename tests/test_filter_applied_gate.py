@@ -12,7 +12,14 @@ from gui_agent.adapters.browser.filter_state import (
     normalize_applied_filter_state,
     normalize_applied_filters,
 )
-from gui_agent.core.schemas import Milestone
+from gui_agent.core.schemas import (
+    BaseAction,
+    BaseActionDecision,
+    Milestone,
+    Observation,
+    SupervisorStep,
+)
+from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.supervisor.milestone.helpers import (
     _extract_target_fields,
     filter_chips_clean,
@@ -20,6 +27,7 @@ from gui_agent.core.supervisor.milestone.helpers import (
     filter_result_requirement_satisfied,
     filter_state_satisfies_target,
     parse_filter_target,
+    RuntimeFilterIntent,
 )
 from gui_agent.context.runtime import applied_filter_state_block
 
@@ -122,6 +130,84 @@ def test_parse_global_search_box_target_without_inventing_a_column():
     assert filter_state_satisfies_target(
         {"Keyword": "Minerva LumaTech V-Tee"}, milestone
     ) is True
+
+
+def test_runtime_write_intent_matches_actual_keyword_route_without_text_parser():
+    milestone = _filter_ms(
+        "在产品名称字段用精确值『Minerva LumaTech V-Tee』筛选",
+        "产品名称精确筛选已应用，records-found 计数可读",
+    )
+    intent = RuntimeFilterIntent(
+        target_control="Search by keyword",
+        target_value="Minerva LumaTech V-Tee",
+    )
+
+    assert parse_filter_target(milestone) is None
+    assert filter_state_satisfies_target(
+        {"Keyword": "Minerva LumaTech V-Tee"}, milestone, intent
+    ) is True
+    assert filter_chips_clean(
+        {"Keyword": "Minerva LumaTech V-Tee"}, milestone, intent
+    ) is True
+
+
+def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
+    milestone = _filter_ms(
+        "在产品名称字段用精确值『Minerva LumaTech V-Tee』筛选",
+        "产品名称精确筛选已应用，records-found 计数可读",
+    )
+    milestone.returns = ["match_count"]
+    write_step = SupervisorStep(
+        should_act=True,
+        instruction="type exact value",
+        stop=False,
+        goal_completed=False,
+        summary="write",
+        milestone_id=milestone.id,
+        execution_scope=f"milestone:{milestone.id}",
+        milestone_kind="filter",
+        atomic_role="write",
+        action_family="input",
+        target_control="Search by keyword",
+    )
+    write_turn = make_interactive_turn(
+        index=13,
+        observation_source="browser",
+        supervisor_step=write_step,
+        action_decision=BaseActionDecision(action=BaseAction(
+            action_type="type",
+            x=300,
+            y=300,
+            text="Minerva LumaTech V-Tee",
+            description="type exact value",
+        )),
+        executed=True,
+    )
+    checker_calls: list[int] = []
+
+    def _spy_run_checker(*_args, **_kwargs):
+        checker_calls.append(1)
+        raise _CheckerReached()
+
+    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
+    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+    policy = policy_mod.MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+
+    step = policy.step(
+        Observation(
+            png_bytes=b"x",
+            source="browser",
+            applied_filters={"Keyword": "Minerva LumaTech V-Tee"},
+            tables=[{"total_records": 0}],
+        ),
+        goal="find product",
+        history=[write_turn],
+    )
+
+    assert checker_calls == []
+    assert step.goal_completed is True
+    assert step.completion_status == "confirmed"
 
 
 def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatch):

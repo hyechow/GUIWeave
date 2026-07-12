@@ -29,7 +29,7 @@ from gui_agent.core.schemas import (
 def _policy():
     p = MilestoneSupervisorPolicy()
     m = Milestone.model_validate(
-        {"id": "m1", "name": "进入闹钟页", "description": "d", "success_condition": "闹钟列表页", "kind": "action"}
+        {"id": "m1", "name": "进入闹钟页", "description": "d", "success_condition": "闹钟列表页", "kind": "navigation"}
     )
     p._milestones = {"m1": m}
     p._current_id = "m1"
@@ -69,6 +69,27 @@ def _submit_turn(*, no_effect: bool = True, reason: str = "点击 Submit Comment
         action_decision=BaseActionDecision(action=act),
         target_verify=TargetVerify(on_target=True, actual_element="Submit Comment button"),
         no_effect=no_effect,
+        executed=True,
+    )
+
+
+def _write_turn(*, description: str = "在目标字段输入任务值") -> PolicyTurn:
+    act = BaseAction(action_type="type", x=500, y=700, text="target", description=description)
+    return PolicyTurn(
+        index=0,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True,
+            instruction=description,
+            stop=False,
+            goal_completed=False,
+            summary="",
+            milestone_id="m1",
+            atomic_role="write",
+            action_family="input",
+        ),
+        action_decision=BaseActionDecision(action=act),
+        target_verify=TargetVerify(on_target=True, actual_element="target field"),
         executed=True,
     )
 
@@ -175,7 +196,7 @@ def test_terminal_dispatch_advances_without_visible_feedback(monkeypatch):
     )
     p._monitor._last_url = "http://x/order/view/65"
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/order/view/65")
-    p._run_single_turn(m, obs, [_submit_turn(no_effect=True)])
+    p._run_single_turn(m, obs, [_write_turn(), _submit_turn(no_effect=True)])
     assert calls == ["advance"]  # terminal dispatch is enough when only visible feedback is missing
 
 
@@ -258,7 +279,7 @@ def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(status="done", reason="发货已保存，已跳回订单详情页", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
-    history = [_shipment_submit_turn()]
+    history = [_write_turn(description="输入追踪号"), _shipment_submit_turn()]
     decision = _completion_decision(p, m, obs, history)
     assert decision.action == "complete"
     step = p._advance(m, obs, history, decision=decision)
@@ -323,8 +344,7 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     p = MilestoneSupervisorPolicy()
     m = Milestone.model_validate({
         "id": "m1", "name": "点击列表中 Type=Configurable 的那一行打开编辑页", "description": "d",
-        "success_condition": "已进入该产品编辑页", "kind": "action",
-        "require_fresh_action": True,
+        "success_condition": "已进入该产品编辑页", "kind": "navigation",
     })
     p._milestones = {"m1": m}
     p._current_id = "m1"
@@ -349,6 +369,7 @@ def _select_option_turn(milestone_id: str = "m1") -> PolicyTurn:
         supervisor=SupervisorStep(
             should_act=True, instruction="在 Stock Status 下拉框选择 Out of Stock",
             stop=False, goal_completed=False, summary="", milestone_id=milestone_id,
+            atomic_role="write", action_family="select",
         ),
         action_decision=BaseActionDecision(action=act),
         target_verify=TargetVerify(on_target=True, actual_element="Stock Status 下拉"),

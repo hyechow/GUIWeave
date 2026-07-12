@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from gui_agent.core.schemas import Milestone, Observation, SupervisorStep
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.milestone.helpers import (
+    _apply_required_group_checker_guard,
+    target_value_state,
+)
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
@@ -82,6 +86,140 @@ def test_incomplete_repeated_row_replans_commit_to_input_once():
     assert "结构化动作约束冲突" in retry_prompts[1]
 
 
+def test_declared_partial_target_row_rejects_save_before_business_write():
+    milestone = Milestone.model_validate({
+        "id": "ensure-option",
+        "name": "确保选项集合包含 XXXL 并保存",
+        "description": "",
+        "success_condition": "选项集合包含完整的 XXXL 行",
+        "kind": "action",
+        "mutation_mode": "ensure",
+        "target_controls": ["Admin Swatch", "Admin Description"],
+        "target_values": {
+            "Admin Swatch": "XXXL",
+            "Admin Description": "XXXL",
+        },
+    })
+    observation = Observation(
+        png_bytes=b"png",
+        source="browser",
+        dom_state="partial-target-row",
+        form_controls=[
+            {
+                "label": "Swatch",
+                "kind": "text_input",
+                "value": "",
+                "group_id": "collection:20",
+                "group_field": "Admin",
+                "in_viewport": True,
+            },
+            {
+                "label": "Description",
+                "kind": "text_input",
+                "value": "XXXL",
+                "group_id": "collection:20",
+                "group_field": "Admin",
+                "in_viewport": True,
+            },
+        ],
+        form_controls_meta={"coverage": "partial", "truncated": True},
+    )
+    policy, retry_prompts = _policy_with_plans(
+        _PlanResult(
+            instruction="点击 Save Attribute",
+            summary="persist row",
+            atomic_role="commit",
+            action_family="commit",
+            target_control="Save Attribute",
+        ),
+        _PlanResult(
+            instruction="在该选项行的 Admin Swatch 输入 XXXL",
+            summary="complete business field",
+            atomic_role="write",
+            action_family="input",
+            target_control="Admin Swatch",
+        ),
+    )
+
+    step = policy._plan_single(milestone, _check(), observation, [])
+
+    assert step.action_family == "input"
+    assert step.target_control == "Admin Swatch"
+    assert len(retry_prompts) == 2
+    assert "结构化动作约束冲突" in retry_prompts[1]
+
+
+def test_target_values_require_all_declared_fields_in_the_same_group():
+    milestone = Milestone(
+        id="ensure-option",
+        name="ensure option",
+        description="",
+        success_condition="option row is complete",
+        kind="action",
+        mutation_mode="ensure",
+        target_values={
+            "Admin Swatch": "XXXL",
+            "Admin Description": "XXXL",
+        },
+    )
+    controls = [
+        {
+            "label": "Swatch",
+            "kind": "text_input",
+            "value": "",
+            "group_id": "collection:20",
+            "group_field": "Admin",
+        },
+        {
+            "label": "Description",
+            "kind": "text_input",
+            "value": "XXXL",
+            "group_id": "collection:20",
+            "group_field": "Admin",
+        },
+    ]
+
+    incomplete = target_value_state(controls, milestone)
+    assert incomplete.status == "incomplete"
+    assert incomplete.missing_fields == ("Admin Swatch",)
+
+    controls[0]["value"] = "XXXL"
+    complete = target_value_state(controls, milestone)
+    assert complete.status == "complete"
+
+
+def test_partial_inventory_absence_cannot_become_target_contradiction():
+    milestone = Milestone(
+        id="ensure-option",
+        name="ensure option",
+        description="",
+        success_condition="option row is complete",
+        kind="action",
+        mutation_mode="ensure",
+        target_values={"Admin Swatch": "XXXL"},
+    )
+    observation = Observation(
+        png_bytes=b"png",
+        source="browser",
+        form_controls=[],
+        form_controls_meta={"coverage": "partial", "truncated": True},
+    )
+    contradicted = _SingleCheckResult(
+        status="stuck",
+        reason="The target field is absent.",
+        summary="Cannot continue.",
+        outcome_status="contradicted",
+    )
+
+    guarded = _apply_required_group_checker_guard(
+        contradicted, milestone, observation
+    )
+
+    assert guarded.status == "in_progress"
+    assert guarded.outcome_status == "unverified"
+    assert "partial coverage" in guarded.summary
+
+
 def test_visible_named_input_replans_iterate_to_input_once():
     milestone = Milestone.model_validate({
         "id": "search",
@@ -159,4 +297,3 @@ def test_second_conflicting_proposal_enters_recovery_without_action():
 
     assert step.should_act is False
     assert step.summary == "proposal rejected"
-

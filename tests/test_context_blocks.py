@@ -64,7 +64,56 @@ def test_runtime_history_context_keeps_existing_history_text_with_metadata():
     assert "context: runtime.history.recent_actions" in text
     assert "ttl=session" in text
     assert "需要搜索" in text
-    assert "结果尚未记录" in text
+    assert "[无动作]" in text
+
+
+def test_runtime_history_keeps_action_lifecycle_separate_from_checker_summary():
+    turn = PolicyTurn(
+        index=14,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True,
+            instruction="按回车提交筛选",
+            stop=False,
+            goal_completed=False,
+            summary="submit",
+            milestone_id="filter",
+            milestone_kind="filter",
+            atomic_role="commit",
+        ),
+        action_decision={
+            "action": {"action_type": "press_enter", "description": "submit filter"}
+        },
+        executed=True,
+        action_signal={
+            "action_key": "filter|commit",
+            "role": "commit",
+            "execution": "dispatched",
+            "response": "observed",
+            "response_channels": ["dom"],
+            "outcome": "unverified",
+        },
+    )
+    next_turn = PolicyTurn(
+        index=15,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True,
+            instruction="Clear all",
+            stop=False,
+            goal_completed=False,
+            summary="0 records, clear and retry",
+            milestone_id="filter",
+        ),
+        executed=False,
+    )
+
+    text = history_block([turn, next_turn]).render()
+
+    assert "execution=dispatched" in text
+    assert "response=observed(dom)" in text
+    assert "outcome=unverified" in text
+    assert "按回车提交筛选 → 结果" not in text
 
 
 def test_budgeter_keeps_all_when_under_ceiling():

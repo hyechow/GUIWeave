@@ -5,8 +5,9 @@ import pytest
 from gui_agent.core.orchestrator.program import Finish, Program, Run, RunResult
 from gui_agent.core.orchestrator.runner import Interpreter, RunRecord, make_run_result
 from gui_agent.core.run.action_ledger import effective_action_role, semantic_action_key
+from gui_agent.core.run.loop import _needs_terminal_reconciliation, _turn_budget_mode
 from gui_agent.core.run.result import orchestration_result
-from gui_agent.core.run.turns import make_interactive_turn
+from gui_agent.core.run.turns import interactive_turn_count, make_interactive_turn, make_verdict_turn
 from gui_agent.core.schemas import (
     ActionSignal,
     BaseAction,
@@ -21,7 +22,12 @@ from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 
 
-def _step(*, scope: str = "row:65", role: str = "commit") -> SupervisorStep:
+def _step(
+    *,
+    scope: str = "row:65",
+    role: str = "commit",
+    kind: str | None = "action",
+) -> SupervisorStep:
     return SupervisorStep(
         should_act=True,
         instruction="点击 Save",
@@ -30,6 +36,7 @@ def _step(*, scope: str = "row:65", role: str = "commit") -> SupervisorStep:
         summary="",
         milestone_id="m1",
         execution_scope=scope,
+        milestone_kind=kind,
         atomic_role=role,
     )
 
@@ -121,6 +128,30 @@ def test_make_turn_records_execution_separately_from_outcome():
     assert turn.action_signal.outcome == "unverified"
 
 
+def test_make_turn_records_concrete_write_value():
+    step = _step(role="write", kind="filter")
+    step.target_control = "Search by keyword"
+    decision = BaseActionDecision(action=BaseAction(
+        action_type="type",
+        x=300,
+        y=300,
+        text="Minerva LumaTech V-Tee",
+        description="type exact search",
+    ))
+
+    turn = make_interactive_turn(
+        index=1,
+        observation_source="browser",
+        supervisor_step=step,
+        action_decision=decision,
+        executed=True,
+    )
+
+    assert turn.action_signal is not None
+    assert turn.action_signal.target_control == "Search by keyword"
+    assert turn.action_signal.target_value == "Minerva LumaTech V-Tee"
+
+
 def test_duplicate_commit_is_suppressed_before_second_dispatch():
     policy = MilestoneSupervisorPolicy()
     step = _step()
@@ -130,6 +161,92 @@ def test_duplicate_commit_is_suppressed_before_second_dispatch():
 
     assert allowed is False
     assert "禁止" in reason
+
+
+def test_filter_commit_is_not_treated_as_at_most_once_business_mutation():
+    policy = MilestoneSupervisorPolicy()
+    step = _step(scope="milestone:filter", kind="filter")
+    prior = _turn(index=1, step=step)
+
+    allowed, _key, reason = policy.authorize_action_dispatch(
+        step, _decision(700), [prior]
+    )
+
+    assert allowed is True
+    assert reason == ""
+
+
+def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_turn():
+    policy = MilestoneSupervisorPolicy()
+    dispatched = _turn(index=1, step=_step())
+    context = PolicyContext(
+        goal="g",
+        supervisor_policy_name="milestone",
+        action_policy_name="action",
+        turns=[dispatched],
+    )
+
+    assert _needs_terminal_reconciliation(context) is True
+    assert _turn_budget_mode(context, max_turns=1) == "reconcile"
+    observation_turn = make_verdict_turn(
+        index=2,
+        observation_source="browser",
+        supervisor_step=SupervisorStep(
+            should_act=False,
+            stop=False,
+            goal_completed=False,
+            summary="final state remains incomplete",
+            milestone_id="m1",
+        ),
+        supervisor=policy,
+        observation_only=True,
+    )
+    context.turns.append(observation_turn)
+
+    assert observation_turn.operation_mode == "observation"
+    assert interactive_turn_count(context) == 1
+    assert _needs_terminal_reconciliation(context) is False
+    assert _turn_budget_mode(context, max_turns=1) == "stop"
+
+
+def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
+    milestone = Milestone(
+        id="m1",
+        name="change target and save",
+        description="",
+        kind="action",
+        success_condition="saved target state is visible",
+    )
+    policy = MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+    monkeypatch.setattr(
+        policy,
+        "_single_check",
+        lambda *_args, **_kwargs: _SingleCheckResult(
+            status="in_progress",
+            reason="target write was observed but save is still pending",
+            summary="save remains",
+        ),
+    )
+    monkeypatch.setattr(
+        policy,
+        "_invoke_planner",
+        lambda *_args, **_kwargs: pytest.fail("reconcile must not invoke planner"),
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
+        lambda _observation: False,
+    )
+
+    step = policy.reconcile(
+        Observation(png_bytes=b"x", source="browser", dom_state="after-write"),
+        "g",
+        [],
+    )
+
+    assert step.should_act is False
+    assert step.goal_completed is False
+    assert "save is still pending" in step.summary
 
 
 def test_action_policy_stop_cannot_complete_an_in_progress_milestone():
@@ -165,8 +282,8 @@ def test_contradicted_commit_requires_intervening_correction():
     denied, _key, _reason = policy.authorize_action_dispatch(commit, _decision(), [rejected])
     assert denied is False
 
-    prepare = _step(role="prepare")
-    corrected = _turn(index=2, step=prepare, role="prepare")
+    prepare = _step(role="write")
+    corrected = _turn(index=2, step=prepare, role="write")
     allowed, _key, _reason = policy.authorize_action_dispatch(
         commit, _decision(), [rejected, corrected]
     )
@@ -209,8 +326,9 @@ def test_unverified_feedback_does_not_erase_a_known_commit_contradiction():
     )
 
     assert signal.outcome == "contradicted"
+    assert signal.outcome_evidence == ["the attempted route produced the wrong result"]
 
-    correction = _turn(index=2, step=_step(scope="milestone:m1", role="prepare"))
+    correction = _turn(index=2, step=_step(scope="milestone:m1", role="write"))
     allowed, _key, reason = policy.authorize_action_dispatch(
         commit,
         _decision(),
@@ -236,7 +354,11 @@ def test_terminal_dispatch_advances_as_accepted_unverified(
     policy._current_id = "m1"
     policy._order = ["m1"]
     step = _step(scope="milestone:m1")
-    history = [_turn(index=1, step=step)]
+    write_step = _step(scope="milestone:m1", role="write")
+    history = [
+        _turn(index=1, step=write_step, role="write"),
+        _turn(index=2, step=step),
+    ]
     monkeypatch.setattr(
         "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
         lambda _obs: False,
@@ -277,7 +399,10 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
     policy._current_id = "m1"
     policy._order = ["m1"]
     source_step = _step(scope="row:attribute/144")
-    history = [_turn(index=1, step=source_step)]
+    history = [
+        _turn(index=1, step=_step(scope="row:attribute/144", role="write"), role="write"),
+        _turn(index=2, step=source_step),
+    ]
     policy._monitor.observe_effect("http://x/attribute/144", "draft")
     monkeypatch.setattr(
         "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
@@ -311,9 +436,9 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
     assert result.completion_status == "accepted_unverified"
     assert result.pre_existing is False
     assert checker_calls == [1]
-    assert history[0].action_signal is not None
-    assert history[0].action_signal.response == "observed"
-    assert set(history[0].action_signal.response_channels) == {"url", "dom"}
+    assert history[-1].action_signal is not None
+    assert history[-1].action_signal.response == "observed"
+    assert set(history[-1].action_signal.response_channels) == {"url", "dom"}
 
 
 def test_redirected_commit_prefers_confirmed_outcome_feedback(monkeypatch):
@@ -329,7 +454,10 @@ def test_redirected_commit_prefers_confirmed_outcome_feedback(monkeypatch):
     policy._milestones = {"m1": milestone}
     policy._current_id = "m1"
     policy._order = ["m1"]
-    history = [_turn(index=1, step=_step(scope="row:record/65"))]
+    history = [
+        _turn(index=1, step=_step(scope="row:record/65", role="write"), role="write"),
+        _turn(index=2, step=_step(scope="row:record/65")),
+    ]
     policy._monitor.observe_effect("http://x/record/65", "draft")
     monkeypatch.setattr(
         "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
@@ -361,8 +489,8 @@ def test_redirected_commit_prefers_confirmed_outcome_feedback(monkeypatch):
     assert result.goal_completed is True
     assert result.completion_status == "confirmed"
     assert result.pre_existing is False
-    assert history[0].action_signal is not None
-    assert history[0].action_signal.outcome == "confirmed"
+    assert history[-1].action_signal is not None
+    assert history[-1].action_signal.outcome == "confirmed"
 
 
 def test_accepted_unverified_run_result_advances_interpreter_but_is_not_verified():

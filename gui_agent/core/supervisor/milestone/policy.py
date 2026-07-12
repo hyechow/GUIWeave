@@ -39,8 +39,10 @@ from .helpers import (
     filter_state_satisfies_target,
     native_select_satisfies_target,
     proposal_action_constraints,
+    RuntimeFilterIntent,
     target_affordance_scroll_plan,
     target_section_acquire_plan,
+    target_value_state,
 )
 from .runtime import (
     EARLY_FEASIBILITY_AT,
@@ -81,6 +83,7 @@ from gui_agent.core.run.execution_signals import (
     ProvisionalOutcomeLedger,
     SignalFusionArbiter,
     claim,
+    target_matches_declared,
 )
 
 
@@ -168,8 +171,9 @@ def _milestone_dispatch_classes(milestone: Milestone) -> set[str]:
     )
 _NEGATIVE_ACTION_FEEDBACK_RE = re.compile(
     r"(?:"
-    r"错误|失败|校验|必填|无效|被拒绝|权限不足|"
-    r"error|failed|failure|validation|required|invalid|denied|forbidden"
+    r"校验(?:错误|失败)|保存失败|提交失败|字段无效|被拒绝|权限不足|必填字段(?:为空|缺失)|"
+    r"validation\s+(?:error|failed|failure)|save\s+failed|submit\s+failed|"
+    r"required\s+field\s+(?:missing|empty)|invalid\s+field|denied|forbidden"
     r")",
     re.IGNORECASE,
 )
@@ -183,10 +187,10 @@ def _plan_is_input_like(instruction: str) -> bool:
 def _resolved_plan_action_family(
     plan: _PlanResult,
     milestone: Milestone,
-) -> tuple[Literal["prepare", "commit", "iterate"], ActionFamily]:
+) -> tuple[Literal["prepare", "write", "commit", "iterate"], ActionFamily]:
     """Resolve legacy planner omissions before proposal and primitive validation.
 
-    Structured planner fields remain authoritative when present. The small compatibility
+    The lifecycle role is authoritative when role and mechanism conflict. The compatibility
     fallback derives only mechanically obvious families already represented by structured
     fields or an existing input classifier; it does not infer application workflows.
     """
@@ -201,14 +205,21 @@ def _resolved_plan_action_family(
         atomic_role = "commit"
 
     action_family = getattr(plan, "action_family", "unknown")
-    if action_family == "unknown" and _plan_is_input_like(plan.instruction):
+    if atomic_role == "iterate":
+        action_family = "iterate"
+    elif atomic_role == "commit" and action_family not in {"commit", "activate"}:
+        # The lifecycle role is authoritative: pressing Enter while an input owns focus is a
+        # terminal activation, not another text write. Keep input's primitive set narrow and
+        # repair the planner's role/family mismatch before it reaches dispatch validation.
+        action_family = "commit"
+    elif atomic_role == "write" and action_family not in {"input", "select"}:
+        action_family = "input" if _plan_is_input_like(plan.instruction) else "select"
+    elif action_family == "unknown" and _plan_is_input_like(plan.instruction):
         action_family = "input"
     elif action_family == "unknown" and plan.direction in {
         "up", "down", "left", "right", "increase", "decrease"
     }:
         action_family = "iterate"
-    elif action_family == "unknown" and atomic_role == "commit":
-        action_family = "commit"
     return atomic_role, action_family
 
 
@@ -296,8 +307,6 @@ def _has_negative_action_feedback(check: _SingleCheckResult) -> bool:
             check.reason or "",
             check.summary or "",
             check.stuck_reason or "",
-            " ".join(check.visible_evidence or []),
-            " ".join(check.missing_evidence or []),
             " ".join(check.issues or []),
         ]
     )
@@ -465,6 +474,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._timings: dict[str, float] = {}
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
+        self._observe_only: bool = False
 
     def set_app_knowledge(
         self,
@@ -580,9 +590,26 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 evidence="URL changed after the previous action",
                 authoritative=True,
             ))
-        latest = self._action_ledger.latest_dispatched(history, milestone.id)
+        scoped_history = [
+            turn
+            for turn in history
+            if getattr(turn.supervisor, "execution_scope", "") in {"", scope}
+        ]
+        # A terminal dispatch may redirect and therefore change the current row/page scope.
+        # Bridge only the immediately preceding action of this milestone; never borrow evidence
+        # from an older foreach row that happened to reuse the same milestone id.
+        if (
+            history
+            and history[-1].supervisor is not None
+            and history[-1].supervisor.milestone_id == milestone.id
+            and history[-1].executed
+            and history[-1] not in scoped_history
+        ):
+            scoped_history.append(history[-1])
+        latest = self._action_ledger.latest_dispatched(scoped_history, milestone.id)
         if latest is None:
             return claims
+        lifecycle_scope = getattr(latest.supervisor, "execution_scope", "") or scope
         terminal = bool(
             _milestone_dispatch_classes(milestone)
             and _is_terminal_dispatch_turn(latest, milestone)
@@ -595,6 +622,36 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             evidence="runtime action ledger records a dispatched event",
             authoritative=True,
         ))
+        write_turn = self._action_ledger.latest_write(
+            history, milestone.id, scope=lifecycle_scope
+        )
+        if (
+            write_turn is None
+            and terminal
+            and not milestone.target_values
+            and latest.action_signal is not None
+            and target_matches_declared(
+                latest.action_signal.target_control
+                or getattr(latest.supervisor, "target_control", ""),
+                (
+                    *(milestone.target_controls or []),
+                    *(milestone.target_values or {}).keys(),
+                ),
+            )
+        ):
+            # Some business mutations are themselves terminal controls (Delete, Send, Toggle).
+            # Treat that dispatch as its own write only when it names a declared business target;
+            # generic persistence controls such as Save remain commit-only.
+            write_turn = latest
+        if write_turn is not None:
+            claims.append(claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope=scope,
+                evidence="runtime action ledger records an on-target target write",
+                authoritative=True,
+            ))
         target_verify = latest.target_verify
         if target_verify is not None:
             claims.append(claim(
@@ -609,6 +666,50 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 ),
                 authoritative=True,
             ))
+        return claims
+
+    @staticmethod
+    def _target_value_claims(
+        milestone: Milestone,
+        observation: Observation,
+        *,
+        scope: str,
+    ) -> list[EvidenceClaim]:
+        """Translate positive declared field/value matches into authoritative state claims."""
+        state = target_value_state(
+            getattr(observation, "form_controls", None), milestone
+        )
+        claims: list[EvidenceClaim] = []
+        if state.status == "complete":
+            claims.append(claim(
+                "control.state",
+                "confirmed",
+                source_type="obs.dom.target_values",
+                scope=scope,
+                evidence=state.evidence,
+                authoritative=True,
+                coverage="matched_structural_unit",
+            ))
+        coverage = str(
+            (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
+            or "unknown"
+        ).lower()
+        coverage_value = (
+            "partial"
+            if coverage == "partial"
+            else "complete"
+            if coverage == "complete"
+            else "unknown"
+        )
+        claims.append(claim(
+            "inventory.coverage",
+            coverage_value,
+            source_type="obs.dom.form_controls",
+            scope=scope,
+            evidence=f"form control inventory coverage={coverage}",
+            authoritative=True,
+            coverage=coverage,
+        ))
         return claims
 
     @staticmethod
@@ -666,6 +767,9 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         """Arbitrate a checker verdict together with persisted lifecycle evidence."""
         scope = self._execution_scope_for(milestone, observation)
         claims = self._action_lifecycle_claims(milestone, history, scope=scope)
+        claims.extend(self._target_value_claims(
+            milestone, observation, scope=scope
+        ))
         claims.append(self._checker_claim(check, scope=scope))
         return self._signal_arbiter.decide(
             self._contract_for(milestone),
@@ -804,7 +908,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
     def _update_latest_action_response(
         self, history: list[PolicyTurn], milestone: Milestone
     ) -> None:
-        turn = self._action_ledger.latest_dispatched(history, milestone.id)
+        turn = self._action_ledger.latest_pending(history, milestone.id)
         if turn is None or turn.action_signal is None:
             return
         signal = turn.action_signal
@@ -825,22 +929,45 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         milestone: Milestone,
         check: _SingleCheckResult,
     ) -> None:
-        turn = self._action_ledger.latest_dispatched(history, milestone.id)
+        turn = self._action_ledger.latest_pending(history, milestone.id)
         if turn is None or turn.action_signal is None:
             return
         signal = turn.action_signal
         declared = getattr(check, "outcome_status", "unverified")
-        if declared == "contradicted" or _has_negative_action_feedback(check):
+        negative = declared == "contradicted" or _has_negative_action_feedback(check)
+        if negative:
             signal.outcome = "contradicted"
         elif declared == "confirmed" and signal.outcome != "contradicted":
             signal.outcome = "confirmed"
         # ``unverified`` carries no new information and must not erase a confirmed/contradicted
         # outcome from the same dispatch. A contradiction is terminal for that dispatch; only a
         # later corrected commit creates a new lifecycle record that can succeed.
-        evidence = [*(check.visible_evidence or []), check.reason or ""]
-        for item in evidence:
-            if item and item not in signal.evidence:
-                signal.evidence.append(item)
+        if negative or declared == "confirmed":
+            evidence = [*(check.visible_evidence or []), check.reason or ""]
+            for item in evidence:
+                if item and item not in signal.outcome_evidence:
+                    signal.outcome_evidence.append(item)
+
+    def _runtime_filter_intent(
+        self,
+        milestone: Milestone,
+        history: list[PolicyTurn],
+        *,
+        scope: str,
+    ) -> RuntimeFilterIntent | None:
+        if milestone.kind != "filter":
+            return None
+        turn = self._action_ledger.latest_write(history, milestone.id, scope=scope)
+        if turn is None or turn.action_signal is None:
+            return None
+        signal = turn.action_signal
+        value = signal.target_value
+        if not value and turn.action_decision is not None:
+            value = str(getattr(turn.action_decision.action, "text", "") or "")
+        control = signal.target_control or getattr(turn.supervisor, "target_control", "")
+        if not control or not value:
+            return None
+        return RuntimeFilterIntent(control, value)
 
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
         self._timings.clear()
@@ -878,6 +1005,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         result.execution_scope = self._execution_scope_for(result_ms, observation)
 
         return result
+
+    def reconcile(
+        self,
+        observation: Observation,
+        goal: str,
+        history: list[PolicyTurn],
+    ) -> SupervisorStep:
+        """Run one checker/arbiter pass while making every planning path action-less."""
+        self._observe_only = True
+        try:
+            return self.step(observation, goal, history)
+        finally:
+            self._observe_only = False
 
     def reseed(
         self,
@@ -987,9 +1127,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         contract = self._contract_for(milestone)
         fusion_claims = self._action_lifecycle_claims(
             milestone,
-            response_history,
+            history,
             scope=execution_scope,
         )
+        fusion_claims.extend(self._target_value_claims(
+            milestone, observation, scope=execution_scope
+        ))
         latest_dispatched = self._action_ledger.latest_dispatched(
             response_history, milestone.id
         )
@@ -1005,10 +1148,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # completion decision, so a checker cannot override an authoritative state in the same
         # domain and a generic page response cannot masquerade as a business outcome.
         applied_filters = getattr(observation, "applied_filters", None)
+        runtime_filter_intent = self._runtime_filter_intent(
+            milestone,
+            history,
+            scope=execution_scope,
+        )
         filter_applied = bool(
             milestone.kind == "filter"
-            and filter_state_satisfies_target(applied_filters, milestone)
-            and filter_chips_clean(applied_filters, milestone)
+            and filter_state_satisfies_target(
+                applied_filters, milestone, runtime_filter_intent
+            )
+            and filter_chips_clean(
+                applied_filters, milestone, runtime_filter_intent
+            )
         )
         if filter_applied:
             fusion_claims.append(claim(
@@ -1090,7 +1242,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # steal a Configurations-wizard milestone while the named section is still below the fold.
         section_plan = (
             None
-            if terminal_response_pending
+            if terminal_response_pending or self._observe_only
             else target_section_acquire_plan(
                 getattr(observation, "form_controls", None),
                 milestone,
@@ -1124,7 +1276,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # No named container blocks acquisition: fall back to a target control reported offscreen.
         acquire_plan = (
             None
-            if terminal_response_pending
+            if terminal_response_pending or self._observe_only
             else target_affordance_scroll_plan(
                 getattr(observation, "form_controls", None),
                 milestone,
@@ -1192,6 +1344,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         post_fusion = self._signal_arbiter.decide(
             contract, fusion_claims, scope=execution_scope
         )
+        if (
+            post_fusion.action == "continue"
+            and "action.write.required" in post_fusion.conflicts
+        ):
+            check = check.model_copy(update={
+                "status": "in_progress",
+                "outcome_status": "unverified",
+                "reason": post_fusion.reason,
+                "summary": "execution contract requires a target write before commit",
+                "missing_evidence": ["先写入声明的业务目标字段，再执行终端提交。"],
+            })
+            self._last_check = check
         accepted_unverified = post_fusion.completion_status == "accepted_unverified"
         if post_fusion.action == "complete":
             if check.status != "done" or accepted_unverified:
@@ -1269,6 +1433,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 history,
                 decision=post_fusion,
                 final_read=final_read,
+            )
+
+        if self._observe_only:
+            milestone.status = "running"
+            return SupervisorStep(
+                should_act=False,
+                instruction=None,
+                stop=False,
+                goal_completed=False,
+                summary=check.reason or "最终观察未确认当前执行单元完成",
+                execution_scope=execution_scope,
+                **_ctx(milestone, check.read_instruction),
             )
 
         # The checker itself judged NO PROGRESS (status=stuck) from the 任务进展轨迹 (PROGRESS half of
@@ -1391,6 +1567,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         history: list[PolicyTurn],
     ) -> SupervisorStep:
         execution_scope = self._execution_scope_for(milestone, observation)
+        if self._observe_only:
+            self._last_plan = None
+            milestone.status = "running"
+            return SupervisorStep(
+                should_act=False,
+                instruction=None,
+                stop=False,
+                goal_completed=False,
+                summary=check.reason or "最终观察未确认当前执行单元完成",
+                execution_scope=execution_scope,
+                **_ctx(milestone, check.read_instruction),
+            )
         with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
             plan = self._invoke_planner(milestone, check, observation, history)
         if self._is_sequence(plan.instruction):
@@ -1470,16 +1658,29 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 plan.drag_target_value = None
                 drag_steps = None
 
+        raw_action_family = getattr(plan, "action_family", "unknown")
         atomic_role, action_family = _resolved_plan_action_family(plan, milestone)
+        if raw_action_family != action_family:
+            print(
+                "  [ActionContract] normalize "
+                f"role={atomic_role}: family={raw_action_family} -> {action_family}"
+            )
+        has_write = self._action_ledger.latest_write(
+            history,
+            milestone.id,
+            scope=execution_scope,
+        ) is not None
         proposal_constraints = proposal_action_constraints(
             getattr(observation, "form_controls", None),
             milestone,
             scope=execution_scope,
+            has_write=has_write,
         )
         proposal_decision = self._signal_arbiter.validate_proposal(
             action_family,
             proposal_constraints,
             scope=execution_scope,
+            target_control=getattr(plan, "target_control", ""),
         )
         if proposal_decision.action == "reject_action":
             print(f"  [ProposalGate] {proposal_decision.reason}，重试一次...")
@@ -1497,11 +1698,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
             drag_steps = self._picker_drag_steps(plan)
             drag_column = getattr(plan, "drag_column", None)
+            raw_action_family = getattr(plan, "action_family", "unknown")
             atomic_role, action_family = _resolved_plan_action_family(plan, milestone)
+            if raw_action_family != action_family:
+                print(
+                    "  [ActionContract] normalize "
+                    f"role={atomic_role}: family={raw_action_family} -> {action_family}"
+                )
             proposal_decision = self._signal_arbiter.validate_proposal(
                 action_family,
                 proposal_constraints,
                 scope=execution_scope,
+                target_control=getattr(plan, "target_control", ""),
             )
             if proposal_decision.action == "reject_action":
                 print(f"  [ProposalGate] 重试仍冲突：{proposal_decision.reason}")
@@ -1594,6 +1802,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             execution_scope=execution_scope,
             atomic_role=atomic_role,
             action_family=action_family,
+            target_control=getattr(plan, "target_control", ""),
             direction=plan.direction,
             drag_column=getattr(plan, "drag_column", None),
             drag_steps=drag_steps,
@@ -1610,6 +1819,46 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         history: list[PolicyTurn],
     ) -> SupervisorStep:
         scoped_history = self._history_for_scope(history, milestone, observation)
+        if self._observe_only:
+            with _Timer(self._timings, self._timings_order, "loop_check", self._token_usage):
+                frame = self._loop_check(milestone, observation, scoped_history)
+            self._last_check = None
+            read_inst = (
+                None
+                if self.task_type == "action"
+                else frame.read_instruction or _default_read_instruction(milestone)
+            )
+            if frame.should_stop and _has_collected(scoped_history, milestone.id):
+                return self._advance_from_controller(
+                    milestone,
+                    observation,
+                    history,
+                    source_type="runtime.collection_controller",
+                    evidence=f"collection stop condition satisfied: {frame.stop_reason}",
+                    final_read=_ctx(milestone, read_inst, frame.collection_scope),
+                )
+            if frame.boundary_reached and _last_scroll_was_for(scoped_history, milestone.id):
+                return self._advance_from_controller(
+                    milestone,
+                    observation,
+                    history,
+                    source_type="runtime.collection_controller",
+                    evidence="collection boundary reached after a successful scroll",
+                )
+            milestone.status = "running"
+            return SupervisorStep(
+                should_act=False,
+                instruction=None,
+                stop=False,
+                goal_completed=False,
+                summary=frame.stop_reason or frame.summary or "最终观察未确认循环完成",
+                read_instruction=read_inst,
+                allow_read=bool(read_inst),
+                milestone_id=milestone.id,
+                milestone_kind=milestone.kind,
+                completion_strategy=milestone.completion_strategy,
+                collection_scope=frame.collection_scope,
+            )
         self._scroll_counts[milestone.id] = self._scroll_counts.get(milestone.id, 0) + 1
         scroll_count = self._scroll_counts[milestone.id]
 
