@@ -88,6 +88,11 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
 
 def _check_result(result, expected: dict) -> list[str]:
     details = []
+    if "outcome_status" in expected and result.outcome_status != expected["outcome_status"]:
+        details.append(
+            "outcome_status: expected "
+            f"{expected['outcome_status']!r}, got {result.outcome_status!r}"
+        )
     # status：单值用 "status"；当一个轨迹对多个状态都合理时（如 0 条结果 + 同时在打转，
     # stuck/in_progress 都不误判成功），用 "status_in" 接受一个集合，真正的锚点交给 must_not_claim。
     if "status_in" in expected:

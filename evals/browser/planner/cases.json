@@ -891,5 +891,44 @@
       ]
     },
     "note": "即使 checker 错称当前已在 Configurations，Planner 仍拿到 fresh DOM：目标 section center=2021 且标记需向下滚动；可见 Size 和稍下方 Color 是父商品基础属性，不能据名字相同就当作变体生成器。下一步必须继续把命名容器 Configurations 定位进视口，再在其内部寻找 Add Configuration/向导入口。"
+  },
+  {
+    "label": "嵌套向导 Generate 只回填外层编辑器，不得消费最终 Save（回归 20260712_124403 T33）",
+    "screenshot": "evals/browser/planner/screenshots/webarena549_configuration_summary_20260712.png",
+    "observation": {
+      "url": "http://shopping-admin.example/admin/catalog/product/edit/id/1492/",
+      "title": "Create Product Configurations"
+    },
+    "milestone": {
+      "name": "在 Configurations 区域生成 green + XXXL 组合并保存",
+      "description": "在 Configurations 区域生成 green + XXXL 组合并保存父商品",
+      "success_condition": "保存后的父商品 Configurations 集合包含 green + XXXL 组合",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "checker": {
+      "status": "in_progress",
+      "reason": "当前位于配置向导 Step 4 Summary，目标组合已在预览表中，但尚未生成回外层产品编辑器，也尚未保存父商品。",
+      "outcome_status": "unverified",
+      "issues": [],
+      "missing_evidence": [
+        "先点击 Generate Products 将组合回填外层编辑器",
+        "回到外层编辑器后仍需执行父商品 Save"
+      ],
+      "summary": "配置组合处于向导预览阶段。"
+    },
+    "expected": {
+      "must_contain": [
+        "Generate Products"
+      ],
+      "must_not_contain": [
+        "最终保存",
+        "完成保存"
+      ],
+      "atomic_role": "prepare",
+      "action_family": "activate",
+      "target_control": "Generate Products"
+    },
+    "note": "Generate Products 结束内层配置向导并把生成行写回父商品表单；截图背后的外层产品仍有自己的 Save。它是过程激活，不是父资源持久化边界。"
   }
 ]

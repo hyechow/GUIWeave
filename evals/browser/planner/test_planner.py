@@ -124,6 +124,13 @@ def test_planner() -> None:
             continue
 
         details = _check_instruction(result.instruction, c["expected"])
+        for field in ("atomic_role", "action_family", "target_control"):
+            if field in c["expected"]:
+                actual = getattr(result, field, None)
+                if actual != c["expected"][field]:
+                    details.append(
+                        f"{field}: expected {c['expected'][field]!r}, got {actual!r}"
+                    )
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
         if not ok:

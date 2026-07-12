@@ -834,5 +834,72 @@
     },
     "note": "同一重复表单行里，Option Label=XXXL，但 Admin Swatch 和 Store View Swatch 仍为空。旧 checker 只看到截图里出现 XXXL 就声称选项已存在并要求 Save，提交后 payload 的 swatchtext 为空。集合成员必须按 row+field 判断，不能把同行其他字段的文本当成目标字段状态。",
     "with_app_check": true
+  },
+  {
+    "label": "内层生成返回外层编辑器后目标尚未持久化，必须给出反证（回归 20260712_124403 T34）",
+    "screenshot": "evals/browser/checker/screenshots/webarena549_configuration_returned_editor_20260712.png",
+    "observation": {
+      "url": "http://shopping-admin.example/admin/catalog/product/edit/id/1492/",
+      "title": "Minerva LumaTech V-Tee / Products / Inventory / Catalog / Admin",
+      "form_controls": [
+        {
+          "kind": "section_toggle",
+          "label": "Configurations",
+          "value": "true",
+          "in_viewport": true
+        },
+        {
+          "kind": "native_select",
+          "label": "Current Variations",
+          "selected_text": "20",
+          "in_viewport": true
+        }
+      ],
+      "semantic_tree": [
+        {
+          "role": "heading",
+          "key": "Minerva LumaTech V-Tee",
+          "value": "",
+          "ref": "product-title",
+          "depth": 1
+        },
+        {
+          "role": "button",
+          "key": "Save",
+          "value": "",
+          "ref": "outer-save",
+          "depth": 2
+        },
+        {
+          "role": "region",
+          "key": "Configurations",
+          "value": "expanded",
+          "ref": "configurations",
+          "depth": 2
+        }
+      ]
+    },
+    "milestone": {
+      "name": "在 Configurations 区域生成 green + XXXL 组合并保存",
+      "description": "在 Configurations 区域生成 green + XXXL 组合并保存父商品",
+      "success_condition": "保存后的父商品 Configurations 集合包含 green + XXXL 组合",
+      "kind": "action",
+      "task_type": "action"
+    },
+    "last_action_effect": "## 上一步动作信号（运行时事实）\n- action: 点击内层向导的 Generate Products\n- execution_signal: dispatched\n- effect_signal: observed\n- outcome_signal: unverified\n- detail: 向导已关闭并返回外层资源编辑器。动作已执行不等于外层资源已经持久化。",
+    "expected": {
+      "status": "in_progress",
+      "outcome_status": "contradicted",
+      "reason_contains": [
+        "Save",
+        "保存",
+        "外层"
+      ],
+      "must_not_claim": [
+        "(?<!未)(?<!尚未)保存成功",
+        "任务(?:已经|已)完成"
+      ]
+    },
+    "note": "当前帧明确回到外层编辑器且 Save 可见，说明 Generate 只完成了内层向导。此时不是结果通道缺失，而是直接观察到持久化边界尚未跨过；必须 contradicted，阻止 accepted_unverified 提前结束。"
   }
 ]
