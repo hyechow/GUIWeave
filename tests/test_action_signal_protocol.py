@@ -96,36 +96,6 @@ def test_write_key_keeps_structural_group_identity():
     assert semantic_action_key(first, action) != semantic_action_key(second, action)
 
 
-def test_consecutive_identical_write_is_suppressed_before_dispatch() -> None:
-    policy = MilestoneSupervisorPolicy()
-    step = _step(scope="milestone:m1", role="write").model_copy(update={
-        "target_control": "Admin Swatch",
-        "target_value": "XXXL",
-        "target_group_id": "collection:19",
-    })
-    decision = BaseActionDecision(action=BaseAction(
-        action_type="type",
-        x=457,
-        y=665,
-        text="XXXL",
-        description="输入 XXXL",
-    ))
-    prior = make_interactive_turn(
-        index=1,
-        observation_source="browser",
-        supervisor_step=step,
-        action_decision=decision,
-        executed=True,
-    )
-
-    allowed, _key, reason = policy.authorize_action_dispatch(
-        step, decision, [prior]
-    )
-
-    assert allowed is False
-    assert "相同写入" in reason
-
-
 def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch):
     """Replay 20260712_122035 T10-T12: matching draft controls are not persistence."""
     milestone = Milestone(
@@ -234,113 +204,7 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
     assert step.target_control == "Save"
 
 
-def test_different_write_between_retries_reopens_write_dispatch() -> None:
-    policy = MilestoneSupervisorPolicy()
-    first_step = _step(role="write").model_copy(update={
-        "target_control": "Admin Swatch",
-        "target_value": "XXXL",
-        "target_group_id": "collection:19",
-    })
-    first = BaseActionDecision(action=BaseAction(
-        action_type="type", x=457, y=665, text="XXXL", description="输入 XXXL"
-    ))
-    other_step = first_step.model_copy(update={"target_control": "Admin Description"})
-    other = BaseActionDecision(action=BaseAction(
-        action_type="type", x=578, y=665, text="XXXL", description="输入 XXXL"
-    ))
-    history = [
-        make_interactive_turn(
-            index=1,
-            observation_source="browser",
-            supervisor_step=first_step,
-            action_decision=first,
-            executed=True,
-        ),
-        make_interactive_turn(
-            index=2,
-            observation_source="browser",
-            supervisor_step=other_step,
-            action_decision=other,
-            executed=True,
-        ),
-    ]
-
-    allowed, _key, reason = policy.authorize_action_dispatch(
-        first_step, first, history
-    )
-
-    assert allowed is True
-    assert reason == ""
-
-
-def test_suppressed_duplicate_write_routes_next_turn_to_replan(monkeypatch) -> None:
-    policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
-        id="m1",
-        name="update target fields",
-        description="",
-        success_condition="target fields are saved",
-        kind="action",
-        target_values={"Admin Swatch": "XXXL"},
-    )
-    policy.reseed(milestone)
-    step = _step(scope="milestone:m1", role="write").model_copy(update={
-        "target_control": "Admin Swatch",
-        "target_value": "XXXL",
-        "target_group_id": "collection:19",
-    })
-    decision = BaseActionDecision(action=BaseAction(
-        action_type="type", x=457, y=665, text="XXXL", description="输入 XXXL"
-    ))
-    dispatched = make_interactive_turn(
-        index=1,
-        observation_source="browser",
-        supervisor_step=step,
-        action_decision=decision,
-        executed=True,
-    )
-    suppressed = make_interactive_turn(
-        index=2,
-        observation_source="browser",
-        supervisor_step=step,
-        action_decision=decision,
-        executed=False,
-        suppressed_reason=(
-            "同一结构目标已派发过相同写入，期间没有其它有效动作；禁止原样重写"
-        ),
-    )
-    expected = SupervisorStep(
-        should_act=False,
-        stop=False,
-        goal_completed=False,
-        summary="replanned",
-        milestone_id="m1",
-    )
-    monkeypatch.setattr(
-        policy,
-        "_handle_stuck",
-        lambda *_args, **_kwargs: expected,
-    )
-    monkeypatch.setattr(
-        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
-        lambda _observation: False,
-    )
-
-    result = policy.reconcile(
-        Observation(
-            png_bytes=b"x",
-            source="browser",
-            dom_state="same-values",
-        ),
-        "g",
-        [dispatched, suppressed],
-    )
-
-    assert result is expected
-
-
 def test_concrete_scroll_cannot_consume_commit_slot():
-    policy = MilestoneSupervisorPolicy()
     mislabeled_scroll = BaseActionDecision(
         action=BaseAction(
             action_type="scroll",
@@ -361,15 +225,6 @@ def test_concrete_scroll_cannot_consume_commit_slot():
     assert scroll_turn.action_signal is not None
     assert scroll_turn.action_signal.role == "iterate"
     assert scroll_turn.action_signal.action_key.endswith("|iterate|scroll|down|@-")
-
-    allowed, key, reason = policy.authorize_action_dispatch(
-        step, _decision(), [scroll_turn]
-    )
-
-    assert allowed is True
-    assert key.endswith("|commit")
-    assert reason == ""
-
 
 def test_make_turn_records_execution_separately_from_outcome():
     turn = make_interactive_turn(
@@ -408,30 +263,6 @@ def test_make_turn_records_concrete_write_value():
     assert turn.action_signal is not None
     assert turn.action_signal.target_control == "Search by keyword"
     assert turn.action_signal.target_value == "Minerva LumaTech V-Tee"
-
-
-def test_duplicate_commit_is_suppressed_before_second_dispatch():
-    policy = MilestoneSupervisorPolicy()
-    step = _step()
-    allowed, _key, reason = policy.authorize_action_dispatch(
-        step, _decision(700), [_turn(index=1, step=step)]
-    )
-
-    assert allowed is False
-    assert "禁止" in reason
-
-
-def test_filter_commit_is_not_treated_as_at_most_once_business_mutation():
-    policy = MilestoneSupervisorPolicy()
-    step = _step(scope="milestone:filter", kind="filter")
-    prior = _turn(index=1, step=step)
-
-    allowed, _key, reason = policy.authorize_action_dispatch(
-        step, _decision(700), [prior]
-    )
-
-    assert allowed is True
-    assert reason == ""
 
 
 def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_turn():
@@ -507,47 +338,6 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
     assert "save is still pending" in step.summary
 
 
-def test_action_policy_stop_cannot_complete_an_in_progress_milestone():
-    policy = MilestoneSupervisorPolicy()
-    step = _step(role="prepare")
-    stop = BaseActionDecision(
-        action=BaseAction(action_type="stop", description="等待并验证结果")
-    )
-
-    allowed, _key, reason = policy.authorize_action_dispatch(step, stop, [])
-
-    assert allowed is False
-    assert "无权" in reason
-
-
-def test_same_commit_template_is_allowed_for_different_foreach_row():
-    policy = MilestoneSupervisorPolicy()
-    first_step = _step(scope="row:65")
-    second_step = _step(scope="row:66")
-
-    allowed, _key, _reason = policy.authorize_action_dispatch(
-        second_step, _decision(), [_turn(index=1, step=first_step)]
-    )
-
-    assert allowed is True
-
-
-def test_contradicted_commit_requires_intervening_correction():
-    policy = MilestoneSupervisorPolicy()
-    commit = _step()
-    rejected = _turn(index=1, step=commit, outcome="contradicted")
-
-    denied, _key, _reason = policy.authorize_action_dispatch(commit, _decision(), [rejected])
-    assert denied is False
-
-    prepare = _step(role="write")
-    corrected = _turn(index=2, step=prepare, role="write")
-    allowed, _key, _reason = policy.authorize_action_dispatch(
-        commit, _decision(), [rejected, corrected]
-    )
-    assert allowed is True
-
-
 def test_unverified_feedback_does_not_erase_a_known_commit_contradiction():
     policy = MilestoneSupervisorPolicy()
     milestone = Milestone(
@@ -585,16 +375,6 @@ def test_unverified_feedback_does_not_erase_a_known_commit_contradiction():
 
     assert signal.outcome == "contradicted"
     assert signal.outcome_evidence == ["the attempted route produced the wrong result"]
-
-    correction = _turn(index=2, step=_step(scope="milestone:m1", role="write"))
-    allowed, _key, reason = policy.authorize_action_dispatch(
-        commit,
-        _decision(),
-        [dispatched, correction],
-    )
-    assert allowed is True
-    assert reason == ""
-
 
 @pytest.mark.parametrize("checker_status", ["in_progress", "done"])
 def test_terminal_dispatch_advances_as_accepted_unverified(

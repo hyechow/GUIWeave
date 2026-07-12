@@ -135,7 +135,7 @@ def test_native_select_skips_vision_policy(monkeypatch, tmp_path) -> None:
     assert supervisor._context_reports[-1]["kind"] == "native_action"
 
 
-def test_structured_target_retries_visual_stop_once_in_same_turn(monkeypatch, tmp_path) -> None:
+def test_action_policy_stop_is_not_reinterpreted_by_executor(monkeypatch, tmp_path) -> None:
     class RetryPolicy(_Policy):
         def __init__(self) -> None:
             super().__init__()
@@ -208,10 +208,6 @@ def test_structured_target_retries_visual_stop_once_in_same_turn(monkeypatch, tm
         say=messages.append,
     )
 
-    assert policy.calls == 2
-    assert decision.action.action_type == "type"
-    assert decision.action.text == "XXXL"
-    assert decision.action.x == 457
-    assert decision.action.y == 665
-    assert "不要重复 stop" in policy.evidence_context
-    assert any("同轮纠正一次" in message for message in messages)
+    assert policy.calls == 1
+    assert decision.action.action_type == "stop"
+    assert not any("纠正" in message or "拒绝" in message for message in messages)

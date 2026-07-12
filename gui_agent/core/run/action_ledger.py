@@ -48,92 +48,11 @@ def semantic_action_key(supervisor_step: SupervisorStep, action: Any) -> str:
 
 
 class ActionLedger:
-    """Query persisted turns as the source of truth for action dispatch lifecycle."""
+    """Read-only queries over persisted action lifecycle records.
 
-    def authorize(
-        self,
-        supervisor_step: SupervisorStep,
-        action_decision: Any,
-        history: Iterable[PolicyTurn],
-    ) -> tuple[bool, str, str]:
-        """Apply an at-most-once guard before a commit crosses the GUI boundary."""
-        action = getattr(action_decision, "action", None)
-        if action is None:
-            return True, "", ""
-        key = semantic_action_key(supervisor_step, action)
-        if str(getattr(action, "action_type", "") or "").lower() == "stop":
-            # Completion belongs to the milestone supervisor. An action-policy ``stop`` emitted
-            # while the supervisor is still asking for work is only a no-op opinion; dispatching
-            # it as success creates a contradictory turn (checker=in_progress, action=done).
-            return False, key, "action policy 无权用 stop 完成仍处于 in_progress 的 milestone"
-        role = effective_action_role(supervisor_step, action)
-        turns = list(history)
-        if role == "write":
-            dispatched = [
-                turn
-                for turn in turns
-                if turn.action_signal is not None
-                and turn.action_signal.execution == "dispatched"
-            ]
-            latest = dispatched[-1] if dispatched else None
-            if (
-                latest is not None
-                and latest.action_signal is not None
-                and latest.action_signal.action_key == key
-            ):
-                return (
-                    False,
-                    key,
-                    "同一结构目标已派发过相同写入，期间没有其它有效动作；"
-                    "禁止原样重写，必须重新读取目标状态或更换操作路径",
-                )
-            return True, key, ""
-        if role != "commit":
-            return True, key, ""
-        if supervisor_step.milestone_kind not in {None, "action"}:
-            # Navigation/filter commits update reversible UI state. At-most-once protects only
-            # persistent business mutations; loop/stuck detection owns ineffective UI retries.
-            return True, key, ""
-
-        matching = [
-            turn
-            for turn in turns
-            if turn.action_signal is not None
-            and turn.action_signal.action_key == key
-            and turn.action_signal.execution == "dispatched"
-            and turn.action_signal.target != "off_target"
-        ]
-        if not matching:
-            return True, key, ""
-
-        latest = matching[-1]
-        signal = latest.action_signal
-        assert signal is not None
-        if signal.outcome != "contradicted":
-            return False, key, "commit 已可靠派发，结果尚未证伪，禁止原样重复副作用"
-
-        corrected = any(
-            turn.index > latest.index
-            and turn.action_signal is not None
-            and (
-                turn.action_signal.role == "write"
-                or str(
-                    getattr(
-                        getattr(turn.action_decision, "action", None),
-                        "action_type",
-                        "",
-                    )
-                ).lower()
-                in _WRITE_ACTION_TYPES
-            )
-            and turn.action_signal.execution == "dispatched"
-            and getattr(turn.supervisor, "execution_scope", "")
-            == supervisor_step.execution_scope
-            for turn in turns
-        )
-        if corrected:
-            return True, key, ""
-        return False, key, "上次 commit 已被明确拒绝，但尚未执行新的目标写入，禁止重复提交"
+    Dispatch authorization belongs to the milestone controller.  The ledger records what
+    happened; it never suppresses an action or decides whether a statement may continue.
+    """
 
     @staticmethod
     def latest_dispatched(

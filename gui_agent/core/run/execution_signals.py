@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Literal
 
-from gui_agent.core.schemas import ActionFamily, Milestone
+from gui_agent.core.schemas import Milestone
 CompletionMode = Literal[
     "arrival",
     "filter_state",
@@ -41,13 +41,11 @@ ClaimValue = Literal[
     "partial",
     "complete",
 ]
-FusionAction = Literal[
-    "continue",
-    "complete",
-    "replan",
-    "allow_action",
-    "reject_action",
-    "delegate",
+CompletionStatus = Literal[
+    "pending",
+    "satisfied",
+    "contradicted",
+    "delegated",
 ]
 
 
@@ -114,32 +112,14 @@ class EvidenceClaim:
 
 
 @dataclass(frozen=True)
-class FusionDecision:
-    action: FusionAction
+class CompletionEvaluation:
+    status: CompletionStatus
     reason: str
     completion_status: Literal[
         "confirmed", "accepted_unverified", "failed", "in_progress"
     ] = "in_progress"
     used_claims: tuple[EvidenceClaim, ...] = ()
     conflicts: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class ActionConstraint:
-    """One scoped restriction on the next planner proposal.
-
-    Completion evidence answers whether a statement is done. Action constraints answer which
-    atomic family may safely execute next. Keeping them separate prevents an unresolved form
-    field from being misreported as a failed business outcome.
-    """
-
-    scope: str
-    source_type: str
-    evidence: str
-    allowed_families: tuple[ActionFamily, ...] = ()
-    blocked_families: tuple[ActionFamily, ...] = ()
-    required_targets: tuple[str, ...] = ()
-    commit_requires_write: bool = False
 
 
 @dataclass(frozen=True)
@@ -214,8 +194,12 @@ def claim(
     )
 
 
-class SignalFusionArbiter:
-    """Decide completion from typed claims using a small precedence table."""
+class CompletionEvaluator:
+    """Evaluate whether typed evidence satisfies an execution contract.
+
+    This class has no authority over action proposals or dispatch.  Its result is consumed by the
+    milestone policy, which remains the sole owner of advance/recover/fail transitions.
+    """
 
     @staticmethod
     def _claims(
@@ -246,12 +230,12 @@ class SignalFusionArbiter:
         claims: Iterable[EvidenceClaim],
         *,
         scope: str,
-    ) -> FusionDecision:
+    ) -> CompletionEvaluation:
         scoped = tuple(item for item in claims if item.scope == scope)
         outcome = self._best(self._claims(scoped, "business.outcome", scope))
         if outcome is not None and outcome.value == "contradicted":
-            return FusionDecision(
-                action="replan",
+            return CompletionEvaluation(
+                status="contradicted",
                 reason=outcome.evidence or "业务后置状态已被明确证伪",
                 used_claims=(outcome,),
             )
@@ -268,8 +252,8 @@ class SignalFusionArbiter:
         )
 
         if delegation is not None and delegation.value == "confirmed":
-            return FusionDecision(
-                action="delegate",
+            return CompletionEvaluation(
+                status="delegated",
                 reason=delegation.evidence or "执行责任已委托给后续执行单元",
                 used_claims=(delegation,),
             )
@@ -279,8 +263,8 @@ class SignalFusionArbiter:
             and target.value == "contradicted"
             and not (outcome is not None and outcome.value == "confirmed")
         ):
-            return FusionDecision(
-                action="replan",
+            return CompletionEvaluation(
+                status="contradicted",
                 reason=target.evidence or "动作命中了错误目标",
                 used_claims=(target,),
             )
@@ -290,39 +274,39 @@ class SignalFusionArbiter:
                 # A zero-row result is a valid return value.  The following interpreter branch,
                 # not this milestone, decides whether to run a fallback search.
                 used = (filter_state,) + ((result,) if result is not None else ())
-                return FusionDecision(
-                    action="complete",
+                return CompletionEvaluation(
+                    status="satisfied",
                     completion_status="confirmed",
                     reason=filter_state.evidence or "目标筛选状态已权威确认",
                     used_claims=used,
                 )
-            return FusionDecision("continue", "筛选状态尚未权威确认")
+            return CompletionEvaluation("pending", "筛选状态尚未权威确认")
 
         if contract.completion_mode == "filter_state":
             if filter_state is not None and filter_state.value == "confirmed":
                 if outcome is not None and outcome.value == "confirmed":
-                    return FusionDecision(
-                        "complete",
+                    return CompletionEvaluation(
+                        "satisfied",
                         outcome.evidence or filter_state.evidence,
                         "confirmed",
                         (filter_state, outcome),
                     )
-                return FusionDecision("continue", "筛选已应用，仍需结果/验收信号")
-            return FusionDecision("continue", "筛选状态尚未权威确认")
+                return CompletionEvaluation("pending", "筛选已应用，仍需结果/验收信号")
+            return CompletionEvaluation("pending", "筛选状态尚未权威确认")
 
         if contract.completion_mode == "arrival":
             if outcome is not None and outcome.value == "confirmed":
-                return FusionDecision(
-                    "complete", outcome.evidence or "目标页面状态已确认", "confirmed", (outcome,)
+                return CompletionEvaluation(
+                    "satisfied", outcome.evidence or "目标页面状态已确认", "confirmed", (outcome,)
                 )
             # A generic response proves only that something happened, not that the destination is
             # correct.  It intentionally cannot complete navigation by itself.
-            return FusionDecision("continue", "尚无目标页面身份的确认信号")
+            return CompletionEvaluation("pending", "尚无目标页面身份的确认信号")
 
         if contract.completion_mode == "mutation":
             if control_state is not None and control_state.value == "contradicted":
-                return FusionDecision(
-                    "continue",
+                return CompletionEvaluation(
+                    "pending",
                     control_state.evidence or "声明的目标字段尚未全部达到目标值",
                     conflicts=("target.values.incomplete",),
                     used_claims=(control_state,),
@@ -343,8 +327,8 @@ class SignalFusionArbiter:
                 and write_confirmed
                 and not commit_confirmed
             ):
-                return FusionDecision(
-                    "continue",
+                return CompletionEvaluation(
+                    "pending",
                     "目标字段已在本轮写入，但声明的终端提交尚未派发；"
                     "当前控件值只能证明草稿状态，不能证明已持久化",
                     conflicts=("action.commit.required",),
@@ -354,35 +338,35 @@ class SignalFusionArbiter:
                 )
             if outcome is not None and outcome.value == "confirmed":
                 if contract.mutation_mode == "ensure":
-                    return FusionDecision(
-                        "complete",
+                    return CompletionEvaluation(
+                        "satisfied",
                         outcome.evidence or "幂等目标状态已确认",
                         "confirmed",
                         (outcome,),
                     )
                 if contract.require_terminal_dispatch and not commit_confirmed:
-                    return FusionDecision(
-                        "continue",
+                    return CompletionEvaluation(
+                        "pending",
                         "目标状态看似满足，但该执行单元要求的终端提交尚未派发；"
                         "因此缺少本轮产生写操作的执行证据",
                         conflicts=("action.commit.required",),
                     )
                 if not write_confirmed:
-                    return FusionDecision(
-                        "continue",
+                    return CompletionEvaluation(
+                        "pending",
                         "目标状态看似满足，但 change mutation 缺少本轮产生写操作的目标写入证据",
                         conflicts=("action.write.required",),
                     )
                 if contract.require_fresh_action and not (
                     execution is not None and execution.value == "confirmed"
                 ):
-                    return FusionDecision(
-                        "continue",
+                    return CompletionEvaluation(
+                        "pending",
                         "当前目标状态看似已存在，但缺少本轮产生写操作的执行证据",
                         conflicts=("action.execution.required",),
                     )
-                return FusionDecision(
-                    "complete",
+                return CompletionEvaluation(
+                    "satisfied",
                     outcome.evidence or "业务后置状态已确认",
                     "confirmed",
                     tuple(item for item in (write, execution, outcome) if item is not None),
@@ -393,8 +377,8 @@ class SignalFusionArbiter:
                 and execution.source_type == "runtime.commit_dispatch"
                 and not write_confirmed
             ):
-                return FusionDecision(
-                    "continue",
+                return CompletionEvaluation(
+                    "pending",
                     "终端提交已派发，但当前执行作用域缺少目标写入；提交不能代替业务字段写入",
                     conflicts=("action.write.required",),
                 )
@@ -405,8 +389,8 @@ class SignalFusionArbiter:
                 and write_confirmed
             ):
                 if response is None or response.value != "contradicted":
-                    return FusionDecision(
-                        "complete",
+                    return CompletionEvaluation(
+                        "satisfied",
                         "终端副作用已派发且没有矛盾证据；结果反馈通道不可用或尚未出现",
                         "accepted_unverified",
                         tuple(item for item in (execution, response) if item is not None),
@@ -420,91 +404,20 @@ class SignalFusionArbiter:
                 and control_state.value == "confirmed"
                 and (not contract.require_fresh_action or checkbox_state_is_safe_terminal)
             ):
-                return FusionDecision(
-                    "complete", control_state.evidence or "目标控件状态已确认", "confirmed", (control_state,)
+                return CompletionEvaluation(
+                    "satisfied", control_state.evidence or "目标控件状态已确认", "confirmed", (control_state,)
                 )
-            return FusionDecision("continue", "动作结果尚未确认")
+            return CompletionEvaluation("pending", "动作结果尚未确认")
 
         if outcome is not None and outcome.value == "confirmed":
-            return FusionDecision(
-                "complete", outcome.evidence or "验收状态已确认", "confirmed", (outcome,)
+            return CompletionEvaluation(
+                "satisfied", outcome.evidence or "验收状态已确认", "confirmed", (outcome,)
             )
         if control_state is not None and control_state.value == "confirmed":
-            return FusionDecision(
-                "complete", control_state.evidence or "控件状态已确认", "confirmed", (control_state,)
+            return CompletionEvaluation(
+                "satisfied", control_state.evidence or "控件状态已确认", "confirmed", (control_state,)
             )
-        return FusionDecision("continue", "当前证据不足以完成执行单元")
-
-    def validate_proposal(
-        self,
-        family: ActionFamily,
-        constraints: Iterable[ActionConstraint],
-        *,
-        scope: str,
-        target_control: str = "",
-    ) -> FusionDecision:
-        """Validate one planner action family against fresh scoped constraints."""
-        scoped = tuple(item for item in constraints if item.scope == scope)
-        blocked = tuple(item for item in scoped if family in item.blocked_families)
-        if blocked:
-            return FusionDecision(
-                action="reject_action",
-                reason="；".join(item.evidence for item in blocked if item.evidence),
-                conflicts=tuple(item.evidence for item in blocked if item.evidence),
-            )
-
-        allowed_sets = [set(item.allowed_families) for item in scoped if item.allowed_families]
-        if allowed_sets:
-            allowed = set.intersection(*allowed_sets)
-            if family not in allowed:
-                expected = ", ".join(sorted(allowed)) or "<none>"
-                reasons = [item.evidence for item in scoped if item.allowed_families and item.evidence]
-                return FusionDecision(
-                    action="reject_action",
-                    reason=(
-                        f"当前结构化控件状态只允许动作族 [{expected}]，"
-                        f"proposal={family}。" + "；".join(reasons)
-                    ),
-                    conflicts=tuple(reasons),
-                )
-
-        required_targets = {
-            str(value).strip()
-            for item in scoped
-            for value in item.required_targets
-            if _normalize_target(value)
-        }
-        if family == "commit" and any(item.commit_requires_write for item in scoped):
-            return FusionDecision(
-                action="reject_action",
-                reason=(
-                    "当前 mutation 尚无本轮目标写入；终端提交不能代替填写/选择业务目标。"
-                    "请先执行一个 write 动作。"
-                ),
-                conflicts=("action.write.required",),
-            )
-        if required_targets and family in {"input", "select"}:
-            target_matches = target_matches_declared(
-                target_control,
-                required_targets,
-                allow_less_specific=False,
-            )
-            if not target_matches:
-                expected = ", ".join(sorted(required_targets))
-                return FusionDecision(
-                    action="reject_action",
-                    reason=(
-                        f"当前动作必须命中声明目标 [{expected}]，"
-                        f"proposal_target={target_control or '<missing>'}；不得改用相邻控件。"
-                    ),
-                    conflicts=(target_control or "<missing>",),
-                )
-
-        return FusionDecision(
-            action="allow_action",
-            reason="planner proposal satisfies current action constraints",
-        )
-
+        return CompletionEvaluation("pending", "当前证据不足以完成执行单元")
 
 def _normalize_target(value: str) -> str:
     return "".join(ch.lower() for ch in (value or "") if ch.isalnum())
@@ -547,25 +460,3 @@ def target_matches_declared(
             for raw_expected, expected in expected_targets.items()
         )
     )
-
-
-_ACTION_FAMILY_TYPES: dict[ActionFamily, frozenset[str]] = {
-    "input": frozenset({"type", "clear_text"}),
-    "select": frozenset({"select_option", "tap", "click"}),
-    "activate": frozenset({"tap", "click", "press_enter"}),
-    "navigate": frozenset({"navigate", "back", "new_tab", "select_tab", "tap", "click"}),
-    "iterate": frozenset({"scroll", "drag"}),
-    "commit": frozenset({"tap", "click", "press_enter"}),
-    "unknown": frozenset(),
-}
-
-
-def validate_action_family(family: ActionFamily, action_type: str) -> tuple[bool, str]:
-    """Validate a concrete primitive before it crosses the GUI boundary."""
-    if family == "unknown":
-        return True, ""
-    actual = (action_type or "").lower()
-    allowed = _ACTION_FAMILY_TYPES[family]
-    if actual in allowed:
-        return True, ""
-    return False, f"动作族 {family} 不允许执行 primitive={actual or '<empty>'}"

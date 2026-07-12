@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from gui_agent.core.run.execution_signals import FusionDecision
+from gui_agent.core.run.execution_signals import CompletionEvaluation
 from gui_agent.core.schemas import Milestone, Observation
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
@@ -29,7 +29,7 @@ def _function_nodes(tree: ast.AST) -> list[ast.FunctionDef | ast.AsyncFunctionDe
     ]
 
 
-def test_every_advance_call_supplies_an_arbiter_decision():
+def test_every_advance_call_supplies_satisfied_completion_evidence():
     calls = [
         node
         for node in ast.walk(_policy_tree())
@@ -41,7 +41,7 @@ def test_every_advance_call_supplies_an_arbiter_decision():
     assert calls
     for call in calls:
         assert any(keyword.arg == "decision" for keyword in call.keywords), (
-            f"_advance call at line {call.lineno} bypasses the execution arbiter"
+            f"_advance call at line {call.lineno} bypasses completion evaluation"
         )
 
 
@@ -71,8 +71,8 @@ def test_done_state_writes_are_limited_to_completion_or_explicit_delegation():
         if node.name == "_try_filter_fallback"
     )
     fallback_source = ast.unparse(fallback)
-    assert "self._signal_arbiter.decide" in fallback_source
-    assert "decision.action != 'delegate'" in fallback_source
+    assert "self._completion_evaluator.decide" in fallback_source
+    assert "decision.status != 'delegated'" in fallback_source
 
 
 def test_advance_requires_keyword_only_complete_decision():
@@ -92,11 +92,10 @@ def test_advance_requires_keyword_only_complete_decision():
     })
     observation = Observation(png_bytes=b"png", source="test")
 
-    with pytest.raises(ValueError, match="cannot advance without a complete"):
+    with pytest.raises(ValueError, match="cannot advance without satisfied"):
         policy._advance(
             milestone,
             observation,
             [],
-            decision=FusionDecision("continue", "insufficient evidence"),
+            decision=CompletionEvaluation("pending", "insufficient evidence"),
         )
-

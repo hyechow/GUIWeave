@@ -51,10 +51,10 @@ def test_dom_changed_lets_repeated_looking_plan_through():
     assert step.should_act and "输入90" in (step.instruction or "")
 
 
-def test_no_dom_change_still_escalates_to_stuck():
-    # 指纹没变 → 维持原行为:重试一次仍重复 → 升级 stuck
+def test_no_dom_change_does_not_make_planner_text_a_dispatch_gate():
     step = _policy(dom_changed=False)._plan_single(_ms(), _check(), _obs(), [])
-    assert step.summary == STUCK_SUMMARY
+    assert step.summary != STUCK_SUMMARY
+    assert step.should_act
 
 
 def test_dom_state_presence_disables_pre_action_text_repeat_guard():

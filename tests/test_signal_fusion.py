@@ -1,17 +1,15 @@
 from gui_agent.core.run.execution_signals import (
-    ActionConstraint,
+    CompletionEvaluator,
     ConstraintLedger,
     ExecutionContract,
-    SignalFusionArbiter,
     claim,
-    validate_action_family,
 )
 from gui_agent.core.schemas import Milestone
 from gui_agent.core.supervisor.milestone.policy import _resolved_plan_action_family
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult
 
 
-def test_commit_role_normalizes_input_family_before_primitive_validation():
+def test_commit_role_normalizes_input_family_as_planner_metadata():
     plan = _PlanResult(
         instruction="按回车提交当前字段",
         summary="submit",
@@ -32,10 +30,9 @@ def test_commit_role_normalizes_input_family_before_primitive_validation():
 
     assert role == "commit"
     assert family == "commit"
-    assert validate_action_family(family, "press_enter") == (True, "")
 
 
-def test_write_role_does_not_widen_input_family_to_terminal_primitives():
+def test_write_role_normalizes_family_as_planner_metadata():
     plan = _PlanResult(
         instruction="在目标字段输入 value",
         summary="write",
@@ -56,8 +53,6 @@ def test_write_role_does_not_widen_input_family_to_terminal_primitives():
 
     assert role == "write"
     assert family == "input"
-    allowed, _reason = validate_action_family(family, "press_enter")
-    assert allowed is False
 
 
 def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
@@ -67,7 +62,7 @@ def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
         output_fields=("match_count",),
         completion_mode="filter_state_with_result",
     )
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         contract,
         [
             claim(
@@ -96,7 +91,7 @@ def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
         scope="milestone:filter",
     )
 
-    assert decision.action == "complete"
+    assert decision.status == "satisfied"
     assert decision.completion_status == "confirmed"
 
 
@@ -108,7 +103,7 @@ def test_commit_dispatch_without_outcome_feedback_is_provisional():
         require_terminal_dispatch=True,
         completion_mode="mutation",
     )
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         contract,
         [
             claim(
@@ -135,7 +130,7 @@ def test_commit_dispatch_without_outcome_feedback_is_provisional():
         scope="row:7",
     )
 
-    assert decision.action == "complete"
+    assert decision.status == "satisfied"
     assert decision.completion_status == "accepted_unverified"
 
 
@@ -147,7 +142,7 @@ def test_commit_cannot_be_accepted_while_declared_target_values_are_incomplete()
         require_terminal_dispatch=True,
         completion_mode="mutation",
     )
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         contract,
         [
             claim(
@@ -182,7 +177,7 @@ def test_commit_cannot_be_accepted_while_declared_target_values_are_incomplete()
         scope="row:7",
     )
 
-    assert decision.action == "continue"
+    assert decision.status == "pending"
     assert decision.completion_status == "in_progress"
     assert decision.conflicts == ("target.values.incomplete",)
 
@@ -195,7 +190,7 @@ def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():
         require_terminal_dispatch=True,
         completion_mode="mutation",
     )
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         contract,
         [
             claim(
@@ -223,12 +218,12 @@ def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():
         scope="row:7",
     )
 
-    assert decision.action == "continue"
+    assert decision.status == "pending"
     assert "终端提交尚未派发" in decision.reason
 
 
 def test_change_mutation_cannot_complete_from_commit_without_write():
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         ExecutionContract(
             statement_id="save",
             kind="action",
@@ -255,12 +250,12 @@ def test_change_mutation_cannot_complete_from_commit_without_write():
         scope="milestone:save",
     )
 
-    assert decision.action == "continue"
+    assert decision.status == "pending"
     assert decision.completion_status == "in_progress"
 
 
 def test_ensure_mutation_accepts_authoritative_preexisting_outcome():
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         ExecutionContract(
             statement_id="ensure",
             kind="action",
@@ -279,12 +274,12 @@ def test_ensure_mutation_accepts_authoritative_preexisting_outcome():
         scope="milestone:ensure",
     )
 
-    assert decision.action == "complete"
+    assert decision.status == "satisfied"
     assert decision.completion_status == "confirmed"
 
 
 def test_ensure_mutation_with_fresh_draft_write_requires_declared_commit():
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         ExecutionContract(
             statement_id="ensure_saved",
             kind="action",
@@ -319,13 +314,13 @@ def test_ensure_mutation_with_fresh_draft_write_requires_declared_commit():
         scope="row:attribute/144",
     )
 
-    assert decision.action == "continue"
+    assert decision.status == "pending"
     assert decision.conflicts == ("action.commit.required",)
     assert "草稿状态" in decision.reason
 
 
 def test_ensure_mutation_with_preexisting_control_state_still_skips_commit():
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         ExecutionContract(
             statement_id="ensure_existing",
             kind="action",
@@ -346,12 +341,12 @@ def test_ensure_mutation_with_preexisting_control_state_still_skips_commit():
         scope="row:attribute/144",
     )
 
-    assert decision.action == "complete"
+    assert decision.status == "satisfied"
     assert decision.completion_status == "confirmed"
 
 
 def test_commit_without_target_write_returns_typed_recovery_conflict():
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         ExecutionContract(
             statement_id="ensure",
             kind="action",
@@ -369,68 +364,12 @@ def test_commit_without_target_write_returns_typed_recovery_conflict():
         scope="milestone:ensure",
     )
 
-    assert decision.action == "continue"
+    assert decision.status == "pending"
     assert decision.conflicts == ("action.write.required",)
 
 
-def test_named_target_rejects_adjacent_input_control():
-    decision = SignalFusionArbiter().validate_proposal(
-        "input",
-        [
-            ActionConstraint(
-                scope="milestone:filter",
-                source_type="contract.target_controls",
-                evidence="named field",
-                required_targets=("Name",),
-            )
-        ],
-        scope="milestone:filter",
-        target_control="Search by keyword",
-    )
-
-    assert decision.action == "reject_action"
-    assert "相邻控件" in decision.reason
-
-
-def test_specific_declared_target_rejects_less_specific_proposal_name():
-    decision = SignalFusionArbiter().validate_proposal(
-        "input",
-        [
-            ActionConstraint(
-                scope="milestone:write",
-                source_type="contract.target_values",
-                evidence="specific grouped field",
-                required_targets=("Admin Description",),
-            )
-        ],
-        scope="milestone:write",
-        target_control="Description",
-    )
-
-    assert decision.action == "reject_action"
-    assert "相邻控件" in decision.reason
-
-
-def test_specific_declared_target_accepts_reordered_qualifier_name():
-    decision = SignalFusionArbiter().validate_proposal(
-        "input",
-        [
-            ActionConstraint(
-                scope="milestone:write",
-                source_type="contract.target_values",
-                evidence="specific grouped field",
-                required_targets=("Admin Swatch",),
-            )
-        ],
-        scope="milestone:write",
-        target_control="Swatch (Admin)",
-    )
-
-    assert decision.action == "allow_action"
-
-
 def test_generic_page_response_cannot_complete_navigation():
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         ExecutionContract(
             statement_id="open",
             kind="navigation",
@@ -448,11 +387,11 @@ def test_generic_page_response_cannot_complete_navigation():
         scope="milestone:open",
     )
 
-    assert decision.action == "continue"
+    assert decision.status == "pending"
 
 
 def test_partial_inventory_absence_is_not_a_negative_control_claim():
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         ExecutionContract(
             statement_id="edit",
             kind="action",
@@ -471,13 +410,7 @@ def test_partial_inventory_absence_is_not_a_negative_control_claim():
         scope="milestone:edit",
     )
 
-    assert decision.action == "continue"
-
-
-def test_action_family_rejects_tap_for_input_before_dispatch():
-    allowed, reason = validate_action_family("input", "tap")
-    assert allowed is False
-    assert "input" in reason
+    assert decision.status == "pending"
 
 
 def test_runtime_constraint_is_visible_only_in_its_scope():
@@ -488,13 +421,13 @@ def test_runtime_constraint_is_visible_only_in_its_scope():
     assert ledger.visible("milestone:second") == []
 
 
-def test_delegation_is_an_explicit_arbiter_decision_not_completion():
+def test_delegation_is_an_explicit_evidence_status_not_completion():
     contract = ExecutionContract(
         statement_id="filter",
         kind="filter",
         completion_mode="filter_state",
     )
-    decision = SignalFusionArbiter().decide(
+    decision = CompletionEvaluator().decide(
         contract,
         [claim(
             "execution.delegation",
@@ -506,51 +439,5 @@ def test_delegation_is_an_explicit_arbiter_decision_not_completion():
         scope="milestone:filter",
     )
 
-    assert decision.action == "delegate"
+    assert decision.status == "delegated"
     assert decision.completion_status == "in_progress"
-
-
-def test_proposal_arbiter_blocks_commit_until_required_row_is_complete():
-    decision = SignalFusionArbiter().validate_proposal(
-        "commit",
-        [ActionConstraint(
-            scope="milestone:add-option",
-            source_type="obs.dom.form_validity",
-            evidence="target row still has a required empty field",
-            blocked_families=("commit",),
-        )],
-        scope="milestone:add-option",
-    )
-
-    assert decision.action == "reject_action"
-    assert "required empty field" in decision.reason
-
-
-def test_proposal_arbiter_allows_required_input_family():
-    decision = SignalFusionArbiter().validate_proposal(
-        "input",
-        [ActionConstraint(
-            scope="milestone:search",
-            source_type="obs.dom.control_ready",
-            evidence="target input is visible and empty",
-            allowed_families=("input",),
-        )],
-        scope="milestone:search",
-    )
-
-    assert decision.action == "allow_action"
-
-
-def test_proposal_constraints_do_not_cross_execution_scopes():
-    decision = SignalFusionArbiter().validate_proposal(
-        "commit",
-        [ActionConstraint(
-            scope="milestone:first",
-            source_type="obs.dom.form_validity",
-            evidence="first form is incomplete",
-            blocked_families=("commit",),
-        )],
-        scope="milestone:second",
-    )
-
-    assert decision.action == "allow_action"

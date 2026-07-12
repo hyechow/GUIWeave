@@ -281,7 +281,7 @@ def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
     history = [_write_turn(description="输入追踪号"), _shipment_submit_turn()]
     decision = _completion_decision(p, m, obs, history)
-    assert decision.action == "complete"
+    assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # FreshActionRequired suppressed — no re-demand
     assert m.status == "done"
@@ -295,7 +295,7 @@ def test_fresh_action_still_redemands_when_nothing_dispatched(monkeypatch):
     p._last_check = _SingleCheckResult(status="done", reason="状态疑似已满足", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
     decision = _completion_decision(p, m, obs, [])
-    assert decision.action == "continue"
+    assert decision.status == "pending"
     assert "终端提交尚未派发" in decision.reason
     assert plan_calls == []
     assert m.status != "done"
@@ -310,7 +310,7 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
     )
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
     decision = _completion_decision(p, m, obs, [_shipment_submit_turn()])
-    assert decision.action == "replan"
+    assert decision.status == "contradicted"
     assert plan_calls == []
     assert m.status != "done"
 
@@ -354,7 +354,7 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
     history = [_arrival_click_turn()]
     decision = _completion_decision(p, m, obs, history)
-    assert decision.action == "complete"
+    assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # no FreshActionRequired override, no stray write demanded
     assert m.status == "done"
@@ -402,7 +402,7 @@ def test_dispatch_ledger_blocks_done_on_residual_banner(monkeypatch):
     )
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
     decision = _completion_decision(p, m, obs, [_select_option_turn()])
-    assert decision.action == "continue"
+    assert decision.status == "pending"
     assert "终端提交尚未派发" in decision.reason
     assert plan_calls == []
     assert m.status != "done"
@@ -431,7 +431,7 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
     )
     history = [_select_option_turn(), save]
     decision = _completion_decision(p, m, obs, history)
-    assert decision.action == "complete"
+    assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []
     assert m.status == "done"
@@ -553,7 +553,7 @@ def test_dispatch_ledger_rejects_wrong_verb_class(monkeypatch):
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
     apply_turn = _submit_turn(no_effect=False, reason="点击 'Apply Filters' 按钮以应用筛选条件")
     decision = _completion_decision(p, m, obs, [apply_turn])
-    assert decision.action == "continue"
+    assert decision.status == "pending"
     assert plan_calls == []
     assert m.status != "done"
 

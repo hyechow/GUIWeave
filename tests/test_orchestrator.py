@@ -630,7 +630,7 @@ def test_advance_persists_done_check_on_terminal_completion():
     p._last_check = check
     obs = Observation(png_bytes=b"x", source="test")
     decision = p._completion_decision_from_check(ms, obs, [], check)
-    assert decision.action == "complete"
+    assert decision.status == "satisfied"
     step = p._advance(ms, obs, [], decision=decision)
     assert step.goal_completed is True                    # single milestone → terminal step
     assert p._milestone_done_checks[ms.id] is check       # done 判定已留存（验收面板有数据）

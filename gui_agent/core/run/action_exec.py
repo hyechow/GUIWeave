@@ -11,7 +11,6 @@ from typing import Any, Callable
 from llm.structured import get_llm_token_usage
 
 from gui_agent.core.schemas import ActionDecision, Observation, SupervisorStep, action_label
-from gui_agent.core.run.execution_signals import validate_action_family
 from gui_agent.core.vision.frame_analysis import STABLE_MEAN_THR, frame_changed, frame_diff
 from gui_agent.core.vision.target_verify import verify_target
 from gui_agent.core.vision.visualize import print_decision
@@ -200,26 +199,6 @@ class ActionExecutionState:
             return result
 
         action = action_decision.action
-        family_ok, family_reason = validate_action_family(
-            sv_step.action_family,
-            str(getattr(action, "action_type", "") or ""),
-        )
-        if not family_ok:
-            result.suppressed_reason = family_reason
-            say(f"  [ActionContract] 派发前拒绝：{family_reason}")
-            status(turn_no, "动作类型与 planner 指令不匹配")
-            return result
-        authorize = getattr(supervisor, "authorize_action_dispatch", None)
-        if callable(authorize):
-            allowed, action_key, reason = authorize(
-                sv_step, action_decision, history or []
-            )
-            result.action_key = action_key
-            if not allowed:
-                result.suppressed_reason = reason or "duplicate action suppressed"
-                say(f"  [ActionLedger] 抑制重复动作：{result.suppressed_reason}")
-                status(turn_no, "重复动作已抑制")
-                return result
         if action_decision.action:
             status(turn_no, f"[{action_label(action.action_type)}] {action.description}")
 
@@ -368,42 +347,6 @@ class ActionExecutionState:
                             "target_group_id": sv_step.target_group_id,
                             "primitive": action_decision.action.action_type,
                         })
-            family_ok, family_reason = validate_action_family(
-                sv_step.action_family,
-                str(getattr(action_decision.action, "action_type", "") or ""),
-            )
-            if (
-                not family_ok
-                and action_decision.action.action_type == "stop"
-                and evidence_context
-            ):
-                # The action model may visually conflate an adjacent same-value field with the
-                # exact structured target. Retry once in the same turn with the typed contract
-                # conflict; ordinary rendered interaction still belongs to the vision policy.
-                say(f"  [ActionContract] stop 与结构化目标冲突，同轮纠正一次：{family_reason}")
-                retry_evidence = (
-                    f"{evidence_context}\n"
-                    f"上一次候选 primitive=stop 被动作契约拒绝：{family_reason}。"
-                    "请重新输出与 action_family 兼容的单个动作；不要重复 stop。"
-                )
-                action_decision = action_policy.decide(
-                    observation,
-                    instruction_for_action,
-                    direction=sv_step.direction,
-                    drag_column=sv_step.drag_column,
-                    drag_steps=sv_step.drag_steps,
-                    evidence_context=retry_evidence,
-                    context_reports=getattr(supervisor, "_context_reports", None),
-                )
-                if callable(grounder):
-                    action_decision = grounder(
-                        action_decision,
-                        observation,
-                        target_control=sv_step.target_control,
-                        target_value=sv_step.target_value,
-                        target_group_id=sv_step.target_group_id,
-                        action_family=sv_step.action_family,
-                    )
         if hasattr(supervisor, "_timings"):
             supervisor._timings["action_policy"] = time.perf_counter() - started
             supervisor._timings_order.append("action_policy")

@@ -1,13 +1,8 @@
-"""The supervisor's signature-based loop guard: re-typing the same value into the same box is caught
-— url-INDEPENDENTLY, by counting the milestone's executed `type` signatures (not the planner's
-wording, and not a canonical_url key).
+"""Planner wording and historic signatures are advisory, not pre-dispatch gates.
 
-The url-keyed version missed the very loop it was built for: a filter/search/reset cycle rewrites the
-url's path shape (`/index/` → `/index/filter//internal_reviews/…`), so canonical_url is unstable
-across the first-search boundary and the re-types landed under different states (regression
-20260622_205544: 'Olivia zip jacket' typed 3× at T3/T6/T10, guard never fired). The signature alone
-is the identity. Scoped to `type` (its value rides the signature); a re-click of Search/Reset is NOT
-flagged here (the instruction guard owns those)."""
+Loop recovery is based on observed post-action progress in the milestone controller. A planner
+proposal is not rejected merely because a previous instruction or value looked similar.
+"""
 
 from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
@@ -50,14 +45,14 @@ def _typed_turn(index: int, *, execution_scope: str = "") -> PolicyTurn:
     return PolicyTurn(index=index, observation_source="eval", supervisor=sv, action_decision=ad, executed=True)
 
 
-def test_reworded_retype_is_caught_by_signature():
-    # Two identical-signature type actions already executed in this milestone (across different urls).
+def test_reworded_retype_is_left_to_post_action_progress_assessment():
     p = _policy("在 Product 列筛选框中删除现有内容并重新输入 'Olivia zip jacket'")  # different wording, same action
     history = [_typed_turn(3), _typed_turn(6)]
     obs = Observation(png_bytes=b"png", source="browser", url=URL_POSTRESET)
     check = _SingleCheckResult(status="in_progress", reason="筛选未生效", summary="进行中")
     step = p._plan_single(_ms(), check, obs, history)
-    assert step.summary == STUCK  # routed to stuck despite the reworded instruction + churning url
+    assert step.summary != STUCK
+    assert step.should_act
 
 
 def test_repeated_type_history_does_not_block_submit_plan():

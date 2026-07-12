@@ -162,7 +162,7 @@ def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
     assert executor.calls == []
 
 
-def test_duplicate_commit_is_suppressed_before_executor_call(tmp_path):
+def test_executor_does_not_apply_legacy_commit_suppression(tmp_path):
     action = BaseAction(action_type="tap", x=10, y=20, description="点击保存")
     decision = BaseActionDecision(action=action)
     step = _step(decision).model_copy(
@@ -187,13 +187,14 @@ def test_duplicate_commit_is_suppressed_before_executor_call(tmp_path):
         say=lambda _message: None,
     )
 
-    assert result.executed is False
-    assert result.action_key == "scope|m1|commit"
-    assert result.suppressed_reason == "commit already dispatched"
-    assert executor.calls == []
+    assert result.executed is True
+    assert result.action_key == ""
+    assert result.suppressed_reason == ""
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["decision"].action == action
 
 
-def test_action_family_mismatch_is_rejected_before_executor_call(tmp_path):
+def test_action_family_is_advisory_after_grounding(tmp_path):
     decision = BaseActionDecision(
         action=BaseAction(action_type="tap", x=10, y=20, description="点击输入框")
     )
@@ -216,6 +217,7 @@ def test_action_family_mismatch_is_rejected_before_executor_call(tmp_path):
         say=lambda _message: None,
     )
 
-    assert result.executed is False
-    assert "动作族 input" in result.suppressed_reason
-    assert executor.calls == []
+    assert result.executed is True
+    assert result.suppressed_reason == ""
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["decision"].action == decision.action
