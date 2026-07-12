@@ -111,16 +111,16 @@ interactive run 不是单次点击、也不是整段任务；派生计算切给 
 只输出与任务相关的步骤，不加多余前置（已在工作区就别加「打开网站」）。**忠于目标、别臆造实体**：目标要操作/选择/处理某实体（某条记录/对象/条目…）时默认它已存在——用已知名称或 read 选现有再引用（规则10），别补「新建/创建/配置」前置；只有目标动词本身就是新建/创建/添加时才建 create 步。先在 reasoning 里想清楚：要到哪些页、做什么操作、读什么结果、关键动作做完怎么确认、是否需要分支，再写 steps。
 
 示例（功能依赖决定资源阶段；不是站点工作流）——
-应用功能说明：配置集合 C 由 `container` 类型记录持有，只能消费既有注册表 owner R 中已经持久化的选项。目标要求把新选项 V 加入 C。因此先定位并打开既有 R（不能新建另一份 R），完成 R 的独立 mutation，再定位唯一 container 所有者，最后用一条 action 完成 C 的 mutation；打开编辑器是 navigation，向导手势不展开成 action。
+应用功能说明：配置集合 C 由 `container` 类型记录持有，只能消费既有注册表 owner R 中已经持久化的选项；R 的一个有效选项成员要求同一结构单元内 `display_value` 与 `stored_value` 都等于目标值。目标要求把新选项 V 加入 C。因此先定位并打开既有 R（不能新建另一份 R），完成 R 的独立 mutation，再定位唯一 container 所有者，最后用一条 action 完成 C 的 mutation；打开编辑器是 navigation，向导手势不展开成 action。
 {"reasoning":"持久化资源有既有注册表 owner R 和配置集合 C；C 依赖 R[V] 已存在，所以阶段顺序是 locate R→mutate R→locate C owner→mutate C。C 的能力所有者类型是 container，同名候选必须按 kind 消歧。每个资源只有一个持久化 action。","goal":"把新选项 V 加入实体 E 的配置集合 C","steps":[
  {"op":"run","run_kind":"navigation","name":"在注册表列表定位并打开既有 owner R 的选项编辑页","success_condition":"页面显示稳定身份为 R 的既有 owner 及其选项集合"},
- {"op":"run","run_kind":"action","name":"将既有 owner R 的选项集合持久化包含 V","success_condition":"保存后的 owner R 选项集合包含 V"},
+ {"op":"run","run_kind":"action","name":"将既有 owner R 的选项集合持久化包含 V","success_condition":"保存后的 owner R 选项集合包含 V","target_controls":["option_collection"],"target_values":{"display_value":"V","stored_value":"V"}},
  {"op":"run","run_kind":"navigation","name":"进入实体列表页","success_condition":"页面显示实体列表和筛选控件"},
  {"op":"foreach","loop_var":"row","row_fields":["name","kind","detail_url"],"into":"candidates","body":[]},
  {"op":"run","run_kind":"data_query","var":"q","name":"验证并选出配置集合 C 的唯一所有者入口","returns":["match_count","detail_url"],"sql":"SELECT COUNT(*) AS match_count, CASE WHEN COUNT(*) = 1 THEN MAX(detail_url) ELSE '' END AS detail_url FROM candidates WHERE name LIKE '%E%' AND kind = 'container'"},
  {"op":"if","cond_var":"q","cond_field":"match_count","cond_cmp":"==","cond_value":"1","then":[
    {"op":"run","run_kind":"navigation","name":"打开 {q[detail_url]} 进入配置集合 C 的编辑页","success_condition":"页面显示配置集合 C 的唯一 owner"},
-   {"op":"run","run_kind":"action","name":"将配置集合 C 持久化包含选项 V","success_condition":"保存后的配置集合 C 包含 V"}],
+   {"op":"run","run_kind":"action","name":"将配置集合 C 持久化包含选项 V","success_condition":"保存后的配置集合 C 包含 V","target_controls":["configuration_collection"],"target_values":{"member":"V"}}],
   "otherwise":[{"op":"finish","message":"配置集合 C 的 owner 候选为空或不唯一，未执行 mutation。"}]}]}
 
 示例（条件任务 + 关键动作返回确认）——
