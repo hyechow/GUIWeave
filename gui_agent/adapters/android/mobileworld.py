@@ -205,7 +205,19 @@ def main() -> int:
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--headless", action="store_true", help="run fully headless (no HUD / cursor overlay)")
     parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
-    parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
+    dynamic_turns = parser.add_mutually_exclusive_group()
+    dynamic_turns.add_argument(
+        "--dynamic-max-turns",
+        action="store_true",
+        help="explicitly allow DSL program complexity to raise max_turns",
+    )
+    dynamic_turns.add_argument(
+        "--no-dynamic-max-turns",
+        dest="dynamic_max_turns",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(dynamic_max_turns=False)
     parser.add_argument("--no-teardown", action="store_true", help="skip /task/tear_down (leave app state for inspection)")
     parser.add_argument("--no-answer-bridge", action="store_true", help="do not POST a final answer to the backend before eval")
     args = parser.parse_args()
@@ -369,7 +381,7 @@ def main() -> int:
                                 context_reports=context_reports,
                             )
 
-                        if not args.no_dynamic_max_turns:
+                        if args.dynamic_max_turns:
                             run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                             if run_max_turns != args.max_turns:
                                 print(f"[mobileworld] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")

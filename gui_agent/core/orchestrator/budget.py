@@ -1,9 +1,8 @@
 """Turn-budget estimation for DSL orchestrator programs.
 
-The agent-loop max_turns guard counts GUI decision/action turns. This module gives
-orchestrator mode a conservative max_turns BEFORE execution starts so a genuinely
-heavy program (multi-field form, file upload, create-then-verify chain) isn't starved
-at the default floor, while a normal program just stays at the floor.
+The agent-loop max_turns guard counts GUI decision/action turns. This module provides
+an optional recommendation before execution starts. Runners use it only when dynamic
+budgeting is explicitly enabled; max_turns remains a strict runtime boundary by default.
 
 CALIBRATION (against 10 real RoboTeam browser runs, 2026-06-13..16; logs only, no test
 fixtures): actual turns are driven almost entirely by ACTION milestones — reads consume

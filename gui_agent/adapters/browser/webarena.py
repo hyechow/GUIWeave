@@ -923,7 +923,19 @@ def main() -> int:
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
     parser.add_argument("--no-orchestrator-preflight", action="store_true", help="do not stop after deterministic router/decompose preflight failures")
-    parser.add_argument("--no-dynamic-max-turns", action="store_true", help="do not raise max_turns from DSL program complexity")
+    dynamic_turns = parser.add_mutually_exclusive_group()
+    dynamic_turns.add_argument(
+        "--dynamic-max-turns",
+        action="store_true",
+        help="explicitly allow DSL program complexity to raise max_turns",
+    )
+    dynamic_turns.add_argument(
+        "--no-dynamic-max-turns",
+        dest="dynamic_max_turns",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(dynamic_max_turns=False)
     parser.add_argument(
         "--include-skills",
         action="store_true",
@@ -1328,7 +1340,7 @@ def main() -> int:
                                                  current_site=_site,
                                                  prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
 
-                            if not preflight_blocked and not args.no_dynamic_max_turns:
+                            if not preflight_blocked and args.dynamic_max_turns:
                                 run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                                 if run_max_turns != args.max_turns:
                                     print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")

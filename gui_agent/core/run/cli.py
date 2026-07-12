@@ -72,11 +72,19 @@ def main(
         default=20,
         help="agent-loop 最大自动执行轮数，防止无限循环",
     )
-    parser.add_argument(
-        "--no-dynamic-max-turns",
+    dynamic_turns = parser.add_mutually_exclusive_group()
+    dynamic_turns.add_argument(
+        "--dynamic-max-turns",
         action="store_true",
-        help="DSL 编排器模式下不按 Program 复杂度自动上调 max_turns",
+        help="DSL 编排器模式下显式允许按 Program 复杂度提高 max_turns",
     )
+    dynamic_turns.add_argument(
+        "--no-dynamic-max-turns",
+        dest="dynamic_max_turns",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(dynamic_max_turns=False)
     parser.add_argument(
         "--auto-continue",
         action="store_true",
@@ -291,7 +299,7 @@ def main(
                     return decompose(sub_goal, knowledge=knowledge.decompose_context(sub_goal) if knowledge else "",
                                      current_site=cur_site,
                                      prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
-                if not args.no_dynamic_max_turns:
+                if args.dynamic_max_turns:
                     run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                     if run_max_turns != args.max_turns:
                         print(
