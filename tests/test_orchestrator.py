@@ -429,9 +429,9 @@ def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
     assert result.observation_url == "screenshot_back_1.png"
 
 
-def test_target_identity_hint_uses_url_only_for_runtime_target_gate():
+def test_route_identity_evidence_requires_shared_machine_identity():
     from gui_agent.core.schemas import Milestone, Observation
-    from gui_agent.core.supervisor.milestone.policy import _target_identity_hint
+    from gui_agent.core.supervisor.milestone.execution_scope import route_identity_evidence
 
     obs = Observation(png_bytes=b"x", source="test", url="http://host/admin/item/edit/id/347/")
     ordinary = Milestone(
@@ -447,65 +447,10 @@ def test_target_identity_hint_uses_url_only_for_runtime_target_gate():
         "success_condition": "进入该记录详情页（必须对应子目标指定对象「打开记录 347 的详情」）",
     })
 
-    assert _target_identity_hint(ordinary, obs) == ""
-    hint = _target_identity_hint(targeted, obs)
+    assert route_identity_evidence(ordinary, obs) == ""
+    hint = route_identity_evidence(targeted, obs)
     assert "347" in hint
-    assert "URL/路由" in hint
-
-
-def test_route_identity_guard_accepts_identity_only_missing():
-    from gui_agent.core.schemas import Milestone, Observation
-    from gui_agent.core.supervisor.milestone.helpers import _apply_route_identity_checker_guard
-    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
-
-    milestone = Milestone(
-        id="m1",
-        name="打开记录 347 的详情",
-        description="打开记录 347 的详情",
-        kind="navigation",
-        success_condition="进入该记录详情页并显示目标字段（必须对应子目标指定对象「打开记录 347 的详情」）",
-    )
-    obs = Observation(png_bytes=b"x", source="test", url="http://host/admin/item/edit/id/347/")
-    result = _SingleCheckResult(
-        status="in_progress",
-        reason="页面是详情页，但需要确认是否为记录 ID 347。",
-        missing_evidence=["确认当前页面显示的是记录 ID 347 的详情，而非其他记录。"],
-        page_identity="记录详情页",
-        summary="详情页字段已显示，但对象身份待确认。",
-    )
-
-    guarded = _apply_route_identity_checker_guard(result, milestone, obs)
-
-    assert guarded.status == "done"
-    assert guarded.missing_evidence == []
-    assert any("347" in item for item in guarded.visible_evidence)
-
-
-def test_route_identity_guard_does_not_accept_missing_fields():
-    from gui_agent.core.schemas import Milestone, Observation
-    from gui_agent.core.supervisor.milestone.helpers import _apply_route_identity_checker_guard
-    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
-
-    milestone = Milestone(
-        id="m1",
-        name="打开记录 347 的详情",
-        description="打开记录 347 的详情",
-        kind="navigation",
-        success_condition="进入该记录详情页并显示评分（必须对应子目标指定对象「打开记录 347 的详情」）",
-    )
-    obs = Observation(png_bytes=b"x", source="test", url="http://host/admin/item/edit/id/347/")
-    result = _SingleCheckResult(
-        status="in_progress",
-        reason="页面是详情页，但评分字段不可见。",
-        missing_evidence=["需要显示 rating_stars 评分字段。"],
-        page_identity="记录详情页",
-        summary="详情页未显示评分。",
-    )
-
-    guarded = _apply_route_identity_checker_guard(result, milestone, obs)
-
-    assert guarded.status == "in_progress"
-    assert guarded.missing_evidence == result.missing_evidence
+    assert "资源路由" in hint
 
 
 def test_approximate_entity_sql_uses_search_key():
@@ -604,6 +549,13 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     assert ensure.mutation_mode == "ensure"
     assert ensure.target_controls == ["Notifications"]
     assert ensure.target_values == {"Notifications": "on"}
+    persisted = milestone_for_run(
+        Run(name="更新资料", kind="action", requires_commit=True),
+        3,
+    )
+    assert persisted.requires_commit is True
+    from gui_agent.core.run.execution_signals import ExecutionContract
+    assert ExecutionContract.from_milestone(persisted).require_terminal_dispatch is True
     assert milestone_for_run(Run(name="进页", kind="navigation"), 2).require_fresh_action is False
     p.reseed(milestone_for_run(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
@@ -828,7 +780,7 @@ def test_structured_read_empty_returns_no_llm():
 
 def test_normalize_confirm_read_gates_rewrites_action_before_read():
     # L2 backstop: an action immediately followed by a scalar read is normalized into
-    # an action return contract, with a lenient DISPATCH success_condition.
+    # an action return contract without changing its completion contract.
     from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
         Run(name="进页", kind="navigation", success_condition="页面已显示"),
@@ -839,10 +791,7 @@ def test_normalize_confirm_read_gates_rewrites_action_before_read():
     ])
     out = normalize_confirm_read_gates(prog)
     nav, act, fin = out.statements
-    # 触发型 action 的验收被改写成 dispatch 门：不再断言结果，明确让位给 read
-    assert "不判定结果取值" in act.success_condition
-    assert "结构化返回值读取判定" in act.success_condition
-    assert "连通标记" not in act.success_condition  # 结果门措辞已被替换
+    assert act.success_condition == "检测结果（连通标记或不可达提示）已显示在界面"
     # navigation / finish 不动；read 的 returns/read_spec 被挂到 action 上
     assert nav.success_condition == "页面已显示"
     assert act.var == "r"
@@ -850,52 +799,6 @@ def test_normalize_confirm_read_gates_rewrites_action_before_read():
     assert fin.message == "{r[连通状态]}"
     # 原 Program 不被就地改（返回新对象）
     assert prog.statements[1].success_condition == "检测结果（连通标记或不可达提示）已显示在界面"
-
-
-def test_compound_form_fill_action_skips_dispatch_gate():
-    # WebArena 701: a returns-bearing ACTION that OPENS + FILLS a form + SAVES ("点击 Add New Rule
-    # 并填写规则信息…") must NOT get the dispatch gate — its first url_changed is opening the form,
-    # which would mark the milestone done on the empty form (创建状态=失败). It gets a real
-    # filled+saved SC so the milestone drives fill→save→confirm.
-    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
-    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
-    prog = Program(statements=[
-        Run(var="m", kind="action", returns=["创建状态"], read_spec="创建状态：出现'规则已保存'→成功",
-            name="点击 Add New Rule 按钮并填写规则信息：Rule Name='X', Websites 选择 Main Website, "
-                 "Customer Groups 选择 General/Wholesale/Retailer, Discount Amount 15"),
-    ])
-    act = normalize_confirm_read_gates(prog).statements[0]
-    assert not is_dispatch_gate_sc(act.success_condition)   # NOT dispatch-gated
-    assert "保存成功" in act.success_condition
-    assert "继续填写" in act.success_condition
-    assert act.returns == ["创建状态"]                        # returns still own the result value
-
-
-def test_single_dispatch_action_still_gets_dispatch_gate():
-    # A single-click terminal dispatch (no form fill) keeps the dispatch gate: its url_changed IS
-    # the conclusive done signal.
-    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
-    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
-    prog = Program(statements=[
-        Run(var="q", kind="action", returns=["报表"], read_spec="x", name="点击 Show Report 按钮"),
-    ])
-    act = normalize_confirm_read_gates(prog).statements[0]
-    assert is_dispatch_gate_sc(act.success_condition)        # still dispatch-gated
-
-
-def test_fill_only_milestone_is_not_compound_create():
-    # WebArena 702 split plan: a FILL-ONLY milestone (fills fields, no open/create cue) must NOT get
-    # the "…and saved" SC — it can never be satisfied by filling, which forced a premature save +
-    # re-create loop. Only a milestone that BOTH opens/creates a form AND fills it is compound.
-    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
-    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
-    prog = Program(statements=[
-        Run(var="m", kind="action", returns=["填写状态"], read_spec="x",
-            name="填写 Rule Name 为 'Pride Month'，Websites 选中 Main Website，Customer Groups 选中 General/Wholesale/Retailer"),
-    ])
-    act = normalize_confirm_read_gates(prog).statements[0]
-    assert is_dispatch_gate_sc(act.success_condition)        # fill-only → dispatch gate, not saved-SC
-    assert "保存成功" not in act.success_condition
 
 
 def test_normalize_confirm_read_gates_recurses_into_if_branches():
@@ -914,8 +817,7 @@ def test_normalize_confirm_read_gates_recurses_into_if_branches():
     ])
     out = normalize_confirm_read_gates(prog)
     then_action = out.statements[1].then[0]
-    assert "不判定结果取值" in then_action.success_condition
-    assert "订单创建成功" not in then_action.success_condition  # 原结果门措辞被替换
+    assert then_action.success_condition == "订单创建成功提示"
     assert then_action.var == "c"
     assert then_action.returns == ["建单结果"]
     assert len(out.statements[1].then) == 2
@@ -1075,47 +977,6 @@ def test_normalize_confirm_read_gates_action_without_following_read_unchanged():
     assert out.statements[1].success_condition == "第二步生效页"
     # 幂等：再跑一次不变
     assert normalize_confirm_read_gates(out).statements[0].success_condition == "第一步生效页"
-
-
-def test_normalize_navigate_submit_gates_terminal_action():
-    # 纯导航/展示任务（无 returns/data_query/foreach）且含 navigation run：终态提交 action 被改写为
-    # navigate-submit dispatch gate，让确定性 url_changed 判 done、绕过会误读渲染 URL 的 LLM checker
-    # (task 707「Show the sales order report」: 点 Show Report 落到 …/filter/<base64>/ 渲染页)。
-    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
-    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
-    prog = Program(statements=[
-        Run(name="进入 Reports>Sales>Orders 报表页", kind="navigation", success_condition="报表筛选页已显示"),
-        Run(name="设置日期范围并点击 Show Report", kind="action", success_condition="统计表格已渲染出 N 行"),
-    ])
-    out = normalize_confirm_read_gates(prog)
-    # navigation run 不动（自有 arrival checker）
-    assert out.statements[0].success_condition == "报表筛选页已显示"
-    # 终态 action 带上 dispatch-gate 标记
-    assert is_dispatch_gate_sc(out.statements[1].success_condition)
-    # 幂等：再跑一次仍是 dispatch gate（不叠加）
-    again = normalize_confirm_read_gates(out)
-    assert is_dispatch_gate_sc(again.statements[1].success_condition)
-    assert again.statements[1].success_condition == out.statements[1].success_condition
-
-
-def test_normalize_navigate_submit_does_not_gate_terminal_mutation_save():
-    # Task 489 shape: despite being structurally "navigation + no returns/data_query", the terminal
-    # action mutates state. It must keep a real save-success/value gate, not the pure display gate.
-    from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
-    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
-
-    save_sc = "页面显示保存成功提示，且 Page Title 字段值为 {new_title}"
-    prog = Program(statements=[
-        Run(name="进入 CMS Pages 列表页", kind="navigation", success_condition="页面显示 CMS Pages 列表"),
-        Run(name="打开 Privacy Policy 编辑页", kind="action", success_condition="已进入编辑表单页"),
-        Compute(var="new_title", expr="'No privacy policy is needed in this dystopian world'"),
-        Run(name="将 Page Title 字段更新为 {new_title} 并保存", kind="action", success_condition=save_sc),
-    ])
-
-    out = normalize_confirm_read_gates(prog)
-    save = out.statements[-1]
-    assert save.success_condition == save_sc
-    assert not is_dispatch_gate_sc(save.success_condition)
 
 
 def test_normalize_navigate_submit_gates_skips_when_no_navigation_run():

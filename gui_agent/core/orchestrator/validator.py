@@ -206,73 +206,6 @@ def _interactive_url_result_vars(stmts: list[Stmt]) -> set[str]:
     return used
 
 
-_PRESERVE_SCOPE_FILTER_RE = re.compile(
-    r"保留|保持|继续沿用|追加|叠加|同时(?:包含|保留|应用|满足)|"
-    r"\bkeep\b|\bretain\b|\bpreserve\b|\bwith\b|\balongside\b",
-    re.IGNORECASE,
-)
-# Textual fallback debt: these are NOT platform-neutral ontology. They suppress false scope tokens
-# when the router/resolution still exposes status/ranking/page words as plain entity text
-# (WebArena/Magento pressure: pending/complete/reviews/status). Prefer replacing this with a
-# structured router contract that marks which entity refs are preserved lookup scope.
-_NON_SCOPE_ENTITY_TOKENS = {
-    "all",
-    "any",
-    "canceled",
-    "cancelled",
-    "closed",
-    "complete",
-    "completed",
-    "disabled",
-    "enabled",
-    "filter",
-    "first",
-    "item",
-    "items",
-    "keyword",
-    "last",
-    "latest",
-    "least",
-    "most",
-    "newest",
-    "open",
-    "order",
-    "orders",
-    "page",
-    "pages",
-    "pending",
-    "processing",
-    "record",
-    "records",
-    "recent",
-    "result",
-    "results",
-    "review",
-    "reviews",
-    "second",
-    "status",
-    "the",
-}
-
-
-def _distinctive_scope_tokens(value: str) -> set[str]:
-    return {
-        token.lower()
-        for token in re.findall(r"[A-Za-z0-9.]+", value or "")
-        if len(token) >= 3 and token.lower() not in _NON_SCOPE_ENTITY_TOKENS
-    }
-
-
-def _resolution_scope_token_sets(resolution) -> list[set[str]]:
-    out: list[set[str]] = []
-    for ent in getattr(resolution, "entities", []) or []:
-        tokens: set[str] = set()
-        for attr in ("search_key", "key", "mention"):
-            tokens.update(_distinctive_scope_tokens(str(getattr(ent, attr, "") or "")))
-        if tokens:
-            out.append(tokens)
-    return out
-
 # A step whose own acceptance says "nothing changes" is a no-op the LLM invented for flow
 # control (185 sample:「保存当前行结果（逻辑上）: 无UI变化，仅用于流程控制」). Interactive steps
 # must drive the UI; per-row accumulation is the runtime's job. Checker would spin on it.
@@ -342,7 +275,6 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
 
     all_result_vars: set[str] = set()  # every result var anywhere — to spot botched bare refs
     rank_goal_text = (program.goal or "").lower()
-    scope_value_token_sets = _resolution_scope_token_sets(resolution)
     interactive_url_result_vars = _interactive_url_result_vars(program.statements)
 
     def _collect_result_vars(stmts: list[Stmt]) -> None:
@@ -364,8 +296,8 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
     # Its ONLY path onto the page is a later action whose NAME references it as bare `{var}` — the
     # runner (_render/_scalars) then types the EXACT computed value. If nothing downstream references
     # it, the computed value is DEAD and the consuming fill action has no concrete target, so the
-    # action-level planner hallucinates one (WebArena 778: computed new_price but authored the action
-    # as「将价格更新为新值」and filled 150.00 instead of the 86.50 it computed). Require every Compute
+    # action-level planner may otherwise invent one when the action only says "use the new value".
+    # Require every Compute
     # var to be consumed — as `{var}` in some run/finish text, or as an identifier in a later Compute.
     _computes: list[tuple[str, str]] = []   # (var, expr) in program order
     _consumer_text: list[str] = []
@@ -566,23 +498,6 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                 # precondition is a state to ENSURE (确保已到达/已进入某状态) — only meaningful on a
                 # navigation step. On an action/read/filter it would be treated as already-satisfied
                 # and accepted on frame 1, prematurely passing a step that must actually run.
-                if (
-                    s.kind == "filter"
-                    and scope_value_token_sets
-                    and _PRESERVE_SCOPE_FILTER_RE.search(f"{s.name} {s.success_condition}")
-                ):
-                    text_tokens = set(re.findall(r"[A-Za-z0-9.]+", f"{s.name} {s.success_condition}".lower()))
-                    if not any(tokens & text_tokens for tokens in scope_value_token_sets):
-                        examples = sorted({token for tokens in scope_value_token_sets for token in tokens})[:4]
-                        issues.add(
-                            "PRESERVED_SCOPE_FILTER_MISSING_VALUE",
-                            f"筛选步骤「{s.name}」声称要保留/追加上游实体范围，但没有在本步骤 name/SC 里写出"
-                            f"具体实体值或检索关键词（例如 {examples}）。运行时只能按 live active-filter 的"
-                            "具体值做 state-diff；只写「保留客户筛选/保留实体范围/保留搜索结果」无法区分"
-                            "应保留的任务 scope 和任务开始前就已生效的无关筛选。请把本步改成类似「保留 <具体实体值或关键词> "
-                            "结果范围，追加 <新筛选>」，并在 success_condition 里写明 active filters 同时包含"
-                            "该具体值和新筛选。"
-                        )
                 if isinstance(s, Run) and _NOOP_STEP_RE.search(f"{s.name} {s.success_condition}"):
                     issues.add("NOOP_FLOW_CONTROL_STEP",
                         f"步骤「{s.name}」自述无 UI 变化/仅用于流程控制——交互步必须驱动真实界面操作。"

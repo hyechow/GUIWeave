@@ -10,10 +10,6 @@ from __future__ import annotations
 
 
 TEXTUAL_FALLBACK_VALIDATOR_CODES: frozenset[str] = frozenset({
-    # Uses textual "preserve/keep/追加" cues plus extracted entity tokens. Current stoplist includes
-    # WebArena/Magento pressure words (pending/complete/reviews/status) until router exposes a
-    # stronger scope-role contract.
-    "PRESERVED_SCOPE_FILTER_MISSING_VALUE",
     # Uses textual search/filter retry cues and field-name extraction stopwords. Kept as a validator
     # issue so retry efficacy can reveal whether the feedback actually repairs drafts.
     "RETRIEVAL_RETRY_DROPS_FIELD",
@@ -43,9 +39,7 @@ TEXTUAL_FALLBACK_HEURISTIC_SAMPLES: tuple[dict[str, object], ...] = (
         "retire_when": "retrieval target fields are typed in the DSL instead of inferred from prose",
     },
     {
-        # Live trigger (WebArena 502, run 20260708_183100): "Filters 面板的 Name 字段" extracted
-        # ['面板的'] — `name` matched as designator and swallowed the real field "Name", making the
-        # RETRIEVAL_RETRY_DROPS_FIELD feedback unsatisfiable across all 3 decompose retries.
+        # A container prefix before a field label must not be extracted as the field itself.
         "id": "retrieval.field_regex.name_column_literal",
         "kind": "retrieval_field_extract",
         "owner": "gui_agent.core.orchestrator._validator.retrieval",
@@ -83,79 +77,5 @@ TEXTUAL_FALLBACK_HEURISTIC_SAMPLES: tuple[dict[str, object], ...] = (
         "expected": "",
         "validator_code": "RETRIEVAL_RETRY_DROPS_FIELD",
         "retire_when": "field extraction is replaced by a structured parser or typed target_field",
-    },
-    {
-        "id": "orchestrator.arrival_submit_regex.show_report",
-        "kind": "normalize_confirm_read_gate",
-        "owner": "gui_agent.core.orchestrator.passes",
-        "statements": [
-            {"name": "进入 Reports > Sales > Orders 报表页", "kind": "navigation", "success_condition": "报表筛选页已显示"},
-            {"name": "设置日期范围并点击 Show Report", "kind": "action", "success_condition": "统计表格已渲染出 N 行"},
-        ],
-        "expect_dispatch_gate": True,
-        "expect_success_condition_contains": "纯导航/展示意图",
-        "retire_when": "arrival-submit is represented by a structured action role",
-    },
-    {
-        "id": "orchestrator.mutating_terminal_regex.save_not_arrival",
-        "kind": "normalize_confirm_read_gate",
-        "owner": "gui_agent.core.orchestrator.passes",
-        "statements": [
-            {"name": "进入 CMS Pages 列表页", "kind": "navigation", "success_condition": "页面显示 CMS Pages 列表"},
-            {"name": "将 Page Title 字段更新为 {new_title} 并保存", "kind": "action", "success_condition": "页面显示保存成功提示"},
-        ],
-        "expect_dispatch_gate": False,
-        "expect_success_condition": "页面显示保存成功提示",
-        "retire_when": "mutating-vs-arrival terminal intent is represented by a structured action role",
-    },
-    {
-        "id": "runtime.terminal_dispatch_regex.submit_comment",
-        "kind": "terminal_dispatch_turn",
-        "owner": "gui_agent.core.supervisor.milestone.policy",
-        "trigger": "点击 Submit Comment 按钮",
-        "expected": True,
-        "retire_when": "terminal dispatch actions expose a structured dispatch role from the executor",
-    },
-    {
-        "id": "runtime.terminal_dispatch_regex.checkbox_excluded",
-        "kind": "terminal_dispatch_turn",
-        "owner": "gui_agent.core.supervisor.milestone.policy",
-        "trigger": "勾选 Notify Customer by Email 复选框",
-        "expected": False,
-        "retire_when": "terminal dispatch actions expose a structured dispatch role from the executor",
-    },
-    {
-        "id": "runtime.negative_action_feedback_regex.validation_error",
-        "kind": "negative_action_feedback",
-        "owner": "gui_agent.core.supervisor.milestone.policy",
-        "trigger": "validation failed: required field missing",
-        "expected": True,
-        "retire_when": "checker emits structured failure categories instead of free-text issues",
-    },
-    {
-        "id": "runtime.negative_action_feedback_regex.required_column_is_not_error",
-        "kind": "negative_action_feedback",
-        "owner": "gui_agent.core.supervisor.milestone.policy",
-        "trigger": "Attribute Code, Default Label, Required, System, Visible, Scope",
-        "expected": False,
-        "retire_when": "checker emits structured failure categories instead of free-text issues",
-    },
-    {
-        "id": "runtime.preserve_scope_regex.keep_entity_keyword",
-        "kind": "runtime_preserved_scope_filter",
-        "owner": "gui_agent.core.supervisor.milestone.helpers",
-        "milestone_name": "保留 Grace 客户结果范围，追加 Status=Pending 筛选",
-        "milestone_success_condition": "可见筛选状态同时包含 Grace 客户范围和 Status: Pending",
-        "applied_filters": {"Keyword": "Grace Nguyen", "Status": "Pending"},
-        "expected": True,
-        "retire_when": "milestones carry structured preserved_scope_filters",
-    },
-    {
-        "id": "validator.preserve_scope_regex.missing_value",
-        "kind": "validator_issue",
-        "owner": "gui_agent.core.orchestrator.validator",
-        "validator_code": "PRESERVED_SCOPE_FILTER_MISSING_VALUE",
-        "trigger": "保留客户筛选结果范围，追加 Status=Pending",
-        "retire_when": "router resolution marks preserved lookup scopes structurally",
     },
 )

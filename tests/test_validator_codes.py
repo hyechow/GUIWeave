@@ -148,18 +148,6 @@ SAMPLES: dict[str, Program] = {
         Read(var="v", name="读取表格可见行的字段",  returns=["grand_total", "status"],
             read_spec="读取每一行的金额和状态"),
     ]),
-    "PRESERVED_SCOPE_FILTER_MISSING_VALUE": (
-        Program(statements=[
-            Run(
-                name="保留客户筛选结果范围，追加 Status=Pending",
-                kind="filter",
-                success_condition="Active filters 同时包含客户筛选和 Status=Pending",
-            ),
-        ]),
-        SimpleNamespace(entities=[
-            SimpleNamespace(mention="Grace Nguyen", search_key="Grace", type="customer"),
-        ]),
-    ),
     "SQL_SCHEMA_MAPPING_TEXT": Program(statements=[
         Query(var="q", name="查询",  returns=["a"], sql="SELECT Email->customer_email FROM data"),
     ]),
@@ -363,41 +351,6 @@ def test_url_capability_advisories_are_warnings():
         issues = validate_program(SAMPLES[code])
         severities = [issue.severity for issue in issues if issue.code == code]
         assert severities == ["warn"]
-
-
-def test_preserved_scope_filter_accepts_concrete_entity_value():
-    program = Program(statements=[
-        Run(
-            name="保留 Grace 客户结果范围，追加 Status=Pending",
-            kind="filter",
-            success_condition="Active filters 同时包含 Grace 和 Status=Pending",
-        ),
-    ])
-    resolution = SimpleNamespace(entities=[
-        SimpleNamespace(mention="Grace Nguyen", search_key="Grace", type="customer"),
-    ])
-
-    assert "PRESERVED_SCOPE_FILTER_MISSING_VALUE" not in {
-        issue.code for issue in validate_program(program, resolution=resolution)
-    }
-
-
-def test_preserved_scope_filter_requires_lookup_value_with_multiple_entities():
-    program = Program(statements=[
-        Run(
-            name="保留客户筛选结果范围，追加 Status=Pending",
-            kind="filter",
-            success_condition="Active filters 同时包含客户筛选和 Status=Pending",
-        ),
-    ])
-    resolution = SimpleNamespace(entities=[
-        SimpleNamespace(mention="Grace Nguyen", search_key="Grace", type="customer"),
-        SimpleNamespace(mention="most recent pending order", search_key="pending", type="order"),
-    ])
-
-    assert "PRESERVED_SCOPE_FILTER_MISSING_VALUE" in {
-        issue.code for issue in validate_program(program, resolution=resolution)
-    }
 
 
 def test_unused_compute_blocks_mutations_but_only_warns_for_read_only_tasks():

@@ -370,8 +370,7 @@ class Interpreter:
         # Platform-general column-completeness safety net. A declared returns column that is
         # absent (no key) from EVERY collected row means the source grid never rendered it and
         # the collector silently dropped it — feeding an empty grouping/key column to a
-        # downstream data_query yields a silent wrong/empty answer (burned WebArena task 63:
-        # foreach declared Customer Email but the Orders grid didn't render it). "Absent as a
+        # downstream data_query yields a silent wrong/empty answer. "Absent as a
         # key in all rows" is the precise signal: a legitimately-blank-but-rendered column keeps
         # its key (= ""), so this never mis-fires on those. Browser tries to self-heal upstream
         # (Columns control) before we get here; this fails honestly when heal was impossible or
@@ -559,17 +558,16 @@ class Interpreter:
 
         Accept the SAME `{name}` template convention the rest of the DSL uses for scalar refs: the
         decomposer reaches for `{sku}` (as it does in every milestone name) instead of bare `sku`,
-        but to safe_eval `{sku}` is a one-element SET literal → SafeEvalError → silently-empty result
-        (live 185: base_sku came out "", so the search milestone ran with an empty keyword). Strip the
+        but to safe_eval `{sku}` is a one-element SET literal → SafeEvalError → silently-empty result.
+        An empty derived key would otherwise make a later search run without a concrete scope. Strip the
         braces around bare identifiers so `{sku}.rsplit(...)` and `sku.rsplit(...)` are equivalent.
-        Same for the field form: `{p[price]} * 0.865` (offline 778: parsed as a set literal →
+        Same for the field form: `{p[price]} * 0.865` (otherwise parsed as a set literal →
         SafeEvalError → "") normalizes to `p['price'] * 0.865`."""
         expr = normalize_compute_expr(c.expr)
         # Scope from env RunResults' reads, in BOTH shapes the decomposer nondeterministically writes:
         # the field name bare (`current_price`) AND the var-as-dict (`variant_row['current_price']`).
         # Without this, a numeric derivation from a read value raised 未知变量 → silently "" → the fill
-        # milestone lost its concrete value and the planner hallucinated one (WebArena 778: bare
-        # current_price → new_price "" → fail-fast; earlier subscript form → typed 200.00). Scalars
+        # milestone loses its concrete value and the planner may invent one. Scalars
         # (params + prior computes) win on collision.
         scope: dict[str, Any] = {}
         for _v, _rv in self.env.items():
@@ -577,7 +575,7 @@ class Interpreter:
                 scope[_field] = _val           # flat field ref (last read wins)
             if len(_rv.reads) == 1:
                 # A single-field read var is usable BOTH as the scalar it read AND as var['field']:
-                # the decomposer treats it as a scalar (live 778 run 233801 wrote
+                # the decomposer may treat it as a scalar
                 # `old_price_str.replace('$','')` where old_price_str was a one-field read var —
                 # scope held a dict → 不允许的方法调用 → "" → fail-fast with the right value in hand).
                 ((_only_field, _only_val),) = _rv.reads.items()
@@ -727,8 +725,7 @@ class Interpreter:
                 target_ref_values.append(value)
         # Bare `{base}` scalar refs in the name (function params / Compute results) also identify the
         # per-row target — anchor the acceptance gate to them too, so a leftover page from the prior
-        # iteration can't satisfy a generic gate (live 094903: the Eos call read Minerva's stale
-        # edit page because the gate was "已进入某 Configurable 编辑页", not "...{base}...").
+        # iteration cannot satisfy a generic gate using stale state from the prior item.
         for m in BARE_REF_RE.finditer(run.name or ""):
             if m.group(1) not in self._scalars:
                 continue  # stray bare {foo} → existing botched-ref handling, not a scalar gap
@@ -739,7 +736,7 @@ class Interpreter:
                 # A KNOWN scalar (function param / Compute result) that resolved empty: the action
                 # target has no concrete value — fail fast like an empty {var[field]} name ref, so a
                 # failed compute can't silently degrade the milestone to a generic name the planner
-                # then fills with a hallucinated value (WebArena 778: typed 200.00).
+                # then fills with an invented value.
                 missing.append(f"{{{m.group(1)}}}")
         name = self._render(run.name, missing)              # target → strict (collect empties)
         sc = self._render(run.success_condition)            # gate → lenient

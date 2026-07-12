@@ -2153,19 +2153,6 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                     "「Show the sales order report」计划必须包含点击 Show Report(渲染报表)的动作作为终态;"
                     f"当前计划未见: {[(r.kind, r.name) for r in seq]}"
                 )
-            # case 设 normalize=true 时,终态提交 action 必须被 normalize 成 navigate-submit dispatch
-            # gate(含标记 "动作已发出且界面给出响应"),让确定性 url_changed 判 done、绕过会把 Magento
-            # 渲染 URL(仍含 "filter")误读成"未提交"的 LLM checker —— 这是 707 反复点 Show Report 的根因修复。
-            from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
-            terminal_action = next(
-                (r for r in reversed(seq) if r.kind in ("action", "filter")), None
-            )
-            if terminal_action is not None and not is_dispatch_gate_sc(terminal_action.success_condition):
-                details.append(
-                    "终态提交 action 应被 normalize 成 navigate-submit dispatch gate(success_condition 含"
-                    "「动作已发出且界面给出响应」),使 url_changed 确定性判 done、不交给 LLM checker 误判渲染 URL;"
-                    f"当前终态 action success_condition='{terminal_action.success_condition}'"
-                )
         elif assertion == "variant_price_reads_current_before_set":
             # 778/780/782: percentage price change on a configurable-product variant. The new price
             # depends on the variant's CURRENT price (only known at runtime), so the plan must READ

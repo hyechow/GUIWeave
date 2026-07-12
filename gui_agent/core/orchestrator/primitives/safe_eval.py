@@ -72,7 +72,7 @@ def _lenient_int(x: object) -> int:
 _FUNCS = {
     "re_sub": _re_sub, "re_search": _re_search,
     "len": len, "str": str, "int": _lenient_int, "lower": str.lower, "upper": str.upper,
-    # Numeric derivation (WebArena 778 percentage price change): both decompose attempts naturally
+    # Numeric derivation: percentage and offset updates naturally
     # wrote round(float(current_price) * 0.865, 2) — without these the whole numeric-compute class
     # silently degraded to "" and the fill milestone lost its concrete value.
     "float": _lenient_float, "round": round, "abs": abs,
@@ -108,7 +108,7 @@ def _ev(node: ast.AST, scope: dict[str, Any]) -> Any:
         # `+` (concat / add) and `%` (string format) keep string semantics. But *, -, / on a value
         # read off the page (always a str like "75.00") can only be numeric intent — coerce numeric
         # strings so `current_price * 0.865` works whether or not the decomposer wrapped float()
-        # (WebArena 778: it wrote `round(current_price * 0.865, 2)` → "can't multiply sequence").
+        # A numeric expression may otherwise fail when a UI reader returns a numeric string.
         if isinstance(node.op, (ast.Mult, ast.Sub, ast.Div)):
             left, right = _coerce_num(left), _coerce_num(right)
         if isinstance(node.op, ast.Mod):

@@ -31,105 +31,15 @@ from .program import (
 
 
 # ── action return-read structural backstop (L2) ──────────────────────────────────────
-# A UI milestone whose result must be read should carry that read as its return contract,
-# not as the next UI action. Older decompositions may still produce the legacy shape
-# action/filter/navigation -> scalar read; normalize it into one UI Run with
-# returns/read_spec so the engine extracts structured values from the command's completion
-# frame. Only action triggers get a "dispatched/responded" gate. Filters keep filter kind and
-# their authored filter-state gate so FilterGate/applied_filters remains the source of truth for
-# whether the data-source constraint is in effect.
-#
-# `data_query` is deliberately excluded: it analyzes the current structured table snapshot, so
-# the preceding UI milestone must still verify the page data source is in the intended
-# filter/search/sort/scope state before SQL runs.
-
-_DISPATCH_GATE_TMPL = (
-    "已执行「{name}」：动作已发出且界面给出响应"
-    "（出现提示/结果区/列表更新/页面跳转/进入加载，任一即可）；"
-    "本步不判定结果取值（checker 只判动作响应），"
-    "具体结果由本步完成帧的结构化返回值读取判定。"
-)
-
-# Navigate/show tasks (no returns / data_query anywhere) sometimes end in a terminal submit whose
-# only purpose is to NAVIGATE to a destination/render page — e.g. "click Show Report" lands on a
-# report render URL. Without returns, the confirm-read gate above never fires, so the LLM checker
-# is left to adjudicate "did we arrive?" and can loop the same click. Only explicit arrival/display
-# submits get this deterministic gate. Mutating terminal actions (save/update/delete/enable/...)
-# must keep their authored success condition so the checker verifies durable write evidence.
-_NAV_SUBMIT_GATE_TMPL = (
-    "已执行「{name}」：动作已发出且界面给出响应"
-    "（页面跳转/URL 变化/出现结果区或加载，任一即可）；"
-    "本步是纯导航/展示意图的终态，只判动作是否已触发页面跳转，"
-    "不要求出现具体数据行/统计表（报表/结果可能为空）。"
-)
-
-_MUTATING_TERMINAL_RE = re.compile(
-    r"保存|更新|修改|改为|改成|删除|移除|发布|启用|禁用|"
-    r"\bsave\b|\bsaved\b|\bupdate\b|\bedit\b|\bmodify\b|\bchange\b|"
-    r"\bdelete\b|\bremove\b|\benable\b|\bdisable\b|\bpublish\b|\bunpublish\b",
-    re.IGNORECASE,
-)
-_ARRIVAL_SUBMIT_RE = re.compile(
-    r"show\s+report|view\s+report|display\s+report|run\s+report|"
-    r"\bshow\b|\bview\b|\bdisplay\b|\brender\b|\bsearch\b|"
-    r"查看|展示|显示|渲染|查询|搜索|筛选|报表|报告",
-    re.IGNORECASE,
-)
-
-
-# A returns-bearing ACTION that fills form fields before its terminal save is a COMPOUND form op,
-# not a single dispatch. Its FIRST url_changed is opening/navigating the form (e.g. list → …/new/),
-# which would trip the dispatch gate before any field is filled or the save fires — the milestone
-# is marked done on the empty form and the returns read the unsaved page (WebArena 701
-# "点击 Add New Rule 并填写规则信息…" → 创建状态=失败). Give it a real "filled + saved"
-# success_condition instead of the dispatch gate, so the checker+planner drive fill→save→confirm and
-# the milestone actually owns the whole single-page create flow.
-_FORM_FILL_RE = re.compile(r"填写|填入|录入|输入", re.I)
-# The OPEN/CREATE cue is what makes the milestone navigate (list → …/new/) mid-flow, which is the
-# intermediate url_change that misfires the dispatch gate. A fill-ONLY milestone (no open cue) does
-# not navigate, so the dispatch gate never fires on it — it must NOT get the "…and saved" SC or it
-# can never be satisfied by filling (WebArena 702 split plan: the fill-only milestone got the
-# saved-SC, forcing a premature save then a re-create loop).
-_FORM_OPEN_RE = re.compile(r"add\s+new|新建|创建|新增|添加|进入[^。]{0,6}表单|打开[^。]{0,6}表单", re.I)
-
-
-def _is_compound_form_fill(name: str) -> bool:
-    text = name or ""
-    return bool(_FORM_FILL_RE.search(text)) and bool(_FORM_OPEN_RE.search(text))
-
-
-_FORM_SAVE_SC_TMPL = (
-    "「{name}」已完整填写并保存成功：出现保存成功提示，或已跳转到已保存记录/列表页并可见该新记录；"
-    "若仍停留在表单页、字段尚未填全、或出现校验/红色错误，则未完成——继续填写剩余字段后保存。"
-)
-
-
-def _trigger_success_condition(run: Run) -> str:
-    """Dispatch gate for a single-dispatch trigger; a real filled+saved SC for a compound form-fill/
-    create action (so it is not marked done on the intermediate open-form url_change)."""
-    if run.kind == "action" and _is_compound_form_fill(run.name):
-        return _FORM_SAVE_SC_TMPL.format(name=run.name)
-    return _DISPATCH_GATE_TMPL.format(name=run.name)
-
-
-_CONFIRM_READ_TRIGGER_KINDS = {"action"}
-
-
+# Older plans may emit an interactive Run followed by a scalar Read. Merge the read contract into
+# the Run so extraction happens from its completion frame. The authored success condition remains
+# unchanged: interaction completion and result extraction are independent contracts.
 def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
     out: list[Stmt] = []
     i = 0
     while i < len(stmts):
         s = stmts[i]
         nxt = stmts[i + 1] if i + 1 < len(stmts) else None
-        if (
-            isinstance(s, Run)
-            and s.kind in _CONFIRM_READ_TRIGGER_KINDS
-            and s.returns
-        ):
-            update = {"success_condition": _trigger_success_condition(s)}
-            out.append(s.model_copy(update=update))
-            i += 1
-            continue
         if (
             isinstance(s, Run)
             and isinstance(nxt, Read)
@@ -142,22 +52,10 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
                 "returns": list(nxt.returns),
                 "read_spec": nxt.read_spec,
             }
-            if s.kind in _CONFIRM_READ_TRIGGER_KINDS:
-                update = {"success_condition": _trigger_success_condition(s)}
-                update.update({
-                    "var": nxt.var or s.var,
-                    "returns": list(nxt.returns),
-                    "read_spec": nxt.read_spec,
-                })
             out.append(s.model_copy(update=update))
             i += 2
             continue
-        if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
-            if isinstance(nxt, Read):
-                update = {"success_condition": _trigger_success_condition(s)}
-                s = s.model_copy(update=update)
-            out.append(s)
-        elif isinstance(s, If):
+        if isinstance(s, If):
             out.append(s.model_copy(update={
                 "then": _normalize_stmts(s.then),
                 "otherwise": _normalize_stmts(s.otherwise),
@@ -168,79 +66,15 @@ def _normalize_stmts(stmts: list[Stmt]) -> list[Stmt]:
     return out
 
 
-def _program_is_pure_navigate(stmts: list[Stmt]) -> bool:
-    """A navigate/show program: no statement anywhere requests structured data — no Run with
-    returns, no data_query, no foreach (collection). Such a task is judged purely by arrival."""
-    for s in stmts:
-        if isinstance(s, RunLike):
-            if s.returns or isinstance(s, Query):
-                return False
-        elif isinstance(s, ForEach):
-            return False
-        elif isinstance(s, If):
-            if not (_program_is_pure_navigate(s.then) and _program_is_pure_navigate(s.otherwise)):
-                return False
-    return True
-
-
-def _has_navigation_run(stmts: list[Stmt]) -> bool:
-    """True if any Run (recursively) is a navigation step — i.e. the task genuinely reaches a
-    destination page. Distinguishes a reach-then-submit SHOW task (navigation + terminal action,
-    e.g. enter report page then Show Report) from a bare action sequence (no navigation), so the
-    navigate-submit gate stays scoped to arrival tasks and never touches plain action chains."""
-    for s in stmts:
-        if isinstance(s, Run) and s.kind == "navigation":
-            return True
-        if isinstance(s, If) and (_has_navigation_run(s.then) or _has_navigation_run(s.otherwise)):
-            return True
-        if isinstance(s, ForEach) and _has_navigation_run(s.body):
-            return True
-    return False
-
-
-def _gate_terminal_navigate_submit(stmts: list[Stmt]) -> list[Stmt]:
-    """For a pure navigate/show program, rewrite the LAST top-level arrival-submit action's gate
-    so conclusive url_changed marks the milestone done. Navigation-kind runs and mutating actions
-    keep their own checker-authored gates."""
-    from gui_agent.core.supervisor.milestone.helpers import is_dispatch_gate_sc
-
-    def _is_arrival_submit(run: Run) -> bool:
-        text = " ".join([run.name or "", run.success_condition or "", run.read_spec or ""])
-        return bool(_ARRIVAL_SUBMIT_RE.search(text)) and not _MUTATING_TERMINAL_RE.search(text)
-
-    out = list(stmts)
-    for i in range(len(out) - 1, -1, -1):
-        s = out[i]
-        if isinstance(s, Run) and s.kind in _CONFIRM_READ_TRIGGER_KINDS:
-            if _is_arrival_submit(s) and not is_dispatch_gate_sc(s.success_condition):
-                out[i] = s.model_copy(
-                    update={"success_condition": _NAV_SUBMIT_GATE_TMPL.format(name=s.name)}
-                )
-            break
-        if isinstance(s, RunLike):  # a navigation/read terminal — leave arrival checking to it
-            break
-    return out
-
-
 def normalize_confirm_read_gates(program: Program) -> Program:
     """Normalize legacy action->read pairs into action return contracts.
 
     Older plans express result extraction as a scalar read Run immediately after a UI Run.
     Newer plans put ``returns``/``read_spec`` on that UI Run directly. This pass makes both
-    shapes execute the same way: scalar read pairs are merged into the UI Run when the vars
-    are compatible, and action trigger gates are made lenient dispatch gates so the checker
-    accepts on response while structured_read owns the returned value. Filter commands keep their
-    filter-state gates; the returned value is extracted only after the filter is applied. A
-    following data_query is not treated as a return read; the preceding UI step must still verify
-    the data source state before SQL analyzes it. For pure-navigate programs (no returns/
-    data_query/foreach), an explicit arrival/display terminal submit action is additionally gated
-    as a navigate-submit dispatch gate so url_changed deterministically marks arrival; mutating
-    save/update/delete actions keep their authored durable-result gate. Recurses into
-    if-branches; returns a NEW Program (inputs untouched); idempotent."""
-    stmts = _normalize_stmts(program.statements)
-    if _program_is_pure_navigate(stmts) and _has_navigation_run(stmts):
-        stmts = _gate_terminal_navigate_submit(stmts)
-    return program.model_copy(update={"statements": stmts})
+    shapes execute the same way by merging compatible scalar read pairs into the UI Run. The
+    interaction success condition is never rewritten. A following data_query remains separate.
+    Recurses into if-branches and returns a new Program; the pass is idempotent."""
+    return program.model_copy(update={"statements": _normalize_stmts(program.statements)})
 
 
 # ── precondition gate backstop (L2) ──────────────────────────────────────────────────

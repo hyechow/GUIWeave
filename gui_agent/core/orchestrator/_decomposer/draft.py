@@ -81,6 +81,12 @@ class _StepDraft(BaseModel):
             "既有状态可直接满足；change=用户要求新增/创建/修改/删除，本轮必须真实产生变化。"
         ),
     )
+    requires_commit: bool = Field(
+        default=False,
+        description=(
+            "run_kind=action：业务字段写入后是否必须再经过独立保存/提交边界。"
+        ),
+    )
     target_controls: list[str] = Field(
         default_factory=list,
         description=(
@@ -91,8 +97,8 @@ class _StepDraft(BaseModel):
     target_values: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "op=run 且 run_kind=action：业务写入目标 {字段/集合行字段: 目标值}。"
-            "应用说明明确一行需多个字段时必须全部列出；不得把 Save/Submit 按钮列为业务字段。"
+            "run_kind=action：业务写入终态；run_kind=filter：完成后的完整筛选状态。"
+            "格式均为 {语义字段: 目标值}；不得写按钮、选择器或坐标。"
         ),
     )
     returns: list[str] = Field(default_factory=list, description="op=run：该步完成后要返回的结果字段；data_query 也必须填")
@@ -140,7 +146,7 @@ class _StepDraft(BaseModel):
         description=(
             "op=foreach：成员圈选描述。用于 member_desc + 显式 body 的渐进式编排："
             "当每行操作步骤是机械确定的，但哪些行属于目标集合要看运行时真实行数据时填写。"
-            "运行时先按该语义描述圈选成员，只对成员执行 body。只写语义（如 'size 28 的 Sahara leggings 变体'），"
+            "运行时先按该语义描述圈选成员，只对成员执行 body。只写集合成员的业务语义，"
             "不要写猜测的 SKU/name LIKE 谓词。"
         ),
     )
@@ -386,6 +392,7 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                         if (d.mutation_mode or "").strip().lower() == "ensure"
                         else "change"
                     ),
+                    requires_commit=bool(d.requires_commit),
                     target_controls=[
                         value.strip()
                         for value in (d.target_controls or [])

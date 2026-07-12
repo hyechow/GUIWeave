@@ -175,6 +175,13 @@ class Run(RunLike):
             "change 要求本轮产生目标写入。非 action 留默认值。"
         ),
     )
+    requires_commit: bool = Field(
+        default=False,
+        description=(
+            "该 action 的目标值写入后是否还必须经过独立的保存/提交边界才持久化。"
+            "即时生效的切换/选择填 false；草稿表单最终必须 Save/Submit 填 true。"
+        ),
+    )
     target_controls: list[str] = Field(
         default_factory=list,
         description=(
@@ -185,8 +192,9 @@ class Run(RunLike):
     target_values: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "action 要实现的结构化字段终态 {语义控件名: 目标值}。重复集合行可用"
-            "group field + control label 命名；不写 DOM selector。"
+            "action 要实现的结构化字段终态，或 filter 要实现的完整筛选状态"
+            " {语义控件名: 目标值}。重复集合行可用 group field + control label 命名；"
+            "不写 DOM selector。"
         ),
     )
 
@@ -287,7 +295,7 @@ class ForEach(BaseModel):
     # Mutually exclusive with `body`. One level only: the sub-program may not itself use body_goal.
     body_goal: str = ""
     # Progressive orchestration, selection-only form: a SEMANTIC description of which collected rows
-    # belong to the target set (e.g. 「size 28 的 Sahara leggings 变体」). Set together with an
+    # belong to the target set. Set together with an
     # explicit `body`: the checkpoint makes ONE selection call against the REAL rows (membership as
     # data — cross-family 16/16 offline) and runs the t=0-authored body on the selected rows only.
     # Body authoring stays at t=0 (mature decomposer prompt, full validator gates, offline-verifiable);
