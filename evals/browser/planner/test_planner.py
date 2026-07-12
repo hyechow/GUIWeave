@@ -31,9 +31,7 @@ CASES_FILE = Path(__file__).parent / "cases.json"
 
 def _build_history(entries: list[dict], milestone_id: str) -> list[PolicyTurn]:
     """Reconstruct PolicyTurns from compact case-JSON history entries (mirrors the
-    checker eval). History drives run_planner's deterministic loop guards
-    (_repeated_candidate_click) — cases reproducing instruction loops must carry the
-    already-executed turns."""
+    checker eval). History lets the planner reason about already-executed turns."""
     turns = []
     for h in entries:
         sv = SupervisorStep(

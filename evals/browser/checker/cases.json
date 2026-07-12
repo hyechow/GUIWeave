@@ -275,7 +275,7 @@
   {
     "label": "foreach详情页-URL含目标ID且字段可见时不得用字段值否定对象身份（回归 20260624_185832）",
     "screenshot": "evals/browser/checker/screenshots/webarena113_review_347_detail_jane_smith.png",
-    "with_target_identity_hint": true,
+    "with_route_identity_evidence": true,
     "observation": {
       "url": "http://192.168.31.57:7780/admin/review/product/edit/id/347/",
       "title": "Edit Review / Customer Reviews / User Content / Marketing / Magento Admin",

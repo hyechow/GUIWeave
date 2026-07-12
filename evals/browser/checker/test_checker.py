@@ -142,10 +142,10 @@ def test_checker() -> None:
         m = c["milestone"]
         milestone = Milestone.model_validate({**m, "id": c["label"]})
         extra = c.get("extra", "")
-        if c.get("with_target_identity_hint"):
-            from gui_agent.core.supervisor.milestone.policy import _target_identity_hint
+        if c.get("with_route_identity_evidence"):
+            from gui_agent.core.supervisor.milestone.execution_scope import route_identity_evidence
 
-            hint = _target_identity_hint(milestone, observation)
+            hint = route_identity_evidence(milestone, observation)
             extra = f"{extra}\n{hint}".strip()
 
         expected = c["expected"]
