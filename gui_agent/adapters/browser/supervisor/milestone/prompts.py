@@ -44,7 +44,7 @@ STOP_CONDITION_PATCH_PROMPT = load_prompt_text("task.milestone.browser.stop_cond
 # ── Browser-specific structured planner output ──────────────────────────────
 from typing import Literal, Optional  # noqa: E402
 
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, Field, field_validator  # noqa: E402
 
 
 class BrowserPlanResult(BaseModel):
@@ -66,6 +66,25 @@ class BrowserPlanResult(BaseModel):
         default="",
         description="本轮动作实际要命中的控件或字段名称；必须与子目标声明目标一致。",
     )
+    target_value: str = Field(
+        default="",
+        description="本轮写入或选择的结构化目标值。",
+    )
+    target_group_id: str = Field(
+        default="",
+        description="重复结构中目标控件所属的结构单元 ID。",
+    )
+
+    @field_validator("atomic_role", mode="before")
+    @classmethod
+    def _normalize_action_family_as_role(cls, value: object) -> object:
+        return {
+            "navigate": "prepare",
+            "activate": "prepare",
+            "unknown": "prepare",
+            "input": "write",
+            "select": "write",
+        }.get(str(value or "").lower(), value)
     direction: Optional[Literal["up", "down", "left", "right"]] = Field(
         default=None,
         description="只有下一步需要滚动时填写：down=查看下方内容，up=查看上方内容，left/right=横向查看内容；其他操作留空",

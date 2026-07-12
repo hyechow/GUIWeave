@@ -22,7 +22,8 @@
         "name": "Ensure option 'XXXL' exists and save",
         "description": "Complete the repeated option row before persistence.",
         "success_condition": "The saved option collection contains 'XXXL'.",
-        "kind": "action"
+        "kind": "action",
+        "target_values": {"Admin": "XXXL"}
       },
       "observation": {
         "png_bytes": "fixture",
@@ -69,7 +70,8 @@
             "instruction": "Type 'XXXL' into the Admin field of the target option row",
             "summary": "Complete the required field first",
             "atomic_role": "write",
-            "action_family": "input"
+            "action_family": "input",
+            "target_control": "Admin"
           }
         }
       ],

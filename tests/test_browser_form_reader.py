@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import types
 
+from gui_agent.adapters.browser.device import _FORM_VALUE_FINGERPRINT_JS
 from gui_agent.adapters.browser.form_reader import (
     form_controls_js,
     normalize_form_control_snapshot,
@@ -23,6 +24,12 @@ def test_form_controls_js_is_serialized_expression():
     assert "iframe[id$=\"_ifr\"]" in js
     assert "fieldset-wrapper-content" in js
     assert "_hide" in js
+
+
+def test_form_progress_fingerprint_excludes_transient_focus() -> None:
+    assert "document.activeElement" not in _FORM_VALUE_FINGERPRINT_JS
+    assert "e.value" in _FORM_VALUE_FINGERPRINT_JS
+    assert "e.checked" in _FORM_VALUE_FINGERPRINT_JS
 
 
 def test_form_controls_js_reads_below_fold_selects_and_multiselect():
@@ -131,8 +138,38 @@ def test_normalize_form_controls_keeps_repeated_row_field_association():
         description="添加选项 'XXXL' 并保存",
         success_condition="保存后的集合包含 'XXXL'",
         kind="action",
+        target_values={"Admin Swatch": "XXXL"},
     )
     assert required_group_field_gaps(controls, milestone) == ["Admin"]
+
+
+def test_navigation_text_does_not_bind_an_unrelated_required_group() -> None:
+    controls = [
+        {
+            "label": "Attribute Code",
+            "kind": "text_input",
+            "value": "",
+            "required": True,
+            "group_id": "unrelated:1",
+            "group_field": "attribute_code",
+        },
+        {
+            "label": "Label",
+            "kind": "text_input",
+            "value": "size",
+            "group_id": "unrelated:1",
+            "group_field": "label",
+        },
+    ]
+    milestone = Milestone(
+        id="open-size",
+        name="打开 'size' 属性编辑页",
+        description="",
+        success_condition="已进入 size 属性编辑页",
+        kind="navigation",
+    )
+
+    assert required_group_field_gaps(controls, milestone) == []
 
 
 def test_normalize_form_controls_prioritizes_visible_rich_text_editor():

@@ -20,11 +20,13 @@ class _Obs:
     form_controls: Optional[list[dict[str, Any]]] = None
     form_controls_meta: Optional[dict[str, Any]] = None
     ui_facts: Optional[list[dict[str, Any]]] = field(default=None)
+    semantic_tree: Optional[list[dict[str, Any]]] = field(default=None)
 
 
 def test_prompt_asset_carries_the_reliability_rules():
     p = feas._SYSTEM
-    assert "直接观察" in p and "以控件清单为准" in p      # observation > docs
+    assert "直接观察" in p and "对应能力域" in p          # observation > docs, domain-correct
+    assert "禁止用表单控件清单" in p                       # fields cannot disprove links
     assert "默认可行" in p                                  # feasible-default
     assert "0 条" in p or "0条" in p                        # result-count is noise
     assert "directive" in p and "禁掉【两条】死路" in p      # sharp kick-back directive
@@ -45,6 +47,20 @@ def test_control_presence_text_includes_grid_facts():
     obs = _Obs(ui_facts=[{"kind": "grid", "record_count": 0, "active_filters": ["Product: X"]}])
     text = control_presence_text(obs)
     assert "record_count=0" in text and "active_filters" in text
+
+
+def test_control_presence_text_separates_navigation_inventory_from_form_controls():
+    obs = _Obs(
+        form_controls=[{"label": "Search", "kind": "input"}],
+        semantic_tree=[
+            {"role": "link", "key": "Products", "ref": 17},
+            {"role": "heading", "key": "Product Attributes", "ref": 18},
+        ],
+    )
+    text = control_presence_text(obs)
+    assert "页面语义导航入口" in text
+    assert "link: Products" in text
+    assert "heading: Product Attributes" not in text
 
 
 def test_partial_control_inventory_explicitly_disclaims_absence():

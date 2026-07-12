@@ -139,6 +139,54 @@ def test_commit_dispatch_without_outcome_feedback_is_provisional():
     assert decision.completion_status == "accepted_unverified"
 
 
+def test_commit_cannot_be_accepted_while_declared_target_values_are_incomplete():
+    contract = ExecutionContract(
+        statement_id="save",
+        kind="action",
+        require_fresh_action=True,
+        require_terminal_dispatch=True,
+        completion_mode="mutation",
+    )
+    decision = SignalFusionArbiter().decide(
+        contract,
+        [
+            claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope="row:7",
+                authoritative=True,
+            ),
+            claim(
+                "action.execution",
+                "confirmed",
+                source_type="runtime.commit_dispatch",
+                scope="row:7",
+                authoritative=True,
+            ),
+            claim(
+                "control.state",
+                "contradicted",
+                source_type="obs.dom.target_values",
+                scope="row:7",
+                evidence="declared fields are incomplete",
+                authoritative=True,
+            ),
+            claim(
+                "business.outcome",
+                "unverified",
+                source_type="checker",
+                scope="row:7",
+            ),
+        ],
+        scope="row:7",
+    )
+
+    assert decision.action == "continue"
+    assert decision.completion_status == "in_progress"
+    assert decision.conflicts == ("target.values.incomplete",)
+
+
 def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():
     contract = ExecutionContract(
         statement_id="save",
@@ -235,6 +283,73 @@ def test_ensure_mutation_accepts_authoritative_preexisting_outcome():
     assert decision.completion_status == "confirmed"
 
 
+def test_ensure_mutation_with_fresh_draft_write_requires_declared_commit():
+    decision = SignalFusionArbiter().decide(
+        ExecutionContract(
+            statement_id="ensure_saved",
+            kind="action",
+            require_terminal_dispatch=True,
+            completion_mode="mutation",
+            mutation_mode="ensure",
+        ),
+        [
+            claim(
+                "action.write",
+                "confirmed",
+                source_type="runtime.write_dispatch",
+                scope="row:attribute/144",
+                authoritative=True,
+            ),
+            claim(
+                "action.execution",
+                "confirmed",
+                source_type="runtime.action_dispatch",
+                scope="row:attribute/144",
+                authoritative=True,
+            ),
+            claim(
+                "control.state",
+                "confirmed",
+                source_type="obs.dom.target_values",
+                scope="row:attribute/144",
+                evidence="all declared fields match in one structural unit",
+                authoritative=True,
+            ),
+        ],
+        scope="row:attribute/144",
+    )
+
+    assert decision.action == "continue"
+    assert decision.conflicts == ("action.commit.required",)
+    assert "草稿状态" in decision.reason
+
+
+def test_ensure_mutation_with_preexisting_control_state_still_skips_commit():
+    decision = SignalFusionArbiter().decide(
+        ExecutionContract(
+            statement_id="ensure_existing",
+            kind="action",
+            require_terminal_dispatch=True,
+            completion_mode="mutation",
+            mutation_mode="ensure",
+        ),
+        [
+            claim(
+                "control.state",
+                "confirmed",
+                source_type="obs.dom.target_values",
+                scope="row:attribute/144",
+                evidence="target member already persisted before this run",
+                authoritative=True,
+            ),
+        ],
+        scope="row:attribute/144",
+    )
+
+    assert decision.action == "complete"
+    assert decision.completion_status == "confirmed"
+
+
 def test_commit_without_target_write_returns_typed_recovery_conflict():
     decision = SignalFusionArbiter().decide(
         ExecutionContract(
@@ -275,6 +390,43 @@ def test_named_target_rejects_adjacent_input_control():
 
     assert decision.action == "reject_action"
     assert "相邻控件" in decision.reason
+
+
+def test_specific_declared_target_rejects_less_specific_proposal_name():
+    decision = SignalFusionArbiter().validate_proposal(
+        "input",
+        [
+            ActionConstraint(
+                scope="milestone:write",
+                source_type="contract.target_values",
+                evidence="specific grouped field",
+                required_targets=("Admin Description",),
+            )
+        ],
+        scope="milestone:write",
+        target_control="Description",
+    )
+
+    assert decision.action == "reject_action"
+    assert "相邻控件" in decision.reason
+
+
+def test_specific_declared_target_accepts_reordered_qualifier_name():
+    decision = SignalFusionArbiter().validate_proposal(
+        "input",
+        [
+            ActionConstraint(
+                scope="milestone:write",
+                source_type="contract.target_values",
+                evidence="specific grouped field",
+                required_targets=("Admin Swatch",),
+            )
+        ],
+        scope="milestone:write",
+        target_control="Swatch (Admin)",
+    )
+
+    assert decision.action == "allow_action"
 
 
 def test_generic_page_response_cannot_complete_navigation():

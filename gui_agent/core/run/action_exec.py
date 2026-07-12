@@ -300,14 +300,110 @@ class ActionExecutionState:
             )
         started = time.perf_counter()
         token_before = get_llm_token_usage()
-        action_decision = action_policy.decide(
-            observation,
-            instruction_for_action,
-            direction=sv_step.direction,
-            drag_column=sv_step.drag_column,
-            drag_steps=sv_step.drag_steps,
-            context_reports=getattr(supervisor, "_context_reports", None),
-        )
+        action_decision = None
+        native_resolver = getattr(action_policy, "resolve_native_action", None)
+        if callable(native_resolver):
+            action_decision = native_resolver(
+                observation,
+                target_control=sv_step.target_control,
+                target_value=sv_step.target_value,
+                target_group_id=sv_step.target_group_id,
+                action_family=sv_step.action_family,
+                instruction=instruction_for_action or "",
+            )
+        if action_decision is not None:
+            reports = getattr(supervisor, "_context_reports", None)
+            if isinstance(reports, list):
+                reports.append({
+                    "kind": "native_action",
+                    "label": "execution.native_action",
+                    "milestone_id": sv_step.milestone_id,
+                    "target_control": sv_step.target_control,
+                    "target_value": sv_step.target_value,
+                    "target_group_id": sv_step.target_group_id,
+                    "action_family": sv_step.action_family,
+                    "primitive": action_decision.action.action_type,
+                    "fallback": False,
+                })
+            say("原生控件已唯一解析，跳过视觉 Action Policy")
+        else:
+            evidence_context = ""
+            evidence_builder = getattr(action_policy, "action_evidence_context", None)
+            if callable(evidence_builder):
+                evidence_context = evidence_builder(
+                    observation,
+                    target_control=sv_step.target_control,
+                    target_value=sv_step.target_value,
+                    target_group_id=sv_step.target_group_id,
+                    action_family=sv_step.action_family,
+                )
+            action_decision = action_policy.decide(
+                observation,
+                instruction_for_action,
+                direction=sv_step.direction,
+                drag_column=sv_step.drag_column,
+                drag_steps=sv_step.drag_steps,
+                evidence_context=evidence_context,
+                context_reports=getattr(supervisor, "_context_reports", None),
+            )
+            grounder = getattr(action_policy, "ground_rendered_action", None)
+            if callable(grounder):
+                ungrounded = action_decision
+                action_decision = grounder(
+                    action_decision,
+                    observation,
+                    target_control=sv_step.target_control,
+                    target_value=sv_step.target_value,
+                    target_group_id=sv_step.target_group_id,
+                    action_family=sv_step.action_family,
+                )
+                if action_decision is not ungrounded:
+                    reports = getattr(supervisor, "_context_reports", None)
+                    if isinstance(reports, list):
+                        reports.append({
+                            "kind": "action_grounding",
+                            "label": "execution.action_grounding",
+                            "milestone_id": sv_step.milestone_id,
+                            "target_control": sv_step.target_control,
+                            "target_group_id": sv_step.target_group_id,
+                            "primitive": action_decision.action.action_type,
+                        })
+            family_ok, family_reason = validate_action_family(
+                sv_step.action_family,
+                str(getattr(action_decision.action, "action_type", "") or ""),
+            )
+            if (
+                not family_ok
+                and action_decision.action.action_type == "stop"
+                and evidence_context
+            ):
+                # The action model may visually conflate an adjacent same-value field with the
+                # exact structured target. Retry once in the same turn with the typed contract
+                # conflict; ordinary rendered interaction still belongs to the vision policy.
+                say(f"  [ActionContract] stop 与结构化目标冲突，同轮纠正一次：{family_reason}")
+                retry_evidence = (
+                    f"{evidence_context}\n"
+                    f"上一次候选 primitive=stop 被动作契约拒绝：{family_reason}。"
+                    "请重新输出与 action_family 兼容的单个动作；不要重复 stop。"
+                )
+                action_decision = action_policy.decide(
+                    observation,
+                    instruction_for_action,
+                    direction=sv_step.direction,
+                    drag_column=sv_step.drag_column,
+                    drag_steps=sv_step.drag_steps,
+                    evidence_context=retry_evidence,
+                    context_reports=getattr(supervisor, "_context_reports", None),
+                )
+                if callable(grounder):
+                    action_decision = grounder(
+                        action_decision,
+                        observation,
+                        target_control=sv_step.target_control,
+                        target_value=sv_step.target_value,
+                        target_group_id=sv_step.target_group_id,
+                        action_family=sv_step.action_family,
+                    )
         if hasattr(supervisor, "_timings"):
             supervisor._timings["action_policy"] = time.perf_counter() - started
             supervisor._timings_order.append("action_policy")

@@ -63,6 +63,23 @@
     "expected": {"action": "complete", "completion_status": "confirmed"}
   },
   {
+    "label": "ensure draft values from this run cannot skip declared persistence commit",
+    "contract": {
+      "statement_id": "ensure_saved_member",
+      "kind": "action",
+      "require_terminal_dispatch": true,
+      "completion_mode": "mutation",
+      "mutation_mode": "ensure"
+    },
+    "scope": "row:attribute/144",
+    "claims": [
+      {"domain": "action.write", "value": "confirmed", "source_type": "runtime.write_dispatch", "authoritative": true},
+      {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.action_dispatch", "authoritative": true},
+      {"domain": "control.state", "value": "confirmed", "source_type": "obs.dom.target_values", "evidence": "declared fields match in one draft row", "authoritative": true}
+    ],
+    "expected": {"action": "continue", "completion_status": "in_progress"}
+  },
+  {
     "label": "page response alone cannot prove arrival",
     "contract": {
       "statement_id": "open",

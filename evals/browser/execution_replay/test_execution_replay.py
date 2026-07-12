@@ -17,10 +17,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from gui_agent.core.run.action_exec import ActionExecutionState
-from gui_agent.core.run.execution_signals import ConstraintLedger, validate_action_family
+from gui_agent.core.run.execution_signals import (
+    ConstraintLedger,
+    EvidenceClaim,
+    ExecutionContract,
+    SignalFusionArbiter,
+    validate_action_family,
+)
 from gui_agent.core.run.flow import evaluate_turn_progress
 from gui_agent.core.run.loop import _needs_terminal_reconciliation
-from gui_agent.core.run.turns import interactive_turn_count, make_verdict_turn
+from gui_agent.core.run.turns import (
+    interactive_turn_count,
+    make_interactive_turn,
+    make_verdict_turn,
+)
 from gui_agent.core.schemas import (
     BaseActionDecision,
     Milestone,
@@ -35,6 +45,19 @@ from gui_agent.core.supervisor.milestone.policy import (
     MilestoneSupervisorPolicy,
 )
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.adapters.browser.control_grounding import (
+    ground_rendered_action,
+    rendered_target_evidence,
+    resolve_native_control_action,
+)
+from gui_agent.adapters.browser.actions import BrowserActionDecision
+from gui_agent.adapters.browser.policies import BrowserActionPolicy
+from gui_agent.adapters.browser.supervisor.milestone.prompts import BrowserPlanResult
+from gui_agent.core.supervisor.milestone.helpers import (
+    target_unit_execution_plan,
+    target_unit_state,
+)
+from gui_agent.core.supervisor.milestone.feasibility import semantic_target_present
 
 
 TRACES = tuple(sorted(Path(__file__).parent.glob("trace_*.json")))
@@ -238,6 +261,152 @@ def _role_family_case(case: dict[str, Any]) -> None:
     assert allowed is case["expected"]["allowed"]
 
 
+def _native_action_case(case: dict[str, Any]) -> None:
+    decision = resolve_native_control_action(
+        case["form_controls"],
+        target_control=case["target_control"],
+        target_value=case["target_value"],
+        target_group_id=case["target_group_id"],
+        action_family=case["action_family"],
+        instruction=case["instruction"],
+    )
+    assert decision is not None
+    expected = case["expected"]
+    assert decision.action.action_type == expected["action_type"]
+    assert decision.action.text == expected["text"]
+    assert round(float(decision.action.x), 3) == expected["x"]
+    assert round(float(decision.action.y), 3) == expected["y"]
+    assert decision.action.snap["method"] == expected["resolution_method"]
+    assert decision.action.snap["info"] == expected["target_info"]
+
+
+def _legacy_control_grounding_case(case: dict[str, Any]) -> None:
+    """Replay coordinate correction without bypassing the visual action policy."""
+    controls = case["form_controls"]
+    source_decision = BrowserActionDecision.model_validate(case["action_decision"])
+    source_action = source_decision.action
+    decision = ground_rendered_action(
+        source_decision,
+        controls,
+        target_control=case["target_control"],
+        target_value=str(source_action.text or ""),
+        target_group_id=str(
+            case.get("target_group_id")
+            or controls[0].get("group_id")
+            or "__form__"
+        ),
+        action_family=case["action_family"],
+    )
+    expected = case["expected"]
+    assert round(float(decision.action.x), 3) == expected["x"]
+    assert round(float(decision.action.y), 3) == expected["y"]
+    assert decision.action.snap["method"] == expected["grounding_method"]
+    assert decision.action.snap["info"] == expected["target_info"]
+
+
+def _target_unit_case(case: dict[str, Any]) -> None:
+    milestone = Milestone.model_validate(case["milestone"])
+    observation = Observation.model_validate(case["observation"])
+    coverage = str((observation.form_controls_meta or {}).get("coverage") or "unknown")
+    state = target_unit_state(
+        observation.form_controls,
+        milestone,
+        coverage=coverage,
+    )
+    plan = target_unit_execution_plan(
+        observation.form_controls,
+        milestone,
+        coverage=coverage,
+    )
+    expected = case["expected"]
+    assert state.status == expected["status"]
+    if "group_id" in expected:
+        assert state.group_id == expected["group_id"]
+    if expected.get("no_plan"):
+        assert plan is None
+        return
+    assert plan is not None
+    assert plan.action_family == expected["action_family"]
+    assert plan.target_control == expected["target_control"]
+    assert plan.target_value == expected["target_value"]
+    assert plan.target_group_id == expected["target_group_id"]
+    if "direction" in expected:
+        assert plan.direction == expected["direction"]
+
+
+def _duplicate_write_dispatch_case(case: dict[str, Any]) -> None:
+    step = SupervisorStep.model_validate(case["supervisor_step"])
+    decision = BaseActionDecision.model_validate(case["action_decision"])
+    prior = make_interactive_turn(
+        index=case["source_turns"][0],
+        observation_source="browser",
+        supervisor_step=step,
+        action_decision=decision,
+        executed=True,
+    )
+    allowed, _key, reason = MilestoneSupervisorPolicy().authorize_action_dispatch(
+        step,
+        decision,
+        [prior],
+    )
+    assert allowed is case["expected"]["allowed"]
+    assert case["expected"]["reason_contains"] in reason
+
+
+def _browser_plan_schema_case(case: dict[str, Any]) -> None:
+    plan = BrowserPlanResult.model_validate(case["plan"])
+    expected = case["expected"]
+    assert plan.atomic_role == expected["atomic_role"]
+    assert plan.action_family == expected["action_family"]
+
+
+def _browser_action_postprocess_case(case: dict[str, Any]) -> None:
+    decision = BrowserActionDecision.model_validate(case["action_decision"])
+    result = BrowserActionPolicy()._postprocess(decision, case["instruction"])
+    expected = case["expected"]
+    assert result.action.action_type == expected["action_type"]
+    assert result.action.text == expected.get("text")
+    if "description" in expected:
+        assert result.action.description == expected["description"]
+
+
+def _semantic_target_presence_case(case: dict[str, Any]) -> None:
+    assert semantic_target_present(case["semantic_tree"], case["targets"]) is case["expected"]["present"]
+
+
+def _signal_fusion_case(case: dict[str, Any]) -> None:
+    scope = case["scope"]
+    contract = ExecutionContract(**case["contract"])
+    claims = []
+    for payload in case["claims"]:
+        item = dict(payload)
+        authoritative = bool(item.pop("authoritative", False))
+        claims.append(EvidenceClaim(
+            scope=scope,
+            authoritative_for=((item["domain"],) if authoritative else ()),
+            **item,
+        ))
+    decision = SignalFusionArbiter().decide(contract, claims, scope=scope)
+    assert decision.action == case["expected"]["action"]
+    assert decision.completion_status == case["expected"]["completion_status"]
+    if "conflicts" in case["expected"]:
+        assert list(decision.conflicts) == case["expected"]["conflicts"]
+
+
+def _rendered_target_evidence_case(case: dict[str, Any]) -> None:
+    evidence = rendered_target_evidence(
+        case["form_controls"],
+        target_control=case["target_control"],
+        target_value=case["target_value"],
+        target_group_id=case["target_group_id"],
+        action_family=case["action_family"],
+    )
+    for text in case["expected"]["contains"]:
+        assert text in evidence
+    for text in case["expected"].get("not_contains", []):
+        assert text not in evidence
+
+
 def _terminal_reconcile_case(case: dict[str, Any]) -> None:
     milestone = Milestone.model_validate(case["milestone"])
     observation = Observation.model_validate(case["observation"])
@@ -298,6 +467,15 @@ def run_replay() -> list[str]:
         "checker_feedback": _checker_feedback_case,
         "lifecycle_closed": _lifecycle_closed_case,
         "role_family": _role_family_case,
+        "native_action": _native_action_case,
+        "control_grounding": _legacy_control_grounding_case,
+        "target_unit": _target_unit_case,
+        "duplicate_write_dispatch": _duplicate_write_dispatch_case,
+        "browser_plan_schema": _browser_plan_schema_case,
+        "browser_action_postprocess": _browser_action_postprocess_case,
+        "semantic_target_presence": _semantic_target_presence_case,
+        "signal_fusion": _signal_fusion_case,
+        "rendered_target_evidence": _rendered_target_evidence_case,
         "terminal_reconcile": _terminal_reconcile_case,
     }
     with tempfile.TemporaryDirectory(prefix="execution-replay-") as tmp:

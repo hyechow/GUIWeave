@@ -18,8 +18,9 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     SupervisorStep,
 )
+from gui_agent.core.supervisor.milestone import policy as policy_module
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
 def _step(
@@ -79,6 +80,263 @@ def test_commit_key_ignores_button_coordinate_within_same_resource():
     assert semantic_action_key(step, _decision(400).action) == semantic_action_key(
         step, _decision(700).action
     )
+
+
+def test_write_key_keeps_structural_group_identity():
+    action = BaseAction(
+        action_type="type",
+        x=500,
+        y=700,
+        text="XXXL",
+        description="输入 XXXL",
+    )
+    first = _step(role="write").model_copy(update={"target_group_id": "collection:20"})
+    second = _step(role="write").model_copy(update={"target_group_id": "collection:21"})
+
+    assert semantic_action_key(first, action) != semantic_action_key(second, action)
+
+
+def test_consecutive_identical_write_is_suppressed_before_dispatch() -> None:
+    policy = MilestoneSupervisorPolicy()
+    step = _step(scope="milestone:m1", role="write").model_copy(update={
+        "target_control": "Admin Swatch",
+        "target_value": "XXXL",
+        "target_group_id": "collection:19",
+    })
+    decision = BaseActionDecision(action=BaseAction(
+        action_type="type",
+        x=457,
+        y=665,
+        text="XXXL",
+        description="输入 XXXL",
+    ))
+    prior = make_interactive_turn(
+        index=1,
+        observation_source="browser",
+        supervisor_step=step,
+        action_decision=decision,
+        executed=True,
+    )
+
+    allowed, _key, reason = policy.authorize_action_dispatch(
+        step, decision, [prior]
+    )
+
+    assert allowed is False
+    assert "相同写入" in reason
+
+
+def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch):
+    """Replay 20260712_122035 T10-T12: matching draft controls are not persistence."""
+    milestone = Milestone(
+        id="m1",
+        name="ensure option member",
+        description="",
+        success_condition="member fields match and the resource is saved",
+        kind="action",
+        mutation_mode="ensure",
+        target_controls=["options_collection"],
+        target_values={
+            "Admin Description": "XXXL",
+            "Admin Swatch": "XXXL",
+        },
+    )
+    scope = "row:admin/catalog/product_attribute/edit/attribute_id/144"
+    resource_url = "http://x/admin/catalog/product_attribute/edit/attribute_id/144"
+
+    def write_turn(index: int, control: str) -> PolicyTurn:
+        step = SupervisorStep(
+            should_act=True,
+            instruction=f"write {control}",
+            stop=False,
+            goal_completed=False,
+            summary="",
+            milestone_id="m1",
+            milestone_kind="action",
+            execution_scope=scope,
+            atomic_role="write",
+            action_family="input",
+            target_control=control,
+            target_value="XXXL",
+            target_group_id="collection:19",
+        )
+        decision = BaseActionDecision(action=BaseAction(
+            action_type="type",
+            x=500,
+            y=700,
+            text="XXXL",
+            description=f"write {control}",
+        ))
+        return make_interactive_turn(
+            index=index,
+            observation_source="browser",
+            observation_url=resource_url,
+            supervisor_step=step,
+            action_decision=decision,
+            executed=True,
+        )
+
+    history = [
+        write_turn(10, "Admin Description"),
+        write_turn(11, "Admin Swatch"),
+    ]
+    observation = Observation(
+        png_bytes=b"fixture",
+        source="browser",
+        url=resource_url,
+        dom_state="draft-fields-complete",
+        form_controls_meta={"coverage": "complete"},
+        form_controls=[
+            {
+                "label": "Description",
+                "group_field": "Admin",
+                "group_id": "collection:19",
+                "kind": "text_input",
+                "value": "XXXL",
+            },
+            {
+                "label": "Swatch",
+                "group_field": "Admin",
+                "group_id": "collection:19",
+                "kind": "text_input",
+                "value": "XXXL",
+            },
+        ],
+    )
+    checker_calls: list[int] = []
+    policy = MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+    policy._single_check = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
+        checker_calls.append(1)
+        or _SingleCheckResult(
+            status="in_progress",
+            reason="draft fields match but Save has not been dispatched",
+            summary="commit pending",
+            outcome_status="unverified",
+        )
+    )
+    policy._invoke_planner = lambda *_args, **_kwargs: _PlanResult(  # type: ignore[method-assign]
+        instruction="click Save",
+        summary="persist draft",
+        atomic_role="commit",
+        action_family="commit",
+        target_control="Save",
+    )
+    monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
+
+    step = policy._run_single_turn(milestone, observation, history)
+
+    assert checker_calls == [1]
+    assert step.goal_completed is False
+    assert step.should_act is True
+    assert step.atomic_role == "commit"
+    assert step.action_family == "commit"
+    assert step.target_control == "Save"
+
+
+def test_different_write_between_retries_reopens_write_dispatch() -> None:
+    policy = MilestoneSupervisorPolicy()
+    first_step = _step(role="write").model_copy(update={
+        "target_control": "Admin Swatch",
+        "target_value": "XXXL",
+        "target_group_id": "collection:19",
+    })
+    first = BaseActionDecision(action=BaseAction(
+        action_type="type", x=457, y=665, text="XXXL", description="输入 XXXL"
+    ))
+    other_step = first_step.model_copy(update={"target_control": "Admin Description"})
+    other = BaseActionDecision(action=BaseAction(
+        action_type="type", x=578, y=665, text="XXXL", description="输入 XXXL"
+    ))
+    history = [
+        make_interactive_turn(
+            index=1,
+            observation_source="browser",
+            supervisor_step=first_step,
+            action_decision=first,
+            executed=True,
+        ),
+        make_interactive_turn(
+            index=2,
+            observation_source="browser",
+            supervisor_step=other_step,
+            action_decision=other,
+            executed=True,
+        ),
+    ]
+
+    allowed, _key, reason = policy.authorize_action_dispatch(
+        first_step, first, history
+    )
+
+    assert allowed is True
+    assert reason == ""
+
+
+def test_suppressed_duplicate_write_routes_next_turn_to_replan(monkeypatch) -> None:
+    policy = MilestoneSupervisorPolicy()
+    milestone = Milestone(
+        id="m1",
+        name="update target fields",
+        description="",
+        success_condition="target fields are saved",
+        kind="action",
+        target_values={"Admin Swatch": "XXXL"},
+    )
+    policy.reseed(milestone)
+    step = _step(scope="milestone:m1", role="write").model_copy(update={
+        "target_control": "Admin Swatch",
+        "target_value": "XXXL",
+        "target_group_id": "collection:19",
+    })
+    decision = BaseActionDecision(action=BaseAction(
+        action_type="type", x=457, y=665, text="XXXL", description="输入 XXXL"
+    ))
+    dispatched = make_interactive_turn(
+        index=1,
+        observation_source="browser",
+        supervisor_step=step,
+        action_decision=decision,
+        executed=True,
+    )
+    suppressed = make_interactive_turn(
+        index=2,
+        observation_source="browser",
+        supervisor_step=step,
+        action_decision=decision,
+        executed=False,
+        suppressed_reason=(
+            "同一结构目标已派发过相同写入，期间没有其它有效动作；禁止原样重写"
+        ),
+    )
+    expected = SupervisorStep(
+        should_act=False,
+        stop=False,
+        goal_completed=False,
+        summary="replanned",
+        milestone_id="m1",
+    )
+    monkeypatch.setattr(
+        policy,
+        "_handle_stuck",
+        lambda *_args, **_kwargs: expected,
+    )
+    monkeypatch.setattr(
+        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
+        lambda _observation: False,
+    )
+
+    result = policy.reconcile(
+        Observation(
+            png_bytes=b"x",
+            source="browser",
+            dom_state="same-values",
+        ),
+        "g",
+        [dispatched, suppressed],
+    )
+
+    assert result is expected
 
 
 def test_concrete_scroll_cannot_consume_commit_slot():

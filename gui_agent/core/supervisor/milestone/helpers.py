@@ -1132,64 +1132,54 @@ def required_group_field_gaps(
     form_controls: list[dict] | None,
     milestone: Milestone,
 ) -> list[str]:
-    """Required empty fields in a repeated row that already contains a target value.
+    """Return required gaps only inside the explicitly identified target unit.
 
-    This is a DOM-validity invariant, not an application schema: if a target value appears in one
-    control of a repeated row while another control in that same row is explicitly required and
-    empty, the row cannot yet satisfy a collection mutation. It prevents flat screenshot text from
-    turning a partially filled line item/option into a completed member.
+    Free-text or adjacent values are not unit identity. Without ``target_values`` and one uniquely
+    classified group, a required field elsewhere on the page cannot constrain this milestone.
     """
-    target_values = {
-        _norm_text(value)
-        for text in (
-            milestone.name or "",
-            milestone.description or "",
-            milestone.success_condition or "",
-        )
-        for value in _QUOTED_RE.findall(text)
-        if _norm_text(value)
-    }
-    if not target_values:
+    if not milestone.target_values:
         return []
-    groups: dict[str, list[dict]] = {}
+    state = target_value_state(form_controls, milestone)
+    if state.status not in {"complete", "partial", "unique_blank"} or not state.group_id:
+        return []
+    gaps: list[str] = []
     for item in form_controls or []:
         if not isinstance(item, dict):
             continue
-        group_id = str(item.get("group_id") or "").strip()
-        if group_id:
-            groups.setdefault(group_id, []).append(item)
-    gaps: list[str] = []
-    for items in groups.values():
-        values = {
-            _norm_text(str(item.get("selected_text") or item.get("value") or ""))
-            for item in items
-        }
-        if not (values & target_values):
+        group_id = str(item.get("group_id") or "").strip() or "__form__"
+        if group_id != state.group_id or item.get("required") is not True:
             continue
-        for item in items:
-            if item.get("required") is not True:
-                continue
-            current = str(item.get("selected_text") or item.get("value") or "").strip()
-            if current:
-                continue
-            label = str(
-                item.get("group_field")
-                or item.get("label")
-                or item.get("name")
-                or "required field"
-            ).strip()
-            if label and label not in gaps:
-                gaps.append(label)
+        current = str(item.get("selected_text") or item.get("value") or "").strip()
+        if current:
+            continue
+        label = str(
+            item.get("group_field")
+            or item.get("label")
+            or item.get("name")
+            or "required field"
+        ).strip()
+        if label and label not in gaps:
+            gaps.append(label)
     return gaps
 
 
 @dataclass(frozen=True)
-class TargetValueState:
-    status: Literal["complete", "incomplete", "unknown"]
+class TargetUnitState:
+    """State of one structural unit that owns all declared target fields."""
+
+    status: Literal[
+        "complete", "partial", "unique_blank", "absent", "ambiguous", "unknown"
+    ]
     group_id: str = ""
     missing_fields: tuple[str, ...] = ()
     writable_fields: tuple[str, ...] = ()
+    next_field: str = ""
+    next_value: str = ""
     evidence: str = ""
+
+
+# Compatibility for callers that imported the old name. The semantics are deliberately stricter.
+TargetValueState = TargetUnitState
 
 
 def _control_semantic_names(item: dict) -> set[str]:
@@ -1204,23 +1194,61 @@ def _control_semantic_names(item: dict) -> set[str]:
     return {_norm_text(value) for value in names if _norm_text(value)}
 
 
-def target_value_state(
+def _target_control_matches(item: dict, target_key: str) -> bool:
+    aliases = _control_semantic_names(item)
+    if target_key in aliases:
+        return True
+    # A planner may append a structural annotation to an exact field name. Only a compound alias
+    # may match that annotation; a generic label such as "Description" must not select one of
+    # several grouped Description columns.
+    compound = {
+        alias
+        for alias in aliases
+        if _norm_text(str(item.get("group_field") or "")) in alias
+        and _norm_text(str(item.get("group_field") or ""))
+    }
+    return any(alias in target_key for alias in compound)
+
+
+def _next_target_field(
+    missing: tuple[str, ...],
+    matched: dict[str, dict],
+) -> str:
+    for field in missing:
+        item = matched.get(_norm_text(field))
+        if item is not None and item.get("required") is True:
+            return field
+    return missing[0] if missing else ""
+
+
+def target_unit_state(
     form_controls: list[dict] | None,
     milestone: Milestone,
-) -> TargetValueState:
-    """Match declared field/value targets within one repeated row or one flat form.
+    *,
+    coverage: str = "unknown",
+) -> TargetUnitState:
+    return _target_unit_state(form_controls, milestone, coverage=coverage)
 
-    Positive matches remain valid with a partial inventory. Negative absence never becomes a
-    contradiction here: without a row containing at least one declared target value the result is
-    unknown. Repeated rows are retained atomically by the browser adapter.
+
+def _target_unit_state(
+    form_controls: list[dict] | None,
+    milestone: Milestone,
+    *,
+    coverage: str,
+) -> TargetUnitState:
+    """Classify the exact structural unit that owns declared target fields.
+
+    The classifier never uses adjacent values, visual distance, row order, or latest-row guesses.
+    A repeated unit is writable only when it is the sole partial unit or the sole completely blank
+    unit exposing every declared field. Multiple candidates are an explicit ambiguity.
     """
-    targets = {
-        _norm_text(field): (field, _norm_text(value))
+    targets = [
+        (_norm_text(field), field, str(value), _norm_text(value))
         for field, value in (milestone.target_values or {}).items()
         if _norm_text(field) and _norm_text(value)
-    }
+    ]
     if not targets:
-        return TargetValueState("unknown")
+        return TargetUnitState("unknown")
 
     groups: dict[str, list[dict]] = {}
     flat: list[dict] = []
@@ -1232,56 +1260,178 @@ def target_value_state(
             groups.setdefault(group_id, []).append(item)
         else:
             flat.append(item)
-    if flat:
+    declared_controls = {_norm_text(value) for value in milestone.target_controls or []}
+    flat_is_owned = len(targets) == 1 or all(
+        any(
+            target_key == declared
+            or target_key in declared
+            or declared in target_key
+            for declared in declared_controls
+            if declared
+        )
+        for target_key, _field, _raw, _value in targets
+    )
+    if flat and flat_is_owned:
         groups["__form__"] = flat
 
+    complete: list[TargetUnitState] = []
+    partial: list[TargetUnitState] = []
+    blank: list[TargetUnitState] = []
+    structurally_ambiguous = False
     for group_id, items in groups.items():
         matched: dict[str, dict] = {}
-        for target_key in targets:
-            for item in items:
-                aliases = _control_semantic_names(item)
-                if any(
-                    target_key == alias or target_key in alias or alias in target_key
-                    for alias in aliases
-                ):
-                    matched[target_key] = item
-                    break
+        for target_key, _field, _raw_value, _target_value in targets:
+            candidates = [item for item in items if _target_control_matches(item, target_key)]
+            if len(candidates) > 1:
+                structurally_ambiguous = True
+                continue
+            if candidates:
+                matched[target_key] = candidates[0]
         equal_fields = {
             target_key
             for target_key, item in matched.items()
-            if _norm_text(_control_current_value(item)) == targets[target_key][1]
+            if _norm_text(_control_current_value(item))
+            == next(value for key, _field, _raw, value in targets if key == target_key)
         }
-        if not equal_fields:
-            continue
         missing = tuple(
-            targets[target_key][0]
-            for target_key in targets
+            field
+            for target_key, field, _raw_value, _target_value in targets
             if target_key not in equal_fields
         )
         if not missing:
-            return TargetValueState(
+            complete.append(TargetUnitState(
                 "complete",
                 group_id=group_id,
                 evidence=f"目标字段在同一结构单元 {group_id} 中均已达到声明值",
-            )
+            ))
+            continue
         writable = tuple(
-            targets[target_key][0]
-            for target_key, item in matched.items()
+            field
+            for target_key, field, _raw_value, _target_value in targets
+            if (item := matched.get(target_key)) is not None
             if target_key not in equal_fields
             and any(token in str(item.get("kind") or "").lower() for token in ("input", "select", "textarea"))
-            and item.get("in_viewport") is not False
         )
-        return TargetValueState(
-            "incomplete",
+        next_field = _next_target_field(missing, matched)
+        next_value = next(
+            (raw for _key, field, raw, _norm in targets if field == next_field), ""
+        )
+        state = TargetUnitState(
+            "partial",
             group_id=group_id,
             missing_fields=missing,
             writable_fields=writable,
+            next_field=next_field,
+            next_value=next_value,
             evidence=(
                 f"目标结构单元 {group_id} 已定位，但字段未达到声明值："
                 + "、".join(missing)
             ),
         )
-    return TargetValueState("unknown")
+        all_fields_present = len(matched) == len(targets)
+        all_declared_blank = all(
+            not _norm_text(_control_current_value(matched[target_key]))
+            for target_key, _field, _raw, _value in targets
+            if target_key in matched
+        ) and all_fields_present
+        if equal_fields or (group_id == "__form__" and all_fields_present):
+            partial.append(state)
+        elif all_declared_blank:
+            blank.append(TargetUnitState(
+                "unique_blank",
+                group_id=state.group_id,
+                missing_fields=state.missing_fields,
+                writable_fields=state.writable_fields,
+                next_field=state.next_field,
+                next_value=state.next_value,
+                evidence=f"结构单元 {group_id} 是唯一候选空白单元",
+            ))
+
+    if complete:
+        return complete[0]
+    if structurally_ambiguous or len(partial) > 1 or (not partial and len(blank) > 1):
+        return TargetUnitState(
+            "ambiguous",
+            evidence="存在多个满足声明字段结构的候选单元，不能确定性选择写入目标",
+        )
+    if len(partial) == 1:
+        return partial[0]
+    if len(blank) == 1:
+        return blank[0]
+    if coverage.lower() == "complete":
+        return TargetUnitState(
+            "absent",
+            evidence="完整控件清单中没有可唯一识别的目标结构单元",
+        )
+    return TargetUnitState("unknown")
+
+
+def target_value_state(
+    form_controls: list[dict] | None,
+    milestone: Milestone,
+    *,
+    coverage: str = "unknown",
+) -> TargetUnitState:
+    """Compatibility wrapper for the structured target-unit classifier."""
+    return _target_unit_state(form_controls, milestone, coverage=coverage)
+
+
+def target_unit_execution_plan(
+    form_controls: list[dict] | None,
+    milestone: Milestone,
+    *,
+    coverage: str = "unknown",
+) -> Optional[_PlanResult]:
+    """Build the next deterministic acquire/write plan for one target unit."""
+    state = _target_unit_state(form_controls, milestone, coverage=coverage)
+    if state.status not in {"partial", "unique_blank"} or not state.next_field:
+        return None
+    controls = [
+        item
+        for item in form_controls or []
+        if isinstance(item, dict)
+        and (
+            (state.group_id == "__form__" and not item.get("group_id"))
+            or str(item.get("group_id") or "") == state.group_id
+        )
+        and _target_control_matches(item, _norm_text(state.next_field))
+    ]
+    if len(controls) != 1:
+        return None
+    control = controls[0]
+    if control.get("in_viewport") is False:
+        viewport_pos = str(control.get("viewport_pos") or "")
+        if viewport_pos not in {"above", "below"}:
+            return None
+        direction = "up" if viewport_pos == "above" else "down"
+        return _PlanResult(
+            instruction=f"{direction}滚动，使「{state.next_field}」进入当前视口",
+            summary=f"目标结构单元 {state.group_id} 已确定，下一字段位于当前视口{viewport_pos}",
+            atomic_role="iterate",
+            action_family="iterate",
+            target_control=state.next_field,
+            target_value=state.next_value,
+            target_group_id=state.group_id,
+            direction=direction,
+        )
+    kind = str(control.get("kind") or "").lower()
+    if "select" in kind:
+        family: Literal["input", "select"] = "select"
+        verb = "选择"
+    elif "input" in kind or "textarea" in kind:
+        family = "input"
+        verb = "输入"
+    else:
+        return None
+    return _PlanResult(
+        instruction=f"在「{state.next_field}」中{verb}「{state.next_value}」",
+        summary=f"目标结构单元 {state.group_id} 已唯一确定，继续补齐声明字段",
+        atomic_role="write",
+        action_family=family,
+        target_control=state.next_field,
+        target_value=state.next_value,
+        target_group_id=state.group_id,
+    )
 
 
 def proposal_action_constraints(
@@ -1309,22 +1459,28 @@ def proposal_action_constraints(
             required_targets=tuple(milestone.target_controls),
             evidence="筛选动作必须命中 DSL 声明的目标字段，不能替换为相邻搜索控件。",
         ))
-    if milestone.kind == "action" and declared_targets and not has_write:
+    if milestone.kind == "action" and milestone.target_values:
         constraints.append(ActionConstraint(
             scope=scope,
             source_type="contract.write_lineage",
-            required_targets=declared_targets,
-            commit_requires_write=True,
-            evidence="mutation commit requires a prior target write",
+            required_targets=tuple((milestone.target_values or {}).keys()),
+            commit_requires_write=not has_write,
+            evidence=(
+                "mutation writes must always hit a declared target-value field; commit requires "
+                "a prior target write"
+            ),
         ))
     value_state = target_value_state(form_controls, milestone)
-    if value_state.status == "incomplete":
+    if value_state.status in {"partial", "unique_blank"}:
         allowed = ("input", "select") if value_state.writable_fields else ()
         constraints.append(ActionConstraint(
             scope=scope,
             source_type="obs.dom.target_values",
             allowed_families=allowed,
             blocked_families=("commit",),
+            required_targets=(
+                value_state.writable_fields or value_state.missing_fields
+            ),
             evidence=value_state.evidence,
         ))
     gaps = required_group_field_gaps(form_controls, milestone)
@@ -1339,6 +1495,13 @@ def proposal_action_constraints(
                 + "；在修正前禁止提交/保存。"
             ),
         ))
+
+    # Structured field/value contracts own target identity. Falling through to the legacy prose
+    # matcher would bind the requested value to any visible same-name control, including an
+    # existing member of a repeated collection, and incorrectly reject the acquire/add action
+    # needed to create the real target unit.
+    if milestone.target_values:
+        return constraints
 
     text = " ".join(
         part
@@ -1418,7 +1581,7 @@ def _apply_required_group_checker_guard(
     gaps = required_group_field_gaps(
         getattr(observation, "form_controls", None), milestone
     )
-    if value_state.status == "incomplete":
+    if value_state.status in {"partial", "unique_blank"}:
         gaps = list(dict.fromkeys([*value_state.missing_fields, *gaps]))
     if not gaps:
         return result

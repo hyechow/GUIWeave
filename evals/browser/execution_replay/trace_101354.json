@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "source": {
+    "run": "20260712_101354",
+    "task": "549",
+    "description": "A blank option row was visible after Add Swatch, but input plans became scroll primitives and the agent clicked Add Swatch again.",
+    "turns": {
+      "8": "773b97002b3164cc61baea8acdc994a437ed8a56",
+      "9": "db8d9c21fb223b04152968f9e174435b1f4f8ab1",
+      "10": "db8d9c21fb223b04152968f9e174435b1f4f8ab1",
+      "11": "774cfac65fd82a2875e1e21209fded678c9e52f5"
+    }
+  },
+  "cases": [
+    {
+      "id": "blank_row_becomes_typed_description_write",
+      "kind": "target_unit",
+      "source_turns": [8, 9],
+      "milestone": {
+        "id": "size-option",
+        "name": "ensure Size option XXXL and save",
+        "description": "persist one complete option row",
+        "success_condition": "saved option row contains XXXL",
+        "kind": "action",
+        "target_values": {
+          "Admin Description": "XXXL",
+          "Admin Swatch": "XXXL"
+        }
+      },
+      "observation": {
+        "png_bytes": "fixture",
+        "source": "browser",
+        "form_controls_meta": {"coverage": "complete"},
+        "form_controls": [
+          {"label": "Description", "kind": "text_input", "value": "", "required": true, "group_id": "collection:20", "group_field": "Admin", "in_viewport": true, "rect": {"x": 578, "y": 668}},
+          {"label": "Swatch", "kind": "text_input", "value": "", "group_id": "collection:20", "group_field": "Admin", "in_viewport": true, "rect": {"x": 332, "y": 668}}
+        ]
+      },
+      "expected": {
+        "status": "unique_blank",
+        "group_id": "collection:20",
+        "action_family": "input",
+        "target_control": "Admin Description",
+        "target_value": "XXXL",
+        "target_group_id": "collection:20"
+      }
+    },
+    {
+      "id": "offscreen_row_acquires_before_write",
+      "kind": "target_unit",
+      "source_turns": [9, 11],
+      "milestone": {
+        "id": "size-option",
+        "name": "ensure Size option XXXL and save",
+        "description": "persist one complete option row",
+        "success_condition": "saved option row contains XXXL",
+        "kind": "action",
+        "target_values": {"Admin Description": "XXXL", "Admin Swatch": "XXXL"}
+      },
+      "observation": {
+        "png_bytes": "fixture",
+        "source": "browser",
+        "form_controls_meta": {"coverage": "complete"},
+        "form_controls": [
+          {"label": "Description", "kind": "text_input", "value": "", "required": true, "group_id": "collection:20", "group_field": "Admin", "in_viewport": false, "viewport_pos": "below", "rect": {"x": 578, "y": 1200}},
+          {"label": "Swatch", "kind": "text_input", "value": "", "group_id": "collection:20", "group_field": "Admin", "in_viewport": false, "viewport_pos": "below", "rect": {"x": 332, "y": 1200}}
+        ]
+      },
+      "expected": {
+        "status": "unique_blank",
+        "group_id": "collection:20",
+        "action_family": "iterate",
+        "target_control": "Admin Description",
+        "target_value": "XXXL",
+        "target_group_id": "collection:20",
+        "direction": "down"
+      }
+    },
+    {
+      "id": "multiple_blank_rows_fail_ambiguously",
+      "kind": "target_unit",
+      "source_turns": [10, 11],
+      "milestone": {
+        "id": "size-option",
+        "name": "ensure Size option XXXL and save",
+        "description": "persist one complete option row",
+        "success_condition": "saved option row contains XXXL",
+        "kind": "action",
+        "target_values": {"Admin Description": "XXXL", "Admin Swatch": "XXXL"}
+      },
+      "observation": {
+        "png_bytes": "fixture",
+        "source": "browser",
+        "form_controls_meta": {"coverage": "complete"},
+        "form_controls": [
+          {"label": "Description", "kind": "text_input", "value": "", "group_id": "collection:20", "group_field": "Admin"},
+          {"label": "Swatch", "kind": "text_input", "value": "", "group_id": "collection:20", "group_field": "Admin"},
+          {"label": "Description", "kind": "text_input", "value": "", "group_id": "collection:21", "group_field": "Admin"},
+          {"label": "Swatch", "kind": "text_input", "value": "", "group_id": "collection:21", "group_field": "Admin"}
+        ]
+      },
+      "expected": {"status": "ambiguous", "no_plan": true}
+    },
+    {
+      "id": "preexisting_complete_row_needs_no_write",
+      "kind": "target_unit",
+      "source_turns": [8],
+      "milestone": {
+        "id": "size-option",
+        "name": "ensure Size option XXXL and save",
+        "description": "persist one complete option row",
+        "success_condition": "saved option row contains XXXL",
+        "kind": "action",
+        "mutation_mode": "ensure",
+        "target_values": {"Admin Description": "XXXL", "Admin Swatch": "XXXL"}
+      },
+      "observation": {
+        "png_bytes": "fixture",
+        "source": "browser",
+        "form_controls_meta": {"coverage": "complete"},
+        "form_controls": [
+          {"label": "Description", "kind": "text_input", "value": "XXXL", "group_id": "collection:18", "group_field": "Admin"},
+          {"label": "Swatch", "kind": "text_input", "value": "XXXL", "group_id": "collection:18", "group_field": "Admin"}
+        ]
+      },
+      "expected": {"status": "complete", "group_id": "collection:18", "no_plan": true}
+    }
+  ]
+}

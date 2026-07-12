@@ -2393,6 +2393,29 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                         "Size option mutation 的 success_condition 没有验收 member=XXXL，且前序也没有"
                         "锁定 owner=Size；泛化成『动作有响应/status』会让保存了错误属性也通过验收。"
                     )
+                target_values = {
+                    re.sub(r"[^a-z0-9]+", "", str(field).lower()): str(value).lower()
+                    for field, value in (attribute_run.target_values or {}).items()
+                }
+                required_targets = {"admindescription", "adminswatch"}
+                if not required_targets.issubset(target_values) or any(
+                    target_values.get(field) != "xxxl" for field in required_targets
+                ):
+                    details.append(
+                        "Size Text Swatch mutation 必须声明同一新行的两个字段终态："
+                        "Admin Description=XXXL、Admin Swatch=XXXL；只声明 Options/Values 容器"
+                        "会让执行层把邻接 Store View Description 当成目标并提前 Save。"
+                    )
+                command_targets = [
+                    value
+                    for value in (attribute_run.target_controls or [])
+                    if re.search(r"\b(?:save|submit|apply)\b|保存|提交|应用", value, re.IGNORECASE)
+                ]
+                if command_targets:
+                    details.append(
+                        "Size option mutation 的 target_controls 包含持久化命令而非业务字段："
+                        f"{command_targets}"
+                    )
             if not config_mutation_indexes:
                 details.append(
                     "缺少父商品 Configurations mutation：应让 Green/XXXL 组合生成并持久化。"

@@ -34,6 +34,7 @@ class ActionPolicy(Protocol):
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
+        evidence_context: str = "",
         context_reports: MutableSequence[dict] | Callable[[dict], None] | None = None,
     ) -> BaseActionDecision:
         """Return the best action for the current observation and instruction."""
@@ -56,6 +57,7 @@ class BaseActionPolicy:
         direction: Optional[str] = None,
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
+        evidence_context: str = "",
         verbose: bool = True,
         context_reports: MutableSequence[dict] | Callable[[dict], None] | None = None,
     ) -> BaseActionDecision:
@@ -74,9 +76,12 @@ class BaseActionPolicy:
         prepared_png = self._prepare_png(observation.png_bytes)
         b64 = base64.b64encode(prepared_png).decode()
         llm = ChatOpenAI(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
-        user_text = self._build_user_text(
+        instruction_text = self._build_user_text(
             instruction, direction=direction, drag_column=drag_column, drag_steps=drag_steps
         )
+        user_text = instruction_text
+        if evidence_context.strip():
+            user_text = f"{user_text}\n\n{evidence_context.strip()}"
         messages = [
             SystemMessage(content=self.SYSTEM_PROMPT),
             HumanMessage(
@@ -110,9 +115,17 @@ class BaseActionPolicy:
                                 "source_type": "runtime_state",
                                 "source": "action_policy.instruction",
                                 "type": "text",
-                                "text": user_text,
-                                "chars": len(user_text),
+                                "text": instruction_text,
+                                "chars": len(instruction_text),
                             },
+                            *([{
+                                "label": "structured_evidence",
+                                "source_type": "runtime_state",
+                                "source": "action_policy.evidence_context",
+                                "type": "text",
+                                "text": evidence_context,
+                                "chars": len(evidence_context),
+                            }] if evidence_context.strip() else []),
                             {
                                 "label": "screenshot",
                                 "source_type": "image",

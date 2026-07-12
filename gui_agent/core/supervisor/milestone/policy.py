@@ -42,6 +42,8 @@ from .helpers import (
     RuntimeFilterIntent,
     target_affordance_scroll_plan,
     target_section_acquire_plan,
+    target_unit_execution_plan,
+    target_unit_state,
     target_value_state,
 )
 from .runtime import (
@@ -675,9 +677,15 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         *,
         scope: str,
     ) -> list[EvidenceClaim]:
-        """Translate positive declared field/value matches into authoritative state claims."""
+        """Translate declared field/value matches into authoritative state claims."""
+        coverage = str(
+            (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
+            or "unknown"
+        ).lower()
         state = target_value_state(
-            getattr(observation, "form_controls", None), milestone
+            getattr(observation, "form_controls", None),
+            milestone,
+            coverage=coverage,
         )
         claims: list[EvidenceClaim] = []
         if state.status == "complete":
@@ -690,10 +698,16 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 authoritative=True,
                 coverage="matched_structural_unit",
             ))
-        coverage = str(
-            (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
-            or "unknown"
-        ).lower()
+        elif state.status in {"partial", "unique_blank", "absent", "ambiguous"}:
+            claims.append(claim(
+                "control.state",
+                "contradicted",
+                source_type="obs.dom.target_values",
+                scope=scope,
+                evidence=state.evidence,
+                authoritative=True,
+                coverage="matched_structural_unit",
+            ))
         coverage_value = (
             "partial"
             if coverage == "partial"
@@ -1122,7 +1136,36 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if self._monitor.url_changed:
             print(f"  [URLChanged] {observation.url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
         if self._monitor.dom_changed and not self._monitor.url_changed:
-            print("  [DOMChanged] 交互状态指纹有变化(表单/焦点在推进)，抑制 stuck/重复误判")
+            print("  [DOMChanged] 表单值指纹有变化，抑制 stuck/重复误判")
+
+        latest_turn = milestone_history[-1] if milestone_history else None
+        latest_signal = getattr(latest_turn, "action_signal", None)
+        duplicate_write_suppressed = bool(
+            latest_signal is not None
+            and latest_signal.execution != "dispatched"
+            and "同一结构目标已派发过相同写入"
+            in str(latest_signal.suppressed_reason or "")
+        )
+        if duplicate_write_suppressed:
+            reason = str(latest_signal.suppressed_reason or "重复写入已被执行协议抑制")
+            print(f"  [LoopGuard] {reason} → stuck/replan")
+            stuck = _SingleCheckResult(
+                status="stuck",
+                reason=reason,
+                stuck_reason=(
+                    "相同结构目标和值的写入已经执行，重新派发仍不会增加状态证据；"
+                    "应重新读取目标字段、提交已完成的表单，或更换操作路径"
+                ),
+                summary="duplicate write dispatch suppressed",
+            )
+            self._last_check = stuck
+            return self._handle_stuck(
+                milestone,
+                stuck,
+                None,
+                observation,
+                scoped_history,
+            )
 
         contract = self._contract_for(milestone)
         fusion_claims = self._action_lifecycle_claims(
@@ -1269,6 +1312,71 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 execution_scope=execution_scope,
                 direction=section_plan.direction,
                 action_family=getattr(section_plan, "action_family", "unknown"),
+                is_home_screen=False,
+                **_ctx(milestone, None),
+            )
+
+        # Declared target values form a typed execution contract. Once the adapter exposes a
+        # unique structural unit, choose the next field/value here instead of asking the checker,
+        # planner, and vision policy to rediscover that identity independently.
+        form_coverage = str(
+            (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
+            or "unknown"
+        ).lower()
+        unit_state = target_unit_state(
+            getattr(observation, "form_controls", None),
+            milestone,
+            coverage=form_coverage,
+        )
+        if unit_state.status == "ambiguous" and not terminal_response_pending:
+            milestone.status = "failed"
+            milestone.completion_status = "failed"
+            self._last_plan = None
+            print(f"  [TargetUnit] ambiguous: {unit_state.evidence}")
+            return SupervisorStep(
+                should_act=False,
+                instruction=None,
+                stop=True,
+                stop_reason="ambiguous_target_unit",
+                goal_completed=False,
+                summary=unit_state.evidence,
+                execution_scope=execution_scope,
+                **_ctx(milestone, None),
+            )
+        unit_plan = (
+            None
+            if terminal_response_pending or self._observe_only
+            else target_unit_execution_plan(
+                getattr(observation, "form_controls", None),
+                milestone,
+                coverage=form_coverage,
+            )
+        )
+        if unit_plan is not None:
+            check = _SingleCheckResult(
+                status="in_progress",
+                reason=unit_plan.summary,
+                summary=unit_plan.summary,
+                missing_evidence=["声明的目标结构单元尚未达到完整终态。"],
+            )
+            self._last_check = check
+            self._last_plan = unit_plan
+            milestone.status = "running"
+            print(f"  [TargetUnit] {unit_plan.summary}")
+            print(f"  [Planner] {unit_plan.instruction}")
+            return SupervisorStep(
+                should_act=True,
+                instruction=unit_plan.instruction,
+                stop=False,
+                goal_completed=False,
+                summary=unit_plan.summary,
+                execution_scope=execution_scope,
+                atomic_role=unit_plan.atomic_role,
+                action_family=unit_plan.action_family,
+                target_control=unit_plan.target_control,
+                target_value=unit_plan.target_value,
+                target_group_id=unit_plan.target_group_id,
+                direction=unit_plan.direction,
                 is_home_screen=False,
                 **_ctx(milestone, None),
             )
@@ -1544,7 +1652,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # Same exemption from ground truth: the interactive-state fingerprint changed since
         # last turn, so the "similar" instructions are advancing through a form, not looping.
         if rep_stuck is not None and self._monitor.dom_changed:
-            print("  [RepStuck] 已抑制：交互状态指纹在变化（填表推进中）")
+            print("  [RepStuck] 已抑制：表单值指纹在变化（填表推进中）")
             rep_stuck = None
         if sim_stuck or rep_stuck:
             stuck = sim_stuck or rep_stuck
@@ -1803,6 +1911,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             atomic_role=atomic_role,
             action_family=action_family,
             target_control=getattr(plan, "target_control", ""),
+            target_value=getattr(plan, "target_value", ""),
+            target_group_id=getattr(plan, "target_group_id", ""),
             direction=plan.direction,
             drag_column=getattr(plan, "drag_column", None),
             drag_steps=drag_steps,
@@ -2270,6 +2380,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 **_ctx(milestone, read_inst),
             )
 
+        atomic_role, action_family = _resolved_plan_action_family(replan, milestone)
+        drag_steps = self._picker_drag_steps(replan)
         milestone.status = "running"
         return SupervisorStep(
             should_act=bool(replan.instruction),
@@ -2277,6 +2389,14 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             stop=False,
             goal_completed=False,
             summary=f"子目标「{milestone.name}」尚未达成，第 {milestone.retry_count} 次调整策略。{replan.diagnosis}",
+            atomic_role=atomic_role,
+            action_family=action_family,
+            target_control=replan.target_control,
+            target_value=replan.target_value,
+            target_group_id=replan.target_group_id,
+            direction=replan.direction,
+            drag_column=replan.drag_column,
+            drag_steps=drag_steps,
             is_home_screen=(
                 _is_home_identity(self._last_check.page_identity, self._prompts.home_identity_markers)
                 if self._last_check else False
@@ -2297,7 +2417,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         a deliberate conservative-toward-feasible default so it never steals the action-level
         replanner's feasible-but-stuck cases, and naturally no-ops on visual-only platforms (no DOM
         form_controls). Only fires here, after MAX_RETRIES, so the control observation is mature."""
-        from .feasibility import compose_directive, control_presence_text, judge_feasibility
+        from .feasibility import (
+            compose_directive,
+            control_presence_text,
+            judge_feasibility,
+            semantic_target_present,
+        )
 
         # Don't kick back a milestone whose terminal submit/save already dispatched successfully:
         # the write is done and the required control is "absent" only because we already used it and
@@ -2315,6 +2440,30 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         ):
             print("  [Feasibility] 跳过踢回：该里程碑的终端提交已成功派发，不把已完成的 mutation 送去重规划")
             return None
+
+        # A form-control inventory cannot disprove a navigation link. When the latest structured
+        # execution target is present in the AX navigation inventory, an infeasible verdict would
+        # directly contradict authoritative observation. This does not mark the milestone done;
+        # it only leaves the feasible-but-stuck route with the local replanner.
+        if milestone.kind == "navigation":
+            target_hints = list(milestone.target_controls)
+            if history:
+                for turn in reversed(history):
+                    step = turn.supervisor
+                    if step is None or step.milestone_id != milestone.id:
+                        continue
+                    if step.target_control:
+                        target_hints.append(step.target_control)
+                    break
+            if semantic_target_present(
+                getattr(observation, "semantic_tree", None),
+                target_hints,
+            ):
+                print(
+                    "  [Feasibility] 导航目标已在 AX 入口清单中，"
+                    "表单控件清单不能推翻该直接观察 → 默认可行"
+                )
+                return None
 
         control_text = control_presence_text(observation)
         if "无适配器可感知" in control_text:
@@ -2503,8 +2652,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         elif self._monitor.dom_changed:
             execution_signal = "dispatched"
             effect_signal = "dom_changed"
-            fact = ("页面交互状态指纹已变化(dom_changed)——上一步动作确定性地改变了表单/焦点等"
-                    "交互状态。")
+            fact = "页面表单值指纹已变化(dom_changed)——上一步动作确定性地改变了控件值。"
         elif no_effect:
             execution_signal = "dispatched"
             effect_signal = "no_visible_effect"

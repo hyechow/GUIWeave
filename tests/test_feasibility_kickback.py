@@ -4,7 +4,7 @@ The feasibility LLM is monkeypatched — these pin the deterministic ROUTING: in
 step carrying the directive; feasible/visual/judge-error → None (fall through to normal fail)."""
 
 import gui_agent.core.supervisor.milestone.feasibility as feas
-from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 from gui_agent.core.supervisor.milestone.feasibility import FeasibilityVerdict
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.runtime import EARLY_FEASIBILITY_AT, MAX_RETRIES
@@ -68,6 +68,46 @@ def test_judge_exception_treated_as_feasible(monkeypatch):
     monkeypatch.setattr(feas, "judge_feasibility", _boom)
     p = MilestoneSupervisorPolicy()
     assert p._maybe_kickback(_ms(), _obs_browser(), None) is None  # never crashes the run
+
+
+def test_navigation_target_in_semantic_inventory_cannot_be_kicked_back(monkeypatch):
+    called = []
+
+    def _spy(*args, **kwargs):
+        called.append((args, kwargs))
+        return FeasibilityVerdict(feasible=False, reason="入口不存在")
+
+    monkeypatch.setattr(feas, "judge_feasibility", _spy)
+    p = MilestoneSupervisorPolicy()
+    ms = Milestone.model_validate({
+        "id": "nav-products",
+        "name": "进入目标列表页面",
+        "description": "d",
+        "success_condition": "页面显示目标列表",
+        "kind": "navigation",
+    })
+    prior = PolicyTurn.model_validate({
+        "index": 1,
+        "observation_source": "browser",
+        "supervisor": {
+            "should_act": True,
+            "instruction": "点击展开菜单中的目标链接",
+            "stop": False,
+            "goal_completed": False,
+            "summary": "",
+            "milestone_id": "nav-products",
+            "target_control": "Products",
+        },
+    })
+    obs = Observation(
+        png_bytes=b"png",
+        source="browser",
+        form_controls=[{"label": "Search", "kind": "input"}],
+        semantic_tree=[{"role": "link", "key": "Products", "ref": 17, "depth": 2}],
+    )
+
+    assert p._maybe_kickback(ms, obs, None, [prior]) is None
+    assert called == []
 
 
 # ── Early Feasibility probe: consult the guard before the MAX_RETRIES give-up ──

@@ -8,6 +8,7 @@ precedence only inside the domains for which they are authoritative.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Iterable, Literal
 
@@ -319,6 +320,38 @@ class SignalFusionArbiter:
             return FusionDecision("continue", "尚无目标页面身份的确认信号")
 
         if contract.completion_mode == "mutation":
+            if control_state is not None and control_state.value == "contradicted":
+                return FusionDecision(
+                    "continue",
+                    control_state.evidence or "声明的目标字段尚未全部达到目标值",
+                    conflicts=("target.values.incomplete",),
+                    used_claims=(control_state,),
+                )
+            write_confirmed = bool(write is not None and write.value == "confirmed")
+            commit_confirmed = bool(
+                execution is not None
+                and execution.value == "confirmed"
+                and execution.source_type == "runtime.commit_dispatch"
+            )
+            # ``ensure`` may accept a genuinely pre-existing terminal state without touching it.
+            # Once this execution scope has written a target field, however, the observed control
+            # values are only draft state until the statement's declared persistence boundary is
+            # dispatched. Do not let the idempotent/pre-existing fast path swallow that commit.
+            if (
+                contract.mutation_mode == "ensure"
+                and contract.require_terminal_dispatch
+                and write_confirmed
+                and not commit_confirmed
+            ):
+                return FusionDecision(
+                    "continue",
+                    "目标字段已在本轮写入，但声明的终端提交尚未派发；"
+                    "当前控件值只能证明草稿状态，不能证明已持久化",
+                    conflicts=("action.commit.required",),
+                    used_claims=tuple(
+                        item for item in (write, control_state, outcome) if item is not None
+                    ),
+                )
             if outcome is not None and outcome.value == "confirmed":
                 if contract.mutation_mode == "ensure":
                     return FusionDecision(
@@ -327,18 +360,14 @@ class SignalFusionArbiter:
                         "confirmed",
                         (outcome,),
                     )
-                if contract.require_terminal_dispatch and not (
-                    execution is not None
-                    and execution.value == "confirmed"
-                    and execution.source_type == "runtime.commit_dispatch"
-                ):
+                if contract.require_terminal_dispatch and not commit_confirmed:
                     return FusionDecision(
                         "continue",
                         "目标状态看似满足，但该执行单元要求的终端提交尚未派发；"
                         "因此缺少本轮产生写操作的执行证据",
                         conflicts=("action.commit.required",),
                     )
-                if write is None or write.value != "confirmed":
+                if not write_confirmed:
                     return FusionDecision(
                         "continue",
                         "目标状态看似满足，但 change mutation 缺少本轮产生写操作的目标写入证据",
@@ -362,7 +391,7 @@ class SignalFusionArbiter:
                 execution is not None
                 and execution.value == "confirmed"
                 and execution.source_type == "runtime.commit_dispatch"
-                and (write is None or write.value != "confirmed")
+                and not write_confirmed
             ):
                 return FusionDecision(
                     "continue",
@@ -373,8 +402,7 @@ class SignalFusionArbiter:
                 execution is not None
                 and execution.value == "confirmed"
                 and execution.source_type == "runtime.commit_dispatch"
-                and write is not None
-                and write.value == "confirmed"
+                and write_confirmed
             ):
                 if response is None or response.value != "contradicted":
                     return FusionDecision(
@@ -441,23 +469,26 @@ class SignalFusionArbiter:
                 )
 
         required_targets = {
-            _normalize_target(value)
+            str(value).strip()
             for item in scoped
             for value in item.required_targets
             if _normalize_target(value)
         }
         if family == "commit" and any(item.commit_requires_write for item in scoped):
-            if not target_matches_declared(target_control, required_targets):
-                return FusionDecision(
-                    action="reject_action",
-                    reason=(
-                        "当前 mutation 尚无本轮目标写入；终端提交不能代替填写/选择业务目标。"
-                        "请先执行一个 write 动作。"
-                    ),
-                    conflicts=("action.write.required",),
-                )
+            return FusionDecision(
+                action="reject_action",
+                reason=(
+                    "当前 mutation 尚无本轮目标写入；终端提交不能代替填写/选择业务目标。"
+                    "请先执行一个 write 动作。"
+                ),
+                conflicts=("action.write.required",),
+            )
         if required_targets and family in {"input", "select"}:
-            target_matches = target_matches_declared(target_control, required_targets)
+            target_matches = target_matches_declared(
+                target_control,
+                required_targets,
+                allow_less_specific=False,
+            )
             if not target_matches:
                 expected = ", ".join(sorted(required_targets))
                 return FusionDecision(
@@ -479,16 +510,41 @@ def _normalize_target(value: str) -> str:
     return "".join(ch.lower() for ch in (value or "") if ch.isalnum())
 
 
-def target_matches_declared(target: str, declared: Iterable[str]) -> bool:
+def _target_tokens(value: str) -> frozenset[str]:
+    return frozenset(
+        re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", (value or "").lower())
+    )
+
+
+def target_matches_declared(
+    target: str,
+    declared: Iterable[str],
+    *,
+    allow_less_specific: bool = True,
+) -> bool:
     proposed = _normalize_target(target)
-    expected_targets = {_normalize_target(value) for value in declared if _normalize_target(value)}
+    expected_targets = {
+        str(value): _normalize_target(value)
+        for value in declared
+        if _normalize_target(value)
+    }
+    proposed_tokens = _target_tokens(target)
     return bool(
         proposed
         and any(
             proposed == expected
-            or proposed in expected
             or expected in proposed
-            for expected in expected_targets
+            or (
+                _target_tokens(raw_expected)
+                and _target_tokens(raw_expected).issubset(proposed_tokens)
+            )
+            or (allow_less_specific and proposed in expected)
+            or (
+                allow_less_specific
+                and proposed_tokens
+                and proposed_tokens.issubset(_target_tokens(raw_expected))
+            )
+            for raw_expected, expected in expected_targets.items()
         )
     )
 

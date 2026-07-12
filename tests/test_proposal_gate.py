@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from gui_agent.core.schemas import Milestone, Observation, SupervisorStep
+from gui_agent.core.run.execution_signals import SignalFusionArbiter
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.milestone import policy as policy_module
 from gui_agent.core.supervisor.milestone.helpers import (
     _apply_required_group_checker_guard,
+    proposal_action_constraints,
     target_value_state,
 )
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
@@ -38,6 +41,7 @@ def test_incomplete_repeated_row_replans_commit_to_input_once():
         "description": "",
         "success_condition": "Size 属性的 Options 集合中包含 'XXXL'",
         "kind": "action",
+        "target_values": {"Admin": "XXXL"},
     })
     observation = Observation(
         png_bytes=b"png",
@@ -74,6 +78,7 @@ def test_incomplete_repeated_row_replans_commit_to_input_once():
             instruction="在目标选项行的 Admin 输入框填入 'XXXL'",
             summary="complete required field",
             action_family="input",
+            target_control="Admin",
         ),
     )
 
@@ -84,6 +89,43 @@ def test_incomplete_repeated_row_replans_commit_to_input_once():
     assert "Admin" in (step.instruction or "")
     assert len(retry_prompts) == 2
     assert "结构化动作约束冲突" in retry_prompts[1]
+
+
+def test_declared_write_targets_remain_enforced_after_first_write() -> None:
+    milestone = Milestone(
+        id="add-option",
+        name="persist target member",
+        description="",
+        success_condition="target member exists",
+        kind="action",
+        target_values={
+            "Admin Description": "XXXL",
+            "Admin Swatch": "XXXL",
+        },
+    )
+    constraints = proposal_action_constraints(
+        [],
+        milestone,
+        scope="row:19",
+        has_write=True,
+    )
+    arbiter = SignalFusionArbiter()
+
+    adjacent = arbiter.validate_proposal(
+        "input",
+        constraints,
+        scope="row:19",
+        target_control="Swatch (Default Store View)",
+    )
+    declared = arbiter.validate_proposal(
+        "input",
+        constraints,
+        scope="row:19",
+        target_control="Admin Swatch",
+    )
+
+    assert adjacent.action == "reject_action"
+    assert declared.action == "allow_action"
 
 
 def test_declared_partial_target_row_rejects_save_before_business_write():
@@ -149,6 +191,165 @@ def test_declared_partial_target_row_rejects_save_before_business_write():
     assert "结构化动作约束冲突" in retry_prompts[1]
 
 
+def test_incomplete_target_row_rejects_adjacent_optional_field_write():
+    milestone = Milestone(
+        id="ensure-option",
+        name="ensure option XXXL",
+        description="",
+        success_condition="option row is complete",
+        kind="action",
+        mutation_mode="ensure",
+        target_values={
+            "Admin Swatch": "XXXL",
+            "Admin Description": "XXXL",
+        },
+    )
+    observation = Observation(
+        png_bytes=b"png",
+        source="browser",
+        dom_state="target-fields-empty-adjacent-field-empty",
+        form_controls=[
+            {
+                "label": "Swatch",
+                "kind": "text_input",
+                "value": "",
+                "group_id": "collection:20",
+                "group_field": "Admin",
+                "in_viewport": True,
+            },
+            {
+                "label": "Description",
+                "kind": "text_input",
+                "value": "",
+                "group_id": "collection:20",
+                "group_field": "Admin",
+                "in_viewport": True,
+            },
+            {
+                "label": "Description",
+                "kind": "text_input",
+                "value": "",
+                "group_id": "collection:20",
+                "group_field": "Default Store View",
+                "in_viewport": True,
+            },
+        ],
+    )
+    policy, retry_prompts = _policy_with_plans(
+        _PlanResult(
+            instruction="在 Default Store View Description 输入 XXXL",
+            summary="wrong adjacent field",
+            atomic_role="write",
+            action_family="input",
+            target_control="Default Store View Description",
+        ),
+        _PlanResult(
+            instruction="在 Admin Swatch 输入 XXXL",
+            summary="complete declared field",
+            atomic_role="write",
+            action_family="input",
+            target_control="Admin Swatch",
+        ),
+    )
+
+    step = policy._plan_single(milestone, _check(), observation, [])
+
+    assert step.action_family == "input"
+    assert step.target_control == "Admin Swatch"
+    assert len(retry_prompts) == 2
+    assert "Admin Swatch" in retry_prompts[1]
+
+
+def test_adjacent_value_does_not_identify_declared_target_unit():
+    milestone = Milestone(
+        id="ensure-option",
+        name="ensure option",
+        description="",
+        success_condition="option row is complete",
+        kind="action",
+        mutation_mode="ensure",
+        target_values={
+            "Admin Swatch": "XXXL",
+            "Admin Description": "XXXL",
+        },
+    )
+    controls = [
+        {
+            "label": "Swatch",
+            "kind": "text_input",
+            "value": "",
+            "group_id": "collection:20",
+            "group_field": "Admin",
+        },
+        {
+            "label": "Description",
+            "kind": "text_input",
+            "value": "",
+            "group_id": "collection:20",
+            "group_field": "Admin",
+        },
+        {
+            "label": "Description",
+            "kind": "text_input",
+            "value": "XXXL",
+            "group_id": "collection:20",
+            "group_field": "Default Store View",
+        },
+    ]
+
+    state = target_value_state(controls, milestone)
+
+    assert state.status == "unique_blank"
+    assert state.missing_fields == ("Admin Swatch", "Admin Description")
+
+
+def test_multiple_blank_collection_candidates_are_ambiguous():
+    milestone = Milestone(
+        id="ensure-option",
+        name="ensure option",
+        description="",
+        success_condition="option row is complete",
+        kind="action",
+        target_values={
+            "Admin Swatch": "XXXL",
+            "Admin Description": "XXXL",
+        },
+    )
+    controls = []
+    for index in (12, 20):
+        controls.extend([
+            {
+                "label": "Swatch",
+                "kind": "text_input",
+                "value": "",
+                "group_id": f"collection:{index}",
+                "group_index": index,
+                "group_field": "Admin",
+            },
+            {
+                "label": "Description",
+                "kind": "text_input",
+                "value": "",
+                "group_id": f"collection:{index}",
+                "group_index": index,
+                "group_field": "Admin",
+            },
+            {
+                "label": "Description",
+                "kind": "text_input",
+                "value": "XXXL",
+                "group_id": f"collection:{index}",
+                "group_index": index,
+                "group_field": "Default Store View",
+            },
+        ])
+
+    state = target_value_state(controls, milestone)
+
+    assert state.status == "ambiguous"
+    assert state.group_id == ""
+
+
 def test_target_values_require_all_declared_fields_in_the_same_group():
     milestone = Milestone(
         id="ensure-option",
@@ -180,7 +381,7 @@ def test_target_values_require_all_declared_fields_in_the_same_group():
     ]
 
     incomplete = target_value_state(controls, milestone)
-    assert incomplete.status == "incomplete"
+    assert incomplete.status == "partial"
     assert incomplete.missing_fields == ("Admin Swatch",)
 
     controls[0]["value"] = "XXXL"
@@ -218,6 +419,204 @@ def test_partial_inventory_absence_cannot_become_target_contradiction():
     assert guarded.status == "in_progress"
     assert guarded.outcome_status == "unverified"
     assert "partial coverage" in guarded.summary
+
+
+def test_unrelated_flat_form_does_not_claim_missing_target_field() -> None:
+    milestone = Milestone(
+        id="attribute-filter",
+        name="在 Attribute Code 列输入 'size' 并提交搜索",
+        description="",
+        success_condition="列表显示 Attribute Code 为 size 的记录",
+        kind="filter",
+        target_controls=["attribute_code"],
+        target_values={"attribute_code": "size"},
+    )
+    observation = Observation(
+        png_bytes=b"fixture",
+        source="browser",
+        form_controls=[{
+            "label": "search-global",
+            "name": "query",
+            "kind": "text_input",
+            "value": "",
+        }],
+    )
+    original = _SingleCheckResult(
+        status="in_progress",
+        reason="当前在 Dashboard，需要先进入属性列表页",
+        summary="Dashboard",
+    )
+
+    state = target_value_state(observation.form_controls, milestone)
+    guarded = _apply_required_group_checker_guard(original, milestone, observation)
+
+    assert state.status == "unknown"
+    assert guarded == original
+
+
+def test_existing_collection_members_do_not_block_acquire_for_new_target_unit() -> None:
+    milestone = Milestone(
+        id="add-option",
+        name="向 size 属性添加选项 'XXXL'",
+        description="",
+        success_condition="选项集合包含 XXXL",
+        kind="action",
+        target_values={
+            "Admin Description": "XXXL",
+            "Admin Swatch": "XXXL",
+        },
+    )
+    observation = Observation(
+        png_bytes=b"fixture",
+        source="browser",
+        dom_state="existing-option-rows",
+        form_controls_meta={"coverage": "partial"},
+        form_controls=[
+            {
+                "label": "Description",
+                "kind": "text_input",
+                "value": "38",
+                "group_id": "collection:19",
+                "group_field": "Admin",
+                "in_viewport": True,
+            },
+            {
+                "label": "Swatch",
+                "kind": "text_input",
+                "value": "38",
+                "group_id": "collection:19",
+                "group_field": "Admin",
+                "in_viewport": True,
+            },
+        ],
+    )
+    policy, planner_calls = _policy_with_plans(_PlanResult(
+        instruction="向下滚动查看集合底部和添加入口",
+        summary="acquire target unit",
+        atomic_role="iterate",
+        action_family="iterate",
+        direction="down",
+    ))
+
+    step = policy._plan_single(milestone, _check(), observation, [])
+
+    assert target_value_state(
+        observation.form_controls,
+        milestone,
+        coverage="partial",
+    ).status == "unknown"
+    assert step.should_act is True
+    assert step.action_family == "iterate"
+    assert len(planner_calls) == 1
+
+
+def test_target_unit_bypasses_checker_and_planner_for_unique_blank_row(monkeypatch):
+    milestone = Milestone(
+        id="ensure-option",
+        name="ensure option",
+        description="",
+        success_condition="option row is complete",
+        kind="action",
+        target_values={
+            "Admin Description": "XXXL",
+            "Admin Swatch": "XXXL",
+        },
+    )
+    observation = Observation(
+        png_bytes=b"fixture",
+        source="browser",
+        form_controls_meta={"coverage": "complete"},
+        form_controls=[
+            {
+                "label": "Description",
+                "kind": "text_input",
+                "value": "",
+                "required": True,
+                "group_id": "collection:20",
+                "group_field": "Admin",
+                "in_viewport": True,
+                "rect": {"x": 578, "y": 668},
+            },
+            {
+                "label": "Swatch",
+                "kind": "text_input",
+                "value": "",
+                "group_id": "collection:20",
+                "group_field": "Admin",
+                "in_viewport": True,
+                "rect": {"x": 332, "y": 668},
+            },
+        ],
+    )
+    policy = MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+    policy._single_check = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("checker must not own a uniquely resolved target write")
+    )
+    policy._invoke_planner = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("planner must not rediscover a uniquely resolved target write")
+    )
+    monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
+
+    step = policy._run_single_turn(milestone, observation, [])
+
+    assert step.should_act is True
+    assert step.atomic_role == "write"
+    assert step.action_family == "input"
+    assert step.target_control == "Admin Description"
+    assert step.target_value == "XXXL"
+    assert step.target_group_id == "collection:20"
+
+
+def test_ambiguous_target_units_stop_without_planner_or_mutation(monkeypatch):
+    milestone = Milestone(
+        id="ensure-option",
+        name="ensure option",
+        description="",
+        success_condition="option row is complete",
+        kind="action",
+        target_values={"Admin Description": "XXXL", "Admin Swatch": "XXXL"},
+    )
+    controls = []
+    for group_id in ("collection:20", "collection:21"):
+        controls.extend([
+            {
+                "label": "Description",
+                "kind": "text_input",
+                "value": "",
+                "group_id": group_id,
+                "group_field": "Admin",
+            },
+            {
+                "label": "Swatch",
+                "kind": "text_input",
+                "value": "",
+                "group_id": group_id,
+                "group_field": "Admin",
+            },
+        ])
+    observation = Observation(
+        png_bytes=b"fixture",
+        source="browser",
+        form_controls=controls,
+        form_controls_meta={"coverage": "complete"},
+    )
+    policy = MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+    policy._single_check = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("checker must not choose among ambiguous target units")
+    )
+    policy._invoke_planner = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("planner must not guess among ambiguous target units")
+    )
+    monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
+
+    step = policy._run_single_turn(milestone, observation, [])
+
+    assert step.should_act is False
+    assert step.stop is True
+    assert step.stop_reason == "ambiguous_target_unit"
+    assert step.goal_completed is False
 
 
 def test_visible_named_input_replans_iterate_to_input_once():

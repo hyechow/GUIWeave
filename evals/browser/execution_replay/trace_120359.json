@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "source": {
+    "run": "20260712_120359",
+    "task": "549",
+    "description": "The Catalog menu visibly contained Products, but replanning lost target metadata and the action model emitted a generic tap description. The following feasibility probe then treated a form-field inventory as proof that the navigation link was absent.",
+    "turns": {
+      "17": "970c8df620d3c87291eef2e6cf5e4e6445d60e29"
+    }
+  },
+  "cases": [
+    {
+      "id": "replanned_menu_tap_retains_authoritative_target_text",
+      "kind": "browser_action_postprocess",
+      "source_turns": [17],
+      "instruction": "点击展开的 Catalog 子菜单中的 'Products' 链接。",
+      "action_decision": {
+        "action": {
+          "action_type": "tap",
+          "x": 180,
+          "y": 254,
+          "description": "执行tap操作"
+        }
+      },
+      "expected": {
+        "action_type": "tap",
+        "text": null,
+        "description": "点击展开的 Catalog 子菜单中的 'Products' 链接。"
+      }
+    },
+    {
+      "id": "observed_navigation_target_blocks_false_infeasible_verdict",
+      "kind": "semantic_target_presence",
+      "source_turns": [17],
+      "targets": ["Products"],
+      "semantic_tree": [
+        {
+          "role": "link",
+          "key": "Products",
+          "value": "",
+          "ref": 17,
+          "depth": 2
+        },
+        {
+          "role": "link",
+          "key": "Categories",
+          "value": "",
+          "ref": 18,
+          "depth": 2
+        }
+      ],
+      "expected": {
+        "present": true
+      }
+    }
+  ]
+}

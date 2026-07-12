@@ -46,3 +46,45 @@ def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
     text = " ".join(getattr(b, "content", "") for b in captured["human_blocks"])
     assert "浏览器 DOM 表单控件" in text                 # the DOM control block reached the replanner
     assert 'current="Olivia zip jacket"' in text         # carrying the input's authoritative value
+
+
+def test_replan_preserves_atomic_execution_contract(monkeypatch):
+    policy = MilestoneSupervisorPolicy()
+    milestone = Milestone(
+        id="open-products",
+        name="enter products list",
+        description="",
+        success_condition="products list is visible",
+        kind="navigation",
+    )
+    policy.reseed(milestone)
+    monkeypatch.setattr(
+        policy,
+        "_invoke_replanner",
+        lambda *_args, **_kwargs: _ReplanResult(
+            diagnosis="the menu is open but the link was not activated",
+            strategy="local_replan",
+            instruction="点击展开菜单中的 Products 链接",
+            atomic_role="prepare",
+            action_family="navigate",
+            target_control="Products",
+        ),
+    )
+
+    step = policy._handle_stuck(
+        milestone,
+        _SingleCheckResult(
+            status="stuck",
+            reason="wrong menu point",
+            stuck_reason="wrong menu point",
+            summary="",
+        ),
+        None,
+        Observation(png_bytes=b"fixture", source="browser"),
+        [],
+    )
+
+    assert step.instruction == "点击展开菜单中的 Products 链接"
+    assert step.atomic_role == "prepare"
+    assert step.action_family == "navigate"
+    assert step.target_control == "Products"

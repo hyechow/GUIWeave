@@ -13,6 +13,12 @@ from __future__ import annotations
 from gui_agent.core.supervisor.milestone.schemas import _SelectorResult, _SingleCheckResult
 
 
+def test_single_check_schema_requires_explicit_outcome_status():
+    required = _SingleCheckResult.model_json_schema().get("required", [])
+
+    assert "outcome_status" in required
+
+
 def test_single_check_wraps_bare_string_missing_evidence():
     # The exact failure shape from log 20260616_200258 Turn5.
     r = _SingleCheckResult.model_validate({

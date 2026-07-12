@@ -110,7 +110,7 @@ class TraceStep:
     index: int
     state: str       # canonical URL (or a page-identity fallback)
     decision: str    # the action key from `state` — an NL instruction OR an action_signature
-    interaction_state: str = ""  # optional DOM/form-state fingerprint for browser pages
+    interaction_state: str = ""  # optional DOM form-value fingerprint for browser pages
     scope: str = ""  # execution bucket: milestone:<id> or row:<identity>
 
 
@@ -120,12 +120,12 @@ class ProgressMonitor:
 
     turns: list[TraceStep] = field(default_factory=list)
     # Kind-1 "did the last action have an effect" facts (set by observe_effect each turn).
-    # URL/DOM deltas are GROUND TRUTH that the previous action changed something — used to
+    # URL/form-value deltas are GROUND TRUTH that the previous action changed something — used to
     # suppress pixel-based false positives (false no_effect, false sim/rep-stuck on a form fill).
     url_changed: bool = False
     dom_changed: bool = False
     _last_url: Optional[str] = None        # raw url (not canonical) — exact-delta comparison
-    _last_dom_state: Optional[str] = None  # interactive-state fingerprint (form values + focus)
+    _last_dom_state: Optional[str] = None  # form values / checked-state fingerprint
     # Per-milestone sliding window of the checker's read "current value" — the value-stall detector.
     _progress_values: dict = field(default_factory=dict)
     # Recent (frame, action-center) pairs for the screen-similarity detector. Cleared on milestone
@@ -135,7 +135,7 @@ class ProgressMonitor:
     def observe_effect(self, url: Optional[str], dom_state: Optional[str]) -> None:
         """Update `url_changed` / `dom_changed` from this turn's observation: a changed url means
         the previous action navigated (a definite effect); a changed interaction fingerprint means
-        it moved a form/focus. None (visual platforms, no url/dom) → stays False (no signal)."""
+        it changed a form value. None (visual platforms, no url/dom) → stays False (no signal)."""
         self.url_changed = bool(url and self._last_url is not None and url != self._last_url)
         if url is not None:
             self._last_url = url

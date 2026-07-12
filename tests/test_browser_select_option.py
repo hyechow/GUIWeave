@@ -80,7 +80,7 @@ def test_plain_tap_on_select_still_clicks_when_no_option_text():
     assert client.clicked == (856.0, 509.0)
 
 
-def test_select_instruction_rewrites_tap_to_select_option():
+def test_select_wording_does_not_rewrite_tap_without_dom_evidence():
     policy = BrowserActionPolicy()
     decision = BrowserActionDecision(
         action=BrowserAction(
@@ -93,13 +93,13 @@ def test_select_instruction_rewrites_tap_to_select_option():
 
     result = policy._postprocess(decision, "点击下拉列表中的 'Complete' 选项以设置状态筛选条件")
 
-    assert result.action.action_type == "select_option"
-    assert result.action.text == "Complete"
+    assert result.action.action_type == "tap"
+    assert result.action.text is None
     assert result.action.x == 850
     assert result.action.y == 504
 
 
-def test_select_instruction_rewrites_unquoted_option_text():
+def test_unquoted_select_wording_does_not_rewrite_tap_without_dom_evidence():
     policy = BrowserActionPolicy()
     decision = BrowserActionDecision(
         action=BrowserAction(
@@ -112,8 +112,8 @@ def test_select_instruction_rewrites_unquoted_option_text():
 
     result = policy._postprocess(decision, "在 Status 下拉框选择 Complete")
 
-    assert result.action.action_type == "select_option"
-    assert result.action.text == "Complete"
+    assert result.action.action_type == "tap"
+    assert result.action.text is None
 
 
 def test_filter_button_tap_is_not_rewritten_to_select_option():
@@ -134,3 +134,41 @@ def test_filter_button_tap_is_not_rewritten_to_select_option():
 
     assert result.action.action_type == "tap"
     assert result.action.text is None
+
+
+def test_navigation_dropdown_menu_item_is_not_rewritten_to_select_option():
+    policy = BrowserActionPolicy()
+    decision = BrowserActionDecision(
+        action=BrowserAction(
+            action_type="tap",
+            x=319,
+            y=367,
+            description="点击 STORES 下拉菜单中的 Attributes > Product 选项",
+        )
+    )
+
+    result = policy._postprocess(
+        decision,
+        "点击 STORES 下拉菜单中的 Attributes > Product 选项",
+    )
+
+    assert result.action.action_type == "tap"
+    assert result.action.text is None
+
+
+def test_tap_keeps_supervisor_target_text_for_dom_grounding():
+    policy = BrowserActionPolicy()
+    decision = BrowserActionDecision(
+        action=BrowserAction(
+            action_type="tap",
+            x=180,
+            y=254,
+            description="执行tap操作",
+        )
+    )
+    instruction = "点击展开的 Catalog 子菜单中的 'Products' 链接。"
+
+    result = policy._postprocess(decision, instruction)
+
+    assert result.action.action_type == "tap"
+    assert result.action.description == instruction

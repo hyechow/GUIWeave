@@ -302,7 +302,7 @@ class Observation(BaseModel):
     dom_state: Optional[str] = Field(
         default=None,
         description=(
-            "平台感知层提供的页面交互状态指纹（如浏览器表单控件值+焦点的哈希）。"
+            "平台感知层提供的页面交互状态指纹（如浏览器表单控件值/选中状态的哈希）。"
             "逐字段填表时像素几乎不变、指令文本高度相似，但该指纹每轮都变——"
             "作为确定性进展信号抑制 stuck/重复误判（与 url 同模式）。None=该平台不提供。"
         ),
@@ -456,6 +456,14 @@ class SupervisorStep(BaseModel):
     target_control: str = Field(
         default="",
         description="planner 声明的本轮控件/字段目标；执行前与 milestone target_controls 对齐。",
+    )
+    target_value: str = Field(
+        default="",
+        description="本轮写入/选择的结构化目标值；为空时由平台策略按原有路径决策。",
+    )
+    target_group_id: str = Field(
+        default="",
+        description="目标控件所属结构单元 ID；用于区分重复集合中的同名字段。",
     )
     completion_status: CompletionStatus = Field(
         default="in_progress",

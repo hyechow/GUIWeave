@@ -98,10 +98,11 @@ class _SingleCheckResult(BaseModel):
     frozen: bool = Field(default=False, description="屏幕是否冻结（相似度≥99%，即使 reader 返回新内容也应停止）")
     loading: bool = Field(default=False, description="页面正在加载（骨架屏/启动屏/转场动画），应等待下一帧而非立即规划动作")
     outcome_status: Literal["confirmed", "contradicted", "unverified"] = Field(
-        default="unverified",
         description=(
-            "业务后置状态：confirmed=目标状态已有证据；contradicted=明确错误/拒绝/目标不符；"
-            "unverified=缺少结果证据。不得用动作已派发替代 confirmed。"
+            "业务后置状态：confirmed=目标状态已有证据；contradicted=当前帧有直接事实否定"
+            "完成条件（包括报错、目标值不符、仍在中间步骤或外层提交尚未执行）；"
+            "unverified=当前帧没有可判读的目标结果通道。contradicted 不等于动作派发失败；"
+            "不得用动作已派发替代 confirmed。"
         ),
     )
 
@@ -174,6 +175,25 @@ class _PlanResult(BaseModel):
         default="",
         description="本轮原子动作要命中的控件、字段或集合能力；必须与 milestone 合同一致。",
     )
+    target_value: str = Field(
+        default="",
+        description="本轮写入/选择的结构化目标值；不要依赖 instruction 文本重新抽取。",
+    )
+    target_group_id: str = Field(
+        default="",
+        description="目标控件所属结构单元 ID；重复集合中必须用它保持行身份。",
+    )
+
+    @field_validator("atomic_role", mode="before")
+    @classmethod
+    def _normalize_action_family_as_role(cls, value: object) -> object:
+        return {
+            "navigate": "prepare",
+            "activate": "prepare",
+            "unknown": "prepare",
+            "input": "write",
+            "select": "write",
+        }.get(str(value or "").lower(), value)
     direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
         default=None,
         description=(
@@ -213,8 +233,47 @@ class _ReplanResult(BaseModel):
     diagnosis: str = Field(description="当前未达成目标的原因（一句话）")
     strategy: Literal["local_replan", "escalate_human", "force_complete"]
     instruction: str = Field(default="")
+    atomic_role: Literal["prepare", "write", "commit", "iterate"] = Field(
+        default="prepare",
+        description="修复指令的原子执行角色；语义与正常 planner 输出一致。",
+    )
+    action_family: Literal[
+        "input", "select", "activate", "navigate", "iterate", "commit", "unknown"
+    ] = Field(
+        default="unknown",
+        description="修复指令的动作族；不得只在 instruction 文本中隐含。",
+    )
+    target_control: str = Field(
+        default="",
+        description="修复动作要命中的具体控件；用于执行契约和 adapter grounding。",
+    )
+    target_value: str = Field(
+        default="",
+        description="修复动作要写入或选择的值；非写入动作留空。",
+    )
+    target_group_id: str = Field(
+        default="",
+        description="重复集合中目标控件所属结构单元 ID。",
+    )
+    direction: Optional[
+        Literal["up", "down", "left", "right", "increase", "decrease"]
+    ] = None
+    drag_column: Optional[str] = None
+    drag_current_value: Optional[int] = None
+    drag_target_value: Optional[int] = None
     escalation_message: str = Field(default="")
     can_degrade_to_collection: bool = Field(default=False)
+
+    @field_validator("atomic_role", mode="before")
+    @classmethod
+    def _normalize_action_family_as_role(cls, value: object) -> object:
+        return {
+            "navigate": "prepare",
+            "activate": "prepare",
+            "unknown": "prepare",
+            "input": "write",
+            "select": "write",
+        }.get(str(value or "").lower(), value)
 
 
 class _StopConditionPatch(BaseModel):

@@ -40,7 +40,11 @@ def semantic_action_key(supervisor_step: SupervisorStep, action: Any) -> str:
     prefix = f"{scope}|{milestone_id}|{role}"
     # A commit is the persistence boundary of its interactive Run. Coordinates and button
     # wording must not create a second key for the same side effect.
-    return prefix if role == "commit" else f"{prefix}|{action_signature(action)}"
+    if role == "commit":
+        return prefix
+    group_id = supervisor_step.target_group_id or ""
+    group_part = f"|group:{group_id}" if group_id else ""
+    return f"{prefix}{group_part}|{action_signature(action)}"
 
 
 class ActionLedger:
@@ -62,14 +66,35 @@ class ActionLedger:
             # while the supervisor is still asking for work is only a no-op opinion; dispatching
             # it as success creates a contradictory turn (checker=in_progress, action=done).
             return False, key, "action policy 无权用 stop 完成仍处于 in_progress 的 milestone"
-        if effective_action_role(supervisor_step, action) != "commit":
+        role = effective_action_role(supervisor_step, action)
+        turns = list(history)
+        if role == "write":
+            dispatched = [
+                turn
+                for turn in turns
+                if turn.action_signal is not None
+                and turn.action_signal.execution == "dispatched"
+            ]
+            latest = dispatched[-1] if dispatched else None
+            if (
+                latest is not None
+                and latest.action_signal is not None
+                and latest.action_signal.action_key == key
+            ):
+                return (
+                    False,
+                    key,
+                    "同一结构目标已派发过相同写入，期间没有其它有效动作；"
+                    "禁止原样重写，必须重新读取目标状态或更换操作路径",
+                )
+            return True, key, ""
+        if role != "commit":
             return True, key, ""
         if supervisor_step.milestone_kind not in {None, "action"}:
             # Navigation/filter commits update reversible UI state. At-most-once protects only
             # persistent business mutations; loop/stuck detection owns ineffective UI retries.
             return True, key, ""
 
-        turns = list(history)
         matching = [
             turn
             for turn in turns

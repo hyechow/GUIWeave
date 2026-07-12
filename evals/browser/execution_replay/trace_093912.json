@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "source": {
+    "run": "20260712_093912",
+    "task": "549",
+    "description": "The planner named Admin Description, but the vision-only action policy saw no column headers and typed into a top-row Default Store View Description repeatedly.",
+    "turns": {
+      "12": "db8d9c21fb223b04152968f9e174435b1f4f8ab1",
+      "13": "26128a211e89669f5168379fd72b6df7fc3686a9",
+      "22": "076c2f7fc8b5e6ec1cd8800994655210231bc363"
+    }
+  },
+  "cases": [
+    {
+      "id": "t12_visual_type_is_grounded_to_declared_collection_field",
+      "kind": "control_grounding",
+      "source_turns": [12, 13, 22],
+      "target_control": "Admin Description (Swatch row)",
+      "target_value": "XXXL",
+      "target_group_id": "collection:20",
+      "action_family": "input",
+      "instruction": "在 Admin Description 输入框填入 XXXL",
+      "action_decision": {
+        "action": {
+          "action_type": "type",
+          "x": 820,
+          "y": 175,
+          "text": "XXXL",
+          "description": "在 Admin Description 输入框填入 XXXL"
+        }
+      },
+      "form_controls": [
+        {
+          "label": "Description",
+          "kind": "text_input",
+          "value": "38",
+          "group_id": "collection:19",
+          "group_index": 19,
+          "group_field": "Admin",
+          "rect": {"x": 578, "y": 632, "w": 217, "h": 33}
+        },
+        {
+          "label": "Description",
+          "kind": "text_input",
+          "value": "",
+          "group_id": "collection:20",
+          "group_index": 20,
+          "group_field": "Admin",
+          "rect": {"x": 578, "y": 668, "w": 217, "h": 33}
+        },
+        {
+          "label": "Description",
+          "kind": "text_input",
+          "value": "",
+          "group_id": "collection:20",
+          "group_index": 20,
+          "group_field": "Default Store View",
+          "rect": {"x": 821, "y": 668, "w": 217, "h": 33}
+        }
+      ],
+      "expected": {
+        "action_type": "type",
+        "text": "XXXL",
+        "x": 578.0,
+        "y": 668.0,
+        "grounding_method": "semantic_dom",
+        "target_info": "Admin Description"
+      }
+    }
+  ]
+}

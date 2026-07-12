@@ -20,7 +20,8 @@ re-decompose plumbing are wired in later stages."""
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import re
+from typing import Any, Iterable, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -103,14 +104,76 @@ def _ui_facts_text(ui_facts: Optional[list[dict[str, Any]]]) -> str:
     return "## 页面 UI 状态事实\n" + "\n".join(lines) if lines else ""
 
 
+_NAVIGATION_ROLES = frozenset({
+    "button",
+    "link",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "tab",
+    "treeitem",
+})
+
+
+def _semantic_navigation_text(semantic_tree: Optional[list[dict[str, Any]]]) -> str:
+    """Format the AX nodes that can act as navigation/activation entry points.
+
+    ``form_controls`` intentionally inventories fields, not links. The semantic tree is the
+    corresponding direct-observation channel for named links, menu items, tabs, and buttons.
+    Keeping the channels separate prevents field absence from being misread as link absence.
+    """
+    lines: list[str] = []
+    for node in semantic_tree or []:
+        if not isinstance(node, dict):
+            continue
+        role = str(node.get("role") or "").strip().lower()
+        label = str(node.get("key") or "").strip()
+        if role not in _NAVIGATION_ROLES or not label:
+            continue
+        lines.append(f"- {role}: {label}")
+        if len(lines) >= 160:
+            lines.append("- ... (navigation inventory truncated; omitted entries cannot prove absence)")
+            break
+    return "## 页面语义导航入口（AX 直接观察）\n" + "\n".join(lines) if lines else ""
+
+
+def _compact_label(value: str) -> str:
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", value.casefold())
+
+
+def semantic_target_present(
+    semantic_tree: Optional[list[dict[str, Any]]],
+    targets: Iterable[str],
+) -> bool:
+    """Return whether a declared target is a named interactive AX node.
+
+    This is a positive-evidence guard only. A missing node does not prove that an entry is
+    impossible: it may live behind a collapsed menu or an as-yet unrendered panel.
+    """
+    wanted = [_compact_label(str(target)) for target in targets]
+    wanted = [target for target in wanted if len(target) >= 3]
+    if not wanted:
+        return False
+    for node in semantic_tree or []:
+        if not isinstance(node, dict):
+            continue
+        role = str(node.get("role") or "").strip().lower()
+        label = _compact_label(str(node.get("key") or ""))
+        if role not in _NAVIGATION_ROLES or len(label) < 3:
+            continue
+        if any(label == target or label in target or target in label for target in wanted):
+            return True
+    return False
+
+
 def control_presence_text(observation: Any) -> str:
-    """The page's actual control inventory (DOM form_controls + grid facts) — the direct
-    observation the Feasibility Guard judges against. Empty/visual-only platforms yield a clear sentinel."""
+    """The page's direct structural evidence, separated by capability domain."""
     parts = [
         format_form_controls_text(
             getattr(observation, "form_controls", None),
             getattr(observation, "form_controls_meta", None),
         ),
+        _semantic_navigation_text(getattr(observation, "semantic_tree", None)),
         _ui_facts_text(getattr(observation, "ui_facts", None)),
     ]
     body = "\n\n".join(p for p in parts if p)
