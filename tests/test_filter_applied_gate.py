@@ -21,20 +21,27 @@ from gui_agent.core.schemas import (
 )
 from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.supervisor.milestone.helpers import (
-    _extract_target_fields,
     filter_chips_clean,
     filter_residual_labels,
-    filter_result_requirement_satisfied,
     filter_state_satisfies_target,
-    parse_filter_target,
     RuntimeFilterIntent,
 )
 from gui_agent.context.runtime import applied_filter_state_block
 
 
-def _filter_ms(name: str, sc: str = "") -> Milestone:
+def _filter_ms(
+    name: str,
+    sc: str = "",
+    *,
+    target_values: dict[str, str] | None = None,
+) -> Milestone:
     return Milestone(
-        id="m_filter", name=name, description=name, success_condition=sc, kind="filter"
+        id="m_filter",
+        name=name,
+        description=name,
+        success_condition=sc,
+        kind="filter",
+        target_values=target_values or {},
     )
 
 
@@ -83,55 +90,6 @@ def test_applied_filters_js_targets_active_filter_chips():
     assert "filter" in js and "legacy_grid" in js  # legacy Mage_Adminhtml grid fallback
 
 
-# ── parse_filter_target ─────────────────────────────────────────────────────────
-def test_parse_range_keeps_both_bounds():
-    # task 185: name carries the structured range
-    assert parse_filter_target(_filter_ms("清除无关筛选，设置 Quantity From=3 且 To=3")) == (
-        "Quantity",
-        ["3", "3"],
-    )
-
-
-def test_parse_range_distinct_bounds():
-    assert parse_filter_target(_filter_ms("设置 Quantity From=2 To=3")) == (
-        "Quantity",
-        ["2", "3"],
-    )
-
-
-def test_parse_single_column_value():
-    assert parse_filter_target(_filter_ms("应用 Status: Complete 筛选")) == (
-        "Status",
-        ["complete"],
-    )
-
-
-def test_parse_chinese_keyword_filter_target():
-    assert parse_filter_target(_filter_ms("清除精确值筛选，在产品/Product列使用关键词'Olivia'进行筛选")) == (
-        "Product",
-        ["olivia"],
-    )
-    assert parse_filter_target(_filter_ms("可见筛选状态显示已应用 Product包含'Olivia'筛选")) == (
-        "Product",
-        ["olivia"],
-    )
-
-
-def test_parse_global_search_box_target_without_inventing_a_column():
-    milestone = _filter_ms(
-        "在搜索框输入精确值 'Minerva LumaTech V-Tee' 并提交搜索",
-        "精确筛选已应用，records-found 计数可读",
-    )
-
-    assert parse_filter_target(milestone) == (
-        "Keyword",
-        ["minerva", "lumatech", "v", "tee"],
-    )
-    assert filter_state_satisfies_target(
-        {"Keyword": "Minerva LumaTech V-Tee"}, milestone
-    ) is True
-
-
 def test_runtime_write_intent_matches_actual_keyword_route_without_text_parser():
     milestone = _filter_ms(
         "在产品名称字段用精确值『Minerva LumaTech V-Tee』筛选",
@@ -142,7 +100,6 @@ def test_runtime_write_intent_matches_actual_keyword_route_without_text_parser()
         target_value="Minerva LumaTech V-Tee",
     )
 
-    assert parse_filter_target(milestone) is None
     assert filter_state_satisfies_target(
         {"Keyword": "Minerva LumaTech V-Tee"}, milestone, intent
     ) is True
@@ -214,6 +171,7 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
     milestone = _filter_ms(
         "在搜索框输入精确值 'Minerva LumaTech V-Tee' 并提交搜索",
         "精确筛选已应用，records-found 计数可读",
+        target_values={"Keyword": "Minerva LumaTech V-Tee"},
     )
     checker_calls: list[int] = []
 
@@ -242,57 +200,30 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
     assert step.goal_completed is True
 
 
-def test_same_search_box_is_deictic_not_a_named_column():
-    milestone = _filter_ms(
-        "清除精确值后在同一搜索框用关键词 'Minerva' 重筛",
-        "关键词筛选已应用且匹配记录非 0 条",
-    )
-
-    assert _extract_target_fields(milestone) == []
-    assert parse_filter_target(milestone) == ("Keyword", ["minerva"])
-
-
-def test_explicit_nonzero_fallback_does_not_fast_complete_on_known_zero():
-    milestone = _filter_ms(
-        "清除精确值后在同一搜索框用关键词 'Minerva' 重筛",
-        "关键词筛选已应用且匹配记录非 0 条",
-    )
-
-    assert filter_result_requirement_satisfied(
-        [{"total_records": 0}], milestone
-    ) is False
-    assert filter_result_requirement_satisfied(
-        [{"total_records": 2}], milestone
-    ) is True
-
-
-def test_parse_unparseable_is_none():
-    assert parse_filter_target(_filter_ms("进入产品列表页并打开筛选面板")) is None
-
-
 # ── filter_state_satisfies_target (the gate predicate) ──────────────────────────
 def test_gate_fires_when_target_chip_present():
     ms = _filter_ms("清除无关筛选，设置 Quantity From=3 且 To=3",
-                    "可见筛选状态显示 Quantity: 3 - 3")
-    applied = {"Store View": "Default Store View", "Quantity": "3 - 3"}
+                    "可见筛选状态显示 Quantity: 3 - 3",
+                    target_values={"Quantity": "3 - 3"})
+    applied = {"Quantity": "3 - 3"}
     assert filter_state_satisfies_target(applied, ms) is True
 
 
 def test_gate_does_not_fire_on_wrong_range():
     # The real failure's antidote: a 2-3 chip must NOT satisfy a 3-3 target.
-    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    ms = _filter_ms("设置 Quantity From=3 且 To=3", target_values={"Quantity": "3 - 3"})
     assert filter_state_satisfies_target({"Quantity": "2 - 3"}, ms) is False
 
 
 def test_gate_ignores_unrelated_display_column_values():
     # Salable Quantity present as a (hypothetical) chip must not be mistaken for Quantity.
-    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    ms = _filter_ms("设置 Quantity From=3 且 To=3", target_values={"Quantity": "3 - 3"})
     applied = {"Salable Quantity": "2", "Quantity": "3 - 3"}
     assert filter_state_satisfies_target(applied, ms) is True
 
 
 def test_gate_false_when_no_chips():
-    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    ms = _filter_ms("设置 Quantity From=3 且 To=3", target_values={"Quantity": "3 - 3"})
     assert filter_state_satisfies_target(None, ms) is False
     assert filter_state_satisfies_target({}, ms) is False
 
@@ -308,9 +239,9 @@ def test_gate_matches_adapter_pair_when_free_text_parser_has_no_syntax_rule():
     ms = _filter_ms(
         "在 Attribute Code 列用精确值'size'筛选",
         "Attribute Code 精确筛选已应用，records-found 计数可读",
+        target_values={"Attribute Code": "size"},
     )
 
-    assert parse_filter_target(ms) is None
     assert filter_state_satisfies_target({"Attribute Code": "size"}, ms) is True
     assert filter_chips_clean({"Attribute Code": "size"}, ms) is True
 
@@ -319,6 +250,7 @@ def test_structural_filter_pair_fallback_requires_both_label_and_exact_value():
     ms = _filter_ms(
         "在 Attribute Code 列用精确值'size'筛选",
         "Attribute Code 精确筛选已应用",
+        target_values={"Attribute Code": "size"},
     )
 
     assert filter_state_satisfies_target({"Attribute Code": "color"}, ms) is False
@@ -329,6 +261,7 @@ def test_structural_filter_pair_still_rejects_unrelated_residual_filter():
     ms = _filter_ms(
         "在 Attribute Code 列用精确值'size'筛选",
         "Attribute Code 精确筛选已应用",
+        target_values={"Attribute Code": "size"},
     )
     applied = {"Attribute Code": "size", "Default Label": "shoe"}
 
@@ -337,15 +270,8 @@ def test_structural_filter_pair_still_rejects_unrelated_residual_filter():
     assert filter_residual_labels(applied, ms) == ["Default Label"]
 
 
-# ── filter_chips_clean (residual-pollution guard, cf. task 186) ─────────────────
-def test_chips_clean_target_plus_benign_store_view():
-    ms = _filter_ms("设置 Quantity From=3 且 To=3")
-    assert filter_chips_clean({"Store View": "Default Store View", "Quantity": "3 - 3"}, ms) is True
-
-
 def test_chips_not_clean_with_leaked_residual():
-    # A leaked Keyword filter (task 186 class) must block the gate so the clear duty is honored.
-    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    ms = _filter_ms("设置 Quantity From=3 且 To=3", target_values={"Quantity": "3 - 3"})
     assert filter_chips_clean({"Keyword": "WS08", "Quantity": "3 - 3"}, ms) is False
 
 
@@ -363,6 +289,7 @@ def _qty3_filter_milestone() -> Milestone:
     return _filter_ms(
         "清除无关筛选，设置 Quantity From=3 且 To=3",
         "网格 Active filters 显示已生效筛选 Quantity: 3 - 3（控件状态达成即可，不需逐行复核库存）。",
+        target_values={"Quantity": "3 - 3"},
     )
 
 
@@ -409,6 +336,7 @@ def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
     ms = _filter_ms(
         "清除精确值筛选，在产品/Product列使用关键词'Olivia'进行筛选",
         "可见筛选状态显示已应用 Product包含'Olivia'筛选，列表已刷新且非0条记录",
+        target_values={"Product": "Olivia"},
     )
     import os
 
@@ -522,22 +450,24 @@ def test_wrong_range_chip_falls_through_to_checker(monkeypatch):
 
 # ── filter_residual_labels (runtime state-diff: clear only unrelated residuals) ──
 def test_residuals_only_the_leaked_chip_not_the_target():
-    # The 186 scenario done right: a leaked `Keyword: WS08` is residual; the task's own Quantity
-    # filter and the benign Store View are KEPT — no blanket Clear-all.
-    ms = _filter_ms("清除残留筛选，设置 Quantity From=3 且 To=3")
-    applied = {"Quantity": "3 - 3", "Keyword": "WS08", "Store View": "Default Store View"}
+    ms = _filter_ms(
+        "设置目标筛选状态",
+        target_values={"Quantity": "3 - 3"},
+    )
+    applied = {"Quantity": "3 - 3", "Keyword": "WS08"}
     assert filter_residual_labels(applied, ms) == ["Keyword"]
 
 
-def test_no_residuals_when_only_target_and_benign():
-    ms = _filter_ms("设置 Quantity From=3 且 To=3")
-    assert filter_residual_labels({"Quantity": "3 - 3", "Store View": "x"}, ms) == []
+def test_no_residuals_when_live_state_exactly_matches_contract():
+    ms = _filter_ms("设置筛选状态", target_values={"Quantity": "3 - 3"})
+    assert filter_residual_labels({"Quantity": "3 - 3"}, ms) == []
 
 
 def test_preserved_entity_scope_filter_is_not_residual_when_adding_filter():
     ms = _filter_ms(
         "保留 Sarah Miller 客户结果范围，追加 Status=Pending 筛选",
         "可见筛选状态同时包含 Keyword: Sarah Miller 和 Status: Pending",
+        target_values={"Keyword": "Sarah Miller", "Status": "Pending"},
     )
     applied = {"Keyword": "Sarah Miller", "Status": "Pending"}
     assert filter_residual_labels(applied, ms) == []
@@ -548,6 +478,7 @@ def test_preserved_scope_can_match_distinctive_partial_token():
     ms = _filter_ms(
         "保留 Grace 客户结果范围，追加 Status=Pending 筛选",
         "可见筛选状态同时包含 Grace 客户范围和 Status: Pending",
+        target_values={"Keyword": "Grace Nguyen", "Status": "Pending"},
     )
     applied = {"Keyword": "Grace Nguyen", "Status": "Pending"}
     assert filter_residual_labels(applied, ms) == []
@@ -558,23 +489,18 @@ def test_preserved_scope_does_not_keep_residual_by_target_value_overlap_only():
     ms = _filter_ms(
         "保留客户结果范围，追加 Status=Pending 筛选",
         "可见筛选状态包含 Status: Pending",
+        target_values={"Status": "Pending"},
     )
     applied = {"Keyword": "Pending", "Status": "Pending"}
     assert filter_residual_labels(applied, ms) == ["Keyword"]
     assert filter_chips_clean(applied, ms) is False
 
 
-def test_unmentioned_keyword_scope_remains_residual_when_setting_column_filter():
-    ms = _filter_ms("设置 Status=Pending 筛选")
+def test_undeclared_keyword_scope_is_residual_when_setting_column_filter():
+    ms = _filter_ms("设置 Status=Pending 筛选", target_values={"Status": "Pending"})
     applied = {"Keyword": "Sarah Miller", "Status": "Pending"}
     assert filter_residual_labels(applied, ms) == ["Keyword"]
     assert filter_chips_clean(applied, ms) is False
-
-
-def test_no_filter_intent_makes_every_chip_residual():
-    # "any state / 全量" task: the intent is NO filter, so every non-benign chip is residual.
-    ms = _filter_ms("清除筛选，准备全量 all orders 数据源（不限状态）")
-    assert filter_residual_labels({"Status": "Complete", "Store View": "x"}, ms) == ["Status"]
 
 
 def test_unparseable_non_nofilter_target_yields_no_residuals():
@@ -584,22 +510,24 @@ def test_unparseable_non_nofilter_target_yields_no_residuals():
 
 
 def test_residuals_empty_when_no_applied_filters():
-    ms = _filter_ms("设置 Quantity From=3 且 To=3")
+    ms = _filter_ms("设置 Quantity From=3 且 To=3", target_values={"Quantity": "3 - 3"})
     assert filter_residual_labels(None, ms) == []
 
 
-def test_keyword_search_treats_leftover_column_filter_as_residual():
-    # live 114706: searching WS08 via Search by keyword while Quantity:3-3 is still applied →
-    # keyword+column AND → the qty=3 child, not the qty=0 Configurable parent. The leftover
-    # Quantity column filter IS a residual for a keyword-search milestone; the Keyword chip is kept.
-    ms = _filter_ms("回到 Products 列表，用顶部 Search by keyword 框搜父产品 SKU WS08")
+def test_declared_keyword_filter_treats_other_filter_as_residual():
+    ms = _filter_ms(
+        "应用关键词筛选",
+        target_values={"Keyword": "WS08"},
+    )
     assert filter_residual_labels({"Quantity": "3 - 3"}, ms) == ["Quantity"]
     assert filter_residual_labels(
-        {"Keyword": "WS08", "Quantity": "3 - 3", "Store View": "x"}, ms
+        {"Keyword": "WS08", "Quantity": "3 - 3"}, ms
     ) == ["Quantity"]
 
 
-def test_quantity_filter_milestone_not_treated_as_keyword_search():
-    # a real Quantity column-filter milestone must NOT be mis-read as keyword-search.
-    ms = _filter_ms("清除残留筛选，设置 Quantity From=3 且 To=3")
+def test_quantity_filter_contract_keeps_only_declared_dimension():
+    ms = _filter_ms(
+        "设置 Quantity 筛选",
+        target_values={"Quantity": "3 - 3"},
+    )
     assert filter_residual_labels({"Quantity": "3 - 3", "Keyword": "WS08"}, ms) == ["Keyword"]

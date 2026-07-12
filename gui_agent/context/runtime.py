@@ -77,6 +77,8 @@ def milestone_block(
         lines.append(f"- 完成策略：{milestone.completion_strategy}")
     if milestone.kind == "action":
         lines.append(f"- Mutation mode：{milestone.mutation_mode}")
+    if milestone.requires_commit:
+        lines.append("- 持久化边界：需要显式 commit 动作并验证后置状态")
     if milestone.target_controls:
         lines.append(f"- 目标控件/能力：{', '.join(milestone.target_controls)}")
     if milestone.target_values:

@@ -11,31 +11,6 @@
   },
   "cases": [
     {
-      "id": "t15_commit_role_normalizes_input_family",
-      "kind": "role_family",
-      "source_turns": [15],
-      "milestone": {
-        "id": "product-search",
-        "name": "submit current filter",
-        "description": "",
-        "success_condition": "filter is applied",
-        "kind": "filter"
-      },
-      "plan": {
-        "instruction": "press Enter to submit the current filter",
-        "summary": "submit",
-        "atomic_role": "commit",
-        "action_family": "input",
-        "target_control": "Search by keyword"
-      },
-      "primitive": "press_enter",
-      "expected": {
-        "role": "commit",
-        "family": "commit",
-        "allowed": true
-      }
-    },
-    {
       "id": "t31_hard_limit_reconciles_latest_dispatch_without_action",
       "kind": "terminal_reconcile",
       "source_turns": [31],

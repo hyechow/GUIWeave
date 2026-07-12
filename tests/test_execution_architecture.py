@@ -8,6 +8,9 @@ import pytest
 
 from gui_agent.core.run.execution_signals import CompletionEvaluation
 from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.supervisor.milestone.execution_scope import (
+    resource_identity_from_url,
+)
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 
@@ -15,6 +18,7 @@ POLICY_PATH = (
     Path(__file__).resolve().parents[1]
     / "gui_agent/core/supervisor/milestone/policy.py"
 )
+MILESTONE_DIR = POLICY_PATH.parent
 
 
 def _policy_tree() -> ast.Module:
@@ -64,15 +68,7 @@ def test_done_state_writes_are_limited_to_completion_or_explicit_delegation():
                 owners.append((function.name, node.lineno))
 
     assert owners
-    assert {name for name, _line in owners} == {"_advance", "_try_filter_fallback"}
-
-    fallback = next(
-        node for node in _function_nodes(_policy_tree())
-        if node.name == "_try_filter_fallback"
-    )
-    fallback_source = ast.unparse(fallback)
-    assert "self._completion_evaluator.decide" in fallback_source
-    assert "decision.status != 'delegated'" in fallback_source
+    assert {name for name, _line in owners} == {"_advance"}
 
 
 def test_advance_requires_keyword_only_complete_decision():
@@ -99,3 +95,65 @@ def test_advance_requires_keyword_only_complete_decision():
             [],
             decision=CompletionEvaluation("pending", "insufficient evidence"),
         )
+
+
+def test_policy_does_not_reimplement_execution_services():
+    policy_methods = {node.name for node in _function_nodes(_policy_tree())}
+
+    assert "resolved_plan_action_family" not in policy_methods
+    assert "is_terminal_dispatch_turn" not in policy_methods
+    assert "resource_identity_from_url" not in policy_methods
+    assert "target_value_claims" not in policy_methods
+    assert "checker_claim" not in policy_methods
+
+
+def test_execution_kernel_contains_no_site_or_benchmark_vocabulary():
+    kernel_files = [
+        MILESTONE_DIR / name
+        for name in (
+            "policy.py",
+            "action_protocol.py",
+            "evidence.py",
+            "execution_scope.py",
+            "helpers.py",
+        )
+    ]
+    forbidden = ("webarena", "magento", "shopping_admin")
+
+    for path in kernel_files:
+        source = path.read_text(encoding="utf-8").casefold()
+        for token in forbidden:
+            assert token not in source, f"{path.name} contains site vocabulary {token!r}"
+
+        assert "gui_agent.adapters." not in source, (
+            f"{path.name} imports a platform adapter from core execution"
+        )
+
+
+def test_prompt_text_postprocessors_are_not_execution_services():
+    helper_tree = ast.parse(
+        (MILESTONE_DIR / "helpers.py").read_text(encoding="utf-8")
+    )
+    helper_functions = {node.name for node in _function_nodes(helper_tree)}
+
+    assert not helper_functions & {
+        "_guard_native_select_plan",
+        "_guard_exact_dropdown_target",
+        "_guard_named_field_substitution_plan",
+        "_guard_stale_text_filter_plan",
+        "_repeated_candidate_click",
+        "_reopens_selected_dropdown",
+    }
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://host/workspace/entity/edit/widget_id/42/", "workspace/entity/edit/widget_id/42"),
+        ("https://host/app/detail/id/7/", "app/detail/id/7"),
+        ("https://host/app/list/page/3/", ""),
+        ("https://host/app/index/filter/name/value/", ""),
+    ],
+)
+def test_execution_scope_uses_generic_resource_routes(url: str, expected: str):
+    assert resource_identity_from_url(url) == expected

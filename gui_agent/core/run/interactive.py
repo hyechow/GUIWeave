@@ -57,6 +57,7 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
         precondition=run.precondition,
         require_fresh_action=(run.kind == "action" and run.mutation_mode == "change"),
         mutation_mode=run.mutation_mode,
+        requires_commit=run.requires_commit,
         target_controls=list(run.target_controls),
         target_values=dict(run.target_values),
         returns=list(run.returns),

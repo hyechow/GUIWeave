@@ -86,6 +86,7 @@ class ExecutionContract:
             output_fields=tuple(milestone.returns or ()),
             read_spec=milestone.read_spec or "",
             require_fresh_action=bool(milestone.require_fresh_action),
+            require_terminal_dispatch=bool(milestone.requires_commit),
             completion_mode=mode,
             mutation_mode=milestone.mutation_mode,
             target_controls=tuple(milestone.target_controls or ()),
@@ -284,14 +285,12 @@ class CompletionEvaluator:
 
         if contract.completion_mode == "filter_state":
             if filter_state is not None and filter_state.value == "confirmed":
-                if outcome is not None and outcome.value == "confirmed":
-                    return CompletionEvaluation(
-                        "satisfied",
-                        outcome.evidence or filter_state.evidence,
-                        "confirmed",
-                        (filter_state, outcome),
-                    )
-                return CompletionEvaluation("pending", "筛选已应用，仍需结果/验收信号")
+                return CompletionEvaluation(
+                    "satisfied",
+                    filter_state.evidence or "目标筛选状态已权威确认",
+                    "confirmed",
+                    (filter_state,),
+                )
             return CompletionEvaluation("pending", "筛选状态尚未权威确认")
 
         if contract.completion_mode == "arrival":

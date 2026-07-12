@@ -65,6 +65,7 @@ def _submit_turn(*, no_effect: bool = True, reason: str = "点击 Submit Comment
             goal_completed=False,
             summary="",
             milestone_id="m1",
+            atomic_role="commit",
         ),
         action_decision=BaseActionDecision(action=act),
         target_verify=TargetVerify(on_target=True, actual_element="Submit Comment button"),
@@ -174,7 +175,11 @@ def _submit_milestone_policy():
     # (…提交/保存…) — an arrival milestone must not be force-done'd by a stray dispatch-verb click.
     p = MilestoneSupervisorPolicy()
     m = Milestone.model_validate(
-        {"id": "m1", "name": "提交评论", "description": "d", "success_condition": "评论出现在历史中", "kind": "action"}
+        {
+            "id": "m1", "name": "提交评论", "description": "d",
+            "success_condition": "评论出现在历史中", "kind": "action",
+            "requires_commit": True,
+        }
     )
     p._milestones = {"m1": m}
     p._current_id = "m1"
@@ -210,6 +215,7 @@ def test_terminal_dispatch_gate_respects_negative_feedback(monkeypatch):
             reason="页面显示 validation failed: required field missing",
             summary="提交失败",
             missing_evidence=["需要修正表单错误"],
+            outcome_status="contradicted",
         ),
     )
     p._monitor._last_url = "http://x/order/view/65"
@@ -239,6 +245,7 @@ def _fresh_action_policy():
         "id": "m1", "name": "填入追踪号并提交发货", "description": "d",
         "success_condition": "发货已保存，订单出现追踪号", "kind": "action",
         "require_fresh_action": True,
+        "requires_commit": True,
     })
     p._milestones = {"m1": m}
     p._current_id = "m1"
@@ -254,6 +261,7 @@ def _shipment_submit_turn() -> PolicyTurn:
         supervisor=SupervisorStep(
             should_act=True, instruction="点击页面右下角的 Submit Shipment 按钮",
             stop=False, goal_completed=False, summary="", milestone_id="m1",
+            atomic_role="commit",
         ),
         action_decision=BaseActionDecision(action=act),
         target_verify=TargetVerify(on_target=True, actual_element="Submit Shipment button"),
@@ -307,6 +315,7 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(
         status="done", reason="提交时页面提示 validation failed: required field missing", summary="ok",
+        outcome_status="contradicted",
     )
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
     decision = _completion_decision(p, m, obs, [_shipment_submit_turn()])
@@ -383,6 +392,7 @@ def _save_milestone_policy():
         "id": "m1", "name": "将 Stock Status 下拉设为 Out of Stock 并保存", "description": "d",
         "success_condition": "页面显示保存成功提示", "kind": "action",
         "require_fresh_action": True,
+        "requires_commit": True,
     })
     p._milestones = {"m1": m}
     p._current_id = "m1"
@@ -424,6 +434,7 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
         supervisor=SupervisorStep(
             should_act=True, instruction="点击右上角 Save 按钮保存",
             stop=False, goal_completed=False, summary="", milestone_id="m1",
+            atomic_role="commit",
         ),
         action_decision=BaseActionDecision(action=act),
         target_verify=TargetVerify(on_target=True, actual_element="Save button"),
@@ -474,6 +485,7 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
             goal_completed=False,
             summary="",
             milestone_id="m1",
+            atomic_role="commit",
         ),
         action_decision=BaseActionDecision(action=BaseAction(
             action_type="tap",

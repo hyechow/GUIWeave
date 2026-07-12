@@ -189,6 +189,7 @@
         "description": "Read match_count after applying the exact filter.",
         "success_condition": "Keyword 精确筛选已应用，records-found 计数可读（是否 0 条由返回值判读）。",
         "kind": "filter",
+        "target_values": {"Keyword": "Minerva LumaTech V-Tee"},
         "returns": ["match_count"]
       },
       "observation": {

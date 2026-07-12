@@ -1,7 +1,5 @@
 import re
-from collections import Counter
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -51,44 +49,12 @@ from .schemas import (
 )
 
 
-_DISPATCH_GATE_MARKER = "动作已发出且界面给出响应"
-
-
-def is_dispatch_gate_sc(success_condition: str) -> bool:
-    """True when the SC is a dispatch gate — 'action dispatched + any UI response'.
-
-    Dispatch gates are deterministic: url_changed OR dom_changed is conclusive.
-    The LLM checker should never be asked to verify one."""
-    return _DISPATCH_GATE_MARKER in (success_condition or "")
-
-
 # ── filter "action-applied" gate ──────────────────────────────────────────────
 # A `filter` milestone's job is to APPLY a filter; its success is "the intended filter is in
 # effect" — which the adapter reports authoritatively through Observation.applied_filters
 # (whatever platform-native evidence channel produced it), NOT by re-reading row/cell values.
 # Decouples action-applied from effect-judgment so the checker can't reject a correctly-applied
 # filter on display-column grounds.
-
-# A capitalized English field name is the filter column the applied-filter state keys on.
-# `From=N … To=M` is decompose's canonical range phrasing; `Column: value` and
-# `Column 包含/关键词 Value` cover single-value filters.
-_FILTER_RANGE_RE = re.compile(
-    r"([A-Z][A-Za-z ]{1,20}?)\s*From\s*[=:：]?\s*([\w.\-]+)"
-    r".{0,8}?To\s*[=:：]?\s*([\w.\-]+)",
-    re.IGNORECASE,
-)
-_FILTER_SINGLE_RE = re.compile(r"\b([A-Z][A-Za-z]{2,20})\s*[:：=]\s*([A-Za-z0-9][\w.\-]{0,24})")
-_FILTER_CONTAINS_RE = re.compile(
-    r"\b([A-Z][A-Za-z ]{1,30})(?:\s*(?:列|字段|field|column))?"
-    r".{0,18}?(?:包含|含|contains|关键词|keyword|使用关键词|筛选为|设为|等于|为)\s*"
-    r"['\"「“]?([A-Za-z0-9][\w .\-]{0,40})",
-    re.IGNORECASE,
-)
-_KEYWORD_SEARCH_INTENT_RE = re.compile(
-    r"search\s+by\s+keyword|search\s+(?:box|field)|搜索框|检索框|关键词|keyword",
-    re.IGNORECASE,
-)
-
 
 @dataclass(frozen=True)
 class RuntimeFilterIntent:
@@ -103,84 +69,6 @@ def _value_tokens(s: str) -> list[str]:
     return [t.lower() for t in re.findall(r"[A-Za-z0-9.]+", s or "")]
 
 
-def parse_filter_target(milestone: Milestone) -> Optional[tuple[str, list[str]]]:
-    """The filter this `filter` milestone intends to apply, as `(column, value_tokens)` matched
-    against the applied filter's value as an exact token-multiset. None when not confidently
-    parseable — the gate then stays out of the way (falls back to the checker). Reads the
-    milestone name and SC. The range
-    form keeps BOTH bounds (From=3,To=3 → ['3','3']) so a '2 - 3' value does NOT satisfy a
-    '3 - 3' target."""
-    text = f"{milestone.name or ''}\n{milestone.success_condition or ''}"
-    m = _FILTER_RANGE_RE.search(text)
-    if m:
-        col = m.group(1).strip()
-        vals = [m.group(2).strip(), m.group(3).strip()]
-        if col and all(vals):
-            return col, _value_tokens(" ".join(vals))
-    m = _FILTER_SINGLE_RE.search(text)
-    if m:
-        col = m.group(1).strip()
-        val = m.group(2).strip()
-        if col and val and col.lower() not in ("from", "to"):
-            return col, _value_tokens(val)
-    m = _FILTER_CONTAINS_RE.search(text)
-    if m:
-        col = m.group(1).strip()
-        val = m.group(2).strip().strip("'\"「」“”")
-        if col and val and col.lower() not in ("from", "to"):
-            return col, _value_tokens(val)
-    # Global/free-text search has no named grid column in the DSL. The adapter exposes its
-    # applied state under the semantic ``Keyword`` dimension, so recover the target from the
-    # quoted search value instead of forcing the planner to invent a column. This is what lets an
-    # exact trial that legitimately returns zero finish and hand its count to an explicit fallback.
-    if _KEYWORD_SEARCH_INTENT_RE.search(text):
-        for source in (milestone.name or "", milestone.description or ""):
-            quoted = _QUOTED_RE.findall(source)
-            if quoted:
-                value = quoted[-1].strip()
-                tokens = _value_tokens(value)
-                if tokens:
-                    return "Keyword", tokens
-    return None
-
-
-def _compact_filter_phrase(text: str) -> str:
-    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(text or "").lower())
-
-
-def _state_filter_pair_is_declared(
-    label: str,
-    value: str,
-    milestone: Milestone,
-) -> bool:
-    """Whether one adapter-reported filter pair is explicitly present in the contract text.
-
-    This is the structural fallback for free-text phrasings the legacy parser does not recognize.
-    Both the adapter label and its exact value token multiset must be present, so a visible but
-    unrelated filter cannot complete the statement merely because its value appears elsewhere.
-    """
-    text = " ".join(
-        part
-        for part in (
-            milestone.name,
-            milestone.description,
-            milestone.success_condition,
-        )
-        if part
-    )
-    compact_text = _compact_filter_phrase(text)
-    compact_label = _compact_filter_phrase(label)
-    if not compact_label or compact_label not in compact_text:
-        return False
-
-    wanted_tokens = Counter(_value_tokens(value))
-    if wanted_tokens:
-        available_tokens = Counter(_value_tokens(text))
-        return all(available_tokens[token] >= count for token, count in wanted_tokens.items())
-    compact_value = _compact_filter_phrase(value)
-    return bool(compact_value and compact_value in compact_text)
-
-
 def _matched_applied_filter_labels(
     applied_filters: Optional[dict[str, str]],
     milestone: Milestone,
@@ -188,94 +76,29 @@ def _matched_applied_filter_labels(
 ) -> set[str]:
     if not applied_filters:
         return set()
-    if runtime_intent is not None:
-        wanted = sorted(_value_tokens(runtime_intent.target_value))
-        if runtime_intent.target_control and wanted:
-            return {
-                label
-                for label, value in applied_filters.items()
-                if target_matches_declared(label, (runtime_intent.target_control,))
-                and sorted(_value_tokens(value)) == wanted
-            }
-    target = parse_filter_target(milestone)
-    if target is not None:
-        column, values = target
-        col_l = column.lower()
-        wanted = sorted(values)
-        return {
+    intents = [
+        RuntimeFilterIntent(str(control), str(value))
+        for control, value in (milestone.target_values or {}).items()
+        if str(control).strip() and str(value).strip()
+    ]
+    if not intents and runtime_intent is not None:
+        intents = [runtime_intent]
+    if not intents:
+        return set()
+
+    matched: set[str] = set()
+    for intent in intents:
+        wanted = sorted(_value_tokens(intent.target_value))
+        candidates = {
             label
             for label, value in applied_filters.items()
-            if (col_l in label.lower() or label.lower() in col_l)
+            if target_matches_declared(label, (intent.target_control,))
             and sorted(_value_tokens(value)) == wanted
         }
-    return {
-        label
-        for label, value in applied_filters.items()
-        if _state_filter_pair_is_declared(label, value, milestone)
-    }
-
-
-# Always-on system filters that are not task pollution and never need clearing — a chip outside
-# {target column} ∪ this set means an unrelated residual still applied (cf. task 186's leaked
-# `Keyword`), so the gate must NOT fire `done` (the milestone's "clear unrelated filters" duty
-# is unmet); fall back to the checker/planner to drive the clear.
-_BENIGN_FILTER_LABELS = {"store view"}
-_PRESERVE_SCOPE_INTENT_RE = re.compile(
-    r"保留|保持|继续沿用|追加|叠加|同时(?:包含|保留|应用|满足)|"
-    r"\bkeep\b|\bretain\b|\bpreserve\b|\bwith\b|\balongside\b",
-    re.IGNORECASE,
-)
-# Textual fallback debt: generic words removed when deciding whether an already-applied filter chip
-# is an intentional preserved upstream scope. This is a runtime guard around free-text milestone
-# wording, not an app ontology. Prefer a future structured "preserved_scope_filters" field over
-# growing this token list.
-_GENERIC_SCOPE_VALUE_TOKENS = {
-    "field",
-    "filter",
-    "item",
-    "items",
-    "keyword",
-    "order",
-    "orders",
-    "page",
-    "pages",
-    "product",
-    "record",
-    "records",
-    "result",
-    "results",
-    "status",
-    "the",
-}
-
-
-def _scope_value_tokens(value: str) -> set[str]:
-    return {
-        token
-        for token in _value_tokens(value)
-        if len(token) >= 3 and token not in _GENERIC_SCOPE_VALUE_TOKENS
-    }
-
-
-def _mentions_filter_value(text: str, value: str, *, exclude_tokens: set[str] | None = None) -> bool:
-    value_tokens = _scope_value_tokens(value)
-    if not value_tokens:
-        return False
-    text_tokens = set(_value_tokens(text))
-    overlap = value_tokens & text_tokens
-    if exclude_tokens:
-        overlap -= exclude_tokens
-    return bool(overlap)
-
-
-def _is_preserved_scope_filter(_label: str, value: str, milestone: Milestone) -> bool:
-    """True when an already-applied chip is an intentional upstream scope, not pollution."""
-    text = f"{milestone.name or ''} {milestone.success_condition or ''} {milestone.description or ''}"
-    if not _PRESERVE_SCOPE_INTENT_RE.search(text):
-        return False
-    target = parse_filter_target(milestone)
-    target_tokens = set(target[1]) if target else set()
-    return _mentions_filter_value(text, value, exclude_tokens=target_tokens)
+        if len(candidates) != 1:
+            return set()
+        matched.update(candidates)
+    return matched
 
 
 def filter_chips_clean(
@@ -283,79 +106,31 @@ def filter_chips_clean(
     milestone: Milestone,
     runtime_intent: RuntimeFilterIntent | None = None,
 ) -> bool:
-    """True when no applied filter is an unrelated residual — every filter is either the milestone's
-    target column or a benign always-on system filter. A parsed target is preferred; otherwise an
-    adapter-reported label/value pair must both be explicitly present in the milestone contract."""
+    """Whether the live filter set exactly matches the declared filter-state contract."""
     matched_labels = _matched_applied_filter_labels(
         applied_filters, milestone, runtime_intent
     )
     if not matched_labels:
         return False
-    for label in (applied_filters or {}):
-        ll = label.lower()
-        if label in matched_labels:
-            continue
-        if ll in _BENIGN_FILTER_LABELS:
-            continue
-        if _is_preserved_scope_filter(label, applied_filters[label], milestone):
-            continue
-        return False  # an unrelated residual filter is still applied
-    return True
+    return set(applied_filters or {}) == matched_labels
 
 
-# A filter milestone whose INTENT is "no filter on dimension X / 全量 / any state" — here EVERY
-# applied chip (beyond benign system filters) is an unwanted residual to clear. Distinct from the
-# common case (a specific target filter), where only chips OUTSIDE the target are residual.
-_NO_FILTER_INTENT_RE = re.compile(
-    r"全量|不限|任意状态|无筛选|没有.{0,6}筛选|清空所有筛选|清除所有筛选|any\s+state|all\s+(?:orders|records|states)",
-    re.IGNORECASE,
-)
-
-# A KEYWORD-SEARCH milestone (uses the grid's global "Search by keyword" box). Its intended active
-# filter is ONLY the keyword chip — so any pre-existing COLUMN filter (Quantity/Status/…) is a
-# residual that must be cleared, else keyword+column AND together return the wrong rows (live
-# 114706: searching WS08 with a leftover Quantity:3-3 returned the qty=3 child, not the qty=0
-# Configurable parent → "no Configurable found").
 def filter_residual_labels(
     applied_filters: Optional[dict[str, str]], milestone: Milestone
 ) -> list[str]:
-    """The applied-filter chip labels that are UNRELATED RESIDUALS for this filter milestone —
-    computed at RUNTIME by diffing the live chips against the milestone's INTENDED filter set
-    (not a blanket "clear all" prescribed at decompose time, which can't see the live state and so
-    misleads the model into wiping legitimate filters; cf. the over-broad task-186 prompt rule).
-
-    - intent = a specific target filter (e.g. Quantity 3-3): residual = any chip whose column is
-      NOT the target and NOT a benign system filter (e.g. a leaked `Keyword: WS08`).
-    - intent = "no filter / 全量 / any state": residual = every non-benign chip.
-    - intent unparseable and not a no-filter task → [] (can't diff; don't guess)."""
+    """Return live filters not present in the complete declared filter-state contract."""
     if not applied_filters:
         return []
-    target = parse_filter_target(milestone)
-    matched_labels = _matched_applied_filter_labels(applied_filters, milestone)
-    text = f"{milestone.name or ''} {milestone.success_condition or ''} {milestone.description or ''}"
-    no_filter_intent = bool(_NO_FILTER_INTENT_RE.search(text))
-    keyword_intent = bool(_KEYWORD_SEARCH_INTENT_RE.search(text))
-    if target is None and not matched_labels and not no_filter_intent and not keyword_intent:
+    if not milestone.target_values:
         return []
-    # intended-filter column: a parsed column target wins; else a keyword search keeps only the
-    # `Keyword` chip; else (no-filter intent) nothing is intended → every non-benign chip residual.
-    if target is not None:
-        col_l = target[0].lower()
-    elif keyword_intent:
-        col_l = "keyword"
-    else:
-        col_l = ""
-    out: list[str] = []
-    for label in applied_filters:
-        ll = label.lower()
-        if label in matched_labels or (col_l and (col_l in ll or ll in col_l)):
-            continue  # the intended target filter — keep it
-        if ll in _BENIGN_FILTER_LABELS:
-            continue  # benign always-on system filter — keep it
-        if _is_preserved_scope_filter(label, applied_filters[label], milestone):
-            continue  # explicitly retained upstream entity scope — keep it
-        out.append(label)
-    return out
+    matched_labels = _matched_applied_filter_labels(applied_filters, milestone)
+    declared_controls = tuple(str(key) for key in milestone.target_values)
+    return [
+        label
+        for label in applied_filters
+        if label not in matched_labels
+        and not target_matches_declared(label, declared_controls)
+    ]
 
 
 def filter_state_satisfies_target(
@@ -363,53 +138,32 @@ def filter_state_satisfies_target(
     milestone: Milestone,
     runtime_intent: RuntimeFilterIntent | None = None,
 ) -> bool:
-    """True when the grid's applied-filter state already contains this milestone's target filter —
-    i.e. the filter ACTION took effect, authoritatively, regardless of the rendered rows. Match =
-    the target column appears as an applied-filter label AND that filter's value tokens are an exact
-    multiset of the target's. When the syntax parser cannot classify the free text, the adapter's
-    exact label/value pair must both occur in the milestone contract; otherwise remain conservative."""
+    """Whether every declared filter pair is present in the adapter's applied state."""
     return bool(_matched_applied_filter_labels(
         applied_filters, milestone, runtime_intent
     ))
 
 
-_NONZERO_FILTER_RESULT_RE = re.compile(
-    r"非\s*0\s*条|非零|至少\s*[1-9]\d*\s*条|"
-    r"(?:records?|results?|matches?)\s*(?:>|>=)\s*0|non[- ]?zero",
-    re.IGNORECASE,
-)
-
-
-def filter_result_requirement_satisfied(
-    tables: Optional[list[dict]], milestone: Milestone
-) -> bool:
-    """Honor an explicit non-zero result clause without coupling every filter to row content.
-
-    Applied-filter state remains authoritative for whether the filter action took effect. When the
-    success contract additionally requires a non-empty result and the adapter authoritatively
-    reports zero records, the fast gate must stay open for fallback/recovery instead of declaring
-    the whole filter milestone done. Unknown counts remain neutral.
-    """
-    text = f"{milestone.success_condition or ''} {milestone.description or ''}"
-    if not _NONZERO_FILTER_RESULT_RE.search(text):
-        return True
-    totals = [
-        table.get("total_records")
-        for table in tables or []
-        if isinstance(table, dict) and isinstance(table.get("total_records"), int)
-    ]
-    return not totals or any(total > 0 for total in totals)
-
-
 def _default_milestone_prompts() -> MilestonePrompts:
-    """Lazy iphone-prompts default: keeps every no-prompts caller (iphone factory,
-    evals, tests, scripts) working unchanged while prompt bodies live as Markdown
-    assets loaded by the iphone adapter. A platform that wants its own prompts
-    injects them."""
-    from gui_agent.adapters.iphone.supervisor.milestone.prompts import (
-        IPHONE_MILESTONE_PROMPTS,
+    """Platform-neutral compatibility bundle for deterministic tests and tooling.
+
+    Production adapter factories inject their own prompt bundle. Keeping the no-argument
+    constructor neutral avoids a core-to-adapter dependency while preserving tests that exercise
+    deterministic policy paths without invoking a model.
+    """
+    return MilestonePrompts(
+        decompose="Decompose the goal into platform-neutral executable milestones.",
+        single_checker="Verify the current milestone from the supplied observation and contracts.",
+        check_kind_sections={},
+        check_section_default="Use visible evidence and structured state only.",
+        check_section_converge="Report current and target values for iterative controls.",
+        loop_frame="Assess collection progress and the observable boundary.",
+        plan="Propose one atomic action using structured target metadata.",
+        loop_scroll="Propose one collection-progress action.",
+        replan="Propose one local recovery action without changing the goal.",
+        stop_condition_patch="Make the collection stop condition observable.",
+        image_resize="none",
     )
-    return IPHONE_MILESTONE_PROMPTS
 
 
 load_dotenv()
@@ -539,142 +293,6 @@ def _format_form_controls(form_controls: list[dict] | None) -> str:
     return format_form_controls_text(form_controls)
 
 
-_OPEN_SELECT_RE = re.compile(r"点击|打开|展开|激活|下拉箭头|选项列表")
-
-
-def _advance_native_multiselect_plan(plan, milestone, observation):
-    """If the plan re-selects a native <select> option that DOM already shows selected, advance to
-    the next milestone-target option not yet in selected_text. control.selected is DOM-authoritative,
-    so re-issuing an already-selected value only loops (WebArena 702: re-select General forever
-    instead of moving on to Wholesale/Retailer). Reads the same obs.dom signal as the checker gate."""
-    instruction = getattr(plan, "instruction", "") or ""
-    form_controls = getattr(observation, "form_controls", None)
-    if not instruction or not form_controls or not re.search(r"选择|选中", instruction):
-        return plan
-    ctx = _norm_text(" ".join([milestone.name or "", milestone.success_condition or ""]))
-    instr_norm = _norm_text(instruction)
-    for item in form_controls:
-        if not isinstance(item, dict) or item.get("kind") != "native_select":
-            continue
-        label = str(item.get("label") or item.get("name") or "").strip()
-        if not label or _norm_text(label) not in instr_norm:
-            continue
-        options = [str(o).strip() for o in (item.get("options") or []) if str(o).strip()]
-        selected = _norm_text(str(item.get("selected_text") or ""))
-        being_selected = next((o for o in options if _norm_text(o) and _norm_text(o) in instr_norm), "")
-        if not being_selected or _norm_text(being_selected) not in selected:
-            return plan  # not a re-select of an already-selected option — leave the plan alone
-        nxt = next((o for o in options if _norm_text(o) in ctx and _norm_text(o) not in selected), "")
-        if not nxt:
-            return plan  # all milestone-target options already selected — nothing to advance to
-        note = f"{being_selected} 已在 DOM selected_text 中（已选），改选下一个未选目标 {nxt}。"
-        return plan.model_copy(update={
-            "instruction": f"在 {label} 下拉框选择 {nxt}",
-            "summary": (f"{plan.summary}；{note}" if getattr(plan, "summary", "") else note),
-        })
-    return plan
-
-
-def native_select_satisfies_target(
-    form_controls: Optional[list[dict]], milestone: Milestone
-) -> bool:
-    """True when every native <select> the milestone targets already holds its target option value(s)
-    per DOM (form_controls.selected_text). The control.selected claim is DOM-authoritative (obs.dom),
-    so this is deterministic ground truth the vision checker must not override — it otherwise loops
-    "still-open list box = not selected" despite the DOM (WebArena 702 Customer Groups; the prompt
-    arbitration protocol alone did not stop it). Reads the same typed obs.dom signal as the block.
-
-    Conservative: only a SELECT-focused milestone (no save/submit/create cue — a compound
-    fill-and-save milestone is not done just because a select is set), and only when the target can
-    be pinned down (returns False otherwise, never false-`done`)."""
-    if not form_controls or not isinstance(form_controls, list):
-        return False
-    ctx = _norm_text(" ".join([milestone.name or "", milestone.success_condition or ""]))
-    if not ctx or re.search(r"保存|save|提交|submit|创建|create", ctx):
-        return False
-    referenced = 0
-    for item in form_controls:
-        if not isinstance(item, dict) or item.get("kind") != "native_select":
-            continue
-        label = _norm_text(str(item.get("label") or item.get("name") or ""))
-        if not label or label not in ctx:
-            continue
-        options = [str(o).strip() for o in (item.get("options") or []) if str(o).strip()]
-        targets = [o for o in options if _norm_text(o) and _norm_text(o) in ctx]
-        if not targets:
-            continue
-        referenced += 1
-        selected = _norm_text(str(item.get("selected_text") or ""))
-        if not all(_norm_text(t) in selected for t in targets):
-            return False
-    return referenced > 0
-
-
-_CHECKBOX_TARGET_RE = re.compile(
-    r"复选框|checkbox|勾选|选中|启用|开启|显示|可见|enable|enabled|show|visible|checked|select",
-    re.IGNORECASE,
-)
-_CHECKBOX_NEGATIVE_RE = re.compile(
-    r"取消勾选|取消选中|禁用|关闭|隐藏|disable|disabled|hide|hidden|uncheck|unchecked|off",
-    re.IGNORECASE,
-)
-
-
-def checkbox_toggle_satisfies_target(
-    form_controls: Optional[list[dict]],
-    semantic_tree: Optional[list[dict]],
-    milestone: Milestone,
-) -> bool:
-    """True when a target checkbox/switch is already ON for a checkbox-focused milestone.
-
-    This mirrors the native-select gate: checkbox state is a DOM/AX fact. It is intentionally
-    conservative: only positive "enable/show/select/check" milestones are fast-pathed, never
-    compound save/submit milestones, and the target label must match a named field/column.
-    """
-    ctx = " ".join([milestone.name or "", milestone.description or "", milestone.success_condition or ""])
-    if (
-        not ctx
-        or not _CHECKBOX_TARGET_RE.search(ctx)
-        or _CHECKBOX_NEGATIVE_RE.search(ctx)
-        or re.search(r"保存|save|提交|submit|创建|create|apply|应用", ctx, re.IGNORECASE)
-    ):
-        return False
-
-    fields = _extract_target_fields(milestone)
-    if not fields:
-        return False
-    wanted = {_compact_norm(field) for field in fields if _compact_norm(field)}
-    if not wanted:
-        return False
-
-    def _label_matches(label: str) -> bool:
-        got = _compact_norm(label)
-        return bool(got) and any(got == want or want in got or got in want for want in wanted)
-
-    for node in semantic_tree or []:
-        if not isinstance(node, dict):
-            continue
-        role = str(node.get("role") or "").lower()
-        if role not in {"checkbox", "menuitemcheckbox", "switch", "menuitemradio"}:
-            continue
-        if not _label_matches(str(node.get("key") or "")):
-            continue
-        if _truthy_checked(node.get("value")):
-            return True
-
-    for item in form_controls or []:
-        if not isinstance(item, dict):
-            continue
-        kind = str(item.get("kind") or "").lower()
-        if not any(part in kind for part in ("checkbox", "radio", "switch")):
-            continue
-        if not _label_matches(_control_label(item)):
-            continue
-        if _truthy_checked(item.get("selected_text") or item.get("value") or item.get("current")):
-            return True
-    return False
-
-
 _TARGET_AFFORDANCE_KINDS = (
     "input",
     "select",
@@ -693,47 +311,21 @@ _SECTION_TOGGLE_KINDS = (
 )
 
 
-def _compact_has_enough_signal(text: str) -> bool:
-    value = _compact_norm(text)
-    if not value:
-        return False
-    if re.search(r"[\u4e00-\u9fff]", value):
-        return len(value) >= 2
-    return len(value) >= 4
-
-
 def _control_is_named_in_milestone(item: dict, milestone: Milestone) -> bool:
-    ctx = " ".join([milestone.name or "", milestone.description or "", milestone.success_condition or ""])
-    ctx_norm = _norm_text(ctx)
-    ctx_compact = _compact_norm(ctx)
-    for raw in (
-        item.get("label"),
-        item.get("name"),
-        item.get("id"),
-        item.get("placeholder"),
-    ):
-        label = str(raw or "").strip()
-        label_norm = _norm_text(label)
-        label_compact = _compact_norm(label)
-        if (
-            not label_compact
-            or label_compact in _GENERIC_CONTROL_LABELS
-            or not _compact_has_enough_signal(label)
-        ):
-            continue
-        if label_norm.isascii():
-            # ASCII controls: require a WORD-BOUNDARY match, not an arbitrary substring, so a control
-            # labeled "Status" does not match the compound token "submit_status" (a return-field name
-            # that leaks into the milestone text during return-location) and send AcquireGate scrolling
-            # to the order Status dropdown. `\b` treats `_` as a word char, so `\bstatus\b` correctly
-            # rejects "submit_status" while still matching "order status" / a standalone "Status".
-            if re.search(r"\b" + re.escape(label_norm) + r"\b", ctx_norm):
-                return True
-        else:
-            # CJK labels have no word delimiters; keep exact-then-compact substring matching.
-            if (label_norm and label_norm in ctx_norm) or (label_compact and label_compact in ctx_compact):
-                return True
-    return False
+    declared = {_norm_text(field) for field in _extract_target_fields(milestone)}
+    if not declared:
+        return False
+    observed = {
+        _norm_text(str(raw or ""))
+        for raw in (
+            item.get("label"),
+            item.get("name"),
+            item.get("id"),
+            item.get("placeholder"),
+        )
+        if str(raw or "").strip()
+    }
+    return bool(declared & observed)
 
 
 def target_affordance_scroll_plan(
@@ -884,19 +476,6 @@ def target_section_acquire_plan(
     )
     if target_visible and not named_section_below:
         return None
-    target_control_present = bool(target_controls)
-    # If the milestone did not name a section, but it names a target field that is not rendered
-    # and there is exactly one collapsed/unknown section affordance, opening that affordance is
-    # the safest page-local acquire step. This handles forms where the field only exists after a
-    # section is expanded, without encoding any app-specific section names.
-    if not candidates and target_fields and not target_control_present:
-        collapsed = [item for item in toggles if not _is_expanded(item)]
-        visible = [item for item in collapsed if item.get("in_viewport") is not False]
-        if len(visible) == 1:
-            candidates = visible
-        elif len(collapsed) == 1 and collapsed[0].get("in_viewport") is False:
-            candidates = collapsed
-
     if not candidates:
         return None
 
@@ -933,178 +512,28 @@ def target_section_acquire_plan(
     return _scroll_section_plan(offscreen[0])
 
 
-def _compact_norm(text: str) -> str:
-    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(text or "").lower())
-
-
-def _truthy_checked(value: object) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "checked", "on", "yes", "selected"}
-
-
-def _guard_native_select_plan(
-    plan: _PlanResult,
-    milestone: Milestone,
-    check: _SingleCheckResult,
-    observation: Observation,
-) -> _PlanResult:
-    """Rewrite native-select open-click plans into value-selection instructions."""
-    instruction = plan.instruction or ""
-    form_controls = getattr(observation, "form_controls", None)
-    if not instruction or not form_controls or not _OPEN_SELECT_RE.search(instruction):
-        return plan
-    context = " ".join([
-        milestone.name or "",
-        milestone.description or "",
-        milestone.success_condition or "",
-        check.reason or "",
-        check.summary or "",
-        " ".join(check.issues or []),
-        " ".join(check.missing_evidence or []),
-    ])
-    context_norm = _norm_text(context)
-    instruction_norm = _norm_text(instruction)
-    for item in form_controls:
-        if not isinstance(item, dict) or item.get("kind") != "native_select":
-            continue
-        label = str(item.get("label") or item.get("name") or item.get("id") or "").strip()
-        if not label or _norm_text(label) not in instruction_norm:
-            continue
-        options = item.get("options")
-        if not isinstance(options, list):
-            continue
-        target = ""
-        for opt in sorted((str(o).strip() for o in options if str(o).strip()), key=len, reverse=True):
-            opt_norm = _norm_text(opt)
-            if opt_norm and opt_norm in context_norm:
-                target = opt
-                break
-        if not target:
-            continue
-        target_norm = _norm_text(target)
-        if target_norm in instruction_norm and re.search(r"选择|选中|设置|设为", instruction):
-            return plan
-        return plan.model_copy(update={
-            "instruction": f"在 {label} 下拉框选择 {target}",
-            "summary": (
-                f"{plan.summary}；DOM 表明 {label} 是 native select，直接选择目标值 {target}。"
-                if plan.summary else
-                f"DOM 表明 {label} 是 native select，直接选择目标值 {target}。"
-            ),
-        })
-    return plan
-
-
 def _norm_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip()).lower()
 
 
-_FIELD_SUFFIX_RE = re.compile(
-    r"([A-Za-z][A-Za-z0-9 _/-]{0,30}|[\u4e00-\u9fff]{1,12})\s*"
-    # `列` only as a COLUMN suffix — NOT inside `列表`(list)/`列出`(to list): "Products 列表" means
-    # the Products LIST page, not a "Products" column, so it must not be extracted as a filter
-    # field (else _guard_named_field_substitution_plan hijacks a keyword search into a column-filter
-    # hunt — live 102944: 横向 scroll 找「Products」列的筛选框 instead of using Search by keyword).
-    r"(?:列(?![表出])|字段|输入框|筛选框|搜索框|下拉框|column|field|filter)",
-    re.IGNORECASE,
-)
-_QUOTED_RE = re.compile(r"[\"'「『“‘]([^\"'」』”’]{1,80})[\"'」』”’]")
-_GENERIC_CONTROL_LABELS = {
-    "undefined",
-    "from",
-    "to",
-    "perpage",
-    "of",
-    "actions",
-    "searchglobal",
-    "selectall",
-    "unselectall",
-}
-_AMBIGUOUS_SEMANTIC_FIELDS = {
-    "customer",
-    "record",
-    "entity",
-    "item",
-    "客户",
-    "顾客",
-    "用户",
-    "记录",
-    "实体",
-    "对象",
-}
-
-
 def _normalize_field_name(field: str) -> str:
-    text = str(field or "").strip(" '\"「」『』")
-    # ``同一搜索框`` / ``the same search box`` identifies the previously used control; ``同一``
-    # is not a field label. A greedy free-text suffix match can otherwise turn
-    # ``清除精确值后在同一搜索框`` into a fictional column named ``清除精确值后在同一`` and send the
-    # planner horizontally hunting for it. Keep this as a syntax rule, not a page vocabulary.
-    if re.search(r"(?:同一|同一个|相同的)\s*$", text, re.IGNORECASE):
-        return ""
-    # Chinese field mentions often include a leading syntactic marker before the actual label:
-    # "在产品列" / "按状态字段" should match Product / Status, not a literal "在产品" field.
-    while len(text) >= 3 and text[0] in {"在", "按", "用", "以", "把", "将", "给", "对"}:
-        text = text[1:].strip()
-    return text
+    return str(field or "").strip(" '\"「」『』")
 
 
 def _field_aliases(field: str) -> set[str]:
     norm = _norm_text(_normalize_field_name(field))
-    aliases = {norm} if norm else set()
-    bilingual = {
-        "产品": {"product", "产品"},
-        "商品": {"product", "商品"},
-        "昵称": {"nickname", "昵称"},
-        "评论": {"review", "detail", "评论"},
-        "状态": {"status", "状态"},
-        "可见性": {"visibility", "visiblein", "可见性"},
-        "类型": {"type", "类型"},
-        "标题": {"title", "标题"},
-        "名称": {"name", "名称"},
-        "名字": {"name", "名字"},
-    }
-    aliases.update(bilingual.get(norm, set()))
-    return {_norm_text(a) for a in aliases if _norm_text(a)}
-
-
-# Runtime annotations the orchestrator appends to a milestone name (e.g. the empty-returns retry
-# `（继续定位返回字段：material）` from loop.py) are NOT user-named columns — strip them before field
-# extraction so they don't get parsed as a "继续定位返回" column and hijack the planner (live 120601:
-# the retry annotation drove a 横向 scroll hunt for a「继续定位返回」column filter on the edit page).
-_RUNTIME_ANNOTATION_RE = re.compile(r"[（(]继续定位[^）)]*[）)]")
-_IMPLICIT_ASCII_TARGET_FIELD_RES = (
-    re.compile(
-        r"(?:将|把)\s*([A-Za-z][A-Za-z0-9 _/-]{2,60}?)\s*"
-        r"(?:更新|改为|改成|设置|设为|填写|填入|输入)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:update|set|write|fill)\s+(?:the\s+)?([A-Z][A-Za-z0-9 _/-]{2,60}?)\s+"
-        r"(?:field\s+)?(?:to|with|as|=)",
-        re.IGNORECASE,
-    ),
-)
+    return {norm} if norm else set()
 
 
 def _extract_target_fields(milestone: Milestone) -> list[str]:
-    text = " ".join([milestone.name or "", milestone.description or ""])
-    text = _RUNTIME_ANNOTATION_RE.sub(" ", text)
     fields: list[str] = []
-    def _add(raw: object) -> None:
+    for raw in [
+        *(milestone.target_values or {}).keys(),
+        *(milestone.target_controls or []),
+    ]:
         field = _normalize_field_name(str(raw or ""))
-        norm = _norm_text(field)
-        if not norm or norm in {"当前", "目标", "搜索", "筛选", "关键词", "读取"}:
-            return
-        if norm in _AMBIGUOUS_SEMANTIC_FIELDS:
-            return
-        if field not in fields:
+        if field and field not in fields:
             fields.append(field)
-
-    for raw in _FIELD_SUFFIX_RE.findall(text):
-        _add(raw)
-    for rx in _IMPLICIT_ASCII_TARGET_FIELD_RES:
-        for match in rx.finditer(text):
-            _add(match.group(1))
     return fields[:3]
 
 
@@ -1122,10 +551,25 @@ def _visible_field_controls(form_controls: list[dict] | None) -> list[dict]:
             continue
         label = _control_label(item)
         label_norm = _norm_text(label)
-        if not label_norm or label_norm in _GENERIC_CONTROL_LABELS:
+        if not label_norm:
             continue
         out.append(item)
     return out
+
+
+def _find_matching_control(field: str, controls: list[dict]) -> dict | None:
+    """Resolve a declared control name against adapter-provided control labels."""
+    aliases = _field_aliases(field)
+    for item in controls:
+        label_norm = _norm_text(_control_label(item))
+        if label_norm and label_norm in aliases:
+            return item
+    return None
+
+
+def _control_current_value(item: dict) -> str:
+    """Read the adapter's normalized current-value channels."""
+    return str(item.get("selected_text") or item.get("value") or "").strip()
 
 
 def required_group_field_gaps(
@@ -1423,257 +867,6 @@ def _apply_required_group_checker_guard(
     })
 
 
-def _instruction_mentions_control(instruction: str, controls: list[dict]) -> dict | None:
-    inst_norm = _norm_text(instruction)
-    for item in controls:
-        label_norm = _norm_text(_control_label(item))
-        if label_norm and len(label_norm) >= 3 and label_norm in inst_norm:
-            return item
-    return None
-
-
-def _find_matching_control(field: str, controls: list[dict]) -> dict | None:
-    aliases = _field_aliases(field)
-    for item in controls:
-        label_norm = _norm_text(_control_label(item))
-        if label_norm and label_norm in aliases:
-            return item
-    return None
-
-
-def _extract_input_value(plan: _PlanResult, milestone: Milestone) -> str:
-    for text in (plan.instruction or "", milestone.name or "", milestone.description or ""):
-        match = re.search(r"(?:输入|填写|搜索|筛选)(?!框)\s*[\"'「『“‘]?([^\"'」』”’，。;；]{1,80})", text)
-        if match:
-            return match.group(1).strip()
-    for text in (plan.instruction or "", milestone.name or "", milestone.description or ""):
-        for value in _QUOTED_RE.findall(text):
-            value = value.strip()
-            if value:
-                return value
-    return ""
-
-
-def _extract_input_value_from_text(text: str) -> str:
-    match = re.search(r"(?:输入|填写|搜索|筛选|设置为|设为)(?!框)\s*[\"'「『“‘]?([^\"'」』”’，。;；]{1,80})", text or "")
-    if match:
-        return match.group(1).strip()
-    for value in _QUOTED_RE.findall(text or ""):
-        value = value.strip()
-        if value:
-            return value
-    return ""
-
-
-_SUBMIT_STALE_INPUT_RE = re.compile(r"Search|Apply|提交|应用|按回车|回车|Enter|搜索按钮|筛选按钮", re.IGNORECASE)
-_CLEAR_FILTER_RE = re.compile(r"Reset Filter|清除|重置|reset", re.IGNORECASE)
-
-
-def _control_current_value(item: dict) -> str:
-    return str(item.get("selected_text") or item.get("value") or "").strip()
-
-
-def _extract_target_value_for_field(milestone: Milestone, field: str) -> str:
-    aliases = _field_aliases(field)
-    texts = [milestone.success_condition or "", milestone.name or "", milestone.description or ""]
-    patterns = [
-        r"(?:current|当前值)\s*=\s*[\"'「『“‘]([^\"'」』”’]{1,80})[\"'」』”’]",
-        r"(?:改用|改为|改成|设置为|设为|输入|填写|使用关键词|关键词)\s*[\"'「『“‘]([^\"'」』”’]{1,80})[\"'」』”’]",
-        r"(?:按|关键词)\s+([A-Za-z0-9][A-Za-z0-9 _/-]{0,60})\s*(?:筛选|搜索|检索|$)",
-    ]
-    for text in texts:
-        norm_text = _norm_text(text)
-        if aliases and not any(alias in norm_text for alias in aliases):
-            continue
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if not match:
-                continue
-            value = match.group(1).strip(" '\"「」『』“”‘’")
-            if value and _norm_text(value) not in {"current", "目标", "关键词"}:
-                return value
-    return ""
-
-
-def _guard_stale_text_filter_plan(
-    plan: _PlanResult,
-    milestone: Milestone,
-    check: _SingleCheckResult,
-    observation: Observation,
-) -> _PlanResult:
-    """Do not submit a text filter while its DOM current value is still stale."""
-    instruction = plan.instruction or ""
-    if not instruction or _CLEAR_FILTER_RE.search(instruction):
-        return plan
-    controls = _visible_field_controls(getattr(observation, "form_controls", None))
-    if not controls:
-        return plan
-    targets = _extract_target_fields(milestone)
-    if not targets:
-        return plan
-    inst_norm = _norm_text(instruction)
-    plan_value = _extract_input_value_from_text(instruction)
-    for field in targets:
-        target_control = _find_matching_control(field, controls)
-        if target_control is None:
-            continue
-        kind = str(target_control.get("kind") or "")
-        if "input" not in kind and "textarea" not in kind:
-            continue
-        target_value = _extract_target_value_for_field(milestone, field)
-        if not target_value:
-            continue
-        if _norm_text(_control_current_value(target_control)) == _norm_text(target_value):
-            continue
-        label = _control_label(target_control) or field
-        label_mentioned = any(alias in inst_norm for alias in _field_aliases(label) | _field_aliases(field))
-        typed_stale_value = (
-            bool(plan_value)
-            and _norm_text(plan_value) != _norm_text(target_value)
-            and (label_mentioned or re.search(r"输入|填写|搜索|筛选|设置", instruction))
-        )
-        submits_stale_value = bool(_SUBMIT_STALE_INPUT_RE.search(instruction))
-        if not typed_stale_value and not submits_stale_value:
-            continue
-        return plan.model_copy(update={
-            "instruction": f"在 {label} 输入框输入 {target_value}",
-            "summary": (
-                f"子目标要求把「{field}」字段改为「{target_value}」，但 DOM 当前值仍是"
-                f"「{_control_current_value(target_control)}」；先修正字段值，不能提交旧值。"
-            ),
-        })
-    return plan
-
-
-def _guard_named_field_substitution_plan(
-    plan: _PlanResult,
-    milestone: Milestone,
-    check: _SingleCheckResult,
-    observation: Observation,
-) -> _PlanResult:
-    """Do not substitute a different visible field for the field named by the milestone.
-
-    Only meaningful for milestones that SET/FILTER a named field (filter / action). A
-    navigation/read/collection milestone (open an Edit link, read a value) targets a control by
-    role, not a named grid column — applying the column-substitution guard there only mis-fires
-    (live 120601: a navigation milestone "open the Edit link 〔继续定位返回字段：material〕" got
-    hijacked into a column-filter scroll). Skip it for those kinds."""
-    if milestone.kind not in ("filter", "action"):
-        return plan
-    instruction = plan.instruction or ""
-    if not instruction or not re.search(r"输入|填写|选择|设置|筛选|搜索", instruction):
-        return plan
-    controls = _visible_field_controls(getattr(observation, "form_controls", None))
-    if not controls:
-        return plan
-    mentioned = _instruction_mentions_control(instruction, controls)
-    if mentioned is None:
-        return plan
-    targets = _extract_target_fields(milestone)
-    if not targets:
-        return plan
-    inst_norm = _norm_text(instruction)
-    for field in targets:
-        aliases = _field_aliases(field)
-        if aliases and any(alias in inst_norm for alias in aliases):
-            return plan
-        target_control = _find_matching_control(field, controls)
-        value = _extract_input_value(plan, milestone)
-        if target_control is not None:
-            label = _control_label(target_control) or field
-            instruction = f"在 {label} 输入框输入 {value}" if value else f"操作 {label} 字段"
-            return plan.model_copy(update={
-                "instruction": instruction,
-                "summary": (
-                    f"子目标要求操作「{field}」字段，原计划指向了「{_control_label(mentioned)}」，"
-                    "已改为目标字段。"
-                ),
-            })
-        # Absence from a sampled control inventory is not proof that the field is absent. More
-        # importantly, a post-planner guard must not invent a different route (historically it
-        # rewrote a correct global-keyword input into horizontal scrolling). Leave the proposal
-        # intact; TargetVerify/action-family validation can reject a bad concrete dispatch, while
-        # an actually partial inventory is allowed to improve on the next frame.
-        return plan
-    return plan
-
-
-_ROUTE_TARGET_IDENTITY_MARKER = "必须对应子目标指定对象"
-_ROUTE_TARGET_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,}")
-_IDENTITY_ONLY_MISSING_RE = re.compile(
-    r"身份|标识|对象|对应|指定|当前.*ID|评论\s*ID|记录\s*ID|URL|url|路由|路径|route|"
-    r"不匹配|错误|wrong|mismatch|confirm",
-    re.IGNORECASE,
-)
-_FIELD_VALUE_MISSING_RE = re.compile(
-    r"产品名|评分|星级|昵称|字段|取值|product_name|rating_stars|customer_nickname|"
-    r"summary|review|status|visibility",
-    re.IGNORECASE,
-)
-
-
-def _route_target_matches(milestone: Milestone, observation: Observation) -> list[str]:
-    if _ROUTE_TARGET_IDENTITY_MARKER not in (milestone.success_condition or ""):
-        return []
-    url = str(getattr(observation, "url", "") or "")
-    if not url:
-        return []
-    text = f"{milestone.name}\n{milestone.success_condition}"
-    matches: list[str] = []
-    seen: set[str] = set()
-    for token in _ROUTE_TARGET_TOKEN_RE.findall(text):
-        if not any(ch.isdigit() for ch in token):
-            continue
-        lowered = token.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        if re.search(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", url):
-            matches.append(token)
-    return matches
-
-
-def _missing_is_only_target_identity(missing_evidence: list[str]) -> bool:
-    if not missing_evidence:
-        return False
-    missing_text = " ".join(str(item) for item in missing_evidence)
-    if not _IDENTITY_ONLY_MISSING_RE.search(missing_text):
-        return False
-    field_value_hits = _FIELD_VALUE_MISSING_RE.search(missing_text)
-    identity_hits = _IDENTITY_ONLY_MISSING_RE.search(missing_text)
-    return bool(identity_hits) and not field_value_hits
-
-
-def _apply_route_identity_checker_guard(
-    result: _SingleCheckResult,
-    milestone: Milestone,
-    observation: Observation,
-) -> _SingleCheckResult:
-    """Accept route-backed target identity when only object identity is disputed."""
-    if result.status == "done":
-        return result
-    matches = _route_target_matches(milestone, observation)
-    if not matches or not _missing_is_only_target_identity(result.missing_evidence):
-        return result
-    page_identity = result.page_identity or ""
-    claims_text = f"{result.reason} {result.summary} {page_identity}"
-    if not re.search(r"详情|编辑|detail|edit|结果页|result", claims_text, re.IGNORECASE):
-        return result
-    target = "、".join(matches[:3])
-    visible = list(result.visible_evidence or [])
-    visible.append(f"URL/路由包含目标标识 {target}")
-    return result.model_copy(update={
-        "status": "done",
-        "reason": (
-            f"当前页为详情/结果页，且 URL/路由包含当前子目标的目标标识「{target}」；"
-            "缺失证据只是在要求再次确认对象身份，已由机器路由证据满足。"
-        ),
-        "missing_evidence": [],
-        "visible_evidence": visible,
-        "stuck_reason": "",
-    })
-
-
 def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
     """Make structured picker direction consistent with current/target values.
 
@@ -1698,173 +891,6 @@ def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
     else:
         plan.direction = "increase" if tgt > cur else "decrease"
     return plan
-
-
-_CLICKED_OPTION_RE = re.compile(
-    r"点击.{0,20}(?:候选|选项|条目).{0,8}[「『“\"'`]([^」』”\"'`]+)[」』”\"'`]"
-)
-_CLICKED_OPTION_DETAIL_RE = re.compile(
-    r"点击(?P<context>.{0,40}?)(?:候选|选项|条目).{0,12}[「『“\"'`](?P<value>[^」』”\"'`]+)[」』”\"'`]"
-)
-_CLICK_DROPDOWN_FIELD_RE = re.compile(
-    r"点击(?P<context>.{0,40}?)(?:下拉框|选择框|搜索框|输入框|框).{0,30}(?:候选|选项|列表|展开|确认|选择|重选)"
-)
-_BUTTON_CLAIM_RE = re.compile(r"(?:确认|提交|执行)按钮|点击.{0,4}(?:确认|提交|执行)")
-_QUOTED_VALUE_RE = re.compile(r"[「『“\"'`]([^」』”\"'`]{2,80})[」』”\"'`]")
-
-
-def _quoted_values(text: str) -> list[str]:
-    return [m.group(1).strip() for m in _QUOTED_VALUE_RE.finditer(text or "") if m.group(1).strip()]
-
-
-def _normalize_control_context(text: str) -> str:
-    quoted = _quoted_values(text or "")
-    context = quoted[-1] if quoted else (text or "")
-    context = re.sub(r"[「『“\"'`].*$", "", context).strip()
-    context = re.sub(r"(当前|该|这个|此|下拉|搜索框|输入框|框|列表|中的?|里的?|精确|匹配)", "", context)
-    context = re.sub(r"\s+", "", context)
-    return context
-
-
-_TRAILING_FIELD_RE = re.compile(r"(?:以|来)(?:选择|确认|选定|设置|完成)(?P<tail>[^，。;；「『]{2,24})")
-
-
-def _trailing_field_context(instruction: str, start: int) -> str:
-    """「点击候选…『X』以选择<字段>」式指令把字段名放在尾部——前置 context 缺失时从尾部提取，
-    让同字段的重复点击能被守卫识别（多选项重点击可能取消选中，回归 20260612_205558）。
-    纯动词尾巴（「以完成选定」）不算字段名。"""
-    m = _TRAILING_FIELD_RE.search(instruction[start:] if start < len(instruction) else "")
-    if not m:
-        return ""
-    context = _normalize_control_context(m.group("tail"))
-    return "" if context in ("", "选定", "选择", "确认", "操作") else context
-
-
-def _clicked_option_detail(instruction: str) -> Optional[tuple[str, str]]:
-    match = _CLICKED_OPTION_DETAIL_RE.search(instruction or "")
-    if not match:
-        fallback = _CLICKED_OPTION_RE.search(instruction or "")
-        if not fallback:
-            return None
-        return fallback.group(1).strip(), _trailing_field_context(instruction, fallback.end())
-    value = match.group("value").strip()
-    context = _normalize_control_context(match.group("context"))
-    if not context:
-        context = _trailing_field_context(instruction, match.end())
-    return value, context
-
-
-def _typed_value_in_context(instruction: str, value: str, context: str) -> bool:
-    if "输入" not in (instruction or "") or value not in instruction:
-        return False
-    prefix = instruction.split("输入", 1)[0]
-    return _normalize_control_context(prefix) == context
-
-
-def _clicked_dropdown_field_context(instruction: str) -> str:
-    match = _CLICK_DROPDOWN_FIELD_RE.search(instruction or "")
-    if not match:
-        return ""
-    return _normalize_control_context(match.group("context"))
-
-
-def _guard_exact_dropdown_target(plan: _PlanResult, milestone: Milestone) -> _PlanResult:
-    """Repair a narrow class of searchable-dropdown hallucinations.
-
-    Vision models sometimes click the closest visible option even when the milestone's
-    success condition names a different exact value. If the planned clicked option is
-    similar to, but not exactly, a quoted target in the success condition, prefer typing
-    the target to filter the dropdown. This leaves normal candidate clicks untouched.
-    """
-    match = _CLICKED_OPTION_RE.search(plan.instruction or "")
-    if not match:
-        return plan
-    clicked = match.group(1).strip()
-    targets = _quoted_values(milestone.success_condition)
-    if not targets or clicked in targets:
-        return plan
-
-    best = max(targets, key=lambda t: SequenceMatcher(None, clicked, t).ratio())
-    if SequenceMatcher(None, clicked, best).ratio() < 0.55:
-        return plan
-
-    plan.instruction = f"在当前下拉搜索框中输入「{best}」"
-    plan.summary = (
-        f"{plan.summary}；候选「{clicked}」与目标「{best}」不完全一致，改为先输入目标全文过滤"
-    )
-    return plan
-
-
-def _repeated_candidate_click(
-    instruction: str, milestone_id: Optional[str], history: list[PolicyTurn]
-) -> Optional[str]:
-    """Detect the dropdown re-selection loop signature (20260612_184401).
-
-    A candidate click closes the list; the box keeps the chosen text (still with the
-    search icon), which the checker sometimes misreads as "not selected yet". The planner
-    then obeys missing_evidence and clicks again — REOPENING the list and making the
-    misjudgment true for another round (4 wasted turns live; prompt rules alone did not
-    break the lock: 0/10 with the checker text asserting the list is open).
-
-    Signature: the planned instruction clicks candidate X while an already-EXECUTED turn
-    of the SAME milestone clicked candidate X, with no re-typing of X into the dropdown
-    in between (re-typing reopens the list, making a follow-up click legitimate).
-    Returns X when the signature matches, else None.
-    """
-    current = _clicked_option_detail(instruction)
-    if not current:
-        return None
-    clicked, current_context = current
-    if not current_context:
-        return None
-    last_click_idx = None
-    for i, t in enumerate(history):
-        if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
-            continue
-        detail = _clicked_option_detail(t.supervisor.instruction or "")
-        if detail and detail[0] == clicked and detail[1] == current_context:
-            last_click_idx = i
-    if last_click_idx is None:
-        return None
-    for t in history[last_click_idx + 1:]:
-        if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
-            continue
-        instr = t.supervisor.instruction or ""
-        if _typed_value_in_context(instr, clicked, current_context):
-            return None
-    return clicked
-
-
-def _reopens_selected_dropdown(
-    instruction: str, milestone_id: Optional[str], history: list[PolicyTurn]
-) -> Optional[tuple[str, str]]:
-    """Detect attempts to reopen a dropdown field after its candidate was selected.
-
-    This is the sibling of `_repeated_candidate_click`: some plans do not click the
-    same candidate again directly; they first click the filled input/search box to
-    reopen the candidate list. The guard only fires when the field context matches a
-    prior executed candidate click in the same milestone.
-    """
-    context = _clicked_dropdown_field_context(instruction)
-    if not context:
-        return None
-    last_click_idx = None
-    last_value = ""
-    for i, t in enumerate(history):
-        if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
-            continue
-        detail = _clicked_option_detail(t.supervisor.instruction or "")
-        if detail and detail[1] == context:
-            last_click_idx = i
-            last_value = detail[0]
-    if last_click_idx is None:
-        return None
-    for t in history[last_click_idx + 1:]:
-        if not (t.executed and t.supervisor and t.supervisor.milestone_id == milestone_id):
-            continue
-        if _typed_value_in_context(t.supervisor.instruction or "", last_value, context):
-            return None
-    return context, last_value
 
 
 def run_checker(
@@ -2005,29 +1031,7 @@ def run_checker(
             ]
 
     _strip_progress_evidence(result)
-    result = _apply_route_identity_checker_guard(result, milestone, observation)
     result = _apply_required_group_checker_guard(result, milestone, observation)
-
-    claims_text = f"{result.reason} {result.summary} " + " ".join(result.missing_evidence)
-    if result.status == "in_progress" and not _is_retry and _BUTTON_CLAIM_RE.search(claims_text):
-        print("  [SingleCheck] 提到了确认/提交/执行按钮，重核按钮是否真实可见...")
-        result = run_checker(
-            milestone, observation, history,
-            app_name=app_name, task_type=task_type, constraints=constraints,
-            extra=(
-                "你刚才提到了确认/提交/执行按钮。请重新核对当前截图：只有按钮在截图中真实可见，"
-                "且当前子目标明确要求点击它时，才可以把按钮写进 reason/summary/missing_evidence。"
-                "如果当前截图没有这类按钮，不要提按钮，也不要要求点击按钮；只根据目标值、目标状态、"
-                "成功提示或结果区域是否可见来判断。"
-            ),
-            _is_retry=True,
-            prompts=prompts,
-            check_knowledge=check_knowledge,
-            context_reports=context_reports,
-        )
-        _strip_progress_evidence(result)
-        result = _apply_route_identity_checker_guard(result, milestone, observation)
-        result = _apply_required_group_checker_guard(result, milestone, observation)
 
     # Validate a done verdict in two stages, because the retry and the force-stuck
     # play different roles:
@@ -2078,7 +1082,6 @@ def run_checker(
             context_reports=context_reports,
         )
         _strip_progress_evidence(result)
-        result = _apply_route_identity_checker_guard(result, milestone, observation)
         result = _apply_required_group_checker_guard(result, milestone, observation)
     if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
@@ -2255,53 +1258,6 @@ def run_planner(
         trace_sink=context_reports,
         trace_label="planner",
     )
-    plan = _guard_native_select_plan(plan, milestone, check, observation)
-    plan = _advance_native_multiselect_plan(plan, milestone, observation)
-    plan = _guard_named_field_substitution_plan(plan, milestone, check, observation)
-    plan = _guard_stale_text_filter_plan(plan, milestone, check, observation)
-    plan = _guard_exact_dropdown_target(plan, milestone)
-    # Selection re-entry loop breaker: clicking an already-clicked candidate again
-    # (without re-typing/searching in between) often means the checker misread an
-    # already-selected field as incomplete. Re-invoke once with corrective context;
-    # `extra` doubles as the recursion brake (a corrective call won't re-fire).
-    if not extra:
-        repeated = _repeated_candidate_click(plan.instruction, milestone.id, history)
-        if repeated:
-            print(f"  [Planner] 候选「{repeated}」此前已点击执行过，疑似重选已完成的下拉框，纠偏重试...")
-            return run_planner(
-                milestone, check, observation, history,
-                constraints=constraints,
-                extra=(
-                    f"你计划点击的候选/选项「{repeated}」在之前轮次已经点击执行过。"
-                    "请重新只看当前截图：只有当前仍明确显示可选候选列表、且该候选尚未呈现已选状态时，才再次点击。"
-                    "若对应字段/控件已经显示目标值、已选标记或完整选择结果，该字段通常已完成；"
-                    "不要为了确认已选项而重新打开或重复点击它，直接处理其他真正未完成字段。"
-                    "若该控件允许多选，重复点击已选项可能会取消选中；看到已选标记时应继续下一步，"
-                    "除非任务明确要求取消该项。"
-                ),
-                app_knowledge=app_knowledge,
-                elements_knowledge=elements_knowledge,
-                prompts=prompts,
-                context_reports=context_reports,
-            )
-        reopened = _reopens_selected_dropdown(plan.instruction, milestone.id, history)
-        if reopened:
-            context, value = reopened
-            print(f"  [Planner] 字段「{context}」此前已选择候选「{value}」，疑似重开已完成的下拉框，纠偏重试...")
-            return run_planner(
-                milestone, check, observation, history,
-                constraints=constraints,
-                extra=(
-                    f"你计划点击字段/控件「{context}」以展开或确认候选，但它此前已经点击候选「{value}」执行过。"
-                    "请重新只看当前截图：若该控件附近没有候选列表、且控件已显示目标值或已选状态，它通常已经完成。"
-                    "不要为了确认已选项而重新打开该控件；这可能把已完成字段重新置为编辑态。"
-                    "请直接处理当前截图中其他真正未完成的字段。"
-                ),
-                app_knowledge=app_knowledge,
-                elements_knowledge=elements_knowledge,
-                prompts=prompts,
-                context_reports=context_reports,
-            )
     return _normalize_picker_plan_direction(plan)
 
 

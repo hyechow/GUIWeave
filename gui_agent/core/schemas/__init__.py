@@ -589,6 +589,10 @@ class Milestone(BaseModel):
         default="change",
         description="mutation 的幂等语义；ensure 可接受既有终态，change 要求本轮目标写入。",
     )
+    requires_commit: bool = Field(
+        default=False,
+        description="目标写入后是否必须经过独立持久化提交边界。",
+    )
     target_controls: list[str] = Field(
         default_factory=list,
         description="该执行单元必须命中的字段、控件或集合能力名称。",

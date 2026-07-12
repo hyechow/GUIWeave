@@ -61,17 +61,16 @@ def _rec(name: str, *, failed: bool) -> RunRecord:
     )
 
 
-def test_recovered_kickback_does_not_inherit_superseded_failure():
-    """Regression (task-113 live run 20260625_151340 scored 0 with the right answer): a kickback
-    re-plans *because* a re-plannable step failed; the loop hot-swaps to a fresh Interpreter that
+def test_recovered_kickback_does_not_inherit_superseded_failure(monkeypatch):
+    """A kickback re-plans because a re-plannable step failed; the loop hot-swaps to an interpreter that
     inherits the prior run_log. If that inherited log keeps the superseded ✗ record, `interp.failed`
     stays True forever and `orchestration_result` reports goal_completed=False even though the
     re-decompose recovered and finish produced the answer. The loop now drops failed records from
     the inherited run_log (loop.py: `[r for r in _prev_log if not r.result.failed]`)."""
     prev_log = [
-        _rec("进入 All Reviews 页面", failed=False),
-        _rec("用 Product 列筛选评论", failed=False),
-        _rec("筛出评分<=3 的评论者昵称", failed=True),  # the data_query that triggered the kickback
+        _rec("进入记录列表", failed=False),
+        _rec("按目标字段筛选记录", failed=False),
+        _rec("查询符合条件的记录", failed=True),
     ]
 
     # WITHOUT the fix: inheriting the raw log keeps the ✗ → failed=True → goal_completed=False.
@@ -82,9 +81,13 @@ def test_recovered_kickback_does_not_inherit_superseded_failure():
     # WITH the fix: the loop filters failed records before inheritance.
     recovered = Interpreter(Program(goal="g", statements=[Finish(message="done")]))
     recovered.run_log = [r for r in prev_log if not r.result.failed]
-    recovered.run_log.append(_rec("逐条钻取后筛出评分<=3 的评论者昵称", failed=False))  # redecompose's success
+    recovered.run_log.append(_rec("逐条读取后查询符合条件的记录", failed=False))
     assert recovered.failed is False
 
     ctx = PolicyContext(goal="g", supervisor_policy_name="milestone", action_policy_name="action")
+    monkeypatch.setattr(
+        "gui_agent.core.llm.output.compose_orchestration_reply",
+        lambda *_args, **_kwargs: "completed",
+    )
     result = orchestration_result(ctx, recovered, "完成", current=None)
     assert result["goal_completed"] is True

@@ -37,11 +37,8 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.supervisor.milestone import policy as policy_module
-from gui_agent.core.supervisor.milestone.policy import (
-    _resolved_plan_action_family,
-    MilestoneSupervisorPolicy,
-)
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
     rendered_target_evidence,
@@ -168,15 +165,6 @@ def _lifecycle_closed_case(case: dict[str, Any]) -> None:
     signal = dispatched.action_signal
     assert signal is not None
     assert signal.outcome == case["expected"]["outcome"]
-
-
-def _role_family_case(case: dict[str, Any]) -> None:
-    role, family = _resolved_plan_action_family(
-        _PlanResult.model_validate(case["plan"]),
-        Milestone.model_validate(case["milestone"]),
-    )
-    assert role == case["expected"]["role"]
-    assert family == case["expected"]["family"]
 
 
 def _native_action_case(case: dict[str, Any]) -> None:
@@ -340,7 +328,6 @@ def run_replay() -> list[str]:
         "lifecycle_monotonic": _lifecycle_monotonic_case,
         "checker_feedback": _checker_feedback_case,
         "lifecycle_closed": _lifecycle_closed_case,
-        "role_family": _role_family_case,
         "native_action": _native_action_case,
         "control_grounding": _legacy_control_grounding_case,
         "browser_plan_schema": _browser_plan_schema_case,

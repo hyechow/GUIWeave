@@ -262,7 +262,6 @@ class _ReplanResult(BaseModel):
     drag_current_value: Optional[int] = None
     drag_target_value: Optional[int] = None
     escalation_message: str = Field(default="")
-    can_degrade_to_collection: bool = Field(default=False)
 
     @field_validator("atomic_role", mode="before")
     @classmethod

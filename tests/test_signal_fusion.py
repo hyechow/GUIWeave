@@ -4,12 +4,21 @@ from gui_agent.core.run.execution_signals import (
     ExecutionContract,
     claim,
 )
-from gui_agent.core.schemas import Milestone
-from gui_agent.core.supervisor.milestone.policy import _resolved_plan_action_family
+from gui_agent.core.schemas import (
+    BaseAction,
+    BaseActionDecision,
+    Milestone,
+    PolicyTurn,
+    SupervisorStep,
+)
+from gui_agent.core.supervisor.milestone.action_protocol import (
+    action_metadata,
+    is_commit_turn,
+)
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult
 
 
-def test_commit_role_normalizes_input_family_as_planner_metadata():
+def test_action_metadata_preserves_structured_commit_role_and_family():
     plan = _PlanResult(
         instruction="按回车提交当前字段",
         summary="submit",
@@ -17,7 +26,7 @@ def test_commit_role_normalizes_input_family_as_planner_metadata():
         action_family="input",
     )
 
-    role, family = _resolved_plan_action_family(
+    role, family = action_metadata(
         plan,
         Milestone(
             id="filter",
@@ -29,10 +38,10 @@ def test_commit_role_normalizes_input_family_as_planner_metadata():
     )
 
     assert role == "commit"
-    assert family == "commit"
+    assert family == "input"
 
 
-def test_write_role_normalizes_family_as_planner_metadata():
+def test_action_metadata_preserves_structured_write_role_and_family():
     plan = _PlanResult(
         instruction="在目标字段输入 value",
         summary="write",
@@ -40,7 +49,7 @@ def test_write_role_normalizes_family_as_planner_metadata():
         action_family="commit",
     )
 
-    role, family = _resolved_plan_action_family(
+    role, family = action_metadata(
         plan,
         Milestone(
             id="write",
@@ -52,7 +61,42 @@ def test_write_role_normalizes_family_as_planner_metadata():
     )
 
     assert role == "write"
-    assert family == "input"
+    assert family == "commit"
+
+
+def test_commit_detection_uses_structured_role_not_instruction_vocabulary():
+    milestone = Milestone(
+        id="m",
+        name="perform mutation",
+        description="",
+        success_condition="state is durable",
+        kind="action",
+    )
+    turn = PolicyTurn(
+        index=1,
+        observation_source="test",
+        supervisor=SupervisorStep(
+            should_act=True,
+            instruction="trigger boundary",
+            stop=False,
+            goal_completed=False,
+            summary="",
+            milestone_id="m",
+            atomic_role="commit",
+        ),
+        action_decision=BaseActionDecision(
+            action=BaseAction(action_type="tap", x=1, y=1)
+        ),
+        executed=True,
+    )
+
+    assert is_commit_turn(turn, milestone) is True
+    assert is_commit_turn(
+        turn.model_copy(update={
+            "supervisor": turn.supervisor.model_copy(update={"atomic_role": "prepare"})
+        }),
+        milestone,
+    ) is False
 
 
 def test_filter_with_result_completes_when_applied_even_if_result_is_zero():

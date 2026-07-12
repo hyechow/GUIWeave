@@ -25,6 +25,7 @@ def _notify_milestone() -> Milestone:
         ),
         success_condition="页面显示成功提示或评论历史中新增了对应备注",
         kind="action",
+        target_controls=["Comment", "Notify Customer by Email"],
     )
 
 
@@ -195,6 +196,7 @@ def test_acquire_gate_still_matches_standalone_status_control() -> None:
         description="",
         success_condition="Status 已设为 Processing",
         kind="action",
+        target_controls=["Status"],
     )
     plan = target_affordance_scroll_plan(_order_status_control(), ms)
     assert plan is not None
@@ -208,6 +210,7 @@ def _description_milestone() -> Milestone:
         description="",
         success_condition="页面显示保存成功提示或返回列表",
         kind="action",
+        target_controls=["Content", "Short Description"],
     )
 
 
@@ -218,6 +221,7 @@ def _description_without_section_milestone() -> Milestone:
         description="",
         success_condition="页面显示保存成功提示或返回列表",
         kind="action",
+        target_controls=["Short Description"],
     )
 
 
@@ -281,7 +285,7 @@ def test_target_section_acquire_plan_stays_out_when_target_editor_visible() -> N
     assert plan is None
 
 
-def test_target_section_acquire_plan_expands_sole_visible_section_for_unrendered_field() -> None:
+def test_target_section_acquire_plan_does_not_guess_undeclared_section() -> None:
     plan = target_section_acquire_plan(
         [{
             "kind": "section_toggle",
@@ -292,9 +296,7 @@ def test_target_section_acquire_plan_expands_sole_visible_section_for_unrendered
         _description_without_section_milestone(),
     )
 
-    assert plan is not None
-    assert "Content" in plan.instruction
-    assert "展开" in plan.instruction
+    assert plan is None
 
 
 def test_target_section_acquire_plan_does_not_guess_among_multiple_sections() -> None:
@@ -380,6 +382,7 @@ def test_named_section_below_wins_over_visible_same_name_fields() -> None:
             description="在 Configurations 区域生成 green + XXXL 组合并保存",
             success_condition="Configurations 集合包含 green + XXXL 组合",
             kind="action",
+            target_controls=["Configurations", "Size"],
         ),
     )
 
@@ -404,6 +407,7 @@ def test_policy_named_section_precedes_flat_target_affordance(monkeypatch) -> No
         description="在 Configurations 区域生成 green + XXXL 组合并保存",
         success_condition="Configurations 集合包含 green + XXXL 组合",
         kind="action",
+        target_controls=["Configurations", "Color"],
     )
     policy = policy_mod.MilestoneSupervisorPolicy()
     policy.reseed(milestone)

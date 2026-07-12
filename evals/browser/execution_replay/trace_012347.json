@@ -3,7 +3,7 @@
   "source": {
     "run": "20260711_012347",
     "task": "549",
-    "description": "Applied filter evidence was present, but a free-text parser miss caused duplicate commit suppression to be counted as executor failure.",
+    "description": "Applied filter evidence must satisfy the declared filter-state contract without checker inference.",
     "turns": {
       "4": "099643080f10d1fe6f3e8eaa98327fd63cb96c85",
       "5": "9e7bd7546b58c479eece0dc5e6e802da857fae7c",
@@ -22,6 +22,7 @@
         "description": "在 Attribute Code 列用精确值'size'筛选（读取字段：match_count）",
         "success_condition": "Attribute Code 精确筛选已应用，records-found 计数可读",
         "kind": "filter",
+        "target_values": {"Attribute Code": "size"},
         "returns": ["match_count"]
       },
       "observation": {

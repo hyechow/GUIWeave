@@ -105,6 +105,7 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
         success_condition="member fields match and the resource is saved",
         kind="action",
         mutation_mode="ensure",
+        requires_commit=True,
         target_controls=["options_collection"],
         target_values={
             "Admin Description": "XXXL",
@@ -569,7 +570,11 @@ def test_legacy_run_result_infers_confirmed_status():
     assert result.verified is True
 
 
-def test_final_result_does_not_report_unverified_dispatch_as_success():
+def test_final_result_does_not_report_unverified_dispatch_as_success(monkeypatch):
+    monkeypatch.setattr(
+        "gui_agent.core.llm.output.compose_orchestration_reply",
+        lambda *_args, **_kwargs: "result remains unverified",
+    )
     interp = Interpreter(Program(goal="保存记录", statements=[Finish(message="done")]))
     interp.run_log = [
         RunRecord(

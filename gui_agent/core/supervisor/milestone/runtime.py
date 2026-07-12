@@ -15,47 +15,6 @@ MAX_RETRIES = 3
 EARLY_FEASIBILITY_AT = 2
 MAX_SCROLL_PER_MILESTONE = 3
 
-_SEARCH_FILTER_MILESTONE_MARKERS = (
-    "搜索",
-    "筛选",
-    "过滤",
-    "查询",
-    "search",
-    "filter",
-)
-_SUBMIT_BY_TYPING_MARKERS = ("回车", "enter")
-
-
-def _type_only_search_filter_pending_submit(milestone: Milestone, history: list[PolicyTurn]) -> bool:
-    """True when a search/filter milestone was just filled but not submitted.
-
-    Some grids keep their old rows/count visible after typing into a filter input until the user
-    clicks Search/Apply or presses Enter. Vision-only checking can mistake that stale count for a
-    refreshed result. Keep this guard structural and narrow: it only fires for search/filter-shaped
-    milestones whose latest executed action in the same milestone is a plain `type`.
-    """
-    text = f"{milestone.name} {milestone.description} {milestone.success_condition}".lower()
-    if not any(marker in text for marker in _SEARCH_FILTER_MILESTONE_MARKERS):
-        return False
-    same_ms = [
-        t for t in history
-        if (
-            t.executed
-            and t.supervisor
-            and t.supervisor.milestone_id == milestone.id
-            and t.action_decision
-        )
-    ]
-    if not same_ms:
-        return False
-    last = same_ms[-1]
-    action = last.action_decision.action
-    if action.action_type != "type":
-        return False
-    action_text = f"{last.supervisor.instruction or ''} {action.description or ''}".lower()
-    return not any(marker in action_text for marker in _SUBMIT_BY_TYPING_MARKERS)
-
-
 class _Timer:
     """Context manager: time a named section and optionally record token deltas."""
 
