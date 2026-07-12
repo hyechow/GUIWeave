@@ -41,16 +41,16 @@ finish(f"最终答复,引用 {v['字段']}")                       # 产出答�
 
 ## 示例
 
-目标:"把 size 28 的 Sahara leggings 全部降价 13.5%"(变体 SKU 形如 `WP02-28-Blue`,尺寸编码在 SKU 中段)
+目标:"把目标集合中的所有子记录数值降低 13.5%"
 ```python
-navigate("进入 Catalog > Products 列表页", sc="页面显示产品网格和搜索框")
-filter("在搜索框输入 'Sahara' 并提交", sc="列表显示含 Sahara 的记录(非0条)")
-for row in collect("搜索结果中 SKU 含 '-28-' 的 Simple Product 变体行", returns=["sku", "action_url"]):
-    d = navigate(f"打开变体 {row['sku']} 的编辑页", sc="已进入该变体编辑页",
-                 returns=["current_price"], read_spec="current_price: Price 输入框中的数值")
-    new_price = round(float(d["current_price"]) * 0.865, 2)
-    action(f"将 Price 更新为 {new_price} 并点击 Save", sc="显示 You saved the product 成功提示")
-finish("已完成所有 size 28 Sahara leggings 变体的调价")
+navigate("进入记录列表页", sc="页面显示记录网格和搜索控件")
+filter("输入任务给定的检索值并提交", sc="检索条件已应用且列表已刷新")
+for row in collect("属于目标集合的子记录", returns=["record_id", "detail_url"]):
+    d = navigate(f"打开记录 {row['record_id']} 的详情页", sc="已进入该记录详情页",
+                 returns=["current_value"], read_spec="current_value: 目标数值字段的当前值")
+    new_value = round(float(d["current_value"]) * 0.865, 2)
+    action(f"将目标数值更新为 {new_value} 并保存", sc="显示保存成功提示")
+finish("已完成目标集合中所有子记录的数值更新")
 ```
 
 目标:"总共有多少条评论?"
