@@ -10,9 +10,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from gui_agent.core.run.execution_signals import (
+    CompletionEvaluator,
     EvidenceClaim,
     ExecutionContract,
-    SignalFusionArbiter,
 )
 
 
@@ -21,7 +21,7 @@ CASES = Path(__file__).with_name("cases.json")
 
 def main() -> int:
     cases = json.loads(CASES.read_text())
-    arbiter = SignalFusionArbiter()
+    evaluator = CompletionEvaluator()
     failures: list[str] = []
     for case in cases:
         scope = case["scope"]
@@ -37,9 +37,14 @@ def main() -> int:
                 authoritative_for=((item["domain"],) if authoritative else ()),
                 **item,
             ))
-        decision = arbiter.decide(contract, claims, scope=scope)
+        decision = evaluator.decide(contract, claims, scope=scope)
         got = {
-            "action": decision.action,
+            "action": {
+                "satisfied": "complete",
+                "pending": "continue",
+                "contradicted": "replan",
+                "delegated": "delegate",
+            }[decision.status],
             "completion_status": decision.completion_status,
         }
         if got != case["expected"]:
