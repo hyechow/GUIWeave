@@ -1,4 +1,4 @@
-"""Vision-only browser action policy: screenshot + instruction -> one Action.
+"""Browser action policy with vision interaction and native-control bridging.
 
 Mirrors the iphone ``StructuredOutputPolicy`` LLM machinery — same config via
 ``gui_agent.core.config.resolve_llm_config('action_policy')``, same structured-output
@@ -8,9 +8,8 @@ with a desktop pointer, output ONE action within the neutral action vocabulary
 (tap / type / clear_text / press_enter / scroll / drag / navigate / back /
 new_tab / select_tab / close_tab / select_option / stop).
 
-VISION-ONLY: the screenshot is sent as-is (optionally downscaled if very large) —
-it is NOT the iphone 2x retina image, so ``resize_to_logical_png`` is deliberately
-NOT used. No iPhone picker, no home-screen / springboard concepts, no DOM.
+Rendered controls are handled from the screenshot. Browser-native controls whose
+interactive surface is absent from the screenshot may use adapter DOM evidence.
 """
 
 from __future__ import annotations
@@ -21,8 +20,12 @@ import re
 from dotenv import load_dotenv
 
 from gui_agent.adapters.browser.actions import BrowserActionDecision
+from gui_agent.adapters.browser.control_grounding import (
+    ground_rendered_action,
+    rendered_target_evidence,
+    resolve_native_control_action,
+)
 from gui_agent.adapters.browser.executor import _range_field_label
-from gui_agent.adapters.browser.option_text import option_text_from_instruction
 from gui_agent.core.policies.base import BaseActionPolicy
 from gui_agent.prompts import load_prompt_text
 
@@ -72,10 +75,6 @@ _UPLOAD_CONTROL_RE = re.compile(
 )
 # instruction 里出现的本地文件绝对路径（supervisor 规则要求把真实路径原样带进 instruction）。
 _FILE_PATH_RE = re.compile(r"(?:/[\w./+~-]+|~/[\w./+~-]+)")
-_SELECT_CONTROL_CUE_RE = re.compile(
-    r"下拉|选择框|筛选框|选项|option|select",
-    re.IGNORECASE,
-)
 # 区间过滤器（From/To）填值：planner 指令里点名了某个「字段 from/to」框。把这条字段命名指令带进
 # type 动作的 description，executor 的聚焦点吸附即可按 DOM 身份（name/label + from/to 角色）
 # 命中相邻同形两框中的正确那个，而不是靠 vision 几乎相同的像素瞎猜。
@@ -83,7 +82,7 @@ _FILL_VERB_RE = re.compile(r"填入|填写|输入|设为|设置为|设置成|set
 
 
 class BrowserActionPolicy(BaseActionPolicy):
-    """Vision-based browser action policy."""
+    """Vision policy for rendered interaction plus narrow native-control hooks."""
 
     name = "browser_vision"
     SYSTEM_PROMPT = SYSTEM_PROMPT
@@ -91,6 +90,68 @@ class BrowserActionPolicy(BaseActionPolicy):
 
     def _prepare_png(self, png_bytes: bytes) -> bytes:
         return _prepare_browser_png(png_bytes)
+
+    def resolve_native_action(
+        self,
+        observation,
+        *,
+        target_control: str = "",
+        target_value: str = "",
+        target_group_id: str = "",
+        action_family: str = "",
+        instruction: str = "",
+    ):
+        decision = resolve_native_control_action(
+            getattr(observation, "form_controls", None),
+            target_control=target_control,
+            target_value=target_value,
+            target_group_id=target_group_id,
+            action_family=action_family,
+            instruction=instruction,
+        )
+        if decision is not None:
+            action = decision.action
+            print(
+                "  [NativeAction] "
+                f"{target_group_id}:{target_control} -> {action.action_type}"
+            )
+        return decision
+
+    def ground_rendered_action(
+        self,
+        decision,
+        observation,
+        *,
+        target_control: str = "",
+        target_value: str = "",
+        target_group_id: str = "",
+        action_family: str = "",
+    ):
+        return ground_rendered_action(
+            decision,
+            getattr(observation, "form_controls", None),
+            target_control=target_control,
+            target_value=target_value,
+            target_group_id=target_group_id,
+            action_family=action_family,
+        )
+
+    def action_evidence_context(
+        self,
+        observation,
+        *,
+        target_control: str = "",
+        target_value: str = "",
+        target_group_id: str = "",
+        action_family: str = "",
+    ) -> str:
+        return rendered_target_evidence(
+            getattr(observation, "form_controls", None),
+            target_control=target_control,
+            target_value=target_value,
+            target_group_id=target_group_id,
+            action_family=action_family,
+        )
 
     def _postprocess(
         self, decision, instruction, *, direction=None, drag_column=None, drag_steps=None
@@ -114,17 +175,15 @@ class BrowserActionPolicy(BaseActionPolicy):
                 )
                 decision = decision.model_copy(update={"action": action})
         if (
-            getattr(action, "action_type", None) == "tap"
-            and _SELECT_CONTROL_CUE_RE.search(getattr(action, "description", "") or "")
+            getattr(action, "action_type", None) in {"tap", "click"}
+            and (instruction or "").strip()
         ):
-            option_text = option_text_from_instruction(
-                f"{instruction or ''}\n{getattr(action, 'description', '') or ''}"
-            )
-            if option_text:
-                action = action.model_copy(
-                    update={"action_type": "select_option", "text": option_text}
-                )
-                decision = decision.model_copy(update={"action": action})
+            # The supervisor instruction is the target contract. Vision models sometimes emit a
+            # generic description such as "execute tap", which strips the label needed by the
+            # executor's DOM text retargeting. Preserve the authoritative instruction while
+            # leaving the model-selected primitive and coordinate untouched.
+            action = action.model_copy(update={"description": instruction.strip()})
+            decision = decision.model_copy(update={"action": action})
         if (
             getattr(action, "action_type", None) == "type"
             and _FILL_VERB_RE.search(instruction or "")

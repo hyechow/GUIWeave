@@ -66,6 +66,13 @@ _SETTLE_CAP_S = 3.0
 # handles long loads).
 _XHR_STALE_S = 2.0
 
+_FORM_VALUE_FINGERPRINT_JS = (
+    "(()=>{const els=[...document.querySelectorAll('input,select,textarea')];"
+    "const vals=els.map(e=>(e.type==='checkbox'||e.type==='radio')?(e.checked?'1':'0')"
+    ":String(e.value??''));"
+    "return els.length+'|'+vals.join('\\u0001');})()"
+)
+
 # A MutationObserver storing the time of the last DOM change on window.__q.t (installed once
 # per document, guarded; re-installs after a navigation wipes window.__q). _SETTLE_RESET sets
 # the baseline to now (called on wait_settled entry, so quiet is measured FROM THE ACTION);
@@ -471,22 +478,17 @@ class PlaywrightDevice:
             return "", ""
 
     def form_state_fingerprint(self) -> str | None:
-        """Short hash of the page's interactive state: every form control's value/checked
-        plus the focused element. The structural progress signal behind Observation.dom_state —
-        filling a form changes this every turn while pixels stay near-identical and the
-        planner's instructions read alike ("在X输入框输入Y"), so the stuck/repetition
-        detectors get ground truth instead of guessing from text similarity. Raw CDP
-        (page.evaluate is broken over connect_over_cdp here). None on any failure."""
-        js = (
-            "(()=>{const els=[...document.querySelectorAll('input,select,textarea')];"
-            "const vals=els.map(e=>(e.type==='checkbox'||e.type==='radio')?(e.checked?'1':'0')"
-            ":String(e.value??''));"
-            "const a=document.activeElement;"
-            "const focus=a?(a.tagName+':'+(a.name||a.id||a.placeholder||'')):'';"
-            "return els.length+'|'+focus+'|'+vals.join('\\u0001');})()"
-        )
+        """Hash form values and checked state, excluding transient focus.
+
+        ``Observation.dom_state`` is a progress signal. Moving focus only proves that a pointer
+        or keyboard action changed the active element; it does not prove that any target value
+        changed. Including focus allowed repeated no-op writes to masquerade as progress.
+        """
         try:
-            res = self._cdp_send("Runtime.evaluate", {"expression": js, "returnByValue": True})
+            res = self._cdp_send(
+                "Runtime.evaluate",
+                {"expression": _FORM_VALUE_FINGERPRINT_JS, "returnByValue": True},
+            )
             val = (res.get("result", {}) or {}).get("value")
         except Exception:
             return None
