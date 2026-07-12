@@ -163,7 +163,7 @@ def main(
             initial_png = initial_obs.png_bytes
             initial_tables = getattr(initial_obs, "tables", None)
             # Map the url's host to a known app name (semantic site) — the IP itself is opaque
-            # to router/decompose, but "RoboTeam" / "shopping_admin" carries meaning.
+            # to router/decompose, while an explicit application identity carries meaning.
             if cur_url:
                 cur_site = match_app_by_url(cur_url, bundle.platform) or ""
             if cur_url or cur_site:

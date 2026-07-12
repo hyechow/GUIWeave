@@ -29,9 +29,7 @@ if TYPE_CHECKING:
 _POLICIES: dict[str, type] = {
     StructuredOutputPolicy.name: StructuredOutputPolicy,
 }
-_SUPERVISORS: dict[str, type] = {
-    MilestoneSupervisorPolicy.name: MilestoneSupervisorPolicy,
-}
+_SUPERVISOR_NAMES: tuple[str, ...] = (MilestoneSupervisorPolicy.name,)
 
 
 def _build_action_policy(name: str) -> "ActionPolicy":
@@ -43,11 +41,14 @@ def _build_action_policy(name: str) -> "ActionPolicy":
 
 
 def _build_supervisor(name: str) -> "SupervisorPolicy":
-    try:
-        return _SUPERVISORS[name]()
-    except KeyError as exc:
-        choices = ", ".join(sorted(_SUPERVISORS))
-        raise ValueError(f"未知监督者 {name!r}，可选：{choices}") from exc
+    from gui_agent.adapters.iphone.supervisor.milestone.prompts import (
+        IPHONE_MILESTONE_PROMPTS,
+    )
+
+    if name == MilestoneSupervisorPolicy.name:
+        return MilestoneSupervisorPolicy(prompts=IPHONE_MILESTONE_PROMPTS)
+    choices = ", ".join(_SUPERVISOR_NAMES)
+    raise ValueError(f"未知监督者 {name!r}，可选：{choices}")
 
 
 def _make_hud() -> "AbstractContextManager":
@@ -146,5 +147,5 @@ def build_iphone_bundle(*, backend: Optional[str] = None, **_ignored: object) ->
         default_action_policy=StructuredOutputPolicy.name,
         default_supervisor=MilestoneSupervisorPolicy.name,
         action_policy_choices=tuple(sorted(_POLICIES)),
-        supervisor_choices=tuple(sorted(_SUPERVISORS)),
+        supervisor_choices=_SUPERVISOR_NAMES,
     )

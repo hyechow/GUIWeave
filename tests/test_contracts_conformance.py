@@ -95,24 +95,27 @@ def test_recon_capabilities_conform():
 
 
 def test_milestone_prompts_injected_from_adapter():
-    # Semantic-neutrality seam: the iphone-flavored milestone prompts live in the
-    # ADAPTER and are injected into the neutral supervisor framework; core holds only
-    # the MilestonePrompts shape. Construction falls back to the iphone set (lazy).
+    # Semantic-neutrality seam: platform prompts are injected by the adapter factory;
+    # a direct core construction stays platform-neutral.
     from gui_agent.core.supervisor.milestone import MilestonePrompts, MilestoneSupervisorPolicy
+    from gui_agent.adapters.iphone.factory import _build_supervisor
     from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
 
-    sup = MilestoneSupervisorPolicy()
-    assert isinstance(sup._prompts, MilestonePrompts)
-    assert sup._prompts is IPHONE_MILESTONE_PROMPTS
+    neutral = MilestoneSupervisorPolicy()
+    assert isinstance(neutral._prompts, MilestonePrompts)
+    assert neutral._prompts is not IPHONE_MILESTONE_PROMPTS
+
+    iphone = _build_supervisor(MilestoneSupervisorPolicy.name)
+    assert iphone._prompts is IPHONE_MILESTONE_PROMPTS
     assert all(
-        getattr(sup._prompts, f)
+        getattr(iphone._prompts, f)
         for f in (
             "decompose", "single_checker", "check_kind_sections", "check_section_default",
             "check_section_converge", "loop_frame", "plan", "loop_scroll", "replan",
             "stop_condition_patch",
         )
     )
-    assert sup._prompts.decompose.startswith("你是 iPhone")  # iphone strings preserved verbatim
+    assert iphone._prompts.decompose.startswith("你是 iPhone")
 
 
 def test_milestone_vision_prompts_keep_runtime_data_out_of_templates():
