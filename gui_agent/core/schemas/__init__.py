@@ -156,10 +156,18 @@ class RunState(BaseModel):
 
     status: Optional[RunStatus] = Field(
         default=None,
-        description="本次运行的最终状态：completed=目标完成，interrupted=用户中止，stopped=未完成停止",
+        description="本次运行的最终状态：completed=执行到终态，interrupted=用户中止，stopped=中途停止",
     )
     stop_reason: str = Field(default="", description="本次运行的最终停止原因")
+    execution_completed: bool = Field(
+        default=False,
+        description="程序是否已执行到终态；可为 true 而业务效果仍未确认",
+    )
     goal_completed: bool = Field(default=False, description="本次运行是否确认完成用户目标")
+    goal_status: Literal["confirmed", "accepted_unverified", "incomplete"] = Field(
+        default="incomplete",
+        description="目标效果确认级别：confirmed、accepted_unverified 或 incomplete",
+    )
     output: Optional[str] = Field(default=None, description="最终输出")
 
 

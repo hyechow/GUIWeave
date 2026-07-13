@@ -183,13 +183,42 @@ def test_write_final_run_state_writes_only_structured_run(tmp_path):
     assert data["run"] == {
         "status": "interrupted",
         "stop_reason": "用户按 ESC 中止 agent-loop",
+        "execution_completed": False,
         "goal_completed": False,
+        "goal_status": "incomplete",
         "output": "已中止",
     }
     assert "output" not in data
     assert "stop_reason" not in data
     assert "run_status" not in data
+    assert "execution_completed" not in data
     assert "goal_completed" not in data
+    assert "goal_status" not in data
+
+
+def test_run_state_preserves_completed_execution_with_unverified_outcome(tmp_path):
+    path = tmp_path / "context.json"
+    path.write_text('{"turns": []}', encoding="utf-8")
+
+    write_final_run_state(
+        path,
+        {
+            "stop_reason": "program finished",
+            "execution_completed": True,
+            "goal_completed": False,
+            "goal_status": "accepted_unverified",
+        },
+        "终态动作已派发，结果未验证",
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8"))["run"] == {
+        "status": "completed",
+        "stop_reason": "program finished",
+        "execution_completed": True,
+        "goal_completed": False,
+        "goal_status": "accepted_unverified",
+        "output": "终态动作已派发，结果未验证",
+    }
 
 
 def test_milestone_supervisor_exposes_runtime_state_snapshot():

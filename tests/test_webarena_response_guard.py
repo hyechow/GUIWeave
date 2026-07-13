@@ -9,6 +9,7 @@ from gui_agent.adapters.browser.webarena import (
     _guess_webarena_task_type,
     _preflight_failure_response,
     _run_official_eval,
+    _synthesize_response,
     _official_eval_summary,
     _task_for_eval_compat,
     _warn_if_pre_loop_page_changed,
@@ -171,6 +172,65 @@ def test_completed_mutate_response_trusts_runtime_completion_without_recounting_
         retrieved_data=None,
         error_details=None,
     )
+
+
+def test_completed_mutate_response_accepts_terminal_dispatch_without_claiming_verification():
+    result = {
+        "task_type": "MUTATE",
+        "execution_completed": True,
+        "goal_completed": False,
+        "goal_status": "accepted_unverified",
+        "result_summary": "终态保存动作已可靠派发，结果反馈不可用",
+    }
+    resp = _completed_mutate_response(
+        "Add a new product variant",
+        result,
+    )
+
+    assert resp == WAResponse(
+        task_type="MUTATE",
+        status="SUCCESS",
+        retrieved_data=None,
+        error_details=None,
+    )
+    assert _finalize_response(
+        resp,
+        goal_completed=False,
+        execution_completed=True,
+        goal_status="accepted_unverified",
+    ).status == "SUCCESS"
+
+
+def test_unverified_mutate_without_completed_execution_is_not_accepted():
+    resp = _completed_mutate_response(
+        "Add a new product variant",
+        {
+            "task_type": "MUTATE",
+            "execution_completed": False,
+            "goal_completed": False,
+            "goal_status": "accepted_unverified",
+        },
+    )
+
+    assert resp is None
+
+
+def test_live_180142_terminal_save_bypasses_second_llm_judgement():
+    resp = _synthesize_response(
+        "Add a new size XXXL to green Minerva LumaTech V-Tee",
+        {
+            "task_type": "browser",
+            "execution_completed": True,
+            "goal_completed": False,
+            "goal_status": "accepted_unverified",
+            "stop_reason": "match_count：1；match_count：16；match_count：1",
+            "result_summary": "终态保存动作已可靠派发，结果未验证",
+        },
+    )
+
+    assert resp.status == "SUCCESS"
+    assert resp.task_type == "MUTATE"
+    assert resp.retrieved_data is None
 
 
 def test_completed_mutate_response_does_not_mask_explicit_failure_text():

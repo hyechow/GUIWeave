@@ -622,7 +622,7 @@ def test_legacy_run_result_infers_confirmed_status():
     assert result.verified is True
 
 
-def test_final_result_does_not_report_unverified_dispatch_as_success(monkeypatch):
+def test_final_result_separates_execution_completion_from_outcome_verification(monkeypatch):
     monkeypatch.setattr(
         "gui_agent.core.llm.output.compose_orchestration_reply",
         lambda *_args, **_kwargs: "result remains unverified",
@@ -646,6 +646,7 @@ def test_final_result_does_not_report_unverified_dispatch_as_success(monkeypatch
 
     result = orchestration_result(context, interp, "done", current=None)
 
+    assert result["execution_completed"] is True
     assert result["goal_completed"] is False
     assert result["goal_status"] == "accepted_unverified"
     assert result["orchestrator"]["accepted_unverified"] is True

@@ -19,6 +19,7 @@ def make_result(
 ) -> dict:
     last_summary = context.turns[-1].supervisor.summary if context.turns else stop_reason
     turns_detail = []
+    execution_completed = any(t.supervisor.goal_completed for t in context.turns)
     accepted_unverified = any(
         getattr(turn.supervisor, "completion_status", "in_progress") == "accepted_unverified"
         for turn in context.turns
@@ -39,16 +40,16 @@ def make_result(
         "goal": context.goal,
         "result_summary": last_summary,
         "stop_reason": stop_reason,
-        "goal_completed": (
-            any(t.supervisor.goal_completed for t in context.turns)
-            and not accepted_unverified
-        ),
+        # Keep execution completion separate from outcome verification. A reliably
+        # dispatched terminal action ends the run without proving its business effect.
+        "execution_completed": execution_completed,
+        "goal_completed": execution_completed and not accepted_unverified,
         "goal_status": (
             "accepted_unverified"
             if accepted_unverified
             else (
                 "confirmed"
-                if any(t.supervisor.goal_completed for t in context.turns)
+                if execution_completed
                 else "incomplete"
             )
         ),
@@ -93,12 +94,13 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
         r.result.completion_status == "accepted_unverified"
         for r in interp.run_log
     )
-    base["goal_completed"] = (
+    execution_completed = (
         (current is None)
         and not interp.failed
         and not finish_incomplete
-        and not accepted_unverified
     )
+    base["execution_completed"] = execution_completed
+    base["goal_completed"] = execution_completed and not accepted_unverified
     base["goal_status"] = (
         "accepted_unverified"
         if accepted_unverified

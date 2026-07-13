@@ -34,7 +34,7 @@ def strip_milestone_runtime_fields(milestones: list[dict]) -> None:
 
 def classify_run_status(result: dict) -> str:
     """Classify a finished run for reports without relying on LLM wording."""
-    if result.get("goal_completed"):
+    if result.get("execution_completed") or result.get("goal_completed"):
         return "completed"
     stop_reason = str(result.get("stop_reason") or "")
     if "ESC" in stop_reason or "用户退出" in stop_reason or "用户按" in stop_reason:
@@ -46,7 +46,9 @@ def run_state_from_result(result: dict, output: str | None = None) -> RunState:
     return RunState(
         status=classify_run_status(result),
         stop_reason=str(result.get("stop_reason") or ""),
+        execution_completed=bool(result.get("execution_completed", False)),
         goal_completed=bool(result.get("goal_completed", False)),
+        goal_status=str(result.get("goal_status") or "incomplete"),
         output=output,
     )
 
@@ -73,7 +75,10 @@ def write_final_run_state(context_path: Path, result: dict, output: str) -> None
         **existing_run,
         **run_state.model_dump(mode="json"),
     }
-    for key in ("output", "stop_reason", "run_status", "goal_completed"):
+    for key in (
+        "output", "stop_reason", "run_status", "execution_completed",
+        "goal_completed", "goal_status",
+    ):
         raw.pop(key, None)
     context_path.write_text(
         json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"

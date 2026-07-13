@@ -140,7 +140,30 @@ def _normalize_retrieved_data_for_intent(data: object, intent: str = "") -> obje
     return data
 
 
-def _finalize_response(resp: WAResponse, *, goal_completed: bool = True, intent: str = "") -> WAResponse:
+def _runtime_completion_accepted(result: dict) -> bool:
+    """Whether runtime reached a terminal state sufficient for a mutation submission.
+
+    ``goal_completed`` means the post-state was confirmed. ``accepted_unverified`` means
+    the terminal side effect was reliably dispatched and the program ended deliberately,
+    but no authoritative post-state channel was available. Keep those facts distinct in
+    core results while allowing mutation adapters to report that the requested action ran.
+    """
+    if bool(result.get("goal_completed")):
+        return True
+    return (
+        bool(result.get("execution_completed"))
+        and str(result.get("goal_status") or "") == "accepted_unverified"
+    )
+
+
+def _finalize_response(
+    resp: WAResponse,
+    *,
+    goal_completed: bool = True,
+    execution_completed: bool = False,
+    goal_status: str = "",
+    intent: str = "",
+) -> WAResponse:
     """Apply deterministic WebArena response invariants after LLM synthesis.
 
     A RETRIEVE task counts as success only when the run BOTH reached goal_completed AND
@@ -171,11 +194,14 @@ def _finalize_response(resp: WAResponse, *, goal_completed: bool = True, intent:
             ),
         })
 
-    # Same honesty for MUTATE: goal_completed=False means the orchestrator KNOWS the run didn't do
-    # the work (a failed/incomplete foreach, a finish over empty reads). 778 live 114429: the
-    # body_goal foreach no-opped (rows=[], finish_incomplete) yet the response still said SUCCESS
-    # with zero saves — a false success that also poisons diagnostics.
-    if task_type == "MUTATE" and status == "SUCCESS" and not goal_completed:
+    # MUTATE accepts either confirmed effect or a completed terminal dispatch. It still rejects
+    # interrupted programs and empty/incomplete foreach runs (778 live 114429), which have neither.
+    mutation_completed = _runtime_completion_accepted({
+        "goal_completed": goal_completed,
+        "execution_completed": execution_completed,
+        "goal_status": goal_status,
+    })
+    if task_type == "MUTATE" and status == "SUCCESS" and not mutation_completed:
         updates.update({
             "status": "UNKNOWN_ERROR",
             "error_details": resp.error_details or "Run did not reach goal_completed (mutation not performed).",
@@ -202,14 +228,14 @@ def _webarena_task_type_from_result(intent: str, result: dict) -> str:
 def _completed_mutate_response(intent: str, result: dict) -> WAResponse | None:
     """Deterministically submit SUCCESS for completed WebArena mutate runs.
 
-    The agent loop's ``goal_completed`` is the runtime success signal. For MUTATE tasks WebArena
-    expects no retrieved data; letting a second response-synthesis LLM infer from incidental traces
-    such as "N records found" can turn a completed aggregate mutation into UNKNOWN_ERROR. This does
-    not read evaluator expected values; it only trusts the agent's own completed run unless the
-    result text explicitly says the mutation failed or the target was not found.
+    Core exposes execution completion separately from post-state verification. For MUTATE tasks
+    WebArena expects no retrieved data; letting a second response-synthesis LLM infer from
+    incidental traces such as "N records found" can turn a completed mutation into UNKNOWN_ERROR.
+    This does not read evaluator expected values; it only trusts the agent's own terminal state
+    unless the result text explicitly says the mutation failed or the target was not found.
     """
     task_type = _webarena_task_type_from_result(intent, result)
-    if task_type != "MUTATE" or not bool(result.get("goal_completed")):
+    if task_type != "MUTATE" or not _runtime_completion_accepted(result):
         return None
     result_text = " ".join(
         str(result.get(key) or "")
@@ -1444,7 +1470,11 @@ def main() -> int:
                 else:
                     resp = _synthesize_response(intent, result or {}, log_dir / "context.json")
                 response_payload = _finalize_response(
-                    resp, goal_completed=bool(result.get("goal_completed")), intent=intent
+                    resp,
+                    goal_completed=bool(result.get("goal_completed")),
+                    execution_completed=bool(result.get("execution_completed")),
+                    goal_status=str(result.get("goal_status") or ""),
+                    intent=intent,
                 ).model_dump()
                 resp_path.write_text(json.dumps(response_payload, indent=2))
                 eval_path = None
