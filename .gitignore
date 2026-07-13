@@ -18,6 +18,7 @@ tests/**/*.png
 tests/**/*.jpg
 tests/**/*.jpeg
 tests/**/*.webp
+!evals/browser/supervisor_replay/**/*.png
 *.mov
 *.pdf
 videos

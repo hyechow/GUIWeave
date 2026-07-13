@@ -9,6 +9,8 @@ from gui_agent.core.run.context import (
     save_observation_snapshot,
 )
 from gui_agent.core.schemas import Observation
+from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
+from scripts.replay_supervisor_turn import _action_expectation_failures
 
 
 def test_observation_snapshot_round_trips_structured_signals_and_adjacent_png(tmp_path):
@@ -52,3 +54,22 @@ def test_observation_snapshot_refuses_missing_screenshot(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="replay screenshot not found"):
         load_observation_snapshot(snapshot)
+
+
+def test_action_replay_expectation_checks_primitive_and_target_region():
+    decision = BrowserActionDecision(
+        action=BrowserAction(action_type="tap", x=908, y=39, description="commit")
+    )
+    expectation = {
+        "action": {
+            "action_type": "tap",
+            "x_range": [850, 945],
+            "y_range": [0, 100],
+        }
+    }
+
+    assert _action_expectation_failures(expectation, decision) == []
+    assert _action_expectation_failures(
+        {"action": {**expectation["action"], "x_range": [950, 1000]}},
+        decision,
+    ) == ["expected x in [950, 1000], got 908.0"]

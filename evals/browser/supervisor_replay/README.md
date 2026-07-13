@@ -20,6 +20,14 @@ uv run python scripts/replay_supervisor_turn.py \
   evals/browser/supervisor_replay/090810_turn30
 ```
 
-The command exits nonzero when the live model decision violates the expectation. It never dispatches
-the returned action. A screenshot without its observation JSON is intentionally rejected because it
-cannot reproduce DOM controls, filters, traversal state, or semantic target evidence.
+The command exits nonzero when the live supervisor or optional action-policy decision violates the
+expectation. It never dispatches the returned action. A screenshot without its observation JSON is
+intentionally rejected because it cannot reproduce DOM controls, filters, traversal state, or
+semantic target evidence.
+
+Frontier regression pair:
+
+- `102742_turn29`: the child wizard is still on its value-selection surface; the expected edge is
+  its concrete `Next` control and a parent commit is forbidden.
+- `090810_turn30`: the child wizard has returned to the parent editor; the expected edge is the
+  concrete parent `Save` control.

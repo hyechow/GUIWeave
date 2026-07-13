@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.adapters.browser.factory import _build_supervisor
+from gui_agent.adapters.browser.factory import _build_action_policy, _build_supervisor
 from gui_agent.core.run.context import load_observation_snapshot
 from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
@@ -110,6 +110,10 @@ def _restore_monitor(
         if not path.is_file():
             continue
         observation = load_observation_snapshot(path)
+        if prior.action_signal is not None and not prior.action_signal.surface_id:
+            resolve_surface = getattr(supervisor, "surface_id", None)
+            if callable(resolve_surface):
+                prior.action_signal.surface_id = str(resolve_surface(observation) or "")
         if prior.supervisor is not None:
             supervisor.note_executed_action(
                 index=prior.index,
@@ -172,6 +176,72 @@ def _expectation_failures(expectation: dict[str, Any], decision: Any) -> list[st
     return failures
 
 
+def _action_expectation_failures(
+    expectation: dict[str, Any],
+    action_decision: Any,
+) -> list[str]:
+    expected = expectation.get("action")
+    if not expected:
+        return []
+    action = action_decision.action
+    failures: list[str] = []
+    if expected.get("action_type") and action.action_type != expected["action_type"]:
+        failures.append(
+            f"expected action_type={expected['action_type']!r}, got {action.action_type!r}"
+        )
+    for field in ("x", "y"):
+        bounds = expected.get(f"{field}_range")
+        value = getattr(action, field, None)
+        if bounds and (
+            not isinstance(value, (int, float))
+            or not float(bounds[0]) <= float(value) <= float(bounds[1])
+        ):
+            failures.append(f"expected {field} in {bounds!r}, got {value!r}")
+    return failures
+
+
+def _decide_action_without_dispatch(
+    context: PolicyContext,
+    observation: Any,
+    decision: Any,
+) -> Any:
+    action_policy = _build_action_policy(context.action_policy_name)
+    native = action_policy.resolve_native_action(
+        observation,
+        target_control=decision.target_control,
+        target_value=decision.target_value,
+        target_group_id=decision.target_group_id,
+        action_family=decision.action_family,
+        instruction=decision.instruction or "",
+    )
+    if native is not None:
+        return native
+    evidence = action_policy.action_evidence_context(
+        observation,
+        target_control=decision.target_control,
+        target_value=decision.target_value,
+        target_group_id=decision.target_group_id,
+        action_family=decision.action_family,
+    )
+    proposed = action_policy.decide(
+        observation,
+        decision.instruction or "",
+        direction=decision.direction,
+        drag_column=decision.drag_column,
+        drag_steps=decision.drag_steps,
+        evidence_context=evidence,
+        verbose=False,
+    )
+    return action_policy.ground_rendered_action(
+        proposed,
+        observation,
+        target_control=decision.target_control,
+        target_value=decision.target_value,
+        target_group_id=decision.target_group_id,
+        action_family=decision.action_family,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Replay one real supervisor decision without executing its action."
@@ -189,6 +259,11 @@ def main() -> int:
     )
     parser.add_argument("--expect-target", help="require this exact target_control")
     parser.add_argument("--reject-target", help="fail if this exact target_control is proposed")
+    parser.add_argument(
+        "--with-action-policy",
+        action="store_true",
+        help="also generate the concrete action primitive without dispatching it",
+    )
     parser.add_argument(
         "--expectation",
         type=Path,
@@ -252,6 +327,24 @@ def main() -> int:
         "warnings": warnings,
     }
     failures = _expectation_failures(expectation, decision)
+    action_decision = None
+    if args.with_action_policy or expectation.get("action"):
+        if not decision.should_act or not decision.instruction:
+            failures.append("action policy requested but supervisor returned no action")
+        else:
+            action_decision = _decide_action_without_dispatch(
+                context,
+                observation,
+                decision,
+            )
+            failures.extend(
+                _action_expectation_failures(expectation, action_decision)
+            )
+    result["action_decision"] = (
+        action_decision.model_dump(mode="json", exclude_none=True)
+        if action_decision is not None
+        else None
+    )
     result["expectation_failures"] = failures
 
     print(
@@ -264,6 +357,7 @@ def main() -> int:
                 "atomic_role": decision.atomic_role,
                 "action_family": decision.action_family,
                 "target_control": decision.target_control,
+                "action": result["action_decision"],
                 "warnings": warnings,
                 "expectation_failures": failures,
             },

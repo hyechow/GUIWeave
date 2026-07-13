@@ -1,0 +1,17 @@
+{
+  "turn": 29,
+  "atomic_role": "prepare",
+  "action_family": "activate",
+  "target_control": "Next",
+  "action": {
+    "action_type": "tap",
+    "x_range": [
+      880,
+      980
+    ],
+    "y_range": [
+      70,
+      250
+    ]
+  }
+}
