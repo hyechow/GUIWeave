@@ -11,6 +11,17 @@ from gui_agent.core.schemas import (
 )
 
 
+class _CdpPlatform:
+    def __init__(self, frame: bytes) -> None:
+        self.frame = frame
+
+    def wait_settled(self, _action_type):
+        return 0.4, True
+
+    def screenshot(self):
+        return self.frame
+
+
 class _Pool:
     def __init__(self) -> None:
         self.submitted = None
@@ -58,6 +69,32 @@ def test_submit_target_verify_uses_tap_point():
         action_exec.verify_target,
         (b"png", 10.0, 20.0, "点击确认按钮"),
     )
+
+
+def test_cdp_no_effect_is_overruled_by_visual_change(monkeypatch):
+    monkeypatch.setattr(action_exec, "frame_changed", lambda *_args, **_kwargs: True)
+
+    elapsed, no_effect = action_exec.settle_after_action(
+        _CdpPlatform(b"after"),
+        b"before",
+        "tap",
+        center=(10, 20),
+    )
+
+    assert elapsed == 0.4
+    assert no_effect is False
+
+
+def test_no_effect_requires_cdp_and_visual_channels_to_agree(monkeypatch):
+    monkeypatch.setattr(action_exec, "frame_changed", lambda *_args, **_kwargs: False)
+
+    _, no_effect = action_exec.settle_after_action(
+        _CdpPlatform(b"same"),
+        b"same",
+        "tap",
+    )
+
+    assert no_effect is True
 
 
 def test_finalize_auto_continue_turn_reuses_branch_settle():

@@ -42,7 +42,13 @@ def settle_after_action(
         cdp_settle = getattr(platform, "wait_settled", None)
         if cdp_settle is not None:
             try:
-                return cdp_settle(action_type)
+                elapsed, no_effect = cdp_settle(action_type)
+                if no_effect and pre_frame is not None:
+                    current = platform.screenshot()
+                    if frame_changed(pre_frame, current, focus_y, center=center):
+                        print("  [Settle] CDP 未观察到反馈，但视觉帧已变化")
+                        no_effect = False
+                return elapsed, no_effect
             except Exception as exc:
                 print(f"  [Settle] CDP settle 异常，回退视觉: {exc}")
     started = time.perf_counter()
