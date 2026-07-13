@@ -9,8 +9,8 @@ the page advanced. This satisfies the runner's scroll-collect contract:
   - ``make_scroll_probe(phone, executor, log_dir)`` -> ``BrowserScrollProbe``
   - ``probe(before_png, action, *, turn_no)`` -> result(success, profile, reason);
     the probe EXECUTES the scroll (so the runner marks the turn executed on success).
-  - ``apply_profile(action, profile)`` -> action pinned to the verified scroll point
-    (re-used by the runner's cached-scroll path on subsequent turns).
+  - ``apply_profile(action, profile)`` -> reuse the verified method/direction while resolving a
+    fresh safe page anchor on every frame.
 
 Boundary detection is handled by the runner: when a cached scroll yields zero shift it
 discards the cache and re-probes; the re-probe then returns failure (no progress),
@@ -62,8 +62,8 @@ def browser_robust_shift(prev_u8, cur_u8) -> tuple[int, float]:
 
 
 def apply_profile(action: Action, profile: BrowserScrollProfile) -> Action:
-    """Pin a fresh scroll action to the profile's verified point/direction."""
-    return action.model_copy(update={"x": profile.x, "y": profile.y, "direction": profile.direction})
+    """Reuse scroll behavior, not a stale absolute point from a previous frame."""
+    return action.model_copy(update={"x": None, "y": None, "direction": profile.direction})
 
 
 class BrowserScrollProbe:

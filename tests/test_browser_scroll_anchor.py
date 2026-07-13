@@ -5,6 +5,7 @@ import pytest
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.device import PlaywrightDevice
 from gui_agent.adapters.browser.executor import BrowserExecutor
+from gui_agent.adapters.browser.scroll_probe import BrowserScrollProfile, apply_profile
 
 
 class _Client:
@@ -67,6 +68,19 @@ def test_explicit_local_scroll_anchor_is_not_rewritten():
     assert ok is True
     assert client.anchor_calls == []
     assert client.scroll_calls == [("down", 5, 320.0, 384.0)]
+
+
+def test_cached_scroll_profile_recomputes_anchor_on_each_frame():
+    action = _scroll_action(x=250, y=400)
+
+    cached = apply_profile(
+        action,
+        BrowserScrollProfile(x=900, y=700, direction="down"),
+    )
+
+    assert cached.x is None
+    assert cached.y is None
+    assert cached.direction == "down"
 
 
 class _Page:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from gui_agent.core.run.action_exec import ActionExecutionState
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, Observation, SupervisorStep
 
@@ -221,3 +223,61 @@ def test_action_family_is_advisory_after_grounding(tmp_path):
     assert result.suppressed_reason == ""
     assert len(executor.calls) == 1
     assert executor.calls[0]["decision"].action == decision.action
+
+
+def test_target_directed_iterate_scroll_uses_progress_probe(tmp_path):
+    action = BaseAction(
+        action_type="scroll",
+        direction="down",
+        amount="medium",
+        description="滚动到目标",
+    )
+    decision = BaseActionDecision(action=action)
+    step = _step(decision).model_copy(update={
+        "milestone_id": "m-acquire",
+        "execution_scope": "row:42",
+        "atomic_role": "iterate",
+        "action_family": "iterate",
+        "target_control": "Details",
+        "direction": "down",
+        "completion_strategy": "visible_once",
+    })
+    calls: list[str] = []
+
+    class _Probe:
+        def probe(self, _png, proposed, *, turn_no):
+            calls.append(f"probe:{turn_no}:{proposed.direction}")
+            return SimpleNamespace(
+                success=True,
+                profile=SimpleNamespace(direction="down"),
+                reason="progress",
+            )
+
+    class _Bundle:
+        @staticmethod
+        def make_scroll_probe(_platform, _executor, _log_dir):
+            return _Probe()
+
+        @staticmethod
+        def apply_scroll_profile(proposed, _profile):
+            return proposed
+
+    result = ActionExecutionState().run(
+        sv_step=step,
+        observation=Observation(png_bytes=b"png", source="test"),
+        action_policy=object(),
+        supervisor=object(),
+        executor=_Executor(),
+        bundle=_Bundle(),
+        platform=object(),
+        prep_future=_Future(),
+        log_dir=tmp_path,
+        turn_no=7,
+        flash=lambda _action: None,
+        status=lambda _turn_no, _message: None,
+        say=lambda _message: None,
+    )
+
+    assert result.executed is True
+    assert result.probe_failed is False
+    assert calls == ["probe:7:down"]

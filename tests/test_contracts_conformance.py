@@ -369,7 +369,7 @@ def test_build_platform_returns_browser_bundle():
     visualizer = bundle.make_action_visualizer(None)
     assert visualizer is not None
     assert isinstance(visualizer, ActionVisualizer)
-    # apply_scroll_profile pins a fresh scroll action to a verified scroll point.
+    # A cached profile reuses behavior but recomputes a safe non-control anchor each frame.
     from gui_agent.adapters.browser.scroll_probe import BrowserScrollProfile
     from gui_agent.core.schemas import Action
 
@@ -377,7 +377,7 @@ def test_build_platform_returns_browser_bundle():
         Action(action_type="scroll", direction="down", amount="medium"),
         BrowserScrollProfile(x=123.0, y=456.0, direction="down"),
     )
-    assert _pinned.x == 123.0 and _pinned.y == 456.0 and _pinned.direction == "down"
+    assert _pinned.x is None and _pinned.y is None and _pinned.direction == "down"
 
 
 def test_browser_scroll_collect_is_implemented():

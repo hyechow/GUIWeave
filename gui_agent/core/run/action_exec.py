@@ -148,6 +148,13 @@ class ActionExecutionState:
         self.scroll_profiles: dict[str, Any] = {}
         self.scroll_probe_failures: dict[str, str] = {}
 
+    @staticmethod
+    def _scroll_profile_key(step: SupervisorStep) -> str:
+        scope = step.execution_scope or step.milestone_id or "_global"
+        target = (step.target_control or "_viewport").strip().lower()
+        direction = (step.direction or "down").strip().lower()
+        return f"{scope}|{target}|{direction}"
+
     def run(
         self,
         *,
@@ -259,10 +266,13 @@ class ActionExecutionState:
         if action_decision.action:
             status(turn_no, f"[{action_label(action.action_type)}] {action.description}")
 
-        profile_key = sv_step.milestone_id or "_global"
+        profile_key = self._scroll_profile_key(sv_step)
         should_probe_scroll = (
             action.action_type == "scroll"
-            and sv_step.completion_strategy == "scroll_until_boundary"
+            and (
+                sv_step.completion_strategy == "scroll_until_boundary"
+                or sv_step.atomic_role == "iterate"
+            )
         )
         if should_probe_scroll and profile_key in self.scroll_profiles:
             self._try_cached_scroll(
@@ -323,7 +333,7 @@ class ActionExecutionState:
         status(turn_no, "动作决策中…")
         say("动作决策中...")
         instruction_for_action = sv_step.instruction
-        profile_key = sv_step.milestone_id or "_global"
+        profile_key = self._scroll_profile_key(sv_step)
         if (
             sv_step.completion_strategy == "scroll_until_boundary"
             and profile_key in self.scroll_probe_failures

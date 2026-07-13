@@ -38,7 +38,6 @@ from gui_agent.core.schemas import (
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
-from .acquisition import target_section_acquire_plan
 from .observation_state import (
     RuntimeFilterIntent,
     filter_residual_labels,
@@ -236,17 +235,6 @@ def run_checker(
         prompts = MilestonePrompts.neutral()
     if constraints is None:
         constraints = []
-    section_plan = target_section_acquire_plan(
-        getattr(observation, "form_controls", None), milestone
-    )
-    if section_plan is not None:
-        return _SingleCheckResult(
-            status="in_progress",
-            outcome_status="unverified",
-            reason=section_plan.summary,
-            summary=section_plan.summary,
-            missing_evidence=["目标命名区域需先滚动到视口或展开，再验收区域内业务状态。"],
-        )
     kind_section = prompts.check_kind_sections.get(milestone.kind, prompts.check_section_default)
     # 连续调值类（picker 收敛）在 kind 段之上叠加专用段：当前值以滚轮中心带为准、强制输出
     # 当前值/目标值。这是连续操作进展传感器的基础——避免把已推进的拖动误读为"没动"。
@@ -506,11 +494,6 @@ def run_planner(
         prompts = MilestonePrompts.neutral()
     if constraints is None:
         constraints = []
-    section_plan = target_section_acquire_plan(
-        getattr(observation, "form_controls", None), milestone
-    )
-    if section_plan is not None:
-        return section_plan
     if milestone.retry_count > 0 and not extra:
         tried = sorted({
             t.supervisor.instruction

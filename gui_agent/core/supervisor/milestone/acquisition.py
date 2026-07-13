@@ -1,228 +1,297 @@
 from __future__ import annotations
 
-from typing import Optional
+import re
+from dataclasses import dataclass
+from typing import Literal, Optional
 
 from gui_agent.core.schemas import Milestone
 
-from .observation_state import (
-    _control_label,
-    _extract_target_fields,
-    _find_matching_control,
-    _norm_text,
-    _visible_field_controls,
-)
 from .schemas import _PlanResult
 
-_TARGET_AFFORDANCE_KINDS = (
-    "input",
-    "select",
-    "textarea",
-    "combobox",
-    "listbox",
-    "checkbox",
-    "radio",
-    "switch",
-)
-_SECTION_TOGGLE_KINDS = (
-    "section_toggle",
-    "accordion",
-    "tab",
-    "treeitem",
-)
+AcquireStatus = Literal["inactive", "ready", "act", "ambiguous", "exhausted"]
+
+_CONTAINER_KINDS = ("section_toggle", "accordion", "tab", "treeitem")
+_COLLAPSED_VALUES = {"0", "false", "no", "closed", "collapsed", "off", "hidden"}
+_MIN_GEOMETRY_PROGRESS = 4.0
+_NO_PROGRESS_LIMIT = 2
+_DEFAULT_SCROLL_BUDGET = 12
 
 
-def _control_is_named_in_milestone(item: dict, milestone: Milestone) -> bool:
-    declared = {_norm_text(field) for field in _extract_target_fields(milestone)}
-    if not declared:
-        return False
-    observed = {
-        _norm_text(str(raw or ""))
-        for raw in (
-            item.get("label"),
-            item.get("name"),
-            item.get("id"),
-            item.get("placeholder"),
+def _label(control: dict) -> str:
+    return str(
+        control.get("label")
+        or control.get("name")
+        or control.get("id")
+        or control.get("placeholder")
+        or ""
+    ).strip()
+
+
+def _tokens(value: str) -> tuple[str, ...]:
+    """Canonicalize capability names without a platform/domain alias table."""
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value or ""))
+    result: list[str] = []
+    for token in re.findall(r"[a-z0-9]+", text.lower().replace("_", " ")):
+        token = token[:-1] if len(token) > 4 and token.endswith("s") else token
+        if len(token) >= 3 and token not in result:
+            result.append(token)
+    return tuple(result)
+
+
+def _aliases(control: dict) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            str(control.get(key) or "").strip()
+            for key in ("label", "name", "id", "placeholder", "group_field", "key")
+            if str(control.get(key) or "").strip()
         )
-        if str(raw or "").strip()
-    }
-    return bool(declared & observed)
-
-
-def target_affordance_scroll_plan(
-    form_controls: Optional[list[dict]],
-    milestone: Milestone,
-) -> Optional[_PlanResult]:
-    """Return a deterministic acquire scroll when target controls already exist offscreen.
-
-    This is the form-control sibling of FilterGate / CheckboxGate: if the adapter has already
-    reported a target affordance in ``obs.form_controls`` with an off-viewport direction, the next
-    operation is a deterministic page-internal acquire action. Do not let the vision checker turn
-    "not visible in screenshot" into a speculative route change. Conservative boundary: only
-    action/filter milestones, only named controls mentioned by the milestone, and only while at
-    least one matched target control remains outside the viewport in a single known direction.
-    """
-    if milestone.kind not in {"action", "filter"}:
-        return None
-    controls = _visible_field_controls(form_controls)
-    if not controls:
-        return None
-    matched: list[dict] = []
-    for item in controls:
-        kind = str(item.get("kind") or "").lower()
-        if not any(part in kind for part in _TARGET_AFFORDANCE_KINDS):
-            continue
-        if _control_is_named_in_milestone(item, milestone):
-            matched.append(item)
-    if not matched:
-        return None
-    offscreen = [
-        item
-        for item in matched
-        if item.get("in_viewport") is False and item.get("viewport_pos") in {"above", "below"}
-    ]
-    if not offscreen:
-        return None
-    directions = {
-        "up" if item.get("viewport_pos") == "above" else "down"
-        for item in offscreen
-    }
-    if len(directions) != 1:
-        return None
-    direction = next(iter(directions))
-    target = offscreen[0]
-    label = _control_label(target)
-    rect = target.get("rect") if isinstance(target.get("rect"), dict) else {}
-    y = rect.get("y") if isinstance(rect, dict) else None
-    direction_text = "向上" if direction == "up" else "向下"
-    suffix = f"（DOM center y={y}）" if isinstance(y, int) else ""
-    return _PlanResult(
-        instruction=f"{direction_text}滚动到「{label}」控件附近{suffix}",
-        summary=(
-            f"目标控件「{label}」已由 DOM 确认存在但不在当前视口；"
-            f"先{direction_text}滚动完成页内 acquire，不切换页面模式。"
-        ),
-        atomic_role="iterate",
-        action_family="iterate",
-        direction=direction,
     )
 
 
-def target_section_acquire_plan(
-    form_controls: Optional[list[dict]],
-    milestone: Milestone,
-) -> Optional[_PlanResult]:
-    """Return a deterministic acquire action for a named section/tab/accordion.
+def _match_score(query: str, control: dict) -> float:
+    query_tokens = set(_tokens(query))
+    if not query_tokens:
+        return 0.0
+    best = 0.0
+    for alias in _aliases(control):
+        alias_tokens = set(_tokens(alias))
+        if not alias_tokens:
+            continue
+        if alias_tokens == query_tokens:
+            return 1.0
+        if alias_tokens <= query_tokens or query_tokens <= alias_tokens:
+            overlap = len(alias_tokens & query_tokens) / len(alias_tokens | query_tokens)
+            best = max(best, 0.8 + 0.1 * overlap)
+    return best
 
-    Some pages render fields only after their containing section is expanded, so the target field
-    is legitimately absent from ``form_controls`` until the section is opened. This is the same
-    acquire phase as offscreen-control scrolling, but the affordance is a section header instead
-    of the final input. The rule is intentionally structural and conservative: the milestone must
-    explicitly name the section/toggle, and the adapter must expose that toggle as a DOM fact.
+
+def _is_container(control: dict) -> bool:
+    kind = str(control.get("kind") or "").lower()
+    return any(part in kind for part in _CONTAINER_KINDS)
+
+
+def _direction(control: dict) -> Literal["up", "down"] | None:
+    if control.get("in_viewport") is not False:
+        return None
+    position = control.get("viewport_pos")
+    if position == "above":
+        return "up"
+    if position == "below":
+        return "down"
+    return None
+
+
+def _y(control: dict) -> float | None:
+    rect = control.get("rect")
+    value = rect.get("y") if isinstance(rect, dict) else None
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _collapsed(control: dict) -> bool:
+    value = str(control.get("selected_text") or control.get("value") or "").strip().lower()
+    return value in _COLLAPSED_VALUES
+
+
+@dataclass(frozen=True)
+class AcquireDecision:
+    status: AcquireStatus
+    plan: _PlanResult | None = None
+    target_labels: tuple[str, ...] = ()
+    reason: str = ""
+
+
+@dataclass
+class _ScrollState:
+    y: float | None
+    attempts: int = 1
+    stagnant: int = 0
+
+
+class TargetAcquireController:
+    """Resolve and acquire a declared target before normal milestone execution.
+
+    The controller owns only the multi-turn positioning operation. Adapter structure is optional:
+    when no unique target can be resolved it returns ``inactive`` and the visual planner remains
+    authoritative. Desired values never participate in location binding.
     """
-    if milestone.kind not in {"action", "filter"}:
-        return None
 
-    def _is_section_toggle(item: dict) -> bool:
-        kind = str(item.get("kind") or "").lower()
-        return any(part in kind for part in _SECTION_TOGGLE_KINDS)
+    def __init__(self, *, scroll_budget: int = _DEFAULT_SCROLL_BUDGET) -> None:
+        self.scroll_budget = max(1, scroll_budget)
+        self._scrolls: dict[tuple[str, str], _ScrollState] = {}
 
-    def _is_collapsed(item: dict) -> bool:
-        # Explicit collapsed signal ONLY — an UNKNOWN state ('' from form_reader, e.g. a custom
-        # accordion with no aria-expanded/recognizable class) is NOT collapsed. The acquire click
-        # must fire only on a definitely-collapsed section: clicking an unknown (possibly already
-        # open) section would collapse it and hide the target, and re-firing every turn on an
-        # unrecognized state is a toggle loop (review findings M1/M2).
-        value = str(item.get("selected_text") or item.get("value") or "").strip().lower()
-        return value in {"0", "false", "no", "closed", "collapsed", "off", "hidden"}
+    @staticmethod
+    def _queries(milestone: Milestone) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                str(value or "").strip()
+                for value in milestone.target_controls or []
+                if str(value or "").strip()
+            )
+        )
 
-    def _click_section_plan(item: dict) -> _PlanResult:
-        label = _control_label(item)
-        return _PlanResult(
-            instruction=f"点击或展开「{label}」区域",
-            summary=(
-                f"目标字段尚未作为控件出现，但页面暴露了页内区域「{label}」；"
-                "先展开该区域完成 affordance acquire。"
+    @staticmethod
+    def _resolve(controls: list[dict], queries: tuple[str, ...]) -> tuple[list[dict], str]:
+        matches: list[dict] = []
+        for query in queries:
+            ranked = sorted(
+                ((_match_score(query, control), control) for control in controls),
+                key=lambda pair: pair[0],
+                reverse=True,
+            )
+            score = ranked[0][0] if ranked else 0.0
+            if score <= 0:
+                continue
+            best = [control for candidate, control in ranked if candidate == score]
+            if len(best) != 1:
+                return matches, f"semantic target {query!r} has {len(best)} equally strong matches"
+            if best[0] not in matches:
+                matches.append(best[0])
+        return matches, ""
+
+    @staticmethod
+    def _scroll_target(matches: list[dict]) -> tuple[dict | None, str]:
+        containers = [control for control in matches if _is_container(control)]
+        fields = [control for control in matches if not _is_container(control)]
+        visible_field = any(_direction(control) is None for control in fields)
+
+        # A declared container below the viewport owns the search space. A container above may
+        # already contain a visible descendant, in which case positioning is complete.
+        candidates = [
+            control
+            for control in containers
+            if _direction(control) == "down" or (_direction(control) == "up" and not visible_field)
+        ]
+        if not candidates:
+            candidates = [control for control in fields if _direction(control) is not None]
+        if not candidates:
+            return None, ""
+        directions = {_direction(control) for control in candidates}
+        if len(directions) != 1:
+            return None, "resolved targets require conflicting scroll directions"
+        return candidates[0], ""
+
+    def _track_scroll(
+        self,
+        *,
+        scope: str,
+        target: str,
+        direction: Literal["up", "down"],
+        position: float | None,
+    ) -> str:
+        key = (scope, " ".join(_tokens(target)))
+        state = self._scrolls.get(key)
+        if state is None:
+            self._scrolls[key] = _ScrollState(position)
+            return ""
+        state.attempts += 1
+        if state.y is not None and position is not None:
+            delta = position - state.y
+            progressed = (
+                delta <= -_MIN_GEOMETRY_PROGRESS
+                if direction == "down"
+                else delta >= _MIN_GEOMETRY_PROGRESS
+            )
+            if progressed:
+                state.stagnant = 0
+            else:
+                state.stagnant += 1
+        state.y = position
+        if state.stagnant >= _NO_PROGRESS_LIMIT:
+            self._scrolls.pop(key, None)
+            return "target geometry did not advance after repeated scroll attempts"
+        if state.attempts > self.scroll_budget:
+            self._scrolls.pop(key, None)
+            return f"target acquire exhausted its {self.scroll_budget}-scroll budget"
+        return ""
+
+    def decide(
+        self,
+        form_controls: Optional[list[dict]],
+        milestone: Milestone,
+        *,
+        scope: str,
+    ) -> AcquireDecision:
+        queries = self._queries(milestone)
+        if milestone.kind not in {"action", "filter"} or not queries:
+            return AcquireDecision("inactive", reason="milestone has no positioning target")
+        controls = [
+            control
+            for control in form_controls or []
+            if isinstance(control, dict) and _aliases(control)
+        ]
+        if not controls:
+            return AcquireDecision("inactive", reason="adapter exposed no target structure")
+
+        matches, ambiguity = self._resolve(controls, queries)
+        labels = tuple(_label(control) for control in matches)
+        if ambiguity:
+            return AcquireDecision("ambiguous", target_labels=labels, reason=ambiguity)
+        if not matches:
+            return AcquireDecision("inactive", reason="no unique structural target match")
+
+        target, conflict = self._scroll_target(matches)
+        if conflict:
+            return AcquireDecision("ambiguous", target_labels=labels, reason=conflict)
+        if target is not None:
+            label = _label(target)
+            direction = _direction(target)
+            assert direction is not None
+            exhausted = self._track_scroll(
+                scope=scope,
+                target=label,
+                direction=direction,
+                position=_y(target),
+            )
+            if exhausted:
+                return AcquireDecision("exhausted", target_labels=labels, reason=exhausted)
+            direction_text = "向上" if direction == "up" else "向下"
+            plan = _PlanResult(
+                instruction=f"{direction_text}滚动到「{label}」附近",
+                summary=(
+                    f"AcquireTarget 已唯一绑定「{label}」，目标位于当前视口"
+                    f"{'上方' if direction == 'up' else '下方'}；"
+                    "继续同一目标定向过程。"
+                ),
+                atomic_role="iterate",
+                action_family="iterate",
+                target_control=label,
+                direction=direction,
+            )
+            return AcquireDecision("act", plan=plan, target_labels=labels)
+
+        # Positioning reached the declared container. Only an explicitly collapsed state is safe
+        # to activate; unknown disclosure state falls through to visual execution.
+        visible_fields = [
+            control
+            for control in matches
+            if not _is_container(control) and _direction(control) is None
+        ]
+        collapsed = next(
+            (
+                control
+                for control in matches
+                if _is_container(control) and _collapsed(control)
             ),
-            action_family="activate",
+            None,
         )
+        if collapsed is not None and not visible_fields:
+            label = _label(collapsed)
+            self._scrolls.pop((scope, " ".join(_tokens(label))), None)
+            plan = _PlanResult(
+                instruction=f"点击或展开「{label}」区域",
+                summary=(
+                    f"AcquireTarget 已定位「{label}」，该区域明确处于折叠状态。"
+                ),
+                atomic_role="prepare",
+                action_family="activate",
+                target_control=label,
+            )
+            return AcquireDecision("act", plan=plan, target_labels=labels)
 
-    def _scroll_section_plan(item: dict) -> _PlanResult:
-        direction = "up" if item.get("viewport_pos") == "above" else "down"
-        label = _control_label(item)
-        direction_text = "向上" if direction == "up" else "向下"
-        return _PlanResult(
-            instruction=f"{direction_text}滚动到「{label}」区域",
-            summary=(
-                f"目标相关区域「{label}」已由 DOM 确认存在但不在当前视口；"
-                f"先{direction_text}滚动到该页内入口。"
-            ),
-            atomic_role="iterate",
-            action_family="iterate",
-            direction=direction,
+        for label in labels:
+            self._scrolls.pop((scope, " ".join(_tokens(label))), None)
+        return AcquireDecision(
+            "ready",
+            target_labels=labels,
+            reason="target positioning is complete",
         )
-
-    toggles = [
-        item
-        for item in form_controls or []
-        if isinstance(item, dict) and _is_section_toggle(item) and _control_label(item)
-    ]
-    candidates: list[dict] = []
-    for item in toggles:
-        if _control_is_named_in_milestone(item, milestone):
-            candidates.append(item)
-    target_fields = _extract_target_fields(milestone)
-    target_controls: list[dict] = []
-    if target_fields:
-        controls = _visible_field_controls(form_controls)
-        for field in target_fields:
-            match = _find_matching_control(field, controls)
-            if match is not None:
-                target_controls.append(match)
-    # Once the final target field/editor is already in the current viewport, acquire is normally
-    # done. An explicitly named section BELOW the viewport is the exception: a visible same-name
-    # field appears before that section in DOM order and therefore cannot be its descendant. In
-    # that case the container identity wins, preventing a flat control inventory from confusing a
-    # parent-form field with a field inside the requested section/wizard. A section header above
-    # the viewport may legitimately contain a currently visible descendant, so keep the old
-    # short-circuit for that direction.
-    target_visible = any(item.get("in_viewport") is not False for item in target_controls)
-    named_section_below = any(
-        item.get("in_viewport") is False and item.get("viewport_pos") == "below"
-        for item in candidates
-    )
-    if target_visible and not named_section_below:
-        return None
-    if not candidates:
-        return None
-
-    # Prefer a visible EXPLICITLY-collapsed section: clicking it reveals the target controls. An
-    # unknown-state section is skipped here (not clicked) — see _is_collapsed: clicking a possibly
-    # already-open section would collapse it / loop (M1/M2).
-    for item in candidates:
-        if item.get("in_viewport") is False:
-            continue
-        if not _is_collapsed(item):
-            continue
-        return _click_section_plan(item)
-
-    # If the named section exists but is offscreen, scroll toward the section before asking the
-    # planner/checker to invent another route. Expanded only describes disclosure state; it does
-    # not mean the header/content is in the viewport, so expanded offscreen sections still need
-    # acquire scrolling.
-    offscreen = [
-        item
-        for item in candidates
-        if (
-            item.get("in_viewport") is False
-            and item.get("viewport_pos") in {"above", "below"}
-        )
-    ]
-    if not offscreen:
-        return None
-    directions = {
-        "up" if item.get("viewport_pos") == "above" else "down"
-        for item in offscreen
-    }
-    if len(directions) != 1:
-        return None
-    return _scroll_section_plan(offscreen[0])

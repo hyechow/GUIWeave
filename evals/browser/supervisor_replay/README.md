@@ -63,3 +63,12 @@ Structured mutation-capability replay:
   turn 26 has no extras and must resolve to one authorized target write. This fixture is consumed
   by `tests/test_mutation_replay.py` and intentionally needs no screenshot because the mutation
   kernel operates only on the recorded structured observation.
+
+Target-directed acquire replay:
+
+- `170119_target_acquire`: the program declares the semantic capability
+  `configurations_collection`, while the adapter exposes the visual section label
+  `Configurations` below the viewport and unrelated Color/Size fields elsewhere. Turns 23-24
+  show real geometry progress; turns 25-26 show a frozen target position. The acquire controller
+  must keep one target identity, continue while geometry advances, and exhaust explicitly after
+  repeated no-progress frames instead of drifting to the desired-value fields.

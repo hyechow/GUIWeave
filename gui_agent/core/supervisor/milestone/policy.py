@@ -14,8 +14,7 @@ from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.run.action_ledger import ActionLedger
 
 from .acquisition import (
-    target_affordance_scroll_plan,
-    target_section_acquire_plan,
+    TargetAcquireController,
 )
 from .decomposition import MilestoneDecompositionMixin
 from .runtime import (
@@ -155,6 +154,7 @@ class MilestoneSupervisorPolicy(
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
         self._observe_only: bool = False
+        self._target_acquire = TargetAcquireController()
 
     def _active_targets(self, observation: Observation) -> tuple[str, ...]:
         """Read optional platform structure without making core depend on adapter schemas."""
@@ -587,59 +587,25 @@ class MilestoneSupervisorPolicy(
                 decision=pre_completion,
             )
 
-        # A named section/container owns the target search space. Resolve it before matching flat
-        # same-name controls elsewhere on the page; otherwise a control in another container can
-        # steal the milestone while its declared section is still below the fold.
-        section_plan = (
-            None
-            if terminal_response_pending or self._observe_only
-            else target_section_acquire_plan(
-                getattr(observation, "form_controls", None), milestone
-            )
-        )
-        if section_plan is not None:
-            check = _SingleCheckResult(
-                status="in_progress",
-                outcome_status="unverified",
-                reason=section_plan.summary,
-                summary=section_plan.summary,
-                missing_evidence=["目标字段所在页内区域需先展开或滚动到位。"],
-            )
-            self._last_check = check
-            self._last_plan = section_plan
-            milestone.status = "running"
-            print(f"  [AcquireGate] {section_plan.summary}")
-            print(f"  [Planner] {section_plan.instruction}")
-            return SupervisorStep(
-                should_act=True,
-                instruction=section_plan.instruction,
-                stop=False,
-                goal_completed=False,
-                summary=section_plan.summary,
-                execution_scope=execution_scope,
-                direction=section_plan.direction,
-                atomic_role=getattr(section_plan, "atomic_role", "iterate"),
-                action_family=getattr(section_plan, "action_family", "unknown"),
-                is_home_screen=False,
-                **_ctx(milestone, None),
-            )
-
-        # No named container blocks acquisition: fall back to a target control reported offscreen.
-        acquire_plan = (
-            None
-            if terminal_response_pending or self._observe_only
-            else target_affordance_scroll_plan(
+        # Target-directed scrolling is one semantic AcquireTarget operation. Adapter structure can
+        # bind it deterministically; an unresolved target falls through to the normal visual path.
+        # The controller owns only scrolling: expanding, clicking, navigation and writes remain
+        # ordinary milestone actions after the target enters the viewport.
+        acquire = None
+        if not terminal_response_pending and not self._observe_only:
+            acquire = self._target_acquire.decide(
                 getattr(observation, "form_controls", None),
                 milestone,
+                scope=execution_scope,
             )
-        )
+        acquire_plan = acquire.plan if acquire is not None else None
         if acquire_plan is not None:
             check = _SingleCheckResult(
                 status="in_progress",
                 outcome_status="unverified",
                 reason=acquire_plan.summary,
                 summary=acquire_plan.summary,
-                missing_evidence=["目标控件已在 DOM 中定位，需先滚动到视口内再执行操作。"],
+                missing_evidence=["目标已唯一绑定，需先滚动到视口内再执行操作。"],
             )
             self._last_check = check
             self._last_plan = acquire_plan
@@ -656,8 +622,30 @@ class MilestoneSupervisorPolicy(
                 direction=acquire_plan.direction,
                 atomic_role=getattr(acquire_plan, "atomic_role", "iterate"),
                 action_family=getattr(acquire_plan, "action_family", "unknown"),
+                target_control=getattr(acquire_plan, "target_control", ""),
                 is_home_screen=False,
                 **_ctx(milestone, None),
+            )
+        # Optional structure may be ambiguous; in that case the normal visual path can still
+        # disambiguate it. Only a uniquely-bound target that repeatedly failed to move is a
+        # deterministic acquire failure.
+        if acquire is not None and acquire.status == "exhausted":
+            check = _SingleCheckResult(
+                status="stuck",
+                outcome_status="unverified",
+                reason=acquire.reason,
+                stuck_reason=acquire.reason,
+                summary="AcquireTarget could not produce a unique progressing scroll route",
+                missing_evidence=["需要重新绑定唯一目标或选择新的页内获取路径。"],
+            )
+            self._last_check = check
+            print(f"  [AcquireTarget] {acquire.status}: {acquire.reason}")
+            return self._handle_stuck(
+                milestone,
+                check,
+                None,
+                observation,
+                scoped_history,
             )
 
         with _Timer(self._timings, self._timings_order, "checker", self._token_usage):
