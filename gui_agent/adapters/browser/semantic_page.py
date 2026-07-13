@@ -82,7 +82,8 @@ def _walk(
     ref: int = node.get("backendDOMNodeId") or 0
 
     skip = (
-        role in _SKIP_ROLES
+        node.get("ignored") is True
+        or role in _SKIP_ROLES
         or (role not in _ALWAYS_KEEP and role not in _KEEP_IF_NAMED)
         or (role in _KEEP_IF_NAMED and not name)
         or (role == "img" and not name)   # decorative image

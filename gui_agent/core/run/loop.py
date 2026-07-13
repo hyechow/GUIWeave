@@ -919,6 +919,11 @@ def run_agent_loop(
                 context=context,
                 observation_source=observation.source,
                 observation_url=observation_url_for_turn,
+                surface_id=(
+                    supervisor.surface_id(observation)
+                    if callable(getattr(supervisor, "surface_id", None))
+                    else ""
+                ),
                 supervisor_step=sv_step,
                 supervisor=supervisor,
                 action_decision=action_decision,

@@ -100,6 +100,10 @@ class ActionSignal(BaseModel):
 
     action_key: str = ""
     role: AtomicRole = "prepare"
+    surface_id: str = Field(
+        default="",
+        description="动作派发时所在的活动交互表面身份；由平台 adapter 产生，视觉平台可为空。",
+    )
     target_control: str = ""
     target_value: str = ""
     binding: Optional[TargetBinding] = None

@@ -51,6 +51,7 @@ def make_interactive_turn(
     index: int,
     observation_source: str,
     observation_url: str = "",
+    surface_id: str = "",
     supervisor_step: SupervisorStep,
     action_decision: Any = None,
     checker: dict | None = None,
@@ -88,6 +89,7 @@ def make_interactive_turn(
     action_signal = ActionSignal(
         action_key=action_key,
         role=role,
+        surface_id=surface_id,
         target_control=supervisor_step.target_control,
         target_value=(
             str(getattr(action, "text", "") or "")
@@ -128,6 +130,7 @@ def make_verdict_turn(
     index: int,
     observation_source: str,
     observation_url: str = "",
+    surface_id: str = "",
     supervisor_step: SupervisorStep,
     supervisor: Any,
     llm_calls: int = 0,
@@ -141,6 +144,7 @@ def make_verdict_turn(
         index=index,
         observation_source=observation_source,
         observation_url=observation_url,
+        surface_id=surface_id,
         supervisor_step=supervisor_step,
         action_decision=None,
         checker=extract_checker(supervisor),
@@ -251,6 +255,7 @@ def record_interactive_turn(
     context: PolicyContext,
     observation_source: str,
     observation_url: str = "",
+    surface_id: str = "",
     supervisor_step: SupervisorStep,
     supervisor: Any,
     action_decision: Any,
@@ -273,6 +278,7 @@ def record_interactive_turn(
         index=len(context.turns) + 1,
         observation_source=observation_source,
         observation_url=observation_url,
+        surface_id=surface_id,
         supervisor_step=supervisor_step,
         action_decision=action_decision,
         checker=extract_checker(supervisor),

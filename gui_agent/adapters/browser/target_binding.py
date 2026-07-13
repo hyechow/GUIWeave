@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from gui_agent.core.schemas import (
     BaseActionDecision,
     Observation,
@@ -91,4 +93,71 @@ class BrowserTargetBinder:
         return None
 
 
-__all__ = ["BrowserTargetBinder"]
+def _active_surface_nodes(observation: Observation) -> list[dict]:
+    tree = [item for item in observation.semantic_tree or [] if isinstance(item, dict)]
+    dialog_indexes = [index for index, item in enumerate(tree) if item.get("role") == "dialog"]
+    if not dialog_indexes:
+        return tree
+    start = dialog_indexes[-1]
+    depth = int(tree[start].get("depth") or 0)
+    end = len(tree)
+    for index in range(start + 1, len(tree)):
+        if int(tree[index].get("depth") or 0) <= depth:
+            end = index
+            break
+    return tree[start:end]
+
+
+def active_surface_id(observation: Observation) -> str:
+    """Stable identity of the currently active browser interaction surface."""
+    nodes = _active_surface_nodes(observation)
+    if nodes and nodes[0].get("role") == "dialog":
+        dialog = nodes[0]
+        dialog_name = str(dialog.get("key") or "").strip()
+        headings = [
+            str(item.get("key") or "").strip()
+            for item in nodes[1:]
+            if item.get("role") == "heading"
+            and str(item.get("key") or "").strip()
+            and str(item.get("key") or "").strip() != dialog_name
+        ]
+        stage = headings[-1] if headings else dialog_name
+        return f"dialog:{dialog.get('ref') or dialog_name}:{stage}"
+
+    path = urlsplit(observation.url or "").path.rstrip("/") or "/"
+    heading = next(
+        (
+            str(item.get("key") or "").strip()
+            for item in nodes
+            if item.get("role") == "heading" and str(item.get("key") or "").strip()
+        ),
+        "",
+    )
+    return f"document:{path}:{heading}" if path or heading else ""
+
+
+def active_target_aliases(observation: Observation) -> set[str]:
+    """Translate browser DOM/AX inventory into platform-neutral active-target aliases."""
+    aliases: set[str] = set()
+    surface_nodes = _active_surface_nodes(observation)
+    has_dialog = bool(surface_nodes and surface_nodes[0].get("role") == "dialog")
+    sources = (surface_nodes,) if has_dialog else (
+        observation.form_controls or [],
+        surface_nodes,
+    )
+    for items in sources:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for field in ("key", "label", "name", "id", "group_field"):
+                value = str(item.get(field) or "").strip()
+                if value:
+                    aliases.add(value)
+    return aliases
+
+
+__all__ = [
+    "BrowserTargetBinder",
+    "active_surface_id",
+    "active_target_aliases",
+]
