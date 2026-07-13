@@ -18,7 +18,7 @@ from gui_agent.adapters.iphone.executor import ActionExecutor
 from gui_agent.adapters.iphone.perception import LivePhoneSession
 from gui_agent.core.policies import StructuredOutputPolicy
 from gui_agent.core.schemas import Action, ActionDecision, Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone import run_checker, run_planner
+from gui_agent.core.supervisor.milestone.model_io import run_checker, run_planner
 
 
 OUT_DIR = Path("/tmp/drag_policy_test")

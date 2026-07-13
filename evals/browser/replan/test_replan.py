@@ -31,7 +31,8 @@ from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.schemas import Milestone, PolicyTurn, SupervisorStep
 from gui_agent.adapters.browser.supervisor.milestone.prompts import REPLAN_PROMPT
-from gui_agent.core.supervisor.milestone import _ReplanResult, _format_history
+from gui_agent.core.supervisor.milestone.model_io import _format_history
+from gui_agent.core.supervisor.milestone.schemas import _ReplanResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

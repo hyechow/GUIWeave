@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env")
 
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone import _PlanResult, _SingleCheckResult, run_planner
+from gui_agent.core.supervisor.milestone.model_io import run_planner
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent

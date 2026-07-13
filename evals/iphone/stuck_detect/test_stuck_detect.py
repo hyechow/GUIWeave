@@ -38,8 +38,8 @@ from gui_agent.core.supervisor.milestone import (
     STUCK_SCREEN_FROZEN,
     STUCK_SCREEN_WINDOW,
     MilestoneSupervisorPolicy,
-    _SingleCheckResult,
 )
+from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 
 # ── Image helpers ──────────────────────────────────────────────────────────────
 

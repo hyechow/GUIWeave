@@ -43,7 +43,6 @@ def main() -> int:
                 "satisfied": "complete",
                 "pending": "continue",
                 "contradicted": "replan",
-                "delegated": "delegate",
             }[decision.status],
             "completion_status": decision.completion_status,
         }

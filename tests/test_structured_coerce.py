@@ -23,6 +23,7 @@ def test_single_check_wraps_bare_string_missing_evidence():
     # The exact failure shape from log 20260616_200258 Turn5.
     r = _SingleCheckResult.model_validate({
         "status": "in_progress",
+        "outcome_status": "unverified",
         "reason": "x",
         "summary": "y",
         "missing_evidence": "需要看到文件选择器或上传成功的提示",
@@ -33,6 +34,7 @@ def test_single_check_wraps_bare_string_missing_evidence():
 def test_single_check_wraps_bare_string_for_all_three_lists():
     r = _SingleCheckResult.model_validate({
         "status": "done",
+        "outcome_status": "confirmed",
         "reason": "x",
         "summary": "y",
         "missing_evidence": "缺A",
@@ -47,6 +49,7 @@ def test_single_check_wraps_bare_string_for_all_three_lists():
 def test_single_check_handles_none_and_list_inputs():
     r = _SingleCheckResult.model_validate({
         "status": "done",
+        "outcome_status": "confirmed",
         "reason": "x",
         "summary": "y",
         "missing_evidence": None,
@@ -59,6 +62,7 @@ def test_single_check_handles_none_and_list_inputs():
 def test_single_check_keeps_a_normal_list_untouched():
     r = _SingleCheckResult.model_validate({
         "status": "in_progress",
+        "outcome_status": "unverified",
         "reason": "x",
         "summary": "y",
         "missing_evidence": ["a", "b"],

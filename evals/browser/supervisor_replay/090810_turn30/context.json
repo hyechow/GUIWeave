@@ -1327,7 +1327,7 @@
         "milestone_kind": "action",
         "completion_strategy": "visible_once",
         "atomic_role": "commit",
-        "action_family": "commit",
+        "action_family": "activate",
         "target_control": "Save Attribute",
         "target_value": "",
         "target_group_id": "",
@@ -1400,7 +1400,7 @@
         "instruction": "点击「Save Attribute」按钮以保存属性更改",
         "summary": "Admin Description 和 Admin Swatch 均已填写为 XXXL，现在需要执行持久化提交以完成子目标。",
         "atomic_role": "commit",
-        "action_family": "commit",
+        "action_family": "activate",
         "target_control": "Save Attribute",
         "target_value": "",
         "target_group_id": ""

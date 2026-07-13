@@ -24,7 +24,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.schemas import Milestone
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
-from gui_agent.core.supervisor.milestone.helpers import run_selector
+from gui_agent.core.supervisor.milestone.model_io import run_selector
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

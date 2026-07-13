@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -95,7 +97,6 @@ def _completion_case(case: dict[str, Any]) -> None:
         "complete": "satisfied",
         "continue": "pending",
         "replan": "contradicted",
-        "delegate": "delegated",
     }[expected["action"]]
     assert decision.status == expected_status
     assert decision.completion_status == expected["completion_status"]
@@ -152,7 +153,9 @@ def _verified_interaction_case(case: dict[str, Any]) -> None:
         policy_module.is_loading_frame = original
 
     expected = case["expected"]
-    assert policy._contract_for(milestone).completion_mode == expected["completion_mode"]
+    assert execution_contract_for(
+        milestone, policy._execution_contract
+    ).completion_mode == expected["completion_mode"]
     assert step.goal_completed is expected["goal_completed"]
     assert step.completion_status == expected["completion_status"]
     assert milestone.status == expected["milestone_status"]
@@ -289,8 +292,14 @@ def _legacy_control_grounding_case(case: dict[str, Any]) -> None:
 
 
 def _browser_plan_schema_case(case: dict[str, Any]) -> None:
-    plan = BrowserPlanResult.model_validate(case["plan"])
     expected = case["expected"]
+    if expected.get("validation_error"):
+        try:
+            BrowserPlanResult.model_validate(case["plan"])
+        except ValidationError:
+            return
+        raise AssertionError("invalid planner role was silently accepted")
+    plan = BrowserPlanResult.model_validate(case["plan"])
     assert plan.atomic_role == expected["atomic_role"]
     assert plan.action_family == expected["action_family"]
 
@@ -341,12 +350,13 @@ def _nested_persistence_case(case: dict[str, Any]) -> None:
 
     expected = case["expected"]
     assert role == expected["generate_role"]
-    assert step.goal_completed is False
-    assert step.completion_status == "in_progress"
-    assert step.should_act is True
-    assert step.atomic_role == expected["next_role"]
-    assert step.action_family == expected["next_family"]
-    assert step.target_control == expected["next_target_control"]
+    assert step.goal_completed is expected["goal_completed"]
+    assert step.completion_status == expected["completion_status"]
+    assert step.should_act is expected["should_act"]
+    if step.should_act:
+        assert step.atomic_role == expected["next_role"]
+        assert step.action_family == expected["next_family"]
+        assert step.target_control == expected["next_target_control"]
 
 
 def _transaction_frontier_detection_case(case: dict[str, Any]) -> None:
@@ -393,7 +403,6 @@ def _signal_fusion_case(case: dict[str, Any]) -> None:
         "complete": "satisfied",
         "continue": "pending",
         "replan": "contradicted",
-        "delegate": "delegated",
     }[case["expected"]["action"]]
     assert decision.status == expected_status
     assert decision.completion_status == case["expected"]["completion_status"]

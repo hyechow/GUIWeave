@@ -250,7 +250,7 @@ def main(
             _subdecompose = None  # per-row sub-goal decomposer; set inside the orchestrator block
             if args.orchestrator:
                 from gui_agent.core.orchestrator import decompose, estimate_program_turns
-                from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
+                from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
                 # Resolve @<path> refs once (config field values the goal only points at) and feed
                 # them to the decomposer — mirrors the DAG path, which the orchestrator's decompose
                 # otherwise skipped (the LLM only saw the literal @token, never the field values).
@@ -281,9 +281,9 @@ def main(
                 # The config must ALSO reach the execution-time planner deterministically — the
                 # supervisor's constraints flow to every milestone's planner, and reseed never clears
                 # them (LLM distillation of config into constraints proved unstable; see DAG path).
-                if file_section and hasattr(supervisor, "_global_constraints"):
+                if file_section:
                     _CAP = 3000
-                    supervisor._global_constraints.append(
+                    supervisor.add_static_constraint(
                         file_section if len(file_section) <= _CAP
                         else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
                     )

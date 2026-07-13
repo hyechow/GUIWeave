@@ -175,7 +175,7 @@
         "form_controls_meta": {"coverage": "partial", "truncated": true}
       },
       "expected": {
-        "regresses": true
+        "regresses": false
       }
     }
   ]

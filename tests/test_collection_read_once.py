@@ -43,6 +43,7 @@ def test_done_read_once_collection_requests_reader():
     policy, milestone = _policy("analysis")
     policy._single_check = lambda *a, **k: _SingleCheckResult(  # type: ignore[assignment]
         status="done",
+        outcome_status="confirmed",
         reason="The result count is visible.",
         summary="The page shows a result count.",
         page_identity="Result list",
@@ -61,6 +62,7 @@ def test_action_task_done_collection_does_not_collect_notes():
     policy, milestone = _policy("action")
     policy._single_check = lambda *a, **k: _SingleCheckResult(  # type: ignore[assignment]
         status="done",
+        outcome_status="confirmed",
         reason="The action result is visible.",
         summary="The page shows the target state.",
         page_identity="Result list",

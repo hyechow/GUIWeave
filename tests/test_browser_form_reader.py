@@ -10,7 +10,7 @@ from gui_agent.adapters.browser.form_reader import (
 )
 from gui_agent.adapters.browser.perception import BrowserPerception
 from gui_agent.core.schemas import Milestone, Observation
-from gui_agent.core.supervisor.milestone.helpers import required_group_field_gaps
+from gui_agent.core.supervisor.milestone.observation_state import required_group_field_gaps
 
 
 def test_form_controls_js_is_serialized_expression():

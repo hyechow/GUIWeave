@@ -4,7 +4,7 @@ A first Android-tuned draft of the milestone supervisor prompts, parallel to the
 iphone / browser sets. The supervisor FRAMEWORK is neutral; these prompts inject
 Android concepts (App + 界面身份 / 顶部标题栏 / 底部导航 tab / 应用抽屉 / 三大金刚键
 / 软键盘) instead of iphone (iOS 主屏 / picker) or web (URL / 标签页 / navigate) ones.
-The .format() placeholders are IDENTICAL to the iphone/browser sets — helpers.py /
+The .format() placeholders are IDENTICAL to the iphone/browser sets — model_io.py /
 policy.py fill the same kwargs, so the wording differs but the wiring is the same.
 
 ⚠️ DRAFT — un-tuned. Validated structurally (placeholders + construction); the prompt

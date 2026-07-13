@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
-from gui_agent.core.supervisor.milestone import _PlanResult
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 passed = 0

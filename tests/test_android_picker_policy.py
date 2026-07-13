@@ -12,7 +12,7 @@ from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILE
 from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
 from gui_agent.adapters.android.policies import AndroidActionPolicy
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone.helpers import _build_msgs
+from gui_agent.core.supervisor.milestone.model_io import _build_msgs
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.run.progress_monitor import ProgressMonitor
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
@@ -261,6 +261,7 @@ def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
     )
     check = _SingleCheckResult(
         status="in_progress",
+        outcome_status="unverified",
         reason="当前时间已设定为 06:30 AM，但尚未点击保存按钮。",
         summary="时间已到位，等待保存。",
     )
@@ -333,7 +334,7 @@ def test_alarm_goal_period_is_preserved_after_decompose_patch():
 
     policy._patch_decomposition(None, "创建一个上午6点30的闹钟")  # type: ignore[arg-type]
 
-    assert any("上午/早上/AM" in c for c in policy._global_constraints)
+    assert any("上午/早上/AM" in c for c in policy.constraints_snapshot())
     assert "上午/早上/AM" in time_milestone.description
     assert "上午/早上/AM" in time_milestone.success_condition
     assert "下午/晚上/傍晚/PM" in time_milestone.success_condition
@@ -356,7 +357,7 @@ def test_goal_period_patch_applies_to_non_alarm_clock_time_targets():
 
     policy._patch_decomposition(None, "创建一个下午9点15的提醒")  # type: ignore[arg-type]
 
-    assert any("下午/晚上/傍晚/PM" in c for c in policy._global_constraints)
+    assert any("下午/晚上/傍晚/PM" in c for c in policy.constraints_snapshot())
     assert "下午/晚上/傍晚/PM" in time_milestone.description
     assert "下午/晚上/傍晚/PM" in time_milestone.success_condition
 
@@ -383,7 +384,7 @@ def test_goal_repeat_rule_is_preserved_after_decompose_patch():
 
     policy._patch_decomposition(None, "创建一个工作日上午6点30的闹钟")  # type: ignore[arg-type]
 
-    assert any("重复规则" in c and "工作日/周一至周五" in c for c in policy._global_constraints)
+    assert any("重复规则" in c and "工作日/周一至周五" in c for c in policy.constraints_snapshot())
     assert "重复规则=工作日/周一至周五" in time_milestone.success_condition
     assert "重复规则=工作日/周一至周五" in save_milestone.success_condition
 
@@ -402,7 +403,7 @@ def test_goal_name_field_is_preserved_after_decompose_patch():
 
     policy._patch_decomposition(None, "创建一个下午9点15的提醒，名称设为喝水")  # type: ignore[arg-type]
 
-    assert any("名称/标签" in c and "喝水" in c for c in policy._global_constraints)
+    assert any("名称/标签" in c and "喝水" in c for c in policy.constraints_snapshot())
     assert "名称/标签=喝水" in milestone.success_condition
 
 
@@ -418,11 +419,13 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
     )
     check = _SingleCheckResult(
         status="in_progress",
+        outcome_status="unverified",
         reason="当前中间行仍为 06:51，目标 06:30",
         summary="当前时间为 06:51",
     )
     stuck = _SingleCheckResult(
         status="stuck",
+        outcome_status="unverified",
         reason="连续 3 帧局部与全局均无实质变化",
         stuck_reason="动作无效果",
         summary="屏幕连续无变化",
@@ -477,6 +480,7 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
 def test_progress_value_extracts_time_from_reason_without_missing_evidence():
     check = _SingleCheckResult(
         status="in_progress",
+        outcome_status="unverified",
         reason="当前页面为新建闹钟界面，时间设定为上午08:51，尚未达到目标时间06:30。",
         summary="当前屏幕为新建闹钟界面。",
     )

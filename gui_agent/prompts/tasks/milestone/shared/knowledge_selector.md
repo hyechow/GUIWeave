@@ -5,7 +5,7 @@ source_type: task_template
 platform: shared
 scope:
   - selector
-owner: gui_agent.core.supervisor.milestone.helpers
+owner: gui_agent.core.supervisor.milestone.model_io
 schema: _SelectorResult
 eval_suites:
 version: 1

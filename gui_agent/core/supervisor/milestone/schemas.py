@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from gui_agent.core.schemas import CollectionScope, Milestone
 
@@ -11,11 +11,11 @@ from gui_agent.core.schemas import CollectionScope, Milestone
 class MilestonePrompts:
     """Platform-specific LLM prompt set for the milestone supervisor.
 
-    The supervisor FRAMEWORK (policy.py decompose→check→plan loop + helpers) is
+    The supervisor FRAMEWORK (policy.py decompose→check→plan loop + model I/O) is
     platform-neutral; adapters own the prompt bundle and load the model-visible
     bodies from Markdown prompt assets. This container is the neutral seam: only
     the field SHAPE lives in core, never the content. Fields cover every prompt
-    policy.py + helpers.py consume."""
+    policy.py + model_io.py consume."""
 
     decompose: str
     single_checker: str
@@ -35,15 +35,32 @@ class MilestonePrompts:
     # use picker fields can provide a smaller schema, so those fields are not shown
     # to the model.
     plan_result_schema: type[BaseModel] | None = None
-    # Optional override for the KnowledgeSelector prompt (helpers.run_selector). The
+    # Optional override for the KnowledgeSelector prompt (model_io.run_selector). The
     # selection task (match current page + milestone against a section-title list) is
-    # platform-neutral, so the core default in helpers.py fits all platforms; override
+    # platform-neutral, so the core default in model_io.py fits all platforms; override
     # only if a platform needs different selection guidance.
     selector: str | None = None
     # Platform-owned page_identity markers that mean "system home/launcher screen".
     # Core only applies the configured markers; it does not know iOS/Android/browser
     # home-screen vocabulary itself.
     home_identity_markers: tuple[str, ...] = ()
+
+    @classmethod
+    def neutral(cls) -> "MilestonePrompts":
+        """Return a platform-neutral bundle for deterministic execution and tooling."""
+        return cls(
+            decompose="Decompose the goal into platform-neutral executable milestones.",
+            single_checker="Verify the current milestone from supplied observations and contracts.",
+            check_kind_sections={},
+            check_section_default="Use visible evidence and structured state only.",
+            check_section_converge="Report current and target values for iterative controls.",
+            loop_frame="Assess collection progress and the observable boundary.",
+            plan="Propose one atomic action using structured target metadata.",
+            loop_scroll="Propose one collection-progress action.",
+            replan="Propose one local recovery action without changing the goal.",
+            stop_condition_patch="Make the collection stop condition observable.",
+            image_resize="none",
+        )
 
 
 def _coerce_str_list(value):
@@ -106,17 +123,6 @@ class _SingleCheckResult(BaseModel):
         ),
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def _infer_legacy_outcome_status(cls, value):
-        """Old checker payloads used status=done as their only outcome signal."""
-        if isinstance(value, dict) and "outcome_status" not in value:
-            value = dict(value)
-            value["outcome_status"] = (
-                "confirmed" if value.get("status") == "done" else "unverified"
-            )
-        return value
-
     @field_validator("issues", "visible_evidence", "missing_evidence", mode="before")
     @classmethod
     def _coerce_str_list_fields(cls, v):
@@ -163,12 +169,13 @@ class _PlanResult(BaseModel):
         ),
     )
     action_family: Literal[
-        "input", "select", "activate", "navigate", "iterate", "commit", "unknown"
+        "input", "select", "activate", "navigate", "iterate", "unknown"
     ] = Field(
         default="unknown",
         description=(
             "本轮指令的动作族：input=输入/清空，select=选择值，activate=点击普通控件，"
-            "navigate=页面/标签跳转，iterate=滚动/拖动，commit=保存/提交，unknown=无法判断。"
+            "navigate=页面/标签跳转，iterate=滚动/拖动，unknown=无法判断。保存/提交的"
+            "事务语义只由 atomic_role=commit 表达；点击保存按钮时 family 仍为 activate。"
         ),
     )
     target_control: str = Field(
@@ -187,16 +194,6 @@ class _PlanResult(BaseModel):
         description="目标控件所属结构单元 ID；重复集合中必须用它保持行身份。",
     )
 
-    @field_validator("atomic_role", mode="before")
-    @classmethod
-    def _normalize_action_family_as_role(cls, value: object) -> object:
-        return {
-            "navigate": "prepare",
-            "activate": "prepare",
-            "unknown": "prepare",
-            "input": "write",
-            "select": "write",
-        }.get(str(value or "").lower(), value)
     direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
         default=None,
         description=(
@@ -241,10 +238,13 @@ class _ReplanResult(BaseModel):
         description="修复指令的原子执行角色；语义与正常 planner 输出一致。",
     )
     action_family: Literal[
-        "input", "select", "activate", "navigate", "iterate", "commit", "unknown"
+        "input", "select", "activate", "navigate", "iterate", "unknown"
     ] = Field(
         default="unknown",
-        description="修复指令的动作族；不得只在 instruction 文本中隐含。",
+        description=(
+            "修复指令的 UI 原语族；不得只在 instruction 文本中隐含。保存/提交使用"
+            "atomic_role=commit，点击原语仍填 activate。"
+        ),
     )
     target_control: str = Field(
         default="",
@@ -265,18 +265,6 @@ class _ReplanResult(BaseModel):
     drag_current_value: Optional[int] = None
     drag_target_value: Optional[int] = None
     escalation_message: str = Field(default="")
-
-    @field_validator("atomic_role", mode="before")
-    @classmethod
-    def _normalize_action_family_as_role(cls, value: object) -> object:
-        return {
-            "navigate": "prepare",
-            "activate": "prepare",
-            "unknown": "prepare",
-            "input": "write",
-            "select": "write",
-        }.get(str(value or "").lower(), value)
-
 
 class _StopConditionPatch(BaseModel):
     scroll_stop_condition: str = Field(

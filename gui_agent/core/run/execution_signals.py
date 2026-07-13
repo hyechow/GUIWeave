@@ -29,9 +29,7 @@ ClaimDomain = Literal[
     "filter.state",
     "control.state",
     "business.outcome",
-    "result.availability",
-    "inventory.coverage",
-    "execution.delegation",
+    "collection.coverage",
 ]
 ClaimValue = Literal[
     "confirmed",
@@ -45,7 +43,6 @@ CompletionStatus = Literal[
     "pending",
     "satisfied",
     "contradicted",
-    "delegated",
 ]
 
 
@@ -186,6 +183,17 @@ class ConstraintLedger:
     def clear_scope(self, scope: str) -> None:
         self.entries = [entry for entry in self.entries if entry.scope != scope]
 
+    def remove_sources(self, scope: str, sources: Iterable[str]) -> int:
+        """Remove scoped transient constraints from selected producers."""
+        selected = set(sources)
+        before = len(self.entries)
+        self.entries = [
+            entry
+            for entry in self.entries
+            if not (entry.scope == scope and entry.source in selected)
+        ]
+        return before - len(self.entries)
+
 
 def claim(
     domain: ClaimDomain,
@@ -280,9 +288,8 @@ class CompletionEvaluator:
             for item in self._claims(scoped, "control.state", scope)
             if covers_expected_subject(item)
         )
-        result = self._best(self._claims(scoped, "result.availability", scope))
-        delegation = self._best(
-            self._claims(scoped, "execution.delegation", scope)
+        collection_coverage = self._best(
+            self._claims(scoped, "collection.coverage", scope)
         )
 
         # A probabilistic checker cannot overrule an authoritative reading of the exact declared
@@ -307,13 +314,6 @@ class CompletionEvaluator:
                     used_claims=(outcome,),
                 )
 
-        if delegation is not None and delegation.value == "confirmed":
-            return CompletionEvaluation(
-                status="delegated",
-                reason=delegation.evidence or "执行责任已委托给后续执行单元",
-                used_claims=(delegation,),
-            )
-
         if (
             target is not None
             and target.value == "contradicted"
@@ -329,12 +329,11 @@ class CompletionEvaluator:
             if filter_state is not None and filter_state.value == "confirmed":
                 # A zero-row result is a valid return value.  The following interpreter branch,
                 # not this milestone, decides whether to run a fallback search.
-                used = (filter_state,) + ((result,) if result is not None else ())
                 return CompletionEvaluation(
                     status="satisfied",
                     completion_status="confirmed",
                     reason=filter_state.evidence or "目标筛选状态已权威确认",
-                    used_claims=used,
+                    used_claims=(filter_state,),
                 )
             return CompletionEvaluation("pending", "筛选状态尚未权威确认")
 
@@ -356,6 +355,20 @@ class CompletionEvaluator:
             # A generic response proves only that something happened, not that the destination is
             # correct.  It intentionally cannot complete navigation by itself.
             return CompletionEvaluation("pending", "尚无目标页面身份的确认信号")
+
+        if contract.completion_mode == "read":
+            if (
+                collection_coverage is not None
+                and collection_coverage.value == "complete"
+                and collection_coverage.authoritative
+            ):
+                return CompletionEvaluation(
+                    "satisfied",
+                    collection_coverage.evidence or "集合遍历已完成",
+                    "confirmed",
+                    (collection_coverage,),
+                )
+            return CompletionEvaluation("pending", "集合遍历尚未达到可验证边界")
 
         if contract.completion_mode == "mutation":
             if control_state is not None and control_state.value == "contradicted":

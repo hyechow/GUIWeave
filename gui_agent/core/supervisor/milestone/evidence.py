@@ -16,13 +16,13 @@ from gui_agent.core.run.execution_signals import (
 from gui_agent.core.run.progress_monitor import ProgressMonitor
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 
-from .action_protocol import is_commit_turn
-from .helpers import (
+from .action_protocol import PersistenceBoundaryState, is_commit_turn
+from .observation_state import (
     RuntimeFilterIntent,
     filter_chips_clean,
     filter_state_satisfies_target,
     observed_filter_intent,
-    target_value_state,
+    target_unit_state,
 )
 from .schemas import _SingleCheckResult
 
@@ -45,6 +45,7 @@ def action_lifecycle_claims(
     scope: str,
     monitor: ProgressMonitor,
     ledger: ActionLedger,
+    boundary: PersistenceBoundaryState | None = None,
 ) -> list[EvidenceClaim]:
     """Translate persisted action lifecycle state into typed evidence claims."""
     claims: list[EvidenceClaim] = []
@@ -75,7 +76,11 @@ def action_lifecycle_claims(
             evidence="URL changed after the previous action",
             authoritative=True,
         ))
-    terminal = is_commit_turn(latest, milestone)
+    terminal = (
+        boundary.is_terminal_dispatch(latest, milestone)
+        if boundary is not None
+        else is_commit_turn(latest, milestone)
+    )
     claims.append(claim(
         "action.execution",
         "confirmed",
@@ -142,7 +147,7 @@ def target_value_claims(
         (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
         or "unknown"
     ).lower()
-    state = target_value_state(
+    state = target_unit_state(
         getattr(observation, "form_controls", None),
         milestone,
         coverage=coverage,
@@ -170,22 +175,6 @@ def target_value_claims(
             authoritative=True,
             coverage="matched_structural_unit",
         ))
-    coverage_value = (
-        "partial"
-        if coverage == "partial"
-        else "complete"
-        if coverage == "complete"
-        else "unknown"
-    )
-    claims.append(claim(
-        "inventory.coverage",
-        coverage_value,
-        source_type="obs.dom.form_controls",
-        scope=scope,
-        evidence=f"form control inventory coverage={coverage}",
-        authoritative=True,
-        coverage=coverage,
-    ))
     return claims
 
 

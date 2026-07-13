@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import gui_agent.core.supervisor.milestone.policy as policy_mod
+import gui_agent.core.supervisor.milestone.llm_runtime as policy_mod
+import gui_agent.core.supervisor.milestone.policy as supervisor_policy_mod
 from gui_agent.core.schemas import Milestone, Observation
-from gui_agent.core.supervisor.milestone.helpers import (
+from gui_agent.core.supervisor.milestone.acquisition import (
     target_affordance_scroll_plan,
     target_section_acquire_plan,
 )
@@ -74,9 +75,9 @@ def test_policy_acquire_gate_bypasses_checker_for_known_offscreen_controls(monke
         raise _CheckerReached()
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
-    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    policy = policy_mod.MilestoneSupervisorPolicy()
+    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
     policy.reseed(_notify_milestone())
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
@@ -399,7 +400,7 @@ def test_policy_named_section_precedes_flat_target_affordance(monkeypatch) -> No
         raise _CheckerReached()
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
-    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
     milestone = Milestone(
         id="m-config",
@@ -409,7 +410,7 @@ def test_policy_named_section_precedes_flat_target_affordance(monkeypatch) -> No
         kind="action",
         target_controls=["Configurations", "Color"],
     )
-    policy = policy_mod.MilestoneSupervisorPolicy()
+    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
     policy.reseed(milestone)
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
@@ -454,9 +455,9 @@ def test_policy_section_acquire_gate_bypasses_checker_for_named_section(monkeypa
         raise _CheckerReached()
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
-    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    policy = policy_mod.MilestoneSupervisorPolicy()
+    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
     policy.reseed(_description_milestone())
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",

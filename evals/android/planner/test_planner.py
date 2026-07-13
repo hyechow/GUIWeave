@@ -23,7 +23,8 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
 from gui_agent.core.schemas import Milestone, Observation
-from gui_agent.core.supervisor.milestone import _PlanResult, _SingleCheckResult, run_planner
+from gui_agent.core.supervisor.milestone.model_io import run_planner
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 

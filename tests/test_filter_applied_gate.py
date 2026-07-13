@@ -22,7 +22,7 @@ from gui_agent.core.schemas import (
 from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.run.action_ledger import ActionLedger
 from gui_agent.core.supervisor.milestone.evidence import runtime_filter_intent
-from gui_agent.core.supervisor.milestone.helpers import (
+from gui_agent.core.supervisor.milestone.observation_state import (
     filter_chips_clean,
     filter_residual_labels,
     filter_state_satisfies_target,
@@ -178,7 +178,7 @@ def test_commit_receipt_carries_filter_intent_when_control_was_prepopulated():
         execution_scope=scope,
         milestone_kind="filter",
         atomic_role="commit",
-        action_family="commit",
+        action_family="input",
         target_control="Search by keyword",
         target_value="Minerva",
     )
@@ -271,8 +271,8 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
         raise _CheckerReached()
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
-    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
-    policy = policy_mod.MilestoneSupervisorPolicy()
+    monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
+    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
     policy.reseed(milestone)
 
     step = policy.step(
@@ -304,9 +304,9 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
         raise _CheckerReached()
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
-    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    policy = policy_mod.MilestoneSupervisorPolicy()
+    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
     policy.reseed(milestone)
     step = policy.step(
         Observation(
@@ -400,7 +400,8 @@ def test_chips_not_clean_with_leaked_residual():
 
 
 # ── strong-path integration: the gate fires in the real policy.step(), no LLM ───
-import gui_agent.core.supervisor.milestone.policy as policy_mod  # noqa: E402
+import gui_agent.core.supervisor.milestone.llm_runtime as policy_mod  # noqa: E402
+import gui_agent.core.supervisor.milestone.policy as supervisor_policy_mod  # noqa: E402
 from gui_agent.core.schemas import Observation  # noqa: E402
 
 # A real (non-blank) PNG so is_loading_frame() doesn't short-circuit to a loading frame.
@@ -431,9 +432,9 @@ def _run_step(monkeypatch, applied_filters):
         raise _CheckerReached()
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
-    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    pol = policy_mod.MilestoneSupervisorPolicy()
+    pol = supervisor_policy_mod.MilestoneSupervisorPolicy()
     ms = _qty3_filter_milestone()
     pol.reseed(ms)
     obs = Observation(png_bytes=png, source="test", applied_filters=applied_filters)
@@ -472,9 +473,9 @@ def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
         raise _CheckerReached()
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
-    monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
+    monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    pol = policy_mod.MilestoneSupervisorPolicy()
+    pol = supervisor_policy_mod.MilestoneSupervisorPolicy()
     pol.reseed(ms)
     obs = Observation(
         png_bytes=png,

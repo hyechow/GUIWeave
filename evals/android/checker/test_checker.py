@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.schemas import Milestone, Observation
-from gui_agent.core.supervisor.milestone import run_checker
+from gui_agent.core.supervisor.milestone.model_io import run_checker
 from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
 
 CASES_FILE = Path(__file__).parent / "cases.json"

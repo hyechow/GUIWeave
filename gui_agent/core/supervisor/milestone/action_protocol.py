@@ -6,7 +6,8 @@ metadata records the action role, while executed turns provide dispatch and targ
 
 from __future__ import annotations
 
-from typing import Iterable, Protocol
+from dataclasses import dataclass
+from typing import Iterable, Literal, Protocol
 
 from gui_agent.core.run.action_ledger import ActionLedger
 from gui_agent.core.run.execution_signals import CompletionEvaluation
@@ -19,24 +20,60 @@ class PlannedAction(Protocol):
     action_family: ActionFamily
 
 
+SurfaceRelation = Literal["same", "different", "unknown"]
+
+
 def action_metadata(
     plan: PlannedAction,
     milestone: Milestone,
 ) -> tuple[AtomicRole, ActionFamily]:
-    """Return coherent structured metadata for this execution contract.
+    """Return the planner's independent transaction role and UI primitive family.
 
-    A persisted mutation's terminal boundary is represented by both ``atomic_role=commit`` and
-    ``action_family=commit``.  Nested wizard actions remain executable, but a conflicting
-    ``commit + activate`` proposal cannot consume the outer resource's persistence boundary.
+    A Save button is normally ``commit + activate``. Whether its receipt crossed the terminal
+    persistence boundary is resolved from surface history by ``persistence_boundary_state``;
+    the primitive family is not a persistence signal.
     """
     if milestone.is_iterative:
         return "iterate", "iterate"
-    if milestone.requires_commit:
-        if plan.action_family == "commit":
-            return "commit", "commit"
-        if plan.atomic_role == "commit":
-            return "prepare", plan.action_family
     return plan.atomic_role, plan.action_family
+
+
+@dataclass(frozen=True)
+class PersistenceBoundaryState:
+    """Single interpretation of the current persistence frontier."""
+
+    parent_pending: bool = False
+    reason: str = ""
+
+    def is_terminal_dispatch(
+        self,
+        turn: PolicyTurn | None,
+        milestone: Milestone,
+    ) -> bool:
+        return bool(is_commit_turn(turn, milestone) and not self.parent_pending)
+
+    def accepts_parent_plan(
+        self,
+        plan: PlannedAction,
+        milestone: Milestone,
+        available_targets: Iterable[str],
+    ) -> bool:
+        """Whether a pending parent boundary is bound to a concrete current control."""
+        if not self.parent_pending:
+            return False
+        role, family = action_metadata(plan, milestone)
+        target = _control_key(str(getattr(plan, "target_control", "") or ""))
+        rendered = {
+            _control_key(str(key))
+            for key in available_targets
+            if _control_key(str(key))
+        }
+        return bool(
+            role == "commit"
+            and family not in {"unknown", "iterate"}
+            and target
+            and target in rendered
+        )
 
 
 def regresses_preparation_frontier(
@@ -71,7 +108,7 @@ def regresses_preparation_frontier(
             and signal.target != "off_target"
             and signal.response == "observed"
             and signal.outcome != "contradicted"
-            and _same_surface(signal.surface_id, current_surface_id)
+            and _surface_relation(signal.surface_id, current_surface_id) == "same"
             and _control_key(signal.target_control) == target
         ):
             completed_at = index
@@ -87,7 +124,7 @@ def regresses_preparation_frontier(
     )
 
 
-def parent_persistence_pending(
+def _parent_persistence_pending(
     milestone: Milestone,
     history: list[PolicyTurn],
     available_targets: Iterable[str],
@@ -111,8 +148,20 @@ def parent_persistence_pending(
         and turn.supervisor.milestone_id == milestone.id
         and _responded_on_target(turn)
     ]
-    if any(is_commit_turn(turn, milestone) for turn in turns):
-        return False
+    # A commit on the active surface already crossed this boundary. A commit on a departed child
+    # surface is provisional: returning to a known parent entry proves that more persistence work
+    # remains on the parent.
+    for turn in turns:
+        if not is_commit_turn(turn, milestone):
+            continue
+        signal = turn.action_signal
+        if signal is None:
+            continue
+        relation = _surface_relation(signal.surface_id, current_surface_id)
+        if relation == "unknown":
+            return False
+        if relation == "same":
+            return False
     first_write = next(
         (index for index, turn in enumerate(turns) if turn.action_signal.role == "write"),
         None,
@@ -137,7 +186,7 @@ def parent_persistence_pending(
         if (
             signal.role == "prepare"
             and target
-            and _same_surface(signal.surface_id, current_surface_id)
+            and _surface_relation(signal.surface_id, current_surface_id) == "same"
             and target not in later_prepare_targets
             and target in rendered
         ):
@@ -145,20 +194,27 @@ def parent_persistence_pending(
     return False
 
 
-def concrete_persistence_plan(
-    plan: PlannedAction,
+def persistence_boundary_state(
     milestone: Milestone,
+    history: list[PolicyTurn],
     available_targets: Iterable[str],
-) -> bool:
-    """Whether a commit proposal names a concrete target on the active surface."""
-    role, family = action_metadata(plan, milestone)
-    target = _control_key(str(getattr(plan, "target_control", "") or ""))
-    rendered = {_control_key(str(key)) for key in available_targets if _control_key(str(key))}
-    return bool(
-        role == "commit"
-        and family == "commit"
-        and target
-        and target in rendered
+    *,
+    current_surface_id: str = "",
+) -> PersistenceBoundaryState:
+    """Resolve parent-return and terminal-dispatch semantics for all consumers."""
+    pending = _parent_persistence_pending(
+        milestone,
+        history,
+        available_targets,
+        current_surface_id=current_surface_id,
+    )
+    return PersistenceBoundaryState(
+        parent_pending=pending,
+        reason=(
+            "child-surface dispatch returned draft state to a parent persistence surface"
+            if pending
+            else "no uncommitted parent persistence surface is proven"
+        ),
     )
 
 
@@ -174,9 +230,11 @@ def _responded_on_target(turn: PolicyTurn) -> bool:
     )
 
 
-def _same_surface(recorded: str, current: str) -> bool:
-    """Missing identities retain legacy fallback; two known identities must match exactly."""
-    return not recorded or not current or recorded == current
+def _surface_relation(recorded: str, current: str) -> SurfaceRelation:
+    """Compare two optional surface identities without treating absence as equality."""
+    if not recorded or not current:
+        return "unknown"
+    return "same" if recorded == current else "different"
 
 
 def _control_key(value: str) -> str:
@@ -252,10 +310,10 @@ def record_action_outcome(
 
 
 __all__ = [
+    "PersistenceBoundaryState",
     "action_metadata",
-    "concrete_persistence_plan",
     "is_commit_turn",
-    "parent_persistence_pending",
+    "persistence_boundary_state",
     "regresses_preparation_frontier",
     "record_action_outcome",
     "record_action_response",

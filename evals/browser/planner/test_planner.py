@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone import _SingleCheckResult, run_planner
+from gui_agent.core.supervisor.milestone.model_io import run_planner
+from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
 

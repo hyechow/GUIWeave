@@ -1,20 +1,8 @@
 {
   "turn": 30,
-  "atomic_role": "commit",
-  "action_family": "commit",
-  "target_control": "Save",
+  "goal_completed": false,
+  "completion_status": "in_progress",
   "reject_target_controls": [
-    "Edit Configurations"
-  ],
-  "action": {
-    "action_type": "tap",
-    "x_range": [
-      850,
-      945
-    ],
-    "y_range": [
-      0,
-      100
-    ]
-  }
+    "Save"
+  ]
 }

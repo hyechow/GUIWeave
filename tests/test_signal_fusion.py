@@ -14,10 +14,10 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.supervisor.milestone.action_protocol import (
+    PersistenceBoundaryState,
     action_metadata,
-    concrete_persistence_plan,
     is_commit_turn,
-    parent_persistence_pending,
+    persistence_boundary_state,
     regresses_preparation_frontier,
 )
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
@@ -171,30 +171,7 @@ def test_action_metadata_preserves_structured_commit_role_and_family():
     assert family == "input"
 
 
-def test_action_metadata_preserves_structured_write_role_and_family():
-    plan = _PlanResult(
-        instruction="在目标字段输入 value",
-        summary="write",
-        atomic_role="write",
-        action_family="commit",
-    )
-
-    role, family = action_metadata(
-        plan,
-        Milestone(
-            id="write",
-            name="write value",
-            description="",
-            success_condition="value is written",
-            kind="action",
-        ),
-    )
-
-    assert role == "write"
-    assert family == "commit"
-
-
-def test_persisted_mutation_downgrades_nested_activate_from_commit_role():
+def test_persisted_mutation_keeps_transaction_role_separate_from_ui_family():
     plan = _PlanResult(
         instruction="generate nested draft rows",
         summary="return generated rows to the outer editor",
@@ -215,32 +192,8 @@ def test_persisted_mutation_downgrades_nested_activate_from_commit_role():
         ),
     )
 
-    assert role == "prepare"
-    assert family == "activate"
-
-
-def test_persisted_mutation_promotes_commit_family_to_terminal_role():
-    plan = _PlanResult(
-        instruction="save outer resource",
-        summary="persist draft",
-        atomic_role="prepare",
-        action_family="commit",
-    )
-
-    role, family = action_metadata(
-        plan,
-        Milestone(
-            id="persisted",
-            name="update collection and save",
-            description="",
-            success_condition="saved collection contains target rows",
-            kind="action",
-            requires_commit=True,
-        ),
-    )
-
     assert role == "commit"
-    assert family == "commit"
+    assert family == "activate"
 
 
 def test_persisted_mutation_rejects_backward_preparation_edge():
@@ -253,9 +206,9 @@ def test_persisted_mutation_rejects_backward_preparation_edge():
         requires_commit=True,
     )
     history = [
-        _signal_turn(1, role="prepare", control="Open editor"),
-        _signal_turn(2, role="write", control="Target value"),
-        _signal_turn(3, role="prepare", control="Generate draft"),
+        _signal_turn(1, role="prepare", control="Open editor", surface="resource"),
+        _signal_turn(2, role="write", control="Target value", surface="resource"),
+        _signal_turn(3, role="prepare", control="Generate draft", surface="resource"),
     ]
     proposal = _PlanResult(
         instruction="open the editor again",
@@ -265,9 +218,15 @@ def test_persisted_mutation_rejects_backward_preparation_edge():
         target_control="Open editor",
     )
 
-    assert regresses_preparation_frontier(proposal, milestone, history) is True
     assert regresses_preparation_frontier(
-        proposal.model_copy(update={"target_control": "Save", "action_family": "commit"}),
+        proposal, milestone, history, current_surface_id="resource"
+    ) is True
+    assert regresses_preparation_frontier(
+        proposal.model_copy(update={
+            "atomic_role": "commit",
+            "target_control": "Save",
+            "action_family": "activate",
+        }),
         milestone,
         history,
     ) is False
@@ -318,18 +277,98 @@ def test_parent_persistence_becomes_pending_when_child_entry_reappears_after_pro
         requires_commit=True,
     )
     history = [
-        _signal_turn(1, role="prepare", control="Open child editor"),
-        _signal_turn(2, role="prepare", control="Next"),
-        _signal_turn(3, role="write", control="Target A"),
-        _signal_turn(4, role="write", control="Target B"),
-        _signal_turn(5, role="prepare", control="Next"),
-        _signal_turn(6, role="prepare", control="Generate draft"),
+        _signal_turn(1, role="prepare", control="Open child editor", surface="parent"),
+        _signal_turn(2, role="prepare", control="Next", surface="child:1"),
+        _signal_turn(3, role="write", control="Target A", surface="child:2"),
+        _signal_turn(4, role="write", control="Target B", surface="child:2"),
+        _signal_turn(5, role="prepare", control="Next", surface="child:2"),
+        _signal_turn(6, role="prepare", control="Generate draft", surface="child:3"),
     ]
-    assert parent_persistence_pending(
+    assert persistence_boundary_state(
         milestone,
         history,
         {"Open child editor", "Persist resource"},
-    ) is True
+        current_surface_id="parent",
+    ).parent_pending is True
+
+
+def test_unknown_surface_does_not_prove_parent_return():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child editor"),
+        _signal_turn(2, role="write", control="Target A"),
+        _signal_turn(3, role="prepare", control="Generate draft"),
+    ]
+
+    assert persistence_boundary_state(
+        milestone,
+        history,
+        {"Open child editor", "Persist resource"},
+    ).parent_pending is False
+
+
+def test_child_surface_commit_is_provisional_after_return_to_parent():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(
+            1,
+            role="prepare",
+            control="Open child editor",
+            surface="resource:parent",
+        ),
+        _signal_turn(2, role="write", control="Target A", surface="wizard:values"),
+        _signal_turn(3, role="prepare", control="Next", surface="wizard:values"),
+        _signal_turn(4, role="commit", control="Generate", surface="wizard:summary"),
+    ]
+
+    boundary = persistence_boundary_state(
+        milestone,
+        history,
+        {"Open child editor", "Persist resource"},
+        current_surface_id="resource:parent",
+    )
+
+    assert boundary.parent_pending is True
+    assert boundary.is_terminal_dispatch(history[-1], milestone) is False
+
+
+def test_same_surface_commit_is_terminal_without_parent_return():
+    milestone = Milestone(
+        id="persisted",
+        name="write fields and save",
+        description="",
+        success_condition="saved fields contain target values",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="write", control="Field A", surface="resource:editor"),
+        _signal_turn(2, role="commit", control="Persist", surface="resource:editor"),
+    ]
+
+    boundary = persistence_boundary_state(
+        milestone,
+        history,
+        {"Persist"},
+        current_surface_id="resource:editor",
+    )
+
+    assert boundary.parent_pending is False
+    assert boundary.is_terminal_dispatch(history[-1], milestone) is True
 
 
 def test_repeated_in_flow_control_does_not_look_like_parent_return():
@@ -347,7 +386,9 @@ def test_repeated_in_flow_control_does_not_look_like_parent_return():
         _signal_turn(3, role="prepare", control="Next"),
     ]
 
-    assert parent_persistence_pending(milestone, history, {"next"}) is False
+    assert persistence_boundary_state(
+        milestone, history, {"next"}
+    ).parent_pending is False
 
 
 def test_writes_alone_do_not_make_parent_persistence_pending():
@@ -366,11 +407,11 @@ def test_writes_alone_do_not_make_parent_persistence_pending():
         _signal_turn(4, role="write", control="Target B"),
     ]
 
-    assert parent_persistence_pending(
+    assert persistence_boundary_state(
         milestone,
         history,
         {"Open child editor", "Advance child flow"},
-    ) is False
+    ).parent_pending is False
 
 
 def test_visible_later_child_control_blocks_parent_return_even_when_entry_remains_in_dom():
@@ -388,11 +429,11 @@ def test_visible_later_child_control_blocks_parent_return_even_when_entry_remain
         _signal_turn(3, role="prepare", control="Advance child flow"),
     ]
 
-    assert parent_persistence_pending(
+    assert persistence_boundary_state(
         milestone,
         history,
         {"openchildeditor", "advancechildflow"},
-    ) is False
+    ).parent_pending is False
 
 
 def test_policy_requires_concrete_commit_target_when_parent_entry_reappears():
@@ -405,9 +446,9 @@ def test_policy_requires_concrete_commit_target_when_parent_entry_reappears():
         requires_commit=True,
     )
     history = [
-        _signal_turn(1, role="prepare", control="Open child editor"),
-        _signal_turn(2, role="write", control="Target A"),
-        _signal_turn(3, role="prepare", control="Generate draft"),
+        _signal_turn(1, role="prepare", control="Open child editor", surface="parent"),
+        _signal_turn(2, role="write", control="Target A", surface="child:1"),
+        _signal_turn(3, role="prepare", control="Generate draft", surface="child:2"),
     ]
     observation = Observation(
         png_bytes=b"frame",
@@ -417,6 +458,7 @@ def test_policy_requires_concrete_commit_target_when_parent_entry_reappears():
         ],
     )
     policy = MilestoneSupervisorPolicy(
+        surface_resolver=lambda _observation: "parent",
         active_target_resolver=lambda _observation: {
             "Open child editor",
             "Persist resource",
@@ -426,7 +468,7 @@ def test_policy_requires_concrete_commit_target_when_parent_entry_reappears():
         instruction="persist the current resource",
         summary="cross the parent boundary",
         atomic_role="commit",
-        action_family="commit",
+        action_family="activate",
         target_control="Persist resource",
     )
 
@@ -443,11 +485,11 @@ def test_policy_requires_concrete_commit_target_when_parent_entry_reappears():
     )
 
     assert step.atomic_role == "commit"
-    assert step.action_family == "commit"
+    assert step.action_family == "activate"
     assert step.target_control == "Persist resource"
 
 
-def test_abstract_or_inactive_commit_target_is_not_concrete_persistence():
+def test_parent_boundary_accepts_only_a_concrete_current_commit_target():
     milestone = Milestone(
         id="persisted",
         name="update collection and save",
@@ -460,15 +502,16 @@ def test_abstract_or_inactive_commit_target_is_not_concrete_persistence():
         instruction="persist",
         summary="",
         atomic_role="commit",
-        action_family="commit",
+        action_family="activate",
         target_control="",
     )
     wrong = abstract.model_copy(update={"target_control": "Inactive command"})
     concrete = abstract.model_copy(update={"target_control": "Persist resource"})
 
-    assert concrete_persistence_plan(abstract, milestone, {"Persist resource"}) is False
-    assert concrete_persistence_plan(wrong, milestone, {"Persist resource"}) is False
-    assert concrete_persistence_plan(concrete, milestone, {"Persist resource"}) is True
+    boundary = PersistenceBoundaryState(parent_pending=True)
+    assert boundary.accepts_parent_plan(abstract, milestone, {"Persist resource"}) is False
+    assert boundary.accepts_parent_plan(wrong, milestone, {"Persist resource"}) is False
+    assert boundary.accepts_parent_plan(concrete, milestone, {"Persist resource"}) is True
 
 
 def test_visual_regression_proposal_requires_a_new_forward_plan():
@@ -481,9 +524,9 @@ def test_visual_regression_proposal_requires_a_new_forward_plan():
         requires_commit=True,
     )
     history = [
-        _signal_turn(1, role="prepare", control="Open child editor"),
-        _signal_turn(2, role="write", control="Target A"),
-        _signal_turn(3, role="prepare", control="Generate draft"),
+        _signal_turn(1, role="prepare", control="Open child editor", surface="parent"),
+        _signal_turn(2, role="write", control="Target A", surface="parent"),
+        _signal_turn(3, role="prepare", control="Generate draft", surface="parent"),
     ]
     proposals = iter(
         [
@@ -502,7 +545,7 @@ def test_visual_regression_proposal_requires_a_new_forward_plan():
             ),
         ]
     )
-    policy = MilestoneSupervisorPolicy()
+    policy = MilestoneSupervisorPolicy(surface_resolver=lambda _observation: "parent")
     policy._invoke_planner = lambda *_args, **_kwargs: next(proposals)  # type: ignore[method-assign]
 
     step = policy._plan_single(
@@ -521,7 +564,7 @@ def test_visual_regression_proposal_requires_a_new_forward_plan():
     assert step.action_family == "iterate"
 
 
-def test_visual_regression_that_persists_is_not_dispatched():
+def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
     milestone = Milestone(
         id="persisted",
         name="update collection and save",
@@ -557,8 +600,8 @@ def test_visual_regression_that_persists_is_not_dispatched():
         history,
     )
 
-    assert step.should_act is False
-    assert step.instruction is None
+    assert step.should_act is True
+    assert step.instruction == "open the child editor again"
 
 
 def test_commit_detection_uses_structured_role_not_instruction_vocabulary():
@@ -618,14 +661,6 @@ def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
                 "confirmed",
                 source_type="obs.applied_filters",
                 scope="milestone:filter",
-                authoritative=True,
-            ),
-            claim(
-                "result.availability",
-                "confirmed",
-                source_type="obs.tables",
-                scope="milestone:filter",
-                evidence="match_count=0",
                 authoritative=True,
             ),
         ],
@@ -1002,27 +1037,50 @@ def test_generic_page_response_cannot_complete_navigation():
     assert decision.status == "pending"
 
 
-def test_partial_inventory_absence_is_not_a_negative_control_claim():
+def test_collection_requires_authoritative_complete_coverage():
     decision = CompletionEvaluator().decide(
         ExecutionContract(
-            statement_id="edit",
-            kind="action",
-            completion_mode="mutation",
+            statement_id="rows",
+            kind="collection",
+            completion_mode="read",
         ),
         [
             claim(
-                "inventory.coverage",
+                "collection.coverage",
                 "partial",
-                source_type="obs.dom",
-                scope="milestone:edit",
+                source_type="runtime.collection_controller",
+                scope="milestone:rows",
                 authoritative=True,
                 coverage="partial",
             )
         ],
-        scope="milestone:edit",
+        scope="milestone:rows",
     )
 
     assert decision.status == "pending"
+
+
+def test_collection_completes_from_authoritative_coverage_fact():
+    decision = CompletionEvaluator().decide(
+        ExecutionContract(
+            statement_id="rows",
+            kind="collection",
+            completion_mode="read",
+        ),
+        [claim(
+            "collection.coverage",
+            "complete",
+            source_type="runtime.collection_controller",
+            scope="milestone:rows",
+            evidence="observable boundary reached",
+            authoritative=True,
+            coverage="complete",
+        )],
+        scope="milestone:rows",
+    )
+
+    assert decision.status == "satisfied"
+    assert decision.completion_status == "confirmed"
 
 
 def test_runtime_constraint_is_visible_only_in_its_scope():
@@ -1031,25 +1089,3 @@ def test_runtime_constraint_is_visible_only_in_its_scope():
 
     assert ledger.visible("milestone:first") == ["do not repeat this scroll"]
     assert ledger.visible("milestone:second") == []
-
-
-def test_delegation_is_an_explicit_evidence_status_not_completion():
-    contract = ExecutionContract(
-        statement_id="filter",
-        kind="filter",
-        completion_mode="filter_state",
-    )
-    decision = CompletionEvaluator().decide(
-        contract,
-        [claim(
-            "execution.delegation",
-            "confirmed",
-            source_type="runtime.filter_fallback",
-            scope="milestone:filter",
-            authoritative=True,
-        )],
-        scope="milestone:filter",
-    )
-
-    assert decision.status == "delegated"
-    assert decision.completion_status == "in_progress"

@@ -1,0 +1,9 @@
+{
+  "task": "WebArena 549",
+  "history_source": "logs/gui_agent/webarena/browser/20260713_105939/context.json",
+  "history_through_turn": 11,
+  "observation_source": "recorded observation_turn_12.json and screenshot_turn_12.png",
+  "observation_captured_on": "2026-07-13",
+  "migration": "turn 11 receipt role restored from the same source context raw planner output: atomic_role=commit, action_family=activate; old runtime had downgraded it to prepare",
+  "purpose": "A direct same-surface Save Attribute dispatch followed by redirect and success response must complete the mutation without reopening the edited record."
+}

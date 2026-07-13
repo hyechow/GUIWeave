@@ -1,0 +1,18 @@
+{
+  "turn": 30,
+  "should_act": true,
+  "atomic_role": "commit",
+  "action_family": "activate",
+  "target_control": "Save",
+  "action": {
+    "action_type": "tap",
+    "x_range": [
+      850,
+      970
+    ],
+    "y_range": [
+      0,
+      100
+    ]
+  }
+}

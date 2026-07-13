@@ -57,7 +57,7 @@ CompletionStrategy = Literal[
 ]
 AtomicRole = Literal["prepare", "write", "commit", "iterate"]
 ActionFamily = Literal[
-    "input", "select", "activate", "navigate", "iterate", "commit", "unknown"
+    "input", "select", "activate", "navigate", "iterate", "unknown"
 ]
 ActionExecutionStatus = Literal["not_attempted", "dispatched", "dispatch_failed"]
 ActionTargetStatus = Literal["on_target", "off_target", "unknown"]
@@ -466,7 +466,7 @@ class SupervisorStep(BaseModel):
         default="unknown",
         description=(
             "planner 指令要求的原子动作族。runner 在派发前校验 concrete primitive；"
-            "unknown 保持旧调用方兼容。"
+            "unknown 表示当前无法确定具体 UI 原语；提交语义只由 atomic_role=commit 表达。"
         ),
     )
     target_control: str = Field(

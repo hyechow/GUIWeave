@@ -90,7 +90,7 @@
             "execution_scope": "milestone:prod-search-exact",
             "milestone_kind": "filter",
             "atomic_role": "commit",
-            "action_family": "commit",
+            "action_family": "input",
             "target_control": "Search by keyword"
           },
           "action_decision": {

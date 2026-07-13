@@ -3,21 +3,6 @@
 from collections.abc import Callable, Iterable
 from typing import Literal, Optional
 
-from langchain_openai import ChatOpenAI
-
-from gui_agent.context.runtime import (
-    completed_milestones_block,
-    constraints_block,
-    extra_instruction_block,
-    form_controls_block,
-    history_block,
-    knowledge_block,
-    loop_frame_summary_block,
-    milestone_block,
-    replan_state_block,
-    tried_instructions_block,
-)
-from llm.structured import invoke_structured
 from gui_agent.core.vision.frame_analysis import is_loading_frame
 from gui_agent.core.schemas import (
     Milestone,
@@ -25,13 +10,11 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     SupervisorStep,
 )
-from gui_agent.core.self_learning.progressive import ProgressiveKnowledge, _norm as _norm_page
+from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.run.action_ledger import ActionLedger
 
-from .decomposition import MilestoneDecompositionMixin, _looks_like_analysis
-from .helpers import assemble_messages, _make_llm, run_loop_check, run_planner
-from .helpers import run_checker, run_selector, _default_milestone_prompts
-from .helpers import (
+from .decomposition import MilestoneDecompositionMixin
+from .acquisition import (
     target_affordance_scroll_plan,
     target_section_acquire_plan,
     target_unit_write_plan,
@@ -56,12 +39,9 @@ from gui_agent.core.run.progress_monitor import (
 )
 from .schemas import (
     MilestonePrompts,
-    _DecomposeResponse,
-    _LoopFrameResult,
     _PlanResult,
     _ReplanResult,
     _SingleCheckResult,
-    _StopConditionPatch,
 )
 from .stuck import MilestoneStuckMixin
 from gui_agent.core.run.execution_signals import (
@@ -73,9 +53,8 @@ from gui_agent.core.run.execution_signals import (
 )
 from .action_protocol import (
     action_metadata,
-    concrete_persistence_plan,
     is_commit_turn,
-    parent_persistence_pending,
+    persistence_boundary_state,
     regresses_preparation_frontier,
     record_action_outcome,
     record_action_response,
@@ -85,21 +64,23 @@ from .evidence import (
     checker_claim,
     execution_contract_for,
     observation_state_claims,
-    resolved_filter_intent,
 )
 from .execution_scope import (
     execution_scope_for,
     history_for_current_milestone,
     history_for_scope,
-    page_known,
-    route_identity_evidence,
 )
+from .llm_runtime import MilestoneLLMRuntimeMixin
 
 
 # ── Main class ────────────────────────────────────────────────────────
 
 
-class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin):
+class MilestoneSupervisorPolicy(
+    MilestoneLLMRuntimeMixin,
+    MilestoneDecompositionMixin,
+    MilestoneStuckMixin,
+):
     """The sole control-flow owner for milestone execution.
 
     Checkers and deterministic adapters contribute evidence, planners propose one primitive,
@@ -118,10 +99,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
     ) -> None:
         # Platform factories inject their prompt bundle. The neutral default only supports
         # deterministic tests and tooling that do not need platform-specific visual guidance.
-        self._prompts = prompts or _default_milestone_prompts()
+        self._prompts = prompts or MilestonePrompts.neutral()
         self._surface_resolver = surface_resolver
         self._active_target_resolver = active_target_resolver
-        self._global_constraints: list[str] = []
+        self._static_constraints: list[str] = []
         self._milestones: dict[str, Milestone] = {}
         self._order: list[str] = []
         self._current_id: Optional[str] = None
@@ -234,6 +215,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 mid: list(values)
                 for mid, values in self._monitor._progress_values.items()
             },
+            "constraints": self.constraints_snapshot(),
         }
 
     def set_execution_contract(self, contract: ExecutionContract) -> None:
@@ -249,81 +231,60 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
     ) -> None:
         actual_scope = scope or self._current_execution_scope or "task"
         self._constraint_ledger.add(text, scope=actual_scope, source=source)
-        # Keep the legacy inspection surface stable for reports/tests. Prompt consumers call
-        # _constraints_for_scope(), which removes out-of-scope runtime entries.
-        if text not in self._global_constraints:
-            self._global_constraints.append(text)
+
+    def constraints_snapshot(self, scope: str | None = None) -> list[str]:
+        """Return effective static and runtime constraints for reports and eval tooling."""
+        return self._constraints_for_scope(scope)
+
+    def add_static_constraint(self, text: str) -> None:
+        """Add task-lifetime context supplied by the runner or decomposition boundary."""
+        if text and text not in self._static_constraints:
+            self._static_constraints.append(text)
 
     def _constraints_for_scope(self, scope: str | None = None) -> list[str]:
         actual_scope = scope or self._current_execution_scope
-        runtime_texts = {entry.text for entry in self._constraint_ledger.entries}
-        static = [text for text in self._global_constraints if text not in runtime_texts]
-        return [*static, *self._constraint_ledger.visible(actual_scope)]
+        return [
+            *self._static_constraints,
+            *self._constraint_ledger.visible(actual_scope),
+        ]
 
-    def _contract_for(self, milestone: Milestone) -> ExecutionContract:
-        return execution_contract_for(milestone, self._execution_contract)
-
-    def _action_lifecycle_claims(
-        self,
-        milestone: Milestone,
-        history: list[PolicyTurn],
-        *,
-        scope: str,
-    ):
-        return action_lifecycle_claims(
-            milestone,
-            history,
-            scope=scope,
-            monitor=self._monitor,
-            ledger=self._action_ledger,
-        )
-
-    def _controller_completion_decision(
+    def _collection_completion_decision(
         self,
         milestone: Milestone,
         *,
         scope: str,
-        source_type: str,
         evidence: str,
-        history: list[PolicyTurn] | None = None,
     ) -> CompletionEvaluation:
-        claims = self._action_lifecycle_claims(
-            milestone,
-            history or [],
-            scope=scope,
-        )
-        claims.append(claim(
-            "business.outcome",
-            "confirmed",
-            source_type=source_type,
-            scope=scope,
-            subject_scope=scope,
-            evidence=evidence,
-            authoritative=True,
-        ))
+        """Evaluate a typed collection-boundary fact without inventing a business outcome."""
         return self._completion_evaluator.decide(
-            self._contract_for(milestone),
-            claims,
+            execution_contract_for(milestone, self._execution_contract),
+            [claim(
+                "collection.coverage",
+                "complete",
+                source_type="runtime.collection_controller",
+                scope=scope,
+                subject_scope=scope,
+                evidence=evidence,
+                authoritative=True,
+                coverage="complete",
+            )],
             scope=scope,
         )
 
-    def _advance_from_controller(
+    def _advance_from_collection_controller(
         self,
         milestone: Milestone,
         observation: Observation,
         history: list[PolicyTurn],
         *,
-        source_type: str,
         evidence: str,
         final_read: Optional[dict] = None,
     ) -> SupervisorStep:
         scope = execution_scope_for(milestone, observation)
-        decision = self._controller_completion_decision(
+        decision = self._collection_completion_decision(
             milestone,
             scope=scope,
-            source_type=source_type,
             evidence=evidence,
-            history=history,
         )
         if decision.status != "satisfied":
             raise RuntimeError(
@@ -379,7 +340,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 f"⚠️ 当前执行上下文下已经执行过同一具体动作（{decision}）且目标未达成。"
                 "必须换一个当前页面可见的新入口或新操作，禁止重复同一 DOM 目标。"
             )
-            if con not in self._global_constraints:
+            if con not in self._constraints_for_scope(scope):
                 self._add_runtime_constraint(con, scope=scope, source="loop_guard")
 
     def step(self, observation: Observation, goal: str, history: list[PolicyTurn]) -> SupervisorStep:
@@ -503,6 +464,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
             synthetic = _SingleCheckResult(
                 status="in_progress",
+                outcome_status="unverified",
                 reason=f"刚进入子目标「{milestone.name}」，默认未完成",
                 summary="",
             )
@@ -542,11 +504,20 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if self._monitor.dom_changed and not self._monitor.url_changed:
             print("  [DOMChanged] 表单值指纹有变化，抑制 stuck/重复误判")
 
-        contract = self._contract_for(milestone)
-        evidence_claims = self._action_lifecycle_claims(
+        contract = execution_contract_for(milestone, self._execution_contract)
+        boundary = persistence_boundary_state(
+            milestone,
+            history,
+            self._active_targets(observation),
+            current_surface_id=self.surface_id(observation),
+        )
+        evidence_claims = action_lifecycle_claims(
             milestone,
             history,
             scope=execution_scope,
+            monitor=self._monitor,
+            ledger=self._action_ledger,
+            boundary=boundary,
         )
         evidence_claims.extend(observation_state_claims(
             milestone,
@@ -604,6 +575,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if section_plan is not None:
             check = _SingleCheckResult(
                 status="in_progress",
+                outcome_status="unverified",
                 reason=section_plan.summary,
                 summary=section_plan.summary,
                 missing_evidence=["目标字段所在页内区域需先展开或滚动到位。"],
@@ -638,6 +610,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if acquire_plan is not None:
             check = _SingleCheckResult(
                 status="in_progress",
+                outcome_status="unverified",
                 reason=acquire_plan.summary,
                 summary=acquire_plan.summary,
                 missing_evidence=["目标控件已在 DOM 中定位，需先滚动到视口内再执行操作。"],
@@ -684,6 +657,23 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             scope=execution_scope,
             subject_scope=execution_scope,
         ))
+        if (
+            milestone.kind == "collection"
+            and milestone.completion_strategy == "read_once"
+            and check.status == "done"
+        ):
+            # The strategy itself defines the collection boundary as the current frame. The
+            # checker verifies that the requested value is readable; it does not invent coverage.
+            evidence_claims.append(claim(
+                "collection.coverage",
+                "complete",
+                source_type="runtime.read_once_boundary",
+                scope=execution_scope,
+                subject_scope=execution_scope,
+                evidence="read_once collection boundary is the current observation",
+                authoritative=True,
+                coverage="complete",
+            ))
         post_completion = self._completion_evaluator.decide(
             contract, evidence_claims, scope=execution_scope
         )
@@ -756,11 +746,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 if self.task_type != "action":
                     read_inst = check.read_instruction or _default_read_instruction(milestone)
                     final_read = _ctx(milestone, read_inst)
-                return self._advance_from_controller(
+                return self._advance_from_collection_controller(
                     milestone,
                     observation,
                     history,
-                    source_type="runtime.collection_controller",
                     evidence="collection controller reports all requested rows completed",
                     final_read=final_read,
                 )
@@ -818,6 +807,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print(f"  [OffTarget] 上一步误中「{last_tv.actual_element}」，已先验收(未完成)→ replan")
             stuck = _SingleCheckResult(
                 status="stuck",
+                outcome_status="unverified",
                 reason=f"上一步没有打开预期元素，当前停留在「{last_tv.actual_element}」相关状态",
                 stuck_reason=f"上一步没有到达预期元素，当前显示「{last_tv.actual_element}」相关状态",
                 summary="",
@@ -844,6 +834,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             print(f"  [NoEffect] 上一步点击「{tapped}」落点正确但屏幕零变化，已先验收(未完成)→ replan")
             stuck = _SingleCheckResult(
                 status="stuck",
+                outcome_status="unverified",
                 reason=f"点击「{tapped}」后页面没有出现验收条件所需的可见变化",
                 stuck_reason=f"点击「{tapped}」后仍未看到目标状态，应尝试其他可见入口",
                 summary="",
@@ -938,15 +929,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         )
         active_targets = self._active_targets(observation)
         current_surface_id = self.surface_id(observation)
-        parent_commit = (
-            check.outcome_status != "contradicted"
-            and parent_persistence_pending(
-                milestone,
-                history,
-                active_targets,
-                current_surface_id=current_surface_id,
-            )
+        boundary = persistence_boundary_state(
+            milestone,
+            history,
+            active_targets,
+            current_surface_id=current_surface_id,
         )
+        parent_commit = check.outcome_status != "contradicted" and boundary.parent_pending
         if parent_commit:
             print("  [ActionFrontier] 子流程已返回父资源，要求绑定具体持久化控件")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
@@ -957,12 +946,14 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     history,
                     extra=(
                         "结构化执行轨迹已确认子编辑流程返回父资源，且父资源提交边界尚未跨越。"
-                        "下一步必须是当前父资源的持久化提交动作；atomic_role 和 action_family "
-                        "都填 commit，target_control 必须填写当前屏幕上实际存在的具体控件名称。"
+                        "下一步必须是当前父资源的持久化提交动作；atomic_role 填 commit，"
+                        "点击保存按钮时 action_family 填 activate（禁止填 commit），"
+                        "target_control 必须填写当前屏幕上"
+                        "实际存在的具体控件名称。"
                         "禁止留空、禁止填写抽象的 persistence boundary，也禁止重新进入子编辑流程。"
                     ),
                 )
-            if not concrete_persistence_plan(plan, milestone, active_targets):
+            if not boundary.accepts_parent_plan(plan, milestone, active_targets):
                 print("  [ActionFrontier] 提交提议缺少可验证的当前控件，重试")
                 with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
                     plan = self._invoke_planner(
@@ -973,10 +964,12 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                         extra=(
                             "上一个提交提议没有绑定到当前活动表面中的具体控件。只返回一个当前"
                             "父资源上真实可见、可点击的持久化控件；target_control 原样填写该控件"
-                            "名称，atomic_role=commit，action_family=commit。找不到时不要猜测。"
+                            "名称，atomic_role=commit；点击控件时 action_family=activate，"
+                            "禁止把事务角色重复写进 action_family。"
+                            "找不到时不要猜测。"
                         ),
                     )
-            if not concrete_persistence_plan(plan, milestone, active_targets):
+            if not boundary.accepts_parent_plan(plan, milestone, active_targets):
                 print("  [ActionFrontier] 无法绑定具体持久化控件，保持未决且不派发动作")
                 plan = _PlanResult(
                     instruction="",
@@ -1126,20 +1119,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 else frame.read_instruction or _default_read_instruction(milestone)
             )
             if frame.should_stop and _has_collected(scoped_history, milestone.id):
-                return self._advance_from_controller(
+                return self._advance_from_collection_controller(
                     milestone,
                     observation,
                     history,
-                    source_type="runtime.collection_controller",
                     evidence=f"collection stop condition satisfied: {frame.stop_reason}",
                     final_read=_ctx(milestone, read_inst, frame.collection_scope),
                 )
             if frame.boundary_reached and _last_scroll_was_for(scoped_history, milestone.id):
-                return self._advance_from_controller(
+                return self._advance_from_collection_controller(
                     milestone,
                     observation,
                     history,
-                    source_type="runtime.collection_controller",
                     evidence="collection boundary reached after a successful scroll",
                 )
             milestone.status = "running"
@@ -1170,6 +1161,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             if not _has_successful_scroll_for(scoped_history, milestone.id):
                 stuck = _SingleCheckResult(
                     status="stuck",
+                    outcome_status="unverified",
                     reason="滚动预算耗尽，但尚未观测到任何成功执行的纵向滚动",
                     stuck_reason="无法区分页面边界与无效滚动，且缺少有效滚动证据",
                     issues=["没有成功滚动记录"],
@@ -1177,9 +1169,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
                 read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
                 return self._handle_stuck(milestone, stuck, read_inst, observation, scoped_history)
-            return self._advance_from_controller(
+            return self._advance_from_collection_controller(
                 milestone, observation, history,
-                source_type="runtime.collection_controller",
                 evidence="collection scroll budget exhausted after successful traversal",
             )
 
@@ -1196,9 +1187,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
                     return self._handle_stuck(milestone, sim_stuck, read_inst, observation, scoped_history)
                 print("  [Loop] 屏幕冻结（≥99%），即使 reader 返回新内容也结束收集")
-                return self._advance_from_controller(
+                return self._advance_from_collection_controller(
                     milestone, observation, history,
-                    source_type="runtime.collection_controller",
                     evidence="collection viewport is frozen after successful traversal",
                 )
             if not last_read_added:
@@ -1207,9 +1197,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
                     return self._handle_stuck(milestone, sim_stuck, read_inst, observation, scoped_history)
                 print("  [Loop] 截图连续无变化且无新增内容 → 判为边界，结束收集")
-                return self._advance_from_controller(
+                return self._advance_from_collection_controller(
                     milestone, observation, history,
-                    source_type="runtime.collection_controller",
                     evidence="collection reached a stable boundary with no new content",
                 )
             print("  [Loop] 截图相似但上一轮读到了新内容，继续收集")
@@ -1249,9 +1238,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                         f"停止条件「{milestone.scroll_stop_condition}」已触发"
                         f"（{frame.stop_reason}）"
                     )
-                return self._advance_from_controller(
+                return self._advance_from_collection_controller(
                     milestone, observation, history,
-                    source_type="runtime.collection_controller",
                     evidence=f"collection stop condition satisfied: {frame.stop_reason}",
                     final_read=final_read,
                 )
@@ -1265,6 +1253,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             else:
                 stuck = _SingleCheckResult(
                     status="stuck",
+                    outcome_status="unverified",
                     reason=f"停止条件已触发但尚未采集到目标内容：{frame.stop_reason}",
                     stuck_reason="停止条件触发且没有可用采集结果",
                     summary=frame.summary,
@@ -1273,9 +1262,8 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
         if frame.boundary_reached and _last_scroll_was_for(scoped_history, milestone.id):
             print("  [Loop] 确认列表边界 → 结束收集")
-            return self._advance_from_controller(
+            return self._advance_from_collection_controller(
                 milestone, observation, history,
-                source_type="runtime.collection_controller",
                 evidence="collection boundary reached after a successful scroll",
             )
 
@@ -1414,6 +1402,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             # (done check for the completed milestone already saved at the top of _advance)
             synthetic = _SingleCheckResult(
                 status="in_progress",
+                outcome_status="unverified",
                 reason=f"刚进入子目标「{next_ms.name}」，默认未完成",
                 summary="",
             )
@@ -1445,15 +1434,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 if truly_new_page:
                     print(f"  [Replan] 页面已跳转（{prev_page_id} → {current_page_id}），不计入重试次数")
                     skip_retry = True
-                    before = len(self._global_constraints)
-                    self._global_constraints = [
-                        c for c in self._global_constraints
-                        if not (
-                            c.startswith("指令「")
-                            and ("禁止重复此指令" in c or "未达成目标" in c)
-                        )
-                    ]
-                    cleared = before - len(self._global_constraints)
+                    cleared = self._constraint_ledger.remove_sources(
+                        self._current_execution_scope,
+                        {"loop_guard", "no_effect"},
+                    )
                     if cleared:
                         print(f"  [Replan] 清除 {cleared} 条旧页面操作约束")
                 else:
@@ -1500,31 +1484,19 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # the next Replan prompt) avoids immediately repeating the same unproductive path.
         if replan.diagnosis:
             path_constraint = f"⚠️ 之前未达成目标的路径：{replan.diagnosis}。除非当前截图出现新的明确证据，否则不要重复。"
-            if path_constraint not in self._global_constraints:
+            if path_constraint not in self._constraints_for_scope():
                 self._add_runtime_constraint(path_constraint, source="replan")
 
         if replan.strategy == "force_complete":
-            scope = execution_scope_for(milestone, observation)
-            decision = self._controller_completion_decision(
-                milestone,
-                scope=scope,
-                source_type="replanner.force_complete",
-                evidence=replan.diagnosis or "replanner judged the goal already satisfied",
-                history=history,
-            )
-            if decision.status == "satisfied":
-                print("  [Replan] force_complete 经 completion evidence 验证通过")
-                return self._advance(
-                    milestone,
-                    observation,
-                    history,
-                    decision=decision,
-                )
-            print(f"  [Replan] force_complete 被执行契约拒绝：{decision.reason}")
+            # A replanner diagnosis is a proposal, not business-state evidence. The normal
+            # observation/check path may confirm completion on a later frame; this turn remains
+            # pending and asks for a concrete local action instead of fabricating authority.
+            print("  [Replan] force_complete 不产生完成证据，退回本地规划")
             check = check.model_copy(update={
                 "status": "in_progress",
-                "reason": decision.reason,
-                "summary": "replanner completion rejected by execution contract",
+                "outcome_status": "unverified",
+                "reason": "replanner requested completion without new authoritative evidence",
+                "summary": "completion request deferred to the normal evidence path",
             })
             self._last_check = check
             return self._plan_single(milestone, check, observation, history)
@@ -1719,7 +1691,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             return
         instruction = last_action.supervisor.instruction
         constraint = f"指令「{instruction}」未达成目标：{reason}。优先尝试当前截图中不同的可见入口。"
-        if constraint not in self._global_constraints:
+        if constraint not in self._constraints_for_scope():
             self._add_runtime_constraint(constraint, source="no_effect")
             print(f"  [Constraint] {constraint}")
 
@@ -1784,302 +1756,3 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             "目标状态证据”。对提交/保存/发送这类终端派发动作，若页面没有错误/校验失败，"
             "不要仅因缺少成功 toast/历史新增可见反馈而要求重复提交。"
         )
-
-    def _single_check(
-        self,
-        milestone: Milestone,
-        observation: Observation,
-        history: list[PolicyTurn],
-        extra: str = "",
-        execution_scope: str = "",
-        effect_history: Optional[list[PolicyTurn]] = None,
-    ) -> _SingleCheckResult:
-        app_name = self._app_name
-        if not app_name:
-            for t in reversed(history):
-                if t.supervisor and t.supervisor.app_name:
-                    app_name = t.supervisor.app_name
-                    break
-        if milestone.completion_strategy == "react_until_collected" and self._collection_progress:
-            extra = f"{extra}\n{self._collection_progress}".strip()
-        identity_evidence = route_identity_evidence(milestone, observation)
-        if identity_evidence:
-            extra = f"{extra}\n{identity_evidence}".strip()
-        runtime_filter = resolved_filter_intent(
-            milestone,
-            observation,
-            history,
-            scope=execution_scope or execution_scope_for(milestone, observation),
-            ledger=self._action_ledger,
-        )
-        return run_checker(
-            milestone, observation, history,
-            app_name=app_name,
-            task_type=self.task_type,
-            constraints=self._constraints_for_scope(execution_scope),
-            extra=extra,
-            prompts=self._prompts,
-            check_knowledge=self._check_knowledge,
-            context_reports=self._context_reports,
-            state_trace_text=self._monitor.render(scope=execution_scope),
-            last_action_effect=self._last_action_effect_text(effect_history or history),
-            initial_filters=self._initial_filters,
-            runtime_filter=runtime_filter,
-        )
-
-    def _loop_check(
-        self,
-        milestone: Milestone,
-        observation: Observation,
-        history: list[PolicyTurn],
-    ) -> _LoopFrameResult:
-        return run_loop_check(
-            milestone, observation, history, constraints=self._constraints_for_scope(),
-            prompts=self._prompts,
-            context_reports=self._context_reports,
-        )
-
-    def _select_sections(self, milestone: Milestone, check: _SingleCheckResult) -> list[str]:
-        """Resolve which knowledge sections to inject this turn, via the KnowledgeSelector.
-
-        Cache key = (milestone id, normalized page_identity): selection only changes when the
-        page or the milestone changes, so most turns reuse the cached stems and cost nothing.
-        Two rules keep knowledge from going permanently dark when page identity is the weak
-        signal (was: an empty pick under an unidentified page got cached and disabled knowledge
-        for the rest of the milestone):
-          - Never cache under an UNKNOWN page (empty / 未知 / 未识别) — those turns re-decide
-            every time instead of locking in an empty.
-          - When the selector cleanly returns nothing, fall back to a deterministic match of
-            (page identity + milestone name + success_condition) against section titles and
-            selector_when lines BEFORE giving up.
-        Only a KNOWN page caches its result (incl. a genuinely empty one = a real "nothing here").
-        On selector failure nothing is cached either — the deterministic fallback covers the turn
-        and the next turn retries the LLM."""
-        if self._pk is None:
-            return []
-        page_id = check.page_identity or ""
-        is_known_page = page_known(page_id)
-        key = (milestone.id, _norm_page(page_id))
-        if is_known_page and key in self._selector_cache:
-            stems = self._selector_cache[key]
-            self._record_selector_report(
-                milestone=milestone,
-                page_identity=page_id,
-                page_known=is_known_page,
-                cache="hit",
-                sections=stems,
-                cached=True,
-            )
-            return stems
-        signals = [page_id, milestone.name, milestone.success_condition]
-        try:
-            with _Timer(self._timings, self._timings_order, "selector", self._token_usage):
-                sel = run_selector(
-                    self._goal, milestone, page_id,
-                    self._pk.selector_manifest(),
-                    prompts=self._prompts,
-                    context_reports=self._context_reports,
-                )
-            stems = self._pk.by_ids(sel.section_ids)
-            selected_stems = list(stems)
-            stems = self._pk.augment_with_signals(stems, signals)
-            fallback_triggered = stems != selected_stems
-            fallback_reason = ""
-            if fallback_triggered:
-                fallback_reason = (
-                    "empty_selector" if not selected_stems else "deterministic_augmentation"
-                )
-            if stems or sel.section_ids:
-                names = "、".join(stems) if stems else "（ID 未命中）"
-                print(f"  [Selector] {names}" + (f" — {sel.reason}" if sel.reason else ""))
-            if is_known_page:
-                self._selector_cache[key] = stems
-            self._record_selector_report(
-                milestone=milestone,
-                page_identity=page_id,
-                page_known=is_known_page,
-                cache="miss",
-                section_ids=list(sel.section_ids or []),
-                sections=stems,
-                fallback_triggered=fallback_triggered,
-                fallback_reason=fallback_reason,
-                cached=is_known_page,
-                reason=sel.reason,
-            )
-            return stems
-        except Exception as exc:  # noqa: BLE001 — selector must never block the planner
-            print(f"  [Selector] 调用失败，回退确定性模糊匹配：{exc}")
-            stems = self._pk.match_signals(signals)
-            self._record_selector_report(
-                milestone=milestone,
-                page_identity=page_id,
-                page_known=is_known_page,
-                cache="miss",
-                sections=stems,
-                fallback_triggered=bool(stems),
-                fallback_reason="selector_error",
-                cached=False,
-                error=str(exc),
-            )
-            return stems
-
-    def _record_selector_report(
-        self,
-        *,
-        milestone: Milestone,
-        page_identity: str,
-        page_known: bool,
-        cache: str,
-        section_ids: list[str] | None = None,
-        sections: list[str] | None = None,
-        fallback_triggered: bool = False,
-        fallback_reason: str = "",
-        cached: bool = False,
-        reason: str = "",
-        error: str = "",
-    ) -> None:
-        self._context_reports.append({
-            "kind": "selector",
-            "label": "knowledge.selector",
-            "milestone_id": milestone.id,
-            "page_identity": page_identity,
-            "page_known": page_known,
-            "cache": cache,
-            "section_ids": list(section_ids or []),
-            "sections": list(sections or []),
-            "fallback_triggered": fallback_triggered,
-            "fallback_reason": fallback_reason,
-            "cached": cached,
-            "reason": reason,
-            "error": error,
-        })
-
-    def _elements_for(self, milestone: Milestone, check: _SingleCheckResult) -> Optional[str]:
-        """Element knowledge for instruction generation: the per-section bodies the
-        KnowledgeSelector picked for this (milestone, page) — cached — when section knowledge
-        exists, else the full _elements.md blob as fallback. Shared by planner and replanner so
-        both inject the same focused slice instead of the whole 600+-line elements blob."""
-        if self._pk:
-            self._last_sections_loaded = self._select_sections(milestone, check)
-            return self._pk.bodies(self._last_sections_loaded)
-        return self._elements_knowledge
-
-    def _invoke_planner(
-        self,
-        milestone: Milestone,
-        check: _SingleCheckResult,
-        observation: Observation,
-        history: list[PolicyTurn],
-        extra: str = "",
-    ) -> _PlanResult:
-        elements = self._elements_for(milestone, check)
-        if milestone.completion_strategy == "react_until_collected" and self._collection_progress:
-            extra = f"{extra}\n{self._collection_progress}".strip()
-        runtime_filter = resolved_filter_intent(
-            milestone,
-            observation,
-            history,
-            scope=execution_scope_for(milestone, observation),
-            ledger=self._action_ledger,
-        )
-        return run_planner(
-            milestone, check, observation, history,
-            constraints=self._constraints_for_scope(),
-            extra=extra,
-            app_knowledge=self._app_knowledge,
-            elements_knowledge=elements,
-            prompts=self._prompts,
-            context_reports=self._context_reports,
-            initial_filters=self._initial_filters,
-            runtime_filter=runtime_filter,
-        )
-
-    def _invoke_loop_scroll(
-        self,
-        milestone: Milestone,
-        frame: _LoopFrameResult,
-        observation: Observation,
-    ) -> _PlanResult:
-        prompt = self._prompts.loop_scroll
-        plan_schema = self._prompts.plan_result_schema or _PlanResult
-        return invoke_structured(
-            self._llm(),
-            assemble_messages(
-                prompt,
-                observation,
-                system_blocks=[
-                    milestone_block(milestone),
-                    constraints_block(self._constraints_for_scope()),
-                    loop_frame_summary_block(frame.summary),
-                ],
-                image_resize=self._prompts.image_resize,
-                label="loop_scroll",
-                context_reports=self._context_reports,
-            ),
-            plan_schema,
-            trace_sink=self._context_reports,
-            trace_label="loop_scroll",
-        )
-
-    def _invoke_replanner(
-        self,
-        milestone: Milestone,
-        check: _SingleCheckResult,
-        observation: Observation,
-        history: list[PolicyTurn],
-        extra: str = "",
-    ) -> _ReplanResult:
-        tried = sorted({
-            t.supervisor.instruction
-            for t in history
-            if t.supervisor
-            and t.supervisor.instruction
-            and t.supervisor.milestone_id == milestone.id
-        })
-        prompt = self._prompts.replan
-        msgs = assemble_messages(
-            prompt, observation,
-            system_blocks=[
-                milestone_block(milestone),
-                replan_state_block(
-                    check,
-                    retry_count=milestone.retry_count,
-                    failure_hints=milestone.failure_hints,
-                ),
-                constraints_block(self._constraints_for_scope()),
-                completed_milestones_block(self._milestones.values(), current_id=milestone.id),
-                history_block(history, current_milestone_id=milestone.id),
-                tried_instructions_block(tried),
-                extra_instruction_block(extra, source="replanner_guard"),
-            ],
-            human_blocks=[
-                knowledge_block("app_navigation", self._app_knowledge),
-                knowledge_block("page_elements", self._elements_for(milestone, check)),
-                # DOM control inventory (incl. each input's authoritative `current=` value) — so the
-                # replanner doesn't misdiagnose a narrow scrolled input as truncated from the screenshot.
-                form_controls_block(
-                    getattr(observation, "form_controls", None),
-                    getattr(observation, "form_controls_meta", None),
-                ),
-            ],
-            image_resize=self._prompts.image_resize,
-            label="replanner",
-            context_reports=self._context_reports,
-        )
-        result = invoke_structured(
-            self._llm(),
-            msgs,
-            _ReplanResult,
-            trace_sink=self._context_reports,
-            trace_label="replanner",
-        )
-        if self._is_sequence(result.instruction):
-            print("  [Replan] 多步序列，重试...")
-            result = self._invoke_replanner(
-                milestone, check, observation, history,
-                extra="你刚才输出了多个步骤，请只返回一个原子操作。",
-            )
-        return result
-
-    def _llm(self) -> ChatOpenAI:
-        return _make_llm()

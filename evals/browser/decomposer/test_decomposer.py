@@ -212,13 +212,13 @@ def test_decomposer() -> None:
             continue
 
         details = _check_basic(milestones, policy.task_type, c["expected"])
-        details.extend(_check_assertions(milestones, policy._global_constraints, c.get("assertions", [])))
+        details.extend(_check_assertions(milestones, policy.constraints_snapshot(), c.get("assertions", [])))
         ok = len(details) == 0
         _report(c["label"], ok, "; ".join(details) if details else "")
         if not ok:
             for m in milestones:
                 print(f"       [{m.kind}/{m.completion_strategy}] {m.name}: {m.success_condition}")
-            print(f"       constraints: {policy._global_constraints}")
+            print(f"       constraints: {policy.constraints_snapshot()}")
 
 
 def main() -> int:

@@ -118,7 +118,7 @@ def _ms_action() -> Milestone:
 
 
 def _stuck_check() -> _SingleCheckResult:
-    return _SingleCheckResult(status="stuck", reason="打转", summary="")
+    return _SingleCheckResult(status="stuck", outcome_status="unverified", reason="打转", summary="")
 
 
 def test_early_feasibility_probe_fires_at_threshold(monkeypatch):

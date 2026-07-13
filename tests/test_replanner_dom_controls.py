@@ -7,7 +7,7 @@ only '…zip jacket' in the screenshot; the replanner got NO DOM block at all an
 "删除现有内容并重新输入" for 4 turns. The fix wires form_controls_block into _invoke_replanner's
 human_blocks. This locks that wiring deterministically (the LLM is bypassed)."""
 
-import gui_agent.core.supervisor.milestone.policy as pol
+import gui_agent.core.supervisor.milestone.llm_runtime as pol
 from gui_agent.core.schemas import Milestone, Observation
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _ReplanResult, _SingleCheckResult
@@ -34,7 +34,7 @@ def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
         "id": "m3", "name": "在 Product 列筛选框输入 'Olivia zip jacket'", "description": "d",
         "success_condition": "Product 框内容为 'Olivia zip jacket'", "kind": "action",
     })
-    check = _SingleCheckResult(status="in_progress", reason="r", summary="s")
+    check = _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="r", summary="s")
     obs = Observation(
         png_bytes=b"png", source="browser",
         form_controls=[{"label": "Product", "kind": "text_input",
@@ -75,6 +75,7 @@ def test_replan_preserves_atomic_execution_contract(monkeypatch):
         milestone,
         _SingleCheckResult(
             status="stuck",
+            outcome_status="unverified",
             reason="wrong menu point",
             stuck_reason="wrong menu point",
             summary="",

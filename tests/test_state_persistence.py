@@ -52,6 +52,7 @@ def test_runner_syncs_milestone_state_from_supervisor_snapshot():
     milestone.retry_count = 2
     check = _SingleCheckResult(
         status="done",
+        outcome_status="confirmed",
         reason="已在目标页",
         summary="目标页",
     )
@@ -203,6 +204,7 @@ def test_milestone_supervisor_exposes_runtime_state_snapshot():
     milestone.retry_count = 1
     check = _SingleCheckResult(
         status="done",
+        outcome_status="confirmed",
         reason="已在目标页",
         summary="目标页",
     )

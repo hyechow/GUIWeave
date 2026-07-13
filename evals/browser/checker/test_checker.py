@@ -31,7 +31,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.self_learning.app_summary import KNOWLEDGE_DIR
-from gui_agent.core.supervisor.milestone import run_checker
+from gui_agent.core.supervisor.milestone.model_io import run_checker
 from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
 

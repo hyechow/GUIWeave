@@ -95,7 +95,7 @@ def _checklist_item_id(prefix: str, text: str) -> str:
 
 
 def _success_checklist_texts(success_condition: str, fallback: str = "") -> list[str]:
-    # Shared with the checker (helpers._single_check enumerates the same items), so item index
+    # Shared with the checker (model_io.run_checker enumerates the same items), so item index
     # in item_verdicts lines up with this ordering.
     return split_acceptance_items(success_condition, fallback)
 

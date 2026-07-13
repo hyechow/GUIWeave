@@ -10,7 +10,7 @@ knowledge at all — it only needs navigation/flow structure.)
 from __future__ import annotations
 
 from gui_agent.core.schemas import Milestone
-from gui_agent.core.supervisor.milestone import _SingleCheckResult
+from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 
@@ -22,7 +22,13 @@ def _ms():
 
 def _check():
     return _SingleCheckResult.model_validate(
-        {"status": "in_progress", "reason": "r", "summary": "s", "page_identity": "订单页"}
+        {
+            "status": "in_progress",
+            "outcome_status": "unverified",
+            "reason": "r",
+            "summary": "s",
+            "page_identity": "订单页",
+        }
     )
 
 

@@ -49,7 +49,7 @@ def test_reworded_retype_is_left_to_post_action_progress_assessment():
     p = _policy("在 Product 列筛选框中删除现有内容并重新输入 'Olivia zip jacket'")  # different wording, same action
     history = [_typed_turn(3), _typed_turn(6)]
     obs = Observation(png_bytes=b"png", source="browser", url=URL_POSTRESET)
-    check = _SingleCheckResult(status="in_progress", reason="筛选未生效", summary="进行中")
+    check = _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="筛选未生效", summary="进行中")
     step = p._plan_single(_ms(), check, obs, history)
     assert step.summary != STUCK
     assert step.should_act
@@ -61,7 +61,7 @@ def test_repeated_type_history_does_not_block_submit_plan():
     p = _policy("点击 Search 按钮应用筛选")
     history = [_typed_turn(3), _typed_turn(6)]
     obs = Observation(png_bytes=b"png", source="browser", url=URL_POSTRESET)
-    check = _SingleCheckResult(status="in_progress", reason="筛选词已输入但尚未提交", summary="进行中")
+    check = _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="筛选词已输入但尚未提交", summary="进行中")
     step = p._plan_single(_ms(), check, obs, history)
     assert step.summary != STUCK
     assert step.should_act
@@ -74,7 +74,7 @@ def test_repeated_old_value_does_not_block_new_fallback_value():
     p = _policy("在 Product 输入框填入 'Olivia'")
     history = [_typed_turn(3), _typed_turn(6)]
     obs = Observation(png_bytes=b"png", source="browser", url=URL_POSTRESET)
-    check = _SingleCheckResult(status="in_progress", reason="精确词 0 条，需改用关键词 Olivia", summary="进行中")
+    check = _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="精确词 0 条，需改用关键词 Olivia", summary="进行中")
     step = p._plan_single(_ms(), check, obs, history)
     assert step.summary != STUCK
     assert step.should_act
@@ -85,7 +85,7 @@ def test_first_type_is_not_flagged():
     # Only ONE identical type executed → not yet a loop; the next attempt must go through.
     p = _policy("在 Product 列筛选框输入 'Olivia zip jacket'")
     obs = Observation(png_bytes=b"png", source="browser", url=URL_PREFILTER)
-    check = _SingleCheckResult(status="in_progress", reason="筛选未生效", summary="进行中")
+    check = _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="筛选未生效", summary="进行中")
     step = p._plan_single(_ms(), check, obs, [_typed_turn(3)])
     assert step.summary != STUCK
     assert step.should_act
@@ -104,7 +104,7 @@ def test_same_type_template_in_different_row_scopes_is_not_flagged():
         source="browser",
         url="http://h:7780/admin/catalog/product/edit/id/1843/",
     )
-    check = _SingleCheckResult(status="in_progress", reason="价格未保存", summary="进行中")
+    check = _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="价格未保存", summary="进行中")
     step = p._plan_single(_ms(), check, obs, history)
     assert step.summary != STUCK
     assert step.should_act
@@ -128,6 +128,7 @@ def test_dom_backed_route_correction_may_type_same_value_into_a_different_contro
     )
     check = _SingleCheckResult(
         status="in_progress",
+        outcome_status="unverified",
         reason="Name field is visible and empty",
         summary="corrected route",
     )

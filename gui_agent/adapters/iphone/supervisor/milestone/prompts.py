@@ -6,7 +6,7 @@ DECOMPOSE_PROMPT = load_prompt_text("task.milestone.iphone.decompose")
 # shared core with a {kind_section} slot; CHECK_KIND_SECTIONS supplies only the
 # rules relevant to the current kind. This keeps each checker focused (sharper
 # done-judgment, less hallucination) and its output terse (faster). See
-# helpers.run_checker for the dispatch.
+# model_io.run_checker for the dispatch.
 SINGLE_CHECKER_PROMPT = load_prompt_text("task.milestone.iphone.checker")
 
 # ── Per-kind checker sections (only the relevant one is injected) ──────────

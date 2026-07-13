@@ -16,7 +16,7 @@ ids for the planner. These tests stub the LLM call and lock the POLICY-side cont
 
 from __future__ import annotations
 
-import gui_agent.core.supervisor.milestone.policy as policy_mod
+import gui_agent.core.supervisor.milestone.llm_runtime as policy_mod
 from gui_agent.core.schemas import Milestone
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SelectorResult, _SingleCheckResult
@@ -41,11 +41,11 @@ def _ms(mid: str = "m1") -> Milestone:
 
 
 def _check(page: str) -> _SingleCheckResult:
-    return _SingleCheckResult(status="in_progress", reason="r" * 10, summary="s", page_identity=page)
+    return _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="r" * 10, summary="s", page_identity=page)
 
 
 def _stub(monkeypatch, results=None, error: Exception | None = None):
-    """Replace policy_mod.run_selector with a counting stub returning canned results."""
+    """Replace llm_runtime.run_selector with a counting stub returning canned results."""
     calls = {"n": 0}
 
     def fake(goal, milestone, page_identity, manifest, *, prompts=None, context_reports=None):

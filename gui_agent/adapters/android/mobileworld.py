@@ -336,7 +336,7 @@ def main() -> int:
                             estimate_program_turns,
                             redecompose,
                         )
-                        from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
+                        from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
                         from gui_agent.core.router import resolve_intent
 
                         file_section = resolve_file_refs(intent)
@@ -358,9 +358,9 @@ def main() -> int:
                             context_reports=orchestrator_context_reports,
                             resolution=resolution,
                         )
-                        if file_section and hasattr(supervisor, "_global_constraints"):
+                        if file_section:
                             cap = 3000
-                            supervisor._global_constraints.append(
+                            supervisor.add_static_constraint(
                                 file_section if len(file_section) <= cap
                                 else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
                             )

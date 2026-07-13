@@ -14,9 +14,11 @@ platform-neutral. Site facts belong in knowledge; platform mechanics belong in a
   milestone state. Statement scope and evidence subject/resource are separate dimensions.
 - `execution_scope.py`: isolates history by observable resource identity or milestone identity.
   It does not know application routes or entity names.
-- `helpers.py`: assembles model calls and implements structural target-state/acquire helpers over
-  the neutral `Observation` contract. Target matching uses declared `target_controls` and
-  `target_values`, not text extracted from milestone prose.
+- `observation_state.py`: interprets normalized filter and target-unit state without planning or
+  state transitions.
+- `acquisition.py`: derives deterministic section, affordance, and target-write proposals from the
+  neutral `Observation` contract.
+- `model_io.py`: assembles checker/planner/selector model calls; it owns no execution transition.
 - `runtime.py`: small timing and collection-loop utilities.
 - `decomposition.py`: translates a goal into milestone contracts.
 - `stuck.py`: recovery support based on progress evidence; it does not own completion.

@@ -192,7 +192,7 @@ def test_decomposer() -> None:
                 )
             policy._decompose(c["goal"], observation)
             milestones = [policy._milestones[mid] for mid in policy._order]
-            constraints = policy._global_constraints
+            constraints = policy.constraints_snapshot()
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")
             continue

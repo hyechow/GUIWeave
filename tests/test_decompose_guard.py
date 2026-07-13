@@ -13,7 +13,8 @@ rather than slipping through to a derailed run:
 from __future__ import annotations
 
 from gui_agent.core.schemas import Milestone
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy, _looks_like_analysis
+from gui_agent.core.supervisor.milestone.decomposition import _looks_like_analysis
+from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 
 def _policy(milestones: list[dict], task_type: str = "action") -> MilestoneSupervisorPolicy:

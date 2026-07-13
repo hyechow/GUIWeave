@@ -555,7 +555,7 @@ def filter_residual_block(
 ) -> ContextBlock | None:
     """Inject the PRECISE set of unrelated residual filters to clear — computed at runtime by
     diffing the live applied-filter state against this milestone's intended filter set (see
-    helpers.filter_residual_labels). This replaces the old blanket "always clear ALL filters"
+    observation_state.filter_residual_labels). This replaces the old blanket "always clear ALL filters"
     decompose-prompt rule, which — written before the page is seen — could only be unconditional
     and so taught the model to wipe legitimate filters wholesale (一刀切). Here we name exactly the
     filters to remove, so the agent clears the leaked residual (e.g. a stale `<field>: <value>`) and KEEPS the

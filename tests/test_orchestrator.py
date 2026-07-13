@@ -601,7 +601,7 @@ def test_advance_persists_done_check_on_terminal_completion():
     p = MilestoneSupervisorPolicy()
     ms = milestone_for_run(Run(name="进首页", kind="navigation"), 0)
     p.reseed(ms)                                          # single milestone, orchestrator style
-    check = _SingleCheckResult(status="done", reason="已进入首页", summary="首页")
+    check = _SingleCheckResult(status="done", outcome_status="confirmed", reason="已进入首页", summary="首页")
     p._last_check = check
     obs = Observation(png_bytes=b"x", source="test")
     from gui_agent.core.run.execution_signals import CompletionEvaluation
@@ -639,6 +639,7 @@ def test_require_fresh_action_blocks_preexisting_done(monkeypatch):
         "_single_check",
         lambda *_args, **_kwargs: _SingleCheckResult(
             status="done",
+            outcome_status="confirmed",
             reason="Price 字段已经是 64.88，且有保存成功提示。",
             summary="看似已完成",
         ),

@@ -22,7 +22,7 @@ from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.schemas import Milestone, Observation
 
-from .helpers import resolve_file_refs
+from .model_io import resolve_file_refs
 from .runtime import _is_loop
 from .schemas import _DecomposeResponse, _StopConditionPatch
 
@@ -141,7 +141,7 @@ class MilestoneDecompositionMixin:
                 file_section if len(file_section) <= _CAP
                 else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
             )
-            self._global_constraints.append(snippet)
+            self._static_constraints.append(snippet)
 
         if self._current_id not in self._milestones:
             self._current_id = self._next_milestone()
@@ -192,7 +192,7 @@ class MilestoneDecompositionMixin:
             trace_label="milestone.decompose",
         )
 
-        self._global_constraints = resp.global_constraints
+        self._static_constraints = resp.global_constraints
         self.task_type = resp.task_type
         self._milestones = {m.id: m for m in resp.milestones}
         self._order = [m.id for m in resp.milestones]
@@ -404,8 +404,8 @@ class MilestoneDecompositionMixin:
 
         for constraint in constraints:
             global_text = constraint.global_text()
-            if global_text not in self._global_constraints:
-                self._global_constraints.append(global_text)
+            if global_text not in self._static_constraints:
+                self._static_constraints.append(global_text)
                 fixes.append(f"补充目标字段约束「{constraint.field}={constraint.target}」")
 
         patched: set[tuple[str, str]] = set()
@@ -537,7 +537,7 @@ class MilestoneDecompositionMixin:
                         f"子目标描述：{m.description}\n"
                         f"本子目标验收条件：{m.success_condition}\n"
                         f"{dep_context}\n"
-                        f"全局约束：{json.dumps(self._global_constraints, ensure_ascii=False)}"
+                        f"全局约束：{json.dumps(self._static_constraints, ensure_ascii=False)}"
                         f"{existing}"
                     )),
                 ],

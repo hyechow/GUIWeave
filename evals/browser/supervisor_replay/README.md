@@ -29,5 +29,18 @@ Frontier regression pair:
 
 - `102742_turn29`: the child wizard is still on its value-selection surface; the expected edge is
   its concrete `Next` control and a parent commit is forbidden.
-- `090810_turn30`: the child wizard has returned to the parent editor; the expected edge is the
-  concrete parent `Save` control.
+- `090810_turn30`: a legacy capture whose history lacks surface identities and adjacent structured
+  observations. It is a negative provenance case: an unknown surface must remain incomplete and
+  must not authorize a guessed parent `Save`. The positive parent-return edge is covered below.
+
+Persistence-boundary replay:
+
+- `105939_turn12`: a direct `commit + activate` Save on one editor surface redirected to a list
+  with a success response. The milestone must finish as `accepted_unverified`; reopening the row
+  to visually re-check the saved value is a regression. Its source metadata documents the
+  migration from the old runtime's downgraded receipt to the raw planner role stored in the same
+  production context.
+- `112455_persistence_flow`: one complete live child/parent transaction. Use
+  `expectation_turn_29.json`, `expectation_turn_30.json`, and `expectation_turn_31.json` with
+  `--expectation` to verify child generation, concrete parent Save, and terminal response
+  completion respectively.

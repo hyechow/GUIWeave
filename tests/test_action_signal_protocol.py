@@ -25,6 +25,15 @@ from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
+def test_checker_payload_requires_explicit_outcome_status() -> None:
+    with pytest.raises(ValueError, match="outcome_status"):
+        _SingleCheckResult.model_validate({
+            "status": "done",
+            "reason": "visible state looks complete",
+            "summary": "done",
+        })
+
+
 def _step(
     *,
     scope: str = "row:65",
@@ -192,7 +201,7 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
         instruction="click Save",
         summary="persist draft",
         atomic_role="commit",
-        action_family="commit",
+        action_family="activate",
         target_control="Save",
     )
     monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
@@ -203,7 +212,7 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
     assert step.goal_completed is False
     assert step.should_act is True
     assert step.atomic_role == "commit"
-    assert step.action_family == "commit"
+    assert step.action_family == "activate"
     assert step.target_control == "Save"
 
 
@@ -314,8 +323,9 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
     monkeypatch.setattr(
         policy,
         "_single_check",
-        lambda *_args, **_kwargs: _SingleCheckResult(
-            status="in_progress",
+            lambda *_args, **_kwargs: _SingleCheckResult(
+                status="in_progress",
+                outcome_status="unverified",
             reason="target write was observed but save is still pending",
             summary="save remains",
         ),

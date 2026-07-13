@@ -1,0 +1,6472 @@
+{
+  "version": 1,
+  "screenshot": "screenshot_turn_28.png",
+  "observation": {
+    "source": "browser",
+    "loading": false,
+    "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/",
+    "title": "Minerva LumaTech™ V-Tee / Products / Inventory / Catalog / Magento Admin",
+    "dom_state": "f06f732e469c603f",
+    "tables": [
+      {
+        "index": 1,
+        "source": "table",
+        "caption": "",
+        "headers": [
+          "Image",
+          "Name",
+          "SKU",
+          "Price",
+          "Quantity",
+          "Weight",
+          "Status",
+          "Attributes",
+          "Actions",
+          "Name_url"
+        ],
+        "rows": [
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-XS-Black",
+            "SKU": "WS08-XS-Black",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: XS, Color: Black",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1477/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-XS-Blue",
+            "SKU": "WS08-XS-Blue",
+            "Price": "$32.00",
+            "Quantity": "3",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: XS, Color: Blue",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1478/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-XS-Red",
+            "SKU": "WS08-XS-Red",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: XS, Color: Red",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1479/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-S-Black",
+            "SKU": "WS08-S-Black",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: S, Color: Black",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1480/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-S-Blue",
+            "SKU": "WS08-S-Blue",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: S, Color: Blue",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1481/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-S-Red",
+            "SKU": "WS08-S-Red",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: S, Color: Red",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1482/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-M-Black",
+            "SKU": "WS08-M-Black",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: M, Color: Black",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1483/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-M-Blue",
+            "SKU": "WS08-M-Blue",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: M, Color: Blue",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1484/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-M-Red",
+            "SKU": "WS08-M-Red",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: M, Color: Red",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1485/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-L-Black",
+            "SKU": "WS08-L-Black",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: L, Color: Black",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1486/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-L-Blue",
+            "SKU": "WS08-L-Blue",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: L, Color: Blue",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1487/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-L-Red",
+            "SKU": "WS08-L-Red",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: L, Color: Red",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1488/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-XL-Black",
+            "SKU": "WS08-XL-Black",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: XL, Color: Black",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1489/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-XL-Blue",
+            "SKU": "WS08-XL-Blue",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: XL, Color: Blue",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1490/"
+          },
+          {
+            "Image": "",
+            "Name": "Minerva LumaTech™ V-Tee-XL-Red",
+            "SKU": "WS08-XL-Red",
+            "Price": "$32.00",
+            "Quantity": "100",
+            "Weight": "1.000000",
+            "Status": "Enabled",
+            "Attributes": "Size: XL, Color: Red",
+            "Actions": "Select",
+            "Name_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1491/"
+          }
+        ],
+        "row_count": 15,
+        "dom_row_count": 15,
+        "total_records": 1,
+        "partial": false,
+        "path": "div.admin__field.admin__field-wide>div.admin__field-control>div.admin__control-table-wrapper>table.admin__dynamic-rows.data-grid",
+        "page": {
+          "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/",
+          "title": "Minerva LumaTech™ V-Tee / Products / Inventory / Catalog / Magento Admin"
+        },
+        "traversal": {
+          "type": "paged",
+          "page_index": 1,
+          "page_count": 1,
+          "has_next_page": false,
+          "has_prev_page": false,
+          "page_size": null,
+          "page_size_options": [],
+          "has_page_size_control": false,
+          "page_size_menu_open": false
+        }
+      }
+    ],
+    "form_controls": [
+      {
+        "kind": "section_toggle",
+        "label": "Content",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 311,
+          "w": 1322,
+          "h": 62
+        }
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Configurations",
+        "value": "true",
+        "rect": {
+          "x": 530,
+          "y": 386,
+          "w": 1322,
+          "h": 62
+        }
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Product Reviews",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2074,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Images And Videos",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2149,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Search Engine Optimization",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2224,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Related Products, Up-Sells, and Cross-Sells",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2299,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Customizable Options",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2375,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Product in Websites",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2450,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Design",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2525,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Schedule Design Update",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2600,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Gift Options",
+        "value": "false",
+        "rect": {
+          "x": 530,
+          "y": 2675,
+          "w": 1322,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Create Product Configurations",
+        "id": "modal-title-22",
+        "rect": {
+          "x": 531,
+          "y": 40,
+          "w": 1213,
+          "h": 25
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "search-global",
+        "id": "search-global",
+        "rect": {
+          "x": 849,
+          "y": -3222,
+          "w": 50,
+          "h": 35
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "Enable Product",
+        "name": "product[status]",
+        "id": "SNOJASN",
+        "value": "on",
+        "rect": {
+          "x": 310,
+          "y": -2987,
+          "w": 1,
+          "h": 1
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Product Name",
+        "name": "product[name]",
+        "id": "FQADOKC",
+        "value": "Minerva LumaTech&trade; V-Tee",
+        "required": true,
+        "rect": {
+          "x": 530,
+          "y": -2830,
+          "w": 646,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "SKU",
+        "name": "product[sku]",
+        "id": "WSOQGMH",
+        "value": "WS08",
+        "required": true,
+        "rect": {
+          "x": 530,
+          "y": -2755,
+          "w": 646,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Price $",
+        "name": "product[price]",
+        "id": "J6F2FC6",
+        "rect": {
+          "x": 367,
+          "y": -2679,
+          "w": 130,
+          "h": 31
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-H80R3WH",
+        "name": "product[tax_class_id]",
+        "id": "H80R3WH",
+        "value": "2",
+        "selected_text": "Taxable Goods",
+        "options": [
+          "None",
+          "Taxable Goods"
+        ],
+        "rect": {
+          "x": 362,
+          "y": -2604,
+          "w": 152,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Quantity",
+        "name": "product[quantity_and_stock_status][qty]",
+        "id": "NYIVYOD",
+        "rect": {
+          "x": 361,
+          "y": -2529,
+          "w": 150,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-E083H3C",
+        "name": "product[quantity_and_stock_status][is_in_stock]",
+        "id": "E083H3C",
+        "value": "1",
+        "selected_text": "In Stock",
+        "options": [
+          "In Stock",
+          "Out of Stock"
+        ],
+        "rect": {
+          "x": 357,
+          "y": -2418,
+          "w": 137,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Weight lbs",
+        "name": "product[weight]",
+        "id": "UL77M3N",
+        "rect": {
+          "x": 348,
+          "y": -2343,
+          "w": 109,
+          "h": 31
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-RIBJJQO",
+        "name": "product[product_has_weight]",
+        "id": "RIBJJQO",
+        "value": "1",
+        "selected_text": "This item has weight",
+        "options": [
+          "This item has weight",
+          "This item has no weight"
+        ],
+        "rect": {
+          "x": 497,
+          "y": -2343,
+          "w": 211,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-PR9XJA5",
+        "name": "product[visibility]",
+        "id": "PR9XJA5",
+        "value": "4",
+        "selected_text": "Catalog, Search",
+        "options": [
+          "Not Visible Individually",
+          "Catalog",
+          "Search",
+          "Catalog, Search"
+        ],
+        "rect": {
+          "x": 380,
+          "y": -2192,
+          "w": 204,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Set Product as New From",
+        "name": "product[news_from_date]",
+        "id": "QDOQ1L7",
+        "is_datepicker": true,
+        "rect": {
+          "x": 361,
+          "y": -2117,
+          "w": 150,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "To",
+        "name": "product[news_to_date]",
+        "id": "BHXRMUG",
+        "is_datepicker": true,
+        "rect": {
+          "x": 501,
+          "y": -2117,
+          "w": 150,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-JL4DPTM",
+        "name": "product[country_of_manufacture]",
+        "id": "JL4DPTM",
+        "options": [
+          "Afghanistan",
+          "Albania",
+          "Algeria",
+          "American Samoa",
+          "Andorra",
+          "Angola",
+          "Anguilla",
+          "Antarctica",
+          "Antigua & Barbuda",
+          "Argentina",
+          "Armenia",
+          "Aruba",
+          "Australia",
+          "Austria",
+          "Azerbaijan",
+          "Bahamas",
+          "Bahrain",
+          "Bangladesh",
+          "Barbados",
+          "Belarus",
+          "Belgium",
+          "Belize",
+          "Benin",
+          "Bermuda",
+          "Bhutan",
+          "Bolivia",
+          "Bosnia & Herzegovina",
+          "Botswana",
+          "Bouvet Island",
+          "Brazil"
+        ],
+        "rect": {
+          "x": 419,
+          "y": -2041,
+          "w": 321,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "Erin Recommends",
+        "name": "product[erin_recommends]",
+        "id": "GAGYGBA",
+        "value": "off",
+        "rect": {
+          "x": 310,
+          "y": 64,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "New",
+        "name": "product[new]",
+        "id": "K4IGCJB",
+        "value": "off",
+        "rect": {
+          "x": 310,
+          "y": 138,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "Sale",
+        "name": "product[sale]",
+        "id": "HVPS3U4",
+        "value": "on",
+        "rect": {
+          "x": 310,
+          "y": 212,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "kind": "native_select",
+        "label": "Current Variations",
+        "value": "20",
+        "selected_text": "20",
+        "options": [
+          "5",
+          "20",
+          "30",
+          "50",
+          "100",
+          "200",
+          "500"
+        ],
+        "rect": {
+          "x": 735,
+          "y": 589,
+          "w": 85,
+          "h": 33
+        }
+      },
+      {
+        "kind": "number_input",
+        "label": "of 1",
+        "id": "2",
+        "value": "1",
+        "rect": {
+          "x": 897,
+          "y": 589,
+          "w": 44,
+          "h": 33
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Apply single set of images to all SKUs",
+        "name": "ko_unique_1",
+        "id": "apply-single-set-radio",
+        "value": "off",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Apply single set of images to all SKUs",
+        "rect": {
+          "x": 123,
+          "y": 383,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Apply unique images by attribute to each SKU",
+        "name": "ko_unique_2",
+        "id": "apply-unique-images-radio",
+        "value": "off",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Apply unique images by attribute to each SKU",
+        "rect": {
+          "x": 123,
+          "y": 426,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Skip image uploading at this time",
+        "name": "ko_unique_3",
+        "id": "skip-images-uploading-radio",
+        "value": "on",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Skip image uploading at this time",
+        "rect": {
+          "x": 123,
+          "y": 469,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Apply single price to all SKUs",
+        "name": "ko_unique_4",
+        "id": "apply-single-price-radio",
+        "value": "off",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Apply single price to all SKUs",
+        "rect": {
+          "x": 123,
+          "y": 590,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Apply unique prices by attribute to each SKU",
+        "name": "ko_unique_5",
+        "id": "apply-unique-prices-radio",
+        "value": "off",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Apply unique prices by attribute to each SKU",
+        "rect": {
+          "x": 123,
+          "y": 633,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Skip price at this time",
+        "name": "ko_unique_6",
+        "id": "skip-pricing-radio",
+        "value": "on",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Skip price at this time",
+        "rect": {
+          "x": 123,
+          "y": 676,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Apply single quantity to each SKUs",
+        "name": "ko_unique_8",
+        "id": "apply-single-inventory-radio",
+        "value": "off",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Apply single quantity to each SKUs",
+        "rect": {
+          "x": 123,
+          "y": 798,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Apply unique quantity by attribute to each SKU",
+        "name": "ko_unique_9",
+        "id": "apply-unique-inventory-radio",
+        "value": "off",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Apply unique quantity by attribute to each SKU",
+        "rect": {
+          "x": 123,
+          "y": 841,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "Skip quantity at this time",
+        "name": "ko_unique_10",
+        "id": "skip-inventory-radio",
+        "value": "on",
+        "group_id": "collection:0",
+        "group_index": 0,
+        "group_field": "Skip quantity at this time",
+        "rect": {
+          "x": 123,
+          "y": 884,
+          "w": 13,
+          "h": 13
+        }
+      }
+    ],
+    "form_controls_meta": {
+      "total_rendered": 62,
+      "returned": 40,
+      "truncated": true,
+      "coverage": "partial",
+      "raw_limit_hit": false
+    },
+    "viewport": {
+      "type": "paged",
+      "page_index": 1,
+      "page_count": 1,
+      "has_next_page": false,
+      "has_prev_page": false,
+      "page_size": null,
+      "page_size_options": [],
+      "has_page_size_control": false,
+      "page_size_menu_open": false
+    },
+    "semantic_tree": [
+      {
+        "role": "link",
+        "key": "Magento Admin Panel",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/",
+        "ref": 664554,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " DASHBOARD",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/dashboard/",
+        "ref": 664558,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " SALES",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#",
+        "ref": 664561,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CATALOG",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#",
+        "ref": 664594,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CUSTOMERS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#",
+        "ref": 664612,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " MARKETING",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#",
+        "ref": 664631,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CONTENT",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#",
+        "ref": 664698,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " REPORTS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#",
+        "ref": 664744,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " STORES",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#",
+        "ref": 664869,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " SYSTEM",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#",
+        "ref": 664945,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " FIND PARTNERS & EXTENSIONS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/marketplace/index/",
+        "ref": 665028,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "System Messages: 2",
+        "value": "",
+        "url": "",
+        "ref": 665052,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Cache Management",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/cache/",
+        "ref": 665058,
+        "depth": 0
+      },
+      {
+        "role": "heading",
+        "key": "Minerva LumaTech™ V-Tee",
+        "value": "",
+        "url": "",
+        "ref": 665075,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " admin",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/system_account/index/",
+        "ref": 665078,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/notification/index/",
+        "ref": 665090,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 664057,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Save",
+        "value": "",
+        "url": "",
+        "ref": 665131,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Save options",
+        "value": "",
+        "url": "",
+        "ref": 665133,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": " Back",
+        "value": "",
+        "url": "",
+        "ref": 665142,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Add Attribute",
+        "value": "",
+        "url": "",
+        "ref": 665144,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[website] Enable Product Yes",
+        "value": "true",
+        "url": "",
+        "ref": 664134,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "[store view] Product Name *",
+        "value": "",
+        "url": "",
+        "ref": 664102,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "[global] SKU *",
+        "value": "",
+        "url": "",
+        "ref": 664103,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "[global] Price $",
+        "value": "",
+        "url": "",
+        "ref": 664136,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-H80R3WH",
+        "value": "",
+        "url": "",
+        "ref": 664137,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "None",
+        "value": "",
+        "url": "",
+        "ref": 665236,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Taxable Goods",
+        "value": "",
+        "url": "",
+        "ref": 665239,
+        "depth": 1
+      },
+      {
+        "role": "textbox",
+        "key": "[global] Quantity",
+        "value": "",
+        "url": "",
+        "ref": 664138,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Advanced Inventory",
+        "value": "",
+        "url": "",
+        "ref": 665250,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-E083H3C",
+        "value": "",
+        "url": "",
+        "ref": 664139,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "In Stock",
+        "value": "",
+        "url": "",
+        "ref": 665260,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Out of Stock",
+        "value": "",
+        "url": "",
+        "ref": 665263,
+        "depth": 1
+      },
+      {
+        "role": "textbox",
+        "key": "[global] Weight lbs",
+        "value": "",
+        "url": "",
+        "ref": 664140,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-RIBJJQO",
+        "value": "",
+        "url": "",
+        "ref": 664160,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "This item has weight",
+        "value": "",
+        "url": "",
+        "ref": 665279,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "This item has no weight",
+        "value": "",
+        "url": "",
+        "ref": 665282,
+        "depth": 1
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 665298,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 665302,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 665306,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 665310,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "New Category",
+        "value": "",
+        "url": "",
+        "ref": 665365,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-PR9XJA5",
+        "value": "",
+        "url": "",
+        "ref": 664142,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 665378,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Catalog",
+        "value": "",
+        "url": "",
+        "ref": 665381,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Search",
+        "value": "",
+        "url": "",
+        "ref": 665384,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Catalog, Search",
+        "value": "",
+        "url": "",
+        "ref": 665387,
+        "depth": 1
+      },
+      {
+        "role": "textbox",
+        "key": "[website] Set Product as New From",
+        "value": "",
+        "url": "",
+        "ref": 664143,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "undefined ",
+        "value": "",
+        "url": "",
+        "ref": 665400,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "To",
+        "value": "",
+        "url": "",
+        "ref": 664144,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "undefined ",
+        "value": "",
+        "url": "",
+        "ref": 665408,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-JL4DPTM",
+        "value": "",
+        "url": "",
+        "ref": 664145,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 665421,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Afghanistan",
+        "value": "",
+        "url": "",
+        "ref": 665424,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Albania",
+        "value": "",
+        "url": "",
+        "ref": 665427,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Algeria",
+        "value": "",
+        "url": "",
+        "ref": 665430,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "American Samoa",
+        "value": "",
+        "url": "",
+        "ref": 665433,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Andorra",
+        "value": "",
+        "url": "",
+        "ref": 665436,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Angola",
+        "value": "",
+        "url": "",
+        "ref": 665439,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Anguilla",
+        "value": "",
+        "url": "",
+        "ref": 665442,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Antarctica",
+        "value": "",
+        "url": "",
+        "ref": 665445,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Antigua & Barbuda",
+        "value": "",
+        "url": "",
+        "ref": 665448,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Argentina",
+        "value": "",
+        "url": "",
+        "ref": 665451,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Armenia",
+        "value": "",
+        "url": "",
+        "ref": 665454,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Aruba",
+        "value": "",
+        "url": "",
+        "ref": 665457,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Australia",
+        "value": "",
+        "url": "",
+        "ref": 665460,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Austria",
+        "value": "",
+        "url": "",
+        "ref": 665463,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Azerbaijan",
+        "value": "",
+        "url": "",
+        "ref": 665466,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bahamas",
+        "value": "",
+        "url": "",
+        "ref": 665469,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bahrain",
+        "value": "",
+        "url": "",
+        "ref": 665472,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bangladesh",
+        "value": "",
+        "url": "",
+        "ref": 665475,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Barbados",
+        "value": "",
+        "url": "",
+        "ref": 665478,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Belarus",
+        "value": "",
+        "url": "",
+        "ref": 665481,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Belgium",
+        "value": "",
+        "url": "",
+        "ref": 665484,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Belize",
+        "value": "",
+        "url": "",
+        "ref": 665487,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Benin",
+        "value": "",
+        "url": "",
+        "ref": 665490,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bermuda",
+        "value": "",
+        "url": "",
+        "ref": 665493,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bhutan",
+        "value": "",
+        "url": "",
+        "ref": 665496,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bolivia",
+        "value": "",
+        "url": "",
+        "ref": 665499,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bosnia & Herzegovina",
+        "value": "",
+        "url": "",
+        "ref": 665502,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Botswana",
+        "value": "",
+        "url": "",
+        "ref": 665505,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bouvet Island",
+        "value": "",
+        "url": "",
+        "ref": 665508,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Brazil",
+        "value": "",
+        "url": "",
+        "ref": 665511,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "British Indian Ocean Territory",
+        "value": "",
+        "url": "",
+        "ref": 665514,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "British Virgin Islands",
+        "value": "",
+        "url": "",
+        "ref": 665517,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Brunei",
+        "value": "",
+        "url": "",
+        "ref": 665520,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bulgaria",
+        "value": "",
+        "url": "",
+        "ref": 665523,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Burkina Faso",
+        "value": "",
+        "url": "",
+        "ref": 665526,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Burundi",
+        "value": "",
+        "url": "",
+        "ref": 665529,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cambodia",
+        "value": "",
+        "url": "",
+        "ref": 665532,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cameroon",
+        "value": "",
+        "url": "",
+        "ref": 665535,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Canada",
+        "value": "",
+        "url": "",
+        "ref": 665538,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cape Verde",
+        "value": "",
+        "url": "",
+        "ref": 665541,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Caribbean Netherlands",
+        "value": "",
+        "url": "",
+        "ref": 665544,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cayman Islands",
+        "value": "",
+        "url": "",
+        "ref": 665547,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Central African Republic",
+        "value": "",
+        "url": "",
+        "ref": 665550,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Chad",
+        "value": "",
+        "url": "",
+        "ref": 665553,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Chile",
+        "value": "",
+        "url": "",
+        "ref": 665556,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "China",
+        "value": "",
+        "url": "",
+        "ref": 665559,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Christmas Island",
+        "value": "",
+        "url": "",
+        "ref": 665562,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cocos (Keeling) Islands",
+        "value": "",
+        "url": "",
+        "ref": 665565,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Colombia",
+        "value": "",
+        "url": "",
+        "ref": 665568,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Comoros",
+        "value": "",
+        "url": "",
+        "ref": 665571,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Congo - Brazzaville",
+        "value": "",
+        "url": "",
+        "ref": 665574,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Congo - Kinshasa",
+        "value": "",
+        "url": "",
+        "ref": 665577,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cook Islands",
+        "value": "",
+        "url": "",
+        "ref": 665580,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Costa Rica",
+        "value": "",
+        "url": "",
+        "ref": 665583,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Croatia",
+        "value": "",
+        "url": "",
+        "ref": 665586,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cuba",
+        "value": "",
+        "url": "",
+        "ref": 665589,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Curaçao",
+        "value": "",
+        "url": "",
+        "ref": 665592,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cyprus",
+        "value": "",
+        "url": "",
+        "ref": 665595,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Czechia",
+        "value": "",
+        "url": "",
+        "ref": 665598,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Côte d’Ivoire",
+        "value": "",
+        "url": "",
+        "ref": 665601,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Denmark",
+        "value": "",
+        "url": "",
+        "ref": 665604,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Djibouti",
+        "value": "",
+        "url": "",
+        "ref": 665607,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Dominica",
+        "value": "",
+        "url": "",
+        "ref": 665610,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Dominican Republic",
+        "value": "",
+        "url": "",
+        "ref": 665613,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ecuador",
+        "value": "",
+        "url": "",
+        "ref": 665616,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Egypt",
+        "value": "",
+        "url": "",
+        "ref": 665619,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "El Salvador",
+        "value": "",
+        "url": "",
+        "ref": 665622,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Equatorial Guinea",
+        "value": "",
+        "url": "",
+        "ref": 665625,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Eritrea",
+        "value": "",
+        "url": "",
+        "ref": 665628,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Estonia",
+        "value": "",
+        "url": "",
+        "ref": 665631,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Eswatini",
+        "value": "",
+        "url": "",
+        "ref": 665634,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ethiopia",
+        "value": "",
+        "url": "",
+        "ref": 665637,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Falkland Islands",
+        "value": "",
+        "url": "",
+        "ref": 665640,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Faroe Islands",
+        "value": "",
+        "url": "",
+        "ref": 665643,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Fiji",
+        "value": "",
+        "url": "",
+        "ref": 665646,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Finland",
+        "value": "",
+        "url": "",
+        "ref": 665649,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "France",
+        "value": "",
+        "url": "",
+        "ref": 665652,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "French Guiana",
+        "value": "",
+        "url": "",
+        "ref": 665655,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "French Polynesia",
+        "value": "",
+        "url": "",
+        "ref": 665658,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "French Southern Territories",
+        "value": "",
+        "url": "",
+        "ref": 665661,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gabon",
+        "value": "",
+        "url": "",
+        "ref": 665664,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gambia",
+        "value": "",
+        "url": "",
+        "ref": 665667,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Georgia",
+        "value": "",
+        "url": "",
+        "ref": 665670,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Germany",
+        "value": "",
+        "url": "",
+        "ref": 665673,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ghana",
+        "value": "",
+        "url": "",
+        "ref": 665676,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gibraltar",
+        "value": "",
+        "url": "",
+        "ref": 665679,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Greece",
+        "value": "",
+        "url": "",
+        "ref": 665682,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Greenland",
+        "value": "",
+        "url": "",
+        "ref": 665685,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Grenada",
+        "value": "",
+        "url": "",
+        "ref": 665688,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guadeloupe",
+        "value": "",
+        "url": "",
+        "ref": 665691,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guam",
+        "value": "",
+        "url": "",
+        "ref": 665694,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guatemala",
+        "value": "",
+        "url": "",
+        "ref": 665697,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guernsey",
+        "value": "",
+        "url": "",
+        "ref": 665700,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guinea",
+        "value": "",
+        "url": "",
+        "ref": 665703,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guinea-Bissau",
+        "value": "",
+        "url": "",
+        "ref": 665706,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guyana",
+        "value": "",
+        "url": "",
+        "ref": 665709,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Haiti",
+        "value": "",
+        "url": "",
+        "ref": 665712,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Heard & McDonald Islands",
+        "value": "",
+        "url": "",
+        "ref": 665715,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Honduras",
+        "value": "",
+        "url": "",
+        "ref": 665718,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hong Kong SAR China",
+        "value": "",
+        "url": "",
+        "ref": 665721,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hungary",
+        "value": "",
+        "url": "",
+        "ref": 665724,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Iceland",
+        "value": "",
+        "url": "",
+        "ref": 665727,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "India",
+        "value": "",
+        "url": "",
+        "ref": 665730,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Indonesia",
+        "value": "",
+        "url": "",
+        "ref": 665733,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Iran",
+        "value": "",
+        "url": "",
+        "ref": 665736,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Iraq",
+        "value": "",
+        "url": "",
+        "ref": 665739,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ireland",
+        "value": "",
+        "url": "",
+        "ref": 665742,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Isle of Man",
+        "value": "",
+        "url": "",
+        "ref": 665745,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Israel",
+        "value": "",
+        "url": "",
+        "ref": 665748,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Italy",
+        "value": "",
+        "url": "",
+        "ref": 665751,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jamaica",
+        "value": "",
+        "url": "",
+        "ref": 665754,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Japan",
+        "value": "",
+        "url": "",
+        "ref": 665757,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jersey",
+        "value": "",
+        "url": "",
+        "ref": 665760,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jordan",
+        "value": "",
+        "url": "",
+        "ref": 665763,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kazakhstan",
+        "value": "",
+        "url": "",
+        "ref": 665766,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kenya",
+        "value": "",
+        "url": "",
+        "ref": 665769,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kiribati",
+        "value": "",
+        "url": "",
+        "ref": 665772,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kosovo",
+        "value": "",
+        "url": "",
+        "ref": 665775,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kuwait",
+        "value": "",
+        "url": "",
+        "ref": 665778,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kyrgyzstan",
+        "value": "",
+        "url": "",
+        "ref": 665781,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Laos",
+        "value": "",
+        "url": "",
+        "ref": 665784,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Latvia",
+        "value": "",
+        "url": "",
+        "ref": 665787,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lebanon",
+        "value": "",
+        "url": "",
+        "ref": 665790,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lesotho",
+        "value": "",
+        "url": "",
+        "ref": 665793,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Liberia",
+        "value": "",
+        "url": "",
+        "ref": 665796,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Libya",
+        "value": "",
+        "url": "",
+        "ref": 665799,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Liechtenstein",
+        "value": "",
+        "url": "",
+        "ref": 665802,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lithuania",
+        "value": "",
+        "url": "",
+        "ref": 665805,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Luxembourg",
+        "value": "",
+        "url": "",
+        "ref": 665808,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Macao SAR China",
+        "value": "",
+        "url": "",
+        "ref": 665811,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Madagascar",
+        "value": "",
+        "url": "",
+        "ref": 665814,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Malawi",
+        "value": "",
+        "url": "",
+        "ref": 665817,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Malaysia",
+        "value": "",
+        "url": "",
+        "ref": 665820,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Maldives",
+        "value": "",
+        "url": "",
+        "ref": 665823,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mali",
+        "value": "",
+        "url": "",
+        "ref": 665826,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Malta",
+        "value": "",
+        "url": "",
+        "ref": 665829,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Marshall Islands",
+        "value": "",
+        "url": "",
+        "ref": 665832,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Martinique",
+        "value": "",
+        "url": "",
+        "ref": 665835,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mauritania",
+        "value": "",
+        "url": "",
+        "ref": 665838,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mauritius",
+        "value": "",
+        "url": "",
+        "ref": 665841,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mayotte",
+        "value": "",
+        "url": "",
+        "ref": 665844,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mexico",
+        "value": "",
+        "url": "",
+        "ref": 665847,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Micronesia",
+        "value": "",
+        "url": "",
+        "ref": 665850,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Moldova",
+        "value": "",
+        "url": "",
+        "ref": 665853,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Monaco",
+        "value": "",
+        "url": "",
+        "ref": 665856,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mongolia",
+        "value": "",
+        "url": "",
+        "ref": 665859,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Montenegro",
+        "value": "",
+        "url": "",
+        "ref": 665862,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Montserrat",
+        "value": "",
+        "url": "",
+        "ref": 665865,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Morocco",
+        "value": "",
+        "url": "",
+        "ref": 665868,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mozambique",
+        "value": "",
+        "url": "",
+        "ref": 665871,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Myanmar (Burma)",
+        "value": "",
+        "url": "",
+        "ref": 665874,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Namibia",
+        "value": "",
+        "url": "",
+        "ref": 665877,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nauru",
+        "value": "",
+        "url": "",
+        "ref": 665880,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nepal",
+        "value": "",
+        "url": "",
+        "ref": 665883,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Netherlands",
+        "value": "",
+        "url": "",
+        "ref": 665886,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "New Caledonia",
+        "value": "",
+        "url": "",
+        "ref": 665889,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "New Zealand",
+        "value": "",
+        "url": "",
+        "ref": 665892,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nicaragua",
+        "value": "",
+        "url": "",
+        "ref": 665895,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Niger",
+        "value": "",
+        "url": "",
+        "ref": 665898,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nigeria",
+        "value": "",
+        "url": "",
+        "ref": 665901,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Niue",
+        "value": "",
+        "url": "",
+        "ref": 665904,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Norfolk Island",
+        "value": "",
+        "url": "",
+        "ref": 665907,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "North Korea",
+        "value": "",
+        "url": "",
+        "ref": 665910,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "North Macedonia",
+        "value": "",
+        "url": "",
+        "ref": 665913,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Northern Mariana Islands",
+        "value": "",
+        "url": "",
+        "ref": 665916,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Norway",
+        "value": "",
+        "url": "",
+        "ref": 665919,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Oman",
+        "value": "",
+        "url": "",
+        "ref": 665922,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Pakistan",
+        "value": "",
+        "url": "",
+        "ref": 665925,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Palau",
+        "value": "",
+        "url": "",
+        "ref": 665928,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Palestinian Territories",
+        "value": "",
+        "url": "",
+        "ref": 665931,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Panama",
+        "value": "",
+        "url": "",
+        "ref": 665934,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Papua New Guinea",
+        "value": "",
+        "url": "",
+        "ref": 665937,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Paraguay",
+        "value": "",
+        "url": "",
+        "ref": 665940,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Peru",
+        "value": "",
+        "url": "",
+        "ref": 665943,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Philippines",
+        "value": "",
+        "url": "",
+        "ref": 665946,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Pitcairn Islands",
+        "value": "",
+        "url": "",
+        "ref": 665949,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Poland",
+        "value": "",
+        "url": "",
+        "ref": 665952,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Portugal",
+        "value": "",
+        "url": "",
+        "ref": 665955,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Qatar",
+        "value": "",
+        "url": "",
+        "ref": 665958,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Romania",
+        "value": "",
+        "url": "",
+        "ref": 665961,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Russia",
+        "value": "",
+        "url": "",
+        "ref": 665964,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rwanda",
+        "value": "",
+        "url": "",
+        "ref": 665967,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Réunion",
+        "value": "",
+        "url": "",
+        "ref": 665970,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Samoa",
+        "value": "",
+        "url": "",
+        "ref": 665973,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "San Marino",
+        "value": "",
+        "url": "",
+        "ref": 665976,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Saudi Arabia",
+        "value": "",
+        "url": "",
+        "ref": 665979,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Senegal",
+        "value": "",
+        "url": "",
+        "ref": 665982,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Serbia",
+        "value": "",
+        "url": "",
+        "ref": 665985,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Seychelles",
+        "value": "",
+        "url": "",
+        "ref": 665988,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sierra Leone",
+        "value": "",
+        "url": "",
+        "ref": 665991,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Singapore",
+        "value": "",
+        "url": "",
+        "ref": 665994,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sint Maarten",
+        "value": "",
+        "url": "",
+        "ref": 665997,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Slovakia",
+        "value": "",
+        "url": "",
+        "ref": 666000,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Slovenia",
+        "value": "",
+        "url": "",
+        "ref": 666003,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Solomon Islands",
+        "value": "",
+        "url": "",
+        "ref": 666006,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Somalia",
+        "value": "",
+        "url": "",
+        "ref": 666009,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "South Africa",
+        "value": "",
+        "url": "",
+        "ref": 666012,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "South Georgia & South Sandwich Islands",
+        "value": "",
+        "url": "",
+        "ref": 666015,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "South Korea",
+        "value": "",
+        "url": "",
+        "ref": 666018,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Spain",
+        "value": "",
+        "url": "",
+        "ref": 666021,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sri Lanka",
+        "value": "",
+        "url": "",
+        "ref": 666024,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Barthélemy",
+        "value": "",
+        "url": "",
+        "ref": 666027,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Helena",
+        "value": "",
+        "url": "",
+        "ref": 666030,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Kitts & Nevis",
+        "value": "",
+        "url": "",
+        "ref": 666033,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Lucia",
+        "value": "",
+        "url": "",
+        "ref": 666036,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Martin",
+        "value": "",
+        "url": "",
+        "ref": 666039,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Pierre & Miquelon",
+        "value": "",
+        "url": "",
+        "ref": 666042,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Vincent & Grenadines",
+        "value": "",
+        "url": "",
+        "ref": 666045,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sudan",
+        "value": "",
+        "url": "",
+        "ref": 666048,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Suriname",
+        "value": "",
+        "url": "",
+        "ref": 666051,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Svalbard & Jan Mayen",
+        "value": "",
+        "url": "",
+        "ref": 666054,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sweden",
+        "value": "",
+        "url": "",
+        "ref": 666057,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Switzerland",
+        "value": "",
+        "url": "",
+        "ref": 666060,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Syria",
+        "value": "",
+        "url": "",
+        "ref": 666063,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "São Tomé & Príncipe",
+        "value": "",
+        "url": "",
+        "ref": 666066,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Taiwan, Province of China",
+        "value": "",
+        "url": "",
+        "ref": 666069,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tajikistan",
+        "value": "",
+        "url": "",
+        "ref": 666072,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tanzania",
+        "value": "",
+        "url": "",
+        "ref": 666075,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Thailand",
+        "value": "",
+        "url": "",
+        "ref": 666078,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Timor-Leste",
+        "value": "",
+        "url": "",
+        "ref": 666081,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Togo",
+        "value": "",
+        "url": "",
+        "ref": 666084,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tokelau",
+        "value": "",
+        "url": "",
+        "ref": 666087,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tonga",
+        "value": "",
+        "url": "",
+        "ref": 666090,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Trinidad & Tobago",
+        "value": "",
+        "url": "",
+        "ref": 666093,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tunisia",
+        "value": "",
+        "url": "",
+        "ref": 666096,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Turkey",
+        "value": "",
+        "url": "",
+        "ref": 666099,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Turkmenistan",
+        "value": "",
+        "url": "",
+        "ref": 666102,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Turks & Caicos Islands",
+        "value": "",
+        "url": "",
+        "ref": 666105,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tuvalu",
+        "value": "",
+        "url": "",
+        "ref": 666108,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "U.S. Outlying Islands",
+        "value": "",
+        "url": "",
+        "ref": 666111,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "U.S. Virgin Islands",
+        "value": "",
+        "url": "",
+        "ref": 666114,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Uganda",
+        "value": "",
+        "url": "",
+        "ref": 666117,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ukraine",
+        "value": "",
+        "url": "",
+        "ref": 666120,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "United Arab Emirates",
+        "value": "",
+        "url": "",
+        "ref": 666123,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "United Kingdom",
+        "value": "",
+        "url": "",
+        "ref": 666126,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "United States",
+        "value": "",
+        "url": "",
+        "ref": 666129,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Uruguay",
+        "value": "",
+        "url": "",
+        "ref": 666132,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Uzbekistan",
+        "value": "",
+        "url": "",
+        "ref": 666135,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Vanuatu",
+        "value": "",
+        "url": "",
+        "ref": 666138,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Vatican City",
+        "value": "",
+        "url": "",
+        "ref": 666141,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Venezuela",
+        "value": "",
+        "url": "",
+        "ref": 666144,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Vietnam",
+        "value": "",
+        "url": "",
+        "ref": 666147,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Wallis & Futuna",
+        "value": "",
+        "url": "",
+        "ref": 666150,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Western Sahara",
+        "value": "",
+        "url": "",
+        "ref": 666153,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Yemen",
+        "value": "",
+        "url": "",
+        "ref": 666156,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Zambia",
+        "value": "",
+        "url": "",
+        "ref": 666159,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Zimbabwe",
+        "value": "",
+        "url": "",
+        "ref": 666162,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Åland Islands",
+        "value": "",
+        "url": "",
+        "ref": 666165,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Activity",
+        "value": "",
+        "url": "",
+        "ref": 664146,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Hike",
+        "value": "",
+        "url": "",
+        "ref": 666174,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Outdoor",
+        "value": "",
+        "url": "",
+        "ref": 666177,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Running",
+        "value": "",
+        "url": "",
+        "ref": 666180,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Warmup",
+        "value": "",
+        "url": "",
+        "ref": 666183,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Yoga",
+        "value": "",
+        "url": "",
+        "ref": 666186,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Recreation",
+        "value": "",
+        "url": "",
+        "ref": 666189,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lounge",
+        "value": "",
+        "url": "",
+        "ref": 666192,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gym",
+        "value": "",
+        "url": "",
+        "ref": 666195,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Climbing",
+        "value": "",
+        "url": "",
+        "ref": 666198,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Crosstraining",
+        "value": "",
+        "url": "",
+        "ref": 666201,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Post-workout",
+        "value": "",
+        "url": "",
+        "ref": 666204,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cycling",
+        "value": "",
+        "url": "",
+        "ref": 666207,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Athletic",
+        "value": "",
+        "url": "",
+        "ref": 666210,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sports",
+        "value": "",
+        "url": "",
+        "ref": 666213,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hiking",
+        "value": "",
+        "url": "",
+        "ref": 666216,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Overnight",
+        "value": "",
+        "url": "",
+        "ref": 666219,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "School",
+        "value": "",
+        "url": "",
+        "ref": 666222,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Trail",
+        "value": "",
+        "url": "",
+        "ref": 666225,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Travel",
+        "value": "",
+        "url": "",
+        "ref": 666228,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Urban",
+        "value": "",
+        "url": "",
+        "ref": 666231,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Style General",
+        "value": "",
+        "url": "",
+        "ref": 664147,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Insulated",
+        "value": "",
+        "url": "",
+        "ref": 666240,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jacket",
+        "value": "",
+        "url": "",
+        "ref": 666243,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Vest",
+        "value": "",
+        "url": "",
+        "ref": 666246,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lightweight",
+        "value": "",
+        "url": "",
+        "ref": 666249,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hooded",
+        "value": "",
+        "url": "",
+        "ref": 666252,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Heavy Duty",
+        "value": "",
+        "url": "",
+        "ref": 666255,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rain Coat",
+        "value": "",
+        "url": "",
+        "ref": 666258,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hard Shell",
+        "value": "",
+        "url": "",
+        "ref": 666261,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Soft Shell",
+        "value": "",
+        "url": "",
+        "ref": 666264,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Windbreaker",
+        "value": "",
+        "url": "",
+        "ref": 666267,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "&frac12; zip",
+        "value": "",
+        "url": "",
+        "ref": 666270,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "&frac14; zip",
+        "value": "",
+        "url": "",
+        "ref": 666273,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Full Zip",
+        "value": "",
+        "url": "",
+        "ref": 666276,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Reversible",
+        "value": "",
+        "url": "",
+        "ref": 666279,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bra",
+        "value": "",
+        "url": "",
+        "ref": 666282,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hoodie",
+        "value": "",
+        "url": "",
+        "ref": 666285,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sweatshirt",
+        "value": "",
+        "url": "",
+        "ref": 666288,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Polo",
+        "value": "",
+        "url": "",
+        "ref": 666291,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tank",
+        "value": "",
+        "url": "",
+        "ref": 666294,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tee",
+        "value": "",
+        "url": "",
+        "ref": 666297,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Pullover",
+        "value": "",
+        "url": "",
+        "ref": 666300,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hoodie",
+        "value": "",
+        "url": "",
+        "ref": 666303,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cardigan",
+        "value": "",
+        "url": "",
+        "ref": 666306,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Henley",
+        "value": "",
+        "url": "",
+        "ref": 666309,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tunic",
+        "value": "",
+        "url": "",
+        "ref": 666312,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Camisole",
+        "value": "",
+        "url": "",
+        "ref": 666315,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Material",
+        "value": "",
+        "url": "",
+        "ref": 664148,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Burlap",
+        "value": "",
+        "url": "",
+        "ref": 666324,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cocona&reg; performance fabric",
+        "value": "",
+        "url": "",
+        "ref": 666327,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Canvas",
+        "value": "",
+        "url": "",
+        "ref": 666330,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Wool",
+        "value": "",
+        "url": "",
+        "ref": 666333,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cotton",
+        "value": "",
+        "url": "",
+        "ref": 666336,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Fleece",
+        "value": "",
+        "url": "",
+        "ref": 666339,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Faux Leather",
+        "value": "",
+        "url": "",
+        "ref": 666342,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hemp",
+        "value": "",
+        "url": "",
+        "ref": 666345,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jersey",
+        "value": "",
+        "url": "",
+        "ref": 666348,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Leather",
+        "value": "",
+        "url": "",
+        "ref": 666351,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "LumaTech&trade;",
+        "value": "",
+        "url": "",
+        "ref": 666354,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mesh",
+        "value": "",
+        "url": "",
+        "ref": 666357,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lycra&reg;",
+        "value": "",
+        "url": "",
+        "ref": 666360,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nylon",
+        "value": "",
+        "url": "",
+        "ref": 666363,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Microfiber",
+        "value": "",
+        "url": "",
+        "ref": 666366,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Polyester",
+        "value": "",
+        "url": "",
+        "ref": 666369,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rayon",
+        "value": "",
+        "url": "",
+        "ref": 666372,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Spandex",
+        "value": "",
+        "url": "",
+        "ref": 666375,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "HeatTec&reg;",
+        "value": "",
+        "url": "",
+        "ref": 666378,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ripstop",
+        "value": "",
+        "url": "",
+        "ref": 666381,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "EverCool&trade;",
+        "value": "",
+        "url": "",
+        "ref": 666384,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Suede",
+        "value": "",
+        "url": "",
+        "ref": 666387,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Foam",
+        "value": "",
+        "url": "",
+        "ref": 666390,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Organic Cotton",
+        "value": "",
+        "url": "",
+        "ref": 666393,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Metal",
+        "value": "",
+        "url": "",
+        "ref": 666396,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "TENCEL",
+        "value": "",
+        "url": "",
+        "ref": 666399,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "CoolTech&trade;",
+        "value": "",
+        "url": "",
+        "ref": 666402,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Plastic",
+        "value": "",
+        "url": "",
+        "ref": 666405,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Khaki",
+        "value": "",
+        "url": "",
+        "ref": 666408,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rubber",
+        "value": "",
+        "url": "",
+        "ref": 666411,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Linen",
+        "value": "",
+        "url": "",
+        "ref": 666414,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Synthetic",
+        "value": "",
+        "url": "",
+        "ref": 666417,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Stainless Steel",
+        "value": "",
+        "url": "",
+        "ref": 666420,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Wool",
+        "value": "",
+        "url": "",
+        "ref": 666423,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Silicone",
+        "value": "",
+        "url": "",
+        "ref": 666426,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Terry",
+        "value": "",
+        "url": "",
+        "ref": 666429,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Sleeve",
+        "value": "",
+        "url": "",
+        "ref": 664149,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Sleeve",
+        "value": "",
+        "url": "",
+        "ref": 666438,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Long-Sleeve",
+        "value": "",
+        "url": "",
+        "ref": 666441,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Short-Sleeve",
+        "value": "",
+        "url": "",
+        "ref": 666444,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sleeveless",
+        "value": "",
+        "url": "",
+        "ref": 666447,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tank",
+        "value": "",
+        "url": "",
+        "ref": 666450,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Strap",
+        "value": "",
+        "url": "",
+        "ref": 666453,
+        "depth": 1
+      },
+      {
+        "role": "combobox",
+        "key": "notice-KQ3UTHQ",
+        "value": "",
+        "url": "",
+        "ref": 664150,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666467,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "55 cm",
+        "value": "",
+        "url": "",
+        "ref": 666470,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "XS",
+        "value": "",
+        "url": "",
+        "ref": 666473,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "65 cm",
+        "value": "",
+        "url": "",
+        "ref": 666476,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "S",
+        "value": "",
+        "url": "",
+        "ref": 666479,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "75 cm",
+        "value": "",
+        "url": "",
+        "ref": 666482,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "M",
+        "value": "",
+        "url": "",
+        "ref": 666485,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "6 foot",
+        "value": "",
+        "url": "",
+        "ref": 666488,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "L",
+        "value": "",
+        "url": "",
+        "ref": 666491,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "8 foot",
+        "value": "",
+        "url": "",
+        "ref": 666494,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "XL",
+        "value": "",
+        "url": "",
+        "ref": 666497,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "10 foot",
+        "value": "",
+        "url": "",
+        "ref": 666500,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "28",
+        "value": "",
+        "url": "",
+        "ref": 666503,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "29",
+        "value": "",
+        "url": "",
+        "ref": 666506,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "30",
+        "value": "",
+        "url": "",
+        "ref": 666509,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "31",
+        "value": "",
+        "url": "",
+        "ref": 666512,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "32",
+        "value": "",
+        "url": "",
+        "ref": 666515,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "33",
+        "value": "",
+        "url": "",
+        "ref": 666518,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "34",
+        "value": "",
+        "url": "",
+        "ref": 666521,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "36",
+        "value": "",
+        "url": "",
+        "ref": 666524,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "38",
+        "value": "",
+        "url": "",
+        "ref": 666527,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "XXXL",
+        "value": "",
+        "url": "",
+        "ref": 666530,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Collar",
+        "value": "",
+        "url": "",
+        "ref": 664151,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "N/A",
+        "value": "",
+        "url": "",
+        "ref": 666539,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "? zip",
+        "value": "",
+        "url": "",
+        "ref": 666542,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Boat Neck",
+        "value": "",
+        "url": "",
+        "ref": 666545,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Crew",
+        "value": "",
+        "url": "",
+        "ref": 666548,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Full zip",
+        "value": "",
+        "url": "",
+        "ref": 666551,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "V-neck",
+        "value": "",
+        "url": "",
+        "ref": 666554,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ballet",
+        "value": "",
+        "url": "",
+        "ref": 666557,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Scoop",
+        "value": "",
+        "url": "",
+        "ref": 666560,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "High Collar",
+        "value": "",
+        "url": "",
+        "ref": 666563,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Stand Collar",
+        "value": "",
+        "url": "",
+        "ref": 666566,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Roll Neck",
+        "value": "",
+        "url": "",
+        "ref": 666569,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Square Neck",
+        "value": "",
+        "url": "",
+        "ref": 666572,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Pattern",
+        "value": "",
+        "url": "",
+        "ref": 664152,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Color-Blocked",
+        "value": "",
+        "url": "",
+        "ref": 666581,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Checked",
+        "value": "",
+        "url": "",
+        "ref": 666584,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Color-Blocked",
+        "value": "",
+        "url": "",
+        "ref": 666587,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Graphic Print",
+        "value": "",
+        "url": "",
+        "ref": 666590,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Solid",
+        "value": "",
+        "url": "",
+        "ref": 666593,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Solid-Highlight",
+        "value": "",
+        "url": "",
+        "ref": 666596,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Striped",
+        "value": "",
+        "url": "",
+        "ref": 666599,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Camo",
+        "value": "",
+        "url": "",
+        "ref": 666602,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Geometric",
+        "value": "",
+        "url": "",
+        "ref": 666605,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Climate",
+        "value": "",
+        "url": "",
+        "ref": 664153,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "All-Weather",
+        "value": "",
+        "url": "",
+        "ref": 666614,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cold",
+        "value": "",
+        "url": "",
+        "ref": 666617,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cool",
+        "value": "",
+        "url": "",
+        "ref": 666620,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Indoor",
+        "value": "",
+        "url": "",
+        "ref": 666623,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mild",
+        "value": "",
+        "url": "",
+        "ref": 666626,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rainy",
+        "value": "",
+        "url": "",
+        "ref": 666629,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Spring",
+        "value": "",
+        "url": "",
+        "ref": 666632,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Warm",
+        "value": "",
+        "url": "",
+        "ref": 666635,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Windy",
+        "value": "",
+        "url": "",
+        "ref": 666638,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Wintry",
+        "value": "",
+        "url": "",
+        "ref": 666641,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hot",
+        "value": "",
+        "url": "",
+        "ref": 666644,
+        "depth": 1
+      },
+      {
+        "role": "combobox",
+        "key": "notice-SDLVFUK",
+        "value": "",
+        "url": "",
+        "ref": 664154,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666658,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Black",
+        "value": "",
+        "url": "",
+        "ref": 666661,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Blue",
+        "value": "",
+        "url": "",
+        "ref": 666664,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Brown",
+        "value": "",
+        "url": "",
+        "ref": 666667,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gray",
+        "value": "",
+        "url": "",
+        "ref": 666670,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Green",
+        "value": "",
+        "url": "",
+        "ref": 666673,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lavender",
+        "value": "",
+        "url": "",
+        "ref": 666676,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Multi",
+        "value": "",
+        "url": "",
+        "ref": 666679,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Orange",
+        "value": "",
+        "url": "",
+        "ref": 666682,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Purple",
+        "value": "",
+        "url": "",
+        "ref": 666685,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Red",
+        "value": "",
+        "url": "",
+        "ref": 666688,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "White",
+        "value": "",
+        "url": "",
+        "ref": 666691,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Yellow",
+        "value": "",
+        "url": "",
+        "ref": 666694,
+        "depth": 1
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] Eco Collection No",
+        "value": "false",
+        "url": "",
+        "ref": 664155,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] Performance Fabric No",
+        "value": "false",
+        "url": "",
+        "ref": 664156,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] Erin Recommends No",
+        "value": "false",
+        "url": "",
+        "ref": 664157,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] New No",
+        "value": "false",
+        "url": "",
+        "ref": 664158,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] Sale Yes",
+        "value": "true",
+        "url": "",
+        "ref": 664159,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Add Products Manually",
+        "value": "",
+        "url": "",
+        "ref": 666850,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Edit Configurations",
+        "value": "",
+        "url": "",
+        "ref": 666852,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 664162,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "5",
+        "value": "",
+        "url": "",
+        "ref": 666866,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "20",
+        "value": "",
+        "url": "",
+        "ref": 666869,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "30",
+        "value": "",
+        "url": "",
+        "ref": 666872,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "50",
+        "value": "",
+        "url": "",
+        "ref": 666875,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "100",
+        "value": "",
+        "url": "",
+        "ref": 666878,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "200",
+        "value": "",
+        "url": "",
+        "ref": 666881,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "500",
+        "value": "",
+        "url": "",
+        "ref": 666884,
+        "depth": 1
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666888,
+        "depth": 0
+      },
+      {
+        "role": "spinbutton",
+        "key": "of 1",
+        "value": "",
+        "url": "",
+        "ref": 664075,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666894,
+        "depth": 0
+      },
+      {
+        "role": "table",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666896,
+        "depth": 0
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666898,
+        "depth": 1
+      },
+      {
+        "role": "columnheader",
+        "key": "Image",
+        "value": "",
+        "url": "",
+        "ref": 666899,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Name",
+        "value": "",
+        "url": "",
+        "ref": 666901,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "SKU",
+        "value": "",
+        "url": "",
+        "ref": 666903,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Price",
+        "value": "",
+        "url": "",
+        "ref": 666905,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Quantity",
+        "value": "",
+        "url": "",
+        "ref": 666907,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Weight",
+        "value": "",
+        "url": "",
+        "ref": 666909,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Status",
+        "value": "",
+        "url": "",
+        "ref": 666911,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Attributes",
+        "value": "",
+        "url": "",
+        "ref": 666913,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Actions",
+        "value": "",
+        "url": "",
+        "ref": 666915,
+        "depth": 2
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666918,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666919,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666926,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-XS-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1477/",
+        "ref": 666934,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666935,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666943,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666951,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666959,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 666967,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: XS, Color: Black",
+        "value": "",
+        "url": "",
+        "ref": 666970,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 666977,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 666979,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666988,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666989,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 666996,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-XS-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1478/",
+        "ref": 667004,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667005,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667013,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667021,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667029,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667037,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: XS, Color: Blue",
+        "value": "",
+        "url": "",
+        "ref": 667040,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667047,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667049,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667058,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667059,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667066,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-XS-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1479/",
+        "ref": 667074,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667075,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667083,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667091,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667099,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667107,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: XS, Color: Red",
+        "value": "",
+        "url": "",
+        "ref": 667110,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667117,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667119,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667128,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667129,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667136,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-S-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1480/",
+        "ref": 667144,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667145,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667153,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667161,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667169,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667177,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: S, Color: Black",
+        "value": "",
+        "url": "",
+        "ref": 667180,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667187,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667189,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667198,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667199,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667206,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-S-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1481/",
+        "ref": 667214,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667215,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667223,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667231,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667239,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667247,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: S, Color: Blue",
+        "value": "",
+        "url": "",
+        "ref": 667250,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667257,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667259,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667268,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667269,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667276,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-S-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1482/",
+        "ref": 667284,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667285,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667293,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667301,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667309,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667317,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: S, Color: Red",
+        "value": "",
+        "url": "",
+        "ref": 667320,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667327,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667329,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667338,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667339,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667346,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-M-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1483/",
+        "ref": 667354,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667355,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667363,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667371,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667379,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667387,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: M, Color: Black",
+        "value": "",
+        "url": "",
+        "ref": 667390,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667397,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667399,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667408,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667409,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667416,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-M-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1484/",
+        "ref": 667424,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667425,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667433,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667441,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667449,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667457,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: M, Color: Blue",
+        "value": "",
+        "url": "",
+        "ref": 667460,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667467,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667469,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667478,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667479,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667486,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-M-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1485/",
+        "ref": 667494,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667495,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667503,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667511,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667519,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667527,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: M, Color: Red",
+        "value": "",
+        "url": "",
+        "ref": 667530,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667537,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667539,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667548,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667549,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667556,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-L-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1486/",
+        "ref": 667564,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667565,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667573,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667581,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667589,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667597,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: L, Color: Black",
+        "value": "",
+        "url": "",
+        "ref": 667600,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667607,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667609,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667618,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667619,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667626,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-L-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1487/",
+        "ref": 667634,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667635,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667643,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667651,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667659,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667667,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: L, Color: Blue",
+        "value": "",
+        "url": "",
+        "ref": 667670,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667677,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667679,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667688,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667689,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667696,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-L-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1488/",
+        "ref": 667704,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667705,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667713,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667721,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667729,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667737,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: L, Color: Red",
+        "value": "",
+        "url": "",
+        "ref": 667740,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667747,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667749,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667758,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667759,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667766,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-XL-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1489/",
+        "ref": 667774,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667775,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667783,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667791,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667799,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667807,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: XL, Color: Black",
+        "value": "",
+        "url": "",
+        "ref": 667810,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667817,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667819,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667828,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667829,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667836,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-XL-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1490/",
+        "ref": 667844,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667845,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667853,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667861,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667869,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667877,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: XL, Color: Blue",
+        "value": "",
+        "url": "",
+        "ref": 667880,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667887,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667889,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667898,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667899,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667906,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Minerva LumaTech™ V-Tee-XL-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1491/",
+        "ref": 667914,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667915,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667923,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667931,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 667939,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 667947,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: XL, Color: Red",
+        "value": "",
+        "url": "",
+        "ref": 667950,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667957,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 667959,
+        "depth": 3
+      },
+      {
+        "role": "link",
+        "key": "",
+        "value": "",
+        "url": "http://magento.com/",
+        "ref": 668193,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Privacy Policy",
+        "value": "",
+        "url": "https://www.adobe.com/privacy/policy.html",
+        "ref": 668196,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Account Activity",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/security/session/activity/",
+        "ref": 668197,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Report an Issue",
+        "value": "",
+        "url": "https://github.com/magento/magento2/issues",
+        "ref": 668198,
+        "depth": 0
+      },
+      {
+        "role": "dialog",
+        "key": "Create Product Configurations",
+        "value": "",
+        "url": "",
+        "ref": 668435,
+        "depth": 0
+      },
+      {
+        "role": "heading",
+        "key": "Create Product Configurations",
+        "value": "",
+        "url": "",
+        "ref": 668439,
+        "depth": 1
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 668440,
+        "depth": 1
+      },
+      {
+        "role": "link",
+        "key": "Select Attributes",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#variation-steps-wizard_step1",
+        "ref": 670681,
+        "depth": 1
+      },
+      {
+        "role": "link",
+        "key": "Attribute Values",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#variation-steps-wizard_step2",
+        "ref": 670683,
+        "depth": 1
+      },
+      {
+        "role": "link",
+        "key": "Bulk Images & Price",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#variation-steps-wizard_step3",
+        "ref": 670685,
+        "depth": 1
+      },
+      {
+        "role": "link",
+        "key": "Summary",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/#variation-steps-wizard_step4",
+        "ref": 670687,
+        "depth": 1
+      },
+      {
+        "role": "button",
+        "key": "Cancel",
+        "value": "",
+        "url": "",
+        "ref": 670690,
+        "depth": 1
+      },
+      {
+        "role": "button",
+        "key": "Back",
+        "value": "",
+        "url": "",
+        "ref": 670693,
+        "depth": 1
+      },
+      {
+        "role": "button",
+        "key": "Next",
+        "value": "",
+        "url": "",
+        "ref": 670696,
+        "depth": 1
+      },
+      {
+        "role": "heading",
+        "key": "Step 3: Bulk Images, Price and Quantity",
+        "value": "",
+        "url": "",
+        "ref": 670759,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Apply single set of images to all SKUs",
+        "value": "false",
+        "url": "",
+        "ref": 670769,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Apply unique images by attribute to each SKU",
+        "value": "false",
+        "url": "",
+        "ref": 670774,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Skip image uploading at this time",
+        "value": "true",
+        "url": "",
+        "ref": 670779,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Apply single price to all SKUs",
+        "value": "false",
+        "url": "",
+        "ref": 670856,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Apply unique prices by attribute to each SKU",
+        "value": "false",
+        "url": "",
+        "ref": 670861,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Skip price at this time",
+        "value": "true",
+        "url": "",
+        "ref": 670866,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Apply single quantity to each SKUs",
+        "value": "false",
+        "url": "",
+        "ref": 670907,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Apply unique quantity by attribute to each SKU",
+        "value": "false",
+        "url": "",
+        "ref": 670912,
+        "depth": 1
+      },
+      {
+        "role": "radio",
+        "key": "Skip quantity at this time",
+        "value": "true",
+        "url": "",
+        "ref": 670917,
+        "depth": 1
+      }
+    ],
+    "applied_filters": null,
+    "applied_filter_meta": {
+      "source": "none",
+      "indicator_channel": "absent",
+      "fallback_channel": "absent",
+      "chip_container": "absent",
+      "legacy_grid": "absent"
+    }
+  }
+}

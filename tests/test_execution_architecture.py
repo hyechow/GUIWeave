@@ -115,7 +115,9 @@ def test_execution_kernel_contains_no_site_or_benchmark_vocabulary():
             "action_protocol.py",
             "evidence.py",
             "execution_scope.py",
-            "helpers.py",
+            "observation_state.py",
+            "acquisition.py",
+            "model_io.py",
         )
     ]
     forbidden = ("webarena", "magento", "shopping_admin")
@@ -131,12 +133,12 @@ def test_execution_kernel_contains_no_site_or_benchmark_vocabulary():
 
 
 def test_prompt_text_postprocessors_are_not_execution_services():
-    helper_tree = ast.parse(
-        (MILESTONE_DIR / "helpers.py").read_text(encoding="utf-8")
+    model_io_tree = ast.parse(
+        (MILESTONE_DIR / "model_io.py").read_text(encoding="utf-8")
     )
-    helper_functions = {node.name for node in _function_nodes(helper_tree)}
+    model_io_functions = {node.name for node in _function_nodes(model_io_tree)}
 
-    assert not helper_functions & {
+    assert not model_io_functions & {
         "_guard_native_select_plan",
         "_guard_exact_dropdown_target",
         "_guard_named_field_substitution_plan",

@@ -295,6 +295,7 @@ class ProgressMonitor:
             print(f"  [SimStuck] 全局[{gstr}] 局部[{lstr}] → {tag}")
             return _SingleCheckResult(
                 status="stuck",
+                outcome_status="unverified",
                 reason=f"连续 {STUCK_SCREEN_WINDOW} 帧没有看到与目标相关的页面变化",
                 stuck_reason="上一步操作后页面没有出现新内容或目标状态，需要尝试其他可见入口",
                 issues=["连续多帧未看到页面状态推进"],
@@ -307,6 +308,7 @@ class ProgressMonitor:
             print(f"  [SimStuck] 2back={sim_2back:.2%}, adj={sim_adj:.2%} → AB 循环")
             return _SingleCheckResult(
                 status="stuck",
+                outcome_status="unverified",
                 reason="页面在两个可见状态之间来回切换，验收条件仍未出现",
                 stuck_reason="页面在两个状态之间反复切换，需要换路径或先关闭当前弹窗/面板",
                 issues=["页面状态来回切换"],
@@ -333,6 +335,7 @@ class ProgressMonitor:
             from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
             return _SingleCheckResult(
                 status="stuck",
+                outcome_status="unverified",
                 reason=f"连续 {STUCK_REPEAT_WINDOW} 步给出相似指令，当前页面仍未满足验收条件",
                 stuck_reason="连续相似指令未达成目标，需要改用当前截图中的其他可见入口或操作顺序",
                 issues=["连续操作策略过于相似"],
@@ -384,6 +387,7 @@ class ProgressMonitor:
             from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
             return _SingleCheckResult(
                 status="stuck",
+                outcome_status="unverified",
                 reason=f"连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留在「{val}」，调整未朝目标推进",
                 stuck_reason="连续调值无进展：当前值多轮未变化",
                 issues=["监控值多轮未朝目标推进（疑似方向错/步长不足/非法值回弹）"],

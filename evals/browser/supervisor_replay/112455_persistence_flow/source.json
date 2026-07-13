@@ -1,0 +1,8 @@
+{
+  "task": "WebArena 549",
+  "history_source": "logs/gui_agent/webarena/browser/20260713_112455/context.json",
+  "history_through_turn": 30,
+  "observation_source": "recorded observation_turn_28..31.json and matching screenshots",
+  "observation_captured_on": "2026-07-13",
+  "purpose": "One live flow covering child generation, parent persistence, and terminal response completion under a shared PersistenceBoundaryState."
+}

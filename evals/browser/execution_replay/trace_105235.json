@@ -43,7 +43,7 @@
         "action_family": "navigate",
         "target_control": "STORES"
       },
-      "expected": {"atomic_role": "prepare", "action_family": "navigate"}
+      "expected": {"validation_error": true}
     }
   ]
 }

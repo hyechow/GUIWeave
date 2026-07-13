@@ -159,6 +159,9 @@ def _configure_knowledge(supervisor: Any, context: PolicyContext) -> None:
 def _expectation_failures(expectation: dict[str, Any], decision: Any) -> list[str]:
     failures: list[str] = []
     checks = (
+        ("should_act", expectation.get("should_act")),
+        ("goal_completed", expectation.get("goal_completed")),
+        ("completion_status", expectation.get("completion_status")),
         ("atomic_role", expectation.get("atomic_role")),
         ("action_family", expectation.get("action_family")),
         ("target_control", expectation.get("target_control")),
@@ -255,7 +258,7 @@ def main() -> int:
     parser.add_argument("--expect-role", choices=("prepare", "write", "commit", "iterate"))
     parser.add_argument(
         "--expect-family",
-        choices=("input", "select", "activate", "navigate", "iterate", "commit", "unknown"),
+        choices=("input", "select", "activate", "navigate", "iterate", "unknown"),
     )
     parser.add_argument("--expect-target", help="require this exact target_control")
     parser.add_argument("--reject-target", help="fail if this exact target_control is proposed")
@@ -354,6 +357,9 @@ def main() -> int:
                 "checker_status": getattr(checker, "status", None),
                 "checker_outcome": getattr(checker, "outcome_status", None),
                 "instruction": decision.instruction,
+                "should_act": decision.should_act,
+                "goal_completed": decision.goal_completed,
+                "completion_status": decision.completion_status,
                 "atomic_role": decision.atomic_role,
                 "action_family": decision.action_family,
                 "target_control": decision.target_control,

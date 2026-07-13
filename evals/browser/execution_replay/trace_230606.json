@@ -95,7 +95,7 @@
             "execution_scope": "milestone:f2_Name_Minerva_207873e6",
             "milestone_kind": "filter",
             "atomic_role": "commit",
-            "action_family": "commit",
+            "action_family": "input",
             "target_control": "Search by keyword",
             "target_value": "Minerva"
           },

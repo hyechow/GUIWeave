@@ -67,7 +67,7 @@
             "instruction": "Click Save Attribute",
             "summary": "Persist the option",
             "atomic_role": "commit",
-            "action_family": "commit",
+            "action_family": "activate",
             "target_control": "Save Attribute"
           }
         },
@@ -183,7 +183,7 @@
             "milestone_id": "ensure-option",
             "execution_scope": "milestone:ensure-option",
             "atomic_role": "commit",
-            "action_family": "commit",
+            "action_family": "activate",
             "target_control": "Save Attribute"
           },
           "action_decision": {

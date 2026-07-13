@@ -7,8 +7,8 @@ to the path and plain @-mentions never break anything.
 
 from __future__ import annotations
 
-import gui_agent.core.supervisor.milestone.helpers as helpers_mod
-from gui_agent.core.supervisor.milestone.helpers import resolve_file_refs
+import gui_agent.core.supervisor.milestone.model_io as model_io
+from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
 
 
 def _mk(tmp_path, name: str, text: str):
@@ -64,7 +64,7 @@ def test_subdir_and_absolute_path(tmp_path):
 
 
 def test_truncation_cap(tmp_path, monkeypatch):
-    monkeypatch.setattr(helpers_mod, "_FILE_REF_MAX_CHARS", 10)
+    monkeypatch.setattr(model_io, "_FILE_REF_MAX_CHARS", 10)
     _mk(tmp_path, "big.txt", "x" * 100)
     out = resolve_file_refs("读 @big.txt", base=tmp_path)
     assert "已截断" in out and "x" * 100 not in out
@@ -74,8 +74,8 @@ def test_aggregate_total_cap_across_multiple_refs(tmp_path, monkeypatch):
     # file_reference_block is `required` (never dropped by the budgeter), so the TOTAL across
     # all @refs must be deterministically bounded — otherwise several big files defeat the hard
     # context cap. Per-file cap stays high; the aggregate cap truncates/omits the overflow.
-    monkeypatch.setattr(helpers_mod, "_FILE_REF_MAX_CHARS", 1000)
-    monkeypatch.setattr(helpers_mod, "_FILE_REF_TOTAL_MAX_CHARS", 1200)
+    monkeypatch.setattr(model_io, "_FILE_REF_MAX_CHARS", 1000)
+    monkeypatch.setattr(model_io, "_FILE_REF_TOTAL_MAX_CHARS", 1200)
     _mk(tmp_path, "a.txt", "a" * 1000)
     _mk(tmp_path, "b.txt", "b" * 1000)
     _mk(tmp_path, "c.txt", "c" * 1000)

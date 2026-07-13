@@ -29,7 +29,7 @@
         "target_control": "Generate Products"
       },
       "expected": {
-        "atomic_role": "prepare",
+        "atomic_role": "commit",
         "action_family": "activate"
       }
     },
@@ -234,14 +234,14 @@
         "instruction": "点击外层 Save 按钮持久化产品配置",
         "summary": "内层生成步骤已返回产品编辑页，继续保存外层产品资源。",
         "atomic_role": "commit",
-        "action_family": "commit",
+        "action_family": "activate",
         "target_control": "Save"
       },
       "expected": {
-        "generate_role": "prepare",
-        "next_role": "commit",
-        "next_family": "commit",
-        "next_target_control": "Save"
+        "generate_role": "commit",
+        "goal_completed": true,
+        "completion_status": "accepted_unverified",
+        "should_act": false
       }
     }
   ]

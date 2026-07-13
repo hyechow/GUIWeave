@@ -37,7 +37,7 @@ def _ms() -> Milestone:
 
 
 def _check() -> _SingleCheckResult:
-    return _SingleCheckResult(status="in_progress", reason="尚未完成填写表单", summary="填表中")
+    return _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="尚未完成填写表单", summary="填表中")
 
 
 def _obs() -> Observation:
@@ -147,4 +147,4 @@ def test_same_dom_action_on_same_dom_state_marks_repeat():
 
     trace = p._monitor.render()
     assert "⚠️重复(同 T1)" in trace
-    assert p._global_constraints
+    assert p.constraints_snapshot()

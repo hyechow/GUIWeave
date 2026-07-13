@@ -406,7 +406,7 @@
             "milestone_id": "add-option",
             "execution_scope": "milestone:add-option",
             "atomic_role": "commit",
-            "action_family": "commit",
+            "action_family": "activate",
             "target_control": "Save Attribute"
           },
           "action_decision": {"action": {"action_type": "tap", "description": "Click Save Attribute"}},

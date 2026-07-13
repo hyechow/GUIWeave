@@ -75,6 +75,7 @@
       ],
       "check": {
         "status": "in_progress",
+        "outcome_status": "unverified",
         "reason": "the target value is selected, but persistence is still pending",
         "summary": "save remains"
       },

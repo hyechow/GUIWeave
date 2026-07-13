@@ -10,7 +10,7 @@ context, SKILL.md body read only when invoked), we keep:
   - the **section bodies** (the per-section page-knowledge .md files) — loaded only for the
     section(s) the checker flags as relevant to the current screen.
 
-A dedicated KnowledgeSelector micro-decision (helpers.run_selector) reads the id'd manifest
+A dedicated KnowledgeSelector micro-decision (model_io.run_selector) reads the id'd manifest
 and picks ``section_ids``; the planner then injects only those bodies. The policy caches the
 selection per (milestone, page_identity), so the selector LLM only fires on page/milestone
 changes. Leaf module: only ``re``.

@@ -114,7 +114,7 @@ def test_regression_webarena_113_reset_search_loop_20260622_105707():
 def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch):
     """The guard also FEEDS the checker: run_checker must surface the state→decision trace when
     given state_trace_text, and omit the block when empty. Pins the wiring against silent drops."""
-    import gui_agent.core.supervisor.milestone.helpers as helpers
+    import gui_agent.core.supervisor.milestone.model_io as model_io
     from gui_agent.core.schemas import Milestone, Observation
     from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 
@@ -132,10 +132,10 @@ def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch
 
     def _fake_invoke(llm, messages, schema, **_kw):
         captured["text"] = _flat(messages)
-        return _SingleCheckResult(status="in_progress", reason="检查中尚未达成", summary="进行中")
+        return _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="检查中尚未达成", summary="进行中")
 
-    monkeypatch.setattr(helpers, "invoke_structured", _fake_invoke)
-    monkeypatch.setattr(helpers, "_make_llm", lambda: object())
+    monkeypatch.setattr(model_io, "invoke_structured", _fake_invoke)
+    monkeypatch.setattr(model_io, "_make_llm", lambda: object())
 
     from io import BytesIO
     from PIL import Image
@@ -148,11 +148,11 @@ def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch
     obs = Observation(png_bytes=_PNG, source="browser")
     trace = " T3 状态:/admin/review/product/index | 决策:点击search ⚠️重复(同 T1)"
 
-    helpers.run_checker(ms, obs, [], state_trace_text=trace)
+    model_io.run_checker(ms, obs, [], state_trace_text=trace)
     assert "任务进展轨迹" in captured["text"]
     assert "⚠️重复" in captured["text"] and "点击search" in captured["text"]
 
-    helpers.run_checker(ms, obs, [], state_trace_text="")   # empty → no trace block
+    model_io.run_checker(ms, obs, [], state_trace_text="")   # empty → no trace block
     assert "任务进展轨迹" not in captured["text"]
 
 
