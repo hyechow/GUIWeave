@@ -20,10 +20,13 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.run.turns import make_interactive_turn
+from gui_agent.core.run.action_ledger import ActionLedger
+from gui_agent.core.supervisor.milestone.evidence import runtime_filter_intent
 from gui_agent.core.supervisor.milestone.helpers import (
     filter_chips_clean,
     filter_residual_labels,
     filter_state_satisfies_target,
+    observed_filter_intent,
     RuntimeFilterIntent,
 )
 from gui_agent.context.runtime import applied_filter_state_block
@@ -108,10 +111,131 @@ def test_runtime_write_intent_matches_actual_keyword_route_without_text_parser()
     ) is True
 
 
+def test_runtime_write_refines_semantic_filter_control_for_same_declared_value():
+    milestone = _filter_ms(
+        "在 Name 列用关键词『Minerva』筛选",
+        target_values={"Name": "Minerva"},
+    )
+    intent = RuntimeFilterIntent(
+        target_control="Search by keyword",
+        target_value="Minerva",
+    )
+    applied = {"Keyword": "Minerva"}
+
+    assert filter_state_satisfies_target(applied, milestone, intent) is True
+    assert filter_chips_clean(applied, milestone, intent) is True
+    assert filter_residual_labels(applied, milestone, intent) == []
+
+
+def test_observed_filter_state_binds_prepopulated_concrete_control():
+    milestone = _filter_ms(
+        "在 Name 列用关键词『Minerva』筛选",
+        target_values={"Name": "Minerva"},
+    )
+    intent = observed_filter_intent(
+        {"Keyword": "Minerva"},
+        [{
+            "label": "Search by keyword",
+            "kind": "text_input",
+            "value": "Minerva",
+        }],
+        milestone,
+    )
+
+    assert intent == RuntimeFilterIntent("Search by keyword", "Minerva")
+
+
+def test_observed_filter_state_rejects_ambiguous_concrete_controls():
+    milestone = _filter_ms(
+        "筛选目标值",
+        target_values={"Name": "same"},
+    )
+    intent = observed_filter_intent(
+        {"Keyword": "same"},
+        [
+            {"label": "Search by keyword", "value": "same"},
+            {"label": "Keyword search", "value": "same"},
+        ],
+        milestone,
+    )
+
+    assert intent is None
+
+
+def test_commit_receipt_carries_filter_intent_when_control_was_prepopulated():
+    milestone = _filter_ms(
+        "在 Name 列用关键词『Minerva』筛选",
+        target_values={"Name": "Minerva"},
+    )
+    scope = f"milestone:{milestone.id}"
+    step = SupervisorStep(
+        should_act=True,
+        instruction="按回车键提交",
+        stop=False,
+        goal_completed=False,
+        summary="submit populated filter",
+        milestone_id=milestone.id,
+        execution_scope=scope,
+        milestone_kind="filter",
+        atomic_role="commit",
+        action_family="commit",
+        target_control="Search by keyword",
+        target_value="Minerva",
+    )
+    turn = make_interactive_turn(
+        index=1,
+        observation_source="browser",
+        supervisor_step=step,
+        action_decision=BaseActionDecision(action=BaseAction(
+            action_type="press_enter",
+            description="submit populated filter",
+        )),
+        executed=True,
+    )
+
+    assert runtime_filter_intent(
+        milestone, [turn], scope=scope, ledger=ActionLedger()
+    ) == RuntimeFilterIntent("Search by keyword", "Minerva")
+
+
+def test_runtime_write_cannot_refine_ambiguous_equal_declared_values():
+    milestone = _filter_ms(
+        "设置两个独立筛选字段",
+        target_values={"Primary": "same", "Secondary": "same"},
+    )
+    intent = RuntimeFilterIntent(
+        target_control="Broad search",
+        target_value="same",
+    )
+
+    assert filter_state_satisfies_target(
+        {"Search": "same"}, milestone, intent
+    ) is False
+
+
+def test_runtime_write_cannot_override_declared_filter_value():
+    milestone = _filter_ms(
+        "在 Name 列筛选『Minerva』",
+        target_values={"Name": "Minerva"},
+    )
+    intent = RuntimeFilterIntent(
+        target_control="Search by keyword",
+        target_value="LumaTech",
+    )
+
+    assert filter_state_satisfies_target(
+        {"Keyword": "LumaTech"}, milestone, intent
+    ) is False
+    assert filter_residual_labels(
+        {"Keyword": "LumaTech"}, milestone, intent
+    ) == ["Keyword"]
+
+
 def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
     milestone = _filter_ms(
         "在产品名称字段用精确值『Minerva LumaTech V-Tee』筛选",
         "产品名称精确筛选已应用，records-found 计数可读",
+        target_values={"Name": "Minerva LumaTech V-Tee"},
     )
     milestone.returns = ["match_count"]
     write_step = SupervisorStep(

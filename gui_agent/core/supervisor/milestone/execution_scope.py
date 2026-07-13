@@ -129,13 +129,6 @@ def history_for_current_milestone(
     ]
 
 
-# Compatibility aliases for existing private imports.
-_page_known = page_known
-_resource_identity_from_url = resource_identity_from_url
-_resource_identity_from_text = resource_identity_from_text
-_turn_execution_scope = turn_execution_scope
-
-
 __all__ = [
     "execution_scope_for",
     "history_for_current_milestone",

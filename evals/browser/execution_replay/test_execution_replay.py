@@ -22,6 +22,7 @@ from gui_agent.core.run.execution_signals import (
     ExecutionContract,
 )
 from gui_agent.core.run.flow import evaluate_turn_progress
+from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.run.loop import _needs_terminal_reconciliation
 from gui_agent.core.run.turns import (
     interactive_turn_count,
@@ -38,8 +39,19 @@ from gui_agent.core.schemas import (
 )
 from gui_agent.core.supervisor.milestone import policy as policy_module
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.action_protocol import record_action_outcome
-from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+from gui_agent.core.supervisor.milestone.action_protocol import (
+    action_metadata,
+    regresses_preparation_frontier,
+    record_action_outcome,
+)
+from gui_agent.core.supervisor.milestone.evidence import (
+    action_lifecycle_claims,
+    checker_claim,
+    execution_contract_for,
+    target_value_claims,
+)
+from gui_agent.core.supervisor.milestone.execution_scope import execution_scope_for
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 from gui_agent.adapters.browser.control_grounding import (
     ground_rendered_action,
     rendered_target_evidence,
@@ -63,11 +75,20 @@ def _completion_case(case: dict[str, Any]) -> None:
     history = [PolicyTurn.model_validate(item) for item in case["history"]]
     check = _SingleCheckResult.model_validate(case["check"])
 
-    decision = policy._completion_decision_from_check(
+    scope = execution_scope_for(milestone, observation)
+    claims = action_lifecycle_claims(
         milestone,
-        observation,
         history,
-        check,
+        scope=scope,
+        monitor=policy._monitor,
+        ledger=policy._action_ledger,
+    )
+    claims.extend(target_value_claims(milestone, observation, scope=scope))
+    claims.append(checker_claim(check, scope=scope, subject_scope=scope))
+    decision = policy._completion_evaluator.decide(
+        execution_contract_for(milestone, policy._execution_contract),
+        claims,
+        scope=scope,
     )
     expected = case["expected"]
     expected_status = {
@@ -97,6 +118,41 @@ def _filter_completion_case(case: dict[str, Any]) -> None:
         policy_module.is_loading_frame = original
 
     expected = case["expected"]
+    assert step.goal_completed is expected["goal_completed"]
+    assert step.completion_status == expected["completion_status"]
+    assert milestone.status == expected["milestone_status"]
+    if "pre_existing" in expected:
+        assert step.pre_existing is expected["pre_existing"]
+
+
+def _verified_interaction_case(case: dict[str, Any]) -> None:
+    """A non-mutation action advances from verified state without inventing a write."""
+    policy = MilestoneSupervisorPolicy()
+    milestone = Milestone.model_validate(case["milestone"])
+    observation = Observation.model_validate(case["observation"])
+    history = [PolicyTurn.model_validate(item) for item in case.get("history", [])]
+    check = _SingleCheckResult.model_validate(case["check"])
+    policy.reseed(milestone)
+    if case.get("previous_url"):
+        policy._monitor._last_url = case["previous_url"]  # noqa: SLF001
+    if case.get("previous_dom_state"):
+        policy._monitor._last_dom_state = case["previous_dom_state"]  # noqa: SLF001
+    policy._single_check = lambda *_args, **_kwargs: check  # type: ignore[method-assign]
+    policy._invoke_planner = (  # type: ignore[method-assign]
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("planner called after the interaction state was confirmed")
+        )
+    )
+
+    original = policy_module.is_loading_frame
+    policy_module.is_loading_frame = lambda _observation: False
+    try:
+        step = policy._run_single_turn(milestone, observation, history)
+    finally:
+        policy_module.is_loading_frame = original
+
+    expected = case["expected"]
+    assert policy._contract_for(milestone).completion_mode == expected["completion_mode"]
     assert step.goal_completed is expected["goal_completed"]
     assert step.completion_status == expected["completion_status"]
     assert milestone.status == expected["milestone_status"]
@@ -157,9 +213,7 @@ def _lifecycle_monotonic_case(case: dict[str, Any]) -> None:
 
 def _checker_feedback_case(case: dict[str, Any]) -> None:
     check = _SingleCheckResult.model_validate(case["check"])
-    claim = MilestoneSupervisorPolicy._checker_claim(  # noqa: SLF001
-        check, scope=case["scope"]
-    )
+    claim = checker_claim(check, scope=case["scope"])
     assert claim.value == case["expected"]["claim_value"]
 
 
@@ -241,6 +295,73 @@ def _browser_plan_schema_case(case: dict[str, Any]) -> None:
     assert plan.action_family == expected["action_family"]
 
 
+def _action_metadata_case(case: dict[str, Any]) -> None:
+    role, family = action_metadata(
+        _PlanResult.model_validate(case["plan"]),
+        Milestone.model_validate(case["milestone"]),
+    )
+    assert role == case["expected"]["atomic_role"]
+    assert family == case["expected"]["action_family"]
+
+
+def _nested_persistence_case(case: dict[str, Any]) -> None:
+    """Replay a nested generator dispatch followed by an unpersisted outer editor frame."""
+    milestone = Milestone.model_validate(case["milestone"])
+    plan = _PlanResult.model_validate(case["generate_plan"])
+    role, family = action_metadata(plan, milestone)
+    generate_turn = PolicyTurn.model_validate(case["generate_turn"])
+    generate_turn.supervisor.atomic_role = role
+    generate_turn.supervisor.action_family = family
+    assert generate_turn.action_signal is not None
+    generate_turn.action_signal.role = role
+    history = [
+        *(PolicyTurn.model_validate(item) for item in case["prior_history"]),
+        generate_turn,
+    ]
+
+    policy = MilestoneSupervisorPolicy()
+    policy.reseed(milestone)
+    recorded_check = case.get("check") or case["recorded_turn"]["checker"]
+    policy._single_check = (  # type: ignore[method-assign]
+        lambda *_args, **_kwargs: _SingleCheckResult.model_validate(recorded_check)
+    )
+    policy._invoke_planner = (  # type: ignore[method-assign]
+        lambda *_args, **_kwargs: _PlanResult.model_validate(case["next_plan"])
+    )
+    original = policy_module.is_loading_frame
+    policy_module.is_loading_frame = lambda _observation: False
+    try:
+        step = policy._run_single_turn(
+            milestone,
+            Observation.model_validate(case["observation"]),
+            history,
+        )
+    finally:
+        policy_module.is_loading_frame = original
+
+    expected = case["expected"]
+    assert role == expected["generate_role"]
+    assert step.goal_completed is False
+    assert step.completion_status == "in_progress"
+    assert step.should_act is True
+    assert step.atomic_role == expected["next_role"]
+    assert step.action_family == expected["next_family"]
+    assert step.target_control == expected["next_target_control"]
+
+
+def _transaction_frontier_detection_case(case: dict[str, Any]) -> None:
+    """Recorded history identifies a backward edge without scripting its replacement plan."""
+    milestone = Milestone.model_validate(case["milestone"])
+    proposal = _PlanResult.model_validate(case["recorded_turn"]["planner"])
+    history = [PolicyTurn.model_validate(item) for item in case["history"]]
+
+    assert regresses_preparation_frontier(
+        proposal,
+        milestone,
+        history,
+    ) is case["expected"]["regresses"]
+
+
 def _browser_action_postprocess_case(case: dict[str, Any]) -> None:
     decision = BrowserActionDecision.model_validate(case["action_decision"])
     result = BrowserActionPolicy()._postprocess(decision, case["instruction"])
@@ -294,6 +415,60 @@ def _target_binding_case(case: dict[str, Any]) -> None:
     assert outcome.status == expected["status"]
     if "source" in expected:
         assert outcome.source == expected["source"]
+
+
+def _planner_target_passthrough_case(case: dict[str, Any]) -> None:
+    """A terminal-state contract must not reject an intermediate UI target by text."""
+    recorded = case["recorded_turn"]
+    supervisor = recorded["supervisor"]
+    policy = MilestoneSupervisorPolicy()
+    policy._invoke_planner = lambda *_args, **_kwargs: _PlanResult(  # type: ignore[method-assign]
+        instruction=supervisor["instruction"],
+        summary=supervisor["summary"],
+        atomic_role=supervisor["atomic_role"],
+        action_family=supervisor["action_family"],
+        target_control=supervisor["target_control"],
+        target_value=supervisor["target_value"],
+        target_group_id=supervisor.get("target_group_id", ""),
+    )
+    step = policy._plan_single(  # noqa: SLF001
+        Milestone.model_validate(case["milestone"]),
+        _SingleCheckResult.model_validate(recorded["checker"]),
+        Observation.model_validate(case["observation"]),
+        [],
+    )
+    expected = case["expected"]
+    assert step.should_act is True
+    assert step.target_control == expected["target_control"]
+    assert step.target_value == expected["target_value"]
+
+
+def _target_unit_policy_case(case: dict[str, Any]) -> None:
+    """A unique structural unit must be written before asking the LLM to materialize again."""
+    policy = MilestoneSupervisorPolicy()
+    policy._invoke_planner = (  # type: ignore[method-assign]
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("LLM planner called despite a unique writable unit")
+        )
+    )
+    step = policy._plan_single(  # noqa: SLF001
+        Milestone.model_validate(case["milestone"]),
+        _SingleCheckResult.model_validate(case["recorded_turn"]["checker"]),
+        Observation.model_validate(case["observation"]),
+        [],
+    )
+    expected = case["expected"]
+    assert step.atomic_role == "write"
+    assert step.target_control == expected["target_control"]
+    assert step.target_value == expected["target_value"]
+    assert step.target_group_id == expected["target_group_id"]
+
+
+def _knowledge_selection_case(case: dict[str, Any]) -> None:
+    selected = ProgressiveKnowledge(case["sections"]).augment_with_signals(
+        case["selected"], case["signals"]
+    )
+    assert selected == case["expected"]["sections"]
 
 
 def _rendered_target_evidence_case(case: dict[str, Any]) -> None:
@@ -369,6 +544,7 @@ def run_replay() -> list[str]:
     handlers = {
         "completion": _completion_case,
         "filter_completion": _filter_completion_case,
+        "verified_interaction": _verified_interaction_case,
         "scope_isolation": _scope_case,
         "suppression_progress": _suppression_progress_case,
         "lifecycle_monotonic": _lifecycle_monotonic_case,
@@ -377,10 +553,16 @@ def run_replay() -> list[str]:
         "native_action": _native_action_case,
         "control_grounding": _legacy_control_grounding_case,
         "browser_plan_schema": _browser_plan_schema_case,
+        "action_metadata": _action_metadata_case,
+        "nested_persistence": _nested_persistence_case,
+        "transaction_frontier_detection": _transaction_frontier_detection_case,
         "browser_action_postprocess": _browser_action_postprocess_case,
         "semantic_target_presence": _semantic_target_presence_case,
         "signal_fusion": _signal_fusion_case,
         "target_binding": _target_binding_case,
+        "planner_target_passthrough": _planner_target_passthrough_case,
+        "target_unit_policy": _target_unit_policy_case,
+        "knowledge_selection": _knowledge_selection_case,
         "rendered_target_evidence": _rendered_target_evidence_case,
         "terminal_reconcile": _terminal_reconcile_case,
     }

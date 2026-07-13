@@ -21,6 +21,7 @@ from .helpers import (
     RuntimeFilterIntent,
     filter_chips_clean,
     filter_state_satisfies_target,
+    observed_filter_intent,
     target_value_state,
 )
 from .schemas import _SingleCheckResult
@@ -219,20 +220,47 @@ def runtime_filter_intent(
     scope: str,
     ledger: ActionLedger,
 ) -> RuntimeFilterIntent | None:
-    """Derive the concrete filter write from an executed action receipt."""
+    """Derive the concrete control/value used by the current filter attempt.
+
+    Prefer a write receipt.  A filter may also begin with its desired control already populated;
+    in that case the first action is a commit (Apply/Search/Enter), and the dispatched commit's
+    structured supervisor target is the only concrete attempt identity.
+    """
     if milestone.kind != "filter":
         return None
     turn = ledger.latest_write(history, milestone.id, scope=scope)
+    if turn is None:
+        turn = ledger.latest_commit(history, milestone.id, scope=scope)
     if turn is None or turn.action_signal is None:
         return None
     signal = turn.action_signal
     value = signal.target_value
+    if not value and turn.supervisor is not None:
+        value = str(getattr(turn.supervisor, "target_value", "") or "")
     if not value and turn.action_decision is not None:
         value = str(getattr(turn.action_decision.action, "text", "") or "")
     control = signal.target_control or getattr(turn.supervisor, "target_control", "")
     if not control or not value:
         return None
     return RuntimeFilterIntent(control, value)
+
+
+def resolved_filter_intent(
+    milestone: Milestone,
+    observation: Observation,
+    history: list[PolicyTurn],
+    *,
+    scope: str,
+    ledger: ActionLedger,
+) -> RuntimeFilterIntent | None:
+    """Resolve one concrete filter identity from receipts, then from current adapter state."""
+    return runtime_filter_intent(
+        milestone, history, scope=scope, ledger=ledger
+    ) or observed_filter_intent(
+        getattr(observation, "applied_filters", None),
+        getattr(observation, "form_controls", None),
+        milestone,
+    )
 
 
 def observation_state_claims(
@@ -246,8 +274,8 @@ def observation_state_claims(
     """Build deterministic claims from the current adapter observation."""
     claims = target_value_claims(milestone, observation, scope=scope)
     applied_filters = getattr(observation, "applied_filters", None)
-    filter_intent = runtime_filter_intent(
-        milestone, history, scope=scope, ledger=ledger
+    filter_intent = resolved_filter_intent(
+        milestone, observation, history, scope=scope, ledger=ledger
     )
     filter_applied = bool(
         milestone.kind == "filter"
@@ -273,6 +301,7 @@ __all__ = [
     "checker_claim",
     "execution_contract_for",
     "observation_state_claims",
+    "resolved_filter_intent",
     "runtime_filter_intent",
     "target_value_claims",
 ]

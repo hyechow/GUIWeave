@@ -104,12 +104,12 @@ def test_unknown_page_empty_is_not_cached(monkeypatch):
 
 def test_unknown_page_markers_are_substring_matched(monkeypatch):
     # The checker writes free-form page identity;归一化后精确匹配会漏掉所有真实变体,必须子串判定。
-    from gui_agent.core.supervisor.milestone.policy import _page_known
+    from gui_agent.core.supervisor.milestone.execution_scope import page_known
 
     for variant in ["无法识别当前页面", "未知页面（用户中心？）", "unknown page", "页面不确定", "Unidentified view"]:
-        assert _page_known(variant) is False, variant
+        assert page_known(variant) is False, variant
     for known in ["订单列表页", "个人中心", "WeChat 聊天列表"]:
-        assert _page_known(known) is True, known
+        assert page_known(known) is True, known
 
     # 端到端:一个会归一成 "无法识别当前页面" 的身份,空选择不入缓存,逐轮重决
     calls = _stub(monkeypatch, [_SelectorResult(section_ids=[]), _SelectorResult(section_ids=[])])
@@ -143,6 +143,29 @@ def test_clean_empty_falls_back_to_deterministic_match(monkeypatch):
     assert report["fallback_triggered"] is True
     assert report["fallback_reason"] == "empty_selector"
     assert report["cached"] is True
+
+
+def test_nonempty_selector_keeps_strongest_deterministic_match(monkeypatch):
+    p = MilestoneSupervisorPolicy()
+    p.set_app_knowledge("nav", app_name="RoboTeam", elements="e", sections={
+        "通用侧边栏": "侧边栏正文",
+        "产品列表": "产品正文",
+        "产品属性": "---\nselector_when: 进入产品属性列表或编辑属性值时\n---\n属性正文",
+    })
+    calls = _stub(monkeypatch, [_SelectorResult(section_ids=["s01", "s02"])])
+    ms = Milestone.model_validate({
+        "id": "m1",
+        "name": "进入产品属性列表",
+        "description": "d",
+        "success_condition": "页面显示产品属性网格",
+        "kind": "navigation",
+    })
+
+    stems = p._select_sections(ms, _check("Dashboard"))
+
+    assert stems == ["通用侧边栏", "产品列表", "产品属性"]
+    assert calls["n"] == 1
+    assert p._context_reports[-1]["fallback_reason"] == "deterministic_augmentation"
 
 
 def test_empty_page_identity_fallback_hits_but_does_not_cache(monkeypatch):

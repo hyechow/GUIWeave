@@ -1,5 +1,8 @@
 from gui_agent.core.schemas import Milestone
-from gui_agent.core.supervisor.milestone.helpers import target_value_state
+from gui_agent.core.supervisor.milestone.helpers import (
+    target_unit_write_plan,
+    target_value_state,
+)
 
 
 def _milestone() -> Milestone:
@@ -66,3 +69,37 @@ def test_target_state_partial_coverage_does_not_claim_absence() -> None:
     state = target_value_state([], _milestone(), coverage="partial")
 
     assert state.status == "unknown"
+
+
+def test_unique_blank_unit_plans_its_first_declared_field() -> None:
+    plan = target_unit_write_plan(
+        _row("row:20"), _milestone(), coverage="partial"
+    )
+
+    assert plan is not None
+    assert plan.target_control == "Admin Description"
+    assert plan.target_value == "XXXL"
+    assert plan.target_group_id == "row:20"
+    assert plan.atomic_role == "write"
+
+
+def test_partial_unit_keeps_identity_for_the_next_field() -> None:
+    plan = target_unit_write_plan(
+        _row("row:20", description="XXXL"),
+        _milestone(),
+        coverage="partial",
+    )
+
+    assert plan is not None
+    assert plan.target_control == "Admin Swatch"
+    assert plan.target_group_id == "row:20"
+
+
+def test_ambiguous_blank_units_do_not_produce_a_write_plan() -> None:
+    plan = target_unit_write_plan(
+        [*_row("row:20"), *_row("row:21")],
+        _milestone(),
+        coverage="partial",
+    )
+
+    assert plan is None

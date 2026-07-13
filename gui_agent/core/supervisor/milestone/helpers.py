@@ -69,6 +69,79 @@ def _value_tokens(s: str) -> list[str]:
     return [t.lower() for t in re.findall(r"[A-Za-z0-9.]+", s or "")]
 
 
+def _effective_filter_intents(
+    milestone: Milestone,
+    runtime_intent: RuntimeFilterIntent | None,
+) -> list[RuntimeFilterIntent]:
+    """Resolve semantic filter declarations to the concrete controls used this attempt."""
+    declared = [
+        RuntimeFilterIntent(str(control), str(value))
+        for control, value in (milestone.target_values or {}).items()
+        if str(control).strip() and str(value).strip()
+    ]
+    if runtime_intent is None:
+        return declared
+    if not declared:
+        return [runtime_intent]
+
+    # The DSL names semantic fields while the UI may offer a different concrete search control.
+    # A dispatched write receipt may refine exactly one declaration with the same desired value;
+    # it may neither invent a value nor choose between equal-valued declarations.
+    runtime_value = sorted(_value_tokens(runtime_intent.target_value))
+    matching_indexes = [
+        index
+        for index, intent in enumerate(declared)
+        if sorted(_value_tokens(intent.target_value)) == runtime_value
+    ]
+    if len(matching_indexes) != 1:
+        return declared
+    resolved = list(declared)
+    resolved[matching_indexes[0]] = runtime_intent
+    return resolved
+
+
+def observed_filter_intent(
+    applied_filters: Optional[dict[str, str]],
+    form_controls: list[dict] | None,
+    milestone: Milestone,
+) -> RuntimeFilterIntent | None:
+    """Bind an applied-state entry to its currently populated concrete filter control.
+
+    This covers an execution unit entered with its desired filter already active.  Both sides of
+    the adapter state must agree: one applied entry and one rendered control have compatible
+    identities and the same exact value.  The concrete value must then refine exactly one DSL
+    declaration, using the same ambiguity rules as an action receipt.
+    """
+    if not applied_filters or not form_controls or not milestone.target_values:
+        return None
+    candidates: list[RuntimeFilterIntent] = []
+    for applied_label, applied_value in applied_filters.items():
+        wanted = sorted(_value_tokens(applied_value))
+        controls: list[str] = []
+        for item in form_controls:
+            if not isinstance(item, dict) or item.get("group_id"):
+                continue
+            control = str(
+                item.get("label") or item.get("name") or item.get("id") or ""
+            ).strip()
+            value = str(item.get("selected_text") or item.get("value") or "").strip()
+            if (
+                control
+                and sorted(_value_tokens(value)) == wanted
+                and target_matches_declared(applied_label, (control,))
+            ):
+                controls.append(control)
+        if len(controls) == 1:
+            candidates.append(RuntimeFilterIntent(controls[0], str(applied_value)))
+    resolved = [
+        candidate
+        for candidate in candidates
+        if _effective_filter_intents(milestone, candidate)
+        != _effective_filter_intents(milestone, None)
+    ]
+    return resolved[0] if len(resolved) == 1 else None
+
+
 def _matched_applied_filter_labels(
     applied_filters: Optional[dict[str, str]],
     milestone: Milestone,
@@ -76,13 +149,7 @@ def _matched_applied_filter_labels(
 ) -> set[str]:
     if not applied_filters:
         return set()
-    intents = [
-        RuntimeFilterIntent(str(control), str(value))
-        for control, value in (milestone.target_values or {}).items()
-        if str(control).strip() and str(value).strip()
-    ]
-    if not intents and runtime_intent is not None:
-        intents = [runtime_intent]
+    intents = _effective_filter_intents(milestone, runtime_intent)
     if not intents:
         return set()
 
@@ -116,15 +183,22 @@ def filter_chips_clean(
 
 
 def filter_residual_labels(
-    applied_filters: Optional[dict[str, str]], milestone: Milestone
+    applied_filters: Optional[dict[str, str]],
+    milestone: Milestone,
+    runtime_intent: RuntimeFilterIntent | None = None,
 ) -> list[str]:
     """Return live filters not present in the complete declared filter-state contract."""
     if not applied_filters:
         return []
     if not milestone.target_values:
         return []
-    matched_labels = _matched_applied_filter_labels(applied_filters, milestone)
-    declared_controls = tuple(str(key) for key in milestone.target_values)
+    matched_labels = _matched_applied_filter_labels(
+        applied_filters, milestone, runtime_intent
+    )
+    declared_controls = tuple(
+        intent.target_control
+        for intent in _effective_filter_intents(milestone, runtime_intent)
+    )
     return [
         label
         for label in applied_filters
@@ -622,10 +696,6 @@ class TargetUnitState:
     evidence: str = ""
 
 
-# Compatibility for callers that imported the old name. The semantics are deliberately stricter.
-TargetValueState = TargetUnitState
-
-
 def _control_semantic_names(item: dict) -> set[str]:
     label = _control_label(item)
     group_field = str(item.get("group_field") or "").strip()
@@ -820,6 +890,48 @@ def target_value_state(
     return _target_unit_state(form_controls, milestone, coverage=coverage)
 
 
+def target_unit_write_plan(
+    form_controls: list[dict] | None,
+    milestone: Milestone,
+    *,
+    coverage: str = "unknown",
+) -> _PlanResult | None:
+    """Plan the next declared field write when one structural unit is unambiguous."""
+    state = target_unit_state(form_controls, milestone, coverage=coverage)
+    if (
+        state.status not in {"partial", "unique_blank"}
+        or not state.group_id
+        or not state.next_field
+        or state.next_field not in state.writable_fields
+    ):
+        return None
+    target_key = _norm_text(state.next_field)
+    candidates = [
+        item
+        for item in form_controls or []
+        if isinstance(item, dict)
+        and (str(item.get("group_id") or "").strip() or "__form__") == state.group_id
+        and _target_control_matches(item, target_key)
+    ]
+    if len(candidates) != 1:
+        return None
+    kind = str(candidates[0].get("kind") or "").lower()
+    family = (
+        "select"
+        if any(token in kind for token in ("select", "checkbox", "radio", "switch"))
+        else "input"
+    )
+    return _PlanResult(
+        instruction=f"将「{state.next_field}」设置为「{state.next_value}」",
+        summary=state.evidence,
+        atomic_role="write",
+        action_family=family,
+        target_control=state.next_field,
+        target_value=state.next_value,
+        target_group_id=state.group_id,
+    )
+
+
 def _apply_required_group_checker_guard(
     result: _SingleCheckResult,
     milestone: Milestone,
@@ -909,6 +1021,7 @@ def run_checker(
     state_trace_text: str = "",
     last_action_effect: str = "",
     initial_filters: dict[str, str] | None = None,
+    runtime_filter: RuntimeFilterIntent | None = None,
 ) -> _SingleCheckResult:
     """Run the single-step milestone checker. Used by both production and evals.
 
@@ -1000,7 +1113,11 @@ def run_checker(
                 initial_filters=initial_filters,
             ),
             filter_residual_block(
-                filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
+                filter_residual_labels(
+                    getattr(observation, "applied_filters", None),
+                    milestone,
+                    runtime_filter,
+                ),
                 getattr(observation, "applied_filters", None),
             ),
             form_controls_block(
@@ -1181,6 +1298,7 @@ def run_planner(
     prompts: Optional[MilestonePrompts] = None,
     context_reports: list[dict] | None = None,
     initial_filters: dict[str, str] | None = None,
+    runtime_filter: RuntimeFilterIntent | None = None,
 ) -> _PlanResult:
     """Run the step planner. Used by both production and evals."""
     if prompts is None:
@@ -1236,7 +1354,11 @@ def run_planner(
                 initial_filters=initial_filters,
             ),
             filter_residual_block(
-                filter_residual_labels(getattr(observation, "applied_filters", None), milestone),
+                filter_residual_labels(
+                    getattr(observation, "applied_filters", None),
+                    milestone,
+                    runtime_filter,
+                ),
                 getattr(observation, "applied_filters", None),
             ),
             form_controls_block(

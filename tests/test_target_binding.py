@@ -1,31 +1,16 @@
 from __future__ import annotations
 
-import pytest
-
 from gui_agent.adapters.browser.actions import BrowserAction, BrowserActionDecision
 from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.run.action_exec import ActionExecutionState
-from gui_agent.core.run.target_binding import bind_action_target, validate_target_spec
+from gui_agent.core.run.target_binding import bind_action_target
 from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
-    Milestone,
     Observation,
     SupervisorStep,
 )
-
-
-def _milestone() -> Milestone:
-    return Milestone(
-        id="m1",
-        name="update one field",
-        description="",
-        success_condition="the declared field has the requested value",
-        kind="action",
-        target_controls=["Amount"],
-        target_values={"Amount": "42"},
-    )
 
 
 def _step(**updates) -> SupervisorStep:
@@ -54,22 +39,6 @@ def _decision(x: float | None = 400, y: float | None = 600) -> BaseActionDecisio
         text="42",
         description="set Amount to 42",
     ))
-
-
-@pytest.mark.parametrize(
-    ("control", "value", "error"),
-    [
-        ("Amount", "42", ""),
-        ("Adjacent Field", "42", "outside"),
-        ("Amount", "43", "does not match"),
-        ("", "42", "must declare"),
-    ],
-)
-def test_target_spec_is_checked_against_the_milestone(
-    control: str, value: str, error: str
-) -> None:
-    result = validate_target_spec(control=control, value=value, milestone=_milestone())
-    assert (error in result) if error else result == ""
 
 
 def test_visual_binding_requires_a_declared_target_and_concrete_point() -> None:

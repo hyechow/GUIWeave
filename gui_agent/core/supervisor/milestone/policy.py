@@ -33,6 +33,7 @@ from .helpers import run_checker, run_selector, _default_milestone_prompts
 from .helpers import (
     target_affordance_scroll_plan,
     target_section_acquire_plan,
+    target_unit_write_plan,
 )
 from .runtime import (
     EARLY_FEASIBILITY_AT,
@@ -52,7 +53,6 @@ from gui_agent.core.run.progress_monitor import (
     action_signature,
     canonical_url,
 )
-from gui_agent.core.run.target_binding import validate_target_spec
 from .schemas import (
     MilestonePrompts,
     _DecomposeResponse,
@@ -67,15 +67,13 @@ from gui_agent.core.run.execution_signals import (
     ConstraintLedger,
     ExecutionContract,
     CompletionEvaluation,
-    ProvisionalOutcome,
-    ProvisionalOutcomeLedger,
     CompletionEvaluator,
     claim,
 )
 from .action_protocol import (
     action_metadata,
     is_commit_turn,
-    milestone_commit_succeeded,
+    regresses_preparation_frontier,
     record_action_outcome,
     record_action_response,
 )
@@ -84,16 +82,13 @@ from .evidence import (
     checker_claim,
     execution_contract_for,
     observation_state_claims,
-    target_value_claims,
+    resolved_filter_intent,
 )
 from .execution_scope import (
-    _page_known,
-    _resource_identity_from_text,
-    _resource_identity_from_url,
-    _turn_execution_scope,
     execution_scope_for,
     history_for_current_milestone,
     history_for_scope,
+    page_known,
     route_identity_evidence,
 )
 
@@ -138,7 +133,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._monitor = ProgressMonitor()
         self._action_ledger = ActionLedger()
         self._constraint_ledger = ConstraintLedger()
-        self._provisional_outcomes = ProvisionalOutcomeLedger()
         self._completion_evaluator = CompletionEvaluator()
         self._execution_contract: ExecutionContract | None = None
         self._current_execution_scope: str = ""
@@ -209,15 +203,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 mid: list(values)
                 for mid, values in self._monitor._progress_values.items()
             },
-            "provisional_outcomes": [
-                {
-                    "statement_id": item.statement_id,
-                    "scope": item.scope,
-                    "status": item.status,
-                    "evidence": list(item.evidence),
-                }
-                for item in self._provisional_outcomes.entries
-            ],
         }
 
     def set_execution_contract(self, contract: ExecutionContract) -> None:
@@ -262,9 +247,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             ledger=self._action_ledger,
         )
 
-    _target_value_claims = staticmethod(target_value_claims)
-    _checker_claim = staticmethod(checker_claim)
-
     def _controller_completion_decision(
         self,
         milestone: Milestone,
@@ -294,26 +276,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             scope=scope,
         )
 
-    def _completion_decision_from_check(
-        self,
-        milestone: Milestone,
-        observation: Observation,
-        history: list[PolicyTurn],
-        check: _SingleCheckResult,
-    ) -> CompletionEvaluation:
-        """Arbitrate a checker verdict together with persisted lifecycle evidence."""
-        scope = self._execution_scope_for(milestone, observation)
-        claims = self._action_lifecycle_claims(milestone, history, scope=scope)
-        claims.extend(self._target_value_claims(
-            milestone, observation, scope=scope
-        ))
-        claims.append(self._checker_claim(check, scope=scope, subject_scope=scope))
-        return self._completion_evaluator.decide(
-            self._contract_for(milestone),
-            claims,
-            scope=scope,
-        )
-
     def _advance_from_controller(
         self,
         milestone: Milestone,
@@ -324,7 +286,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         evidence: str,
         final_read: Optional[dict] = None,
     ) -> SupervisorStep:
-        scope = self._execution_scope_for(milestone, observation)
+        scope = execution_scope_for(milestone, observation)
         decision = self._controller_completion_decision(
             milestone,
             scope=scope,
@@ -343,25 +305,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             decision=decision,
             final_read=final_read,
         )
-
-    def _execution_scope_for(self, milestone: Milestone, observation: Observation) -> str:
-        return execution_scope_for(milestone, observation)
-
-    def _history_for_scope(
-        self,
-        history: list[PolicyTurn],
-        milestone: Milestone,
-        observation: Observation,
-    ) -> list[PolicyTurn]:
-        return history_for_scope(history, milestone, observation)
-
-    def _history_for_current_milestone(
-        self,
-        history: list[PolicyTurn],
-        milestone: Milestone,
-        observation: Observation,
-    ) -> list[PolicyTurn]:
-        return history_for_current_milestone(history, milestone, observation)
 
     def note_executed_action(
         self,
@@ -441,7 +384,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         else:
             result = self._run_single_turn(milestone, observation, history)
         result_ms = self._milestones.get(result.milestone_id or "", milestone)
-        result.execution_scope = self._execution_scope_for(result_ms, observation)
+        result.execution_scope = execution_scope_for(result_ms, observation)
 
         return result
 
@@ -516,10 +459,10 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 **_ctx(milestone, None),
             )
 
-        execution_scope = self._execution_scope_for(milestone, observation)
+        execution_scope = execution_scope_for(milestone, observation)
         self._current_execution_scope = execution_scope
-        scoped_history = self._history_for_scope(history, milestone, observation)
-        milestone_history = self._history_for_current_milestone(history, milestone, observation)
+        scoped_history = history_for_scope(history, milestone, observation)
+        milestone_history = history_for_current_milestone(history, milestone, observation)
 
         # Freshly entered navigation milestone (reseed fresh_advance, mirror DAG _advance):
         # skip the initial done-check and plan the first nav action directly — drops the 2nd
@@ -705,7 +648,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 **_ctx(milestone, None),
             )
 
-        evidence_claims.append(self._checker_claim(
+        evidence_claims.append(checker_claim(
             check,
             scope=execution_scope,
             subject_scope=execution_scope,
@@ -759,14 +702,6 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     ),
                 })
             if accepted_unverified:
-                evidence = tuple(
-                    item.evidence for item in post_completion.used_claims if item.evidence
-                )
-                self._provisional_outcomes.record(ProvisionalOutcome(
-                    statement_id=contract.statement_id,
-                    scope=execution_scope,
-                    evidence=evidence,
-                ))
                 print("  [Completion] dispatch accepted without outcome feedback")
             else:
                 print(f"  [Completion] confirmed（{post_completion.reason}）")
@@ -953,7 +888,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        execution_scope = self._execution_scope_for(milestone, observation)
+        execution_scope = execution_scope_for(milestone, observation)
         if self._observe_only:
             self._last_plan = None
             milestone.status = "running"
@@ -966,8 +901,20 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 execution_scope=execution_scope,
                 **_ctx(milestone, check.read_instruction),
             )
-        with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
-            plan = self._invoke_planner(milestone, check, observation, history)
+        coverage = str(
+            (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
+            or "unknown"
+        )
+        plan = target_unit_write_plan(
+            getattr(observation, "form_controls", None),
+            milestone,
+            coverage=coverage,
+        )
+        if plan is not None:
+            print(f"  [TargetUnit] {plan.summary}")
+        else:
+            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                plan = self._invoke_planner(milestone, check, observation, history)
         if self._is_sequence(plan.instruction):
             print("  [Planner] 多步序列，重试...")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
@@ -975,37 +922,29 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     milestone, check, observation, history,
                     extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
                 )
+        if (
+            check.outcome_status != "contradicted"
+            and regresses_preparation_frontier(plan, milestone, history)
+        ):
+            print(
+                "  [ActionFrontier] 提议回到已完成的 preparation，"
+                "要求 planner 沿当前事务继续向前"
+            )
+            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                plan = self._invoke_planner(
+                    milestone,
+                    check,
+                    observation,
+                    history,
+                    extra=(
+                        "当前持久化事务已经越过你提议的 preparation 控件，之后还有其他"
+                        "已派发且获得响应的前向动作。不得重新进入早先的准备界面或重做已完成步骤；"
+                        "请只选择当前界面上的下一条前向动作。若业务字段已经准备完成且当前资源"
+                        "仍有未跨越的持久化边界，应执行该资源的终端提交动作。"
+                    ),
+                )
         raw_action_family = getattr(plan, "action_family", "unknown")
         atomic_role, action_family = action_metadata(plan, milestone)
-        target_error = ""
-        if (
-            (milestone.target_controls or milestone.target_values)
-            and (atomic_role == "write" or action_family in {"input", "select"})
-        ):
-            target_error = validate_target_spec(
-                control=getattr(plan, "target_control", ""),
-                value=getattr(plan, "target_value", ""),
-                milestone=milestone,
-            )
-        if target_error:
-            print(f"  [TargetContract] {target_error}")
-            stuck = _SingleCheckResult(
-                status="stuck",
-                reason=f"planner target contract is invalid: {target_error}",
-                stuck_reason=target_error,
-                summary="写目标未能绑定到 milestone 合同",
-                outcome_status="unverified",
-            )
-            return self._handle_stuck(
-                milestone,
-                stuck,
-                check.read_instruction,
-                observation,
-                history,
-                page_changed=False,
-                prev_page_id=check.page_identity,
-                current_page_id=check.page_identity,
-            )
         # 结构化 drag 距离：当 planner 给出本列的当前值/目标值时，按差几格算出 drag_steps，
         # 让 action policy 据此放大拖动幅度（差 20 格用 large 粗调、接近后自动收回 small 精调）。
         # 这条结构化通路绕开「从 instruction 文本正则抠数字」的脆弱性——指令只写了目标值
@@ -1079,7 +1018,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        scoped_history = self._history_for_scope(history, milestone, observation)
+        scoped_history = history_for_scope(history, milestone, observation)
         if self._observe_only:
             with _Timer(self._timings, self._timings_order, "loop_check", self._token_usage):
                 frame = self._loop_check(milestone, observation, scoped_history)
@@ -1295,7 +1234,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 f"cannot advance without satisfied completion evidence: {decision.status}"
             )
         done_name = milestone.name
-        scoped_history = self._history_for_scope(history, milestone, observation)
+        scoped_history = history_for_scope(history, milestone, observation)
         executed_in_scope = any(
             t.executed for t in scoped_history
             if t.supervisor.milestone_id == milestone.id
@@ -1468,7 +1407,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 self._add_runtime_constraint(path_constraint, source="replan")
 
         if replan.strategy == "force_complete":
-            scope = self._execution_scope_for(milestone, observation)
+            scope = execution_scope_for(milestone, observation)
             decision = self._controller_completion_decision(
                 milestone,
                 scope=scope,
@@ -1562,7 +1501,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         # when the frame shows negative feedback because that means the submit did not take.
         if (
             history is not None
-            and milestone_commit_succeeded(history, milestone)
+            and self._action_ledger.latest_commit(history, milestone.id) is not None
             and not (
                 isinstance(self._last_check, _SingleCheckResult)
                 and self._last_check.outcome_status == "contradicted"
@@ -1769,6 +1708,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         identity_evidence = route_identity_evidence(milestone, observation)
         if identity_evidence:
             extra = f"{extra}\n{identity_evidence}".strip()
+        runtime_filter = resolved_filter_intent(
+            milestone,
+            observation,
+            history,
+            scope=execution_scope or execution_scope_for(milestone, observation),
+            ledger=self._action_ledger,
+        )
         return run_checker(
             milestone, observation, history,
             app_name=app_name,
@@ -1781,6 +1727,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             state_trace_text=self._monitor.render(scope=execution_scope),
             last_action_effect=self._last_action_effect_text(effect_history or history),
             initial_filters=self._initial_filters,
+            runtime_filter=runtime_filter,
         )
 
     def _loop_check(
@@ -1814,14 +1761,14 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         if self._pk is None:
             return []
         page_id = check.page_identity or ""
-        page_known = _page_known(page_id)
+        is_known_page = page_known(page_id)
         key = (milestone.id, _norm_page(page_id))
-        if page_known and key in self._selector_cache:
+        if is_known_page and key in self._selector_cache:
             stems = self._selector_cache[key]
             self._record_selector_report(
                 milestone=milestone,
                 page_identity=page_id,
-                page_known=page_known,
+                page_known=is_known_page,
                 cache="hit",
                 sections=stems,
                 cached=True,
@@ -1837,28 +1784,29 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     context_reports=self._context_reports,
                 )
             stems = self._pk.by_ids(sel.section_ids)
-            fallback_triggered = False
+            selected_stems = list(stems)
+            stems = self._pk.augment_with_signals(stems, signals)
+            fallback_triggered = stems != selected_stems
             fallback_reason = ""
-            if not stems:  # clean-empty selector: try the deterministic fallback before giving up
-                fallback = self._pk.match_signals(signals)
-                fallback_triggered = bool(fallback)
-                fallback_reason = "empty_selector" if fallback else ""
-                stems = fallback
+            if fallback_triggered:
+                fallback_reason = (
+                    "empty_selector" if not selected_stems else "deterministic_augmentation"
+                )
             if stems or sel.section_ids:
                 names = "、".join(stems) if stems else "（ID 未命中）"
                 print(f"  [Selector] {names}" + (f" — {sel.reason}" if sel.reason else ""))
-            if page_known:
+            if is_known_page:
                 self._selector_cache[key] = stems
             self._record_selector_report(
                 milestone=milestone,
                 page_identity=page_id,
-                page_known=page_known,
+                page_known=is_known_page,
                 cache="miss",
                 section_ids=list(sel.section_ids or []),
                 sections=stems,
                 fallback_triggered=fallback_triggered,
                 fallback_reason=fallback_reason,
-                cached=page_known,
+                cached=is_known_page,
                 reason=sel.reason,
             )
             return stems
@@ -1868,7 +1816,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             self._record_selector_report(
                 milestone=milestone,
                 page_identity=page_id,
-                page_known=page_known,
+                page_known=is_known_page,
                 cache="miss",
                 sections=stems,
                 fallback_triggered=bool(stems),
@@ -1930,6 +1878,13 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         elements = self._elements_for(milestone, check)
         if milestone.completion_strategy == "react_until_collected" and self._collection_progress:
             extra = f"{extra}\n{self._collection_progress}".strip()
+        runtime_filter = resolved_filter_intent(
+            milestone,
+            observation,
+            history,
+            scope=execution_scope_for(milestone, observation),
+            ledger=self._action_ledger,
+        )
         return run_planner(
             milestone, check, observation, history,
             constraints=self._constraints_for_scope(),
@@ -1939,6 +1894,7 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             prompts=self._prompts,
             context_reports=self._context_reports,
             initial_filters=self._initial_filters,
+            runtime_filter=runtime_filter,
         )
 
     def _invoke_loop_scroll(

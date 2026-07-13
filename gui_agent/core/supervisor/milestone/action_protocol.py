@@ -23,10 +23,69 @@ def action_metadata(
     plan: PlannedAction,
     milestone: Milestone,
 ) -> tuple[AtomicRole, ActionFamily]:
-    """Return structured planner metadata with only the iterative contract override."""
+    """Return coherent structured metadata for this execution contract.
+
+    A persisted mutation's terminal boundary is represented by both ``atomic_role=commit`` and
+    ``action_family=commit``.  Nested wizard actions remain executable, but a conflicting
+    ``commit + activate`` proposal cannot consume the outer resource's persistence boundary.
+    """
     if milestone.is_iterative:
         return "iterate", "iterate"
+    if milestone.requires_commit:
+        if plan.action_family == "commit":
+            return "commit", "commit"
+        if plan.atomic_role == "commit":
+            return "prepare", plan.action_family
     return plan.atomic_role, plan.action_family
+
+
+def regresses_preparation_frontier(
+    plan: PlannedAction,
+    milestone: Milestone,
+    history: list[PolicyTurn],
+) -> bool:
+    """Whether a proposal re-enters an already completed preparation surface.
+
+    Persistent mutations are monotonic transactions: once an on-target preparation has responded
+    and later actions have advanced the same execution scope, revisiting that earlier control is a
+    backward edge.  Explicit outcome contradiction is handled by the caller and may permit retry.
+    """
+    role, family = action_metadata(plan, milestone)
+    target = _control_key(getattr(plan, "target_control", ""))
+    if not milestone.requires_commit or role != "prepare" or family != "activate" or not target:
+        return False
+    if any(is_commit_turn(turn, milestone) for turn in history):
+        return False
+
+    completed_at = -1
+    for index, turn in enumerate(history):
+        signal = turn.action_signal
+        if (
+            signal is not None
+            and turn.supervisor is not None
+            and turn.supervisor.milestone_id == milestone.id
+            and signal.role == "prepare"
+            and signal.execution == "dispatched"
+            and signal.target != "off_target"
+            and signal.response == "observed"
+            and signal.outcome != "contradicted"
+            and _control_key(signal.target_control) == target
+        ):
+            completed_at = index
+    return completed_at >= 0 and any(
+        turn.action_signal is not None
+        and turn.supervisor is not None
+        and turn.supervisor.milestone_id == milestone.id
+        and turn.action_signal.execution == "dispatched"
+        and turn.action_signal.target != "off_target"
+        and turn.action_signal.response == "observed"
+        and _control_key(turn.action_signal.target_control) != target
+        for turn in history[completed_at + 1 :]
+    )
+
+
+def _control_key(value: str) -> str:
+    return "".join(char.casefold() for char in (value or "") if char.isalnum())
 
 
 def is_commit_turn(turn: PolicyTurn | None, milestone: Milestone) -> bool:
@@ -40,12 +99,6 @@ def is_commit_turn(turn: PolicyTurn | None, milestone: Milestone) -> bool:
         return False
     target_verify = turn.target_verify
     return target_verify is None or target_verify.on_target
-
-
-def milestone_commit_succeeded(
-    history: list[PolicyTurn], milestone: Milestone
-) -> bool:
-    return any(is_commit_turn(turn, milestone) for turn in history)
 
 
 def record_action_response(
@@ -106,7 +159,7 @@ def record_action_outcome(
 __all__ = [
     "action_metadata",
     "is_commit_turn",
-    "milestone_commit_succeeded",
+    "regresses_preparation_frontier",
     "record_action_outcome",
     "record_action_response",
 ]

@@ -1,0 +1,248 @@
+{
+  "version": 2,
+  "source": {
+    "run": "logs/gui_agent/webarena/browser/20260713_083949/context.json",
+    "task": "549",
+    "capture": "Turn 28 Generate Products returned nested wizard rows to an outer editor but was mislabeled as the persistent mutation commit"
+  },
+  "cases": [
+    {
+      "id": "turn_28_nested_generate_cannot_consume_outer_commit",
+      "kind": "action_metadata",
+      "recorded_turn": {"index": 28},
+      "milestone": {
+        "id": "m7_action",
+        "name": "在 Configurations 区域生成包含 Size=XXXL, Color=green 的变体组合并保存",
+        "description": "在 Configurations 区域生成包含 Size=XXXL, Color=green 的变体组合并保存",
+        "kind": "action",
+        "success_condition": "保存成功，Configurations 表格中新增一行显示 Size=XXXL, Color=green",
+        "mutation_mode": "change",
+        "requires_commit": true,
+        "target_controls": ["Configurations"],
+        "target_values": {"Size": "XXXL", "Color": "green"}
+      },
+      "plan": {
+        "instruction": "点击「Generate Products」按钮生成变体",
+        "summary": "在 Summary 步骤确认已选 Size=XXXL, Color=green 的组合后，点击 Generate Products 触发变体生成并提交到父商品配置集合。",
+        "atomic_role": "commit",
+        "action_family": "activate",
+        "target_control": "Generate Products"
+      },
+      "expected": {
+        "atomic_role": "prepare",
+        "action_family": "activate"
+      }
+    },
+    {
+      "id": "turn_29_nested_generate_must_continue_to_outer_commit",
+      "kind": "nested_persistence",
+      "recorded_turn": {
+        "index": 29,
+        "supervisor": {
+          "should_act": false,
+          "stop": true,
+          "stop_reason": "所有子目标已完成",
+          "goal_completed": true,
+          "summary": "子目标「在 Configurations 区域生成包含 Size=XXXL, Color=green 的变体组合并保存」已完成，任务全部完成。",
+          "milestone_id": "m7_action",
+          "execution_scope": "row:admin/catalog/product/edit/id/1492",
+          "milestone_kind": "action",
+          "atomic_role": "prepare",
+          "action_family": "unknown",
+          "completion_status": "accepted_unverified"
+        },
+        "checker": {
+          "status": "done",
+          "reason": "终端副作用已派发且没有矛盾证据；结果反馈通道不可用或尚未出现",
+          "item_verdicts": [
+            {
+              "index": 1,
+              "met": false,
+              "evidence": "截图中未显示 Configurations 表格中有 Size=XXXL, Color=green 的新增行"
+            }
+          ],
+          "missing_evidence": [
+            "需要在 Configurations 区域点击'Edit Configurations'按钮进入配置编辑界面",
+            "需要在配置界面中勾选 Size=XXXL 和 Color=green 选项并生成变体",
+            "需要验证生成的变体组合是否正确显示在 Configurations 表格中"
+          ],
+          "page_identity": "Magento Admin - 产品编辑页 (Configurations 区域展开)",
+          "summary": "completion evidence accepted dispatched terminal without outcome feedback",
+          "outcome_status": "unverified"
+        }
+      },
+      "milestone": {
+        "id": "m7_action",
+        "name": "在 Configurations 区域生成包含 Size=XXXL, Color=green 的变体组合并保存",
+        "description": "在 Configurations 区域生成包含 Size=XXXL, Color=green 的变体组合并保存",
+        "kind": "action",
+        "success_condition": "保存成功，Configurations 表格中新增一行显示 Size=XXXL, Color=green",
+        "mutation_mode": "change",
+        "requires_commit": true,
+        "target_controls": ["Configurations"],
+        "target_values": {"Size": "XXXL", "Color": "green"}
+      },
+      "prior_history": [
+        {
+          "index": 24,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "在 Size 属性区域勾选 XXXL 选项",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "当前页面处于属性值选择步骤，先选中 Size 的 XXXL 选项。",
+            "milestone_id": "m7_action",
+            "execution_scope": "row:admin/catalog/product/edit/id/1492",
+            "milestone_kind": "action",
+            "atomic_role": "write",
+            "action_family": "activate",
+            "target_control": "Size - XXXL checkbox",
+            "target_value": "XXXL"
+          },
+          "action_decision": {
+            "action": {
+              "action_type": "tap",
+              "x": 503.0,
+              "y": 584.0,
+              "description": "在 Size 属性区域勾选 XXXL 选项"
+            }
+          },
+          "executed": true,
+          "action_signal": {
+            "action_key": "row:admin/catalog/product/edit/id/1492|m7_action|write|tap|input@10,11|",
+            "role": "write",
+            "target_control": "Size - XXXL checkbox",
+            "binding": {
+              "status": "bound",
+              "source": "visual",
+              "reason": "bound to the concrete visual action point"
+            },
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "response_channels": ["dom"],
+            "outcome": "unverified"
+          }
+        },
+        {
+          "index": 25,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "在 Color 属性区域勾选 Green 选项",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "当前 Size=XXXL 已勾选，需在 Color 区域选中 Green。",
+            "milestone_id": "m7_action",
+            "execution_scope": "row:admin/catalog/product/edit/id/1492",
+            "milestone_kind": "action",
+            "atomic_role": "write",
+            "action_family": "activate",
+            "target_control": "Color - Green checkbox",
+            "target_value": "Green"
+          },
+          "action_decision": {
+            "action": {
+              "action_type": "tap",
+              "x": 325.0,
+              "y": 769.0,
+              "description": "在 Color 属性区域勾选 Green 选项"
+            }
+          },
+          "executed": true,
+          "action_signal": {
+            "action_key": "row:admin/catalog/product/edit/id/1492|m7_action|write|tap|input@6,15|",
+            "role": "write",
+            "target_control": "Color - Green checkbox",
+            "binding": {
+              "status": "bound",
+              "source": "visual",
+              "reason": "bound to the concrete visual action point"
+            },
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "response_channels": ["dom"],
+            "outcome": "unverified"
+          }
+        }
+      ],
+      "generate_plan": {
+        "instruction": "点击「Generate Products」按钮生成变体",
+        "summary": "在 Summary 步骤确认已选 Size=XXXL, Color=green 的组合后，点击 Generate Products 触发变体生成并提交到父商品配置集合。",
+        "atomic_role": "commit",
+        "action_family": "activate",
+        "target_control": "Generate Products"
+      },
+      "generate_turn": {
+        "index": 28,
+        "observation_source": "browser",
+        "supervisor": {
+          "should_act": true,
+          "instruction": "点击「Generate Products」按钮生成变体",
+          "stop": false,
+          "goal_completed": false,
+          "summary": "在 Summary 步骤确认组合后，点击 Generate Products 生成变体。",
+          "milestone_id": "m7_action",
+          "execution_scope": "row:admin/catalog/product/edit/id/1492",
+          "milestone_kind": "action",
+          "atomic_role": "commit",
+          "action_family": "activate",
+          "target_control": "Generate Products"
+        },
+        "action_decision": {
+          "action": {
+            "action_type": "tap",
+            "x": 894.0,
+            "y": 113.0,
+            "description": "点击「Generate Products」按钮生成变体"
+          }
+        },
+        "executed": true,
+        "action_signal": {
+          "action_key": "row:admin/catalog/product/edit/id/1492|m7_action|commit",
+          "role": "commit",
+          "target_control": "Generate Products",
+          "execution": "dispatched",
+          "target": "on_target",
+          "response": "observed",
+          "response_channels": ["visual", "dom"],
+          "outcome": "unverified"
+        }
+      },
+      "observation": {
+        "png_bytes": "recorded-turn-29-frame",
+        "source": "browser",
+        "loading": false,
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/",
+        "title": "Minerva LumaTech V-Tee / Products / Inventory / Catalog / Magento Admin",
+        "dom_state": "recorded-turn-29-outer-product-editor",
+        "form_controls_meta": {
+          "coverage": "partial",
+          "total_rendered": 56,
+          "returned": 34,
+          "truncated": true
+        },
+        "form_controls": [
+          {"label": "Configurations", "kind": "section_toggle", "value": "true"},
+          {"label": "Current Variations", "kind": "native_select", "value": "20"}
+        ],
+        "tables": [{"total_records": 2}]
+      },
+      "next_plan": {
+        "instruction": "点击外层 Save 按钮持久化产品配置",
+        "summary": "内层生成步骤已返回产品编辑页，继续保存外层产品资源。",
+        "atomic_role": "commit",
+        "action_family": "commit",
+        "target_control": "Save"
+      },
+      "expected": {
+        "generate_role": "prepare",
+        "next_role": "commit",
+        "next_family": "commit",
+        "next_target_control": "Save"
+      }
+    }
+  ]
+}

@@ -173,7 +173,10 @@ class _PlanResult(BaseModel):
     )
     target_control: str = Field(
         default="",
-        description="本轮原子动作要命中的控件、字段或集合能力；必须与 milestone 合同一致。",
+        description=(
+            "本轮原子动作要命中的具体控件、字段或集合能力；用于动作定位，不是 milestone "
+            "终态字段的字面白名单。"
+        ),
     )
     target_value: str = Field(
         default="",
@@ -245,7 +248,7 @@ class _ReplanResult(BaseModel):
     )
     target_control: str = Field(
         default="",
-        description="修复动作要命中的具体控件；用于执行契约和 adapter grounding。",
+        description="修复动作要命中的具体控件；用于 adapter grounding，不作终态字段的字面白名单。",
     )
     target_value: str = Field(
         default="",

@@ -5,6 +5,7 @@ from gui_agent.core.run.execution_signals import (
     claim,
 )
 from gui_agent.core.schemas import (
+    ActionSignal,
     BaseAction,
     BaseActionDecision,
     Milestone,
@@ -14,8 +15,34 @@ from gui_agent.core.schemas import (
 from gui_agent.core.supervisor.milestone.action_protocol import (
     action_metadata,
     is_commit_turn,
+    regresses_preparation_frontier,
 )
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult
+
+
+def _signal_turn(index: int, *, role: str, control: str) -> PolicyTurn:
+    return PolicyTurn(
+        index=index,
+        observation_source="test",
+        supervisor=SupervisorStep(
+            should_act=True,
+            instruction=control,
+            stop=False,
+            goal_completed=False,
+            summary="",
+            milestone_id="persisted",
+            atomic_role=role,
+            target_control=control,
+        ),
+        executed=True,
+        action_signal=ActionSignal(
+            role=role,
+            target_control=control,
+            execution="dispatched",
+            target="on_target",
+            response="observed",
+        ),
+    )
 
 
 def _redirected_mutation_contract() -> ExecutionContract:
@@ -154,6 +181,85 @@ def test_action_metadata_preserves_structured_write_role_and_family():
 
     assert role == "write"
     assert family == "commit"
+
+
+def test_persisted_mutation_downgrades_nested_activate_from_commit_role():
+    plan = _PlanResult(
+        instruction="generate nested draft rows",
+        summary="return generated rows to the outer editor",
+        atomic_role="commit",
+        action_family="activate",
+    )
+
+    role, family = action_metadata(
+        plan,
+        Milestone(
+            id="persisted",
+            name="update collection and save",
+            description="",
+            success_condition="saved collection contains target rows",
+            kind="action",
+            requires_commit=True,
+            target_values={"member": "target"},
+        ),
+    )
+
+    assert role == "prepare"
+    assert family == "activate"
+
+
+def test_persisted_mutation_promotes_commit_family_to_terminal_role():
+    plan = _PlanResult(
+        instruction="save outer resource",
+        summary="persist draft",
+        atomic_role="prepare",
+        action_family="commit",
+    )
+
+    role, family = action_metadata(
+        plan,
+        Milestone(
+            id="persisted",
+            name="update collection and save",
+            description="",
+            success_condition="saved collection contains target rows",
+            kind="action",
+            requires_commit=True,
+        ),
+    )
+
+    assert role == "commit"
+    assert family == "commit"
+
+
+def test_persisted_mutation_rejects_backward_preparation_edge():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open editor"),
+        _signal_turn(2, role="write", control="Target value"),
+        _signal_turn(3, role="prepare", control="Generate draft"),
+    ]
+    proposal = _PlanResult(
+        instruction="open the editor again",
+        summary="",
+        atomic_role="prepare",
+        action_family="activate",
+        target_control="Open editor",
+    )
+
+    assert regresses_preparation_frontier(proposal, milestone, history) is True
+    assert regresses_preparation_frontier(
+        proposal.model_copy(update={"target_control": "Save", "action_family": "commit"}),
+        milestone,
+        history,
+    ) is False
 
 
 def test_commit_detection_uses_structured_role_not_instruction_vocabulary():

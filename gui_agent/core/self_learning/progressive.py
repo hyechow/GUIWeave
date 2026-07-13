@@ -206,6 +206,23 @@ class ProgressiveKnowledge:
                     break
         return picked
 
+    def augment_with_signals(self, selected: list[str], signals: list[str]) -> list[str]:
+        """Keep selector choices while reserving one slot for the strongest deterministic match."""
+        out = list(dict.fromkeys(selected))[:_MAX_SELECTED]
+        matched = self.match_signals(signals)
+        if not matched:
+            return out
+        strongest = matched[0]
+        if strongest not in out:
+            if len(out) < _MAX_SELECTED:
+                out.append(strongest)
+            else:
+                out[-1] = strongest
+        for stem in matched[1:]:
+            if stem not in out and len(out) < _MAX_SELECTED:
+                out.append(stem)
+        return out
+
     def bodies(self, stems: list[str]) -> str:
         """Concatenate the bodies of the given section stems (as returned by :meth:`pick`)."""
         return render_context_blocks(self.body_blocks(stems), include_headers=True)

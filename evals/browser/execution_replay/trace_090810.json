@@ -1,0 +1,182 @@
+{
+  "version": 2,
+  "source": {
+    "run": "logs/gui_agent/webarena/browser/20260713_090810/context.json",
+    "task": "549",
+    "capture": "Turn 30 re-entered an earlier preparation surface after nested generation returned to the outer editor"
+  },
+  "cases": [
+    {
+      "id": "turn_30_persisted_mutation_cannot_regress_to_earlier_prepare",
+      "kind": "transaction_frontier_detection",
+      "recorded_turn": {
+        "index": 30,
+        "checker": {
+          "status": "in_progress",
+          "reason": "当前 DOM 控件清单覆盖不完整，未返回声明目标不能证明目标不存在或执行失败。",
+          "page_identity": "Magento Admin - Product Edit Page (Configurations section)",
+          "summary": "目标状态未知：当前控件清单为 partial coverage",
+          "outcome_status": "unverified"
+        },
+        "planner": {
+          "instruction": "点击「Edit Configurations」按钮进入配置编辑向导",
+          "summary": "当前处于产品编辑页的 Configurations 区域，需要重新打开配置向导。",
+          "atomic_role": "prepare",
+          "action_family": "activate",
+          "target_control": "Edit Configurations"
+        }
+      },
+      "milestone": {
+        "id": "r_config",
+        "name": "在 Configurations 区域添加目标变体组合",
+        "description": "在 Configurations 区域添加目标变体组合",
+        "kind": "action",
+        "success_condition": "配置列表出现目标组合并保存成功",
+        "mutation_mode": "change",
+        "requires_commit": true,
+        "target_controls": ["Configurations"],
+        "target_values": {"Color": "green", "Size": "XXXL"}
+      },
+      "history": [
+        {
+          "index": 23,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "点击 Edit Configurations",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "进入配置向导",
+            "milestone_id": "r_config",
+            "execution_scope": "row:admin/catalog/product/edit/id/1492",
+            "atomic_role": "prepare",
+            "action_family": "activate",
+            "target_control": "Edit Configurations"
+          },
+          "executed": true,
+          "action_signal": {
+            "role": "prepare",
+            "target_control": "Edit Configurations",
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "response_channels": ["visual", "dom"],
+            "outcome": "unverified"
+          }
+        },
+        {
+          "index": 24,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "点击 Next",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "进入属性值步骤",
+            "milestone_id": "r_config",
+            "execution_scope": "row:admin/catalog/product/edit/id/1492",
+            "atomic_role": "prepare",
+            "action_family": "activate",
+            "target_control": "Next"
+          },
+          "executed": true,
+          "action_signal": {
+            "role": "prepare",
+            "target_control": "Next",
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "outcome": "unverified"
+          }
+        },
+        {
+          "index": 25,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "选择 Size=XXXL",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "写入尺寸",
+            "milestone_id": "r_config",
+            "execution_scope": "row:admin/catalog/product/edit/id/1492",
+            "atomic_role": "write",
+            "action_family": "activate",
+            "target_control": "Size - XXXL checkbox"
+          },
+          "executed": true,
+          "action_signal": {
+            "role": "write",
+            "target_control": "Size - XXXL checkbox",
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "outcome": "unverified"
+          }
+        },
+        {
+          "index": 26,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "选择 Color=Green",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "写入颜色",
+            "milestone_id": "r_config",
+            "execution_scope": "row:admin/catalog/product/edit/id/1492",
+            "atomic_role": "write",
+            "action_family": "activate",
+            "target_control": "Color - Green checkbox"
+          },
+          "executed": true,
+          "action_signal": {
+            "role": "write",
+            "target_control": "Color - Green checkbox",
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "outcome": "unverified"
+          }
+        },
+        {
+          "index": 29,
+          "observation_source": "browser",
+          "supervisor": {
+            "should_act": true,
+            "instruction": "生成草稿组合",
+            "stop": false,
+            "goal_completed": false,
+            "summary": "内层生成后返回外层编辑器",
+            "milestone_id": "r_config",
+            "execution_scope": "row:admin/catalog/product/edit/id/1492",
+            "atomic_role": "prepare",
+            "action_family": "activate",
+            "target_control": "Generate Products"
+          },
+          "executed": true,
+          "action_signal": {
+            "role": "prepare",
+            "target_control": "Generate Products",
+            "execution": "dispatched",
+            "target": "on_target",
+            "response": "observed",
+            "response_channels": ["visual", "dom"],
+            "outcome": "unverified"
+          }
+        }
+      ],
+      "observation": {
+        "png_bytes": "recorded-turn-30-frame",
+        "source": "browser",
+        "loading": false,
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/",
+        "dom_state": "recorded-turn-30-outer-product-editor",
+        "form_controls_meta": {"coverage": "partial", "truncated": true}
+      },
+      "expected": {
+        "regresses": true
+      }
+    }
+  ]
+}

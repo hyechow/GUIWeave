@@ -14,7 +14,10 @@ from typing import TYPE_CHECKING, Callable, Literal
 from gui_agent.core.orchestrator.contracts import normalize_return_reads
 from gui_agent.core.orchestrator.program import INTERACTIVE_KINDS, Run, RunLike
 from gui_agent.core.schemas import Milestone
-from gui_agent.core.run.execution_signals import ExecutionContract
+from gui_agent.core.run.execution_signals import (
+    ExecutionContract,
+    action_requires_mutation_evidence,
+)
 
 if TYPE_CHECKING:
     from gui_agent.core.schemas import Observation
@@ -47,6 +50,15 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
     description = run.name
     if run.returns:
         description = f"{run.name}（读取字段：{'、'.join(run.returns)}）"
+    mutation_evidence = bool(
+        run.kind == "action"
+        and action_requires_mutation_evidence(
+            mutation_mode=run.mutation_mode,
+            target_values=run.target_values,
+            requires_commit=run.requires_commit,
+            output_fields=run.returns,
+        )
+    )
     return Milestone(
         id=_milestone_id(run, index),
         name=run.name,
@@ -55,7 +67,7 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
         kind=kind,  # type: ignore[arg-type]
         completion_strategy=strategy,  # type: ignore[arg-type]
         precondition=run.precondition,
-        require_fresh_action=(run.kind == "action" and run.mutation_mode == "change"),
+        require_fresh_action=(mutation_evidence and run.mutation_mode == "change"),
         mutation_mode=run.mutation_mode,
         requires_commit=run.requires_commit,
         target_controls=list(run.target_controls),

@@ -2,40 +2,12 @@
 
 from __future__ import annotations
 
-from gui_agent.core.run.execution_signals import target_matches_declared
 from gui_agent.core.schemas import (
     BaseActionDecision,
-    Milestone,
     Observation,
     SupervisorStep,
     TargetBinding,
 )
-
-
-def validate_target_spec(*, control: str, value: str, milestone: Milestone) -> str:
-    """Return an explanation when a planner write target exceeds its milestone contract."""
-    if not control or not value:
-        return "write/select action must declare target_control and target_value"
-    declared_controls = (
-        *(milestone.target_controls or ()),
-        *(milestone.target_values or {}).keys(),
-    )
-    if not target_matches_declared(control, declared_controls):
-        return f"target control {control!r} is outside the milestone contract"
-    declared_value = next(
-        (
-            str(expected)
-            for field, expected in (milestone.target_values or {}).items()
-            if target_matches_declared(control, (field,))
-        ),
-        "",
-    )
-    if declared_value and str(value) != declared_value:
-        return (
-            f"target value {value!r} does not match declared value {declared_value!r} "
-            f"for {control!r}"
-        )
-    return ""
 
 
 def _visual_binding(
@@ -78,4 +50,4 @@ def bind_action_target(
     return _visual_binding(step, action_decision)
 
 
-__all__ = ["bind_action_target", "validate_target_spec"]
+__all__ = ["bind_action_target"]

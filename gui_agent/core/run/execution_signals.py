@@ -75,7 +75,17 @@ class ExecutionContract:
         elif milestone.kind == "filter":
             mode = "filter_state_with_result" if milestone.returns else "filter_state"
         elif milestone.kind == "action":
-            mode = "mutation"
+            mode = (
+                "mutation"
+                if action_requires_mutation_evidence(
+                    mutation_mode=milestone.mutation_mode,
+                    target_values=milestone.target_values,
+                    requires_commit=milestone.requires_commit,
+                    output_fields=milestone.returns,
+                    require_fresh_action=milestone.require_fresh_action,
+                )
+                else "verification"
+            )
         elif milestone.kind == "collection":
             mode = "read"
         else:
@@ -92,6 +102,30 @@ class ExecutionContract:
             target_controls=tuple(milestone.target_controls or ()),
             target_values=tuple((milestone.target_values or {}).items()),
         )
+
+
+def action_requires_mutation_evidence(
+    *,
+    mutation_mode: str,
+    target_values: Iterable[object],
+    requires_commit: bool,
+    output_fields: Iterable[object],
+    require_fresh_action: bool = False,
+) -> bool:
+    """Whether an action declares a business mutation that needs lifecycle evidence.
+
+    ``action`` is an interactive boundary, not inherently a persistent write.  Opening a record,
+    expanding a region, or switching a view may be emitted as an action by a decomposer and is
+    complete when its declared state is verified.  Structured target values, a persistence
+    boundary, returned action data, or explicit ensure semantics identify actual mutations.
+    """
+    return bool(
+        mutation_mode == "ensure"
+        or tuple(target_values)
+        or requires_commit
+        or tuple(output_fields)
+        or require_fresh_action
+    )
 
 
 @dataclass(frozen=True)
@@ -151,25 +185,6 @@ class ConstraintLedger:
 
     def clear_scope(self, scope: str) -> None:
         self.entries = [entry for entry in self.entries if entry.scope != scope]
-
-
-@dataclass(frozen=True)
-class ProvisionalOutcome:
-    statement_id: str
-    scope: str
-    status: Literal["accepted_unverified"] = "accepted_unverified"
-    evidence: tuple[str, ...] = ()
-
-
-@dataclass
-class ProvisionalOutcomeLedger:
-    """Reportable provisional outcomes; no rollback behavior is attached to this ledger."""
-
-    entries: list[ProvisionalOutcome] = field(default_factory=list)
-
-    def record(self, outcome: ProvisionalOutcome) -> None:
-        if outcome not in self.entries:
-            self.entries.append(outcome)
 
 
 def claim(

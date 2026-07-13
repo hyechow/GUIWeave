@@ -13,8 +13,16 @@ no-effect route to replan. These lock that ordering by mocking the checker.
 from __future__ import annotations
 
 from gui_agent.core.supervisor.milestone import policy as P
+from gui_agent.core.supervisor.milestone.evidence import (
+    action_lifecycle_claims,
+    checker_claim,
+    execution_contract_for,
+    target_value_claims,
+)
+from gui_agent.core.supervisor.milestone.execution_scope import execution_scope_for
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
@@ -24,6 +32,27 @@ from gui_agent.core.schemas import (
     SupervisorStep,
     TargetVerify,
 )
+
+
+def _executed_turn(
+    *,
+    index: int,
+    source: str,
+    step: SupervisorStep,
+    action: BaseAction,
+    actual_element: str,
+    no_effect: bool = False,
+) -> PolicyTurn:
+    turn = make_interactive_turn(
+        index=index,
+        observation_source=source,
+        supervisor_step=step,
+        action_decision=BaseActionDecision(action=action),
+        executed=True,
+    )
+    turn.target_verify = TargetVerify(on_target=True, actual_element=actual_element)
+    turn.no_effect = no_effect
+    return turn
 
 
 def _policy():
@@ -39,26 +68,28 @@ def _policy():
 
 def _tap_turn(*, on_target: bool, no_effect: bool = False) -> PolicyTurn:
     act = BaseAction(action_type="tap", x=125, y=967, description="点击底部『闹钟』tab")
-    return PolicyTurn(
+    turn = _executed_turn(
         index=1,
-        observation_source="test",
-        supervisor=SupervisorStep(
+        source="test",
+        step=SupervisorStep(
             should_act=True, instruction="点击底部『闹钟』tab", stop=False,
             goal_completed=False, summary="", milestone_id="m1",
         ),
-        action_decision=BaseActionDecision(action=act),
-        target_verify=TargetVerify(on_target=on_target, actual_element="世界时钟 tab"),
+        action=act,
+        actual_element="世界时钟 tab",
         no_effect=no_effect,
-        executed=True,
     )
+    assert turn.target_verify is not None
+    turn.target_verify.on_target = on_target
+    return turn
 
 
 def _submit_turn(*, no_effect: bool = True, reason: str = "点击 Submit Comment 按钮") -> PolicyTurn:
     act = BaseAction(action_type="tap", x=640, y=820, description=reason)
-    return PolicyTurn(
+    return _executed_turn(
         index=1,
-        observation_source="browser",
-        supervisor=SupervisorStep(
+        source="browser",
+        step=SupervisorStep(
             should_act=True,
             instruction=reason,
             stop=False,
@@ -67,19 +98,18 @@ def _submit_turn(*, no_effect: bool = True, reason: str = "点击 Submit Comment
             milestone_id="m1",
             atomic_role="commit",
         ),
-        action_decision=BaseActionDecision(action=act),
-        target_verify=TargetVerify(on_target=True, actual_element="Submit Comment button"),
+        action=act,
+        actual_element="Submit Comment button",
         no_effect=no_effect,
-        executed=True,
     )
 
 
 def _write_turn(*, description: str = "在目标字段输入任务值") -> PolicyTurn:
     act = BaseAction(action_type="type", x=500, y=700, text="target", description=description)
-    return PolicyTurn(
+    return _executed_turn(
         index=0,
-        observation_source="browser",
-        supervisor=SupervisorStep(
+        source="browser",
+        step=SupervisorStep(
             should_act=True,
             instruction=description,
             stop=False,
@@ -89,9 +119,8 @@ def _write_turn(*, description: str = "在目标字段输入任务值") -> Polic
             atomic_role="write",
             action_family="input",
         ),
-        action_decision=BaseActionDecision(action=act),
-        target_verify=TargetVerify(on_target=True, actual_element="target field"),
-        executed=True,
+        action=act,
+        actual_element="target field",
     )
 
 
@@ -255,23 +284,22 @@ def _fresh_action_policy():
 
 def _shipment_submit_turn() -> PolicyTurn:
     act = BaseAction(action_type="tap", x=896, y=798, description="点击页面右下角的 Submit Shipment 按钮")
-    return PolicyTurn(
+    return _executed_turn(
         index=1,
-        observation_source="browser",
-        supervisor=SupervisorStep(
+        source="browser",
+        step=SupervisorStep(
             should_act=True, instruction="点击页面右下角的 Submit Shipment 按钮",
             stop=False, goal_completed=False, summary="", milestone_id="m1",
             atomic_role="commit",
         ),
-        action_decision=BaseActionDecision(action=act),
-        target_verify=TargetVerify(on_target=True, actual_element="Submit Shipment button"),
-        executed=True,
+        action=act,
+        actual_element="Submit Shipment button",
     )
 
 
 def _no_redemand_wire(monkeypatch, p):
     """Force post-redirect scope reset (pre_existing True) and record any re-demand plan call."""
-    monkeypatch.setattr(p, "_history_for_scope", lambda *a, **k: [])
+    monkeypatch.setattr(P, "history_for_scope", lambda *a, **k: [])
     plan_calls: list[str] = []
     monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
     return plan_calls
@@ -279,7 +307,15 @@ def _no_redemand_wire(monkeypatch, p):
 
 def _completion_decision(p, m, obs, history):
     assert p._last_check is not None
-    return p._completion_decision_from_check(m, obs, history, p._last_check)
+    scope = execution_scope_for(m, obs)
+    claims = action_lifecycle_claims(
+        m, history, scope=scope, monitor=p._monitor, ledger=p._action_ledger
+    )
+    claims.extend(target_value_claims(m, obs, scope=scope))
+    claims.append(checker_claim(p._last_check, scope=scope, subject_scope=scope))
+    return p._completion_evaluator.decide(
+        execution_contract_for(m, p._execution_contract), claims, scope=scope
+    )
 
 
 def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
@@ -333,16 +369,15 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
 
 def _arrival_click_turn(milestone_id: str = "m1") -> PolicyTurn:
     act = BaseAction(action_type="tap", x=400, y=500, description="点击列表中目标产品行")
-    return PolicyTurn(
+    return _executed_turn(
         index=1,
-        observation_source="browser",
-        supervisor=SupervisorStep(
+        source="browser",
+        step=SupervisorStep(
             should_act=True, instruction="点击列表中目标产品行",
             stop=False, goal_completed=False, summary="", milestone_id=milestone_id,
         ),
-        action_decision=BaseActionDecision(action=act),
-        target_verify=TargetVerify(on_target=True, actual_element="产品行"),
-        executed=True,
+        action=act,
+        actual_element="产品行",
     )
 
 
@@ -372,17 +407,16 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
 
 def _select_option_turn(milestone_id: str = "m1") -> PolicyTurn:
     act = BaseAction(action_type="tap", x=369, y=874, description="选择下拉选项 Out of Stock")
-    return PolicyTurn(
+    return _executed_turn(
         index=2,
-        observation_source="browser",
-        supervisor=SupervisorStep(
+        source="browser",
+        step=SupervisorStep(
             should_act=True, instruction="在 Stock Status 下拉框选择 Out of Stock",
             stop=False, goal_completed=False, summary="", milestone_id=milestone_id,
             atomic_role="write", action_family="select",
         ),
-        action_decision=BaseActionDecision(action=act),
-        target_verify=TargetVerify(on_target=True, actual_element="Stock Status 下拉"),
-        executed=True,
+        action=act,
+        actual_element="Stock Status 下拉",
     )
 
 
@@ -428,17 +462,16 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
     # Verb-class agreement: the milestone says 保存 (save class) → the dispatch must be a Save
     # click, not just any dispatch-verb action (an Apply Filters click must not count).
     act = BaseAction(action_type="tap", x=896, y=180, description="点击右上角 Save 按钮保存")
-    save = PolicyTurn(
+    save = _executed_turn(
         index=3,
-        observation_source="browser",
-        supervisor=SupervisorStep(
+        source="browser",
+        step=SupervisorStep(
             should_act=True, instruction="点击右上角 Save 按钮保存",
             stop=False, goal_completed=False, summary="", milestone_id="m1",
             atomic_role="commit",
         ),
-        action_decision=BaseActionDecision(action=act),
-        target_verify=TargetVerify(on_target=True, actual_element="Save button"),
-        executed=True,
+        action=act,
+        actual_element="Save button",
     )
     history = [_select_option_turn(), save]
     decision = _completion_decision(p, m, obs, history)
@@ -475,10 +508,10 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
         reason="Short Description 已更新，但尚未点击保存按钮",
         summary="等待保存",
     )
-    save = PolicyTurn(
+    save = _executed_turn(
         index=3,
-        observation_source="browser",
-        supervisor=SupervisorStep(
+        source="browser",
+        step=SupervisorStep(
             should_act=True,
             instruction="点击页面右上角的「Save」按钮",
             stop=False,
@@ -487,14 +520,13 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
             milestone_id="m1",
             atomic_role="commit",
         ),
-        action_decision=BaseActionDecision(action=BaseAction(
+        action=BaseAction(
             action_type="tap",
             x=1165,
             y=39,
             description="点击页面右上角的 Save 按钮",
-        )),
-        target_verify=TargetVerify(on_target=True, actual_element="Save button"),
-        executed=True,
+        ),
+        actual_element="Save button",
     )
     obs = Observation(
         png_bytes=b"x",

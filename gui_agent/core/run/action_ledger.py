@@ -58,28 +58,15 @@ class ActionLedger:
     def latest_dispatched(
         history: Iterable[PolicyTurn], milestone_id: str
     ) -> PolicyTurn | None:
-        """Return the latest dispatch for a milestone, including legacy persisted turns."""
-        turns = list(history)
-        structured = next(
+        """Return the latest structured dispatch for a milestone."""
+        return next(
             (
                 turn
-                for turn in reversed(turns)
+                for turn in reversed(list(history))
                 if turn.supervisor is not None
                 and turn.supervisor.milestone_id == milestone_id
                 and turn.action_signal is not None
                 and turn.action_signal.execution == "dispatched"
-            ),
-            None,
-        )
-        if structured is not None:
-            return structured
-        return next(
-            (
-                turn
-                for turn in reversed(turns)
-                if turn.executed
-                and turn.supervisor is not None
-                and turn.supervisor.milestone_id == milestone_id
             ),
             None,
         )
@@ -107,11 +94,10 @@ class ActionLedger:
         history: Iterable[PolicyTurn], milestone_id: str, *, scope: str = ""
     ) -> PolicyTurn | None:
         """Return the newest on-target write in this interactive statement."""
-        turns = list(history)
-        structured = next(
+        return next(
             (
                 turn
-                for turn in reversed(turns)
+                for turn in reversed(list(history))
                 if turn.supervisor is not None
                 and turn.supervisor.milestone_id == milestone_id
                 and turn.action_signal is not None
@@ -120,39 +106,29 @@ class ActionLedger:
                 and turn.action_signal.target != "off_target"
                 and (
                     not scope
-                    or getattr(turn.supervisor, "execution_scope", "") == scope
+                    or getattr(turn.supervisor, "execution_scope", "") in {"", scope}
                 )
             ),
             None,
         )
-        if structured is not None:
-            return structured
-        # Persisted contexts created before ActionSignal existed still carry the concrete
-        # primitive and supervisor role. Accept only mechanically evident writes.
+
+    @staticmethod
+    def latest_commit(
+        history: Iterable[PolicyTurn], milestone_id: str, *, scope: str = ""
+    ) -> PolicyTurn | None:
+        """Return the newest dispatched commit in this interactive statement."""
         return next(
             (
                 turn
-                for turn in reversed(turns)
-                if turn.executed
-                and turn.supervisor is not None
+                for turn in reversed(list(history))
+                if turn.supervisor is not None
                 and turn.supervisor.milestone_id == milestone_id
-                and (
-                    getattr(turn.supervisor, "atomic_role", "prepare") == "write"
-                    or str(
-                        getattr(
-                            getattr(turn.action_decision, "action", None),
-                            "action_type",
-                            "",
-                        )
-                    ).lower()
-                    in _WRITE_ACTION_TYPES
-                )
+                and turn.action_signal is not None
+                and turn.action_signal.execution == "dispatched"
+                and turn.action_signal.role == "commit"
                 and (
                     not scope
                     or getattr(turn.supervisor, "execution_scope", "") in {"", scope}
-                )
-                and (
-                    turn.target_verify is None or turn.target_verify.on_target
                 )
             ),
             None,

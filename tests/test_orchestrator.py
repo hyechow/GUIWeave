@@ -534,7 +534,23 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     assert p._skip_initial_check is True                  # nav + 刚推进 → 跳 check
     p.reseed(milestone_for_run(Run(name="点按钮", kind="action"), 1), fresh_advance=True)
     assert p._skip_initial_check is False                 # action → 保留 check（防双执行）
-    assert milestone_for_run(Run(name="点按钮", kind="action"), 1).require_fresh_action is True
+    interaction = milestone_for_run(
+        Run(name="打开详情面板", kind="action", target_controls=["Details"]),
+        1,
+    )
+    assert interaction.require_fresh_action is False
+    from gui_agent.core.run.execution_signals import ExecutionContract
+    assert ExecutionContract.from_milestone(interaction).completion_mode == "verification"
+    mutation = milestone_for_run(
+        Run(
+            name="更新状态",
+            kind="action",
+            target_values={"Status": "Approved"},
+        ),
+        2,
+    )
+    assert mutation.require_fresh_action is True
+    assert ExecutionContract.from_milestone(mutation).completion_mode == "mutation"
     ensure = milestone_for_run(
         Run(
             name="确保通知已开启",
@@ -549,13 +565,20 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     assert ensure.mutation_mode == "ensure"
     assert ensure.target_controls == ["Notifications"]
     assert ensure.target_values == {"Notifications": "on"}
+    assert ExecutionContract.from_milestone(ensure).completion_mode == "mutation"
     persisted = milestone_for_run(
         Run(name="更新资料", kind="action", requires_commit=True),
         3,
     )
     assert persisted.requires_commit is True
-    from gui_agent.core.run.execution_signals import ExecutionContract
+    assert persisted.require_fresh_action is True
     assert ExecutionContract.from_milestone(persisted).require_terminal_dispatch is True
+    result_action = milestone_for_run(
+        Run(name="触发检测", kind="action", returns=["result"]),
+        4,
+    )
+    assert result_action.require_fresh_action is True
+    assert ExecutionContract.from_milestone(result_action).completion_mode == "mutation"
     assert milestone_for_run(Run(name="进页", kind="navigation"), 2).require_fresh_action is False
     p.reseed(milestone_for_run(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
@@ -581,7 +604,12 @@ def test_advance_persists_done_check_on_terminal_completion():
     check = _SingleCheckResult(status="done", reason="已进入首页", summary="首页")
     p._last_check = check
     obs = Observation(png_bytes=b"x", source="test")
-    decision = p._completion_decision_from_check(ms, obs, [], check)
+    from gui_agent.core.run.execution_signals import CompletionEvaluation
+    decision = CompletionEvaluation(
+        status="satisfied",
+        reason=check.reason,
+        completion_status="confirmed",
+    )
     assert decision.status == "satisfied"
     step = p._advance(ms, obs, [], decision=decision)
     assert step.goal_completed is True                    # single milestone → terminal step

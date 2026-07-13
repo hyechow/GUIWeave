@@ -388,6 +388,8 @@ def test_terminal_dispatch_advances_as_accepted_unverified(
         description="",
         success_condition="记录已保存",
         kind="action",
+        require_fresh_action=True,
+        requires_commit=True,
     )
     policy._milestones = {"m1": milestone}
     policy._current_id = "m1"
