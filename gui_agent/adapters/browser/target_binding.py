@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import groupby
 from urllib.parse import urlsplit
 
 from gui_agent.core.schemas import (
@@ -10,7 +11,6 @@ from gui_agent.core.schemas import (
     SupervisorStep,
     TargetBinding,
 )
-
 from .control_grounding import matches_target_control
 
 
@@ -64,12 +64,18 @@ class BrowserTargetBinder:
         controls = getattr(observation, "form_controls", None)
         if not controls:
             return None
+        authorization = step.mutation_authorization
+        unit_hint = (
+            authorization.subject_ref
+            if authorization is not None and authorization.source == "structural"
+            else ""
+        )
         semantic = [
             item
             for item in controls
             if isinstance(item, dict)
             and matches_target_control(item, step.target_control)
-            and _in_declared_unit(item, step.target_group_id)
+            and _in_declared_unit(item, unit_hint)
         ]
         point_owners = [
             item
@@ -156,7 +162,83 @@ def active_target_aliases(observation: Observation) -> set[str]:
     return aliases
 
 
+def _semantic_key(value: object) -> str:
+    return "".join(char.casefold() for char in str(value or "") if char.isalnum())
+
+
+def _checkbox_runs(nodes: list[dict]) -> list[list[dict]]:
+    return [
+        list(run)
+        for is_checkbox, run in groupby(
+            nodes, key=lambda node: node.get("role") == "checkbox"
+        )
+        if is_checkbox
+    ]
+
+
+def active_choice_controls(
+    observation: Observation,
+    desired_state: dict[str, str],
+) -> tuple[dict, ...]:
+    """Normalize an active checkbox surface into the shared form-control contract.
+
+    Choice groups are contiguous checkbox runs on the active browser surface. A desired value
+    must resolve uniquely to one rendered checkbox run before the adapter reports anything.
+    The adapter exposes concrete options only; it does not infer workflow commands from nearby
+    buttons. Visual-only and structurally ambiguous pages therefore remain fail-open.
+    """
+    desired = [
+        (str(field), _semantic_key(value))
+        for field, value in desired_state.items()
+        if _semantic_key(field) and _semantic_key(value)
+    ]
+    if not desired:
+        return ()
+    nodes = _active_surface_nodes(observation)
+    runs = _checkbox_runs(nodes)
+    locations: dict[str, int] = {}
+    for field, desired_key in desired:
+        matches = [
+            run_index
+            for run_index, checkboxes in enumerate(runs)
+            if any(_semantic_key(node.get("key")) == desired_key for node in checkboxes)
+        ]
+        if len(matches) != 1:
+            return ()
+        locations[field] = matches[0]
+    if len(set(locations.values())) != len(locations):
+        return ()
+
+    surface = active_surface_id(observation)
+    subject_ref = f"choice:{surface}" if surface else "choice:active"
+    controls: list[dict] = []
+    for field, run_index in locations.items():
+        for node in runs[run_index]:
+            label = str(node.get("key") or "").strip()
+            while label and not label[0].isalnum():
+                label = label[1:].lstrip()
+            if not label or not _semantic_key(label):
+                continue
+            checked = str(node.get("value") or "").strip().casefold() in {
+                "true", "1", "on", "checked", "selected",
+            }
+            controls.append({
+                "kind": "checkbox_input",
+                "label": label,
+                "option_text": label,
+                "group_field": field,
+                "group_id": subject_ref,
+                "checked": checked,
+                "value": "on" if checked else "off",
+                # Semantic-tree refs identify an option but do not carry a stable screen rect.
+                # Dispatch therefore binds once to the visual point chosen for this subject.
+                "binding_source": "visual",
+            })
+    return tuple(controls)
+
+
 __all__ = [
+    "active_choice_controls",
     "BrowserTargetBinder",
     "active_surface_id",
     "active_target_aliases",

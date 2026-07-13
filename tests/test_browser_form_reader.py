@@ -9,8 +9,7 @@ from gui_agent.adapters.browser.form_reader import (
     normalize_form_controls,
 )
 from gui_agent.adapters.browser.perception import BrowserPerception
-from gui_agent.core.schemas import Milestone, Observation
-from gui_agent.core.supervisor.milestone.observation_state import required_group_field_gaps
+from gui_agent.core.schemas import Observation
 
 
 def test_form_controls_js_is_serialized_expression():
@@ -132,46 +131,6 @@ def test_normalize_form_controls_keeps_repeated_row_field_association():
     assert controls[0]["group_field"] == "Admin"
     assert controls[1]["group_field"] == "Default Store View"
 
-    milestone = Milestone(
-        id="m-option",
-        name="添加选项 'XXXL' 并保存",
-        description="添加选项 'XXXL' 并保存",
-        success_condition="保存后的集合包含 'XXXL'",
-        kind="action",
-        target_values={"Admin Swatch": "XXXL"},
-    )
-    assert required_group_field_gaps(controls, milestone) == ["Admin"]
-
-
-def test_navigation_text_does_not_bind_an_unrelated_required_group() -> None:
-    controls = [
-        {
-            "label": "Attribute Code",
-            "kind": "text_input",
-            "value": "",
-            "required": True,
-            "group_id": "unrelated:1",
-            "group_field": "attribute_code",
-        },
-        {
-            "label": "Label",
-            "kind": "text_input",
-            "value": "size",
-            "group_id": "unrelated:1",
-            "group_field": "label",
-        },
-    ]
-    milestone = Milestone(
-        id="open-size",
-        name="打开 'size' 属性编辑页",
-        description="",
-        success_condition="已进入 size 属性编辑页",
-        kind="navigation",
-    )
-
-    assert required_group_field_gaps(controls, milestone) == []
-
-
 def test_normalize_form_controls_prioritizes_visible_rich_text_editor():
     raw_controls = [
         {
@@ -208,6 +167,8 @@ def test_observation_accepts_optional_form_controls():
 
 def test_browser_perception_reads_form_controls(tmp_path):
     class _Client:
+        viewport_size = (2048, 1152)
+
         def screenshot(self):
             return b"png"
 

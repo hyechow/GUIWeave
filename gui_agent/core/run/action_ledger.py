@@ -42,7 +42,8 @@ def semantic_action_key(supervisor_step: SupervisorStep, action: Any) -> str:
     # wording must not create a second key for the same side effect.
     if role == "commit":
         return prefix
-    group_id = supervisor_step.target_group_id or ""
+    authorization = supervisor_step.mutation_authorization
+    group_id = authorization.subject_ref if authorization is not None else ""
     group_part = f"|group:{group_id}" if group_id else ""
     return f"{prefix}{group_part}|{action_signature(action)}"
 

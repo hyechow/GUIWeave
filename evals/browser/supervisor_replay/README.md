@@ -27,8 +27,12 @@ semantic target evidence.
 
 Frontier regression pair:
 
-- `102742_turn29`: the child wizard is still on its value-selection surface; the expected edge is
-  its concrete `Next` control and a parent commit is forbidden.
+- `102742_turn29`: the child wizard is still on its value-selection surface with inherited
+  Size/Color values selected. Both turn 27 (before selecting the targets) and turn 29 (after the
+  targets were added on top) must remove one concrete extra option; advancing with `Next` would
+  authorize a Cartesian-product mutation outside the declared business change. Workflow buttons
+  such as `Select All` and `Remove Attribute` are not inferred as safe cleanup primitives. Use
+  `expectation_turn_27.json` for the earlier frame and the default expectation for turn 29.
 - `090810_turn30`: a legacy capture whose history lacks surface identities and adjacent structured
   observations. It is a negative provenance case: an unknown surface must remain incomplete and
   must not authorize a guessed parent `Save`. The positive parent-return edge is covered below.
@@ -44,3 +48,18 @@ Persistence-boundary replay:
   `expectation_turn_29.json`, `expectation_turn_30.json`, and `expectation_turn_31.json` with
   `--expectation` to verify child generation, concrete parent Save, and terminal response
   completion respectively.
+
+Filter-intent binding replay:
+
+- `140905_turn26`: the latest write receipt carries a semantic field identity while the current
+  adapter observation exposes one concrete populated control and one matching applied-filter
+  entry. The state/receipt pair must resolve to that concrete route and complete the filter
+  milestone without dispatching a synthetic `stop` action.
+
+Structured mutation-capability replay:
+
+- `152920_choice_surface`: three unmodified browser observation snapshots from the same active
+  choice surface. Turns 24/25 contain extra selected options and must resolve to `preparing`;
+  turn 26 has no extras and must resolve to one authorized target write. This fixture is consumed
+  by `tests/test_mutation_replay.py` and intentionally needs no screenshot because the mutation
+  kernel operates only on the recorded structured observation.

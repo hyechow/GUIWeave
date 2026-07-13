@@ -215,6 +215,14 @@ class ActionExecutionState:
 
         action = action_decision.action
         if effective_action_role(sv_step, action) == "write":
+            authorization = sv_step.mutation_authorization
+            if sv_step.requires_mutation_authorization and authorization is None:
+                result.suppressed_reason = (
+                    "mutation write has no system-resolved subject authorization"
+                )
+                say(f"  [Mutation] {result.suppressed_reason}")
+                status(turn_no, "mutation subject 未解析，未派发写动作")
+                return result
             binder = action_policy if callable(getattr(action_policy, "bind", None)) else None
             result.binding = bind_action_target(
                 binder=binder,
@@ -230,6 +238,20 @@ class ActionExecutionState:
                 say(f"  [TargetBinding] {result.suppressed_reason}")
                 status(turn_no, "目标绑定失败，未派发写动作")
                 return result
+            if authorization is not None:
+                binding_matches = (
+                    result.binding.source == authorization.source
+                    and result.binding.unit_id == authorization.subject_ref
+                )
+                if not binding_matches:
+                    result.suppressed_reason = (
+                        "mutation action point does not match its authorized subject: "
+                        f"expected {authorization.source}:{authorization.subject_ref}, got "
+                        f"{result.binding.source}:{result.binding.unit_id or 'control'}"
+                    )
+                    say(f"  [Mutation] {result.suppressed_reason}")
+                    status(turn_no, "mutation 写入目标与授权 subject 不一致")
+                    return result
             say(
                 "  [TargetBinding] "
                 f"{result.binding.source}:{result.binding.unit_id or 'control'}"
@@ -315,13 +337,19 @@ class ActionExecutionState:
         started = time.perf_counter()
         token_before = get_llm_token_usage()
         action_decision = None
+        authorization = sv_step.mutation_authorization
+        target_group_id = (
+            authorization.subject_ref
+            if authorization is not None and authorization.source == "structural"
+            else ""
+        )
         native_resolver = getattr(action_policy, "resolve_native_action", None)
         if callable(native_resolver):
             action_decision = native_resolver(
                 observation,
                 target_control=sv_step.target_control,
                 target_value=sv_step.target_value,
-                target_group_id=sv_step.target_group_id,
+                target_group_id=target_group_id,
                 action_family=sv_step.action_family,
                 instruction=instruction_for_action or "",
             )
@@ -334,7 +362,7 @@ class ActionExecutionState:
                     "milestone_id": sv_step.milestone_id,
                     "target_control": sv_step.target_control,
                     "target_value": sv_step.target_value,
-                    "target_group_id": sv_step.target_group_id,
+                    "target_group_id": target_group_id,
                     "action_family": sv_step.action_family,
                     "primitive": action_decision.action.action_type,
                     "fallback": False,
@@ -348,7 +376,7 @@ class ActionExecutionState:
                     observation,
                     target_control=sv_step.target_control,
                     target_value=sv_step.target_value,
-                    target_group_id=sv_step.target_group_id,
+                    target_group_id=target_group_id,
                     action_family=sv_step.action_family,
                 )
             action_decision = action_policy.decide(
@@ -368,7 +396,7 @@ class ActionExecutionState:
                     observation,
                     target_control=sv_step.target_control,
                     target_value=sv_step.target_value,
-                    target_group_id=sv_step.target_group_id,
+                    target_group_id=target_group_id,
                     action_family=sv_step.action_family,
                 )
                 if action_decision is not ungrounded:
@@ -379,7 +407,7 @@ class ActionExecutionState:
                             "label": "execution.action_grounding",
                             "milestone_id": sv_step.milestone_id,
                             "target_control": sv_step.target_control,
-                            "target_group_id": sv_step.target_group_id,
+                            "target_group_id": target_group_id,
                             "primitive": action_decision.action.action_type,
                         })
         if hasattr(supervisor, "_timings"):

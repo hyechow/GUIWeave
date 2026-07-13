@@ -63,6 +63,9 @@ The **Configurations** collection belongs to the configurable parent product. Ea
 color/size combination is a variation represented by a separate simple product.
 Product-name search can return both the parent and its simple variations, so use the product Type
 to select the unique **Configurable Product** owner before editing Configurations.
+After collecting the filtered product rows, verify that exactly one row matches both the product
+identity and `Type=Configurable Product`. Return a detail URL only when that count is one; do not
+hide zero or multiple owner candidates with an arbitrary first-row / `LIMIT 1` selection.
 
 Configuration values come from the globally defined product attribute options. If a requested
 Size or Color value does not exist yet, create and save that option under **Stores > Attributes >
@@ -70,11 +73,28 @@ Product** before generating the combination in the parent product. Saving an att
 saving the parent product's Configurations collection are two independent persistent changes; the
 attribute option must be durable before Configurations can consume it.
 
+Treat these as ordered resource phases, not as pages to keep open for later. Complete and save the
+global attribute-option mutation first. Only then locate and open the configurable parent product.
+Do not open the parent before editing the attribute and do not rely on browser Back to recover an
+earlier parent editor; that route can restore stale form state or the wrong owner.
+
 Generating a requested color/size combination and saving the configurable parent are one
 Configurations mutation boundary. In the DSL, express them as one action whose terminal state is
 the saved Configurations collection containing that exact combination. Expanding Configurations,
 starting the wizard, selecting attributes, generating rows, and clicking the final product Save are
 runtime steps inside that action; do not split generation and Save into separate action statements.
+
+The configuration wizard can open with the parent's existing Size and Color values already
+selected. It generates the Cartesian product of every selected value, not merely the values clicked
+during the current run. To add one requested combination, use **Deselect All** separately for each
+attribute dimension, then select only the requested Size and Color. On **Step 4: Summary**, the
+**New Product Review** table is the pending generation set: it must contain exactly one row for that
+requested combination. If it contains any additional rows, go back and correct the selections;
+do not click **Generate Products**. After generating the one row, save the configurable parent.
+Rows returned to the parent Configurations matrix by **Generate Products** are not durable until
+the parent Save. If that pending matrix contains multiple newly generated rows for a request that
+authorizes one combination, reopen **Edit Configurations** and correct the generated set before
+saving the parent; returning from the wizard alone is not commit authorization.
 
 ## Advanced pricing and inventory
 

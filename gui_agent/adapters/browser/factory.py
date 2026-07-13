@@ -65,6 +65,7 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
     from gui_agent.adapters.browser.target_binding import (
+        active_choice_controls,
         active_surface_id,
         active_target_aliases,
     )
@@ -74,6 +75,7 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
             prompts=BROWSER_MILESTONE_PROMPTS,
             surface_resolver=active_surface_id,
             active_target_resolver=active_target_aliases,
+            mutation_control_resolver=active_choice_controls,
         )
     raise ValueError(f"未知监督者 {name!r}，可选：{MilestoneSupervisorPolicy.name}")
 

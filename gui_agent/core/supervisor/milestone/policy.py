@@ -13,12 +13,11 @@ from gui_agent.core.schemas import (
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.run.action_ledger import ActionLedger
 
-from .decomposition import MilestoneDecompositionMixin
 from .acquisition import (
     target_affordance_scroll_plan,
     target_section_acquire_plan,
-    target_unit_write_plan,
 )
+from .decomposition import MilestoneDecompositionMixin
 from .runtime import (
     EARLY_FEASIBILITY_AT,
     MAX_RETRIES,
@@ -51,6 +50,7 @@ from gui_agent.core.run.execution_signals import (
     CompletionEvaluator,
     claim,
 )
+from gui_agent.core.run.mutation import authorize_mutation, resolve_mutation
 from .action_protocol import (
     action_metadata,
     is_commit_turn,
@@ -96,12 +96,16 @@ class MilestoneSupervisorPolicy(
         *,
         surface_resolver: Callable[[Observation], str] | None = None,
         active_target_resolver: Callable[[Observation], Iterable[str]] | None = None,
+        mutation_control_resolver: (
+            Callable[[Observation, dict[str, str]], Iterable[dict]] | None
+        ) = None,
     ) -> None:
         # Platform factories inject their prompt bundle. The neutral default only supports
         # deterministic tests and tooling that do not need platform-specific visual guidance.
         self._prompts = prompts or MilestonePrompts.neutral()
         self._surface_resolver = surface_resolver
         self._active_target_resolver = active_target_resolver
+        self._mutation_control_resolver = mutation_control_resolver
         self._static_constraints: list[str] = []
         self._milestones: dict[str, Milestone] = {}
         self._order: list[str] = []
@@ -171,6 +175,23 @@ class MilestoneSupervisorPolicy(
         except Exception as exc:  # noqa: BLE001 - optional structure must not block execution
             print(f"  [ActionFrontier] 活动表面解析失败，退回无表面身份：{exc}")
             return ""
+
+    def _mutation_observation(
+        self,
+        observation: Observation,
+        desired_state: dict[str, str],
+    ) -> Observation:
+        if self._mutation_control_resolver is None or not desired_state:
+            return observation
+        try:
+            derived = list(self._mutation_control_resolver(observation, desired_state))
+        except Exception as exc:  # noqa: BLE001 - optional structure must not block execution
+            print(f"  [Mutation] 控件能力归一化失败，退回原始观察：{exc}")
+            return observation
+        if not derived:
+            return observation
+        controls = [*(observation.form_controls or []), *derived]
+        return observation.model_copy(update={"form_controls": controls})
 
     def set_app_knowledge(
         self,
@@ -371,6 +392,11 @@ class MilestoneSupervisorPolicy(
             return self._terminal_step()
 
         milestone = self._milestones[self._current_id]
+        if milestone.kind == "action" and milestone.target_values:
+            observation = self._mutation_observation(
+                observation,
+                milestone.target_values,
+            )
         if _is_loop(milestone):
             result = self._run_loop_turn(milestone, observation, history)
         else:
@@ -568,8 +594,7 @@ class MilestoneSupervisorPolicy(
             None
             if terminal_response_pending or self._observe_only
             else target_section_acquire_plan(
-                getattr(observation, "form_controls", None),
-                milestone,
+                getattr(observation, "form_controls", None), milestone
             )
         )
         if section_plan is not None:
@@ -593,6 +618,7 @@ class MilestoneSupervisorPolicy(
                 summary=section_plan.summary,
                 execution_scope=execution_scope,
                 direction=section_plan.direction,
+                atomic_role=getattr(section_plan, "atomic_role", "iterate"),
                 action_family=getattr(section_plan, "action_family", "unknown"),
                 is_home_screen=False,
                 **_ctx(milestone, None),
@@ -628,6 +654,7 @@ class MilestoneSupervisorPolicy(
                 summary=acquire_plan.summary,
                 execution_scope=execution_scope,
                 direction=acquire_plan.direction,
+                atomic_role=getattr(acquire_plan, "atomic_role", "iterate"),
                 action_family=getattr(acquire_plan, "action_family", "unknown"),
                 is_home_screen=False,
                 **_ctx(milestone, None),
@@ -923,12 +950,19 @@ class MilestoneSupervisorPolicy(
                 execution_scope=execution_scope,
                 **_ctx(milestone, check.read_instruction),
             )
-        coverage = str(
-            (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
-            or "unknown"
-        )
         active_targets = self._active_targets(observation)
         current_surface_id = self.surface_id(observation)
+        mutation_required = bool(milestone.kind == "action" and milestone.target_values)
+        mutation_subject = (
+            resolve_mutation(
+                milestone,
+                observation,
+                history,
+                surface_id=current_surface_id,
+            )
+            if mutation_required
+            else None
+        )
         boundary = persistence_boundary_state(
             milestone,
             history,
@@ -936,6 +970,7 @@ class MilestoneSupervisorPolicy(
             current_surface_id=current_surface_id,
         )
         parent_commit = check.outcome_status != "contradicted" and boundary.parent_pending
+        mutation_owned_plan = False
         if parent_commit:
             print("  [ActionFrontier] 子流程已返回父资源，要求绑定具体持久化控件")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
@@ -978,17 +1013,29 @@ class MilestoneSupervisorPolicy(
                     action_family="unknown",
                 )
         else:
-            plan = target_unit_write_plan(
-                getattr(observation, "form_controls", None),
-                milestone,
-                coverage=coverage,
-            )
-            if plan is not None:
-                print(f"  [TargetUnit] {plan.summary}")
+            if mutation_subject is not None and mutation_subject.status in {
+                "preparing", "writable"
+            }:
+                mutation_owned_plan = True
+                write = mutation_subject.status == "writable"
+                plan = _PlanResult(
+                    instruction=(
+                        f"将「{mutation_subject.next_field}」设置为"
+                        f"「{mutation_subject.next_value}」"
+                        if write
+                        else f"取消选择「{mutation_subject.target_control}」"
+                    ),
+                    summary=mutation_subject.evidence,
+                    atomic_role="write" if write else "prepare",
+                    action_family=mutation_subject.action_family,
+                    target_control=mutation_subject.target_control,
+                    target_value=mutation_subject.next_value if write else "",
+                )
+                print(f"  [Mutation] {plan.summary}")
             else:
                 with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
                     plan = self._invoke_planner(milestone, check, observation, history)
-        if self._is_sequence(plan.instruction):
+        if not mutation_owned_plan and self._is_sequence(plan.instruction):
             print("  [Planner] 多步序列，重试...")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
                 plan = self._invoke_planner(
@@ -996,7 +1043,8 @@ class MilestoneSupervisorPolicy(
                     extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
                 )
         if (
-            check.outcome_status != "contradicted"
+            not mutation_owned_plan
+            and check.outcome_status != "contradicted"
             and regresses_preparation_frontier(
                 plan,
                 milestone,
@@ -1033,8 +1081,28 @@ class MilestoneSupervisorPolicy(
                     atomic_role="prepare",
                     action_family="unknown",
                 )
-        raw_action_family = getattr(plan, "action_family", "unknown")
         atomic_role, action_family = action_metadata(plan, milestone)
+        mutation_authorization = None
+        if mutation_owned_plan and atomic_role == "write" and mutation_subject is not None:
+            mutation_authorization = authorize_mutation(milestone, mutation_subject)
+        elif mutation_required and atomic_role == "write":
+            if not str(getattr(plan, "target_value", "") or ""):
+                # Workflow commands are preparation, not business-value writes. Correct the
+                # metadata deterministically instead of spending another model call on schema
+                # repair while preserving the proposed primitive.
+                plan = plan.model_copy(update={"atomic_role": "prepare"})
+                atomic_role = "prepare"
+                print("  [Mutation] target-less write reclassified as preparation")
+            if atomic_role == "write" and mutation_authorization is None:
+                print("  [Mutation] unresolved or off-contract write blocked before dispatch")
+                plan = _PlanResult(
+                    instruction="",
+                    summary="mutation write lacks a resolved subject authorization",
+                    atomic_role="prepare",
+                    action_family="unknown",
+                )
+                atomic_role, action_family = "prepare", "unknown"
+        raw_action_family = getattr(plan, "action_family", "unknown")
         # 结构化 drag 距离：当 planner 给出本列的当前值/目标值时，按差几格算出 drag_steps，
         # 让 action policy 据此放大拖动幅度（差 20 格用 large 粗调、接近后自动收回 small 精调）。
         # 这条结构化通路绕开「从 instruction 文本正则抠数字」的脆弱性——指令只写了目标值
@@ -1092,7 +1160,8 @@ class MilestoneSupervisorPolicy(
             action_family=action_family,
             target_control=getattr(plan, "target_control", ""),
             target_value=getattr(plan, "target_value", ""),
-            target_group_id=getattr(plan, "target_group_id", ""),
+            mutation_authorization=mutation_authorization,
+            requires_mutation_authorization=mutation_required and atomic_role == "write",
             direction=plan.direction,
             drag_column=getattr(plan, "drag_column", None),
             drag_steps=drag_steps,
@@ -1520,6 +1589,18 @@ class MilestoneSupervisorPolicy(
             )
 
         atomic_role, action_family = action_metadata(replan, milestone)
+        mutation_required = bool(milestone.kind == "action" and milestone.target_values)
+        if mutation_required and atomic_role == "write":
+            print("  [Mutation] replanner write returned to the single mutation planner")
+            check = check.model_copy(
+                update={
+                    "status": "in_progress",
+                    "outcome_status": "unverified",
+                    "reason": "mutation write requires normal subject resolution",
+                }
+            )
+            self._last_check = check
+            return self._plan_single(milestone, check, observation, history)
         drag_steps = self._picker_drag_steps(replan)
         milestone.status = "running"
         return SupervisorStep(
@@ -1532,7 +1613,6 @@ class MilestoneSupervisorPolicy(
             action_family=action_family,
             target_control=replan.target_control,
             target_value=replan.target_value,
-            target_group_id=replan.target_group_id,
             direction=replan.direction,
             drag_column=replan.drag_column,
             drag_steps=drag_steps,

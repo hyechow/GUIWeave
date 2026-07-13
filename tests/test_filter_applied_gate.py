@@ -145,6 +145,41 @@ def test_observed_filter_state_binds_prepopulated_concrete_control():
     assert intent == RuntimeFilterIntent("Search by keyword", "Minerva")
 
 
+def test_observed_filter_state_refines_unstructured_runtime_control() -> None:
+    milestone = _filter_ms(
+        "清除精确值后在同一产品名称字段用关键词 'Minerva' 重筛",
+        "产品名称关键词筛选已应用且匹配记录非 0 条",
+    )
+    intent = observed_filter_intent(
+        {"Keyword": "Minerva"},
+        [{
+            "label": "Search by keyword",
+            "kind": "text_input",
+            "value": "Minerva",
+        }],
+        milestone,
+        RuntimeFilterIntent("Name", "Minerva"),
+    )
+
+    assert intent == RuntimeFilterIntent("Search by keyword", "Minerva")
+
+
+def test_observed_filter_state_does_not_override_runtime_value() -> None:
+    milestone = _filter_ms("筛选目标记录")
+    intent = observed_filter_intent(
+        {"Keyword": "LumaTech"},
+        [{
+            "label": "Search by keyword",
+            "kind": "text_input",
+            "value": "LumaTech",
+        }],
+        milestone,
+        RuntimeFilterIntent("Name", "Minerva"),
+    )
+
+    assert intent is None
+
+
 def test_observed_filter_state_rejects_ambiguous_concrete_controls():
     milestone = _filter_ms(
         "筛选目标值",

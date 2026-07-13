@@ -38,5 +38,5 @@ version: 2
   上传是专门动作：点中上传控件并把文件经系统 file chooser 注进去，所以必须给出文件路径、而不是只描述点哪里。
 - instruction 只含一个原子操作，禁止「并」「然后」「再」等连接词
 - 滚动指令描述要查看什么内容，不要指定手指方向
-- `local_replan` 除 instruction 外，必须同时填写该原子动作的 `atomic_role`、`action_family`、`target_control`；写入/选择时再填写 `target_value`，重复集合内再填写 `target_group_id`。这些字段是执行合同，不能只把目标藏在自然语言里。
+- `local_replan` 除 instruction 外，必须同时填写该原子动作的 `atomic_role`、`action_family`、`target_control`；写入/选择时再填写 `target_value`。重复集合成员身份由执行层绑定，不能由 replanner 声明。上述字段是执行合同，不能只把目标藏在自然语言里。
 - 嵌套弹窗/向导内把结果生成、应用或附加回外层编辑器的按钮属于过程动作：只要外层资源仍需 Save/Submit，`atomic_role=prepare`、`action_family=activate`。不得把内部 Generate/Apply/Next 当成整个子目标唯一的最终 commit；`target_control` 只写按钮真实名称，不追加“并保存”等解释。

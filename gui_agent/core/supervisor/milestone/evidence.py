@@ -14,6 +14,7 @@ from gui_agent.core.run.execution_signals import (
     target_matches_declared,
 )
 from gui_agent.core.run.progress_monitor import ProgressMonitor
+from gui_agent.core.run.mutation import resolve_mutation
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 
 from .action_protocol import PersistenceBoundaryState, is_commit_turn
@@ -22,7 +23,6 @@ from .observation_state import (
     filter_chips_clean,
     filter_state_satisfies_target,
     observed_filter_intent,
-    target_unit_state,
 )
 from .schemas import _SingleCheckResult
 
@@ -91,10 +91,22 @@ def action_lifecycle_claims(
         authoritative=True,
     ))
     write_turn = ledger.latest_write(history, milestone.id, scope=lifecycle_scope)
+    if milestone.kind == "action" and milestone.target_values:
+        write_turn = next(
+            (
+                turn
+                for turn in reversed(history)
+                if turn.action_signal is not None
+                and (receipt := turn.action_signal.mutation_receipt) is not None
+                and receipt.statement_id == milestone.id
+            ),
+            None,
+        )
     if (
         write_turn is None
         and terminal
         and not milestone.requires_commit
+        and not (milestone.kind == "action" and milestone.target_values)
         and latest.action_signal is not None
         and target_matches_declared(
             latest.action_signal.target_control
@@ -139,41 +151,36 @@ def action_lifecycle_claims(
 def target_value_claims(
     milestone: Milestone,
     observation: Observation,
+    history: list[PolicyTurn],
     *,
     scope: str,
 ) -> list[EvidenceClaim]:
     """Translate declared field/value matches into authoritative state claims."""
-    coverage = str(
-        (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
-        or "unknown"
-    ).lower()
-    state = target_unit_state(
-        getattr(observation, "form_controls", None),
-        milestone,
-        coverage=coverage,
-    )
+    if milestone.kind != "action" or not milestone.target_values:
+        return []
+    state = resolve_mutation(milestone, observation, history)
     claims: list[EvidenceClaim] = []
     if state.status == "complete":
         claims.append(claim(
             "control.state",
             "confirmed",
-            source_type="obs.dom.target_values",
+            source_type="obs.mutation.desired_state",
             scope=scope,
-            subject_scope=scope,
+            subject_scope=state.subject_ref or scope,
             evidence=state.evidence,
             authoritative=True,
-            coverage="matched_structural_unit",
+            coverage="resolved_subject",
         ))
-    elif state.status in {"partial", "unique_blank", "absent", "ambiguous"}:
+    elif state.status in {"preparing", "writable", "absent", "ambiguous"}:
         claims.append(claim(
             "control.state",
             "contradicted",
-            source_type="obs.dom.target_values",
+            source_type="obs.mutation.desired_state",
             scope=scope,
-            subject_scope=scope,
+            subject_scope=state.subject_ref or scope,
             evidence=state.evidence,
             authoritative=True,
-            coverage="matched_structural_unit",
+            coverage="resolved_subject",
         ))
     return claims
 
@@ -242,14 +249,16 @@ def resolved_filter_intent(
     scope: str,
     ledger: ActionLedger,
 ) -> RuntimeFilterIntent | None:
-    """Resolve one concrete filter identity from receipts, then from current adapter state."""
-    return runtime_filter_intent(
+    """Resolve one concrete filter identity from current state and dispatch receipts."""
+    runtime_intent = runtime_filter_intent(
         milestone, history, scope=scope, ledger=ledger
-    ) or observed_filter_intent(
+    )
+    return observed_filter_intent(
         getattr(observation, "applied_filters", None),
         getattr(observation, "form_controls", None),
         milestone,
-    )
+        runtime_intent,
+    ) or runtime_intent
 
 
 def observation_state_claims(
@@ -261,7 +270,7 @@ def observation_state_claims(
     ledger: ActionLedger,
 ) -> list[EvidenceClaim]:
     """Build deterministic claims from the current adapter observation."""
-    claims = target_value_claims(milestone, observation, scope=scope)
+    claims = target_value_claims(milestone, observation, history, scope=scope)
     applied_filters = getattr(observation, "applied_filters", None)
     filter_intent = resolved_filter_intent(
         milestone, observation, history, scope=scope, ledger=ledger

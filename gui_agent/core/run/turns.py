@@ -20,6 +20,7 @@ from gui_agent.core.run.result import print_timings, print_turn_stats
 from gui_agent.core.run.state import sync_milestone_states
 from gui_agent.core.schemas import (
     ActionSignal,
+    MutationReceipt,
     PolicyContext,
     PolicyTurn,
     SupervisorStep,
@@ -95,6 +96,19 @@ def make_interactive_turn(
             str(getattr(action, "text", "") or "")
             if role == "write" and action is not None
             else ""
+        ),
+        mutation_receipt=(
+            MutationReceipt(
+                statement_id=authorization.statement_id,
+                subject_ref=authorization.subject_ref,
+                field=authorization.field,
+                intended_value=authorization.desired_value,
+                source=authorization.source,
+            )
+            if role == "write"
+            and execution == "dispatched"
+            and (authorization := supervisor_step.mutation_authorization) is not None
+            else None
         ),
         binding=binding,
         execution=execution,

@@ -97,8 +97,9 @@ class _StepDraft(BaseModel):
     target_values: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "run_kind=action：业务写入终态；run_kind=filter：完成后的完整筛选状态。"
-            "格式均为 {语义字段: 目标值}；不得写按钮、选择器或坐标。"
+            "run_kind=action：本步必须实现的业务终态；它不提供目标身份或写入授权。"
+            "run_kind=filter：完成后的完整筛选状态。格式均为 {语义字段: 目标值}；"
+            "不得写按钮、选择器、坐标或系统生成的 ID/时间戳。"
         ),
     )
     returns: list[str] = Field(default_factory=list, description="op=run：该步完成后要返回的结果字段；data_query 也必须填")

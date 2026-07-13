@@ -70,11 +70,6 @@ class BrowserPlanResult(BaseModel):
         default="",
         description="本轮写入或选择的结构化目标值。",
     )
-    target_group_id: str = Field(
-        default="",
-        description="重复结构中目标控件所属的结构单元 ID。",
-    )
-
     direction: Optional[Literal["up", "down", "left", "right"]] = Field(
         default=None,
         description="只有下一步需要滚动时填写：down=查看下方内容，up=查看上方内容，left/right=横向查看内容；其他操作留空",

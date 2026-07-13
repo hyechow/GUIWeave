@@ -91,6 +91,7 @@ def test_policy_acquire_gate_bypasses_checker_for_known_offscreen_controls(monke
 
     assert checker_calls == []
     assert step.should_act is True
+    assert step.atomic_role == "iterate"
     assert step.direction == "down"
     assert step.instruction and "Comment" in step.instruction
     assert "Edit" not in step.instruction

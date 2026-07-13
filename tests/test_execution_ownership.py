@@ -6,7 +6,8 @@ from gui_agent.core.run.action_exec import ActionExecutionState
 from gui_agent.core.run.action_ledger import ActionLedger
 from gui_agent.core.run.execution_signals import CompletionEvaluator
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone import action_protocol, evidence
+from gui_agent.core.supervisor.milestone import action_protocol, evidence, observation_state
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult
 
 
 def test_milestone_policy_is_the_only_component_with_control_flow_authority() -> None:
@@ -40,6 +41,15 @@ def test_policy_does_not_execute_structural_target_units_directly() -> None:
     assert "target_unit_state" not in source
     assert "target_unit_execution_plan" not in source
     assert "ambiguous_target_unit" not in source
+
+
+def test_mutation_subject_has_one_runtime_owner() -> None:
+    policy_source = inspect.getsource(MilestoneSupervisorPolicy)
+
+    assert not hasattr(observation_state, "target_unit_state")
+    assert not hasattr(observation_state, "required_group_field_gaps")
+    assert "resolve_mutation" in policy_source
+    assert "target_group_id" not in _PlanResult.model_fields
 
 
 def test_completion_evaluator_only_evaluates_evidence() -> None:

@@ -6,7 +6,23 @@ from gui_agent.adapters.browser.control_grounding import (
 )
 from gui_agent.core.run import action_exec as action_exec_module
 from gui_agent.core.run.action_exec import ActionExecutionState
-from gui_agent.core.schemas import Observation, SupervisorStep
+from gui_agent.core.schemas import MutationAuthorization, Observation, SupervisorStep
+
+
+def _authorization(
+    *,
+    statement_id: str,
+    subject_ref: str,
+    field: str,
+    value: str,
+) -> MutationAuthorization:
+    return MutationAuthorization(
+        statement_id=statement_id,
+        subject_ref=subject_ref,
+        field=field,
+        desired_value=value,
+        source="structural",
+    )
 
 
 class _Policy:
@@ -69,7 +85,12 @@ def test_action_execution_grounds_rendered_input_after_vision(monkeypatch, tmp_p
         action_family="input",
         target_control="Admin Description",
         target_value="XXXL",
-        target_group_id="collection:20",
+        mutation_authorization=_authorization(
+            statement_id="size-option",
+            subject_ref="collection:20",
+            field="Admin Description",
+            value="XXXL",
+        ),
     )
     monkeypatch.setattr(action_exec_module, "print_decision", lambda *_args, **_kwargs: None)
 
@@ -115,7 +136,12 @@ def test_native_select_skips_vision_policy(monkeypatch, tmp_path) -> None:
         action_family="select",
         target_control="Status",
         target_value="Complete",
-        target_group_id="__form__",
+        mutation_authorization=_authorization(
+            statement_id="status",
+            subject_ref="__form__",
+            field="Status",
+            value="Complete",
+        ),
     )
     monkeypatch.setattr(action_exec_module, "print_decision", lambda *_args, **_kwargs: None)
 
@@ -192,7 +218,12 @@ def test_action_policy_stop_is_not_reinterpreted_by_executor(monkeypatch, tmp_pa
         action_family="input",
         target_control="Admin Swatch",
         target_value="XXXL",
-        target_group_id="collection:19",
+        mutation_authorization=_authorization(
+            statement_id="size-option",
+            subject_ref="collection:19",
+            field="Admin Swatch",
+            value="XXXL",
+        ),
     )
     messages: list[str] = []
     monkeypatch.setattr(action_exec_module, "print_decision", lambda *_args, **_kwargs: None)

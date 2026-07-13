@@ -239,9 +239,12 @@
       },
       "expected": {
         "generate_role": "commit",
-        "goal_completed": true,
-        "completion_status": "accepted_unverified",
-        "should_act": false
+        "goal_completed": false,
+        "completion_status": "in_progress",
+        "should_act": true,
+        "next_role": "commit",
+        "next_family": "activate",
+        "next_target_control": "Save"
       }
     }
   ]

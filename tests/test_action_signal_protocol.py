@@ -14,6 +14,8 @@ from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
     Milestone,
+    MutationAuthorization,
+    MutationReceipt,
     Observation,
     PolicyContext,
     PolicyTurn,
@@ -101,8 +103,19 @@ def test_write_key_keeps_structural_group_identity():
         text="XXXL",
         description="输入 XXXL",
     )
-    first = _step(role="write").model_copy(update={"target_group_id": "collection:20"})
-    second = _step(role="write").model_copy(update={"target_group_id": "collection:21"})
+    def authorized(subject_ref: str) -> SupervisorStep:
+        return _step(role="write").model_copy(update={
+            "mutation_authorization": MutationAuthorization(
+                statement_id="m1",
+                subject_ref=subject_ref,
+                field="Size",
+                desired_value="XXXL",
+                source="structural",
+            )
+        })
+
+    first = authorized("collection:20")
+    second = authorized("collection:21")
 
     assert semantic_action_key(first, action) != semantic_action_key(second, action)
 
@@ -140,7 +153,14 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
             action_family="input",
             target_control=control,
             target_value="XXXL",
-            target_group_id="collection:19",
+            mutation_authorization=MutationAuthorization(
+                statement_id="m1",
+                subject_ref="collection:19",
+                field=control,
+                desired_value="XXXL",
+                source="structural",
+            ),
+            requires_mutation_authorization=True,
         )
         decision = BaseActionDecision(action=BaseAction(
             action_type="type",
@@ -509,14 +529,20 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
     policy._milestones = {"m1": milestone}
     policy._current_id = "m1"
     policy._order = ["m1"]
-    history = [
-        _turn(
-            index=1,
-            step=_step(scope="row:record/7", role="write"),
-            role="write",
-        ),
-        _turn(index=2, step=_step(scope="row:record/7")),
-    ]
+    write = _turn(
+        index=1,
+        step=_step(scope="row:record/7", role="write"),
+        role="write",
+    )
+    assert write.action_signal is not None
+    write.action_signal.mutation_receipt = MutationReceipt(
+        statement_id="m1",
+        subject_ref="__form__",
+        field="Primary Value",
+        intended_value="A",
+        source="structural",
+    )
+    history = [write, _turn(index=2, step=_step(scope="row:record/7"))]
     policy._monitor.observe_effect("http://x/record/7", "draft")
     monkeypatch.setattr(
         "gui_agent.core.supervisor.milestone.policy.is_loading_frame",

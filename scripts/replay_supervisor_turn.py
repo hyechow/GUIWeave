@@ -165,6 +165,7 @@ def _expectation_failures(expectation: dict[str, Any], decision: Any) -> list[st
         ("atomic_role", expectation.get("atomic_role")),
         ("action_family", expectation.get("action_family")),
         ("target_control", expectation.get("target_control")),
+        ("direction", expectation.get("direction")),
     )
     for field, expected in checks:
         if expected is not None and getattr(decision, field, None) != expected:
@@ -209,11 +210,17 @@ def _decide_action_without_dispatch(
     decision: Any,
 ) -> Any:
     action_policy = _build_action_policy(context.action_policy_name)
+    authorization = decision.mutation_authorization
+    target_group_id = (
+        authorization.subject_ref
+        if authorization is not None and authorization.source == "structural"
+        else ""
+    )
     native = action_policy.resolve_native_action(
         observation,
         target_control=decision.target_control,
         target_value=decision.target_value,
-        target_group_id=decision.target_group_id,
+        target_group_id=target_group_id,
         action_family=decision.action_family,
         instruction=decision.instruction or "",
     )
@@ -223,7 +230,7 @@ def _decide_action_without_dispatch(
         observation,
         target_control=decision.target_control,
         target_value=decision.target_value,
-        target_group_id=decision.target_group_id,
+        target_group_id=target_group_id,
         action_family=decision.action_family,
     )
     proposed = action_policy.decide(
@@ -240,7 +247,7 @@ def _decide_action_without_dispatch(
         observation,
         target_control=decision.target_control,
         target_value=decision.target_value,
-        target_group_id=decision.target_group_id,
+        target_group_id=target_group_id,
         action_family=decision.action_family,
     )
 

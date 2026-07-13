@@ -604,6 +604,46 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
     assert step.instruction == "open the child editor again"
 
 
+def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
+    milestone = Milestone(
+        id="persisted",
+        name="prepare one declared combination and save",
+        description="",
+        success_condition="saved collection contains the declared combination",
+        kind="action",
+        requires_commit=True,
+        target_values={"Color": "green", "Size": "XXXL"},
+    )
+    proposal = _PlanResult(
+        instruction="clear the current draft selection",
+        summary="reduce the draft frontier before selecting the target",
+        atomic_role="write",
+        action_family="activate",
+        target_control="collection selection command",
+        target_value="",
+    )
+    policy = MilestoneSupervisorPolicy()
+    policy._invoke_planner = lambda *_args, **_kwargs: proposal  # type: ignore[method-assign]
+
+    step = policy._plan_single(
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="the draft selection still contains extra values",
+            summary="selection preparation is pending",
+            outcome_status="contradicted",
+        ),
+        Observation(png_bytes=b"frame", source="visual"),
+        [],
+    )
+
+    assert step.should_act is True
+    assert step.atomic_role == "prepare"
+    assert step.target_control == "collection selection command"
+    assert step.mutation_authorization is None
+    assert step.requires_mutation_authorization is False
+
+
 def test_commit_detection_uses_structured_role_not_instruction_vocabulary():
     milestone = Milestone(
         id="m",

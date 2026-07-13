@@ -1,0 +1,312 @@
+"""Resolve one mutation subject and authorize its next declared write."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Literal
+
+from gui_agent.core.schemas import (
+    Milestone,
+    MutationAuthorization,
+    Observation,
+    PolicyTurn,
+)
+
+ResolutionStatus = Literal[
+    "complete", "preparing", "writable", "absent", "ambiguous", "unknown"
+]
+CHOICE_KINDS = ("checkbox", "radio", "switch")
+WRITABLE_KINDS = ("input", "select", "textarea", *CHOICE_KINDS)
+SELECTED_VALUES = {"on", "true", "checked", "selected", "1"}
+
+
+def _norm(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def _key(value: object) -> tuple[str, ...]:
+    return tuple(sorted(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", _norm(value))))
+
+
+def _current(control: dict) -> str:
+    return str(control.get("selected_text") or control.get("value") or "").strip()
+
+
+def _is_choice(control: dict) -> bool:
+    kind = _norm(control.get("kind"))
+    return any(token in kind for token in CHOICE_KINDS)
+
+
+def _selected(control: dict) -> bool:
+    return _is_choice(control) and bool(
+        control.get("checked") is True or _norm(_current(control)) in SELECTED_VALUES
+    )
+
+
+def _option_is(control: dict, value: str) -> bool:
+    wanted = _key(value)
+    return bool(
+        wanted
+        and any(
+            _key(control.get(field)) == wanted
+            for field in ("label", "key", "option_text", "text")
+            if control.get(field)
+        )
+    )
+
+
+def _satisfies(control: dict, value: str) -> bool:
+    return (
+        _option_is(control, value) and _selected(control)
+        if _is_choice(control)
+        else _norm(_current(control)) == _norm(value)
+    )
+
+
+def _matches_field(control: dict, field: str) -> bool:
+    label = str(
+        control.get("label")
+        or control.get("name")
+        or control.get("id")
+        or control.get("placeholder")
+        or ""
+    ).strip()
+    group = str(control.get("group_field") or "").strip()
+    names = (label, group, f"{group} {label}", f"{label} {group}")
+    expected = _key(field)
+    return bool(expected and any(_key(name) == expected for name in names if name.strip()))
+
+
+def _groups(observation: Observation) -> tuple[dict[str, list[dict]], bool]:
+    groups: dict[str, list[dict]] = {}
+    flat: list[dict] = []
+    for control in observation.form_controls or []:
+        if not isinstance(control, dict):
+            continue
+        group = str(control.get("group_id") or "").strip()
+        (groups.setdefault(group, []) if group else flat).append(control)
+    repeated = bool(groups)
+    if flat:
+        groups["__form__"] = flat
+    return groups, repeated
+
+
+def _match_fields(
+    controls: list[dict], desired: tuple[tuple[str, str], ...]
+) -> dict[str, dict] | None:
+    matched: dict[str, dict] = {}
+    for field, value in desired:
+        candidates = [item for item in controls if _matches_field(item, field)]
+        if len(candidates) > 1:
+            candidates = [item for item in candidates if _option_is(item, value)]
+        if len(candidates) > 1:
+            return None
+        if candidates:
+            matched[field] = candidates[0]
+    return matched
+
+
+@dataclass(frozen=True)
+class SubjectResolution:
+    status: ResolutionStatus
+    subject_ref: str = ""
+    source: Literal["visual", "structural"] = "structural"
+    next_field: str = ""
+    target_control: str = ""
+    next_value: str = ""
+    action_family: Literal["input", "select"] = "input"
+    evidence: str = ""
+
+
+def _source(control: dict) -> Literal["visual", "structural"]:
+    return "visual" if control.get("binding_source") == "visual" else "structural"
+
+
+def _group_state(
+    subject_ref: str,
+    controls: list[dict],
+    desired: tuple[tuple[str, str], ...],
+    *,
+    singleton: bool,
+) -> SubjectResolution | None:
+    matched = _match_fields(controls, desired)
+    if matched is None:
+        return None
+
+    for field, value in desired:
+        field_controls = [item for item in controls if _matches_field(item, field)]
+        if not any(_is_choice(item) for item in field_controls):
+            continue
+        extras = [item for item in field_controls if _selected(item) and not _option_is(item, value)]
+        if extras:
+            extra = extras[0]
+            label = str(extra.get("option_text") or extra.get("label") or "").strip()
+            return SubjectResolution(
+                "preparing",
+                subject_ref,
+                _source(extra),
+                field,
+                f"{field} {label}" if label else field,
+                action_family="select",
+                evidence=f"{subject_ref} has an extra selected {field} value {label!r}",
+            )
+
+    equal = {
+        field for field, value in desired
+        if field in matched and _satisfies(matched[field], value)
+    }
+    if len(equal) == len(desired):
+        return SubjectResolution(
+            "complete", subject_ref=subject_ref,
+            evidence=f"desired state is complete on {subject_ref}",
+        )
+
+    pending = [
+        (field, value, matched[field])
+        for field, value in desired
+        if field not in equal
+        and field in matched
+        and any(token in _norm(matched[field].get("kind")) for token in WRITABLE_KINDS)
+    ]
+    if not pending:
+        return None
+    all_blank = len(matched) == len(desired) and all(
+        (_option_is(matched[field], value) and not _selected(matched[field]))
+        if _is_choice(matched[field]) else not _norm(_current(matched[field]))
+        for field, value in desired
+    )
+    if not (singleton or equal or all_blank):
+        return None
+
+    field, value, control = pending[0]
+    family: Literal["input", "select"] = (
+        "select" if _is_choice(control) or "select" in _norm(control.get("kind")) else "input"
+    )
+    return SubjectResolution(
+        "writable",
+        subject_ref,
+        _source(control),
+        field,
+        f"{field} {value}" if _option_is(control, value) else field,
+        value,
+        family,
+        f"{subject_ref} owns the next desired field {field}",
+    )
+
+
+def _receipted_subjects(history: list[PolicyTurn], milestone_id: str) -> set[str]:
+    return {
+        receipt.subject_ref
+        for turn in history
+        if turn.action_signal is not None
+        if (receipt := turn.action_signal.mutation_receipt) is not None
+        if receipt.statement_id == milestone_id and receipt.subject_ref
+    }
+
+
+def _has_unreceipted_write(history: list[PolicyTurn], milestone_id: str) -> bool:
+    return any(
+        turn.supervisor is not None
+        and turn.supervisor.milestone_id == milestone_id
+        and turn.action_signal is not None
+        and turn.action_signal.role == "write"
+        and turn.action_signal.execution == "dispatched"
+        and turn.action_signal.mutation_receipt is None
+        for turn in history
+    )
+
+
+def _resolve(
+    milestone: Milestone,
+    observation: Observation,
+    history: list[PolicyTurn],
+    surface_id: str,
+) -> SubjectResolution:
+    desired = tuple(
+        (str(field), str(value))
+        for field, value in (milestone.target_values or {}).items()
+        if _norm(field) and _norm(value)
+    )
+    if not desired:
+        return SubjectResolution("unknown", evidence="no desired-state map")
+
+    groups, repeated = _groups(observation)
+    bound = _receipted_subjects(history, milestone.id)
+    if len(bound) > 1:
+        return SubjectResolution("ambiguous", evidence="receipts bind multiple subjects")
+    if bound:
+        subject_ref = next(iter(bound))
+        controls = groups.get(subject_ref)
+        if controls is None:
+            return SubjectResolution("unknown", subject_ref, evidence="bound subject is not observable")
+        return _group_state(
+            subject_ref, controls, desired, singleton=subject_ref == "__form__"
+        ) or SubjectResolution("unknown", subject_ref, evidence="bound subject lacks declared fields")
+
+    contaminated = _has_unreceipted_write(history, milestone.id)
+    if "__form__" in groups:
+        state = _group_state("__form__", groups["__form__"], desired, singleton=True)
+        if state is not None:
+            return SubjectResolution("unknown", evidence="unbound prior write") if contaminated else state
+
+    states = [
+        state
+        for subject_ref, controls in groups.items()
+        if subject_ref != "__form__"
+        if (state := _group_state(subject_ref, controls, desired, singleton=False)) is not None
+    ]
+    preparing = [state for state in states if state.status == "preparing"]
+    if len(preparing) == 1:
+        return preparing[0]
+    if len(preparing) > 1:
+        return SubjectResolution("ambiguous", evidence="multiple subjects need preparation")
+
+    complete = [state for state in states if state.status == "complete"]
+    writable = [state for state in states if state.status == "writable"]
+    if contaminated and (complete or writable):
+        return SubjectResolution("ambiguous", evidence="partial state follows an unbound write")
+    if complete:
+        return complete[0]
+    if len(writable) == 1:
+        return writable[0]
+    if len(writable) > 1:
+        return SubjectResolution("ambiguous", evidence="multiple writable subjects")
+    coverage = _norm((observation.form_controls_meta or {}).get("coverage"))
+    if repeated and coverage == "complete":
+        return SubjectResolution("absent", evidence="complete inventory has no target subject")
+    if not observation.form_controls and len(desired) == 1:
+        field, value = desired[0]
+        return SubjectResolution(
+            "writable", f"visual:{surface_id or milestone.id}", "visual",
+            field, field, value, evidence="one-shot visual subject",
+        )
+    return SubjectResolution("unknown", evidence="subject identity is not observable")
+
+
+def resolve_mutation(
+    milestone: Milestone,
+    observation: Observation,
+    history: list[PolicyTurn],
+    *,
+    surface_id: str = "",
+) -> SubjectResolution:
+    return _resolve(milestone, observation, history, surface_id)
+
+
+def authorize_mutation(
+    milestone: Milestone,
+    subject: SubjectResolution,
+) -> MutationAuthorization | None:
+    if subject.status != "writable" or not subject.subject_ref:
+        return None
+    return MutationAuthorization(
+        statement_id=milestone.id,
+        subject_ref=subject.subject_ref,
+        field=subject.next_field,
+        desired_value=subject.next_value,
+        source=subject.source,
+    )
+
+
+__all__ = ["SubjectResolution", "authorize_mutation", "resolve_mutation"]

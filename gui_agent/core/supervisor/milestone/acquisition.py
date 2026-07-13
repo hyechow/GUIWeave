@@ -9,9 +9,7 @@ from .observation_state import (
     _extract_target_fields,
     _find_matching_control,
     _norm_text,
-    _target_control_matches,
     _visible_field_controls,
-    target_unit_state,
 )
 from .schemas import _PlanResult
 
@@ -128,10 +126,6 @@ def target_section_acquire_plan(
         kind = str(item.get("kind") or "").lower()
         return any(part in kind for part in _SECTION_TOGGLE_KINDS)
 
-    def _is_expanded(item: dict) -> bool:
-        value = str(item.get("selected_text") or item.get("value") or "").strip().lower()
-        return value in {"1", "true", "yes", "open", "opened", "expanded", "on"}
-
     def _is_collapsed(item: dict) -> bool:
         # Explicit collapsed signal ONLY — an UNKNOWN state ('' from form_reader, e.g. a custom
         # accordion with no aria-expanded/recognizable class) is NOT collapsed. The acquire click
@@ -232,46 +226,3 @@ def target_section_acquire_plan(
     if len(directions) != 1:
         return None
     return _scroll_section_plan(offscreen[0])
-
-
-def target_unit_write_plan(
-    form_controls: list[dict] | None,
-    milestone: Milestone,
-    *,
-    coverage: str = "unknown",
-) -> _PlanResult | None:
-    """Plan the next declared field write when one structural unit is unambiguous."""
-    state = target_unit_state(form_controls, milestone, coverage=coverage)
-    if (
-        state.status not in {"partial", "unique_blank"}
-        or not state.group_id
-        or not state.next_field
-        or state.next_field not in state.writable_fields
-    ):
-        return None
-    target_key = _norm_text(state.next_field)
-    candidates = [
-        item
-        for item in form_controls or []
-        if isinstance(item, dict)
-        and (str(item.get("group_id") or "").strip() or "__form__") == state.group_id
-        and _target_control_matches(item, target_key)
-    ]
-    if len(candidates) != 1:
-        return None
-    kind = str(candidates[0].get("kind") or "").lower()
-    family = (
-        "select"
-        if any(token in kind for token in ("select", "checkbox", "radio", "switch"))
-        else "input"
-    )
-    return _PlanResult(
-        instruction=f"将「{state.next_field}」设置为「{state.next_value}」",
-        summary=state.evidence,
-        atomic_role="write",
-        action_family=family,
-        target_control=state.next_field,
-        target_value=state.next_value,
-        target_group_id=state.group_id,
-    )
-

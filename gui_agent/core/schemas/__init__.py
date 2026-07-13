@@ -90,6 +90,30 @@ class TargetBinding(BaseModel):
     reason: str = ""
 
 
+class MutationAuthorization(BaseModel):
+    """One-shot permission to write one desired field on one resolved subject."""
+
+    statement_id: str
+    subject_ref: str
+    field: str
+    desired_value: str
+    source: BindingSource
+
+
+class MutationReceipt(BaseModel):
+    """Immutable proof that one authorized mutation write crossed the UI boundary.
+
+    Post-action state is deliberately absent: effects belong to observations, while this
+    receipt records dispatch provenance only.
+    """
+
+    statement_id: str
+    subject_ref: str
+    field: str
+    intended_value: str
+    source: BindingSource
+
+
 class ActionSignal(BaseModel):
     """Structured lifecycle of one atomic UI action.
 
@@ -106,6 +130,7 @@ class ActionSignal(BaseModel):
     )
     target_control: str = ""
     target_value: str = ""
+    mutation_receipt: Optional[MutationReceipt] = None
     binding: Optional[TargetBinding] = None
     execution: ActionExecutionStatus = "not_attempted"
     target: ActionTargetStatus = "unknown"
@@ -477,9 +502,13 @@ class SupervisorStep(BaseModel):
         default="",
         description="本轮写入/选择的结构化目标值；为空时由平台策略按原有路径决策。",
     )
-    target_group_id: str = Field(
-        default="",
-        description="目标控件所属结构单元 ID；用于区分重复集合中的同名字段。",
+    mutation_authorization: Optional[MutationAuthorization] = Field(
+        default=None,
+        description="执行层生成的一次性 mutation 写授权；不属于 planner/DSL 输出。",
+    )
+    requires_mutation_authorization: bool = Field(
+        default=False,
+        description="当前 write 是否必须持有系统生成的 mutation authorization。",
     )
     completion_status: CompletionStatus = Field(
         default="in_progress",
@@ -615,7 +644,7 @@ class Milestone(BaseModel):
     )
     target_values: dict[str, str] = Field(
         default_factory=dict,
-        description="该执行单元要求实现的结构化字段终态。",
+        description="该执行单元要求实现的结构化业务终态；它不提供目标身份或写入授权。",
     )
     completion_status: CompletionStatus = Field(
         default="in_progress",

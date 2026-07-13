@@ -42,8 +42,6 @@ from .acquisition import target_section_acquire_plan
 from .observation_state import (
     RuntimeFilterIntent,
     filter_residual_labels,
-    required_group_field_gaps,
-    target_unit_state,
 )
 
 from .schemas import (
@@ -180,53 +178,6 @@ def _build_msgs(system_prompt: str, png_bytes: bytes, *, image_resize: str = "re
 
 def _format_form_controls(form_controls: list[dict] | None) -> str:
     return format_form_controls_text(form_controls)
-
-
-def _apply_required_group_checker_guard(
-    result: _SingleCheckResult,
-    milestone: Milestone,
-    observation: Observation,
-) -> _SingleCheckResult:
-    value_state = target_unit_state(
-        getattr(observation, "form_controls", None), milestone
-    )
-    coverage = str(
-        (getattr(observation, "form_controls_meta", None) or {}).get("coverage") or ""
-    ).lower()
-    if (
-        value_state.status == "unknown"
-        and coverage == "partial"
-        and milestone.target_values
-        and (result.status == "stuck" or result.outcome_status == "contradicted")
-    ):
-        return result.model_copy(update={
-            "status": "in_progress",
-            "outcome_status": "unverified",
-            "reason": (
-                "当前 DOM 控件清单覆盖不完整，未返回声明目标不能证明目标不存在或执行失败；"
-                "应继续在当前执行单元内获取目标控件或等待完整状态。"
-            ),
-            "summary": "目标状态未知：当前控件清单为 partial coverage",
-            "missing_evidence": ["需要完整控件清单或声明目标字段的正向状态证据。"],
-        })
-    gaps = required_group_field_gaps(
-        getattr(observation, "form_controls", None), milestone
-    )
-    if value_state.status in {"partial", "unique_blank"}:
-        gaps = list(dict.fromkeys([*value_state.missing_fields, *gaps]))
-    if not gaps:
-        return result
-    gap_text = "、".join(gaps)
-    return result.model_copy(update={
-        "status": "in_progress",
-        "outcome_status": "unverified",
-        "reason": (
-            "DOM 表单约束显示：目标值虽然出现在重复集合的一行中，但同一行仍有"
-            f"必填字段为空（{gap_text}）；该集合成员尚未完成，不能提交或判定成功。"
-        ),
-        "summary": f"重复集合行仍缺少必填字段：{gap_text}",
-        "missing_evidence": [f"先填写同一集合行的必填字段：{gap_text}"],
-    })
 
 
 def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
@@ -399,7 +350,6 @@ def run_checker(
             ]
 
     _strip_progress_evidence(result)
-    result = _apply_required_group_checker_guard(result, milestone, observation)
 
     # Validate a done verdict in two stages, because the retry and the force-stuck
     # play different roles:
@@ -450,7 +400,6 @@ def run_checker(
             context_reports=context_reports,
         )
         _strip_progress_evidence(result)
-        result = _apply_required_group_checker_guard(result, milestone, observation)
     if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
             status="stuck",

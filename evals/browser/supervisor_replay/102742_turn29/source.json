@@ -2,7 +2,7 @@
   "task": "WebArena 549",
   "history_source": "logs/gui_agent/webarena/browser/20260713_102742/context.json",
   "history_through_turn": 28,
-  "observation_source": "recorded observation_turn_29.json and screenshot_turn_29.png",
+  "observation_source": "recorded observation_turn_25..29.json and matching screenshots",
   "observation_captured_on": "2026-07-13",
-  "purpose": "Two values are selected in an active child wizard, but no post-write prepare edge has completed; the next action must advance the child flow rather than consume the parent commit boundary."
+  "purpose": "Real child-wizard frames covering preselected values, exact-target selection, and the post-write prepare edge without consuming the parent commit boundary."
 }

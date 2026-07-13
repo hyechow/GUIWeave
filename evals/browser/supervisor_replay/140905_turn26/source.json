@@ -1,0 +1,8 @@
+{
+  "task": "WebArena 549",
+  "history_source": "logs/gui_agent/webarena/browser/20260713_140905/context.json",
+  "history_through_turn": 25,
+  "observation_source": "recorded observation_turn_25..26.json and matching screenshots",
+  "observation_captured_on": "2026-07-13",
+  "purpose": "Filter-intent binding replay: the planner receipt names a semantic Name field, while the unique rendered control and applied-filter state identify the concrete Search by keyword route with the same exact value. Completion must advance without dispatching a synthetic stop."
+}

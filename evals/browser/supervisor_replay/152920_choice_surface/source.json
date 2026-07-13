@@ -1,0 +1,6 @@
+{
+  "run": "logs/gui_agent/webarena/browser/20260713_152920",
+  "task": 549,
+  "turns": [24, 25, 26],
+  "purpose": "real browser observations for exact choice-surface normalization and mutation subject resolution"
+}

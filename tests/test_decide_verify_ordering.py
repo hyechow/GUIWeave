@@ -318,11 +318,52 @@ def _completion_decision(p, m, obs, history):
     claims = action_lifecycle_claims(
         m, history, scope=scope, monitor=p._monitor, ledger=p._action_ledger
     )
-    claims.extend(target_value_claims(m, obs, scope=scope))
+    claims.extend(target_value_claims(m, obs, history, scope=scope))
     claims.append(checker_claim(p._last_check, scope=scope, subject_scope=scope))
     return p._completion_evaluator.decide(
         execution_contract_for(m, p._execution_contract), claims, scope=scope
     )
+
+
+def test_mutation_commit_without_receipt_does_not_claim_a_target_write() -> None:
+    p = MilestoneSupervisorPolicy()
+    milestone = Milestone(
+        id="m1",
+        name="approve record",
+        description="",
+        success_condition="status is approved",
+        kind="action",
+        target_values={"Status": "Approved"},
+    )
+    step = SupervisorStep(
+        should_act=True,
+        instruction="approve",
+        stop=False,
+        goal_completed=False,
+        summary="",
+        milestone_id="m1",
+        milestone_kind="action",
+        atomic_role="commit",
+        target_control="Status",
+        target_value="Approved",
+    )
+    turn = _executed_turn(
+        index=1,
+        source="browser",
+        step=step,
+        action=BaseAction(action_type="tap", x=100, y=100, description="approve"),
+        actual_element="Approve button",
+    )
+
+    claims = action_lifecycle_claims(
+        milestone,
+        [turn],
+        scope="milestone:m1",
+        monitor=p._monitor,
+        ledger=p._action_ledger,
+    )
+
+    assert not any(item.domain == "action.write" for item in claims)
 
 
 def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):

@@ -85,7 +85,7 @@ def _completion_case(case: dict[str, Any]) -> None:
         monitor=policy._monitor,
         ledger=policy._action_ledger,
     )
-    claims.extend(target_value_claims(milestone, observation, scope=scope))
+    claims.extend(target_value_claims(milestone, observation, history, scope=scope))
     claims.append(checker_claim(check, scope=scope, subject_scope=scope))
     decision = policy._completion_evaluator.decide(
         execution_contract_for(milestone, policy._execution_contract),
@@ -427,7 +427,7 @@ def _target_binding_case(case: dict[str, Any]) -> None:
 
 
 def _planner_target_passthrough_case(case: dict[str, Any]) -> None:
-    """A terminal-state contract must not reject an intermediate UI target by text."""
+    """A planner write cannot self-authorize an unresolved repeated subject."""
     recorded = case["recorded_turn"]
     supervisor = recorded["supervisor"]
     policy = MilestoneSupervisorPolicy()
@@ -438,7 +438,6 @@ def _planner_target_passthrough_case(case: dict[str, Any]) -> None:
         action_family=supervisor["action_family"],
         target_control=supervisor["target_control"],
         target_value=supervisor["target_value"],
-        target_group_id=supervisor.get("target_group_id", ""),
     )
     step = policy._plan_single(  # noqa: SLF001
         Milestone.model_validate(case["milestone"]),
@@ -447,9 +446,8 @@ def _planner_target_passthrough_case(case: dict[str, Any]) -> None:
         [],
     )
     expected = case["expected"]
-    assert step.should_act is True
-    assert step.target_control == expected["target_control"]
-    assert step.target_value == expected["target_value"]
+    assert step.should_act is expected["should_act"]
+    assert bool(step.mutation_authorization) is expected["authorization"]
 
 
 def _target_unit_policy_case(case: dict[str, Any]) -> None:
@@ -470,7 +468,8 @@ def _target_unit_policy_case(case: dict[str, Any]) -> None:
     assert step.atomic_role == "write"
     assert step.target_control == expected["target_control"]
     assert step.target_value == expected["target_value"]
-    assert step.target_group_id == expected["target_group_id"]
+    assert step.mutation_authorization is not None
+    assert step.mutation_authorization.subject_ref == expected["target_group_id"]
 
 
 def _knowledge_selection_case(case: dict[str, Any]) -> None:

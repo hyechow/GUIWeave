@@ -192,9 +192,9 @@ class Run(RunLike):
     target_values: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "action 要实现的结构化字段终态，或 filter 要实现的完整筛选状态"
+            "action 要实现的结构化业务终态，或 filter 要实现的完整筛选状态"
             " {语义控件名: 目标值}。重复集合行可用 group field + control label 命名；"
-            "不写 DOM selector。"
+            "该字段不提供目标身份或写入授权；系统派生元数据不在此声明。不写 DOM selector。"
         ),
     )
 

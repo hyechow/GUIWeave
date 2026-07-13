@@ -189,11 +189,6 @@ class _PlanResult(BaseModel):
         default="",
         description="本轮写入/选择的结构化目标值；不要依赖 instruction 文本重新抽取。",
     )
-    target_group_id: str = Field(
-        default="",
-        description="目标控件所属结构单元 ID；重复集合中必须用它保持行身份。",
-    )
-
     direction: Optional[Literal["up", "down", "left", "right", "increase", "decrease"]] = Field(
         default=None,
         description=(
@@ -253,10 +248,6 @@ class _ReplanResult(BaseModel):
     target_value: str = Field(
         default="",
         description="修复动作要写入或选择的值；非写入动作留空。",
-    )
-    target_group_id: str = Field(
-        default="",
-        description="重复集合中目标控件所属结构单元 ID。",
     )
     direction: Optional[
         Literal["up", "down", "left", "right", "increase", "decrease"]

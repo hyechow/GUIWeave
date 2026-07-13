@@ -70,8 +70,8 @@
         ]
       },
       "expected": {
-        "target_control": "Green (Color checkbox)",
-        "target_value": "green"
+        "should_act": false,
+        "authorization": false
       }
     }
   ]

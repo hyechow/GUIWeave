@@ -1,0 +1,3471 @@
+{
+  "version": 1,
+  "screenshot": "screenshot_turn_26.png",
+  "observation": {
+    "source": "browser",
+    "loading": false,
+    "url": "http://192.168.1.102:7780/admin/catalog/product/",
+    "title": "Products / Inventory / Catalog / Magento Admin",
+    "dom_state": "683e56f561b406b0",
+    "tables": [
+      {
+        "index": 1,
+        "source": "table",
+        "caption": "",
+        "headers": [
+          "Options",
+          "ID",
+          "Thumbnail",
+          "Name",
+          "Type",
+          "Attribute Set",
+          "SKU",
+          "Price",
+          "Quantity",
+          "Salable Quantity",
+          "Visibility",
+          "Status",
+          "Websites",
+          "Last Updated At",
+          "Action",
+          "Action_url"
+        ],
+        "rows": [
+          {
+            "Options": "",
+            "ID": "1477",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-XS-Black",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-XS-Black",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 100",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1477/"
+          },
+          {
+            "Options": "",
+            "ID": "1481",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-S-Blue",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-S-Blue",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 100",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1481/"
+          },
+          {
+            "Options": "",
+            "ID": "1485",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-M-Red",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-M-Red",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 100",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1485/"
+          },
+          {
+            "Options": "",
+            "ID": "1489",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-XL-Black",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-XL-Black",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 99",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1489/"
+          },
+          {
+            "Options": "",
+            "ID": "1478",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-XS-Blue",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-XS-Blue",
+            "Price": "$32.00",
+            "Quantity": "3.0000",
+            "Salable Quantity": "Default Stock: 3",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 23, 2023 6:35:28 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1478/"
+          },
+          {
+            "Options": "",
+            "ID": "1482",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-S-Red",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-S-Red",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 99",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1482/"
+          },
+          {
+            "Options": "",
+            "ID": "1486",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-L-Black",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-L-Black",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 100",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1486/"
+          },
+          {
+            "Options": "",
+            "ID": "1490",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-XL-Blue",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-XL-Blue",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 99",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1490/"
+          },
+          {
+            "Options": "",
+            "ID": "1479",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-XS-Red",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-XS-Red",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 98",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1479/"
+          },
+          {
+            "Options": "",
+            "ID": "1483",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-M-Black",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-M-Black",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 99",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1483/"
+          },
+          {
+            "Options": "",
+            "ID": "1487",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-L-Blue",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-L-Blue",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 100",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1487/"
+          },
+          {
+            "Options": "",
+            "ID": "1491",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-XL-Red",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-XL-Red",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 100",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1491/"
+          },
+          {
+            "Options": "",
+            "ID": "1480",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-S-Black",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-S-Black",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 100",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1480/"
+          },
+          {
+            "Options": "",
+            "ID": "1484",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-M-Blue",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-M-Blue",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 100",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1484/"
+          },
+          {
+            "Options": "",
+            "ID": "1488",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee-L-Red",
+            "Type": "Simple Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08-L-Red",
+            "Price": "$32.00",
+            "Quantity": "100.0000",
+            "Salable Quantity": "Default Stock: 99",
+            "Visibility": "Not Visible Individually",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1488/"
+          },
+          {
+            "Options": "",
+            "ID": "1492",
+            "Thumbnail": "",
+            "Name": "Minerva LumaTech™ V-Tee",
+            "Type": "Configurable Product",
+            "Attribute Set": "Top",
+            "SKU": "WS08",
+            "Price": "$32.00",
+            "Quantity": "0.0000",
+            "Salable Quantity": "",
+            "Visibility": "Catalog, Search",
+            "Status": "Enabled",
+            "Websites": "Main Website",
+            "Last Updated At": "Apr 19, 2023 12:13:47 PM",
+            "Action": "Edit",
+            "Action_url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/"
+          }
+        ],
+        "row_count": 16,
+        "dom_row_count": 16,
+        "total_records": 16,
+        "partial": false,
+        "path": "div#container>div.admin__data-grid-outer-wrap>div.admin__data-grid-wrap>table.data-grid.data-grid-draggable",
+        "page": {
+          "url": "http://192.168.1.102:7780/admin/catalog/product/",
+          "title": "Products / Inventory / Catalog / Magento Admin"
+        },
+        "traversal": {
+          "type": "paged",
+          "page_index": 1,
+          "page_count": 1,
+          "has_next_page": false,
+          "has_prev_page": false,
+          "page_size": 20,
+          "page_size_options": [
+            20,
+            30,
+            50,
+            100,
+            200
+          ],
+          "has_page_size_control": true,
+          "page_size_menu_open": false
+        }
+      }
+    ],
+    "form_controls": [
+      {
+        "kind": "text_input",
+        "label": "search-global",
+        "id": "search-global",
+        "rect": {
+          "x": 849,
+          "y": 113,
+          "w": 50,
+          "h": 35
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Search by keyword",
+        "id": "fulltext",
+        "placeholder": "Search by keyword",
+        "value": "Minerva",
+        "rect": {
+          "x": 235,
+          "y": 434,
+          "w": 455,
+          "h": 33
+        }
+      },
+      {
+        "kind": "selectmenu",
+        "label": "per page per page",
+        "id": "product_listing.product_listing.listing_top.listing_paging_sizes",
+        "value": "20",
+        "options": [
+          "20",
+          "30",
+          "50",
+          "100",
+          "200",
+          "Custom",
+          "Save"
+        ],
+        "rect": {
+          "x": 733,
+          "y": 487,
+          "w": 60,
+          "h": 21
+        }
+      },
+      {
+        "kind": "number_input",
+        "label": "of 1",
+        "id": "75",
+        "value": "1",
+        "rect": {
+          "x": 896,
+          "y": 488,
+          "w": 44,
+          "h": 33
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "77",
+        "id": "77",
+        "value": "off",
+        "group_id": "grid:0",
+        "group_index": 0,
+        "group_field": "77",
+        "rect": {
+          "x": 103,
+          "y": 566,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1477",
+        "id": "idscheck1477",
+        "value": "off",
+        "group_id": "grid:0",
+        "group_index": 0,
+        "group_field": "idscheck1477",
+        "rect": {
+          "x": 97,
+          "y": 648,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1481",
+        "id": "idscheck1481",
+        "value": "off",
+        "group_id": "grid:1",
+        "group_index": 1,
+        "group_field": "idscheck1481",
+        "rect": {
+          "x": 97,
+          "y": 741,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1485",
+        "id": "idscheck1485",
+        "value": "off",
+        "group_id": "grid:2",
+        "group_index": 2,
+        "group_field": "idscheck1485",
+        "rect": {
+          "x": 97,
+          "y": 833,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1489",
+        "id": "idscheck1489",
+        "value": "off",
+        "group_id": "grid:3",
+        "group_index": 3,
+        "group_field": "idscheck1489",
+        "rect": {
+          "x": 97,
+          "y": 926,
+          "w": 13,
+          "h": 13
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1478",
+        "id": "idscheck1478",
+        "value": "off",
+        "group_id": "grid:4",
+        "group_index": 4,
+        "group_field": "idscheck1478",
+        "rect": {
+          "x": 97,
+          "y": 1018,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1482",
+        "id": "idscheck1482",
+        "value": "off",
+        "group_id": "grid:5",
+        "group_index": 5,
+        "group_field": "idscheck1482",
+        "rect": {
+          "x": 97,
+          "y": 1110,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1486",
+        "id": "idscheck1486",
+        "value": "off",
+        "group_id": "grid:6",
+        "group_index": 6,
+        "group_field": "idscheck1486",
+        "rect": {
+          "x": 97,
+          "y": 1203,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1490",
+        "id": "idscheck1490",
+        "value": "off",
+        "group_id": "grid:7",
+        "group_index": 7,
+        "group_field": "idscheck1490",
+        "rect": {
+          "x": 97,
+          "y": 1295,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1479",
+        "id": "idscheck1479",
+        "value": "off",
+        "group_id": "grid:8",
+        "group_index": 8,
+        "group_field": "idscheck1479",
+        "rect": {
+          "x": 97,
+          "y": 1387,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1483",
+        "id": "idscheck1483",
+        "value": "off",
+        "group_id": "grid:9",
+        "group_index": 9,
+        "group_field": "idscheck1483",
+        "rect": {
+          "x": 97,
+          "y": 1480,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1487",
+        "id": "idscheck1487",
+        "value": "off",
+        "group_id": "grid:10",
+        "group_index": 10,
+        "group_field": "idscheck1487",
+        "rect": {
+          "x": 97,
+          "y": 1572,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1491",
+        "id": "idscheck1491",
+        "value": "off",
+        "group_id": "grid:11",
+        "group_index": 11,
+        "group_field": "idscheck1491",
+        "rect": {
+          "x": 97,
+          "y": 1665,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1480",
+        "id": "idscheck1480",
+        "value": "off",
+        "group_id": "grid:12",
+        "group_index": 12,
+        "group_field": "idscheck1480",
+        "rect": {
+          "x": 97,
+          "y": 1757,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1484",
+        "id": "idscheck1484",
+        "value": "off",
+        "group_id": "grid:13",
+        "group_index": 13,
+        "group_field": "idscheck1484",
+        "rect": {
+          "x": 97,
+          "y": 1849,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1488",
+        "id": "idscheck1488",
+        "value": "off",
+        "group_id": "grid:14",
+        "group_index": 14,
+        "group_field": "idscheck1488",
+        "rect": {
+          "x": 97,
+          "y": 1942,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "idscheck1492",
+        "id": "idscheck1492",
+        "value": "off",
+        "group_id": "grid:15",
+        "group_index": 15,
+        "group_field": "idscheck1492",
+        "rect": {
+          "x": 97,
+          "y": 2032,
+          "w": 13,
+          "h": 13
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      }
+    ],
+    "form_controls_meta": {
+      "total_rendered": 21,
+      "returned": 21,
+      "truncated": false,
+      "coverage": "complete",
+      "raw_limit_hit": false,
+      "viewport_height": 836
+    },
+    "viewport": {
+      "type": "paged",
+      "page_index": 1,
+      "page_count": 1,
+      "has_next_page": false,
+      "has_prev_page": false,
+      "page_size": 20,
+      "page_size_options": [
+        20,
+        30,
+        50,
+        100,
+        200
+      ],
+      "has_page_size_control": true,
+      "page_size_menu_open": false
+    },
+    "semantic_tree": [
+      {
+        "role": "link",
+        "key": "Magento Admin Panel",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/",
+        "ref": 733362,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " DASHBOARD",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/dashboard/",
+        "ref": 733366,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " SALES",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/#",
+        "ref": 733369,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CATALOG",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/#",
+        "ref": 733402,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CUSTOMERS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/#",
+        "ref": 733420,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " MARKETING",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/#",
+        "ref": 733439,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CONTENT",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/#",
+        "ref": 733506,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " REPORTS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/#",
+        "ref": 733552,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " STORES",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/#",
+        "ref": 733677,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " SYSTEM",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/#",
+        "ref": 733753,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " FIND PARTNERS & EXTENSIONS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/marketplace/index/",
+        "ref": 733836,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "System Messages: 2",
+        "value": "",
+        "url": "",
+        "ref": 733858,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Cache Management",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/cache/",
+        "ref": 733864,
+        "depth": 0
+      },
+      {
+        "role": "heading",
+        "key": "Products",
+        "value": "",
+        "url": "",
+        "ref": 733881,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " admin",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/system_account/index/",
+        "ref": 733884,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/notification/index/",
+        "ref": 733896,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 732821,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Add Product",
+        "value": "",
+        "url": "",
+        "ref": 733915,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Add product of type",
+        "value": "",
+        "url": "",
+        "ref": 733917,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": " Default View",
+        "value": "",
+        "url": "",
+        "ref": 733948,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": " Columns",
+        "value": "",
+        "url": "",
+        "ref": 733962,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Filters",
+        "value": "",
+        "url": "",
+        "ref": 734048,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 743288,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Clear all",
+        "value": "",
+        "url": "",
+        "ref": 734060,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "Search by keyword",
+        "value": "",
+        "url": "",
+        "ref": 732833,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Search",
+        "value": "",
+        "url": "",
+        "ref": 732845,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Actions",
+        "value": "",
+        "url": "",
+        "ref": 735189,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "per page",
+        "value": "",
+        "url": "",
+        "ref": 732842,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "per page Select",
+        "value": "",
+        "url": "",
+        "ref": 735216,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 732854,
+        "depth": 0
+      },
+      {
+        "role": "spinbutton",
+        "key": "of 1",
+        "value": "",
+        "url": "",
+        "ref": 732838,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 732855,
+        "depth": 0
+      },
+      {
+        "role": "table",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 735488,
+        "depth": 0
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 735490,
+        "depth": 1
+      },
+      {
+        "role": "columnheader",
+        "key": "Options",
+        "value": "",
+        "url": "",
+        "ref": 735491,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 732857,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "Options",
+        "value": "",
+        "url": "",
+        "ref": 732859,
+        "depth": 3
+      },
+      {
+        "role": "columnheader",
+        "key": "ID",
+        "value": "",
+        "url": "",
+        "ref": 732861,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Thumbnail",
+        "value": "",
+        "url": "",
+        "ref": 732862,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Name",
+        "value": "",
+        "url": "",
+        "ref": 732863,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Type",
+        "value": "",
+        "url": "",
+        "ref": 732864,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "↓ Attribute Set",
+        "value": "",
+        "url": "",
+        "ref": 732865,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "SKU",
+        "value": "",
+        "url": "",
+        "ref": 732867,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Price",
+        "value": "",
+        "url": "",
+        "ref": 732868,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Quantity",
+        "value": "",
+        "url": "",
+        "ref": 732869,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Salable Quantity",
+        "value": "",
+        "url": "",
+        "ref": 732870,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Visibility",
+        "value": "",
+        "url": "",
+        "ref": 732871,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Status",
+        "value": "",
+        "url": "",
+        "ref": 732872,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Websites",
+        "value": "",
+        "url": "",
+        "ref": 732873,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Last Updated At",
+        "value": "",
+        "url": "",
+        "ref": 732874,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Action",
+        "value": "",
+        "url": "",
+        "ref": 732875,
+        "depth": 2
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741755,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741816,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 741817,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1477",
+        "value": "",
+        "url": "",
+        "ref": 741820,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-XS-Black",
+        "value": "",
+        "url": "",
+        "ref": 741822,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-XS-Black",
+        "value": "",
+        "url": "",
+        "ref": 741826,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 741828,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 741830,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-XS-Black",
+        "value": "",
+        "url": "",
+        "ref": 741832,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 741834,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 741836,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 100",
+        "value": "",
+        "url": "",
+        "ref": 741838,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 741851,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 741853,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 741855,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 741857,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XS-Black",
+        "value": "",
+        "url": "",
+        "ref": 741859,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XS-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1477/",
+        "ref": 741866,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741758,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741871,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 741872,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1481",
+        "value": "",
+        "url": "",
+        "ref": 741875,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-S-Blue",
+        "value": "",
+        "url": "",
+        "ref": 741877,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-S-Blue",
+        "value": "",
+        "url": "",
+        "ref": 741881,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 741883,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 741885,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-S-Blue",
+        "value": "",
+        "url": "",
+        "ref": 741887,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 741889,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 741891,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 100",
+        "value": "",
+        "url": "",
+        "ref": 741893,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 741906,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 741908,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 741910,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 741912,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-S-Blue",
+        "value": "",
+        "url": "",
+        "ref": 741914,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-S-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1481/",
+        "ref": 741921,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741761,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741926,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 741927,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1485",
+        "value": "",
+        "url": "",
+        "ref": 741930,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-M-Red",
+        "value": "",
+        "url": "",
+        "ref": 741932,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-M-Red",
+        "value": "",
+        "url": "",
+        "ref": 741936,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 741938,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 741940,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-M-Red",
+        "value": "",
+        "url": "",
+        "ref": 741942,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 741944,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 741946,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 100",
+        "value": "",
+        "url": "",
+        "ref": 741948,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 741961,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 741963,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 741965,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 741967,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-M-Red",
+        "value": "",
+        "url": "",
+        "ref": 741969,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-M-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1485/",
+        "ref": 741976,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741764,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741981,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 741982,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1489",
+        "value": "",
+        "url": "",
+        "ref": 741985,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-XL-Black",
+        "value": "",
+        "url": "",
+        "ref": 741987,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-XL-Black",
+        "value": "",
+        "url": "",
+        "ref": 741991,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 741993,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 741995,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-XL-Black",
+        "value": "",
+        "url": "",
+        "ref": 741997,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 741999,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742001,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 99",
+        "value": "",
+        "url": "",
+        "ref": 742003,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742016,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742018,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742020,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742022,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XL-Black",
+        "value": "",
+        "url": "",
+        "ref": 742024,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XL-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1489/",
+        "ref": 742031,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741767,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742036,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742037,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1478",
+        "value": "",
+        "url": "",
+        "ref": 742040,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-XS-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742042,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-XS-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742046,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742048,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742050,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-XS-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742052,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742054,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "3.0000",
+        "value": "",
+        "url": "",
+        "ref": 742056,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 3",
+        "value": "",
+        "url": "",
+        "ref": 742058,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742071,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742073,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742075,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 23, 2023 6:35:28 PM",
+        "value": "",
+        "url": "",
+        "ref": 742077,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XS-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742079,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XS-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1478/",
+        "ref": 742086,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741770,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742091,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742092,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1482",
+        "value": "",
+        "url": "",
+        "ref": 742095,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-S-Red",
+        "value": "",
+        "url": "",
+        "ref": 742097,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-S-Red",
+        "value": "",
+        "url": "",
+        "ref": 742101,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742103,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742105,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-S-Red",
+        "value": "",
+        "url": "",
+        "ref": 742107,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742109,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742111,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 99",
+        "value": "",
+        "url": "",
+        "ref": 742113,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742126,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742128,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742130,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742132,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-S-Red",
+        "value": "",
+        "url": "",
+        "ref": 742134,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-S-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1482/",
+        "ref": 742141,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741773,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742146,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742147,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1486",
+        "value": "",
+        "url": "",
+        "ref": 742150,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-L-Black",
+        "value": "",
+        "url": "",
+        "ref": 742152,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-L-Black",
+        "value": "",
+        "url": "",
+        "ref": 742156,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742158,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742160,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-L-Black",
+        "value": "",
+        "url": "",
+        "ref": 742162,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742164,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742166,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 100",
+        "value": "",
+        "url": "",
+        "ref": 742168,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742181,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742183,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742185,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742187,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-L-Black",
+        "value": "",
+        "url": "",
+        "ref": 742189,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-L-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1486/",
+        "ref": 742196,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741776,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742201,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742202,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1490",
+        "value": "",
+        "url": "",
+        "ref": 742205,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-XL-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742207,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-XL-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742211,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742213,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742215,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-XL-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742217,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742219,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742221,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 99",
+        "value": "",
+        "url": "",
+        "ref": 742223,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742236,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742238,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742240,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742242,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XL-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742244,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XL-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1490/",
+        "ref": 742251,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741779,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742256,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742257,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1479",
+        "value": "",
+        "url": "",
+        "ref": 742260,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-XS-Red",
+        "value": "",
+        "url": "",
+        "ref": 742262,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-XS-Red",
+        "value": "",
+        "url": "",
+        "ref": 742266,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742268,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742270,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-XS-Red",
+        "value": "",
+        "url": "",
+        "ref": 742272,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742274,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742276,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 98",
+        "value": "",
+        "url": "",
+        "ref": 742278,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742291,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742293,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742295,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742297,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XS-Red",
+        "value": "",
+        "url": "",
+        "ref": 742299,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XS-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1479/",
+        "ref": 742306,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741782,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742311,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742312,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1483",
+        "value": "",
+        "url": "",
+        "ref": 742315,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-M-Black",
+        "value": "",
+        "url": "",
+        "ref": 742317,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-M-Black",
+        "value": "",
+        "url": "",
+        "ref": 742321,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742323,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742325,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-M-Black",
+        "value": "",
+        "url": "",
+        "ref": 742327,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742329,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742331,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 99",
+        "value": "",
+        "url": "",
+        "ref": 742333,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742346,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742348,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742350,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742352,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-M-Black",
+        "value": "",
+        "url": "",
+        "ref": 742354,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-M-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1483/",
+        "ref": 742361,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741785,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742366,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742367,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1487",
+        "value": "",
+        "url": "",
+        "ref": 742370,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-L-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742372,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-L-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742376,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742378,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742380,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-L-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742382,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742384,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742386,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 100",
+        "value": "",
+        "url": "",
+        "ref": 742388,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742401,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742403,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742405,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742407,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-L-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742409,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-L-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1487/",
+        "ref": 742416,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741788,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742421,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742422,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1491",
+        "value": "",
+        "url": "",
+        "ref": 742425,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-XL-Red",
+        "value": "",
+        "url": "",
+        "ref": 742427,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-XL-Red",
+        "value": "",
+        "url": "",
+        "ref": 742431,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742433,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742435,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-XL-Red",
+        "value": "",
+        "url": "",
+        "ref": 742437,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742439,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742441,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 100",
+        "value": "",
+        "url": "",
+        "ref": 742443,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742456,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742458,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742460,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742462,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XL-Red",
+        "value": "",
+        "url": "",
+        "ref": 742464,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-XL-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1491/",
+        "ref": 742471,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741791,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742476,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742477,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1480",
+        "value": "",
+        "url": "",
+        "ref": 742480,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-S-Black",
+        "value": "",
+        "url": "",
+        "ref": 742482,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-S-Black",
+        "value": "",
+        "url": "",
+        "ref": 742486,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742488,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742490,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-S-Black",
+        "value": "",
+        "url": "",
+        "ref": 742492,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742494,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742496,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 100",
+        "value": "",
+        "url": "",
+        "ref": 742498,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742511,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742513,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742515,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742517,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-S-Black",
+        "value": "",
+        "url": "",
+        "ref": 742519,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-S-Black",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1480/",
+        "ref": 742526,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741794,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742531,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742532,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1484",
+        "value": "",
+        "url": "",
+        "ref": 742535,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-M-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742537,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-M-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742541,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742543,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742545,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-M-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742547,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742549,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742551,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 100",
+        "value": "",
+        "url": "",
+        "ref": 742553,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742566,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742568,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742570,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742572,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-M-Blue",
+        "value": "",
+        "url": "",
+        "ref": 742574,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-M-Blue",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1484/",
+        "ref": 742581,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741797,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742586,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742587,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1488",
+        "value": "",
+        "url": "",
+        "ref": 742590,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee-L-Red",
+        "value": "",
+        "url": "",
+        "ref": 742592,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee-L-Red",
+        "value": "",
+        "url": "",
+        "ref": 742596,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Simple Product",
+        "value": "",
+        "url": "",
+        "ref": 742598,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742600,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08-L-Red",
+        "value": "",
+        "url": "",
+        "ref": 742602,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742604,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "100.0000",
+        "value": "",
+        "url": "",
+        "ref": 742606,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Default Stock: 99",
+        "value": "",
+        "url": "",
+        "ref": 742608,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 742621,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742623,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742625,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742627,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-L-Red",
+        "value": "",
+        "url": "",
+        "ref": 742629,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee-L-Red",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1488/",
+        "ref": 742636,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 741800,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742641,
+        "depth": 2
+      },
+      {
+        "role": "checkbox",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 742642,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "1492",
+        "value": "",
+        "url": "",
+        "ref": 742645,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech&amp;trade; V-Tee",
+        "value": "",
+        "url": "",
+        "ref": 742647,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Minerva LumaTech™ V-Tee",
+        "value": "",
+        "url": "",
+        "ref": 742651,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Configurable Product",
+        "value": "",
+        "url": "",
+        "ref": 742653,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Top",
+        "value": "",
+        "url": "",
+        "ref": 742655,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "WS08",
+        "value": "",
+        "url": "",
+        "ref": 742657,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "$32.00",
+        "value": "",
+        "url": "",
+        "ref": 742659,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "0.0000",
+        "value": "",
+        "url": "",
+        "ref": 742661,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 742663,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Catalog, Search",
+        "value": "",
+        "url": "",
+        "ref": 742676,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 742678,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Main Website",
+        "value": "",
+        "url": "",
+        "ref": 742680,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Apr 19, 2023 12:13:47 PM",
+        "value": "",
+        "url": "",
+        "ref": 742682,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Edit Minerva LumaTech&trade; V-Tee",
+        "value": "",
+        "url": "",
+        "ref": 742684,
+        "depth": 2
+      },
+      {
+        "role": "link",
+        "key": "Edit Minerva LumaTech&trade; V-Tee",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1492/",
+        "ref": 742691,
+        "depth": 3
+      },
+      {
+        "role": "link",
+        "key": "",
+        "value": "",
+        "url": "http://magento.com/",
+        "ref": 735955,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Privacy Policy",
+        "value": "",
+        "url": "https://www.adobe.com/privacy/policy.html",
+        "ref": 735958,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Account Activity",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/security/session/activity/",
+        "ref": 735959,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Report an Issue",
+        "value": "",
+        "url": "https://github.com/magento/magento2/issues",
+        "ref": 735960,
+        "depth": 0
+      }
+    ],
+    "applied_filters": {
+      "Keyword": "Minerva"
+    },
+    "applied_filter_meta": {
+      "source": "chips",
+      "indicator_channel": "present",
+      "fallback_channel": "absent",
+      "chip_container": "present",
+      "legacy_grid": "absent"
+    }
+  }
+}

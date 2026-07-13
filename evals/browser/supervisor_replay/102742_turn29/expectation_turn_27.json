@@ -1,7 +1,10 @@
 {
-  "turn": 29,
+  "turn": 27,
+  "should_act": true,
   "reject_target_controls": [
-    "Next"
+    "Next",
+    "Green",
+    "XXXL"
   ],
   "action": {
     "action_type": "tap"
