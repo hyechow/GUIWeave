@@ -10,30 +10,23 @@ steps belong in explicit DSL structure such as ``foreach`` body runs.
 from __future__ import annotations
 
 import re
+from hashlib import sha1
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from gui_agent.core.runtime.traversal import TraversalSession, window_from_signal
 from gui_agent.core.schemas import Observation
-
-from .controller import TraversalController
 
 
 Action = Literal[
-    "set_page_size",
     "paginate_next",
     "paginate_prev",
     "scroll_down",
+    "wait",
     "schema_mismatch",
     "done",
     "fallback",
 ]
-
-# Pixel-freeze fallback (no DOM viewport signal): consecutive global similarity at/above this
-# threshold over this many frames reads as "stopped scrolling" — mirrors
-# gui_agent.core.run.progress_monitor.STUCK_SCREEN_WINDOW/STUCK_SCREEN_FROZEN, kept as a
-# separate constant so traversal's boundary call doesn't couple to the stuck detector's tuning.
-_PIXEL_WINDOW = 3
-_PIXEL_FROZEN_SIMILARITY = 0.99
 
 
 def _norm(value: Any) -> str:
@@ -74,6 +67,32 @@ def _resolve_field(headers: list[str], field: str) -> ColumnResolution:
     for normalized, header in normalized_headers:
         if normalized == wanted:
             return ColumnResolution(field, header, "resolved", 1.0, "exact normalized match")
+
+    # Link-bearing columns are capabilities, not stable display labels. A decomposer may call the
+    # sole row link detail_url/action_url/edit_url while the normalized DOM table calls it
+    # Action_url. Resolve a unique URL-like header without a site vocabulary.
+    if wanted.endswith(("url", "link", "href")):
+        url_headers = [
+            header
+            for normalized, header in normalized_headers
+            if normalized.endswith(("url", "link", "href"))
+        ]
+        if len(url_headers) == 1:
+            return ColumnResolution(
+                field,
+                url_headers[0],
+                "resolved",
+                0.92,
+                "requested row-link capability and table has one URL-like column",
+            )
+        if len(url_headers) > 1:
+            return ColumnResolution(
+                field,
+                None,
+                "ambiguous",
+                0.0,
+                f"URL-like columns: {url_headers}",
+            )
 
     field_tokens = _tokens(field)
     if field_tokens and field_tokens[-1] == "id":
@@ -221,31 +240,39 @@ class ListTraversalRuntime:
     var: str
     returns: list[str]
     read_spec: str = ""
+    limit: int | None = None
     rows: list[dict[str, str]] = field(default_factory=list)
     _seen_rows: set[str] = field(default_factory=set)
-    _traversal: TraversalController = field(init=False)
+    _traversal: TraversalSession = field(init=False)
     _last_decision: ListTraversalDecision = field(
         default_factory=lambda: ListTraversalDecision("fallback", "尚未观察集合", "观察当前集合")
     )
     expected_total: int | None = None
     _last_visible_rows: int = 0
     _last_resolutions: list[ColumnResolution] = field(default_factory=list)
-    _recent_frames: list[bytes] = field(default_factory=list)
+    _current_table: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        self._traversal = TraversalController(self.var)
+        self._traversal = TraversalSession(
+            self.var,
+            coverage="complete",
+            boundary_status="done",
+            no_progress_status="done",
+        )
 
     @property
     def done(self) -> bool:
         return self._last_decision.action == "done"
 
     def update(self, observation: Observation) -> ListTraversalDecision:
-        """Row VALUE extraction (table-specific, when a table is found) is independent of the
-        TRAVERSAL decision (view-window-specific: ``observation.viewport``, or a pixel-freeze
-        fallback when the platform has no DOM signal). A run with no table at all can still
-        paginate/scroll deterministically; a table only adds row extraction on top of that."""
+        """Consume rows, then traverse the exact surface that produced them.
+
+        A table's own traversal signal is authoritative for that table. The page-level viewport
+        is used only when no table was resolved (card/feed or visual-only collection).
+        """
         picked = _best_table(getattr(observation, "tables", None), self.returns)
         table = picked[0] if picked else None
+        self._current_table = table
         resolutions = picked[1] if picked else []
         mismatch: ListTraversalDecision | None = None
         if table is not None:
@@ -275,40 +302,13 @@ class ListTraversalRuntime:
                         ),
                         "停止翻页或滚动；需要先修正读取字段与表头映射，或使用视觉列表读取兜底",
                     )
-        decision = mismatch if mismatch is not None else self._decide_from_list(self._viewport_signal(observation))
+        decision = mismatch if mismatch is not None else self._decide_from_list(observation, table)
         self._last_decision = decision
         return decision
 
-    def _viewport_signal(self, observation: Observation) -> dict[str, Any] | None:
-        """The view window's traversal signal: the platform's own ``Observation.viewport`` when
-        available, else a pixel-freeze fallback (consecutive near-identical frames) — never
-        ``table.get("traversal")``, so traversal works with or without a resolvable table."""
-        viewport = getattr(observation, "viewport", None)
-        if isinstance(viewport, dict):
-            self._recent_frames.clear()
-            return viewport
-        return self._pixel_fallback_viewport(getattr(observation, "png_bytes", None))
-
-    def _pixel_fallback_viewport(self, png_bytes: bytes | None) -> dict[str, Any] | None:
-        """Platforms with no DOM traversal signal (iphone/android, or a browser page where the
-        page-level sensor found nothing): treat the view window as still scrollable until the
-        last few frames are near-identical (mirrors ProgressMonitor.check_screen_similarity's
-        frozen threshold, kept independent to avoid coupling traversal to the stuck detector)."""
-        if not png_bytes:
-            return None
-        self._recent_frames.append(png_bytes)
-        if len(self._recent_frames) > _PIXEL_WINDOW:
-            self._recent_frames.pop(0)
-        if len(self._recent_frames) < _PIXEL_WINDOW:
-            return None
-        from gui_agent.core.vision.frame_analysis import region_change
-
-        sims = [
-            region_change(self._recent_frames[i - 1], self._recent_frames[i])[0]
-            for i in range(1, len(self._recent_frames))
-        ]
-        frozen = all(sim >= _PIXEL_FROZEN_SIMILARITY for sim in sims)
-        return {"type": "scroll", "can_scroll_more": not frozen, "at_scroll_end": frozen}
+    @property
+    def current_table(self) -> dict[str, Any] | None:
+        return self._current_table
 
     def prompt_text(self) -> str:
         return (
@@ -348,30 +348,58 @@ class ListTraversalRuntime:
             self._seen_rows.add(key)
             self.rows.append({field: row.result_values.get(field, "") for field in self.returns})
 
-    def _decide_from_list(self, viewport: dict[str, Any] | None) -> ListTraversalDecision:
-        if self.expected_total and len(self.rows) >= self.expected_total:
+    def _decide_from_list(
+        self,
+        observation: Observation,
+        table: dict[str, Any] | None,
+    ) -> ListTraversalDecision:
+        goal_satisfied = bool(
+            (self.limit and len(self.rows) >= self.limit)
+            or (self.expected_total and len(self.rows) >= self.expected_total)
+        )
+        if goal_satisfied and table is None:
             return ListTraversalDecision(
                 "done",
-                f"已累计 {len(self.rows)} 行，达到列表声明总数 {self.expected_total}",
+                f"已累计 {len(self.rows)} 行，达到采集目标",
                 "停止，不要继续翻页或滚动",
             )
 
-        action = self._traversal.update(viewport)
-        if action == "set_page_size":
-            target = self._traversal.target_page_size
-            current = viewport.get("page_size") if viewport else None
+        signal = None
+        surface_id = ""
+        content_key = ""
+        if table is not None:
+            signal = table.get("traversal") if isinstance(table.get("traversal"), dict) else None
+            surface_id = self._table_surface_id(table)
+            content_key = self._table_content_key(table)
+        else:
+            viewport = getattr(observation, "viewport", None)
+            signal = viewport if isinstance(viewport, dict) else None
+            surface_id = f"viewport:{self.var}"
+            png = getattr(observation, "png_bytes", None) or b""
+            content_key = sha1(png).hexdigest() if png else ""
+            # Visual-only platforms expose no structural boundary. Treat each frame as a
+            # forward-scroll window; TraversalSession turns repeated frames into a boundary.
+            if signal is None and content_key:
+                signal = {"type": "scroll", "can_scroll_more": True, "at_scroll_end": False}
+
+        window = window_from_signal(signal, surface_id=surface_id, content_key=content_key)
+        if window is None:
             return ListTraversalDecision(
-                "set_page_size",
-                f"列表支持调整每页显示条数（当前 {current}，可设为 {target}），先放大每页条数可减少翻页次数",
-                f"把每页显示条数切换为 {target}（先打开每页条数下拉/输入框，选中或输入该值并确认），还不要翻页",
+                "done" if goal_satisfied else "fallback",
+                "采集目标已满足" if goal_satisfied else "遍历状态不完整",
+                "停止" if goal_satisfied else "判断是否还有下一页/更多行；若有则前进，否则停止",
             )
-        if action == "paginate_next":
+
+        decision = self._traversal.observe(window, goal_satisfied=goal_satisfied)
+        if decision.action == "move_forward" and signal.get("type") == "paged":
             return ListTraversalDecision("paginate_next", "感知到下一页可用", "点击下一页")
-        if action == "paginate_prev":
+        if decision.action == "move_backward" and signal.get("type") == "paged":
             return ListTraversalDecision("paginate_prev", "采集从列表中段开始，先回到第一页", "点击上一页或第 1 页")
-        if action == "scroll_down":
+        if decision.action == "move_forward":
             return ListTraversalDecision("scroll_down", "列表还能继续滚动", "向下滚动加载更多行")
-        if action == "done":
+        if decision.action == "wait":
+            return ListTraversalDecision("wait", decision.reason, "等待当前窗口完成更新后重新观察")
+        if decision.action == "done":
             if self.expected_total and len(self.rows) < self.expected_total:
                 if self.rows:
                     return ListTraversalDecision(
@@ -390,9 +418,25 @@ class ListTraversalRuntime:
             return ListTraversalDecision("done", f"无可用后续页/滚动；累计 {len(self.rows)} 行", "停止")
         return ListTraversalDecision(
             "fallback",
-            "遍历状态不完整",
-            "判断是否还有下一页/更多行；若有则前进，否则停止",
+            decision.reason,
+            "重新绑定当前集合的翻页/滚动区域后继续",
         )
+
+    def _table_surface_id(self, table: dict[str, Any]) -> str:
+        path = str(table.get("path") or "").strip()
+        caption = _norm(table.get("caption"))
+        headers = ",".join(_norm(header) for header in table.get("headers") or [])
+        return f"table:{path or caption or headers or self.var}"
+
+    @staticmethod
+    def _table_content_key(table: dict[str, Any]) -> str:
+        rows = table.get("rows") or []
+        text = repr([
+            sorted((str(key), str(value or "")) for key, value in row.items())
+            for row in rows
+            if isinstance(row, dict)
+        ])
+        return sha1(text.encode("utf-8")).hexdigest()
 
     def _result_values(self, headers: list[str], table_values: dict[str, str]) -> dict[str, str]:
         out: dict[str, str] = {}

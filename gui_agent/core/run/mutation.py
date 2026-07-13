@@ -11,6 +11,7 @@ from gui_agent.core.schemas import (
     MutationAuthorization,
     Observation,
     PolicyTurn,
+    target_value_options,
 )
 
 ResolutionStatus = Literal[
@@ -92,18 +93,29 @@ def _groups(observation: Observation) -> tuple[dict[str, list[dict]], bool]:
     return groups, repeated
 
 
-def _match_fields(
-    controls: list[dict], desired: tuple[tuple[str, str], ...]
-) -> dict[str, dict] | None:
-    matched: dict[str, dict] = {}
-    for field, value in desired:
+DesiredState = dict[str, tuple[str, ...]]
+TargetControl = tuple[str, str, dict]
+
+
+def _match_targets(
+    controls: list[dict], desired: DesiredState
+) -> list[TargetControl] | None:
+    matched: list[TargetControl] = []
+    for field, values in desired.items():
         candidates = [item for item in controls if _matches_field(item, field)]
-        if len(candidates) > 1:
-            candidates = [item for item in candidates if _option_is(item, value)]
-        if len(candidates) > 1:
+        if not candidates:
+            continue
+        choices = [item for item in candidates if _is_choice(item)]
+        if choices:
+            for value in values:
+                options = [item for item in choices if _option_is(item, value)]
+                if len(options) != 1:
+                    return None
+                matched.append((field, value, options[0]))
+        elif len(values) == 1 and len(candidates) == 1:
+            matched.append((field, values[0], candidates[0]))
+        else:
             return None
-        if candidates:
-            matched[field] = candidates[0]
     return matched
 
 
@@ -126,57 +138,101 @@ def _source(control: dict) -> Literal["visual", "structural"]:
 def _group_state(
     subject_ref: str,
     controls: list[dict],
-    desired: tuple[tuple[str, str], ...],
+    desired: DesiredState,
     *,
     singleton: bool,
 ) -> SubjectResolution | None:
-    matched = _match_fields(controls, desired)
-    if matched is None:
+    targets = _match_targets(controls, desired)
+    if targets is None:
         return None
+    matched_fields = {field for field, _, _ in targets}
 
-    for field, value in desired:
+    selected_extras: list[tuple[str, list[dict]]] = []
+    cleanup_candidates: list[tuple[int, str, str, dict]] = []
+    for field, values in desired.items():
         field_controls = [item for item in controls if _matches_field(item, field)]
-        if not any(_is_choice(item) for item in field_controls):
+        choices = [item for item in field_controls if _is_choice(item)]
+        if not choices:
             continue
-        extras = [item for item in field_controls if _selected(item) and not _option_is(item, value)]
+        extras = [
+            item
+            for item in choices
+            if _selected(item)
+            and not any(_option_is(item, value) for value in values)
+        ]
         if extras:
-            extra = extras[0]
-            label = str(extra.get("option_text") or extra.get("label") or "").strip()
-            return SubjectResolution(
-                "preparing",
-                subject_ref,
-                _source(extra),
-                field,
-                f"{field} {label}" if label else field,
-                action_family="select",
-                evidence=f"{subject_ref} has an extra selected {field} value {label!r}",
+            selected_extras.append((field, extras))
+            pending_count = sum(
+                not any(_option_is(item, value) and _selected(item) for item in choices)
+                for value in values
             )
+            direct_cost = len(extras) + pending_count
+            field_targets = [
+                control
+                for target_field, _, control in targets
+                if target_field == field
+            ]
+            operations = next(
+                (
+                    item.get("choice_operations") or {}
+                    for item in field_targets
+                    if item.get("choice_operations")
+                ),
+                {},
+            )
+            clear_label = str(operations.get("clear_all") or "").strip()
+            clear_cost = 1 + len(values)
+            if clear_label and clear_cost < direct_cost:
+                cleanup_candidates.append(
+                    (direct_cost - clear_cost, field, clear_label, field_targets[0])
+                )
 
-    equal = {
-        field for field, value in desired
-        if field in matched and _satisfies(matched[field], value)
-    }
-    if len(equal) == len(desired):
+    if cleanup_candidates:
+        _, field, label, control = max(cleanup_candidates, key=lambda item: item[0])
+        return SubjectResolution(
+            "preparing",
+            subject_ref,
+            _source(control),
+            field,
+            f"{field} {label}" if label else field,
+            action_family="select",
+            evidence=f"{subject_ref} can clear the {field} choice group before selecting its target",
+        )
+
+    if selected_extras:
+        field, extras = selected_extras[0]
+        extra = extras[0]
+        label = str(extra.get("option_text") or extra.get("label") or "").strip()
+        return SubjectResolution(
+            "preparing", subject_ref, _source(extra), field,
+            f"{field} {label}" if label else field,
+            action_family="select",
+            evidence=f"{subject_ref} has an extra selected {field} value {label!r}",
+        )
+
+    if matched_fields == set(desired) and all(
+        _satisfies(control, value) for _, value, control in targets
+    ):
         return SubjectResolution(
             "complete", subject_ref=subject_ref,
             evidence=f"desired state is complete on {subject_ref}",
         )
 
     pending = [
-        (field, value, matched[field])
-        for field, value in desired
-        if field not in equal
-        and field in matched
-        and any(token in _norm(matched[field].get("kind")) for token in WRITABLE_KINDS)
+        (field, value, control)
+        for field, value, control in targets
+        if not _satisfies(control, value)
+        and any(token in _norm(control.get("kind")) for token in WRITABLE_KINDS)
     ]
     if not pending:
         return None
-    all_blank = len(matched) == len(desired) and all(
-        (_option_is(matched[field], value) and not _selected(matched[field]))
-        if _is_choice(matched[field]) else not _norm(_current(matched[field]))
-        for field, value in desired
+    target_progress = any(_satisfies(control, value) for _, value, control in targets)
+    all_blank = matched_fields == set(desired) and all(
+        (_option_is(control, value) and not _selected(control))
+        if _is_choice(control) else not _norm(_current(control))
+        for _, value, control in targets
     )
-    if not (singleton or equal or all_blank):
+    if not (singleton or target_progress or all_blank):
         return None
 
     field, value, control = pending[0]
@@ -223,11 +279,12 @@ def _resolve(
     history: list[PolicyTurn],
     surface_id: str,
 ) -> SubjectResolution:
-    desired = tuple(
-        (str(field), str(value))
+    desired = {
+        str(field): options
         for field, value in (milestone.target_values or {}).items()
-        if _norm(field) and _norm(value)
-    )
+        if _norm(field)
+        if (options := target_value_options(value))
+    }
     if not desired:
         return SubjectResolution("unknown", evidence="no desired-state map")
 
@@ -276,10 +333,12 @@ def _resolve(
     if repeated and coverage == "complete":
         return SubjectResolution("absent", evidence="complete inventory has no target subject")
     if not observation.form_controls and len(desired) == 1:
-        field, value = desired[0]
+        field, values = next(iter(desired.items()))
+        if len(values) != 1:
+            return SubjectResolution("unknown", evidence="multi-value target needs observable choices")
         return SubjectResolution(
             "writable", f"visual:{surface_id or milestone.id}", "visual",
-            field, field, value, evidence="one-shot visual subject",
+            field, field, values[0], evidence="one-shot visual subject",
         )
     return SubjectResolution("unknown", evidence="subject identity is not observable")
 
@@ -309,4 +368,8 @@ def authorize_mutation(
     )
 
 
-__all__ = ["SubjectResolution", "authorize_mutation", "resolve_mutation"]
+__all__ = [
+    "SubjectResolution",
+    "authorize_mutation",
+    "resolve_mutation",
+]

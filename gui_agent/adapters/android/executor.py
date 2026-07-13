@@ -65,6 +65,8 @@ class AndroidExecutor(VisionExecutor):
 
     def execute(self, decision, app_name: str = "", png_bytes=None, is_home_screen: bool = False) -> bool:
         action = decision.action
+        if action is None:
+            return False
         if action.action_type == "scroll" and action.direction:
             print(f"\n动作: [{action.action_type}] {action.description}")
             self._execute_scroll_action(action)

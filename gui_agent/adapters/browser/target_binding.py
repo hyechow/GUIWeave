@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from itertools import groupby
 from urllib.parse import urlsplit
 
 from gui_agent.core.schemas import (
@@ -10,6 +9,8 @@ from gui_agent.core.schemas import (
     Observation,
     SupervisorStep,
     TargetBinding,
+    TargetValue,
+    target_value_options,
 )
 from .control_grounding import matches_target_control
 
@@ -166,42 +167,68 @@ def _semantic_key(value: object) -> str:
     return "".join(char.casefold() for char in str(value or "") if char.isalnum())
 
 
-def _checkbox_runs(nodes: list[dict]) -> list[list[dict]]:
-    return [
-        list(run)
-        for is_checkbox, run in groupby(
-            nodes, key=lambda node: node.get("role") == "checkbox"
-        )
-        if is_checkbox
-    ]
+def _choice_operation(node: dict) -> str:
+    """Normalize common group commands without leaking their labels into core policy."""
+    if node.get("role") != "button":
+        return ""
+    key = _semantic_key(node.get("key"))
+    if key in {"deselectall", "unselectall", "clearall", "取消全选", "全部取消"}:
+        return "clear_all"
+    if key in {"selectall", "全选"}:
+        return "select_all"
+    return ""
+
+
+def _choice_groups(nodes: list[dict]) -> list[tuple[dict[str, str], list[dict]]]:
+    groups: list[tuple[dict[str, str], list[dict]]] = []
+    operations: dict[str, str] = {}
+    checkboxes: list[dict] = []
+    for node in nodes:
+        role = node.get("role")
+        if role != "checkbox" and checkboxes:
+            groups.append((operations, checkboxes))
+            operations, checkboxes = {}, []
+        if role == "checkbox":
+            checkboxes.append(node)
+        elif role == "button" and (operation := _choice_operation(node)):
+            operations[operation] = str(node.get("key") or "").strip()
+        elif role != "button":
+            operations = {}
+    if checkboxes:
+        groups.append((operations, checkboxes))
+    return groups
 
 
 def active_choice_controls(
     observation: Observation,
-    desired_state: dict[str, str],
+    desired_state: dict[str, TargetValue],
 ) -> tuple[dict, ...]:
     """Normalize an active checkbox surface into the shared form-control contract.
 
     Choice groups are contiguous checkbox runs on the active browser surface. A desired value
     must resolve uniquely to one rendered checkbox run before the adapter reports anything.
-    The adapter exposes concrete options only; it does not infer workflow commands from nearby
-    buttons. Visual-only and structurally ambiguous pages therefore remain fail-open.
+    The adapter also normalizes an immediately adjacent select-all/clear-all button as an optional
+    group operation. Visual-only and structurally ambiguous pages remain fail-open.
     """
     desired = [
-        (str(field), _semantic_key(value))
+        (str(field), tuple(_semantic_key(option) for option in options))
         for field, value in desired_state.items()
-        if _semantic_key(field) and _semantic_key(value)
+        if _semantic_key(field)
+        if (options := target_value_options(value))
     ]
     if not desired:
         return ()
     nodes = _active_surface_nodes(observation)
-    runs = _checkbox_runs(nodes)
+    groups = _choice_groups(nodes)
     locations: dict[str, int] = {}
-    for field, desired_key in desired:
+    for field, desired_keys in desired:
         matches = [
             run_index
-            for run_index, checkboxes in enumerate(runs)
-            if any(_semantic_key(node.get("key")) == desired_key for node in checkboxes)
+            for run_index, (_, checkboxes) in enumerate(groups)
+            if all(
+                any(_semantic_key(node.get("key")) == desired_key for node in checkboxes)
+                for desired_key in desired_keys
+            )
         ]
         if len(matches) != 1:
             return ()
@@ -211,9 +238,11 @@ def active_choice_controls(
 
     surface = active_surface_id(observation)
     subject_ref = f"choice:{surface}" if surface else "choice:active"
+    desired_keys = {field: set(values) for field, values in desired}
     controls: list[dict] = []
     for field, run_index in locations.items():
-        for node in runs[run_index]:
+        operations, checkboxes = groups[run_index]
+        for node in checkboxes:
             label = str(node.get("key") or "").strip()
             while label and not label[0].isalnum():
                 label = label[1:].lstrip()
@@ -222,7 +251,7 @@ def active_choice_controls(
             checked = str(node.get("value") or "").strip().casefold() in {
                 "true", "1", "on", "checked", "selected",
             }
-            controls.append({
+            control = {
                 "kind": "checkbox_input",
                 "label": label,
                 "option_text": label,
@@ -233,7 +262,10 @@ def active_choice_controls(
                 # Semantic-tree refs identify an option but do not carry a stable screen rect.
                 # Dispatch therefore binds once to the visual point chosen for this subject.
                 "binding_source": "visual",
-            })
+            }
+            if operations and _semantic_key(label) in desired_keys[field]:
+                control["choice_operations"] = operations
+            controls.append(control)
     return tuple(controls)
 
 

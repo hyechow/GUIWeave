@@ -7,11 +7,11 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
 
-# The 7 shared actions every platform supports. Platform-specific actions (iphone
+# The 6 shared actions every platform supports. Platform-specific actions (iphone
 # home/app_switch, browser navigate, android home/back/app_switch) live in each
 # adapter's <Plat>Action.action_type, so a policy injects only its own vocabulary.
 BaseActionType = Literal[
-    "tap", "type", "clear_text", "press_enter", "scroll", "drag", "stop"
+    "tap", "type", "clear_text", "press_enter", "scroll", "drag"
 ]
 BaseScrollTargetArea = Literal[
     "main_content",
@@ -36,7 +36,6 @@ _ACTION_TYPE_LABELS: dict[str, str] = {
     "back": "返回",
     "app_switch": "切换应用",
     "select_option": "选择选项",
-    "stop": "停止",
 }
 
 
@@ -66,6 +65,18 @@ ActionOutcomeStatus = Literal["confirmed", "contradicted", "unverified"]
 CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
 BindingSource = Literal["visual", "structural"]
 BindingStatus = Literal["bound", "unresolved", "contradicted"]
+TargetValue = str | list[str]
+
+
+def target_value_options(value: TargetValue | object) -> tuple[str, ...]:
+    """Return the ordered, non-empty values declared for one semantic field."""
+    raw = value if isinstance(value, list) else [value]
+    result: list[str] = []
+    for item in raw:
+        text = str(item).strip()
+        if text and text not in result:
+            result.append(text)
+    return tuple(result)
 
 # 「连续操作」轴（与 kind 正交）：靠重复调整逼近目标的策略，区别于单步达成。
 #   - repeat_until_satisfied：收敛到目标值（picker 调日期/时间、步进器、滑块）
@@ -263,7 +274,7 @@ class BaseAction(BaseModel):
         return data
 
     action_type: BaseActionType = Field(
-        description="操作类型：tap、type、press_enter、clear_text、scroll、drag、stop 之一"
+        description="操作类型：tap、type、press_enter、clear_text、scroll、drag 之一"
     )
     x: Optional[float] = Field(
         default=None,
@@ -381,11 +392,11 @@ class Observation(BaseModel):
     viewport: Optional[dict[str, Any]] = Field(
         default=None,
         description=(
-            "当前可滚动/可翻页区域（view window）的遍历边界信号，与页面上是否存在表格无关："
+            "页面级可滚动/可翻页区域（view window）的遍历边界信号："
             "{type: 'paged'|'scroll'|'unknown', page_index, page_count, has_next_page, "
-            "has_prev_page, can_scroll_more, at_scroll_end}。是行采集（foreach 来源）遍历决策"
-            "（TraversalController）的权威输入；tables[i].traversal 是其遗留的表格内嵌副本，"
-            "不再是决策来源。None=该平台/当前帧未探测到遍历信号（遍历退回像素冻结兜底）。"
+            "has_prev_page, can_scroll_more, at_scroll_end}。仅驱动页面级/视觉集合；表格采集必须"
+            "使用产生该表格行的 tables[i].traversal，避免消费其它滚动区或分页器的信号。"
+            "None=该平台/当前帧未探测到页面级遍历信号（遍历退回像素冻结兜底）。"
         ),
     )
     semantic_tree: Optional[list[dict[str, Any]]] = Field(
@@ -423,15 +434,20 @@ class Observation(BaseModel):
 
 
 class BaseActionDecision(BaseModel):
-    """Action policy output: the next action to execute."""
+    """Action policy output: one physical action or an explicit grounding failure."""
 
     # SerializeAsAny so model_dump_json preserves per-platform Action subclass fields
     # (e.g. iphone value_direction, browser url). Without it, a base-typed field drops
     # subclass-only fields on serialization (context.json in runner.py:285).
-    action: SerializeAsAny[BaseAction] = Field(description="当前应该执行的操作")
+    action: Optional[SerializeAsAny[BaseAction]] = Field(
+        description="当前应该执行的物理操作；无法定位可执行目标时为 null",
+    )
     not_found_reason: Optional[str] = Field(
         default=None,
-        description="当截图中找不到指令要求的目标元素时填写原因（如「当前页面无通讯录标签」）；找到目标时留空",
+        description=(
+            "action=null 时说明为什么当前帧无法定位可执行目标；它不是任务完成或终止信号，"
+            "找到目标时留空"
+        ),
     )
 
     @model_validator(mode="before")
@@ -447,6 +463,26 @@ class BaseActionDecision(BaseModel):
         """
         if not isinstance(data, dict):
             return data
+        raw_action = data.get("action")
+        action_type = (
+            raw_action.get("action_type")
+            if isinstance(raw_action, dict)
+            else raw_action
+        )
+        if action_type == "stop" or data.get("action_type") == "stop":
+            description = (
+                raw_action.get("description")
+                if isinstance(raw_action, dict)
+                else data.get("description")
+            )
+            return {
+                "action": None,
+                "not_found_reason": data.get("not_found_reason")
+                or description
+                or "legacy action policy returned stop",
+            }
+        if data.get("not_found_reason"):
+            return {**data, "action": None}
         if "action_type" in data and "action" not in data:
             return {"action": data}
         if isinstance(data.get("action"), str):
@@ -457,6 +493,12 @@ class BaseActionDecision(BaseModel):
                 out["not_found_reason"] = data["not_found_reason"]
             return out
         return data
+
+    @model_validator(mode="after")
+    def _require_action_or_reason(self) -> "BaseActionDecision":
+        if self.action is None and not str(self.not_found_reason or "").strip():
+            raise ValueError("action=null 时必须填写 not_found_reason")
+        return self
 
 
 class SupervisorStep(BaseModel):
@@ -650,9 +692,12 @@ class Milestone(BaseModel):
         default_factory=list,
         description="该执行单元必须命中的字段、控件或集合能力名称。",
     )
-    target_values: dict[str, str] = Field(
+    target_values: dict[str, TargetValue] = Field(
         default_factory=dict,
-        description="该执行单元要求实现的结构化业务终态；它不提供目标身份或写入授权。",
+        description=(
+            "该执行单元要求实现的结构化业务终态；action 可用数组表示同一选择组必须同时"
+            "满足的精确值集合，重复集合成员仍使用各自的标量合同。它不提供目标身份或写入授权。"
+        ),
     )
     completion_status: CompletionStatus = Field(
         default="in_progress",
@@ -760,6 +805,27 @@ class PolicyTurn(BaseModel):
             "cache/fallback/section_ids。"
         ),
     )
+
+    @model_validator(mode="after")
+    def _normalize_no_action_signal(self) -> "PolicyTurn":
+        """A turn without a physical action cannot contain dispatch evidence.
+
+        This also repairs historical contexts where the action policy returned the
+        now-retired ``stop`` primitive and the executor recorded that no-op as a
+        successful dispatch.
+        """
+        if self.action_decision is None or self.action_decision.action is not None:
+            return self
+        self.executed = False
+        if self.action_signal is not None:
+            self.action_signal.action_key = ""
+            self.action_signal.execution = "not_attempted"
+            self.action_signal.mutation_receipt = None
+            self.action_signal.response = "unknown"
+            self.action_signal.response_channels.clear()
+            self.action_signal.outcome = "unverified"
+            self.action_signal.outcome_evidence.clear()
+        return self
 
 
 class PolicyContext(BaseModel):

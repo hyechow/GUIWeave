@@ -8,7 +8,7 @@ picker, no browser navigate.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import SerializeAsAny
 
@@ -16,7 +16,7 @@ from gui_agent.core.schemas import BaseAction, BaseActionDecision
 
 AndroidActionType = Literal[
     "tap", "type", "clear_text", "press_enter", "scroll", "drag",
-    "home", "back", "app_switch", "stop",
+    "home", "back", "app_switch",
 ]
 
 
@@ -27,4 +27,4 @@ class AndroidAction(BaseAction):
 
 
 class AndroidActionDecision(BaseActionDecision):
-    action: SerializeAsAny[AndroidAction]  # type: ignore[assignment]
+    action: Optional[SerializeAsAny[AndroidAction]]  # type: ignore[assignment]

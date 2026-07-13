@@ -9,7 +9,7 @@ from __future__ import annotations
 from gui_agent.core.schemas import Action
 
 # Action types that have a screen location worth visualizing. press_enter / home /
-# stop / clear_text are non-spatial and are skipped (no misleading center flash).
+# clear_text is non-spatial and is skipped (no misleading center flash).
 _SPATIAL = {"tap", "click", "type", "scroll", "drag", "select_option"}
 
 

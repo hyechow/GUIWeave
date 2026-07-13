@@ -95,8 +95,7 @@ def normalize_confirm_read_gates(program: Program) -> Program:
 _PRECONDITION_GATE_TMPL = (
     "已处于该前置步要求的目标状态（如已登录、已进入某模式/某页）："
     "显示对应的稳定标志（功能区/导航就位，与业务数据无关），"
-    "而非只在未完成态才出现的中间界面（如登录表单）；"
-    "初始若已满足则第一帧即判 done、直接跳过。"
+    "而非只在未完成态才出现的中间界面（如登录表单）。"
 )
 # NOTE: do not name `_check.md` (or any internal knowledge-overlay filename) in this
 # template — it is injected into the checker/supervisor prompt via milestone.success_condition,
@@ -125,9 +124,9 @@ def normalize_precondition_gates(program: Program) -> Program:
 
     Detection is the STRUCTURAL `run.precondition` flag (set by the decomposer), not name keywords —
     so it's robust to phrasing/language and covers any precondition (login / enter-mode / open-page),
-    not just login. An already-satisfied precondition is then judged done on frame 1 (no form/data
-    antipattern → no stuck). Recurses into if-branches; returns a NEW Program (inputs untouched);
-    idempotent. App-specific markers stay in the checker's _check.md, which judges this gate."""
+    not just login. Recurses into if-branches; returns a NEW Program (inputs untouched); idempotent.
+    The checker may recognize this state, but runtime completion still requires evidence that the
+    navigation edge executed; app-specific markers stay in the checker's _check.md."""
     return program.model_copy(update={"statements": _normalize_precondition_stmts(program.statements)})
 
 
@@ -244,7 +243,7 @@ def collapse_foreach_enrichment_passes(program: Program) -> Program:
 # definite target STATE (on the list page). It must NOT read "若在编辑页则返回；若已在列表则不操作" —
 # that smuggles if/else into a milestone (breaks the FROM→TO-edge + single-page contract and makes
 # the selector/planner unable to pick one action: live 185 mis-retrieved Customers knowledge and
-# emitted a [stop] for the no-op). Idempotency is the MECHANISM's job, not the prose's: the step is
+# emitted no physical action for the no-op). Idempotency is the MECHANISM's job, not the prose's: the step is
 # marked precondition=true, so when the SC already holds (already on the list) the checker passes it
 # on frame 1 with no action — iteration 1 / single calls pay nothing — without any conditional text.
 _ENTRY_ARRIVAL_NAME = "确保当前处于承载下一步搜索/筛选的列表（数据源）页。"

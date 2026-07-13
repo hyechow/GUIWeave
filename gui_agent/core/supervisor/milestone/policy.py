@@ -9,6 +9,7 @@ from gui_agent.core.schemas import (
     Observation,
     PolicyTurn,
     SupervisorStep,
+    TargetValue,
 )
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.run.action_ledger import ActionLedger
@@ -49,11 +50,13 @@ from gui_agent.core.run.execution_signals import (
     CompletionEvaluator,
     claim,
 )
-from gui_agent.core.run.mutation import authorize_mutation, resolve_mutation
+from gui_agent.core.run.mutation import (
+    authorize_mutation,
+    resolve_mutation,
+)
 from .action_protocol import (
     action_metadata,
     is_commit_turn,
-    persistence_boundary_state,
     regresses_preparation_frontier,
     record_action_outcome,
     record_action_response,
@@ -96,7 +99,7 @@ class MilestoneSupervisorPolicy(
         surface_resolver: Callable[[Observation], str] | None = None,
         active_target_resolver: Callable[[Observation], Iterable[str]] | None = None,
         mutation_control_resolver: (
-            Callable[[Observation, dict[str, str]], Iterable[dict]] | None
+            Callable[[Observation, dict[str, TargetValue]], Iterable[dict]] | None
         ) = None,
     ) -> None:
         # Platform factories inject their prompt bundle. The neutral default only supports
@@ -179,7 +182,7 @@ class MilestoneSupervisorPolicy(
     def _mutation_observation(
         self,
         observation: Observation,
-        desired_state: dict[str, str],
+        desired_state: dict[str, TargetValue],
     ) -> Observation:
         if self._mutation_control_resolver is None or not desired_state:
             return observation
@@ -450,12 +453,10 @@ class MilestoneSupervisorPolicy(
         # 第一步导航动作——省掉交接时第 2 次 checker。幂等（重点 nav 目标无害；残留 already-done 由
         # 下一轮正常 check 兜底）。action/filter/collection 一律保留 check：重跑 action 可能双执行
         # （re-send/re-submit），collection 需要 checker 的 read_instruction。一次性，step() 消费后清。
-        # precondition（入口状态归一化门，如 loop/function 体的「确保在列表页」）例外：它本就可能
-        # 第一帧即满足，必须让 checker 先判（满足→done、不动作、不发 stop；未满足→in_progress→planner
-        # 才规划返回动作），否则 SkipCheck 会把分支判断泄漏给 planner。
-        self._skip_initial_check = (
-            fresh_advance and milestone.kind == "navigation" and not milestone.precondition
-        )
+        # Navigation arrival is an executable edge. A checker verdict alone cannot prove that edge
+        # was traversed, including precondition/ensure-state entries; all fresh arrivals therefore
+        # enter planning once. The next frame verifies the destination before advancing.
+        self._skip_initial_check = fresh_advance and milestone.kind == "navigation"
 
     # ── Single-step machine ───────────────────────────────────────────
 
@@ -499,7 +500,8 @@ class MilestoneSupervisorPolicy(
             return self._plan_single(milestone, synthetic, observation, scoped_history)
 
         if milestone_history and milestone_history[-1].action_decision:
-            if milestone_history[-1].action_decision.action.action_type == "type":
+            last_action = milestone_history[-1].action_decision.action
+            if last_action is not None and last_action.action_type == "type":
                 self._monitor.clear_screenshots()
 
         prev_page_id = self._last_page_identity.get(milestone.id, "")
@@ -531,19 +533,12 @@ class MilestoneSupervisorPolicy(
             print("  [DOMChanged] 表单值指纹有变化，抑制 stuck/重复误判")
 
         contract = execution_contract_for(milestone, self._execution_contract)
-        boundary = persistence_boundary_state(
-            milestone,
-            history,
-            self._active_targets(observation),
-            current_surface_id=self.surface_id(observation),
-        )
         evidence_claims = action_lifecycle_claims(
             milestone,
             history,
             scope=execution_scope,
             monitor=self._monitor,
             ledger=self._action_ledger,
-            boundary=boundary,
         )
         evidence_claims.extend(observation_state_claims(
             milestone,
@@ -719,7 +714,10 @@ class MilestoneSupervisorPolicy(
                 "outcome_status": "unverified",
                 "reason": post_completion.reason,
                 "summary": "execution contract requires terminal persistence",
-                "missing_evidence": ["目标字段已就绪；执行声明的保存/提交边界。"],
+                "missing_evidence": [
+                    "完成前仍需越过声明的持久化边界；沿当前流程前进，"
+                    "不要重写已经满足的业务字段。"
+                ],
             })
             self._last_check = check
         accepted_unverified = post_completion.completion_status == "accepted_unverified"
@@ -842,6 +840,7 @@ class MilestoneSupervisorPolicy(
             and not self._monitor.url_changed  # URL changed = the tap DID navigate → not a no-effect
             and not self._monitor.dom_changed  # interactive-state fingerprint moved = the tap DID something
             and last_turn.action_decision is not None
+            and last_turn.action_decision.action is not None
             and last_turn.action_decision.action.action_type in ("tap", "click")
             and (last_tv is None or last_tv.on_target)
         ):
@@ -938,7 +937,6 @@ class MilestoneSupervisorPolicy(
                 execution_scope=execution_scope,
                 **_ctx(milestone, check.read_instruction),
             )
-        active_targets = self._active_targets(observation)
         current_surface_id = self.surface_id(observation)
         mutation_required = bool(milestone.kind == "action" and milestone.target_values)
         mutation_subject = (
@@ -951,78 +949,29 @@ class MilestoneSupervisorPolicy(
             if mutation_required
             else None
         )
-        boundary = persistence_boundary_state(
-            milestone,
-            history,
-            active_targets,
-            current_surface_id=current_surface_id,
-        )
-        parent_commit = check.outcome_status != "contradicted" and boundary.parent_pending
         mutation_owned_plan = False
-        if parent_commit:
-            print("  [ActionFrontier] 子流程已返回父资源，要求绑定具体持久化控件")
-            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
-                plan = self._invoke_planner(
-                    milestone,
-                    check,
-                    observation,
-                    history,
-                    extra=(
-                        "结构化执行轨迹已确认子编辑流程返回父资源，且父资源提交边界尚未跨越。"
-                        "下一步必须是当前父资源的持久化提交动作；atomic_role 填 commit，"
-                        "点击保存按钮时 action_family 填 activate（禁止填 commit），"
-                        "target_control 必须填写当前屏幕上"
-                        "实际存在的具体控件名称。"
-                        "禁止留空、禁止填写抽象的 persistence boundary，也禁止重新进入子编辑流程。"
-                    ),
-                )
-            if not boundary.accepts_parent_plan(plan, milestone, active_targets):
-                print("  [ActionFrontier] 提交提议缺少可验证的当前控件，重试")
-                with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
-                    plan = self._invoke_planner(
-                        milestone,
-                        check,
-                        observation,
-                        history,
-                        extra=(
-                            "上一个提交提议没有绑定到当前活动表面中的具体控件。只返回一个当前"
-                            "父资源上真实可见、可点击的持久化控件；target_control 原样填写该控件"
-                            "名称，atomic_role=commit；点击控件时 action_family=activate，"
-                            "禁止把事务角色重复写进 action_family。"
-                            "找不到时不要猜测。"
-                        ),
-                    )
-            if not boundary.accepts_parent_plan(plan, milestone, active_targets):
-                print("  [ActionFrontier] 无法绑定具体持久化控件，保持未决且不派发动作")
-                plan = _PlanResult(
-                    instruction="",
-                    summary="父资源提交边界待处理，但当前未绑定到可验证的具体控件。",
-                    atomic_role="prepare",
-                    action_family="unknown",
-                )
+        if mutation_subject is not None and mutation_subject.status in {
+            "preparing", "writable"
+        }:
+            mutation_owned_plan = True
+            write = mutation_subject.status == "writable"
+            plan = _PlanResult(
+                instruction=(
+                    f"将「{mutation_subject.next_field}」设置为"
+                    f"「{mutation_subject.next_value}」"
+                    if write
+                    else f"点击「{mutation_subject.target_control}」以移除多余选择"
+                ),
+                summary=mutation_subject.evidence,
+                atomic_role="write" if write else "prepare",
+                action_family=mutation_subject.action_family,
+                target_control=mutation_subject.target_control,
+                target_value=mutation_subject.next_value if write else "",
+            )
+            print(f"  [Mutation] {plan.summary}")
         else:
-            if mutation_subject is not None and mutation_subject.status in {
-                "preparing", "writable"
-            }:
-                mutation_owned_plan = True
-                write = mutation_subject.status == "writable"
-                plan = _PlanResult(
-                    instruction=(
-                        f"将「{mutation_subject.next_field}」设置为"
-                        f"「{mutation_subject.next_value}」"
-                        if write
-                        else f"取消选择「{mutation_subject.target_control}」"
-                    ),
-                    summary=mutation_subject.evidence,
-                    atomic_role="write" if write else "prepare",
-                    action_family=mutation_subject.action_family,
-                    target_control=mutation_subject.target_control,
-                    target_value=mutation_subject.next_value if write else "",
-                )
-                print(f"  [Mutation] {plan.summary}")
-            else:
-                with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
-                    plan = self._invoke_planner(milestone, check, observation, history)
+            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                plan = self._invoke_planner(milestone, check, observation, history)
         if not mutation_owned_plan and self._is_sequence(plan.instruction):
             print("  [Planner] 多步序列，重试...")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
@@ -1451,10 +1400,7 @@ class MilestoneSupervisorPolicy(
         # extra action is harmless. Other kinds keep the check — re-running an
         # action milestone could double-execute (re-send/re-submit), and
         # collection/verification need the checker's read_instruction.
-        # precondition entry-state gates (e.g. loop/function-body「确保在列表页」) are exempt: they
-        # may already hold on frame 1, so the checker must judge first (satisfied→done, no action;
-        # else→in_progress→plan the return). Skipping it leaks the branch decision to the planner.
-        if next_ms.kind == "navigation" and not next_ms.precondition:
+        if next_ms.kind == "navigation":
             print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
             # (done check for the completed milestone already saved at the top of _advance)
             synthetic = _SingleCheckResult(

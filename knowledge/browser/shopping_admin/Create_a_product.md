@@ -72,6 +72,9 @@ Size or Color value does not exist yet, create and save that option under **Stor
 Product** before generating the combination in the parent product. Saving an attribute option and
 saving the parent product's Configurations collection are two independent persistent changes; the
 attribute option must be durable before Configurations can consume it.
+Only a value explicitly requested as new or missing creates this prerequisite mutation. Existing
+Size or Color values that merely qualify the requested combinations are selected in the
+Configurations wizard and must not be re-added to the global attribute option collection.
 
 Treat these as ordered resource phases, not as pages to keep open for later. Complete and save the
 global attribute-option mutation first. Only then locate and open the configurable parent product.

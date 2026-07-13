@@ -16,7 +16,7 @@ from gui_agent.core.schemas import BaseAction, BaseActionDecision
 BrowserActionType = Literal[
     "tap", "type", "clear_text", "press_enter", "scroll", "drag",
     "navigate", "back", "new_tab", "select_tab", "close_tab", "upload",
-    "select_option", "stop",
+    "select_option",
 ]
 
 
@@ -27,7 +27,7 @@ class BrowserAction(BaseAction):
     action_type: BrowserActionType = Field(
         description=(
             "浏览器动作类型：tap/type/clear_text/press_enter/scroll/drag/navigate/"
-            "back/new_tab/select_tab/close_tab/upload/select_option/stop"
+            "back/new_tab/select_tab/close_tab/upload/select_option"
         )
     )  # type: ignore[assignment]
     direction: Optional[str] = Field(
@@ -76,4 +76,4 @@ class BrowserAction(BaseAction):
 
 
 class BrowserActionDecision(BaseActionDecision):
-    action: SerializeAsAny[BrowserAction]  # type: ignore[assignment]
+    action: Optional[SerializeAsAny[BrowserAction]]  # type: ignore[assignment]

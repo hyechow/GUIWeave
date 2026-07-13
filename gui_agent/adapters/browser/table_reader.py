@@ -370,9 +370,15 @@ def table_snapshot_js() -> str:
   }};
 
   const scrollStateOf = (container) => {{
+    const scroll_top = Math.max(0, container.scrollTop || 0);
     const can_scroll_more = container.scrollHeight > container.scrollTop + container.clientHeight + 2;
     return {{
       type: 'scroll',
+      scroll_top,
+      scroll_extent: container.scrollHeight,
+      viewport_extent: container.clientHeight,
+      at_scroll_start: scroll_top <= 2,
+      can_scroll_back: scroll_top > 2,
       can_scroll_more,
       at_scroll_end: !can_scroll_more,
     }};
@@ -390,13 +396,10 @@ def table_snapshot_js() -> str:
     return {{ type: 'unknown' }};
   }};
 
-  // Page-level traversal sensor: NOT anchored to a table/grid. Used as the canonical
-  // ``viewport`` signal so card/feed-style collections (no <table>) still get a
-  // deterministic pagination/scroll-boundary signal instead of falling back to the LLM.
-  const detectPageViewport = (tableSnapshots) => {{
-    for (const snap of tableSnapshots) {{
-      if (snap.traversal && snap.traversal.type !== 'unknown') return snap.traversal;
-    }}
+  // Page-level traversal sensor: deliberately not derived from a table/grid. Table traversal
+  // keeps its own surface identity in snapshots[i].traversal; copying it here would let an
+  // unrelated page-level consumer move that table without knowing which surface produced it.
+  const detectPageViewport = () => {{
     // PAGER_SELECTORS' catch-all `[aria-label*="page" i]` can match a single page-NUMBER link
     // (e.g. Google's <a aria-label="Page 2">) instead of the pagination bar that wraps it —
     // readPagedPager() on that tiny element finds no index/buttons, returning an uninformative
@@ -420,7 +423,16 @@ def table_snapshot_js() -> str:
     const viewH = window.innerHeight;
     if (docHeight > viewH + 2) {{
       const can_scroll_more = docHeight > docTop + viewH + 2;
-      return {{ type: 'scroll', can_scroll_more, at_scroll_end: !can_scroll_more }};
+      return {{
+        type: 'scroll',
+        scroll_top: docTop,
+        scroll_extent: docHeight,
+        viewport_extent: viewH,
+        at_scroll_start: docTop <= 2,
+        can_scroll_back: docTop > 2,
+        can_scroll_more,
+        at_scroll_end: !can_scroll_more,
+      }};
     }}
     // SPA shells where the document itself doesn't grow but an inner panel scrolls.
     let best = null;
@@ -510,7 +522,7 @@ def table_snapshot_js() -> str:
     url: location.href,
     title: document.title,
     tables: snapshots,
-    viewport: detectPageViewport(snapshots),
+    viewport: detectPageViewport(),
   }});
 }})()"""
 
@@ -585,9 +597,8 @@ def normalize_table_snapshots(raw: Any) -> list[dict[str, Any]]:
                 "partial": bool(item.get("partial") or (total_records and len(rows) < total_records)),
                 "path": str(item.get("path") or ""),
                 "page": page,
-                # Legacy table-scoped copy of this table's own pager/scroll state. Kept for
-                # back-compat and as detectPageViewport()'s reuse source; NOT the traversal
-                # decision's authority — that's Observation.viewport (see schemas docstring).
+                # Surface-scoped traversal evidence. Consumers must move this exact table rather
+                # than borrowing the page-level viewport or another table's pager.
                 "traversal": traversal if isinstance(traversal, dict) else None,
             }
         )

@@ -136,7 +136,7 @@ def region_change(
         avoids the grayscale failure mode the module DESIGN NOTE warns about). A picker step
         keeps global_sim ~0.999 yet drives local_change to ~0.24; a no-op leaves it ~0.0.
         Threshold against ``CHANGE_SSIM_DIST_THR``. ``None`` when the action had no coordinates
-        (press_enter / home / back / stop) — the caller falls back to the global tier alone.
+        (press_enter / home / back) — the caller falls back to the global tier alone.
     """
     import numpy as np
     from skimage.metrics import structural_similarity as ssim

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Callable, Iterable, MutableSequence
 
 from gui_agent.context.blocks import ContextBlock, ContextBudgeter
-from gui_agent.core.schemas import Milestone, PolicyTurn
+from gui_agent.core.schemas import Milestone, PolicyTurn, target_value_options
 
 # Hard char ceiling for the dynamic context blocks assembled around a prompt. Generous by
 # default (insurance against runaway inflation — knowledge blobs + history + @file refs piling
@@ -83,7 +83,8 @@ def milestone_block(
         lines.append(f"- 目标控件/能力：{', '.join(milestone.target_controls)}")
     if milestone.target_values:
         rendered_targets = ", ".join(
-            f"{field}={value}" for field, value in milestone.target_values.items()
+            f"{field}={','.join(target_value_options(value))}"
+            for field, value in milestone.target_values.items()
         )
         lines.append(f"- 目标字段终态：{rendered_targets}")
     if task_type:

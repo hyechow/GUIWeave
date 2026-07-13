@@ -187,6 +187,8 @@ class BrowserExecutor(VisionExecutor):
         return client
 
     def execute(self, decision, app_name: str = "", png_bytes=None, is_home_screen: bool = False) -> bool:
+        if decision.action is None:
+            return False
         # Stash the action so _tap can record its DOM snap on it (the report / runtime visualizer
         # read action.snap to draw original→snapped, the same as iphone YOLO/OCR).
         self._cur_action = decision.action

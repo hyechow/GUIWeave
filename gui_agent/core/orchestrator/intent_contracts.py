@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from gui_agent.core.router import IntentResolution
+from gui_agent.core.schemas import target_value_options
 
 from .program import Call, Compute, ForEach, If, Program, Query, Run, RunLike, Stmt
 
@@ -59,13 +60,20 @@ def _check_value_entity_consumption(
     for entity in resolution.entities:
         if _entity_role(entity) != "value":
             continue
-        mention = str(getattr(entity, "mention", "") or "").strip()
-        search_key = str(getattr(entity, "search_key", "") or "").strip()
-        if not mention and not search_key:
-            continue
-        if _contains(consumer_text, mention) or _contains(consumer_text, search_key):
-            continue
-        value = mention or search_key
+        members = target_value_options(entity.value_members)
+        if len(members) > 1:
+            missing = tuple(value for value in members if not _contains(consumer_text, value))
+            if not missing:
+                continue
+            value = ", ".join(missing)
+        else:
+            mention = str(getattr(entity, "mention", "") or "").strip()
+            search_key = str(getattr(entity, "search_key", "") or "").strip()
+            if not mention and not search_key:
+                continue
+            if _contains(consumer_text, mention) or _contains(consumer_text, search_key):
+                continue
+            value = mention or search_key
         issues.append(IntentContractIssue(
             code="ROUTER_VALUE_DROPPED",
             message=(
@@ -74,7 +82,7 @@ def _check_value_entity_consumption(
                 "navigation/filter text, or finish message does not change application state. "
                 f"Carry「{value}」verbatim into the mutation/data-flow node that sets or creates it."
             ),
-            evidence=(f"mention={mention}", f"search_key={search_key}"),
+            evidence=(f"mention={entity.mention}", f"missing={value}"),
         ))
     return issues
 
@@ -86,6 +94,8 @@ def _value_consumer_text(program: Program) -> str:
         for stmt in stmts:
             if isinstance(stmt, RunLike) and stmt.kind == "action":
                 parts.extend([stmt.name or "", stmt.success_condition or "", stmt.read_spec or ""])
+                for value in getattr(stmt, "target_values", {}).values():
+                    parts.extend(target_value_options(value))
             elif isinstance(stmt, Compute):
                 parts.append(stmt.expr or "")
             elif isinstance(stmt, Call):

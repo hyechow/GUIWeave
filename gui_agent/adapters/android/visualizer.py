@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from gui_agent.core.schemas import BaseAction
 
-# Action types with a screen location worth a cursor. press_enter / home / stop /
+# Action types with a screen location worth a cursor. press_enter / home /
 # clear_text are non-spatial and skipped (no misleading center flash).
 _SPATIAL = {"tap", "click", "type", "scroll", "drag"}
 

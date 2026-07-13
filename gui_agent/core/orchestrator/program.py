@@ -22,6 +22,8 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Discriminator, Field, Tag, model_validator
 
+from gui_agent.core.schemas import TargetValue
+
 # DSL data-flow template grammar: ``{var[field]}`` pulls a prior read's value out of the
 # variable environment. Used by finish messages (the original site) AND — since the
 # result-then-reference extension — by a run's name/success_condition/read_spec, so a later
@@ -157,9 +159,9 @@ class Run(RunLike):
     # STRUCTURAL marker for a precondition step ("确保已登录 / 已进入某模式"): a state to ENSURE,
     # not a fresh action. Set by the decomposer (an easy binary classification — far more reliable
     # than authoring a perfect gate). The engine rewrites a precondition's success_condition to a
-    # generic "ensure-state" gate keyed on THIS flag, so an already-satisfied precondition is
-    # accepted on frame 1. App-specific "what that state looks like" stays in the checker's
-    # _check.md. The flag — not a string match — is the detection signal.
+    # generic "ensure-state" gate keyed on THIS flag. App-specific "what that state looks like"
+    # stays in the checker's _check.md. This flag does not authorize checker-only completion: the
+    # runtime still controls traversal of the navigation edge.
     precondition: bool = False
     # STRUCTURAL declaration for set-realization: this single interactive step covers ALL members
     # of the named set entity via an aggregate mechanism the app provides (a parent record whose
@@ -189,11 +191,13 @@ class Run(RunLike):
             "替换成相邻控件；值来自任务/应用能力说明，不包含选择器。"
         ),
     )
-    target_values: dict[str, str] = Field(
+    target_values: dict[str, TargetValue] = Field(
         default_factory=dict,
         description=(
-            "action 要实现的结构化业务终态，或 filter 要实现的完整筛选状态"
-            " {语义控件名: 目标值}。重复集合行可用 group field + control label 命名；"
+            "action 要实现的结构化业务终态，或 filter 要实现的完整筛选状态。"
+            "action 数组仅表示同一选择组必须同时满足的精确集合，不表示重复集合的多行；"
+            "filter 每字段只声明一个值；"
+            "重复集合行可用 group field + control label 命名；"
             "该字段不提供目标身份或写入授权；系统派生元数据不在此声明。不写 DOM selector。"
         ),
     )

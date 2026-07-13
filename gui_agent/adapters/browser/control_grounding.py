@@ -91,7 +91,7 @@ def rendered_target_evidence(
         f"matched_control={display_name!r}; kind={kind!r}{center}{viewport}\n"
         f"- current_value={current!r}; requested_value={str(target_value)!r}\n"
         "只判断 matched_control 自身是否达到 requested_value；相邻字段出现相同文本不代表该目标完成。"
-        "若该目标可见且 current_value 不同，执行指令要求的动作，不要返回 stop。"
+        "若该目标可见且 current_value 不同，执行指令要求的动作，不要拒绝该动作。"
     )
 
 
@@ -173,6 +173,8 @@ def ground_rendered_action(
     already compatible ``type`` action; it never synthesizes input, selection, or scrolling.
     """
     action = decision.action
+    if action is None:
+        return decision
     if action_family != "input" or action.action_type != "type":
         return decision
     if not target_control or not target_value or not target_group_id:

@@ -178,6 +178,8 @@ class ActionExecutor:
 
     def execute(self, decision: ActionDecision, app_name: str = "", png_bytes: bytes | None = None, is_home_screen: bool = False) -> bool:
         action = decision.action
+        if action is None:
+            return False
         # iPhone status-bar / home-indicator dead-zone clamp: keep the tap anchor
         # in the tappable band [200, 850] (normalized). Moved here from the shared
         # Action schema (S3) so it stays an iPhone-only concern — other platforms
@@ -245,10 +247,6 @@ class ActionExecutor:
         elif action.action_type == "app_switch":
             print("执行：打开 App Switcher（多任务切换）")
             return self._app_switch()
-
-        elif action.action_type == "stop":
-            print("停止操作（当前状态已满足目标，无需执行）")
-            return True
 
         else:
             print(f"跳过执行：action_type={action.action_type!r}，需手动处理")

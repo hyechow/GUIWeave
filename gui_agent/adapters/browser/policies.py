@@ -6,7 +6,7 @@ call via ``llm.structured.invoke_structured`` into an ``ActionDecision``, same
 ``BaseActionPolicy`` base — but with a BROWSER system prompt: operate a web page
 with a desktop pointer, output ONE action within the neutral action vocabulary
 (tap / type / clear_text / press_enter / scroll / drag / navigate / back /
-new_tab / select_tab / close_tab / select_option / stop).
+new_tab / select_tab / close_tab / select_option).
 
 Rendered controls are handled from the screenshot. Browser-native controls whose
 interactive surface is absent from the screenshot may use adapter DOM evidence.
@@ -168,6 +168,8 @@ class BrowserActionPolicy(BaseActionPolicy):
         is injected via the chooser instead. Fires ONLY when a real path is present —
         never fabricates one (per SYSTEM_PROMPT: 路径来自任务，不要自己编造)."""
         action = decision.action
+        if action is None:
+            return decision
         if (
             getattr(action, "action_type", None) == "tap"
             and _UPLOAD_CONTROL_RE.search(instruction or "")

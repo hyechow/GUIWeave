@@ -194,7 +194,7 @@ class _PlanResult(BaseModel):
         description=(
             "普通列表 scroll 时填手指移动方向（up/down/left/right）；"
             "picker drag/scroll 时填值的变化方向（increase=值变大，decrease=值变小）；"
-            "tap/type/home/stop 留空"
+            "tap/type/home 留空"
         ),
     )
     # Picker-wheel fields: iPhone date pickers use year/month/day; Android time

@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 
 from gui_agent.context import ContextBlock
 from gui_agent.core.config import resolve_llm_config
+from gui_agent.core.schemas import target_value_options
 from gui_agent.prompts import load_prompt_text
 from llm.structured import invoke_structured
 
@@ -51,7 +52,14 @@ class EntityRef(BaseModel):
     """One entity the goal must look up in the target system."""
 
     mention: str = Field(description="目标原文里对该实体的引用,如 'Aurora jacket'")
-    role: str = Field(default="lookup", description='"lookup"=要在系统里检索/定位的既有实体;"value"=要设置/创建/填写的值(新名称、表单选项、规则作用域)——原样使用,不检索、绝不改拼写')
+    role: str = Field(default="lookup", description='"lookup"=要在系统里检索/定位的既有实体;"value"=要设置/创建/填写的值(新名称、表单选项、规则作用域)——不检索、绝不改拼写')
+    value_members: list[str] = Field(
+        default_factory=list,
+        description=(
+            "仅 role=value 使用：当 mention 表示同一逻辑选择必须包含的多个原子值时，"
+            "逐项原样列出；标量值和不同字段的值留空并分别建 EntityRef。"
+        ),
+    )
     type: str = Field(default="generic", description="实体类型:product|customer|order|category|sku|review_text|generic")
     match_mode: str = Field(default="approximate", description='"exact"=系统级精确标识;"approximate"=口语/部分/转述引用')
     search_key: str = Field(default="", description="approximate:最显著、最可能逐字命中存储名称的【单个】token;exact:整串原值")
@@ -110,6 +118,7 @@ def resolve_intent(
             e.match_mode = "approximate"
         if not e.search_key.strip():
             e.search_key = e.mention
+        e.value_members = list(target_value_options(e.value_members))
     return resolution
 
 
@@ -127,6 +136,12 @@ def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBloc
         # used verbatim, never searched. Rendering it as a retrieval line made decompose search for
         # things that don't exist yet (703 "Thanks giving sale") or foreach over form settings (702).
         if getattr(e, "role", "lookup") == "value":
+            members = target_value_options(e.value_members)
+            if len(members) > 1:
+                return (
+                    f"- 待填入同字段值集合「{e.mention}」｜类型={e.type}｜"
+                    f"原子值={list(members)}（分别填写，不合并成一个字符串）"
+                )
             return f"- 待填入值「{e.mention}」｜类型={e.type}｜原样填写（不检索、不改拼写）"
         match = ("允许模糊匹配，检索关键词：" + e.search_key) if e.match_mode == "approximate" else "精确匹配"
         # cardinality=set is authoritative for the DECISION (the reference denotes a SET, not one

@@ -6,6 +6,8 @@ import re
 
 from pydantic import BaseModel, Field, field_validator
 
+from gui_agent.core.schemas import TargetValue, target_value_options
+
 from ..program import (
     Call,
     Compute,
@@ -94,11 +96,13 @@ class _StepDraft(BaseModel):
             "例如命名列筛选填写列名；mutation 填业务字段或集合名，不写 CSS/坐标。"
         ),
     )
-    target_values: dict[str, str] = Field(
+    target_values: dict[str, TargetValue] = Field(
         default_factory=dict,
         description=(
-            "run_kind=action：本步必须实现的业务终态；它不提供目标身份或写入授权。"
-            "run_kind=filter：完成后的完整筛选状态。格式均为 {语义字段: 目标值}；"
+            "run_kind=action：本步必须实现的业务终态；同一选择组需要多个值时使用字符串数组，"
+            "不得拼成 and/和 连接的单个字符串，重复集合成员仍分别使用标量合同。"
+            "run_kind=filter：完成后的完整筛选状态，"
+            "每个字段只声明一个已应用值。它不提供目标身份或写入授权；"
             "不得写按钮、选择器、坐标或系统生成的 ID/时间戳。"
         ),
     )
@@ -400,9 +404,12 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                         if value.strip()
                     ],
                     target_values={
-                        str(key).strip(): str(value).strip()
+                        str(key).strip(): (
+                            list(options) if isinstance(value, list) else options[0]
+                        )
                         for key, value in (d.target_values or {}).items()
-                        if str(key).strip() and str(value).strip()
+                        if str(key).strip()
+                        if (options := target_value_options(value))
                     },
                 ))
     return out

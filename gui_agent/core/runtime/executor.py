@@ -84,6 +84,8 @@ class VisionExecutor:
     ) -> bool:
         # app_name / png_bytes / is_home_screen are iphone-only; ignored here.
         action = decision.action
+        if action is None:
+            return False
         print(f"\n动作: [{action.action_type}] {action.description}")
         client = self._client()
 
@@ -128,10 +130,6 @@ class VisionExecutor:
             duration_ms = action.duration_ms or 1000
             print(f"  drag ({fx:.0f},{fy:.0f})->({tx:.0f},{ty:.0f}), {duration_ms}ms")
             print(f"  结果: {client.drag(fx, fy, tx, ty, duration_ms)}")
-
-        elif action.action_type == "stop":
-            print("停止操作（当前状态已满足目标，无需执行）")
-            return True
 
         else:
             handled = self._dispatch_extra(action, client)

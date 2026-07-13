@@ -93,6 +93,8 @@ class StructuredOutputPolicy(BaseActionPolicy):
         drag_column: Optional[str] = None,
         drag_steps: Optional[int] = None,
     ) -> IPhoneActionDecision:
+        if decision.action is None:
+            return decision
         direction, drag_column, drag_steps, gesture_hint_dir = _resolve_hints(
             instruction, direction, drag_column, drag_steps
         )

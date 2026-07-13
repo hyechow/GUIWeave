@@ -62,8 +62,6 @@ class ExecutionContract:
     require_terminal_dispatch: bool = False
     completion_mode: CompletionMode = "verification"
     mutation_mode: Literal["ensure", "change"] = "change"
-    target_controls: tuple[str, ...] = ()
-    target_values: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_milestone(cls, milestone: Milestone) -> "ExecutionContract":
@@ -96,8 +94,6 @@ class ExecutionContract:
             require_terminal_dispatch=bool(milestone.requires_commit),
             completion_mode=mode,
             mutation_mode=milestone.mutation_mode,
-            target_controls=tuple(milestone.target_controls or ()),
-            target_values=tuple((milestone.target_values or {}).items()),
         )
 
 
@@ -348,13 +344,15 @@ class CompletionEvaluator:
             return CompletionEvaluation("pending", "筛选状态尚未权威确认")
 
         if contract.completion_mode == "arrival":
-            if outcome is not None and outcome.value == "confirmed":
-                return CompletionEvaluation(
-                    "satisfied", outcome.evidence or "目标页面状态已确认", "confirmed", (outcome,)
-                )
-            # A generic response proves only that something happened, not that the destination is
-            # correct.  It intentionally cannot complete navigation by itself.
-            return CompletionEvaluation("pending", "尚无目标页面身份的确认信号")
+            if not (
+                execution is not None and execution.value == "confirmed"
+                and outcome is not None and outcome.value == "confirmed"
+            ):
+                return CompletionEvaluation("pending", "导航动作或目标页面确认尚不完整")
+            return CompletionEvaluation(
+                "satisfied", outcome.evidence or "目标页面状态已确认",
+                "confirmed", (execution, outcome),
+            )
 
         if contract.completion_mode == "read":
             if (
@@ -394,7 +392,8 @@ class CompletionEvaluator:
                 return CompletionEvaluation(
                     "pending",
                     "声明的目标字段已达到目标值，但终端提交尚未派发；"
-                    "当前控件值仍是草稿状态，下一步只应执行持久化提交",
+                    "当前控件值仍是草稿状态。完成前继续当前前向流程，"
+                    "且不要重写已满足字段",
                     conflicts=("action.commit.required",),
                     used_claims=(write, control_state),
                 )
@@ -410,8 +409,9 @@ class CompletionEvaluator:
             ):
                 return CompletionEvaluation(
                     "pending",
-                    "目标字段已在本轮写入，但声明的终端提交尚未派发；"
-                    "当前控件值只能证明草稿状态，不能证明已持久化",
+                    "目标字段已在本轮写入，但终端提交尚未派发；"
+                    "当前控件值只能证明草稿状态，不能证明已持久化。"
+                    "完成前继续当前前向流程，且不要重写已满足字段",
                     conflicts=("action.commit.required",),
                     used_claims=tuple(
                         item for item in (write, control_state, outcome) if item is not None
@@ -428,8 +428,8 @@ class CompletionEvaluator:
                 if contract.require_terminal_dispatch and not commit_confirmed:
                     return CompletionEvaluation(
                         "pending",
-                        "目标状态看似满足，但该执行单元要求的终端提交尚未派发；"
-                        "因此缺少本轮产生写操作的执行证据",
+                        "目标状态看似满足，但终端提交尚未派发；"
+                        "因此缺少本轮写操作已经持久化的证据",
                         conflicts=("action.commit.required",),
                     )
                 if not write_confirmed:
@@ -469,7 +469,7 @@ class CompletionEvaluator:
                 and execution.source_type == "runtime.commit_dispatch"
                 and write_confirmed
             ):
-                if response is None or response.value != "contradicted":
+                if response is None or response.coverage == "navigation_transition":
                     return CompletionEvaluation(
                         "satisfied",
                         "终端副作用已派发且没有矛盾证据；结果反馈通道不可用或尚未出现",

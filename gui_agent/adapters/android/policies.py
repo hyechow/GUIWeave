@@ -5,7 +5,7 @@ Mirrors the iphone ``StructuredOutputPolicy`` LLM machinery — same config via
 ``invoke_structured`` into an ``ActionDecision``, same ``BaseActionPolicy`` base —
 but with an ANDROID system prompt: operate a phone touchscreen, output ONE action
 within the android action vocabulary (tap / type / clear_text / press_enter /
-scroll / drag / home / back / app_switch / stop).
+scroll / drag / home / back / app_switch).
 
 VISION-ONLY: the screenshot is sent as-is (downscaled only if very large) — it is
 NOT the iphone 2x retina image, so ``resize_to_logical_png`` is deliberately NOT
@@ -261,6 +261,8 @@ class AndroidActionPolicy(BaseActionPolicy):
             instruction, direction, drag_column, drag_steps
         )
         action = decision.action
+        if action is None:
+            return decision
 
         if column:
             anchor = _PICKER_COLUMN_ANCHORS.get(column)

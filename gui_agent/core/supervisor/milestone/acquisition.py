@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from gui_agent.core.runtime.traversal import TraversalSession, TraversalWindow
 from gui_agent.core.schemas import Milestone
 
 from .schemas import _PlanResult
@@ -12,8 +13,6 @@ AcquireStatus = Literal["inactive", "ready", "act", "ambiguous", "exhausted"]
 
 _CONTAINER_KINDS = ("section_toggle", "accordion", "tab", "treeitem")
 _COLLAPSED_VALUES = {"0", "false", "no", "closed", "collapsed", "off", "hidden"}
-_MIN_GEOMETRY_PROGRESS = 4.0
-_NO_PROGRESS_LIMIT = 2
 _DEFAULT_SCROLL_BUDGET = 12
 
 
@@ -100,13 +99,6 @@ class AcquireDecision:
     reason: str = ""
 
 
-@dataclass
-class _ScrollState:
-    y: float | None
-    attempts: int = 1
-    stagnant: int = 0
-
-
 class TargetAcquireController:
     """Resolve and acquire a declared target before normal milestone execution.
 
@@ -117,7 +109,7 @@ class TargetAcquireController:
 
     def __init__(self, *, scroll_budget: int = _DEFAULT_SCROLL_BUDGET) -> None:
         self.scroll_budget = max(1, scroll_budget)
-        self._scrolls: dict[tuple[str, str], _ScrollState] = {}
+        self._traversals: dict[tuple[str, str], TraversalSession] = {}
 
     @staticmethod
     def _queries(milestone: Milestone) -> tuple[str, ...]:
@@ -170,39 +162,46 @@ class TargetAcquireController:
             return None, "resolved targets require conflicting scroll directions"
         return candidates[0], ""
 
-    def _track_scroll(
+    def _traverse_target(
         self,
         *,
         scope: str,
         target: str,
         direction: Literal["up", "down"],
         position: float | None,
-    ) -> str:
+    ) -> tuple[str, str]:
         key = (scope, " ".join(_tokens(target)))
-        state = self._scrolls.get(key)
-        if state is None:
-            self._scrolls[key] = _ScrollState(position)
-            return ""
-        state.attempts += 1
-        if state.y is not None and position is not None:
-            delta = position - state.y
-            progressed = (
-                delta <= -_MIN_GEOMETRY_PROGRESS
-                if direction == "down"
-                else delta >= _MIN_GEOMETRY_PROGRESS
+        session = self._traversals.get(key)
+        if session is None:
+            session = TraversalSession(
+                f"target:{key[1]}",
+                coverage="from_current",
+                boundary_status="exhausted",
+                no_progress_status="exhausted",
+                max_moves=self.scroll_budget,
             )
-            if progressed:
-                state.stagnant = 0
-            else:
-                state.stagnant += 1
-        state.y = position
-        if state.stagnant >= _NO_PROGRESS_LIMIT:
-            self._scrolls.pop(key, None)
-            return "target geometry did not advance after repeated scroll attempts"
-        if state.attempts > self.scroll_budget:
-            self._scrolls.pop(key, None)
-            return f"target acquire exhausted its {self.scroll_budget}-scroll budget"
-        return ""
+            self._traversals[key] = session
+        # As the page scrolls down, a below-fold target's document-relative y decreases. Negating
+        # y gives the shared traversal model a monotonically increasing forward position.
+        traversal_position = -position if position is not None else None
+        window = TraversalWindow(
+            surface_id=scope,
+            position_key=f"target-y:{position}" if position is not None else "target-y:unknown",
+            # Target positioning is geometric. The semantic target stays constant across valid
+            # scrolls, so it must not be used as a window-content progress signal.
+            content_key="",
+            position=traversal_position,
+            can_forward=direction == "down",
+            can_backward=direction == "up",
+        )
+        decision = session.observe(window)
+        if decision.action in {"exhausted", "ambiguous"}:
+            self._traversals.pop(key, None)
+        return decision.action, decision.reason
+
+    def _clear_targets(self, scope: str, labels: tuple[str, ...]) -> None:
+        for label in labels:
+            self._traversals.pop((scope, " ".join(_tokens(label))), None)
 
     def decide(
         self,
@@ -236,14 +235,16 @@ class TargetAcquireController:
             label = _label(target)
             direction = _direction(target)
             assert direction is not None
-            exhausted = self._track_scroll(
+            traversal_action, traversal_reason = self._traverse_target(
                 scope=scope,
                 target=label,
                 direction=direction,
                 position=_y(target),
             )
-            if exhausted:
-                return AcquireDecision("exhausted", target_labels=labels, reason=exhausted)
+            if traversal_action == "exhausted":
+                return AcquireDecision("exhausted", target_labels=labels, reason=traversal_reason)
+            if traversal_action == "ambiguous":
+                return AcquireDecision("ambiguous", target_labels=labels, reason=traversal_reason)
             direction_text = "向上" if direction == "up" else "向下"
             plan = _PlanResult(
                 instruction=f"{direction_text}滚动到「{label}」附近",
@@ -276,7 +277,7 @@ class TargetAcquireController:
         )
         if collapsed is not None and not visible_fields:
             label = _label(collapsed)
-            self._scrolls.pop((scope, " ".join(_tokens(label))), None)
+            self._clear_targets(scope, labels)
             plan = _PlanResult(
                 instruction=f"点击或展开「{label}」区域",
                 summary=(
@@ -288,8 +289,7 @@ class TargetAcquireController:
             )
             return AcquireDecision("act", plan=plan, target_labels=labels)
 
-        for label in labels:
-            self._scrolls.pop((scope, " ".join(_tokens(label))), None)
+        self._clear_targets(scope, labels)
         return AcquireDecision(
             "ready",
             target_labels=labels,

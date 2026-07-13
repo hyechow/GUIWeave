@@ -62,6 +62,7 @@ def _last_scroll_was_for(history: list[PolicyTurn], milestone_id: str) -> bool:
         history
         and history[-1].supervisor.milestone_id == milestone_id
         and history[-1].action_decision
+        and history[-1].action_decision.action
         and history[-1].action_decision.action.action_type == "scroll"
         and history[-1].executed
     )
@@ -71,6 +72,7 @@ def _has_successful_scroll_for(history: list[PolicyTurn], milestone_id: str) -> 
     return any(
         t.supervisor.milestone_id == milestone_id
         and t.action_decision
+        and t.action_decision.action
         and t.action_decision.action.action_type in {"scroll", "drag"}
         and t.executed
         for t in history

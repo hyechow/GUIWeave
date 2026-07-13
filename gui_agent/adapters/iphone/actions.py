@@ -27,7 +27,7 @@ IPhoneScrollTargetArea = Literal[
 ]
 IPhoneActionType = Literal[
     "tap", "type", "clear_text", "press_enter", "scroll", "drag",
-    "home", "app_switch", "stop",
+    "home", "app_switch",
 ]
 
 
@@ -47,4 +47,4 @@ class IPhoneAction(BaseAction):
 
 
 class IPhoneActionDecision(BaseActionDecision):
-    action: SerializeAsAny[IPhoneAction]  # type: ignore[assignment]
+    action: Optional[SerializeAsAny[IPhoneAction]]  # type: ignore[assignment]

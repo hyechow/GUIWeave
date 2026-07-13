@@ -12,10 +12,14 @@ for testing and for future individual wiring.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
+from hashlib import sha1
 from pathlib import Path
 from typing import Any
+
+from gui_agent.core.runtime.traversal import TraversalSession, window_from_signal
 
 # How much SSIM similarity (1−distance) constitutes "frozen frame" — page didn't
 # scroll.  Must be > CHANGE_SSIM_DIST_THR (0.08) complement: 1−0.08 = 0.92 is
@@ -41,30 +45,39 @@ def _frame_similarity(a: bytes, b: bytes) -> float:
     return 1.0 - dist  # return similarity, not distance
 
 
-def _browser_at_scroll_end(client: Any) -> bool:
-    """True when the page cannot scroll further down (DOM-exact, no image processing).
-
-    Uses ``window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2``
-    (2 px tolerance for sub-pixel rounding).  Falls back to False on any error so
-    the scroll loop continues rather than stopping too early.
-    """
+def _browser_scroll_signal(client: Any) -> dict[str, Any] | None:
+    """Read the document scroll window as adapter evidence for a traversal session."""
     cdp = getattr(client, "_cdp_send", None)
     if not callable(cdp):
-        return False
+        return None
     try:
         res = cdp(
             "Runtime.evaluate",
             {
                 "expression": (
-                    "window.scrollY + window.innerHeight"
-                    " >= document.documentElement.scrollHeight - 2"
+                    "({top:window.scrollY, viewport:window.innerHeight, "
+                    "extent:document.documentElement.scrollHeight})"
                 ),
                 "returnByValue": True,
             },
         )
-        return bool((res.get("result") or {}).get("value"))
+        value = (res.get("result") or {}).get("value")
+        if not isinstance(value, dict):
+            return None
+        top = float(value.get("top") or 0)
+        viewport = float(value.get("viewport") or 0)
+        extent = float(value.get("extent") or 0)
+        at_end = top + viewport >= extent - 2
+        return {
+            "type": "scroll",
+            "scroll_top": top,
+            "at_scroll_start": top <= 0,
+            "at_scroll_end": at_end,
+            "can_scroll_more": not at_end,
+            "can_scroll_back": top > 0,
+        }
     except Exception:
-        return False
+        return None
 
 
 def _browser_scroll_step(client: Any) -> tuple[int, int, int]:
@@ -117,10 +130,18 @@ def scroll_until_read(
     client = getattr(platform, "client", None)
     is_browser = client is not None and hasattr(client, "viewport_size")
 
-    prev_png: bytes | None = None
+    traversal = TraversalSession(
+        "visual-read",
+        coverage="from_current",
+        boundary_status="exhausted",
+        no_progress_status="exhausted",
+        max_moves=max_scrolls,
+    )
+    previous_png: bytes | None = None
+    previous_content_key = ""
     reads: dict[str, str] = {}
 
-    for scroll_i in range(max_scrolls + 1):
+    for scroll_i in range(max_scrolls + 2):
         obs_url = f"scroll_read_{scroll_i}.png"
         try:
             obs = bundle.make_perception(platform, log_dir / obs_url).observe()
@@ -143,24 +164,35 @@ def scroll_until_read(
         if all(reads.get(f, "").strip() for f in returns):
             return reads
 
-        # Boundary check.
-        at_end = False
-        if is_browser:
-            at_end = _browser_at_scroll_end(client)
-        else:
-            # iPhone/Android: pixel-freeze via SSIM.
-            if obs.viewport is not None:
-                at_end = bool(obs.viewport.get("at_scroll_end"))
-            if not at_end and prev_png is not None:
-                try:
-                    at_end = _frame_similarity(prev_png, png) >= _FREEZE_SSIM_THR
-                except Exception:
-                    pass
+        content_key = sha1(png).hexdigest() if png else ""
+        if not is_browser and previous_png is not None:
+            try:
+                if _frame_similarity(previous_png, png) >= _FREEZE_SSIM_THR:
+                    content_key = previous_content_key
+            except Exception:
+                pass
 
-        if at_end:
+        signal = _browser_scroll_signal(client) if is_browser else None
+        if signal is None and isinstance(obs.viewport, dict):
+            signal = obs.viewport
+        if signal is None:
+            signal = {"type": "scroll", "can_scroll_more": True, "at_scroll_end": False}
+        window = window_from_signal(
+            signal,
+            surface_id=f"visual-read:{id(platform)}",
+            content_key=content_key,
+        )
+        if window is None:
             break
+        decision = traversal.observe(window)
+        previous_png = png
+        previous_content_key = content_key
+        if decision.action in {"done", "exhausted", "ambiguous"}:
+            break
+        if decision.action == "wait":
+            continue
 
-        # Scroll one step.
+        direction = "down" if decision.action == "move_forward" else "up"
         scroll_fn = getattr(client, "scroll", None) if client is not None else None
         if not callable(scroll_fn):
             break
@@ -173,22 +205,21 @@ def scroll_until_read(
                 # unit mismatch.
                 cdp = getattr(client, "_cdp_send", None)
                 if callable(cdp):
+                    delta = step_px if direction == "down" else -step_px
                     cdp(
                         "Runtime.evaluate",
                         {
-                            "expression": f"window.scrollBy({{top:{step_px},behavior:'instant'}})",
+                            "expression": f"window.scrollBy({{top:{delta},behavior:'instant'}})",
                             "returnByValue": True,
                         },
                     )
                 else:
-                    scroll_fn("down", amount=5, x=cx, y=cy)
+                    scroll_fn(direction, amount=5, x=cx, y=cy)
             else:
-                scroll_fn("down", amount=5, x=640, y=400)
+                scroll_fn(direction, amount=5, x=640, y=400)
             time.sleep(_POST_SCROLL_SETTLE_S)
         except Exception:
             break
-
-        prev_png = png
 
     return reads
 
@@ -347,6 +378,64 @@ def read_page_complete(
 _DEFAULT_MAX_PAGES = 20
 
 
+def _move_bound_table(client: Any, table: dict[str, Any], direction: str) -> bool:
+    """Move the pager/scroll container associated with ``table`` and no other surface."""
+
+    cdp = getattr(client, "_cdp_send", None)
+    path = str(table.get("path") or "").strip()
+    traversal = table.get("traversal") if isinstance(table.get("traversal"), dict) else {}
+    if not callable(cdp) or not path:
+        return False
+    expression = f"""(() => {{
+      let surface;
+      try {{ surface = document.querySelector({json.dumps(path)}); }} catch (_) {{ return false; }}
+      if (!surface) return false;
+      const disabled = (el) => !!(el && (
+        el.disabled || el.matches('[disabled],[aria-disabled="true"],.disabled,[class*="disabled" i]')
+      ));
+      if ({json.dumps(traversal.get("type"))} === 'paged') {{
+        const pagerSelector = [
+          '.pager','.pagination','.pages','.page-numbers','.data-grid-paginator',
+          '.admin__data-grid-pager','nav[aria-label*="pagination" i]'
+        ].join(',');
+        const buttonSelector = {json.dumps(direction)} === 'forward'
+          ? '[aria-label*="next page" i],.next-page,.action-next,button[title*="Next" i],button[class*="next" i]'
+          : '[aria-label*="previous page" i],.prev-page,.action-previous,button[title*="Previous" i],button[class*="previous" i]';
+        for (let root = surface, depth = 0; root && depth < 7; root = root.parentElement, depth++) {{
+          const pager = root.querySelector(pagerSelector);
+          const button = pager && pager.querySelector(buttonSelector);
+          if (button && !disabled(button)) {{ button.click(); return true; }}
+        }}
+        return false;
+      }}
+      for (let root = surface, depth = 0; root && depth < 6; root = root.parentElement, depth++) {{
+        if (root.scrollHeight > root.clientHeight + 2) {{
+          const delta = root.clientHeight * ({json.dumps(direction)} === 'forward' ? 1 : -1);
+          root.scrollBy({{top: delta, behavior: 'instant'}});
+          return true;
+        }}
+      }}
+      window.scrollBy({{top: window.innerHeight * ({json.dumps(direction)} === 'forward' ? 1 : -1), behavior: 'instant'}});
+      return true;
+    }})()"""
+    try:
+        result = cdp("Runtime.evaluate", {"expression": expression, "returnByValue": True})
+        return bool(((result or {}).get("result") or {}).get("value"))
+    except Exception:
+        return False
+
+
+def _single_paged_table(obs: Any, selected: dict[str, Any]) -> bool:
+    tables = [table for table in getattr(obs, "tables", None) or [] if isinstance(table, dict)]
+    paged = [
+        table
+        for table in tables
+        if isinstance(table.get("traversal"), dict)
+        and table["traversal"].get("type") == "paged"
+    ]
+    return len(paged) == 1 and paged[0] is selected
+
+
 def _missing_grid_columns(rows: list[dict[str, str]], returns: list[str]) -> list[str]:
     """Declared ``returns`` columns that NO collected row carries a non-empty value for.
 
@@ -460,24 +549,18 @@ def read_grid_complete(
     Returns an empty list when the table exists but contains no data rows.
     Returns the full collected row list otherwise.
 
-    Single-page grids: reads all rows in one shot (AX tree is scroll-position-independent).
-    Paginated grids: driven by ``Observation.viewport`` (the page-level pager sensor in
-    ``table_reader.py``) through the SAME ``TraversalController`` state machine the
-    multi-turn ``react_until_collected``/``ListTraversalRuntime`` path uses — not a
-    bespoke heuristic. This means a grid that loads mid-pagination (e.g. a saved
-    UI-grid bookmark restoring a non-1 page) rewinds to page 1 for free via the
-    controller's existing ``started_at_page``/``paginate_prev`` logic, instead of a
-    second, narrower click-and-diff mechanism duplicating what the controller already
-    does. When no viewport signal is available at all (no DOM pager sensor matched),
-    this falls back to the legacy forward-only walk via the AX tree's next-page button.
+    Single-page grids read all rows in one shot. Multi-window grids use the shared
+    ``TraversalSession`` through ``ListTraversalRuntime`` and bind movement to the DOM table
+    that produced the rows. A page-level scroll or another grid's pager cannot drive this
+    collection. An AX pager ref is used only as a compatibility fallback when the selected
+    table is the page's sole paginated surface.
     """
     from gui_agent.adapters.browser.semantic_page import (
-        _row_dedup_key,
         find_next_page_ref,
         find_prev_page_ref,
         read_grid_from_tree,
     )
-    from gui_agent.core.orchestrator.traversal.controller import TraversalController
+    from gui_agent.core.orchestrator.traversal.list_runtime import ListTraversalRuntime
 
     semantic_tree = getattr(obs, "semantic_tree", None)
     rows = read_grid_from_tree(semantic_tree, returns) if semantic_tree else None
@@ -491,7 +574,9 @@ def read_grid_complete(
         # → caller still falls back to interactive react_until_collected.
         from gui_agent.core.orchestrator.traversal.list_runtime import rows_from_tables
 
-        return rows_from_tables(getattr(obs, "tables", None), returns)
+        rows = rows_from_tables(getattr(obs, "tables", None), returns)
+        if rows is None:
+            return None
 
     # Self-heal: if the grid didn't render some declared columns (the AX extractor silently
     # drops unmatched fields), enable them via the grid's "Columns" control and re-read BEFORE
@@ -506,92 +591,54 @@ def read_grid_complete(
         rows = _healed_rows
         semantic_tree = getattr(obs, "semantic_tree", None)
 
-    # rows is not None ⇒ the AX tree produced this grid, so semantic_tree is truthy. The
-    # pagination walk below is AX-tree-driven and relies on that invariant.
-    assert semantic_tree is not None
-    all_rows: list[dict[str, str]] = list(rows)
-    seen_keys: set[str] = {_row_dedup_key(r) for r in all_rows}
-
-    viewport = getattr(obs, "viewport", None)
-    _on_page_1 = not isinstance(viewport, dict) or (
-        (viewport.get("page_index") or 1) <= 1 and not viewport.get("has_prev_page")
-    )
-    # When grid is not on page 1 (e.g. left mid-pagination by a prior run),
-    # disable limit so the controller rewinds + forward-collects all rows;
-    # the downstream data_query's ORDER BY + LIMIT selects the correct row.
-    _effective_limit = limit if _on_page_1 else None
-
-    if _effective_limit and len(all_rows) >= _effective_limit:
-        return all_rows[:_effective_limit]
-
     client = getattr(platform, "client", None) if platform is not None else None
-    if client is None or bundle is None or log_dir is None:
-        return all_rows  # single-page only, no pagination
+    if client is None or bundle is None or log_dir is None or not getattr(obs, "tables", None):
+        return rows  # semantic single-page path; no bound DOM surface is available
 
-    controller = TraversalController("grid") if isinstance(viewport, dict) else None
+    runtime = ListTraversalRuntime(var="grid", returns=list(returns), limit=limit)
+    for move_n in range(max_pages + 1):
+        decision = runtime.update(obs)
+        if decision.action == "done":
+            return runtime.rows[:limit] if limit else runtime.rows
+        if decision.action in {"fallback", "schema_mismatch"}:
+            return None
 
-    for page_n in range(1, max_pages):
-        if controller is not None:
-            decision = controller.update(viewport)
-            if decision == "done":
-                break
-            if decision == "paginate_prev":
-                ref = find_prev_page_ref(semantic_tree)
-            elif decision == "paginate_next":
-                ref = find_next_page_ref(semantic_tree)
-            else:
-                # stay / set_page_size / unresolved unknown streak: the controller has
-                # no driveable action this frame — fall back to the forward-only signal
-                # so a pager the sensor can't fully parse still makes progress.
-                ref = find_next_page_ref(semantic_tree)
-        else:
-            ref = find_next_page_ref(semantic_tree)
-
-        if ref is None:
-            break
-
-        try:
-            client.click_by_ref(ref)
-        except Exception:
-            break
+        table = runtime.current_table
+        if table is None:
+            return None
+        moved = decision.action == "wait"
+        if decision.action in {"paginate_next", "paginate_prev", "scroll_down"}:
+            direction = "backward" if decision.action == "paginate_prev" else "forward"
+            moved = _move_bound_table(client, table, direction)
+            # Compatibility fallback for an adapter that exposes AX refs but no DOM-eval path.
+            # It is safe only when the selected table is the sole paginated surface.
+            if not moved and decision.action.startswith("paginate") and _single_paged_table(obs, table):
+                ref = (
+                    find_prev_page_ref(getattr(obs, "semantic_tree", None) or [])
+                    if direction == "backward"
+                    else find_next_page_ref(getattr(obs, "semantic_tree", None) or [])
+                )
+                if ref is not None:
+                    try:
+                        client.click_by_ref(ref)
+                        moved = True
+                    except Exception:
+                        pass
+        if not moved:
+            return None
 
         settle = getattr(client, "wait_settled", None)
         if callable(settle):
             try:
-                settle("navigate")
+                settle("navigate" if decision.action.startswith("paginate") else "scroll")
             except Exception:
                 pass
-
-        obs_url = f"grid_page_{page_n + 1}.png"
         try:
-            obs = bundle.make_perception(platform, log_dir / obs_url).observe()
+            obs = bundle.make_perception(
+                platform,
+                log_dir / f"grid_window_{move_n + 2}.png",
+            ).observe()
         except Exception:
-            break
+            return None
 
-        semantic_tree = getattr(obs, "semantic_tree", None)
-        if not semantic_tree:
-            break
-        viewport = getattr(obs, "viewport", None)
-
-        page_rows = read_grid_from_tree(semantic_tree, returns)
-        if not page_rows:
-            break
-
-        new_count = 0
-        for r in page_rows:
-            k = _row_dedup_key(r)
-            if k not in seen_keys:
-                seen_keys.add(k)
-                all_rows.append(r)
-                new_count += 1
-
-        if _effective_limit and len(all_rows) >= _effective_limit:
-            break  # collected enough rows — no need to paginate further
-
-        # Without a controller (no viewport signal at all), "no new rows" is the only
-        # boundary signal we have. With a controller, a rewind step revisiting an
-        # already-seen page is expected to add 0 rows — that's not "the end of the list".
-        if controller is None and new_count == 0:
-            break
-
-    return all_rows
+    return None

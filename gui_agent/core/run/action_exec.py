@@ -110,6 +110,8 @@ def snapped_point(action_decision: ActionDecision | None) -> tuple[float, float]
     if action_decision is None:
         return None
     action = action_decision.action
+    if action is None:
+        return None
     if action.action_type not in ("tap", "click") or action.x is None or action.y is None:
         return None
     snap = action.snap
@@ -221,6 +223,10 @@ class ActionExecutionState:
             return result
 
         action = action_decision.action
+        if action is None:
+            say("  [NoAction] Action Policy 未返回可执行动作")
+            status(turn_no, "未产生可执行动作")
+            return result
         if effective_action_role(sv_step, action) == "write":
             authorization = sv_step.mutation_authorization
             if sv_step.requires_mutation_authorization and authorization is None:
@@ -263,8 +269,7 @@ class ActionExecutionState:
                 "  [TargetBinding] "
                 f"{result.binding.source}:{result.binding.unit_id or 'control'}"
             )
-        if action_decision.action:
-            status(turn_no, f"[{action_label(action.action_type)}] {action.description}")
+        status(turn_no, f"[{action_label(action.action_type)}] {action.description}")
 
         profile_key = self._scroll_profile_key(sv_step)
         should_probe_scroll = (
@@ -290,6 +295,10 @@ class ActionExecutionState:
             )
             action_decision = result.action_decision
             action = action_decision.action
+            if action is None:
+                say("  [NoAction] grounding 后未返回可执行动作")
+                status(turn_no, "未产生可执行动作")
+                return result
 
         if should_probe_scroll and not result.executed and not result.probe_failed:
             self._probe_scroll(
@@ -374,7 +383,7 @@ class ActionExecutionState:
                     "target_value": sv_step.target_value,
                     "target_group_id": target_group_id,
                     "action_family": sv_step.action_family,
-                    "primitive": action_decision.action.action_type,
+                    "primitive": action_decision.action.action_type if action_decision.action else "none",
                     "fallback": False,
                 })
             say("原生控件已唯一解析，跳过视觉 Action Policy")
@@ -418,7 +427,7 @@ class ActionExecutionState:
                             "milestone_id": sv_step.milestone_id,
                             "target_control": sv_step.target_control,
                             "target_group_id": target_group_id,
-                            "primitive": action_decision.action.action_type,
+                            "primitive": action_decision.action.action_type if action_decision.action else "none",
                         })
         if hasattr(supervisor, "_timings"):
             supervisor._timings["action_policy"] = time.perf_counter() - started

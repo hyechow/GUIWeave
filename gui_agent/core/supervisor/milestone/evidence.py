@@ -17,7 +17,7 @@ from gui_agent.core.run.progress_monitor import ProgressMonitor
 from gui_agent.core.run.mutation import resolve_mutation
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 
-from .action_protocol import PersistenceBoundaryState, is_commit_turn
+from .action_protocol import is_commit_turn
 from .observation_state import (
     RuntimeFilterIntent,
     filter_chips_clean,
@@ -45,7 +45,6 @@ def action_lifecycle_claims(
     scope: str,
     monitor: ProgressMonitor,
     ledger: ActionLedger,
-    boundary: PersistenceBoundaryState | None = None,
 ) -> list[EvidenceClaim]:
     """Translate persisted action lifecycle state into typed evidence claims."""
     claims: list[EvidenceClaim] = []
@@ -66,21 +65,26 @@ def action_lifecycle_claims(
     if latest is None:
         return claims
     lifecycle_scope = getattr(latest.supervisor, "execution_scope", "") or scope
-    if monitor.url_changed:
+    if monitor.url_changed or monitor.dom_changed:
         claims.append(claim(
             "page.response",
             "confirmed",
             source_type="runtime.effect_monitor",
             scope=scope,
             subject_scope=lifecycle_scope,
-            evidence="URL changed after the previous action",
+            evidence=(
+                "URL changed after the previous action"
+                if monitor.url_changed
+                else "structured page state changed after the previous action"
+            ),
             authoritative=True,
+            coverage=(
+                "navigation_transition"
+                if monitor.url_changed
+                else "in_place_transition"
+            ),
         ))
-    terminal = (
-        boundary.is_terminal_dispatch(latest, milestone)
-        if boundary is not None
-        else is_commit_turn(latest, milestone)
-    )
+    terminal = is_commit_turn(latest, milestone)
     claims.append(claim(
         "action.execution",
         "confirmed",
