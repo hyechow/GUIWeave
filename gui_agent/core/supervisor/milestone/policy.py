@@ -1,5 +1,6 @@
 """MilestoneSupervisorPolicy: two-machine milestone supervisor."""
 
+from collections.abc import Callable, Iterable
 from typing import Literal, Optional
 
 from langchain_openai import ChatOpenAI
@@ -72,7 +73,9 @@ from gui_agent.core.run.execution_signals import (
 )
 from .action_protocol import (
     action_metadata,
+    concrete_persistence_plan,
     is_commit_turn,
+    parent_persistence_pending,
     regresses_preparation_frontier,
     record_action_outcome,
     record_action_response,
@@ -106,10 +109,18 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
 
     name = "milestone"
 
-    def __init__(self, prompts: Optional[MilestonePrompts] = None) -> None:
+    def __init__(
+        self,
+        prompts: Optional[MilestonePrompts] = None,
+        *,
+        surface_resolver: Callable[[Observation], str] | None = None,
+        active_target_resolver: Callable[[Observation], Iterable[str]] | None = None,
+    ) -> None:
         # Platform factories inject their prompt bundle. The neutral default only supports
         # deterministic tests and tooling that do not need platform-specific visual guidance.
         self._prompts = prompts or _default_milestone_prompts()
+        self._surface_resolver = surface_resolver
+        self._active_target_resolver = active_target_resolver
         self._global_constraints: list[str] = []
         self._milestones: dict[str, Milestone] = {}
         self._order: list[str] = []
@@ -159,6 +170,26 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
         self._observe_only: bool = False
+
+    def _active_targets(self, observation: Observation) -> tuple[str, ...]:
+        """Read optional platform structure without making core depend on adapter schemas."""
+        if self._active_target_resolver is None:
+            return ()
+        try:
+            return tuple(self._active_target_resolver(observation))
+        except Exception as exc:  # noqa: BLE001 - optional structure must not block execution
+            print(f"  [ActionFrontier] 活动目标解析失败，退回视觉证据：{exc}")
+            return ()
+
+    def surface_id(self, observation: Observation) -> str:
+        """Return the adapter-defined active surface identity, if available."""
+        if self._surface_resolver is None:
+            return ""
+        try:
+            return str(self._surface_resolver(observation) or "")
+        except Exception as exc:  # noqa: BLE001 - optional structure must not block execution
+            print(f"  [ActionFrontier] 活动表面解析失败，退回无表面身份：{exc}")
+            return ""
 
     def set_app_knowledge(
         self,
@@ -905,16 +936,65 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
             (getattr(observation, "form_controls_meta", None) or {}).get("coverage")
             or "unknown"
         )
-        plan = target_unit_write_plan(
-            getattr(observation, "form_controls", None),
-            milestone,
-            coverage=coverage,
+        active_targets = self._active_targets(observation)
+        current_surface_id = self.surface_id(observation)
+        parent_commit = (
+            check.outcome_status != "contradicted"
+            and parent_persistence_pending(
+                milestone,
+                history,
+                active_targets,
+                current_surface_id=current_surface_id,
+            )
         )
-        if plan is not None:
-            print(f"  [TargetUnit] {plan.summary}")
-        else:
+        if parent_commit:
+            print("  [ActionFrontier] 子流程已返回父资源，要求绑定具体持久化控件")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
-                plan = self._invoke_planner(milestone, check, observation, history)
+                plan = self._invoke_planner(
+                    milestone,
+                    check,
+                    observation,
+                    history,
+                    extra=(
+                        "结构化执行轨迹已确认子编辑流程返回父资源，且父资源提交边界尚未跨越。"
+                        "下一步必须是当前父资源的持久化提交动作；atomic_role 和 action_family "
+                        "都填 commit，target_control 必须填写当前屏幕上实际存在的具体控件名称。"
+                        "禁止留空、禁止填写抽象的 persistence boundary，也禁止重新进入子编辑流程。"
+                    ),
+                )
+            if not concrete_persistence_plan(plan, milestone, active_targets):
+                print("  [ActionFrontier] 提交提议缺少可验证的当前控件，重试")
+                with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                    plan = self._invoke_planner(
+                        milestone,
+                        check,
+                        observation,
+                        history,
+                        extra=(
+                            "上一个提交提议没有绑定到当前活动表面中的具体控件。只返回一个当前"
+                            "父资源上真实可见、可点击的持久化控件；target_control 原样填写该控件"
+                            "名称，atomic_role=commit，action_family=commit。找不到时不要猜测。"
+                        ),
+                    )
+            if not concrete_persistence_plan(plan, milestone, active_targets):
+                print("  [ActionFrontier] 无法绑定具体持久化控件，保持未决且不派发动作")
+                plan = _PlanResult(
+                    instruction="",
+                    summary="父资源提交边界待处理，但当前未绑定到可验证的具体控件。",
+                    atomic_role="prepare",
+                    action_family="unknown",
+                )
+        else:
+            plan = target_unit_write_plan(
+                getattr(observation, "form_controls", None),
+                milestone,
+                coverage=coverage,
+            )
+            if plan is not None:
+                print(f"  [TargetUnit] {plan.summary}")
+            else:
+                with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
+                    plan = self._invoke_planner(milestone, check, observation, history)
         if self._is_sequence(plan.instruction):
             print("  [Planner] 多步序列，重试...")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
@@ -924,11 +1004,16 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                 )
         if (
             check.outcome_status != "contradicted"
-            and regresses_preparation_frontier(plan, milestone, history)
+            and regresses_preparation_frontier(
+                plan,
+                milestone,
+                history,
+                current_surface_id=current_surface_id,
+            )
         ):
             print(
                 "  [ActionFrontier] 提议回到已完成的 preparation，"
-                "要求 planner 沿当前事务继续向前"
+                "拒绝回退并要求新的前向动作"
             )
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
                 plan = self._invoke_planner(
@@ -937,11 +1022,23 @@ class MilestoneSupervisorPolicy(MilestoneDecompositionMixin, MilestoneStuckMixin
                     observation,
                     history,
                     extra=(
-                        "当前持久化事务已经越过你提议的 preparation 控件，之后还有其他"
-                        "已派发且获得响应的前向动作。不得重新进入早先的准备界面或重做已完成步骤；"
-                        "请只选择当前界面上的下一条前向动作。若业务字段已经准备完成且当前资源"
-                        "仍有未跨越的持久化边界，应执行该资源的终端提交动作。"
+                        "你提议的 preparation 已经执行并获得响应，之后同一事务还有其他前向动作。"
+                        "禁止重新进入该旧入口。请选择当前表面上未执行过的前向动作；没有结构证据"
+                        "证明已经返回父资源时，不得自行宣称提交边界已经就绪。"
                     ),
+                )
+            if regresses_preparation_frontier(
+                plan,
+                milestone,
+                history,
+                current_surface_id=current_surface_id,
+            ):
+                print("  [ActionFrontier] 重试仍回退，保持未决且不派发动作")
+                plan = _PlanResult(
+                    instruction="",
+                    summary="事务前沿无法确认新的安全前向动作，本轮不派发。",
+                    atomic_role="prepare",
+                    action_family="unknown",
                 )
         raw_action_family = getattr(plan, "action_family", "unknown")
         atomic_role, action_family = action_metadata(plan, milestone)

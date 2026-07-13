@@ -64,9 +64,17 @@ def _build_supervisor(name: str) -> "SupervisorPolicy":
     # browser-task A/B tuning.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
+    from gui_agent.adapters.browser.target_binding import (
+        active_surface_id,
+        active_target_aliases,
+    )
 
     if name == MilestoneSupervisorPolicy.name:
-        return MilestoneSupervisorPolicy(prompts=BROWSER_MILESTONE_PROMPTS)
+        return MilestoneSupervisorPolicy(
+            prompts=BROWSER_MILESTONE_PROMPTS,
+            surface_resolver=active_surface_id,
+            active_target_resolver=active_target_aliases,
+        )
     raise ValueError(f"未知监督者 {name!r}，可选：{MilestoneSupervisorPolicy.name}")
 
 

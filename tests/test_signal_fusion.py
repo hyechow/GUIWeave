@@ -9,18 +9,28 @@ from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
     Milestone,
+    Observation,
     PolicyTurn,
     SupervisorStep,
 )
 from gui_agent.core.supervisor.milestone.action_protocol import (
     action_metadata,
+    concrete_persistence_plan,
     is_commit_turn,
+    parent_persistence_pending,
     regresses_preparation_frontier,
 )
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult
+from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
-def _signal_turn(index: int, *, role: str, control: str) -> PolicyTurn:
+def _signal_turn(
+    index: int,
+    *,
+    role: str,
+    control: str,
+    surface: str = "",
+) -> PolicyTurn:
     return PolicyTurn(
         index=index,
         observation_source="test",
@@ -37,6 +47,7 @@ def _signal_turn(index: int, *, role: str, control: str) -> PolicyTurn:
         executed=True,
         action_signal=ActionSignal(
             role=role,
+            surface_id=surface,
             target_control=control,
             execution="dispatched",
             target="on_target",
@@ -260,6 +271,294 @@ def test_persisted_mutation_rejects_backward_preparation_edge():
         milestone,
         history,
     ) is False
+
+
+def test_same_control_name_on_a_different_surface_is_not_a_backward_edge():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Next", surface="wizard:step-1"),
+        _signal_turn(2, role="write", control="Target A", surface="wizard:step-2"),
+    ]
+    proposal = _PlanResult(
+        instruction="advance",
+        summary="",
+        atomic_role="prepare",
+        action_family="activate",
+        target_control="Next",
+    )
+
+    assert regresses_preparation_frontier(
+        proposal,
+        milestone,
+        history,
+        current_surface_id="wizard:step-2",
+    ) is False
+    assert regresses_preparation_frontier(
+        proposal,
+        milestone,
+        history,
+        current_surface_id="wizard:step-1",
+    ) is True
+
+
+def test_parent_persistence_becomes_pending_when_child_entry_reappears_after_progress():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child editor"),
+        _signal_turn(2, role="prepare", control="Next"),
+        _signal_turn(3, role="write", control="Target A"),
+        _signal_turn(4, role="write", control="Target B"),
+        _signal_turn(5, role="prepare", control="Next"),
+        _signal_turn(6, role="prepare", control="Generate draft"),
+    ]
+    assert parent_persistence_pending(
+        milestone,
+        history,
+        {"Open child editor", "Persist resource"},
+    ) is True
+
+
+def test_repeated_in_flow_control_does_not_look_like_parent_return():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Next"),
+        _signal_turn(2, role="write", control="Target A"),
+        _signal_turn(3, role="prepare", control="Next"),
+    ]
+
+    assert parent_persistence_pending(milestone, history, {"next"}) is False
+
+
+def test_writes_alone_do_not_make_parent_persistence_pending():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child editor"),
+        _signal_turn(2, role="prepare", control="Advance child flow"),
+        _signal_turn(3, role="write", control="Target A"),
+        _signal_turn(4, role="write", control="Target B"),
+    ]
+
+    assert parent_persistence_pending(
+        milestone,
+        history,
+        {"Open child editor", "Advance child flow"},
+    ) is False
+
+
+def test_visible_later_child_control_blocks_parent_return_even_when_entry_remains_in_dom():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child editor"),
+        _signal_turn(2, role="write", control="Target A"),
+        _signal_turn(3, role="prepare", control="Advance child flow"),
+    ]
+
+    assert parent_persistence_pending(
+        milestone,
+        history,
+        {"openchildeditor", "advancechildflow"},
+    ) is False
+
+
+def test_policy_requires_concrete_commit_target_when_parent_entry_reappears():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child editor"),
+        _signal_turn(2, role="write", control="Target A"),
+        _signal_turn(3, role="prepare", control="Generate draft"),
+    ]
+    observation = Observation(
+        png_bytes=b"frame",
+        source="browser",
+        semantic_tree=[
+            {"role": "button", "key": "Open child editor", "ref": 17, "depth": 0},
+        ],
+    )
+    policy = MilestoneSupervisorPolicy(
+        active_target_resolver=lambda _observation: {
+            "Open child editor",
+            "Persist resource",
+        }
+    )
+    policy._invoke_planner = lambda *_args, **_kwargs: _PlanResult(  # type: ignore[method-assign]
+        instruction="persist the current resource",
+        summary="cross the parent boundary",
+        atomic_role="commit",
+        action_family="commit",
+        target_control="Persist resource",
+    )
+
+    step = policy._plan_single(
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="state not yet durable",
+            summary="returned to parent resource",
+            outcome_status="unverified",
+        ),
+        observation,
+        history,
+    )
+
+    assert step.atomic_role == "commit"
+    assert step.action_family == "commit"
+    assert step.target_control == "Persist resource"
+
+
+def test_abstract_or_inactive_commit_target_is_not_concrete_persistence():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    abstract = _PlanResult(
+        instruction="persist",
+        summary="",
+        atomic_role="commit",
+        action_family="commit",
+        target_control="",
+    )
+    wrong = abstract.model_copy(update={"target_control": "Inactive command"})
+    concrete = abstract.model_copy(update={"target_control": "Persist resource"})
+
+    assert concrete_persistence_plan(abstract, milestone, {"Persist resource"}) is False
+    assert concrete_persistence_plan(wrong, milestone, {"Persist resource"}) is False
+    assert concrete_persistence_plan(concrete, milestone, {"Persist resource"}) is True
+
+
+def test_visual_regression_proposal_requires_a_new_forward_plan():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child editor"),
+        _signal_turn(2, role="write", control="Target A"),
+        _signal_turn(3, role="prepare", control="Generate draft"),
+    ]
+    proposals = iter(
+        [
+            _PlanResult(
+                instruction="open the child editor again",
+                summary="re-enter child flow",
+                atomic_role="prepare",
+                action_family="activate",
+                target_control="Open child editor",
+            ),
+            _PlanResult(
+                instruction="inspect a new forward surface",
+                summary="do not revisit the old entry",
+                atomic_role="iterate",
+                action_family="iterate",
+            ),
+        ]
+    )
+    policy = MilestoneSupervisorPolicy()
+    policy._invoke_planner = lambda *_args, **_kwargs: next(proposals)  # type: ignore[method-assign]
+
+    step = policy._plan_single(
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="state not yet durable",
+            summary="visual-only parent surface",
+            outcome_status="unverified",
+        ),
+        Observation(png_bytes=b"frame", source="visual"),
+        history,
+    )
+
+    assert step.atomic_role == "iterate"
+    assert step.action_family == "iterate"
+
+
+def test_visual_regression_that_persists_is_not_dispatched():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        requires_commit=True,
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child editor"),
+        _signal_turn(2, role="write", control="Target A"),
+        _signal_turn(3, role="prepare", control="Generate draft"),
+    ]
+    regression = _PlanResult(
+        instruction="open the child editor again",
+        summary="re-enter child flow",
+        atomic_role="prepare",
+        action_family="activate",
+        target_control="Open child editor",
+    )
+    policy = MilestoneSupervisorPolicy()
+    policy._invoke_planner = lambda *_args, **_kwargs: regression  # type: ignore[method-assign]
+
+    step = policy._plan_single(
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="state not yet durable",
+            summary="visual-only parent surface",
+            outcome_status="unverified",
+        ),
+        Observation(png_bytes=b"frame", source="visual"),
+        history,
+    )
+
+    assert step.should_act is False
+    assert step.instruction is None
 
 
 def test_commit_detection_uses_structured_role_not_instruction_vocabulary():
