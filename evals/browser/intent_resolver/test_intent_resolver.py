@@ -72,6 +72,14 @@ def test_intent_resolver() -> None:
                 details.append(f"{exp['mention_contains']}: mode {e.match_mode!r} != {exp['match_mode']!r}")
             if "role" in exp and getattr(e, "role", "lookup") != exp["role"]:
                 details.append(f"{exp['mention_contains']}: role {getattr(e, 'role', 'lookup')!r} != {exp['role']!r}")
+            if "value_members" in exp:
+                actual_members = {value.casefold() for value in getattr(e, "value_members", [])}
+                expected_members = {str(value).casefold() for value in exp["value_members"]}
+                if actual_members != expected_members:
+                    details.append(
+                        f"{exp['mention_contains']}: value_members {sorted(actual_members)!r} "
+                        f"!= {sorted(expected_members)!r}"
+                    )
             key_any = exp.get("search_key_any")
             if key_any and e.search_key not in key_any:
                 details.append(f"{exp['mention_contains']}: key {e.search_key!r} not in {key_any}")

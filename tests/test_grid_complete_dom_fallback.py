@@ -58,3 +58,101 @@ def test_read_grid_complete_dom_fallback_requires_column_match():
     # A DOM table that doesn't cover the requested columns → None (caller goes interactive).
     obs = Observation(png_bytes=b"", source="eval", semantic_tree=None, tables=[_ACCOUNT_TABLE])
     assert read_grid_complete(obs, ["Product", "Price"]) is None
+
+
+class _PagerClient:
+    def __init__(self):
+        self.moves = 0
+
+    def _cdp_send(self, method, params):
+        assert method == "Runtime.evaluate"
+        self.moves += 1
+        return {"result": {"value": True}}
+
+    def wait_settled(self, action_type=None):
+        return (0.0, False)
+
+
+class _Perception:
+    def __init__(self, observation):
+        self.observation = observation
+
+    def observe(self):
+        return self.observation
+
+
+class _Bundle:
+    def __init__(self, observations):
+        self.observations = list(observations)
+
+    def make_perception(self, platform, path):
+        return _Perception(self.observations.pop(0))
+
+
+class _Platform:
+    def __init__(self, client):
+        self.client = client
+
+
+def _paged_products(page, rows, *, has_next):
+    return {
+        "path": "#product-grid",
+        "headers": ["Name", "Type", "Action_url"],
+        "rows": rows,
+        "total_records": 3,
+        "traversal": {
+            "type": "paged",
+            "page_index": page,
+            "has_next_page": has_next,
+            "has_prev_page": page > 1,
+        },
+    }
+
+
+def test_complete_grid_binds_to_table_pager_not_page_viewport(tmp_path):
+    """A page-level scroll signal must not hide or drive a paginated grid."""
+    first = Observation(
+        png_bytes=b"",
+        source="eval",
+        semantic_tree=None,
+        tables=[
+            _paged_products(
+                1,
+                [
+                    {"Name": "Item A", "Type": "Simple", "Action_url": "/a"},
+                    {"Name": "Item B", "Type": "Simple", "Action_url": "/b"},
+                ],
+                has_next=True,
+            )
+        ],
+        viewport={"type": "scroll", "can_scroll_more": False, "at_scroll_end": True},
+    )
+    second = Observation(
+        png_bytes=b"",
+        source="eval",
+        semantic_tree=None,
+        tables=[
+            _paged_products(
+                2,
+                [{"Name": "Target", "Type": "Owner", "Action_url": "/target"}],
+                has_next=False,
+            )
+        ],
+        viewport={"type": "scroll", "can_scroll_more": False, "at_scroll_end": True},
+    )
+    client = _PagerClient()
+
+    rows = read_grid_complete(
+        first,
+        ["name", "type", "detail_url"],
+        bundle=_Bundle([second]),
+        platform=_Platform(client),
+        log_dir=tmp_path,
+    )
+
+    assert rows == [
+        {"name": "Item A", "type": "Simple", "detail_url": "/a"},
+        {"name": "Item B", "type": "Simple", "detail_url": "/b"},
+        {"name": "Target", "type": "Owner", "detail_url": "/target"},
+    ]
+    assert client.moves == 1

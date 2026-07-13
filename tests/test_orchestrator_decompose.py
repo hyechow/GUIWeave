@@ -218,6 +218,21 @@ def test_to_program_preserves_mutation_contract():
     assert step.target_values == {"Notifications": "on"}
 
 
+def test_to_program_preserves_multi_value_mutation_contract():
+    draft = _PlanDraft(steps=[
+        _StepDraft(
+            op="run",
+            run_kind="action",
+            name="生成两个配置组合",
+            target_values={"Size": "XXS", "Color": ["blue", "purple"]},
+        )
+    ])
+
+    step = to_program(draft, "").statements[0]
+    assert isinstance(step, Run)
+    assert step.target_values == {"Size": "XXS", "Color": ["blue", "purple"]}
+
+
 def test_to_program_url_template_open_normalizes_to_navigation():
     draft = _PlanDraft(steps=[
         _StepDraft(op="run", run_kind="action", name="打开 {q[detail_url]} 进入详情页"),

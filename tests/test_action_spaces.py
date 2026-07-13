@@ -24,9 +24,10 @@ def _action_type_values(action_cls) -> set[str]:
 
 # --- action_type vocabulary: overlap + per-platform isolation --------------- #
 def test_shared_overlap_in_every_platform():
-    shared = {"tap", "type", "clear_text", "press_enter", "scroll", "drag", "stop"}
+    shared = {"tap", "type", "clear_text", "press_enter", "scroll", "drag"}
     for cls in (IPhoneAction, BrowserAction, AndroidAction):
         assert shared <= _action_type_values(cls)
+        assert "stop" not in _action_type_values(cls)
 
 
 def test_iphone_vocabulary():
@@ -111,7 +112,10 @@ def test_subclasses_are_base():
     assert isinstance(a, BaseAction)
     d = IPhoneActionDecision(action=a)
     assert isinstance(d, BaseActionDecision)
-    assert isinstance(BrowserActionDecision(action=BrowserAction(action_type="stop", description="x")), BaseActionDecision)
+    assert isinstance(
+        BrowserActionDecision(action=None, not_found_reason="目标不可定位"),
+        BaseActionDecision,
+    )
     assert isinstance(AndroidActionDecision(action=AndroidAction(action_type="home", description="x")), BaseActionDecision)
 
 
@@ -152,6 +156,20 @@ def test_action_decision_unwraps_flat_fields():
     # action fields at the top level, no wrapper at all
     d = IPhoneActionDecision.model_validate({"action_type": "tap", "x": 1, "y": 2, "description": "x"})
     assert d.action.action_type == "tap" and d.action.x == 1
+
+
+def test_legacy_stop_decision_is_migrated_to_grounding_failure():
+    decision = BrowserActionDecision.model_validate({
+        "action": {"action_type": "stop", "description": "当前帧找不到目标"},
+    })
+
+    assert decision.action is None
+    assert decision.not_found_reason == "当前帧找不到目标"
+
+
+def test_no_action_requires_grounding_reason():
+    with pytest.raises(Exception):
+        BrowserActionDecision(action=None)
 
 
 # --- field isolation: a platform's injected schema has ONLY its own fields --- #

@@ -4,5 +4,5 @@
   "history_through_turn": 29,
   "observation_source": "read-only Chrome CDP capture of the retained final product-editor state",
   "observation_captured_on": "2026-07-13",
-  "purpose": "Negative provenance replay: the legacy history has no surface identities or adjacent observation snapshots, so it cannot prove a parent return and must not authorize a guessed parent Save. The positive parent-return path is covered by 112455_persistence_flow."
+  "purpose": "Negative provenance replay: the legacy history lacks adjacent structured observations, so incomplete evidence must not authorize a guessed Save."
 }

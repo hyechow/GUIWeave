@@ -134,8 +134,7 @@ def test_preformed_action_reflashes_after_executor_snap(tmp_path):
 
 
 def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
-    action = BaseAction(action_type="tap", x=10, y=20, description="点击确认")
-    decision = BaseActionDecision(action=action, not_found_reason="未找到确认按钮")
+    decision = BaseActionDecision(action=None, not_found_reason="未找到确认按钮")
     future = _Future()
     executor = _Executor()
     statuses = []
@@ -158,6 +157,7 @@ def test_not_found_waits_for_prep_and_skips_execute(tmp_path):
 
     assert future.waited
     assert result.action_decision is decision
+    assert result.action_decision.action is None
     assert result.executed is False
     assert result.probe_failed is False
     assert statuses == [(4, "未找到目标元素")]

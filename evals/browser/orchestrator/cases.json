@@ -707,5 +707,52 @@
    }
   ],
   "note": "冷启动验证：不注入 _skill.md，只使用应用功能说明。颜色不进入父商品 Name；Size option 与父 Configurations 是有顺序的两个独立 mutation；配置向导内部 HOW 不展开为多个 DSL action。"
+ },
+ {
+  "label": "配置型商品同一字段多值组合合同（shopping_admin task-550）",
+  "goal": "Add a new size XXS to blue and purple Nona Fitness Tank",
+  "platform": "browser",
+  "knowledge_app": "shopping_admin",
+  "knowledge_profile": "functional_only",
+  "current_site": "shopping_admin",
+  "current_url": "http://192.168.1.13:7780/admin",
+  "current_title": "Dashboard / Magento Admin",
+  "normalize": true,
+  "expected": {
+   "min_statements": 4
+  },
+  "assertions": [
+   "action_preserves_multi_value_target_set"
+  ],
+  "resolution": [
+   {
+    "mention": "Nona Fitness Tank",
+    "role": "lookup",
+    "type": "product",
+    "match_mode": "approximate",
+    "search_key": "Nona",
+    "cardinality": "single",
+    "selector": ""
+   },
+   {
+    "mention": "blue and purple",
+    "role": "value",
+    "value_members": [
+     "blue",
+     "purple"
+    ],
+    "type": "generic",
+    "match_mode": "exact",
+    "search_key": "blue and purple"
+   },
+   {
+    "mention": "XXS",
+    "role": "value",
+    "type": "generic",
+    "match_mode": "exact",
+    "search_key": "XXS"
+   }
+  ],
+  "note": "同一 Color 选择组必须保留 blue、purple 两个值；只有明确为 new 的 XXS 建立全局 option 前置，既有颜色不重复写入。"
  }
 ]

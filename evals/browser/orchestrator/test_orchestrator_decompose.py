@@ -41,6 +41,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 from gui_agent.core.orchestrator import Compute, Finish, ForEach, If, Query, Read, Run, RunLike, decompose
 from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates, normalize_precondition_gates
 from gui_agent.core.orchestrator.program import TEMPLATE_RE
+from gui_agent.core.schemas import target_value_options
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge, load_knowledge_for_app
 
 CASES_FILE = Path(__file__).parent / "cases.json"
@@ -2305,6 +2306,65 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             elif any(s.returns for s in covers):
                 details.append(
                     f"covers_set 聚合 mutation 步不应带 returns（纯 mutate 静态收尾）：{[s.name for s in covers if s.returns]}"
+                )
+        elif assertion == "action_preserves_multi_value_target_set":
+            all_actions = [
+                run
+                for run in _flatten_runs(program.statements)
+                if run.kind == "action"
+            ]
+            actions = [
+                run
+                for run in all_actions
+                if "xxs" in f"{run.name} {run.success_condition}".lower()
+                and any(
+                    token in f"{run.name} {run.success_condition}".lower()
+                    for token in ("configuration", "配置", "组合", "variant")
+                )
+            ]
+            if len(actions) != 1:
+                details.append(f"应有一个承载两个组合的 Configurations mutation，实际为 {[r.name for r in actions]}")
+            else:
+                target_values = actions[0].target_values or {}
+                semantic_values = {
+                    str(field).casefold(): value
+                    for field, value in target_values.items()
+                }
+                colors = {
+                    value.casefold()
+                    for value in target_value_options(semantic_values.get("color", ""))
+                }
+                sizes = {
+                    value.casefold()
+                    for value in target_value_options(semantic_values.get("size", ""))
+                }
+                if colors != {"blue", "purple"} or sizes != {"xxs"}:
+                    details.append(
+                        "多值组合必须结构化声明 target_values="
+                        "{'Size':'XXS','Color':['blue','purple']}；"
+                        f"当前为 {target_values}"
+                    )
+                if actions[0].mutation_mode != "change":
+                    details.append("Add 语义必须使用 mutation_mode=change，不能按既有状态 ensure 跳过。")
+            color_prerequisites = []
+            for run in all_actions:
+                if run in actions:
+                    continue
+                text = f"{run.name} {run.success_condition}".lower()
+                values = {
+                    option.casefold()
+                    for value in (run.target_values or {}).values()
+                    for option in target_value_options(value)
+                }
+                if (
+                    values.intersection({"blue", "purple"})
+                    and any(token in text for token in ("attribute", "option", "属性", "选项"))
+                ):
+                    color_prerequisites.append(run.name)
+            if color_prerequisites:
+                details.append(
+                    "blue/purple 是既有组合选择值，不得额外改写全局 Color options："
+                    f"{color_prerequisites}"
                 )
         elif assertion == "shopping_admin_configurable_variant_two_phase_mutation":
             seq = _flatten_runs(program.statements)

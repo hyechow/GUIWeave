@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn, SupervisorStep
@@ -7,6 +8,9 @@ from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from gui_agent.reports.builder import RunnerReportBuilder
 from gui_agent.reports.runner_html import generate_html
+
+
+REPLAYS = Path(__file__).resolve().parents[1] / "evals/browser/supervisor_replay"
 
 
 def _context(**extra) -> PolicyContext:
@@ -38,6 +42,21 @@ def test_policy_context_strips_runtime_fields_from_static_milestones():
     assert "done_check" not in ctx.milestones[0]
     assert "status" not in ctx.milestones[0]
     assert "retry_count" not in ctx.milestones[0]
+
+
+def test_legacy_stop_replay_does_not_restore_fake_dispatch_evidence():
+    raw = json.loads((REPLAYS / "140905_turn26/context.json").read_text())
+
+    context = PolicyContext.model_validate(raw)
+    turn = next(turn for turn in context.turns if turn.index == 26)
+
+    assert turn.action_decision is not None
+    assert turn.action_decision.action is None
+    assert turn.executed is False
+    assert turn.action_signal is not None
+    assert turn.action_signal.execution == "not_attempted"
+    assert turn.action_signal.action_key == ""
+    assert turn.action_signal.mutation_receipt is None
 
 
 def test_runner_syncs_milestone_state_from_supervisor_snapshot():

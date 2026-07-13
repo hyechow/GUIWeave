@@ -36,10 +36,8 @@ def test_arrival_prepended_to_drilling_function_body():
 
 
 def test_arrival_is_a_precondition_gate_not_a_branch_milestone():
-    # The arrival is an entry-state precondition (idempotent ensure-state), NOT a business step:
-    # precondition=True so the runtime lets the checker judge frame-1 (satisfied→done, no action),
-    # and its name/SC are LINEAR (an imperative + a state assertion) with NO 若…则… branch — a
-    # conditional in the milestone text leaks the decision to the planner (live 185 stop misfire).
+    # The arrival is an entry-state navigation edge, not a business branch. Its text stays linear;
+    # runtime, rather than checker prose, controls whether that edge has been traversed.
     p = insert_loop_entry_arrivals(Program(goal="g", functions=[_resolve_fn()], statements=[]))
     arrival = p.functions[0].body[0]
     assert arrival.kind == "navigation" and arrival.precondition is True

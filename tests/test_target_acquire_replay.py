@@ -61,4 +61,4 @@ def test_real_170119_no_progress_exhausts_instead_of_drifting_to_fields() -> Non
 
     assert exhausted.status == "exhausted"
     assert exhausted.target_labels == ("Configurations",)
-    assert "geometry did not advance" in exhausted.reason
+    assert "did not advance the bound surface" in exhausted.reason

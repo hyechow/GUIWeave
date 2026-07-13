@@ -444,6 +444,7 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(status="done", outcome_status="confirmed", reason="已进入编辑页", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
+    assert _completion_decision(p, m, obs, []).status == "pending"
     history = [_arrival_click_turn()]
     decision = _completion_decision(p, m, obs, history)
     assert decision.status == "satisfied"

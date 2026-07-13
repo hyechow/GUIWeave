@@ -1,0 +1,6 @@
+{
+  "source_log": "logs/gui_agent/webarena/browser/20260713_205258",
+  "task_id": 550,
+  "turn": 28,
+  "invariant": "A completed local choice set forbids rewriting those choices, but does not turn an intermediate workflow transition into the resource persistence boundary."
+}

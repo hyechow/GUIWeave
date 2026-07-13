@@ -354,3 +354,36 @@ def test_intent_contract_blocks_value_only_present_in_goal_or_navigation():
 
     assert {issue.code for issue in issues} == {"ROUTER_VALUE_DROPPED"}
     assert "green" in str(issues[0])
+
+
+def test_intent_contract_requires_every_multi_value_member_to_be_consumed():
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="blue and purple",
+            role="value",
+            value_members=["blue", "purple"],
+            match_mode="exact",
+        ),
+    ])
+    incomplete = Program(statements=[
+        Run(
+            kind="action",
+            name="选择目标颜色并保存",
+            target_values={"Color": "blue"},
+        ),
+    ])
+    complete = Program(statements=[
+        Run(
+            kind="action",
+            name="选择第一个集合成员",
+            target_values={"Color": "blue"},
+        ),
+        Run(
+            kind="action",
+            name="选择第二个集合成员",
+            target_values={"Color": "purple"},
+        ),
+    ])
+
+    assert "ROUTER_VALUE_DROPPED" in _codes(incomplete, resolution)
+    assert validate_intent_contracts(complete, resolution) == []

@@ -86,6 +86,37 @@ def test_singleton_form_can_change_an_existing_value() -> None:
     assert (subject.status, subject.subject_ref) == ("writable", "__form__")
 
 
+def _choice_group(selected: set[str], *, with_clear: bool = True) -> list[dict]:
+    controls = [
+        {
+            "label": value,
+            "option_text": value,
+            "kind": "checkbox_input",
+            "checked": value in selected,
+            "group_id": "choices",
+            "group_field": "Size",
+        }
+        for value in ("S", "M", "L", "38")
+    ]
+    if with_clear:
+        controls[-1]["choice_operations"] = {"clear_all": "Clear choices"}
+    return controls
+
+
+def test_choice_group_uses_clear_command_only_when_it_shortens_reconciliation() -> None:
+    bulk = _subject(
+        _choice_group({"S", "M", "L"}),
+        milestone=_milestone(Size="38"),
+    )
+    direct = _subject(
+        _choice_group({"S"}),
+        milestone=_milestone(Size="38"),
+    )
+
+    assert (bulk.status, bulk.target_control) == ("preparing", "Size Clear choices")
+    assert (direct.status, direct.target_control) == ("preparing", "Size S")
+
+
 def _receipt(subject_ref: str = "r1") -> MutationReceipt:
     return MutationReceipt(
         statement_id="m",

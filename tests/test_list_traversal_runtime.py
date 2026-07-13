@@ -3,14 +3,6 @@ from gui_agent.core.schemas import Observation
 
 
 def _obs(*, tables=None, controls=None, viewport=None, png_bytes=b"") -> Observation:
-    # Mirror the real pipeline (table_reader.py's detectPageViewport): when no explicit
-    # viewport is given, reuse the first resolved per-table traversal as the page-level signal.
-    if viewport is None and tables:
-        for t in tables:
-            trav = t.get("traversal") if isinstance(t, dict) else None
-            if isinstance(trav, dict) and trav.get("type") not in (None, "unknown"):
-                viewport = trav
-                break
     return Observation(
         png_bytes=png_bytes,
         source="test",
@@ -100,10 +92,8 @@ def test_missing_detail_fields_are_accumulated_without_opening_rows():
     ]
 
 
-def test_sets_page_size_to_max_once_before_first_pagination():
-    """Fewer total pages beats clicking through many small ones: when the table exposes a
-    larger page size, switch to it BEFORE any pagination — but only ever try once, so it
-    can't oscillate or interfere with total/row-count bookkeeping later in the collection."""
+def test_page_size_is_only_metadata_and_does_not_change_traversal_correctness():
+    """Changing page size is an optional optimization, not part of traversal correctness."""
     runtime = ListTraversalRuntime(var="items", returns=["Code"])
     table = _table(
         [{"Code": "A1", "Name": "Alpha", "Action": "Edit"}],
@@ -118,14 +108,8 @@ def test_sets_page_size_to_max_once_before_first_pagination():
         },
     )
 
-    first = runtime.update(_obs(tables=[table]))
-    assert first.action == "set_page_size"
-    assert "200" in first.instruction
-
-    # Still on the same (unchanged) page next observation: the one-shot check does not
-    # re-fire, so traversal proceeds with ordinary pagination instead of repeating itself.
-    second = runtime.update(_obs(tables=[table]))
-    assert second.action == "paginate_next"
+    decision = runtime.update(_obs(tables=[table]))
+    assert decision.action == "paginate_next"
 
 
 def test_no_page_size_control_skips_straight_to_pagination():
@@ -182,9 +166,9 @@ def test_pixel_freeze_fallback_when_no_viewport_signal_at_all():
 
     decisions = [runtime.update(_obs(png_bytes=frozen_frame)) for _ in range(4)]
 
-    # Not enough frames yet to judge -> generic fallback, then converges to a deterministic
-    # "stopped" verdict once the pixel-freeze window fills with identical frames.
-    assert decisions[0].action == "fallback"
+    # The first frame starts a forward search. Repeated frames are execution evidence that the
+    # same bound visual surface did not move, so the shared traversal session terminates.
+    assert decisions[0].action == "scroll_down"
     assert decisions[-1].action == "done"
 
 
@@ -251,9 +235,6 @@ def test_total_discrepancy_does_not_drive_page_size_change():
             "page_size_menu_open": False,
         },
     )
-    # The one-shot page-size-max check fires before any pagination decision (separate
-    # behavior, see test_sets_page_size_to_max_once_before_first_pagination below).
-    runtime.update(_obs(tables=[first_table]))
     first = runtime.update(_obs(tables=[first_table]))
     assert first.action == "paginate_next"
 

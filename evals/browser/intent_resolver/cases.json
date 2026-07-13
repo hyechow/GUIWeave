@@ -1,5 +1,36 @@
 [
   {
+    "label": "同一字段多值 → value_members 保留原子集合（task-550）",
+    "goal": "Add a new size XXS to blue and purple Nona Fitness Tank",
+    "expected_entities": [
+      {
+        "mention_contains": "Nona",
+        "role": "lookup",
+        "type": "product",
+        "match_mode": "approximate",
+        "search_key_any": [
+          "Nona"
+        ]
+      },
+      {
+        "mention_contains": "blue and purple",
+        "role": "value",
+        "value_members": [
+          "blue",
+          "purple"
+        ]
+      },
+      {
+        "mention_contains": "XXS",
+        "role": "value",
+        "search_key_any": [
+          "XXS"
+        ]
+      }
+    ],
+    "note": "Router 负责结构化同一字段的复合值；下游不按 and 文本猜拆分。"
+  },
+  {
     "label": "既有父实体与待设置属性值分离（回归 task-549 shared-token fallback）",
     "goal": "Add a new size XXXL to green Minerva LumaTech V-Tee",
     "expected_entities": [

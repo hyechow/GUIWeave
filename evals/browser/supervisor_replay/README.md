@@ -34,10 +34,10 @@ Frontier regression pair:
   such as `Select All` and `Remove Attribute` are not inferred as safe cleanup primitives. Use
   `expectation_turn_27.json` for the earlier frame and the default expectation for turn 29.
 - `090810_turn30`: a legacy capture whose history lacks surface identities and adjacent structured
-  observations. It is a negative provenance case: an unknown surface must remain incomplete and
-  must not authorize a guessed parent `Save`. The positive parent-return edge is covered below.
+  observations. It is a negative provenance case: incomplete evidence must not authorize a guessed
+  `Save`.
 
-Persistence-boundary replay:
+Dispatch-response replay:
 
 - `105939_turn12`: a direct `commit + activate` Save on one editor surface redirected to a list
   with a success response. The milestone must finish as `accepted_unverified`; reopening the row
@@ -46,8 +46,7 @@ Persistence-boundary replay:
   production context.
 - `112455_persistence_flow`: one complete live child/parent transaction. Use
   `expectation_turn_29.json`, `expectation_turn_30.json`, and `expectation_turn_31.json` with
-  `--expectation` to verify child generation, concrete parent Save, and terminal response
-  completion respectively.
+  `--expectation` to verify child generation, the resource Save, and URL-response completion.
 
 Filter-intent binding replay:
 
@@ -63,6 +62,10 @@ Structured mutation-capability replay:
   turn 26 has no extras and must resolve to one authorized target write. This fixture is consumed
   by `tests/test_mutation_replay.py` and intentionally needs no screenshot because the mutation
   kernel operates only on the recorded structured observation.
+- `205258_intermediate_transition`: the real configuration-wizard observation has the complete
+  declared choice set on an intermediate surface. Completion blocks further target writes, but the
+  next workflow transition remains `prepare`; local subject completion must not manufacture a
+  terminal commit boundary.
 
 Target-directed acquire replay:
 

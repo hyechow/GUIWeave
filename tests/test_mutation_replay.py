@@ -2,13 +2,21 @@ import json
 from pathlib import Path
 
 from gui_agent.core.run.mutation import authorize_mutation, resolve_mutation
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
-from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+from gui_agent.core.schemas import (
+    ActionSignal,
+    Milestone,
+    MutationReceipt,
+    Observation,
+    PolicyTurn,
+    SupervisorStep,
+)
+from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
 REPLAYS = Path(__file__).resolve().parents[1] / "evals/browser/supervisor_replay"
 FIXTURE = REPLAYS / "142444_mutation_subject"
 CHOICE_FIXTURE = REPLAYS / "152920_choice_surface"
+INTERMEDIATE_FIXTURE = REPLAYS / "205258_intermediate_transition"
 
 
 def _run_statements(node: object) -> list[dict]:
@@ -94,6 +102,7 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
         mutation_control_resolver=active_choice_controls,
     )
     states: dict[int, str] = {}
+    targets: dict[int, str] = {}
     for turn_no in (24, 25, 26):
         observation = _observation(CHOICE_FIXTURE, turn_no)
         derived = active_choice_controls(observation, milestone.target_values)
@@ -103,6 +112,7 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
         )
         subject = resolve_mutation(milestone, normalized, [])
         states[turn_no] = subject.status
+        targets[turn_no] = subject.target_control
         step = policy._plan_single(  # noqa: SLF001 - replay the production policy seam
             milestone,
             _SingleCheckResult(
@@ -116,10 +126,14 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
         )
 
         assert len(derived) == 33
-        assert not any(
-            item["option_text"] in {"Next", "Select All", "Deselect All", "Remove Attribute"}
+        assert [
+            item["choice_operations"]
             for item in derived
-        )
+            if item.get("choice_operations")
+        ] == [
+            {"select_all": "Select All", "clear_all": "Deselect All"},
+            {"select_all": "Select All", "clear_all": "Deselect All"},
+        ]
         if turn_no < 26:
             assert step.atomic_role == "prepare"
             assert step.requires_mutation_authorization is False
@@ -130,5 +144,153 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
             assert step.mutation_authorization.subject_ref.startswith("choice:dialog:")
 
     assert states == {24: "preparing", 25: "preparing", 26: "writable"}
+    assert targets == {
+        24: "Size Deselect All",
+        25: "Color Deselect All",
+        26: "Color green",
+    }
     assert subject.target_control == "Color green"
     assert subject.source == "visual"
+
+
+def test_real_choice_surface_executes_multi_value_contract_as_exact_set() -> None:
+    from gui_agent.adapters.browser.target_binding import active_choice_controls
+
+    milestone = Milestone(
+        id="multi-choice",
+        name="add two configuration combinations",
+        description="",
+        success_condition="the saved collection contains XXXL-blue and XXXL-purple",
+        kind="action",
+        target_values={"Size": "XXXL", "Color": ["Blue", "Purple"]},
+    )
+    source = _observation(CHOICE_FIXTURE, 26)
+    derived = list(active_choice_controls(source, milestone.target_values))
+    assert len(derived) == 33
+
+    def state(*selected: str):
+        selected_keys = {value.casefold() for value in selected}
+        controls = [
+            {
+                **control,
+                "checked": str(control.get("option_text", "")).casefold() in selected_keys,
+                "value": (
+                    "on"
+                    if str(control.get("option_text", "")).casefold() in selected_keys
+                    else "off"
+                ),
+            }
+            for control in derived
+        ]
+        return resolve_mutation(
+            milestone,
+            Observation(png_bytes=b"replay", source="browser", form_controls=controls),
+            [],
+        )
+
+    assert (state().status, state().target_control) == ("writable", "Size XXXL")
+    assert (state("XXXL").status, state("XXXL").target_control) == (
+        "writable", "Color Blue",
+    )
+    assert (state("XXXL", "Blue").status, state("XXXL", "Blue").target_control) == (
+        "writable", "Color Purple",
+    )
+    assert state("XXXL", "Blue", "Purple").status == "complete"
+    assert state("XXXL", "Blue", "Purple", "Green").status == "preparing"
+    assert resolve_mutation(
+        milestone, Observation(png_bytes=b"visual-only", source="browser"), []
+    ).status == "unknown"
+
+
+def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare() -> None:
+    from gui_agent.adapters.browser.target_binding import (
+        active_choice_controls,
+        active_surface_id,
+        active_target_aliases,
+    )
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+
+    milestone = Milestone(
+        id="m9_action",
+        name="persist the declared configuration combinations",
+        description="",
+        success_condition="the saved collection contains both declared combinations",
+        kind="action",
+        target_values={"Size": "XXS", "Color": ["blue", "purple"]},
+        requires_commit=True,
+    )
+    observation = _observation(INTERMEDIATE_FIXTURE, 28)
+    policy = MilestoneSupervisorPolicy(
+        active_target_resolver=active_target_aliases,
+        mutation_control_resolver=active_choice_controls,
+        surface_resolver=active_surface_id,
+    )
+    normalized = policy._mutation_observation(  # noqa: SLF001 - replay production seam
+        observation,
+        milestone.target_values,
+    )
+    subject = resolve_mutation(
+        milestone,
+        normalized,
+        [],
+        surface_id=active_surface_id(observation),
+    )
+    history = [
+        PolicyTurn(
+            index=27,
+            observation_source="browser",
+            supervisor=SupervisorStep(
+                should_act=True,
+                instruction="select the final declared choice",
+                stop=False,
+                goal_completed=False,
+                summary="",
+                milestone_id=milestone.id,
+                atomic_role="write",
+                target_control="Size XXS",
+                target_value="XXS",
+            ),
+            executed=True,
+            action_signal=ActionSignal(
+                role="write",
+                target_control="Size XXS",
+                target_value="XXS",
+                execution="dispatched",
+                target="on_target",
+                response="observed",
+                surface_id=active_surface_id(observation),
+                mutation_receipt=MutationReceipt(
+                    statement_id=milestone.id,
+                    subject_ref=subject.subject_ref,
+                    field="Size",
+                    intended_value="XXS",
+                    source="structural",
+                ),
+            ),
+        )
+    ]
+    proposal = _PlanResult(
+        instruction="advance the current workflow",
+        summary="the local choices are complete; continue to the next workflow surface",
+        atomic_role="prepare",
+        action_family="activate",
+        target_control="Next",
+    )
+    policy._invoke_planner = lambda *_args, **_kwargs: proposal  # type: ignore[method-assign]
+
+    step = policy._plan_single(  # noqa: SLF001 - replay production policy seam
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="declared choices are complete but the workflow has not reached persistence",
+            summary="continue the workflow",
+            outcome_status="unverified",
+        ),
+        normalized,
+        history,
+    )
+
+    assert subject.status == "complete"
+    assert step.should_act is True
+    assert step.atomic_role == "prepare"
+    assert step.target_control == "Next"

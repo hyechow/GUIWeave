@@ -29,6 +29,21 @@ def test_intent_block_none_when_no_entities():
     assert intent_block(IntentResolution(entities=[])) is None
 
 
+def test_intent_block_renders_multi_value_members_as_separate_atoms():
+    block = intent_block(IntentResolution(entities=[
+        EntityRef(
+            mention="blue and purple",
+            role="value",
+            value_members=["blue", "purple"],
+            match_mode="exact",
+        ),
+    ]))
+
+    assert block is not None
+    assert "原子值=['blue', 'purple']" in block.content
+    assert "不合并成一个字符串" in block.content
+
+
 def test_resolve_intent_empty_goal_skips_llm():
     # empty goal must not call the LLM at all
     assert resolve_intent("   ").entities == []

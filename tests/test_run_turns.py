@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from gui_agent.core.run.turns import SupervisorTimingCarry, make_verdict_turn
-from gui_agent.core.schemas import SupervisorStep
+from gui_agent.core.run.turns import SupervisorTimingCarry, make_interactive_turn, make_verdict_turn
+from gui_agent.core.schemas import BaseActionDecision, SupervisorStep
 
 
 def _step() -> SupervisorStep:
@@ -46,6 +46,24 @@ def test_make_verdict_turn_captures_supervisor_state():
     assert turn.token_usage == {"checker": {"input": 10, "output": 5}}
     assert turn.sections_loaded == ["orders"]
     assert turn.llm_context == [{"kind": "context_budget", "label": "checker.dynamic"}]
+
+
+def test_grounding_failure_is_recorded_without_dispatch_evidence():
+    step = _step().model_copy(update={"should_act": True, "goal_completed": False})
+    decision = BaseActionDecision(action=None, not_found_reason="当前帧找不到目标")
+
+    turn = make_interactive_turn(
+        index=3,
+        observation_source="screen.png",
+        supervisor_step=step,
+        action_decision=decision,
+        executed=False,
+    )
+
+    assert turn.action_signal is not None
+    assert turn.action_signal.execution == "not_attempted"
+    assert turn.action_signal.action_key == ""
+    assert turn.action_signal.mutation_receipt is None
 
 
 def test_supervisor_timing_carry_merges_ordered_timings_and_tokens():

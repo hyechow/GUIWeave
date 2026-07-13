@@ -161,7 +161,7 @@ def test_native_select_skips_vision_policy(monkeypatch, tmp_path) -> None:
     assert supervisor._context_reports[-1]["kind"] == "native_action"
 
 
-def test_action_policy_stop_is_not_reinterpreted_by_executor(monkeypatch, tmp_path) -> None:
+def test_action_policy_grounding_failure_is_not_reinterpreted(monkeypatch, tmp_path) -> None:
     class RetryPolicy(_Policy):
         def __init__(self) -> None:
             super().__init__()
@@ -170,18 +170,10 @@ def test_action_policy_stop_is_not_reinterpreted_by_executor(monkeypatch, tmp_pa
         def decide(self, *_args, **kwargs):
             self.calls += 1
             self.evidence_context = str(kwargs.get("evidence_context") or "")
-            if self.calls == 1:
-                return BrowserActionDecision(action=BrowserAction(
-                    action_type="stop",
-                    description="目标值似乎已存在",
-                ))
-            return BrowserActionDecision(action=BrowserAction(
-                action_type="type",
-                x=820,
-                y=665,
-                text="XXXL",
-                description="在 Admin Swatch 输入 XXXL",
-            ))
+            return BrowserActionDecision(
+                action=None,
+                not_found_reason="当前帧无法定位 Admin Swatch",
+            )
 
     policy = RetryPolicy()
     supervisor = _Supervisor()
@@ -240,5 +232,6 @@ def test_action_policy_stop_is_not_reinterpreted_by_executor(monkeypatch, tmp_pa
     )
 
     assert policy.calls == 1
-    assert decision.action.action_type == "stop"
+    assert decision.action is None
+    assert decision.not_found_reason == "当前帧无法定位 Admin Swatch"
     assert not any("纠正" in message or "拒绝" in message for message in messages)
