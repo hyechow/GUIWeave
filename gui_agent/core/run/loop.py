@@ -22,6 +22,7 @@ from gui_agent.core.llm.reader import ContentReader
 from gui_agent.core.run.context import (
     load_context as _load_context,
     save_context as _save_context,
+    save_observation_snapshot,
 )
 from gui_agent.core.run.result import (
     make_result as _make_result,
@@ -619,6 +620,11 @@ def run_agent_loop(
             observation_url_for_turn = f"screenshot_turn_{turn_no}.png"
             perception = bundle.make_perception(platform, log_dir / observation_url_for_turn)
             observation = perception.observe()
+            save_observation_snapshot(
+                log_dir / f"observation_turn_{turn_no}.json",
+                observation,
+                screenshot=observation_url_for_turn,
+            )
             # YOLO + OCR run in the background, overlapping the decide below;
             # awaited just before execute (snap) so they add ~no latency.
             prep_future = _PREP_POOL.submit(executor.prepare_frame, observation.png_bytes)

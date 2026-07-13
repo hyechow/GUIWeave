@@ -1,0 +1,7 @@
+{
+  "turn": 30,
+  "atomic_role": "commit",
+  "reject_target_controls": [
+    "Edit Configurations"
+  ]
+}

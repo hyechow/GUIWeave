@@ -5,12 +5,52 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from gui_agent.core.schemas import PolicyContext
+from gui_agent.core.schemas import Observation, PolicyContext
+
+
+OBSERVATION_SNAPSHOT_VERSION = 1
 
 
 def save_context(path: Path, context: PolicyContext) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
+
+
+def save_observation_snapshot(
+    path: Path,
+    observation: Observation,
+    *,
+    screenshot: str,
+) -> None:
+    """Persist the structured half of one observed frame for deterministic replay.
+
+    PNG bytes already live in the adjacent screenshot. Keeping them out of JSON avoids a second
+    base64 copy while preserving every adapter-provided signal consumed by the supervisor.
+    """
+    payload = {
+        "version": OBSERVATION_SNAPSHOT_VERSION,
+        "screenshot": screenshot,
+        "observation": observation.model_dump(mode="json", exclude={"png_bytes"}),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_observation_snapshot(path: Path) -> Observation:
+    """Load a replayable observation and its adjacent screenshot."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    version = payload.get("version")
+    if version != OBSERVATION_SNAPSHOT_VERSION:
+        raise ValueError(
+            f"unsupported observation snapshot version {version!r}; "
+            f"expected {OBSERVATION_SNAPSHOT_VERSION}"
+        )
+    screenshot = path.parent / str(payload["screenshot"])
+    if not screenshot.is_file():
+        raise FileNotFoundError(f"replay screenshot not found: {screenshot}")
+    return Observation.model_validate(
+        {**payload["observation"], "png_bytes": screenshot.read_bytes()}
+    )
 
 
 def extract_checker(supervisor: object) -> dict | None:
