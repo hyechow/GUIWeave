@@ -32,10 +32,13 @@ _RETRIEVAL_ACTION_CUE_RE = re.compile(
     re.IGNORECASE,
 )
 _SAME_RETRIEVAL_TARGET_RE = re.compile(
-    # Allow the concrete field name between 同一/same and the designator: "同一 Name 字段" /
-    # "same Status column" are explicit same-target declarations, not generic keyword retries.
-    r"同一(?:个)?\s*[A-Za-z0-9 _/-]{0,30}?(?:字段|列|输入框|筛选框|搜索框|下拉框)|"
-    r"same\s+(?:[A-Za-z0-9_-]+\s+)?(?:field|column|input|filter|search\s*box|dropdown)",
+    # Allow the concrete field name between 同一/same and the designator:
+    # "同一 Name 字段", "同一名称字段", "同一产品名称字段", "same Status column".
+    # Chinese field labels must be accepted — live decomposer often writes 「同一名称字段」
+    # after 「在产品名称字段…」; the previous ASCII-only gap rejected that as a field drop.
+    r"同一(?:个)?\s*(?:[A-Za-z0-9 _./-]|[\u4e00-\u9fff]){0,20}?"
+    r"(?:字段|列|输入框|筛选框|搜索框|下拉框)|"
+    r"same\s+(?:[A-Za-z0-9 _./-]+\s+)?(?:field|column|input|filter|search\s*box|dropdown)",
     re.IGNORECASE,
 )
 

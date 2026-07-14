@@ -254,7 +254,21 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
         )
 
     consumed_result_vars = _consumed_result_vars(program.statements)
+    interactive_url_result_vars = _interactive_url_result_vars(program.statements)
     for stmt in _iter_main_statements(program.statements):
+        if (
+            isinstance(stmt, Run)
+            and stmt.kind == "filter"
+            and stmt.returns
+            and not stmt.target_values
+        ):
+            issues.add(
+                "FILTER_RESULT_WITHOUT_TARGET_STATE",
+                f"filter 步「{stmt.name}」会返回 {list(stmt.returns)}，但没有用 target_values "
+                "声明完成后的完整筛选状态。运行时无法区分任务筛选、旧残留筛选和相邻搜索框，"
+                "也无法可靠读取该结果。请按 {<语义筛选字段>: <精确值>} 填写 target_values；"
+                "若要保留上游筛选，也必须一并列入。",
+            )
         if (
             isinstance(stmt, Run)
             and stmt.kind == "action"
@@ -272,11 +286,24 @@ def validate_program(program: Program, *, resolution=None) -> list[ValidationIss
                 "当前状态检查与幂等跳过由 interactive Run 在实时页面中处理，不属于 Program 控制流。",
                 evidence=(stmt.var, tuple(stmt.returns)),
             )
+        if isinstance(stmt, Query) and stmt.var:
+            url_fields = {
+                field
+                for field in stmt.returns
+                if any(token in field.lower() for token in ("url", "href", "link"))
+            }
+            if url_fields and stmt.var not in interactive_url_result_vars:
+                issues.add(
+                    "DATA_QUERY_URL_RESULT_UNUSED",
+                    f"data_query 步「{stmt.name}」返回 URL/link 字段 {sorted(url_fields)}，"
+                    "但后续步骤没有引用它。既然查询已经确定了目标入口，后续 navigation/action "
+                    f"必须使用 {{{stmt.var}[字段]}}；否则请从 returns/SELECT 中删除该入口字段，"
+                    "不要重新依赖视觉滚动或按名称猜目标。",
+                    evidence=(stmt.var, tuple(sorted(url_fields))),
+                )
 
     all_result_vars: set[str] = set()  # every result var anywhere — to spot botched bare refs
     rank_goal_text = (program.goal or "").lower()
-    interactive_url_result_vars = _interactive_url_result_vars(program.statements)
-
     def _collect_result_vars(stmts: list[Stmt]) -> None:
         for s in stmts:
             if isinstance(s, RunLike) and _produces_result(s):

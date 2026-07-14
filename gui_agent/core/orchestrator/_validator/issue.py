@@ -78,6 +78,8 @@ ALL_CODES: frozenset[str] = frozenset({
     "DATA_QUERY_VAR_AS_TABLE",
     "RETURNS_WITHOUT_READ_SPEC",
     "MUTATION_RESULT_UNUSED",
+    "FILTER_RESULT_WITHOUT_TARGET_STATE",
+    "DATA_QUERY_URL_RESULT_UNUSED",
     # function / capability data-flow
     "CALL_FUNC_NOT_DEFINED",
     "CALL_RETURNS_WITHOUT_VAR",

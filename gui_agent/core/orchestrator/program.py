@@ -22,7 +22,12 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Discriminator, Field, Tag, model_validator
 
-from gui_agent.core.schemas import TargetValue
+from gui_agent.core.schemas import (
+    EffectMode,
+    PersistenceMode,
+    TargetValue,
+    normalize_effect_contract_fields,
+)
 
 # DSL data-flow template grammar: ``{var[field]}`` pulls a prior read's value out of the
 # variable environment. Used by finish messages (the original site) AND — since the
@@ -142,6 +147,12 @@ class Run(RunLike):
     （milestone react loop——milestone 仅是执行器的内部载体格式）开到 done。
     `var` binds its RunResult; `returns` = fields to read from the completion frame."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_effect_contract(cls, data: object) -> object:
+        """Accept legacy mutation fields while exposing one canonical execution contract."""
+        return normalize_effect_contract_fields(data)
+
     # 交互命令的 kind 只剩交互词汇；read/data_query 是平级的 Read/Query 节点。
     kind: Literal["navigation", "filter", "action"] = "action"  # type: ignore[assignment]
     # Entry state of this interaction — the EXIT (success_condition) of the interaction that runs
@@ -170,19 +181,13 @@ class Run(RunLike):
     # step declares coverage — knowledge decides WHEN aggregate coverage exists; this flag — not a
     # text pattern — is how the program states it.
     covers_set: str = ""
-    mutation_mode: Literal["ensure", "change"] = Field(
-        default="change",
-        description=(
-            "action 的 mutation 语义：ensure 允许权威确认的既有目标状态直接完成；"
-            "change 要求本轮产生目标写入。非 action 留默认值。"
-        ),
+    effect_mode: Optional[EffectMode] = Field(
+        default=None,
+        description="ensure | transform | dispatch；普通交互状态转换留空。",
     )
-    requires_commit: bool = Field(
-        default=False,
-        description=(
-            "该 action 的目标值写入后是否还必须经过独立的保存/提交边界才持久化。"
-            "即时生效的切换/选择填 false；草稿表单最终必须 Save/Submit 填 true。"
-        ),
+    persistence: PersistenceMode = Field(
+        default="immediate",
+        description="immediate | explicit_commit。",
     )
     target_controls: list[str] = Field(
         default_factory=list,

@@ -31,11 +31,11 @@ the dedicated-block approach; annotate_goal was removed.)"""
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from gui_agent.context import ContextBlock
 from gui_agent.core.config import resolve_llm_config
@@ -52,11 +52,17 @@ class EntityRef(BaseModel):
     """One entity the goal must look up in the target system."""
 
     mention: str = Field(description="目标原文里对该实体的引用,如 'Aurora jacket'")
-    role: str = Field(default="lookup", description='"lookup"=要在系统里检索/定位的既有实体;"value"=要设置/创建/填写的值(新名称、表单选项、规则作用域)——不检索、绝不改拼写')
+    role: Literal["lookup", "target_value", "qualifier_value"] = Field(
+        default="lookup",
+        description=(
+            '"lookup"=检索既有实体;"target_value"=任务要引入或设置的目标值;'
+            '"qualifier_value"=只限定最终选择的既有值。后两者都不用于检索且保留原文'
+        ),
+    )
     value_members: list[str] = Field(
         default_factory=list,
         description=(
-            "仅 role=value 使用：当 mention 表示同一逻辑选择必须包含的多个原子值时，"
+            "仅值角色使用：当 mention 表示同一逻辑选择必须包含的多个原子值时，"
             "逐项原样列出；标量值和不同字段的值留空并分别建 EntityRef。"
         ),
     )
@@ -66,6 +72,22 @@ class EntityRef(BaseModel):
     cardinality: str = Field(default="single", description='"single"=指向唯一一个实体;"set"=一个规格,匹配多个实体(如"size 28 的所有颜色变体"、"所有蓝色 XS 商品"、"评分≤3 的所有评论")→ 下游须逐个迭代')
     selector: str = Field(default="", description='cardinality="set" 时,把成员从基底筛出来的规格/限定词(被 search_key 丢掉的那部分),如 "size 28"、"blue + size XS"、"rating<=3";single 时留空')
     reason: str = Field(default="", description="一句话依据")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_role(cls, value: object) -> object:
+        """Translate the retired value/introduction pair at the wire boundary."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        if data.get("role") == "value":
+            data["role"] = (
+                "qualifier_value"
+                if data.get("introduction") == "not_required"
+                else "target_value"
+            )
+        data.pop("introduction", None)
+        return data
 
 
 class IntentResolution(BaseModel):
@@ -132,17 +154,21 @@ def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBloc
         return None
 
     def _line(e: EntityRef) -> str:
-        # role=value: a value to be SET/CREATED (a new rule name, a form option, a scope setting) —
-        # used verbatim, never searched. Rendering it as a retrieval line made decompose search for
-        # things that don't exist yet (703 "Thanks giving sale") or foreach over form settings (702).
-        if getattr(e, "role", "lookup") == "value":
+        # Values are used verbatim and never searched. Their role says whether the task introduces
+        # the value itself or merely selects it while mutating another object.
+        if e.role in {"target_value", "qualifier_value"}:
             members = target_value_options(e.value_members)
+            usage = (
+                "｜目标要引入或设置该值"
+                if e.role == "target_value"
+                else "｜仅作为最终限定值，不得额外创建/改写其定义"
+            )
             if len(members) > 1:
                 return (
                     f"- 待填入同字段值集合「{e.mention}」｜类型={e.type}｜"
-                    f"原子值={list(members)}（分别填写，不合并成一个字符串）"
+                    f"原子值={list(members)}（同一选择组，不合并成字符串）{usage}"
                 )
-            return f"- 待填入值「{e.mention}」｜类型={e.type}｜原样填写（不检索、不改拼写）"
+            return f"- 待填入值「{e.mention}」｜类型={e.type}｜原样填写（不检索、不改拼写）{usage}"
         match = ("允许模糊匹配，检索关键词：" + e.search_key) if e.match_mode == "approximate" else "精确匹配"
         # cardinality=set is authoritative for the DECISION (the reference denotes a SET, not one
         # entity) — but NOT for the strategy: HOW the set gets covered is decompose's call (foreach
@@ -163,6 +189,24 @@ def intent_block(resolution: Optional[IntentResolution]) -> Optional[ContextBloc
         return f"- 实体「{e.mention}」｜类型={e.type}｜{match}{card}"
 
     lines = [_line(e) for e in resolution.entities]
+    target_values = [
+        value
+        for entity in resolution.entities
+        if entity.role == "target_value"
+        for value in (target_value_options(entity.value_members) or (entity.mention,))
+    ]
+    qualifier_values = [
+        value
+        for entity in resolution.entities
+        if entity.role == "qualifier_value"
+        for value in (target_value_options(entity.value_members) or (entity.mention,))
+    ]
+    if target_values or qualifier_values:
+        lines.extend((
+            "## 值生命周期合同",
+            f"- 可作为任务写入目标、必要时建立定义前置：{target_values or ['（无）']}",
+            f"- 只允许在最终 mutation 中选择、禁止建立独立定义阶段：{qualifier_values or ['（无）']}",
+        ))
     return ContextBlock(
         id="runtime.intent_resolution",
         budget="required",

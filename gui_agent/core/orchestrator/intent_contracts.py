@@ -39,6 +39,7 @@ def validate_intent_contracts(
     issues: list[IntentContractIssue] = []
     issues.extend(_check_router_entity_coverage(program, resolution))
     issues.extend(_check_value_entity_consumption(program, resolution))
+    issues.extend(_check_multi_value_binding(program, resolution))
     issues.extend(_check_entity_scope_predicates(program, resolution))
     return issues
 
@@ -58,7 +59,7 @@ def _check_value_entity_consumption(
     consumer_text = _value_consumer_text(program)
     issues: list[IntentContractIssue] = []
     for entity in resolution.entities:
-        if _entity_role(entity) != "value":
+        if not _is_value_role(entity):
             continue
         members = target_value_options(entity.value_members)
         if len(members) > 1:
@@ -77,7 +78,7 @@ def _check_value_entity_consumption(
         issues.append(IntentContractIssue(
             code="ROUTER_VALUE_DROPPED",
             message=(
-                f"Router marked「{value}」as role=value, but no action, compute, call argument, or "
+                f"Router marked「{value}」as {_entity_role(entity)}, but no action, compute, call argument, or "
                 "foreach body_goal consumes that value. A value appearing only in the user goal, "
                 "navigation/filter text, or finish message does not change application state. "
                 f"Carry「{value}」verbatim into the mutation/data-flow node that sets or creates it."
@@ -89,28 +90,100 @@ def _check_value_entity_consumption(
 
 def _value_consumer_text(program: Program) -> str:
     parts: list[str] = []
-
-    def _collect(stmts: list[Stmt]) -> None:
-        for stmt in stmts:
-            if isinstance(stmt, RunLike) and stmt.kind == "action":
-                parts.extend([stmt.name or "", stmt.success_condition or "", stmt.read_spec or ""])
-                for value in getattr(stmt, "target_values", {}).values():
-                    parts.extend(target_value_options(value))
-            elif isinstance(stmt, Compute):
-                parts.append(stmt.expr or "")
-            elif isinstance(stmt, Call):
-                parts.extend(str(value) for value in (stmt.args or {}).values())
-            elif isinstance(stmt, ForEach):
-                parts.append(stmt.body_goal or "")
-                _collect(stmt.body)
-            elif isinstance(stmt, If):
-                _collect(stmt.then)
-                _collect(stmt.otherwise)
-
-    _collect(program.statements)
-    for fn in getattr(program, "functions", None) or []:
-        _collect(fn.body)
+    for stmt in _program_statements(program):
+        if isinstance(stmt, RunLike) and stmt.kind == "action":
+            parts.extend((stmt.name, stmt.success_condition, stmt.read_spec))
+            for value in stmt.target_values.values():
+                parts.extend(target_value_options(value))
+        elif isinstance(stmt, Compute):
+            parts.append(stmt.expr)
+        elif isinstance(stmt, Call):
+            parts.extend(str(value) for value in stmt.args.values())
+        elif isinstance(stmt, ForEach):
+            parts.append(stmt.body_goal)
     return "\n".join(parts)
+
+
+def _check_multi_value_binding(
+    program: Program,
+    resolution: IntentResolution,
+) -> list[IntentContractIssue]:
+    """Keep one logical multi-selection together and do not redefine selection-only values."""
+    actions = [
+        (
+            stmt,
+            [
+                {_norm(value) for value in target_value_options(raw)}
+                for raw in stmt.target_values.values()
+            ],
+        )
+        for stmt in _program_statements(program)
+        if isinstance(stmt, RunLike) and stmt.kind == "action"
+    ]
+
+    issues: list[IntentContractIssue] = []
+    target_members = {
+        _norm(value)
+        for entity in resolution.entities
+        if _entity_role(entity) == "target_value"
+        for value in (
+            target_value_options(entity.value_members)
+            or (str(entity.mention or entity.search_key),)
+        )
+        if str(value).strip()
+    }
+    for entity in resolution.entities:
+        if not _is_value_role(entity):
+            continue
+        members = {_norm(value) for value in target_value_options(entity.value_members)}
+        if len(members) < 2:
+            continue
+        grouped = [
+            item
+            for item in actions
+            if any(members <= group for group in item[1])
+            and (
+                not target_members
+                or any(target_members & group for group in item[1])
+            )
+        ]
+        if not grouped:
+            issues.append(IntentContractIssue(
+                code="ROUTER_MULTI_VALUE_SPLIT",
+                message=(
+                    f"Router 声明「{entity.mention}」是同一选择组的原子值 {sorted(members)}，"
+                    "但没有任一 action 在 target_values 的同一字段中同时承载它们。"
+                    "请用一个数组字段保留完整选择集，不要拆成多个独立 mutation。"
+                ),
+            ))
+            continue
+        if _entity_role(entity) != "qualifier_value":
+            continue
+        grouped_ids = {id(item[0]) for item in grouped}
+        extras = [
+            action.name
+            for action, groups in actions
+            if id(action) not in grouped_ids
+            and (
+                any(members & group for group in groups)
+                or any(_contains(_action_text(action), member) for member in members)
+            )
+        ]
+        if extras:
+            issues.append(IntentContractIssue(
+                code="ROUTER_SELECTION_VALUE_REDEFINED",
+                message=(
+                    f"Router 声明「{entity.mention}」只是最终选择值，但计划又在其他 action "
+                    f"中单独创建/改写了它：{extras}。保留承载完整选择集的最终 mutation；"
+                    "必须删除这些 action 及专门为它们准备的 navigation/filter/if 整个前置资源阶段，"
+                    "不能只把多个前置合并或改名。该值仍保留在最终 mutation 的 target_values 中。"
+                ),
+            ))
+    return issues
+
+
+def _action_text(action: RunLike) -> str:
+    return "\n".join((action.name or "", action.success_condition or "", action.read_spec or ""))
 
 
 def _check_router_entity_coverage(program: Program, resolution: IntentResolution) -> list[IntentContractIssue]:
@@ -120,9 +193,9 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
     issues: list[IntentContractIssue] = []
 
     for entity in resolution.entities:
-        # role=value entities are values to SET (a new rule name, a form scope) — used verbatim,
+        # Value entities are values to set/select (a new rule name, a form scope) — used verbatim,
         # never searched, never iterated. Coverage checks on them false-block create/update tasks.
-        if _entity_role(entity) == "value":
+        if _is_value_role(entity):
             continue
 
         mention = str(entity.mention or "").strip()
@@ -132,23 +205,16 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
         selector = str(getattr(entity, "selector", "") or "").strip()
 
         mention_present = _contains(program_text, mention)
-        mention_present_in_retrieval = _contains(retrieval_text, mention)
+        mention_present_in_retrieval = _contains_filter_value(program, mention)
         key_present = _contains(program_text, search_key)
-        key_present_as_own_strategy = key_present
-        if mention and search_key and _norm(mention) != _norm(search_key):
-            retrieval_wo_mention = _remove_norm_phrase(retrieval_text, mention)
-            key_present_as_own_strategy = (
-                _contains(retrieval_wo_mention, search_key)
-                # Relaxed anchor: any substantive token of the mention as the fallback key also
-                # satisfies the contract — knowledge may pick a better-discriminating token than
-                # the router's choice; the invariant is fallback-anchored-to-mention.
-                or _mention_token_fallback_present(retrieval_wo_mention, mention)
-            )
         set_scope_decomposed = (
             cardinality == "set"
             and bool(selector)
             and (not search_key or _contains(retrieval_text, search_key))
             and _contains(retrieval_text, selector)
+        )
+        key_present_as_own_strategy = set_scope_decomposed or _has_zero_count_fallback(
+            program, mention=mention, search_key=search_key
         )
 
         if mention or search_key:
@@ -178,12 +244,11 @@ def _check_router_entity_coverage(program: Program, resolution: IntentResolution
                         code="ROUTER_APPROXIMATE_KEY_DROPPED",
                         message=(
                             f"Router marked entity「{mention}」as approximate with search_key"
-                            f"「{search_key}」, but after removing the original mention from retrieval "
-                            f"steps the program does not include search_key「{search_key}」(or another "
-                            f"substantive token of「{mention}」) as its own fallback/search-scope "
-                            "strategy. Keep the exact trial with the full mention, and add an explicit "
-                            "fallback retrieval step using the search_key — or, when app knowledge "
-                            "identifies a better-discriminating token of the same mention, that token."
+                            f"「{search_key}」, but the exact filter's explicit zero-count branch does "
+                            f"not retry the same field with search_key「{search_key}」. Keep the exact "
+                            "trial with the full mention, then use the router-provided search_key "
+                            "verbatim in that fallback. If the key is wrong, correct intent resolution "
+                            "instead of overriding its contract downstream."
                         ),
                         evidence=(f"mention={mention}", f"search_key={search_key}"),
                     ))
@@ -249,23 +314,14 @@ def _check_entity_scope_predicates(program: Program, resolution: IntentResolutio
     scoped_queries: list[Query] = []
     ui_text_parts: list[str] = []
 
-    def _collect(stmts: list[Stmt]) -> None:
-        for s in stmts:
-            if isinstance(s, ForEach):
-                into_tables.add((s.into or f"{s.var}s").strip().lower())
-                ui_text_parts.extend([s.target or "", s.member_desc or "", s.body_goal or ""])
-                _collect(s.body)
-            elif isinstance(s, Query):
-                scoped_queries.append(s)
-            elif isinstance(s, Run):
-                ui_text_parts.extend([s.name or "", s.success_condition or ""])
-            elif isinstance(s, If):
-                _collect(s.then)
-                _collect(s.otherwise)
-
-    _collect(program.statements)
-    for fn in getattr(program, "functions", None) or []:
-        _collect(fn.body)
+    for stmt in _program_statements(program):
+        if isinstance(stmt, ForEach):
+            into_tables.add((stmt.into or f"{stmt.var}s").strip().lower())
+            ui_text_parts.extend((stmt.target, stmt.member_desc, stmt.body_goal))
+        elif isinstance(stmt, Query):
+            scoped_queries.append(stmt)
+        elif isinstance(stmt, Run):
+            ui_text_parts.extend((stmt.name, stmt.success_condition))
     if not into_tables:
         return []
 
@@ -279,7 +335,7 @@ def _check_entity_scope_predicates(program: Program, resolution: IntentResolutio
     issues: list[IntentContractIssue] = []
     ui_text = " ".join(ui_text_parts).lower()
     for entity in entities:
-        if _entity_role(entity) == "value":
+        if _is_value_role(entity):
             continue
         keys = [str(k).strip() for k in (getattr(entity, "search_key", ""), getattr(entity, "mention", ""))
                 if str(k or "").strip()]
@@ -306,28 +362,72 @@ def _entity_role(entity: object) -> str:
     return str(getattr(entity, "role", "lookup") or "lookup").strip().lower()
 
 
+def _is_value_role(entity: object) -> bool:
+    return _entity_role(entity) in {"target_value", "qualifier_value"}
+
+
 def _program_text(program: Program) -> str:
     return program.model_dump_json(exclude_none=True)
 
 
 def _retrieval_text(program: Program) -> str:
     parts: list[str] = []
-
-    def _collect(stmts: list[Stmt]) -> None:
-        for stmt in stmts:
-            if isinstance(stmt, RunLike) and stmt.kind in {"filter", "navigation"}:
-                parts.extend([stmt.name or "", stmt.success_condition or "", getattr(stmt, "read_spec", "") or ""])
-            elif isinstance(stmt, ForEach):
-                parts.extend([stmt.target or "", stmt.member_desc or "", stmt.body_goal or ""])
-                _collect(stmt.body)
-            elif isinstance(stmt, If):
-                _collect(stmt.then)
-                _collect(stmt.otherwise)
-
-    _collect(program.statements)
-    for fn in (getattr(program, "functions", None) or []):
-        _collect(fn.body)
+    for stmt in _program_statements(program):
+        if isinstance(stmt, RunLike) and stmt.kind in {"filter", "navigation"}:
+            parts.extend((stmt.name, stmt.success_condition, stmt.read_spec))
+        elif isinstance(stmt, ForEach):
+            parts.extend((stmt.target, stmt.member_desc, stmt.body_goal))
     return "\n".join(parts)
+
+
+def _filter_text(stmt: RunLike) -> str:
+    values = " ".join(str(value) for value in stmt.target_values.values())
+    return "\n".join((stmt.name, stmt.success_condition, stmt.read_spec, values))
+
+
+def _contains_filter_value(program: Program, value: str) -> bool:
+    return any(
+        stmt.kind == "filter" and _contains(_filter_text(stmt), value)
+        for stmt in _program_statements(program)
+        if isinstance(stmt, RunLike)
+    )
+
+
+def _has_zero_count_fallback(
+    program: Program,
+    *,
+    mention: str,
+    search_key: str,
+) -> bool:
+    if not mention or not search_key or _norm(mention) == _norm(search_key):
+        return _contains_filter_value(program, search_key)
+    trials = {
+        stmt.var
+        for stmt in _program_statements(program)
+        if isinstance(stmt, RunLike)
+        and stmt.kind == "filter"
+        and stmt.var
+        and "match_count" in stmt.returns
+        and _contains(_filter_text(stmt), mention)
+    }
+    for stmt in _program_statements(program):
+        if not isinstance(stmt, If) or stmt.cond.var not in trials:
+            continue
+        if stmt.cond.field != "match_count" or str(stmt.cond.value) != "0":
+            continue
+        if stmt.cond.cmp == "==":
+            branch = stmt.then
+        elif stmt.cond.cmp == "!=":
+            branch = stmt.otherwise
+        else:
+            continue
+        for fallback in _walk_statements(branch):
+            if not isinstance(fallback, RunLike) or fallback.kind != "filter":
+                continue
+            text = _remove_norm_phrase(_filter_text(fallback), mention)
+            if _contains(text, search_key):
+                return True
+    return False
 
 
 def _contains(haystack: str, needle: str) -> bool:
@@ -366,45 +466,28 @@ def _set_covered_by_aggregate(program: Program, mention: str) -> bool:
     return any(_scan(fn.body) for fn in (getattr(program, "functions", None) or []))
 
 
-def _mention_token_fallback_present(retrieval_wo_mention: str, mention: str) -> bool:
-    """A fallback anchored to ANY substantive token of the original mention counts as a
-    fallback strategy: the router's search_key is one valid anchor, but app knowledge may know a
-    better discriminating token of the same mention (e.g. the product-line word instead of a
-    fabric brand shared across families). The invariant preserved is anchoring-to-the-mention,
-    not which token the router happened to pick. Only NAME-LIKE tokens qualify (contains an
-    uppercase letter, or CJK): a generic lowercase word ("orders") appearing anywhere in retrieval
-    prose must not silence the contract."""
-    for token in re.findall(r"[A-Za-z0-9]{3,}|[一-鿿]{2,}", mention or ""):
-        if not any(ch.isupper() for ch in token) and token.isascii():
-            continue
-        if _contains(retrieval_wo_mention, token):
-            return True
-    return False
+def _walk_statements(stmts: list[Stmt]):
+    for stmt in stmts:
+        yield stmt
+        if isinstance(stmt, If):
+            yield from _walk_statements(stmt.then)
+            yield from _walk_statements(stmt.otherwise)
+        elif isinstance(stmt, ForEach):
+            yield from _walk_statements(stmt.body)
+
+
+def _program_statements(program: Program):
+    yield from _walk_statements(program.statements)
+    for function in program.functions:
+        yield from _walk_statements(function.body)
 
 
 def _iter_foreaches(stmts: list[Stmt]) -> list[ForEach]:
-    out: list[ForEach] = []
-    for stmt in stmts:
-        if isinstance(stmt, ForEach):
-            out.append(stmt)
-            out.extend(_iter_foreaches(stmt.body))
-        elif isinstance(stmt, If):
-            out.extend(_iter_foreaches(stmt.then))
-            out.extend(_iter_foreaches(stmt.otherwise))
-    return out
+    return [stmt for stmt in _walk_statements(stmts) if isinstance(stmt, ForEach)]
 
 
 def _iter_runs(stmts: list[Stmt]) -> list[RunLike]:
-    out: list[RunLike] = []
-    for stmt in stmts:
-        if isinstance(stmt, RunLike):
-            out.append(stmt)
-        elif isinstance(stmt, If):
-            out.extend(_iter_runs(stmt.then))
-            out.extend(_iter_runs(stmt.otherwise))
-        elif isinstance(stmt, ForEach):
-            out.extend(_iter_runs(stmt.body))
-    return out
+    return [stmt for stmt in _walk_statements(stmts) if isinstance(stmt, RunLike)]
 
 
 def _block_has_if(stmts: list[Stmt]) -> bool:

@@ -76,18 +76,16 @@ class _StepDraft(BaseModel):
                     "在执行该聚合动作的 mutation 步上填被覆盖的实体提及原文，程序可以不用 foreach。"
                     "没有知识依据时禁止填写——那等于漏改其余成员。",
     )
-    mutation_mode: str = Field(
-        default="change",
+    effect_mode: str = Field(
+        default="",
         description=(
-            "op=run 且 run_kind=action：ensure | change。ensure=用户只要求维持/确保终态，"
-            "既有状态可直接满足；change=用户要求新增/创建/修改/删除，本轮必须真实产生变化。"
+            "run_kind=action 的业务效果：ensure | transform | dispatch。普通展开/切换等"
+            "无业务效果交互留空。"
         ),
     )
-    requires_commit: bool = Field(
-        default=False,
-        description=(
-            "run_kind=action：业务字段写入后是否必须再经过独立保存/提交边界。"
-        ),
+    persistence: str = Field(
+        default="immediate",
+        description="run_kind=action：immediate | explicit_commit。",
     )
     target_controls: list[str] = Field(
         default_factory=list,
@@ -101,6 +99,8 @@ class _StepDraft(BaseModel):
         description=(
             "run_kind=action：本步必须实现的业务终态；同一选择组需要多个值时使用字符串数组，"
             "不得拼成 and/和 连接的单个字符串，重复集合成员仍分别使用标量合同。"
+            "Router 的 target_value 可作为写入目标并在知识明确要求时建立定义前置；qualifier_value"
+            "只能进入最终 mutation 的选择合同，禁止为它建立独立的创建/改写阶段。"
             "run_kind=filter：完成后的完整筛选状态，"
             "每个字段只声明一个已应用值。它不提供目标身份或写入授权；"
             "不得写按钮、选择器、坐标或系统生成的 ID/时间戳。"
@@ -215,6 +215,8 @@ class _PlanDraft(BaseModel):
         default="",
         description=(
             "先列出任务涉及的持久化资源、各资源的所有者类型、明确的资源依赖，并拓扑排序完整资源阶段；"
+            "值依赖必须服从 Router 角色：只有 target_value 可产生定义前置，qualifier_value 只能被最终"
+            "mutation 选择，不能成为独立持久化资源；"
             "再分析要到哪些页、做什么操作、读什么结果、是否需要条件分支。若采集所有者判别字段，必须在"
             "选唯一目标的 member_desc、if 条件或 data_query WHERE 中实际消费。向既有 owner 的集合增加"
             "member 时，先用 navigation/filter 定位并打开既有 owner，再执行成员集合 mutation；不得误建"
@@ -392,12 +394,17 @@ def _to_stmts(drafts: list[_StepDraft]) -> list[Stmt]:
                     },
                     precondition=bool(d.precondition),
                     covers_set=(d.covers_set or "").strip(),
-                    mutation_mode=(
-                        "ensure"
-                        if (d.mutation_mode or "").strip().lower() == "ensure"
-                        else "change"
+                    effect_mode=(
+                        (d.effect_mode or "").strip().lower()
+                        if (d.effect_mode or "").strip().lower()
+                        in {"ensure", "transform", "dispatch"}
+                        else None
                     ),
-                    requires_commit=bool(d.requires_commit),
+                    persistence=(
+                        "explicit_commit"
+                        if (d.persistence or "").strip().lower() == "explicit_commit"
+                        else "immediate"
+                    ),
                     target_controls=[
                         value.strip()
                         for value in (d.target_controls or [])

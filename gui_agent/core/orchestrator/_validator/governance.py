@@ -61,6 +61,16 @@ TEXTUAL_FALLBACK_HEURISTIC_SAMPLES: tuple[dict[str, object], ...] = (
         "retire_when": "exact/fuzzy retries carry a structured target_field",
     },
     {
+        # Chinese field label between 同一 and 字段 (webarena 550 live compile failure).
+        "id": "retrieval.same_target.chinese_field_name_between",
+        "kind": "retrieval_same_target",
+        "owner": "gui_agent.core.orchestrator._validator.retrieval",
+        "trigger": "清除精确值后在同一名称字段用关键词『Nona』重筛并提交",
+        "expected": True,
+        "validator_code": "RETRIEVAL_RETRY_DROPS_FIELD",
+        "retire_when": "exact/fuzzy retries carry a structured target_field",
+    },
+    {
         "id": "retrieval.stopword.input_exact_overcapture",
         "kind": "retrieval_field_normalize",
         "owner": "gui_agent.core.orchestrator._validator.retrieval",

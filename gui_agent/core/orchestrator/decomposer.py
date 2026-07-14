@@ -143,12 +143,16 @@ def _invoke_plan(
     )
     issues: list[ValidationIssue] = []
     feedback_issues: list[ValidationIssue] = []
+    previous_draft = ""
     program = Program(goal=goal, statements=[])
     for attempt in range(_MAX_RETRIES + 1):
         messages = assemble_messages(
             system_prompt,
             png_bytes,
-            human_blocks=[*context_blocks, feedback_block(feedback_issues)],
+            human_blocks=[
+                *context_blocks,
+                feedback_block(feedback_issues, previous_output=previous_draft),
+            ],
             image_resize="none",
             prepare_vision_prompt_png=prepare_vision_prompt_png,
             label=label,
@@ -156,6 +160,7 @@ def _invoke_plan(
             decision_text="",
         )
         draft = invoke_structured(llm, messages, _PlanDraft, trace_sink=context_reports, trace_label=label)
+        previous_draft = draft.model_dump_json(exclude_defaults=True, exclude_none=True)
         program = to_program(draft, goal)
         program = _normalize_data_query_display_identifiers(program)
         all_issues = list(validate_program(program, resolution=resolution))
