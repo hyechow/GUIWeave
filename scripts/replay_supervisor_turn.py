@@ -70,12 +70,17 @@ def _milestone_for_turn(raw: dict[str, Any], turn: PolicyTurn) -> Milestone:
         "precondition",
         "mutation_mode",
         "requires_commit",
+        "effect_mode",
+        "persistence",
         "target_controls",
         "target_values",
         "returns",
         "read_spec",
     ):
-        if field in statement:
+        # Older run logs serialized unset optional enum fields as an empty string.
+        # Treat those as absent so a replay exercises current policy rather than
+        # failing while reconstructing the milestone schema.
+        if field in statement and statement[field] not in (None, ""):
             merged[field] = statement[field]
     merged["status"] = "running"
     return Milestone.model_validate(merged)
@@ -156,7 +161,9 @@ def _configure_knowledge(supervisor: Any, context: PolicyContext) -> None:
         )
 
 
-def _expectation_failures(expectation: dict[str, Any], decision: Any) -> list[str]:
+def _expectation_failures(
+    expectation: dict[str, Any], decision: Any, milestone: Milestone
+) -> list[str]:
     failures: list[str] = []
     checks = (
         ("should_act", expectation.get("should_act")),
@@ -176,6 +183,11 @@ def _expectation_failures(expectation: dict[str, Any], decision: Any) -> list[st
     if getattr(decision, "target_control", None) in rejected:
         failures.append(
             f"rejected target_control was proposed: {decision.target_control!r}"
+        )
+    expected_retries = expectation.get("retry_count")
+    if expected_retries is not None and milestone.retry_count != expected_retries:
+        failures.append(
+            f"expected retry_count={expected_retries!r}, got {milestone.retry_count!r}"
         )
     return failures
 
@@ -336,7 +348,7 @@ def main() -> int:
         "decision": decision.model_dump(mode="json", exclude_none=True),
         "warnings": warnings,
     }
-    failures = _expectation_failures(expectation, decision)
+    failures = _expectation_failures(expectation, decision, milestone)
     action_decision = None
     if args.with_action_policy or expectation.get("action"):
         if not decision.should_act or not decision.instruction:
@@ -362,7 +374,7 @@ def main() -> int:
             {
                 "turn": target_index,
                 "checker_status": getattr(checker, "status", None),
-                "checker_outcome": getattr(checker, "outcome_status", None),
+                "checker_effect": getattr(checker, "effect_status", None),
                 "instruction": decision.instruction,
                 "should_act": decision.should_act,
                 "goal_completed": decision.goal_completed,

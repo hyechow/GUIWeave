@@ -37,7 +37,7 @@ def _ms() -> Milestone:
 
 
 def _check() -> _SingleCheckResult:
-    return _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="尚未完成填写表单", summary="填表中")
+    return _SingleCheckResult(status="in_progress", effect_status="unverified", reason="尚未完成填写表单", summary="填表中")
 
 
 def _obs() -> Observation:

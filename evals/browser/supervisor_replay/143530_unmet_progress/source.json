@@ -1,0 +1,8 @@
+{
+  "task": "WebArena 550",
+  "history_source": "logs/gui_agent/webarena/browser/20260714_143530/context.json",
+  "history_through_turn": 10,
+  "observation_source": "recorded observation_turn_8..11.json and matching screenshots",
+  "observation_captured_on": "2026-07-14",
+  "purpose": "The target value was normally absent while scrolling toward Add Swatch. Three ordinary unmet frames must not consume recovery retries."
+}

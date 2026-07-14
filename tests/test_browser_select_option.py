@@ -48,7 +48,7 @@ def test_select_option_action_dispatches_client():
     assert client.clicked is None
 
 
-def test_tap_on_native_select_with_option_text_is_rescued():
+def test_tap_on_native_select_never_becomes_an_implicit_write():
     client = _Client(snap=(856.0, 509.0, "select 246x32"))
     decision = BrowserActionDecision(
         action=BrowserAction(
@@ -60,8 +60,8 @@ def test_tap_on_native_select_with_option_text_is_rescued():
     )
 
     assert _exec(client).execute(decision) is True
-    assert client.selected == (856.0, 509.0, "Complete")
-    assert client.clicked is None
+    assert client.selected is None
+    assert client.clicked == (856.0, 509.0)
 
 
 def test_plain_tap_on_select_still_clicks_when_no_option_text():

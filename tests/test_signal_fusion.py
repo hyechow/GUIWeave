@@ -1,20 +1,19 @@
 from gui_agent.core.run.execution_signals import (
-    CompletionEvaluator,
+    ExecutionCoordinator,
     ConstraintLedger,
     ExecutionContract,
     claim,
 )
+from gui_agent.core.run.persistence import PersistenceAssessment, assess_persistence
 from gui_agent.core.schemas import (
     ActionSignal,
     Milestone,
+    MutationReceipt,
     Observation,
     PolicyTurn,
     SupervisorStep,
 )
-from gui_agent.core.supervisor.milestone.action_protocol import (
-    action_metadata,
-    mutation_progress,
-)
+from gui_agent.core.supervisor.milestone.schemas import action_metadata
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
@@ -26,6 +25,8 @@ def _signal_turn(
     control: str,
     surface: str = "",
     milestone_id: str = "persisted",
+    field: str = "",
+    value: str = "",
 ) -> PolicyTurn:
     return PolicyTurn(
         index=index,
@@ -45,6 +46,17 @@ def _signal_turn(
             role=role,
             surface_id=surface,
             target_control=control,
+            mutation_receipt=(
+                MutationReceipt(
+                    statement_id=milestone_id,
+                    subject_ref=f"choice:{surface}",
+                    field=field,
+                    intended_value=value,
+                    source="visual",
+                )
+                if field
+                else None
+            ),
             execution="dispatched",
             target="on_target",
             response="observed",
@@ -56,14 +68,36 @@ def _redirected_mutation_contract() -> ExecutionContract:
     return ExecutionContract(
         statement_id="save",
         kind="action",
-        require_terminal_dispatch=True,
+        effect_mode="transform",
+        persistence="explicit_commit",
         completion_mode="mutation",
     )
 
 
+def test_unmet_state_remains_actionable_without_progress_failure() -> None:
+    scope = "milestone:add-value"
+    decision = ExecutionCoordinator().decide(
+        _redirected_mutation_contract(),
+        [
+            claim(
+                "control.state",
+                "unmet",
+                source_type="obs.mutation.desired_state",
+                scope=scope,
+                authoritative=True,
+                evidence="the declared value is not present yet",
+            )
+        ],
+        scope=scope,
+    )
+
+    assert decision.status == "pending"
+    assert decision.next == "act"
+
+
 def test_destination_page_state_cannot_contradict_source_resource_mutation() -> None:
     scope = "milestone:save"
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         _redirected_mutation_contract(),
         [
             claim(
@@ -82,9 +116,9 @@ def test_destination_page_state_cannot_contradict_source_resource_mutation() -> 
                 subject_scope="row:record/65",
                 authoritative=True,
             ),
-            claim(
-                "control.state",
-                "contradicted",
+                claim(
+                    "control.state",
+                    "unmet",
                 source_type="obs.dom.target_values",
                 scope=scope,
                 subject_scope="milestone:save",
@@ -92,7 +126,7 @@ def test_destination_page_state_cannot_contradict_source_resource_mutation() -> 
                 authoritative=True,
             ),
             claim(
-                "business.outcome",
+                "effect.state",
                 "contradicted",
                 source_type="checker",
                 scope=scope,
@@ -109,7 +143,7 @@ def test_destination_page_state_cannot_contradict_source_resource_mutation() -> 
 
 def test_authoritative_operation_failure_for_source_resource_wins_after_redirect() -> None:
     scope = "milestone:save"
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         _redirected_mutation_contract(),
         [
             claim(
@@ -129,7 +163,7 @@ def test_authoritative_operation_failure_for_source_resource_wins_after_redirect
                 authoritative=True,
             ),
             claim(
-                "business.outcome",
+                "effect.state",
                 "contradicted",
                 source_type="adapter.persistence_result",
                 scope=scope,
@@ -183,7 +217,8 @@ def test_persisted_mutation_keeps_transaction_role_separate_from_ui_family():
             description="",
             success_condition="saved collection contains target rows",
             kind="action",
-            requires_commit=True,
+            persistence="explicit_commit",
+            effect_mode="transform",
             target_values={"member": "target"},
         ),
     )
@@ -192,14 +227,15 @@ def test_persisted_mutation_keeps_transaction_role_separate_from_ui_family():
     assert family == "activate"
 
 
-def test_persisted_mutation_rejects_backward_preparation_edge():
+def test_persisted_mutation_projects_pending_commit_without_rejecting_proposals():
     milestone = Milestone(
         id="persisted",
         name="update collection and save",
         description="",
         success_condition="saved collection contains target rows",
         kind="action",
-        requires_commit=True,
+        persistence="explicit_commit",
+        effect_mode="transform",
     )
     history = [
         _signal_turn(1, role="prepare", control="Open editor", surface="parent"),
@@ -207,93 +243,62 @@ def test_persisted_mutation_rejects_backward_preparation_edge():
         _signal_turn(3, role="prepare", control="Next", surface="child:values"),
         _signal_turn(4, role="commit", control="Generate draft", surface="child:summary"),
     ]
-    proposal = _PlanResult(
-        instruction="open the editor again",
-        summary="",
-        atomic_role="prepare",
-        action_family="activate",
-        target_control="Open editor",
-    )
-
-    progress = mutation_progress(milestone, history)
-    assert progress.rejects(
-        proposal, milestone, current_surface_id="parent"
-    ) is True
-    assert progress.rejects(
-        proposal.model_copy(update={
-            "atomic_role": "commit",
-            "target_control": "Save",
-            "action_family": "activate",
-        }),
-        milestone,
-    ) is False
+    state = assess_persistence(milestone, history)
+    assert state.status == "pending"
+    assert state.latest_write is history[1]
+    assert state.entry_surface == "parent"
 
 
-def test_same_control_name_on_a_different_surface_is_not_a_backward_edge():
+def test_persistence_projection_does_not_compare_control_names():
     milestone = Milestone(
         id="persisted",
         name="update collection and save",
         description="",
         success_condition="saved collection contains target rows",
         kind="action",
-        requires_commit=True,
+        persistence="explicit_commit",
+        effect_mode="transform",
     )
     history = [
         _signal_turn(1, role="prepare", control="Next", surface="wizard:step-1"),
         _signal_turn(2, role="write", control="Target A", surface="wizard:step-2"),
     ]
-    proposal = _PlanResult(
-        instruction="advance",
-        summary="",
-        atomic_role="prepare",
-        action_family="activate",
-        target_control="Next",
-    )
-
-    progress = mutation_progress(milestone, history)
-    assert progress.rejects(
-        proposal,
-        milestone,
-        current_surface_id="wizard:step-2",
-    ) is False
-    assert progress.rejects(
-        proposal,
-        milestone,
-        current_surface_id="wizard:step-1",
-    ) is True
+    state = assess_persistence(milestone, history)
+    assert state.status == "pending"
+    assert state.entry_surface == "wizard:step-1"
 
 
-def test_visual_regression_proposal_requires_a_new_forward_plan():
+def test_pending_persistence_without_terminal_readiness_allows_forward_prepare():
     milestone = Milestone(
         id="persisted",
         name="update collection and save",
         description="",
         success_condition="saved collection contains target rows",
         kind="action",
-        requires_commit=True,
+        persistence="explicit_commit",
+        effect_mode="transform",
     )
     history = [
         _signal_turn(1, role="prepare", control="Open child editor", surface="parent"),
         _signal_turn(2, role="write", control="Target A", surface="parent"),
         _signal_turn(3, role="prepare", control="Generate draft", surface="parent"),
     ]
-    proposals = iter(
-        [
-            _PlanResult(
-                instruction="open the child editor again",
-                summary="re-enter child flow",
-                atomic_role="prepare",
-                action_family="activate",
-                target_control="Open child editor",
-            ),
-            _PlanResult(
-                instruction="inspect a new forward surface",
-                summary="do not revisit the old entry",
-                atomic_role="iterate",
-                action_family="iterate",
-            ),
-        ]
-    )
+    proposals = iter([
+        _PlanResult(
+            instruction="open the child editor again",
+            summary="re-enter child flow",
+            atomic_role="prepare",
+            action_family="activate",
+            target_control="Open child editor",
+        ),
+        _PlanResult(
+            instruction="save the current resource",
+            summary="cross the pending boundary",
+            atomic_role="commit",
+            action_family="activate",
+            target_control="Save",
+        ),
+    ])
     policy = MilestoneSupervisorPolicy(surface_resolver=lambda _observation: "parent")
     policy._invoke_planner = lambda *_args, **_kwargs: next(proposals)  # type: ignore[method-assign]
 
@@ -303,14 +308,14 @@ def test_visual_regression_proposal_requires_a_new_forward_plan():
             status="in_progress",
             reason="state not yet durable",
             summary="visual-only parent surface",
-            outcome_status="unverified",
+            effect_status="unverified",
         ),
         Observation(png_bytes=b"frame", source="visual"),
         history,
     )
 
-    assert step.atomic_role == "iterate"
-    assert step.action_family == "iterate"
+    assert step.atomic_role == "prepare"
+    assert step.target_control == "Open child editor"
 
 
 def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
@@ -320,7 +325,8 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
         description="",
         success_condition="saved collection contains target rows",
         kind="action",
-        requires_commit=True,
+        persistence="explicit_commit",
+        effect_mode="transform",
     )
     history = [
         _signal_turn(1, role="prepare", control="Open child editor"),
@@ -343,7 +349,7 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
             status="in_progress",
             reason="state not yet durable",
             summary="visual-only parent surface",
-            outcome_status="unverified",
+            effect_status="unverified",
         ),
         Observation(png_bytes=b"frame", source="visual"),
         history,
@@ -353,6 +359,104 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
     assert step.instruction == "open the child editor again"
 
 
+def test_terminal_ready_rejects_repeated_noncommit_proposals():
+    milestone = Milestone(
+        id="persisted",
+        name="update collection and save",
+        description="",
+        success_condition="saved collection contains target rows",
+        kind="action",
+        persistence="explicit_commit",
+        effect_mode="transform",
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child", surface="parent"),
+        _signal_turn(2, role="write", control="Target A", surface="child"),
+        _signal_turn(3, role="commit", control="Generate draft", surface="child"),
+    ]
+    regression = _PlanResult(
+        instruction="open the child editor again",
+        summary="re-enter child flow",
+        atomic_role="prepare",
+        action_family="activate",
+        target_control="Open child editor",
+    )
+    policy = MilestoneSupervisorPolicy(surface_resolver=lambda _observation: "parent")
+    policy._invoke_planner = lambda *_args, **_kwargs: regression  # type: ignore[method-assign]
+
+    step = policy._plan_single(
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="root commit is pending",
+            summary="returned to parent",
+            effect_status="unverified",
+        ),
+        Observation(png_bytes=b"frame", source="visual"),
+        history,
+    )
+
+    assert step.should_act is False
+    assert step.atomic_role == "commit"
+    assert "non-commit proposal rejected" in step.summary
+    assert any(
+        "terminal persistence is pending" in item
+        for item in policy.constraints_snapshot("milestone:persisted")
+    )
+
+
+def test_complete_write_receipts_keep_child_workflow_moving_forward():
+    milestone = Milestone(
+        id="persisted",
+        name="materialize declared choices and save",
+        description="",
+        success_condition="saved collection contains the declared choices",
+        kind="action",
+        persistence="explicit_commit",
+        effect_mode="transform",
+        target_values={"Size": "XXXL", "Color": "green"},
+    )
+    history = [
+        _signal_turn(1, role="prepare", control="Open child", surface="parent"),
+        _signal_turn(
+            2, role="write", control="XXXL", surface="child", field="Size", value="XXXL"
+        ),
+        _signal_turn(
+            3, role="write", control="Green", surface="child", field="Color", value="green"
+        ),
+        _signal_turn(4, role="prepare", control="Next", surface="child"),
+    ]
+    extras: list[str] = []
+
+    def planner(*_args, **kwargs):
+        extras.append(kwargs.get("extra", ""))
+        return _PlanResult(
+            instruction="generate the prepared child records",
+            summary="continue from completed target writes",
+            atomic_role="commit",
+            action_family="activate",
+            target_control="Generate",
+        )
+
+    policy = MilestoneSupervisorPolicy(surface_resolver=lambda _observation: "child-summary")
+    policy._invoke_planner = planner  # type: ignore[method-assign]
+    step = policy._plan_single(
+        milestone,
+        _SingleCheckResult(
+            status="in_progress",
+            reason="effect remains unverified",
+            summary="later child workflow surface",
+            effect_status="unverified",
+        ),
+        Observation(png_bytes=b"frame", source="visual"),
+        history,
+    )
+
+    assert step.atomic_role == "commit"
+    assert step.target_control == "Generate"
+    assert extras and "write receipts" in extras[0]
+
+
 def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
     milestone = Milestone(
         id="persisted",
@@ -360,7 +464,8 @@ def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
         description="",
         success_condition="saved collection contains the declared combination",
         kind="action",
-        requires_commit=True,
+        persistence="explicit_commit",
+        effect_mode="transform",
         target_values={"Color": "green", "Size": "XXXL"},
     )
     proposal = _PlanResult(
@@ -380,7 +485,7 @@ def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
             status="in_progress",
             reason="the draft selection still contains extra values",
             summary="selection preparation is pending",
-            outcome_status="contradicted",
+            effect_status="unmet",
         ),
         Observation(png_bytes=b"frame", source="visual"),
         [],
@@ -393,13 +498,15 @@ def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
     assert step.requires_mutation_authorization is False
 
 
-def test_commit_detection_uses_structured_role_not_instruction_vocabulary():
+def test_persistence_uses_structured_role_not_instruction_vocabulary():
     milestone = Milestone(
         id="m",
         name="perform mutation",
         description="",
         success_condition="state is durable",
         kind="action",
+        effect_mode="dispatch",
+        persistence="explicit_commit",
     )
     turn = _signal_turn(
         1,
@@ -408,24 +515,30 @@ def test_commit_detection_uses_structured_role_not_instruction_vocabulary():
         milestone_id="m",
     )
 
-    assert mutation_progress(milestone, [turn]).phase == "terminal"
+    attempted = assess_persistence(milestone, [turn])
+    assert attempted.status == "pending"
+    assert attempted.terminal_turn is turn
+    assert turn.action_signal is not None
+    turn.action_signal.response_channels.append("url")
+    assert assess_persistence(milestone, [turn]).status == "submitted"
     prepare = _signal_turn(
         1,
         role="prepare",
         control="trigger boundary",
         milestone_id="m",
     )
-    assert mutation_progress(milestone, [prepare]).phase == "preparing"
+    assert assess_persistence(milestone, [prepare]).status == "clean"
 
 
-def test_mutation_progress_does_not_treat_nested_in_place_commit_as_terminal():
+def test_persistence_does_not_treat_nested_commit_as_terminal():
     milestone = Milestone(
         id="persisted",
         name="persist mutation",
         description="",
         success_condition="state is durable",
         kind="action",
-        requires_commit=True,
+        persistence="explicit_commit",
+        effect_mode="transform",
     )
     outer_prepare = _signal_turn(
         1,
@@ -447,63 +560,30 @@ def test_mutation_progress_does_not_treat_nested_in_place_commit_as_terminal():
         surface="resource:record-7",
     )
 
-    nested = mutation_progress(milestone, [outer_prepare, child_commit])
-    assert nested.phase == "preparing"
-    assert nested.terminal_index is None
+    nested = assess_persistence(milestone, [outer_prepare, child_commit])
+    assert nested.status == "clean"
+    assert nested.terminal_turn is None
 
-    pending = mutation_progress(milestone, [outer_prepare, write, child_commit])
-    drift = _PlanResult(
-        instruction="open another preparation route",
-        summary="",
-        atomic_role="prepare",
-        action_family="navigate",
-        target_control="another route",
-    )
-    assert pending.phase == "commit_pending"
-    assert pending.rejects(
-        drift, milestone, current_surface_id="resource:record-7"
-    ) is True
-    assert pending.rejects(
-        drift.model_copy(update={"atomic_role": "commit"}),
-        milestone,
-        current_surface_id="resource:record-7",
-    ) is False
+    pending = assess_persistence(milestone, [outer_prepare, write, child_commit])
+    assert pending.status == "pending"
 
-    persisted = mutation_progress(
-        milestone,
-        [outer_prepare, child_commit, outer_commit],
+    persisted = assess_persistence(
+        milestone, [outer_prepare, write, child_commit, outer_commit]
     )
-    assert persisted.phase == "terminal"
-    assert persisted.terminal_index == outer_commit.index
+    assert persisted.status == "pending"
+    assert persisted.terminal_turn is outer_commit
+    assert outer_commit.action_signal is not None
+    outer_commit.action_signal.response_channels.append("url")
+    assert assess_persistence(
+        milestone, [outer_prepare, write, child_commit, outer_commit]
+    ).status == "submitted"
 
     redirected_child = child_commit.model_copy(deep=True)
     assert redirected_child.action_signal is not None
     redirected_child.action_signal.response_channels.append("url")
-    redirected = mutation_progress(milestone, [outer_prepare, redirected_child])
-    assert redirected.phase == "terminal"
-    assert redirected.terminal_index == redirected_child.index
-
-    assert mutation_progress(
-        milestone.model_copy(update={"requires_commit": False}), [write]
-    ).phase == "written"
-
-    contradicted = write.model_copy(deep=True)
-    assert contradicted.action_signal is not None
-    contradicted.action_signal.outcome = "contradicted"
-    contradicted_progress = mutation_progress(milestone, [contradicted])
-    assert contradicted_progress.phase == "contradicted"
-    retry = _PlanResult(
-        instruction="retry the preparation",
-        summary="",
-        atomic_role="prepare",
-        action_family="activate",
-        target_control="Target value",
-    )
-    assert contradicted_progress.rejects(
-        retry,
-        milestone,
-        current_surface_id="record",
-    ) is False
+    redirected = assess_persistence(milestone, [outer_prepare, write, redirected_child])
+    assert redirected.status == "pending"
+    assert redirected.terminal_turn is None
 
 
 def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
@@ -513,7 +593,7 @@ def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
         output_fields=("match_count",),
         completion_mode="filter_state_with_result",
     )
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         contract,
         [
             claim(
@@ -542,8 +622,8 @@ def test_commit_dispatch_without_outcome_feedback_is_provisional():
     contract = ExecutionContract(
         statement_id="save",
         kind="action",
-        require_fresh_action=True,
-        require_terminal_dispatch=True,
+        effect_mode="transform",
+        persistence="explicit_commit",
         completion_mode="mutation",
     )
     claims = [
@@ -556,34 +636,62 @@ def test_commit_dispatch_without_outcome_feedback_is_provisional():
             source_type="runtime.commit_dispatch", scope="row:7", authoritative=True,
         ),
         claim(
-            "business.outcome", "unverified",
+            "effect.state", "unverified",
             source_type="checker", scope="row:7",
         ),
     ]
-    decision = CompletionEvaluator().decide(contract, claims, scope="row:7")
+    attempt = PersistenceAssessment(
+        status="pending",
+        terminal_turn=_signal_turn(
+            2, role="commit", control="Save", milestone_id="save"
+        ),
+    )
+    decision = ExecutionCoordinator().decide(
+        contract,
+        claims,
+        scope="row:7",
+        persistence_assessment=attempt,
+    )
 
-    assert decision.status == "satisfied"
-    assert decision.completion_status == "accepted_unverified"
+    assert decision.status == "pending"
+    assert decision.completion_status == "in_progress"
+    assert decision.next == "observe"
 
     dom_response = claim(
         "page.response", "confirmed",
         source_type="runtime.effect_monitor", scope="row:7", authoritative=True,
         coverage="in_place_transition",
     )
-    assert CompletionEvaluator().decide(
-        contract, [*claims, dom_response], scope="row:7"
-    ).status == "pending"
+    assert ExecutionCoordinator().decide(
+        contract,
+        [*claims, dom_response],
+        scope="row:7",
+        persistence_assessment=attempt,
+    ).next == "observe"
+
+    acknowledged = PersistenceAssessment(
+        status="submitted",
+        terminal_turn=_signal_turn(
+            2, role="commit", control="Save", milestone_id="save"
+        ),
+    )
+    assert ExecutionCoordinator().decide(
+        contract,
+        claims,
+        scope="row:7",
+        persistence_assessment=acknowledged,
+    ).completion_status == "accepted_unverified"
 
 
 def test_commit_cannot_be_accepted_while_declared_target_values_are_incomplete():
     contract = ExecutionContract(
         statement_id="save",
         kind="action",
-        require_fresh_action=True,
-        require_terminal_dispatch=True,
+        effect_mode="transform",
+        persistence="explicit_commit",
         completion_mode="mutation",
     )
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         contract,
         [
             claim(
@@ -602,14 +710,14 @@ def test_commit_cannot_be_accepted_while_declared_target_values_are_incomplete()
             ),
             claim(
                 "control.state",
-                "contradicted",
+                "unmet",
                 source_type="obs.dom.target_values",
                 scope="row:7",
                 evidence="declared fields are incomplete",
                 authoritative=True,
             ),
             claim(
-                "business.outcome",
+                "effect.state",
                 "unverified",
                 source_type="checker",
                 scope="row:7",
@@ -618,18 +726,17 @@ def test_commit_cannot_be_accepted_while_declared_target_values_are_incomplete()
         scope="row:7",
     )
 
-    assert decision.status == "pending"
-    assert decision.completion_status == "in_progress"
-    assert decision.conflicts == ("target.values.incomplete",)
+    assert decision.status == "contradicted"
+    assert decision.next == "recover"
 
 
 def test_authoritative_field_state_overrides_checker_pixel_contradiction():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="save",
             kind="action",
-            require_fresh_action=True,
-            require_terminal_dispatch=True,
+            effect_mode="transform",
+            persistence="explicit_commit",
             completion_mode="mutation",
         ),
         [
@@ -649,7 +756,7 @@ def test_authoritative_field_state_overrides_checker_pixel_contradiction():
                 authoritative=True,
             ),
             claim(
-                "business.outcome",
+                "effect.state",
                 "contradicted",
                 source_type="checker",
                 scope="row:7",
@@ -660,18 +767,26 @@ def test_authoritative_field_state_overrides_checker_pixel_contradiction():
     )
 
     assert decision.status == "pending"
-    assert decision.conflicts == ("action.commit.required",)
+    assert decision.next == "act"
 
 
 def test_authoritative_business_failure_still_overrides_field_state():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="save",
             kind="action",
-            require_terminal_dispatch=True,
+            effect_mode="transform",
+            persistence="explicit_commit",
             completion_mode="mutation",
         ),
         [
+            claim(
+                "action.execution",
+                "confirmed",
+                source_type="runtime.commit_dispatch",
+                scope="row:7",
+                authoritative=True,
+            ),
             claim(
                 "control.state",
                 "confirmed",
@@ -680,7 +795,7 @@ def test_authoritative_business_failure_still_overrides_field_state():
                 authoritative=True,
             ),
             claim(
-                "business.outcome",
+                "effect.state",
                 "contradicted",
                 source_type="adapter.validation_error",
                 scope="row:7",
@@ -698,11 +813,11 @@ def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():
     contract = ExecutionContract(
         statement_id="save",
         kind="action",
-        require_fresh_action=True,
-        require_terminal_dispatch=True,
+        effect_mode="transform",
+        persistence="explicit_commit",
         completion_mode="mutation",
     )
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         contract,
         [
             claim(
@@ -720,7 +835,7 @@ def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():
                 authoritative=True,
             ),
             claim(
-                "business.outcome",
+                "effect.state",
                 "confirmed",
                 source_type="checker",
                 scope="row:7",
@@ -731,18 +846,17 @@ def test_confirmed_outcome_cannot_replace_required_terminal_dispatch():
     )
 
     assert decision.status == "pending"
-    assert "终端提交尚未派发" in decision.reason
+    assert decision.next == "act"
 
 
 def test_change_mutation_cannot_complete_from_commit_without_write():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="save",
             kind="action",
-            require_fresh_action=True,
-            require_terminal_dispatch=True,
+            persistence="explicit_commit",
             completion_mode="mutation",
-            mutation_mode="change",
+            effect_mode="transform",
         ),
         [
             claim(
@@ -753,7 +867,7 @@ def test_change_mutation_cannot_complete_from_commit_without_write():
                 authoritative=True,
             ),
             claim(
-                "business.outcome",
+                "effect.state",
                 "unverified",
                 source_type="checker",
                 scope="milestone:save",
@@ -762,21 +876,21 @@ def test_change_mutation_cannot_complete_from_commit_without_write():
         scope="milestone:save",
     )
 
-    assert decision.status == "pending"
-    assert decision.completion_status == "in_progress"
+    assert decision.status == "contradicted"
+    assert decision.next == "recover"
 
 
 def test_ensure_mutation_accepts_authoritative_preexisting_outcome():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="ensure",
             kind="action",
             completion_mode="mutation",
-            mutation_mode="ensure",
+            effect_mode="ensure",
         ),
         [
             claim(
-                "business.outcome",
+                "effect.state",
                 "confirmed",
                 source_type="checker",
                 scope="milestone:ensure",
@@ -791,13 +905,13 @@ def test_ensure_mutation_accepts_authoritative_preexisting_outcome():
 
 
 def test_ensure_mutation_with_fresh_draft_write_requires_declared_commit():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="ensure_saved",
             kind="action",
-            require_terminal_dispatch=True,
+            persistence="explicit_commit",
             completion_mode="mutation",
-            mutation_mode="ensure",
+            effect_mode="ensure",
         ),
         [
             claim(
@@ -827,18 +941,17 @@ def test_ensure_mutation_with_fresh_draft_write_requires_declared_commit():
     )
 
     assert decision.status == "pending"
-    assert decision.conflicts == ("action.commit.required",)
-    assert "草稿状态" in decision.reason
+    assert decision.next == "act"
 
 
 def test_ensure_mutation_with_preexisting_control_state_still_skips_commit():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="ensure_existing",
             kind="action",
-            require_terminal_dispatch=True,
+            persistence="explicit_commit",
             completion_mode="mutation",
-            mutation_mode="ensure",
+            effect_mode="ensure",
         ),
         [
             claim(
@@ -858,13 +971,13 @@ def test_ensure_mutation_with_preexisting_control_state_still_skips_commit():
 
 
 def test_commit_without_target_write_returns_typed_recovery_conflict():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="ensure",
             kind="action",
-            require_terminal_dispatch=True,
+            persistence="explicit_commit",
             completion_mode="mutation",
-            mutation_mode="ensure",
+            effect_mode="ensure",
         ),
         [claim(
             "action.execution",
@@ -876,19 +989,19 @@ def test_commit_without_target_write_returns_typed_recovery_conflict():
         scope="milestone:ensure",
     )
 
-    assert decision.status == "pending"
-    assert decision.conflicts == ("action.write.required",)
+    assert decision.status == "contradicted"
+    assert decision.next == "recover"
 
 
 def test_checker_without_navigation_dispatch_cannot_complete_navigation():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="open",
             kind="navigation",
             completion_mode="arrival",
         ),
         [claim(
-            "business.outcome",
+            "effect.state",
             "confirmed",
             source_type="checker",
             scope="milestone:open",
@@ -901,7 +1014,7 @@ def test_checker_without_navigation_dispatch_cannot_complete_navigation():
 
 
 def test_collection_requires_authoritative_complete_coverage():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="rows",
             kind="collection",
@@ -924,7 +1037,7 @@ def test_collection_requires_authoritative_complete_coverage():
 
 
 def test_collection_completes_from_authoritative_coverage_fact():
-    decision = CompletionEvaluator().decide(
+    decision = ExecutionCoordinator().decide(
         ExecutionContract(
             statement_id="rows",
             kind="collection",

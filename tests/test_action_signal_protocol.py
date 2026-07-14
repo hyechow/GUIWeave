@@ -4,8 +4,7 @@ import pytest
 
 from gui_agent.core.orchestrator.program import Finish, Program, Run, RunResult
 from gui_agent.core.orchestrator.runner import Interpreter, RunRecord, make_run_result
-from gui_agent.core.run.action_ledger import effective_action_role, semantic_action_key
-from gui_agent.core.run.execution_signals import CompletionEvaluation, claim
+from gui_agent.core.run.action_signals import effective_action_role, semantic_action_key
 from gui_agent.core.run.loop import _needs_terminal_reconciliation, _turn_budget_mode
 from gui_agent.core.run.result import orchestration_result
 from gui_agent.core.run.turns import interactive_turn_count, make_interactive_turn, make_verdict_turn
@@ -13,6 +12,7 @@ from gui_agent.core.schemas import (
     ActionSignal,
     BaseAction,
     BaseActionDecision,
+    EffectSignal,
     Milestone,
     MutationAuthorization,
     MutationReceipt,
@@ -22,13 +22,13 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.supervisor.milestone import policy as policy_module
-from gui_agent.core.supervisor.milestone.action_protocol import record_action_outcome
+from gui_agent.core.supervisor.milestone.evidence import action_lifecycle_claims, checker_claim
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
-def test_checker_payload_requires_explicit_outcome_status() -> None:
-    with pytest.raises(ValueError, match="outcome_status"):
+def test_checker_payload_requires_explicit_effect_status() -> None:
+    with pytest.raises(ValueError, match="effect_status"):
         _SingleCheckResult.model_validate({
             "status": "done",
             "reason": "visible state looks complete",
@@ -65,7 +65,6 @@ def _turn(
     *,
     index: int,
     step: SupervisorStep,
-    outcome: str = "unverified",
     role: str | None = None,
 ) -> PolicyTurn:
     decision = _decision()
@@ -82,7 +81,6 @@ def _turn(
             role=signal_role,
             execution="dispatched",
             target="on_target",
-            outcome=outcome,
         ),
     )
 
@@ -128,8 +126,8 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
         description="",
         success_condition="member fields match and the resource is saved",
         kind="action",
-        mutation_mode="ensure",
-        requires_commit=True,
+        effect_mode="ensure",
+        persistence="explicit_commit",
         target_controls=["options_collection"],
         target_values={
             "Admin Description": "XXXL",
@@ -214,7 +212,7 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
             status="in_progress",
             reason="draft fields match but Save has not been dispatched",
             summary="commit pending",
-            outcome_status="unverified",
+            effect_status="unverified",
         )
     )
     policy._invoke_planner = lambda *_args, **_kwargs: _PlanResult(  # type: ignore[method-assign]
@@ -251,6 +249,8 @@ def test_concrete_scroll_cannot_consume_commit_slot():
         supervisor_step=step,
         action_decision=mislabeled_scroll,
         executed=True,
+        action_role=effective_action_role(step, mislabeled_scroll.action),
+        action_key=semantic_action_key(step, mislabeled_scroll.action),
     )
 
     assert effective_action_role(step, mislabeled_scroll.action) == "iterate"
@@ -270,7 +270,7 @@ def test_make_turn_records_execution_separately_from_outcome():
     assert turn.action_signal is not None
     assert turn.action_signal.execution == "dispatched"
     assert turn.action_signal.response == "unknown"
-    assert turn.action_signal.outcome == "unverified"
+    assert turn.effect_signal is None
 
 
 def test_make_turn_records_concrete_write_value():
@@ -345,7 +345,7 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
         "_single_check",
             lambda *_args, **_kwargs: _SingleCheckResult(
                 status="in_progress",
-                outcome_status="unverified",
+                effect_status="unverified",
             reason="target write was observed but save is still pending",
             summary="save remains",
         ),
@@ -371,7 +371,7 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
     assert "save is still pending" in step.summary
 
 
-def test_only_authoritative_contradiction_rewrites_action_lifecycle():
+def test_legacy_effect_does_not_reenter_current_lifecycle_evidence():
     policy = MilestoneSupervisorPolicy()
     milestone = Milestone(
         id="m1",
@@ -385,55 +385,36 @@ def test_only_authoritative_contradiction_rewrites_action_lifecycle():
     signal = dispatched.action_signal
     assert signal is not None
 
-    record_action_outcome(
-        [dispatched],
-        milestone,
-        CompletionEvaluation(
-            status="contradicted",
-            reason="checker cannot see the result",
-            used_claims=(claim(
-                "business.outcome",
-                "contradicted",
-                source_type="checker",
-                scope="milestone:m1",
-            ),),
-        ),
-        ledger=policy._action_ledger,
-    )
-    assert signal.outcome == "unverified"
-
-    record_action_outcome(
-        [dispatched],
-        milestone,
-        CompletionEvaluation(
-            status="contradicted",
-            reason="the attempted route produced the wrong result",
-            used_claims=(claim(
-                "action.target",
-                "contradicted",
-                source_type="runtime.target_verify",
-                scope="milestone:m1",
-                authoritative=True,
-            ),),
-        ),
-        ledger=policy._action_ledger,
-    )
-    record_action_outcome(
-        [dispatched],
-        milestone,
-        CompletionEvaluation(
-            status="pending",
-            reason="the corrected form is not submitted yet",
-        ),
-        ledger=policy._action_ledger,
+    dispatched.effect_signal = EffectSignal(
+        statement_id="m1",
+        status="contradicted",
+        freshness="current_run",
+        source_type="legacy.effect",
+        authoritative=True,
+        evidence=["the attempted route produced the wrong result"],
     )
 
-    assert signal.outcome == "contradicted"
-    assert signal.outcome_evidence == ["the attempted route produced the wrong result"]
+    assert signal.execution == "dispatched"
+    claims = action_lifecycle_claims(
+        milestone,
+        [dispatched],
+        scope="milestone:m1",
+    )
+    assert all(item.domain != "effect.state" for item in claims)
+
+
+def test_unmet_checker_state_is_not_a_failure():
+    check = _SingleCheckResult(
+        status="in_progress",
+        reason="the workflow is still on an intermediate step",
+        summary="target remains pending",
+        effect_status="unmet",
+    )
+    assert checker_claim(check, scope="milestone:m1").value == "unmet"
 
 
 @pytest.mark.parametrize("checker_status", ["in_progress", "done"])
-def test_terminal_dispatch_advances_as_accepted_unverified(
+def test_terminal_dispatch_without_persistence_response_waits_for_observation(
     monkeypatch, checker_status
 ):
     policy = MilestoneSupervisorPolicy()
@@ -443,8 +424,8 @@ def test_terminal_dispatch_advances_as_accepted_unverified(
         description="",
         success_condition="记录已保存",
         kind="action",
-        require_fresh_action=True,
-        requires_commit=True,
+        effect_mode="transform",
+        persistence="explicit_commit",
     )
     policy._milestones = {"m1": milestone}
     policy._current_id = "m1"
@@ -466,7 +447,7 @@ def test_terminal_dispatch_advances_as_accepted_unverified(
             status=checker_status,
             reason="未看到成功提示",
             summary="缺少可见反馈",
-            outcome_status="unverified",
+            effect_status="unverified",
         ),
     )
 
@@ -476,9 +457,10 @@ def test_terminal_dispatch_advances_as_accepted_unverified(
         history,
     )
 
-    assert result.goal_completed is True
-    assert result.completion_status == "accepted_unverified"
-    assert milestone.completion_status == "accepted_unverified"
+    assert result.goal_completed is False
+    assert result.should_act is False
+    assert result.completion_status == "in_progress"
+    assert milestone.completion_status == "in_progress"
 
 
 def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypatch):
@@ -489,7 +471,8 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
         description="",
         success_condition="保存后的选项集合包含 XXXL",
         kind="action",
-        require_fresh_action=True,
+        effect_mode="transform",
+        persistence="explicit_commit",
     )
     policy._milestones = {"m1": milestone}
     policy._current_id = "m1"
@@ -512,7 +495,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
             status="in_progress",
             reason="保存请求已响应，但当前帧不能直接读取集合成员",
             summary="提交有响应，结果尚未完全确认",
-            outcome_status="unverified",
+            effect_status="unverified",
         )
 
     monkeypatch.setattr(policy, "_single_check", _unverified_feedback)
@@ -546,8 +529,8 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
         description="",
         success_condition="the saved record contains the requested values",
         kind="action",
-        require_fresh_action=True,
-        requires_commit=True,
+        effect_mode="transform",
+        persistence="explicit_commit",
         target_controls=["record_fields"],
         target_values={"Primary Value": "A", "Secondary Value": "B"},
     )
@@ -582,7 +565,7 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
             summary="source-local state is outside this frame",
             missing_evidence=["source form fields"],
             visible_evidence=[],
-            outcome_status="contradicted",
+            effect_status="unmet",
         ),
     )
 
@@ -606,7 +589,7 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
     assert result.goal_completed is True
     assert result.completion_status == "accepted_unverified"
     assert history[-1].action_signal is not None
-    assert history[-1].action_signal.outcome == "unverified"
+    assert history[-1].effect_signal is None
 
 
 def test_accepted_unverified_run_result_advances_interpreter_but_is_not_verified():
@@ -675,3 +658,4 @@ def test_final_result_separates_execution_completion_from_outcome_verification(m
     assert result["goal_completed"] is False
     assert result["goal_status"] == "accepted_unverified"
     assert result["orchestrator"]["accepted_unverified"] is True
+    EffectSignal,

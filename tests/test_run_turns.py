@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from gui_agent.core.run import loop as run_loop
 from gui_agent.core.run.turns import SupervisorTimingCarry, make_interactive_turn, make_verdict_turn
-from gui_agent.core.schemas import BaseActionDecision, SupervisorStep
+from gui_agent.core.schemas import BaseActionDecision, Observation, PolicyContext, SupervisorStep
 
 
 def _step() -> SupervisorStep:
@@ -95,3 +96,49 @@ def test_supervisor_timing_carry_merges_ordered_timings_and_tokens():
         {"kind": "context_budget", "label": "checker.dynamic"},
         {"kind": "selector", "label": "knowledge.selector"},
     ]
+
+
+def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_path):
+    observation = Observation(png_bytes=b"", source="test")
+    def step(*_args):
+        return SupervisorStep(
+            should_act=False, stop=True, stop_reason="test complete",
+            goal_completed=False, summary="first observation completed",
+        )
+    supervisor = SimpleNamespace(
+        name="test",
+        step=step,
+        reconcile=step,
+        runtime_state_snapshot=lambda: {},
+    )
+    bundle = SimpleNamespace(
+        platform="test",
+        prepare_vision_prompt_png=lambda data: data,
+        make_executor=lambda _platform: SimpleNamespace(prepare_frame=lambda _png: None),
+        make_action_visualizer=lambda _platform: None,
+        make_perception=lambda *_args: SimpleNamespace(observe=lambda: observation),
+    )
+    context = PolicyContext(
+        goal="test first turn", supervisor_policy_name="test", action_policy_name="test"
+    )
+    monkeypatch.setattr(run_loop, "build_platform", lambda **_kwargs: bundle)
+    monkeypatch.setattr(run_loop, "_load_context", lambda *_args, **_kwargs: context)
+    monkeypatch.setattr(run_loop, "_save_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(run_loop, "save_observation_snapshot", lambda *_args, **_kwargs: None)
+
+    result = run_loop.run_agent_loop(
+        "test first turn",
+        SimpleNamespace(name="test"),
+        supervisor,
+        None,
+        tmp_path,
+        tmp_path / "context.json",
+        max_turns=1,
+        auto_continue=True,
+        silent=True,
+        platform=object(),
+        headless=True,
+    )
+
+    assert result["stop_reason"] == "test complete"
+    assert len(context.turns) == 1

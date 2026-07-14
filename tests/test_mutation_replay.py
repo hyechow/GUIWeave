@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-from gui_agent.core.run.action_ledger import ActionLedger
 from gui_agent.core.run.mutation import authorize_mutation, resolve_mutation
 from gui_agent.core.run.progress_monitor import ProgressMonitor
+from gui_agent.core.run.persistence import assess_persistence
 from gui_agent.core.schemas import (
     ActionSignal,
     Milestone,
@@ -13,7 +13,6 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
-from gui_agent.core.supervisor.milestone.action_protocol import mutation_progress
 from gui_agent.core.supervisor.milestone.evidence import (
     action_lifecycle_claims,
 )
@@ -26,6 +25,8 @@ INTERMEDIATE_FIXTURE = REPLAYS / "205258_intermediate_transition"
 NESTED_COMMIT_FIXTURE = REPLAYS / "091305_nested_commit"
 DIRECT_SAVE_FIXTURE = REPLAYS / "105939_turn12"
 PERSISTENCE_FLOW_FIXTURE = REPLAYS / "112455_persistence_flow"
+TERMINAL_FRONTIER_FIXTURE = REPLAYS / "111415_terminal_frontier"
+UNMET_PROGRESS_FIXTURE = REPLAYS / "143530_unmet_progress"
 
 
 def _run_statements(node: object) -> list[dict]:
@@ -57,6 +58,8 @@ def _context(root: Path, turn_no: int) -> tuple[Milestone, list[PolicyTurn]]:
     merged.update({
         field: statement[field]
         for field in (
+            "effect_mode",
+            "persistence",
             "mutation_mode",
             "requires_commit",
             "target_controls",
@@ -135,7 +138,7 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
                 status="in_progress",
                 reason="the exact declared choices are not ready",
                 summary="choice preparation is pending",
-                outcome_status="contradicted",
+                effect_status="unmet",
             ),
             normalized,
             [],
@@ -233,7 +236,7 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
         success_condition="the saved collection contains both declared combinations",
         kind="action",
         target_values={"Size": "XXS", "Color": ["blue", "purple"]},
-        requires_commit=True,
+        persistence="explicit_commit",
     )
     observation = _observation(INTERMEDIATE_FIXTURE, 28)
     policy = MilestoneSupervisorPolicy(
@@ -300,7 +303,7 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
             status="in_progress",
             reason="declared choices are complete but the workflow has not reached persistence",
             summary="continue the workflow",
-            outcome_status="unverified",
+            effect_status="unverified",
         ),
         normalized,
         history,
@@ -321,32 +324,151 @@ def test_real_091305_child_dispatch_does_not_consume_terminal_commit() -> None:
         milestone,
         history,
         scope=scope,
-        monitor=ProgressMonitor(),
-        ledger=ActionLedger(),
     )
     execution = next(item for item in claims if item.domain == "action.execution")
-    progress = mutation_progress(milestone, history, scope=scope)
+    persistence = assess_persistence(milestone, history, scope=scope)
 
-    assert progress.phase == "commit_pending"
-    assert progress.terminal_index is None
+    assert persistence.status == "pending"
+    assert persistence.terminal_turn is None
     assert execution.source_type == "runtime.action_dispatch"
+
+
+def test_real_111415_returned_child_commit_requires_root_commit(monkeypatch) -> None:
+    from gui_agent.adapters.browser.target_binding import active_surface_id
+    from gui_agent.core.supervisor.milestone import policy as policy_module
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+
+    milestone, turns = _context(TERMINAL_FRONTIER_FIXTURE, 32)
+    history = [turn for turn in turns if turn.index < 32]
+    observation = _observation(TERMINAL_FRONTIER_FIXTURE, 32)
+    prior = _observation(TERMINAL_FRONTIER_FIXTURE, 31)
+    recorded = next(turn for turn in turns if turn.index == 32)
+    persistence = assess_persistence(
+        milestone,
+        history,
+        scope=recorded.supervisor.execution_scope,
+        current_surface=active_surface_id(observation),
+    )
+    assert persistence.terminal_ready
+
+    extras: list[str] = []
+    policy = MilestoneSupervisorPolicy(surface_resolver=active_surface_id)
+    policy.reseed(milestone)
+    policy._monitor._last_url = prior.url
+    policy._monitor._last_dom_state = prior.dom_state
+    policy._single_check = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
+        _SingleCheckResult.model_validate(recorded.checker).model_copy(update={
+            "status": "stuck",
+            "effect_status": "unmet",
+            "reason": "draft rows are not final before the root commit",
+        })
+    )
+
+    plans = iter((
+        _PlanResult(
+            instruction="reopen Edit Configurations",
+            summary="repeat the child flow",
+            atomic_role="prepare",
+            action_family="activate",
+            target_control="Edit Configurations",
+        ),
+        _PlanResult(
+            instruction="click the root Save",
+            summary="persist the resource",
+            atomic_role="commit",
+            action_family="activate",
+            target_control="Save",
+        ),
+    ))
+
+    def plan(*_args, **kwargs):
+        extras.append(kwargs.get("extra", ""))
+        return next(plans)
+
+    policy._invoke_planner = plan  # type: ignore[method-assign]
+    monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
+
+    def unexpected_similarity(*_args):
+        raise AssertionError("terminal commit frontier must bypass route-level stuck detection")
+
+    policy._monitor.check_screen_similarity = unexpected_similarity  # type: ignore[method-assign]
+
+    step = policy._run_single_turn(milestone, observation, history)
+
+    assert step.should_act is True
+    assert step.atomic_role == "commit"
+    assert step.target_control == "Save"
+    assert len(extras) == 2
+    assert all("atomic_role=commit" in extra for extra in extras)
+
+
+def test_real_143530_unmet_frames_do_not_consume_recovery_retries(
+    monkeypatch,
+) -> None:
+    from gui_agent.core.supervisor.milestone import policy as policy_module
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+
+    for turn_no in (9, 10, 11):
+        milestone, turns = _context(UNMET_PROGRESS_FIXTURE, turn_no)
+        history = [turn for turn in turns if turn.index < turn_no]
+        observation = _observation(UNMET_PROGRESS_FIXTURE, turn_no)
+        prior = _observation(UNMET_PROGRESS_FIXTURE, turn_no - 1)
+        recorded = next(turn for turn in turns if turn.index == turn_no)
+        check = _SingleCheckResult.model_validate(recorded.checker)
+        assert check.effect_status == "unmet"
+
+        policy = MilestoneSupervisorPolicy()
+        policy.reseed(milestone)
+        policy._monitor._last_url = prior.url
+        policy._monitor._last_dom_state = prior.dom_state
+        policy._single_check = lambda *_args, _check=check, **_kwargs: _check  # type: ignore[method-assign]
+        policy._invoke_planner = lambda *_args, _turn=turn_no, **_kwargs: (  # type: ignore[method-assign]
+            _PlanResult(
+                instruction=(
+                    "click Add Swatch"
+                    if _turn == 11
+                    else "scroll toward the option collection boundary"
+                ),
+                summary="continue the current acquire path",
+                atomic_role="prepare" if _turn == 11 else "iterate",
+                action_family="activate" if _turn == 11 else "navigate",
+                target_control="Add Swatch" if _turn == 11 else "option_collection",
+                direction=None if _turn == 11 else "down",
+            )
+        )
+        policy._invoke_replanner = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
+            (_ for _ in ()).throw(AssertionError("ordinary unmet state triggered recovery"))
+        )
+        monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
+
+        step = policy._run_single_turn(milestone, observation, history)
+
+        assert step.should_act is True
+        assert step.goal_completed is False
+        assert milestone.retry_count == 0
+        if turn_no == 11:
+            assert step.target_control == "Add Swatch"
 
 
 def test_real_persistence_boundaries_share_one_progress_projection() -> None:
     cases = (
-        (PERSISTENCE_FLOW_FIXTURE, 29, "commit_pending", None),
-        (PERSISTENCE_FLOW_FIXTURE, 30, "terminal", 30),
-        (DIRECT_SAVE_FIXTURE, 11, "terminal", 11),
+        (PERSISTENCE_FLOW_FIXTURE, 29, "pending", None),
+        (PERSISTENCE_FLOW_FIXTURE, 30, "submitted", 30),
+        (DIRECT_SAVE_FIXTURE, 11, "submitted", 11),
     )
-    for root, turn_no, expected_phase, terminal_index in cases:
+    for root, turn_no, expected_status, terminal_index in cases:
         milestone, turns = _context(root, turn_no)
         target_turn = next(turn for turn in turns if turn.index == turn_no)
         history = [turn for turn in turns if turn.index <= turn_no]
-        progress = mutation_progress(
+        persistence = assess_persistence(
             milestone,
             history,
             scope=target_turn.supervisor.execution_scope,
         )
 
-        assert progress.phase == expected_phase
-        assert progress.terminal_index == terminal_index
+        assert persistence.status == expected_status
+        assert (
+            persistence.terminal_turn.index
+            if persistence.terminal_turn is not None
+            else None
+        ) == terminal_index

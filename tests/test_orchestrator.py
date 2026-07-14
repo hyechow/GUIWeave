@@ -538,7 +538,7 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
         Run(name="打开详情面板", kind="action", target_controls=["Details"]),
         1,
     )
-    assert interaction.require_fresh_action is False
+    assert interaction.effect_mode is None
     from gui_agent.core.run.execution_signals import ExecutionContract
     assert ExecutionContract.from_milestone(interaction).completion_mode == "verification"
     mutation = milestone_for_run(
@@ -549,43 +549,67 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
         ),
         2,
     )
-    assert mutation.require_fresh_action is True
+    assert mutation.effect_mode == "transform"
     assert ExecutionContract.from_milestone(mutation).completion_mode == "mutation"
     ensure = milestone_for_run(
         Run(
             name="确保通知已开启",
             kind="action",
-            mutation_mode="ensure",
+            effect_mode="ensure",
             target_controls=["Notifications"],
             target_values={"Notifications": "on"},
         ),
         2,
     )
-    assert ensure.require_fresh_action is False
-    assert ensure.mutation_mode == "ensure"
+    assert ensure.effect_mode == "ensure"
     assert ensure.target_controls == ["Notifications"]
     assert ensure.target_values == {"Notifications": "on"}
     assert ExecutionContract.from_milestone(ensure).completion_mode == "mutation"
     persisted = milestone_for_run(
-        Run(name="更新资料", kind="action", requires_commit=True),
+        Run(name="更新资料", kind="action", persistence="explicit_commit"),
         3,
     )
-    assert persisted.requires_commit is True
-    assert persisted.require_fresh_action is True
-    assert ExecutionContract.from_milestone(persisted).require_terminal_dispatch is True
+    assert persisted.persistence == "explicit_commit"
+    assert persisted.effect_mode == "dispatch"
+    assert ExecutionContract.from_milestone(persisted).persistence == "explicit_commit"
     result_action = milestone_for_run(
         Run(name="触发检测", kind="action", returns=["result"]),
         4,
     )
-    assert result_action.require_fresh_action is True
+    assert result_action.effect_mode == "dispatch"
     assert ExecutionContract.from_milestone(result_action).completion_mode == "mutation"
-    assert milestone_for_run(Run(name="进页", kind="navigation"), 2).require_fresh_action is False
+    assert milestone_for_run(Run(name="进页", kind="navigation"), 2).effect_mode is None
     p.reseed(milestone_for_run(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
     # precondition 仍是 navigation edge，不能由 checker 在无动作证据时直接判为 PreExisting。
     p.reseed(milestone_for_run(Run(name="确保在列表页", kind="navigation", precondition=True), 3),
              fresh_advance=True)
     assert p._skip_initial_check is True
+
+
+def test_legacy_effect_contract_normalizes_at_both_model_boundaries():
+    from gui_agent.core.schemas import Milestone
+
+    legacy = {
+        "name": "更新并保存",
+        "kind": "action",
+        "mutation_mode": "change",
+        "requires_commit": True,
+        "target_values": {"Status": "Approved"},
+    }
+    run = Run.model_validate(legacy)
+    milestone = Milestone.model_validate({
+        **legacy,
+        "id": "legacy-action",
+        "description": "",
+        "success_condition": "状态已保存",
+    })
+
+    assert (run.effect_mode, run.persistence) == ("transform", "explicit_commit")
+    assert (milestone.effect_mode, milestone.persistence) == (
+        "transform",
+        "explicit_commit",
+    )
 
 
 def test_advance_persists_done_check_on_terminal_completion():
@@ -600,7 +624,7 @@ def test_advance_persists_done_check_on_terminal_completion():
     p = MilestoneSupervisorPolicy()
     ms = milestone_for_run(Run(name="进首页", kind="navigation"), 0)
     p.reseed(ms)                                          # single milestone, orchestrator style
-    check = _SingleCheckResult(status="done", outcome_status="confirmed", reason="已进入首页", summary="首页")
+    check = _SingleCheckResult(status="done", effect_status="confirmed", reason="已进入首页", summary="首页")
     p._last_check = check
     obs = Observation(png_bytes=b"x", source="test")
     from gui_agent.core.run.execution_signals import CompletionEvaluation
@@ -615,7 +639,7 @@ def test_advance_persists_done_check_on_terminal_completion():
     assert p._milestone_done_checks[ms.id] is check       # done 判定已留存（验收面板有数据）
 
 
-def test_require_fresh_action_blocks_preexisting_done(monkeypatch):
+def test_transform_effect_blocks_preexisting_done(monkeypatch):
     # Mutation/write milestones must not complete solely because the current
     # frame already contains the target value. They need an executed action in
     # this milestone, otherwise dirty state can swallow the write.
@@ -630,7 +654,7 @@ def test_require_fresh_action_blocks_preexisting_done(monkeypatch):
         description="将价格更新为 64.88 并保存",
         kind="action",
         success_condition="页面显示保存成功提示，Price 字段已更新为 64.88",
-        require_fresh_action=True,
+        effect_mode="transform",
     )
     p.reseed(ms)
     monkeypatch.setattr(
@@ -638,15 +662,15 @@ def test_require_fresh_action_blocks_preexisting_done(monkeypatch):
         "_single_check",
         lambda *_args, **_kwargs: _SingleCheckResult(
             status="done",
-            outcome_status="confirmed",
+            effect_status="confirmed",
             reason="Price 字段已经是 64.88，且有保存成功提示。",
             summary="看似已完成",
         ),
     )
 
-    def fake_plan(milestone, check, _observation, _history):
+    def fake_plan(milestone, check, _observation, _history, _persistence=None):
         assert check.status == "in_progress"
-        assert "本轮产生写操作" in check.reason
+        assert "动作结果" in check.reason
         return SupervisorStep(
             should_act=True,
             instruction="重新点击 Save 以产生本轮保存事件",
@@ -942,7 +966,8 @@ def test_exact_to_fuzzy_fallback_is_structural_if():
 
     prog = Program(statements=[
         Run(op="run", var="f1", name="在目标列用精确值『X』筛选", kind="filter",
-            returns=["match_count"], read_spec="读 grid 顶部 records found 计数"),
+            returns=["match_count"], read_spec="读 grid 顶部 records found 计数",
+            target_values={"目标列": "X"}),
         If(cond=Cond(var="f1", field="match_count", cmp="==", value="0"), then=[
             Run(op="run", name="清除精确值后在同一列用关键词『K』重筛", kind="filter"),
         ]),

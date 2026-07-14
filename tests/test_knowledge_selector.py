@@ -41,7 +41,7 @@ def _ms(mid: str = "m1") -> Milestone:
 
 
 def _check(page: str) -> _SingleCheckResult:
-    return _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="r" * 10, summary="s", page_identity=page)
+    return _SingleCheckResult(status="in_progress", effect_status="unverified", reason="r" * 10, summary="s", page_identity=page)
 
 
 def _stub(monkeypatch, results=None, error: Exception | None = None):

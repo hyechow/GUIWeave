@@ -112,7 +112,6 @@ def test_execution_kernel_contains_no_site_or_benchmark_vocabulary():
         MILESTONE_DIR / name
         for name in (
             "policy.py",
-            "action_protocol.py",
             "evidence.py",
             "execution_scope.py",
             "observation_state.py",

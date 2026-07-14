@@ -210,11 +210,7 @@
         "summary": "The outcome is not independently confirmed.",
         "outcome_status": "unverified"
       },
-      "expected": {
-        "action": "continue",
-        "completion_status": "in_progress",
-        "conflicts": ["action.write.required"]
-      }
+      "expected": {"action": "replan", "completion_status": "failed"}
     }
   ]
 }

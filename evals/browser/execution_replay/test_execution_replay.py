@@ -17,12 +17,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from gui_agent.core.run.execution_signals import (
-    CompletionEvaluation,
-    CompletionEvaluator,
     ConstraintLedger,
     EvidenceClaim,
     ExecutionContract,
+    ExecutionCoordinator,
 )
+from gui_agent.core.run.persistence import assess_persistence
 from gui_agent.core.run.flow import evaluate_turn_progress
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
 from gui_agent.core.run.loop import _needs_terminal_reconciliation
@@ -41,11 +41,7 @@ from gui_agent.core.schemas import (
 )
 from gui_agent.core.supervisor.milestone import policy as policy_module
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.action_protocol import (
-    action_metadata,
-    mutation_progress,
-    record_action_outcome,
-)
+from gui_agent.core.supervisor.milestone.schemas import action_metadata
 from gui_agent.core.supervisor.milestone.evidence import (
     action_lifecycle_claims,
     checker_claim,
@@ -82,12 +78,10 @@ def _completion_case(case: dict[str, Any]) -> None:
         milestone,
         history,
         scope=scope,
-        monitor=policy._monitor,
-        ledger=policy._action_ledger,
     )
     claims.extend(target_value_claims(milestone, observation, history, scope=scope))
     claims.append(checker_claim(check, scope=scope, subject_scope=scope))
-    decision = policy._completion_evaluator.decide(
+    decision = policy._execution_coordinator.decide(
         execution_contract_for(milestone, policy._execution_contract),
         claims,
         scope=scope,
@@ -100,8 +94,6 @@ def _completion_case(case: dict[str, Any]) -> None:
     }[expected["action"]]
     assert decision.status == expected_status
     assert decision.completion_status == expected["completion_status"]
-    if "conflicts" in expected:
-        assert list(decision.conflicts) == expected["conflicts"]
 
 
 def _filter_completion_case(case: dict[str, Any]) -> None:
@@ -190,28 +182,16 @@ def _suppression_progress_case(case: dict[str, Any]) -> None:
 
 
 def _lifecycle_monotonic_case(case: dict[str, Any]) -> None:
-    policy = MilestoneSupervisorPolicy()
-    milestone = Milestone.model_validate(case["milestone"])
     dispatched = PolicyTurn.model_validate(case["dispatched_turn"])
     contradiction = _SingleCheckResult.model_validate(case["contradiction_check"])
     later_unverified = _SingleCheckResult.model_validate(case["later_unverified_check"])
 
-    record_action_outcome(
-        [dispatched],
-        milestone,
-        _fused_result(contradiction),
-        ledger=policy._action_ledger,
-    )
-    record_action_outcome(
-        [dispatched],
-        milestone,
-        _fused_result(later_unverified),
-        ledger=policy._action_ledger,
-    )
     signal = dispatched.action_signal
     assert signal is not None
-    expected = case["expected"]
-    assert signal.outcome == expected["preserved_outcome"]
+    assert checker_claim(contradiction, scope="milestone:product-filter").value == "contradicted"
+    assert checker_claim(later_unverified, scope="milestone:product-filter").value == "unverified"
+    assert signal.execution == "dispatched"
+    assert dispatched.effect_signal is None
 
 
 def _checker_feedback_case(case: dict[str, Any]) -> None:
@@ -221,31 +201,18 @@ def _checker_feedback_case(case: dict[str, Any]) -> None:
 
 
 def _lifecycle_closed_case(case: dict[str, Any]) -> None:
-    policy = MilestoneSupervisorPolicy()
-    milestone = Milestone.model_validate(case["milestone"])
     dispatched = PolicyTurn.model_validate(case["dispatched_turn"])
-    for payload in case["checks"]:
-        record_action_outcome(
-            [dispatched],
-            milestone,
-            _fused_result(_SingleCheckResult.model_validate(payload)),
-            ledger=policy._action_ledger,
+    claims = [
+        checker_claim(
+            _SingleCheckResult.model_validate(payload),
+            scope="milestone:open-attributes",
         )
-    signal = dispatched.action_signal
-    assert signal is not None
-    assert signal.outcome == case["expected"]["outcome"]
-
-
-def _fused_result(check: _SingleCheckResult) -> CompletionEvaluation:
-    if check.outcome_status == "contradicted":
-        return CompletionEvaluation(status="contradicted", reason=check.reason)
-    if check.outcome_status == "confirmed":
-        return CompletionEvaluation(
-            status="satisfied",
-            reason=check.reason,
-            completion_status="confirmed",
-        )
-    return CompletionEvaluation(status="pending", reason=check.reason)
+        for payload in case["checks"]
+    ]
+    assert [item.value for item in claims] == ["confirmed", "unmet"]
+    assert dispatched.effect_signal is None
+    assert dispatched.action_signal is not None
+    assert dispatched.action_signal.execution == "dispatched"
 
 
 def _native_action_case(case: dict[str, Any]) -> None:
@@ -360,16 +327,12 @@ def _nested_persistence_case(case: dict[str, Any]) -> None:
 
 
 def _transaction_frontier_detection_case(case: dict[str, Any]) -> None:
-    """Recorded history identifies a backward edge without scripting its replacement plan."""
+    """Recorded history is projected without a parallel proposal-rejection state machine."""
     milestone = Milestone.model_validate(case["milestone"])
-    proposal = _PlanResult.model_validate(case["recorded_turn"]["planner"])
     history = [PolicyTurn.model_validate(item) for item in case["history"]]
 
-    progress = mutation_progress(milestone, history)
-    assert progress.rejects(
-        proposal,
-        milestone,
-    ) is case["expected"]["regresses"]
+    persistence = assess_persistence(milestone, history)
+    assert persistence.terminal_ready is case["expected"]["regresses"]
 
 
 def _browser_action_postprocess_case(case: dict[str, Any]) -> None:
@@ -398,7 +361,7 @@ def _signal_fusion_case(case: dict[str, Any]) -> None:
             authoritative_for=((item["domain"],) if authoritative else ()),
             **item,
         ))
-    decision = CompletionEvaluator().decide(contract, claims, scope=scope)
+    decision = ExecutionCoordinator().decide(contract, claims, scope=scope)
     expected_status = {
         "complete": "satisfied",
         "continue": "pending",
@@ -406,8 +369,6 @@ def _signal_fusion_case(case: dict[str, Any]) -> None:
     }[case["expected"]["action"]]
     assert decision.status == expected_status
     assert decision.completion_status == case["expected"]["completion_status"]
-    if "conflicts" in case["expected"]:
-        assert list(decision.conflicts) == case["expected"]["conflicts"]
 
 
 def _target_binding_case(case: dict[str, Any]) -> None:
@@ -538,7 +499,7 @@ def _terminal_reconcile_case(case: dict[str, Any]) -> None:
     assert step.should_act is False
     assert signal.execution == "dispatched"
     assert signal.response == expected["response"]
-    assert signal.outcome == expected["outcome"]
+    assert history[-1].effect_signal is None
     if "goal_completed" in expected:
         assert step.goal_completed is expected["goal_completed"]
     if "completion_status" in expected:

@@ -199,13 +199,14 @@ def test_to_program_unknown_kind_defaults_action():
     assert to_program(draft, "").statements[0].kind == "action"
 
 
-def test_to_program_preserves_mutation_contract():
+def test_to_program_preserves_effect_contract():
     draft = _PlanDraft(steps=[
         _StepDraft(
             op="run",
             run_kind="action",
             name="确保通知设置保持开启",
-            mutation_mode="ensure",
+            effect_mode="ensure",
+            persistence="explicit_commit",
             target_controls=["Notifications"],
             target_values={"Notifications": "on"},
         )
@@ -213,7 +214,8 @@ def test_to_program_preserves_mutation_contract():
 
     step = to_program(draft, "").statements[0]
     assert isinstance(step, Run)
-    assert step.mutation_mode == "ensure"
+    assert step.effect_mode == "ensure"
+    assert step.persistence == "explicit_commit"
     assert step.target_controls == ["Notifications"]
     assert step.target_values == {"Notifications": "on"}
 

@@ -693,14 +693,14 @@
    },
    {
     "mention": "green",
-    "role": "value",
+    "role": "qualifier_value",
     "type": "generic",
     "match_mode": "exact",
     "search_key": "green"
    },
    {
     "mention": "XXXL",
-    "role": "value",
+    "role": "target_value",
     "type": "generic",
     "match_mode": "exact",
     "search_key": "XXXL"
@@ -736,7 +736,7 @@
    },
    {
     "mention": "blue and purple",
-    "role": "value",
+    "role": "qualifier_value",
     "value_members": [
      "blue",
      "purple"
@@ -747,12 +747,12 @@
    },
    {
     "mention": "XXS",
-    "role": "value",
+    "role": "target_value",
     "type": "generic",
     "match_mode": "exact",
     "search_key": "XXS"
    }
   ],
-  "note": "同一 Color 选择组必须保留 blue、purple 两个值；只有明确为 new 的 XXS 建立全局 option 前置，既有颜色不重复写入。"
+  "note": "来源 live 20260714_115511：同一 Color 选择组必须保留 blue、purple 两个值；只有明确为 new 的 XXS 建立全局 option 前置，既有颜色不重复写入。"
  }
 ]

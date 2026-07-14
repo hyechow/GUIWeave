@@ -39,7 +39,7 @@ class _SnappingExecutor(_Executor):
         action_decision.action.snap = {
             "method": "dom",
             "original": [10, 20],
-            "snapped": [30, 40],
+            "snapped": [130, 140],
         }
         return ok
 
@@ -127,9 +127,10 @@ def test_preformed_action_reflashes_after_executor_snap(tmp_path):
     )
 
     assert result.executed is True
+    assert result.action_key.endswith("|prepare|tap|@2,2|")
     assert flashes == [
         (10, 20, None),
-        (10, 20, {"method": "dom", "original": [10, 20], "snapped": [30, 40]}),
+        (10, 20, {"method": "dom", "original": [10, 20], "snapped": [130, 140]}),
     ]
 
 
@@ -190,7 +191,8 @@ def test_executor_does_not_apply_legacy_commit_suppression(tmp_path):
     )
 
     assert result.executed is True
-    assert result.action_key == ""
+    assert result.action_role == "commit"
+    assert result.action_key == "|m1|commit"
     assert result.suppressed_reason == ""
     assert len(executor.calls) == 1
     assert executor.calls[0]["decision"].action == action
@@ -225,7 +227,7 @@ def test_action_family_is_advisory_after_grounding(tmp_path):
     assert executor.calls[0]["decision"].action == decision.action
 
 
-def test_target_directed_iterate_scroll_uses_progress_probe(tmp_path):
+def test_target_directed_iterate_scroll_dispatches_once_without_boundary_probe(tmp_path):
     action = BaseAction(
         action_type="scroll",
         direction="down",
@@ -242,11 +244,11 @@ def test_target_directed_iterate_scroll_uses_progress_probe(tmp_path):
         "direction": "down",
         "completion_strategy": "visible_once",
     })
-    calls: list[str] = []
+    probe_calls: list[str] = []
 
     class _Probe:
         def probe(self, _png, proposed, *, turn_no):
-            calls.append(f"probe:{turn_no}:{proposed.direction}")
+            probe_calls.append(f"probe:{turn_no}:{proposed.direction}")
             return SimpleNamespace(
                 success=True,
                 profile=SimpleNamespace(direction="down"),
@@ -262,12 +264,13 @@ def test_target_directed_iterate_scroll_uses_progress_probe(tmp_path):
         def apply_scroll_profile(proposed, _profile):
             return proposed
 
+    executor = _Executor()
     result = ActionExecutionState().run(
         sv_step=step,
         observation=Observation(png_bytes=b"png", source="test"),
         action_policy=object(),
         supervisor=object(),
-        executor=_Executor(),
+        executor=executor,
         bundle=_Bundle(),
         platform=object(),
         prep_future=_Future(),
@@ -280,4 +283,8 @@ def test_target_directed_iterate_scroll_uses_progress_probe(tmp_path):
 
     assert result.executed is True
     assert result.probe_failed is False
-    assert calls == ["probe:7:down"]
+    assert result.action_role == "iterate"
+    assert result.action_key.endswith("|iterate|scroll|down|@-")
+    assert probe_calls == []
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["decision"].action == action

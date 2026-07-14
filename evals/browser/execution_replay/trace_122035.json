@@ -17,9 +17,9 @@
       "contract": {
         "statement_id": "m3_action",
         "kind": "action",
-        "require_terminal_dispatch": true,
+        "persistence": "explicit_commit",
         "completion_mode": "mutation",
-        "mutation_mode": "ensure"
+        "effect_mode": "ensure"
       },
       "claims": [
         {
@@ -44,10 +44,7 @@
       ],
       "expected": {
         "action": "continue",
-        "completion_status": "in_progress",
-        "conflicts": [
-          "action.commit.required"
-        ]
+        "completion_status": "in_progress"
       }
     }
   ]

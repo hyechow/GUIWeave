@@ -54,11 +54,11 @@ def test_intent_resolver() -> None:
         # entities that must NOT be extracted (values-to-set misread as lookups, filter conditions)
         for banned in c.get("not_expected_mentions", []):
             hit = next((x for x in r.entities if banned.lower() in x.mention.lower()
-                        and getattr(x, "role", "lookup") != "value"), None)
+                        and getattr(x, "role", "lookup") == "lookup"), None)
             if hit is not None:
                 details.append(f"不该抽取的「{banned}」被抽成 lookup 实体: {hit.mention!r}")
         if not c["expected_entities"] and r.entities:
-            lookups = [x.mention for x in r.entities if getattr(x, "role", "lookup") != "value"]
+            lookups = [x.mention for x in r.entities if getattr(x, "role", "lookup") == "lookup"]
             if lookups:
                 details.append(f"期望空实体表(纯条件/口径),却抽出 lookup: {lookups}")
         for exp in c["expected_entities"]:

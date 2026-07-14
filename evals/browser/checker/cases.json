@@ -502,7 +502,7 @@
         "executed": true
       }
     ],
-    "last_action_effect": "## 上一步动作的确定性执行结果(运行时事实,非视觉推断)\n上一步动作「在 Columns 面板内点击勾选 'Customer Email' 复选框」:页面交互状态指纹已变化(dom_changed)——上一步动作确定性地改变了表单/焦点等交互状态,即动作本身已成功执行(不是没点中)。\n⚠️ 判断要点: '动作是否执行成功'与'动作效果是否达成'是两个独立判断。上面的信号只说明动作是否执行/是否改变了界面状态,**不直接等于验收效果**。若动作已执行(dom_changed/URL 变化)但验收目标(如主网格出现某列、某值已设置)未达成,应判 in_progress 并指出'动作已执行但效果未现、需换方式(换控件/滚动/换路径)',**不得**归因为'动作没点中/需重复点击同一控件'——重复一个已执行的动作不会产生新效果,只会打转。",
+    "last_action_response": "## 上一步动作的确定性执行结果(运行时事实,非视觉推断)\n上一步动作「在 Columns 面板内点击勾选 'Customer Email' 复选框」:页面交互状态指纹已变化(dom_changed)——上一步动作确定性地改变了表单/焦点等交互状态,即动作本身已成功执行(不是没点中)。\n⚠️ 判断要点: '动作是否执行成功'与'动作效果是否达成'是两个独立判断。上面的信号只说明动作是否执行/是否改变了界面状态,**不直接等于验收效果**。若动作已执行(dom_changed/URL 变化)但验收目标(如主网格出现某列、某值已设置)未达成,应判 in_progress 并指出'动作已执行但效果未现、需换方式(换控件/滚动/换路径)',**不得**归因为'动作没点中/需重复点击同一控件'——重复一个已执行的动作不会产生新效果,只会打转。",
     "expected": {
       "status": "in_progress",
       "must_not_claim": [
@@ -674,7 +674,7 @@
       }
     ],
     "state_trace": "T18 状态:/admin/catalog/product/edit/id/1492 | 交互:7cb5b38c | 决策:scroll|down|@10,10",
-    "last_action_effect": "## 上一步动作信号(运行时事实,非视觉推断)\n- action: 向下滚动页面以查看 Configurations 区域\n- execution_signal: dispatched\n- effect_signal: observed\n- outcome_signal: unverified\n- detail: 页面滚动后 DOM/视觉位置发生变化，Configurations 仍在视口下方。",
+    "last_action_response": "## 上一步动作信号(运行时事实,非视觉推断)\n- action: 向下滚动页面以查看 Configurations 区域\n- execution_signal: dispatched\n- response_signal: observed\n- detail: 页面滚动后 DOM/视觉位置发生变化，Configurations 仍在视口下方。",
     "expected": {
       "status": "in_progress",
       "reason_contains": [
@@ -886,10 +886,10 @@
       "kind": "action",
       "task_type": "action"
     },
-    "last_action_effect": "## 上一步动作信号（运行时事实）\n- action: 点击内层向导的 Generate Products\n- execution_signal: dispatched\n- effect_signal: observed\n- outcome_signal: unverified\n- detail: 向导已关闭并返回外层资源编辑器。动作已执行不等于外层资源已经持久化。",
+    "last_action_response": "## 上一步动作信号（运行时事实）\n- action: 点击内层向导的 Generate Products\n- execution_signal: dispatched\n- response_signal: observed\n- detail: 向导已关闭并返回外层资源编辑器。动作已执行不等于外层资源已经持久化。",
     "expected": {
       "status": "in_progress",
-      "outcome_status": "contradicted",
+      "effect_status": "unmet",
       "reason_contains": [
         "Save",
         "保存",
@@ -900,6 +900,6 @@
         "任务(?:已经|已)完成"
       ]
     },
-    "note": "当前帧明确回到外层编辑器且 Save 可见，说明 Generate 只完成了内层向导。此时不是结果通道缺失，而是直接观察到持久化边界尚未跨过；必须 contradicted，阻止 accepted_unverified 提前结束。"
+    "note": "当前帧明确回到外层编辑器且 Save 可见，说明 Generate 只完成了内层向导。持久化边界尚未跨过属于正常 unmet；由 persistence 投影要求外层 commit，不能伪装成业务拒绝。"
   }
 ]

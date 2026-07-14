@@ -10,9 +10,9 @@ it and Feasibility didn't fire until T21. Keying on the action SIGNATURE catches
 
 from types import SimpleNamespace
 
+from gui_agent.core.run.action_signals import action_signature
 from gui_agent.core.run.progress_monitor import (
     ProgressMonitor,
-    action_signature,
     canonical_url,
     state_trace_block,
 )
@@ -132,7 +132,7 @@ def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch
 
     def _fake_invoke(llm, messages, schema, **_kw):
         captured["text"] = _flat(messages)
-        return _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="检查中尚未达成", summary="进行中")
+        return _SingleCheckResult(status="in_progress", effect_status="unverified", reason="检查中尚未达成", summary="进行中")
 
     monkeypatch.setattr(model_io, "invoke_structured", _fake_invoke)
     monkeypatch.setattr(model_io, "_make_llm", lambda: object())

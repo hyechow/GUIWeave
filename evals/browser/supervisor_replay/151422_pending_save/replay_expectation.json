@@ -1,0 +1,6 @@
+{
+  "turn": 42,
+  "should_act": false,
+  "goal_completed": false,
+  "completion_status": "in_progress"
+}

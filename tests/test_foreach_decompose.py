@@ -281,6 +281,12 @@ def test_validate_accepts_bodyless_foreach_when_data_query_consumes_table():
             returns=["detail_url"],
             sql="SELECT detail_url FROM pending_orders ORDER BY purchase_date_ts DESC LIMIT 1",
         ),
+        _StepDraft(
+            op="run",
+            run_kind="navigation",
+            name="打开 {q[detail_url]} 进入最近订单详情页",
+            success_condition="已进入最近订单详情页",
+        ),
     ])
 
     assert validate_program(to_program(draft, "g")) == []

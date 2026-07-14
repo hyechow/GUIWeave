@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from gui_agent.context import ContextBlock, ContextBudgeter, ContextBundle
 from gui_agent.context.runtime import (
+    feedback_block,
     form_controls_block,
     format_history_text,
     history_block,
@@ -12,6 +13,19 @@ from gui_agent.core.schemas import PolicyTurn, SupervisorStep
 
 def _blk(id_: str, budget: str, chars: int, *, ttl: str = "turn") -> ContextBlock:
     return ContextBlock(id_, "runtime_state", "test", "x" * chars, ttl=ttl, budget=budget)
+
+
+def test_decompose_feedback_includes_previous_draft_for_local_repair():
+    block = feedback_block(
+        ["URL result is unused"],
+        previous_output='{"steps":[{"op":"run","var":"q"}]}',
+    )
+
+    assert block is not None
+    assert "URL result is unused" in block.content
+    assert "上一版结构化草稿" in block.content
+    assert '"var":"q"' in block.content
+    assert "不要从头改写" in block.content
 
 
 def test_context_block_renders_source_metadata():
@@ -91,8 +105,8 @@ def test_runtime_history_keeps_action_lifecycle_separate_from_checker_summary():
             "execution": "dispatched",
             "response": "observed",
             "response_channels": ["dom"],
-            "outcome": "unverified",
         },
+        effect_signal={"statement_id": "filter", "status": "unknown"},
     )
     next_turn = PolicyTurn(
         index=15,
@@ -112,8 +126,41 @@ def test_runtime_history_keeps_action_lifecycle_separate_from_checker_summary():
 
     assert "execution=dispatched" in text
     assert "response=observed(dom)" in text
-    assert "outcome=unverified" in text
+    assert "effect=unknown(unknown)" in text
     assert "按回车提交筛选 → 结果" not in text
+
+
+def test_runtime_history_renders_action_policy_not_found_without_crashing():
+    turn = PolicyTurn(
+        index=7,
+        observation_source="browser",
+        supervisor=SupervisorStep(
+            should_act=True,
+            instruction="点击 Add Swatch",
+            stop=False,
+            goal_completed=False,
+            summary="需要创建新行",
+            milestone_id="attribute_option",
+            atomic_role="prepare",
+            target_control="Add Swatch",
+        ),
+        action_decision={
+            "action": None,
+            "not_found_reason": "当前帧未找到 Add Swatch",
+        },
+        executed=False,
+        action_signal={
+            "role": "prepare",
+            "execution": "not_attempted",
+            "target": "unknown",
+            "response": "unknown",
+        },
+    )
+
+    text = history_block([turn]).render()
+
+    assert "[未派发] 当前帧未找到 Add Swatch" in text
+    assert "execution=not_attempted" in text
 
 
 def test_budgeter_keeps_all_when_under_ceiling():

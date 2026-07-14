@@ -34,7 +34,7 @@
       }
     },
     {
-      "id": "turn_29_nested_generate_must_continue_to_outer_commit",
+      "id": "turn_29_nested_generate_requires_more_evidence",
       "kind": "nested_persistence",
       "recorded_turn": {
         "index": 29,
@@ -241,10 +241,7 @@
         "generate_role": "commit",
         "goal_completed": false,
         "completion_status": "in_progress",
-        "should_act": true,
-        "next_role": "commit",
-        "next_family": "activate",
-        "next_target_control": "Save"
+        "should_act": false
       }
     }
   ]

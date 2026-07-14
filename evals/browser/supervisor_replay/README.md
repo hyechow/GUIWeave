@@ -51,6 +51,13 @@ Dispatch-response replay:
   resource editor without crossing a persistence boundary. The recorded turn 34 must keep the
   statement pending and dispatch the outer resource's `Save`; child-surface planner metadata must
   not consume the statement's terminal commit requirement.
+- `111415_terminal_frontier`: the same child/parent boundary with a harder outer frame: generated
+  rows are present but still draft-like, while the recorded checker incorrectly reuses scroll
+  history from before the child dialog and proposes reopening it. Structured mutation progress
+  must override that non-authoritative route diagnosis and request the root-surface commit.
+- `151422_pending_save`: a root Save was dispatched, but the next frame still shows an in-flight
+  loading state and no persistence response. The dispatch must remain pending; it is neither a
+  completed mutation nor permission to submit the same action again.
 
 Filter-intent binding replay:
 
@@ -58,6 +65,9 @@ Filter-intent binding replay:
   adapter observation exposes one concrete populated control and one matching applied-filter
   entry. The state/receipt pair must resolve to that concrete route and complete the filter
   milestone without dispatching a synthetic `stop` action.
+- `151422_filter_residual`: a new target filter inherits an unrelated applied filter from the
+  preceding page. The runtime must remove only that residual state before applying the target;
+  silently stacking both filters can turn a valid lookup into a false zero-result search.
 
 Structured mutation-capability replay:
 
@@ -79,3 +89,7 @@ Target-directed acquire replay:
   show real geometry progress; turns 25-26 show a frozen target position. The acquire controller
   must keep one target identity, continue while geometry advances, and exhaust explicitly after
   repeated no-progress frames instead of drifting to the desired-value fields.
+- `143530_unmet_progress`: turns 9-11 are consecutive real frames from one target-acquire
+  sequence. The declared value is absent while the viewport advances toward `Add Swatch`;
+  absence is normal `unmet` state and must not consume recovery retries. Use the two numbered
+  expectations for the earlier frames and the default expectation for turn 11.

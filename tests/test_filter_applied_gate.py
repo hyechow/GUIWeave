@@ -20,7 +20,6 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.run.turns import make_interactive_turn
-from gui_agent.core.run.action_ledger import ActionLedger
 from gui_agent.core.supervisor.milestone.evidence import runtime_filter_intent
 from gui_agent.core.supervisor.milestone.observation_state import (
     filter_chips_clean,
@@ -229,7 +228,7 @@ def test_commit_receipt_carries_filter_intent_when_control_was_prepopulated():
     )
 
     assert runtime_filter_intent(
-        milestone, [turn], scope=scope, ledger=ActionLedger()
+        milestone, [turn], scope=scope
     ) == RuntimeFilterIntent("Search by keyword", "Minerva")
 
 
@@ -667,6 +666,15 @@ def test_unparseable_non_nofilter_target_yields_no_residuals():
     # Can't diff without an intent → return [] (don't guess / don't blanket-clear).
     ms = _filter_ms("打开筛选面板")
     assert filter_residual_labels({"Keyword": "WS08"}, ms) == []
+
+
+def test_runtime_filter_receipt_can_diff_residuals_for_legacy_program():
+    ms = _filter_ms("在 Name 字段筛选 Nona")
+    intent = RuntimeFilterIntent("Name", "Nona")
+
+    assert filter_residual_labels(
+        {"Keyword": "WS08", "Name": "Nona"}, ms, intent
+    ) == ["Keyword"]
 
 
 def test_residuals_empty_when_no_applied_filters():

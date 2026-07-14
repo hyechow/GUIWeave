@@ -24,7 +24,7 @@ def _check():
     return _SingleCheckResult.model_validate(
         {
             "status": "in_progress",
-            "outcome_status": "unverified",
+            "effect_status": "unverified",
             "reason": "r",
             "summary": "s",
             "page_identity": "订单页",

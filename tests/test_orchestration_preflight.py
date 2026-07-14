@@ -1,4 +1,4 @@
-from gui_agent.core.orchestrator import Finish, ForEach, Program, Read, Query, Run, validate_orchestration_preflight
+from gui_agent.core.orchestrator import Cond, Finish, ForEach, If, Program, Read, Query, Run, validate_orchestration_preflight
 from gui_agent.core.router import EntityRef, IntentResolution
 
 
@@ -61,8 +61,22 @@ def test_preflight_blocks_approximate_entity_when_search_key_is_missing():
 def test_preflight_accepts_approximate_entity_when_search_key_is_preserved():
     program = Program(
         statements=[
-            Run(kind="filter", name="Search Product column by Olivia zip jacket"),
-            Run(kind="filter", name="If no match, search Product column by Olivia"),
+            Run(
+                kind="filter",
+                var="f1",
+                name="Search Product column by exact value Olivia zip jacket",
+                returns=["match_count"],
+                read_spec="match_count: read records found",
+                target_values={"Product": "Olivia zip jacket"},
+            ),
+            If(
+                cond=Cond(var="f1", field="match_count", cmp="==", value="0"),
+                then=[Run(
+                    kind="filter",
+                    name="Clear the exact value and search Product column by Olivia",
+                    target_values={"Product": "Olivia"},
+                )],
+            ),
             Read( var="r", name="Read matching review", returns=["nickname"]),
             Finish(message="{r[nickname]}"),
         ]
@@ -171,9 +185,9 @@ def test_preflight_accepts_value_role_entities_consumed_by_mutation():
         ),
     ])
     resolution = IntentResolution(entities=[
-        EntityRef(mention="Thanks giving sale", role="value", match_mode="approximate",
+        EntityRef(mention="Thanks giving sale", role="target_value", match_mode="approximate",
                   search_key="Thanksgiving"),           # normalized key is irrelevant for a value
-        EntityRef(mention="all registered customers", role="value", cardinality="set",
+        EntityRef(mention="all registered customers", role="target_value", cardinality="set",
                   selector="registered"),               # set-valued form input, not a foreach target
     ])
 

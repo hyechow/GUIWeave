@@ -88,10 +88,10 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
 
 def _check_result(result, expected: dict) -> list[str]:
     details = []
-    if "outcome_status" in expected and result.outcome_status != expected["outcome_status"]:
+    if "effect_status" in expected and result.effect_status != expected["effect_status"]:
         details.append(
-            "outcome_status: expected "
-            f"{expected['outcome_status']!r}, got {result.outcome_status!r}"
+            "effect_status: expected "
+            f"{expected['effect_status']!r}, got {result.effect_status!r}"
         )
     # status：单值用 "status"；当一个轨迹对多个状态都合理时（如 0 条结果 + 同时在打转，
     # stuck/in_progress 都不误判成功），用 "status_in" 接受一个集合，真正的锚点交给 must_not_claim。
@@ -165,7 +165,7 @@ def test_checker() -> None:
                         prompts=BROWSER_MILESTONE_PROMPTS,
                         check_knowledge=_app_check_knowledge(c),
                         state_trace_text=c.get("state_trace", ""),
-                        last_action_effect=c.get("last_action_effect", ""),
+                        last_action_response=c.get("last_action_response", ""),
                     )
             except Exception as e:  # noqa: BLE001
                 failures.append(f"attempt {attempt}: exception: {e}")

@@ -125,6 +125,31 @@ SAMPLES: dict[str, Program] = {
         ),
         Finish(message="操作结束"),
     ]),
+    "FILTER_RESULT_WITHOUT_TARGET_STATE": Program(statements=[
+        Run(
+            var="f",
+            name="按名称筛选",
+            kind="filter",
+            returns=["match_count"],
+            read_spec="match_count：读取结果计数",
+        ),
+    ]),
+    "DATA_QUERY_URL_RESULT_UNUSED": Program(statements=[
+        Query(
+            var="q",
+            name="选出唯一入口",
+            returns=["match_count", "detail_url"],
+            sql=(
+                "SELECT COUNT(*) AS match_count, "
+                "CASE WHEN COUNT(*) = 1 THEN MAX(detail_url) ELSE '' END AS detail_url "
+                "FROM candidates"
+            ),
+        ),
+        If(
+            cond=Cond(var="q", field="match_count", cmp="==", value="1"),
+            then=[Run(name="按名称打开目标", kind="navigation")],
+        ),
+    ]),
     "CALL_FUNC_NOT_DEFINED": Program(statements=[Call(func="missing", args={}, var="m")]),
     "CALL_RETURNS_WITHOUT_VAR": Program(
         functions=[FunctionDef(name="f", returns=["x"], body=[Compute(var="x", expr="'1'")])],
@@ -420,6 +445,45 @@ def test_retrieval_retry_accepts_same_field_anaphora():
                 Run(
                     kind="filter",
                     name="清除精确值后在同一字段输入关键词『Grace』并提交筛选",
+                ),
+            ],
+        ),
+    ])
+
+    assert "RETRIEVAL_RETRY_DROPS_FIELD" not in {
+        issue.code for issue in validate_program(program)
+    }
+
+
+def test_retrieval_retry_accepts_chinese_same_field_anaphora():
+    # Live webarena 550: exact step names 「产品名称字段」; fallback says 「同一名称字段」.
+    # The same-target escape used to allow only ASCII between 同一 and 字段, so this
+    # shape burned the full decompose retry budget as RETRIEVAL_RETRY_DROPS_FIELD.
+    from gui_agent.core.orchestrator._validator.retrieval import (
+        _mentions_same_retrieval_target,
+    )
+
+    assert _mentions_same_retrieval_target(
+        "清除精确值后在同一名称字段用关键词『Nona』重筛并提交"
+    )
+    assert _mentions_same_retrieval_target(
+        "清除精确值后在同一产品名称字段用关键词『Nona』重筛并提交"
+    )
+
+    program = Program(statements=[
+        Run(
+            var="f1",
+            kind="filter",
+            name="在产品名称字段用精确值『Nona Fitness Tank』筛选并提交",
+            returns=["match_count"],
+            read_spec="match_count：读取记录数",
+        ),
+        If(
+            cond=Cond(var="f1", field="match_count", cmp="==", value="0"),
+            then=[
+                Run(
+                    kind="filter",
+                    name="清除精确值后在同一名称字段用关键词『Nona』重筛并提交",
                 ),
             ],
         ),
@@ -870,3 +934,26 @@ def test_ordered_top_one_url_query_is_not_treated_as_owner_ambiguity():
     )
 
     assert "SINGLE_TARGET_LIMIT_HIDES_AMBIGUITY" not in _codes(program)
+
+
+def test_data_query_url_result_must_be_consumed_by_downstream_step():
+    program = Program(
+        statements=[
+            Query(
+                var="q",
+                name="选出唯一目标",
+                returns=["match_count", "detail_url"],
+                sql=(
+                    "SELECT COUNT(*) AS match_count, "
+                    "CASE WHEN COUNT(*) = 1 THEN MAX(detail_url) ELSE '' END AS detail_url "
+                    "FROM candidates"
+                ),
+            ),
+            If(
+                cond=Cond(var="q", field="match_count", cmp="==", value="1"),
+                then=[Run(name="打开 {q[detail_url]}", kind="navigation")],
+            ),
+        ],
+    )
+
+    assert "DATA_QUERY_URL_RESULT_UNUSED" not in _codes(program)

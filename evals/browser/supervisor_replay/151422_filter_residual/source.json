@@ -1,0 +1,8 @@
+{
+  "task": "WebArena 550",
+  "history_source": "logs/gui_agent/webarena/browser/20260714_151422/context.json",
+  "history_through_turn": 19,
+  "observation_source": "recorded observation_turn_18..19.json and matching screenshots",
+  "observation_captured_on": "2026-07-14",
+  "purpose": "A product-name filter was about to be applied while an unrelated keyword filter from an earlier page remained active. The runtime must remove residual state before setting the new target filter."
+}

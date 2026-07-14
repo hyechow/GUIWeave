@@ -11,41 +11,41 @@
     "claims": [
       {"domain": "filter.state", "value": "confirmed", "source_type": "obs.applied_filters", "authoritative": true}
     ],
-    "expected": {"action": "complete", "completion_status": "confirmed"}
+    "expected": {"next": "complete", "completion_status": "confirmed"}
   },
   {
     "label": "commit response without business feedback is provisional",
     "contract": {
       "statement_id": "save",
       "kind": "action",
-      "require_fresh_action": true,
-      "require_terminal_dispatch": true,
+      "effect_mode": "transform",
+      "persistence": "explicit_commit",
       "completion_mode": "mutation"
     },
     "scope": "row:7",
     "claims": [
       {"domain": "action.write", "value": "confirmed", "source_type": "runtime.write_dispatch", "authoritative": true},
       {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.commit_dispatch", "authoritative": true},
-      {"domain": "business.outcome", "value": "unverified", "source_type": "checker"}
+      {"domain": "effect.state", "value": "unverified", "source_type": "checker"}
     ],
-    "expected": {"action": "complete", "completion_status": "accepted_unverified"}
+    "expected": {"next": "complete", "completion_status": "accepted_unverified"}
   },
   {
     "label": "change commit without target write stays in progress",
     "contract": {
       "statement_id": "save_without_write",
       "kind": "action",
-      "require_fresh_action": true,
-      "require_terminal_dispatch": true,
+      "effect_mode": "transform",
+      "persistence": "explicit_commit",
       "completion_mode": "mutation",
-      "mutation_mode": "change"
+      "output_fields": []
     },
     "scope": "milestone:save_without_write",
     "claims": [
       {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.commit_dispatch", "authoritative": true},
-      {"domain": "business.outcome", "value": "unverified", "source_type": "checker"}
+      {"domain": "effect.state", "value": "unverified", "source_type": "checker"}
     ],
-    "expected": {"action": "continue", "completion_status": "in_progress"}
+    "expected": {"next": "recover", "completion_status": "failed"}
   },
   {
     "label": "ensure accepts an already confirmed target state",
@@ -53,22 +53,23 @@
       "statement_id": "ensure_state",
       "kind": "action",
       "completion_mode": "mutation",
-      "mutation_mode": "ensure"
+      "effect_mode": "ensure"
     },
     "scope": "milestone:ensure_state",
     "claims": [
-      {"domain": "business.outcome", "value": "confirmed", "source_type": "checker", "evidence": "target already exists"}
+      {"domain": "effect.state", "value": "confirmed", "source_type": "checker", "evidence": "target already exists"}
     ],
-    "expected": {"action": "complete", "completion_status": "confirmed"}
+    "expected": {"next": "complete", "completion_status": "confirmed"}
   },
   {
     "label": "ensure draft values from this run cannot skip declared persistence commit",
     "contract": {
       "statement_id": "ensure_saved_member",
       "kind": "action",
-      "require_terminal_dispatch": true,
+      "effect_mode": "ensure",
+      "persistence": "explicit_commit",
       "completion_mode": "mutation",
-      "mutation_mode": "ensure"
+      "output_fields": []
     },
     "scope": "row:attribute/144",
     "claims": [
@@ -76,7 +77,7 @@
       {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.action_dispatch", "authoritative": true},
       {"domain": "control.state", "value": "confirmed", "source_type": "obs.dom.target_values", "evidence": "declared fields match in one draft row", "authoritative": true}
     ],
-    "expected": {"action": "continue", "completion_status": "in_progress"}
+    "expected": {"next": "act", "completion_status": "in_progress"}
   },
   {
     "label": "page response alone cannot prove arrival",
@@ -89,7 +90,7 @@
     "claims": [
       {"domain": "page.response", "value": "confirmed", "source_type": "runtime.effect_monitor", "authoritative": true}
     ],
-    "expected": {"action": "continue", "completion_status": "in_progress"}
+    "expected": {"next": "act", "completion_status": "in_progress"}
   },
   {
     "label": "confirmed destination state survives stale off-target verifier",
@@ -100,56 +101,57 @@
     },
     "scope": "milestone:open_record",
     "claims": [
+      {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.action_dispatch", "authoritative": true},
       {"domain": "action.target", "value": "contradicted", "source_type": "runtime.target_verify", "authoritative": true},
-      {"domain": "business.outcome", "value": "confirmed", "source_type": "checker", "evidence": "destination identity is visible"}
+      {"domain": "effect.state", "value": "confirmed", "source_type": "checker", "evidence": "destination identity is visible"}
     ],
-    "expected": {"action": "complete", "completion_status": "confirmed"}
+    "expected": {"next": "complete", "completion_status": "confirmed"}
   },
   {
     "label": "explicit business contradiction blocks provisional commit success",
     "contract": {
       "statement_id": "save_rejected",
       "kind": "action",
-      "require_fresh_action": true,
-      "require_terminal_dispatch": true,
+      "effect_mode": "transform",
+      "persistence": "explicit_commit",
       "completion_mode": "mutation"
     },
     "scope": "row:9",
     "claims": [
       {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.commit_dispatch", "authoritative": true},
-      {"domain": "business.outcome", "value": "contradicted", "source_type": "checker", "evidence": "validation error"}
+      {"domain": "effect.state", "value": "contradicted", "source_type": "checker", "evidence": "validation error"}
     ],
-    "expected": {"action": "replan", "completion_status": "in_progress"}
+    "expected": {"next": "recover", "completion_status": "failed"}
   },
   {
     "label": "ordinary preparation dispatch cannot stand in for commit",
     "contract": {
       "statement_id": "save_pending",
       "kind": "action",
-      "require_fresh_action": true,
-      "require_terminal_dispatch": true,
+      "effect_mode": "transform",
+      "persistence": "explicit_commit",
       "completion_mode": "mutation"
     },
     "scope": "row:11",
     "claims": [
       {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.action_dispatch", "authoritative": true},
-      {"domain": "business.outcome", "value": "confirmed", "source_type": "checker", "evidence": "stale success banner"}
+      {"domain": "effect.state", "value": "confirmed", "source_type": "checker", "evidence": "stale success banner"}
     ],
-    "expected": {"action": "continue", "completion_status": "in_progress"}
+    "expected": {"next": "observe", "completion_status": "in_progress"}
   },
   {
     "label": "fresh mutation cannot finish from pre-existing state alone",
     "contract": {
       "statement_id": "fresh_write",
       "kind": "action",
-      "require_fresh_action": true,
-      "require_terminal_dispatch": true,
+      "effect_mode": "transform",
+      "persistence": "explicit_commit",
       "completion_mode": "mutation"
     },
     "scope": "milestone:fresh_write",
     "claims": [
-      {"domain": "business.outcome", "value": "confirmed", "source_type": "checker", "evidence": "target value already visible"}
+      {"domain": "effect.state", "value": "confirmed", "source_type": "checker", "evidence": "target value already visible"}
     ],
-    "expected": {"action": "continue", "completion_status": "in_progress"}
+    "expected": {"next": "act", "completion_status": "in_progress"}
   }
 ]

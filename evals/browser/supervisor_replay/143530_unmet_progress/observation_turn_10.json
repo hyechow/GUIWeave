@@ -1,0 +1,3521 @@
+{
+  "version": 1,
+  "screenshot": "screenshot_turn_10.png",
+  "observation": {
+    "source": "browser",
+    "loading": false,
+    "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/",
+    "title": "size / Product Attributes / Attributes / Stores / Magento Admin",
+    "dom_state": "42a5286cebad5a01",
+    "tables": [
+      {
+        "index": 1,
+        "source": "table",
+        "caption": "Manage Swatch (Values of Your Attribute)",
+        "headers": [
+          "col_1",
+          "Is Default",
+          "Admin",
+          "Default Store View",
+          "col_5",
+          "col_6",
+          "col_7"
+        ],
+        "rows": [
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          },
+          {
+            "col_1": "",
+            "Is Default": "",
+            "Admin": "",
+            "Default Store View": "",
+            "col_5": "",
+            "col_6": "",
+            "col_7": "Delete"
+          }
+        ],
+        "row_count": 20,
+        "dom_row_count": 20,
+        "total_records": null,
+        "partial": false,
+        "path": "div#product_attribute_tabs_main_content>fieldset.fieldset>div#swatch-text-options-panel>table.data-table.clearfix",
+        "page": {
+          "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/",
+          "title": "size / Product Attributes / Attributes / Stores / Magento Admin"
+        },
+        "traversal": {
+          "type": "unknown"
+        }
+      }
+    ],
+    "form_controls": [
+      {
+        "kind": "section_toggle",
+        "label": "Advanced Attribute Properties",
+        "value": "false",
+        "rect": {
+          "x": 641,
+          "y": 1196,
+          "w": 791,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "ATTRIBUTE INFORMATION",
+        "rect": {
+          "x": 192,
+          "y": -334,
+          "w": 255,
+          "h": 54
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "search-global",
+        "id": "search-global",
+        "rect": {
+          "x": 815,
+          "y": -525,
+          "w": 50,
+          "h": 35
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Default label",
+        "name": "frontend_label[0]",
+        "id": "attribute_label",
+        "value": "Size",
+        "required": true,
+        "rect": {
+          "x": 641,
+          "y": -260,
+          "w": 475,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "Catalog Input Type for Store Owner",
+        "name": "frontend_input",
+        "id": "frontend_input",
+        "value": "swatch_text",
+        "selected_text": "Text Swatch",
+        "options": [
+          "Dropdown",
+          "Visual Swatch",
+          "Text Swatch"
+        ],
+        "rect": {
+          "x": 512,
+          "y": -195,
+          "w": 145,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "Values Required",
+        "name": "is_required",
+        "id": "is_required",
+        "value": "0",
+        "selected_text": "No",
+        "options": [
+          "Yes",
+          "No"
+        ],
+        "rect": {
+          "x": 486,
+          "y": -107,
+          "w": 80,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "Update Product Preview Image",
+        "name": "update_product_preview_image",
+        "id": "update_product_preview_image",
+        "value": "1",
+        "selected_text": "Yes",
+        "options": [
+          "Yes",
+          "No"
+        ],
+        "rect": {
+          "x": 486,
+          "y": -38,
+          "w": 80,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "radio_input",
+        "label": "defaulttext[]",
+        "name": "defaulttext[]",
+        "value": "off",
+        "group_id": "collection:13",
+        "group_index": 13,
+        "group_field": "Is Default",
+        "rect": {
+          "x": 388,
+          "y": 781,
+          "w": 16,
+          "h": 16
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][173][0]",
+        "placeholder": "Swatch",
+        "value": "30",
+        "group_id": "collection:13",
+        "group_index": 13,
+        "group_field": "Admin",
+        "rect": {
+          "x": 457,
+          "y": 779,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][173][0]",
+        "placeholder": "Description",
+        "value": "30",
+        "group_id": "collection:13",
+        "group_index": 13,
+        "group_field": "Admin",
+        "rect": {
+          "x": 578,
+          "y": 779,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][173][1]",
+        "placeholder": "Swatch",
+        "value": "30",
+        "group_id": "collection:13",
+        "group_index": 13,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 700,
+          "y": 779,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][173][1]",
+        "placeholder": "Description",
+        "group_id": "collection:13",
+        "group_index": 13,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 822,
+          "y": 779,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "defaulttext[]",
+        "name": "defaulttext[]",
+        "value": "off",
+        "group_id": "collection:14",
+        "group_index": 14,
+        "group_field": "Is Default",
+        "rect": {
+          "x": 388,
+          "y": 825,
+          "w": 16,
+          "h": 16
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][174][0]",
+        "placeholder": "Swatch",
+        "value": "31",
+        "group_id": "collection:14",
+        "group_index": 14,
+        "group_field": "Admin",
+        "rect": {
+          "x": 457,
+          "y": 824,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][174][0]",
+        "placeholder": "Description",
+        "value": "31",
+        "group_id": "collection:14",
+        "group_index": 14,
+        "group_field": "Admin",
+        "rect": {
+          "x": 578,
+          "y": 824,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][174][1]",
+        "placeholder": "Swatch",
+        "value": "31",
+        "group_id": "collection:14",
+        "group_index": 14,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 700,
+          "y": 824,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][174][1]",
+        "placeholder": "Description",
+        "group_id": "collection:14",
+        "group_index": 14,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 822,
+          "y": 824,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "defaulttext[]",
+        "name": "defaulttext[]",
+        "value": "off",
+        "group_id": "collection:15",
+        "group_index": 15,
+        "group_field": "Is Default",
+        "rect": {
+          "x": 388,
+          "y": 870,
+          "w": 16,
+          "h": 16
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][175][0]",
+        "placeholder": "Swatch",
+        "value": "32",
+        "group_id": "collection:15",
+        "group_index": 15,
+        "group_field": "Admin",
+        "rect": {
+          "x": 457,
+          "y": 868,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][175][0]",
+        "placeholder": "Description",
+        "value": "32",
+        "group_id": "collection:15",
+        "group_index": 15,
+        "group_field": "Admin",
+        "rect": {
+          "x": 578,
+          "y": 868,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][175][1]",
+        "placeholder": "Swatch",
+        "value": "32",
+        "group_id": "collection:15",
+        "group_index": 15,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 700,
+          "y": 868,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][175][1]",
+        "placeholder": "Description",
+        "group_id": "collection:15",
+        "group_index": 15,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 822,
+          "y": 868,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "defaulttext[]",
+        "name": "defaulttext[]",
+        "value": "off",
+        "group_id": "collection:16",
+        "group_index": 16,
+        "group_field": "Is Default",
+        "rect": {
+          "x": 388,
+          "y": 915,
+          "w": 16,
+          "h": 16
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][176][0]",
+        "placeholder": "Swatch",
+        "value": "33",
+        "group_id": "collection:16",
+        "group_index": 16,
+        "group_field": "Admin",
+        "rect": {
+          "x": 457,
+          "y": 913,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][176][0]",
+        "placeholder": "Description",
+        "value": "33",
+        "group_id": "collection:16",
+        "group_index": 16,
+        "group_field": "Admin",
+        "rect": {
+          "x": 578,
+          "y": 913,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][176][1]",
+        "placeholder": "Swatch",
+        "value": "33",
+        "group_id": "collection:16",
+        "group_index": 16,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 700,
+          "y": 913,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][176][1]",
+        "placeholder": "Description",
+        "group_id": "collection:16",
+        "group_index": 16,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 822,
+          "y": 913,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "defaulttext[]",
+        "name": "defaulttext[]",
+        "value": "off",
+        "group_id": "collection:17",
+        "group_index": 17,
+        "group_field": "Is Default",
+        "rect": {
+          "x": 388,
+          "y": 959,
+          "w": 16,
+          "h": 16
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][177][0]",
+        "placeholder": "Swatch",
+        "value": "34",
+        "group_id": "collection:17",
+        "group_index": 17,
+        "group_field": "Admin",
+        "rect": {
+          "x": 457,
+          "y": 958,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][177][0]",
+        "placeholder": "Description",
+        "value": "34",
+        "group_id": "collection:17",
+        "group_index": 17,
+        "group_field": "Admin",
+        "rect": {
+          "x": 578,
+          "y": 958,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][177][1]",
+        "placeholder": "Swatch",
+        "value": "34",
+        "group_id": "collection:17",
+        "group_index": 17,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 700,
+          "y": 958,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][177][1]",
+        "placeholder": "Description",
+        "group_id": "collection:17",
+        "group_index": 17,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 822,
+          "y": 958,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "radio_input",
+        "label": "defaulttext[]",
+        "name": "defaulttext[]",
+        "value": "off",
+        "group_id": "collection:18",
+        "group_index": 18,
+        "group_field": "Is Default",
+        "rect": {
+          "x": 388,
+          "y": 1004,
+          "w": 16,
+          "h": 16
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][178][0]",
+        "placeholder": "Swatch",
+        "value": "36",
+        "group_id": "collection:18",
+        "group_index": 18,
+        "group_field": "Admin",
+        "rect": {
+          "x": 457,
+          "y": 1002,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][178][0]",
+        "placeholder": "Description",
+        "value": "36",
+        "group_id": "collection:18",
+        "group_index": 18,
+        "group_field": "Admin",
+        "rect": {
+          "x": 578,
+          "y": 1002,
+          "w": 217,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Swatch",
+        "name": "swatchtext[value][178][1]",
+        "placeholder": "Swatch",
+        "value": "36",
+        "group_id": "collection:18",
+        "group_index": 18,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 700,
+          "y": 1002,
+          "w": 64,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "Description",
+        "name": "optiontext[value][178][1]",
+        "placeholder": "Description",
+        "group_id": "collection:18",
+        "group_index": 18,
+        "group_field": "Default Store View",
+        "rect": {
+          "x": 822,
+          "y": 1002,
+          "w": 217,
+          "h": 33
+        }
+      }
+    ],
+    "form_controls_meta": {
+      "total_rendered": 108,
+      "returned": 37,
+      "truncated": true,
+      "coverage": "partial",
+      "raw_limit_hit": false
+    },
+    "viewport": {
+      "type": "scroll",
+      "scroll_top": 600,
+      "scroll_extent": 1973,
+      "viewport_extent": 963,
+      "at_scroll_start": false,
+      "can_scroll_back": true,
+      "can_scroll_more": true,
+      "at_scroll_end": false
+    },
+    "semantic_tree": [
+      {
+        "role": "link",
+        "key": "Magento Admin Panel",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/",
+        "ref": 1217877,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " DASHBOARD",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/dashboard/",
+        "ref": 1217881,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " SALES",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#",
+        "ref": 1217884,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CATALOG",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#",
+        "ref": 1217917,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CUSTOMERS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#",
+        "ref": 1217935,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " MARKETING",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#",
+        "ref": 1217954,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CONTENT",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#",
+        "ref": 1218021,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " REPORTS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#",
+        "ref": 1218067,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " STORES",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#",
+        "ref": 1218192,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " SYSTEM",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#",
+        "ref": 1218268,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " FIND PARTNERS & EXTENSIONS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/marketplace/index/",
+        "ref": 1218351,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "System Messages: 1",
+        "value": "",
+        "url": "",
+        "ref": 1218373,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Retry Synchronization",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/analytics/subscription/retry/",
+        "ref": 1218379,
+        "depth": 0
+      },
+      {
+        "role": "heading",
+        "key": "size",
+        "value": "",
+        "url": "",
+        "ref": 1218392,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " admin",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/system_account/index/",
+        "ref": 1217572,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/notification/index/",
+        "ref": 1217577,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1217532,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": " Back",
+        "value": "",
+        "url": "",
+        "ref": 1218418,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Reset",
+        "value": "",
+        "url": "",
+        "ref": 1218420,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Delete Attribute",
+        "value": "",
+        "url": "",
+        "ref": 1218422,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Save and Continue Edit",
+        "value": "",
+        "url": "",
+        "ref": 1218424,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Save Attribute",
+        "value": "",
+        "url": "",
+        "ref": 1218426,
+        "depth": 0
+      },
+      {
+        "role": "tabpanel",
+        "key": "Properties",
+        "value": "",
+        "url": "",
+        "ref": 1218434,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "Default Label *",
+        "value": "",
+        "url": "",
+        "ref": 1217533,
+        "depth": 1
+      },
+      {
+        "role": "combobox",
+        "key": "Catalog Input Type for Store Owner",
+        "value": "",
+        "url": "",
+        "ref": 1217534,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Dropdown",
+        "value": "",
+        "url": "",
+        "ref": 1218457,
+        "depth": 2
+      },
+      {
+        "role": "option",
+        "key": "Visual Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1218460,
+        "depth": 2
+      },
+      {
+        "role": "option",
+        "key": "Text Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1218463,
+        "depth": 2
+      },
+      {
+        "role": "combobox",
+        "key": "Values Required",
+        "value": "",
+        "url": "",
+        "ref": 1217535,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Yes",
+        "value": "",
+        "url": "",
+        "ref": 1218477,
+        "depth": 2
+      },
+      {
+        "role": "option",
+        "key": "No",
+        "value": "",
+        "url": "",
+        "ref": 1218480,
+        "depth": 2
+      },
+      {
+        "role": "combobox",
+        "key": "Update Product Preview Image",
+        "value": "",
+        "url": "",
+        "ref": 1217536,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Yes",
+        "value": "",
+        "url": "",
+        "ref": 1218493,
+        "depth": 2
+      },
+      {
+        "role": "option",
+        "key": "No",
+        "value": "",
+        "url": "",
+        "ref": 1218496,
+        "depth": 2
+      },
+      {
+        "role": "table",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218545,
+        "depth": 1
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218547,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218548,
+        "depth": 3
+      },
+      {
+        "role": "columnheader",
+        "key": "Is Default",
+        "value": "",
+        "url": "",
+        "ref": 1217594,
+        "depth": 3
+      },
+      {
+        "role": "columnheader",
+        "key": "Admin",
+        "value": "",
+        "url": "",
+        "ref": 1217596,
+        "depth": 3
+      },
+      {
+        "role": "columnheader",
+        "key": "Default Store View",
+        "value": "",
+        "url": "",
+        "ref": 1217597,
+        "depth": 3
+      },
+      {
+        "role": "columnheader",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218552,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218554,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218555,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218557,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "true",
+        "url": "",
+        "ref": 1218558,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "55 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218559,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217618,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "55 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218562,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217619,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "55 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218565,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217620,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218568,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217621,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218571,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218573,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218575,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218576,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218578,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218579,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "XS",
+        "value": "",
+        "url": "",
+        "ref": 1218580,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217622,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "XS",
+        "value": "",
+        "url": "",
+        "ref": 1218583,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217623,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "XS",
+        "value": "",
+        "url": "",
+        "ref": 1218586,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217624,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218589,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217625,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218592,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218594,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218596,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218597,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218599,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218600,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "65 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218601,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217626,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "65 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218604,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217627,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "65 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218606,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217628,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218609,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217629,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218612,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218614,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218616,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218617,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218619,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218620,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "S",
+        "value": "",
+        "url": "",
+        "ref": 1218621,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217630,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "S",
+        "value": "",
+        "url": "",
+        "ref": 1218624,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217631,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "S",
+        "value": "",
+        "url": "",
+        "ref": 1218627,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217632,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218630,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217633,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218633,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218635,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218637,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218638,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218640,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218641,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "75 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218642,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217634,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "75 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218645,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217635,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "75 cm",
+        "value": "",
+        "url": "",
+        "ref": 1218648,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217636,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218651,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217637,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218654,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218656,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218658,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218659,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218661,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218662,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "M",
+        "value": "",
+        "url": "",
+        "ref": 1218663,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217638,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "M",
+        "value": "",
+        "url": "",
+        "ref": 1218666,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217639,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "M",
+        "value": "",
+        "url": "",
+        "ref": 1218669,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217640,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218672,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217641,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218675,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218677,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218679,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218680,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218682,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218683,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "6 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218684,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217642,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "6 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218687,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217643,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "6 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218690,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217644,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218693,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217645,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218696,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218698,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218700,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218701,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218703,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218704,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "L",
+        "value": "",
+        "url": "",
+        "ref": 1218705,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217646,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "L",
+        "value": "",
+        "url": "",
+        "ref": 1218708,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217647,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "L",
+        "value": "",
+        "url": "",
+        "ref": 1218711,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217648,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218714,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217649,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218717,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218719,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218721,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218722,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218724,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218725,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "8 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218726,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217650,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "8 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218729,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217651,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "8 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218732,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217652,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218735,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217653,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218738,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218740,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218742,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218743,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218745,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218746,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "XL",
+        "value": "",
+        "url": "",
+        "ref": 1218747,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217654,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "XL",
+        "value": "",
+        "url": "",
+        "ref": 1218750,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217655,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "XL",
+        "value": "",
+        "url": "",
+        "ref": 1218753,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217656,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218756,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217657,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218759,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218761,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218763,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218764,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218766,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218767,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "10 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218768,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217658,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "10 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218771,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217659,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "10 foot",
+        "value": "",
+        "url": "",
+        "ref": 1218774,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217660,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218777,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217661,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218780,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218782,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218784,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218785,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218787,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218788,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "28",
+        "value": "",
+        "url": "",
+        "ref": 1218789,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217662,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "28",
+        "value": "",
+        "url": "",
+        "ref": 1218792,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217663,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "28",
+        "value": "",
+        "url": "",
+        "ref": 1218795,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217664,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218798,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217665,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218801,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218803,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218805,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218806,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218808,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218809,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "29",
+        "value": "",
+        "url": "",
+        "ref": 1218810,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217666,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "29",
+        "value": "",
+        "url": "",
+        "ref": 1218813,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217667,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "29",
+        "value": "",
+        "url": "",
+        "ref": 1218816,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217668,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218819,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217669,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218822,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218824,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218826,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218827,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218829,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218830,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "30",
+        "value": "",
+        "url": "",
+        "ref": 1218831,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217670,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "30",
+        "value": "",
+        "url": "",
+        "ref": 1218834,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217671,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "30",
+        "value": "",
+        "url": "",
+        "ref": 1218837,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217672,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218840,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217673,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218843,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218845,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218847,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218848,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218850,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218851,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "31",
+        "value": "",
+        "url": "",
+        "ref": 1218852,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217674,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "31",
+        "value": "",
+        "url": "",
+        "ref": 1218855,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217675,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "31",
+        "value": "",
+        "url": "",
+        "ref": 1218858,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217676,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218861,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217677,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218864,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218866,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218868,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218869,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218871,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218872,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "32",
+        "value": "",
+        "url": "",
+        "ref": 1218873,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217678,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "32",
+        "value": "",
+        "url": "",
+        "ref": 1218876,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217679,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "32",
+        "value": "",
+        "url": "",
+        "ref": 1218879,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217680,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218882,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217681,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218885,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218887,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218889,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218890,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218892,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218893,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "33",
+        "value": "",
+        "url": "",
+        "ref": 1218894,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217682,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "33",
+        "value": "",
+        "url": "",
+        "ref": 1218897,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217683,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "33",
+        "value": "",
+        "url": "",
+        "ref": 1218900,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217684,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218903,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217685,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218906,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218908,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218910,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218911,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218913,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218914,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "34",
+        "value": "",
+        "url": "",
+        "ref": 1218915,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217686,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "34",
+        "value": "",
+        "url": "",
+        "ref": 1218918,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217687,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "34",
+        "value": "",
+        "url": "",
+        "ref": 1218921,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217688,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218924,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217689,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218927,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218929,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218931,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218932,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218934,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218935,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "36",
+        "value": "",
+        "url": "",
+        "ref": 1218936,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217690,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "36",
+        "value": "",
+        "url": "",
+        "ref": 1218939,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217691,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "36",
+        "value": "",
+        "url": "",
+        "ref": 1218942,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217692,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218945,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217693,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218948,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218950,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218952,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218953,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218955,
+        "depth": 3
+      },
+      {
+        "role": "radio",
+        "key": "",
+        "value": "false",
+        "url": "",
+        "ref": 1218956,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "38",
+        "value": "",
+        "url": "",
+        "ref": 1218957,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217694,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "38",
+        "value": "",
+        "url": "",
+        "ref": 1218960,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217695,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "38",
+        "value": "",
+        "url": "",
+        "ref": 1218963,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1217696,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1218966,
+        "depth": 3
+      },
+      {
+        "role": "textbox",
+        "key": "Description",
+        "value": "",
+        "url": "",
+        "ref": 1217697,
+        "depth": 4
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218969,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218971,
+        "depth": 4
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218974,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218975,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1218978,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Add Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1218979,
+        "depth": 3
+      },
+      {
+        "role": "button",
+        "key": "Add Swatch",
+        "value": "",
+        "url": "",
+        "ref": 1218980,
+        "depth": 4
+      },
+      {
+        "role": "tab",
+        "key": "Properties",
+        "value": "",
+        "url": "",
+        "ref": 1219416,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Properties",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#product_attribute_tabs_main_content",
+        "ref": 1217588,
+        "depth": 1
+      },
+      {
+        "role": "tab",
+        "key": "Manage Labels",
+        "value": "",
+        "url": "",
+        "ref": 1219437,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Manage Labels",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#product_attribute_tabs_labels_content",
+        "ref": 1219438,
+        "depth": 1
+      },
+      {
+        "role": "tab",
+        "key": "Storefront Properties",
+        "value": "",
+        "url": "",
+        "ref": 1219459,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Storefront Properties",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product_attribute/edit/attribute_id/144/#product_attribute_tabs_front_content",
+        "ref": 1219460,
+        "depth": 1
+      },
+      {
+        "role": "link",
+        "key": "",
+        "value": "",
+        "url": "http://magento.com/",
+        "ref": 1219484,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Privacy Policy",
+        "value": "",
+        "url": "https://www.adobe.com/privacy/policy.html",
+        "ref": 1219487,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Account Activity",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/security/session/activity/",
+        "ref": 1219488,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Report an Issue",
+        "value": "",
+        "url": "https://github.com/magento/magento2/issues",
+        "ref": 1219489,
+        "depth": 0
+      }
+    ],
+    "applied_filters": null,
+    "applied_filter_meta": {
+      "source": "none",
+      "indicator_channel": "absent",
+      "fallback_channel": "absent",
+      "chip_container": "absent",
+      "legacy_grid": "absent"
+    }
+  }
+}

@@ -233,12 +233,32 @@ def test_live_180142_terminal_save_bypasses_second_llm_judgement():
     assert resp.retrieved_data is None
 
 
-def test_completed_mutate_response_does_not_mask_explicit_failure_text():
+def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
     resp = _completed_mutate_response(
         "Update product",
         {
             "task_type": "MUTATE",
             "goal_completed": True,
+            "result_summary": "未找到目标产品，无法继续操作",
+        },
+    )
+
+    assert resp == WAResponse(
+        task_type="MUTATE",
+        status="SUCCESS",
+        retrieved_data=None,
+        error_details=None,
+    )
+
+
+def test_incomplete_mutate_remains_incomplete_with_failure_summary():
+    resp = _completed_mutate_response(
+        "Update product",
+        {
+            "task_type": "MUTATE",
+            "execution_completed": False,
+            "goal_completed": False,
+            "goal_status": "incomplete",
             "result_summary": "未找到目标产品，无法继续操作",
         },
     )

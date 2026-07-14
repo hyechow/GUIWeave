@@ -1,5 +1,5 @@
 from gui_agent.core.orchestrator.intent_contracts import validate_intent_contracts
-from gui_agent.core.orchestrator.program import ForEach, Program, Query, Run
+from gui_agent.core.orchestrator.program import Cond, ForEach, If, Program, Query, Run
 from gui_agent.core.router import EntityRef, IntentResolution
 
 
@@ -89,8 +89,22 @@ def test_intent_contract_does_not_count_query_name_as_approximate_retrieval():
 
 def test_intent_contract_accepts_approximate_exact_then_fallback():
     program = Program(statements=[
-        Run(kind="filter", name="在 Bill-to Name 字段用精确值『Grace Nguyen』筛选"),
-        Run(kind="filter", name="若 0 条，在同一 Bill-to Name 字段用关键词『Nguyen』重筛"),
+        Run(
+            kind="filter",
+            var="f1",
+            name="在 Bill-to Name 字段用精确值『Grace Nguyen』筛选",
+            returns=["match_count"],
+            read_spec="match_count：读取结果计数",
+            target_values={"Bill-to Name": "Grace Nguyen"},
+        ),
+        If(
+            cond=Cond(var="f1", field="match_count", cmp="==", value="0"),
+            then=[Run(
+                kind="filter",
+                name="清除精确值后在同一 Bill-to Name 字段用关键词『Nguyen』重筛",
+                target_values={"Bill-to Name": "Nguyen"},
+            )],
+        ),
     ])
     resolution = IntentResolution(entities=[
         EntityRef(
@@ -197,9 +211,7 @@ def test_intent_contract_covers_set_requires_entity_scope_in_retrieval():
     assert "ROUTER_SET_ENTITY_WITHOUT_FOREACH" in _codes(program, resolution)
 
 
-def test_intent_contract_key_dropped_accepts_name_like_mention_token_fallback():
-    """Knowledge may pick a better-discriminating token of the mention (Gobi, the product-line
-    word) than the router's search_key (HeatTec, a fabric brand shared across families)."""
+def test_intent_contract_key_dropped_rejects_downstream_token_substitution():
     program = Program(statements=[
         Run(kind="filter", name="在 Filters 面板的 Name 字段用精确值『Gobi HeatTec Tee』筛选"),
         Run(kind="filter", name="若 0 条，在同一 Name 字段用关键词『Gobi』重筛"),
@@ -213,7 +225,28 @@ def test_intent_contract_key_dropped_accepts_name_like_mention_token_fallback():
         ),
     ])
 
-    assert "ROUTER_APPROXIMATE_KEY_DROPPED" not in _codes(program, resolution)
+    assert "ROUTER_APPROXIMATE_KEY_DROPPED" in _codes(program, resolution)
+
+
+def test_later_navigation_mention_does_not_replace_exact_filter_trial():
+    program = Program(statements=[
+        Run(
+            kind="filter",
+            name="在 Name 字段用关键词『Nona』筛选",
+            target_values={"Name": "Nona"},
+        ),
+        Run(kind="navigation", name="打开 Nona Fitness Tank 编辑页"),
+    ])
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="Nona Fitness Tank",
+            type="product",
+            match_mode="approximate",
+            search_key="Nona",
+        ),
+    ])
+
+    assert "ROUTER_APPROXIMATE_MENTION_DROPPED" in _codes(program, resolution)
 
 
 def test_intent_contract_key_dropped_ignores_generic_lowercase_tokens():
@@ -328,9 +361,9 @@ def test_intent_contract_accepts_consumed_value_role_entities():
         Run(kind="action", name='填写 Rule Name 为 "Thanks giving sale"，Customer Groups 选择 all registered customers，保存'),
     ])
     resolution = IntentResolution(entities=[
-        EntityRef(mention="Thanks giving sale", role="value", match_mode="approximate",
+        EntityRef(mention="Thanks giving sale", role="target_value", match_mode="approximate",
                   search_key="Thanksgiving"),
-        EntityRef(mention="all registered customers", role="value", cardinality="set",
+        EntityRef(mention="all registered customers", role="target_value", cardinality="set",
                   selector="registered"),
     ])
 
@@ -346,8 +379,8 @@ def test_intent_contract_blocks_value_only_present_in_goal_or_navigation():
         ],
     )
     resolution = IntentResolution(entities=[
-        EntityRef(mention="green", role="value", match_mode="exact", search_key="green"),
-        EntityRef(mention="XXXL", role="value", match_mode="exact", search_key="XXXL"),
+        EntityRef(mention="green", role="qualifier_value", match_mode="exact", search_key="green"),
+        EntityRef(mention="XXXL", role="target_value", match_mode="exact", search_key="XXXL"),
     ])
 
     issues = validate_intent_contracts(program, resolution)
@@ -360,7 +393,7 @@ def test_intent_contract_requires_every_multi_value_member_to_be_consumed():
     resolution = IntentResolution(entities=[
         EntityRef(
             mention="blue and purple",
-            role="value",
+            role="qualifier_value",
             value_members=["blue", "purple"],
             match_mode="exact",
         ),
@@ -372,7 +405,7 @@ def test_intent_contract_requires_every_multi_value_member_to_be_consumed():
             target_values={"Color": "blue"},
         ),
     ])
-    complete = Program(statements=[
+    split = Program(statements=[
         Run(
             kind="action",
             name="选择第一个集合成员",
@@ -384,6 +417,60 @@ def test_intent_contract_requires_every_multi_value_member_to_be_consumed():
             target_values={"Color": "purple"},
         ),
     ])
+    complete = Program(statements=[
+        Run(
+            kind="action",
+            name="保存完整颜色选择集",
+            target_values={"Color": ["blue", "purple"]},
+        ),
+    ])
 
     assert "ROUTER_VALUE_DROPPED" in _codes(incomplete, resolution)
+    assert "ROUTER_MULTI_VALUE_SPLIT" in _codes(split, resolution)
     assert validate_intent_contracts(complete, resolution) == []
+
+
+def test_intent_contract_blocks_redefining_selection_only_values():
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="blue and purple",
+            role="qualifier_value",
+            value_members=["blue", "purple"],
+        ),
+        EntityRef(mention="XXS", role="target_value", search_key="XXS"),
+    ])
+    program = Program(statements=[
+        Run(
+            kind="action",
+            name="创建 blue 和 purple 定义",
+            target_values={"Label": ["blue", "purple"]},
+        ),
+        Run(
+            kind="action",
+            name="添加组合",
+            target_values={"Color": ["blue", "purple"], "Size": "XXS"},
+        ),
+    ])
+
+    assert "ROUTER_SELECTION_VALUE_REDEFINED" in _codes(program, resolution)
+
+
+def test_intent_contract_blocks_selection_redefinition_hidden_in_action_text():
+    resolution = IntentResolution(entities=[
+        EntityRef(
+            mention="blue and purple",
+            role="qualifier_value",
+            value_members=["blue", "purple"],
+        ),
+        EntityRef(mention="XXS", role="target_value", search_key="XXS"),
+    ])
+    program = Program(statements=[
+        Run(kind="action", name="create blue and purple definitions"),
+        Run(
+            kind="action",
+            name="create the requested variants",
+            target_values={"Color": ["blue", "purple"], "Size": "XXS"},
+        ),
+    ])
+
+    assert "ROUTER_SELECTION_VALUE_REDEFINED" in _codes(program, resolution)

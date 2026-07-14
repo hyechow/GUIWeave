@@ -65,7 +65,7 @@
         "status": "in_progress",
         "reason": "The submitted global search produced the wrong filter dimension and zero matches.",
         "summary": "First route failed.",
-        "outcome_status": "contradicted"
+        "effect_status": "rejected"
       },
       "later_unverified_check": {
         "status": "in_progress",
@@ -428,7 +428,7 @@
         "summary": "Commit lacks causal write.",
         "outcome_status": "unverified"
       },
-      "expected": {"action": "continue", "completion_status": "in_progress"}
+      "expected": {"action": "replan", "completion_status": "failed"}
     },
     {
       "id": "t13_ensure_accepts_preexisting_target_without_save",

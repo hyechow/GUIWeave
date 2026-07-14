@@ -24,6 +24,8 @@ from gui_agent.core.supervisor.milestone.execution_scope import execution_scope_
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from gui_agent.core.run.turns import make_interactive_turn
+from gui_agent.core.run.action_signals import latest_action
+from gui_agent.core.run.persistence import assess_persistence
 from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
@@ -132,7 +134,7 @@ def _wire(monkeypatch, p, check_status: str) -> list[str]:
         p, "_single_check",
         lambda *a, **k: _SingleCheckResult(
             status=check_status,
-            outcome_status="confirmed" if check_status == "done" else "unverified",
+            effect_status="confirmed" if check_status == "done" else "unverified",
             reason="r",
             summary="s",
         ),
@@ -229,7 +231,7 @@ def test_terminal_dispatch_advances_without_visible_feedback(monkeypatch):
         p,
         _SingleCheckResult(
             status="in_progress",
-            outcome_status="unverified",
+            effect_status="unverified",
             reason="未看到成功提示或新评论出现在历史中",
             summary="提交后页面没有明显反馈",
             missing_evidence=["缺少成功提示"],
@@ -251,7 +253,7 @@ def test_terminal_dispatch_gate_respects_negative_feedback(monkeypatch):
             reason="页面显示 validation failed: required field missing",
             summary="提交失败",
             missing_evidence=["需要修正表单错误"],
-            outcome_status="contradicted",
+            effect_status="rejected",
         ),
     )
     p._monitor._last_url = "http://x/order/view/65"
@@ -315,13 +317,19 @@ def _no_redemand_wire(monkeypatch, p):
 def _completion_decision(p, m, obs, history):
     assert p._last_check is not None
     scope = execution_scope_for(m, obs)
-    claims = action_lifecycle_claims(
-        m, history, scope=scope, monitor=p._monitor, ledger=p._action_ledger
-    )
+    claims = action_lifecycle_claims(m, history, scope=scope)
     claims.extend(target_value_claims(m, obs, history, scope=scope))
     claims.append(checker_claim(p._last_check, scope=scope, subject_scope=scope))
-    return p._completion_evaluator.decide(
-        execution_contract_for(m, p._execution_contract), claims, scope=scope
+    latest = latest_action(history, m.id)
+    persistence_scope = (
+        getattr(latest.supervisor, "execution_scope", "") if latest is not None else ""
+    ) or scope
+    persistence = assess_persistence(m, history, scope=persistence_scope)
+    return p._execution_coordinator.decide(
+        execution_contract_for(m, p._execution_contract),
+        claims,
+        scope=scope,
+        persistence_assessment=persistence,
     )
 
 
@@ -359,8 +367,6 @@ def test_mutation_commit_without_receipt_does_not_claim_a_target_write() -> None
         milestone,
         [turn],
         scope="milestone:m1",
-        monitor=p._monitor,
-        ledger=p._action_ledger,
     )
 
     assert not any(item.domain == "action.write" for item in claims)
@@ -369,7 +375,7 @@ def test_mutation_commit_without_receipt_does_not_claim_a_target_write() -> None
 def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
     p, m = _fresh_action_policy()
     plan_calls = _no_redemand_wire(monkeypatch, p)
-    p._last_check = _SingleCheckResult(status="done", outcome_status="confirmed", reason="发货已保存，已跳回订单详情页", summary="ok")
+    p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="发货已保存，已跳回订单详情页", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
     history = [_write_turn(description="输入追踪号"), _shipment_submit_turn()]
     decision = _completion_decision(p, m, obs, history)
@@ -384,11 +390,11 @@ def test_fresh_action_still_redemands_when_nothing_dispatched(monkeypatch):
     # Control: genuinely pre-existing (no write for this milestone) → must still re-demand.
     p, m = _fresh_action_policy()
     plan_calls = _no_redemand_wire(monkeypatch, p)
-    p._last_check = _SingleCheckResult(status="done", outcome_status="confirmed", reason="状态疑似已满足", summary="ok")
+    p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="状态疑似已满足", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
     decision = _completion_decision(p, m, obs, [])
     assert decision.status == "pending"
-    assert "终端提交尚未派发" in decision.reason
+    assert decision.next == "act"
     assert plan_calls == []
     assert m.status != "done"
 
@@ -399,7 +405,7 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(
         status="done", reason="提交时页面提示 validation failed: required field missing", summary="ok",
-        outcome_status="contradicted",
+        effect_status="rejected",
     )
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/sales/order/view/order_id/304")
     decision = _completion_decision(p, m, obs, [_shipment_submit_turn()])
@@ -442,7 +448,7 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     p._current_id = "m1"
     p._order = ["m1"]
     plan_calls = _no_redemand_wire(monkeypatch, p)
-    p._last_check = _SingleCheckResult(status="done", outcome_status="confirmed", reason="已进入编辑页", summary="ok")
+    p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="已进入编辑页", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
     assert _completion_decision(p, m, obs, []).status == "pending"
     history = [_arrival_click_turn()]
@@ -491,12 +497,12 @@ def test_dispatch_ledger_blocks_done_on_residual_banner(monkeypatch):
     plan_calls: list[str] = []
     monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
     p._last_check = _SingleCheckResult(
-        status="done", outcome_status="confirmed", reason="页面顶部显示 'You saved the product.'，Stock Status 为 Out of Stock", summary="ok",
+        status="done", effect_status="confirmed", reason="页面顶部显示 'You saved the product.'，Stock Status 为 Out of Stock", summary="ok",
     )
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
     decision = _completion_decision(p, m, obs, [_select_option_turn()])
     assert decision.status == "pending"
-    assert "终端提交尚未派发" in decision.reason
+    assert "显式持久化边界尚未提交" in decision.reason
     assert plan_calls == []
     assert m.status != "done"
 
@@ -506,7 +512,7 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
     p, m = _save_milestone_policy()
     plan_calls: list[str] = []
     monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
-    p._last_check = _SingleCheckResult(status="done", outcome_status="confirmed", reason="保存成功提示可见", summary="ok")
+    p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="保存成功提示可见", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
     # Verb-class agreement: the milestone says 保存 (save class) → the dispatch must be a Save
     # click, not just any dispatch-verb action (an Apply Filters click must not count).
@@ -547,14 +553,14 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
             status="in_progress",
             reason="保存请求已响应，但当前帧没有直接展示目标字段",
             summary="提交已响应，结果未完全确认",
-            outcome_status="unverified",
+            effect_status="unverified",
         )
 
     monkeypatch.setattr(L, "run_checker", _unverified_checker)
     p._monitor._last_url = "http://x/admin/catalog/product/edit/id/1556/"
     p._last_check = _SingleCheckResult(
         status="in_progress",
-        outcome_status="unverified",
+        effect_status="unverified",
         reason="Short Description 已更新，但尚未点击保存按钮",
         summary="等待保存",
     )
@@ -626,7 +632,7 @@ def test_terminal_dispatch_gate_ignores_arrival_milestone(monkeypatch):
         monkeypatch, p,
         _SingleCheckResult(
             status="in_progress",
-            outcome_status="unverified",
+            effect_status="unverified",
             reason="筛选已应用并显示目标行，但尚未点击进入编辑页",
             summary="仍在列表页",
         ),
@@ -638,15 +644,17 @@ def test_terminal_dispatch_gate_ignores_arrival_milestone(monkeypatch):
     assert calls == ["plan"]  # gate must NOT force done — keep planning toward the row click
 
 
-def test_dispatch_ledger_rejects_wrong_verb_class(monkeypatch):
-    # Save milestone (…并保存): an Apply Filters dispatch (apply class) in history must not
-    # satisfy the ledger — only a save-class dispatch counts.
+def test_dispatch_ledger_rejects_non_terminal_structured_role(monkeypatch):
+    # Persistence follows the structured role, not button prose. A preparation action cannot
+    # satisfy the terminal boundary even if its label contains a submit-like verb.
     p, m = _save_milestone_policy()
     plan_calls: list[str] = []
     monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
-    p._last_check = _SingleCheckResult(status="done", outcome_status="confirmed", reason="成功提示可见", summary="ok")
+    p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="成功提示可见", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
     apply_turn = _submit_turn(no_effect=False, reason="点击 'Apply Filters' 按钮以应用筛选条件")
+    assert apply_turn.action_signal is not None
+    apply_turn.action_signal.role = "prepare"
     decision = _completion_decision(p, m, obs, [apply_turn])
     assert decision.status == "pending"
     assert plan_calls == []
@@ -672,7 +680,7 @@ def test_maybe_kickback_suppressed_after_successful_terminal_submit(monkeypatch)
     monkeypatch.setattr(feas, "control_presence_text", lambda obs: "Add Tracking Number 缺失")
 
     p, m = _fresh_action_policy()
-    p._last_check = _SingleCheckResult(status="stuck", outcome_status="unverified", reason="表单不见了", summary="stuck")
+    p._last_check = _SingleCheckResult(status="stuck", effect_status="unverified", reason="表单不见了", summary="stuck")
     step = p._maybe_kickback(m, _obs(), None, [_shipment_submit_turn()])
     assert step is None            # suppressed → falls through to a clean bounded fail, no re-decompose
 
@@ -689,7 +697,7 @@ def test_maybe_kickback_still_fires_when_no_dispatch_and_control_absent(monkeypa
     monkeypatch.setattr(feas, "compose_directive", lambda v: "重规划指令")
 
     p, m = _fresh_action_policy()
-    p._last_check = _SingleCheckResult(status="stuck", outcome_status="unverified", reason="控件缺失", summary="stuck")
+    p._last_check = _SingleCheckResult(status="stuck", effect_status="unverified", reason="控件缺失", summary="stuck")
     step = p._maybe_kickback(m, _obs(), None, [])   # empty history: nothing dispatched
     assert step is not None
     assert step.replan_directive == "重规划指令"

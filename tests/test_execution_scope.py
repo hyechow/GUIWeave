@@ -57,7 +57,7 @@ def test_checker_history_is_bucketed_by_current_row_scope(monkeypatch):
 
     def fake_single_check(_milestone, _observation, history, **_kwargs):
         captured["history"] = history
-        return _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="还未保存", summary="进行中")
+        return _SingleCheckResult(status="in_progress", effect_status="unverified", reason="还未保存", summary="进行中")
 
     monkeypatch.setattr(P, "is_loading_frame", lambda _obs: False)
     monkeypatch.setattr(policy, "_single_check", fake_single_check)

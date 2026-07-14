@@ -1,0 +1,10 @@
+{
+  "turn": 32,
+  "should_act": true,
+  "goal_completed": false,
+  "completion_status": "in_progress",
+  "atomic_role": "commit",
+  "action_family": "activate",
+  "target_control": "Save",
+  "reject_target_controls": ["Edit Configurations"]
+}

@@ -34,7 +34,7 @@ def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
         "id": "m3", "name": "在 Product 列筛选框输入 'Olivia zip jacket'", "description": "d",
         "success_condition": "Product 框内容为 'Olivia zip jacket'", "kind": "action",
     })
-    check = _SingleCheckResult(status="in_progress", outcome_status="unverified", reason="r", summary="s")
+    check = _SingleCheckResult(status="in_progress", effect_status="unverified", reason="r", summary="s")
     obs = Observation(
         png_bytes=b"png", source="browser",
         form_controls=[{"label": "Product", "kind": "text_input",
@@ -75,7 +75,7 @@ def test_replan_preserves_atomic_execution_contract(monkeypatch):
         milestone,
         _SingleCheckResult(
             status="stuck",
-            outcome_status="unverified",
+            effect_status="unverified",
             reason="wrong menu point",
             stuck_reason="wrong menu point",
             summary="",

@@ -33,15 +33,40 @@ def test_intent_block_renders_multi_value_members_as_separate_atoms():
     block = intent_block(IntentResolution(entities=[
         EntityRef(
             mention="blue and purple",
-            role="value",
+            role="qualifier_value",
             value_members=["blue", "purple"],
+            match_mode="exact",
+        ),
+        EntityRef(
+            mention="XXS",
+            role="target_value",
             match_mode="exact",
         ),
     ]))
 
     assert block is not None
     assert "原子值=['blue', 'purple']" in block.content
-    assert "不合并成一个字符串" in block.content
+    assert "同一选择组" in block.content
+    assert "不得额外创建/改写其定义" in block.content
+    assert "可作为任务写入目标、必要时建立定义前置：['XXS']" in block.content
+    assert "只允许在最终 mutation 中选择、禁止建立独立定义阶段：['blue', 'purple']" in block.content
+
+
+def test_legacy_value_introduction_pair_normalizes_at_model_boundary():
+    qualifier = EntityRef.model_validate({
+        "mention": "blue",
+        "role": "value",
+        "introduction": "not_required",
+    })
+    target = EntityRef.model_validate({
+        "mention": "XXS",
+        "role": "value",
+        "introduction": "required",
+    })
+
+    assert qualifier.role == "qualifier_value"
+    assert target.role == "target_value"
+    assert "introduction" not in qualifier.model_dump()
 
 
 def test_resolve_intent_empty_goal_skips_llm():

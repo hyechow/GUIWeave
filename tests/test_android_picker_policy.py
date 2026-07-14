@@ -14,7 +14,7 @@ from gui_agent.adapters.android.policies import AndroidActionPolicy
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.supervisor.milestone.model_io import _build_msgs
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.run.progress_monitor import ProgressMonitor
+from gui_agent.core.run.progress_monitor import ProgressAssessment, ProgressMonitor
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 
@@ -261,7 +261,7 @@ def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
     )
     check = _SingleCheckResult(
         status="in_progress",
-        outcome_status="unverified",
+        effect_status="unverified",
         reason="当前时间已设定为 06:30 AM，但尚未点击保存按钮。",
         summary="时间已到位，等待保存。",
     )
@@ -419,16 +419,14 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
     )
     check = _SingleCheckResult(
         status="in_progress",
-        outcome_status="unverified",
+        effect_status="unverified",
         reason="当前中间行仍为 06:51，目标 06:30",
         summary="当前时间为 06:51",
     )
-    stuck = _SingleCheckResult(
-        status="stuck",
-        outcome_status="unverified",
+    stuck = ProgressAssessment(
+        status="stalled",
         reason="连续 3 帧局部与全局均无实质变化",
-        stuck_reason="动作无效果",
-        summary="屏幕连续无变化",
+        source_type="runtime.screen_progress",
     )
     history = [
         PolicyTurn(
@@ -480,7 +478,7 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
 def test_progress_value_extracts_time_from_reason_without_missing_evidence():
     check = _SingleCheckResult(
         status="in_progress",
-        outcome_status="unverified",
+        effect_status="unverified",
         reason="当前页面为新建闹钟界面，时间设定为上午08:51，尚未达到目标时间06:30。",
         summary="当前屏幕为新建闹钟界面。",
     )
