@@ -93,6 +93,11 @@ user-visible or architecture-visible change.
 When the user asks to commit only specific files, stage only those files. Do not
 include unrelated working-tree changes.
 
+When grouping a larger change, split production code into coherent implementation
+commits where useful. Keep all related unit tests, eval cases, fixtures, replay
+scripts, and replay data together in a separate follow-up `test(...)` commit rather
+than scattering test artifacts across the production commits.
+
 ## Security And Configuration
 
 Keep provider secrets in local environment files or shell configuration, never in
