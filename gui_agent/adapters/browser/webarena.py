@@ -210,14 +210,6 @@ def _finalize_response(
     return resp.model_copy(update=updates)
 
 
-_MUTATION_FAILURE_SUMMARY_RE = re.compile(
-    r"未找到|未完成|无法|失败|错误|异常|"
-    r"\bnot\s+found\b|\bincomplete\b|\bfailed\b|\bfailure\b|\berror\b|"
-    r"\bunknown_error\b|\bnot\s+performed\b",
-    re.IGNORECASE,
-)
-
-
 def _webarena_task_type_from_result(intent: str, result: dict) -> str:
     task_type = str(result.get("task_type") or "").strip().upper()
     if task_type in _TASK_TYPES:
@@ -231,17 +223,11 @@ def _completed_mutate_response(intent: str, result: dict) -> WAResponse | None:
     Core exposes execution completion separately from post-state verification. For MUTATE tasks
     WebArena expects no retrieved data; letting a second response-synthesis LLM infer from
     incidental traces such as "N records found" can turn a completed mutation into UNKNOWN_ERROR.
-    This does not read evaluator expected values; it only trusts the agent's own terminal state
-    unless the result text explicitly says the mutation failed or the target was not found.
+    This does not read evaluator expected values. Natural-language summaries are diagnostic output,
+    not a second completion signal; only the structured runtime result owns completion.
     """
     task_type = _webarena_task_type_from_result(intent, result)
     if task_type != "MUTATE" or not _runtime_completion_accepted(result):
-        return None
-    result_text = " ".join(
-        str(result.get(key) or "")
-        for key in ("stop_reason", "result_summary", "error_details")
-    )
-    if _MUTATION_FAILURE_SUMMARY_RE.search(result_text):
         return None
     return WAResponse(
         task_type="MUTATE",
