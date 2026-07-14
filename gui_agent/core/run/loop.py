@@ -94,7 +94,6 @@ def _needs_terminal_reconciliation(context: PolicyContext) -> bool:
         and latest.executed
         and signal is not None
         and signal.execution == "dispatched"
-        and signal.outcome == "unverified"
     )
 
 
@@ -928,6 +927,7 @@ def run_agent_loop(
                 supervisor=supervisor,
                 action_decision=action_decision,
                 executed=executed,
+                action_role=action_result.action_role,
                 action_key=action_result.action_key,
                 suppressed_reason=action_result.suppressed_reason,
                 binding=action_result.binding,

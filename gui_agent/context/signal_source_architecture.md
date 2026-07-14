@@ -1,5 +1,9 @@
 # Signal-Source Architecture — typed observation + scoped authority + model arbitration
 
+本文只描述 observation/context 进入模型时的来源与权威域。运行时动作事实另由
+`core/run/action_signals.py` 统一归档，typed claim 由 milestone `evidence.py` 投影，完成建议由
+`ExecutionCoordinator` 归约；模型输出本身不是运行时状态转移权限。
+
 ## 为什么
 
 GUI agent 里判断"当前状态"的逻辑正在以**特判**堆叠:checker.md 里散落着"DOM current 优先于截图/窄框以 current 为准/native_select 展开即已选"等局部规则;policy.py 里 dispatch/filter gate 用 url_changed / active-filters chip **确定性判 done、跳过 LLM**。这些都是"我们替模型硬编码地整合不同信号源"。
@@ -24,7 +28,7 @@ GUI agent 里判断"当前状态"的逻辑正在以**特判**堆叠:checker.md �
 
 ## Authority domains(权威落到 claim,而非仅 block)
 
-`control.value` · `control.selected` · `filter.applied` · `filter.residual` · `table.record_count` · `table.rendered_rows` · `page.url` · `page.title` · `layout.visible_structure` · `modal.visibility` · `spatial.relationship` · `action.effect.url_changed` · `action.effect.dom_changed` · `action.effect.no_effect` · `prior_judgment` · `app.semantic_structure` · `strategy.directive`
+`control.value` · `control.selected` · `filter.applied` · `filter.residual` · `table.record_count` · `table.rendered_rows` · `page.url` · `page.title` · `layout.visible_structure` · `modal.visibility` · `spatial.relationship` · `action.response.url_changed` · `action.response.dom_changed` · `action.response.none_observed` · `prior_judgment` · `app.semantic_structure` · `strategy.directive`
 
 同一个 block 常混多个 claim(如 form_controls 含 存在性/当前值/selected_text/是否被弹层遮挡),它们**不是同一权威域**:DOM 对 `control.value`/`control.selected` 权威,但不对"是否被弹层遮挡/是否可见"权威(那归 `obs.vision`)。P1 先在 block 级实现,但 domain 命名尽量细。
 
@@ -48,7 +52,7 @@ GUI agent 里判断"当前状态"的逻辑正在以**特判**堆叠:checker.md �
 
 ## 迁移边界(分阶段)
 
-- **P1(本步)**:`ContextBlock` 加 `authoritative_for` / `not_authoritative_for` / `freshness` / `coverage` + render header 暴露;checker/planner 加 4-rule 协议;**只迁 3 个高价值块**:`form_controls` / `applied_filters` / `last_action_effect`。**不动 gate bypass。**
+- **P1(本步)**:`ContextBlock` 加 `authoritative_for` / `not_authoritative_for` / `freshness` / `coverage` + render header 暴露;checker/planner 加 4-rule 协议;**只迁 3 个高价值块**:`form_controls` / `applied_filters` / `last_action_response`。**不动 gate bypass。**
 - **P2**:其余 obs 块分源(grid_status / url / title / 截图 vision 元信息)。
 - **P3**:多选(入口案例)——`control.selected` 由 `obs.dom` 权威,模型裁决,修 native multiselect 循环。
 - **P4**:dispatch / filter gate **降级**为 `obs.effect` / `obs.dom` 信号块;**保留 deterministic fast path 作为"同一信号协议下的安全快路"**(读同一套信号),仅当 eval 证明 checker 在无 fast path 时稳定后,再逐个移除 bypass。

@@ -2,9 +2,16 @@ from dataclasses import dataclass
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from gui_agent.core.schemas import CollectionScope, Milestone
+from gui_agent.core.schemas import ActionFamily, AtomicRole, CollectionScope, Milestone
+
+
+def action_metadata(plan, milestone: Milestone) -> tuple[AtomicRole, ActionFamily]:
+    """Normalize planner metadata against the milestone execution strategy."""
+    if milestone.is_iterative:
+        return "iterate", "iterate"
+    return plan.atomic_role, plan.action_family
 
 
 @dataclass(frozen=True)
@@ -114,14 +121,28 @@ class _SingleCheckResult(BaseModel):
     )
     frozen: bool = Field(default=False, description="屏幕是否冻结（相似度≥99%，即使 reader 返回新内容也应停止）")
     loading: bool = Field(default=False, description="页面正在加载（骨架屏/启动屏/转场动画），应等待下一帧而非立即规划动作")
-    outcome_status: Literal["confirmed", "contradicted", "unverified"] = Field(
+    effect_status: Literal["confirmed", "unmet", "rejected", "unverified"] = Field(
         description=(
-            "业务后置状态：confirmed=目标状态已有证据；contradicted=当前帧有直接事实否定"
-            "完成条件（包括报错、目标值不符、仍在中间步骤或外层提交尚未执行）；"
-            "unverified=当前帧没有可判读的目标结果通道。contradicted 不等于动作派发失败；"
-            "不得用动作已派发替代 confirmed。"
+            "业务目标状态：confirmed=目标状态已有证据；unmet=目标当前尚未满足，仍需正常执行；"
+            "rejected=本子目标动作派发后出现明确错误、拒绝或可靠后置反证；"
+            "unverified=当前帧没有可判读的目标结果通道。不得用动作已派发替代 confirmed。"
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_outcome_status(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        if "effect_status" not in data and "outcome_status" in data:
+            data["effect_status"] = data.pop("outcome_status")
+        # Historical ``contradicted`` conflated a normal unmet target with an explicit
+        # post-action rejection.  The safe compatibility interpretation is unmet; current
+        # checkers use ``rejected`` only when a dispatched action has concrete failure evidence.
+        if data.get("effect_status") == "contradicted":
+            data["effect_status"] = "unmet"
+        return data
 
     @field_validator("issues", "visible_evidence", "missing_evidence", mode="before")
     @classmethod
@@ -166,6 +187,7 @@ class _PlanResult(BaseModel):
         description=(
             "当前原子动作角色：prepare=展开/定位/导航等获取动作；write=输入/选择/切换目标值；"
             "commit=提交/保存/发送等最终副作用边界；iterate=滚动/picker 等有进展时可重复动作。"
+            "不要填 navigate/activate/input/select——那些属于 action_family。"
         ),
     )
     action_family: Literal[
@@ -178,6 +200,7 @@ class _PlanResult(BaseModel):
             "事务语义只由 atomic_role=commit 表达；点击保存按钮时 family 仍为 activate。"
         ),
     )
+
     target_control: str = Field(
         default="",
         description=(
@@ -230,7 +253,10 @@ class _ReplanResult(BaseModel):
     instruction: str = Field(default="")
     atomic_role: Literal["prepare", "write", "commit", "iterate"] = Field(
         default="prepare",
-        description="修复指令的原子执行角色；语义与正常 planner 输出一致。",
+        description=(
+            "修复指令的原子执行角色；语义与正常 planner 输出一致。"
+            "不要填 navigate/activate/input/select——那些属于 action_family。"
+        ),
     )
     action_family: Literal[
         "input", "select", "activate", "navigate", "iterate", "unknown"

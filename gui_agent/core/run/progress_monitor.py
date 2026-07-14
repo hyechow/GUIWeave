@@ -3,9 +3,9 @@
 Stuck is a TRAJECTORY property, not a single-frame one: it only shows up across turns (no real
 progress over a window). So it needs a stateful, cross-turn monitor — neither the per-turn LLM
 checker (stateless across turns) nor the scattered frame-level heuristics own that. This module
-accumulates deterministic FACTS; it does NOT make the semantic judgment ("is this repeat
-meaningless?") — that stays with the checker, which reads the rendered trace. It also exposes a
-programmatic `repeated()` the supervisor routes to stuck.
+accumulates deterministic FACTS; it does NOT advance, retry, or replan execution. Its detectors
+emit typed progress assessments for the milestone policy's single recovery path. Completion and
+persistence evidence remain independent of trajectory health.
 
 This is the task-level memory the frame-level guards miss: a Reset→search→Reset loop changes the
 URL and DOM every turn, so each iteration looks like "progress" and the frame detectors get
@@ -13,7 +13,7 @@ suppressed — but at the task level it is the same (state, action) recurring.
 
 Two ways to key an action (the `decision`):
   - the planner's NL instruction (legacy Action-Loop Guard) — reworded phrasings collapse via
-    `_norm_action`, but a genuinely reworded SAME action can still slip through; and
+    `normalize_action_text`, but a genuinely reworded SAME action can still slip through; and
   - `action_signature(action)` — a reword-proof identity of the EXECUTED action
     (action_type | target-control | text). Run 20260622_171843 re-typed the same long search value
     into the same box across T3/T9/T12/T13 while the instruction kept changing; the signature collapses
@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from gui_agent.context import ContextBlock
+from gui_agent.core.run.action_signals import action_signature, normalize_action_text
 from gui_agent.core.run.instruction_similarity import instructions_are_repeated
 from gui_agent.core.schemas import Observation
 from gui_agent.core.vision.frame_analysis import CHANGE_SSIM_DIST_THR, region_change
@@ -42,12 +43,6 @@ from gui_agent.core.vision.frame_analysis import CHANGE_SSIM_DIST_THR, region_ch
 # [^/]* (not +) so an EMPTY volatile segment collapses too: a cleared filter renders as
 # `/filter//internal_reviews`; without this it would NOT match the content-filter URL's state.
 _VOLATILE_SEG = re.compile(r"/(filter|form_key|key|uenc|back|isAjax|sort|dir|limit|page)/[^/]*")
-
-# Position bin (px) for the action signature. The DOM snap reports a per-element center that
-# jitters a few px between turns (and the WxH in `info` jitters too), so we drop the size and bin
-# the snapped center. Coarse enough to absorb the jitter (~6px) yet keep distinct controls apart
-# (the Reviews filter boxes sit ~200px apart). Floor-division → deterministic, no rounding edge.
-_POS_BIN_PX = 50
 
 # Frame/instruction/value stuck-detector thresholds (moved here from stuck.py — the monitor owns
 # the deterministic stuck facts).
@@ -59,6 +54,16 @@ STUCK_REPEAT_WORD_OVERLAP = 0.85
 STUCK_VALUE_STALL_WINDOW = 4
 
 
+@dataclass(frozen=True)
+class ProgressAssessment:
+    """A trajectory fact emitted by the monitor, without control-flow authority."""
+
+    status: Literal["advancing", "stalled", "exhausted"] = "advancing"
+    reason: str = ""
+    source_type: str = "runtime.progress"
+    frozen: bool = False
+
+
 def canonical_url(url: str | None) -> str:
     """Canonical page-state id: host-stripped path with volatile segments removed. '' if no url."""
     if not url:
@@ -67,42 +72,6 @@ def canonical_url(url: str | None) -> str:
     p = _VOLATILE_SEG.sub("", p)
     p = p.split("?", 1)[0].rstrip("/")
     return p or "/"
-
-
-def _norm_action(text: str) -> str:
-    """Light normalization so superficially-different phrasings of the same action collapse."""
-    t = (text or "").lower()
-    t = re.sub(r"[\s，。、；;：:！!？?（）()「」『』\[\]【】\"'`’‘“”]+", "", t)
-    return t[:80]
-
-
-def _target_key(action: Any) -> str:
-    """A stable identity for the control an action touched: element tag + binned snapped center.
-
-    Prefers the DOM-snapped center (which lands on the element); falls back to the planned x/y.
-    Drops the jittery WxH from `info`, keeping only the tag (input/button/a/…)."""
-    snap = getattr(action, "snap", None) or {}
-    info = snap.get("info") or ""
-    tag = info.split(" ", 1)[0].lower() if info else ""
-    pt = snap.get("snapped") or [getattr(action, "x", None), getattr(action, "y", None)]
-    px = pt[0] if pt else None
-    py = pt[1] if pt and len(pt) > 1 else None
-    if px is not None and py is not None:
-        bucket = f"{int(px // _POS_BIN_PX)},{int(py // _POS_BIN_PX)}"
-    else:
-        bucket = "-"
-    return f"{tag}@{bucket}" if tag else f"@{bucket}"
-
-
-def action_signature(action: Any) -> str:
-    """A reword-proof identity for a concrete action: `type|input@16,8|oliviazipjacket`,
-    `tap|button@2,5|`, `scroll|down|@-`. Two turns with the same signature did the same thing,
-    however differently the instruction was phrased. Use as the `decision` key in note/repeated."""
-    at = getattr(action, "action_type", "") or "?"
-    target = _target_key(action)
-    if at in ("scroll", "drag"):
-        return f"{at}|{getattr(action, 'direction', '') or ''}|{target}"
-    return f"{at}|{target}|{_norm_action(getattr(action, 'text', '') or '')}"
 
 
 @dataclass
@@ -156,7 +125,7 @@ class ProgressMonitor:
         self.turns.append(TraceStep(
             index=index,
             state=state,
-            decision=_norm_action(decision),
+            decision=normalize_action_text(decision),
             interaction_state=interaction_state or "",
             scope=scope or "",
         ))
@@ -170,7 +139,7 @@ class ProgressMonitor:
     ) -> Optional[TraceStep]:
         """The earliest prior turn with this same (state, decision), or None. A hit = the agent is
         about to redo a move it already made in a page it already stood on (a loop)."""
-        key = _norm_action(decision)
+        key = normalize_action_text(decision)
         ix = interaction_state or ""
         for t in self.turns:
             if scope and t.scope != scope:
@@ -187,7 +156,7 @@ class ProgressMonitor:
         scope: str = "",
     ) -> int:
         """How many prior turns already executed this (state, decision)."""
-        key = _norm_action(decision)
+        key = normalize_action_text(decision)
         ix = interaction_state or ""
         return sum(1 for t in self.turns
                    if t.state == state and t.decision == key and t.interaction_state == ix
@@ -267,8 +236,7 @@ class ProgressMonitor:
     def check_screen_similarity(
         self, observation: Observation, action_center: Optional[tuple[float, float]] = None,
     ):
-        """Stuck if the last STUCK_SCREEN_WINDOW frames show no change (frozen) in both the touched
-        region and globally, or if the page is oscillating A↔B. Returns a stuck check or None."""
+        """Report stalled progress when recent frames freeze or oscillate; otherwise return None."""
         self._recent_screenshots.append((observation.png_bytes, action_center))
         if len(self._recent_screenshots) > STUCK_SCREEN_WINDOW:
             self._recent_screenshots.pop(0)
@@ -286,39 +254,31 @@ class ProgressMonitor:
         def _no_change(gs: float, lc: Optional[float]) -> bool:
             return gs >= STUCK_SCREEN_SIMILARITY and (lc is None or lc <= CHANGE_SSIM_DIST_THR)
 
-        from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
         if all(_no_change(gs, lc) for gs, lc in zip(gsims, locs)):
             gstr = ", ".join(f"{g:.2%}" for g in gsims)
             lstr = ", ".join("∅" if l is None else f"{l:.3f}" for l in locs)
             frozen = max(gsims) >= STUCK_SCREEN_FROZEN
             tag = "屏幕冻结（局部+全局均无变化）" if frozen else "连续无变化（局部+全局）"
             print(f"  [SimStuck] 全局[{gstr}] 局部[{lstr}] → {tag}")
-            return _SingleCheckResult(
-                status="stuck",
-                outcome_status="unverified",
+            return ProgressAssessment(
+                status="stalled",
                 reason=f"连续 {STUCK_SCREEN_WINDOW} 帧没有看到与目标相关的页面变化",
-                stuck_reason="上一步操作后页面没有出现新内容或目标状态，需要尝试其他可见入口",
-                issues=["连续多帧未看到页面状态推进"],
-                summary="屏幕连续无变化",
+                source_type="runtime.screen_progress",
                 frozen=frozen,
             )
         sim_2back, _ = region_change(frames[-1][0], frames[-3][0])
         sim_adj, _ = region_change(frames[-1][0], frames[-2][0])
         if sim_2back >= STUCK_SCREEN_SIMILARITY and sim_adj < STUCK_SCREEN_SIMILARITY:
             print(f"  [SimStuck] 2back={sim_2back:.2%}, adj={sim_adj:.2%} → AB 循环")
-            return _SingleCheckResult(
-                status="stuck",
-                outcome_status="unverified",
+            return ProgressAssessment(
+                status="stalled",
                 reason="页面在两个可见状态之间来回切换，验收条件仍未出现",
-                stuck_reason="页面在两个状态之间反复切换，需要换路径或先关闭当前弹窗/面板",
-                issues=["页面状态来回切换"],
-                summary="页面在两个状态之间反复切换",
+                source_type="runtime.screen_progress",
             )
         return None
 
     def check_instruction_repetition(self, history, milestone_id: str):
-        """Stuck if the last STUCK_REPEAT_WINDOW instructions for this milestone are near-identical
-        (word overlap ≥ threshold) — the planner is circling. Returns a stuck check or None."""
+        """Report stalled progress when recent milestone instructions are near-identical."""
         recent = [
             t.supervisor.instruction
             for t in history[-STUCK_REPEAT_WINDOW:]
@@ -332,14 +292,10 @@ class ProgressMonitor:
         ]
         if all(repeated):
             print("  [RepStuck] 指令目标一致且文本连续相似 → 指令连续重复")
-            from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
-            return _SingleCheckResult(
-                status="stuck",
-                outcome_status="unverified",
+            return ProgressAssessment(
+                status="stalled",
                 reason=f"连续 {STUCK_REPEAT_WINDOW} 步给出相似指令，当前页面仍未满足验收条件",
-                stuck_reason="连续相似指令未达成目标，需要改用当前截图中的其他可见入口或操作顺序",
-                issues=["连续操作策略过于相似"],
-                summary="操作陷入重复循环",
+                source_type="runtime.instruction_progress",
             )
         return None
 
@@ -372,8 +328,7 @@ class ProgressMonitor:
         return re.sub(r"\s+", "", check.summary or "")
 
     def check_value_stall(self, milestone, check):
-        """Stuck if the checker's read value stays identical for STUCK_VALUE_STALL_WINDOW turns —
-        a continuous adjustment that isn't approaching the target (wrong direction / too-small step)."""
+        """Report stalled progress when a continuously adjusted value remains unchanged."""
         val = self._extract_progress_value(check)
         window = self._progress_values.setdefault(milestone.id, [])
         window.append(val)
@@ -384,14 +339,10 @@ class ProgressMonitor:
         if len(set(window)) == 1:
             print(f"  [ValueStall] 连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留「{val}」，未朝目标推进")
             window.clear()
-            from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
-            return _SingleCheckResult(
-                status="stuck",
-                outcome_status="unverified",
+            return ProgressAssessment(
+                status="stalled",
                 reason=f"连续 {STUCK_VALUE_STALL_WINDOW} 轮当前值停留在「{val}」，调整未朝目标推进",
-                stuck_reason="连续调值无进展：当前值多轮未变化",
-                issues=["监控值多轮未朝目标推进（疑似方向错/步长不足/非法值回弹）"],
-                summary=check.summary,
+                source_type="runtime.value_progress",
             )
         return None
 

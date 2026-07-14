@@ -46,13 +46,18 @@ from typing import Literal, Optional  # noqa: E402
 
 from pydantic import BaseModel, Field  # noqa: E402
 
+from gui_agent.core.supervisor.milestone.schemas import MilestonePrompts  # noqa: E402
+
 
 class BrowserPlanResult(BaseModel):
     instruction: str = Field(description="下一步精确操作指令；输入/选择具名值时必须包含子目标要求的目标原文")
     summary: str = Field(description="规划依据一句话摘要")
     atomic_role: Literal["prepare", "write", "commit", "iterate"] = Field(
         default="prepare",
-        description="prepare=展开/定位；write=填写/选择目标值；commit=保存/提交；iterate=滚动/拖动。",
+        description=(
+            "prepare=展开/定位；write=填写/选择目标值；commit=保存/提交；iterate=滚动/拖动。"
+            "不要填 navigate/activate/input/select——那些属于 action_family。"
+        ),
     )
     action_family: Literal[
         "input", "select", "activate", "navigate", "iterate", "unknown"
@@ -75,10 +80,7 @@ class BrowserPlanResult(BaseModel):
         description="只有下一步需要滚动时填写：down=查看下方内容，up=查看上方内容，left/right=横向查看内容；其他操作留空",
     )
 
-
 # ── Bundle into the neutral MilestonePrompts seam (web draft) ────────────────
-from gui_agent.core.supervisor.milestone.schemas import MilestonePrompts  # noqa: E402
-
 BROWSER_MILESTONE_PROMPTS = MilestonePrompts(
     decompose=DECOMPOSE_PROMPT,
     single_checker=SINGLE_CHECKER_PROMPT,

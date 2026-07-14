@@ -75,9 +75,9 @@ def milestone_block(
         lines.append(f"- 子目标类型：{milestone.kind}")
     if milestone.completion_strategy:
         lines.append(f"- 完成策略：{milestone.completion_strategy}")
-    if milestone.kind == "action":
-        lines.append(f"- Mutation mode：{milestone.mutation_mode}")
-    if milestone.requires_commit:
+    if milestone.kind == "action" and milestone.effect_mode:
+        lines.append(f"- Effect mode：{milestone.effect_mode}")
+    if milestone.persistence == "explicit_commit":
         lines.append("- 持久化边界：需要显式 commit 动作并验证后置状态")
     if milestone.target_controls:
         lines.append(f"- 目标控件/能力：{', '.join(milestone.target_controls)}")
@@ -265,8 +265,7 @@ def _render_turn_lines(turns: list[PolicyTurn]) -> str:
             channels = ",".join(signal.response_channels) or "none"
             lifecycle = (
                 f" | role={signal.role}; execution={signal.execution}; "
-                f"target={signal.target}; response={signal.response}({channels}); "
-                f"outcome={signal.outcome}"
+                f"target={signal.target}; response={signal.response}({channels})"
             )
             if signal.target_control:
                 lifecycle += f"; target_control={signal.target_control}"
@@ -276,18 +275,28 @@ def _render_turn_lines(turns: list[PolicyTurn]) -> str:
                 lifecycle += f"; suppressed={signal.suppressed_reason}"
             if signal.binding:
                 lifecycle += f"; binding={signal.binding.status}"
-        if turn.action_decision and turn.executed:
-            action = turn.action_decision.action
+            if turn.effect_signal is not None:
+                lifecycle += (
+                    f"; effect={turn.effect_signal.status}"
+                    f"({turn.effect_signal.freshness})"
+                )
+        decision = turn.action_decision
+        action = decision.action if decision is not None else None
+        if action is not None and turn.executed:
             lines.append(
                 f"{turn.index}. 指令=「{sv.instruction}」"
                 f" → [{action.action_type}] {action.description}"
                 f"{lifecycle}"
             )
-        elif turn.action_decision and not turn.executed:
-            action = turn.action_decision.action
+        elif action is not None:
             lines.append(
                 f"{turn.index}. 指令=「{sv.instruction}」 → [未执行] "
                 f"[{action.action_type}] {action.description}{lifecycle}"
+            )
+        elif decision is not None:
+            reason = decision.not_found_reason or "未产生可派发动作"
+            lines.append(
+                f"{turn.index}. 指令=「{sv.instruction}」 → [未派发] {reason}{lifecycle}"
             )
         else:
             lines.append(f"{turn.index}. [无动作] {sv.summary}{lifecycle}")
@@ -747,11 +756,22 @@ def browser_page_block(url: str | None, title: str | None, *, site: str = "") ->
     )
 
 
-def feedback_block(issues: Iterable[str]) -> ContextBlock | None:
+def feedback_block(
+    issues: Iterable[str],
+    *,
+    previous_output: str = "",
+) -> ContextBlock | None:
     issue_list = [issue for issue in issues if issue]
     if not issue_list:
         return None
     body = "\n".join(f"  - {issue}" for issue in issue_list)
+    content = f"此前分解存在以下问题，请修正并保持已修复约束：\n{body}"
+    if previous_output.strip():
+        content += (
+            "\n\n以下是上一版结构化草稿。以它为基线做局部修复；保留未被上述问题点名的"
+            "步骤、变量、分支和已满足的合同，不要从头改写：\n"
+            + previous_output.strip()
+        )
     return ContextBlock(
         id="runtime.decompose.feedback",
         budget="required",
@@ -760,7 +780,7 @@ def feedback_block(issues: Iterable[str]) -> ContextBlock | None:
         ttl="turn",
         priority=20,
         metadata={"count": len(issue_list)},
-        content=f"此前分解存在以下问题，请修正并保持已修复约束：\n{body}",
+        content=content,
     )
 
 

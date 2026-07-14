@@ -219,7 +219,7 @@ def run_checker(
     check_knowledge: str = "",
     context_reports: list[dict] | None = None,
     state_trace_text: str = "",
-    last_action_effect: str = "",
+    last_action_response: str = "",
     initial_filters: dict[str, str] | None = None,
     runtime_filter: RuntimeFilterIntent | None = None,
 ) -> _SingleCheckResult:
@@ -267,24 +267,24 @@ def run_checker(
                          "据此判断任务是在推进(不断到达新状态)还是在少数状态里打转。\n" + state_trace_text),
             ) if state_trace_text.strip() else None),
             (ContextBlock(
-                id="runtime.last_action_effect", budget="high", source_type="rt.execution",
+                id="runtime.last_action_response", budget="high", source_type="rt.execution",
                 source="progress_monitor", ttl="turn", priority=29,
-                # Deterministic post-action effect (url/dom delta): authoritative for whether the
+                # Deterministic post-action response (url/dom delta): authoritative for whether the
                 # last action was dispatched and whether it produced a navigation/DOM change —
                 # NOT for whether the business RESULT is correct. freshness=post_action: it
-                # describes the just-executed action's execution/effect signals.
+                # describes the just-executed action's execution/response signals.
                 authoritative_for=(
                     "action.execution.dispatched",
                     "action.execution.not_dispatched",
-                    "action.effect.url_changed",
-                    "action.effect.dom_changed",
-                    "action.effect.no_effect",
+                    "action.response.url_changed",
+                    "action.response.dom_changed",
+                    "action.response.none_observed",
                 ),
                 not_authoritative_for=("business.result", "target.state"),
                 freshness="post_action",
                 coverage="complete",
-                content=last_action_effect,
-            ) if last_action_effect.strip() else None),
+                content=last_action_response,
+            ) if last_action_response.strip() else None),
             extra_instruction_block(extra, source="checker_guard"),
             page_title_block(title),
             acceptance_items_block(accept_items),
@@ -391,7 +391,7 @@ def run_checker(
     if result.status == "done" and _still_invalid(result):
         return _SingleCheckResult(
             status="stuck",
-            outcome_status="unverified",
+            effect_status="unverified",
             reason="当前验收结论缺少可见依据或存在自相矛盾",
             stuck_reason="当前页面仍缺少足够的验收依据，需要继续确认可见状态",
             summary=result.summary,

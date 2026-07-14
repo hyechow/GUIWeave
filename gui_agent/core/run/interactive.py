@@ -53,9 +53,9 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
     mutation_evidence = bool(
         run.kind == "action"
         and action_requires_mutation_evidence(
-            mutation_mode=run.mutation_mode,
+            effect_mode=run.effect_mode,
             target_values=run.target_values,
-            requires_commit=run.requires_commit,
+            persistence=run.persistence,
             output_fields=run.returns,
         )
     )
@@ -67,9 +67,8 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
         kind=kind,  # type: ignore[arg-type]
         completion_strategy=strategy,  # type: ignore[arg-type]
         precondition=run.precondition,
-        require_fresh_action=(mutation_evidence and run.mutation_mode == "change"),
-        mutation_mode=run.mutation_mode,
-        requires_commit=run.requires_commit,
+        effect_mode=run.effect_mode if mutation_evidence else None,
+        persistence=run.persistence,
         target_controls=list(run.target_controls),
         target_values=dict(run.target_values),
         returns=list(run.returns),

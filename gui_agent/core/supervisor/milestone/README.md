@@ -8,11 +8,22 @@ platform-neutral. Site facts belong in knowledge; platform mechanics belong in a
 - `policy.py`: owns milestone state transitions. It may consume typed evidence, request one
   proposal, advance, recover, or fail. It must not classify instruction prose or implement a
   platform control mechanism.
-- `action_protocol.py`: records structured executor receipts (response and arbitrated outcome).
-  Its read-only `MutationProgress` gives evidence and proposal validation one lifecycle view. It
-  contains no action-verb vocabulary and cannot advance execution.
+- `../../run/action_exec.py`: grounds, authorizes, and dispatches one concrete primitive. The
+  concrete lifecycle role and semantic action key are fixed here, never reconstructed by history.
+- `../../run/action_signals.py`: is the only runtime writer of persisted action delivery, target,
+  and response facts. Sensors submit raw facts; this module cannot infer effects or transitions.
+- `../../run/turns.py`: records the supplied supervisor decision and action facts without
+  reclassifying them.
 - `evidence.py`: converts observations and receipts into `EvidenceClaim` values. It never changes
-  milestone state. Statement scope and evidence subject/resource are separate dimensions.
+  milestone state or reads transient monitor state. Statement scope and evidence subject/resource
+  are separate dimensions.
+- `../../run/execution_signals.py`: `ExecutionCoordinator` is the sole reducer of action, effect,
+  and persistence claims into a completion recommendation. `policy.py` alone applies that
+  recommendation and may escalate an ordinary `act` to recovery from typed progress evidence.
+- `../../run/persistence.py`: projects write/commit receipts into `clean/pending/submitted`; it
+  does not judge the requested business state.
+- `../../run/progress_monitor.py`: emits advancing/stalled/exhausted trajectory evidence. It
+  cannot call recovery or reinterpret an unmet target as rejection.
 - `execution_scope.py`: isolates history by observable resource identity or milestone identity.
   It does not know application routes or entity names.
 - `observation_state.py`: interprets normalized filter and target-unit state without planning or
@@ -59,8 +70,14 @@ and must be supported by post-action evidence associated with the same binding t
 ## Mutation Progress
 
 Mutation history is projected rather than stored in a second mutable transaction object. Surface
-identity is fallback evidence: the first observed surface is an entry hint, an in-place commit on
-another surface is non-terminal, and a navigation response can establish a boundary. Platforms
-without surface identity rely on structured roles, receipts, and completion evidence. A nested
-in-place commit leaves the phase at `preparing` without a write receipt and at `commit_pending`
-after a write; it never establishes `terminal` by itself.
+identity is fallback evidence: the first observed surface is an entry hint and an in-place commit
+on another surface is non-terminal. A URL response alone never manufactures a persistence
+boundary. Workflows whose only final submit occurs on a child surface must declare immediate
+persistence instead of relying on a navigation heuristic. Platforms without surface identity rely
+on structured roles, receipts, and completion evidence.
+
+A nested in-place commit leaves persistence clean without a write receipt and pending after a
+write; it never establishes terminal persistence by itself. Before the child flow returns to the
+entry surface, forward preparation remains legal. Once that return makes persistence
+`terminal_ready`, only a root commit may be dispatched; repeated non-commit proposals are dropped.
+There is deliberately no second text-derived "closed preparation" state machine.

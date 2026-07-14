@@ -53,7 +53,7 @@ class MilestoneLLMRuntimeMixin:
         history: list[PolicyTurn],
         extra: str = "",
         execution_scope: str = "",
-        effect_history: Optional[list[PolicyTurn]] = None,
+        response_history: Optional[list[PolicyTurn]] = None,
     ) -> _SingleCheckResult:
         app_name = self._app_name
         if not app_name:
@@ -71,7 +71,6 @@ class MilestoneLLMRuntimeMixin:
             observation,
             history,
             scope=execution_scope or execution_scope_for(milestone, observation),
-            ledger=self._action_ledger,
         )
         return run_checker(
             milestone,
@@ -85,7 +84,9 @@ class MilestoneLLMRuntimeMixin:
             check_knowledge=self._check_knowledge,
             context_reports=self._context_reports,
             state_trace_text=self._monitor.render(scope=execution_scope),
-            last_action_effect=self._last_action_effect_text(effect_history or history),
+            last_action_response=self._last_action_response_text(
+                response_history or history
+            ),
             initial_filters=self._initial_filters,
             runtime_filter=runtime_filter,
         )
@@ -233,7 +234,6 @@ class MilestoneLLMRuntimeMixin:
             observation,
             history,
             scope=execution_scope_for(milestone, observation),
-            ledger=self._action_ledger,
         )
         return run_planner(
             milestone,

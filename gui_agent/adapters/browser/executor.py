@@ -16,7 +16,6 @@ import re
 from typing import Optional
 
 from gui_agent.adapters.browser.actions import BrowserAction
-from gui_agent.adapters.browser.option_text import option_text_from_instruction
 from gui_agent.core.runtime.executor import VisionExecutor
 
 # Datepicker value set — directly writes el.value without firing events.
@@ -281,12 +280,6 @@ class BrowserExecutor(VisionExecutor):
                 print(f"  DOM 吸附: ({px:.0f},{py:.0f}) → ({cx:.0f},{cy:.0f}) [{info}]")
                 sx, sy = cx, cy
                 self._record_snap(px, py, sx, sy, info)
-            option_text = option_text_from_instruction(getattr(action, "description", "") or "")
-            if at in ("tap", "click") and option_text and (info or "").startswith("select "):
-                print(f"  原生下拉选择: {option_text!r}")
-                result = self._client().select_option(sx, sy, option_text)
-                print(f"  结果: {result}")
-                return "failed" not in result.lower()
         except Exception:  # noqa: BLE001 — never block a click on a snap failure
             pass
         return super()._tap(sx, sy)

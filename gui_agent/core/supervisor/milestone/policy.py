@@ -1,4 +1,4 @@
-"""MilestoneSupervisorPolicy: two-machine milestone supervisor."""
+"""Control-flow owner for one interactive milestone."""
 
 from collections.abc import Callable, Iterable
 from typing import Literal, Optional
@@ -12,7 +12,11 @@ from gui_agent.core.schemas import (
     TargetValue,
 )
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
-from gui_agent.core.run.action_ledger import ActionLedger
+from gui_agent.core.run.action_signals import (
+    action_signature,
+    latest_action,
+    record_latest_structured_response,
+)
 
 from .acquisition import (
     TargetAcquireController,
@@ -32,8 +36,8 @@ from .runtime import (
     _last_scroll_was_for,
 )
 from gui_agent.core.run.progress_monitor import (
+    ProgressAssessment,
     ProgressMonitor,
-    action_signature,
     canonical_url,
 )
 from .schemas import (
@@ -41,24 +45,20 @@ from .schemas import (
     _PlanResult,
     _ReplanResult,
     _SingleCheckResult,
+    action_metadata,
 )
 from .stuck import MilestoneStuckMixin
 from gui_agent.core.run.execution_signals import (
     ConstraintLedger,
     ExecutionContract,
     CompletionEvaluation,
-    CompletionEvaluator,
+    ExecutionCoordinator,
     claim,
 )
+from gui_agent.core.run.persistence import PersistenceAssessment, assess_persistence
 from gui_agent.core.run.mutation import (
     authorize_mutation,
     resolve_mutation,
-)
-from .action_protocol import (
-    action_metadata,
-    mutation_progress,
-    record_action_outcome,
-    record_action_response,
 )
 from .evidence import (
     action_lifecycle_claims,
@@ -128,9 +128,8 @@ class MilestoneSupervisorPolicy(
         # Progress memory is observational. It may trigger recovery in this policy, but it never
         # suppresses a primitive inside the action executor.
         self._monitor = ProgressMonitor()
-        self._action_ledger = ActionLedger()
         self._constraint_ledger = ConstraintLedger()
-        self._completion_evaluator = CompletionEvaluator()
+        self._execution_coordinator = ExecutionCoordinator()
         self._execution_contract: ExecutionContract | None = None
         self._current_execution_scope: str = ""
         self._early_feasibility_probed: set[str] = set()  # milestone ids given an early Feasibility probe
@@ -177,18 +176,6 @@ class MilestoneSupervisorPolicy(
         except Exception as exc:  # noqa: BLE001 - optional structure must not block execution
             print(f"  [TargetBinding] 活动表面解析失败，退回无表面身份：{exc}")
             return ""
-
-    @staticmethod
-    def _mutation_progress(
-        milestone: Milestone,
-        observation: Observation,
-        history: list[PolicyTurn],
-    ):
-        return mutation_progress(
-            milestone,
-            history,
-            scope=execution_scope_for(milestone, observation),
-        )
 
     def _mutation_observation(
         self,
@@ -291,7 +278,7 @@ class MilestoneSupervisorPolicy(
         evidence: str,
     ) -> CompletionEvaluation:
         """Evaluate a typed collection-boundary fact without inventing a business outcome."""
-        return self._completion_evaluator.decide(
+        return self._execution_coordinator.decide(
             execution_contract_for(milestone, self._execution_contract),
             [claim(
                 "collection.coverage",
@@ -502,7 +489,7 @@ class MilestoneSupervisorPolicy(
             print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
             synthetic = _SingleCheckResult(
                 status="in_progress",
-                outcome_status="unverified",
+                effect_status="unverified",
                 reason=f"刚进入子目标「{milestone.name}」，默认未完成",
                 summary="",
             )
@@ -532,11 +519,11 @@ class MilestoneSupervisorPolicy(
             and history[-1].executed
         ):
             response_history = [history[-1]]
-        record_action_response(
+        record_latest_structured_response(
             response_history,
-            milestone,
-            monitor=self._monitor,
-            ledger=self._action_ledger,
+            milestone.id,
+            url_changed=self._monitor.url_changed,
+            dom_changed=self._monitor.dom_changed,
         )
         if self._monitor.url_changed:
             print(f"  [URLChanged] {observation.url} → 已跳页(确定性)，抑制 no_effect/sim_stuck 误判")
@@ -544,45 +531,41 @@ class MilestoneSupervisorPolicy(
             print("  [DOMChanged] 表单值指纹有变化，抑制 stuck/重复误判")
 
         contract = execution_contract_for(milestone, self._execution_contract)
+        latest_dispatch = latest_action(history, milestone.id)
+        persistence_scope = (
+            getattr(latest_dispatch.supervisor, "execution_scope", "")
+            if latest_dispatch is not None
+            else ""
+        ) or execution_scope
+        persistence_assessment = assess_persistence(
+            milestone,
+            history,
+            scope=persistence_scope,
+            current_surface=self.surface_id(observation),
+        )
         evidence_claims = action_lifecycle_claims(
             milestone,
             history,
             scope=execution_scope,
-            monitor=self._monitor,
-            ledger=self._action_ledger,
         )
         evidence_claims.extend(observation_state_claims(
             milestone,
             observation,
             history,
             scope=execution_scope,
-            ledger=self._action_ledger,
         ))
-        terminal_response_pending = bool(
-            milestone.kind == "action"
-            and self._monitor.url_changed
-            and any(
-                item.domain == "action.execution"
-                and item.source_type == "runtime.commit_dispatch"
-                for item in evidence_claims
-            )
-        )
-
-        pre_completion = self._completion_evaluator.decide(
-            contract, evidence_claims, scope=execution_scope
+        pre_completion = self._execution_coordinator.decide(
+            contract,
+            evidence_claims,
+            scope=execution_scope,
+            persistence_assessment=persistence_assessment,
         )
         if pre_completion.status == "satisfied" and pre_completion.completion_status == "confirmed":
-            record_action_outcome(
-                response_history,
-                milestone,
-                pre_completion,
-                ledger=self._action_ledger,
-            )
             check = _SingleCheckResult(
                 status="done",
                 reason=pre_completion.reason,
                 summary="typed evidence confirmed completion",
-                outcome_status="confirmed",
+                effect_status="confirmed",
             )
             print(f"  [Completion] confirmed（{pre_completion.reason}）")
             self._last_check = check
@@ -593,12 +576,20 @@ class MilestoneSupervisorPolicy(
                 decision=pre_completion,
             )
 
+        awaiting_terminal_observation = bool(
+            pre_completion.next == "observe"
+            or (
+                pre_completion.next == "complete"
+                and pre_completion.completion_status == "accepted_unverified"
+            )
+        )
+
         # Target-directed scrolling is one semantic AcquireTarget operation. Adapter structure can
         # bind it deterministically; an unresolved target falls through to the normal visual path.
         # The controller owns only scrolling: expanding, clicking, navigation and writes remain
         # ordinary milestone actions after the target enters the viewport.
         acquire = None
-        if not terminal_response_pending and not self._observe_only:
+        if not awaiting_terminal_observation and not self._observe_only:
             acquire = self._target_acquire.decide(
                 getattr(observation, "form_controls", None),
                 milestone,
@@ -608,7 +599,7 @@ class MilestoneSupervisorPolicy(
         if acquire_plan is not None:
             check = _SingleCheckResult(
                 status="in_progress",
-                outcome_status="unverified",
+                effect_status="unverified",
                 reason=acquire_plan.summary,
                 summary=acquire_plan.summary,
                 missing_evidence=["目标已唯一绑定，需先滚动到视口内再执行操作。"],
@@ -636,19 +627,14 @@ class MilestoneSupervisorPolicy(
         # disambiguate it. Only a uniquely-bound target that repeatedly failed to move is a
         # deterministic acquire failure.
         if acquire is not None and acquire.status == "exhausted":
-            check = _SingleCheckResult(
-                status="stuck",
-                outcome_status="unverified",
-                reason=acquire.reason,
-                stuck_reason=acquire.reason,
-                summary="AcquireTarget could not produce a unique progressing scroll route",
-                missing_evidence=["需要重新绑定唯一目标或选择新的页内获取路径。"],
-            )
-            self._last_check = check
             print(f"  [AcquireTarget] {acquire.status}: {acquire.reason}")
             return self._handle_stuck(
                 milestone,
-                check,
+                ProgressAssessment(
+                    status="exhausted",
+                    reason=acquire.reason,
+                    source_type="runtime.target_acquire",
+                ),
                 None,
                 observation,
                 scoped_history,
@@ -660,7 +646,7 @@ class MilestoneSupervisorPolicy(
                 observation,
                 scoped_history,
                 execution_scope=execution_scope,
-                effect_history=response_history,
+                response_history=response_history,
             )
         self._last_check = check
         print(f"  [SingleCheck] {check.status}: {check.reason}")
@@ -695,40 +681,20 @@ class MilestoneSupervisorPolicy(
                 authoritative=True,
                 coverage="complete",
             ))
-        post_completion = self._completion_evaluator.decide(
-            contract, evidence_claims, scope=execution_scope
+        post_completion = self._execution_coordinator.decide(
+            contract,
+            evidence_claims,
+            scope=execution_scope,
+            persistence_assessment=persistence_assessment,
         )
-        record_action_outcome(
-            response_history,
-            milestone,
-            post_completion,
-            ledger=self._action_ledger,
-        )
-        if (
-            post_completion.status == "pending"
-            and "action.write.required" in post_completion.conflicts
-        ):
+        if post_completion.next == "commit":
             check = check.model_copy(update={
                 "status": "in_progress",
-                "outcome_status": "unverified",
+                "effect_status": "unverified",
                 "reason": post_completion.reason,
-                "summary": "execution contract requires a target write before commit",
-                "missing_evidence": ["先写入声明的业务目标字段，再执行终端提交。"],
-            })
-            self._last_check = check
-        elif (
-            post_completion.status == "pending"
-            and "action.commit.required" in post_completion.conflicts
-        ):
-            check = check.model_copy(update={
-                "status": "in_progress",
-                "outcome_status": "unverified",
-                "reason": post_completion.reason,
-                "summary": "execution contract requires terminal persistence",
-                "missing_evidence": [
-                    "完成前仍需越过声明的持久化边界；沿当前流程前进，"
-                    "不要重写已经满足的业务字段。"
-                ],
+                "stuck_reason": "",
+                "summary": "persistence boundary remains pending",
+                "missing_evidence": ["沿当前资源表面执行终端持久化动作。"],
             })
             self._last_check = check
         accepted_unverified = post_completion.completion_status == "accepted_unverified"
@@ -738,16 +704,16 @@ class MilestoneSupervisorPolicy(
                     "status": "done",
                     "reason": post_completion.reason,
                     "summary": (
-                        "completion evidence accepted dispatched terminal without outcome feedback"
+                        "completion evidence accepted dispatched terminal without effect feedback"
                         if accepted_unverified
                         else "completion evidence confirmed"
                     ),
-                    "outcome_status": (
+                    "effect_status": (
                         "unverified" if accepted_unverified else "confirmed"
                     ),
                 })
             if accepted_unverified:
-                print("  [Completion] dispatch accepted without outcome feedback")
+                print("  [Completion] dispatch accepted without effect feedback")
             else:
                 print(f"  [Completion] confirmed（{post_completion.reason}）")
             self._last_check = check
@@ -813,15 +779,48 @@ class MilestoneSupervisorPolicy(
                 **_ctx(milestone, check.read_instruction),
             )
 
-        # The checker itself judged NO PROGRESS (status=stuck) from the 任务进展轨迹 (PROGRESS half of
-        # the checker): the agent is looping / dead-ending, not advancing. Route to the stuck path —
-        # replan + the early Feasibility probe — the same as the deterministic detectors.
-        if check.status == "stuck":
-            print(f"  [Checker] 判定无进展(stuck)：{check.stuck_reason or check.reason}")
-            return self._handle_stuck(milestone, check, check.read_instruction, observation, scoped_history)
+        if post_completion.next == "observe":
+            milestone.status = "running"
+            return SupervisorStep(
+                should_act=False,
+                instruction=None,
+                stop=False,
+                goal_completed=False,
+                summary=post_completion.reason,
+                execution_scope=execution_scope,
+                **_ctx(milestone, check.read_instruction),
+            )
+
+        if post_completion.next == "commit":
+            return self._plan_single(
+                milestone, check, observation, scoped_history, persistence_assessment
+            )
+
+        if post_completion.next == "recover":
+            failed_check = check.model_copy(update={
+                "status": "stuck",
+                "effect_status": "unverified",
+                "reason": post_completion.reason,
+                "stuck_reason": post_completion.reason,
+            })
+            self._last_check = failed_check
+            return self._handle_stuck(
+                milestone,
+                failed_check,
+                check.read_instruction,
+                observation,
+                scoped_history,
+            )
+
+        if post_completion.next == "act" and check.status == "stuck":
+            return self._handle_stuck(
+                milestone, check, check.read_instruction, observation, scoped_history
+            )
 
         if milestone.completion_strategy == "react_until_collected":
-            return self._plan_single(milestone, check, observation, scoped_history)
+            return self._plan_single(
+                milestone, check, observation, scoped_history, persistence_assessment
+            )
 
         # Off-target last action (post-action targeting verify said the tap missed) — and the
         # milestone is NOT done (checked above) → route straight into replan. Catches "screen
@@ -829,14 +828,22 @@ class MilestoneSupervisorPolicy(
         last_tv = milestone_history[-1].target_verify if milestone_history else None
         if last_tv is not None and not last_tv.on_target:
             print(f"  [OffTarget] 上一步误中「{last_tv.actual_element}」，已先验收(未完成)→ replan")
-            stuck = _SingleCheckResult(
-                status="stuck",
-                outcome_status="unverified",
-                reason=f"上一步没有打开预期元素，当前停留在「{last_tv.actual_element}」相关状态",
-                stuck_reason=f"上一步没有到达预期元素，当前显示「{last_tv.actual_element}」相关状态",
-                summary="",
+            # Normally action_lifecycle_claims has already routed this through the coordinator.
+            # Keep a typed progress fallback for legacy turns without an action receipt.
+            return self._handle_stuck(
+                milestone,
+                ProgressAssessment(
+                    status="stalled",
+                    reason=(
+                        "上一步没有到达预期元素，当前显示"
+                        f"「{last_tv.actual_element}」相关状态"
+                    ),
+                    source_type="runtime.target_progress",
+                ),
+                check.read_instruction,
+                observation,
+                scoped_history,
             )
-            return self._handle_stuck(milestone, stuck, None, observation, scoped_history)
 
         # Ineffective last tap: target_verify said on_target (hit the intended element) yet
         # settle saw zero screen change → the tap did nothing (re-tapped an already-active tab
@@ -857,14 +864,17 @@ class MilestoneSupervisorPolicy(
         ):
             tapped = last_turn.action_decision.action.description or "目标元素"
             print(f"  [NoEffect] 上一步点击「{tapped}」落点正确但屏幕零变化，已先验收(未完成)→ replan")
-            stuck = _SingleCheckResult(
-                status="stuck",
-                outcome_status="unverified",
-                reason=f"点击「{tapped}」后页面没有出现验收条件所需的可见变化",
-                stuck_reason=f"点击「{tapped}」后仍未看到目标状态，应尝试其他可见入口",
-                summary="",
+            return self._handle_stuck(
+                milestone,
+                ProgressAssessment(
+                    status="stalled",
+                    reason=f"点击「{tapped}」后页面没有出现验收条件所需的可见变化",
+                    source_type="runtime.no_effect_progress",
+                ),
+                check.read_instruction,
+                observation,
+                scoped_history,
             )
-            return self._handle_stuck(milestone, stuck, None, observation, scoped_history)
 
         prev_action = (
             milestone_history[-1].action_decision.action
@@ -880,7 +890,8 @@ class MilestoneSupervisorPolicy(
             if sim_stuck is not None:
                 print(f"  [Stuck] {sim_stuck.status}: {sim_stuck.reason}")
                 return self._handle_stuck(
-                    milestone, sim_stuck, check.read_instruction, observation, scoped_history,
+                    milestone, sim_stuck, check.read_instruction,
+                    observation, scoped_history,
                     page_changed=False,
                     prev_page_id=prev_page_id, current_page_id=current_page_id,
                 )
@@ -888,11 +899,14 @@ class MilestoneSupervisorPolicy(
             stall = self._monitor.check_value_stall(milestone, check)
             if stall is not None:
                 return self._handle_stuck(
-                    milestone, stall, check.read_instruction, observation, scoped_history,
+                    milestone, stall, check.read_instruction,
+                    observation, scoped_history,
                     page_changed=False,
                     prev_page_id=prev_page_id, current_page_id=current_page_id,
                 )
-            return self._plan_single(milestone, check, observation, scoped_history)
+            return self._plan_single(
+                milestone, check, observation, scoped_history, persistence_assessment
+            )
 
         sim_stuck = None if (self._monitor.url_changed or self._monitor.dom_changed) else self._monitor.check_screen_similarity(observation, self._monitor.action_center(prev_action))
         self._last_check_summary[milestone.id] = check.summary
@@ -916,17 +930,20 @@ class MilestoneSupervisorPolicy(
             print("  [RepStuck] 已抑制：表单值指纹在变化（填表推进中）")
             rep_stuck = None
         if sim_stuck or rep_stuck:
-            stuck = sim_stuck or rep_stuck
-            assert stuck is not None
-            print(f"  [Stuck] {stuck.status}: {stuck.reason}")
+            progress = sim_stuck or rep_stuck
+            assert progress is not None
+            print(f"  [Stuck] {progress.status}: {progress.reason}")
             page_changed = sim_stuck is None
             return self._handle_stuck(
-                milestone, stuck, check.read_instruction, observation, scoped_history,
+                milestone, progress, check.read_instruction,
+                observation, scoped_history,
                 page_changed=page_changed,
                 prev_page_id=prev_page_id,
                 current_page_id=current_page_id,
             )
-        return self._plan_single(milestone, check, observation, scoped_history)
+        return self._plan_single(
+            milestone, check, observation, scoped_history, persistence_assessment
+        )
 
     def _plan_single(
         self,
@@ -934,6 +951,7 @@ class MilestoneSupervisorPolicy(
         check: _SingleCheckResult,
         observation: Observation,
         history: list[PolicyTurn],
+        persistence_assessment: PersistenceAssessment | None = None,
     ) -> SupervisorStep:
         execution_scope = execution_scope_for(milestone, observation)
         if self._observe_only:
@@ -949,7 +967,9 @@ class MilestoneSupervisorPolicy(
                 **_ctx(milestone, check.read_instruction),
             )
         current_surface_id = self.surface_id(observation)
-        progress = self._mutation_progress(milestone, observation, history)
+        persistence = persistence_assessment or assess_persistence(
+            milestone, history, scope=execution_scope, current_surface=current_surface_id
+        )
         mutation_required = bool(milestone.kind == "action" and milestone.target_values)
         mutation_subject = (
             resolve_mutation(
@@ -982,50 +1002,59 @@ class MilestoneSupervisorPolicy(
             )
             print(f"  [Mutation] {plan.summary}")
         else:
-            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
-                plan = self._invoke_planner(milestone, check, observation, history)
+            written_fields = {
+                receipt.field.strip().casefold()
+                for receipt in persistence.pending_receipts
+            }
+            writes_complete = bool(milestone.target_values) and all(
+                str(field).strip().casefold() in written_fields
+                for field in milestone.target_values
+            )
+            planner_extra = (
+                "结构化持久化证据表明目标写入已完成、持久化边界仍待提交。"
+                "请沿当前表面提出 atomic_role=commit 的前向提交动作；"
+                "不要重复已经完成的目标写入或重新进入准备流程。"
+                if persistence.terminal_ready
+                else (
+                    "结构化 write receipts 已覆盖全部声明目标字段。"
+                    "继续当前工作流的前向步骤，不要返回先前的目标选择或写入阶段；"
+                    "这些 receipts 只约束路线，不代表业务效果已经完成。"
+                    if writes_complete
+                    else ""
+                )
+            )
+            planner_hints = [planner_extra]
+            if persistence.terminal_ready:
+                planner_hints.append(
+                    "ExecutionCoordinator 已将下一转移裁定为 commit。"
+                    "只提出当前表面可执行的一个 atomic_role=commit 动作；"
+                    "不要返回 prepare/write/navigation。"
+                )
+            for extra in planner_hints:
+                with _Timer(
+                    self._timings, self._timings_order, "planner", self._token_usage
+                ):
+                    plan = self._invoke_planner(
+                        milestone, check, observation, history, extra=extra,
+                    )
+                if not persistence.terminal_ready or plan.atomic_role == "commit":
+                    break
+            if persistence.terminal_ready and plan.atomic_role != "commit":
+                reason = "terminal persistence is pending; non-commit proposal rejected"
+                self._add_runtime_constraint(
+                    reason, scope=execution_scope, source="persistence"
+                )
+                print("  [Persistence] 重试仍非 commit，本轮不派发")
+                plan = _PlanResult(
+                    instruction="", summary=reason,
+                    atomic_role="commit", action_family="unknown",
+                )
         if not mutation_owned_plan and self._is_sequence(plan.instruction):
             print("  [Planner] 多步序列，重试...")
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
                 plan = self._invoke_planner(
                     milestone, check, observation, history,
                     extra="你刚才输出了多个步骤，请只返回当前屏幕上马上要做的一个操作。",
-                )
-        if (
-            not mutation_owned_plan
-            and progress.rejects(
-                plan,
-                milestone,
-                current_surface_id=current_surface_id,
-            )
-        ):
-            print(
-                "  [MutationProgress] 提议回到已完成的 preparation，"
-                "拒绝回退并要求新的前向动作"
-            )
-            with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
-                plan = self._invoke_planner(
-                    milestone,
-                    check,
-                    observation,
-                    history,
-                    extra=(
-                        "你的提议与已确认的 mutation 进度冲突，禁止新增或重进 preparation/navigation。"
-                        "若目标写入已完成、嵌套 commit 已返回 entry surface，当前只允许提出"
-                        " atomic_role=commit 的终态持久化动作；否则选择尚未执行的前向动作。"
-                    ),
-                )
-            if progress.rejects(
-                plan,
-                milestone,
-                current_surface_id=current_surface_id,
-            ):
-                print("  [MutationProgress] 重试仍回退，保持未决且不派发动作")
-                plan = _PlanResult(
-                    instruction="",
-                    summary="mutation 进度无法确认新的安全前向动作，本轮不派发。",
-                    atomic_role="prepare",
-                    action_family="unknown",
                 )
         atomic_role, action_family = action_metadata(plan, milestone)
         mutation_authorization = None
@@ -1174,16 +1203,15 @@ class MilestoneSupervisorPolicy(
         if scroll_count > budget:
             print(f"  [Loop] 滚动预算耗尽（{scroll_count}/{budget}，observable={milestone.observable_boundary}）→ 结束收集")
             if not _has_successful_scroll_for(scoped_history, milestone.id):
-                stuck = _SingleCheckResult(
-                    status="stuck",
-                    outcome_status="unverified",
+                progress = ProgressAssessment(
+                    status="exhausted",
                     reason="滚动预算耗尽，但尚未观测到任何成功执行的纵向滚动",
-                    stuck_reason="无法区分页面边界与无效滚动，且缺少有效滚动证据",
-                    issues=["没有成功滚动记录"],
-                    summary="滚动未取得可验证进展",
+                    source_type="runtime.collection_progress",
                 )
                 read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
-                return self._handle_stuck(milestone, stuck, read_inst, observation, scoped_history)
+                return self._handle_stuck(
+                    milestone, progress, read_inst, observation, scoped_history,
+                )
             return self._advance_from_collection_controller(
                 milestone, observation, history,
                 evidence="collection scroll budget exhausted after successful traversal",
@@ -1200,7 +1228,9 @@ class MilestoneSupervisorPolicy(
                 if not _has_successful_scroll_for(scoped_history, milestone.id):
                     print("  [Loop] 屏幕冻结且无成功滚动证据 → 判为无效滚动，触发重规划")
                     read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
-                    return self._handle_stuck(milestone, sim_stuck, read_inst, observation, scoped_history)
+                    return self._handle_stuck(
+                        milestone, sim_stuck, read_inst, observation, scoped_history,
+                    )
                 print("  [Loop] 屏幕冻结（≥99%），即使 reader 返回新内容也结束收集")
                 return self._advance_from_collection_controller(
                     milestone, observation, history,
@@ -1210,7 +1240,9 @@ class MilestoneSupervisorPolicy(
                 if not _has_successful_scroll_for(scoped_history, milestone.id):
                     print("  [Loop] 截图连续无变化且无成功滚动证据 → 判为无效滚动，触发重规划")
                     read_inst = None if self.task_type == "action" else _default_read_instruction(milestone)
-                    return self._handle_stuck(milestone, sim_stuck, read_inst, observation, scoped_history)
+                    return self._handle_stuck(
+                        milestone, sim_stuck, read_inst, observation, scoped_history,
+                    )
                 print("  [Loop] 截图连续无变化且无新增内容 → 判为边界，结束收集")
                 return self._advance_from_collection_controller(
                     milestone, observation, history,
@@ -1266,14 +1298,14 @@ class MilestoneSupervisorPolicy(
                 # 零滚动+零采集时结束收集。落到下方滚动规划块。
                 print("  [Loop] 停止条件触发但尚未滚动过且零采集 → 先强制滚动一次验证边界，不判完成")
             else:
-                stuck = _SingleCheckResult(
-                    status="stuck",
-                    outcome_status="unverified",
+                progress = ProgressAssessment(
+                    status="stalled",
                     reason=f"停止条件已触发但尚未采集到目标内容：{frame.stop_reason}",
-                    stuck_reason="停止条件触发且没有可用采集结果",
-                    summary=frame.summary,
+                    source_type="runtime.collection_progress",
                 )
-                return self._handle_stuck(milestone, stuck, read_inst, observation, scoped_history)
+                return self._handle_stuck(
+                    milestone, progress, read_inst, observation, scoped_history,
+                )
 
         if frame.boundary_reached and _last_scroll_was_for(scoped_history, milestone.id):
             print("  [Loop] 确认列表边界 → 结束收集")
@@ -1414,7 +1446,7 @@ class MilestoneSupervisorPolicy(
             # (done check for the completed milestone already saved at the top of _advance)
             synthetic = _SingleCheckResult(
                 status="in_progress",
-                outcome_status="unverified",
+                effect_status="unverified",
                 reason=f"刚进入子目标「{next_ms.name}」，默认未完成",
                 summary="",
             )
@@ -1427,7 +1459,7 @@ class MilestoneSupervisorPolicy(
     def _handle_stuck(
         self,
         milestone: Milestone,
-        check: _SingleCheckResult,
+        check: _SingleCheckResult | ProgressAssessment,
         read_inst: Optional[str],
         observation: Observation,
         history: list[PolicyTurn],
@@ -1435,6 +1467,16 @@ class MilestoneSupervisorPolicy(
         prev_page_id: str = "",
         current_page_id: str = "",
     ) -> SupervisorStep:
+        if isinstance(check, ProgressAssessment):
+            check = _SingleCheckResult(
+                status="stuck",
+                effect_status="unverified",
+                reason=check.reason,
+                stuck_reason=check.reason,
+                summary="execution trajectory stalled",
+                frozen=check.frozen,
+            )
+            self._last_check = check
         self._monitor.clear_screenshots()
         skip_retry = False
         if history and history[-1].supervisor and history[-1].supervisor.milestone_id == milestone.id:
@@ -1506,7 +1548,7 @@ class MilestoneSupervisorPolicy(
             print("  [Replan] force_complete 不产生完成证据，退回本地规划")
             check = check.model_copy(update={
                 "status": "in_progress",
-                "outcome_status": "unverified",
+                "effect_status": "unverified",
                 "reason": "replanner requested completion without new authoritative evidence",
                 "summary": "completion request deferred to the normal evidence path",
             })
@@ -1531,16 +1573,6 @@ class MilestoneSupervisorPolicy(
                 **_ctx(milestone, read_inst),
             )
 
-        progress = self._mutation_progress(milestone, observation, history)
-        if progress.rejects(
-            replan,
-            milestone,
-            current_surface_id=self.surface_id(observation),
-        ):
-            print("  [MutationProgress] replanner 提议回到已关闭的 preparation，退回常规规划")
-            self._last_check = check.model_copy(update={"outcome_status": "unverified"})
-            return self._plan_single(milestone, self._last_check, observation, history)
-
         atomic_role, action_family = action_metadata(replan, milestone)
         mutation_required = bool(milestone.kind == "action" and milestone.target_values)
         if mutation_required and atomic_role == "write":
@@ -1548,7 +1580,7 @@ class MilestoneSupervisorPolicy(
             check = check.model_copy(
                 update={
                     "status": "in_progress",
-                    "outcome_status": "unverified",
+                    "effect_status": "unverified",
                     "reason": "mutation write requires normal subject resolution",
                 }
             )
@@ -1601,14 +1633,18 @@ class MilestoneSupervisorPolicy(
         # the page redirected away. Re-decomposing here could redo the completed mutation after the
         # original form has vanished. Degrade to a clean bounded failure instead. This is skipped
         # when the frame shows negative feedback because that means the submit did not take.
-        progress = self._mutation_progress(milestone, observation, history) if history else None
-        if (
-            progress is not None
-            and progress.phase == "terminal"
-            and not (
-                isinstance(self._last_check, _SingleCheckResult)
-                and self._last_check.outcome_status == "contradicted"
+        persistence = (
+            assess_persistence(
+                milestone,
+                history,
+                scope=execution_scope_for(milestone, observation),
             )
+            if history
+            else None
+        )
+        if (
+            persistence is not None
+            and persistence.status == "submitted"
         ):
             print("  [Feasibility] 跳过踢回：该里程碑的终端提交已成功派发，不把已完成的 mutation 送去重规划")
             return None
@@ -1734,8 +1770,8 @@ class MilestoneSupervisorPolicy(
         self._collection_progress = text or ""
         self._collection_done = bool(done)
 
-    def _last_action_effect_text(self, history: list[PolicyTurn]) -> str:
-        """Deterministic execution/effect fact for the checker.
+    def _last_action_response_text(self, history: list[PolicyTurn]) -> str:
+        """Deterministic execution/response fact for the checker.
 
         "动作是否执行成功"与"动作效果是否达成"是两个独立判断，不能用效果
         (如某列是否出现)反推动作有没有执行。这里只报告动作执行的确定性事实(URL/交互指纹
@@ -1751,41 +1787,39 @@ class MilestoneSupervisorPolicy(
         no_effect = bool(getattr(last, "no_effect", False))
         if signal is not None:
             execution_signal = signal.execution
-            effect_signal = signal.response
+            response_signal = signal.response
             fact = (
-                f"结构化动作信号：target={signal.target}, response={signal.response}, "
-                f"outcome={signal.outcome}."
+                f"结构化动作信号：target={signal.target}, response={signal.response}."
             )
         elif not executed:
             execution_signal = "not_dispatched"
-            effect_signal = "none"
+            response_signal = "none"
             fact = "上一步动作未被执行(动作未发出)。"
         elif self._monitor.url_changed:
             execution_signal = "dispatched"
-            effect_signal = "url_changed"
+            response_signal = "url_changed"
             fact = "页面 URL 已变化——上一步动作确定性地产生了导航效果。"
         elif self._monitor.dom_changed:
             execution_signal = "dispatched"
-            effect_signal = "dom_changed"
+            response_signal = "dom_changed"
             fact = "页面表单值指纹已变化(dom_changed)——上一步动作确定性地改变了控件值。"
         elif no_effect:
             execution_signal = "dispatched"
-            effect_signal = "no_visible_effect"
+            response_signal = "no_visible_effect"
             fact = "动作已发出,但 settle 全程页面零变化(no_effect)——未观察到可见/DOM 反馈。"
         else:
             execution_signal = "dispatched"
-            effect_signal = "unknown"
+            response_signal = "unknown"
             fact = "动作已发出,但当前平台没有提供可判定的 URL/DOM/视觉反馈信号。"
         return (
             "## 上一步动作信号(运行时事实,非视觉推断)\n"
             f"- action: {instr_brief}\n"
             f"- execution_signal: {execution_signal}\n"
-            f"- effect_signal: {effect_signal}\n"
-            f"- outcome_signal: {(signal.outcome if signal is not None else 'unverified')}\n"
+            f"- response_signal: {response_signal}\n"
             f"- detail: {fact}\n"
-            "裁决规则：execution_signal 只回答“动作是否已派发/执行”，effect_signal 只回答"
+            "裁决规则：execution_signal 只回答“动作是否已派发/执行”，response_signal 只回答"
             "“派发后是否观察到 URL/DOM/视觉反馈”，二者都不直接等于业务目标状态。"
-            "若 execution_signal=dispatched 而 effect_signal=no_visible_effect/unknown，不能写成"
+            "若 execution_signal=dispatched 而 response_signal=no_visible_effect/unknown，不能写成"
             "“动作没点中/未执行/需要重复点击同一控件”；只能说“动作已执行但当前反馈通道未提供"
             "目标状态证据”。对提交/保存/发送这类终端派发动作，若页面没有错误/校验失败，"
             "不要仅因缺少成功 toast/历史新增可见反馈而要求重复提交。"

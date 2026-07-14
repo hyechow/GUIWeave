@@ -122,19 +122,24 @@ turn、LLM 统计和 recovery ledger。
 
 ## 动作信号与完成状态
 
-交互动作不能压缩成单一的“成功/失败”或“看见反馈/没看见反馈”。每次原子动作记录四条
-相互独立的信号：
+交互动作不能压缩成单一的“成功/失败”或“看见反馈/没看见反馈”。执行层分开记录三类事实：
 
 ```text
 execution: not_attempted | dispatched | dispatch_failed
 target:    on_target | off_target | unknown
 response:  observed | none_observed | unobservable | unknown
-outcome:   confirmed | contradicted | unverified
+
+effect.status:    satisfied | unmet | contradicted | unknown
+effect.freshness: preexisting | current_run | unknown
+
+progress:    advancing | stalled | exhausted
+persistence: clean | pending | submitted
 ```
 
 其中 `execution` 回答“执行器是否可靠派发”，`target` 回答“动作是否落在预期对象”，
-`response` 只描述页面是否给出响应，`outcome` 才回答业务终态是否得到证明。URL 变化、toast、
-列表刷新等都属于 response channel；它们可能帮助确认 outcome，但二者不能互相代替。
+`response` 只描述页面是否给出响应。`effect` 回答声明的业务状态是否满足，`persistence`
+回答本轮写入是否跨过声明的持久化边界。URL 变化、toast、列表刷新等只产生 response 或
+effect 证据；它们不能自行证明动作派发、业务效果和持久化三者同时成立。
 
 Milestone 的完成状态另行记录：
 
@@ -150,10 +155,24 @@ completion_status: confirmed | accepted_unverified | failed | in_progress
 4. 弱视觉推断只能辅助，不能覆盖相反的结构化证据。
 
 第三档只能产生 `accepted_unverified`：Interpreter 可以继续执行后续 statement，但最终结果层
-不得把它表述为“已确认成功”。`outcome=contradicted` 时不能凭 dispatch 推进；没有 toast 也
-不能据此重复提交。`mutation_mode=change` 的写操作不能被 PreExisting 状态吞掉。
+不得把它表述为“已确认成功”。`effect.status=contradicted` 时不能凭 dispatch 推进；没有 toast
+也不能据此重复提交。`effect_mode=transform` 的写操作不能被 preexisting 状态吞掉。
 
-## 动作账本与重复提交
+`progress` 只描述跨帧执行轨迹，不能把目标值暂未出现解释成业务失败。`persistence`
+只投影 write/commit receipt 是否越过边界，不吸收业务效果。
+
+动作事实只有一条归档路径：executor 在 concrete primitive 产生后固定 `role/action_key`，各传感器
+把 dispatch、target、visual/URL/DOM response 交给 `action_signals.py` 追加到同一 receipt；
+`turns.py` 只落盘，`evidence.py` 只从 receipt 和当前 observation 投影 claim。后两者不得重新解释
+动作，也不得直接读取跨帧 monitor 制造第二份响应事实。
+
+`ExecutionCoordinator` 是唯一把 action/effect/persistence claim 归约成完成建议的组件；`policy.py`
+是唯一应用建议、推进 Milestone 或发起恢复的控制流所有者。只有 Coordinator 仍建议普通 `act`
+且 `ProgressMonitor` 给出停滞事实时，policy 才能升级为 `recover`；明确的 `commit` 前沿和已经确认
+的完成不受模糊 stuck 覆盖。checker、planner、monitor 和 adapter 只提供证据或提案，
+不能独立推进或重规划 Milestone。
+
+## 动作回执与持久边界
 
 Planner 为每个原子动作声明 `atomic_role`：
 
@@ -167,18 +186,29 @@ prepare | write | commit | iterate
 - `iterate` 是允许重复并由边界/目标值终止的调节动作。
 
 交互 Run 还声明 `target_controls`；input/select proposal 必须命中这些字段或控件，不能在目标控件
-尚未渲染时改用相邻的全局搜索框。action 通过 `mutation_mode` 区分幂等 `ensure` 与要求本轮变化的
-`change`：ensure 可由权威既有状态完成；change 必须先有同 scope 的 write，存在持久化边界时再有
-commit。只有滚动和保存不能证明本轮产生了目标变化。
+尚未渲染时改用相邻的全局搜索框。`effect_mode=ensure` 可由权威既有状态完成，
+`effect_mode=transform` 必须有本轮效果证据。`persistence=explicit_commit` 还要求同 scope 的写入
+跨过终端 commit；只有滚动或保存不能证明本轮产生了目标变化。
 
-执行器在真正调用平台 adapter 之前，用 `execution_scope + milestone_id + atomic_role` 形成语义
-动作键并查询 run-scoped `ActionLedger`。同一 scope 的 commit 已经 `dispatched` 且未被
-`contradicted` 时，后续同义 commit 必须在 dispatch 前被抑制；坐标漂移或按钮文案轻微变化不应
-绕过此门。若 outcome 明确 contradicted，只有先出现新的 write 修正动作，才允许再次 commit。
-foreach 的不同 row identity 属于不同 scope，因此不会互相误伤。
+持久化状态从当前 statement 的结构化 write/commit receipts 投影，不维护第二套可变事务对象。
+首个可观测 surface 只是 entry/root 的 fallback；只有 entry surface 上的 commit 才是终端边界。
+子表面的 in-place commit 只完成准备，URL 变化本身也不把它升级成终端提交。没有父级提交的工作流
+必须由 DSL 声明 `persistence=immediate`，不能靠 URL 启发式猜测完成。
 
-旧字段 `executed`、`no_effect` 和 `target_verify` 只承担持久化上下文兼容；新决策不得再把它们
-拼成单一“动作成功”结论。
+在 `terminal_ready` 之前，执行器允许继续提出前向 prepare；它不再从动作文本历史推断一套
+“已关闭 preparation”状态机。在子流程已提交并回到 entry surface 后，下一转移只能是 commit：
+planner 重试仍返回 prepare/write/navigation 时，本轮不派发。这个窄门防止重开子流程，同时不把
+正常 acquire/向导步骤误判为回退。
+
+执行器在平台 adapter 成功派发 concrete primitive 后，用
+`execution_scope + milestone_id + atomic_role` 形成语义动作键并写入同一 `ActionSignal` 回执。
+动作键只标识历史事实，不在 dispatch 前充当第二套授权或重复提交门。持久化投影按 scope 读取
+write/commit 回执；`terminal_ready` 后由 policy 只接收终端 commit。foreach 的不同 row identity
+属于不同 scope，因此不会互相污染。
+
+旧字段 `mutation_mode`、`requires_commit`、`executed`、`no_effect` 和 `target_verify` 只承担模型
+边界或历史上下文兼容；新决策不得再把它们拼成单一“动作成功”结论。Program 与 Milestone 的
+反序列化都经过同一兼容归一化函数，运行时只消费新合同字段。
 
 ## 执行预算与终态观察
 

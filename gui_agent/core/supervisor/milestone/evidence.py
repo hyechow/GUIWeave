@@ -6,18 +6,17 @@ advance, retry, fail, or otherwise own execution control flow.
 
 from __future__ import annotations
 
-from gui_agent.core.run.action_ledger import ActionLedger
+from gui_agent.core.run.action_signals import latest_action
 from gui_agent.core.run.execution_signals import (
     EvidenceClaim,
     ExecutionContract,
     claim,
     target_matches_declared,
 )
-from gui_agent.core.run.progress_monitor import ProgressMonitor
 from gui_agent.core.run.mutation import resolve_mutation
+from gui_agent.core.run.persistence import assess_persistence
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 
-from .action_protocol import mutation_progress
 from .observation_state import (
     RuntimeFilterIntent,
     filter_chips_clean,
@@ -43,8 +42,6 @@ def action_lifecycle_claims(
     history: list[PolicyTurn],
     *,
     scope: str,
-    monitor: ProgressMonitor,
-    ledger: ActionLedger,
 ) -> list[EvidenceClaim]:
     """Translate persisted action lifecycle state into typed evidence claims."""
     claims: list[EvidenceClaim] = []
@@ -61,32 +58,36 @@ def action_lifecycle_claims(
         and history[-1] not in scoped_history
     ):
         scoped_history.append(history[-1])
-    latest = ledger.latest_dispatched(scoped_history, milestone.id)
+    latest = latest_action(scoped_history, milestone.id)
     if latest is None:
         return claims
     lifecycle_scope = getattr(latest.supervisor, "execution_scope", "") or scope
-    progress = mutation_progress(milestone, history, scope=lifecycle_scope)
-    latest = progress.latest_dispatch or latest
-    if monitor.url_changed or monitor.dom_changed:
+    persistence = assess_persistence(milestone, history, scope=lifecycle_scope)
+    signal = latest.action_signal
+    if signal is not None and signal.response == "observed":
+        channels = set(signal.response_channels)
         claims.append(claim(
             "page.response",
             "confirmed",
-            source_type="runtime.effect_monitor",
+            source_type="runtime.action_response",
             scope=scope,
             subject_scope=lifecycle_scope,
             evidence=(
                 "URL changed after the previous action"
-                if monitor.url_changed
+                if "url" in channels
                 else "structured page state changed after the previous action"
             ),
             authoritative=True,
             coverage=(
                 "navigation_transition"
-                if monitor.url_changed
+                if "url" in channels
                 else "in_place_transition"
             ),
         ))
-    terminal = progress.terminal_index is not None and latest.index == progress.terminal_index
+    terminal = bool(
+        persistence.terminal_turn is not None
+        and latest.index == persistence.terminal_turn.index
+    )
     claims.append(claim(
         "action.execution",
         "confirmed",
@@ -96,11 +97,11 @@ def action_lifecycle_claims(
         evidence="runtime action ledger records a dispatched event",
         authoritative=True,
     ))
-    write_turn = progress.latest_write
+    write_turn = persistence.latest_write
     if (
         write_turn is None
         and terminal
-        and not milestone.requires_commit
+        and milestone.persistence == "immediate"
         and not (milestone.kind == "action" and milestone.target_values)
         and latest.action_signal is not None
         and target_matches_declared(
@@ -166,16 +167,27 @@ def target_value_claims(
             authoritative=True,
             coverage="resolved_subject",
         ))
-    elif state.status in {"preparing", "writable", "absent", "ambiguous"}:
+    elif state.status in {"preparing", "writable", "absent"}:
         claims.append(claim(
             "control.state",
-            "contradicted",
+            "unmet",
             source_type="obs.mutation.desired_state",
             scope=scope,
             subject_scope=state.subject_ref or scope,
             evidence=state.evidence,
             authoritative=True,
             coverage="resolved_subject",
+        ))
+    elif state.status == "ambiguous":
+        claims.append(claim(
+            "control.state",
+            "unverified",
+            source_type="obs.mutation.desired_state",
+            scope=scope,
+            subject_scope=state.subject_ref or scope,
+            evidence=state.evidence,
+            authoritative=True,
+            coverage="ambiguous_subject",
         ))
     return claims
 
@@ -187,16 +199,18 @@ def checker_claim(
     subject_scope: str = "",
 ) -> EvidenceClaim:
     """Translate a probabilistic checker result without granting it control-flow authority."""
-    if check.outcome_status == "contradicted":
+    if check.effect_status == "rejected":
         value = "contradicted"
-    elif check.outcome_status == "confirmed":
+    elif check.effect_status == "unmet":
+        value = "unmet"
+    elif check.effect_status == "confirmed":
         value = "confirmed"
     else:
         value = "unverified"
     return claim(
-        "business.outcome",
+        "effect.state",
         value,
-        source_type="checker",
+        source_type=("checker.rejected" if check.effect_status == "rejected" else "checker"),
         scope=scope,
         subject_scope=subject_scope or scope,
         evidence=check.reason or check.summary,
@@ -209,7 +223,6 @@ def runtime_filter_intent(
     history: list[PolicyTurn],
     *,
     scope: str,
-    ledger: ActionLedger,
 ) -> RuntimeFilterIntent | None:
     """Derive the concrete control/value used by the current filter attempt.
 
@@ -219,9 +232,9 @@ def runtime_filter_intent(
     """
     if milestone.kind != "filter":
         return None
-    turn = ledger.latest_write(history, milestone.id, scope=scope)
+    turn = latest_action(history, milestone.id, scope=scope, role="write")
     if turn is None:
-        turn = ledger.latest_commit(history, milestone.id, scope=scope)
+        turn = latest_action(history, milestone.id, scope=scope, role="commit")
     if turn is None or turn.action_signal is None:
         return None
     signal = turn.action_signal
@@ -242,11 +255,10 @@ def resolved_filter_intent(
     history: list[PolicyTurn],
     *,
     scope: str,
-    ledger: ActionLedger,
 ) -> RuntimeFilterIntent | None:
     """Resolve one concrete filter identity from current state and dispatch receipts."""
     runtime_intent = runtime_filter_intent(
-        milestone, history, scope=scope, ledger=ledger
+        milestone, history, scope=scope
     )
     return observed_filter_intent(
         getattr(observation, "applied_filters", None),
@@ -262,13 +274,12 @@ def observation_state_claims(
     history: list[PolicyTurn],
     *,
     scope: str,
-    ledger: ActionLedger,
 ) -> list[EvidenceClaim]:
     """Build deterministic claims from the current adapter observation."""
     claims = target_value_claims(milestone, observation, history, scope=scope)
     applied_filters = getattr(observation, "applied_filters", None)
     filter_intent = resolved_filter_intent(
-        milestone, observation, history, scope=scope, ledger=ledger
+        milestone, observation, history, scope=scope
     )
     filter_applied = bool(
         milestone.kind == "filter"

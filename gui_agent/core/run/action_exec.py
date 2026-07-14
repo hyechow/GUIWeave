@@ -12,12 +12,18 @@ from llm.structured import get_llm_token_usage
 
 from gui_agent.core.schemas import (
     ActionDecision,
+    AtomicRole,
     Observation,
     SupervisorStep,
     TargetBinding,
     action_label,
 )
-from gui_agent.core.run.action_ledger import effective_action_role
+from gui_agent.core.run.action_signals import (
+    effective_action_role,
+    record_response,
+    record_target,
+    semantic_action_key,
+)
 from gui_agent.core.run.target_binding import bind_action_target
 from gui_agent.core.vision.frame_analysis import STABLE_MEAN_THR, frame_changed, frame_diff
 from gui_agent.core.vision.target_verify import verify_target
@@ -136,6 +142,7 @@ def has_snapped_point(action_decision: ActionDecision | None) -> bool:
 class ActionRunResult:
     action_decision: Any = None
     executed: bool = False
+    action_role: AtomicRole = "prepare"
     action_key: str = ""
     suppressed_reason: str = ""
     probe_failed: bool = False
@@ -227,7 +234,8 @@ class ActionExecutionState:
             say("  [NoAction] Action Policy 未返回可执行动作")
             status(turn_no, "未产生可执行动作")
             return result
-        if effective_action_role(sv_step, action) == "write":
+        result.action_role = effective_action_role(sv_step, action)
+        if result.action_role == "write":
             authorization = sv_step.mutation_authorization
             if sv_step.requires_mutation_authorization and authorization is None:
                 result.suppressed_reason = (
@@ -274,10 +282,7 @@ class ActionExecutionState:
         profile_key = self._scroll_profile_key(sv_step)
         should_probe_scroll = (
             action.action_type == "scroll"
-            and (
-                sv_step.completion_strategy == "scroll_until_boundary"
-                or sv_step.atomic_role == "iterate"
-            )
+            and sv_step.completion_strategy == "scroll_until_boundary"
         )
         if should_probe_scroll and profile_key in self.scroll_profiles:
             self._try_cached_scroll(
@@ -325,6 +330,10 @@ class ActionExecutionState:
             )
             if result.executed and has_snapped_point(action_decision):
                 flash(action)
+        if result.executed and result.action_decision.action is not None:
+            result.action_key = semantic_action_key(
+                sv_step, result.action_decision.action
+            )
         return result
 
     def _decide_action(
@@ -590,23 +599,24 @@ def finalize_auto_continue_turn(
             center=settle_center,
         )
 
-    signal = getattr(turn, "action_signal", None)
     if verify_future is None:
-        if signal is not None:
-            signal.response = "none_observed" if turn.no_effect else "observed"
-            if not turn.no_effect:
-                signal.response_channels = ["visual"]
+        record_response(
+            turn,
+            observed=not turn.no_effect,
+            channels=("visual",) if not turn.no_effect else (),
+        )
         return
     try:
         turn.target_verify = verify_future.result(timeout=VERIFY_TIMEOUT_S)
         tv = turn.target_verify
-        if tv is not None and signal is not None:
-            signal.target = "on_target" if tv.on_target else "off_target"
+        if tv is not None:
+            record_target(turn, on_target=tv.on_target)
         if tv is not None and not tv.on_target:
             say(f"  [TargetVerify] off_target：标记落在「{tv.actual_element}」")
     except Exception as exc:
         say(f"  [TargetVerify] 校验失败（忽略）：{exc}")
-    if signal is not None:
-        signal.response = "none_observed" if turn.no_effect else "observed"
-        if not turn.no_effect:
-            signal.response_channels = ["visual"]
+    record_response(
+        turn,
+        observed=not turn.no_effect,
+        channels=("visual",) if not turn.no_effect else (),
+    )

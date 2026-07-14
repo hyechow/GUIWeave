@@ -61,7 +61,10 @@ ActionFamily = Literal[
 ActionExecutionStatus = Literal["not_attempted", "dispatched", "dispatch_failed"]
 ActionTargetStatus = Literal["on_target", "off_target", "unknown"]
 ActionResponseStatus = Literal["observed", "none_observed", "unobservable", "unknown"]
-ActionOutcomeStatus = Literal["confirmed", "contradicted", "unverified"]
+EffectMode = Literal["ensure", "transform", "dispatch"]
+PersistenceMode = Literal["immediate", "explicit_commit"]
+EffectStatus = Literal["satisfied", "unmet", "contradicted", "unknown"]
+EffectFreshness = Literal["preexisting", "current_run", "unknown"]
 CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
 BindingSource = Literal["visual", "structural"]
 BindingStatus = Literal["bound", "unresolved", "contradicted"]
@@ -77,6 +80,35 @@ def target_value_options(value: TargetValue | object) -> tuple[str, ...]:
         if text and text not in result:
             result.append(text)
     return tuple(result)
+
+
+def normalize_effect_contract_fields(value: object) -> object:
+    """Map retired mutation fields to the canonical effect/persistence contract."""
+    if not isinstance(value, dict):
+        return value
+    data = dict(value)
+    legacy_mode = str(data.get("mutation_mode") or "").strip().lower()
+    legacy_boundary = bool(data.get("requires_commit") or data.get("require_fresh_action"))
+    if not data.get("effect_mode"):
+        if legacy_mode == "ensure":
+            data["effect_mode"] = "ensure"
+        elif legacy_mode == "change" and (data.get("target_values") or legacy_boundary):
+            data["effect_mode"] = "transform"
+        elif legacy_boundary:
+            data["effect_mode"] = "dispatch"
+    data.setdefault(
+        "persistence",
+        "explicit_commit" if data.get("requires_commit") else "immediate",
+    )
+    if data.get("kind") == "action" and not data.get("effect_mode"):
+        data["effect_mode"] = (
+            "transform"
+            if data.get("target_values")
+            else "dispatch"
+            if data.get("persistence") == "explicit_commit" or data.get("returns")
+            else None
+        )
+    return data
 
 # 「连续操作」轴（与 kind 正交）：靠重复调整逼近目标的策略，区别于单步达成。
 #   - repeat_until_satisfied：收敛到目标值（picker 调日期/时间、步进器、滑块）
@@ -129,8 +161,8 @@ class ActionSignal(BaseModel):
     """Structured lifecycle of one atomic UI action.
 
     Execution answers whether the event crossed the GUI boundary; response answers whether the
-    page visibly reacted; outcome answers whether the requested business postcondition is known.
-    These axes must not be inferred from each other.
+    page visibly reacted. Business outcome and persistence are assessed separately and must not
+    be inferred from these delivery facts.
     """
 
     action_key: str = ""
@@ -147,10 +179,24 @@ class ActionSignal(BaseModel):
     target: ActionTargetStatus = "unknown"
     response: ActionResponseStatus = "unknown"
     response_channels: list[str] = Field(default_factory=list)
-    outcome: ActionOutcomeStatus = "unverified"
     evidence: list[str] = Field(default_factory=list)
-    outcome_evidence: list[str] = Field(default_factory=list)
     suppressed_reason: str = ""
+
+
+class EffectSignal(BaseModel):
+    """Persisted statement-level business-effect evidence.
+
+    It is deliberately separate from ``ActionSignal``: a correctly dispatched action may still
+    have an unknown or contradicted business result.
+    """
+
+    statement_id: str = ""
+    status: EffectStatus = "unknown"
+    freshness: EffectFreshness = "unknown"
+    subject_ref: str = ""
+    source_type: str = ""
+    authoritative: bool = False
+    evidence: list[str] = Field(default_factory=list)
 
 
 class CollectionScope(BaseModel):
@@ -649,7 +695,7 @@ class Milestone(BaseModel):
                 normalized["completion_strategy"] = strategy_aliases.get(
                     strategy.strip().lower(), strategy
                 )
-            return normalized
+            return normalize_effect_contract_fields(normalized)
         return data
 
     id: str
@@ -672,21 +718,13 @@ class Milestone(BaseModel):
         default=False,
         description="True when this milestone ensures an entry state and may already be satisfied on the first frame.",
     )
-    require_fresh_action: bool = Field(
-        default=False,
-        description=(
-            "True when a done verdict is not sufficient unless this milestone has executed an "
-            "action in the current run. Used for mutation/write milestones so dirty existing "
-            "state cannot be mistaken for work performed by this task."
-        ),
+    effect_mode: Optional[EffectMode] = Field(
+        default=None,
+        description="业务效果语义；None 表示普通交互状态转换，不声明持久化业务效果。",
     )
-    mutation_mode: Literal["ensure", "change"] = Field(
-        default="change",
-        description="mutation 的幂等语义；ensure 可接受既有终态，change 要求本轮目标写入。",
-    )
-    requires_commit: bool = Field(
-        default=False,
-        description="目标写入后是否必须经过独立持久化提交边界。",
+    persistence: PersistenceMode = Field(
+        default="immediate",
+        description="业务效果是立即生效，还是需要独立持久化提交边界。",
     )
     target_controls: list[str] = Field(
         default_factory=list,
@@ -781,7 +819,11 @@ class PolicyTurn(BaseModel):
     executed: bool = False
     action_signal: Optional[ActionSignal] = Field(
         default=None,
-        description="动作派发、页面响应与业务结果的结构化信号；旧日志可为空。",
+        description="动作派发、目标命中与页面响应的结构化信号；旧日志可为空。",
+    )
+    effect_signal: Optional[EffectSignal] = Field(
+        default=None,
+        description="statement 级业务效果证据；与原子动作信号分离。",
     )
     llm_calls: int = 0
     input_tokens: int = Field(default=0, description="本轮 LLM 调用累计输入 tokens（与 llm_calls 同口径），用于成本核算")
@@ -806,6 +848,29 @@ class PolicyTurn(BaseModel):
         ),
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_action_outcome(cls, data: object) -> object:
+        """Move historical per-action outcome fields into statement-level effect evidence."""
+        if not isinstance(data, dict) or data.get("effect_signal") is not None:
+            return data
+        signal = data.get("action_signal")
+        if not isinstance(signal, dict):
+            return data
+        outcome = str(signal.get("outcome") or "unverified")
+        if outcome not in {"confirmed", "contradicted"}:
+            return data
+        supervisor = data.get("supervisor") if isinstance(data.get("supervisor"), dict) else {}
+        migrated = dict(data)
+        migrated["effect_signal"] = {
+            "statement_id": str(supervisor.get("milestone_id") or ""),
+            "status": "satisfied" if outcome == "confirmed" else "contradicted",
+            "freshness": "current_run",
+            "source_type": "legacy.action_outcome",
+            "evidence": list(signal.get("outcome_evidence") or ()),
+        }
+        return migrated
+
     @model_validator(mode="after")
     def _normalize_no_action_signal(self) -> "PolicyTurn":
         """A turn without a physical action cannot contain dispatch evidence.
@@ -823,8 +888,7 @@ class PolicyTurn(BaseModel):
             self.action_signal.mutation_receipt = None
             self.action_signal.response = "unknown"
             self.action_signal.response_channels.clear()
-            self.action_signal.outcome = "unverified"
-            self.action_signal.outcome_evidence.clear()
+            self.effect_signal = None
         return self
 
 

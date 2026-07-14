@@ -14,13 +14,12 @@ from typing import Any, Callable
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.run.action_ledger import effective_action_role, semantic_action_key
+from gui_agent.core.run.action_signals import build_action_signal
 from gui_agent.core.run.context import extract_checker, extract_plan, extract_replan
 from gui_agent.core.run.result import print_timings, print_turn_stats
 from gui_agent.core.run.state import sync_milestone_states
 from gui_agent.core.schemas import (
-    ActionSignal,
-    MutationReceipt,
+    AtomicRole,
     PolicyContext,
     PolicyTurn,
     SupervisorStep,
@@ -59,6 +58,7 @@ def make_interactive_turn(
     planner: dict | None = None,
     replan: dict | None = None,
     executed: bool = False,
+    action_role: AtomicRole | None = None,
     action_key: str = "",
     suppressed_reason: str = "",
     binding: TargetBinding | None = None,
@@ -73,48 +73,17 @@ def make_interactive_turn(
     llm_context: list[dict] | None = None,
 ) -> PolicyTurn:
     """Build a normal UI turn."""
-    action = action_decision.action if action_decision else None
-    role = (
-        effective_action_role(supervisor_step, action)
-        if action is not None
-        else supervisor_step.atomic_role
-    )
-    if not action_key and action is not None:
-        action_key = semantic_action_key(supervisor_step, action)
-    if executed:
-        execution = "dispatched"
-    elif action_decision is not None and not action_decision.not_found_reason and not suppressed_reason:
-        execution = "dispatch_failed"
-    else:
-        execution = "not_attempted"
-    action_signal = ActionSignal(
-        action_key=action_key,
+    role = action_role or supervisor_step.atomic_role
+    action_signal = build_action_signal(
+        supervisor_step,
+        action_decision,
         role=role,
+        action_key=action_key,
         surface_id=surface_id,
-        target_control=supervisor_step.target_control,
-        target_value=(
-            str(getattr(action, "text", "") or "")
-            if role == "write" and action is not None
-            else ""
-        ),
-        mutation_receipt=(
-            MutationReceipt(
-                statement_id=authorization.statement_id,
-                subject_ref=authorization.subject_ref,
-                field=authorization.field,
-                intended_value=authorization.desired_value,
-                source=authorization.source,
-            )
-            if role == "write"
-            and execution == "dispatched"
-            and (authorization := supervisor_step.mutation_authorization) is not None
-            else None
-        ),
-        binding=binding,
-        execution=execution,
+        executed=executed,
         suppressed_reason=suppressed_reason,
-        evidence=([suppressed_reason] if suppressed_reason else []),
-    ) if action_decision is not None or suppressed_reason else None
+        binding=binding,
+    )
     return PolicyTurn(
         index=index,
         operation_mode="interactive",
@@ -274,6 +243,7 @@ def record_interactive_turn(
     supervisor: Any,
     action_decision: Any,
     executed: bool,
+    action_role: AtomicRole | None = None,
     action_key: str = "",
     suppressed_reason: str = "",
     binding: TargetBinding | None = None,
@@ -299,6 +269,7 @@ def record_interactive_turn(
         planner=extract_plan(supervisor),
         replan=extract_replan(supervisor),
         executed=executed,
+        action_role=action_role,
         action_key=action_key,
         suppressed_reason=suppressed_reason,
         binding=binding,

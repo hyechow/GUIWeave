@@ -166,7 +166,7 @@ def filter_residual_labels(
     """Return live filters not present in the complete declared filter-state contract."""
     if not applied_filters:
         return []
-    if not milestone.target_values:
+    if not milestone.target_values and runtime_intent is None:
         return []
     matched_labels = _matched_applied_filter_labels(
         applied_filters, milestone, runtime_intent

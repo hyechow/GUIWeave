@@ -11,7 +11,7 @@ version: 1
 ---
 
 ## 动作类子目标（kind=action）
-- `outcome_status`：目标业务状态已有直接证据填 `confirmed`；明确错误/拒绝/目标不符填 `contradicted`；仅动作已执行或缺少反馈时填 `unverified`。
+- `effect_status`：目标业务状态已有直接证据填 `confirmed`；目标当前尚未满足或仍在中间步骤填 `unmet`；本子目标动作派发后出现明确错误/拒绝填 `rejected`；缺少可判读反馈时填 `unverified`。
 - done 仅当动作的预期效果已在屏幕上发生（弹窗关闭、目标值已改变、出现成功提示等）。
 - in_progress 时 visible_evidence / missing_evidence 可留空。
 

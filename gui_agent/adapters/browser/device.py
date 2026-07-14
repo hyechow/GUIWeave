@@ -58,14 +58,6 @@ _SETTLE_POLL_S = 0.12        # poll cadence (raw-CDP evaluate is cheap)
 # and the next turn sees it further along. So keep the cap short; a page still busy at the cap
 # returns anyway (the log says 仍在加载) and the loop re-checks next turn.
 _SETTLE_CAP_S = 3.0
-# An XHR/Fetch in flight longer than this is treated as streaming / long-poll / an unconsumed
-# body (it may never fire loadingFinished) and excluded from the gate — otherwise such a page
-# would settle at the cap on every action. Kept under _SETTLE_CAP_S so it excludes a stuck
-# request and returns 'settled' BEFORE the cap. A genuinely slow one-shot fetch is waited on up
-# to here; past it the next turn's observe picks up the late data (the same re-observe path that
-# handles long loads).
-_XHR_STALE_S = 2.0
-
 _FORM_VALUE_FINGERPRINT_JS = (
     "(()=>{const els=[...document.querySelectorAll('input,select,textarea')];"
     "const vals=els.map(e=>(e.type==='checkbox'||e.type==='radio')?(e.checked?'1':'0')"
@@ -361,17 +353,17 @@ class PlaywrightDevice:
         return base64.b64decode(result["data"])
 
     def is_loading(self) -> bool:
-        """True only when document.readyState == 'loading' (structural sensor).
-
-        SPAs like Feishu stay at 'interactive' for a long time — only 'loading'
-        means the page is truly not yet actionable.  False on any failure.
-        """
+        """Whether the document or a tracked one-shot request is still pending."""
         try:
+            self._ensure_net_tracking()
             res = self._cdp_send(
                 "Runtime.evaluate",
                 {"expression": "document.readyState", "returnByValue": True},
             )
-            return (res.get("result", {}) or {}).get("value") == "loading"
+            return (
+                (res.get("result", {}) or {}).get("value") == "loading"
+                or bool(self._xhr_ids)
+            )
         except Exception:
             return False
 
@@ -402,7 +394,11 @@ class PlaywrightDevice:
                 if self._xhr_ids.pop(p.get("requestId"), None) is not None:
                     self._xhr_last = time.monotonic()
 
+            def _on_response(p):
+                _on_done(p)
+
             self._cdp.on("Network.requestWillBeSent", _on_req)
+            self._cdp.on("Network.responseReceived", _on_response)
             self._cdp.on("Network.loadingFinished", _on_done)
             self._cdp.on("Network.loadingFailed", _on_done)
             self._net_session = self._cdp
@@ -434,10 +430,9 @@ class PlaywrightDevice:
             res = self._cdp_send("Runtime.evaluate", {"expression": _SETTLE_PROBE, "returnByValue": True})
             val = res.get("result", {}).get("value")
             rs, q = (val[0], val[1]) if isinstance(val, list) and len(val) == 2 else ("complete", None)
-            # network quiet = no (non-stale) XHR/Fetch in flight AND none started/finished in the
-            # window. Drop requests stuck in flight > _XHR_STALE_S (streaming / unconsumed body).
+            # XHR/Fetch remains in flight until response headers, completion or failure.  A slow
+            # persistence request must not become "quiet" merely because a local timer elapsed.
             now = time.monotonic()
-            self._xhr_ids = {i: t for i, t in self._xhr_ids.items() if now - t < _XHR_STALE_S}
             xhr_inflight = len(self._xhr_ids)
             net_quiet = xhr_inflight == 0 and (now - self._xhr_last) * 1000.0 >= _SETTLE_QUIET_MS
             elapsed = time.perf_counter() - t0
