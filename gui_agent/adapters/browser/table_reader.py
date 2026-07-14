@@ -222,21 +222,21 @@ def table_snapshot_js() -> str:
           options.push(n);
         }}
         options.sort((a, b) => a - b);
-        const activeMenu = menu.querySelector('.selectmenu-items._active, [role="listbox"], ._active');
-        const page_size_menu_open = !!(activeMenu && visible(activeMenu));
+        const rect = control.getBoundingClientRect();
         return {{
           page_size: current,
           page_size_options: options,
-          has_page_size_control: true,
-          page_size_menu_open,
+          page_size_control: {{
+            kind: control.tagName === 'SELECT' ? 'native_select' : 'selectmenu',
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+          }},
         }};
       }}
     }}
     return {{
       page_size: null,
       page_size_options: [],
-      has_page_size_control: false,
-      page_size_menu_open: false,
     }};
   }};
 

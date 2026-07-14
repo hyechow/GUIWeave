@@ -63,6 +63,8 @@ def test_read_grid_complete_dom_fallback_requires_column_match():
 class _PagerClient:
     def __init__(self):
         self.moves = 0
+        self.opened = 0
+        self.selected: list[str] = []
 
     def _cdp_send(self, method, params):
         assert method == "Runtime.evaluate"
@@ -71,6 +73,14 @@ class _PagerClient:
 
     def wait_settled(self, action_type=None):
         return (0.0, False)
+
+    def tap(self, x, y):
+        self.opened += 1
+        return "OK tap"
+
+    def select_option(self, x, y, text):
+        self.selected.append(text)
+        return f"OK select_option {text}"
 
 
 class _Perception:
@@ -94,19 +104,36 @@ class _Platform:
         self.client = client
 
 
-def _paged_products(page, rows, *, has_next):
+def _paged_products(page, rows, *, has_next, total=3, traversal_extra=None):
+    traversal = {
+        "type": "paged",
+        "page_index": page,
+        "has_next_page": has_next,
+        "has_prev_page": page > 1,
+    }
+    traversal.update(traversal_extra or {})
     return {
         "path": "#product-grid",
         "headers": ["Name", "Type", "Action_url"],
         "rows": rows,
-        "total_records": 3,
-        "traversal": {
-            "type": "paged",
-            "page_index": page,
-            "has_next_page": has_next,
-            "has_prev_page": page > 1,
-        },
+        "total_records": total,
+        "traversal": traversal,
     }
+
+
+def _page_size_obs(rows, *, size, has_next):
+    return Observation(
+        png_bytes=b"",
+        source="eval",
+        tables=[_paged_products(
+            1, rows, has_next=has_next,
+            traversal_extra={
+                "page_size": size,
+                "page_size_options": [2, 3, 10],
+                "page_size_control": {"kind": "selectmenu", "x": 800, "y": 400},
+            },
+        )],
+    )
 
 
 def test_complete_grid_binds_to_table_pager_not_page_viewport(tmp_path):
@@ -156,3 +183,29 @@ def test_complete_grid_binds_to_table_pager_not_page_viewport(tmp_path):
         {"name": "Target", "type": "Owner", "detail_url": "/target"},
     ]
     assert client.moves == 1
+
+
+def test_complete_grid_uses_covering_page_size_before_paginating(tmp_path):
+    first = _page_size_obs([
+        {"Name": "Item A", "Type": "Simple", "Action_url": "/a"},
+        {"Name": "Item B", "Type": "Simple", "Action_url": "/b"},
+    ], size=2, has_next=True)
+    expanded = _page_size_obs([
+        {"Name": "Item A", "Type": "Simple", "Action_url": "/a"},
+        {"Name": "Item B", "Type": "Simple", "Action_url": "/b"},
+        {"Name": "Owner", "Type": "Configurable", "Action_url": "/owner"},
+    ], size=3, has_next=False)
+    client = _PagerClient()
+
+    rows = read_grid_complete(
+        first,
+        ["name", "type", "detail_url"],
+        bundle=_Bundle([expanded]),
+        platform=_Platform(client),
+        log_dir=tmp_path,
+    )
+
+    assert rows is not None and rows[-1]["detail_url"] == "/owner"
+    assert client.opened == 1
+    assert client.selected == ["3"]
+    assert client.moves == 0

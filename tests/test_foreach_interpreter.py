@@ -330,3 +330,17 @@ def test_foreach_does_not_misfire_on_present_but_blank_column():
     assert interp.env["orders"].rows == [
         {"ID": "1", "Coupon": ""}, {"ID": "2", "Coupon": ""},
     ]
+
+
+def test_foreach_does_not_turn_incomplete_collection_into_empty_complete_table():
+    program = Program(statements=[
+        ForEach(var="row", into="candidates", row_fields=["name"], body=[]),
+        Finish(message="done"),
+    ])
+    interp = Interpreter(program, collect_fn=lambda *_args, **_kwargs: None)
+
+    drive(interp, lambda run: RunResult(completed=True))
+
+    assert interp.finish_incomplete is True
+    assert interp.env["candidates"].completed is False
+    assert interp.env["candidates"].rows == []

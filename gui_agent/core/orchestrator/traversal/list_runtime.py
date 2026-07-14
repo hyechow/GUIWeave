@@ -401,19 +401,13 @@ class ListTraversalRuntime:
             return ListTraversalDecision("wait", decision.reason, "等待当前窗口完成更新后重新观察")
         if decision.action == "done":
             if self.expected_total and len(self.rows) < self.expected_total:
-                if self.rows:
-                    return ListTraversalDecision(
-                        "done",
-                        (
-                            f"已到集合末尾，累计 {len(self.rows)} 行；列表声明总数 {self.expected_total} "
-                            "与可采集唯一行不一致，按遍历边界完成并保留差异证据"
-                        ),
-                        "停止，不要仅因总数提示不一致而继续翻页、滚动或调整每页条数",
-                    )
                 return ListTraversalDecision(
-                    "schema_mismatch",
-                    f"遍历传感器认为已到末尾，但累计 0 行，少于列表声明总数 {self.expected_total}",
-                    "停止翻页或滚动；需要先修正读取字段与表头映射，或使用视觉列表读取兜底",
+                    "fallback",
+                    (
+                        f"遍历已到边界，但只采集到 {len(self.rows)}/{self.expected_total} 条唯一记录；"
+                        "数据源不完整"
+                    ),
+                    "重新采集完整集合；在完整性得到证明前不得执行下游查询",
                 )
             return ListTraversalDecision("done", f"无可用后续页/滚动；累计 {len(self.rows)} 行", "停止")
         return ListTraversalDecision(

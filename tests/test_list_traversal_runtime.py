@@ -1,5 +1,11 @@
+import json
+from pathlib import Path
+
 from gui_agent.core.orchestrator.traversal.list_runtime import ListTraversalRuntime
 from gui_agent.core.schemas import Observation
+
+
+REPLAYS = Path(__file__).resolve().parents[1] / "evals/browser/traversal_replay"
 
 
 def _obs(*, tables=None, controls=None, viewport=None, png_bytes=b"") -> Observation:
@@ -103,8 +109,6 @@ def test_page_size_is_only_metadata_and_does_not_change_traversal_correctness():
         traversal_extra={
             "page_size": 20,
             "page_size_options": [20, 50, 100, 200],
-            "has_page_size_control": True,
-            "page_size_menu_open": False,
         },
     )
 
@@ -197,7 +201,7 @@ def test_visible_row_changes_are_accumulated_by_key_without_detail_state():
     ]
 
 
-def test_does_not_finish_when_declared_total_is_not_reached():
+def test_declared_total_mismatch_is_incomplete():
     runtime = ListTraversalRuntime(var="items", returns=["Code"])
     first_table = _table(
         [{"Code": f"A{i}", "Name": f"Alpha {i}", "Action": "Edit"} for i in range(6)],
@@ -216,12 +220,12 @@ def test_does_not_finish_when_declared_total_is_not_reached():
     )
     decision = runtime.update(_obs(tables=[duplicate_last_page]))
 
-    assert decision.action == "done"
-    assert "不一致" in decision.reason
+    assert decision.action == "fallback"
+    assert "6/7" in decision.reason
     assert len(runtime.rows) == 6
 
 
-def test_total_discrepancy_does_not_drive_page_size_change():
+def test_total_discrepancy_does_not_claim_complete_with_page_size_metadata():
     runtime = ListTraversalRuntime(var="items", returns=["Code"])
     first_table = _table(
         [{"Code": f"A{i}", "Name": f"Alpha {i}", "Action": "Edit"} for i in range(6)],
@@ -231,8 +235,6 @@ def test_total_discrepancy_does_not_drive_page_size_change():
         traversal_extra={
             "page_size": 6,
             "page_size_options": [6, 20, 30, 50],
-            "has_page_size_control": True,
-            "page_size_menu_open": False,
         },
     )
     first = runtime.update(_obs(tables=[first_table]))
@@ -246,46 +248,13 @@ def test_total_discrepancy_does_not_drive_page_size_change():
         traversal_extra={
             "page_size": 6,
             "page_size_options": [6, 20, 30, 50],
-            "has_page_size_control": True,
-            "page_size_menu_open": False,
         },
     )
     decision = runtime.update(_obs(tables=[duplicate_last_page]))
 
-    assert decision.action == "done"
-    assert "不一致" in decision.reason
-    assert "每页条数" in decision.instruction
+    assert decision.action == "fallback"
+    assert "6/7" in decision.reason
     assert len(runtime.rows) == 6
-
-
-def test_page_size_menu_open_does_not_override_boundary_completion():
-    runtime = ListTraversalRuntime(var="items", returns=["Code"])
-    runtime.update(
-        _obs(tables=[
-            _table(
-                [{"Code": f"A{i}", "Name": f"Alpha {i}", "Action": "Edit"} for i in range(6)],
-                total=7,
-                page=1,
-                has_next=True,
-                traversal_extra={"page_size": 6, "page_size_options": [6, 20], "page_size_menu_open": False},
-            )
-        ])
-    )
-
-    decision = runtime.update(
-        _obs(tables=[
-            _table(
-                [{"Code": "A1", "Name": "Alpha 1", "Action": "Edit"}],
-                total=7,
-                page=2,
-                has_next=False,
-                traversal_extra={"page_size": 6, "page_size_options": [6, 20], "page_size_menu_open": True},
-            )
-        ])
-    )
-
-    assert decision.action == "done"
-    assert "不一致" in decision.reason
 
 
 def test_resolves_requested_id_suffix_to_unique_id_column():
@@ -339,7 +308,7 @@ def test_ambiguous_id_columns_stop_collection_instead_of_guessing():
     assert runtime.rows == []
 
 
-def test_end_boundary_with_low_confidence_total_discrepancy_finishes_with_rows():
+def test_end_boundary_with_total_discrepancy_is_incomplete():
     runtime = ListTraversalRuntime(var="reviews", returns=["review_id"])
     decision = runtime.update(
         _obs(tables=[
@@ -364,6 +333,33 @@ def test_end_boundary_with_low_confidence_total_discrepancy_finishes_with_rows()
         ])
     )
 
-    assert decision.action == "done"
-    assert "不一致" in decision.reason
+    assert decision.action == "fallback"
+    assert "3/4" in decision.reason
     assert runtime.rows == [{"review_id": "351"}, {"review_id": "347"}, {"review_id": "349"}]
+
+
+def test_replay_103448_stale_second_page_is_not_complete():
+    replay = json.loads((REPLAYS / "103448_stale_second_page.json").read_text())
+    runtime = ListTraversalRuntime(var="candidates", returns=replay["returns"])
+
+    def observe(page: int, has_next: bool):
+        return runtime.update(_obs(tables=[{
+            "path": "#product-grid",
+            "headers": ["ID", "Name", "Type", "Action_url"],
+            "rows": replay["rows"],
+            "total_records": replay["total_records"],
+            "traversal": {
+                "type": "paged",
+                "page_index": page,
+                "page_count": 2,
+                "has_next_page": has_next,
+                "has_prev_page": page > 1,
+            },
+        }]))
+
+    assert observe(1, True).action == "paginate_next"
+    assert observe(2, False).action == "wait"
+    decision = observe(2, False)
+
+    assert decision.action == replay["expected"]["decision"]
+    assert len(runtime.rows) == replay["expected"]["unique_rows"]

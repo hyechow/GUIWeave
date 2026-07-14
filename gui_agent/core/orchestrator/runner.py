@@ -230,6 +230,16 @@ class Interpreter:
     def failed(self) -> bool:
         return any(r.result.failed for r in self.run_log)
 
+    def _fail_foreach(self, loop: ForEach, summary: str) -> None:
+        into = loop.into or f"{loop.var}s"
+        result = RunResult(completed=False, failed=True, rows=[], summary=summary)
+        self.finish_incomplete = True
+        self.env[into] = result
+        self._materialized_vars.add(into)
+        self.run_log.append(RunRecord(
+            name=f"foreach {loop.var} in {loop.over}", var=into, result=result,
+        ))
+
     def steps(self) -> Generator[Run, RunResult, str]:
         reply = yield from self._block(self._program.statements)
         return reply if reply is not None else self._auto_summary()
@@ -337,15 +347,10 @@ class Interpreter:
             if not collect_cols:
                 # No row binding at all — the per-row sub-goal would run IDENTICALLY for every row.
                 # Fail honestly instead of collecting nothing and reporting completion.
-                self.finish_incomplete = True
-                into0 = loop.into or f"{loop.var}s"
-                self.env[into0] = RunResult(
-                    completed=False, rows=[],
+                self._fail_foreach(
+                    loop,
                     summary="body_goal 未引用任何行字段模板（{" + loop.var + "[字段]}）——无法按行采集/迭代",
                 )
-                self._materialized_vars.add(into0)
-                self.run_log.append(RunRecord(
-                    name=f"foreach {loop.var} (body_goal 无行绑定)", var=into0, result=self.env[into0]))
                 return None
         else:
             collect_cols = _unique_fields(loop.row_fields or loop.returns)
@@ -363,7 +368,10 @@ class Interpreter:
             # Also covers old-style foreach whose over var exists but carries no rows (e.g. when
             # the preceding row-collection read was silently dropped on schema upgrade).
             collected = self._collect_fn(loop.target, list(collect_cols), limit=loop.limit)
-            rows = collected if collected is not None else []
+            if collected is None:
+                self._fail_foreach(loop, "集合采集未能证明完整性")
+                return None
+            rows = collected
         if loop.limit and rows:
             rows = rows[: loop.limit]
         into = loop.into or f"{loop.var}s"
@@ -379,15 +387,9 @@ class Interpreter:
         if rows and collect_cols:
             uncovered = [f for f in collect_cols if all(f not in row for row in rows)]
             if uncovered:
-                self.finish_incomplete = True
-                self.env[into] = RunResult(
-                    completed=False, rows=[],
-                    summary=f"采集列缺失：声明的 {uncovered} 未出现在任何行（网格未渲染该列，已丢列）",
+                self._fail_foreach(
+                    loop, f"采集列缺失：声明的 {uncovered} 未出现在任何行（网格未渲染该列，已丢列）",
                 )
-                self._materialized_vars.add(into)
-                self.run_log.append(RunRecord(
-                    name=f"foreach {loop.var} in {loop.over}", var=into, result=self.env[into],
-                ))
                 return None
         body_read_vars = self._read_vars(loop.body)
         body_scalar_vars = self._compute_vars(loop.body)

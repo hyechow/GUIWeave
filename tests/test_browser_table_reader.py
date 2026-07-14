@@ -237,8 +237,7 @@ def test_normalize_preserves_page_size_traversal_fields():
                 "has_prev_page": True,
                 "page_size": 20,
                 "page_size_options": [20, 30, 50, 100],
-                "has_page_size_control": True,
-                "page_size_menu_open": False,
+                "page_size_control": {"kind": "selectmenu", "x": 900, "y": 80},
             },
         }],
     }
@@ -247,8 +246,7 @@ def test_normalize_preserves_page_size_traversal_fields():
 
     assert tables[0]["traversal"]["page_size"] == 20
     assert tables[0]["traversal"]["page_size_options"] == [20, 30, 50, 100]
-    assert tables[0]["traversal"]["has_page_size_control"] is True
-    assert tables[0]["traversal"]["page_size_menu_open"] is False
+    assert tables[0]["traversal"]["page_size_control"]["kind"] == "selectmenu"
 
 
 def test_normalize_preserves_traversal_infinite_scroll():

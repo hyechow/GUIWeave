@@ -378,6 +378,37 @@ def read_page_complete(
 _DEFAULT_MAX_PAGES = 20
 
 
+def _expand_bound_page_size(client: Any, table: dict[str, Any]) -> bool:
+    """Use one declared page-size option when it can contain the complete result set."""
+    traversal = table.get("traversal") if isinstance(table.get("traversal"), dict) else {}
+    control = traversal.get("page_size_control")
+    if not isinstance(control, dict):
+        return False
+    try:
+        current = int(traversal.get("page_size") or 0)
+        total = int(table.get("total_records") or 0)
+        options = sorted({int(value) for value in traversal.get("page_size_options") or []})
+        x, y = float(control["x"]), float(control["y"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if current >= total:
+        return False
+    desired = next((value for value in options if value >= total and value > current), None)
+    kind = control.get("kind")
+    if not desired or kind not in {"native_select", "selectmenu"}:
+        return False
+    if kind == "selectmenu":
+        if not str(client.tap(x, y)).startswith("OK"):
+            return False
+        _settle_click(client)
+        x = y = None
+    result = str(client.select_option(x, y, str(desired)))
+    if not result.startswith("OK"):
+        return False
+    _settle_click(client)
+    return True
+
+
 def _move_bound_table(client: Any, table: dict[str, Any], direction: str) -> bool:
     """Move the pager/scroll container associated with ``table`` and no other surface."""
 
@@ -596,8 +627,17 @@ def read_grid_complete(
         return rows  # semantic single-page path; no bound DOM surface is available
 
     runtime = ListTraversalRuntime(var="grid", returns=list(returns), limit=limit)
+    decision = runtime.update(obs)
     for move_n in range(max_pages + 1):
-        decision = runtime.update(obs)
+        table = runtime.current_table
+        if decision.action == "paginate_next" and table is not None:
+            if _expand_bound_page_size(client, table):
+                try:
+                    obs = bundle.make_perception(platform, log_dir / "grid_expanded.png").observe()
+                    decision = runtime.update(obs)
+                    continue
+                except Exception:
+                    return None
         if decision.action == "done":
             return runtime.rows[:limit] if limit else runtime.rows
         if decision.action in {"fallback", "schema_mismatch"}:
@@ -640,5 +680,6 @@ def read_grid_complete(
             ).observe()
         except Exception:
             return None
+        decision = runtime.update(obs)
 
     return None

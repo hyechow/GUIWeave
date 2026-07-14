@@ -1,0 +1,29 @@
+{
+  "source_log": "logs/gui_agent/webarena/browser/20260714_103448",
+  "description": "The pager advanced from page 1 to page 2, but the rendered product rows stayed on the first window. The complete collector must not publish the 20 unique rows as a complete 32-row source.",
+  "returns": ["name", "type", "detail_url"],
+  "total_records": 32,
+  "rows": [
+    {"ID": "1717", "Name": "Nona Fitness Tank-XS-Blue", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1717/"},
+    {"ID": "1721", "Name": "Nona Fitness Tank-S-Purple", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1721/"},
+    {"ID": "1725", "Name": "Nona Fitness Tank-M-Red", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1725/"},
+    {"ID": "1729", "Name": "Nona Fitness Tank-XL-Blue", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1729/"},
+    {"ID": "1749", "Name": "Chloe Compete Tank-XS-Blue", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1749/"},
+    {"ID": "1753", "Name": "Chloe Compete Tank-S-Red", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1753/"},
+    {"ID": "1757", "Name": "Chloe Compete Tank-M-Yellow", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1757/"},
+    {"ID": "1761", "Name": "Chloe Compete Tank-XL-Blue", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1761/"},
+    {"ID": "1718", "Name": "Nona Fitness Tank-XS-Purple", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1718/"},
+    {"ID": "1722", "Name": "Nona Fitness Tank-S-Red", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1722/"},
+    {"ID": "1726", "Name": "Nona Fitness Tank-L-Blue", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1726/"},
+    {"ID": "1730", "Name": "Nona Fitness Tank-XL-Purple", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1730/"},
+    {"ID": "1750", "Name": "Chloe Compete Tank-XS-Red", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1750/"},
+    {"ID": "1754", "Name": "Chloe Compete Tank-S-Yellow", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1754/"},
+    {"ID": "1758", "Name": "Chloe Compete Tank-L-Blue", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1758/"},
+    {"ID": "1762", "Name": "Chloe Compete Tank-XL-Red", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1762/"},
+    {"ID": "1719", "Name": "Nona Fitness Tank-XS-Red", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1719/"},
+    {"ID": "1723", "Name": "Nona Fitness Tank-M-Blue", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1723/"},
+    {"ID": "1727", "Name": "Nona Fitness Tank-L-Purple", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1727/"},
+    {"ID": "1731", "Name": "Nona Fitness Tank-XL-Red", "Type": "Simple Product", "Action_url": "/catalog/product/edit/id/1731/"}
+  ],
+  "expected": {"decision": "fallback", "unique_rows": 20}
+}
