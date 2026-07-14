@@ -1,0 +1,8 @@
+{
+  "turn": 34,
+  "should_act": true,
+  "goal_completed": false,
+  "atomic_role": "commit",
+  "action_family": "activate",
+  "target_control": "Save"
+}

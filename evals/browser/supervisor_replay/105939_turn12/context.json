@@ -1151,6 +1151,13 @@
         "surface_id": "document:/admin/catalog/product_attribute/edit/attribute_id/144:size",
         "target_control": "Admin Description",
         "target_value": "XXXL",
+        "mutation_receipt": {
+          "statement_id": "m2_action",
+          "subject_ref": "collection:20",
+          "field": "Admin Description",
+          "intended_value": "XXXL",
+          "source": "structural"
+        },
         "binding": {
           "status": "bound",
           "source": "structural",
@@ -1284,6 +1291,13 @@
         "surface_id": "document:/admin/catalog/product_attribute/edit/attribute_id/144:size",
         "target_control": "Admin Swatch",
         "target_value": "XXXL",
+        "mutation_receipt": {
+          "statement_id": "m2_action",
+          "subject_ref": "collection:20",
+          "field": "Admin Swatch",
+          "intended_value": "XXXL",
+          "source": "structural"
+        },
         "binding": {
           "status": "bound",
           "source": "structural",

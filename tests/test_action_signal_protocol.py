@@ -5,7 +5,7 @@ import pytest
 from gui_agent.core.orchestrator.program import Finish, Program, Run, RunResult
 from gui_agent.core.orchestrator.runner import Interpreter, RunRecord, make_run_result
 from gui_agent.core.run.action_ledger import effective_action_role, semantic_action_key
-from gui_agent.core.run.execution_signals import CompletionEvaluation
+from gui_agent.core.run.execution_signals import CompletionEvaluation, claim
 from gui_agent.core.run.loop import _needs_terminal_reconciliation, _turn_budget_mode
 from gui_agent.core.run.result import orchestration_result
 from gui_agent.core.run.turns import interactive_turn_count, make_interactive_turn, make_verdict_turn
@@ -371,7 +371,7 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
     assert "save is still pending" in step.summary
 
 
-def test_unverified_feedback_does_not_erase_a_known_commit_contradiction():
+def test_only_authoritative_contradiction_rewrites_action_lifecycle():
     policy = MilestoneSupervisorPolicy()
     milestone = Milestone(
         id="m1",
@@ -390,7 +390,31 @@ def test_unverified_feedback_does_not_erase_a_known_commit_contradiction():
         milestone,
         CompletionEvaluation(
             status="contradicted",
+            reason="checker cannot see the result",
+            used_claims=(claim(
+                "business.outcome",
+                "contradicted",
+                source_type="checker",
+                scope="milestone:m1",
+            ),),
+        ),
+        ledger=policy._action_ledger,
+    )
+    assert signal.outcome == "unverified"
+
+    record_action_outcome(
+        [dispatched],
+        milestone,
+        CompletionEvaluation(
+            status="contradicted",
             reason="the attempted route produced the wrong result",
+            used_claims=(claim(
+                "action.target",
+                "contradicted",
+                source_type="runtime.target_verify",
+                scope="milestone:m1",
+                authoritative=True,
+            ),),
         ),
         ledger=policy._action_ledger,
     )
@@ -406,6 +430,7 @@ def test_unverified_feedback_does_not_erase_a_known_commit_contradiction():
 
     assert signal.outcome == "contradicted"
     assert signal.outcome_evidence == ["the attempted route produced the wrong result"]
+
 
 @pytest.mark.parametrize("checker_status", ["in_progress", "done"])
 def test_terminal_dispatch_advances_as_accepted_unverified(

@@ -3103,6 +3103,13 @@
         "surface_id": "dialog:668435:Step 2: Attribute Values",
         "target_control": "XXXL",
         "target_value": "",
+        "mutation_receipt": {
+          "statement_id": "m8_action",
+          "subject_ref": "choice:dialog:668435:Step 2: Attribute Values",
+          "field": "Size",
+          "intended_value": "XXXL",
+          "source": "visual"
+        },
         "binding": {
           "status": "bound",
           "source": "visual",
@@ -3244,6 +3251,13 @@
         "surface_id": "dialog:668435:Step 2: Attribute Values",
         "target_control": "Green",
         "target_value": "",
+        "mutation_receipt": {
+          "statement_id": "m8_action",
+          "subject_ref": "choice:dialog:668435:Step 2: Attribute Values",
+          "field": "Color",
+          "intended_value": "Green",
+          "source": "visual"
+        },
         "binding": {
           "status": "bound",
           "source": "visual",

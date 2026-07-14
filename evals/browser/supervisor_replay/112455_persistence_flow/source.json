@@ -4,5 +4,6 @@
   "history_through_turn": 30,
   "observation_source": "recorded observation_turn_28..31.json and matching screenshots",
   "observation_captured_on": "2026-07-13",
+  "migration": "turns 25-26 MutationReceipt fields reconstructed from their persisted visual binding, target control, declared target value, active surface, and statement id",
   "purpose": "One live flow covering child generation, resource persistence, and terminal URL-response completion."
 }

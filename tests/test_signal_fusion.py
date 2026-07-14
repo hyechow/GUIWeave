@@ -6,8 +6,6 @@ from gui_agent.core.run.execution_signals import (
 )
 from gui_agent.core.schemas import (
     ActionSignal,
-    BaseAction,
-    BaseActionDecision,
     Milestone,
     Observation,
     PolicyTurn,
@@ -15,8 +13,7 @@ from gui_agent.core.schemas import (
 )
 from gui_agent.core.supervisor.milestone.action_protocol import (
     action_metadata,
-    is_commit_turn,
-    regresses_preparation_frontier,
+    mutation_progress,
 )
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
@@ -28,6 +25,7 @@ def _signal_turn(
     role: str,
     control: str,
     surface: str = "",
+    milestone_id: str = "persisted",
 ) -> PolicyTurn:
     return PolicyTurn(
         index=index,
@@ -38,7 +36,7 @@ def _signal_turn(
             stop=False,
             goal_completed=False,
             summary="",
-            milestone_id="persisted",
+            milestone_id=milestone_id,
             atomic_role=role,
             target_control=control,
         ),
@@ -217,17 +215,17 @@ def test_persisted_mutation_rejects_backward_preparation_edge():
         target_control="Open editor",
     )
 
-    assert regresses_preparation_frontier(
-        proposal, milestone, history, current_surface_id="parent"
+    progress = mutation_progress(milestone, history)
+    assert progress.rejects(
+        proposal, milestone, current_surface_id="parent"
     ) is True
-    assert regresses_preparation_frontier(
+    assert progress.rejects(
         proposal.model_copy(update={
             "atomic_role": "commit",
             "target_control": "Save",
             "action_family": "activate",
         }),
         milestone,
-        history,
     ) is False
 
 
@@ -252,16 +250,15 @@ def test_same_control_name_on_a_different_surface_is_not_a_backward_edge():
         target_control="Next",
     )
 
-    assert regresses_preparation_frontier(
+    progress = mutation_progress(milestone, history)
+    assert progress.rejects(
         proposal,
         milestone,
-        history,
         current_surface_id="wizard:step-2",
     ) is False
-    assert regresses_preparation_frontier(
+    assert progress.rejects(
         proposal,
         milestone,
-        history,
         current_surface_id="wizard:step-1",
     ) is True
 
@@ -404,30 +401,108 @@ def test_commit_detection_uses_structured_role_not_instruction_vocabulary():
         success_condition="state is durable",
         kind="action",
     )
-    turn = PolicyTurn(
-        index=1,
-        observation_source="test",
-        supervisor=SupervisorStep(
-            should_act=True,
-            instruction="trigger boundary",
-            stop=False,
-            goal_completed=False,
-            summary="",
-            milestone_id="m",
-            atomic_role="commit",
-        ),
-        action_decision=BaseActionDecision(
-            action=BaseAction(action_type="tap", x=1, y=1)
-        ),
-        executed=True,
+    turn = _signal_turn(
+        1,
+        role="commit",
+        control="trigger boundary",
+        milestone_id="m",
     )
 
-    assert is_commit_turn(turn, milestone) is True
-    assert is_commit_turn(
-        turn.model_copy(update={
-            "supervisor": turn.supervisor.model_copy(update={"atomic_role": "prepare"})
-        }),
+    assert mutation_progress(milestone, [turn]).phase == "terminal"
+    prepare = _signal_turn(
+        1,
+        role="prepare",
+        control="trigger boundary",
+        milestone_id="m",
+    )
+    assert mutation_progress(milestone, [prepare]).phase == "preparing"
+
+
+def test_mutation_progress_does_not_treat_nested_in_place_commit_as_terminal():
+    milestone = Milestone(
+        id="persisted",
+        name="persist mutation",
+        description="",
+        success_condition="state is durable",
+        kind="action",
+        requires_commit=True,
+    )
+    outer_prepare = _signal_turn(
+        1,
+        role="prepare",
+        control="open child workflow",
+        surface="resource:record-7",
+    )
+    child_commit = _signal_turn(
+        3,
+        role="commit",
+        control="materialize child state",
+        surface="child:workflow-1",
+    )
+    write = _signal_turn(2, role="write", control="target value", surface="child:workflow-1")
+    outer_commit = _signal_turn(
+        4,
+        role="commit",
+        control="persist resource",
+        surface="resource:record-7",
+    )
+
+    nested = mutation_progress(milestone, [outer_prepare, child_commit])
+    assert nested.phase == "preparing"
+    assert nested.terminal_index is None
+
+    pending = mutation_progress(milestone, [outer_prepare, write, child_commit])
+    drift = _PlanResult(
+        instruction="open another preparation route",
+        summary="",
+        atomic_role="prepare",
+        action_family="navigate",
+        target_control="another route",
+    )
+    assert pending.phase == "commit_pending"
+    assert pending.rejects(
+        drift, milestone, current_surface_id="resource:record-7"
+    ) is True
+    assert pending.rejects(
+        drift.model_copy(update={"atomic_role": "commit"}),
         milestone,
+        current_surface_id="resource:record-7",
+    ) is False
+
+    persisted = mutation_progress(
+        milestone,
+        [outer_prepare, child_commit, outer_commit],
+    )
+    assert persisted.phase == "terminal"
+    assert persisted.terminal_index == outer_commit.index
+
+    redirected_child = child_commit.model_copy(deep=True)
+    assert redirected_child.action_signal is not None
+    redirected_child.action_signal.response_channels.append("url")
+    redirected = mutation_progress(milestone, [outer_prepare, redirected_child])
+    assert redirected.phase == "terminal"
+    assert redirected.terminal_index == redirected_child.index
+
+    assert mutation_progress(
+        milestone.model_copy(update={"requires_commit": False}), [write]
+    ).phase == "written"
+
+    contradicted = write.model_copy(deep=True)
+    assert contradicted.action_signal is not None
+    contradicted.action_signal.outcome = "contradicted"
+    contradicted_progress = mutation_progress(milestone, [contradicted])
+    assert contradicted_progress.phase == "contradicted"
+    retry = _PlanResult(
+        instruction="retry the preparation",
+        summary="",
+        atomic_role="prepare",
+        action_family="activate",
+        target_control="Target value",
+    )
+    assert contradicted_progress.rejects(
+        retry,
+        milestone,
+        current_surface_id="record",
     ) is False
 
 

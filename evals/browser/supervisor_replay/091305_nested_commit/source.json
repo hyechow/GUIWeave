@@ -1,0 +1,8 @@
+{
+  "task": "WebArena 550",
+  "history_source": "logs/gui_agent/webarena/browser/20260714_091305/context.json",
+  "history_through_turn": 33,
+  "observation_source": "recorded observation_turn_33..34.json and matching screenshots",
+  "observation_captured_on": "2026-07-14",
+  "purpose": "A child workflow materialization was mislabeled commit; the statement still requires its outer persistence dispatch."
+}

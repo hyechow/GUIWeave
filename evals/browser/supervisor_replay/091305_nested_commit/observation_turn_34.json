@@ -1,0 +1,4923 @@
+{
+  "version": 1,
+  "screenshot": "screenshot_turn_34.png",
+  "observation": {
+    "source": "browser",
+    "loading": false,
+    "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/",
+    "title": "Nona Fitness Tank / Products / Inventory / Catalog / Magento Admin",
+    "dom_state": "13e4f8ee314d568e",
+    "tables": [
+      {
+        "index": 1,
+        "source": "table",
+        "caption": "",
+        "headers": [
+          "Image",
+          "Name",
+          "SKU",
+          "Price",
+          "Quantity",
+          "Weight",
+          "Status",
+          "Attributes",
+          "Actions"
+        ],
+        "rows": [
+          {
+            "Image": "Upload Image",
+            "Name": "",
+            "SKU": "",
+            "Price": "$",
+            "Quantity": "",
+            "Weight": "",
+            "Status": "Enabled",
+            "Attributes": "Size: XXS, Color: Blue",
+            "Actions": "Select"
+          },
+          {
+            "Image": "Upload Image",
+            "Name": "",
+            "SKU": "",
+            "Price": "$",
+            "Quantity": "",
+            "Weight": "",
+            "Status": "Enabled",
+            "Attributes": "Size: XXS, Color: Purple",
+            "Actions": "Select"
+          }
+        ],
+        "row_count": 2,
+        "dom_row_count": 2,
+        "total_records": 1,
+        "partial": false,
+        "path": "div.admin__field.admin__field-wide>div.admin__field-control>div.admin__control-table-wrapper>table.admin__dynamic-rows.data-grid",
+        "page": {
+          "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/",
+          "title": "Nona Fitness Tank / Products / Inventory / Catalog / Magento Admin"
+        },
+        "traversal": {
+          "type": "paged",
+          "page_index": 1,
+          "page_count": 1,
+          "has_next_page": false,
+          "has_prev_page": false,
+          "page_size": null,
+          "page_size_options": [],
+          "has_page_size_control": false,
+          "page_size_menu_open": false
+        }
+      }
+    ],
+    "form_controls": [
+      {
+        "kind": "section_toggle",
+        "label": "Content",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 337,
+          "w": 1133,
+          "h": 62
+        }
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Configurations",
+        "value": "true",
+        "rect": {
+          "x": 534,
+          "y": 402,
+          "w": 1133,
+          "h": 62
+        }
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Product Reviews",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 858,
+          "w": 1133,
+          "h": 62
+        }
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Images And Videos",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 923,
+          "w": 1133,
+          "h": 62
+        }
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Search Engine Optimization",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 988,
+          "w": 1133,
+          "h": 62
+        }
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Related Products, Up-Sells, and Cross-Sells",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 1053,
+          "w": 1133,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Customizable Options",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 1119,
+          "w": 1133,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Product in Websites",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 1184,
+          "w": 1133,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Design",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 1249,
+          "w": 1133,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Schedule Design Update",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 1314,
+          "w": 1133,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "section_toggle",
+        "label": "Gift Options",
+        "value": "false",
+        "rect": {
+          "x": 534,
+          "y": 1379,
+          "w": 1133,
+          "h": 62
+        },
+        "in_viewport": false,
+        "viewport_pos": "below"
+      },
+      {
+        "kind": "text_input",
+        "label": "search-global",
+        "id": "search-global",
+        "rect": {
+          "x": 827,
+          "y": -2780,
+          "w": 50,
+          "h": 35
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "Enable Product",
+        "name": "product[status]",
+        "id": "CV09YDH",
+        "value": "on",
+        "rect": {
+          "x": 319,
+          "y": -2576,
+          "w": 1,
+          "h": 1
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Product Name",
+        "name": "product[name]",
+        "id": "F28Y79T",
+        "value": "Nona Fitness Tank",
+        "required": true,
+        "rect": {
+          "x": 534,
+          "y": -2440,
+          "w": 552,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "SKU",
+        "name": "product[sku]",
+        "id": "IBHPT18",
+        "value": "WT04",
+        "required": true,
+        "rect": {
+          "x": 534,
+          "y": -2375,
+          "w": 552,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Price $",
+        "name": "product[price]",
+        "id": "HL7OVCW",
+        "rect": {
+          "x": 385,
+          "y": -2309,
+          "w": 130,
+          "h": 31
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-OFU9VS2",
+        "name": "product[tax_class_id]",
+        "id": "OFU9VS2",
+        "value": "2",
+        "selected_text": "Taxable Goods",
+        "options": [
+          "None",
+          "Taxable Goods"
+        ],
+        "rect": {
+          "x": 378,
+          "y": -2244,
+          "w": 152,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Quantity",
+        "name": "product[quantity_and_stock_status][qty]",
+        "id": "J5LPB7A",
+        "rect": {
+          "x": 378,
+          "y": -2179,
+          "w": 150,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-PMGNJPQ",
+        "name": "product[quantity_and_stock_status][is_in_stock]",
+        "id": "PMGNJPQ",
+        "value": "1",
+        "selected_text": "In Stock",
+        "options": [
+          "In Stock",
+          "Out of Stock"
+        ],
+        "rect": {
+          "x": 373,
+          "y": -2083,
+          "w": 137,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Weight lbs",
+        "name": "product[weight]",
+        "id": "WCM1JRC",
+        "rect": {
+          "x": 362,
+          "y": -2017,
+          "w": 109,
+          "h": 31
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-BTKPRA5",
+        "name": "product[product_has_weight]",
+        "id": "BTKPRA5",
+        "value": "1",
+        "selected_text": "This item has weight",
+        "options": [
+          "This item has weight",
+          "This item has no weight"
+        ],
+        "rect": {
+          "x": 534,
+          "y": -2017,
+          "w": 211,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "native_select",
+        "label": "notice-LG5O0C9",
+        "name": "product[visibility]",
+        "id": "LG5O0C9",
+        "value": "4",
+        "selected_text": "Catalog, Search",
+        "options": [
+          "Not Visible Individually",
+          "Catalog",
+          "Search",
+          "Catalog, Search"
+        ],
+        "rect": {
+          "x": 399,
+          "y": -1854,
+          "w": 204,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "Set Product as New From",
+        "name": "product[news_from_date]",
+        "id": "NNNYOOQ",
+        "is_datepicker": true,
+        "rect": {
+          "x": 378,
+          "y": -1788,
+          "w": 150,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "text_input",
+        "label": "To",
+        "name": "product[news_to_date]",
+        "id": "SF34GN5",
+        "is_datepicker": true,
+        "rect": {
+          "x": 538,
+          "y": -1788,
+          "w": 150,
+          "h": 33
+        },
+        "in_viewport": false,
+        "viewport_pos": "above"
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "Performance Fabric",
+        "name": "product[performance_fabric]",
+        "id": "Q45OOMB",
+        "value": "on",
+        "rect": {
+          "x": 319,
+          "y": 58,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "Erin Recommends",
+        "name": "product[erin_recommends]",
+        "id": "OKN25PD",
+        "value": "off",
+        "rect": {
+          "x": 319,
+          "y": 123,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "New",
+        "name": "product[new]",
+        "id": "PIS0JKQ",
+        "value": "off",
+        "rect": {
+          "x": 319,
+          "y": 187,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "kind": "checkbox_input",
+        "label": "Sale",
+        "name": "product[sale]",
+        "id": "XETC7DK",
+        "value": "off",
+        "rect": {
+          "x": 319,
+          "y": 251,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "kind": "native_select",
+        "label": "Current Variations",
+        "value": "20",
+        "selected_text": "20",
+        "options": [
+          "5",
+          "20",
+          "30",
+          "50",
+          "100",
+          "200",
+          "500"
+        ],
+        "rect": {
+          "x": 696,
+          "y": 578,
+          "w": 85,
+          "h": 33
+        }
+      },
+      {
+        "kind": "number_input",
+        "label": "of 1",
+        "id": "2",
+        "value": "1",
+        "rect": {
+          "x": 881,
+          "y": 578,
+          "w": 44,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "configurable-matrix[0][name]",
+        "name": "configurable-matrix[0][name]",
+        "id": "L46VJYV",
+        "value": "Nona Fitness Tank-XXS-Blue",
+        "group_id": "grid:0",
+        "group_index": 0,
+        "group_field": "Name",
+        "rect": {
+          "x": 219,
+          "y": 683,
+          "w": 121,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "configurable-matrix[0][sku]",
+        "name": "configurable-matrix[0][sku]",
+        "id": "LU1J9L9",
+        "value": "WT04-XXS-Blue",
+        "required": true,
+        "group_id": "grid:0",
+        "group_index": 0,
+        "group_field": "SKU",
+        "rect": {
+          "x": 330,
+          "y": 683,
+          "w": 121,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "$",
+        "name": "configurable-matrix[0][price]",
+        "id": "TNUKO9Q",
+        "group_id": "grid:0",
+        "group_index": 0,
+        "group_field": "Price",
+        "rect": {
+          "x": 455,
+          "y": 683,
+          "w": 120,
+          "h": 31
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "configurable-matrix[0][qty]",
+        "name": "configurable-matrix[0][qty]",
+        "id": "J1ASLAJ",
+        "group_id": "grid:0",
+        "group_index": 0,
+        "group_field": "Quantity",
+        "rect": {
+          "x": 568,
+          "y": 683,
+          "w": 127,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "configurable-matrix[0][weight]",
+        "name": "configurable-matrix[0][weight]",
+        "id": "I6JMGXV",
+        "group_id": "grid:0",
+        "group_index": 0,
+        "group_field": "Weight",
+        "rect": {
+          "x": 682,
+          "y": 683,
+          "w": 122,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "configurable-matrix[1][name]",
+        "name": "configurable-matrix[1][name]",
+        "id": "J7U64SJ",
+        "value": "Nona Fitness Tank-XXS-Purple",
+        "group_id": "grid:1",
+        "group_index": 1,
+        "group_field": "Name",
+        "rect": {
+          "x": 219,
+          "y": 756,
+          "w": 121,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "configurable-matrix[1][sku]",
+        "name": "configurable-matrix[1][sku]",
+        "id": "UR7XGON",
+        "value": "WT04-XXS-Purple",
+        "required": true,
+        "group_id": "grid:1",
+        "group_index": 1,
+        "group_field": "SKU",
+        "rect": {
+          "x": 330,
+          "y": 756,
+          "w": 121,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "$",
+        "name": "configurable-matrix[1][price]",
+        "id": "AUSN8U4",
+        "group_id": "grid:1",
+        "group_index": 1,
+        "group_field": "Price",
+        "rect": {
+          "x": 455,
+          "y": 756,
+          "w": 120,
+          "h": 31
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "configurable-matrix[1][qty]",
+        "name": "configurable-matrix[1][qty]",
+        "id": "Y3F8BKN",
+        "group_id": "grid:1",
+        "group_index": 1,
+        "group_field": "Quantity",
+        "rect": {
+          "x": 568,
+          "y": 756,
+          "w": 127,
+          "h": 33
+        }
+      },
+      {
+        "kind": "text_input",
+        "label": "configurable-matrix[1][weight]",
+        "name": "configurable-matrix[1][weight]",
+        "id": "FXUJUYT",
+        "group_id": "grid:1",
+        "group_index": 1,
+        "group_field": "Weight",
+        "rect": {
+          "x": 682,
+          "y": 756,
+          "w": 122,
+          "h": 33
+        }
+      }
+    ],
+    "form_controls_meta": {
+      "total_rendered": 62,
+      "returned": 40,
+      "truncated": true,
+      "coverage": "partial",
+      "raw_limit_hit": false
+    },
+    "viewport": {
+      "type": "paged",
+      "page_index": 1,
+      "page_count": 1,
+      "has_next_page": false,
+      "has_prev_page": false,
+      "page_size": null,
+      "page_size_options": [],
+      "has_page_size_control": false,
+      "page_size_menu_open": false
+    },
+    "semantic_tree": [
+      {
+        "role": "link",
+        "key": "Magento Admin Panel",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/",
+        "ref": 1088817,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " DASHBOARD",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/dashboard/",
+        "ref": 1088821,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " SALES",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/#",
+        "ref": 1088824,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CATALOG",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/#",
+        "ref": 1088857,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CUSTOMERS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/#",
+        "ref": 1088875,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " MARKETING",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/#",
+        "ref": 1088894,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " CONTENT",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/#",
+        "ref": 1088961,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " REPORTS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/#",
+        "ref": 1089007,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " STORES",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/#",
+        "ref": 1089132,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " SYSTEM",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/catalog/product/edit/id/1732/#",
+        "ref": 1089208,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " FIND PARTNERS & EXTENSIONS",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/marketplace/index/",
+        "ref": 1089291,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "System Messages: 2",
+        "value": "",
+        "url": "",
+        "ref": 1089315,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Cache Management",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/cache/",
+        "ref": 1089321,
+        "depth": 0
+      },
+      {
+        "role": "heading",
+        "key": "Nona Fitness Tank",
+        "value": "",
+        "url": "",
+        "ref": 1089336,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": " admin",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/system_account/index/",
+        "ref": 1088263,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/admin/notification/index/",
+        "ref": 1088268,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1088246,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Save",
+        "value": "",
+        "url": "",
+        "ref": 1089379,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Save options",
+        "value": "",
+        "url": "",
+        "ref": 1088272,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": " Back",
+        "value": "",
+        "url": "",
+        "ref": 1089389,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Add Attribute",
+        "value": "",
+        "url": "",
+        "ref": 1089391,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[website] Enable Product Yes",
+        "value": "true",
+        "url": "",
+        "ref": 1088300,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "[store view] Product Name *",
+        "value": "",
+        "url": "",
+        "ref": 1088298,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "[global] SKU *",
+        "value": "",
+        "url": "",
+        "ref": 1088299,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "[global] Price $",
+        "value": "",
+        "url": "",
+        "ref": 1088302,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-OFU9VS2",
+        "value": "",
+        "url": "",
+        "ref": 1088303,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "None",
+        "value": "",
+        "url": "",
+        "ref": 1089471,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Taxable Goods",
+        "value": "",
+        "url": "",
+        "ref": 1089474,
+        "depth": 1
+      },
+      {
+        "role": "textbox",
+        "key": "[global] Quantity",
+        "value": "",
+        "url": "",
+        "ref": 1088304,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Advanced Inventory",
+        "value": "",
+        "url": "",
+        "ref": 1089482,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-PMGNJPQ",
+        "value": "",
+        "url": "",
+        "ref": 1088305,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "In Stock",
+        "value": "",
+        "url": "",
+        "ref": 1089493,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Out of Stock",
+        "value": "",
+        "url": "",
+        "ref": 1089496,
+        "depth": 1
+      },
+      {
+        "role": "textbox",
+        "key": "[global] Weight lbs",
+        "value": "",
+        "url": "",
+        "ref": 1088306,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-BTKPRA5",
+        "value": "",
+        "url": "",
+        "ref": 1088326,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "This item has weight",
+        "value": "",
+        "url": "",
+        "ref": 1089512,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "This item has no weight",
+        "value": "",
+        "url": "",
+        "ref": 1089515,
+        "depth": 1
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1089524,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1089528,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1089532,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "New Category",
+        "value": "",
+        "url": "",
+        "ref": 1089586,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-LG5O0C9",
+        "value": "",
+        "url": "",
+        "ref": 1088308,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Not Visible Individually",
+        "value": "",
+        "url": "",
+        "ref": 1089597,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Catalog",
+        "value": "",
+        "url": "",
+        "ref": 1089600,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Search",
+        "value": "",
+        "url": "",
+        "ref": 1089603,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Catalog, Search",
+        "value": "",
+        "url": "",
+        "ref": 1089606,
+        "depth": 1
+      },
+      {
+        "role": "textbox",
+        "key": "[website] Set Product as New From",
+        "value": "",
+        "url": "",
+        "ref": 1088309,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "undefined ",
+        "value": "",
+        "url": "",
+        "ref": 1089614,
+        "depth": 0
+      },
+      {
+        "role": "textbox",
+        "key": "To",
+        "value": "",
+        "url": "",
+        "ref": 1088310,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "undefined ",
+        "value": "",
+        "url": "",
+        "ref": 1089621,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "notice-PWKEURS",
+        "value": "",
+        "url": "",
+        "ref": 1088311,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1089634,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Afghanistan",
+        "value": "",
+        "url": "",
+        "ref": 1089637,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Albania",
+        "value": "",
+        "url": "",
+        "ref": 1089640,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Algeria",
+        "value": "",
+        "url": "",
+        "ref": 1089643,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "American Samoa",
+        "value": "",
+        "url": "",
+        "ref": 1089646,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Andorra",
+        "value": "",
+        "url": "",
+        "ref": 1089649,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Angola",
+        "value": "",
+        "url": "",
+        "ref": 1089652,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Anguilla",
+        "value": "",
+        "url": "",
+        "ref": 1089655,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Antarctica",
+        "value": "",
+        "url": "",
+        "ref": 1089658,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Antigua & Barbuda",
+        "value": "",
+        "url": "",
+        "ref": 1089661,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Argentina",
+        "value": "",
+        "url": "",
+        "ref": 1089664,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Armenia",
+        "value": "",
+        "url": "",
+        "ref": 1089667,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Aruba",
+        "value": "",
+        "url": "",
+        "ref": 1089670,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Australia",
+        "value": "",
+        "url": "",
+        "ref": 1089673,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Austria",
+        "value": "",
+        "url": "",
+        "ref": 1089676,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Azerbaijan",
+        "value": "",
+        "url": "",
+        "ref": 1089679,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bahamas",
+        "value": "",
+        "url": "",
+        "ref": 1089682,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bahrain",
+        "value": "",
+        "url": "",
+        "ref": 1089685,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bangladesh",
+        "value": "",
+        "url": "",
+        "ref": 1089688,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Barbados",
+        "value": "",
+        "url": "",
+        "ref": 1089691,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Belarus",
+        "value": "",
+        "url": "",
+        "ref": 1089694,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Belgium",
+        "value": "",
+        "url": "",
+        "ref": 1089697,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Belize",
+        "value": "",
+        "url": "",
+        "ref": 1089700,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Benin",
+        "value": "",
+        "url": "",
+        "ref": 1089703,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bermuda",
+        "value": "",
+        "url": "",
+        "ref": 1089706,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bhutan",
+        "value": "",
+        "url": "",
+        "ref": 1089709,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bolivia",
+        "value": "",
+        "url": "",
+        "ref": 1089712,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bosnia & Herzegovina",
+        "value": "",
+        "url": "",
+        "ref": 1089715,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Botswana",
+        "value": "",
+        "url": "",
+        "ref": 1089718,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bouvet Island",
+        "value": "",
+        "url": "",
+        "ref": 1089721,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Brazil",
+        "value": "",
+        "url": "",
+        "ref": 1089724,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "British Indian Ocean Territory",
+        "value": "",
+        "url": "",
+        "ref": 1089727,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "British Virgin Islands",
+        "value": "",
+        "url": "",
+        "ref": 1089730,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Brunei",
+        "value": "",
+        "url": "",
+        "ref": 1089733,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bulgaria",
+        "value": "",
+        "url": "",
+        "ref": 1089736,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Burkina Faso",
+        "value": "",
+        "url": "",
+        "ref": 1089739,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Burundi",
+        "value": "",
+        "url": "",
+        "ref": 1089742,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cambodia",
+        "value": "",
+        "url": "",
+        "ref": 1089745,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cameroon",
+        "value": "",
+        "url": "",
+        "ref": 1089748,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Canada",
+        "value": "",
+        "url": "",
+        "ref": 1089751,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cape Verde",
+        "value": "",
+        "url": "",
+        "ref": 1089754,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Caribbean Netherlands",
+        "value": "",
+        "url": "",
+        "ref": 1089757,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cayman Islands",
+        "value": "",
+        "url": "",
+        "ref": 1089760,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Central African Republic",
+        "value": "",
+        "url": "",
+        "ref": 1089763,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Chad",
+        "value": "",
+        "url": "",
+        "ref": 1089766,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Chile",
+        "value": "",
+        "url": "",
+        "ref": 1089769,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "China",
+        "value": "",
+        "url": "",
+        "ref": 1089772,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Christmas Island",
+        "value": "",
+        "url": "",
+        "ref": 1089775,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cocos (Keeling) Islands",
+        "value": "",
+        "url": "",
+        "ref": 1089778,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Colombia",
+        "value": "",
+        "url": "",
+        "ref": 1089781,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Comoros",
+        "value": "",
+        "url": "",
+        "ref": 1089784,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Congo - Brazzaville",
+        "value": "",
+        "url": "",
+        "ref": 1089787,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Congo - Kinshasa",
+        "value": "",
+        "url": "",
+        "ref": 1089790,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cook Islands",
+        "value": "",
+        "url": "",
+        "ref": 1089793,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Costa Rica",
+        "value": "",
+        "url": "",
+        "ref": 1089796,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Croatia",
+        "value": "",
+        "url": "",
+        "ref": 1089799,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cuba",
+        "value": "",
+        "url": "",
+        "ref": 1089802,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Curaçao",
+        "value": "",
+        "url": "",
+        "ref": 1089805,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cyprus",
+        "value": "",
+        "url": "",
+        "ref": 1089808,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Czechia",
+        "value": "",
+        "url": "",
+        "ref": 1089811,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Côte d’Ivoire",
+        "value": "",
+        "url": "",
+        "ref": 1089814,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Denmark",
+        "value": "",
+        "url": "",
+        "ref": 1089817,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Djibouti",
+        "value": "",
+        "url": "",
+        "ref": 1089820,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Dominica",
+        "value": "",
+        "url": "",
+        "ref": 1089823,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Dominican Republic",
+        "value": "",
+        "url": "",
+        "ref": 1089826,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ecuador",
+        "value": "",
+        "url": "",
+        "ref": 1089829,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Egypt",
+        "value": "",
+        "url": "",
+        "ref": 1089832,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "El Salvador",
+        "value": "",
+        "url": "",
+        "ref": 1089835,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Equatorial Guinea",
+        "value": "",
+        "url": "",
+        "ref": 1089838,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Eritrea",
+        "value": "",
+        "url": "",
+        "ref": 1089841,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Estonia",
+        "value": "",
+        "url": "",
+        "ref": 1089844,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Eswatini",
+        "value": "",
+        "url": "",
+        "ref": 1089847,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ethiopia",
+        "value": "",
+        "url": "",
+        "ref": 1089850,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Falkland Islands",
+        "value": "",
+        "url": "",
+        "ref": 1089853,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Faroe Islands",
+        "value": "",
+        "url": "",
+        "ref": 1089856,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Fiji",
+        "value": "",
+        "url": "",
+        "ref": 1089859,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Finland",
+        "value": "",
+        "url": "",
+        "ref": 1089862,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "France",
+        "value": "",
+        "url": "",
+        "ref": 1089865,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "French Guiana",
+        "value": "",
+        "url": "",
+        "ref": 1089868,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "French Polynesia",
+        "value": "",
+        "url": "",
+        "ref": 1089871,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "French Southern Territories",
+        "value": "",
+        "url": "",
+        "ref": 1089874,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gabon",
+        "value": "",
+        "url": "",
+        "ref": 1089877,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gambia",
+        "value": "",
+        "url": "",
+        "ref": 1089880,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Georgia",
+        "value": "",
+        "url": "",
+        "ref": 1089883,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Germany",
+        "value": "",
+        "url": "",
+        "ref": 1089886,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ghana",
+        "value": "",
+        "url": "",
+        "ref": 1089889,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gibraltar",
+        "value": "",
+        "url": "",
+        "ref": 1089892,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Greece",
+        "value": "",
+        "url": "",
+        "ref": 1089895,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Greenland",
+        "value": "",
+        "url": "",
+        "ref": 1089898,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Grenada",
+        "value": "",
+        "url": "",
+        "ref": 1089901,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guadeloupe",
+        "value": "",
+        "url": "",
+        "ref": 1089904,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guam",
+        "value": "",
+        "url": "",
+        "ref": 1089907,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guatemala",
+        "value": "",
+        "url": "",
+        "ref": 1089910,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guernsey",
+        "value": "",
+        "url": "",
+        "ref": 1089913,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guinea",
+        "value": "",
+        "url": "",
+        "ref": 1089916,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guinea-Bissau",
+        "value": "",
+        "url": "",
+        "ref": 1089919,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Guyana",
+        "value": "",
+        "url": "",
+        "ref": 1089922,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Haiti",
+        "value": "",
+        "url": "",
+        "ref": 1089925,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Heard & McDonald Islands",
+        "value": "",
+        "url": "",
+        "ref": 1089928,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Honduras",
+        "value": "",
+        "url": "",
+        "ref": 1089931,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hong Kong SAR China",
+        "value": "",
+        "url": "",
+        "ref": 1089934,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hungary",
+        "value": "",
+        "url": "",
+        "ref": 1089937,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Iceland",
+        "value": "",
+        "url": "",
+        "ref": 1089940,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "India",
+        "value": "",
+        "url": "",
+        "ref": 1089943,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Indonesia",
+        "value": "",
+        "url": "",
+        "ref": 1089946,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Iran",
+        "value": "",
+        "url": "",
+        "ref": 1089949,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Iraq",
+        "value": "",
+        "url": "",
+        "ref": 1089952,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ireland",
+        "value": "",
+        "url": "",
+        "ref": 1089955,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Isle of Man",
+        "value": "",
+        "url": "",
+        "ref": 1089958,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Israel",
+        "value": "",
+        "url": "",
+        "ref": 1089961,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Italy",
+        "value": "",
+        "url": "",
+        "ref": 1089964,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jamaica",
+        "value": "",
+        "url": "",
+        "ref": 1089967,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Japan",
+        "value": "",
+        "url": "",
+        "ref": 1089970,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jersey",
+        "value": "",
+        "url": "",
+        "ref": 1089973,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jordan",
+        "value": "",
+        "url": "",
+        "ref": 1089976,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kazakhstan",
+        "value": "",
+        "url": "",
+        "ref": 1089979,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kenya",
+        "value": "",
+        "url": "",
+        "ref": 1089982,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kiribati",
+        "value": "",
+        "url": "",
+        "ref": 1089985,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kosovo",
+        "value": "",
+        "url": "",
+        "ref": 1089988,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kuwait",
+        "value": "",
+        "url": "",
+        "ref": 1089991,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Kyrgyzstan",
+        "value": "",
+        "url": "",
+        "ref": 1089994,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Laos",
+        "value": "",
+        "url": "",
+        "ref": 1089997,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Latvia",
+        "value": "",
+        "url": "",
+        "ref": 1090000,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lebanon",
+        "value": "",
+        "url": "",
+        "ref": 1090003,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lesotho",
+        "value": "",
+        "url": "",
+        "ref": 1090006,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Liberia",
+        "value": "",
+        "url": "",
+        "ref": 1090009,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Libya",
+        "value": "",
+        "url": "",
+        "ref": 1090012,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Liechtenstein",
+        "value": "",
+        "url": "",
+        "ref": 1090015,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lithuania",
+        "value": "",
+        "url": "",
+        "ref": 1090018,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Luxembourg",
+        "value": "",
+        "url": "",
+        "ref": 1090021,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Macao SAR China",
+        "value": "",
+        "url": "",
+        "ref": 1090024,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Madagascar",
+        "value": "",
+        "url": "",
+        "ref": 1090027,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Malawi",
+        "value": "",
+        "url": "",
+        "ref": 1090030,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Malaysia",
+        "value": "",
+        "url": "",
+        "ref": 1090033,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Maldives",
+        "value": "",
+        "url": "",
+        "ref": 1090036,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mali",
+        "value": "",
+        "url": "",
+        "ref": 1090039,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Malta",
+        "value": "",
+        "url": "",
+        "ref": 1090042,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Marshall Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090045,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Martinique",
+        "value": "",
+        "url": "",
+        "ref": 1090048,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mauritania",
+        "value": "",
+        "url": "",
+        "ref": 1090051,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mauritius",
+        "value": "",
+        "url": "",
+        "ref": 1090054,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mayotte",
+        "value": "",
+        "url": "",
+        "ref": 1090057,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mexico",
+        "value": "",
+        "url": "",
+        "ref": 1090060,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Micronesia",
+        "value": "",
+        "url": "",
+        "ref": 1090063,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Moldova",
+        "value": "",
+        "url": "",
+        "ref": 1090066,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Monaco",
+        "value": "",
+        "url": "",
+        "ref": 1090069,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mongolia",
+        "value": "",
+        "url": "",
+        "ref": 1090072,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Montenegro",
+        "value": "",
+        "url": "",
+        "ref": 1090075,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Montserrat",
+        "value": "",
+        "url": "",
+        "ref": 1090078,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Morocco",
+        "value": "",
+        "url": "",
+        "ref": 1090081,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mozambique",
+        "value": "",
+        "url": "",
+        "ref": 1090084,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Myanmar (Burma)",
+        "value": "",
+        "url": "",
+        "ref": 1090087,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Namibia",
+        "value": "",
+        "url": "",
+        "ref": 1090090,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nauru",
+        "value": "",
+        "url": "",
+        "ref": 1090093,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nepal",
+        "value": "",
+        "url": "",
+        "ref": 1090096,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Netherlands",
+        "value": "",
+        "url": "",
+        "ref": 1090099,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "New Caledonia",
+        "value": "",
+        "url": "",
+        "ref": 1090102,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "New Zealand",
+        "value": "",
+        "url": "",
+        "ref": 1090105,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nicaragua",
+        "value": "",
+        "url": "",
+        "ref": 1090108,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Niger",
+        "value": "",
+        "url": "",
+        "ref": 1090111,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nigeria",
+        "value": "",
+        "url": "",
+        "ref": 1090114,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Niue",
+        "value": "",
+        "url": "",
+        "ref": 1090117,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Norfolk Island",
+        "value": "",
+        "url": "",
+        "ref": 1090120,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "North Korea",
+        "value": "",
+        "url": "",
+        "ref": 1090123,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "North Macedonia",
+        "value": "",
+        "url": "",
+        "ref": 1090126,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Northern Mariana Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090129,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Norway",
+        "value": "",
+        "url": "",
+        "ref": 1090132,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Oman",
+        "value": "",
+        "url": "",
+        "ref": 1090135,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Pakistan",
+        "value": "",
+        "url": "",
+        "ref": 1090138,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Palau",
+        "value": "",
+        "url": "",
+        "ref": 1090141,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Palestinian Territories",
+        "value": "",
+        "url": "",
+        "ref": 1090144,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Panama",
+        "value": "",
+        "url": "",
+        "ref": 1090147,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Papua New Guinea",
+        "value": "",
+        "url": "",
+        "ref": 1090150,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Paraguay",
+        "value": "",
+        "url": "",
+        "ref": 1090153,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Peru",
+        "value": "",
+        "url": "",
+        "ref": 1090156,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Philippines",
+        "value": "",
+        "url": "",
+        "ref": 1090159,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Pitcairn Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090162,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Poland",
+        "value": "",
+        "url": "",
+        "ref": 1090165,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Portugal",
+        "value": "",
+        "url": "",
+        "ref": 1090168,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Qatar",
+        "value": "",
+        "url": "",
+        "ref": 1090171,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Romania",
+        "value": "",
+        "url": "",
+        "ref": 1090174,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Russia",
+        "value": "",
+        "url": "",
+        "ref": 1090177,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rwanda",
+        "value": "",
+        "url": "",
+        "ref": 1090180,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Réunion",
+        "value": "",
+        "url": "",
+        "ref": 1090183,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Samoa",
+        "value": "",
+        "url": "",
+        "ref": 1090186,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "San Marino",
+        "value": "",
+        "url": "",
+        "ref": 1090189,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Saudi Arabia",
+        "value": "",
+        "url": "",
+        "ref": 1090192,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Senegal",
+        "value": "",
+        "url": "",
+        "ref": 1090195,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Serbia",
+        "value": "",
+        "url": "",
+        "ref": 1090198,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Seychelles",
+        "value": "",
+        "url": "",
+        "ref": 1090201,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sierra Leone",
+        "value": "",
+        "url": "",
+        "ref": 1090204,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Singapore",
+        "value": "",
+        "url": "",
+        "ref": 1090207,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sint Maarten",
+        "value": "",
+        "url": "",
+        "ref": 1090210,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Slovakia",
+        "value": "",
+        "url": "",
+        "ref": 1090213,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Slovenia",
+        "value": "",
+        "url": "",
+        "ref": 1090216,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Solomon Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090219,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Somalia",
+        "value": "",
+        "url": "",
+        "ref": 1090222,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "South Africa",
+        "value": "",
+        "url": "",
+        "ref": 1090225,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "South Georgia & South Sandwich Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090228,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "South Korea",
+        "value": "",
+        "url": "",
+        "ref": 1090231,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Spain",
+        "value": "",
+        "url": "",
+        "ref": 1090234,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sri Lanka",
+        "value": "",
+        "url": "",
+        "ref": 1090237,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Barthélemy",
+        "value": "",
+        "url": "",
+        "ref": 1090240,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Helena",
+        "value": "",
+        "url": "",
+        "ref": 1090243,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Kitts & Nevis",
+        "value": "",
+        "url": "",
+        "ref": 1090246,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Lucia",
+        "value": "",
+        "url": "",
+        "ref": 1090249,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Martin",
+        "value": "",
+        "url": "",
+        "ref": 1090252,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Pierre & Miquelon",
+        "value": "",
+        "url": "",
+        "ref": 1090255,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "St. Vincent & Grenadines",
+        "value": "",
+        "url": "",
+        "ref": 1090258,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sudan",
+        "value": "",
+        "url": "",
+        "ref": 1090261,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Suriname",
+        "value": "",
+        "url": "",
+        "ref": 1090264,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Svalbard & Jan Mayen",
+        "value": "",
+        "url": "",
+        "ref": 1090267,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sweden",
+        "value": "",
+        "url": "",
+        "ref": 1090270,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Switzerland",
+        "value": "",
+        "url": "",
+        "ref": 1090273,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Syria",
+        "value": "",
+        "url": "",
+        "ref": 1090276,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "São Tomé & Príncipe",
+        "value": "",
+        "url": "",
+        "ref": 1090279,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Taiwan, Province of China",
+        "value": "",
+        "url": "",
+        "ref": 1090282,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tajikistan",
+        "value": "",
+        "url": "",
+        "ref": 1090285,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tanzania",
+        "value": "",
+        "url": "",
+        "ref": 1090288,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Thailand",
+        "value": "",
+        "url": "",
+        "ref": 1090291,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Timor-Leste",
+        "value": "",
+        "url": "",
+        "ref": 1090294,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Togo",
+        "value": "",
+        "url": "",
+        "ref": 1090297,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tokelau",
+        "value": "",
+        "url": "",
+        "ref": 1090300,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tonga",
+        "value": "",
+        "url": "",
+        "ref": 1090303,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Trinidad & Tobago",
+        "value": "",
+        "url": "",
+        "ref": 1090306,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tunisia",
+        "value": "",
+        "url": "",
+        "ref": 1090309,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Turkey",
+        "value": "",
+        "url": "",
+        "ref": 1090312,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Turkmenistan",
+        "value": "",
+        "url": "",
+        "ref": 1090315,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Turks & Caicos Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090318,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tuvalu",
+        "value": "",
+        "url": "",
+        "ref": 1090321,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "U.S. Outlying Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090324,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "U.S. Virgin Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090327,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Uganda",
+        "value": "",
+        "url": "",
+        "ref": 1090330,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ukraine",
+        "value": "",
+        "url": "",
+        "ref": 1090333,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "United Arab Emirates",
+        "value": "",
+        "url": "",
+        "ref": 1090336,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "United Kingdom",
+        "value": "",
+        "url": "",
+        "ref": 1090339,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "United States",
+        "value": "",
+        "url": "",
+        "ref": 1090342,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Uruguay",
+        "value": "",
+        "url": "",
+        "ref": 1090345,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Uzbekistan",
+        "value": "",
+        "url": "",
+        "ref": 1090348,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Vanuatu",
+        "value": "",
+        "url": "",
+        "ref": 1090351,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Vatican City",
+        "value": "",
+        "url": "",
+        "ref": 1090354,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Venezuela",
+        "value": "",
+        "url": "",
+        "ref": 1090357,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Vietnam",
+        "value": "",
+        "url": "",
+        "ref": 1090360,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Wallis & Futuna",
+        "value": "",
+        "url": "",
+        "ref": 1090363,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Western Sahara",
+        "value": "",
+        "url": "",
+        "ref": 1090366,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Yemen",
+        "value": "",
+        "url": "",
+        "ref": 1090369,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Zambia",
+        "value": "",
+        "url": "",
+        "ref": 1090372,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Zimbabwe",
+        "value": "",
+        "url": "",
+        "ref": 1090375,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Åland Islands",
+        "value": "",
+        "url": "",
+        "ref": 1090378,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Activity",
+        "value": "",
+        "url": "",
+        "ref": 1088312,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Hike",
+        "value": "",
+        "url": "",
+        "ref": 1090387,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Outdoor",
+        "value": "",
+        "url": "",
+        "ref": 1090390,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Running",
+        "value": "",
+        "url": "",
+        "ref": 1090393,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Warmup",
+        "value": "",
+        "url": "",
+        "ref": 1090396,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Yoga",
+        "value": "",
+        "url": "",
+        "ref": 1090399,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Recreation",
+        "value": "",
+        "url": "",
+        "ref": 1090402,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lounge",
+        "value": "",
+        "url": "",
+        "ref": 1090405,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gym",
+        "value": "",
+        "url": "",
+        "ref": 1090408,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Climbing",
+        "value": "",
+        "url": "",
+        "ref": 1090411,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Crosstraining",
+        "value": "",
+        "url": "",
+        "ref": 1090414,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Post-workout",
+        "value": "",
+        "url": "",
+        "ref": 1090417,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cycling",
+        "value": "",
+        "url": "",
+        "ref": 1090420,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Athletic",
+        "value": "",
+        "url": "",
+        "ref": 1090423,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sports",
+        "value": "",
+        "url": "",
+        "ref": 1090426,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hiking",
+        "value": "",
+        "url": "",
+        "ref": 1090429,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Overnight",
+        "value": "",
+        "url": "",
+        "ref": 1090432,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "School",
+        "value": "",
+        "url": "",
+        "ref": 1090435,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Trail",
+        "value": "",
+        "url": "",
+        "ref": 1090438,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Travel",
+        "value": "",
+        "url": "",
+        "ref": 1090441,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Urban",
+        "value": "",
+        "url": "",
+        "ref": 1090444,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Style General",
+        "value": "",
+        "url": "",
+        "ref": 1088313,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Insulated",
+        "value": "",
+        "url": "",
+        "ref": 1090453,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jacket",
+        "value": "",
+        "url": "",
+        "ref": 1090456,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Vest",
+        "value": "",
+        "url": "",
+        "ref": 1090459,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lightweight",
+        "value": "",
+        "url": "",
+        "ref": 1090462,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hooded",
+        "value": "",
+        "url": "",
+        "ref": 1090465,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Heavy Duty",
+        "value": "",
+        "url": "",
+        "ref": 1090468,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rain Coat",
+        "value": "",
+        "url": "",
+        "ref": 1090471,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hard Shell",
+        "value": "",
+        "url": "",
+        "ref": 1090474,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Soft Shell",
+        "value": "",
+        "url": "",
+        "ref": 1090477,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Windbreaker",
+        "value": "",
+        "url": "",
+        "ref": 1090480,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "&frac12; zip",
+        "value": "",
+        "url": "",
+        "ref": 1090483,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "&frac14; zip",
+        "value": "",
+        "url": "",
+        "ref": 1090486,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Full Zip",
+        "value": "",
+        "url": "",
+        "ref": 1090489,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Reversible",
+        "value": "",
+        "url": "",
+        "ref": 1090492,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Bra",
+        "value": "",
+        "url": "",
+        "ref": 1090495,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hoodie",
+        "value": "",
+        "url": "",
+        "ref": 1090498,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sweatshirt",
+        "value": "",
+        "url": "",
+        "ref": 1090501,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Polo",
+        "value": "",
+        "url": "",
+        "ref": 1090504,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tank",
+        "value": "",
+        "url": "",
+        "ref": 1090507,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tee",
+        "value": "",
+        "url": "",
+        "ref": 1090510,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Pullover",
+        "value": "",
+        "url": "",
+        "ref": 1090513,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hoodie",
+        "value": "",
+        "url": "",
+        "ref": 1090516,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cardigan",
+        "value": "",
+        "url": "",
+        "ref": 1090519,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Henley",
+        "value": "",
+        "url": "",
+        "ref": 1090522,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tunic",
+        "value": "",
+        "url": "",
+        "ref": 1090525,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Camisole",
+        "value": "",
+        "url": "",
+        "ref": 1090528,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Material",
+        "value": "",
+        "url": "",
+        "ref": 1088314,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Burlap",
+        "value": "",
+        "url": "",
+        "ref": 1090537,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cocona&reg; performance fabric",
+        "value": "",
+        "url": "",
+        "ref": 1090540,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Canvas",
+        "value": "",
+        "url": "",
+        "ref": 1090543,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Wool",
+        "value": "",
+        "url": "",
+        "ref": 1090546,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cotton",
+        "value": "",
+        "url": "",
+        "ref": 1090549,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Fleece",
+        "value": "",
+        "url": "",
+        "ref": 1090552,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Faux Leather",
+        "value": "",
+        "url": "",
+        "ref": 1090555,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hemp",
+        "value": "",
+        "url": "",
+        "ref": 1090558,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Jersey",
+        "value": "",
+        "url": "",
+        "ref": 1090561,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Leather",
+        "value": "",
+        "url": "",
+        "ref": 1090564,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "LumaTech&trade;",
+        "value": "",
+        "url": "",
+        "ref": 1090567,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mesh",
+        "value": "",
+        "url": "",
+        "ref": 1090570,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lycra&reg;",
+        "value": "",
+        "url": "",
+        "ref": 1090573,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Nylon",
+        "value": "",
+        "url": "",
+        "ref": 1090576,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Microfiber",
+        "value": "",
+        "url": "",
+        "ref": 1090579,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Polyester",
+        "value": "",
+        "url": "",
+        "ref": 1090582,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rayon",
+        "value": "",
+        "url": "",
+        "ref": 1090585,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Spandex",
+        "value": "",
+        "url": "",
+        "ref": 1090588,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "HeatTec&reg;",
+        "value": "",
+        "url": "",
+        "ref": 1090591,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ripstop",
+        "value": "",
+        "url": "",
+        "ref": 1090594,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "EverCool&trade;",
+        "value": "",
+        "url": "",
+        "ref": 1090597,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Suede",
+        "value": "",
+        "url": "",
+        "ref": 1090600,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Foam",
+        "value": "",
+        "url": "",
+        "ref": 1090603,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Organic Cotton",
+        "value": "",
+        "url": "",
+        "ref": 1090606,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Metal",
+        "value": "",
+        "url": "",
+        "ref": 1090609,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "TENCEL",
+        "value": "",
+        "url": "",
+        "ref": 1090612,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "CoolTech&trade;",
+        "value": "",
+        "url": "",
+        "ref": 1090615,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Plastic",
+        "value": "",
+        "url": "",
+        "ref": 1090618,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Khaki",
+        "value": "",
+        "url": "",
+        "ref": 1090621,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rubber",
+        "value": "",
+        "url": "",
+        "ref": 1090624,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Linen",
+        "value": "",
+        "url": "",
+        "ref": 1090627,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Synthetic",
+        "value": "",
+        "url": "",
+        "ref": 1090630,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Stainless Steel",
+        "value": "",
+        "url": "",
+        "ref": 1090633,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Wool",
+        "value": "",
+        "url": "",
+        "ref": 1090636,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Silicone",
+        "value": "",
+        "url": "",
+        "ref": 1090639,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Terry",
+        "value": "",
+        "url": "",
+        "ref": 1090642,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Sleeve",
+        "value": "",
+        "url": "",
+        "ref": 1088315,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Sleeve",
+        "value": "",
+        "url": "",
+        "ref": 1090651,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Long-Sleeve",
+        "value": "",
+        "url": "",
+        "ref": 1090654,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Short-Sleeve",
+        "value": "",
+        "url": "",
+        "ref": 1090657,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Sleeveless",
+        "value": "",
+        "url": "",
+        "ref": 1090660,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Tank",
+        "value": "",
+        "url": "",
+        "ref": 1090663,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Strap",
+        "value": "",
+        "url": "",
+        "ref": 1090666,
+        "depth": 1
+      },
+      {
+        "role": "combobox",
+        "key": "notice-NA5V62B",
+        "value": "",
+        "url": "",
+        "ref": 1088316,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1090680,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "55 cm",
+        "value": "",
+        "url": "",
+        "ref": 1090683,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "XS",
+        "value": "",
+        "url": "",
+        "ref": 1090686,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "65 cm",
+        "value": "",
+        "url": "",
+        "ref": 1090689,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "S",
+        "value": "",
+        "url": "",
+        "ref": 1090692,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "75 cm",
+        "value": "",
+        "url": "",
+        "ref": 1090695,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "M",
+        "value": "",
+        "url": "",
+        "ref": 1090698,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "6 foot",
+        "value": "",
+        "url": "",
+        "ref": 1090701,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "L",
+        "value": "",
+        "url": "",
+        "ref": 1090704,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "8 foot",
+        "value": "",
+        "url": "",
+        "ref": 1090707,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "XL",
+        "value": "",
+        "url": "",
+        "ref": 1090710,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "10 foot",
+        "value": "",
+        "url": "",
+        "ref": 1090713,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "28",
+        "value": "",
+        "url": "",
+        "ref": 1090716,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "29",
+        "value": "",
+        "url": "",
+        "ref": 1090719,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "30",
+        "value": "",
+        "url": "",
+        "ref": 1090722,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "31",
+        "value": "",
+        "url": "",
+        "ref": 1090725,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "32",
+        "value": "",
+        "url": "",
+        "ref": 1090728,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "33",
+        "value": "",
+        "url": "",
+        "ref": 1090731,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "34",
+        "value": "",
+        "url": "",
+        "ref": 1090734,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "36",
+        "value": "",
+        "url": "",
+        "ref": 1090737,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "38",
+        "value": "",
+        "url": "",
+        "ref": 1090740,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "XXS",
+        "value": "",
+        "url": "",
+        "ref": 1090743,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Collar",
+        "value": "",
+        "url": "",
+        "ref": 1088317,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "N/A",
+        "value": "",
+        "url": "",
+        "ref": 1090752,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "? zip",
+        "value": "",
+        "url": "",
+        "ref": 1090755,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Boat Neck",
+        "value": "",
+        "url": "",
+        "ref": 1090758,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Crew",
+        "value": "",
+        "url": "",
+        "ref": 1090761,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Full zip",
+        "value": "",
+        "url": "",
+        "ref": 1090764,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "V-neck",
+        "value": "",
+        "url": "",
+        "ref": 1090767,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Ballet",
+        "value": "",
+        "url": "",
+        "ref": 1090770,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Scoop",
+        "value": "",
+        "url": "",
+        "ref": 1090773,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "High Collar",
+        "value": "",
+        "url": "",
+        "ref": 1090776,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Stand Collar",
+        "value": "",
+        "url": "",
+        "ref": 1090779,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Roll Neck",
+        "value": "",
+        "url": "",
+        "ref": 1090782,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Square Neck",
+        "value": "",
+        "url": "",
+        "ref": 1090785,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Pattern",
+        "value": "",
+        "url": "",
+        "ref": 1088318,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "Color-Blocked",
+        "value": "",
+        "url": "",
+        "ref": 1090794,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Checked",
+        "value": "",
+        "url": "",
+        "ref": 1090797,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Color-Blocked",
+        "value": "",
+        "url": "",
+        "ref": 1090800,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Graphic Print",
+        "value": "",
+        "url": "",
+        "ref": 1090803,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Solid",
+        "value": "",
+        "url": "",
+        "ref": 1090806,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Solid-Highlight",
+        "value": "",
+        "url": "",
+        "ref": 1090809,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Striped",
+        "value": "",
+        "url": "",
+        "ref": 1090812,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Camo",
+        "value": "",
+        "url": "",
+        "ref": 1090815,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Geometric",
+        "value": "",
+        "url": "",
+        "ref": 1090818,
+        "depth": 1
+      },
+      {
+        "role": "listbox",
+        "key": "[global] Climate",
+        "value": "",
+        "url": "",
+        "ref": 1088319,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "All-Weather",
+        "value": "",
+        "url": "",
+        "ref": 1090827,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cold",
+        "value": "",
+        "url": "",
+        "ref": 1090830,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Cool",
+        "value": "",
+        "url": "",
+        "ref": 1090833,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Indoor",
+        "value": "",
+        "url": "",
+        "ref": 1090836,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Mild",
+        "value": "",
+        "url": "",
+        "ref": 1090839,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Rainy",
+        "value": "",
+        "url": "",
+        "ref": 1090842,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Spring",
+        "value": "",
+        "url": "",
+        "ref": 1090845,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Warm",
+        "value": "",
+        "url": "",
+        "ref": 1090848,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Windy",
+        "value": "",
+        "url": "",
+        "ref": 1090851,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Wintry",
+        "value": "",
+        "url": "",
+        "ref": 1090854,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Hot",
+        "value": "",
+        "url": "",
+        "ref": 1090857,
+        "depth": 1
+      },
+      {
+        "role": "combobox",
+        "key": "notice-FMQHAQ1",
+        "value": "",
+        "url": "",
+        "ref": 1088320,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1090871,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Black",
+        "value": "",
+        "url": "",
+        "ref": 1090874,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Blue",
+        "value": "",
+        "url": "",
+        "ref": 1090877,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Brown",
+        "value": "",
+        "url": "",
+        "ref": 1090880,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Gray",
+        "value": "",
+        "url": "",
+        "ref": 1090883,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Green",
+        "value": "",
+        "url": "",
+        "ref": 1090886,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Lavender",
+        "value": "",
+        "url": "",
+        "ref": 1090889,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Multi",
+        "value": "",
+        "url": "",
+        "ref": 1090892,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Orange",
+        "value": "",
+        "url": "",
+        "ref": 1090895,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Purple",
+        "value": "",
+        "url": "",
+        "ref": 1090898,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Red",
+        "value": "",
+        "url": "",
+        "ref": 1090901,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "White",
+        "value": "",
+        "url": "",
+        "ref": 1090904,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "Yellow",
+        "value": "",
+        "url": "",
+        "ref": 1090907,
+        "depth": 1
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] Eco Collection Yes",
+        "value": "true",
+        "url": "",
+        "ref": 1088321,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] Performance Fabric Yes",
+        "value": "true",
+        "url": "",
+        "ref": 1088322,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] Erin Recommends No",
+        "value": "false",
+        "url": "",
+        "ref": 1088323,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] New No",
+        "value": "false",
+        "url": "",
+        "ref": 1088324,
+        "depth": 0
+      },
+      {
+        "role": "checkbox",
+        "key": "[global] Sale No",
+        "value": "false",
+        "url": "",
+        "ref": 1088325,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Add Products Manually",
+        "value": "",
+        "url": "",
+        "ref": 1091062,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "Edit Configurations",
+        "value": "",
+        "url": "",
+        "ref": 1091064,
+        "depth": 0
+      },
+      {
+        "role": "combobox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1088328,
+        "depth": 0
+      },
+      {
+        "role": "option",
+        "key": "5",
+        "value": "",
+        "url": "",
+        "ref": 1091077,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "20",
+        "value": "",
+        "url": "",
+        "ref": 1091080,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "30",
+        "value": "",
+        "url": "",
+        "ref": 1091083,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "50",
+        "value": "",
+        "url": "",
+        "ref": 1091086,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "100",
+        "value": "",
+        "url": "",
+        "ref": 1091089,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "200",
+        "value": "",
+        "url": "",
+        "ref": 1091092,
+        "depth": 1
+      },
+      {
+        "role": "option",
+        "key": "500",
+        "value": "",
+        "url": "",
+        "ref": 1091095,
+        "depth": 1
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1088296,
+        "depth": 0
+      },
+      {
+        "role": "spinbutton",
+        "key": "of 1",
+        "value": "",
+        "url": "",
+        "ref": 1088260,
+        "depth": 0
+      },
+      {
+        "role": "button",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1088297,
+        "depth": 0
+      },
+      {
+        "role": "table",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091105,
+        "depth": 0
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1102453,
+        "depth": 1
+      },
+      {
+        "role": "columnheader",
+        "key": "Image",
+        "value": "",
+        "url": "",
+        "ref": 1102462,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Name",
+        "value": "",
+        "url": "",
+        "ref": 1102465,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "SKU",
+        "value": "",
+        "url": "",
+        "ref": 1102468,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Price",
+        "value": "",
+        "url": "",
+        "ref": 1102471,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Quantity",
+        "value": "",
+        "url": "",
+        "ref": 1102474,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Weight",
+        "value": "",
+        "url": "",
+        "ref": 1102477,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Status",
+        "value": "",
+        "url": "",
+        "ref": 1102480,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Attributes",
+        "value": "",
+        "url": "",
+        "ref": 1102483,
+        "depth": 2
+      },
+      {
+        "role": "columnheader",
+        "key": "Actions",
+        "value": "",
+        "url": "",
+        "ref": 1102486,
+        "depth": 2
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091127,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091128,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091134,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1101910,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091143,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1102014,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091151,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "$",
+        "value": "",
+        "url": "",
+        "ref": 1102123,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091159,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1102213,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091167,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1102316,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 1091175,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: XXS, Color: Blue",
+        "value": "",
+        "url": "",
+        "ref": 1091178,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 1091185,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 1091187,
+        "depth": 3
+      },
+      {
+        "role": "row",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091196,
+        "depth": 1
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091197,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091203,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1102553,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091212,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1102657,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091220,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "$",
+        "value": "",
+        "url": "",
+        "ref": 1102766,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091228,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1102856,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1091236,
+        "depth": 2
+      },
+      {
+        "role": "textbox",
+        "key": "",
+        "value": "",
+        "url": "",
+        "ref": 1102959,
+        "depth": 3
+      },
+      {
+        "role": "cell",
+        "key": "Enabled",
+        "value": "",
+        "url": "",
+        "ref": 1091244,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Size: XXS, Color: Purple",
+        "value": "",
+        "url": "",
+        "ref": 1091247,
+        "depth": 2
+      },
+      {
+        "role": "cell",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 1091254,
+        "depth": 2
+      },
+      {
+        "role": "button",
+        "key": "Select",
+        "value": "",
+        "url": "",
+        "ref": 1091256,
+        "depth": 3
+      },
+      {
+        "role": "link",
+        "key": "",
+        "value": "",
+        "url": "http://magento.com/",
+        "ref": 1092399,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Privacy Policy",
+        "value": "",
+        "url": "https://www.adobe.com/privacy/policy.html",
+        "ref": 1092402,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Account Activity",
+        "value": "",
+        "url": "http://192.168.1.102:7780/admin/security/session/activity/",
+        "ref": 1092403,
+        "depth": 0
+      },
+      {
+        "role": "link",
+        "key": "Report an Issue",
+        "value": "",
+        "url": "https://github.com/magento/magento2/issues",
+        "ref": 1092404,
+        "depth": 0
+      }
+    ],
+    "applied_filters": null,
+    "applied_filter_meta": {
+      "source": "none",
+      "indicator_channel": "absent",
+      "fallback_channel": "absent",
+      "chip_container": "absent",
+      "legacy_grid": "absent"
+    }
+  }
+}

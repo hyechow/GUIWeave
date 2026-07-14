@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
+from gui_agent.core.run.action_ledger import ActionLedger
 from gui_agent.core.run.mutation import authorize_mutation, resolve_mutation
+from gui_agent.core.run.progress_monitor import ProgressMonitor
 from gui_agent.core.schemas import (
     ActionSignal,
     Milestone,
@@ -11,12 +13,19 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.milestone.action_protocol import mutation_progress
+from gui_agent.core.supervisor.milestone.evidence import (
+    action_lifecycle_claims,
+)
 
 
 REPLAYS = Path(__file__).resolve().parents[1] / "evals/browser/supervisor_replay"
 FIXTURE = REPLAYS / "142444_mutation_subject"
 CHOICE_FIXTURE = REPLAYS / "152920_choice_surface"
 INTERMEDIATE_FIXTURE = REPLAYS / "205258_intermediate_transition"
+NESTED_COMMIT_FIXTURE = REPLAYS / "091305_nested_commit"
+DIRECT_SAVE_FIXTURE = REPLAYS / "105939_turn12"
+PERSISTENCE_FLOW_FIXTURE = REPLAYS / "112455_persistence_flow"
 
 
 def _run_statements(node: object) -> list[dict]:
@@ -32,10 +41,12 @@ def _run_statements(node: object) -> list[dict]:
     return statements
 
 
-def _fixture() -> tuple[Milestone, list[PolicyTurn], dict]:
-    raw = json.loads((FIXTURE / "context.json").read_text())
+def _context(root: Path, turn_no: int) -> tuple[Milestone, list[PolicyTurn]]:
+    raw = json.loads((root / "context.json").read_text())
     turns = [PolicyTurn.model_validate(item) for item in raw["turns"]]
-    milestone_id = turns[5].supervisor.milestone_id
+    milestone_id = next(
+        turn.supervisor.milestone_id for turn in turns if turn.index == turn_no
+    )
     base = next(item for item in raw["milestones"] if item["id"] == milestone_id)
     statement = next(
         item
@@ -55,8 +66,13 @@ def _fixture() -> tuple[Milestone, list[PolicyTurn], dict]:
     })
     merged["kind"] = statement.get("kind") or statement.get("run_kind") or base["kind"]
     merged["status"] = "running"
-    expectation = json.loads((FIXTURE / "replay_expectation.json").read_text())
-    return Milestone.model_validate(merged), turns, expectation
+    return Milestone.model_validate(merged), turns
+
+
+def _fixture() -> tuple[Milestone, list[PolicyTurn], dict]:
+    milestone, turns = _context(FIXTURE, 6)
+    expected = json.loads((FIXTURE / "replay_expectation.json").read_text())
+    return milestone, turns, expected
 
 
 def _observation(root: Path, turn_no: int) -> Observation:
@@ -294,3 +310,43 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
     assert step.should_act is True
     assert step.atomic_role == "prepare"
     assert step.target_control == "Next"
+
+
+def test_real_091305_child_dispatch_does_not_consume_terminal_commit() -> None:
+    milestone, turns = _context(NESTED_COMMIT_FIXTURE, 34)
+    target_turn = next(turn for turn in turns if turn.index == 34)
+    history = [turn for turn in turns if turn.index < 34]
+    scope = target_turn.supervisor.execution_scope
+    claims = action_lifecycle_claims(
+        milestone,
+        history,
+        scope=scope,
+        monitor=ProgressMonitor(),
+        ledger=ActionLedger(),
+    )
+    execution = next(item for item in claims if item.domain == "action.execution")
+    progress = mutation_progress(milestone, history, scope=scope)
+
+    assert progress.phase == "commit_pending"
+    assert progress.terminal_index is None
+    assert execution.source_type == "runtime.action_dispatch"
+
+
+def test_real_persistence_boundaries_share_one_progress_projection() -> None:
+    cases = (
+        (PERSISTENCE_FLOW_FIXTURE, 29, "commit_pending", None),
+        (PERSISTENCE_FLOW_FIXTURE, 30, "terminal", 30),
+        (DIRECT_SAVE_FIXTURE, 11, "terminal", 11),
+    )
+    for root, turn_no, expected_phase, terminal_index in cases:
+        milestone, turns = _context(root, turn_no)
+        target_turn = next(turn for turn in turns if turn.index == turn_no)
+        history = [turn for turn in turns if turn.index <= turn_no]
+        progress = mutation_progress(
+            milestone,
+            history,
+            scope=target_turn.supervisor.execution_scope,
+        )
+
+        assert progress.phase == expected_phase
+        assert progress.terminal_index == terminal_index

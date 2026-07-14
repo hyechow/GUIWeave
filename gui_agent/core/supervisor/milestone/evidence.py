@@ -17,7 +17,7 @@ from gui_agent.core.run.progress_monitor import ProgressMonitor
 from gui_agent.core.run.mutation import resolve_mutation
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 
-from .action_protocol import is_commit_turn
+from .action_protocol import mutation_progress
 from .observation_state import (
     RuntimeFilterIntent,
     filter_chips_clean,
@@ -65,6 +65,8 @@ def action_lifecycle_claims(
     if latest is None:
         return claims
     lifecycle_scope = getattr(latest.supervisor, "execution_scope", "") or scope
+    progress = mutation_progress(milestone, history, scope=lifecycle_scope)
+    latest = progress.latest_dispatch or latest
     if monitor.url_changed or monitor.dom_changed:
         claims.append(claim(
             "page.response",
@@ -84,7 +86,7 @@ def action_lifecycle_claims(
                 else "in_place_transition"
             ),
         ))
-    terminal = is_commit_turn(latest, milestone)
+    terminal = progress.terminal_index is not None and latest.index == progress.terminal_index
     claims.append(claim(
         "action.execution",
         "confirmed",
@@ -94,18 +96,7 @@ def action_lifecycle_claims(
         evidence="runtime action ledger records a dispatched event",
         authoritative=True,
     ))
-    write_turn = ledger.latest_write(history, milestone.id, scope=lifecycle_scope)
-    if milestone.kind == "action" and milestone.target_values:
-        write_turn = next(
-            (
-                turn
-                for turn in reversed(history)
-                if turn.action_signal is not None
-                and (receipt := turn.action_signal.mutation_receipt) is not None
-                and receipt.statement_id == milestone.id
-            ),
-            None,
-        )
+    write_turn = progress.latest_write
     if (
         write_turn is None
         and terminal

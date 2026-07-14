@@ -43,7 +43,7 @@ from gui_agent.core.supervisor.milestone import policy as policy_module
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.action_protocol import (
     action_metadata,
-    regresses_preparation_frontier,
+    mutation_progress,
     record_action_outcome,
 )
 from gui_agent.core.supervisor.milestone.evidence import (
@@ -365,10 +365,10 @@ def _transaction_frontier_detection_case(case: dict[str, Any]) -> None:
     proposal = _PlanResult.model_validate(case["recorded_turn"]["planner"])
     history = [PolicyTurn.model_validate(item) for item in case["history"]]
 
-    assert regresses_preparation_frontier(
+    progress = mutation_progress(milestone, history)
+    assert progress.rejects(
         proposal,
         milestone,
-        history,
     ) is case["expected"]["regresses"]
 
 

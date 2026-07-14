@@ -56,8 +56,7 @@ from gui_agent.core.run.mutation import (
 )
 from .action_protocol import (
     action_metadata,
-    is_commit_turn,
-    regresses_preparation_frontier,
+    mutation_progress,
     record_action_outcome,
     record_action_response,
 )
@@ -166,7 +165,7 @@ class MilestoneSupervisorPolicy(
         try:
             return tuple(self._active_target_resolver(observation))
         except Exception as exc:  # noqa: BLE001 - optional structure must not block execution
-            print(f"  [ActionFrontier] 活动目标解析失败，退回视觉证据：{exc}")
+            print(f"  [TargetBinding] 活动目标解析失败，退回视觉证据：{exc}")
             return ()
 
     def surface_id(self, observation: Observation) -> str:
@@ -176,8 +175,20 @@ class MilestoneSupervisorPolicy(
         try:
             return str(self._surface_resolver(observation) or "")
         except Exception as exc:  # noqa: BLE001 - optional structure must not block execution
-            print(f"  [ActionFrontier] 活动表面解析失败，退回无表面身份：{exc}")
+            print(f"  [TargetBinding] 活动表面解析失败，退回无表面身份：{exc}")
             return ""
+
+    @staticmethod
+    def _mutation_progress(
+        milestone: Milestone,
+        observation: Observation,
+        history: list[PolicyTurn],
+    ):
+        return mutation_progress(
+            milestone,
+            history,
+            scope=execution_scope_for(milestone, observation),
+        )
 
     def _mutation_observation(
         self,
@@ -547,14 +558,14 @@ class MilestoneSupervisorPolicy(
             scope=execution_scope,
             ledger=self._action_ledger,
         ))
-        latest_dispatched = self._action_ledger.latest_dispatched(
-            response_history, milestone.id
-        )
         terminal_response_pending = bool(
             milestone.kind == "action"
             and self._monitor.url_changed
-            and latest_dispatched is not None
-            and is_commit_turn(latest_dispatched, milestone)
+            and any(
+                item.domain == "action.execution"
+                and item.source_type == "runtime.commit_dispatch"
+                for item in evidence_claims
+            )
         )
 
         pre_completion = self._completion_evaluator.decide(
@@ -938,6 +949,7 @@ class MilestoneSupervisorPolicy(
                 **_ctx(milestone, check.read_instruction),
             )
         current_surface_id = self.surface_id(observation)
+        progress = self._mutation_progress(milestone, observation, history)
         mutation_required = bool(milestone.kind == "action" and milestone.target_values)
         mutation_subject = (
             resolve_mutation(
@@ -981,16 +993,14 @@ class MilestoneSupervisorPolicy(
                 )
         if (
             not mutation_owned_plan
-            and check.outcome_status != "contradicted"
-            and regresses_preparation_frontier(
+            and progress.rejects(
                 plan,
                 milestone,
-                history,
                 current_surface_id=current_surface_id,
             )
         ):
             print(
-                "  [ActionFrontier] 提议回到已完成的 preparation，"
+                "  [MutationProgress] 提议回到已完成的 preparation，"
                 "拒绝回退并要求新的前向动作"
             )
             with _Timer(self._timings, self._timings_order, "planner", self._token_usage):
@@ -1000,21 +1010,20 @@ class MilestoneSupervisorPolicy(
                     observation,
                     history,
                     extra=(
-                        "你提议的 preparation 已经执行并获得响应，之后同一事务还有其他前向动作。"
-                        "禁止重新进入该旧入口。请选择当前表面上未执行过的前向动作；没有结构证据"
-                        "证明已经返回父资源时，不得自行宣称提交边界已经就绪。"
+                        "你的提议与已确认的 mutation 进度冲突，禁止新增或重进 preparation/navigation。"
+                        "若目标写入已完成、嵌套 commit 已返回 entry surface，当前只允许提出"
+                        " atomic_role=commit 的终态持久化动作；否则选择尚未执行的前向动作。"
                     ),
                 )
-            if regresses_preparation_frontier(
+            if progress.rejects(
                 plan,
                 milestone,
-                history,
                 current_surface_id=current_surface_id,
             ):
-                print("  [ActionFrontier] 重试仍回退，保持未决且不派发动作")
+                print("  [MutationProgress] 重试仍回退，保持未决且不派发动作")
                 plan = _PlanResult(
                     instruction="",
-                    summary="事务前沿无法确认新的安全前向动作，本轮不派发。",
+                    summary="mutation 进度无法确认新的安全前向动作，本轮不派发。",
                     atomic_role="prepare",
                     action_family="unknown",
                 )
@@ -1522,6 +1531,16 @@ class MilestoneSupervisorPolicy(
                 **_ctx(milestone, read_inst),
             )
 
+        progress = self._mutation_progress(milestone, observation, history)
+        if progress.rejects(
+            replan,
+            milestone,
+            current_surface_id=self.surface_id(observation),
+        ):
+            print("  [MutationProgress] replanner 提议回到已关闭的 preparation，退回常规规划")
+            self._last_check = check.model_copy(update={"outcome_status": "unverified"})
+            return self._plan_single(milestone, self._last_check, observation, history)
+
         atomic_role, action_family = action_metadata(replan, milestone)
         mutation_required = bool(milestone.kind == "action" and milestone.target_values)
         if mutation_required and atomic_role == "write":
@@ -1582,9 +1601,10 @@ class MilestoneSupervisorPolicy(
         # the page redirected away. Re-decomposing here could redo the completed mutation after the
         # original form has vanished. Degrade to a clean bounded failure instead. This is skipped
         # when the frame shows negative feedback because that means the submit did not take.
+        progress = self._mutation_progress(milestone, observation, history) if history else None
         if (
-            history is not None
-            and self._action_ledger.latest_commit(history, milestone.id) is not None
+            progress is not None
+            and progress.phase == "terminal"
             and not (
                 isinstance(self._last_check, _SingleCheckResult)
                 and self._last_check.outcome_status == "contradicted"

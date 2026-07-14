@@ -3,7 +3,7 @@
   "source": {
     "run": "20260711_015402",
     "task": "549",
-    "description": "A contradicted global-search commit was downgraded to unverified, blocking the corrected column-filter commit; same-value inputs on different controls were also conflated before dispatch.",
+    "description": "Checker feedback about a wrong global-search route must not rewrite action lifecycle; same-value inputs on different controls must remain distinct before dispatch.",
     "turns": {
       "16": "f2c463a8b5db4de18416c6756fe44c95e2ab4265",
       "17": "37afbc66c22d04ba4b6cfc7e0eea5bad3cc923b7",
@@ -21,7 +21,7 @@
   },
   "cases": [
     {
-      "id": "t17_t23_contradiction_survives_until_corrected_commit",
+      "id": "t17_t23_checker_contradiction_does_not_rewrite_lifecycle",
       "kind": "lifecycle_monotonic",
       "source_turns": [17, 18, 22, 23],
       "milestone": {
@@ -126,7 +126,7 @@
         }
       },
       "expected": {
-        "preserved_outcome": "contradicted",
+        "preserved_outcome": "unverified",
         "allowed": true,
         "reason": ""
       }

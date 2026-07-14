@@ -6,12 +6,13 @@ metadata records the action role, while executed turns provide dispatch and targ
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from gui_agent.core.run.action_ledger import ActionLedger
 from gui_agent.core.run.execution_signals import CompletionEvaluation
 from gui_agent.core.run.progress_monitor import ProgressMonitor
-from gui_agent.core.schemas import ActionFamily, AtomicRole, Milestone, PolicyTurn
+from gui_agent.core.schemas import ActionFamily, ActionSignal, AtomicRole, Milestone, PolicyTurn
 
 
 class PlannedAction(Protocol):
@@ -19,14 +20,61 @@ class PlannedAction(Protocol):
     action_family: ActionFamily
 
 
-SurfaceRelation = Literal["same", "different", "unknown"]
+MutationPhase = Literal[
+    "preparing", "written", "commit_pending", "terminal", "contradicted"
+]
+
+
+@dataclass(frozen=True)
+class MutationProgress:
+    """Read-only lifecycle projection shared by evidence and proposal validation."""
+
+    phase: MutationPhase
+    latest_dispatch: PolicyTurn | None = None
+    latest_write: PolicyTurn | None = None
+    terminal_index: int | None = None
+    entry_surface: str = ""
+    closed_preparations: frozenset[tuple[str, str]] = frozenset()
+
+    def rejects(
+        self,
+        plan: PlannedAction,
+        milestone: Milestone,
+        *,
+        current_surface_id: str = "",
+    ) -> bool:
+        """Whether a proposal moves backward from the derived mutation progress."""
+        role, family = action_metadata(plan, milestone)
+        target = _control_key(getattr(plan, "target_control", ""))
+        signal = self.latest_dispatch.action_signal if self.latest_dispatch else None
+        terminal_only = bool(
+            self.phase == "commit_pending"
+            and signal is not None
+            and signal.role == "commit"
+            and self.entry_surface
+            and current_surface_id == self.entry_surface
+        )
+        return bool(
+            milestone.requires_commit
+            and self.phase != "contradicted"
+            and (
+                (terminal_only and role != "commit")
+                or (
+                    role == "prepare"
+                    and family == "activate"
+                    and target
+                    and current_surface_id
+                    and (current_surface_id, target) in self.closed_preparations
+                )
+            )
+        )
 
 
 def action_metadata(
     plan: PlannedAction,
     milestone: Milestone,
 ) -> tuple[AtomicRole, ActionFamily]:
-    """Return the planner's independent transaction role and UI primitive family.
+    """Return the planner's independent lifecycle role and UI primitive family.
 
     A Save button is normally ``commit + activate``; the primitive family is not a persistence
     signal.
@@ -36,73 +84,106 @@ def action_metadata(
     return plan.atomic_role, plan.action_family
 
 
-def regresses_preparation_frontier(
-    plan: PlannedAction,
+def mutation_progress(
     milestone: Milestone,
     history: list[PolicyTurn],
     *,
-    current_surface_id: str = "",
-) -> bool:
-    """Whether a proposal re-enters an already completed preparation surface.
+    scope: str = "",
+) -> MutationProgress:
+    """Project dispatch history; surface identity is optional boundary evidence."""
+    events = [
+        (turn, signal)
+        for turn in history
+        if turn.supervisor.milestone_id == milestone.id
+        and (not scope or turn.supervisor.execution_scope in {"", scope})
+        and (signal := turn.action_signal) is not None
+        and signal.execution == "dispatched"
+    ]
 
-    Persistent mutations are monotonic transactions: once an on-target preparation has responded
-    and later actions have advanced the same execution scope, revisiting that earlier control is a
-    backward edge.  Explicit outcome contradiction is handled by the caller and may permit retry.
-    """
-    role, family = action_metadata(plan, milestone)
-    target = _control_key(getattr(plan, "target_control", ""))
-    if not milestone.requires_commit or role != "prepare" or family != "activate" or not target:
-        return False
-    completed_at = -1
-    for index, turn in enumerate(history):
-        signal = turn.action_signal
-        if (
-            signal is not None
-            and turn.supervisor is not None
-            and turn.supervisor.milestone_id == milestone.id
-            and signal.role == "prepare"
-            and signal.execution == "dispatched"
-            and signal.target != "off_target"
-            and signal.response == "observed"
-            and signal.outcome != "contradicted"
-            and _surface_relation(signal.surface_id, current_surface_id) == "same"
-            and _control_key(signal.target_control) == target
-        ):
-            completed_at = index
-    return completed_at >= 0 and any(
-        turn.action_signal is not None
-        and turn.supervisor is not None
-        and turn.supervisor.milestone_id == milestone.id
-        and turn.action_signal.execution == "dispatched"
-        and turn.action_signal.target != "off_target"
-        and turn.action_signal.response == "observed"
-        and _control_key(turn.action_signal.target_control) != target
-        for turn in history[completed_at + 1 :]
+    latest_dispatch = events[-1][0] if events else None
+    valid_events = [
+        (turn, signal)
+        for turn, signal in events
+        if signal.target != "off_target"
+        and (turn.target_verify is None or turn.target_verify.on_target)
+    ]
+    entry_surface = next(
+        (signal.surface_id for _, signal in valid_events if signal.surface_id),
+        "",
     )
 
+    terminal_index = next(
+        (
+            turn.index
+            for turn, signal in reversed(valid_events)
+            if _is_terminal_boundary(signal, entry_surface)
+        ),
+        None,
+    )
+    receipt_required = bool(milestone.kind == "action" and milestone.target_values)
+    latest_write = next(
+        (
+            turn
+            for turn, signal in reversed(valid_events)
+            if (
+                signal.mutation_receipt is not None
+                and signal.mutation_receipt.statement_id == milestone.id
+                if receipt_required
+                else signal.role == "write"
+            )
+        ),
+        None,
+    )
 
-def _surface_relation(recorded: str, current: str) -> SurfaceRelation:
-    """Compare two optional surface identities without treating absence as equality."""
-    if not recorded or not current:
-        return "unknown"
-    return "same" if recorded == current else "different"
+    open_preparations: set[tuple[str, str]] = set()
+    closed_preparations: set[tuple[str, str]] = set()
+    for _, signal in valid_events:
+        if (
+            signal.response != "observed"
+            or signal.outcome == "contradicted"
+            or not (target := _control_key(signal.target_control))
+        ):
+            continue
+        closed_preparations.update(
+            item for item in open_preparations if item[1] != target
+        )
+        if signal.role == "prepare" and signal.surface_id:
+            open_preparations.add((signal.surface_id, target))
+
+    latest_signal = latest_dispatch.action_signal if latest_dispatch is not None else None
+    phase: MutationPhase = (
+        "commit_pending" if latest_write is not None and milestone.requires_commit
+        else "written" if latest_write is not None else "preparing"
+    )
+    if terminal_index is not None:
+        phase = "terminal"
+    if latest_signal is not None and latest_signal.outcome == "contradicted":
+        phase = "contradicted"
+    return MutationProgress(
+        phase=phase,
+        latest_dispatch=latest_dispatch,
+        latest_write=latest_write,
+        terminal_index=terminal_index,
+        entry_surface=entry_surface,
+        closed_preparations=frozenset(closed_preparations),
+    )
 
 
 def _control_key(value: str) -> str:
     return "".join(char.casefold() for char in (value or "") if char.isalnum())
 
 
-def is_commit_turn(turn: PolicyTurn | None, milestone: Milestone) -> bool:
-    """Whether an on-target executed turn crossed the declared persistence boundary."""
-    if turn is None or not turn.executed:
-        return False
-    supervisor = turn.supervisor
-    if supervisor is None or supervisor.milestone_id != milestone.id:
-        return False
-    if supervisor.atomic_role != "commit":
-        return False
-    target_verify = turn.target_verify
-    return target_verify is None or target_verify.on_target
+def _is_terminal_boundary(signal: ActionSignal, entry_surface: str) -> bool:
+    """Whether one concrete dispatch can represent the statement persistence boundary."""
+    return bool(
+        signal.role == "commit"
+        and (
+            not entry_surface
+            or not signal.surface_id
+            or signal.surface_id == entry_surface
+            or "url" in signal.response_channels
+        )
+    )
 
 
 def record_action_response(
@@ -141,7 +222,15 @@ def record_action_outcome(
     if turn is None or turn.action_signal is None:
         return
     signal = turn.action_signal
-    negative = decision.status == "contradicted"
+    negative = bool(
+        decision.status == "contradicted"
+        and any(
+            item.value == "contradicted"
+            and item.authoritative
+            and item.domain in {"action.target", "business.outcome"}
+            for item in decision.used_claims
+        )
+    )
     if negative:
         signal.outcome = "contradicted"
     elif (
@@ -161,9 +250,9 @@ def record_action_outcome(
 
 
 __all__ = [
+    "MutationProgress",
     "action_metadata",
-    "is_commit_turn",
-    "regresses_preparation_frontier",
+    "mutation_progress",
     "record_action_outcome",
     "record_action_response",
 ]

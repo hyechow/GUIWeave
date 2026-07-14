@@ -47,6 +47,10 @@ Dispatch-response replay:
 - `112455_persistence_flow`: one complete live child/parent transaction. Use
   `expectation_turn_29.json`, `expectation_turn_30.json`, and `expectation_turn_31.json` with
   `--expectation` to verify child generation, the resource Save, and URL-response completion.
+- `091305_nested_commit`: a child workflow action was emitted as `commit`, then returned to the
+  resource editor without crossing a persistence boundary. The recorded turn 34 must keep the
+  statement pending and dispatch the outer resource's `Save`; child-surface planner metadata must
+  not consume the statement's terminal commit requirement.
 
 Filter-intent binding replay:
 

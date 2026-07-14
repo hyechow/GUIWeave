@@ -9,7 +9,8 @@ platform-neutral. Site facts belong in knowledge; platform mechanics belong in a
   proposal, advance, recover, or fail. It must not classify instruction prose or implement a
   platform control mechanism.
 - `action_protocol.py`: records structured executor receipts (response and arbitrated outcome).
-  It contains no action-verb vocabulary and cannot advance execution.
+  Its read-only `MutationProgress` gives evidence and proposal validation one lifecycle view. It
+  contains no action-verb vocabulary and cannot advance execution.
 - `evidence.py`: converts observations and receipts into `EvidenceClaim` values. It never changes
   milestone state. Statement scope and evidence subject/resource are separate dimensions.
 - `execution_scope.py`: isolates history by observable resource identity or milestone identity.
@@ -54,3 +55,12 @@ an explicit unit is required only when the point itself cannot distinguish multi
 Binding authorizes one write dispatch only. It does not mark a milestone complete, choose a
 recovery route, or maintain a second execution ledger. Completion remains owned by `policy.py`
 and must be supported by post-action evidence associated with the same binding token.
+
+## Mutation Progress
+
+Mutation history is projected rather than stored in a second mutable transaction object. Surface
+identity is fallback evidence: the first observed surface is an entry hint, an in-place commit on
+another surface is non-terminal, and a navigation response can establish a boundary. Platforms
+without surface identity rely on structured roles, receipts, and completion evidence. A nested
+in-place commit leaves the phase at `preparing` without a write receipt and at `commit_pending`
+after a write; it never establishes `terminal` by itself.
