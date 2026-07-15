@@ -26,7 +26,9 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.adapters.browser.factory import _build_action_policy, _build_supervisor
+from gui_agent.adapters.browser.target_binding import BrowserTargetBinder
 from gui_agent.core.run.context import load_observation_snapshot
+from gui_agent.core.run.target_binding import bind_action_target
 from gui_agent.core.schemas import StatementContract, PolicyContext, PolicyTurn
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
@@ -224,6 +226,11 @@ def main() -> int:
         help="also generate the concrete action primitive without dispatching it",
     )
     parser.add_argument(
+        "--expect-binding",
+        choices=("bound", "unresolved", "contradicted"),
+        help="also replay the pre-dispatch target binding and require this verdict",
+    )
+    parser.add_argument(
         "--expectation",
         type=Path,
         help="expectation JSON; defaults to <run_dir>/replay_expectation.json when present",
@@ -247,6 +254,8 @@ def main() -> int:
         expectation["target_control"] = args.expect_target
     if args.reject_target is not None:
         expectation["reject_target_controls"] = [args.reject_target]
+    if args.expect_binding is not None:
+        expectation["binding_status"] = args.expect_binding
     target_index = args.turn or expectation.get("turn")
     if not target_index:
         parser.error("--turn is required when no replay expectation supplies it")
@@ -304,7 +313,8 @@ def main() -> int:
     }
     failures = _expectation_failures(expectation, decision, supervisor)
     action_decision = None
-    if args.with_action_policy or expectation.get("action"):
+    target_binding = None
+    if args.with_action_policy or expectation.get("action") or expectation.get("binding_status"):
         if not decision.should_act or not decision.instruction:
             failures.append("action policy requested but supervisor returned no action")
         else:
@@ -316,10 +326,28 @@ def main() -> int:
             failures.extend(
                 _action_expectation_failures(expectation, action_decision)
             )
+            # Replay the structural target binding too. It runs pre-dispatch (it decides
+            # whether a write would be suppressed), so it is replay-safe, and it is the gate
+            # whose verdict this harness otherwise could not observe.
+            target_binding = bind_action_target(
+                binder=BrowserTargetBinder(),
+                step=decision,
+                observation=observation,
+                action_decision=action_decision,
+            )
+            expected_binding = expectation.get("binding_status")
+            if expected_binding and target_binding.status != expected_binding:
+                failures.append(
+                    f"expected binding_status={expected_binding!r}, "
+                    f"got {target_binding.status!r}: {target_binding.reason}"
+                )
     result["action_decision"] = (
         action_decision.model_dump(mode="json", exclude_none=True)
         if action_decision is not None
         else None
+    )
+    result["target_binding"] = (
+        target_binding.model_dump(mode="json") if target_binding is not None else None
     )
     result["expectation_failures"] = failures
 
@@ -336,6 +364,9 @@ def main() -> int:
                 "action_family": decision.action_family,
                 "target_control": decision.target_control,
                 "action": result["action_decision"],
+                "target_binding": (
+                    target_binding.model_dump(mode="json") if target_binding is not None else None
+                ),
                 "warnings": warnings,
                 "expectation_failures": failures,
             },
