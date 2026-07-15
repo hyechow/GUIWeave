@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from gui_agent.core.orchestrator.program import Finish, Program, Run, RunResult
-from gui_agent.core.orchestrator.runner import Interpreter, RunRecord, make_run_result
+from gui_agent.core.orchestrator.runner import Interpreter, RunRecord
+from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.action_signals import effective_action_role, semantic_action_key
 from gui_agent.core.run.loop import _needs_terminal_reconciliation, _turn_budget_mode
 from gui_agent.core.run.result import orchestration_result
@@ -596,13 +597,10 @@ def test_accepted_unverified_run_result_advances_interpreter_but_is_not_verified
     interp = Interpreter(program)
     gen = interp.steps()
     run = next(gen)
-    result = make_run_result(
-        run,
-        completed=True,
-        completion_status="accepted_unverified",
-        summary="动作已派发，结果未验证",
-        notes=[],
-    )
+    result = StatementOutcome.completed(
+        "动作已派发，结果未验证",
+        verification="accepted_unverified",
+    ).to_run_result()
 
     try:
         gen.send(result)

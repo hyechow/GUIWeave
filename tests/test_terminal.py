@@ -3,6 +3,7 @@ from __future__ import annotations
 from gui_agent.core.orchestrator.program import Program, Run
 from gui_agent.core.run.flow import finish_terminal_step
 from gui_agent.core.run.program_runtime import ProgramRuntime
+from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.schemas import PolicyContext, PolicyTurn, SupervisorStep
 
 
@@ -55,7 +56,7 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
     )
 
     result = finish_terminal_step(
-        sv_step=step,
+        outcome=StatementOutcome.completed("任务完成"),
         read_state=read_state,
         turn_no=3,
         program_runtime=rt,
@@ -65,7 +66,7 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
     )
 
     assert read_state.calls == ["drain", ("flush", 3)]
-    assert messages == ["\n目标已达成：已经完成"]
+    assert messages == ["\n目标已达成：任务完成"]
     assert result["wrapped"]["goal_completed"] is True
     assert result["wrapped"]["collection_context"] is None
 
@@ -87,7 +88,7 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
     )
 
     result = finish_terminal_step(
-        sv_step=step,
+        outcome=StatementOutcome.failed("用户停止"),
         read_state=read_state,
         turn_no=4,
         program_runtime=rt,
@@ -97,6 +98,6 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
     )
 
     assert read_state.calls == ["drain", ("flush", 4)]
-    assert messages == ["\n任务未完成：连续无动作"]
+    assert messages == ["\n任务未完成：用户停止"]
     assert result["goal_completed"] is False
-    assert "连续无动作" in result["stop_reason"]
+    assert "用户停止" in result["stop_reason"]

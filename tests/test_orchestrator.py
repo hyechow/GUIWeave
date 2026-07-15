@@ -1,7 +1,7 @@
-"""DSL orchestrator MVP: the runner interprets a milestone-level program and threads
+"""DSL orchestrator MVP: the runner interprets a statement program and threads
 each run()'s structured result through variables / conditions / finish.
 
-No GUI, no LLM: the linear (single-milestone) executor is mocked so we test the
+No GUI, no LLM: the linear statement executor is mocked so we test the
 interpreter's control flow, variable env, reads persistence, and finish templating.
 The driving scenario is the connectivity branch (检测→读判定→if 连通 建单 else finish 原因).
 """
@@ -249,23 +249,15 @@ def test_returning_ui_runs_get_target_specific_milestone_ids():
 
 
 def test_immediate_dispatcher_returns_milestone_statement_to_caller(tmp_path):
+    from gui_agent.core.run.program_runtime import ProgramRuntime
     from gui_agent.core.run.statements import drain_immediate_statements
     from gui_agent.core.schemas import Observation, PolicyContext
 
-    class Supervisor:
-        def __init__(self):
-            self.calls = []
-
-        def reseed(self, milestone, task_type="action", fresh_advance=False):
-            self.calls.append((milestone, task_type, fresh_advance))
-
-    supervisor = Supervisor()
     run = Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"])
+    runtime = ProgramRuntime.start(Program(statements=[run]))
 
-    result = drain_immediate_statements(
-        current_statement=run,
-        statement_index=0,
-        interpreter_steps=None,
+    drain_immediate_statements(
+        program_runtime=runtime,
         bundle=None,
         platform=None,
         log_dir=tmp_path,
@@ -276,8 +268,7 @@ def test_immediate_dispatcher_returns_milestone_statement_to_caller(tmp_path):
         observation=Observation(png_bytes=b"x", source="test"),
     )
 
-    assert result.current_statement is run
-    assert supervisor.calls == []
+    assert runtime.current is run
 
 
 def test_direct_nav_url_gates_on_url_present_and_navigate_capability():
@@ -350,6 +341,7 @@ def test_direct_back_gates_on_explicit_back_and_capability():
 
 
 def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
+    from gui_agent.core.run.program_runtime import ProgramRuntime
     from gui_agent.core.run.statements import drain_immediate_statements
     from gui_agent.core.schemas import Observation, PolicyContext
 
@@ -387,30 +379,15 @@ def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
         def make_perception(self, platform, path):
             return Perception(platform)
 
-    class Supervisor:
-        _check_knowledge = ""
-
-        def reseed(self, *args, **kwargs):
-            raise AssertionError("all immediate statements should complete")
-
     nav = Run(name=f"打开 {detail_url} 详情", kind="navigation")
     back = Run(name="浏览器返回上一页，回到 Products 列表", kind="navigation")
-
-    def _steps():
-        first = yield nav
-        assert first.completed
-        second = yield back
-        assert second.completed
-        return "done"
-
-    gen = _steps()
-    first_run = next(gen)
+    runtime = ProgramRuntime.start(
+        Program(statements=[nav, back, Finish(message="done")])
+    )
     platform = Platform()
 
     result = drain_immediate_statements(
-        current_statement=first_run,
-        statement_index=0,
-        interpreter_steps=gen,
+        program_runtime=runtime,
         bundle=Bundle(),
         platform=platform,
         log_dir=tmp_path,
@@ -489,18 +466,6 @@ def test_task_type_for_non_ui_is_analysis():
     assert task_type_for_run(Read(name="读", returns=["x"])) == "analysis"
     assert task_type_for_run(Query(name="查", returns=["x"], sql="SELECT 1")) == "analysis"
     assert task_type_for_run(Run(name="点", kind="action")) == "action"
-
-
-def test_make_run_result_contract():
-    from gui_agent.core.orchestrator.runner import make_run_result
-    ok = make_run_result(
-        Run(name="x", kind="action"), completed=True, summary="成功", notes=["证据1"]
-    )
-    assert ok.completed and not ok.failed and ok.evidence == ["证据1"]
-    bad = make_run_result(
-        Run(name="x", kind="action"), completed=False, summary="失败", notes=[]
-    )
-    assert bad.failed and not bad.completed
 
 
 def test_supervisor_reseed_single_milestone():
@@ -685,17 +650,6 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
     assert step.should_act is True
     assert step.goal_completed is False
     assert p._active_milestone is ms
-
-
-# ── #3 structured read: reads 进 RunResult，让 if 真分支 ──────────────────────────
-
-
-def test_make_run_result_carries_structured_reads():
-    from gui_agent.core.orchestrator.runner import make_run_result
-    r = make_run_result(Read(var="d", name="读", returns=["连通判定"]),
-                       completed=True, summary="读完", notes=[],
-                       reads={"连通判定": "连通"})
-    assert r.reads == {"连通判定": "连通"} and r.completed
 
 
 def test_missing_ui_return_fields_blocks_empty_action_returns():

@@ -4,8 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from gui_agent.core.orchestrator import Finish, Interpreter, Program, Query, Run
+from gui_agent.core.orchestrator import Finish, Program, Query, Run
 from gui_agent.core.orchestrator.primitives.data_query import DataQueryError, execute_data_query
+from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.statements import drain_immediate_statements
 from gui_agent.core.schemas import Observation, PolicyContext
 
@@ -391,9 +392,7 @@ def test_query_executor_repairs_empty_result_with_actual_table_snapshot(tmp_path
             Finish(message="{q[result]}"),
         ]
     )
-    interp = Interpreter(prog)
-    steps = interp.steps()
-    current_run = next(steps)
+    runtime = ProgramRuntime.start(prog)
     context = PolicyContext(
         goal="Get monthly count of completed orders",
         supervisor_policy_name="milestone",
@@ -401,9 +400,7 @@ def test_query_executor_repairs_empty_result_with_actual_table_snapshot(tmp_path
     )
 
     result = drain_immediate_statements(
-        current_statement=current_run,
-        statement_index=0,
-        interpreter_steps=steps,
+        program_runtime=runtime,
         bundle=None,
         platform=_Platform(),
         log_dir=tmp_path,
@@ -466,9 +463,7 @@ def test_query_executor_blocks_when_collected_source_conflicts_with_goal(tmp_pat
             Finish(message="{q[result]}"),
         ]
     )
-    interp = Interpreter(prog)
-    steps = interp.steps()
-    current_run = next(steps)
+    runtime = ProgramRuntime.start(prog)
     context = PolicyContext(
         goal="Get the ranking across the entire history",
         supervisor_policy_name="milestone",
@@ -476,9 +471,7 @@ def test_query_executor_blocks_when_collected_source_conflicts_with_goal(tmp_pat
     )
 
     result = drain_immediate_statements(
-        current_statement=current_run,
-        statement_index=0,
-        interpreter_steps=steps,
+        program_runtime=runtime,
         bundle=None,
         platform=_Platform(),
         log_dir=tmp_path,
@@ -540,9 +533,7 @@ def test_query_executor_empty_repair_after_sql_error_still_fails(tmp_path, monke
             Finish(message="{q[result]}"),
         ]
     )
-    interp = Interpreter(prog)
-    steps = interp.steps()
-    current_run = next(steps)
+    runtime = ProgramRuntime.start(prog)
     context = PolicyContext(
         goal="Get matching records",
         supervisor_policy_name="milestone",
@@ -550,9 +541,7 @@ def test_query_executor_empty_repair_after_sql_error_still_fails(tmp_path, monke
     )
 
     result = drain_immediate_statements(
-        current_statement=current_run,
-        statement_index=0,
-        interpreter_steps=steps,
+        program_runtime=runtime,
         bundle=None,
         platform=_Platform(),
         log_dir=tmp_path,
@@ -588,16 +577,15 @@ def test_query_failure_sets_replan_evidence(tmp_path, monkeypatch):
             sql="SELECT rating FROM data", data_scope="current"),
         Finish(message="{q[x]}"),
     ])
-    steps = Interpreter(prog).steps()
-    cur = next(steps)
+    runtime = ProgramRuntime.start(prog)
     ctx = PolicyContext(goal="g", supervisor_policy_name="milestone", action_policy_name="action")
     result = drain_immediate_statements(
-        current_statement=cur, statement_index=0, interpreter_steps=steps,
+        program_runtime=runtime,
         bundle=None, platform=None, log_dir=tmp_path, check_knowledge="", context=ctx,
         save_context=lambda: None, say=lambda _m: None,
         observation=Observation(png_bytes=b"png", source="browser", tables=[]),
         observation_url="x.png",
     )
-    assert result.current_statement is None     # program ended on the failure
+    assert runtime.current is None              # program ended on the failure
     assert result.failure_evidence is not None   # ... but carries re-plannable evidence
     assert "rating" in result.failure_evidence

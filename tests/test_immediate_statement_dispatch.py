@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import inspect
 
-from gui_agent.core.orchestrator.program import Read, Run
+from gui_agent.core.orchestrator.program import Program, Read, Run
+from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.statements import drain_immediate_statements, is_immediate_statement
 from gui_agent.core.run.statements.navigation import execute_direct_navigation
 from gui_agent.core.run.statements.observation import ObservationCursor
@@ -54,22 +55,16 @@ def test_read_executor_returns_one_outcome_without_dispatch_state(tmp_path):
         status=lambda _message: None,
     )
 
-    assert outcome.result.completed
+    assert outcome.is_completed
     assert outcome.observation_url == "frame.png"
     assert not hasattr(outcome, "current_statement")
 
 
-def test_dispatcher_alone_resumes_generator_until_milestone_run(tmp_path):
+def test_dispatcher_uses_program_runtime_until_interactive_run(tmp_path):
     read = Read(name="读取当前帧")
     action = Run(kind="action", name="点击保存")
 
-    def steps():
-        read_result = yield read
-        assert read_result.completed
-        yield action
-
-    generator = steps()
-    first = next(generator)
+    runtime = ProgramRuntime.start(Program(statements=[read, action]))
     context = PolicyContext(
         goal="g",
         supervisor_policy_name="test",
@@ -77,9 +72,7 @@ def test_dispatcher_alone_resumes_generator_until_milestone_run(tmp_path):
     )
 
     result = drain_immediate_statements(
-        current_statement=first,
-        statement_index=0,
-        interpreter_steps=generator,
+        program_runtime=runtime,
         bundle=None,
         platform=object(),
         log_dir=tmp_path,
@@ -91,6 +84,6 @@ def test_dispatcher_alone_resumes_generator_until_milestone_run(tmp_path):
         observation_url="frame.png",
     )
 
-    assert result.current_statement is action
-    assert result.statement_index == 1
+    assert runtime.current is action
+    assert runtime.index == 1
     assert len(context.turns) == 1

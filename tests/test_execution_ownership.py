@@ -116,6 +116,7 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     # Single-writer cursor: no parallel loop locals for interpreter cursor/kickback.
     assert "_cur_run" not in loop_src
     assert "_kickback_replans" not in loop_src
+    assert "rt.current =" not in loop_src
     assert "rt.send_outcome" in loop_src or "send_outcome" in loop_src
     assert "rt.replace_program" in loop_src or "replace_program" in loop_src
     assert "statement_outcome_from_supervisor_step" in loop_src
@@ -132,14 +133,23 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     assert not hasattr(prt, "compile_single_statement_program")
     assert hasattr(prt.ProgramRuntime, "send_outcome")
     assert hasattr(prt.ProgramRuntime, "replace_program")
-    assert hasattr(prt.ProgramRuntime, "accept_dispatch_cursor")
+    assert not hasattr(prt.ProgramRuntime, "accept_dispatch_cursor")
+    assert not hasattr(prt.ProgramRuntime, "send")
+
+    from gui_agent.core.run.statements import drain_immediate_statements
+
+    dispatch_parameters = inspect.signature(drain_immediate_statements).parameters
+    assert "program_runtime" in dispatch_parameters
+    assert "interpreter_steps" not in dispatch_parameters
+    assert "current_statement" not in dispatch_parameters
 
 
 def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> None:
-    """Ownership: StatementOutcome has no running phase; mid-loop uses ExecutorDecision."""
+    """Ownership: StatementOutcome has no running phase or turn-control variants."""
     import pytest
 
     from gui_agent.core.run.statements import outcome as outcome_mod
+    from gui_agent.core.schemas import SupervisorStep
 
     with pytest.raises(ValueError, match="terminal only"):
         outcome_mod.StatementOutcome(phase="running", summary="mid")  # type: ignore[arg-type]
@@ -148,28 +158,17 @@ def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> 
     assert hasattr(outcome_mod.StatementOutcome, "failed")
     assert hasattr(outcome_mod.StatementOutcome, "infeasible")
 
-    # Mid-turn decisions are a separate type — not StatementOutcome variants.
-    decision_source = inspect.getsource(outcome_mod.ExecutorDecision)
-    assert "act" in decision_source
-    assert "observe" in decision_source
-    assert "phase" not in decision_source
+    assert not hasattr(outcome_mod, "ExecutorDecision")
 
     # Interactive mapping never invents a running outcome for mid-loop steps.
-    mid = type("S", (), {
-        "goal_completed": False,
-        "stop": False,
-        "replan_directive": None,
-        "summary": "go",
-        "stop_reason": "",
-        "completion_status": "in_progress",
-        "should_act": True,
-        "instruction": "tap",
-        "is_loading": False,
-        "preformed_action": None,
-    })()
+    mid = SupervisorStep(
+        goal_completed=False,
+        stop=False,
+        summary="go",
+        should_act=True,
+        instruction="tap",
+    )
     assert outcome_mod.statement_outcome_from_supervisor_step(mid) is None
-    decision = outcome_mod.executor_decision_from_supervisor_step(mid)
-    assert decision is not None and decision.kind == "act"
 
 
 def test_dsl_only_entrypoints_have_no_mode_switches() -> None:
