@@ -258,10 +258,10 @@ class ExecutionCoordinator:
         write = self._best(self._claims(scoped, "action.write", scope))
         expected_subject = ""
         if contract.completion_mode == "mutation":
-            expected_subject = (
-                (write.subject_scope if write is not None else "")
-                or (execution.subject_scope if execution is not None else "")
-            )
+            # Only a write identifies the mutated business subject. A commit's execution
+            # scope identifies the persistence boundary/page, not the child row or control
+            # whose state was observed before the redirect.
+            expected_subject = write.subject_scope if write is not None else ""
 
         def covers_expected_subject(item: EvidenceClaim) -> bool:
             return bool(
