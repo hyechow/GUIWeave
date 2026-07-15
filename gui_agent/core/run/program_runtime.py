@@ -4,13 +4,14 @@ ProgramRuntime owns cursor, env/run_log (via Interpreter), recovery budgets, and
 task-level replan counts. It does not drive GUI turns — that stays in the agent
 loop + InteractiveStatementExecutor (supervisor reseed path).
 
-DAG walkers and ``program is None`` fallbacks are not part of this surface.
+The agent loop must not keep a parallel cursor (``_cur_run`` / ``_run_idx`` /
+``_kickback_replans``); all statement sequencing mutates this object.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generator, Optional
+from typing import TYPE_CHECKING, Any, Callable, Generator
 
 from gui_agent.core.orchestrator.program import Program, RunLike, RunResult
 from gui_agent.core.orchestrator.recovery import (
@@ -19,6 +20,9 @@ from gui_agent.core.orchestrator.recovery import (
 )
 from gui_agent.core.orchestrator.runner import Interpreter
 
+if TYPE_CHECKING:
+    from gui_agent.core.run.statements.outcome import StatementOutcome
+
 
 @dataclass
 class ProgramRuntime:
@@ -26,7 +30,7 @@ class ProgramRuntime:
 
     Ownership (exclusive):
     - program revision + interpreter (env / run_log)
-    - current statement cursor (_cur_run / index)
+    - current statement cursor (current / index / notes_mark)
     - RecoveryLedger and kickback replan budget
     """
 
@@ -90,12 +94,37 @@ class ProgramRuntime:
             self.reply = exc.value or ""
             return None
 
+    def send_outcome(self, outcome: "StatementOutcome") -> RunLike | None:
+        """Resume from a terminal StatementOutcome (never a mid-loop decision)."""
+        return self.send(outcome.to_run_result())
+
     def can_kickback(self) -> bool:
         return self.kickback_replans < MAX_KICKBACK_REPLANS
 
     def record_kickback(self) -> int:
         self.kickback_replans += 1
         return self.kickback_replans
+
+    def mark_notes(self, note_count: int) -> None:
+        """Record content_notes length at the start of the current statement."""
+        self.notes_mark = note_count
+
+    def accept_dispatch_cursor(
+        self,
+        *,
+        current: RunLike | None,
+        index: int,
+        notes_mark: int | None = None,
+    ) -> None:
+        """Install cursor after the immediate dispatcher advanced the generator.
+
+        The dispatcher alone may ``send`` on ``self.steps``; it reports the new
+        cursor here so ProgramRuntime remains the single owner of the fields.
+        """
+        self.current = current
+        self.index = index
+        if notes_mark is not None:
+            self.notes_mark = notes_mark
 
     def replace_program(
         self,
@@ -107,10 +136,18 @@ class ProgramRuntime:
         select_fn: Callable | None = None,
         inherit_env: bool = True,
         inherit_run_log: bool = True,
+        drop_failed_from_log: bool = False,
     ) -> None:
-        """Hot-swap after redecompose; optionally keep prior env/run_log."""
+        """Hot-swap after redecompose; optionally keep prior env/run_log.
+
+        When ``drop_failed_from_log`` is true (kickback recovery), superseded
+        failed records are dropped so ``interp.failed`` does not permanently
+        veto a successful retry.
+        """
         prev_env = dict(self.interpreter.env) if inherit_env else {}
         prev_log = list(self.interpreter.run_log) if inherit_run_log else []
+        if drop_failed_from_log:
+            prev_log = [record for record in prev_log if not record.result.failed]
         self.program = program
         self.interpreter = Interpreter(
             program,
@@ -126,6 +163,7 @@ class ProgramRuntime:
         self.steps = self.interpreter.steps()
         try:
             self.current = next(self.steps)
+            self.reply = None
         except StopIteration as exc:
             self.current = None
             self.reply = exc.value or ""

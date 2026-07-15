@@ -139,39 +139,39 @@ def finish_terminal_step(
     sv_step: SupervisorStep,
     read_state: Any,
     turn_no: int,
-    program: Any,
-    current_run: Any,
-    interpreter_steps: Any,
-    interpreter: Any,
+    program_runtime: Any,
     context: PolicyContext,
-    notes_mark: int,
     finish: Callable[[dict], dict],
     say: Callable[[str], None],
+    outcome: Any | None = None,
 ) -> dict:
-    """Flush reads and build the terminal result for a stop/completed step.
+    """Flush reads and send a terminal StatementOutcome into ProgramRuntime.
 
     Interactive terminal state is projected through ``StatementOutcome`` first so
     illegal bool combos cannot reach the interpreter. Task-level success is still
-    decided by the run result assemblers (ProgramRuntime will own that later).
+    decided by the run result assemblers.
     """
-    from gui_agent.core.run.statements.outcome import statement_outcome_from_supervisor_step
+    from gui_agent.core.run.statements.outcome import (
+        StatementOutcome,
+        statement_outcome_from_supervisor_step,
+    )
 
-    reason = sv_step.stop_reason or ("目标已达成" if sv_step.goal_completed else "agent-loop 停止")
+    reason = sv_step.stop_reason or (
+        "目标已达成" if sv_step.goal_completed else "agent-loop 停止"
+    )
     read_state.drain_pending(say=say)
     read_state.flush(turn_no=turn_no, say=say)
-    notes = context.content_notes[notes_mark:]
-    outcome = statement_outcome_from_supervisor_step(
-        sv_step,
-        notes=notes,
-    )
+    notes = context.content_notes[program_runtime.notes_mark :]
     if outcome is None:
-        # Defensive: callers only invoke this on stop/goal_completed.
-        from gui_agent.core.run.statements.outcome import StatementOutcome
-
+        outcome = statement_outcome_from_supervisor_step(sv_step, notes=notes)
+    if outcome is None:
+        # Defensive: callers only invoke this on terminal steps.
         outcome = (
             StatementOutcome.completed(reason, verification="confirmed", evidence=notes)
             if sv_step.goal_completed
-            else StatementOutcome.failed(reason, evidence=notes, failure_evidence=reason)
+            else StatementOutcome.failed(
+                reason, evidence=notes, failure_evidence=reason
+            )
         )
 
     if outcome.is_completed:
@@ -179,17 +179,20 @@ def finish_terminal_step(
     else:
         say(f"\n任务未完成：{outcome.summary or reason}")
 
-    # ProgramRuntime always owns sequencing — send statement outcome into the interpreter.
-    result = outcome.to_run_result()
-    try:
-        next_run = interpreter_steps.send(result)
-    except StopIteration as exc:
-        return finish(orchestration_result(context, interpreter, exc.value or ""))
+    program_runtime.send_outcome(outcome)
+    if program_runtime.finished:
+        return finish(
+            orchestration_result(
+                context,
+                program_runtime.interpreter,
+                program_runtime.reply or outcome.summary or reason,
+            )
+        )
     return finish(
         orchestration_result(
             context,
-            interpreter,
+            program_runtime.interpreter,
             outcome.summary or reason,
-            current=next_run,
+            current=program_runtime.current,
         )
     )
