@@ -106,7 +106,6 @@ def main(
         action="store_true",
         help="跳过 router 意图改写，直接把输入当作目标（默认经 router，与 chat 模式一致）",
     )
-    parser.set_defaults(orchestrator=True)
     parser.add_argument(
         "--include-skills",
         action="store_true",
@@ -235,12 +234,11 @@ def main(
 
             # DSL-only execution: compile a Program before opening the agent loop.
             orchestrator_context_reports: list[dict] = []
-            orchestrator_metrics: dict = {}
-            run_max_turns = args.max_turns
-            _subdecompose = None  # per-row sub-goal decomposer; set inside the orchestrator block
-            if args.orchestrator:
+            def _compile_program():
                 from gui_agent.core.orchestrator import decompose, estimate_program_turns
                 from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
+                orchestrator_metrics: dict = {}
+                run_max_turns = args.max_turns
                 # Resolve @<path> refs once (config field values the goal only points at) and feed
                 # them to the decomposer so the LLM sees the referenced field values.
                 file_section = resolve_file_refs(goal)
@@ -295,6 +293,9 @@ def main(
                             f"Orchestrator: max_turns {args.max_turns} -> {run_max_turns} "
                             "based on program complexity"
                         )
+                return program, orchestrator_metrics, run_max_turns, _subdecompose
+
+            program, orchestrator_metrics, run_max_turns, _subdecompose = _compile_program()
 
             try:
                 stop_on_esc = args.stop_on_esc and args.auto_continue

@@ -204,7 +204,6 @@ def main() -> int:
     parser.add_argument("--all-tasks", action="store_true", help="with --list, include non-GUI (mcp/user-interaction) tasks")
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--headless", action="store_true", help="run fully headless (no HUD / cursor overlay)")
-    parser.set_defaults(no_orchestrator=False)
     dynamic_turns = parser.add_mutually_exclusive_group()
     dynamic_turns.add_argument(
         "--dynamic-max-turns",
@@ -314,12 +313,11 @@ def main() -> int:
                 }
             else:
                 orchestrator_context_reports: list[dict] = []
-                run_max_turns = args.max_turns
-                _redecompose = None
                 with bundle.open_session() as platform:
                     _prime(platform)
 
-                    if not args.no_orchestrator:
+                    def _compile_program():
+                        run_max_turns = args.max_turns
                         initial_png = None
                         cur_site = knowledge.app_name if knowledge is not None else ""
                         try:
@@ -384,6 +382,9 @@ def main() -> int:
                             run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                             if run_max_turns != args.max_turns:
                                 print(f"[mobileworld] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
+                        return program, _redecompose, run_max_turns
+
+                    program, _redecompose, run_max_turns = _compile_program()
                     with EscStopSignal(enabled=True) as esc_stop:
                         if esc_stop.enabled:
                             print("[mobileworld] Interrupt: 按 ESC 将在当前 turn 收尾后停止")

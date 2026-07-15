@@ -958,8 +958,12 @@ def main() -> int:
         help="persistent Chromium profile for --headless (default: output/.headless_profiles/<site_run>)",
     )
     parser.add_argument("--max-turns", type=int, default=25)
-    parser.set_defaults(no_orchestrator=False)
-    parser.add_argument("--no-orchestrator-preflight", action="store_true", help="do not stop after deterministic router/decompose preflight failures")
+    parser.add_argument(
+        "--no-preflight",
+        dest="skip_preflight",
+        action="store_true",
+        help="do not stop after deterministic Program preflight failures",
+    )
     dynamic_turns = parser.add_mutually_exclusive_group()
     dynamic_turns.add_argument(
         "--dynamic-max-turns",
@@ -1151,13 +1155,6 @@ def main() -> int:
                 }
             else:
                 orchestrator_context_reports: list[dict] = []
-                orchestrator_metrics: dict = {}
-                run_max_turns = args.max_turns
-                preflight_blocked = False
-                _redecompose = None  # Feasibility Guard kick-back re-decompose closure (set in orchestrator branch)
-                _subdecompose = None  # per-row sub-goal decomposer (ForEach.body_goal; set in orchestrator branch)
-                initial_observed_url = ""
-                initial_observed_title = ""
                 with bundle.open_session() as platform:
                     _prime(platform)
                     device = getattr(platform, "client", None)
@@ -1167,7 +1164,15 @@ def main() -> int:
                         except Exception as exc:  # noqa: BLE001 - best-effort start-url settle
                             print(f"[webarena] start_url settle skipped ({exc})")
 
-                    if not args.no_orchestrator:
+                    def _compile_program():
+                        orchestrator_metrics: dict = {}
+                        run_max_turns = args.max_turns
+                        preflight_blocked = False
+                        compile_result = None
+                        _redecompose = None
+                        _subdecompose = None
+                        initial_observed_url = ""
+                        initial_observed_title = ""
                         cur_url = ""
                         cur_title = ""
                         cur_site = knowledge.app_name if knowledge is not None else ""
@@ -1264,7 +1269,7 @@ def main() -> int:
                                 ],
                             })
                             preflight_blocked = True
-                            result = {
+                            compile_result = {
                                 "task_type": _guess_webarena_task_type(intent),
                                 "goal_completed": False,
                                 "stop_reason": f"orchestrator compile failed: {summary}",
@@ -1297,7 +1302,7 @@ def main() -> int:
                                         for issue in compile_error.issues
                                     ],
                                 },
-                                result=result,
+                                result=compile_result,
                             )
                         else:
                             if file_section:
@@ -1321,12 +1326,12 @@ def main() -> int:
                                 for issue in preflight.blocking_issues:
                                     evidence = f" ({'; '.join(issue.evidence)})" if issue.evidence else ""
                                     print(f"[webarena] orchestrator preflight: {issue.code}: {issue.message}{evidence}")
-                                if not args.no_orchestrator_preflight:
+                                if not args.skip_preflight:
                                     preflight_blocked = True
                                     summary = "; ".join(
                                         f"{issue.code}: {issue.message}" for issue in preflight.blocking_issues[:3]
                                     )
-                                    result = {
+                                    compile_result = {
                                         "task_type": _guess_webarena_task_type(intent),
                                         "goal_completed": False,
                                         "stop_reason": f"orchestrator preflight failed: {summary}",
@@ -1348,7 +1353,7 @@ def main() -> int:
                                         }],
                                         orchestrator_metrics=orchestrator_metrics,
                                         preflight_result=preflight,
-                                        result=result,
+                                        result=compile_result,
                                     )
 
                             # Feasibility Guard kick-back: re-decompose ONLY the remaining plan via the
@@ -1393,6 +1398,31 @@ def main() -> int:
                                 run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                                 if run_max_turns != args.max_turns:
                                     print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
+                        return (
+                            program,
+                            orchestrator_metrics,
+                            run_max_turns,
+                            preflight_blocked,
+                            _redecompose,
+                            _subdecompose,
+                            initial_observed_url,
+                            initial_observed_title,
+                            compile_result,
+                        )
+
+                    (
+                        program,
+                        orchestrator_metrics,
+                        run_max_turns,
+                        preflight_blocked,
+                        _redecompose,
+                        _subdecompose,
+                        initial_observed_url,
+                        initial_observed_title,
+                        compile_result,
+                    ) = _compile_program()
+                    if compile_result is not None:
+                        result = compile_result
                     if not preflight_blocked:
                         if not _confirm_to_run(args.confirm):
                             return 1
