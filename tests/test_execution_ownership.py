@@ -123,16 +123,20 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
 
     policy_src = inspect.getsource(MilestoneSupervisorPolicy.step)
     assert "_decompose" not in policy_src
-    assert "reseed" in policy_src or "requires reseed" in policy_src
+    assert "begin_statement" in policy_src or "requires begin_statement" in policy_src
 
     policy_src = inspect.getsource(MilestoneSupervisorPolicy)
     for retired in ("self._milestones", "self._order", "self._current_id", "_next_milestone", "_terminal_step"):
         assert retired not in policy_src
+    assert "def begin_statement" in policy_src
+    assert "def end_statement" in policy_src
+    assert "def runtime_state_snapshot" not in policy_src
 
     assert not hasattr(prt, "ensure_program")
     assert not hasattr(prt, "compile_single_statement_program")
     assert hasattr(prt.ProgramRuntime, "send_outcome")
     assert hasattr(prt.ProgramRuntime, "replace_program")
+    assert hasattr(prt.ProgramRuntime, "next_instance_id")
     assert not hasattr(prt.ProgramRuntime, "accept_dispatch_cursor")
     assert not hasattr(prt.ProgramRuntime, "send")
 

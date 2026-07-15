@@ -444,7 +444,7 @@ def test_real_143530_unmet_frames_do_not_consume_recovery_retries(
 
         assert step.should_act is True
         assert step.outcome is None
-        assert milestone.retry_count == 0
+        assert policy._rt.retry_count == 0
         if turn_no == 11:
             assert step.target_control == "Add Swatch"
 

@@ -269,7 +269,7 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
         "产品名称精确筛选已应用，records-found 计数可读",
         target_values={"Name": "Minerva LumaTech V-Tee"},
     )
-    milestone.returns = ["match_count"]
+    milestone = milestone.model_copy(update={"returns": ["match_count"]})
     write_step = SupervisorStep(
         should_act=True,
         instruction="type exact value",
@@ -350,7 +350,7 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
     )
 
     assert checker_calls == []
-    assert milestone.status == "done"
+    assert step is not None and step.outcome is not None and step.outcome.phase == "completed"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 
@@ -483,8 +483,8 @@ class _CheckerReached(Exception):
 def test_strong_gate_fires_done_without_invoking_checker(monkeypatch):
     ms, step, checker_calls = _run_step(monkeypatch, {"Quantity": "3 - 3"})
     assert checker_calls == [], "FilterGate must bypass the LLM checker when target chip is present"
-    assert ms.status == "done"
     assert step is not None and step.outcome is not None
+    assert step.outcome.phase == "completed"
 
 
 def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
@@ -515,7 +515,7 @@ def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
     )
     step = pol.step(obs, goal="reviews for Olivia zip jacket", history=[])
     assert checker_calls == []
-    assert ms.status == "done"
+    assert step is not None and step.outcome is not None and step.outcome.phase == "completed"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 

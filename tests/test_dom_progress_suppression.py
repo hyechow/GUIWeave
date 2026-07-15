@@ -17,8 +17,15 @@ from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleChec
 STUCK_SUMMARY = "__STUCK_SENTINEL__"
 
 
+def _ms() -> Milestone:
+    return Milestone.model_validate(
+        {"id": "m1", "name": "填写配置", "description": "d", "success_condition": "s", "kind": "action"}
+    )
+
+
 def _policy(dom_changed: bool) -> MilestoneSupervisorPolicy:
     p = MilestoneSupervisorPolicy()
+    p.begin_statement(_ms(), instance_id="i1")
     p._monitor.dom_changed = dom_changed
     p._invoke_planner = lambda *a, **k: _PlanResult(  # type: ignore[method-assign]
         instruction="在「初始电量」输入框中输入90", summary="填表"
@@ -28,12 +35,6 @@ def _policy(dom_changed: bool) -> MilestoneSupervisorPolicy:
         should_act=False, summary=STUCK_SUMMARY
     )
     return p
-
-
-def _ms() -> Milestone:
-    return Milestone.model_validate(
-        {"id": "m1", "name": "填写配置", "description": "d", "success_condition": "s", "kind": "action"}
-    )
 
 
 def _check() -> _SingleCheckResult:
@@ -96,6 +97,7 @@ def _step() -> SupervisorStep:
 
 def test_executed_dom_action_signature_is_recorded():
     p = MilestoneSupervisorPolicy()
+    p.begin_statement(_ms(), instance_id="i1")
     obs = Observation(png_bytes=b"png", source="browser", url="http://h/admin/catalog/product", dom_state="row=sku-a")
 
     p.note_executed_action(
@@ -114,6 +116,7 @@ def test_executed_dom_action_signature_is_recorded():
 
 def test_same_dom_action_on_different_dom_state_is_not_repeat():
     p = MilestoneSupervisorPolicy()
+    p.begin_statement(_ms(), instance_id="i1")
     for index, dom_state in [(1, "row=sku-a"), (2, "row=sku-b")]:
         p.note_executed_action(
             index=index,
@@ -133,6 +136,7 @@ def test_same_dom_action_on_different_dom_state_is_not_repeat():
 
 def test_same_dom_action_on_same_dom_state_marks_repeat():
     p = MilestoneSupervisorPolicy()
+    p.begin_statement(_ms(), instance_id="i1")
     obs = Observation(png_bytes=b"png", source="browser", url="http://h/admin/catalog/product", dom_state="row=sku-a")
     for index in [1, 2]:
         p.note_executed_action(

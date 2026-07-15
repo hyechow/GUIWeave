@@ -339,6 +339,7 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
         target_control="Open child editor",
     )
     policy = MilestoneSupervisorPolicy()
+    policy.begin_statement(milestone, instance_id="i1")
     policy._invoke_planner = lambda *_args, **_kwargs: regression  # type: ignore[method-assign]
 
     step = policy._plan_single(
@@ -380,6 +381,7 @@ def test_terminal_ready_rejects_repeated_noncommit_proposals():
         target_control="Open child editor",
     )
     policy = MilestoneSupervisorPolicy(surface_resolver=lambda _observation: "parent")
+    policy.begin_statement(milestone, instance_id="i1")
     policy._invoke_planner = lambda *_args, **_kwargs: regression  # type: ignore[method-assign]
 
     step = policy._plan_single(

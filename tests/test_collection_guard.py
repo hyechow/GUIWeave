@@ -109,12 +109,12 @@ def main() -> int:
     ok = (
         step.should_act
         and step.outcome is None
-        and ms.status != "done"
+        and p._rt.status != "done"
     )
     _report(
         "零滚动+should_stop → 强制滚动、不判完成",
         ok,
-        f"should_act={step.should_act} outcome={step.outcome} status={ms.status}",
+        f"should_act={step.should_act} outcome={step.outcome} status={p._rt.status if p._statement_rt else None}",
     )
 
     # Case 2: same, but boundary_reached=True on entry (still no scroll) → still must scroll,
@@ -122,11 +122,11 @@ def main() -> int:
     p, ms = _make_policy()
     _stub_loop(p, should_stop=False, boundary=True)
     step = p._run_loop_turn(ms, obs, [])
-    ok = step.should_act and step.outcome is None and ms.status != "done"
+    ok = step.should_act and step.outcome is None and p._rt.status != "done"
     _report(
         "零滚动+boundary_reached → 强制滚动、不判完成",
         ok,
-        f"should_act={step.should_act} status={ms.status}",
+        f"should_act={step.should_act} status={p._rt.status if p._statement_rt else None}",
     )
 
     # Case 3: HAS a successful scroll already but should_stop + nothing collected →
@@ -153,11 +153,11 @@ def main() -> int:
     p, ms = _make_policy()
     _stub_loop(p, should_stop=True)
     step = p._run_loop_turn(ms, obs, [_scroll_turn("5", read_added=True)])
-    ok = ms.status == "done"
+    ok = bool(p._statement_rt and p._rt.status == "done")
     _report(
         "已采集+should_stop → 正常结束收集（advance）",
         ok,
-        f"status={ms.status} outcome={step.outcome}",
+        f"status={p._rt.status if p._statement_rt else None} outcome={step.outcome}",
     )
 
     # Case 5: loading frame on the ENTRY phase (no scroll yet) → wait (is_loading),
@@ -165,7 +165,7 @@ def main() -> int:
     p, ms = _make_policy()
     _stub_loop(p, should_stop=False, loading=True)
     step = p._run_loop_turn(ms, obs, [])
-    ok = step.is_loading and not step.should_act and not step.allow_read and ms.status != "done"
+    ok = step.is_loading and not step.should_act and not step.allow_read and p._rt.status != "done"
     _report(
         "启动帧 loading → 等待(is_loading)、不读不滚",
         ok,

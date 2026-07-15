@@ -57,7 +57,7 @@ def test_program_runtime_owns_recovery_and_replacement():
 def test_supervisor_step_without_reseed_raises():
     policy = MilestoneSupervisorPolicy()
     obs = Observation(png_bytes=b"x", source="test")
-    with pytest.raises(RuntimeError, match="reseed"):
+    with pytest.raises(RuntimeError, match="begin_statement"):
         policy.step(obs, "goal", [])
 
 
@@ -74,8 +74,9 @@ def test_supervisor_reseed_then_complete_does_not_walk_next_milestone():
         success_condition="done",
         kind="action",
     )
-    policy.reseed(first)
-    first.status = "running"
+    policy.begin_statement(first, instance_id="i1")
+    policy._rt.status = "running"
+    # status lives on StatementRuntimeState
 
     decision = CompletionEvaluation(
         status="satisfied",
@@ -91,4 +92,4 @@ def test_supervisor_reseed_then_complete_does_not_walk_next_milestone():
     )
     assert step.outcome is not None and step.outcome.phase == "completed"
     assert policy._active_milestone is first
-    assert first.status == "done"
+    assert policy._rt.status == "done"

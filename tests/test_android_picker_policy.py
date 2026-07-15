@@ -385,6 +385,7 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
         kind="action",
         completion_strategy="repeat_until_satisfied",
     )
+    policy.begin_statement(milestone, instance_id="i1")
     check = _SingleCheckResult(
         status="in_progress",
         effect_status="unverified",

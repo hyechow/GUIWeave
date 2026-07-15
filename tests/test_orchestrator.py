@@ -472,16 +472,14 @@ def test_supervisor_reseed_single_milestone():
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.core.run.interactive import milestone_for_run, task_type_for_run
     p = MilestoneSupervisorPolicy()
-    p._monitor._recent_screenshots.append((b"frame", None))  # stuck 检测器帧历史
-    # S6b 后查询节点不再 marshal 成 milestone；reseed 的读取门用显式 task_type 验证
-    # （task_type_for_run 对查询仍返回 analysis，此处直接断言该映射）
+    # S6b 后查询节点不再 marshal 成 milestone；begin 的读取门用显式 task_type 验证
     run = Read(var="d", name="读判定",  returns=["连通判定"])
     assert task_type_for_run(run) == "analysis"
     nav = Run(var="d", name="开判定页", kind="navigation")
-    p.reseed(milestone_for_run(nav, 0), task_type="analysis")
+    p.begin_statement(milestone_for_run(nav, 0), instance_id="i1", task_type="analysis")
     assert p._active_milestone is not None and p._active_milestone.id == "d"
     assert p.task_type == "analysis"          # 读取门由 task_type 控制
-    # Statement-local frame/scroll state resets at begin(statement).
+    # Statement-local frame/scroll state is fresh at begin(statement).
     assert list(p._monitor._recent_screenshots) == []
     assert p._scroll_count == 0
 

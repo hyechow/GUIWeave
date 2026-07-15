@@ -370,7 +370,7 @@ def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
     assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # FreshActionRequired suppressed — no re-demand
-    assert m.status == "done"
+    assert p._rt.status == "done"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 
@@ -384,7 +384,7 @@ def test_fresh_action_still_redemands_when_nothing_dispatched(monkeypatch):
     assert decision.status == "pending"
     assert decision.next == "act"
     assert plan_calls == []
-    assert m.status != "done"
+    assert p._rt.status != "done"
 
 
 def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch):
@@ -399,7 +399,7 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
     decision = _completion_decision(p, m, obs, [_shipment_submit_turn()])
     assert decision.status == "contradicted"
     assert plan_calls == []
-    assert m.status != "done"
+    assert p._rt.status != "done"
 
 
 # ── WebArena 502 (20260708_185657) regression pair ──────────────────────────────
@@ -442,7 +442,7 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # no FreshActionRequired override, no stray write demanded
-    assert m.status == "done"
+    assert p._rt.status == "done"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 
@@ -488,7 +488,7 @@ def test_dispatch_ledger_blocks_done_on_residual_banner(monkeypatch):
     assert decision.status == "pending"
     assert "显式持久化边界尚未提交" in decision.reason
     assert plan_calls == []
-    assert m.status != "done"
+    assert p._rt.status != "done"
 
 
 def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
@@ -517,7 +517,7 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
     assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []
-    assert m.status == "done"
+    assert p._rt.status == "done"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 
@@ -591,7 +591,7 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
 
     step = p._run_single_turn(m, obs, [_select_option_turn(), save])
 
-    assert m.status == "done"
+    assert p._rt.status == "done"
     assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.should_act is False
     assert step.outcome.verification == "accepted_unverified"
@@ -638,7 +638,7 @@ def test_dispatch_ledger_rejects_non_terminal_structured_role(monkeypatch):
     decision = _completion_decision(p, m, obs, [apply_turn])
     assert decision.status == "pending"
     assert plan_calls == []
-    assert m.status != "done"
+    assert p._rt.status != "done"
 
 
 # ── Feasibility kickback must not re-decompose a milestone whose terminal submit already succeeded ──
@@ -682,4 +682,4 @@ def test_maybe_kickback_still_fires_when_no_dispatch_and_control_absent(monkeypa
     assert step is not None
     assert step.outcome is not None
     assert step.outcome.kickback == "重规划指令"
-    assert m.status == "failed"
+    assert p._rt.status == "failed"

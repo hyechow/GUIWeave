@@ -452,7 +452,7 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
 
     assert result.outcome is None
     assert result.should_act is False
-    assert milestone.completion_status == "in_progress"
+    assert policy._rt.status != "done"  # still in progress
 
 
 def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypatch):

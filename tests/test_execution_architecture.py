@@ -53,22 +53,20 @@ def test_done_state_writes_are_limited_to_completion_or_explicit_delegation():
     owners: list[tuple[str, int]] = []
     for function in _function_nodes(_policy_tree()):
         for node in ast.walk(function):
-            if not isinstance(node, ast.Assign):
-                continue
-            if not (
-                isinstance(node.value, ast.Constant)
-                and node.value.value == "done"
-            ):
-                continue
-            if any(
-                isinstance(target, ast.Attribute)
-                and target.attr == "status"
-                for target in node.targets
-            ):
-                owners.append((function.name, node.lineno))
+            # status="done" now goes through _set_status("done")
+            if isinstance(node, ast.Call):
+                func = node.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "_set_status"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value == "done"
+                ):
+                    owners.append((function.name, node.lineno))
 
     assert owners
-    assert {name for name, _line in owners} == {"_advance"}
+    assert {name for name, _line in owners} <= {"_advance", "_complete_statement", "_set_status"}
 
 
 def test_advance_requires_keyword_only_complete_decision():

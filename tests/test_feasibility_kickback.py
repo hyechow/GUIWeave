@@ -4,6 +4,10 @@ The feasibility LLM is monkeypatched — these pin the deterministic routing:
 infeasible outcome with kickback; feasible/visual/judge-error → None."""
 
 import gui_agent.core.supervisor.milestone.feasibility as feas
+def _begin(p, ms):
+    p.begin_statement(ms, instance_id="i1")
+    return p
+
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
 from gui_agent.core.supervisor.milestone.feasibility import FeasibilityVerdict
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
@@ -30,12 +34,13 @@ def test_kickback_when_infeasible(monkeypatch):
                         lambda *a, **k: FeasibilityVerdict(feasible=False, reason="无 Rating 控件", directive="逐条钻取评论详情"))
     p = MilestoneSupervisorPolicy()
     ms = _ms()
+    p.begin_statement(ms, instance_id="i1")
     step = p._maybe_kickback(ms, _obs_browser(), None)
     assert step is not None
     assert step.outcome is not None
     assert step.outcome.phase == "infeasible"
     assert step.outcome.kickback == "逐条钻取评论详情"
-    assert ms.status == "failed"
+    assert p._rt.status == "failed"
 
 
 def test_no_kickback_when_feasible(monkeypatch):
@@ -43,8 +48,9 @@ def test_no_kickback_when_feasible(monkeypatch):
                         lambda *a, **k: FeasibilityVerdict(feasible=True, reason="有搜索框"))
     p = MilestoneSupervisorPolicy()
     ms = _ms()
+    p.begin_statement(ms, instance_id="i1")
     assert p._maybe_kickback(ms, _obs_browser(), None) is None
-    assert ms.status != "failed"  # untouched → normal fail path runs
+    assert p._rt.status != "failed"  # untouched → normal fail path runs
 
 
 def test_no_kickback_on_visual_platform_no_dom_controls(monkeypatch):
@@ -56,8 +62,10 @@ def test_no_kickback_on_visual_platform_no_dom_controls(monkeypatch):
 
     monkeypatch.setattr(feas, "judge_feasibility", _spy)
     p = MilestoneSupervisorPolicy()
+    ms = _ms()
+    p.begin_statement(ms, instance_id="i1")
     # no form_controls / ui_facts (visual platform) → control sentinel → judge NEVER called
-    assert p._maybe_kickback(_ms(), Observation(png_bytes=b"png", source="iphone"), None) is None
+    assert p._maybe_kickback(ms, Observation(png_bytes=b"png", source="iphone"), None) is None
     assert not called
 
 
@@ -67,7 +75,9 @@ def test_judge_exception_treated_as_feasible(monkeypatch):
 
     monkeypatch.setattr(feas, "judge_feasibility", _boom)
     p = MilestoneSupervisorPolicy()
-    assert p._maybe_kickback(_ms(), _obs_browser(), None) is None  # never crashes the run
+    ms = _ms()
+    p.begin_statement(ms, instance_id="i1")
+    assert p._maybe_kickback(ms, _obs_browser(), None) is None  # never crashes the run
 
 
 def test_navigation_target_in_semantic_inventory_cannot_be_kicked_back(monkeypatch):
@@ -104,6 +114,7 @@ def test_navigation_target_in_semantic_inventory_cannot_be_kicked_back(monkeypat
         semantic_tree=[{"role": "link", "key": "Products", "ref": 17, "depth": 2}],
     )
 
+    p.begin_statement(ms, instance_id="i1")
     assert p._maybe_kickback(ms, obs, None, [prior]) is None
     assert called == []
 
@@ -124,13 +135,14 @@ def test_early_feasibility_probe_fires_at_threshold(monkeypatch):
     at MAX — but only ONCE early (not every retry)."""
     seen: list[int] = []
     p = MilestoneSupervisorPolicy()
-    monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri, hist=None: (seen.append(ms.retry_count), None)[1])
+    ms = _ms_action()
+    p.begin_statement(ms, instance_id="i1")
+    monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri, hist=None: (seen.append(p._rt.retry_count), None)[1])
     monkeypatch.setattr(p, "_invoke_replanner",
                         lambda *a, **k: _ReplanResult(diagnosis="d", strategy="local_replan", instruction="x"))
-    ms = _ms_action()
     obs = Observation(png_bytes=b"png", source="browser", form_controls=[{"label": "Product", "kind": "input"}])
 
-    ms.retry_count = EARLY_FEASIBILITY_AT - 1            # → EARLY_FEASIBILITY_AT after the increment
+    p._rt.retry_count = EARLY_FEASIBILITY_AT - 1            # → EARLY_FEASIBILITY_AT after the increment
     p._handle_stuck(ms, _stuck_check(), None, obs, [])
     assert seen == [EARLY_FEASIBILITY_AT]               # early probe fired once
 
@@ -141,11 +153,12 @@ def test_early_feasibility_probe_fires_at_threshold(monkeypatch):
 def test_no_early_probe_below_threshold(monkeypatch):
     seen: list[int] = []
     p = MilestoneSupervisorPolicy()
-    monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri, hist=None: (seen.append(ms.retry_count), None)[1])
+    ms = _ms_action()
+    p.begin_statement(ms, instance_id="i1")
+    monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri, hist=None: (seen.append(p._rt.retry_count), None)[1])
     monkeypatch.setattr(p, "_invoke_replanner",
                         lambda *a, **k: _ReplanResult(diagnosis="d", strategy="local_replan", instruction="x"))
-    ms = _ms_action()
-    ms.retry_count = 0                                   # → 1 after increment, below the threshold
+    p._rt.retry_count = 0                                   # → 1 after increment, below the threshold
     obs = Observation(png_bytes=b"png", source="browser", form_controls=[{"label": "Product", "kind": "input"}])
     p._handle_stuck(ms, _stuck_check(), None, obs, [])
     assert seen == []
