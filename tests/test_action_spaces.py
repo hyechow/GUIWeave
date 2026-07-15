@@ -196,10 +196,14 @@ def test_android_schema_has_neither_picker_nor_url():
     assert "url" not in s and "value_direction" not in s and "picker_left" not in s
 
 
-def test_base_rejects_all_platform_actions():
-    for bad in ("navigate", "home", "back", "app_switch"):
-        with pytest.raises(Exception):
-            BaseAction(action_type=bad, description="x")
+def test_base_round_trips_platform_action_types():
+    # The base is the RELOAD shape: a persisted PolicyTurn is validated through BaseAction,
+    # so it must accept any platform action_type on load (the subclass already enforced its
+    # own vocabulary when the action was first created). A closed Literal here broke
+    # checkpoint resume and replay for any browser run with select_option / navigate / ….
+    # Cross-platform isolation is still enforced by test_rejects_foreign_action_type.
+    for persisted in ("navigate", "home", "back", "app_switch", "select_option"):
+        BaseAction(action_type=persisted, description="x")
 
 
 def test_type_empty_text_coerces_to_clear_text():

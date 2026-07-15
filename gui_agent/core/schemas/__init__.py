@@ -265,8 +265,14 @@ class BaseAction(BaseModel):
             # mis-clicking the top/bottom of web pages on the browser adapter).
         return data
 
-    action_type: BaseActionType = Field(
-        description="操作类型：tap、type、press_enter、clear_text、scroll、drag 之一"
+    # Open on the base on purpose. Each adapter subclasses BaseAction to add its own
+    # action_type values (browser: select_option / navigate / select_tab / upload …) and a
+    # persisted PolicyTurn is reloaded THROUGH this base type. A closed Literal here rejects
+    # those extensions on load (SerializeAsAny helps dump, not validate), which broke
+    # checkpoint resume and replay for any browser run containing such actions. The subclass
+    # re-constrains action_type to its platform Literal; the base only round-trips it.
+    action_type: str = Field(
+        description="操作类型：tap、type、press_enter、clear_text、scroll、drag 之一（平台子类扩展更多）"
     )
     x: Optional[float] = Field(
         default=None,
