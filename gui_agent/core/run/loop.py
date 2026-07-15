@@ -323,16 +323,18 @@ def run_agent_loop(
                 from gui_agent.core.ui.hud import dock_rect
                 hud.reposition(*dock_rect(*_wb))
 
-        # ── DSL orchestrator mode ──────────────────────────────────────────────────
-        # The interpreter (not the supervisor's walker) sequences milestones. Seed the
-        # supervisor with the first run()'s milestone; the loop drives it, and the stop
-        # block asks the interpreter for the next on milestone-done. program=None → the
-        # DAG path is untouched.
+        # ── ProgramRuntime (always on) ────────────────────────────────────────────
+        # Every task runs through a Program. When the caller omitted one, compile a
+        # single-statement program — no silent DAG walker fallback.
+        from gui_agent.core.run.program_runtime import ProgramRuntime, ensure_program
+
+        program = ensure_program(program, context.goal)
         _interp = None
         _gen = None
         _cur_run = None
         _run_idx = 0
         _notes_mark = 0
+        _program_rt: ProgramRuntime | None = None
 
         def _stop_after_esc(turn_no: int) -> dict | None:
             if not _stop_requested():
@@ -341,9 +343,7 @@ def run_agent_loop(
             read_state.flush(turn_no=turn_no, say=_say)
             _say("\n收到 ESC：当前 turn 已收尾，agent-loop 安全停止")
             reason = "用户按 ESC 中止 agent-loop"
-            if program is not None:
-                return _finish(_orch_result(context, _interp, f"{reason}（任务未完成）", current=_cur_run))
-            return _finish(_make_result(context, reason))
+            return _finish(_orch_result(context, _interp, f"{reason}（任务未完成）", current=_cur_run))
 
         _immediate_failure: "str | None" = None
 
@@ -418,41 +418,50 @@ def run_agent_loop(
                 _notes_mark = len(context.content_notes)
             return result.reply
 
-        if program is not None:
-            from gui_agent.core.orchestrator import Interpreter
-            _collect_fn = _make_collect_fn(bundle, platform, log_dir)
-            from gui_agent.core.orchestrator.expansion import expand_foreach, select_members
-            _interp = Interpreter(program, collect_fn=_collect_fn, subdecompose_fn=subdecompose,
-                                  expand_fn=expand_foreach, select_fn=select_members)
-            _orch_interp = _interp  # _save_ctx now mirrors its run_log (reads) into context
-            _orchestrator_reports = list(orchestrator_context_reports or [])
-            _orchestrator_metrics = next(
-                (
-                    report for report in _orchestrator_reports
-                    if isinstance(report, dict) and report.get("kind") == "orchestrator_metrics"
-                ),
-                {},
-            )
-            # Persist the decomposed program so the report renders decompose as its OWN row
-            # (a distinct stage now, not folded into turn 1's supervisor step).
-            context.orchestrator = {
-                "program": program.model_dump(mode="json"),
-                "max_turns": max_turns,
-                "context_reports": _orchestrator_reports,
-                "timings": dict(_orchestrator_metrics.get("timings") or {}),
-                "token_usage": dict(_orchestrator_metrics.get("token_usage") or {}),
-                "llm_calls": int(_orchestrator_metrics.get("llm_calls") or 0),
-            }
-            _gen = _interp.steps()
-            try:
-                _cur_run = next(_gen)
-            except StopIteration as _e:  # program with no run() (just finish / empty)
-                return _finish(_orch_result(context, _interp, _e.value or ""))
-            _reply = _drain_immediate()
-            if _reply is not None:
-                return _finish(_orch_result(context, _interp, _reply))
+        _collect_fn = _make_collect_fn(bundle, platform, log_dir)
+        from gui_agent.core.orchestrator.expansion import expand_foreach, select_members
+        _program_rt = ProgramRuntime.start(
+            program,
+            collect_fn=_collect_fn,
+            subdecompose_fn=subdecompose,
+            expand_fn=expand_foreach,
+            select_fn=select_members,
+            recovery=_recovery,
+        )
+        _interp = _program_rt.interpreter
+        _gen = _program_rt.steps
+        _cur_run = _program_rt.current
+        _run_idx = _program_rt.index
+        _orch_interp = _interp  # _save_ctx mirrors run_log into context
+        _orchestrator_reports = list(orchestrator_context_reports or [])
+        _orchestrator_metrics = next(
+            (
+                report for report in _orchestrator_reports
+                if isinstance(report, dict) and report.get("kind") == "orchestrator_metrics"
+            ),
+            {},
+        )
+        # Persist the program so the report can render structure + run_log.
+        context.orchestrator = {
+            "program": program.model_dump(mode="json"),
+            "max_turns": max_turns,
+            "context_reports": _orchestrator_reports,
+            "timings": dict(_orchestrator_metrics.get("timings") or {}),
+            "token_usage": dict(_orchestrator_metrics.get("token_usage") or {}),
+            "llm_calls": int(_orchestrator_metrics.get("llm_calls") or 0),
+        }
+        if _program_rt.finished:
+            return _finish(_orch_result(context, _interp, _program_rt.reply or ""))
+        _reply = _drain_immediate()
+        if _reply is not None:
+            return _finish(_orch_result(context, _interp, _reply))
+        # Keep ProgramRuntime cursor in sync after immediate drain may have advanced it.
+        if _program_rt is not None:
+            _program_rt.current = _cur_run
+            _program_rt.index = _run_idx
+            _program_rt.notes_mark = _notes_mark
 
-        _kickback_replans = 0  # Feasibility Guard: re-decompose count this run (bounded by MAX_KICKBACK_REPLANS)
+        _kickback_replans = 0  # Feasibility Guard: re-decompose count (also on ProgramRuntime)
 
         def _perform_replan(directive: str, observation=None, *,
                             cls: str = "infeasible_route") -> "tuple[bool, str | None]":
@@ -466,7 +475,7 @@ def run_agent_loop(
             the CURRENT observation its page context, and the new interpreter inherits env/run_log so
             already-collected reads still back the final answer (the user's "重编排是有状态记忆的编排")."""
             nonlocal _interp, _orch_interp, _gen, _cur_run, _kickback_replans
-            if not (program is not None and directive and callable(redecompose)
+            if not (directive and callable(redecompose)
                     and _kickback_replans < MAX_KICKBACK_REPLANS):
                 return (False, None)
             _kickback_replans += 1
@@ -596,9 +605,9 @@ def run_agent_loop(
                 read_state.drain_pending(say=_say)
                 read_state.flush(turn_no=turn_no - 1, say=_say)
                 _say(f"\n达到最大轮数 {max_turns}，agent-loop 停止")
-                if program is not None:  # orchestrator: summarize the whole program so far
-                    return _finish(_orch_result(context, _interp, f"达到最大轮数 {max_turns}（任务未完成）", current=_cur_run))
-                return _finish(_make_result(context, f"达到最大轮数 {max_turns}"))
+                return _finish(_orch_result(
+                    context, _interp, f"达到最大轮数 {max_turns}（任务未完成）", current=_cur_run,
+                ))
             if _budget_reconcile:
                 _say(
                     f"\n达到最大轮数 {max_turns}；末次动作尚无后续观察，"
@@ -663,8 +672,8 @@ def run_agent_loop(
                 if sv_step.is_loading:
                     _did_loading = True
                     break
-                if program is None or not sv_step.goal_completed:
-                    break  # actionable / in_progress / DAG-completion / stop → run the turn body
+                if not sv_step.goal_completed:
+                    break  # actionable / in_progress / stop → run the turn body
 
                 # Orchestrator milestone completed → hand off to the next milestone, same frame.
                 _done_name = _cur_run.name
@@ -838,9 +847,7 @@ def run_agent_loop(
                     f"但当前执行单元仍未完成：{sv_step.summary}"
                 )
                 _say(f"\n{reason}")
-                if program is not None:
-                    return _finish(_orch_result(context, _interp, reason, current=_cur_run))
-                return _finish(_make_result(context, reason))
+                return _finish(_orch_result(context, _interp, reason, current=_cur_run))
 
             if _did_kickback_replan or _did_return_recovery:
                 continue

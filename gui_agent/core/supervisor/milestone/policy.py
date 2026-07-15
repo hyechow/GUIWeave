@@ -385,10 +385,16 @@ class MilestoneSupervisorPolicy(
                 self._initial_filters = dict(applied_now)
 
         if not self._order:
-            with _Timer(self._timings, self._timings_order, "decompose", self._token_usage):
-                self._decompose(goal, observation)
+            # DAG walker / in-step decompose retired. ProgramRuntime must reseed one
+            # interactive statement via begin/reseed before step().
+            raise RuntimeError(
+                "InteractiveStatementExecutor requires reseed(statement) before step(); "
+                "DAG decompose/walker is retired — compile a Program and drive statements "
+                "through ProgramRuntime"
+            )
 
         if self._current_id is None:
+            # Single-statement mode: statement finished; ProgramRuntime decides next.
             return self._terminal_step()
 
         milestone = self._milestones[self._current_id]
@@ -1389,68 +1395,28 @@ class MilestoneSupervisorPolicy(
         # acceptance panel empty for those milestones.
         if self._last_check is not None:
             self._milestone_done_checks[milestone.id] = self._last_check
-        self._current_id = self._next_milestone()
+        # Single-statement executor: never walk to a next milestone. ProgramRuntime
+        # reseeds the next interactive statement after consuming this outcome.
+        self._current_id = None
         self._monitor.clear_screenshots()
         print(f"  子目标「{done_name}」已完成")
 
         if pre_existing:
             print(f"  [PreExisting] 子目标「{done_name}」未执行任何动作即判完成，目标状态在会话前已存在")
 
-        if self._current_id is None:
-            # final_read(_ctx) 已含 milestone_id/kind/completion_strategy；显式再传会撞车
-            # （TypeError: got multiple values for 'milestone_id'）。合并为一个 ctx：无
-            # final_read 时只带这三个 milestone 字段，有则其同名键(同值)覆盖、并补 read_* 等。
-            ctx = {
-                "milestone_id": milestone.id,
-                "milestone_kind": milestone.kind,
-                "completion_strategy": milestone.completion_strategy,
-                "completion_status": milestone.completion_status,
-                **(final_read or {}),
-            }
-            return SupervisorStep(
-                should_act=False, stop=True, stop_reason="所有子目标已完成",
-                goal_completed=True, pre_existing=pre_existing,
-                summary=f"子目标「{done_name}」已完成，任务全部完成。",
-                **ctx,
-            )
-
-        next_ms = self._milestones[self._current_id]
-        print(f"  开始执行「{next_ms.name}」")
-
-        if final_read:
-            return SupervisorStep(
-                should_act=False, stop=False, goal_completed=False,
-                summary=f"子目标「{done_name}」已完成，下一子目标「{next_ms.name}」待执行。",
-                **final_read,
-            )
-
-        if _is_loop(next_ms):
-            return self._run_loop_turn(next_ms, observation, history)
-
-        # Freshly entered navigation milestone: it depends on the just-completed
-        # one, so it is in_progress by construction. Skip its initial done-check
-        # and plan the first nav action directly — this drops the 2nd checker
-        # call on advance turns (the user-visible "2 轮 checker" latency). The
-        # frame is known-loaded here (we only reach _advance after a done check
-        # on this same frame). A residual already-done state is caught by the
-        # next turn's normal check; re-tapping a nav target is idempotent so the
-        # extra action is harmless. Other kinds keep the check — re-running an
-        # action milestone could double-execute (re-send/re-submit), and
-        # collection/verification need the checker's read_instruction.
-        if next_ms.kind == "navigation":
-            print("  [SkipCheck] 新进入导航子目标，跳过首次验收，直接规划")
-            # (done check for the completed milestone already saved at the top of _advance)
-            synthetic = _SingleCheckResult(
-                status="in_progress",
-                effect_status="unverified",
-                reason=f"刚进入子目标「{next_ms.name}」，默认未完成",
-                summary="",
-            )
-            self._last_check = synthetic
-            self._last_page_identity[next_ms.id] = ""
-            return self._plan_single(next_ms, synthetic, observation, history)
-
-        return self._run_single_turn(next_ms, observation, history)
+        ctx = {
+            "milestone_id": milestone.id,
+            "milestone_kind": milestone.kind,
+            "completion_strategy": milestone.completion_strategy,
+            "completion_status": milestone.completion_status,
+            **(final_read or {}),
+        }
+        return SupervisorStep(
+            should_act=False, stop=True, stop_reason="当前子目标已完成",
+            goal_completed=True, pre_existing=pre_existing,
+            summary=f"子目标「{done_name}」已完成。",
+            **ctx,
+        )
 
     def _handle_stuck(
         self,
@@ -1559,10 +1525,10 @@ class MilestoneSupervisorPolicy(
             if kick:
                 return kick
             milestone.status = "failed"
-            self._current_id = self._next_milestone()
+            self._current_id = None
             return SupervisorStep(
                 should_act=False,
-                stop=self._current_id is None,
+                stop=True,
                 stop_reason=replan.escalation_message or "升级人工介入",
                 goal_completed=False,
                 summary=replan.diagnosis,
@@ -1703,19 +1669,13 @@ class MilestoneSupervisorPolicy(
 
     def _fail(self, milestone: Milestone, check: _SingleCheckResult, read_inst: Optional[str]) -> SupervisorStep:
         milestone.status = "failed"
-        self._current_id = self._next_milestone()
+        self._current_id = None
         print(f"  子目标「{milestone.name}」失败")
-        if self._current_id is None:
-            return SupervisorStep(
-                should_act=False, stop=True,
-                stop_reason=f"子目标「{milestone.name}」重试 {MAX_RETRIES} 次后失败",
-                goal_completed=False, summary=check.reason,
-                **_ctx(milestone, read_inst),
-            )
         return SupervisorStep(
-            should_act=False, stop=False, goal_completed=False,
-            summary=f"子目标「{milestone.name}」失败，跳过继续下一个。",
-            **_ctx(self._milestones[self._current_id], read_inst),
+            should_act=False, stop=True,
+            stop_reason=f"子目标「{milestone.name}」重试 {MAX_RETRIES} 次后失败",
+            goal_completed=False, summary=check.reason,
+            **_ctx(milestone, read_inst),
         )
 
     def _terminal_step(self) -> SupervisorStep:

@@ -182,21 +182,17 @@ def finish_terminal_step(
     else:
         say(f"\n任务未完成：{outcome.summary or reason}")
 
-    if program is not None:
-        result = outcome.to_run_result()
-        try:
-            next_run = interpreter_steps.send(result)
-        except StopIteration as exc:
-            return finish(orchestration_result(context, interpreter, exc.value or ""))
-        return finish(
-            orchestration_result(
-                context,
-                interpreter,
-                outcome.summary or reason,
-                current=next_run,
-            )
+    # ProgramRuntime always owns sequencing — send statement outcome into the interpreter.
+    result = outcome.to_run_result()
+    try:
+        next_run = interpreter_steps.send(result)
+    except StopIteration as exc:
+        return finish(orchestration_result(context, interpreter, exc.value or ""))
+    return finish(
+        orchestration_result(
+            context,
+            interpreter,
+            outcome.summary or reason,
+            current=next_run,
         )
-
-    if outcome.is_completed:
-        return finish(make_result(context, reason, sv_step.collection_summary))
-    return finish(make_result(context, reason))
+    )

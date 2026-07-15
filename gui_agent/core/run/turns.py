@@ -211,17 +211,7 @@ def sync_turn_metadata(
             except Exception:
                 pass
 
-    if program is None and not context.milestones and hasattr(supervisor, "_milestones"):
-        context.milestones = [
-            {
-                "id": milestone.id,
-                "name": milestone.name,
-                "description": milestone.description,
-                "kind": milestone.kind,
-                "success_condition": milestone.success_condition,
-            }
-            for milestone in supervisor._milestones.values()
-        ]
+    # Static milestone list comes from Program statements / reseed; no DAG mirror.
 
     if hasattr(supervisor, "task_type") and context.task_type is None:
         context.task_type = supervisor.task_type
