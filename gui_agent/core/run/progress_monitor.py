@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from gui_agent.context import ContextBlock
-from gui_agent.core.run.action_signals import action_signature, normalize_action_text
+from gui_agent.core.run.action_signals import normalize_action_text
 from gui_agent.core.run.instruction_similarity import instructions_are_repeated
 from gui_agent.core.schemas import Observation
 from gui_agent.core.vision.frame_analysis import CHANGE_SSIM_DIST_THR, region_change
@@ -148,20 +148,6 @@ class ProgressMonitor:
                 return t
         return None
 
-    def repeat_count(
-        self,
-        state: str,
-        decision: str,
-        interaction_state: str = "",
-        scope: str = "",
-    ) -> int:
-        """How many prior turns already executed this (state, decision)."""
-        key = normalize_action_text(decision)
-        ix = interaction_state or ""
-        return sum(1 for t in self.turns
-                   if t.state == state and t.decision == key and t.interaction_state == ix
-                   and not (scope and t.scope != scope))
-
     def check_loop(
         self, index: int, state: str, decision: str, interaction_state: str = "", scope: str = "",
     ) -> Optional[TraceStep]:
@@ -175,48 +161,6 @@ class ProgressMonitor:
             return hit
         self.note(index, state, decision, interaction_state, scope)
         return None
-
-    @staticmethod
-    def check_action_repetition(
-        history,
-        milestone_id,
-        *,
-        execution_scope: str = "",
-        min_repeats: int = 2,
-    ) -> Optional[str]:
-        """URL-independent type-repeat catch: within THIS milestone, has the most-recently executed
-        `type` action already put the SAME concrete value into the SAME box ≥ min_repeats times?
-        Returns that signature, else None.
-
-        Why not the url-keyed check_loop: a filter/search/reset cycle rewrites the url's path shape
-        (`/index/` → `/index/filter//internal_reviews/…`), so canonical_url is NOT stable across the
-        first-search boundary — the first re-type lands under a different state and never matches
-        (regression 20260622_205544: the same long search value was typed at T3/T6/T10, the guard
-        never fired).
-        The signature alone (type|box|value) IS the identity; scanning the milestone's own executed
-        type actions needs no url. Scoped to `type`: re-putting the same value into the same box is
-        always redundant, whereas a re-click of Search/Reset can be legitimate (instruction guard owns
-        those)."""
-        sigs: list[str] = []
-        for t in history:
-            sv = getattr(t, "supervisor", None)
-            ad = getattr(t, "action_decision", None)
-            same_milestone = sv and getattr(sv, "milestone_id", None) == milestone_id
-            same_scope = (
-                not execution_scope
-                or not sv
-                or not getattr(sv, "execution_scope", "")
-                or getattr(sv, "execution_scope", "") == execution_scope
-            )
-            if not (getattr(t, "executed", False) and same_milestone and same_scope and ad):
-                continue
-            action = getattr(ad, "action", None)
-            if action is not None and getattr(action, "action_type", "") == "type":
-                sigs.append(action_signature(action))
-        if not sigs:
-            return None
-        last = sigs[-1]
-        return last if sigs.count(last) >= min_repeats else None
 
     # ── deterministic stuck detectors (moved from stuck.py) ────────────────
     def clear_screenshots(self) -> None:

@@ -1,10 +1,8 @@
-"""Deterministic preflight checks for benchmark orchestration.
+"""Deterministic execution preflight checks for benchmark orchestration.
 
-The normal ``validate_program`` gate protects DSL shape: references resolve, SQL is
-syntactically safe, branches read declared fields, and so on. This module is a
-separate execution gate for benchmark runs: it checks whether the router's
-semantic decisions still appear in the decomposed program before spending turns
-on UI execution.
+The compiler owns DSL shape and intent-contract validation. This module only
+checks whether an already-compiled program is worth executing, without repeating
+compiler validation or depending on router state.
 """
 
 from __future__ import annotations
@@ -14,9 +12,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from gui_agent.core.router import IntentResolution
-
-from .intent_contracts import validate_intent_contracts
 from .program import Call, Finish, ForEach, If, Program, Run, RunLike, Stmt
 
 
@@ -85,8 +80,6 @@ _ANSWER_INTENT_MARKERS = (
 def validate_orchestration_preflight(
     goal: str,
     program: Program,
-    *,
-    resolution: IntentResolution | None = None,
 ) -> OrchestrationPreflightResult:
     """Check whether a decomposed program is worth executing.
 
@@ -142,17 +135,6 @@ def validate_orchestration_preflight(
         )
 
     issues.extend(_check_purity_discipline(runs))
-
-    if resolution is not None:
-        issues.extend(
-            OrchestrationPreflightIssue(
-                code=issue.code,
-                severity=issue.severity,
-                message=issue.message,
-                evidence=list(issue.evidence),
-            )
-            for issue in validate_intent_contracts(program, resolution)
-        )
 
     ok = not any(issue.severity == "error" for issue in issues)
     return OrchestrationPreflightResult(ok=ok, issues=issues)

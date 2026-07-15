@@ -1311,7 +1311,7 @@ def main() -> int:
                                   f"{(', ' + str(len(program.functions)) + ' functions') if program.functions else ''}")
                             _print_program(program)
 
-                            preflight = validate_orchestration_preflight(intent, program, resolution=resolution)
+                            preflight = validate_orchestration_preflight(intent, program)
                             orchestrator_context_reports.append({
                                 "kind": "orchestrator_preflight",
                                 **preflight.model_dump(mode="json"),

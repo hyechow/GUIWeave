@@ -123,7 +123,6 @@ class MilestoneSupervisorPolicy(
         self._app_name: str = ""
         # url/dom-delta effect signals now live on the ProgressMonitor (observe_effect).
         self._last_page_identity: dict[str, str] = {}
-        self._last_check_summary: dict[str, str] = {}
         # 连续调值进展窗口、url/dom 效果信号、帧/指令/值停滞探测都在 ProgressMonitor 上。
         # Progress memory is observational. It may trigger recovery in this policy, but it never
         # suppresses a primitive inside the action executor.
@@ -895,7 +894,6 @@ class MilestoneSupervisorPolicy(
                     page_changed=False,
                     prev_page_id=prev_page_id, current_page_id=current_page_id,
                 )
-            self._last_check_summary[milestone.id] = check.summary
             stall = self._monitor.check_value_stall(milestone, check)
             if stall is not None:
                 return self._handle_stuck(
@@ -909,8 +907,6 @@ class MilestoneSupervisorPolicy(
             )
 
         sim_stuck = None if (self._monitor.url_changed or self._monitor.dom_changed) else self._monitor.check_screen_similarity(observation, self._monitor.action_center(prev_action))
-        self._last_check_summary[milestone.id] = check.summary
-
         has_dom_state = bool(getattr(observation, "dom_state", None))
         rep_stuck = (
             None

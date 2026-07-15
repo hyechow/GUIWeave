@@ -5,15 +5,11 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from gui_agent.core.run.instruction_similarity import instructions_are_repeated
-
 from .schemas import _PlanResult
 
 
 class MilestoneStuckMixin:
-    """Plan-fixing helpers (picker direction/steps, sequence + repeated-instruction detection).
-    The deterministic stuck DETECTORS (screen-similarity / instruction-repetition / value-stall)
-    moved to gui_agent.core.run.progress_monitor."""
+    """Plan-fixing helpers for picker direction/steps and action sequences."""
 
     @staticmethod
     def _picker_drag_steps(plan: _PlanResult) -> Optional[int]:
@@ -72,32 +68,3 @@ class MilestoneStuckMixin:
         text = instruction.strip()
         markers = ("操作序列", "步骤", "\n1.", "\n2.", "1.", "2.", "；2", ";2")
         return any(m in text for m in markers)
-
-    def _is_repeated_instruction(
-        self, instruction: str, milestone_id: str, history,
-    ) -> bool:
-        _scroll_words = ("滚动", "滑动", "拖动", "拖拽", "scroll", "drag")
-
-        stuck_tried: set[str] = set()
-        all_tried: list[str] = []
-        for idx, t in enumerate(history):
-            sv = t.supervisor
-            if not sv or not sv.instruction:
-                continue
-            if sv.milestone_id == milestone_id:
-                all_tried.append(sv.instruction)
-            next_sv = history[idx + 1].supervisor if idx + 1 < len(history) else None
-            if (
-                next_sv
-                and ("卡住" in (next_sv.summary or "") or "重试" in (next_sv.summary or ""))
-            ):
-                stuck_tried.add(sv.instruction)
-
-        for old in stuck_tried:
-            if instructions_are_repeated(instruction, old, threshold=0.6):
-                return True
-
-        if any(w in instruction for w in _scroll_words):
-            return False
-        similar_count = sum(1 for old in all_tried if instructions_are_repeated(instruction, old, threshold=0.6))
-        return similar_count >= 2

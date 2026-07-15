@@ -146,7 +146,7 @@ def _has_result_source(program: Program) -> bool:
 
 # ---------------------------------------------------------------- grading
 
-def grade_program(program: Program, gt: dict, resolution) -> list[str]:
+def grade_program(program: Program, gt: dict) -> list[str]:
     """Deterministic plan-level failures (empty = the plan is consistent with ground truth)."""
     fails: list[str] = []
 
@@ -154,7 +154,7 @@ def grade_program(program: Program, gt: dict, resolution) -> list[str]:
     for i in getattr(issues, "issues", []) or []:
         fails.append(f"VALIDATOR:{i.code}")
 
-    pf = validate_orchestration_preflight(program.goal or "", program, resolution=resolution)
+    pf = validate_orchestration_preflight(program.goal or "", program)
     for i in pf.blocking_issues:
         fails.append(f"PREFLIGHT:{i.code}")
 
@@ -224,7 +224,7 @@ def run_task(task: dict, knowledge_nav: str, current_site: str, k: int,
                 current_site=current_site,
                 resolution=resolution,
             )
-            fails = grade_program(program, gt, resolution)
+            fails = grade_program(program, gt)
             samples.append({
                 "ok": not fails,
                 "fails": fails,
