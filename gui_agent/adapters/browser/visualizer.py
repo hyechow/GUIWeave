@@ -57,7 +57,7 @@ class BrowserCursorVisualizer:
     macOS logical points (no devicePixelRatio scaling needed).
 
     macOS-host only (agent_cursor is a Swift NSWindow). Best-effort throughout: if the
-    binary is missing/uncompilable or any CDP/daemon call fails, visualization is
+    prebuilt binary is missing or any CDP/daemon call fails, visualization is
     silently disabled and the agent loop is unaffected.
     """
 

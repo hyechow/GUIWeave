@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Build GUIWeave's optional macOS cursor overlay outside the action path.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$ROOT/sck/agent_cursor.swift"
+CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}"
+OUT="${AGENT_CURSOR_BIN:-$CACHE_ROOT/guiweave/bin/agent_cursor}"
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "agent_cursor 仅支持 macOS。" >&2
+  exit 1
+fi
+
+if [[ -x "$OUT" && "$OUT" -nt "$SRC" && "${1:-}" != "--force" ]]; then
+  echo "agent_cursor 已是最新: $OUT"
+  exit 0
+fi
+
+mkdir -p "$(dirname "$OUT")"
+
+# Some Command Line Tools releases ship the newest macOS SDK one Swift patch
+# ahead/behind the compiler. The co-installed 15.4 SDK avoids that module-version
+# mismatch and the resulting very slow import of AppKit. Callers can override it.
+SDK="${GUIWEAVE_MACOS_SDK:-}"
+if [[ -z "$SDK" && -d /Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk ]]; then
+  SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
+fi
+if [[ -z "$SDK" ]]; then
+  SDK="$(xcrun --show-sdk-path)"
+fi
+
+ARCH="$(uname -m)"
+TMP_OUT="$OUT.tmp.$$"
+MODULE_CACHE="${TMPDIR:-/tmp}/guiweave-swift-module-cache"
+trap 'rm -f "$TMP_OUT"' EXIT
+mkdir -p "$MODULE_CACHE"
+
+echo "构建 agent_cursor → $OUT"
+env \
+  SWIFT_MODULECACHE_PATH="$MODULE_CACHE" \
+  CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
+  xcrun swiftc \
+    -sdk "$SDK" \
+    -target "$ARCH-apple-macosx15.0" \
+    "$SRC" \
+    -o "$TMP_OUT"
+chmod 755 "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+trap - EXIT
+echo "agent_cursor 已安装: $OUT"

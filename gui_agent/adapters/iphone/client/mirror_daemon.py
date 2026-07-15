@@ -30,28 +30,14 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[4]   # gui_agent/adapters/iphone/client/x.py → 项目根
 _DAEMON = _ROOT / "bin" / "mirror_daemon"
-_CURSOR_SRC = _ROOT / "sck" / "agent_cursor.swift"
 
 # agent_cursor 驱动留在 sck/(overlay 是 device I/O 基建,不进策略核心);从那里导入
 sys.path.insert(0, str(_ROOT / "sck"))
-from agent_cursor import AgentCursor  # noqa: E402
+from agent_cursor import AgentCursor, ensure_cursor_bin  # noqa: E402
 
 
 def _resolve_daemon() -> str:
     return os.environ.get("MIRROR_DAEMON_BIN") or str(_DAEMON)
-
-
-def _ensure_cursor_bin() -> str | None:
-    """定位 agent_cursor 二进制;缺失则尝试从源码编译一次。失败返回 None(禁用光标)。"""
-    cb = os.environ.get("AGENT_CURSOR_BIN", "/tmp/agent_cursor")
-    if os.path.exists(cb):
-        return cb
-    try:
-        subprocess.run(["swiftc", str(_CURSOR_SRC), "-o", cb],
-                       check=True, capture_output=True)
-        return cb
-    except Exception:
-        return None
 
 
 class MirrorDaemonClient:
@@ -81,12 +67,12 @@ class MirrorDaemonClient:
             raise RuntimeError(f"mirror_daemon failed to start: {line!r}")
         self._win = self._query_window()
         if self._cursor_enabled:
-            cb = _ensure_cursor_bin()
+            cb = ensure_cursor_bin()
             if cb:
                 self._cursor = AgentCursor(cb)
                 self._cursor.start()
             else:
-                print("[MirrorDaemonClient] agent_cursor 二进制缺失且编译失败,光标可视化禁用",
+                print("[MirrorDaemonClient] agent_cursor 二进制缺失,光标可视化禁用",
                       file=sys.stderr)
         print(f"[MirrorDaemonClient] 就绪 window={self._win} cursor={'on' if self._cursor else 'off'}",
               file=sys.stderr)

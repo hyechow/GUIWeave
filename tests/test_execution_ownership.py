@@ -67,6 +67,21 @@ def test_action_signal_updates_have_one_runtime_writer() -> None:
     assert "turn.target_verify =" in signal_source
 
 
+def test_optional_action_visualizer_never_compiles_on_dispatch_path() -> None:
+    root = Path(__file__).resolve().parents[1]
+    cursor_source = (root / "sck/agent_cursor.py").read_text(encoding="utf-8")
+    browser_source = (
+        root / "gui_agent/adapters/browser/visualizer.py"
+    ).read_text(encoding="utf-8")
+    android_source = (
+        root / "gui_agent/adapters/android/visualizer.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'subprocess.run(["swiftc"' not in cursor_source
+    assert 'subprocess.run(["swiftc"' not in browser_source
+    assert 'subprocess.run(["swiftc"' not in android_source
+
+
 def test_evidence_projects_receipts_instead_of_reading_live_progress_monitor() -> None:
     source = inspect.getsource(evidence)
 

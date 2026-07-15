@@ -11,7 +11,7 @@
 # 用法:
 #   bin/launch_chrome_cdp                 # 端口 9222,profile ~/chrome-cdp-profile
 #   PORT=9333 bin/launch_chrome_cdp       # 自定义端口(agent 侧记得 export CHROME_CDP_URL=http://localhost:9333)
-#   CHROME_BIN=/path/to/Chrome bin/launch_chrome_cdp
+#   CHROME_BIN=/path/to/Chrome bin/launch_chrome_cdp  # 显式覆盖自动发现
 #
 # 启动后在弹出的 Chrome 窗口里登录/打开目标页,再到另一个终端跑:
 #   AGENT_PLATFORM=browser uv run python -m gui_agent.core.runner "你的指令" --auto-continue
@@ -19,12 +19,50 @@ set -euo pipefail
 
 PORT="${PORT:-9222}"
 PROFILE="${PROFILE:-$HOME/chrome-cdp-profile}"
-CHROME_BIN="${CHROME_BIN:-$HOME/Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing}"
 
-if [[ ! -x "$CHROME_BIN" ]]; then
-  echo "找不到 Chrome:$CHROME_BIN" >&2
-  echo "用 CHROME_BIN=/path/to/chrome 指定后重试。" >&2
+# 显式 CHROME_BIN 优先；否则发现系统 Chrome，再回退到任意已安装的 Playwright Chromium。
+# 不固定 Playwright revision：`uv sync` / Playwright 升级会清掉旧 revision 目录。
+if [[ -z "${CHROME_BIN:-}" ]]; then
+  for candidate in \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
+    "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+    "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "$HOME/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
+    "$HOME/Applications/Chromium.app/Contents/MacOS/Chromium"
+  do
+    if [[ -x "$candidate" ]]; then
+      CHROME_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${CHROME_BIN:-}" ]]; then
+  for candidate in \
+    "$HOME"/Library/Caches/ms-playwright/chromium-*/chrome-mac*/Google\ Chrome\ for\ Testing.app/Contents/MacOS/Google\ Chrome\ for\ Testing
+  do
+    if [[ -x "$candidate" ]]; then
+      CHROME_BIN="$candidate"
+    fi
+  done
+fi
+
+if [[ -z "${CHROME_BIN:-}" || ! -x "$CHROME_BIN" ]]; then
+  echo "找不到可执行的 Chrome${CHROME_BIN:+：$CHROME_BIN}" >&2
+  echo "请安装 Google Chrome / Playwright Chromium，或用 CHROME_BIN=/path/to/chrome 指定。" >&2
   exit 1
+fi
+
+echo "Chrome: $CHROME_BIN"
+
+# Prepare the optional native cursor before a run. Compilation is deliberately
+# kept here, outside the action dispatch path; failure only disables visualization.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if ! "$SCRIPT_DIR/build_agent_cursor"; then
+    echo "警告: agent_cursor 构建失败，本次仍会启动 Chrome，但不显示动作光标。" >&2
+  fi
 fi
 
 # 该端口已经有一个调试 Chrome → 直接复用,不重复拉起。

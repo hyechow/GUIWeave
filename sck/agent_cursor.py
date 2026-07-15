@@ -5,8 +5,9 @@
 光标不动。坐标 = 逻辑屏幕点、左上原点(同 CGWindow 全局坐标)。
 
 独立 overlay 进程(不整合进 mirror_daemon,避免浮层进截图污染 OCR/YOLO)。
-二进制路径默认 /tmp/agent_cursor,可用环境变量 AGENT_CURSOR_BIN 覆盖。
-  build: swiftc sck/agent_cursor.swift -o /tmp/agent_cursor
+二进制默认安装到用户缓存目录 ~/.cache/guiweave/bin/agent_cursor,可用环境变量
+AGENT_CURSOR_BIN 覆盖。运行时只加载已有二进制,不在 action 路径编译。
+  build: bin/build_agent_cursor
 
 用法:
     cur = AgentCursor(); cur.start()
@@ -21,29 +22,40 @@ import subprocess
 from pathlib import Path
 
 
-def ensure_cursor_bin() -> str | None:
-    """定位 agent_cursor 二进制(env AGENT_CURSOR_BIN 或 /tmp/agent_cursor);缺失则从同目录
-    的 agent_cursor.swift 编译一次。返回路径,或 None(调用方据此禁用光标可视化)。
+def cursor_bin_candidates() -> tuple[Path, ...]:
+    """Return cursor binary locations in ownership order.
 
-    与 iphone mirror_daemon 的 _ensure_cursor_bin 同款逻辑,放在 sck/ 这个 agent_cursor
-    的“家”里,供任意平台(iphone/browser)复用同一个 overlay 渲染器。"""
-    cb = os.environ.get("AGENT_CURSOR_BIN") or "/tmp/agent_cursor"
-    src = Path(__file__).resolve().parent / "agent_cursor.swift"
-    # Up-to-date binary (exists AND not older than the source) → reuse. Rebuilding
-    # when the .swift is newer means edits (e.g. the persist command) aren't masked
-    # by a stale cached build.
-    if os.path.exists(cb) and (not src.exists() or os.path.getmtime(cb) >= os.path.getmtime(src)):
-        return cb
-    try:
-        subprocess.run(["swiftc", str(src), "-o", cb], check=True, capture_output=True)
-        return cb
-    except Exception:
-        return cb if os.path.exists(cb) else None  # fall back to a stale build if present
+    An explicit AGENT_CURSOR_BIN is authoritative. Otherwise use a durable
+    per-user cache and retain /tmp/agent_cursor only as a legacy fallback for
+    existing developer installations.
+    """
+    configured = os.environ.get("AGENT_CURSOR_BIN")
+    if configured:
+        return (Path(configured).expanduser(),)
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser()
+    return (
+        cache_root / "guiweave" / "bin" / "agent_cursor",
+        Path("/tmp/agent_cursor"),
+    )
+
+
+def ensure_cursor_bin() -> str | None:
+    """Locate an existing cursor binary without compiling on the action path.
+
+    The overlay is optional. A missing binary disables visualization so it can never delay or
+    prevent device input. Build/install it explicitly with bin/build_agent_cursor
+    or set AGENT_CURSOR_BIN.
+    """
+    for candidate in cursor_bin_candidates():
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 class AgentCursor:
     def __init__(self, bin_path: str | None = None):
-        self._bin = bin_path or os.environ.get("AGENT_CURSOR_BIN") or "/tmp/agent_cursor"
+        candidates = cursor_bin_candidates()
+        self._bin = bin_path or str(candidates[0])
         self._p: subprocess.Popen | None = None
 
     def start(self) -> None:
