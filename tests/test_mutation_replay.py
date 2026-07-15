@@ -16,6 +16,7 @@ from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleChec
 from gui_agent.core.supervisor.milestone.evidence import (
     action_lifecycle_claims,
 )
+from scripts.replay_supervisor_turn import normalize_replay_context
 
 
 REPLAYS = Path(__file__).resolve().parents[1] / "evals/browser/supervisor_replay"
@@ -43,7 +44,7 @@ def _run_statements(node: object) -> list[dict]:
 
 
 def _context(root: Path, turn_no: int) -> tuple[Milestone, list[PolicyTurn]]:
-    raw = json.loads((root / "context.json").read_text())
+    raw = normalize_replay_context(json.loads((root / "context.json").read_text()))
     turns = [PolicyTurn.model_validate(item) for item in raw["turns"]]
     milestone_id = next(
         turn.supervisor.milestone_id for turn in turns if turn.index == turn_no
@@ -261,8 +262,6 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
             supervisor=SupervisorStep(
                 should_act=True,
                 instruction="select the final declared choice",
-                stop=False,
-                goal_completed=False,
                 summary="",
                 milestone_id=milestone.id,
                 atomic_role="write",
@@ -444,7 +443,7 @@ def test_real_143530_unmet_frames_do_not_consume_recovery_retries(
         step = policy._run_single_turn(milestone, observation, history)
 
         assert step.should_act is True
-        assert step.goal_completed is False
+        assert step.outcome is None
         assert milestone.retry_count == 0
         if turn_no == 11:
             assert step.target_control == "Add Swatch"

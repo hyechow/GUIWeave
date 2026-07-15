@@ -11,7 +11,13 @@ from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecis
 from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
 from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
 from gui_agent.adapters.android.policies import AndroidActionPolicy
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import (
+    Milestone,
+    Observation,
+    PolicyTurn,
+    StatementOutcome,
+    SupervisorStep,
+)
 from gui_agent.core.orchestrator.passes import normalize_goal_value_contracts
 from gui_agent.core.orchestrator.program import Program, Run
 from gui_agent.core.run.interactive import milestone_for_run
@@ -397,8 +403,6 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
             supervisor=SupervisorStep(
                 should_act=True,
                 instruction="在分钟列滚动，把 51 分钟调到 30 分钟",
-                stop=False,
-                goal_completed=False,
                 summary="",
                 milestone_id="m2",
             ),
@@ -423,9 +427,7 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
         "_handle_stuck",
         lambda *args, **kwargs: SupervisorStep(
             should_act=False,
-            stop=True,
-            goal_completed=False,
-            stop_reason="stuck",
+            outcome=StatementOutcome.failed("stuck"),
             summary="stuck handled",
             milestone_id="m2",
         ),
@@ -433,8 +435,8 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
 
     step = policy._run_single_turn(milestone, Observation(png_bytes=_png(), source="eval"), history)
 
-    assert step.stop is True
-    assert step.stop_reason == "stuck"
+    assert step.outcome is not None
+    assert step.outcome.summary == "stuck"
 
 
 def test_progress_value_extracts_time_from_reason_without_missing_evidence():

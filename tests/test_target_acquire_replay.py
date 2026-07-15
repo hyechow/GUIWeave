@@ -5,7 +5,7 @@ from pathlib import Path
 
 from gui_agent.core.schemas import PolicyContext
 from gui_agent.core.supervisor.milestone.acquisition import TargetAcquireController
-from scripts.replay_supervisor_turn import _milestone_for_turn
+from scripts.replay_supervisor_turn import _milestone_for_turn, normalize_replay_context
 
 
 FIXTURE = (
@@ -20,7 +20,7 @@ def _controls(turn: int) -> list[dict]:
 
 
 def test_real_170119_frames_keep_one_target_directed_acquire_session() -> None:
-    raw = json.loads((FIXTURE / "context.json").read_text())
+    raw = normalize_replay_context(json.loads((FIXTURE / "context.json").read_text()))
     context = PolicyContext.model_validate(raw)
     turn = next(item for item in context.turns if item.index == 24)
     milestone = _milestone_for_turn(raw, turn)
@@ -48,7 +48,7 @@ def test_real_170119_frames_keep_one_target_directed_acquire_session() -> None:
 
 
 def test_real_170119_no_progress_exhausts_instead_of_drifting_to_fields() -> None:
-    raw = json.loads((FIXTURE / "context.json").read_text())
+    raw = normalize_replay_context(json.loads((FIXTURE / "context.json").read_text()))
     context = PolicyContext.model_validate(raw)
     turn = next(item for item in context.turns if item.index == 24)
     milestone = _milestone_for_turn(raw, turn)

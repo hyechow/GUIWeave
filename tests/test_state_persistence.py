@@ -2,7 +2,13 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import (
+    Milestone,
+    PolicyContext,
+    PolicyTurn,
+    StatementOutcome,
+    SupervisorStep,
+)
 from gui_agent.core.run.state import sync_milestone_states, write_final_run_state
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
@@ -44,21 +50,6 @@ def test_policy_context_strips_runtime_fields_from_static_milestones():
     assert "retry_count" not in ctx.milestones[0]
 
 
-def test_legacy_stop_replay_does_not_restore_fake_dispatch_evidence():
-    raw = json.loads((REPLAYS / "140905_turn26/context.json").read_text())
-
-    context = PolicyContext.model_validate(raw)
-    turn = next(turn for turn in context.turns if turn.index == 26)
-
-    assert turn.action_decision is not None
-    assert turn.action_decision.action is None
-    assert turn.executed is False
-    assert turn.action_signal is not None
-    assert turn.action_signal.execution == "not_attempted"
-    assert turn.action_signal.action_key == ""
-    assert turn.action_signal.mutation_receipt is None
-
-
 def test_runner_syncs_milestone_state_from_supervisor_snapshot():
     milestone = Milestone(
         id="m1",
@@ -87,9 +78,7 @@ def test_runner_syncs_milestone_state_from_supervisor_snapshot():
         observation_source="screen",
         supervisor=SupervisorStep(
             should_act=False,
-            stop=True,
-            stop_reason="所有子目标已完成",
-            goal_completed=True,
+            outcome=StatementOutcome.completed("所有子目标已完成"),
             summary="完成",
             milestone_id="m1",
             milestone_kind="navigation",
@@ -146,8 +135,6 @@ def test_runner_updates_checklist_from_in_progress_checker():
                 supervisor=SupervisorStep(
                     should_act=True,
                     instruction="填写名称",
-                    stop=False,
-                    goal_completed=False,
                     summary="名称已填，站点未选",
                     milestone_id="m1",
                     milestone_kind="action",
@@ -315,9 +302,11 @@ def test_report_builder_reads_done_check_from_milestone_states(tmp_path):
       "supervisor": {
         "should_act": false,
         "instruction": null,
-        "stop": true,
-        "stop_reason": "所有子目标已完成",
-        "goal_completed": true,
+        "outcome": {
+          "phase": "completed",
+          "summary": "所有子目标已完成",
+          "verification": "confirmed"
+        },
         "summary": "完成",
         "milestone_id": "m1",
         "milestone_kind": "navigation",
@@ -337,6 +326,8 @@ def test_report_builder_reads_done_check_from_milestone_states(tmp_path):
     assert data.pages[0].verify_checker["reason"] == "已在目标页"
     assert data.milestones[0]["status"] == "done"
     assert data.pages[0].checklist[0]["status"] == "done"
+    assert data.pages[0].steps[0].outcome_phase == "completed"
+    assert data.pages[0].steps[0].verification == "confirmed"
     html = generate_html(data)
     assert "milestone-checklist" in html
     assert "页面已打开" in html
@@ -407,9 +398,11 @@ def test_report_builder_uses_prior_observation_frame_for_same_frame_handoff(tmp_
       "supervisor": {
         "should_act": false,
         "instruction": null,
-        "stop": true,
-        "stop_reason": "子目标已完成",
-        "goal_completed": false,
+        "outcome": {
+          "phase": "completed",
+          "summary": "子目标已完成",
+          "verification": "confirmed"
+        },
         "summary": "完成上一阶段",
         "milestone_id": "m1",
         "milestone_kind": "action"
@@ -424,9 +417,6 @@ def test_report_builder_uses_prior_observation_frame_for_same_frame_handoff(tmp_
       "supervisor": {
         "should_act": true,
         "instruction": "点击下一行",
-        "stop": false,
-        "stop_reason": "",
-        "goal_completed": false,
         "summary": "继续执行",
         "milestone_id": "m2",
         "milestone_kind": "action"

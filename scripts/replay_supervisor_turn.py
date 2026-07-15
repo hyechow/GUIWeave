@@ -32,6 +32,46 @@ from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
 
+def normalize_replay_context(raw: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade captured pre-Outcome turns at the offline replay boundary.
+
+    Runtime schemas stay strict; historical fixtures are translated only by the tool
+    whose explicit job is replaying historical captures.
+    """
+    for turn in raw.get("turns") or []:
+        supervisor = turn.get("supervisor") if isinstance(turn, dict) else None
+        if not isinstance(supervisor, dict):
+            continue
+        stop = bool(supervisor.pop("stop", False))
+        reason = str(supervisor.pop("stop_reason", "") or "")
+        completed = bool(supervisor.pop("goal_completed", False))
+        verification = str(supervisor.pop("completion_status", "") or "")
+        kickback = str(supervisor.pop("replan_directive", "") or "")
+        supervisor.pop("target_group_id", None)
+        if kickback:
+            supervisor["outcome"] = {
+                "phase": "infeasible",
+                "summary": reason or supervisor.get("summary") or "statement infeasible",
+                "kickback": kickback,
+            }
+        elif completed:
+            supervisor["outcome"] = {
+                "phase": "completed",
+                "summary": reason or supervisor.get("summary") or "statement completed",
+                "verification": (
+                    "accepted_unverified"
+                    if verification == "accepted_unverified"
+                    else "confirmed"
+                ),
+            }
+        elif stop:
+            supervisor["outcome"] = {
+                "phase": "failed",
+                "summary": reason or supervisor.get("summary") or "statement failed",
+            }
+    return raw
+
+
 def _run_statements(node: object) -> list[dict[str, Any]]:
     statements: list[dict[str, Any]] = []
     if isinstance(node, dict):
@@ -165,6 +205,16 @@ def _expectation_failures(
     expectation: dict[str, Any], decision: Any, milestone: Milestone
 ) -> list[str]:
     failures: list[str] = []
+    outcome = decision.outcome
+    actuals = {
+        "should_act": decision.should_act,
+        "goal_completed": bool(outcome is not None and outcome.phase == "completed"),
+        "completion_status": outcome.verification if outcome is not None else "in_progress",
+        "atomic_role": decision.atomic_role,
+        "action_family": decision.action_family,
+        "target_control": decision.target_control,
+        "direction": decision.direction,
+    }
     checks = (
         ("should_act", expectation.get("should_act")),
         ("goal_completed", expectation.get("goal_completed")),
@@ -175,9 +225,10 @@ def _expectation_failures(
         ("direction", expectation.get("direction")),
     )
     for field, expected in checks:
-        if expected is not None and getattr(decision, field, None) != expected:
+        actual = actuals[field]
+        if expected is not None and actual != expected:
             failures.append(
-                f"expected {field}={expected!r}, got {getattr(decision, field, None)!r}"
+                f"expected {field}={expected!r}, got {actual!r}"
             )
     rejected = expectation.get("reject_target_controls") or []
     if getattr(decision, "target_control", None) in rejected:
@@ -315,7 +366,7 @@ def main() -> int:
         parser.error("--turn is required when no replay expectation supplies it")
 
     raw = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
-    context = PolicyContext.model_validate(raw)
+    context = PolicyContext.model_validate(normalize_replay_context(raw))
     target_turn = next((turn for turn in context.turns if turn.index == target_index), None)
     if target_turn is None:
         raise ValueError(f"turn {target_index} is absent from {run_dir / 'context.json'}")
@@ -377,8 +428,7 @@ def main() -> int:
                 "checker_effect": getattr(checker, "effect_status", None),
                 "instruction": decision.instruction,
                 "should_act": decision.should_act,
-                "goal_completed": decision.goal_completed,
-                "completion_status": decision.completion_status,
+                "outcome": decision.outcome.model_dump(mode="json") if decision.outcome else None,
                 "atomic_role": decision.atomic_role,
                 "action_family": decision.action_family,
                 "target_control": decision.target_control,

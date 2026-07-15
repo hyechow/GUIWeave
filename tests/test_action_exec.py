@@ -53,8 +53,6 @@ def _step(decision: BaseActionDecision) -> SupervisorStep:
     return SupervisorStep(
         should_act=True,
         instruction="点击确认按钮",
-        stop=False,
-        goal_completed=False,
         summary="需要点击",
         preformed_action=decision,
         app_name="Settings",

@@ -1,13 +1,10 @@
-"""Terminal StatementOutcome invariants and supervisor-step mapping."""
+"""Terminal StatementOutcome invariants and native supervisor ownership."""
 
 from __future__ import annotations
 
 import pytest
 
-from gui_agent.core.run.statements.outcome import (
-    StatementOutcome,
-    statement_outcome_from_supervisor_step,
-)
+from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.schemas import SupervisorStep
 
 
@@ -53,83 +50,62 @@ def test_no_running_phase_constructor():
         StatementOutcome(phase="running", summary="mid")  # type: ignore[arg-type]
 
 
-def test_map_supervisor_completed_step():
-    step = SupervisorStep(
-        should_act=False,
-        instruction=None,
-        stop=False,
-        goal_completed=True,
-        summary="保存成功",
-        completion_status="confirmed",
+def test_retired_boolean_terminal_shape_is_rejected():
+    with pytest.raises(ValueError):
+        StatementOutcome(
+            phase="completed",
+            summary="done",
+            verification="confirmed",
+            completed=True,  # type: ignore[call-arg]
+            failed=False,  # type: ignore[call-arg]
+        )
+
+
+def test_supervisor_step_carries_native_outcome():
+    outcome = StatementOutcome.completed(
+        "已提交",
+        verification="accepted_unverified",
     )
-    out = statement_outcome_from_supervisor_step(step)
-    assert out is not None
-    assert out.phase == "completed"
-    assert out.verification == "confirmed"
-
-
-def test_map_supervisor_accepted_unverified():
     step = SupervisorStep(
         should_act=False,
-        instruction=None,
-        stop=False,
-        goal_completed=True,
         summary="已提交",
-        completion_status="accepted_unverified",
+        outcome=outcome,
     )
-    out = statement_outcome_from_supervisor_step(step)
-    assert out is not None
-    assert out.verification == "accepted_unverified"
-    assert out.to_run_result().completion_status == "accepted_unverified"
+    assert step.outcome is outcome
+    assert step.outcome.verification == "accepted_unverified"
 
 
-def test_map_supervisor_infeasible_kickback():
-    step = SupervisorStep(
-        should_act=False,
-        instruction=None,
-        stop=True,
-        goal_completed=False,
-        summary="控件不可达",
-        replan_directive="改走订单列表检索",
-    )
-    out = statement_outcome_from_supervisor_step(step)
-    assert out is not None
-    assert out.phase == "infeasible"
-    assert "订单列表" in (out.kickback or "")
-
-
-def test_map_supervisor_mid_loop_has_no_terminal_outcome():
+def test_mid_loop_step_has_no_outcome():
     step = SupervisorStep(
         should_act=True,
         instruction="点击保存",
-        stop=False,
-        goal_completed=False,
         summary="准备点击",
     )
-    assert statement_outcome_from_supervisor_step(step) is None
+    assert step.outcome is None
 
 
-def test_map_stop_without_complete_to_failed_or_exhausted():
-    failed = statement_outcome_from_supervisor_step(
+@pytest.mark.parametrize("running_field", ["should_act", "is_loading"])
+def test_terminal_step_rejects_running_signals(running_field):
+    fields = {
+        "should_act": False,
+        "summary": "done",
+        "outcome": StatementOutcome.completed("done"),
+        running_field: True,
+    }
+    with pytest.raises(ValueError, match="terminal SupervisorStep"):
+        SupervisorStep(**fields)
+
+
+def test_retired_terminal_fields_are_rejected():
+    with pytest.raises(ValueError):
         SupervisorStep(
             should_act=False,
-            instruction=None,
-            stop=True,
-            goal_completed=False,
-            stop_reason="找不到目标控件",
-            summary="放弃",
+            summary="done",
+            goal_completed=True,  # type: ignore[call-arg]
         )
-    )
-    assert failed is not None and failed.phase == "failed"
-
-    exhausted = statement_outcome_from_supervisor_step(
+    with pytest.raises(ValueError):
         SupervisorStep(
             should_act=False,
-            instruction=None,
-            stop=True,
-            goal_completed=False,
-            stop_reason="达到最大轮数 20",
-            summary="超时",
+            summary="blocked",
+            replan_directive="retry",  # type: ignore[call-arg]
         )
-    )
-    assert exhausted is not None and exhausted.phase == "exhausted"

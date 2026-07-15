@@ -17,8 +17,6 @@ def _context() -> PolicyContext:
 def _step(scope: CollectionScope | None = None) -> SupervisorStep:
     return SupervisorStep(
         should_act=False,
-        stop=False,
-        goal_completed=False,
         summary="s",
         collection_scope=scope,
     )

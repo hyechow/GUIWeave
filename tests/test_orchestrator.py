@@ -597,7 +597,7 @@ def test_advance_persists_done_check_on_terminal_completion():
     )
     assert decision.status == "satisfied"
     step = p._advance(ms, obs, [], decision=decision)
-    assert step.goal_completed is True                    # single milestone → terminal step
+    assert step.outcome is not None and step.outcome.phase == "completed"
     assert p._done_check is check                         # done 判定已留存（验收面板有数据）
 
 
@@ -636,8 +636,6 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
         return SupervisorStep(
             should_act=True,
             instruction="重新点击 Save 以产生本轮保存事件",
-            stop=False,
-            goal_completed=False,
             summary=check.summary,
             milestone_id=milestone.id,
             milestone_kind=milestone.kind,
@@ -648,7 +646,7 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
     step = p._run_single_turn(ms, Observation(png_bytes=_png_bytes(), source="test"), [])
 
     assert step.should_act is True
-    assert step.goal_completed is False
+    assert step.outcome is None
     assert p._active_milestone is ms
 
 

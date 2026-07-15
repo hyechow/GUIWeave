@@ -35,8 +35,6 @@ def _row_turn(index: int, product_id: str) -> PolicyTurn:
         supervisor=SupervisorStep(
             should_act=True,
             instruction="在 Price 字段输入 64.88",
-            stop=False,
-            goal_completed=False,
             summary="",
             milestone_id="price_action",
             execution_scope=f"row:admin/catalog/product/edit/id/{product_id}",
@@ -65,8 +63,6 @@ def test_checker_history_is_bucketed_by_current_row_scope(monkeypatch):
         lambda *_args, **_kwargs: SupervisorStep(
             should_act=True,
             instruction="在 Price 字段输入 64.88",
-            stop=False,
-            goal_completed=False,
             summary="plan",
             milestone_id=milestone.id,
         ),

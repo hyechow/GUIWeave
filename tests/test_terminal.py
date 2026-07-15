@@ -3,6 +3,7 @@ from __future__ import annotations
 from gui_agent.core.orchestrator.program import Program, Run
 from gui_agent.core.run.flow import finish_terminal_step
 from gui_agent.core.run.program_runtime import ProgramRuntime
+from gui_agent.core.run.result import make_result
 from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.schemas import PolicyContext, PolicyTurn, SupervisorStep
 
@@ -42,8 +43,7 @@ def _runtime() -> ProgramRuntime:
 def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
     step = SupervisorStep(
         should_act=False,
-        stop=False,
-        goal_completed=True,
+        outcome=StatementOutcome.completed("任务完成"),
         summary="已经完成",
         collection_summary="采集完成",
     )
@@ -74,9 +74,7 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
 def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
     step = SupervisorStep(
         should_act=False,
-        stop=True,
-        stop_reason="连续无动作",
-        goal_completed=False,
+        outcome=StatementOutcome.failed("用户停止"),
         summary="未完成",
     )
     read_state = _ReadState()
@@ -101,3 +99,17 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
     assert messages == ["\n任务未完成：用户停止"]
     assert result["goal_completed"] is False
     assert "用户停止" in result["stop_reason"]
+
+
+def test_base_result_does_not_promote_one_completed_statement_to_program_success():
+    step = SupervisorStep(
+        should_act=False,
+        outcome=StatementOutcome.completed("第一步完成"),
+        summary="第一步完成",
+    )
+
+    result = make_result(_context(step), "用户中途退出")
+
+    assert result["execution_completed"] is False
+    assert result["goal_completed"] is False
+    assert result["goal_status"] == "incomplete"

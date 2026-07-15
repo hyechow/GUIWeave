@@ -9,8 +9,6 @@ from gui_agent.core.schemas import BaseAction, BaseActionDecision, SupervisorSte
 def _step(*, should_act: bool = True, milestone_id: str | None = "m1") -> SupervisorStep:
     return SupervisorStep(
         should_act=should_act,
-        stop=False,
-        goal_completed=False,
         summary="s",
         milestone_id=milestone_id,
     )

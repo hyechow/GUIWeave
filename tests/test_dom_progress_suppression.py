@@ -25,7 +25,7 @@ def _policy(dom_changed: bool) -> MilestoneSupervisorPolicy:
     )
     p._is_repeated_instruction = lambda *a, **k: True  # type: ignore[method-assign]
     p._handle_stuck = lambda *a, **k: SupervisorStep(  # type: ignore[method-assign]
-        should_act=False, stop=False, goal_completed=False, summary=STUCK_SUMMARY
+        should_act=False, summary=STUCK_SUMMARY
     )
     return p
 
@@ -88,8 +88,6 @@ def _step() -> SupervisorStep:
     return SupervisorStep(
         should_act=True,
         instruction="点击 Edit",
-        stop=False,
-        goal_completed=False,
         summary="打开详情",
         milestone_id="m1",
         completion_strategy="visible_once",

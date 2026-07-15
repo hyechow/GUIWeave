@@ -26,7 +26,7 @@ def _policy(reworded_instruction: str) -> MilestoneSupervisorPolicy:
     p._invoke_planner = lambda *a, **k: _PlanResult(instruction=reworded_instruction, summary="重输")  # type: ignore[method-assign]
     p._is_repeated_instruction = lambda *a, **k: False  # type: ignore[method-assign]  # instruction guard stays silent
     p._handle_stuck = lambda *a, **k: SupervisorStep(  # type: ignore[method-assign]
-        should_act=False, stop=False, goal_completed=False, summary=STUCK,
+        should_act=False, summary=STUCK,
     )
     return p
 
@@ -38,8 +38,8 @@ def _ms() -> Milestone:
 
 
 def _typed_turn(index: int, *, execution_scope: str = "") -> PolicyTurn:
-    sv = SupervisorStep(should_act=True, instruction="在 Product 框输入 Olivia zip jacket", stop=False,
-                        goal_completed=False, milestone_id="m1", execution_scope=execution_scope,
+    sv = SupervisorStep(should_act=True, instruction="在 Product 框输入 Olivia zip jacket",
+                        milestone_id="m1", execution_scope=execution_scope,
                         summary="")
     ad = BrowserActionDecision.model_validate({"action": TYPE_ACTION})
     return PolicyTurn(index=index, observation_source="eval", supervisor=sv, action_decision=ad, executed=True)

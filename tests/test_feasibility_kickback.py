@@ -1,7 +1,7 @@
-"""Stage 2: the supervisor's _maybe_kickback routing at give-up time (Feasibility Guard hook).
+"""The supervisor's _maybe_kickback routing at give-up time.
 
-The feasibility LLM is monkeypatched — these pin the deterministic ROUTING: infeasible → a stop
-step carrying the directive; feasible/visual/judge-error → None (fall through to normal fail)."""
+The feasibility LLM is monkeypatched — these pin the deterministic routing:
+infeasible outcome with kickback; feasible/visual/judge-error → None."""
 
 import gui_agent.core.supervisor.milestone.feasibility as feas
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
@@ -32,9 +32,9 @@ def test_kickback_when_infeasible(monkeypatch):
     ms = _ms()
     step = p._maybe_kickback(ms, _obs_browser(), None)
     assert step is not None
-    assert step.stop is True
-    assert step.replan_directive == "逐条钻取评论详情"
-    assert "不可行" in (step.stop_reason or "")
+    assert step.outcome is not None
+    assert step.outcome.phase == "infeasible"
+    assert step.outcome.kickback == "逐条钻取评论详情"
     assert ms.status == "failed"
 
 
@@ -90,11 +90,9 @@ def test_navigation_target_in_semantic_inventory_cannot_be_kicked_back(monkeypat
         "index": 1,
         "observation_source": "browser",
         "supervisor": {
-            "should_act": True,
-            "instruction": "点击展开菜单中的目标链接",
-            "stop": False,
-            "goal_completed": False,
-            "summary": "",
+                "should_act": True,
+                "instruction": "点击展开菜单中的目标链接",
+                "summary": "",
             "milestone_id": "nav-products",
             "target_control": "Products",
         },

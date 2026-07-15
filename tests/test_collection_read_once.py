@@ -50,8 +50,7 @@ def test_done_read_once_collection_requests_reader():
 
     step = policy._run_single_turn(milestone, Observation(png_bytes=_png(), source="eval"), [])
 
-    assert step.stop is True
-    assert step.goal_completed is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.read_instruction == "Extract the visible result count."
     assert step.allow_read is True
 
@@ -69,7 +68,6 @@ def test_action_task_done_collection_does_not_collect_notes():
 
     step = policy._run_single_turn(milestone, Observation(png_bytes=_png(), source="eval"), [])
 
-    assert step.stop is True
-    assert step.goal_completed is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.read_instruction is None
     assert step.allow_read is False

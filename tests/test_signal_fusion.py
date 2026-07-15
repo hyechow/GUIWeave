@@ -34,8 +34,6 @@ def _signal_turn(
         supervisor=SupervisorStep(
             should_act=True,
             instruction=control,
-            stop=False,
-            goal_completed=False,
             summary="",
             milestone_id=milestone_id,
             atomic_role=role,

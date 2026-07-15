@@ -20,8 +20,6 @@ def _step(**updates) -> SupervisorStep:
     step = SupervisorStep(
         should_act=True,
         instruction="set Amount to 42",
-        stop=False,
-        goal_completed=False,
         summary="write the declared field",
         milestone_id="m1",
         execution_scope="record:1",

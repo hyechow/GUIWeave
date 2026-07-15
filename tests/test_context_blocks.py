@@ -66,8 +66,6 @@ def test_runtime_history_context_keeps_existing_history_text_with_metadata():
         supervisor=SupervisorStep(
             should_act=True,
             instruction="点击搜索框",
-            stop=False,
-            goal_completed=False,
             summary="需要搜索",
         ),
         executed=False,
@@ -88,8 +86,6 @@ def test_runtime_history_keeps_action_lifecycle_separate_from_checker_summary():
         supervisor=SupervisorStep(
             should_act=True,
             instruction="按回车提交筛选",
-            stop=False,
-            goal_completed=False,
             summary="submit",
             milestone_id="filter",
             milestone_kind="filter",
@@ -114,8 +110,6 @@ def test_runtime_history_keeps_action_lifecycle_separate_from_checker_summary():
         supervisor=SupervisorStep(
             should_act=True,
             instruction="Clear all",
-            stop=False,
-            goal_completed=False,
             summary="0 records, clear and retry",
             milestone_id="filter",
         ),
@@ -137,8 +131,6 @@ def test_runtime_history_renders_action_policy_not_found_without_crashing():
         supervisor=SupervisorStep(
             should_act=True,
             instruction="点击 Add Swatch",
-            stop=False,
-            goal_completed=False,
             summary="需要创建新行",
             milestone_id="attribute_option",
             atomic_role="prepare",
@@ -288,8 +280,8 @@ def _turn(idx: int, mid: str, summary: str, instruction: str | None = None) -> P
         index=idx,
         observation_source="browser",
         supervisor=SupervisorStep(
-            should_act=bool(instruction), instruction=instruction, stop=False,
-            goal_completed=False, summary=summary, milestone_id=mid,
+            should_act=bool(instruction), instruction=instruction,
+            summary=summary, milestone_id=mid,
         ),
         executed=bool(instruction),
     )

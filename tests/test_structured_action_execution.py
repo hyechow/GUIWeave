@@ -77,8 +77,6 @@ def test_action_execution_grounds_rendered_input_after_vision(monkeypatch, tmp_p
     step = SupervisorStep(
         should_act=True,
         instruction="在 Admin Description 输入 XXXL",
-        stop=False,
-        goal_completed=False,
         summary="typed write",
         milestone_id="size-option",
         atomic_role="write",
@@ -128,8 +126,6 @@ def test_native_select_skips_vision_policy(monkeypatch, tmp_path) -> None:
     step = SupervisorStep(
         should_act=True,
         instruction="将 Status 设为 Complete",
-        stop=False,
-        goal_completed=False,
         summary="native select",
         milestone_id="status",
         atomic_role="write",
@@ -202,8 +198,6 @@ def test_action_policy_grounding_failure_is_not_reinterpreted(monkeypatch, tmp_p
     step = SupervisorStep(
         should_act=True,
         instruction="在 Admin Swatch 输入 XXXL",
-        stop=False,
-        goal_completed=False,
         summary="typed write",
         milestone_id="size-option",
         atomic_role="write",

@@ -84,8 +84,7 @@ def _scroll_turn(mid: str, *, read_added: bool) -> PolicyTurn:
         index=1,
         observation_source="eval",
         supervisor=SupervisorStep(
-            should_act=True, instruction="向上滚动", stop=False,
-            goal_completed=False, summary="", milestone_id=mid,
+            should_act=True, instruction="向上滚动", summary="", milestone_id=mid,
         ),
         action_decision=ActionDecision(
             action=Action(
@@ -109,14 +108,13 @@ def main() -> int:
     step = p._run_loop_turn(ms, obs, [])
     ok = (
         step.should_act
-        and not step.stop
-        and not step.goal_completed
+        and step.outcome is None
         and ms.status != "done"
     )
     _report(
         "零滚动+should_stop → 强制滚动、不判完成",
         ok,
-        f"should_act={step.should_act} stop={step.stop} gc={step.goal_completed} status={ms.status}",
+        f"should_act={step.should_act} outcome={step.outcome} status={ms.status}",
     )
 
     # Case 2: same, but boundary_reached=True on entry (still no scroll) → still must scroll,
@@ -124,7 +122,7 @@ def main() -> int:
     p, ms = _make_policy()
     _stub_loop(p, should_stop=False, boundary=True)
     step = p._run_loop_turn(ms, obs, [])
-    ok = step.should_act and not step.stop and ms.status != "done"
+    ok = step.should_act and step.outcome is None and ms.status != "done"
     _report(
         "零滚动+boundary_reached → 强制滚动、不判完成",
         ok,
@@ -140,8 +138,7 @@ def main() -> int:
     def _fake_stuck(*a, **k):
         hit["stuck"] = True
         return SupervisorStep(
-            should_act=False, stop=False, goal_completed=False,
-            summary="stuck-sentinel", milestone_id="5",
+            should_act=False, summary="stuck-sentinel", milestone_id="5",
         )
 
     p._handle_stuck = _fake_stuck  # type: ignore[assignment]
@@ -160,7 +157,7 @@ def main() -> int:
     _report(
         "已采集+should_stop → 正常结束收集（advance）",
         ok,
-        f"status={ms.status} stop={step.stop}",
+        f"status={ms.status} outcome={step.outcome}",
     )
 
     # Case 5: loading frame on the ENTRY phase (no scroll yet) → wait (is_loading),

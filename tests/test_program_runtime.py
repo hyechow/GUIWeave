@@ -89,7 +89,6 @@ def test_supervisor_reseed_then_complete_does_not_walk_next_milestone():
         [],
         decision=decision,
     )
-    assert step.goal_completed is True
-    assert step.stop is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
     assert policy._active_milestone is first
     assert first.status == "done"

@@ -46,8 +46,6 @@ def _step(
     return SupervisorStep(
         should_act=True,
         instruction="点击 Save",
-        stop=False,
-        goal_completed=False,
         summary="",
         milestone_id="m1",
         execution_scope=scope,
@@ -142,8 +140,6 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
         step = SupervisorStep(
             should_act=True,
             instruction=f"write {control}",
-            stop=False,
-            goal_completed=False,
             summary="",
             milestone_id="m1",
             milestone_kind="action",
@@ -228,7 +224,7 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
     step = policy._run_single_turn(milestone, observation, history)
 
     assert checker_calls == [1]
-    assert step.goal_completed is False
+    assert step.outcome is None
     assert step.should_act is True
     assert step.atomic_role == "commit"
     assert step.action_family == "activate"
@@ -315,8 +311,6 @@ def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_t
         observation_source="browser",
         supervisor_step=SupervisorStep(
             should_act=False,
-            stop=False,
-            goal_completed=False,
             summary="final state remains incomplete",
             milestone_id="m1",
         ),
@@ -368,7 +362,7 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
     )
 
     assert step.should_act is False
-    assert step.goal_completed is False
+    assert step.outcome is None
     assert "save is still pending" in step.summary
 
 
@@ -456,9 +450,8 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
         history,
     )
 
-    assert result.goal_completed is False
+    assert result.outcome is None
     assert result.should_act is False
-    assert result.completion_status == "in_progress"
     assert milestone.completion_status == "in_progress"
 
 
@@ -508,8 +501,8 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
         history,
     )
 
-    assert result.goal_completed is True
-    assert result.completion_status == "accepted_unverified"
+    assert result.outcome is not None
+    assert result.outcome.verification == "accepted_unverified"
     assert result.pre_existing is False
     assert checker_calls == [1]
     assert history[-1].action_signal is not None
@@ -581,8 +574,8 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
         history,
     )
 
-    assert result.goal_completed is True
-    assert result.completion_status == "accepted_unverified"
+    assert result.outcome is not None
+    assert result.outcome.verification == "accepted_unverified"
     assert history[-1].action_signal is not None
     assert history[-1].effect_signal is None
 

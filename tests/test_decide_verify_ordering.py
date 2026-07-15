@@ -73,8 +73,8 @@ def _tap_turn(*, on_target: bool, no_effect: bool = False) -> PolicyTurn:
         index=1,
         source="test",
         step=SupervisorStep(
-            should_act=True, instruction="点击底部『闹钟』tab", stop=False,
-            goal_completed=False, summary="", milestone_id="m1",
+            should_act=True, instruction="点击底部『闹钟』tab",
+            summary="", milestone_id="m1",
         ),
         action=act,
         actual_element="世界时钟 tab",
@@ -93,8 +93,6 @@ def _submit_turn(*, no_effect: bool = True, reason: str = "点击 Submit Comment
         step=SupervisorStep(
             should_act=True,
             instruction=reason,
-            stop=False,
-            goal_completed=False,
             summary="",
             milestone_id="m1",
             atomic_role="commit",
@@ -113,8 +111,6 @@ def _write_turn(*, description: str = "在目标字段输入任务值") -> Polic
         step=SupervisorStep(
             should_act=True,
             instruction=description,
-            stop=False,
-            goal_completed=False,
             summary="",
             milestone_id="m1",
             atomic_role="write",
@@ -292,7 +288,7 @@ def _shipment_submit_turn() -> PolicyTurn:
         source="browser",
         step=SupervisorStep(
             should_act=True, instruction="点击页面右下角的 Submit Shipment 按钮",
-            stop=False, goal_completed=False, summary="", milestone_id="m1",
+            summary="", milestone_id="m1",
             atomic_role="commit",
         ),
         action=act,
@@ -340,8 +336,6 @@ def test_mutation_commit_without_receipt_does_not_claim_a_target_write() -> None
     step = SupervisorStep(
         should_act=True,
         instruction="approve",
-        stop=False,
-        goal_completed=False,
         summary="",
         milestone_id="m1",
         milestone_kind="action",
@@ -377,7 +371,7 @@ def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # FreshActionRequired suppressed — no re-demand
     assert m.status == "done"
-    assert step.goal_completed is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
 
 
 def test_fresh_action_still_redemands_when_nothing_dispatched(monkeypatch):
@@ -422,7 +416,7 @@ def _arrival_click_turn(milestone_id: str = "m1") -> PolicyTurn:
         source="browser",
         step=SupervisorStep(
             should_act=True, instruction="点击列表中目标产品行",
-            stop=False, goal_completed=False, summary="", milestone_id=milestone_id,
+            summary="", milestone_id=milestone_id,
         ),
         action=act,
         actual_element="产品行",
@@ -449,7 +443,7 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # no FreshActionRequired override, no stray write demanded
     assert m.status == "done"
-    assert step.goal_completed is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
 
 
 def _select_option_turn(milestone_id: str = "m1") -> PolicyTurn:
@@ -459,7 +453,7 @@ def _select_option_turn(milestone_id: str = "m1") -> PolicyTurn:
         source="browser",
         step=SupervisorStep(
             should_act=True, instruction="在 Stock Status 下拉框选择 Out of Stock",
-            stop=False, goal_completed=False, summary="", milestone_id=milestone_id,
+            summary="", milestone_id=milestone_id,
             atomic_role="write", action_family="select",
         ),
         action=act,
@@ -512,7 +506,7 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
         source="browser",
         step=SupervisorStep(
             should_act=True, instruction="点击右上角 Save 按钮保存",
-            stop=False, goal_completed=False, summary="", milestone_id="m1",
+            summary="", milestone_id="m1",
             atomic_role="commit",
         ),
         action=act,
@@ -524,7 +518,7 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []
     assert m.status == "done"
-    assert step.goal_completed is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
 
 
 def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
@@ -560,8 +554,6 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
         step=SupervisorStep(
             should_act=True,
             instruction="点击页面右上角的「Save」按钮",
-            stop=False,
-            goal_completed=False,
             summary="",
             milestone_id="m1",
             atomic_role="commit",
@@ -600,9 +592,9 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
     step = p._run_single_turn(m, obs, [_select_option_turn(), save])
 
     assert m.status == "done"
-    assert step.goal_completed is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.should_act is False
-    assert step.completion_status == "accepted_unverified"
+    assert step.outcome.verification == "accepted_unverified"
     assert checker_calls == [1]
 
 
@@ -688,5 +680,6 @@ def test_maybe_kickback_still_fires_when_no_dispatch_and_control_absent(monkeypa
     p._last_check = _SingleCheckResult(status="stuck", effect_status="unverified", reason="控件缺失", summary="stuck")
     step = p._maybe_kickback(m, _obs(), None, [])   # empty history: nothing dispatched
     assert step is not None
-    assert step.replan_directive == "重规划指令"
+    assert step.outcome is not None
+    assert step.outcome.kickback == "重规划指令"
     assert m.status == "failed"

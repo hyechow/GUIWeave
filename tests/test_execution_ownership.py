@@ -119,7 +119,7 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     assert "rt.current =" not in loop_src
     assert "rt.send_outcome" in loop_src or "send_outcome" in loop_src
     assert "rt.replace_program" in loop_src or "replace_program" in loop_src
-    assert "statement_outcome_from_supervisor_step" in loop_src
+    assert "statement_outcome_from_supervisor_step" not in loop_src
 
     policy_src = inspect.getsource(MilestoneSupervisorPolicy.step)
     assert "_decompose" not in policy_src
@@ -151,7 +151,7 @@ def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> 
     from gui_agent.core.run.statements import outcome as outcome_mod
     from gui_agent.core.schemas import SupervisorStep
 
-    with pytest.raises(ValueError, match="terminal only"):
+    with pytest.raises(ValueError):
         outcome_mod.StatementOutcome(phase="running", summary="mid")  # type: ignore[arg-type]
 
     assert hasattr(outcome_mod.StatementOutcome, "completed")
@@ -159,16 +159,21 @@ def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> 
     assert hasattr(outcome_mod.StatementOutcome, "infeasible")
 
     assert not hasattr(outcome_mod, "ExecutorDecision")
+    assert not hasattr(outcome_mod, "statement_outcome_from_supervisor_step")
+    assert {
+        "stop",
+        "stop_reason",
+        "goal_completed",
+        "completion_status",
+        "replan_directive",
+    }.isdisjoint(SupervisorStep.model_fields)
 
-    # Interactive mapping never invents a running outcome for mid-loop steps.
     mid = SupervisorStep(
-        goal_completed=False,
-        stop=False,
         summary="go",
         should_act=True,
         instruction="tap",
     )
-    assert outcome_mod.statement_outcome_from_supervisor_step(mid) is None
+    assert mid.outcome is None
 
 
 def test_dsl_only_entrypoints_have_no_mode_switches() -> None:

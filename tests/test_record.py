@@ -25,8 +25,6 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
     step = SupervisorStep(
         should_act=True,
         instruction="点击订单",
-        stop=False,
-        goal_completed=False,
         summary="准备点击",
     )
     action = BaseAction(action_type="tap", x=1, y=2, description="点订单")

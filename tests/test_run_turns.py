@@ -5,14 +5,19 @@ from types import SimpleNamespace
 from gui_agent.core.orchestrator.program import Program, Run
 from gui_agent.core.run import loop as run_loop
 from gui_agent.core.run.turns import SupervisorTimingCarry, make_interactive_turn, make_verdict_turn
-from gui_agent.core.schemas import BaseActionDecision, Observation, PolicyContext, SupervisorStep
+from gui_agent.core.schemas import (
+    BaseActionDecision,
+    Observation,
+    PolicyContext,
+    StatementOutcome,
+    SupervisorStep,
+)
 
 
 def _step() -> SupervisorStep:
     return SupervisorStep(
         should_act=False,
-        stop=False,
-        goal_completed=True,
+        outcome=StatementOutcome.completed("完成"),
         summary="完成",
     )
 
@@ -51,7 +56,7 @@ def test_make_verdict_turn_captures_supervisor_state():
 
 
 def test_grounding_failure_is_recorded_without_dispatch_evidence():
-    step = _step().model_copy(update={"should_act": True, "goal_completed": False})
+    step = _step().model_copy(update={"should_act": True, "outcome": None})
     decision = BaseActionDecision(action=None, not_found_reason="当前帧找不到目标")
 
     turn = make_interactive_turn(
@@ -103,8 +108,9 @@ def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_pa
     observation = Observation(png_bytes=b"", source="test")
     def step(*_args):
         return SupervisorStep(
-            should_act=False, stop=True, stop_reason="test complete",
-            goal_completed=False, summary="first observation completed",
+            should_act=False,
+            outcome=StatementOutcome.failed("test complete"),
+            summary="first observation completed",
         )
     supervisor = SimpleNamespace(
         name="test",

@@ -205,8 +205,6 @@ def test_commit_receipt_carries_filter_intent_when_control_was_prepopulated():
     step = SupervisorStep(
         should_act=True,
         instruction="按回车键提交",
-        stop=False,
-        goal_completed=False,
         summary="submit populated filter",
         milestone_id=milestone.id,
         execution_scope=scope,
@@ -275,8 +273,6 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
     write_step = SupervisorStep(
         should_act=True,
         instruction="type exact value",
-        stop=False,
-        goal_completed=False,
         summary="write",
         milestone_id=milestone.id,
         execution_scope=f"milestone:{milestone.id}",
@@ -321,8 +317,8 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
     )
 
     assert checker_calls == []
-    assert step.goal_completed is True
-    assert step.completion_status == "confirmed"
+    assert step.outcome is not None
+    assert step.outcome.verification == "confirmed"
 
 
 def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatch):
@@ -355,7 +351,7 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
 
     assert checker_calls == []
     assert milestone.status == "done"
-    assert step.goal_completed is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
 
 
 # ── filter_state_satisfies_target (the gate predicate) ──────────────────────────
@@ -488,7 +484,7 @@ def test_strong_gate_fires_done_without_invoking_checker(monkeypatch):
     ms, step, checker_calls = _run_step(monkeypatch, {"Quantity": "3 - 3"})
     assert checker_calls == [], "FilterGate must bypass the LLM checker when target chip is present"
     assert ms.status == "done"
-    assert step is not None and step.goal_completed is True
+    assert step is not None and step.outcome is not None
 
 
 def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
@@ -520,7 +516,7 @@ def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
     step = pol.step(obs, goal="reviews for Olivia zip jacket", history=[])
     assert checker_calls == []
     assert ms.status == "done"
-    assert step.goal_completed is True
+    assert step.outcome is not None and step.outcome.phase == "completed"
 
 
 def test_chip_absent_channel_block_warns_not_to_wait_for_chips():
@@ -574,7 +570,7 @@ def test_policy_captures_first_applied_filters_snapshot(monkeypatch):
     })
     pol.reseed(ms)
     monkeypatch.setattr(pol, "_run_single_turn", lambda *a, **k: SupervisorStep(
-        should_act=False, instruction=None, stop=False, goal_completed=False, summary="", milestone_id="m1",
+        should_act=False, instruction=None, summary="", milestone_id="m1",
     ))
     # Turn 1: no applied-filters channel (dashboard) → baseline not captured.
     pol.step(Observation(png_bytes=b"x", source="browser"), goal="g", history=[])

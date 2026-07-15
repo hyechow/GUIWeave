@@ -127,7 +127,7 @@ def test_serialization_preserves_subclass_fields():
         action_type="drag", target_area="picker_left", value_direction="increase", description="调大"))
     br = BrowserActionDecision(action=BrowserAction(
         action_type="navigate", url="example.com", description="打开"))
-    sv = SupervisorStep(should_act=True, stop=False, goal_completed=False, summary="x")
+    sv = SupervisorStep(should_act=True, summary="x")
     ctx = PolicyContext(
         goal="g", supervisor_policy_name="milestone", action_policy_name="x",
         turns=[

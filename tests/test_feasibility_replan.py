@@ -9,14 +9,11 @@ from gui_agent.core.orchestrator.program import Finish, Program, Run
 from gui_agent.core.orchestrator.runner import RunRecord, RunResult
 from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS, should_kickback_replan
 from gui_agent.core.run.result import orchestration_result
-from gui_agent.core.schemas import PolicyContext, SupervisorStep
+from gui_agent.core.schemas import PolicyContext, StatementOutcome
 
 
-def _step(directive=None) -> SupervisorStep:
-    return SupervisorStep(
-        should_act=False, stop=True, goal_completed=False, summary="",
-        replan_directive=directive,
-    )
+def _outcome(directive: str) -> StatementOutcome:
+    return StatementOutcome.infeasible("blocked", kickback=directive)
 
 
 def _noop_redecompose(_d):
@@ -24,23 +21,19 @@ def _noop_redecompose(_d):
 
 
 def test_guard_true_when_all_conditions_met():
-    assert should_kickback_replan(_step("drill"), object(), _noop_redecompose, 0) is True
+    assert should_kickback_replan(_outcome("drill"), _noop_redecompose, 0) is True
 
 
 def test_guard_false_without_directive():
-    assert should_kickback_replan(_step(None), object(), _noop_redecompose, 0) is False
-
-
-def test_guard_false_in_dag_mode_no_program():
-    assert should_kickback_replan(_step("drill"), None, _noop_redecompose, 0) is False
+    assert should_kickback_replan(StatementOutcome.failed("blocked"), _noop_redecompose, 0) is False
 
 
 def test_guard_false_without_redecompose_callable():
-    assert should_kickback_replan(_step("drill"), object(), None, 0) is False
+    assert should_kickback_replan(_outcome("drill"), None, 0) is False
 
 
 def test_guard_false_when_budget_spent():
-    assert should_kickback_replan(_step("drill"), object(), _noop_redecompose, MAX_KICKBACK_REPLANS) is False
+    assert should_kickback_replan(_outcome("drill"), _noop_redecompose, MAX_KICKBACK_REPLANS) is False
 
 
 def test_redecomposed_program_drives_via_fresh_interpreter():

@@ -45,8 +45,6 @@ def _step() -> SupervisorStep:
     return SupervisorStep(
         should_act=True,
         instruction="点击确认按钮",
-        stop=False,
-        goal_completed=False,
         summary="需要点击",
     )
 
