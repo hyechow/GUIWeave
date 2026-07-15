@@ -18,6 +18,12 @@ def program_outcome_from_result(
     """Project the external result payload into one typed Program terminal."""
     if isinstance(result, AgentResult):
         return result.to_program_outcome(output=output)
+    unknown = set(result) - set(AgentResult.model_fields)
+    if unknown:
+        raise ValueError(
+            "result mapping contains fields outside AgentResult: "
+            + ", ".join(sorted(map(str, unknown)))
+        )
     return ProgramOutcome(
         phase=result["phase"],
         verification=result.get("verification"),

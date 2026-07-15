@@ -76,6 +76,9 @@ StatementOutcome:
 `completed`/`failed` 不再是可独立写入的 bool。所有 immediate 与 interactive statement 都产出
 同一个 `StatementOutcome`；Interpreter 不接受其他终态协议。外层 `AgentResult` 是 frozen 的
 Program 结果投影，使用相同的 `phase/summary/output` 词表，并只在 CLI/API 边界 dump 成 JSON。
+其中 `summary` 是运行终止结论，`output` 是面向用户的执行答案；pre-runtime failure 尚无独立答案
+时二者允许同文。Chat 可在生成对话回复后只覆盖持久化 `ProgramOutcome.output`，原始
+`AgentResult.output` 仍代表执行层产物，两者不构成两份终态状态。
 
 - `Compute` 返回标量；
 - `Read` 返回当前帧的结构化字段；

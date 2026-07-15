@@ -41,7 +41,7 @@ from gui_agent.core.runner import (
     run_agent_loop,
 )
 from gui_agent.core.run.state import write_final_program_outcome
-from gui_agent.core.run.result import failed_result
+from gui_agent.core.run.result import AgentResult, failed_result
 from gui_agent.core.chat.session import (
     RouterResult,
     generate_reply,
@@ -114,7 +114,7 @@ def run_chat_turn(
     current_url: str = "",
     current_title: str = "",
     current_site: str = "",
-) -> dict:
+) -> AgentResult:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     context_path = log_dir / "context.json"
     from gui_agent.core.orchestrator import decompose
@@ -293,9 +293,9 @@ def _turn_line(t: dict) -> str:
     return f"  [dim]Turn {no}[/dim]  [dim]{t.get('summary', '')}[/dim]"
 
 
-def _print_result(result: dict) -> None:
-    phase = result.get("phase") or "stopped"
-    verification = result.get("verification")
+def _print_result(result: AgentResult) -> None:
+    phase = result.phase
+    verification = result.verification
     confirmed = phase == "completed" and verification == "confirmed"
     accepted = phase == "completed" and verification == "accepted_unverified"
     color = "green" if confirmed else "yellow" if accepted else "red"
@@ -303,9 +303,9 @@ def _print_result(result: dict) -> None:
     icon = "✓" if confirmed else "~" if accepted else "✗"
     label = "done" if confirmed else "accepted" if accepted else phase
 
-    turns = result.get("turns_count", 0)
+    turns = result.turns_count
     suffix = f"  [dim]{turns} turns[/dim]" if turns else ""
-    tree = Tree(f"[bold {color}]{icon}  {result['output']}[/bold {color}]{suffix}")
+    tree = Tree(f"[bold {color}]{icon}  {result.output}[/bold {color}]{suffix}")
 
     console.print()
     console.print(
@@ -589,7 +589,7 @@ def main() -> None:
             except (SystemExit, KeyboardInterrupt):
                 raise
             except Exception as exc:
-                result = failed_result(goal, f"异常: {exc}").model_dump(mode="json")
+                result = failed_result(goal, f"异常: {exc}")
             exec_secs = time.time() - t0
             live_state["done"] = True
             live_state["current"] = f"执行完成  {exec_secs:.1f}s"
@@ -605,9 +605,11 @@ def main() -> None:
             transient=False,
         ):
             reply = generate_reply(
-                user_msg, result, session=session,
-                content_notes=result.get("content_notes"),
-                collection_context=result.get("collection_context"),
+                # LLM prompt construction is an external serialization boundary; the runtime
+                # and chat control flow retain AgentResult up to this point.
+                user_msg, result.model_dump(mode="json"), session=session,
+                content_notes=result.content_notes,
+                collection_context=result.collection_context,
             )
             reply_secs = time.time() - t1
             reply_state["done"] = True
@@ -615,7 +617,9 @@ def main() -> None:
 
         _print_reply(reply)
 
-        # Persist the reply into the turn's context.json so its report (bin/report) shows it.
+        # Persist the frontend's conversational reply as ProgramOutcome.output. AgentResult.output
+        # remains the execution-layer answer; this deliberate override happens only after reply
+        # synthesis and does not mutate the frozen AgentResult returned by the loop.
         try:
             ctx_path = log_dir / "context.json"
             if ctx_path.exists():
@@ -627,19 +631,19 @@ def main() -> None:
             "user_msg": display_msg,
             "goal": goal,
             "reply": reply,
-            "output": result["output"],
-            "summary": result["summary"],
-            "phase": result["phase"],
-            "verification": result.get("verification"),
-            "turns_count": result["turns_count"],
+            "output": result.output,
+            "summary": result.summary,
+            "phase": result.phase,
+            "verification": result.verification,
+            "turns_count": result.turns_count,
             "log_dir": str(log_dir.relative_to(ROOT)),
         }
         session.append(entry)
         recorder.add(entry)
 
         if (
-            result["phase"] == "completed"
-            and result.get("verification") == "confirmed"
+            result.phase == "completed"
+            and result.verification == "confirmed"
             and goal
         ):
             prefs.auto_extract(display_msg, goal, session)

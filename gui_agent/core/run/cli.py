@@ -23,6 +23,7 @@ from gui_agent.core.self_learning.app_summary import (
     match_app_by_url,
 )
 from gui_agent.core.run.state import write_final_program_outcome
+from gui_agent.core.run.result import AgentResult
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 
@@ -335,7 +336,7 @@ def main(
                             print("Interrupt: 按 ESC 将在当前 turn 收尾后停止")
                         elif stop_on_esc:
                             print("Interrupt: stdin 不是 TTY，ESC 停止未启用")
-                    result: dict | None = run_loop(
+                    result: AgentResult | None = run_loop(
                         goal,
                         action_policy,
                         supervisor,
@@ -361,7 +362,7 @@ def main(
                 if result:
                     # The answer is the interpreter's reply (finish / auto-summary from the
                     # program's persisted reads), not a re-derivation from content notes.
-                    output = result.get("output") or "（编排器未产生答复）"
+                    output = result.output or "（编排器未产生答复）"
                     print("\n" + "=" * 50)
                     print("最终输出")
                     print("=" * 50)

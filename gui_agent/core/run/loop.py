@@ -189,7 +189,7 @@ def run_agent_loop(
     stop_requested: object = None,  # callable() -> bool; true means stop after current turn settles
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
     headless: bool = False,  # suppress the action visualizer (cursor/overlay) on every platform; HUD is gated by the caller
-) -> dict:
+) -> AgentResult:
     if not isinstance(program, Program):
         raise TypeError("run_agent_loop requires a compiled DSL Program")
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
@@ -235,7 +235,7 @@ def run_agent_loop(
             ]
         _save_context(context_path, context)
 
-    def _finish(result: AgentResult) -> dict:
+    def _finish(result: AgentResult) -> AgentResult:
         if (
             rt is not None
             and rt.has_recovery
@@ -247,7 +247,7 @@ def run_agent_loop(
             }
         sync_context_program_outcome(context, result)
         _save_ctx()
-        return result.model_dump(mode="json")
+        return result
 
     _save_ctx()
     _say(f"Goal    : {context.goal}")
@@ -376,7 +376,7 @@ def run_agent_loop(
         _record_llm_mark = get_llm_call_count()
         _record_token_mark = get_llm_token_usage()
 
-        def _stop_after_esc(turn_no: int) -> dict | None:
+        def _stop_after_esc(turn_no: int) -> AgentResult | None:
             if not _stop_requested():
                 return None
             read_state.drain_pending(say=_say)

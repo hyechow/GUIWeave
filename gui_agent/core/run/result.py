@@ -42,6 +42,10 @@ class AgentResult(BaseModel):
 
     ProgramOutcome remains the persisted terminal authority. AgentResult adds presentation and
     reporting data, and is dumped to a plain JSON dictionary only at process/API boundaries.
+    ``summary`` is the diagnostic terminal conclusion; ``output`` is the user-facing answer
+    produced from the run. They intentionally contain the same text for failures created before
+    answer synthesis. A chat frontend may persist its later conversational reply as
+    ProgramOutcome.output without mutating this execution result.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -86,7 +90,7 @@ def failed_result(
     task_type: str | None = None,
     failure_kind: Literal["compile", "preflight", "environment"] | None = None,
 ) -> AgentResult:
-    """Build a typed failure before an agent loop or Program runtime exists."""
+    """Build a typed pre-runtime failure whose diagnostic is also its only safe output."""
     return AgentResult(
         goal=goal,
         output=summary,

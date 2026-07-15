@@ -14,7 +14,7 @@ from gui_agent.core.schemas import PolicyContext, SupervisorStep
 class LoadingResult:
     streak: int
     continue_loop: bool = False
-    terminal_result: dict | None = None
+    terminal_result: AgentResult | None = None
 
 
 def handle_loading_frame(
@@ -26,8 +26,8 @@ def handle_loading_frame(
     current_run: Any,
     context: PolicyContext,
     interpreter: Any,
-    finish: Callable[[AgentResult], dict],
-    stop_after_esc: Callable[[int], dict | None],
+    finish: Callable[[AgentResult], AgentResult],
+    stop_after_esc: Callable[[int], AgentResult | None],
     say: Callable[[str], None],
 ) -> LoadingResult:
     """Handle a loading frame without consuming a turn budget."""
@@ -141,10 +141,10 @@ def finish_terminal_step(
     turn_no: int,
     program_runtime: Any,
     context: PolicyContext,
-    finish: Callable[[AgentResult], dict],
+    finish: Callable[[AgentResult], AgentResult],
     say: Callable[[str], None],
     end_statement: Callable[[Any], None],
-) -> dict:
+) -> AgentResult:
     """Flush reads and send the authoritative terminal outcome into ProgramRuntime."""
     reason = outcome.summary or "statement stopped"
     read_state.drain_pending(say=say)

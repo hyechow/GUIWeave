@@ -49,6 +49,8 @@ from typing import Optional
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from gui_agent.core.run.result import AgentResult, failed_result
+
 # Tags that mark non-GUI-only task subsets; excluded from the default task list (the
 # GUI-only subset is the integration target — see the MobileWorld paper).
 _NON_GUI_TAGS = ("agent-mcp", "agent-user-interaction")
@@ -156,13 +158,13 @@ class MobileWorldEnv:
         )
 
 
-def _final_answer(result: dict) -> str:
+def _final_answer(result: AgentResult) -> str:
     """Best-effort final answer text for answer-style tasks: prefer collected content
     notes, then the run's output. Empty when the run produced neither."""
-    notes = result.get("content_notes") or []
+    notes = result.content_notes or []
     if notes:
         return "\n".join(str(n) for n in notes)
-    return str(result.get("output") or "").strip()
+    return result.output.strip()
 
 
 def _write_mobileworld_context(
@@ -244,7 +246,6 @@ def main() -> int:
 
     from gui_agent.core.runtime.factory import build_platform
     from gui_agent.core.run.io import EscStopSignal, create_run_dir, tee_stdio
-    from gui_agent.core.run.result import failed_result
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
 
     if not env.health():
@@ -298,7 +299,7 @@ def main() -> int:
             env.init_task(args.task)
             print("[mobileworld] init_task OK")
 
-        result: dict = {}
+        result: AgentResult | None = None
         try:
             bundle = build_platform()
             setup = bundle.setup_check()
@@ -310,7 +311,7 @@ def main() -> int:
                     f"环境检查未通过：{setup.summary}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
-                ).model_dump(mode="json")
+                )
             else:
                 orchestrator_context_reports: list[dict] = []
                 with bundle.open_session() as platform:
@@ -409,7 +410,8 @@ def main() -> int:
                         )
 
             # ----- post-run: answer bridge + official state-based eval -----
-            result = result or {}
+            if result is None:
+                raise RuntimeError("MobileWorld run ended without AgentResult")
             if not args.no_answer_bridge:
                 answer = _final_answer(result)
                 if answer:

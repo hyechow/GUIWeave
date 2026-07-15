@@ -50,6 +50,7 @@ if __package__ is None or __package__ == "":
 
 from pydantic import BaseModel
 
+from gui_agent.core.run.result import AgentResult, failed_result
 from gui_agent.prompts import load_prompt, load_prompt_text
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
@@ -140,14 +141,14 @@ def _normalize_retrieved_data_for_intent(data: object, intent: str = "") -> obje
     return data
 
 
-def _runtime_completion_accepted(result: dict) -> bool:
+def _runtime_completion_accepted(result: AgentResult) -> bool:
     """Whether runtime reached a terminal state sufficient for a mutation submission.
 
     A completed phase means the Program ended deliberately. Verification distinguishes a
     confirmed post-state from a reliably dispatched side effect without an authoritative
     post-state channel.
     """
-    return result.get("phase") == "completed"
+    return result.phase == "completed"
 
 
 def _finalize_response(
@@ -190,10 +191,7 @@ def _finalize_response(
 
     # MUTATE accepts either confirmed effect or a completed terminal dispatch. It still rejects
     # interrupted programs and empty/incomplete foreach runs (778 live 114429), which have neither.
-    mutation_completed = _runtime_completion_accepted({
-        "phase": phase,
-        "verification": verification,
-    })
+    mutation_completed = phase == "completed"
     if task_type == "MUTATE" and status == "SUCCESS" and not mutation_completed:
         updates.update({
             "status": "UNKNOWN_ERROR",
@@ -203,14 +201,14 @@ def _finalize_response(
     return resp.model_copy(update=updates)
 
 
-def _webarena_task_type_from_result(intent: str, result: dict) -> str:
-    task_type = str(result.get("task_type") or "").strip().upper()
+def _webarena_task_type_from_result(intent: str, result: AgentResult) -> str:
+    task_type = str(result.task_type or "").strip().upper()
     if task_type in _TASK_TYPES:
         return task_type
     return _guess_webarena_task_type(intent)
 
 
-def _completed_mutate_response(intent: str, result: dict) -> WAResponse | None:
+def _completed_mutate_response(intent: str, result: AgentResult) -> WAResponse | None:
     """Deterministically submit SUCCESS for completed WebArena mutate runs.
 
     Core exposes execution completion separately from post-state verification. For MUTATE tasks
@@ -252,8 +250,8 @@ def _guess_webarena_task_type(intent: str) -> str:
     return "RETRIEVE"
 
 
-def _preflight_failure_response(intent: str, result: dict) -> WAResponse:
-    details = str(result.get("output") or result.get("summary") or "orchestration preflight failed")
+def _preflight_failure_response(intent: str, result: AgentResult) -> WAResponse:
+    details = result.output or result.summary or "orchestration preflight failed"
     return WAResponse(
         task_type=_guess_webarena_task_type(intent),
         status="DATA_VALIDATION_ERROR",
@@ -274,9 +272,9 @@ def _write_orchestration_preflight_context(
     orchestrator_context_reports: list[dict],
     orchestrator_metrics: dict,
     preflight_result: object,
-    result: dict,
+    result: AgentResult,
 ) -> None:
-    from gui_agent.core.schemas import PolicyContext, ProgramOutcome
+    from gui_agent.core.schemas import PolicyContext
 
     context = PolicyContext(
         goal=intent,
@@ -286,11 +284,7 @@ def _write_orchestration_preflight_context(
         raw_input=intent,
     )
     context.knowledge = knowledge_summary
-    context.outcome = ProgramOutcome(
-        phase="stopped",
-        summary=str(result.get("summary") or ""),
-        output=str(result.get("output") or ""),
-    )
+    context.outcome = result.to_program_outcome()
     context.orchestrator = {
         "program": program.model_dump(mode="json") if hasattr(program, "model_dump") else None,
         "max_turns": max_turns,
@@ -549,14 +543,14 @@ def _run_eval_compat_probes(
     task_id: int,
     task: dict,
     start_url: str | None,
-    result: dict,
+    result: AgentResult,
     device: object | None,
 ) -> list[dict]:
     if not enabled:
         return []
     if not (
-        result.get("phase") == "completed"
-        and result.get("verification") == "confirmed"
+        result.phase == "completed"
+        and result.verification == "confirmed"
     ):
         report = [{"status": "skipped", "reason": "agent goal was not completed"}]
         print("[webarena] eval_compat: skipped (agent goal was not completed)")
@@ -648,8 +642,12 @@ def _run_evidence_text(context_path: Path | None) -> str:
     return "\n".join(lines) if lines else "(none)"
 
 
-def _synthesize_response(intent: str, result: dict, context_path: Path | None = None) -> WAResponse:
-    """Map the agent loop's result dict into WebArena's agent_response via one LLM
+def _synthesize_response(
+    intent: str,
+    result: AgentResult,
+    context_path: Path | None = None,
+) -> WAResponse:
+    """Map the typed agent result into WebArena's agent_response via one LLM
     structured call — the intent carries the required output format (e.g. an object
     with keys min/max), so the model emits retrieved_data in exactly that shape
     (fixing the human-questionnaire failure mode of a string-instead-of-object)."""
@@ -663,16 +661,16 @@ def _synthesize_response(intent: str, result: dict, context_path: Path | None = 
     from gui_agent.core.config import resolve_llm_config
     from llm.structured import invoke_structured
 
-    notes = result.get("content_notes") or []
+    notes = result.content_notes or []
     notes_text = "\n".join(f"- {n}" for n in notes) if notes else "(none collected)"
     evidence_text = _run_evidence_text(context_path)
     human = _WEBARENA_HUMAN.render(
         intent=intent,
         task_type_guess=_webarena_task_type_from_result(intent, result),
-        phase=result.get("phase"),
-        verification=result.get("verification"),
-        summary=result.get("summary"),
-        output=result.get("output"),
+        phase=result.phase,
+        verification=result.verification,
+        summary=result.summary,
+        output=result.output,
         notes_text=notes_text,
         evidence_text=evidence_text,
     )
@@ -1028,7 +1026,6 @@ def main() -> int:
 
     from gui_agent.core.runtime.factory import build_platform
     from gui_agent.core.run.io import EscStopSignal, create_run_dir
-    from gui_agent.core.run.result import failed_result
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
     from gui_agent.adapters.browser.har_recorder import HarRecorder
 
@@ -1144,6 +1141,7 @@ def main() -> int:
                 print("[webarena]", device.navigate(start_url))
 
         try:
+            result: AgentResult | None = None
             eval_compat_reports: list[dict] = []
             bundle = build_platform()
             setup = bundle.setup_check()
@@ -1155,7 +1153,7 @@ def main() -> int:
                     f"环境检查未通过：{setup.summary}",
                     task_type="RETRIEVE",
                     failure_kind="environment",
-                ).model_dump(mode="json")
+                )
             else:
                 orchestrator_context_reports: list[dict] = []
                 with bundle.open_session() as platform:
@@ -1277,7 +1275,7 @@ def main() -> int:
                                 f"orchestrator compile failed: {summary}",
                                 task_type=_guess_webarena_task_type(intent),
                                 failure_kind="compile",
-                            ).model_dump(mode="json")
+                            )
                             _write_orchestration_preflight_context(
                                 log_dir / "context.json",
                                 intent=intent,
@@ -1337,7 +1335,7 @@ def main() -> int:
                                         f"orchestrator preflight failed: {summary}",
                                         task_type=_guess_webarena_task_type(intent),
                                         failure_kind="preflight",
-                                    ).model_dump(mode="json")
+                                    )
                                     _write_orchestration_preflight_context(
                                         log_dir / "context.json",
                                         intent=intent,
@@ -1468,6 +1466,8 @@ def main() -> int:
                         )
 
             # ----- post-run artifacts -----
+            if result is None:
+                raise RuntimeError("WebArena run ended without AgentResult")
             rec = recorder_holder.get("rec")
             if rec is not None:
                 print("[webarena]", rec.dump(str(har_path)))
@@ -1476,14 +1476,14 @@ def main() -> int:
                 print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
 
             try:
-                if result.get("failure_kind") in {"compile", "preflight"}:
-                    resp = _preflight_failure_response(intent, result or {})
+                if result.failure_kind in {"compile", "preflight"}:
+                    resp = _preflight_failure_response(intent, result)
                 else:
-                    resp = _synthesize_response(intent, result or {}, log_dir / "context.json")
+                    resp = _synthesize_response(intent, result, log_dir / "context.json")
                 response_payload = _finalize_response(
                     resp,
-                    phase=str(result.get("phase") or "stopped"),
-                    verification=result.get("verification"),
+                    phase=result.phase,
+                    verification=result.verification,
                     intent=intent,
                 ).model_dump()
                 resp_path.write_text(json.dumps(response_payload, indent=2))
@@ -1523,7 +1523,7 @@ def main() -> int:
                     eval_payload=eval_payload,
                 )
             except Exception as exc:  # noqa: BLE001 — still leave a valid response file
-                fallback = {"task_type": result.get("task_type") or "RETRIEVE", "status": "UNKNOWN_ERROR",
+                fallback = {"task_type": result.task_type or "RETRIEVE", "status": "UNKNOWN_ERROR",
                             "retrieved_data": None, "error_details": f"response synthesis failed: {exc}"}
                 resp_path.write_text(json.dumps(fallback, indent=2))
                 eval_path = None
