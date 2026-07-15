@@ -201,6 +201,24 @@ def record_target(turn: PolicyTurn, *, on_target: bool) -> None:
         signal.target = "on_target" if on_target else "off_target"
 
 
+def record_settle(
+    turn: PolicyTurn,
+    *,
+    elapsed_s: float,
+    no_effect: bool,
+) -> None:
+    """Finalize settle facts through the journal turn's sole delivery writer."""
+    turn.settle_s = elapsed_s
+    turn.no_effect = no_effect
+
+
+def record_target_verification(turn: PolicyTurn, verification: Any) -> None:
+    """Attach the verifier payload and its normalized target fact together."""
+    turn.target_verify = verification
+    if verification is not None:
+        record_target(turn, on_target=bool(verification.on_target))
+
+
 __all__ = [
     "action_signature",
     "build_action_signal",
@@ -209,6 +227,8 @@ __all__ = [
     "normalize_action_text",
     "record_latest_structured_response",
     "record_response",
+    "record_settle",
     "record_target",
+    "record_target_verification",
     "semantic_action_key",
 ]

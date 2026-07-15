@@ -39,20 +39,6 @@ def _program_run_items(stmts: list) -> list[dict]:
     return out
 
 
-def _program_run_meta(record: dict, run_items: list[dict]) -> dict:
-    var = str(record.get("var") or "")
-    name = str(record.get("name") or "")
-    if var:
-        for item in run_items:
-            if str(item.get("var") or "") == var:
-                return item
-    if name:
-        for item in run_items:
-            if str(item.get("name") or "") == name:
-                return item
-    return {}
-
-
 def _pretty_non_ui_value(value: object) -> str:
     text = str(value if value is not None else "")
     try:
@@ -94,71 +80,6 @@ def _render_non_ui_detail(non_ui: dict) -> str:
         f'<div class="nonui-detail">'
         f'<div class="nonui-title">{mode} · {_safe(kind)}</div>'
         f'{sql_html}{spec_html}{reads_html}'
-        f'</div>'
-    )
-
-
-def _render_non_ui_log(orchestrator: dict, run_items: list[dict]) -> str:
-    rows: list[str] = []
-    for idx, record in enumerate(orchestrator.get("run_log") or [], start=1):
-        if not isinstance(record, dict):
-            continue
-        meta = _program_run_meta(record, run_items)
-        kind = str(meta.get("kind") or "")
-        if kind not in {"read", "data_query"}:
-            continue
-        result = record.get("result") if isinstance(record.get("result"), dict) else {}
-        completed = result.get("phase") == "completed"
-        status_cls = "nonui-ok" if completed else "nonui-fail"
-        status_text = "completed" if completed else "failed"
-        badge = _PROG_KIND_BADGE.get(kind, "statement-badge-default")
-        name = str(record.get("name") or meta.get("name") or "")
-        var = str(record.get("var") or meta.get("var") or "")
-        var_html = f'<span class="prog-var">{_safe(var)} =</span> ' if var else ""
-        summary = str((result or {}).get("summary") or "")
-        summary_html = f'<div class="nonui-summary">{_safe(summary)}</div>' if summary else ""
-        sql = str(meta.get("sql") or "")
-        scope = str(meta.get("data_scope") or "")
-        sql_html = ""
-        if kind == "data_query" and sql:
-            scope_html = f' <span style="color:#94a3b8">scope={_safe(scope)}</span>' if scope else ""
-            sql_html = (
-                f'<div class="nonui-sql"><span class="nonui-label">SQL{scope_html}</span>'
-                f'<pre class="nonui-code">{_safe(sql)}</pre></div>'
-            )
-        reads = result.get("reads") if isinstance(result.get("reads"), dict) else {}
-        read_rows = []
-        for field in (meta.get("returns") or list(reads.keys()) or []):
-            val = reads.get(field, "")
-            read_rows.append(
-                f'<div class="nonui-read"><span class="nonui-key">{_safe(str(field))}</span>'
-                f'<pre class="nonui-val">{_safe(_pretty_non_ui_value(val))}</pre></div>'
-            )
-        reads_html = f'<div class="nonui-reads">{"".join(read_rows)}</div>' if read_rows else ""
-        obs = str(record.get("observation_url") or "")
-        shot_html = (
-            f'<div class="nonui-shot"><img src="{_safe(obs)}" onclick="zoomImg(\'{_safe(obs)}\')" '
-            f'alt="非 UI 读取帧"></div>'
-            if obs else ""
-        )
-        rows.append(
-            f'<div class="nonui-row">'
-            f'<div class="nonui-main">'
-            f'<div class="nonui-head">'
-            f'<span class="nonui-n">#{idx}</span>'
-            f'<span class="nonui-name">{var_html}{_safe(name)}</span>'
-            f'<span class="statement-badge {badge}">{_safe(kind)}</span>'
-            f'<span class="nonui-status {status_cls}">{status_text}</span>'
-            f'</div>'
-            f'{summary_html}{sql_html}{reads_html}'
-            f'</div>{shot_html}</div>'
-        )
-    if not rows:
-        return ""
-    return (
-        f'<div class="nonui-log">'
-        f'<div class="nonui-title">非 UI 执行记录</div>'
-        f'{"".join(rows)}'
         f'</div>'
     )
 
@@ -245,17 +166,13 @@ def _render_program_card(
     h2_style: str = "",
     embedded: bool = False,
 ) -> str:
-    """Render ONE DSL program as a statement-style card (#0 or #0↻N). env (var→reads, from the
-    runner's mirrored run_log) is shared across a run's cards so {var[field]} refs resolve as the
-    runner did at execute time."""
+    """Render one DSL program using the final report-only Program result projection."""
 
-    # var -> {field: value} captured by each completed read (runner mirrors interp.run_log into
-    # context.orchestrator). Lets the report show WHAT a read got and resolve {var[field]} action
-    # targets — a pure read has no turn/statement, so without this the report only had the static
-    # program structure, never the values it read or where they flowed.
+    # var -> captured values. This projection is written once at Program finish; it is never a
+    # live runtime/checkpoint authority.
     env: dict[str, dict] = {}
     rows_by_var: dict[str, list] = {}   # foreach `into` / list_read → accumulated rows (for "采集 N 行")
-    for r in (orchestrator.get("run_log") or []):
+    for r in (orchestrator.get("report_run_log") or []):
         result = r.get("result") or {}
         reads = result.get("reads") or {}
         if r.get("var") and reads:

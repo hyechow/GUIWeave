@@ -49,10 +49,10 @@ from gui_agent.core.orchestrator.recovery import (
     kickback_adherence_issues,
     parse_kickback_directive,
     sharpen_kickback_directive,
-    should_kickback_replan,
     tighten_ui_return_run as _tighten_ui_return_run,
 )
 from gui_agent.core.run.program_runtime import ProgramRuntime
+from gui_agent.core.run.recovery_router import RecoveryRouter
 from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import (
     contract_for_run,
@@ -227,15 +227,18 @@ def run_agent_loop(
         carries the true end-to-end time (LLM + settle + perception/execution/overhead), not
         just the sum of LLM-module timings."""
         context.wall_clock_s = _prior_wall_clock_s + time.perf_counter() - _run_started
-        # Mirror the interpreter's live run_log into context so the report shows WHAT each
-        # read captured and can resolve {var[field]} targets.
-        if rt is not None and isinstance(context.orchestrator, dict):
-            context.orchestrator["run_log"] = [
-                r.model_dump(mode="json") for r in rt.interpreter.run_log
-            ]
         _save_context(context_path, context)
 
     def _finish(result: AgentResult) -> AgentResult:
+        if isinstance(context.orchestrator, dict):
+            # Final report projection only. Runtime decisions and checkpoint replay read the
+            # interpreter/EventJournal directly; no live run_log mirror is persisted per turn.
+            report_run_log = (result.orchestrator or {}).get("run_log")
+            if report_run_log is not None:
+                context.orchestrator = {
+                    **context.orchestrator,
+                    "report_run_log": report_run_log,
+                }
         if (
             rt is not None
             and rt.has_recovery
@@ -348,6 +351,7 @@ def run_agent_loop(
             expand_fn=expand_foreach,
             select_fn=select_members,
         )
+        recovery_router = RecoveryRouter()
         if rt.current_instance_id:
             if rt.current is None or not getattr(rt.current, "is_interactive", False):
                 raise ValueError(
@@ -767,7 +771,11 @@ def run_agent_loop(
                     break
                 # Terminal StatementOutcome drives hand-off; mid-loop → turn body.
                 _step_outcome = _outcome_from_step(sv_step)
-                if _step_outcome is None or not _step_outcome.is_completed:
+                if (
+                    _step_outcome is None
+                    or recovery_router.route_statement(_step_outcome).action
+                    != "advance_program"
+                ):
                     break  # act/observe/wait or non-completed terminal → turn body
 
                 # Statement completed → hand off to the next statement, same frame.
@@ -778,7 +786,12 @@ def run_agent_loop(
                 _rows: list = []
                 _reads = _read_completed_run_returns(rt.current, observation)
                 _contract = check_return_contract(rt.current, _reads)
-                if _contract:
+                _recovery_decision = recovery_router.route_statement(
+                    _step_outcome,
+                    return_violation=bool(_contract),
+                    can_redecompose=callable(redecompose),
+                )
+                if _recovery_decision.action == "tighten_return":
                     _attempt = rt.next_return_attempt()
                     _cv_site = str(
                         getattr(rt.current, "var", "") or getattr(rt.current, "name", "")
@@ -879,13 +892,22 @@ def run_agent_loop(
                 # Feasibility Guard query kick-back: the program ended because a data_query failed with a
                 # re-plannable data-source issue (source empty / mismatched with the task). Re-decompose
                 # with that evidence as the directive instead of finishing on the failure.
-                if _immediate_failure:
+                _program_end_decision = recovery_router.route_program_end(
+                    failure_evidence=_immediate_failure,
+                    can_redecompose=callable(redecompose),
+                )
+                if _program_end_decision.action == "kickback":
+                    assert _program_end_decision.recovery_class is not None
                     _directive = (
                         "上一份计划在 data_query 步失败：" + _immediate_failure
                         + "\n这说明取数路线不对（数据源为空或与任务口径不一致）。请改用能真正拿到目标数据的"
                           "路线重新规划，不要重复上面失败的取数方式。"
                     )
-                    _handled, _r = _perform_replan(_directive, observation, cls="data_source_error")
+                    _handled, _r = _perform_replan(
+                        _directive,
+                        observation,
+                        cls=_program_end_decision.recovery_class,
+                    )
                     if _handled and _r is not None:
                         return _finish(_orch_result(context, rt.interpreter, _r))
                     if _handled:
@@ -1038,15 +1060,21 @@ def run_agent_loop(
             # Terminal StatementOutcome from this turn's supervisor decision.
             _turn_outcome = _outcome_from_step(sv_step)
             # Feasibility kickback: infeasible outcome → ProgramRuntime replan.
-            if (
-                _turn_outcome is not None
-                and _turn_outcome.phase == "infeasible"
-                and should_kickback_replan(_turn_outcome, redecompose)
-            ):
+            _terminal_decision = (
+                recovery_router.route_statement(
+                    _turn_outcome,
+                    can_redecompose=callable(redecompose),
+                )
+                if _turn_outcome is not None
+                else None
+            )
+            if _terminal_decision is not None and _terminal_decision.action == "kickback":
+                assert _terminal_decision.recovery_class is not None
                 _say("\n[Kickback] statement 判定不可行 → 重规划")
                 _handled, _reply = _perform_replan(
                     _turn_outcome.kickback or "",
                     observation,
+                    cls=_terminal_decision.recovery_class,
                     terminal_outcome=_turn_outcome,
                 )
                 if _handled and _reply is not None:

@@ -213,15 +213,6 @@ def force_interactive_return_recovery(program: object, directive: str) -> object
     return program.model_copy(update={"statements": statements})
 
 
-def should_kickback_replan(outcome, redecompose) -> bool:
-    """Whether an infeasible outcome supplies a usable recompile directive."""
-    return bool(
-        getattr(outcome, "phase", None) == "infeasible"
-        and getattr(outcome, "kickback", None)
-        and callable(redecompose)
-    )
-
-
 DEAD_ROUTE_MARKER = "【死路｜禁止再用】"
 REQUIRED_ROUTE_MARKER = "【规定路线】"
 

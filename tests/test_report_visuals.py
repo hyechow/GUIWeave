@@ -112,7 +112,7 @@ def test_orchestrator_program_renders_foreach_block_and_body():
                     {"op": "finish", "message": "{q[nickname]}"},
                 ],
             },
-            "run_log": [
+            "report_run_log": [
                 {"var": "reviews", "result": {"rows": [{"id": "347"}, {"id": "349"}, {"id": "351"}]}},
             ],
             "context_reports": [],
@@ -123,6 +123,33 @@ def test_orchestrator_program_renders_foreach_block_and_body():
     assert "采集 3 行" in html          # accumulated into-table row count
     assert "打开评论" in html           # body Run rendered (not dropped)
     assert "prog-branch" in html        # body is indented under the loop
+
+
+def test_in_progress_program_card_does_not_require_report_run_log():
+    html = _render_program_section({
+        "program": {
+            "goal": "open one row",
+            "statements": [
+                {
+                    "op": "run",
+                    "kind": "read",
+                    "var": "row",
+                    "name": "read row",
+                    "returns": ["id"],
+                },
+                {
+                    "op": "run",
+                    "kind": "action",
+                    "name": "open {row[id]}",
+                },
+            ],
+        },
+        "context_reports": [],
+    })
+
+    assert "read row" in html
+    assert "open {row[id]}" in html
+    assert "prog-resolved" not in html
 
 
 def test_thumb_time_only_renders_total_and_keeps_flags_searchable():

@@ -137,6 +137,9 @@ def test_agent_loop_resumes_persisted_active_statement(monkeypatch, tmp_path: Pa
     assert first.phase == "stopped"
     assert active_turn.runtime_state is not None
     assert active_turn.runtime_state.retry_count == 2
+    assert persisted.orchestrator is not None
+    assert "run_log" not in persisted.orchestrator
+    assert persisted.orchestrator["report_run_log"] == []
 
     second_policy = StatementSupervisorPolicy()
 
@@ -176,4 +179,7 @@ def test_agent_loop_resumes_persisted_active_statement(monkeypatch, tmp_path: Pa
     assert resumed.verification == "confirmed"
     assert final_context.outcome is not None
     assert final_context.outcome.phase == "completed"
+    assert final_context.orchestrator is not None
+    assert "run_log" not in final_context.orchestrator
+    assert final_context.orchestrator["report_run_log"][0]["result"]["phase"] == "completed"
     assert len(final_context.journal.program_revisions) == 1

@@ -58,6 +58,10 @@ Interpreter 是所有 DSL statement 的统一运行时：
 跨 statement 的恢复预算和 `RecoveryLedger` 属于 Program runtime。它们不能放进 Statement，
 也不能隐藏在一个旁路调用对象里。
 
+`RecoveryRouter` 是无状态决策表：它只把 `StatementOutcome` 归类为 `AdvanceProgram`、
+`TightenReturn`、`Kickback` 或 `FailOrEscalate`。预算消费、Program 替换和 recovery 记账仍由
+`ProgramRuntime` 独占；loop 只执行 Router 给出的控制动作。
+
 ## Statement Executors
 
 不同 statement 共享最小结果协议，但不强行共享不适用的执行状态。
@@ -173,6 +177,11 @@ verification: confirmed | accepted_unverified  # 仅 completed
 把 dispatch、target、visual/URL/DOM response 交给 `action_signals.py` 追加到同一 receipt；
 `turns.py` 只落盘，`evidence.py` 只从 receipt 和当前 observation 投影 claim。后两者不得重新解释
 动作，也不得直接读取跨帧 monitor 制造第二份响应事实。
+
+`EventJournal` 是单一有序事实流。dispatch 后才能得到的 settle、target 和 response 结果，只允许
+`action_signals.py` 在原 `PolicyTurn` 的 delivery envelope 上收尾；它们不能改写 terminal outcome，
+也不能另建第二套回执账本。报告所需 `report_run_log` 仅在一次 loop 调用收尾时由 `AgentResult`
+生成，不参与 checkpoint replay 或任何运行时决策。
 
 `ExecutionCoordinator` 是唯一把 action/effect/persistence claim 归约成完成建议的组件；`policy.py`
 是唯一应用建议、推进 Statement 或发起恢复的控制流所有者。只有 Coordinator 仍建议普通 `act`

@@ -1055,11 +1055,12 @@ JournalEvent = Annotated[
 
 
 class EventJournal(BaseModel):
-    """The single append-only fact stream for one Program execution.
+    """The single ordered fact stream for one Program execution.
 
     Turns, Program revisions, recovered content, and recovery mechanisms share one ordered log.
-    Runtime state and reports are rebuilt as pure projections; no parallel note or turn ledger
-    exists in the persisted shape.
+    Post-dispatch sensors may finalize delivery fields on an existing PolicyTurn only through
+    ``run.action_signals``; they never create a parallel ledger or rewrite terminal outcomes.
+    Runtime state and reports are rebuilt as projections from this persisted shape.
     """
 
     model_config = ConfigDict(extra="forbid")

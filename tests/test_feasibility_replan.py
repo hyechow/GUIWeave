@@ -7,7 +7,7 @@ program drives cleanly via a fresh Interpreter (the hot-swap the loop performs).
 from gui_agent.core.orchestrator import Interpreter
 from gui_agent.core.orchestrator.program import Finish, Program, Run
 from gui_agent.core.orchestrator.runner import RunRecord
-from gui_agent.core.orchestrator.recovery import should_kickback_replan
+from gui_agent.core.run.recovery_router import RecoveryRouter
 from gui_agent.core.run.result import orchestration_result
 from gui_agent.core.schemas import PolicyContext, StatementOutcome
 
@@ -16,20 +16,47 @@ def _outcome(directive: str) -> StatementOutcome:
     return StatementOutcome.infeasible("blocked", kickback=directive)
 
 
-def _noop_redecompose(_d):
-    return None
-
-
 def test_guard_true_when_all_conditions_met():
-    assert should_kickback_replan(_outcome("drill"), _noop_redecompose) is True
+    decision = RecoveryRouter.route_statement(
+        _outcome("drill"),
+        can_redecompose=True,
+    )
+    assert decision.action == "kickback"
+    assert decision.recovery_class == "infeasible_route"
 
 
 def test_guard_false_without_directive():
-    assert should_kickback_replan(StatementOutcome.failed("blocked"), _noop_redecompose) is False
+    decision = RecoveryRouter.route_statement(
+        StatementOutcome.failed("blocked"),
+        can_redecompose=True,
+    )
+    assert decision.action == "fail_or_escalate"
 
 
 def test_guard_false_without_redecompose_callable():
-    assert should_kickback_replan(_outcome("drill"), None) is False
+    decision = RecoveryRouter.route_statement(
+        _outcome("drill"),
+        can_redecompose=False,
+    )
+    assert decision.action == "fail_or_escalate"
+
+
+def test_router_exposes_return_and_program_end_recovery_without_state():
+    router = RecoveryRouter()
+    assert vars(router) == {}
+    assert router.route_statement(
+        StatementOutcome.completed("done"),
+        return_violation=True,
+    ).action == "tighten_return"
+    assert router.route_statement(
+        StatementOutcome.completed("done"),
+    ).action == "advance_program"
+    decision = router.route_program_end(
+        failure_evidence="wrong data source",
+        can_redecompose=True,
+    )
+    assert decision.action == "kickback"
+    assert decision.recovery_class == "data_source_error"
 
 
 def test_redecomposed_program_drives_via_fresh_interpreter():

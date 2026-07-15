@@ -59,6 +59,12 @@ def test_action_signal_updates_have_one_runtime_writer() -> None:
     assert 'signal.target = "' not in evidence_source
     assert 'signal.response = "' not in executor_source
     assert 'signal.target = "' not in executor_source
+    assert "turn.settle_s =" not in executor_source
+    assert "turn.no_effect =" not in executor_source
+    assert "turn.target_verify =" not in executor_source
+    assert "turn.settle_s =" in signal_source
+    assert "turn.no_effect =" in signal_source
+    assert "turn.target_verify =" in signal_source
 
 
 def test_evidence_projects_receipts_instead_of_reading_live_progress_monitor() -> None:
@@ -116,6 +122,11 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     # Single-writer cursor: no parallel loop locals for interpreter cursor/kickback.
     assert "_cur_run" not in loop_src
     assert "_kickback_replans" not in loop_src
+    assert "should_kickback_replan" not in loop_src
+    assert "recovery_router.route_statement" in loop_src
+    assert "recovery_router.route_program_end" in loop_src
+    assert 'context.orchestrator["run_log"]' not in loop_src
+    assert '"report_run_log": report_run_log' in loop_src
     assert "rt.current =" not in loop_src
     assert "rt.send_outcome" in loop_src or "send_outcome" in loop_src
     assert "rt.replace_program" in loop_src or "replace_program" in loop_src
@@ -153,6 +164,16 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     assert "program_runtime" in dispatch_parameters
     assert "interpreter_steps" not in dispatch_parameters
     assert "current_statement" not in dispatch_parameters
+
+
+def test_recovery_router_is_stateless_and_program_runtime_keeps_budgets() -> None:
+    from gui_agent.core.run.program_runtime import ProgramRuntime
+    from gui_agent.core.run.recovery_router import RecoveryRouter
+
+    assert vars(RecoveryRouter()) == {}
+    assert hasattr(ProgramRuntime, "begin_kickback")
+    assert hasattr(ProgramRuntime, "next_return_attempt")
+    assert hasattr(ProgramRuntime, "record_recovery")
 
 
 def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> None:

@@ -21,7 +21,8 @@ from gui_agent.core.schemas import (
 from gui_agent.core.run.action_signals import (
     effective_action_role,
     record_response,
-    record_target,
+    record_settle,
+    record_target_verification,
     semantic_action_key,
 )
 from gui_agent.core.run.target_binding import bind_action_target
@@ -572,7 +573,7 @@ def finalize_auto_continue_turn(
     """Attach settle timing and target verification results to a completed turn."""
     if branch_settle_s is not None:
         # Cached scrolling already settled while verifying displacement.
-        turn.settle_s = branch_settle_s
+        record_settle(turn, elapsed_s=branch_settle_s, no_effect=False)
     else:
         settle_action = action_decision.action if action_decision else None
         settle_action_type = settle_action.action_type if settle_action else None
@@ -591,13 +592,14 @@ def finalize_auto_continue_turn(
             )
             else None
         )
-        turn.settle_s, turn.no_effect = settle_after_action(
+        settle_s, no_effect = settle_after_action(
             platform,
             observation_png,
             settle_action_type,
             settle_focus_y,
             center=settle_center,
         )
+        record_settle(turn, elapsed_s=settle_s, no_effect=no_effect)
 
     if verify_future is None:
         record_response(
@@ -607,10 +609,8 @@ def finalize_auto_continue_turn(
         )
         return
     try:
-        turn.target_verify = verify_future.result(timeout=VERIFY_TIMEOUT_S)
-        tv = turn.target_verify
-        if tv is not None:
-            record_target(turn, on_target=tv.on_target)
+        tv = verify_future.result(timeout=VERIFY_TIMEOUT_S)
+        record_target_verification(turn, tv)
         if tv is not None and not tv.on_target:
             say(f"  [TargetVerify] off_target：标记落在「{tv.actual_element}」")
     except Exception as exc:
