@@ -15,7 +15,7 @@ scroll). MobileWorld's HTTP API is used ONLY for the task lifecycle:
   pre-run  : POST /init (controller) + POST /task/init (reset the app to the task's
              start state) + GET /task/goal (the intent) — in the ``_prime`` hook.
   run      : decompose the goal into the DSL orchestrator program, then run_agent_loop
-             drives each milestone over adb; --no-orchestrator keeps the legacy DAG.
+             drives each statement over adb.
   post-run : (optional) POST /step answer to set the backend's interaction_cache for
              answer-style tasks + GET /task/eval (score, reason) + POST /task/tear_down.
 
@@ -204,7 +204,7 @@ def main() -> int:
     parser.add_argument("--all-tasks", action="store_true", help="with --list, include non-GUI (mcp/user-interaction) tasks")
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--headless", action="store_true", help="run fully headless (no HUD / cursor overlay)")
-    parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
+    parser.set_defaults(no_orchestrator=False)
     dynamic_turns = parser.add_mutually_exclusive_group()
     dynamic_turns.add_argument(
         "--dynamic-max-turns",
@@ -313,7 +313,6 @@ def main() -> int:
                     "content_notes": None,
                 }
             else:
-                program = None
                 orchestrator_context_reports: list[dict] = []
                 run_max_turns = args.max_turns
                 _redecompose = None
@@ -385,9 +384,6 @@ def main() -> int:
                             run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                             if run_max_turns != args.max_turns:
                                 print(f"[mobileworld] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
-                    else:
-                        print("[mobileworld] orchestrator: disabled; using legacy milestone DAG")
-
                     with EscStopSignal(enabled=True) as esc_stop:
                         if esc_stop.enabled:
                             print("[mobileworld] Interrupt: 按 ESC 将在当前 turn 收尾后停止")

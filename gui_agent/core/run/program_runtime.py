@@ -12,38 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generator, Optional
 
-from gui_agent.core.orchestrator.program import Program, Run, RunLike, RunResult
+from gui_agent.core.orchestrator.program import Program, RunLike, RunResult
 from gui_agent.core.orchestrator.recovery import (
     MAX_KICKBACK_REPLANS,
     RecoveryLedger,
 )
 from gui_agent.core.orchestrator.runner import Interpreter
-
-
-def compile_single_statement_program(goal: str) -> Program:
-    """Deterministic compile when no orchestrator Program is supplied.
-
-    One interactive action covering the whole goal. Multi-step structure requires
-    the orchestrator decomposer — there is no silent DAG walker fallback.
-    """
-    text = (goal or "").strip() or "完成用户目标"
-    return Program(
-        goal=text,
-        statements=[
-            Run(
-                name=text,
-                kind="action",
-                success_condition=f"完成用户目标：{text}",
-            )
-        ],
-    )
-
-
-def ensure_program(program: Program | None, goal: str) -> Program:
-    """Return a Program; never None. Compiles a single-statement program if needed."""
-    if program is not None:
-        return program
-    return compile_single_statement_program(goal)
 
 
 @dataclass

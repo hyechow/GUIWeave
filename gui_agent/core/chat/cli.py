@@ -109,9 +109,27 @@ def run_chat_turn(
     raw_input: str | None = None,
     router: dict | None = None,
     knowledge: dict | None = None,
+    decompose_knowledge: str = "",
+    current_url: str = "",
+    current_title: str = "",
+    current_site: str = "",
 ) -> dict:
     """Thin wrapper around run_agent_loop with silent stdio, HUD and live_state spinner."""
     context_path = log_dir / "context.json"
+    from gui_agent.core.orchestrator import decompose
+    from gui_agent.core.router import resolve_intent
+
+    reports: list[dict] = []
+    resolution = resolve_intent(goal)
+    program = decompose(
+        goal,
+        knowledge=decompose_knowledge,
+        current_url=current_url,
+        current_title=current_title,
+        current_site=current_site,
+        context_reports=reports,
+        resolution=resolution,
+    )
     # HUD comes from the platform bundle (make_status_reporter(True) -> the HUD
     # context manager); same object the standalone runner uses, no adapter import.
     with _silent_stdio(log_dir), build_platform().make_status_reporter(True) as hud:
@@ -130,6 +148,8 @@ def run_chat_turn(
             raw_input=raw_input,
             router=router,
             knowledge=knowledge,
+            program=program,
+            orchestrator_context_reports=reports,
         )
 
 
@@ -555,6 +575,10 @@ def main() -> None:
                     raw_input=display_msg,
                     router=router_result.model_dump(),
                     knowledge=knowledge_summary,
+                    decompose_knowledge=(knowledge.decompose_context(goal) if knowledge else ""),
+                    current_url=cur_url,
+                    current_title=cur_title,
+                    current_site=cur_site,
                 )
             except (SystemExit, KeyboardInterrupt):
                 raise

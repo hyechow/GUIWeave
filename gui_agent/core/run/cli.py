@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from gui_agent.core.runtime.factory import build_platform
-from gui_agent.core.llm.output import generate_reply
 from gui_agent.core.run.io import EscStopSignal, create_run_dir, tee_stdio
 from gui_agent.core.self_learning.app_summary import (
     auto_discover_knowledge,
@@ -107,12 +106,7 @@ def main(
         action="store_true",
         help="跳过 router 意图改写，直接把输入当作目标（默认经 router，与 chat 模式一致）",
     )
-    parser.add_argument(
-        "--orchestrator",
-        action="store_true",
-        help="DSL 编排器模式：先把目标 decompose 成 run/if/finish 程序，由解释器排序驱动各 milestone"
-             "（默认走 DAG 路径）",
-    )
+    parser.set_defaults(orchestrator=True)
     parser.add_argument(
         "--include-skills",
         action="store_true",
@@ -235,15 +229,11 @@ def main(
                     f"sections={knowledge_summary['section_count']}, "
                     f"profile={knowledge_summary['profile']})"
                 )
-                if args.orchestrator:
-                    selected = knowledge.decompose_sections(goal)
-                    knowledge_summary["decompose_sections"] = selected
-                    print(f"Knowledge: decompose sections={selected or ['<app-overview-only>']}")
+                selected = knowledge.decompose_sections(goal)
+                knowledge_summary["decompose_sections"] = selected
+                print(f"Knowledge: decompose sections={selected or ['<app-overview-only>']}")
 
-            # DSL orchestrator mode (opt-in): decompose the goal into a run/if/finish program; the
-            # interpreter sequences milestones instead of the supervisor's DAG walker. program=None
-            # (default) → the DAG path is unchanged.
-            program = None
+            # DSL-only execution: compile a Program before opening the agent loop.
             orchestrator_context_reports: list[dict] = []
             orchestrator_metrics: dict = {}
             run_max_turns = args.max_turns
@@ -252,8 +242,7 @@ def main(
                 from gui_agent.core.orchestrator import decompose, estimate_program_turns
                 from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
                 # Resolve @<path> refs once (config field values the goal only points at) and feed
-                # them to the decomposer — mirrors the DAG path, which the orchestrator's decompose
-                # otherwise skipped (the LLM only saw the literal @token, never the field values).
+                # them to the decomposer so the LLM sees the referenced field values.
                 file_section = resolve_file_refs(goal)
                 orch_started = time.perf_counter()
                 orch_calls_before = get_llm_call_count()
@@ -280,7 +269,7 @@ def main(
                 }
                 # The config must ALSO reach the execution-time planner deterministically — the
                 # supervisor's constraints flow to every milestone's planner, and reseed never clears
-                # them (LLM distillation of config into constraints proved unstable; see DAG path).
+                # them (LLM distillation of config into constraints proved unstable).
                 if file_section:
                     _CAP = 3000
                     supervisor.add_static_constraint(
@@ -341,20 +330,9 @@ def main(
                         headless=headless,
                     )
                 if result:
-                    if program is not None:
-                        # Orchestrator mode: the answer is the interpreter's reply (finish /
-                        # auto-summary from the program's persisted reads), not a re-derivation
-                        # from content_notes — that's the whole point of the structured program.
-                        output = result.get("result_summary") or "（编排器未产生答复）"
-                    else:
-                        # Reply to the user's ORIGINAL input (parity with chat, which
-                        # passes user_msg) rather than the router-rewritten goal.
-                        output = generate_reply(
-                            raw_input,
-                            result,
-                            content_notes=result.get("content_notes"),
-                            collection_context=result.get("collection_context"),
-                        )
+                    # The answer is the interpreter's reply (finish / auto-summary from the
+                    # program's persisted reads), not a re-derivation from content notes.
+                    output = result.get("result_summary") or "（编排器未产生答复）"
                     print("\n" + "=" * 50)
                     print("最终输出")
                     print("=" * 50)

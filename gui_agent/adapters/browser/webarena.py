@@ -10,7 +10,7 @@ real browser agent (perception + milestone supervisor + executor + visualizer) v
   pre-run  : inject auth cookies (raw CDP) + start HAR capture + navigate start_url
              — all in the ``on_session_open`` hook, on the just-connected session.
   run      : decompose intent into the DSL orchestrator program, then run_agent_loop
-             drives each linear milestone; --no-orchestrator keeps the legacy DAG path.
+             drives each linear statement.
   post-run : dump network.har + synthesize agent_response.json from the run result.
 
 Headed mode attaches to the user's CDP Chrome (bin/launch_chrome_cdp). Headless
@@ -958,7 +958,7 @@ def main() -> int:
         help="persistent Chromium profile for --headless (default: output/.headless_profiles/<site_run>)",
     )
     parser.add_argument("--max-turns", type=int, default=25)
-    parser.add_argument("--no-orchestrator", action="store_true", help="use the legacy milestone DAG path instead of the DSL orchestrator")
+    parser.set_defaults(no_orchestrator=False)
     parser.add_argument("--no-orchestrator-preflight", action="store_true", help="do not stop after deterministic router/decompose preflight failures")
     dynamic_turns = parser.add_mutually_exclusive_group()
     dynamic_turns.add_argument(
@@ -1150,7 +1150,6 @@ def main() -> int:
                     "content_notes": None,
                 }
             else:
-                program = None
                 orchestrator_context_reports: list[dict] = []
                 orchestrator_metrics: dict = {}
                 run_max_turns = args.max_turns
@@ -1394,9 +1393,6 @@ def main() -> int:
                                 run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                                 if run_max_turns != args.max_turns:
                                     print(f"[webarena] orchestrator: max_turns {args.max_turns} -> {run_max_turns}")
-                    else:
-                        print("[webarena] orchestrator: disabled; using legacy milestone DAG")
-
                     if not preflight_blocked:
                         if not _confirm_to_run(args.confirm):
                             return 1

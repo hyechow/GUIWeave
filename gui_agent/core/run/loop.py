@@ -39,6 +39,7 @@ from gui_agent.core.run.flow import (
     handle_loading_frame,
 )
 from gui_agent.core.run.statements import drain_immediate_statements
+from gui_agent.core.orchestrator.program import Program
 from gui_agent.core.orchestrator.contracts import check_return_contract
 from gui_agent.core.orchestrator.recovery import (
     MAX_EMPTY_RETURN_RECOVERIES,
@@ -166,6 +167,8 @@ def run_agent_loop(
     input_context_path: Path | None,
     log_dir: Path,
     context_path: Path,
+    *,
+    program: Program,
     max_turns: int = 20,
     auto_continue: bool = False,
     hud: AgentHUD | None = None,
@@ -177,7 +180,6 @@ def run_agent_loop(
     router: dict | None = None,    # RouterResult dict (chat path); None for bin/runner
     on_session_open: object = None,  # callable(platform) run once after session open, before the loop
     knowledge: dict | None = None,  # injected app-knowledge summary {app_name, nav_chars, ...}; None if no match
-    program: "Program | None" = None,  # DSL program (orchestrator mode); None = DAG path (unchanged)
     redecompose: object = None,  # callable(directive:str)->Program|None; Feasibility Guard kick-back re-plan. None disables.
     subdecompose: object = None,  # callable(goal:str)->Program|None; per-row agentic sub-goal (ForEach.body_goal). None disables.
     orchestrator_context_reports: list[dict] | None = None,
@@ -185,6 +187,8 @@ def run_agent_loop(
     platform: object = None,  # already-open session (runner pre-opens it so router/decompose can see the current front-tab url/title; see cli.py); None → open here (chat path, unchanged)
     headless: bool = False,  # suppress the action visualizer (cursor/overlay) on every platform; HUD is gated by the caller
 ) -> dict:
+    if not isinstance(program, Program):
+        raise TypeError("run_agent_loop requires a compiled DSL Program")
     _run_started = time.perf_counter()  # for context.wall_clock_s (true end-to-end elapsed)
 
     def _say(s: str) -> None:
@@ -324,11 +328,8 @@ def run_agent_loop(
                 hud.reposition(*dock_rect(*_wb))
 
         # ── ProgramRuntime (always on) ────────────────────────────────────────────
-        # Every task runs through a Program. When the caller omitted one, compile a
-        # single-statement program — no silent DAG walker fallback.
-        from gui_agent.core.run.program_runtime import ProgramRuntime, ensure_program
-
-        program = ensure_program(program, context.goal)
+        # Every task arrives with a compiled Program.
+        from gui_agent.core.run.program_runtime import ProgramRuntime
         _interp = None
         _gen = None
         _cur_run = None
@@ -637,15 +638,14 @@ def run_agent_loop(
             # awaited just before execute (snap) so they add ~no latency.
             prep_future = _PREP_POOL.submit(executor.prepare_frame, observation.png_bytes)
 
-            # ── Decision phase (orchestrator hand-off merge, DAG _advance parity) ────────
-            # Decide for the current milestone on THIS frame. In orchestrator mode a milestone
+            # ── Decision phase (same-frame statement hand-off) ────────────────────────
+            # Decide for the current statement on THIS frame. A statement
             # that COMPLETES here is a hand-off, not a turn end: package it, advance the
             # interpreter (driving any read runs off this verdict frame), reseed the next
-            # milestone, and re-decide on the SAME frame — so a pure milestone hand-off never
-            # costs its own action-less turn (the old behavior spent one). Only an action, a
-            # DAG-mode completion, or a stop ends the turn. The next milestone's nav skip-check
-            # is set when _drain_immediate seeds the next Milestone. Behaviorally the
-            # next milestone is decided on the exact frame the prior one was accepted on — same
+            # statement, and re-decide on the SAME frame — so a pure hand-off never
+            # costs its own action-less turn. Only an action or a stop ends the turn. The next
+            # statement's nav skip-check is set when _drain_immediate seeds its contract.
+            # Behaviorally the next statement is decided on the exact frame the prior one was accepted on — same
             # as the verdict-frame carry-forward, just merged into this turn instead of the next.
             _orch_reply: "str | None" = None    # set if the program ended during a hand-off
             _did_loading = False
@@ -859,7 +859,7 @@ def run_agent_loop(
             if _did_loading:
                 loading = handle_loading_frame(
                     loading_streak=loading_streak, max_loading_frames=MAX_LOADING_FRAMES,
-                    wait_s=LOADING_WAIT_S, turn_no=turn_no, program=program,
+                    wait_s=LOADING_WAIT_S, turn_no=turn_no,
                     current_run=_cur_run, context=context, interpreter=_interp,
                     finish=_finish, stop_after_esc=_stop_after_esc, say=_say,
                 )
