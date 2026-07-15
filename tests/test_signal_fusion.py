@@ -7,6 +7,7 @@ from gui_agent.core.run.execution_signals import (
 from gui_agent.core.run.persistence import PersistenceAssessment, assess_persistence
 from gui_agent.core.schemas import (
     ActionSignal,
+    EffectSignal,
     StatementContract,
     MutationReceipt,
     Observation,
@@ -14,6 +15,7 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.supervisor.statement.schemas import action_metadata
+from gui_agent.core.supervisor.statement.evidence import action_lifecycle_claims
 from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
 
@@ -27,10 +29,13 @@ def _signal_turn(
     statement_id: str = "persisted",
     field: str = "",
     value: str = "",
+    scope: str = "",
+    response_channels: list[str] | None = None,
 ) -> PolicyTurn:
     return PolicyTurn(
         index=index,
         observation_source="test",
+        statement_instance_id="i1",
         supervisor=SupervisorStep(
             should_act=True,
             instruction=control,
@@ -38,6 +43,7 @@ def _signal_turn(
             statement_id=statement_id,
             atomic_role=role,
             target_control=control,
+            execution_scope=scope,
         ),
         executed=True,
         action_signal=ActionSignal(
@@ -58,6 +64,7 @@ def _signal_turn(
             execution="dispatched",
             target="on_target",
             response="observed",
+            response_channels=list(response_channels or []),
         ),
     )
 
@@ -878,6 +885,136 @@ def test_change_mutation_cannot_complete_from_commit_without_write():
 
     assert decision.status == "contradicted"
     assert decision.next == "recover"
+
+
+def test_persistence_transaction_survives_execution_scope_redirect() -> None:
+    statement = StatementContract(
+        id="persisted",
+        name="change and save a resource",
+        description="",
+        success_condition="the resource is saved",
+        kind="action",
+        effect_mode="transform",
+        persistence="explicit_commit",
+    )
+    history = [
+        _signal_turn(
+            1,
+            role="write",
+            control="Description",
+            field="Description",
+            value="declared value",
+            scope="i1/row:editor/144",
+        ),
+        _signal_turn(
+            2,
+            role="commit",
+            control="Save",
+            scope="i1/row:editor/144",
+            response_channels=["url"],
+        ),
+    ]
+
+    state = assess_persistence(
+        statement,
+        history,
+        scope="i1/row:editor/144",
+    )
+
+    assert state.status == "submitted"
+    assert state.orphan_commit is False
+    assert state.latest_write is history[0]
+    assert state.terminal_turn is history[1]
+
+
+def test_transform_effect_latch_crosses_redirect_but_current_state_can_reverse_it() -> None:
+    statement = StatementContract(
+        id="persisted",
+        name="save the declared collection",
+        description="",
+        success_condition="the saved collection contains declared members",
+        kind="action",
+        effect_mode="transform",
+        persistence="explicit_commit",
+    )
+    observed = _signal_turn(
+        1,
+        role="prepare",
+        control="inspect members",
+        surface="resource-editor",
+        scope="i1/row:editor/144",
+    )
+    observed.effect_signal = EffectSignal(
+        statement_id=statement.id,
+        status="satisfied",
+        source_type="obs.mutation.desired_state",
+        authoritative=True,
+        evidence=["all declared members are visible"],
+    )
+    committed = _signal_turn(
+        2,
+        role="commit",
+        control="Save",
+        surface="resource-editor",
+        scope="i1/row:editor/144",
+        response_channels=["url"],
+    )
+    history = [observed, committed]
+    before_commit = ExecutionCoordinator().decide(
+        ExecutionContract.from_statement(statement),
+        action_lifecycle_claims(
+            statement,
+            [observed],
+            scope="i1/row:editor/144",
+        ),
+        scope="i1/row:editor/144",
+        persistence_assessment=assess_persistence(
+            statement,
+            [observed],
+            scope="i1/row:editor/144",
+        ),
+    )
+    persistence = assess_persistence(
+        statement,
+        history,
+        scope="i1/row:editor/144",
+    )
+
+    decision = ExecutionCoordinator().decide(
+        ExecutionContract.from_statement(statement),
+        action_lifecycle_claims(
+            statement,
+            history,
+            scope="i1/statement",
+        ),
+        scope="i1/statement",
+        persistence_assessment=persistence,
+    )
+    reversed_decision = ExecutionCoordinator().decide(
+        ExecutionContract.from_statement(statement),
+        [
+            *action_lifecycle_claims(statement, history, scope="i1/row:editor/144"),
+            claim(
+                "control.state",
+                "unmet",
+                source_type="obs.mutation.desired_state",
+                scope="i1/row:editor/144",
+                authoritative=True,
+            ),
+        ],
+        scope="i1/row:editor/144",
+        persistence_assessment=persistence,
+    )
+
+    assert before_commit.status == "pending"
+    assert before_commit.next == "commit"
+    assert persistence.orphan_commit is True
+    assert decision.status == "satisfied"
+    assert decision.completion_status == "confirmed"
+    assert (reversed_decision.status, reversed_decision.next) == (
+        "contradicted",
+        "recover",
+    )
 
 
 def test_ensure_mutation_accepts_authoritative_preexisting_outcome():

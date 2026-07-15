@@ -10,7 +10,9 @@ from pydantic import ValidationError
 
 from gui_agent.core.run.content import ReadState, store_chunk_note
 from gui_agent.core.run.result import make_result
+from gui_agent.core.run.turns import make_immediate_statement_turn
 from gui_agent.core.schemas import (
+    Observation,
     PolicyContext,
     PolicyTurn,
     StatementOutcome,
@@ -35,6 +37,37 @@ def test_policy_context_exposes_only_journal_and_program_outcome_state_domains()
         PolicyContext.model_fields
     )
     assert {"journal", "outcome"}.issubset(PolicyContext.model_fields)
+
+
+def test_immediate_turn_strips_raw_observation_bytes_before_persist():
+    # An immediate read/query outcome carries the live screenshot observation (raw PNG
+    # bytes). Persisting it crashed save_context: pydantic json-dumps `bytes` as UTF-8, so
+    # non-text bytes (byte 0x89 = PNG magic) raise UnicodeDecodeError. The persisted turn
+    # must keep observation_url (a file path) and drop the bytes.
+    png = b"\x89PNG\r\n\x1a\n" + b"\xff\xfe\x00\x01" * 64
+    outcome = StatementOutcome.completed(
+        "read 1 row",
+        verification="confirmed",
+        reads={"match_count": "1"},
+        observation=Observation(png_bytes=png, source="browser"),
+        observation_url="/tmp/collect_grid.png",
+    )
+    turn = make_immediate_statement_turn(
+        index=1,
+        summary="read",
+        statement_id="s1",
+        observation_source="browser",
+        kind="data_query",
+        name="query",
+        observation_url="/tmp/collect_grid.png",
+        outcome=outcome,
+    )
+    assert turn.supervisor.outcome.observation is None
+    assert turn.observation_url == "/tmp/collect_grid.png"
+
+    context = _context()
+    context.journal.append_turn(turn)
+    context.model_dump(mode="json")  # the original crash site; must not raise
 
 
 def test_content_notes_and_dedupe_are_rebuilt_only_from_journal_events():

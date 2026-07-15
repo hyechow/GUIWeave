@@ -9,6 +9,7 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     SupervisorStep,
 )
+from gui_agent.core.supervisor.statement.evidence import observed_effect_signal
 
 
 def _statement(**values: str) -> StatementContract:
@@ -76,6 +77,58 @@ def test_unique_subject_produces_one_authorized_next_write() -> None:
 
     assert (subject.status, subject.next_field) == ("writable", "Admin Swatch")
     assert authorization is not None and authorization.subject_ref == "r1"
+
+
+def test_aligned_values_resolve_across_repeated_non_choice_rows() -> None:
+    statement = StatementContract(
+        id="members",
+        name="realize two declared members",
+        description="",
+        success_condition="the collection contains both declared members",
+        kind="action",
+        target_values={
+            "Admin Description": ["30", "31"],
+            "Admin Swatch": ["30", "31"],
+        },
+    )
+
+    controls = [
+        *_row("r30", description="30", swatch="30"),
+        *_row("r31", description="31", swatch="31"),
+    ]
+    complete = _subject(controls, statement=statement)
+    pending = _subject(
+        [
+            *_row("r30", description="30", swatch="30"),
+            *_row("r31", description="31"),
+        ],
+        statement=statement,
+    )
+
+    assert complete.status == "complete"
+    assert complete.subject_ref == ""
+    assert pending.status != "complete"
+    assert observed_effect_signal(
+        statement,
+        Observation(png_bytes=b"frame", source="browser", form_controls=controls),
+        [],
+    ) is not None
+
+
+def test_destination_only_absence_is_not_journaled_as_effect() -> None:
+    statement = _statement()
+    observation = Observation(
+        png_bytes=b"destination",
+        source="browser",
+        form_controls=[{
+            "label": "Search",
+            "kind": "text_input",
+            "value": "",
+            "group_id": "destination-filter",
+        }],
+        form_controls_meta={"coverage": "complete"},
+    )
+    assert observed_effect_signal(statement, observation, []) is None
 
 
 def test_singleton_form_can_change_an_existing_value() -> None:
