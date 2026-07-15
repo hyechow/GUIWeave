@@ -139,13 +139,14 @@ def make_interactive_turn(
         operation_mode="interactive",
         observation_source=observation_source,
         observation_url=observation_url,
-        supervisor=supervisor_step,
+        supervisor=supervisor_step.model_copy(update={"effect_signal": None}),
         action_decision=action_decision,
         checker=checker,
         planner=planner,
         replan=replan,
         executed=executed,
         action_signal=action_signal,
+        effect_signal=supervisor_step.effect_signal,
         llm_calls=llm_calls,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -429,6 +430,13 @@ def make_immediate_statement_turn(
             if completed
             else StatementOutcome.failed(summary, reads=dict(reads or {}))
         )
+    elif getattr(outcome, "observation", None) is not None:
+        # The persisted turn keeps ``observation_url`` (a file path) as its screenshot
+        # reference. Raw ``png_bytes`` must never enter the saved context: pydantic
+        # json-dumps ``bytes`` as UTF-8, so non-text bytes (a PNG) raise UnicodeDecodeError
+        # on save_context.model_dump(mode="json"). Strip the live observation here; nothing
+        # downstream reads persisted-outcome bytes (only observation_url / outcome.reads).
+        outcome = outcome.model_copy(update={"observation": None})
     return PolicyTurn(
         index=index,
         operation_mode="non_interactive",
