@@ -221,56 +221,36 @@ def test_milestone_elapsed_matches_turn_badge_elapsed_sum():
 
 
 # ── program-aligned milestone grouping (builder._group_steps_by_milestone) ───────
-def _gstep(mid: str, n: int = 1) -> ReportStep:
+def _gstep(mid: str, iid: str, n: int = 1) -> ReportStep:
     return ReportStep(
         label=f"Turn {n}", action_type="tap", x=1.0, y=1.0,
-        description=mid, annotated_before_url="", milestone_id=mid,
+        description=mid, annotated_before_url="", milestone_id=mid, instance_id=iid,
     )
 
 
 def test_group_merges_non_contiguous_revisit_into_one_card():
-    # Real run shape: m1 turns 1-9, then d 10-12, q 13, then m1 AGAIN at 14.
-    # The revisit must merge into ONE m1 card, not split into two.
-    steps = (
-        [_gstep("m1", i) for i in range(1, 10)]
-        + [_gstep("d", 10), _gstep("d", 11), _gstep("d", 12)]
-        + [_gstep("q", 13)]
-        + [_gstep("m1", 14)]
-    )
-    prog = [{"id": "m0_navigation"}, {"id": "m1"}, {"id": "d"}, {"id": "q"}]
-    pages = _group_steps_by_milestone(steps, prog, {})
-    assert [p.milestone_id for p in pages] == ["m0_navigation", "m1", "d", "q"]
-    m1 = next(p for p in pages if p.milestone_id == "m1")
-    assert len(m1.steps) == 10  # turns 1-9 + 14 merged into one card
-    assert [s.label for s in m1.steps] == [f"Turn {i}" for i in [*range(1, 10), 14]]
+    steps = [_gstep("s1", "i1:s1", 1), _gstep("s2", "i2:s2", 2), _gstep("s1", "i1:s1", 3)]
+    invocations = [
+        {"id": "s1", "instance_id": "i1:s1"},
+        {"id": "s2", "instance_id": "i2:s2"},
+    ]
+    lookup = {item["instance_id"]: item for item in invocations}
+
+    pages = _group_steps_by_milestone(steps, invocations, lookup)
+
+    assert [page.instance_id for page in pages] == ["i1:s1", "i2:s2"]
+    assert [step.label for step in pages[0].steps] == ["Turn 1", "Turn 3"]
 
 
-def test_group_keeps_zero_step_milestone_card():
-    # A startup navigation that completes before the first interactive turn has 0 steps but
-    # must still get a card so the execution view lines up 1:1 with the #0 program card.
-    # (In production ms_lookup is built from ctx["milestones"], so it carries kind/name.)
-    steps = [_gstep("m1", 1)]
-    prog = [{"id": "m0_navigation"}, {"id": "m1"}]
-    ms_lookup = {"m0_navigation": {"kind": "navigation", "name": "进入评论页"}, "m1": {"kind": "filter"}}
-    pages = _group_steps_by_milestone(steps, prog, ms_lookup)
-    assert [p.milestone_id for p in pages] == ["m0_navigation", "m1"]
-    assert pages[0].steps == []                 # zero steps, but a card exists
-    assert pages[0].milestone_kind == "navigation"  # kind/meta come from ms_lookup
-    assert pages[0].milestone_name == "进入评论页"
+def test_group_keeps_statement_and_invocation_ids_separate():
+    steps = [_gstep("s1", "i1:s1"), _gstep("s1", "i2:s1", 2)]
+    invocations = [
+        {"id": "s1", "instance_id": "i1:s1"},
+        {"id": "s1", "instance_id": "i2:s1"},
+    ]
+    lookup = {item["instance_id"]: item for item in invocations}
 
+    pages = _group_steps_by_milestone(steps, invocations, lookup)
 
-def test_group_orphans_to_trailing_card_in_first_seen_order():
-    # Steps whose milestone_id isn't a known program milestone → trailing uncategorized card,
-    # in first-seen order, so no turn is silently dropped.
-    steps = [_gstep("m1", 1), _gstep("non_ui_5", 2), _gstep("_no_milestone", 3)]
-    prog = [{"id": "m1"}]
-    pages = _group_steps_by_milestone(steps, prog, {})
-    assert [p.milestone_id for p in pages] == ["m1", "non_ui_5", "_no_milestone"]
-
-
-def test_group_uses_program_order_not_turn_order():
-    # d executes before m1 in the stream, but the program lists m1 before d → cards follow program.
-    steps = [_gstep("d", 1), _gstep("m1", 2)]
-    prog = [{"id": "m1"}, {"id": "d"}]
-    pages = _group_steps_by_milestone(steps, prog, {})
-    assert [p.milestone_id for p in pages] == ["m1", "d"]
+    assert [page.milestone_id for page in pages] == ["s1", "s1"]
+    assert [page.instance_id for page in pages] == ["i1:s1", "i2:s1"]

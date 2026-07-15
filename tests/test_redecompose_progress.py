@@ -10,7 +10,7 @@ from gui_agent.core.orchestrator import (
     Program,
     Run,
     RunRecord,
-    RunResult,
+    StatementOutcome,
     summarize_progress,
 )
 from gui_agent.core.orchestrator.program import Read
@@ -31,10 +31,10 @@ def _program() -> Program:
 
 def _run_log() -> list[RunRecord]:
     return [
-        RunRecord(name="进入 Reviews 页", result=RunResult(completed=True, summary="已到 Reviews")),
+        RunRecord(name="进入 Reviews 页", result=StatementOutcome.completed("已到 Reviews")),
         RunRecord(
             name="用 Olivia 筛选 Product 列",
-            result=RunResult(completed=True, summary="3 条候选", reads={"count": "3"}),
+            result=StatementOutcome.completed("3 条候选", reads={"count": "3"}),
         ),
     ]
 

@@ -5,7 +5,7 @@ fallback. All deterministic — expand_fn is mocked; expansion._parse_and_valida
 from __future__ import annotations
 
 from gui_agent.core.orchestrator import (
-    Compute, Cond, Finish, ForEach, If, Interpreter, Program, Run, RunResult, drive,
+    Compute, Cond, Finish, ForEach, If, Interpreter, Program, Run, StatementOutcome, drive,
 )
 from gui_agent.core.orchestrator.expansion import ForeachExpansion, _parse_and_validate
 from gui_agent.core.orchestrator.program import Read
@@ -49,11 +49,11 @@ def test_expansion_selects_members_and_drives_shared_body():
 
     seen: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)
         if run.returns == ["current_price"]:
-            return RunResult(completed=True, reads={"current_price": "75.00"})
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", reads={"current_price": "75.00"})
+        return StatementOutcome.completed("")
 
     interp = Interpreter(PROG.model_copy(deep=True), collect_fn=_collect,
                          subdecompose_fn=subdecompose, expand_fn=expand_fn)
@@ -65,7 +65,7 @@ def test_expansion_selects_members_and_drives_shared_body():
         "打开变体 WP05-28-Red 编辑页", "将 Price 更新为 64.88 并保存",
     ]
     into = interp.env["rows"]
-    assert into.completed and len(into.rows) == 2 and "检查点展开" in into.summary
+    assert into.is_completed and len(into.rows) == 2 and "检查点展开" in into.summary
 
 
 def test_expansion_none_falls_back_to_per_row_subdecompose():
@@ -79,9 +79,9 @@ def test_expansion_none_falls_back_to_per_row_subdecompose():
 
     seen: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     interp = Interpreter(PROG.model_copy(deep=True), collect_fn=_collect,
                          subdecompose_fn=subdecompose, expand_fn=lambda *a: None)
@@ -95,15 +95,15 @@ def test_expansion_empty_selection_publishes_empty_table_and_continues():
 
     executed: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         executed.append(run.name)
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     interp = Interpreter(PROG.model_copy(deep=True), collect_fn=_collect,
                          subdecompose_fn=None, expand_fn=expand_fn)
     reply = drive(interp, execute)
     assert executed == []                          # no member → no body execution
-    assert interp.env["rows"].completed and interp.env["rows"].rows == []
+    assert interp.env["rows"].is_completed and interp.env["rows"].rows == []
     assert not interp.finish_incomplete            # empty set is a legitimate outcome
     assert reply is not None                       # program flowed to finish
 
@@ -154,11 +154,11 @@ def test_selection_only_runs_t0_body_on_members():
 
     seen: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)
         if run.returns == ["current_price"]:
-            return RunResult(completed=True, reads={"current_price": "75.00"})
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", reads={"current_price": "75.00"})
+        return StatementOutcome.completed("")
 
     interp = Interpreter(prog, collect_fn=_collect, expand_fn=expand_fn, select_fn=select_fn)
     drive(interp, execute)
@@ -178,9 +178,9 @@ def test_selection_none_keeps_all_rows_no_downgrade():
     ])
     seen: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     interp = Interpreter(prog, collect_fn=_collect, select_fn=lambda *a: None)
     drive(interp, execute)
@@ -195,9 +195,9 @@ def test_selection_empty_publishes_empty_table():
     ])
     executed: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         executed.append(run.name)
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     interp = Interpreter(prog, collect_fn=_collect, select_fn=lambda *a: [])
     reply = drive(interp, execute)
@@ -220,9 +220,9 @@ def test_subgoal_finish_does_not_terminate_the_loop():
             Finish(message="该行已完成"),                      # ← must NOT end the parent loop
         ])
     seen: list[str] = []
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
     interp = Interpreter(prog, collect_fn=_collect, subdecompose_fn=subdecompose)
     reply = drive(interp, execute)
     assert len(seen) == 4, seen                                # all 4 rows processed
@@ -243,11 +243,11 @@ def test_subgoal_if_nested_finish_also_stripped():
                otherwise=[Run(kind="action", name="处理", success_condition="ok")]),
         ])
     seen: list[str] = []
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)
         if run.var == "v":
-            return RunResult(completed=True, reads={"s": "go"})
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", reads={"s": "go"})
+        return StatementOutcome.completed("")
     interp = Interpreter(prog, collect_fn=_collect, subdecompose_fn=subdecompose)
     reply = drive(interp, execute)
     assert seen.count("处理") == 4 and reply == "done"
@@ -270,8 +270,8 @@ def test_bodygoal_loopvar_drift_aliased_and_zero_binding_honest():
             Run(kind="action", name="处理", success_condition="ok"),
         ])
 
-    def execute(run: Run) -> RunResult:
-        return RunResult(completed=True)
+    def execute(run: Run) -> StatementOutcome:
+        return StatementOutcome.completed("")
 
     interp = Interpreter(prog, collect_fn=_collect, subdecompose_fn=subdecompose)
     drive(interp, execute)
@@ -287,4 +287,4 @@ def test_bodygoal_loopvar_drift_aliased_and_zero_binding_honest():
     interp2 = Interpreter(prog2, collect_fn=_collect, subdecompose_fn=subdecompose)
     drive(interp2, execute)
     assert interp2.finish_incomplete
-    assert interp2.env["items"].completed is False
+    assert not interp2.env["items"].is_completed

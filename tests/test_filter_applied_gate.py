@@ -15,12 +15,13 @@ from gui_agent.adapters.browser.filter_state import (
 from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
-    Milestone,
+    StatementContract,
     Observation,
     SupervisorStep,
 )
 from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.supervisor.milestone.evidence import runtime_filter_intent
+from gui_agent.core.supervisor.milestone.execution_scope import execution_scope_for
 from gui_agent.core.supervisor.milestone.observation_state import (
     filter_chips_clean,
     filter_residual_labels,
@@ -36,8 +37,8 @@ def _filter_ms(
     sc: str = "",
     *,
     target_values: dict[str, str] | None = None,
-) -> Milestone:
-    return Milestone(
+) -> StatementContract:
+    return StatementContract(
         id="m_filter",
         name=name,
         description=name,
@@ -303,15 +304,22 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
     policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:filter")
+    observation = Observation(
+        png_bytes=b"x",
+        source="browser",
+        applied_filters={"Keyword": "Minerva LumaTech V-Tee"},
+        tables=[{"total_records": 0}],
+    )
+    write_turn.statement_instance_id = policy._active_instance_id
+    write_turn.supervisor.execution_scope = execution_scope_for(
+        milestone,
+        observation,
+        instance_id=policy._active_instance_id,
+    )
 
     step = policy.step(
-        Observation(
-            png_bytes=b"x",
-            source="browser",
-            applied_filters={"Keyword": "Minerva LumaTech V-Tee"},
-            tables=[{"total_records": 0}],
-        ),
+        observation,
         goal="find product",
         history=[write_turn],
     )
@@ -337,7 +345,7 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
     policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:filter")
     step = policy.step(
         Observation(
             png_bytes=b"x",
@@ -440,7 +448,7 @@ _FIXTURE_PNG = (
 )
 
 
-def _qty3_filter_milestone() -> Milestone:
+def _qty3_filter_milestone() -> StatementContract:
     return _filter_ms(
         "清除无关筛选，设置 Quantity From=3 且 To=3",
         "网格 Active filters 显示已生效筛选 Quantity: 3 - 3（控件状态达成即可，不需逐行复核库存）。",
@@ -466,7 +474,7 @@ def _run_step(monkeypatch, applied_filters):
 
     pol = supervisor_policy_mod.MilestoneSupervisorPolicy()
     ms = _qty3_filter_milestone()
-    pol.reseed(ms)
+    pol.begin_statement(ms, instance_id="test:filter")
     obs = Observation(png_bytes=png, source="test", applied_filters=applied_filters)
     step = None
     try:
@@ -506,7 +514,7 @@ def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
     pol = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    pol.reseed(ms)
+    pol.begin_statement(ms, instance_id="test:filter")
     obs = Observation(
         png_bytes=png,
         source="test",
@@ -564,11 +572,11 @@ def test_policy_captures_first_applied_filters_snapshot(monkeypatch):
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
     pol = MilestoneSupervisorPolicy()
-    ms = Milestone.model_validate({
+    ms = StatementContract.model_validate({
         "id": "m1", "name": "进入 Products 页", "description": "", "success_condition": "列表可见",
         "kind": "navigation",
     })
-    pol.reseed(ms)
+    pol.begin_statement(ms, instance_id="test:filter")
     monkeypatch.setattr(pol, "_run_single_turn", lambda *a, **k: SupervisorStep(
         should_act=False, instruction=None, summary="", milestone_id="m1",
     ))

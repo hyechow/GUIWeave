@@ -23,7 +23,7 @@ from PIL import Image
 from gui_agent.core.schemas import (
     Action,
     ActionDecision,
-    Milestone,
+    StatementContract,
     Observation,
     PolicyTurn,
     SupervisorStep,
@@ -52,9 +52,9 @@ def _png() -> bytes:
     return buf.getvalue()
 
 
-def _make_policy() -> tuple[MilestoneSupervisorPolicy, Milestone]:
+def _make_policy() -> tuple[MilestoneSupervisorPolicy, StatementContract]:
     p = MilestoneSupervisorPolicy()
-    ms = Milestone(
+    ms = StatementContract(
         id="5",
         name="采集账单明细",
         description="滚动采集指定区间的账单明细",
@@ -62,7 +62,7 @@ def _make_policy() -> tuple[MilestoneSupervisorPolicy, Milestone]:
         kind="collection",
         completion_strategy="scroll_until_boundary",
     )
-    p.reseed(ms)
+    p.begin_statement(ms, instance_id="test:collection")
     p.task_type = "analysis"
     return p, ms
 
@@ -79,12 +79,14 @@ def _stub_loop(
     )
 
 
-def _scroll_turn(mid: str, *, read_added: bool) -> PolicyTurn:
+def _scroll_turn(mid: str, *, read_added: bool, instance_id: str) -> PolicyTurn:
     return PolicyTurn(
         index=1,
         observation_source="eval",
+        statement_instance_id=instance_id,
         supervisor=SupervisorStep(
             should_act=True, instruction="向上滚动", summary="", milestone_id=mid,
+            execution_scope=f"{instance_id}/statement",
         ),
         action_decision=ActionDecision(
             action=Action(
@@ -109,12 +111,11 @@ def main() -> int:
     ok = (
         step.should_act
         and step.outcome is None
-        and p._rt.status != "done"
     )
     _report(
         "零滚动+should_stop → 强制滚动、不判完成",
         ok,
-        f"should_act={step.should_act} outcome={step.outcome} status={p._rt.status if p._statement_rt else None}",
+        f"should_act={step.should_act} outcome={step.outcome}",
     )
 
     # Case 2: same, but boundary_reached=True on entry (still no scroll) → still must scroll,
@@ -122,11 +123,11 @@ def main() -> int:
     p, ms = _make_policy()
     _stub_loop(p, should_stop=False, boundary=True)
     step = p._run_loop_turn(ms, obs, [])
-    ok = step.should_act and step.outcome is None and p._rt.status != "done"
+    ok = step.should_act and step.outcome is None
     _report(
         "零滚动+boundary_reached → 强制滚动、不判完成",
         ok,
-        f"should_act={step.should_act} status={p._rt.status if p._statement_rt else None}",
+        f"should_act={step.should_act} outcome={step.outcome}",
     )
 
     # Case 3: HAS a successful scroll already but should_stop + nothing collected →
@@ -142,22 +143,30 @@ def main() -> int:
         )
 
     p._handle_stuck = _fake_stuck  # type: ignore[assignment]
-    p._run_loop_turn(ms, obs, [_scroll_turn("5", read_added=False)])
+    p._run_loop_turn(
+        ms,
+        obs,
+        [_scroll_turn("5", read_added=False, instance_id=p._active_instance_id)],
+    )
     _report(
         "已滚动+should_stop+零采集 → 仍走 stuck",
         hit["stuck"],
         f"handle_stuck_called={hit['stuck']}",
     )
 
-    # Case 4: should_stop AND already collected → normal finish (advance, status=done).
+    # Case 4: should_stop AND already collected → normal finish (terminal outcome).
     p, ms = _make_policy()
     _stub_loop(p, should_stop=True)
-    step = p._run_loop_turn(ms, obs, [_scroll_turn("5", read_added=True)])
-    ok = bool(p._statement_rt and p._rt.status == "done")
+    step = p._run_loop_turn(
+        ms,
+        obs,
+        [_scroll_turn("5", read_added=True, instance_id=p._active_instance_id)],
+    )
+    ok = bool(step.outcome is not None and step.outcome.phase == "completed")
     _report(
         "已采集+should_stop → 正常结束收集（advance）",
         ok,
-        f"status={p._rt.status if p._statement_rt else None} outcome={step.outcome}",
+        f"outcome={step.outcome}",
     )
 
     # Case 5: loading frame on the ENTRY phase (no scroll yet) → wait (is_loading),
@@ -165,7 +174,7 @@ def main() -> int:
     p, ms = _make_policy()
     _stub_loop(p, should_stop=False, loading=True)
     step = p._run_loop_turn(ms, obs, [])
-    ok = step.is_loading and not step.should_act and not step.allow_read and p._rt.status != "done"
+    ok = step.is_loading and not step.should_act and not step.allow_read and step.outcome is None
     _report(
         "启动帧 loading → 等待(is_loading)、不读不滚",
         ok,
@@ -176,7 +185,11 @@ def main() -> int:
     # plan a scroll. Loading detection only guards the entry phase.
     p, ms = _make_policy()
     _stub_loop(p, should_stop=False, loading=True)
-    step = p._run_loop_turn(ms, obs, [_scroll_turn("5", read_added=True)])
+    step = p._run_loop_turn(
+        ms,
+        obs,
+        [_scroll_turn("5", read_added=True, instance_id=p._active_instance_id)],
+    )
     ok = step.should_act and not step.is_loading
     _report(
         "已滚动后 loading → 忽略、继续采集",

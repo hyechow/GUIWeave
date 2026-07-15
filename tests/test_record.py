@@ -51,7 +51,7 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
         on_turn=callbacks.append,
     )
 
-    assert ctx.turns == [turn]
+    assert ctx.journal.events == [turn]
     assert saves == ["saved"]
     assert turn.llm_calls == 2
     assert turn.input_tokens == 20

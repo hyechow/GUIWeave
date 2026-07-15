@@ -115,7 +115,7 @@ def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch
     """The guard also FEEDS the checker: run_checker must surface the state→decision trace when
     given state_trace_text, and omit the block when empty. Pins the wiring against silent drops."""
     import gui_agent.core.supervisor.milestone.model_io as model_io
-    from gui_agent.core.schemas import Milestone, Observation
+    from gui_agent.core.schemas import StatementContract, Observation
     from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 
     captured: dict = {}
@@ -142,7 +142,7 @@ def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch
     _buf = BytesIO()
     Image.new("RGB", (8, 8), "white").save(_buf, "PNG")  # valid, survives the checker's retina halving
     _PNG = _buf.getvalue()
-    ms = Milestone.model_validate({
+    ms = StatementContract.model_validate({
         "id": "m1", "name": "筛选评论", "description": "d", "success_condition": "列表已刷新", "kind": "filter",
     })
     obs = Observation(png_bytes=_PNG, source="browser")

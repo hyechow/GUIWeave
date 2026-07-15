@@ -13,9 +13,6 @@ def test_completed_requires_verification():
     assert ok.phase == "completed"
     assert ok.verification == "confirmed"
     assert ok.is_completed
-    assert ok.to_run_result().completed is True
-    assert ok.to_run_result().failed is False
-    assert ok.to_run_result().completion_status == "confirmed"
 
 
 def test_completed_rejects_kickback():
@@ -41,8 +38,7 @@ def test_infeasible_requires_kickback():
     out = StatementOutcome.infeasible("blocked", kickback="use list view")
     assert out.phase == "infeasible"
     assert out.kickback == "use list view"
-    assert out.to_run_result().failed is True
-    assert out.to_run_result().completed is False
+    assert not out.is_completed
 
 
 def test_no_running_phase_constructor():

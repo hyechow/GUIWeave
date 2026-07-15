@@ -15,7 +15,7 @@ from gui_agent.core.orchestrator import (
     Program,
     ProgramRunner,
     Run,
-    RunResult,
+    StatementOutcome,
     drive,
 )
 from gui_agent.core.orchestrator.program import Query, Read
@@ -32,7 +32,7 @@ def test_compute_bool_scalar_condition_compares_lowercase_true():
     ])
 
     interp = Interpreter(program)
-    reply = drive(interp, lambda run: RunResult(completed=True))
+    reply = drive(interp, lambda run: StatementOutcome.completed(""))
     assert reply == "then"
 
 
@@ -63,18 +63,18 @@ def test_foreach_iterates_rows_and_accumulates_into_table():
     }
     seen_detail_targets: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.var == "r" and run.kind == "read":
-            return RunResult(completed=True, rows=[{"id": "347"}, {"id": "349"}, {"id": "351"}])
+            return StatementOutcome.completed("", rows=[{"id": "347"}, {"id": "349"}, {"id": "351"}])
         if run.name.startswith("打开 review"):
             # {row[id]} was filled by the interpreter before the engine saw the Run
             seen_detail_targets.append(run.name)
-            return RunResult(completed=True)
+            return StatementOutcome.completed("")
         if run.kind == "read":
             # which row are we on? the most recent detail-open target carries the id
             rid = seen_detail_targets[-1].split("review ", 1)[1].split(" ", 1)[0]
-            return RunResult(completed=True, reads=details[rid])
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", reads=details[rid])
+        return StatementOutcome.completed("")
 
     interp = Interpreter(program)
     reply = drive(interp, execute)
@@ -120,11 +120,11 @@ def test_foreach_accumulates_body_action_returns():
     )
     ratings = {"1": "5", "2": "2"}
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.var == "r" and run.kind == "read":
-            return RunResult(completed=True, rows=[{"id": "1"}, {"id": "2"}])
+            return StatementOutcome.completed("", rows=[{"id": "1"}, {"id": "2"}])
         rid = run.name.split()[1]
-        return RunResult(completed=True, reads={"rating": ratings[rid]})
+        return StatementOutcome.completed("", reads={"rating": ratings[rid]})
 
     interp = Interpreter(program)
     drive(interp, execute)
@@ -152,10 +152,10 @@ def test_foreach_target_identity_is_added_to_success_condition():
     interp = Interpreter(program)
     gen = interp.steps()
     run = next(gen)
-    run = gen.send(RunResult(completed=True, rows=[{"id": "351"}, {"id": "347"}]))
+    run = gen.send(StatementOutcome.completed("", rows=[{"id": "351"}, {"id": "347"}]))
     assert run.name == "打开评论 351 的详情"
     assert "351" in run.success_condition
-    run = gen.send(RunResult(completed=True))
+    run = gen.send(StatementOutcome.completed(""))
     assert run.name == "打开评论 347 的详情"
     assert "347" in run.success_condition
 
@@ -178,14 +178,14 @@ def test_row_source_is_not_exposed_as_data_query_table():
     det = {"1": {"rating": "5", "nickname": "Jane"}, "2": {"rating": "2", "nickname": "Emma"}}
     last: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.var == "r" and run.kind == "read":  # list shows id+nickname but NO rating (empty)
-            return RunResult(completed=True, rows=[{"id": "1", "nickname": "", "rating": ""},
+            return StatementOutcome.completed("", rows=[{"id": "1", "nickname": "", "rating": ""},
                                                    {"id": "2", "nickname": "", "rating": ""}])
         if run.name.startswith("打开"):
             last.append(run.name.split()[1])
-            return RunResult(completed=True)
-        return RunResult(completed=True, reads=det[last[-1]])
+            return StatementOutcome.completed("")
+        return StatementOutcome.completed("", reads=det[last[-1]])
 
     interp = Interpreter(program)
     drive(interp, execute)
@@ -206,15 +206,15 @@ def test_foreach_empty_collection_publishes_empty_table():
         ],
     )
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.var == "r" and run.kind == "read":
-            return RunResult(completed=True, rows=[])   # nothing discovered
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", rows=[])   # nothing discovered
+        return StatementOutcome.completed("")
 
     interp = Interpreter(program)
     drive(interp, execute)
     assert interp.env["reviews"].rows == []             # present + complete, just empty
-    assert interp.env["reviews"].completed is True
+    assert interp.env["reviews"].is_completed
 
 
 def test_into_table_is_ready_when_data_query_is_yielded():
@@ -236,11 +236,11 @@ def test_into_table_is_ready_when_data_query_is_yielded():
     interp = Interpreter(program)
     gen = interp.steps()
     run = next(gen)                                   # the read step (row source)
-    run = gen.send(RunResult(completed=True, rows=[{"id": "1"}, {"id": "2"}]))
+    run = gen.send(StatementOutcome.completed("", rows=[{"id": "1"}, {"id": "2"}]))
     # now driving foreach body reads; the into table must NOT exist until the last body read is sent
     while run.kind == "read" and not run.name.startswith("筛"):
         assert interp.materialized_tables() == []    # not yet — foreach still iterating
-        run = gen.send(RunResult(completed=True, reads={"rating": "3"}))
+        run = gen.send(StatementOutcome.completed("", reads={"rating": "3"}))
     # the loop exited because the yielded run is now the data_query — and the into table is READY
     assert run.kind == "data_query"
     assert [m["caption"] for m in interp.materialized_tables()] == ["reviews"]
@@ -257,10 +257,10 @@ def test_foreach_into_defaults_to_var_plural():
         ],
     )
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.var == "r" and run.kind == "read":
-            return RunResult(completed=True, rows=[{"id": "1"}])
-        return RunResult(completed=True, reads={"v": "x"})
+            return StatementOutcome.completed("", rows=[{"id": "1"}])
+        return StatementOutcome.completed("", reads={"v": "x"})
 
     runner = ProgramRunner(execute)
     result = runner.run(program)
@@ -286,20 +286,20 @@ def test_foreach_fails_honestly_when_declared_column_missing_from_all_rows():
         ],
     )
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.var == "r" and run.kind == "read":
             # The grid rendered only ID + Status — Customer Email key never created.
-            return RunResult(completed=True, rows=[
+            return StatementOutcome.completed("", rows=[
                 {"ID": "1", "Status": "Complete"},
                 {"ID": "2", "Status": "Complete"},
             ])
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     interp = Interpreter(program)
     drive(interp, execute)
     assert interp.finish_incomplete is True
     assert interp.env["orders"].rows == []
-    assert interp.env["orders"].completed is False
+    assert not interp.env["orders"].is_completed
 
 
 def test_foreach_does_not_misfire_on_present_but_blank_column():
@@ -316,13 +316,13 @@ def test_foreach_does_not_misfire_on_present_but_blank_column():
         ],
     )
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.var == "r" and run.kind == "read":
-            return RunResult(completed=True, rows=[
+            return StatementOutcome.completed("", rows=[
                 {"ID": "1", "Coupon": ""},   # Coupon present as a key, just blank
                 {"ID": "2", "Coupon": ""},
             ])
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     interp = Interpreter(program)
     drive(interp, execute)
@@ -339,8 +339,8 @@ def test_foreach_does_not_turn_incomplete_collection_into_empty_complete_table()
     ])
     interp = Interpreter(program, collect_fn=lambda *_args, **_kwargs: None)
 
-    drive(interp, lambda run: RunResult(completed=True))
+    drive(interp, lambda run: StatementOutcome.completed(""))
 
     assert interp.finish_incomplete is True
-    assert interp.env["candidates"].completed is False
+    assert not interp.env["candidates"].is_completed
     assert interp.env["candidates"].rows == []

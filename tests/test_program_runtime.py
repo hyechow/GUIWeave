@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gui_agent.core.orchestrator.program import Finish, Program, Run
+from gui_agent.core.orchestrator.program import Finish, ForEach, Program, Run
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.schemas import Observation
@@ -36,22 +36,53 @@ def test_program_runtime_send_advances_cursor():
 
 
 def test_program_runtime_owns_recovery_and_replacement():
+    from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS
     from gui_agent.core.run.statements.outcome import StatementOutcome
 
     program = Program(goal="g", statements=[Run(name="one", kind="action")])
     rt = ProgramRuntime.start(program)
-    assert rt.can_kickback()
-    assert rt.record_kickback() == 1
+    assert rt.begin_kickback() == 1
+    for attempt in range(2, MAX_KICKBACK_REPLANS + 1):
+        assert rt.begin_kickback() == attempt
+    assert rt.begin_kickback() is None
 
     rt.send_outcome(StatementOutcome.failed("boom"))
     assert rt.finished
-    assert rt.interpreter.run_log[-1].result.failed
+    assert not rt.interpreter.run_log[-1].result.is_completed
     rt.replace_program(
         Program(goal="g2", statements=[Run(name="retry", kind="action")]),
         drop_failed_from_log=True,
     )
-    assert all(not record.result.failed for record in rt.interpreter.run_log)
+    assert all(record.result.is_completed for record in rt.interpreter.run_log)
     assert rt.current is not None and rt.current.name == "retry"
+
+
+def test_program_runtime_stamps_body_record_before_foreach_aggregate():
+    """The final foreach send appends both the body RunRecord and an aggregate.
+
+    Invocation identity belongs on the body statement, not whichever record happens to be last.
+    """
+    from gui_agent.core.run.statements.outcome import StatementOutcome
+
+    body = Run(statement_id="s1", name="per row", kind="action", var="result")
+    program = Program(
+        goal="g",
+        statements=[ForEach(var="row", over="rows", body=[body])],
+    )
+    rt = ProgramRuntime.start(
+        program,
+        collect_fn=lambda _target, _returns, *, limit=None: [{"id": "1"}],
+    )
+    assert rt.current is body
+
+    instance_id = rt.next_instance_id("s1")
+    rt.send_outcome(StatementOutcome.completed("done", verification="confirmed"))
+
+    assert len(rt.interpreter.run_log) == 2
+    body_record, aggregate_record = rt.interpreter.run_log
+    assert body_record.name == "per row"
+    assert body_record.instance_id == instance_id
+    assert aggregate_record.instance_id == ""
 
 
 def test_supervisor_step_without_reseed_raises():
@@ -64,10 +95,10 @@ def test_supervisor_step_without_reseed_raises():
 def test_supervisor_reseed_then_complete_does_not_walk_next_milestone():
     """Single-statement executor: completing one statement does not open the next."""
     from gui_agent.core.run.execution_signals import CompletionEvaluation
-    from gui_agent.core.schemas import Milestone
+    from gui_agent.core.schemas import StatementContract
 
     policy = MilestoneSupervisorPolicy()
-    first = Milestone(
+    first = StatementContract(
         id="m1",
         name="第一步",
         description="d",
@@ -75,8 +106,6 @@ def test_supervisor_reseed_then_complete_does_not_walk_next_milestone():
         kind="action",
     )
     policy.begin_statement(first, instance_id="i1")
-    policy._rt.status = "running"
-    # status lives on StatementRuntimeState
 
     decision = CompletionEvaluation(
         status="satisfied",
@@ -92,4 +121,3 @@ def test_supervisor_reseed_then_complete_does_not_walk_next_milestone():
     )
     assert step.outcome is not None and step.outcome.phase == "completed"
     assert policy._active_milestone is first
-    assert policy._rt.status == "done"

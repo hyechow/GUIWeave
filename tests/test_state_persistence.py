@@ -11,7 +11,7 @@ from gui_agent.core.schemas import (
     StatementOutcome,
     SupervisorStep,
 )
-from gui_agent.core.run.state import write_final_run_state
+from gui_agent.core.run.state import write_final_program_outcome
 from gui_agent.reports.statement_reducer import StatementReportReducer
 
 
@@ -25,24 +25,25 @@ def _context(**extra) -> PolicyContext:
     return PolicyContext.model_validate(data)
 
 
-def test_policy_context_has_no_milestone_state_fields():
-    assert "milestones" not in PolicyContext.model_fields
-    assert "milestone_states" not in PolicyContext.model_fields
+def test_policy_context_exposes_only_journal_and_program_outcome_state_domains():
+    assert {"milestones", "milestone_states", "turns", "content_notes", "run"}.isdisjoint(
+        PolicyContext.model_fields
+    )
+    assert {"journal", "outcome"}.issubset(PolicyContext.model_fields)
 
 
-def test_write_final_run_state_patches_run_block(tmp_path: Path):
+def test_write_final_program_outcome_patches_outcome_block(tmp_path: Path):
     path = tmp_path / "context.json"
     path.write_text(
         json.dumps({
             "goal": "g",
             "supervisor_policy_name": "m",
             "action_policy_name": "a",
-            "turns": [],
-            "run": {"status": "stopped"},
+            "journal": {"schema_version": 1, "events": [], "content_notes": []},
         }),
         encoding="utf-8",
     )
-    write_final_run_state(
+    write_final_program_outcome(
         path,
         {
             "execution_completed": True,
@@ -53,9 +54,12 @@ def test_write_final_run_state_patches_run_block(tmp_path: Path):
         output="done",
     )
     raw = json.loads(path.read_text(encoding="utf-8"))
-    assert raw["run"]["status"] == "completed"
-    assert raw["run"]["output"] == "done"
-    assert raw["run"]["goal_completed"] is True
+    assert raw["outcome"] == {
+        "phase": "completed",
+        "summary": "ok",
+        "verification": "confirmed",
+        "output": "done",
+    }
 
 
 def test_statement_reducer_folds_outcome_and_checklist():
@@ -91,7 +95,7 @@ def test_statement_reducer_folds_outcome_and_checklist():
             "operation_mode": "observation",
         }
     ]
-    views = StatementReportReducer().reduce(turns=turns, program={}, run_log=[])
+    views = StatementReportReducer().reduce(events=turns)
     assert len(views) == 1
     view = views[0]
     assert view.statement_id == "m1"

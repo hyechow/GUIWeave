@@ -6,7 +6,7 @@ import io
 
 from PIL import Image, ImageDraw
 
-from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.schemas import StatementContract, Observation
 from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 
@@ -22,9 +22,9 @@ def _png() -> bytes:
     return buf.getvalue()
 
 
-def _policy(task_type: str = "analysis") -> tuple[MilestoneSupervisorPolicy, Milestone]:
+def _policy(task_type: str = "analysis") -> tuple[MilestoneSupervisorPolicy, StatementContract]:
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="1",
         name="Read result count",
         description="Read the count displayed on the current page.",
@@ -32,7 +32,7 @@ def _policy(task_type: str = "analysis") -> tuple[MilestoneSupervisorPolicy, Mil
         kind="collection",
         completion_strategy="read_once",
     )
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:collection")
     policy.task_type = task_type  # type: ignore[assignment]
     return policy, milestone
 

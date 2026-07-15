@@ -8,15 +8,15 @@ def _begin(p, ms):
     p.begin_statement(ms, instance_id="i1")
     return p
 
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
 from gui_agent.core.supervisor.milestone.feasibility import FeasibilityVerdict
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.runtime import EARLY_FEASIBILITY_AT, MAX_RETRIES
 from gui_agent.core.supervisor.milestone.schemas import _ReplanResult, _SingleCheckResult
 
 
-def _ms() -> Milestone:
-    return Milestone.model_validate({
+def _ms() -> StatementContract:
+    return StatementContract.model_validate({
         "id": "m1", "name": "设置评分筛选", "description": "d",
         "success_condition": "Rating<=3 已应用", "kind": "filter",
     })
@@ -40,7 +40,6 @@ def test_kickback_when_infeasible(monkeypatch):
     assert step.outcome is not None
     assert step.outcome.phase == "infeasible"
     assert step.outcome.kickback == "逐条钻取评论详情"
-    assert p._rt.status == "failed"
 
 
 def test_no_kickback_when_feasible(monkeypatch):
@@ -50,7 +49,6 @@ def test_no_kickback_when_feasible(monkeypatch):
     ms = _ms()
     p.begin_statement(ms, instance_id="i1")
     assert p._maybe_kickback(ms, _obs_browser(), None) is None
-    assert p._rt.status != "failed"  # untouched → normal fail path runs
 
 
 def test_no_kickback_on_visual_platform_no_dom_controls(monkeypatch):
@@ -89,7 +87,7 @@ def test_navigation_target_in_semantic_inventory_cannot_be_kicked_back(monkeypat
 
     monkeypatch.setattr(feas, "judge_feasibility", _spy)
     p = MilestoneSupervisorPolicy()
-    ms = Milestone.model_validate({
+    ms = StatementContract.model_validate({
         "id": "nav-products",
         "name": "进入目标列表页面",
         "description": "d",
@@ -120,8 +118,8 @@ def test_navigation_target_in_semantic_inventory_cannot_be_kicked_back(monkeypat
 
 
 # ── Early Feasibility probe: consult the guard before the MAX_RETRIES give-up ──
-def _ms_action() -> Milestone:
-    return Milestone.model_validate({
+def _ms_action() -> StatementContract:
+    return StatementContract.model_validate({
         "id": "m1", "name": "筛选", "description": "d", "success_condition": "s", "kind": "action",
     })
 

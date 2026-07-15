@@ -6,8 +6,8 @@ program drives cleanly via a fresh Interpreter (the hot-swap the loop performs).
 
 from gui_agent.core.orchestrator import Interpreter
 from gui_agent.core.orchestrator.program import Finish, Program, Run
-from gui_agent.core.orchestrator.runner import RunRecord, RunResult
-from gui_agent.core.orchestrator.recovery import MAX_KICKBACK_REPLANS, should_kickback_replan
+from gui_agent.core.orchestrator.runner import RunRecord
+from gui_agent.core.orchestrator.recovery import should_kickback_replan
 from gui_agent.core.run.result import orchestration_result
 from gui_agent.core.schemas import PolicyContext, StatementOutcome
 
@@ -21,19 +21,15 @@ def _noop_redecompose(_d):
 
 
 def test_guard_true_when_all_conditions_met():
-    assert should_kickback_replan(_outcome("drill"), _noop_redecompose, 0) is True
+    assert should_kickback_replan(_outcome("drill"), _noop_redecompose) is True
 
 
 def test_guard_false_without_directive():
-    assert should_kickback_replan(StatementOutcome.failed("blocked"), _noop_redecompose, 0) is False
+    assert should_kickback_replan(StatementOutcome.failed("blocked"), _noop_redecompose) is False
 
 
 def test_guard_false_without_redecompose_callable():
-    assert should_kickback_replan(_outcome("drill"), None, 0) is False
-
-
-def test_guard_false_when_budget_spent():
-    assert should_kickback_replan(_outcome("drill"), _noop_redecompose, MAX_KICKBACK_REPLANS) is False
+    assert should_kickback_replan(_outcome("drill"), None) is False
 
 
 def test_redecomposed_program_drives_via_fresh_interpreter():
@@ -50,7 +46,7 @@ def test_redecomposed_program_drives_via_fresh_interpreter():
 def _rec(name: str, *, failed: bool) -> RunRecord:
     return RunRecord(
         name=name, var=None,
-        result=RunResult(completed=not failed, failed=failed, summary=name),
+        result=(StatementOutcome.failed(name) if failed else StatementOutcome.completed(name)),
     )
 
 
@@ -59,7 +55,7 @@ def test_recovered_kickback_does_not_inherit_superseded_failure(monkeypatch):
     inherits the prior run_log. If that inherited log keeps the superseded ✗ record, `interp.failed`
     stays True forever and `orchestration_result` reports goal_completed=False even though the
     re-decompose recovered and finish produced the answer. The loop now drops failed records from
-    the inherited run_log (loop.py: `[r for r in _prev_log if not r.result.failed]`)."""
+    the inherited run_log."""
     prev_log = [
         _rec("进入记录列表", failed=False),
         _rec("按目标字段筛选记录", failed=False),
@@ -73,7 +69,7 @@ def test_recovered_kickback_does_not_inherit_superseded_failure(monkeypatch):
 
     # WITH the fix: the loop filters failed records before inheritance.
     recovered = Interpreter(Program(goal="g", statements=[Finish(message="done")]))
-    recovered.run_log = [r for r in prev_log if not r.result.failed]
+    recovered.run_log = [r for r in prev_log if r.result.is_completed]
     recovered.run_log.append(_rec("逐条读取后查询符合条件的记录", failed=False))
     assert recovered.failed is False
 

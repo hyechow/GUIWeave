@@ -6,7 +6,7 @@ from gui_agent.core.run.progress_monitor import ProgressMonitor
 from gui_agent.core.run.persistence import assess_persistence
 from gui_agent.core.schemas import (
     ActionSignal,
-    Milestone,
+    StatementContract,
     MutationReceipt,
     Observation,
     PolicyTurn,
@@ -16,7 +16,6 @@ from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleChec
 from gui_agent.core.supervisor.milestone.evidence import (
     action_lifecycle_claims,
 )
-from scripts.replay_supervisor_turn import normalize_replay_context
 
 
 REPLAYS = Path(__file__).resolve().parents[1] / "evals/browser/supervisor_replay"
@@ -43,9 +42,16 @@ def _run_statements(node: object) -> list[dict]:
     return statements
 
 
-def _context(root: Path, turn_no: int) -> tuple[Milestone, list[PolicyTurn]]:
-    raw = normalize_replay_context(json.loads((root / "context.json").read_text()))
-    turns = [PolicyTurn.model_validate(item) for item in raw["turns"]]
+def _context(root: Path, turn_no: int) -> tuple[StatementContract, list[PolicyTurn]]:
+    raw = json.loads((root / "context.json").read_text())
+    turns = []
+    for item in raw["turns"]:
+        supervisor = {
+            key: value
+            for key, value in item["supervisor"].items()
+            if key in SupervisorStep.model_fields
+        }
+        turns.append(PolicyTurn.model_validate({**item, "supervisor": supervisor}))
     milestone_id = next(
         turn.supervisor.milestone_id for turn in turns if turn.index == turn_no
     )
@@ -61,19 +67,16 @@ def _context(root: Path, turn_no: int) -> tuple[Milestone, list[PolicyTurn]]:
         for field in (
             "effect_mode",
             "persistence",
-            "mutation_mode",
-            "requires_commit",
             "target_controls",
             "target_values",
         )
         if field in statement
     })
     merged["kind"] = statement.get("kind") or statement.get("run_kind") or base["kind"]
-    merged["status"] = "running"
-    return Milestone.model_validate(merged), turns
+    return StatementContract.model_validate(merged), turns
 
 
-def _fixture() -> tuple[Milestone, list[PolicyTurn], dict]:
+def _fixture() -> tuple[StatementContract, list[PolicyTurn], dict]:
     milestone, turns = _context(FIXTURE, 6)
     expected = json.loads((FIXTURE / "replay_expectation.json").read_text())
     return milestone, turns, expected
@@ -110,7 +113,7 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
     from gui_agent.adapters.browser.target_binding import active_choice_controls
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m8_action",
         name="add one configuration combination",
         description="",
@@ -176,7 +179,7 @@ def test_real_152920_choice_surface_resolves_cleanup_then_target_write() -> None
 def test_real_choice_surface_executes_multi_value_contract_as_exact_set() -> None:
     from gui_agent.adapters.browser.target_binding import active_choice_controls
 
-    milestone = Milestone(
+    milestone = StatementContract(
         id="multi-choice",
         name="add two configuration combinations",
         description="",
@@ -230,7 +233,7 @@ def test_real_205258_completed_choice_set_keeps_intermediate_transition_prepare(
     )
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m9_action",
         name="persist the declared configuration combinations",
         description="",
@@ -352,7 +355,7 @@ def test_real_111415_returned_child_commit_requires_root_commit(monkeypatch) -> 
 
     extras: list[str] = []
     policy = MilestoneSupervisorPolicy(surface_resolver=active_surface_id)
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:mutation")
     policy._monitor._last_url = prior.url
     policy._monitor._last_dom_state = prior.dom_state
     policy._single_check = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
@@ -417,7 +420,7 @@ def test_real_143530_unmet_frames_do_not_consume_recovery_retries(
         assert check.effect_status == "unmet"
 
         policy = MilestoneSupervisorPolicy()
-        policy.reseed(milestone)
+        policy.begin_statement(milestone, instance_id=f"test:mutation:{turn_no}")
         policy._monitor._last_url = prior.url
         policy._monitor._last_dom_state = prior.dom_state
         policy._single_check = lambda *_args, _check=check, **_kwargs: _check  # type: ignore[method-assign]

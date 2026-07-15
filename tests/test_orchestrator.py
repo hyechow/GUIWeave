@@ -19,7 +19,7 @@ from gui_agent.core.orchestrator import (
     Program,
     ProgramRunner,
     Run,
-    RunResult,
+    StatementOutcome,
 )
 from gui_agent.core.orchestrator.program import Compute, Query, Read
 
@@ -57,9 +57,9 @@ def _connectivity_program() -> Program:
 
 def _driver(verdict: str, reason: str = ""):
     """Mock single-milestone executor: the read milestone (var d) returns the verdict."""
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         reads = {"连通判定": verdict, "不可达原因": reason} if run.var == "d" else {}
-        return RunResult(completed=True, failed=False, reads=reads, summary=run.name)
+        return StatementOutcome.completed(run.name, reads=reads)
     return _exec
 
 
@@ -88,9 +88,9 @@ def test_reads_persist_across_runs():
         Read(var="a", name="读 A",  returns=["x"]),
         Read(var="b", name="读 B",  returns=["y"]),
     ])
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         m = {"a": {"x": "X值"}, "b": {"y": "Y值"}}
-        return RunResult(completed=True, reads=m.get(run.var or "", {}), summary=run.name)
+        return StatementOutcome.completed(run.name, reads=m.get(run.var or "", {}))
     res = ProgramRunner(_exec).run(prog)
     assert res.env["a"].reads["x"] == "X值" and res.env["b"].reads["y"] == "Y值"
     # 无 finish → auto summary 从 run_log 汇总两个读取值
@@ -102,10 +102,10 @@ def test_failed_run_stops_and_reports():
         Run(name="会失败的步骤", kind="action"),
         Run(name="不该执行的后续", kind="action"),
     ])
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         if run.name == "会失败的步骤":
-            return RunResult(completed=False, failed=True, summary="控件不可点")
-        return RunResult(completed=True)
+            return StatementOutcome.failed("控件不可点")
+        return StatementOutcome.completed("")
     res = ProgramRunner(_exec).run(prog)
     assert res.failed is True
     assert "会失败的步骤" in res.reply
@@ -121,9 +121,9 @@ def test_confirm_read_after_action_drives_final_answer():
             read_spec="建单结果：订单列表出现该行或成功提示→成功，否则失败"),
         Finish(message="建单结果：{c[建单结果]}"),
     ])
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         reads = {"建单结果": "成功"} if run.var == "c" else {}
-        return RunResult(completed=True, reads=reads, summary=run.name)
+        return StatementOutcome.completed(run.name, reads=reads)
     res = ProgramRunner(_exec).run(prog)
     assert res.reply == "建单结果：成功"          # 答复由 confirm read 的结构化值驱动
     assert res.env["c"].reads["建单结果"] == "成功"  # confirm 结果进了 env
@@ -136,7 +136,7 @@ def test_neq_condition():
            then=[Finish(message="异常：{d[状态]}")],
            otherwise=[Finish(message="一切正常")]),
     ])
-    res = ProgramRunner(lambda r: RunResult(completed=True, reads={"状态": "告警"})).run(prog)
+    res = ProgramRunner(lambda r: StatementOutcome.completed("", reads={"状态": "告警"})).run(prog)
     assert res.reply == "异常：告警"
 
 
@@ -146,7 +146,7 @@ def test_extended_condition_operators():
             Read(var="r", name="读状态",  returns=["状态", "提示", "订单号", "错误"]),
             If(cond=cond, then=[Finish(message="then")], otherwise=[Finish(message="else")]),
         ])
-        res = ProgramRunner(lambda r: RunResult(completed=True, reads=reads)).run(prog)
+        res = ProgramRunner(lambda r: StatementOutcome.completed("", reads=reads)).run(prog)
         return res.reply
 
     assert _reply({"订单号": "ORD-001"}, Cond(var="r", field="订单号", cmp="exists")) == "then"
@@ -183,7 +183,7 @@ def test_steppable_interpreter_yields_runs_and_consumes_results():
         driven.append(run.name)
         # 把 read milestone 判成不可达 → 走 finish 支
         reads = {"连通判定": "不可达", "不可达原因": "节点离线"} if run.var == "d" else {}
-        result = RunResult(completed=True, reads=reads, summary=run.name)
+        result = StatementOutcome.completed(run.name, reads=reads)
         try:
             run = gen.send(result)
         except StopIteration as e:
@@ -209,43 +209,54 @@ def test_steppable_program_with_only_finish():
     assert ei.value.value == "直接结束"
 
 
-# ── statement executors: interactive adapter + common RunResult protocol ─────────
+# ── statement executors: interactive adapter + common StatementOutcome protocol ─────────
 
 
 def test_milestone_adapter_maps_interactive_kind():
     import pytest
 
-    from gui_agent.core.run.interactive import milestone_for_run
-    nav = milestone_for_run(Run(name="进入页", kind="navigation"), 0)
+    from gui_agent.core.run.interactive import contract_for_run
+    nav = contract_for_run(Run(name="进入页", kind="navigation"), 0)
     assert nav.kind == "navigation" and nav.completion_strategy == "visible_once"
     # returns 折进 description + 结构化通道同行（milestone=函数 的出参合同）
-    ret_nav = milestone_for_run(
+    ret_nav = contract_for_run(
         Run(var="d", name="开详情", kind="navigation", returns=["连通判定", "原因"]), 3
     )
     assert "连通判定" in ret_nav.description and "原因" in ret_nav.description
     assert ret_nav.returns == ["连通判定", "原因"]
     # 查询节点不是 milestone：它由 immediate statement dispatcher 执行。
     with pytest.raises(ValueError, match="query run"):
-        milestone_for_run(Read(var="d", name="读结果", returns=["连通判定"]), 3)
+        contract_for_run(Read(var="d", name="读结果", returns=["连通判定"]), 3)
     with pytest.raises(ValueError, match="query run"):
-        milestone_for_run(Query(var="q", name="统计订单", returns=["emails"], sql="SELECT 1"), 4)
+        contract_for_run(Query(var="q", name="统计订单", returns=["emails"], sql="SELECT 1"), 4)
 
 
 def test_returning_ui_runs_get_target_specific_milestone_ids():
-    from gui_agent.core.run.interactive import milestone_for_run
+    from gui_agent.core.run.interactive import contract_for_run
 
-    first = milestone_for_run(
-        Run(var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"]),
+    # Distinct SOURCE statements (different compile-time statement_id, as the decomposer assigns)
+    # get distinct milestone ids; the id IS the stable statement_id, not a name hash.
+    first = contract_for_run(
+        Run(statement_id="s1", var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"]),
         0,
     )
-    second = milestone_for_run(
-        Run(var="d", name="打开评论 347 的详情", kind="navigation", returns=["rating"]),
+    second = contract_for_run(
+        Run(statement_id="s2", var="d", name="打开评论 347 的详情", kind="navigation", returns=["rating"]),
         0,
     )
 
+    assert first.id == "s1"
+    assert second.id == "s2"
     assert first.id != second.id
-    assert first.id.startswith("d_")
-    assert second.id.startswith("d_")
+
+    # Stability invariant (Issue 4): a name change (return-tighten mutates run.name) must NOT
+    # drift the milestone id — the invocation stays the same statement.
+    tightened = contract_for_run(
+        Run(statement_id="s1", var="d", name="打开评论 351 的详情（继续定位返回字段：rating）",
+            kind="navigation", returns=["rating"]),
+        0,
+    )
+    assert tightened.id == first.id
 
 
 def test_immediate_dispatcher_returns_milestone_statement_to_caller(tmp_path):
@@ -407,11 +418,11 @@ def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
 
 
 def test_route_identity_evidence_requires_shared_machine_identity():
-    from gui_agent.core.schemas import Milestone, Observation
+    from gui_agent.core.schemas import StatementContract, Observation
     from gui_agent.core.supervisor.milestone.execution_scope import route_identity_evidence
 
     obs = Observation(png_bytes=b"x", source="test", url="http://host/admin/item/edit/id/347/")
-    ordinary = Milestone(
+    ordinary = StatementContract(
         id="m1",
         name="进入详情页",
         description="进入详情页",
@@ -468,15 +479,15 @@ def test_task_type_for_non_ui_is_analysis():
     assert task_type_for_run(Run(name="点", kind="action")) == "action"
 
 
-def test_supervisor_reseed_single_milestone():
+def test_supervisor_begins_single_statement():
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.core.run.interactive import milestone_for_run, task_type_for_run
+    from gui_agent.core.run.interactive import contract_for_run, task_type_for_run
     p = MilestoneSupervisorPolicy()
     # S6b 后查询节点不再 marshal 成 milestone；begin 的读取门用显式 task_type 验证
     run = Read(var="d", name="读判定",  returns=["连通判定"])
     assert task_type_for_run(run) == "analysis"
     nav = Run(var="d", name="开判定页", kind="navigation")
-    p.begin_statement(milestone_for_run(nav, 0), instance_id="i1", task_type="analysis")
+    p.begin_statement(contract_for_run(nav, 0), instance_id="i1", task_type="analysis")
     assert p._active_milestone is not None and p._active_milestone.id == "d"
     assert p.task_type == "analysis"          # 读取门由 task_type 控制
     # Statement-local frame/scroll state is fresh at begin(statement).
@@ -484,24 +495,33 @@ def test_supervisor_reseed_single_milestone():
     assert p._scroll_count == 0
 
 
-def test_reseed_fresh_advance_nav_skips_initial_check():
+def test_begin_fresh_advance_nav_skips_initial_check():
     # DAG _advance parity: a freshly-advanced NAVIGATION milestone skips its first done-check
     # (in_progress by construction); action/filter keep it; a non-fresh reseed never skips.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.core.run.interactive import milestone_for_run
+    from gui_agent.core.run.interactive import contract_for_run
     p = MilestoneSupervisorPolicy()
-    p.reseed(milestone_for_run(Run(name="进页", kind="navigation"), 0), fresh_advance=True)
+    p.begin_statement(
+        contract_for_run(Run(name="进页", kind="navigation"), 0),
+        instance_id="test:nav-1",
+        fresh_advance=True,
+    )
     assert p._skip_initial_check is True                  # nav + 刚推进 → 跳 check
-    p.reseed(milestone_for_run(Run(name="点按钮", kind="action"), 1), fresh_advance=True)
+    p.end_statement()
+    p.begin_statement(
+        contract_for_run(Run(name="点按钮", kind="action"), 1),
+        instance_id="test:action-1",
+        fresh_advance=True,
+    )
     assert p._skip_initial_check is False                 # action → 保留 check（防双执行）
-    interaction = milestone_for_run(
+    interaction = contract_for_run(
         Run(name="打开详情面板", kind="action", target_controls=["Details"]),
         1,
     )
     assert interaction.effect_mode is None
     from gui_agent.core.run.execution_signals import ExecutionContract
     assert ExecutionContract.from_milestone(interaction).completion_mode == "verification"
-    mutation = milestone_for_run(
+    mutation = contract_for_run(
         Run(
             name="更新状态",
             kind="action",
@@ -511,7 +531,7 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     )
     assert mutation.effect_mode == "transform"
     assert ExecutionContract.from_milestone(mutation).completion_mode == "mutation"
-    ensure = milestone_for_run(
+    ensure = contract_for_run(
         Run(
             name="确保通知已开启",
             kind="action",
@@ -525,42 +545,53 @@ def test_reseed_fresh_advance_nav_skips_initial_check():
     assert ensure.target_controls == ["Notifications"]
     assert ensure.target_values == {"Notifications": "on"}
     assert ExecutionContract.from_milestone(ensure).completion_mode == "mutation"
-    persisted = milestone_for_run(
+    persisted = contract_for_run(
         Run(name="更新资料", kind="action", persistence="explicit_commit"),
         3,
     )
     assert persisted.persistence == "explicit_commit"
     assert persisted.effect_mode == "dispatch"
     assert ExecutionContract.from_milestone(persisted).persistence == "explicit_commit"
-    result_action = milestone_for_run(
+    result_action = contract_for_run(
         Run(name="触发检测", kind="action", returns=["result"]),
         4,
     )
     assert result_action.effect_mode == "dispatch"
     assert ExecutionContract.from_milestone(result_action).completion_mode == "mutation"
-    assert milestone_for_run(Run(name="进页", kind="navigation"), 2).effect_mode is None
-    p.reseed(milestone_for_run(Run(name="进页", kind="navigation"), 2), fresh_advance=False)
+    assert contract_for_run(Run(name="进页", kind="navigation"), 2).effect_mode is None
+    p.end_statement()
+    p.begin_statement(
+        contract_for_run(Run(name="进页", kind="navigation"), 2),
+        instance_id="test:nav-2",
+        fresh_advance=False,
+    )
     assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
     # precondition 仍是 navigation edge，不能由 checker 在无动作证据时直接判为 PreExisting。
-    p.reseed(milestone_for_run(Run(name="确保在列表页", kind="navigation", precondition=True), 3),
-             fresh_advance=True)
+    p.end_statement()
+    p.begin_statement(
+        contract_for_run(
+            Run(name="确保在列表页", kind="navigation", precondition=True), 3,
+        ),
+        instance_id="test:nav-3",
+        fresh_advance=True,
+    )
     assert p._skip_initial_check is True
 
 
-def test_legacy_effect_contract_normalizes_at_both_model_boundaries():
-    from gui_agent.core.schemas import Milestone
+def test_canonical_effect_contract_survives_both_model_boundaries():
+    from gui_agent.core.schemas import StatementContract
 
-    legacy = {
+    contract = {
         "name": "更新并保存",
         "kind": "action",
-        "mutation_mode": "change",
-        "requires_commit": True,
+        "effect_mode": "transform",
+        "persistence": "explicit_commit",
         "target_values": {"Status": "Approved"},
     }
-    run = Run.model_validate(legacy)
-    milestone = Milestone.model_validate({
-        **legacy,
-        "id": "legacy-action",
+    run = Run.model_validate(contract)
+    milestone = StatementContract.model_validate({
+        **contract,
+        "id": "canonical-action",
         "description": "",
         "success_condition": "状态已保存",
     })
@@ -573,17 +604,14 @@ def test_legacy_effect_contract_normalizes_at_both_model_boundaries():
 
 
 def test_advance_persists_done_check_on_terminal_completion():
-    # The report's 验收 panel renders context.milestone_states[id].done_check (sourced from the
-    # supervisor runtime snapshot). A single-milestone (orchestrator) completion hits _advance's
-    # TERMINAL branch — it must still save the done verdict, else the panel is empty (regression
-    # seen in 20260615_113554 after the hand-off merge).
+    # The terminal observation turn projects the live checker snapshot into the report.
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
-    from gui_agent.core.run.interactive import milestone_for_run
+    from gui_agent.core.run.interactive import contract_for_run
     from gui_agent.core.schemas import Observation
     p = MilestoneSupervisorPolicy()
-    ms = milestone_for_run(Run(name="进首页", kind="navigation"), 0)
-    p.reseed(ms)                                          # single milestone, orchestrator style
+    ms = contract_for_run(Run(name="进首页", kind="navigation"), 0)
+    p.begin_statement(ms, instance_id="test:terminal")
     check = _SingleCheckResult(status="done", effect_status="confirmed", reason="已进入首页", summary="首页")
     p._last_check = check
     obs = Observation(png_bytes=b"x", source="test")
@@ -603,12 +631,12 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
     # Mutation/write milestones must not complete solely because the current
     # frame already contains the target value. They need an executed action in
     # this milestone, otherwise dirty state can swallow the write.
-    from gui_agent.core.schemas import Milestone, Observation, SupervisorStep
+    from gui_agent.core.schemas import StatementContract, Observation, SupervisorStep
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 
     p = MilestoneSupervisorPolicy()
-    ms = Milestone(
+    ms = StatementContract(
         id="m1",
         name="将价格更新为 64.88 并保存",
         description="将价格更新为 64.88 并保存",
@@ -616,7 +644,7 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
         success_condition="页面显示保存成功提示，Price 字段已更新为 64.88",
         effect_mode="transform",
     )
-    p.reseed(ms)
+    p.begin_statement(ms, instance_id="test:transform")
     monkeypatch.setattr(
         p,
         "_single_check",
@@ -923,9 +951,9 @@ def test_exact_to_fuzzy_fallback_is_structural_if():
     assert validate_program(prog) == []           # structural form validates (read_spec present)
 
     interp = Interpreter(prog)
-    interp.env["f1"] = RunResult(reads={"match_count": "0"})
+    interp.env["f1"] = StatementOutcome.completed("", reads={"match_count": "0"})
     assert interp._eval(prog.statements[1].cond) is True    # 0 records → keyword fallback fires
-    interp.env["f1"] = RunResult(reads={"match_count": "3"})
+    interp.env["f1"] = StatementOutcome.completed("", reads={"match_count": "3"})
     assert interp._eval(prog.statements[1].cond) is False   # non-zero → skip fallback
 
 
@@ -1010,9 +1038,9 @@ def test_if_branches_on_structured_reads_end_to_end():
            then=[Run(name="建单", kind="action")],
            otherwise=[Finish(message="不可达")]),
     ])
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         reads = {"连通判定": "连通"} if run.var == "d" else {}
-        return RunResult(completed=True, reads=reads, summary=run.name)
+        return StatementOutcome.completed(run.name, reads=reads)
     res = ProgramRunner(_exec).run(prog)
     assert any(r.name == "建单" for r in res.run_log)   # 连通 → 建单（结构化 reads 驱动分支）
     assert res.reply != "不可达"
@@ -1034,10 +1062,10 @@ def test_run_text_templated_from_prior_read_reaches_executor_filled():
             success_condition="{r[实际名称]} 的预设站点已为 s10"),
     ])
     seen: list[Run] = []
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         seen.append(run)
         reads = {"实际名称": "lucas-10003"} if run.var == "r" else {}
-        return RunResult(completed=True, reads=reads, summary=run.name)
+        return StatementOutcome.completed(run.name, reads=reads)
     res = ProgramRunner(_exec).run(prog)
     edit = seen[-1]
     assert edit.name == "编辑机器人 lucas-10003，设预设站点 s10"   # {r[实际名称]} 已被 env 填好
@@ -1063,10 +1091,10 @@ def test_run_target_template_empty_value_fails_fast_not_silent_gap():
         Run(name="编辑机器人 {r[实际名称]}，设预设站点 s10", kind="action"),
     ])
     seen: list[str] = []
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         seen.append(run.name)
         reads = {"实际名称": ""} if run.var == "r" else {}   # read 读不到该值
-        return RunResult(completed=True, reads=reads, summary=run.name)
+        return StatementOutcome.completed(run.name, reads=reads)
     res = ProgramRunner(_exec).run(prog)
     assert res.failed is True                                  # 程序诚实失败
     assert not any("编辑机器人" in n for n in seen)            # 空指代的 action 没被驱动
@@ -1081,9 +1109,9 @@ def test_run_acceptance_gate_template_empty_is_lenient():
         Run(name="点击保存", kind="action", success_condition="{r[名称]} 已保存"),  # 仅门里有引用
     ])
     seen: list[str] = []
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         seen.append(run.name)
-        return RunResult(completed=True, reads={"名称": ""} if run.var == "r" else {}, summary=run.name)
+        return StatementOutcome.completed(run.name, reads={"名称": ""} if run.var == "r" else {})
     res = ProgramRunner(_exec).run(prog)
     assert res.failed is False
     assert "点击保存" in seen                                  # name 具体 → 照常驱动
@@ -1218,9 +1246,9 @@ def test_finish_on_entirely_empty_read_is_incomplete():
             read_spec="读 Last Search Terms 表格前两行"),
         Finish(message="商店的前 2 个搜索词是：{r[Top Search Terms]}"),
     ])
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         reads = {"Top Search Terms": ""} if run.var == "r" else {}   # 读不到 → 空
-        return RunResult(completed=True, reads=reads, summary=run.name)
+        return StatementOutcome.completed(run.name, reads=reads)
     res = ProgramRunner(_exec).run(prog)
     assert res.finish_incomplete is True          # 整条 read 全空 → 不算答出
     assert res.failed is False                    # 但程序确实跑完了（区别于 milestone 失败）
@@ -1236,9 +1264,9 @@ def test_finish_citing_blank_field_of_nonempty_read_not_incomplete():
             read_spec="连通判定看图标；不可达原因可达时留空"),
         Finish(message="不可达原因：{d[不可达原因]}"),   # 引用的恰好是空字段，但另一字段非空
     ])
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         reads = ({"连通判定": "可达", "不可达原因": ""} if run.var == "d" else {})
-        return RunResult(completed=True, reads=reads, summary=run.name)
+        return StatementOutcome.completed(run.name, reads=reads)
     res = ProgramRunner(_exec).run(prog)
     assert res.finish_incomplete is False         # 整条非全空 → 合法答复
 
@@ -1249,5 +1277,5 @@ def test_finish_with_no_refs_is_not_incomplete():
         Read(var="r", name="读",  returns=["x"], read_spec="y"),
         Finish(message="任务已完成"),   # 不引用任何 read
     ])
-    res = ProgramRunner(lambda run: RunResult(completed=True, reads={"x": ""})).run(prog)
+    res = ProgramRunner(lambda run: StatementOutcome.completed("", reads={"x": ""})).run(prog)
     assert res.finish_incomplete is False

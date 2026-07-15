@@ -22,7 +22,7 @@ from gui_agent.core.orchestrator import (
     Interpreter,
     Program,
     Run,
-    RunResult,
+    StatementOutcome,
     drive,
 )
 from gui_agent.core.orchestrator.primitives.safe_eval import SafeEvalError, safe_eval
@@ -57,12 +57,12 @@ def test_185_function_call_per_row_with_compute():
     rows = [{"Name": "Minerva LumaTech V-Tee-XS-Blue"}, {"Name": "Eos V-Neck Hoodie-S-Blue"}]
     seen_milestones: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.kind == "read":
             seen_milestones.append(run.name)  # the {base} was substituted by the interpreter
             brand = "Minerva" if "Minerva" in run.name else "Eos"
-            return RunResult(completed=True, reads={"material": _MATERIAL_OF[brand]})
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", reads={"material": _MATERIAL_OF[brand]})
+        return StatementOutcome.completed("")
 
     interp = Interpreter(program, collect_fn=lambda t, r, limit=None: rows)
     drive(interp, execute)
@@ -101,9 +101,9 @@ def test_compute_accepts_braced_scalar_refs():
     rows = [{"SKU": "WS08-XS-Blue"}, {"SKU": "WH11-S-Blue"}]
     seen: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)  # the {base} must be the non-empty derived parent SKU
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     interp = Interpreter(program, collect_fn=lambda t, r, limit=None: rows)
     drive(interp, execute)
@@ -170,16 +170,16 @@ def _drive_qty3(self_material_by_sku: dict[str, str]) -> tuple[list[dict], list[
     opened: list[str] = []
     url_to_sku = {row["Action_url"]: row["SKU"] for row in rows}
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if "material" in run.returns:
             opened.append(run.name)
             if "开父" in run.name:
-                return RunResult(completed=True, reads={"material": "ParentMat"})
+                return StatementOutcome.completed("", reads={"material": "ParentMat"})
             url = run.name.split("打开 ", 1)[1].split("，", 1)[0]
             sku = url_to_sku[url]
-            return RunResult(completed=True, reads={"material": self_material_by_sku.get(sku, "")})
+            return StatementOutcome.completed("", reads={"material": self_material_by_sku.get(sku, "")})
         opened.append(run.name)
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     drive(interp, execute)
     return interp.env["out"].rows, opened
@@ -353,14 +353,14 @@ def test_function_callable_from_main_not_loop_bound():
         ],
     )
     interp = Interpreter(program)
-    reply = drive(interp, lambda run: RunResult(completed=True))
+    reply = drive(interp, lambda run: StatementOutcome.completed(""))
     assert reply == "hi world"
 
 
 def test_unknown_function_fails_honestly():
     program = Program(statements=[Call(func="nope", args={}, var="x"), Finish(message="done")])
     interp = Interpreter(program)
-    reply = drive(interp, lambda run: RunResult(completed=True))
+    reply = drive(interp, lambda run: StatementOutcome.completed(""))
     assert "未定义的函数" in reply or "未定义" in reply
 
 
@@ -373,7 +373,7 @@ def test_call_recursion_is_bounded():
         statements=[Call(func="loop", args={}, var="r0"), Finish(message="done")],
     )
     interp = Interpreter(program)
-    reply = drive(interp, lambda run: RunResult(completed=True))
+    reply = drive(interp, lambda run: StatementOutcome.completed(""))
     assert "嵌套过深" in reply
 
 
@@ -421,11 +421,11 @@ def test_compute_reads_env_run_result_fields():
     ])
     seen: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)
         if run.var == "product_detail":
-            return RunResult(completed=True, reads={"current_price": "150.00"})
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", reads={"current_price": "150.00"})
+        return StatementOutcome.completed("")
 
     reply = drive(Interpreter(program), execute)
     # The fill action reached the executor with the EXACT computed value — not "新值", not empty.
@@ -443,9 +443,9 @@ def test_fill_fails_fast_on_empty_compute_scalar():
     ])
     executed: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         executed.append(run.name)
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     reply = drive(Interpreter(program), execute)
     assert executed == []  # the gap-named milestone never reached the executor
@@ -479,11 +479,11 @@ def test_compute_scope_exposes_read_fields_bare_and_dotted():
         ])
         seen: list[str] = []
 
-        def execute(run: Run) -> RunResult:
+        def execute(run: Run) -> StatementOutcome:
             seen.append(run.name)
             if run.var == "variant_row":
-                return RunResult(completed=True, reads={"current_price": "75.00"})
-            return RunResult(completed=True)
+                return StatementOutcome.completed("", reads={"current_price": "75.00"})
+            return StatementOutcome.completed("")
 
         drive(Interpreter(program), execute)
         assert seen[-1] == "将 Price 更新为 64.88 并保存", f"expr {expr!r} → {seen[-1]!r}"
@@ -503,9 +503,9 @@ def test_compute_template_field_braces_in_foreach_body():
     ])
     seen: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         seen.append(run.name)
-        return RunResult(completed=True)
+        return StatementOutcome.completed("")
 
     rows = [{"sku": "WP09-28-Blue", "price": "75.00"}, {"sku": "WP09-28-Gray", "price": "$75.00"}]
     drive(Interpreter(program, collect_fn=lambda target, cols, limit=None: rows), execute)
@@ -532,11 +532,11 @@ def test_compute_single_field_read_var_usable_as_scalar():
         ])
         seen: list[str] = []
 
-        def execute(run: Run) -> RunResult:
+        def execute(run: Run) -> StatementOutcome:
             seen.append(run.name)
             if run.var == "p":
-                return RunResult(completed=True, reads={"price": "$75.00"})
-            return RunResult(completed=True)
+                return StatementOutcome.completed("", reads={"price": "$75.00"})
+            return StatementOutcome.completed("")
 
         drive(Interpreter(program), execute)
         assert seen[-1] == "更新为 64.875 保存", f"{expr!r} → {seen[-1]!r}"

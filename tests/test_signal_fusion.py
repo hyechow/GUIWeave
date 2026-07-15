@@ -7,7 +7,7 @@ from gui_agent.core.run.execution_signals import (
 from gui_agent.core.run.persistence import PersistenceAssessment, assess_persistence
 from gui_agent.core.schemas import (
     ActionSignal,
-    Milestone,
+    StatementContract,
     MutationReceipt,
     Observation,
     PolicyTurn,
@@ -186,7 +186,7 @@ def test_action_metadata_preserves_structured_commit_role_and_family():
 
     role, family = action_metadata(
         plan,
-        Milestone(
+        StatementContract(
             id="filter",
             name="submit filter",
             description="",
@@ -209,7 +209,7 @@ def test_persisted_mutation_keeps_transaction_role_separate_from_ui_family():
 
     role, family = action_metadata(
         plan,
-        Milestone(
+        StatementContract(
             id="persisted",
             name="update collection and save",
             description="",
@@ -226,7 +226,7 @@ def test_persisted_mutation_keeps_transaction_role_separate_from_ui_family():
 
 
 def test_persisted_mutation_projects_pending_commit_without_rejecting_proposals():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -248,7 +248,7 @@ def test_persisted_mutation_projects_pending_commit_without_rejecting_proposals(
 
 
 def test_persistence_projection_does_not_compare_control_names():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -267,7 +267,7 @@ def test_persistence_projection_does_not_compare_control_names():
 
 
 def test_pending_persistence_without_terminal_readiness_allows_forward_prepare():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -317,7 +317,7 @@ def test_pending_persistence_without_terminal_readiness_allows_forward_prepare()
 
 
 def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -359,7 +359,7 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
 
 
 def test_terminal_ready_rejects_repeated_noncommit_proposals():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -401,12 +401,12 @@ def test_terminal_ready_rejects_repeated_noncommit_proposals():
     assert "non-commit proposal rejected" in step.summary
     assert any(
         "terminal persistence is pending" in item
-        for item in policy.constraints_snapshot("milestone:persisted")
+        for item in policy.constraints_snapshot("i1/statement")
     )
 
 
 def test_complete_write_receipts_keep_child_workflow_moving_forward():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="persisted",
         name="materialize declared choices and save",
         description="",
@@ -458,7 +458,7 @@ def test_complete_write_receipts_keep_child_workflow_moving_forward():
 
 
 def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="persisted",
         name="prepare one declared combination and save",
         description="",
@@ -499,7 +499,7 @@ def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
 
 
 def test_persistence_uses_structured_role_not_instruction_vocabulary():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m",
         name="perform mutation",
         description="",
@@ -531,7 +531,7 @@ def test_persistence_uses_structured_role_not_instruction_vocabulary():
 
 
 def test_persistence_does_not_treat_nested_commit_as_terminal():
-    milestone = Milestone(
+    milestone = StatementContract(
         id="persisted",
         name="persist mutation",
         description="",

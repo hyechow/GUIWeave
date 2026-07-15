@@ -9,13 +9,13 @@ knowledge at all — it only needs navigation/flow structure.)
 
 from __future__ import annotations
 
-from gui_agent.core.schemas import Milestone
+from gui_agent.core.schemas import StatementContract
 from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
 
 def _ms():
-    return Milestone.model_validate(
+    return StatementContract.model_validate(
         {"id": "x", "name": "配置", "description": "d", "success_condition": "s", "kind": "action"}
     )
 

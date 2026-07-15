@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from gui_agent.core.run.execution_signals import CompletionEvaluation
-from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.run.statement_runtime import StatementRuntimeState
+from gui_agent.core.schemas import StatementContract, Observation
 from gui_agent.core.supervisor.milestone.execution_scope import (
     resource_identity_from_url,
 )
@@ -49,24 +50,13 @@ def test_every_advance_call_supplies_satisfied_completion_evidence():
         )
 
 
-def test_done_state_writes_are_limited_to_completion_or_explicit_delegation():
-    owners: list[tuple[str, int]] = []
-    for function in _function_nodes(_policy_tree()):
-        for node in ast.walk(function):
-            # status="done" now goes through _set_status("done")
-            if isinstance(node, ast.Call):
-                func = node.func
-                if (
-                    isinstance(func, ast.Attribute)
-                    and func.attr == "_set_status"
-                    and node.args
-                    and isinstance(node.args[0], ast.Constant)
-                    and node.args[0].value == "done"
-                ):
-                    owners.append((function.name, node.lineno))
+def test_statement_runtime_has_no_parallel_terminal_status():
+    policy_source = POLICY_PATH.read_text(encoding="utf-8")
 
-    assert owners
-    assert {name for name, _line in owners} <= {"_advance", "_complete_statement", "_set_status"}
+    assert "status" not in StatementRuntimeState.__dataclass_fields__
+    assert "_set_status" not in policy_source
+    assert "StatementOutcome.completed" in policy_source
+    assert "StatementOutcome.failed" in policy_source
 
 
 def test_advance_requires_keyword_only_complete_decision():
@@ -77,7 +67,7 @@ def test_advance_requires_keyword_only_complete_decision():
     assert decision_param.default is inspect.Parameter.empty
 
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone.model_validate({
+    milestone = StatementContract.model_validate({
         "id": "m",
         "name": "perform one statement",
         "description": "",

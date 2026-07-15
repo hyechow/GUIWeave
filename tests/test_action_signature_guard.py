@@ -5,7 +5,7 @@ proposal is not rejected merely because a previous instruction or value looked s
 """
 
 from gui_agent.adapters.browser.actions import BrowserActionDecision
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
@@ -31,8 +31,8 @@ def _policy(reworded_instruction: str) -> MilestoneSupervisorPolicy:
     return p
 
 
-def _ms() -> Milestone:
-    return Milestone.model_validate(
+def _ms() -> StatementContract:
+    return StatementContract.model_validate(
         {"id": "m1", "name": "筛选产品", "description": "d", "success_condition": "s", "kind": "action"}
     )
 

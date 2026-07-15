@@ -3,7 +3,7 @@ import pytest
 from gui_agent.core.run.mutation import authorize_mutation, resolve_mutation
 from gui_agent.core.schemas import (
     ActionSignal,
-    Milestone,
+    StatementContract,
     MutationReceipt,
     Observation,
     PolicyTurn,
@@ -11,8 +11,8 @@ from gui_agent.core.schemas import (
 )
 
 
-def _milestone(**values: str) -> Milestone:
-    return Milestone(
+def _milestone(**values: str) -> StatementContract:
+    return StatementContract(
         id="m",
         name="ensure one option",
         description="",
@@ -43,7 +43,7 @@ def _subject(
     *,
     coverage: str = "complete",
     history: list[PolicyTurn] | None = None,
-    milestone: Milestone | None = None,
+    milestone: StatementContract | None = None,
 ):
     observation = Observation(
         png_bytes=b"frame",

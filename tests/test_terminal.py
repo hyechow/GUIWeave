@@ -24,14 +24,14 @@ def _context(step: SupervisorStep) -> PolicyContext:
         goal="完成任务",
         supervisor_policy_name="milestone",
         action_policy_name="browser",
-        turns=[
+        journal={"events": [
             PolicyTurn(
                 index=1,
                 observation_source="screen.png",
                 supervisor=step,
                 executed=False,
             )
-        ],
+        ]},
     )
 
 
@@ -63,6 +63,7 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
         context=_context(step),
         finish=lambda value: {"wrapped": value},
         say=messages.append,
+        end_statement=lambda _outcome: None,
     )
 
     assert read_state.calls == ["drain", ("flush", 3)]
@@ -93,6 +94,7 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
         context=_context(step),
         finish=lambda value: value,
         say=messages.append,
+        end_statement=lambda _outcome: None,
     )
 
     assert read_state.calls == ["drain", ("flush", 4)]

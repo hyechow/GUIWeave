@@ -28,102 +28,32 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from gui_agent.adapters.browser.factory import _build_action_policy, _build_supervisor
 from gui_agent.core.run.context import load_observation_snapshot
-from gui_agent.core.schemas import Milestone, PolicyContext, PolicyTurn
+from gui_agent.core.schemas import StatementContract, PolicyContext, PolicyTurn
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
 
-def normalize_replay_context(raw: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade captured pre-Outcome turns at the offline replay boundary.
-
-    Runtime schemas stay strict; historical fixtures are translated only by the tool
-    whose explicit job is replaying historical captures.
-    """
-    for turn in raw.get("turns") or []:
-        supervisor = turn.get("supervisor") if isinstance(turn, dict) else None
-        if not isinstance(supervisor, dict):
-            continue
-        stop = bool(supervisor.pop("stop", False))
-        reason = str(supervisor.pop("stop_reason", "") or "")
-        completed = bool(supervisor.pop("goal_completed", False))
-        verification = str(supervisor.pop("completion_status", "") or "")
-        kickback = str(supervisor.pop("replan_directive", "") or "")
-        supervisor.pop("target_group_id", None)
-        if kickback:
-            supervisor["outcome"] = {
-                "phase": "infeasible",
-                "summary": reason or supervisor.get("summary") or "statement infeasible",
-                "kickback": kickback,
-            }
-        elif completed:
-            supervisor["outcome"] = {
-                "phase": "completed",
-                "summary": reason or supervisor.get("summary") or "statement completed",
-                "verification": (
-                    "accepted_unverified"
-                    if verification == "accepted_unverified"
-                    else "confirmed"
-                ),
-            }
-        elif stop:
-            supervisor["outcome"] = {
-                "phase": "failed",
-                "summary": reason or supervisor.get("summary") or "statement failed",
-            }
-    return raw
-
-
-def _run_statements(node: object) -> list[dict[str, Any]]:
-    statements: list[dict[str, Any]] = []
-    if isinstance(node, dict):
-        if node.get("op") == "run":
-            statements.append(node)
-        for value in node.values():
-            statements.extend(_run_statements(value))
-    elif isinstance(node, list):
-        for value in node:
-            statements.extend(_run_statements(value))
-    return statements
-
-
-def _milestone_for_turn(raw: dict[str, Any], turn: PolicyTurn) -> Milestone:
+def _milestone_for_turn(raw: dict[str, Any], turn: PolicyTurn) -> StatementContract:
     step = turn.supervisor
     if step is None or not step.milestone_id:
         raise ValueError(f"turn {turn.index} has no milestone supervisor decision")
-    base = next(
-        (item for item in raw.get("milestones", []) if item.get("id") == step.milestone_id),
-        None,
-    )
-    if base is None:
-        raise ValueError(f"milestone {step.milestone_id!r} is absent from context.json")
-
-    matches = [
-        statement
-        for statement in _run_statements(raw.get("orchestrator"))
-        if statement.get("name") == base.get("name")
-    ]
-    statement = matches[-1] if matches else {}
-    merged = dict(base)
-    kind = statement.get("kind") or statement.get("run_kind")
-    if kind:
-        merged["kind"] = kind
-    for field in (
-        "precondition",
-        "mutation_mode",
-        "requires_commit",
-        "effect_mode",
-        "persistence",
-        "target_controls",
-        "target_values",
-        "returns",
-        "read_spec",
-    ):
-        # Older run logs serialized unset optional enum fields as an empty string.
-        # Treat those as absent so a replay exercises current policy rather than
-        # failing while reconstructing the milestone schema.
-        if field in statement and statement[field] not in (None, ""):
-            merged[field] = statement[field]
-    merged["status"] = "running"
-    return Milestone.model_validate(merged)
+    info: object = turn.statement
+    if info is None:
+        info = next(
+            (
+                candidate.get("statement")
+                for candidate in (raw.get("journal") or {}).get("events", [])
+                if candidate.get("statement_instance_id") == turn.statement_instance_id
+                and candidate.get("statement") is not None
+            ),
+            None,
+        )
+    if info is None:
+        raise ValueError(
+            f"statement invocation {turn.statement_instance_id!r} has no StatementInfo"
+        )
+    if hasattr(info, "model_dump"):
+        info = info.model_dump(mode="json")
+    return StatementContract.model_validate(info)
 
 
 def _load_snapshot(run_dir: Path, turn: int):
@@ -202,7 +132,7 @@ def _configure_knowledge(supervisor: Any, context: PolicyContext) -> None:
 
 
 def _expectation_failures(
-    expectation: dict[str, Any], decision: Any, milestone: Milestone
+    expectation: dict[str, Any], decision: Any, milestone: StatementContract
 ) -> list[str]:
     failures: list[str] = []
     outcome = decision.outcome
@@ -366,20 +296,24 @@ def main() -> int:
         parser.error("--turn is required when no replay expectation supplies it")
 
     raw = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
-    context = PolicyContext.model_validate(normalize_replay_context(raw))
-    target_turn = next((turn for turn in context.turns if turn.index == target_index), None)
+    context = PolicyContext.model_validate(raw)
+    target_turn = next((turn for turn in context.journal.events if turn.index == target_index), None)
     if target_turn is None:
         raise ValueError(f"turn {target_index} is absent from {run_dir / 'context.json'}")
     if (context.platform or "browser") != "browser":
         raise ValueError("this replay runner currently supports the browser supervisor only")
 
     observation = _load_snapshot(run_dir, target_index)
-    history = [turn for turn in context.turns if turn.index < target_index]
+    history = [turn for turn in context.journal.events if turn.index < target_index]
     milestone = _milestone_for_turn(raw, target_turn)
     supervisor = _build_supervisor(context.supervisor_policy_name)
     _configure_knowledge(supervisor, context)
     supervisor._goal = context.goal
-    supervisor.reseed(milestone, task_type=context.task_type or "action")
+    supervisor.begin_statement(
+        milestone,
+        instance_id=target_turn.statement_instance_id,
+        task_type=context.task_type or "action",
+    )
     warnings = _restore_monitor(supervisor, run_dir, history, target_index)
 
     decision = supervisor.step(observation, context.goal, history)

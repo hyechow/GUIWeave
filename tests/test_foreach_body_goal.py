@@ -16,7 +16,7 @@ from gui_agent.core.orchestrator import (
     Program,
     Query,
     Run,
-    RunResult,
+    StatementOutcome,
     drive,
 )
 from gui_agent.core.orchestrator.validator import validate_program
@@ -60,11 +60,11 @@ def test_body_goal_decomposes_per_row_and_merges_contract():
             Read(var="d", name=f"读父产品主材质::{goal}",  returns=["material"]),
         ])
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.kind == "read" and "读父产品主材质" in run.name:
             brand = "Minerva" if "Minerva" in run.name else "Eos"
-            return RunResult(completed=True, reads={"material": _MATERIAL_OF[brand]})
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", reads={"material": _MATERIAL_OF[brand]})
+        return StatementOutcome.completed("")
 
     interp = Interpreter(program, collect_fn=collect_fn, subdecompose_fn=subdecompose_fn)
     drive(interp, execute)
@@ -191,7 +191,7 @@ def test_body_goal_output_fields_collect_compute_scalars():
         ])
 
     interp = Interpreter(program, collect_fn=collect_fn, subdecompose_fn=subdecompose_fn)
-    drive(interp, lambda run: RunResult(completed=True))
+    drive(interp, lambda run: StatementOutcome.completed(""))
 
     assert interp.env["updates"].rows == [
         {"sku": "A-28", "price": "100", "new_price": "86.5"},
@@ -271,11 +271,11 @@ def test_body_present_executes_body_not_subdecompose():
     def collect_fn(target, returns, limit=None):
         return [{"Name": "Minerva"}, {"Name": "Eos"}]
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.kind == "read":
             brand = "Minerva" if "Minerva" in run.name else "Eos"
-            return RunResult(completed=True, reads={"material": _MATERIAL_OF[brand]})
-        return RunResult(completed=True)
+            return StatementOutcome.completed("", reads={"material": _MATERIAL_OF[brand]})
+        return StatementOutcome.completed("")
 
     interp = Interpreter(
         program, collect_fn=collect_fn,
@@ -298,8 +298,8 @@ def test_body_goal_without_subdecompose_fn_fails_honestly():
         collect_fn=lambda t, r, limit=None: [{"Name": "Minerva LumaTech V-Tee-XS-Blue"}],
         subdecompose_fn=None,
     )
-    drive(interp, lambda run: RunResult(completed=True))
-    assert interp.env["materials"].completed is False
+    drive(interp, lambda run: StatementOutcome.completed(""))
+    assert not interp.env["materials"].is_completed
     assert interp.finish_incomplete is True
 
 
@@ -320,9 +320,9 @@ def test_body_goal_one_level_only():
         collect_fn=lambda t, r, limit=None: [{"Name": "Minerva LumaTech V-Tee-XS-Blue"}],
         subdecompose_fn=subdecompose_fn,
     )
-    drive(interp, lambda run: RunResult(completed=True))
+    drive(interp, lambda run: StatementOutcome.completed(""))
     # the inner foreach was driven (depth 1) but its body_goal could NOT spawn another sub-goal
-    assert interp.env["inner"].completed is False
+    assert not interp.env["inner"].is_completed
 
 
 # ── validator guards ────────────────────────────────────────────────────────────

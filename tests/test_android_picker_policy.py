@@ -12,7 +12,7 @@ from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILE
 from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
 from gui_agent.adapters.android.policies import AndroidActionPolicy
 from gui_agent.core.schemas import (
-    Milestone,
+    StatementContract,
     Observation,
     PolicyTurn,
     StatementOutcome,
@@ -20,7 +20,7 @@ from gui_agent.core.schemas import (
 )
 from gui_agent.core.orchestrator.passes import normalize_goal_value_contracts
 from gui_agent.core.orchestrator.program import Program, Run
-from gui_agent.core.run.interactive import milestone_for_run
+from gui_agent.core.run.interactive import contract_for_run
 from gui_agent.core.supervisor.milestone.model_io import _build_msgs
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.run.progress_monitor import ProgressAssessment, ProgressMonitor
@@ -260,7 +260,7 @@ def test_android_picker_drag_steps_use_shortest_hour_direction():
 
 def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m4",
         name="确认上午时段并保存",
         description="确保闹钟设定为上午，然后点击保存按钮完成创建。",
@@ -309,7 +309,7 @@ def test_alarm_time_value_milestone_defaults_to_converge_strategy():
         success_condition="闹钟的时间显示为06:30且AM标识已选中。",
         kind="action",
     )
-    assert milestone_for_run(run, 0).completion_strategy == "repeat_until_satisfied"
+    assert contract_for_run(run, 0).completion_strategy == "repeat_until_satisfied"
 
 
 def test_alarm_goal_period_is_preserved_after_decompose_patch():
@@ -377,7 +377,7 @@ def test_goal_name_field_is_preserved_after_decompose_patch():
 
 def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m2",
         name="设置闹钟时间",
         description="将闹钟时间设置为 06:30",

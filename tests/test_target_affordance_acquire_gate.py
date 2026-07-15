@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import gui_agent.core.supervisor.milestone.llm_runtime as policy_mod
 import gui_agent.core.supervisor.milestone.policy as supervisor_policy_mod
-from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.schemas import StatementContract, Observation
 from gui_agent.core.supervisor.milestone.acquisition import TargetAcquireController
 
 
@@ -10,13 +10,13 @@ class _CheckerReached(Exception):
     pass
 
 
-def _acquire_plan(controls: list[dict], milestone: Milestone):
+def _acquire_plan(controls: list[dict], milestone: StatementContract):
     controller = TargetAcquireController()
     return controller.decide(controls, milestone, scope=milestone.id).plan
 
 
-def _notify_milestone() -> Milestone:
-    return Milestone(
+def _notify_milestone() -> StatementContract:
+    return StatementContract(
         id="m_notify",
         name=(
             "在 'Notes for this Order' 表单的 Comment 栏填入 'sorry we are bankrupt'，"
@@ -80,7 +80,7 @@ def test_policy_acquire_gate_bypasses_checker_for_known_offscreen_controls(monke
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
     policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.reseed(_notify_milestone())
+    policy.begin_statement(_notify_milestone(), instance_id="test:acquire")
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
         source="browser",
@@ -158,10 +158,10 @@ def test_target_acquire_scrolls_to_offscreen_rich_editor_after_section_expanded(
     assert "Short Description" in plan.instruction
 
 
-def _return_location_milestone() -> Milestone:
+def _return_location_milestone() -> StatementContract:
     # After a terminal Submit succeeded and redirected, the return-contract recovery re-opens the
     # milestone to locate the return field, leaking the field name into the milestone text.
-    return Milestone(
+    return StatementContract(
         id="m_submit",
         name="点 Submit Shipment（继续定位返回字段：submit_status）",
         description="提交发货单后读取 submit_status",
@@ -194,7 +194,7 @@ def test_acquire_gate_ignores_status_substring_of_submit_status() -> None:
 
 def test_acquire_gate_still_matches_standalone_status_control() -> None:
     # But a milestone that genuinely targets a standalone "Status" control still acquires it.
-    ms = Milestone(
+    ms = StatementContract(
         id="m_status",
         name="将 Status 下拉设为 Processing",
         description="",
@@ -207,8 +207,8 @@ def test_acquire_gate_still_matches_standalone_status_control() -> None:
     assert plan.direction == "down"
 
 
-def _description_milestone() -> Milestone:
-    return Milestone(
+def _description_milestone() -> StatementContract:
+    return StatementContract(
         id="m_description",
         name="在 Content 区将 Short Description 字段更新为 3 customer(s) love it! 并保存",
         description="",
@@ -218,8 +218,8 @@ def _description_milestone() -> Milestone:
     )
 
 
-def _description_without_section_milestone() -> Milestone:
-    return Milestone(
+def _description_without_section_milestone() -> StatementContract:
+    return StatementContract(
         id="m_description",
         name="将 Short Description 更新为 3 customer(s) love it! 并保存",
         description="",
@@ -380,7 +380,7 @@ def test_named_section_below_wins_over_visible_same_name_fields() -> None:
                 "rect": {"x": 356, "y": 834},
             },
         ],
-        Milestone(
+        StatementContract(
             id="m-config",
             name="在 Configurations 区域生成 green + XXXL 组合并保存",
             description="在 Configurations 区域生成 green + XXXL 组合并保存",
@@ -405,7 +405,7 @@ def test_policy_named_section_precedes_flat_target_affordance(monkeypatch) -> No
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m-config",
         name="在 Configurations 区域生成 green + XXXL 组合并保存",
         description="在 Configurations 区域生成 green + XXXL 组合并保存",
@@ -414,7 +414,7 @@ def test_policy_named_section_precedes_flat_target_affordance(monkeypatch) -> No
         target_controls=["Configurations", "Color"],
     )
     policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:acquire")
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
         source="browser",
@@ -461,7 +461,7 @@ def test_policy_collapsed_section_is_acquired_before_checker(monkeypatch) -> Non
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
     policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.reseed(_description_milestone())
+    policy.begin_statement(_description_milestone(), instance_id="test:acquire")
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
         source="browser",
@@ -484,7 +484,7 @@ def test_policy_collapsed_section_is_acquired_before_checker(monkeypatch) -> Non
 
 
 def test_semantic_collection_query_resolves_unique_visual_section() -> None:
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m-config",
         name="在配置集合中添加组合",
         description="",
@@ -526,7 +526,7 @@ def test_semantic_collection_query_resolves_unique_visual_section() -> None:
 
 
 def test_target_values_do_not_participate_in_position_binding() -> None:
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m-config",
         name="更新配置",
         description="",
@@ -548,7 +548,7 @@ def test_target_values_do_not_participate_in_position_binding() -> None:
 
 
 def test_target_probe_refuses_equal_semantic_matches() -> None:
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m-ambiguous",
         name="更新备注",
         description="",
@@ -577,7 +577,7 @@ def test_ambiguous_optional_structure_falls_back_to_visual_checker(monkeypatch) 
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m-ambiguous",
         name="更新备注",
         description="",
@@ -586,7 +586,7 @@ def test_ambiguous_optional_structure_falls_back_to_visual_checker(monkeypatch) 
         target_controls=["Comment"],
     )
     policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:acquire")
     observation = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
         source="browser",
@@ -605,7 +605,7 @@ def test_ambiguous_optional_structure_falls_back_to_visual_checker(monkeypatch) 
 
 
 def test_acquire_session_tracks_geometry_progress_and_exhausts_no_progress() -> None:
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m-config",
         name="更新配置",
         description="",

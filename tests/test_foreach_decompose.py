@@ -4,7 +4,7 @@
 - a foreach's materialized `into` table is queryable by a following data_query (the whole point:
   collect per-item detail, then filter/aggregate the set)."""
 
-from gui_agent.core.orchestrator import Call, ForEach, Interpreter, Program, Run, RunResult, drive
+from gui_agent.core.orchestrator import Call, ForEach, Interpreter, Program, Run, StatementOutcome, drive
 from gui_agent.core.orchestrator.primitives.data_query import execute_data_query
 from gui_agent.core.orchestrator.decomposer import _FunctionDraft, _PlanDraft, _StepDraft, to_program, validate_program
 
@@ -676,17 +676,17 @@ def test_data_query_runs_on_foreach_materialized_table():
                "3": {"rating": "3", "nickname": "Seam"}}
     last_open: list[str] = []
 
-    def execute(run: Run) -> RunResult:
+    def execute(run: Run) -> StatementOutcome:
         if run.name == "读候选行" and run.kind == "read":
-            return RunResult(completed=True, rows=[{"id": "1"}, {"id": "2"}, {"id": "3"}])
+            return StatementOutcome.completed("", rows=[{"id": "1"}, {"id": "2"}, {"id": "3"}])
         if run.name.startswith("打开"):
             last_open.append(run.name.split("review ", 1)[1].split(" ", 1)[0])
-            return RunResult(completed=True)
+            return StatementOutcome.completed("")
         if run.kind == "read":
-            return RunResult(completed=True, reads=details[last_open[-1]])
+            return StatementOutcome.completed("", reads=details[last_open[-1]])
         if run.kind == "data_query":
-            return RunResult(completed=True)  # the live loop runs SQL; here we assert it separately
-        return RunResult(completed=True)
+            return StatementOutcome.completed("")  # the live loop runs SQL; here we assert it separately
+        return StatementOutcome.completed("")
 
     interp = Interpreter(program)
     drive(interp, execute)

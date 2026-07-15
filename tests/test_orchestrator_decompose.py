@@ -20,7 +20,7 @@ from gui_agent.core.orchestrator import (
     Program,
     ProgramRunner,
     Run,
-    RunResult,
+    StatementOutcome,
     to_program,
     validate_program,
 )
@@ -525,9 +525,9 @@ def test_validate_answer_goal_requires_result_source():
 
 def test_decomposed_program_drives_correct_branch_end_to_end():
     prog = to_program(_connectivity_draft(), "")
-    def _exec(run: Run) -> RunResult:
+    def _exec(run: Run) -> StatementOutcome:
         reads = {"连通判定": "连通", "不可达原因": ""} if run.var == "d" else {}
-        return RunResult(completed=True, reads=reads, summary=run.name)
+        return StatementOutcome.completed(run.name, reads=reads)
     res = ProgramRunner(_exec).run(prog)
     assert any(r.name == "建单" for r in res.run_log)   # 连通 → 建单支
     assert res.failed is False

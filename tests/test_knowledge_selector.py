@@ -17,7 +17,7 @@ ids for the planner. These tests stub the LLM call and lock the POLICY-side cont
 from __future__ import annotations
 
 import gui_agent.core.supervisor.milestone.llm_runtime as policy_mod
-from gui_agent.core.schemas import Milestone
+from gui_agent.core.schemas import StatementContract
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _SelectorResult, _SingleCheckResult
 
@@ -34,8 +34,8 @@ def _policy() -> MilestoneSupervisorPolicy:
     return p
 
 
-def _ms(mid: str = "m1") -> Milestone:
-    return Milestone.model_validate(
+def _ms(mid: str = "m1") -> StatementContract:
+    return StatementContract.model_validate(
         {"id": mid, "name": "进入订单列表", "description": "d", "success_condition": "s", "kind": "navigation"}
     )
 
@@ -127,7 +127,7 @@ def test_clean_empty_falls_back_to_deterministic_match(monkeypatch):
         "如何查询订单执行状态": "---\nselector_when: 查询订单执行状态时\n---\n状态正文",
     })
     calls = _stub(monkeypatch, [_SelectorResult(section_ids=[])])
-    ms = Milestone.model_validate({
+    ms = StatementContract.model_validate({
         "id": "m1", "name": "新建一个订单", "description": "d",
         "success_condition": "订单创建成功", "kind": "action",
     })
@@ -153,7 +153,7 @@ def test_nonempty_selector_keeps_strongest_deterministic_match(monkeypatch):
         "产品属性": "---\nselector_when: 进入产品属性列表或编辑属性值时\n---\n属性正文",
     })
     calls = _stub(monkeypatch, [_SelectorResult(section_ids=["s01", "s02"])])
-    ms = Milestone.model_validate({
+    ms = StatementContract.model_validate({
         "id": "m1",
         "name": "进入产品属性列表",
         "description": "d",
@@ -174,7 +174,7 @@ def test_empty_page_identity_fallback_hits_but_does_not_cache(monkeypatch):
         "如何创建订单": "---\nselector_when: 新建订单/下单时\n---\n创建订单正文",
     })
     calls = _stub(monkeypatch, [_SelectorResult(section_ids=[]), _SelectorResult(section_ids=[])])
-    ms = Milestone.model_validate({
+    ms = StatementContract.model_validate({
         "id": "m1", "name": "新建一个订单", "description": "d",
         "success_condition": "订单创建成功", "kind": "action",
     })

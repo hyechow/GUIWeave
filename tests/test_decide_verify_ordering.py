@@ -29,7 +29,7 @@ from gui_agent.core.run.persistence import assess_persistence
 from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
-    Milestone,
+    StatementContract,
     Observation,
     PolicyTurn,
     SupervisorStep,
@@ -60,10 +60,10 @@ def _executed_turn(
 
 def _policy():
     p = MilestoneSupervisorPolicy()
-    m = Milestone.model_validate(
+    m = StatementContract.model_validate(
         {"id": "m1", "name": "进入闹钟页", "description": "d", "success_condition": "闹钟列表页", "kind": "navigation"}
     )
-    p.reseed(m)
+    p.begin_statement(m, instance_id="test:decision")
     return p, m
 
 
@@ -188,7 +188,12 @@ def test_url_change_suppresses_false_no_effect(monkeypatch):
     calls = _wire_plan(monkeypatch, p)
     p._monitor._last_url = "http://x/orders"
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/orders/transport")  # navigated
-    p._run_single_turn(m, obs, [_tap_turn(on_target=True, no_effect=True)])
+    turn = _tap_turn(on_target=True, no_effect=True)
+    turn.statement_instance_id = p._active_instance_id
+    turn.supervisor.execution_scope = execution_scope_for(
+        m, obs, instance_id=p._active_instance_id,
+    )
+    p._run_single_turn(m, obs, [turn])
     assert calls == ["plan"]  # URL changed => the tap DID navigate => no_effect suppressed
 
 
@@ -197,7 +202,12 @@ def test_no_url_change_keeps_no_effect_replan(monkeypatch):
     calls = _wire_plan(monkeypatch, p)
     p._monitor._last_url = "http://x/orders"
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/orders")  # unchanged
-    p._run_single_turn(m, obs, [_tap_turn(on_target=True, no_effect=True)])
+    turn = _tap_turn(on_target=True, no_effect=True)
+    turn.statement_instance_id = p._active_instance_id
+    turn.supervisor.execution_scope = execution_scope_for(
+        m, obs, instance_id=p._active_instance_id,
+    )
+    p._run_single_turn(m, obs, [turn])
     assert calls == ["stuck"]  # URL unchanged => no_effect stands => replan
 
 
@@ -205,14 +215,14 @@ def _submit_milestone_policy():
     # TerminalDispatchGate only arms when the MILESTONE itself declares a dispatch terminal
     # (…提交/保存…) — an arrival milestone must not be force-done'd by a stray dispatch-verb click.
     p = MilestoneSupervisorPolicy()
-    m = Milestone.model_validate(
+    m = StatementContract.model_validate(
         {
             "id": "m1", "name": "提交评论", "description": "d",
             "success_condition": "评论出现在历史中", "kind": "action",
-            "requires_commit": True,
+            "effect_mode": "dispatch", "persistence": "explicit_commit",
         }
     )
-    p.reseed(m)
+    p.begin_statement(m, instance_id="test:decision")
     return p, m
 
 
@@ -263,21 +273,20 @@ def test_checker_stuck_status_routes_to_handle_stuck(monkeypatch):
     assert calls == ["stuck"]
 
 
-# ── require_fresh_action must not re-demand a write after a successful terminal submit ──────────
+# ── dispatch contract must not re-demand a write after a successful terminal submit ─────────
 # Regression for WebArena 499 (logs/.../20260708_161248): "fill tracking + Submit Shipment" is one
-# require_fresh_action milestone. Submit POSTed order_shipment/save (302) and REDIRECTED to the
+# explicit-commit statement. Submit POSTed order_shipment/save (302) and REDIRECTED to the
 # order view, so the submit's executed record fell out of the new page-scope → pre_existing turned
 # True → FreshActionRequired flipped done→in_progress and the agent hunted the vanished tracking
 # form until it reported ACTION_NOT_ALLOWED_ERROR — even though the mutation already succeeded.
 def _fresh_action_policy():
     p = MilestoneSupervisorPolicy()
-    m = Milestone.model_validate({
+    m = StatementContract.model_validate({
         "id": "m1", "name": "填入追踪号并提交发货", "description": "d",
         "success_condition": "发货已保存，订单出现追踪号", "kind": "action",
-        "require_fresh_action": True,
-        "requires_commit": True,
+        "effect_mode": "dispatch", "persistence": "explicit_commit",
     })
-    p.reseed(m)
+    p.begin_statement(m, instance_id="test:decision")
     return p, m
 
 
@@ -306,7 +315,7 @@ def _no_redemand_wire(monkeypatch, p):
 
 def _completion_decision(p, m, obs, history):
     assert p._last_check is not None
-    scope = execution_scope_for(m, obs)
+    scope = execution_scope_for(m, obs, instance_id=p._active_instance_id)
     claims = action_lifecycle_claims(m, history, scope=scope)
     claims.extend(target_value_claims(m, obs, history, scope=scope))
     claims.append(checker_claim(p._last_check, scope=scope, subject_scope=scope))
@@ -325,7 +334,7 @@ def _completion_decision(p, m, obs, history):
 
 def test_mutation_commit_without_receipt_does_not_claim_a_target_write() -> None:
     p = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m1",
         name="approve record",
         description="",
@@ -370,7 +379,6 @@ def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
     assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # FreshActionRequired suppressed — no re-demand
-    assert p._rt.status == "done"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 
@@ -384,7 +392,6 @@ def test_fresh_action_still_redemands_when_nothing_dispatched(monkeypatch):
     assert decision.status == "pending"
     assert decision.next == "act"
     assert plan_calls == []
-    assert p._rt.status != "done"
 
 
 def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch):
@@ -399,7 +406,6 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
     decision = _completion_decision(p, m, obs, [_shipment_submit_turn()])
     assert decision.status == "contradicted"
     assert plan_calls == []
-    assert p._rt.status != "done"
 
 
 # ── WebArena 502 (20260708_185657) regression pair ──────────────────────────────
@@ -428,11 +434,11 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     # dropped out of the destination page scope. Full-history execution must count — no stray
     # "write" may be demanded.
     p = MilestoneSupervisorPolicy()
-    m = Milestone.model_validate({
+    m = StatementContract.model_validate({
         "id": "m1", "name": "点击列表中 Type=Configurable 的那一行打开编辑页", "description": "d",
         "success_condition": "已进入该产品编辑页", "kind": "navigation",
     })
-    p.reseed(m)
+    p.begin_statement(m, instance_id="test:decision")
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="已进入编辑页", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
@@ -442,7 +448,6 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []            # no FreshActionRequired override, no stray write demanded
-    assert p._rt.status == "done"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 
@@ -463,13 +468,12 @@ def _select_option_turn(milestone_id: str = "m1") -> PolicyTurn:
 
 def _save_milestone_policy():
     p = MilestoneSupervisorPolicy()
-    m = Milestone.model_validate({
+    m = StatementContract.model_validate({
         "id": "m1", "name": "将 Stock Status 下拉设为 Out of Stock 并保存", "description": "d",
         "success_condition": "页面显示保存成功提示", "kind": "action",
-        "require_fresh_action": True,
-        "requires_commit": True,
+        "effect_mode": "dispatch", "persistence": "explicit_commit",
     })
-    p.reseed(m)
+    p.begin_statement(m, instance_id="test:decision")
     return p, m
 
 
@@ -488,7 +492,6 @@ def test_dispatch_ledger_blocks_done_on_residual_banner(monkeypatch):
     assert decision.status == "pending"
     assert "显式持久化边界尚未提交" in decision.reason
     assert plan_calls == []
-    assert p._rt.status != "done"
 
 
 def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
@@ -517,7 +520,6 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
     assert decision.status == "satisfied"
     step = p._advance(m, obs, history, decision=decision)
     assert plan_calls == []
-    assert p._rt.status == "done"
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 
@@ -591,7 +593,6 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
 
     step = p._run_single_turn(m, obs, [_select_option_turn(), save])
 
-    assert p._rt.status == "done"
     assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.should_act is False
     assert step.outcome.verification == "accepted_unverified"
@@ -603,11 +604,11 @@ def test_terminal_dispatch_gate_ignores_arrival_milestone(monkeypatch):
     # Arrival milestone (click a row to open its edit page) declares NO dispatch verb: a
     # mid-milestone "Apply Filters" click (apply class) must not force-done it.
     p = MilestoneSupervisorPolicy()
-    m = Milestone.model_validate({
+    m = StatementContract.model_validate({
         "id": "m1", "name": "点选 Type=Configurable Product 的产品行，打开其编辑页", "description": "d",
         "success_condition": "已进入该产品编辑页", "kind": "action",
     })
-    p.reseed(m)
+    p.begin_statement(m, instance_id="test:decision")
     calls = _wire_check(
         monkeypatch, p,
         _SingleCheckResult(
@@ -638,7 +639,6 @@ def test_dispatch_ledger_rejects_non_terminal_structured_role(monkeypatch):
     decision = _completion_decision(p, m, obs, [apply_turn])
     assert decision.status == "pending"
     assert plan_calls == []
-    assert p._rt.status != "done"
 
 
 # ── Feasibility kickback must not re-decompose a milestone whose terminal submit already succeeded ──
@@ -682,4 +682,3 @@ def test_maybe_kickback_still_fires_when_no_dispatch_and_control_absent(monkeypa
     assert step is not None
     assert step.outcome is not None
     assert step.outcome.kickback == "重规划指令"
-    assert p._rt.status == "failed"

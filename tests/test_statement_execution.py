@@ -1,4 +1,4 @@
-"""Statement execution boundaries: result contracts, recovery, and Milestone adaptation."""
+"""Statement execution boundaries: result contracts, recovery, and StatementContract adaptation."""
 
 from gui_agent.core.orchestrator.contracts import (
     check_return_contract,
@@ -18,15 +18,15 @@ from gui_agent.core.orchestrator.recovery import (
     tighten_ui_return_run,
 )
 from gui_agent.core.orchestrator.program import Read, Query, Run
-from gui_agent.core.run.interactive import milestone_for_run, start_milestone
+from gui_agent.core.run.interactive import contract_for_run, start_milestone
 
 
 class _FakeSupervisor:
     def __init__(self):
-        self.reseeds = []
+        self.begins = []
 
-    def reseed(self, milestone, task_type="action", fresh_advance=False):
-        self.reseeds.append((milestone, task_type, fresh_advance))
+    def begin_statement(self, contract, *, instance_id, task_type="action", fresh_advance=False):
+        self.begins.append((contract, instance_id, task_type, fresh_advance))
 
 
 def test_ledger_budget_exhausts_per_call_site():
@@ -58,12 +58,12 @@ def test_ledger_key_follows_contract_not_name_suffix():
     assert ledger.next_attempt(3, tightened) == 2
 
 
-def test_start_milestone_translates_run_and_reseeds():
+def test_start_milestone_translates_run_and_begins_statement():
     sup = _FakeSupervisor()
     ui_run = Run(name="点击保存", kind="action", success_condition="出现保存成功提示")
     milestone = start_milestone(sup, ui_run, 2, fresh_advance=True)
-    assert len(sup.reseeds) == 1
-    seeded, task_type, fresh = sup.reseeds[0]
+    assert len(sup.begins) == 1
+    seeded, _instance_id, task_type, fresh = sup.begins[0]
     assert seeded is milestone
     assert seeded.name == "点击保存"
     assert task_type == "action"
@@ -175,14 +175,14 @@ def test_decomposer_draft_maps_return_domains_only_for_declared_fields():
 
 
 def test_start_milestone_rejects_query_runs():
-    """查询节点永不进入 Milestone 执行器。"""
+    """查询节点永不进入 StatementContract 执行器。"""
     import pytest
 
     sup = _FakeSupervisor()
     read_run = Read(name="读取总数",  var="total", returns=["总数"])
     with pytest.raises(ValueError, match="query run"):
         start_milestone(sup, read_run, 0)
-    assert sup.reseeds == []
+    assert sup.begins == []
 
 
 # ── kickback = 类型化异常（S4）────────────────────────────────────────────────────
@@ -284,20 +284,20 @@ def test_to_stmts_lowers_queries_to_ir_nodes():
 
 
 def test_milestone_adapter_rejects_query_runs():
-    """边界类型强制：查询节点不能交给 Milestone executor。"""
+    """边界类型强制：查询节点不能交给 StatementContract executor。"""
     import pytest
 
     from gui_agent.core.orchestrator.program import Query, Read
 
     with pytest.raises(ValueError, match="query run"):
-        milestone_for_run(Read(var="r", name="读计数", returns=["总数"]), 0)
+        contract_for_run(Read(var="r", name="读计数", returns=["总数"]), 0)
     with pytest.raises(ValueError, match="query run"):
-        milestone_for_run(Query(var="q", name="查询", returns=["n"], sql="SELECT 1"), 0)
+        contract_for_run(Query(var="q", name="查询", returns=["n"], sql="SELECT 1"), 0)
     # 兼容:直接构造的 base Run(kind=read) 同样被拒(旧测试/持久化形态)
     with pytest.raises(ValueError, match="query run"):
-        milestone_for_run(Read(var="r", name="读", returns=["x"]), 0)
+        contract_for_run(Read(var="r", name="读", returns=["x"]), 0)
     # 命令照常
-    assert milestone_for_run(Run(kind="action", name="点击"), 0).name == "点击"
+    assert contract_for_run(Run(kind="action", name="点击"), 0).name == "点击"
 
 
 def test_promotion_reclassifies_read_ir_node_to_command_run():

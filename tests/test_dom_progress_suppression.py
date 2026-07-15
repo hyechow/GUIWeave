@@ -10,15 +10,15 @@ worked, and lets the "repeated" plan through instead of retry→escalate.
 from __future__ import annotations
 
 from gui_agent.adapters.browser.actions import BrowserActionDecision
-from gui_agent.core.schemas import Milestone, Observation, SupervisorStep
+from gui_agent.core.schemas import StatementContract, Observation, SupervisorStep
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
 
 STUCK_SUMMARY = "__STUCK_SENTINEL__"
 
 
-def _ms() -> Milestone:
-    return Milestone.model_validate(
+def _ms() -> StatementContract:
+    return StatementContract.model_validate(
         {"id": "m1", "name": "填写配置", "description": "d", "success_condition": "s", "kind": "action"}
     )
 

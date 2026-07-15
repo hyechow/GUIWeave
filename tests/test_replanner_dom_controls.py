@@ -8,7 +8,7 @@ only '…zip jacket' in the screenshot; the replanner got NO DOM block at all an
 human_blocks. This locks that wiring deterministically (the LLM is bypassed)."""
 
 import gui_agent.core.supervisor.milestone.llm_runtime as pol
-from gui_agent.core.schemas import Milestone, Observation
+from gui_agent.core.schemas import StatementContract, Observation
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.supervisor.milestone.schemas import _ReplanResult, _SingleCheckResult
 
@@ -30,7 +30,7 @@ def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
     p = MilestoneSupervisorPolicy()
     monkeypatch.setattr(p, "_llm", lambda: object())  # invoke_structured is patched → never used
 
-    milestone = Milestone.model_validate({
+    milestone = StatementContract.model_validate({
         "id": "m3", "name": "在 Product 列筛选框输入 'Olivia zip jacket'", "description": "d",
         "success_condition": "Product 框内容为 'Olivia zip jacket'", "kind": "action",
     })
@@ -51,14 +51,14 @@ def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
 
 def test_replan_preserves_atomic_execution_contract(monkeypatch):
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="open-products",
         name="enter products list",
         description="",
         success_condition="products list is visible",
         kind="navigation",
     )
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:replan")
     monkeypatch.setattr(
         policy,
         "_invoke_replanner",

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from gui_agent.adapters.iphone.executor import ActionExecutor
 from gui_agent.adapters.iphone.perception import LivePhoneSession
 from gui_agent.core.policies import StructuredOutputPolicy
-from gui_agent.core.schemas import Action, ActionDecision, Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import Action, ActionDecision, StatementContract, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.supervisor.milestone.model_io import run_checker, run_planner
 
 
@@ -57,7 +57,7 @@ LEVEL4_CONSTRAINTS = [
     "完成后不要点击取消；需要应用筛选时点击绿色「确定」。",
 ]
 
-LEVEL3_MILESTONE = Milestone(
+LEVEL3_MILESTONE = StatementContract(
     id="drag_level3_target_month",
     name="选择目标月份",
     description=(
@@ -70,7 +70,7 @@ LEVEL3_MILESTONE = Milestone(
     depends_on=[],
 )
 
-LEVEL4_MILESTONE = Milestone(
+LEVEL4_MILESTONE = StatementContract(
     id="drag_level4_date_range",
     name="选择目标时间段",
     description=(
@@ -211,7 +211,7 @@ def _run_planner_checker_loop(
     *,
     phone: LivePhoneSession,
     executor: ActionExecutor,
-    milestone: Milestone,
+    milestone: StatementContract,
     constraints: list[str],
     label: str,
     max_steps: int,
@@ -284,7 +284,7 @@ def _policy_turn(
     summary: str,
     decision: ActionDecision,
     executed: bool,
-    milestone: Milestone,
+    milestone: StatementContract,
 ) -> PolicyTurn:
     return PolicyTurn(
         index=index,

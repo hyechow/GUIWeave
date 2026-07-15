@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from gui_agent.core.schemas import PolicyContext
+from gui_agent.core.schemas import StatementContract
 from gui_agent.core.supervisor.milestone.acquisition import TargetAcquireController
-from scripts.replay_supervisor_turn import _milestone_for_turn, normalize_replay_context
 
 
 FIXTURE = (
@@ -19,11 +18,20 @@ def _controls(turn: int) -> list[dict]:
     return raw["observation"]["form_controls"]
 
 
+def _milestone() -> StatementContract:
+    return StatementContract(
+        id="s1",
+        name="configure product options",
+        description="",
+        success_condition="the saved collection contains green and XXXL",
+        kind="action",
+        target_controls=["configurations_collection"],
+        target_values={"Color": "green", "Size": "XXXL"},
+    )
+
+
 def test_real_170119_frames_keep_one_target_directed_acquire_session() -> None:
-    raw = normalize_replay_context(json.loads((FIXTURE / "context.json").read_text()))
-    context = PolicyContext.model_validate(raw)
-    turn = next(item for item in context.turns if item.index == 24)
-    milestone = _milestone_for_turn(raw, turn)
+    milestone = _milestone()
 
     assert milestone.target_controls == ["configurations_collection"]
     assert milestone.target_values == {"Color": "green", "Size": "XXXL"}
@@ -48,10 +56,7 @@ def test_real_170119_frames_keep_one_target_directed_acquire_session() -> None:
 
 
 def test_real_170119_no_progress_exhausts_instead_of_drifting_to_fields() -> None:
-    raw = normalize_replay_context(json.loads((FIXTURE / "context.json").read_text()))
-    context = PolicyContext.model_validate(raw)
-    turn = next(item for item in context.turns if item.index == 24)
-    milestone = _milestone_for_turn(raw, turn)
+    milestone = _milestone()
     controller = TargetAcquireController()
 
     controller.decide(_controls(23), milestone, scope="row:product-1492")

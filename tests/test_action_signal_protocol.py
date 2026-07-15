@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gui_agent.core.orchestrator.program import Finish, Program, Run, RunResult
+from gui_agent.core.orchestrator.program import Finish, Program, Run
 from gui_agent.core.orchestrator.runner import Interpreter, RunRecord
 from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.action_signals import effective_action_role, semantic_action_key
@@ -14,7 +14,7 @@ from gui_agent.core.schemas import (
     BaseAction,
     BaseActionDecision,
     EffectSignal,
-    Milestone,
+    StatementContract,
     MutationAuthorization,
     MutationReceipt,
     Observation,
@@ -119,7 +119,7 @@ def test_write_key_keeps_structural_group_identity():
 
 def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch):
     """Replay 20260712_122035 T10-T12: matching draft controls are not persistence."""
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m1",
         name="ensure option member",
         description="",
@@ -202,7 +202,7 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
     )
     checker_calls: list[int] = []
     policy = MilestoneSupervisorPolicy()
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:action-signal")
     policy._single_check = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
         checker_calls.append(1)
         or _SingleCheckResult(
@@ -301,7 +301,7 @@ def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_t
         goal="g",
         supervisor_policy_name="milestone",
         action_policy_name="action",
-        turns=[dispatched],
+        journal={"events": [dispatched]},
     )
 
     assert _needs_terminal_reconciliation(context) is True
@@ -317,7 +317,7 @@ def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_t
         supervisor=policy,
         observation_only=True,
     )
-    context.turns.append(observation_turn)
+    context.journal.events.append(observation_turn)
 
     assert observation_turn.operation_mode == "observation"
     assert interactive_turn_count(context) == 1
@@ -326,7 +326,7 @@ def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_t
 
 
 def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m1",
         name="change target and save",
         description="",
@@ -334,7 +334,7 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
         success_condition="saved target state is visible",
     )
     policy = MilestoneSupervisorPolicy()
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:action-signal")
     monkeypatch.setattr(
         policy,
         "_single_check",
@@ -368,7 +368,7 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
 
 def test_legacy_effect_does_not_reenter_current_lifecycle_evidence():
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m1",
         name="apply target filter",
         description="",
@@ -413,7 +413,7 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
     monkeypatch, checker_status
 ):
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m1",
         name="保存记录",
         description="",
@@ -422,7 +422,7 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
         effect_mode="transform",
         persistence="explicit_commit",
     )
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:action-signal")
     step = _step(scope="milestone:m1")
     write_step = _step(scope="milestone:m1", role="write")
     history = [
@@ -452,12 +452,11 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
 
     assert result.outcome is None
     assert result.should_act is False
-    assert policy._rt.status != "done"  # still in progress
 
 
 def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypatch):
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m1",
         name="将选项集合持久化包含 XXXL",
         description="",
@@ -466,7 +465,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
         effect_mode="transform",
         persistence="explicit_commit",
     )
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:action-signal")
     source_step = _step(scope="row:attribute/144")
     history = [
         _turn(index=1, step=_step(scope="row:attribute/144", role="write"), role="write"),
@@ -513,7 +512,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
 def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
     """A destination page cannot disprove source-local fields that disappeared on Save."""
     policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
+    milestone = StatementContract(
         id="m1",
         name="persist one record",
         description="",
@@ -524,7 +523,7 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
         target_controls=["record_fields"],
         target_values={"Primary Value": "A", "Secondary Value": "B"},
     )
-    policy.reseed(milestone)
+    policy.begin_statement(milestone, instance_id="test:action-signal")
     write = _turn(
         index=1,
         step=_step(scope="row:record/7", role="write"),
@@ -593,7 +592,7 @@ def test_accepted_unverified_run_result_advances_interpreter_but_is_not_verified
     result = StatementOutcome.completed(
         "动作已派发，结果未验证",
         verification="accepted_unverified",
-    ).to_run_result()
+    )
 
     try:
         gen.send(result)
@@ -602,17 +601,15 @@ def test_accepted_unverified_run_result_advances_interpreter_but_is_not_verified
     else:  # pragma: no cover - the finish must terminate the tiny program
         raise AssertionError("interpreter did not finish")
 
-    assert result.completed is True
-    assert result.failed is False
-    assert result.verified is False
-    assert interp.run_log[0].result.completion_status == "accepted_unverified"
+    assert result.is_completed
+    assert result.verification == "accepted_unverified"
+    assert interp.run_log[0].result.verification == "accepted_unverified"
 
 
-def test_legacy_run_result_infers_confirmed_status():
-    result = RunResult(completed=True)
+def test_completed_outcome_defaults_to_confirmed():
+    result = StatementOutcome.completed("")
 
-    assert result.completion_status == "confirmed"
-    assert result.verified is True
+    assert result.verification == "confirmed"
 
 
 def test_final_result_separates_execution_completion_from_outcome_verification(monkeypatch):
@@ -624,10 +621,9 @@ def test_final_result_separates_execution_completion_from_outcome_verification(m
     interp.run_log = [
         RunRecord(
             name="保存记录",
-            result=RunResult(
-                completed=True,
-                completion_status="accepted_unverified",
-                summary="动作已派发，结果未验证",
+            result=StatementOutcome.completed(
+                "动作已派发，结果未验证",
+                verification="accepted_unverified",
             ),
         )
     ]
