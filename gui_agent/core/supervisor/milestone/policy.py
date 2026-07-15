@@ -1387,12 +1387,7 @@ class MilestoneSupervisorPolicy(
         pre_existing = not (executed_in_scope or executed_in_transition)
         milestone.status = "done"
         milestone.completion_status = decision.completion_status
-        # Persist this milestone's DONE verdict before _last_check is overwritten by the next
-        # milestone's check (the report's 验收 panel renders it via context.milestones[id].
-        # done_check). Must be here, not only in the nav-skip branch below: the terminal path
-        # (orchestrator single-milestone completion → _next_milestone() is None) and the
-        # non-nav next path both reach the bottom without otherwise saving it, which left the
-        # acceptance panel empty for those milestones.
+        # Persist this statement's DONE verdict for reports (done_check panel).
         if self._last_check is not None:
             self._milestone_done_checks[milestone.id] = self._last_check
         # Single-statement executor: never walk to a next milestone. ProgramRuntime

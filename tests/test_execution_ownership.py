@@ -117,7 +117,9 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     assert "reseed" in policy_src or "requires reseed" in policy_src
 
     advance_src = inspect.getsource(MilestoneSupervisorPolicy._advance)
-    assert "_next_milestone" not in advance_src
+    # Multi-milestone walk retired: complete always clears current and stops.
+    assert "self._current_id = None" in advance_src
+    assert "self._current_id = self._next_milestone()" not in advance_src
 
     assert prt.ensure_program(None, "g").statements
 
