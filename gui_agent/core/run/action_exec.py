@@ -252,14 +252,34 @@ class ActionExecutionState:
                 observation=observation,
                 action_decision=action_decision,
             )
-            if result.binding.status != "bound":
+            binding = result.binding
+            if binding.status == "contradicted":
+                # Positive evidence the point is a different declared control → do not write.
                 result.suppressed_reason = (
-                    "target binding failed before dispatch: "
-                    f"{result.binding.status}: {result.binding.reason}"
+                    f"target binding contradicted before dispatch: {binding.reason}"
                 )
                 say(f"  [TargetBinding] {result.suppressed_reason}")
-                status(turn_no, "目标绑定失败，未派发写动作")
+                status(turn_no, "目标绑定命中其它控件，未派发写动作")
                 return result
+            if binding.status == "unresolved":
+                if sv_step.target_control:
+                    # A target IS declared but structural identity could not confirm it
+                    # (e.g. the adapter mis-extracted the control label). Fail open and
+                    # dispatch the visual proposal rather than kill a possibly-correct
+                    # action — mutation safety is still enforced by the authorization check
+                    # below (an unresolved binding carries no unit_id, so a mutation's
+                    # subject check rejects it).
+                    say(f"  [TargetBinding] unresolved identity, failing open: {binding.reason}")
+                else:
+                    # No declared target at all → do not write blind.
+                    result.suppressed_reason = (
+                        f"target binding failed before dispatch: {binding.reason}"
+                    )
+                    say(f"  [TargetBinding] {result.suppressed_reason}")
+                    status(turn_no, "目标绑定失败，未派发写动作")
+                    return result
+            # status == "bound" (or unresolved-with-a-declared-target): proceed.
+            # The authorization check below applies to both.
             if authorization is not None:
                 binding_matches = (
                     result.binding.source == authorization.source

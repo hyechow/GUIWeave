@@ -43,6 +43,33 @@ def _in_declared_unit(control: dict, unit_hint: str) -> bool:
     return actual == unit_hint
 
 
+_SELECT_CONTROL_KINDS = {"native_select", "select", "listbox", "combobox"}
+
+
+def _is_select_control(control: dict) -> bool:
+    return str(control.get("kind") or "").strip() in _SELECT_CONTROL_KINDS
+
+
+def _select_has_option(control: dict, target_value: str) -> bool:
+    """Whether a select control's option list contains the declared target value.
+
+    A native ``<select>``'s option list is authoritative identity — unlike its closed-state
+    label, which the adapter often fails to extract (a sibling notice/banner id leaks in, the
+    visible header text is missed, …). So a unique owning select that carries the target
+    option binds deterministically, independent of the label or of mutation authorization.
+    Match on the shared semantic key so whitespace / case differences do not defeat it.
+    """
+    options = control.get("options")
+    if not isinstance(options, list) or not target_value:
+        return False
+    wanted = _semantic_key(target_value)
+    return any(
+        _semantic_key(option) == wanted
+        for option in options
+        if isinstance(option, (str, int, float))
+    )
+
+
 def _binding(control: dict) -> TargetBinding:
     group_id = str(control.get("group_id") or "").strip()
     return TargetBinding(
@@ -54,7 +81,15 @@ def _binding(control: dict) -> TargetBinding:
 
 
 class BrowserTargetBinder:
-    """Upgrade a visual proposal only when a rendered control uniquely owns its point."""
+    """Upgrade a visual proposal only when a rendered control uniquely owns its point.
+
+    Control identity is resolved from the adapter control inventory (a control's own
+    label / name / options / group), NOT from mutation authorization: the authorization only
+    filters candidates to an authorized subject for mutation writes and is checked separately
+    at dispatch time. A point that is owned but not recognized is an identity GAP
+    (``unresolved`` → the caller fails open), never a ``contradicted`` verdict — the latter is
+    reserved for positive evidence of a *different* declared control.
+    """
 
     def bind(
         self,
@@ -86,10 +121,48 @@ class BrowserTargetBinder:
         candidates = [item for item in semantic if item in point_owners]
         if len(candidates) == 1:
             return _binding(candidates[0])
+
+        # Deterministic select binding: a unique <select> owning the action point and
+        # carrying the declared target option IS the target control. The closed-select label
+        # is unreliable, but the option list is authoritative — so this binds filter and
+        # mutation selects without depending on mutation authorization or a perfect label.
+        target_value = str(getattr(step, "target_value", "") or "").strip()
+        if target_value:
+            select_owners = [item for item in point_owners if _is_select_control(item)]
+            if len(select_owners) == 1 and _select_has_option(select_owners[0], target_value):
+                return _binding(select_owners[0])
+
+        # The point lands on a rendered control but identity does not confirm the declared
+        # target. Two sub-cases:
+        #  - contradicted: the point matches the declared control NAME but lands in a
+        #    different authorized unit/subject (a real subject mismatch for a mutation).
+        #    This IS positive evidence of a different identified control.
+        #  - unresolved (default): the point's name cannot be confirmed. That is an identity
+        #    GAP, not a contradiction — adapter labels can be wrong (log 20260715_215953:
+        #    the Type select was labeled 'notice-EV92REG'), so a name-mismatch must fail
+        #    open rather than suppress a possibly-correct action. Mutation safety is still
+        #    enforced downstream by the authorization check.
         if point_owners:
+            if unit_hint:
+                by_name = [
+                    item
+                    for item in controls
+                    if isinstance(item, dict) and matches_target_control(item, step.target_control)
+                ]
+                if any(
+                    item in by_name and not _in_declared_unit(item, unit_hint)
+                    for item in point_owners
+                ):
+                    return TargetBinding(
+                        status="contradicted",
+                        reason="the action point matches the declared control in a different unit/subject",
+                    )
             return TargetBinding(
-                status="contradicted",
-                reason="the action point belongs to a different declared control or unit",
+                status="unresolved",
+                reason=(
+                    "the action point is owned by a control whose identity does not "
+                    "confirm the declared target"
+                ),
             )
         if len(semantic) > 1:
             units = sorted({str(item.get("group_id") or "__form__") for item in semantic})
