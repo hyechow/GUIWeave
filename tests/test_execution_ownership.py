@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import inspect
+import re
+from pathlib import Path
 
 from gui_agent.core.run.action_exec import ActionExecutionState
 from gui_agent.core.run import action_signals, turns
@@ -156,3 +158,17 @@ def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> 
     assert outcome_mod.statement_outcome_from_supervisor_step(mid) is None
     decision = outcome_mod.executor_decision_from_supervisor_step(mid)
     assert decision is not None and decision.kind == "act"
+
+
+def test_dsl_only_entrypoints_have_no_mode_switches() -> None:
+    root = Path(__file__).resolve().parents[1]
+    for relative in (
+        "gui_agent/core/run/cli.py",
+        "gui_agent/adapters/android/mobileworld.py",
+        "gui_agent/adapters/browser/webarena.py",
+    ):
+        source = (root / relative).read_text(encoding="utf-8")
+        assert "--orchestrator" not in source
+        assert "--no-orchestrator" not in source
+        assert re.search(r"args\.orchestrator\b", source) is None
+        assert re.search(r"args\.no_orchestrator\b", source) is None
