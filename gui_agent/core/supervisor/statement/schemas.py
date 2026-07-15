@@ -127,7 +127,7 @@ class _SingleCheckResult(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _migrate_legacy_outcome_status(cls, value: object) -> object:
+    def _normalize_verdict_fields(cls, value: object) -> object:
         if not isinstance(value, dict):
             return value
         data = dict(value)
@@ -138,6 +138,14 @@ class _SingleCheckResult(BaseModel):
         # checkers use ``rejected`` only when a dispatched action has concrete failure evidence.
         if data.get("effect_status") == "contradicted":
             data["effect_status"] = "unmet"
+        # Tolerate an omitted ``summary`` (a display field): default to "" so a checker that
+        # drops it still parses on the primary json_object pass instead of triggering the slow
+        # plain-text reparse. ``effect_status`` is deliberately NOT inferred — it is the
+        # business-target verdict and must be stated explicitly; omission falls back to reparse
+        # so the model re-answers with an honest verdict (see
+        # test_checker_payload_requires_explicit_effect_status).
+        if "summary" not in data:
+            data["summary"] = ""
         return data
 
     @field_validator("issues", "visible_evidence", "missing_evidence", mode="before")

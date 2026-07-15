@@ -39,7 +39,7 @@ REPLAN_PROMPT = load_prompt_text("task.statement.browser.replanner")
 # ── Browser-specific structured planner output ──────────────────────────────
 from typing import Literal, Optional  # noqa: E402
 
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, Field, field_validator  # noqa: E402
 
 from gui_agent.core.supervisor.statement.schemas import StatementPrompts  # noqa: E402
 
@@ -74,6 +74,23 @@ class BrowserPlanResult(BaseModel):
         default=None,
         description="只有下一步需要滚动时填写：down=查看下方内容，up=查看上方内容，left/right=横向查看内容；其他操作留空",
     )
+
+    @field_validator("target_control", "target_value", mode="before")
+    @classmethod
+    def _coerce_optional_str(cls, v):
+        # DashScope json_object occasionally emits ``null`` for an optional string field
+        # even though it has an empty-string default. An explicit null fails the primary
+        # model_validate ("None is not a valid str") — the default does not apply because
+        # the key is present — and invoke_structured then falls back to a slow plain-text
+        # JSON reparse. Treat null as the absent/empty default; stringify a scalar number
+        # the model may emit for target_value (price/quantity). Required strings
+        # (instruction, summary) are deliberately NOT coerced: a null there is a real
+        # planner failure and the fallback reparse is the correct response.
+        if v is None:
+            return ""
+        if isinstance(v, (int, float)):
+            return str(v)
+        return v
 
 # ── Bundle into the neutral StatementPrompts seam (web draft) ────────────────
 BROWSER_STATEMENT_PROMPTS = StatementPrompts(
