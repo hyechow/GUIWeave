@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from gui_agent.core.orchestrator.program import Query
-from gui_agent.core.orchestrator.runner import make_run_result
 from gui_agent.core.schemas import PolicyContext
 
 from .observation import ObservationCursor
@@ -201,15 +200,19 @@ def execute_query(
             outcome="replan_candidate",
         ))
 
-    return StatementOutcome(
-        result=make_run_result(
-            run,
-            completed=completed,
-            summary=summary,
-            notes=[],
+    if completed:
+        return StatementOutcome.completed(
+            summary,
+            verification="confirmed",
             reads=reads,
-        ),
-        summary=summary,
+            observation=cursor.observation,
+            observation_url=cursor.observation_url,
+            executed_sql=executed_sql,
+            recovery_notices=notices,
+        )
+    return StatementOutcome.failed(
+        summary,
+        reads=reads,
         observation=cursor.observation,
         observation_url=cursor.observation_url,
         executed_sql=executed_sql,

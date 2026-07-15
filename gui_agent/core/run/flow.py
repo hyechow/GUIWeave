@@ -151,25 +151,39 @@ def finish_terminal_step(
     finish: Callable[[dict], dict],
     say: Callable[[str], None],
 ) -> dict:
-    """Flush reads and build the terminal result for a stop/completed step."""
+    """Flush reads and build the terminal result for a stop/completed step.
+
+    Interactive terminal state is projected through ``StatementOutcome`` first so
+    illegal bool combos cannot reach the interpreter. Task-level success is still
+    decided by the run result assemblers (ProgramRuntime will own that later).
+    """
+    from gui_agent.core.run.statements.outcome import statement_outcome_from_supervisor_step
+
     reason = sv_step.stop_reason or ("目标已达成" if sv_step.goal_completed else "agent-loop 停止")
     read_state.drain_pending(say=say)
     read_state.flush(turn_no=turn_no, say=say)
-    if sv_step.goal_completed:
-        say(f"\n目标已达成：{reason}")
+    notes = context.content_notes[notes_mark:]
+    outcome = statement_outcome_from_supervisor_step(
+        sv_step,
+        notes=notes,
+    )
+    if outcome is None:
+        # Defensive: callers only invoke this on stop/goal_completed.
+        from gui_agent.core.run.statements.outcome import StatementOutcome
+
+        outcome = (
+            StatementOutcome.completed(reason, verification="confirmed", evidence=notes)
+            if sv_step.goal_completed
+            else StatementOutcome.failed(reason, evidence=notes, failure_evidence=reason)
+        )
+
+    if outcome.is_completed:
+        say(f"\n目标已达成：{outcome.summary or reason}")
     else:
-        say(f"\n任务未完成：{reason}")
+        say(f"\n任务未完成：{outcome.summary or reason}")
 
     if program is not None:
-        from gui_agent.core.orchestrator.runner import make_run_result
-
-        result = make_run_result(
-            current_run,
-            completed=sv_step.goal_completed,
-            summary=sv_step.summary or reason,
-            notes=context.content_notes[notes_mark:],
-            completion_status=sv_step.completion_status,
-        )
+        result = outcome.to_run_result()
         try:
             next_run = interpreter_steps.send(result)
         except StopIteration as exc:
@@ -178,11 +192,11 @@ def finish_terminal_step(
             orchestration_result(
                 context,
                 interpreter,
-                sv_step.summary or reason,
+                outcome.summary or reason,
                 current=next_run,
             )
         )
 
-    if sv_step.goal_completed:
+    if outcome.is_completed:
         return finish(make_result(context, reason, sv_step.collection_summary))
     return finish(make_result(context, reason))

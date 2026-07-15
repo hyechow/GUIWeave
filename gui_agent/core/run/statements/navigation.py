@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from gui_agent.core.orchestrator.program import Run, RunLike
-from gui_agent.core.orchestrator.runner import make_run_result
+
 
 from .observation import ObservationCursor
 from .outcome import StatementOutcome
@@ -118,15 +118,10 @@ def execute_direct_navigation(
                 say(f"  [Orchestrator] 直达后读取 {run.returns} → {reads}")
         summary = f"直达导航 {nav_url}"
 
-    return StatementOutcome(
-        result=make_run_result(
-            run,
-            completed=True,
-            summary=summary,
-            notes=[],
-            reads=reads,
-        ),
-        summary=summary,
+    return StatementOutcome.completed(
+        summary,
+        verification="confirmed",
+        reads=reads,
         observation=cursor.observation,
         observation_url=cursor.observation_url,
         context_reports=context_reports,

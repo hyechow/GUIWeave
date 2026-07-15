@@ -51,7 +51,7 @@ from gui_agent.core.orchestrator.recovery import (
     should_kickback_replan,
     tighten_ui_return_run as _tighten_ui_return_run,
 )
-from gui_agent.core.orchestrator.runner import make_run_result
+from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import extract_run_returns, start_milestone
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
@@ -702,27 +702,32 @@ def run_agent_loop(
                             "  [Orchestrator] 返回值合同持续未满足，停止推进："
                             + _contract.describe()
                         )
-                        _hand = make_run_result(
-                            _cur_run,
-                            completed=False,
-                            summary="返回值合同未满足：" + _contract.describe(),
-                            notes=context.content_notes[_notes_mark:],
+                        _outcome = StatementOutcome.exhausted(
+                            "返回值合同未满足：" + _contract.describe(),
                             reads=_reads,
+                            evidence=context.content_notes[_notes_mark:],
                         )
                         try:
-                            _cur_run = _gen.send(_hand)
+                            _cur_run = _gen.send(_outcome.to_run_result())
                         except StopIteration as _e:
                             _orch_reply = _e.value or ""
                         else:
                             _did_return_recovery = True
                     break
-                _hand = make_run_result(
-                    _cur_run, completed=True, summary=sv_step.summary or "完成",
-                    notes=context.content_notes[_notes_mark:],
+                # Statement completed: project through terminal StatementOutcome (no running).
+                _verification = (
+                    "accepted_unverified"
+                    if sv_step.completion_status == "accepted_unverified"
+                    else "confirmed"
+                )
+                _outcome = StatementOutcome.completed(
+                    sv_step.summary or "完成",
+                    verification=_verification,
                     reads=_reads,
                     rows=_rows,
-                    completion_status=sv_step.completion_status,
+                    evidence=context.content_notes[_notes_mark:],
                 )
+                _hand = _outcome.to_run_result()
                 try:
                     _cur_run = _gen.send(_hand)
                 except StopIteration as _e:          # program finished (finish / off end)

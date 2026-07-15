@@ -153,7 +153,7 @@ def drain_immediate_statements(
             failure_evidence = outcome.failure_evidence
 
         try:
-            statement = interpreter_steps.send(outcome.result)
+            statement = interpreter_steps.send(outcome.to_run_result())
         except StopIteration as exc:
             return ImmediateDispatchResult(
                 current_statement=None,

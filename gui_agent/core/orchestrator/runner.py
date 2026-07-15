@@ -50,18 +50,32 @@ def make_run_result(
 ) -> RunResult:
     """Build the uniform result consumed by the statement interpreter.
 
-    Interactive and deterministic executors differ in how they obtain evidence and values, but
-    both resume the interpreter through the same ``RunResult`` protocol.
+    Prefer constructing a terminal ``StatementOutcome`` and calling ``to_run_result()``.
+    This helper remains as a thin bridge for call sites that still pass legacy bools;
+    it never invents ``in_progress`` for a completed hand-off.
     """
-    return RunResult(
-        completed=completed,
-        failed=not completed,
-        completion_status=completion_status,
-        reads=dict(reads) if reads else {},
-        rows=list(rows) if rows else [],
-        summary=summary,
+    from gui_agent.core.run.statements.outcome import StatementOutcome
+
+    if completed:
+        verification = (
+            "accepted_unverified"
+            if completion_status == "accepted_unverified"
+            else "confirmed"
+        )
+        return StatementOutcome.completed(
+            summary,
+            verification=verification,  # type: ignore[arg-type]
+            reads=reads,
+            rows=rows,
+            evidence=list(notes),
+        ).to_run_result()
+    return StatementOutcome.failed(
+        summary,
+        reads=reads,
+        rows=rows,
         evidence=list(notes),
-    )
+        failure_evidence=summary,
+    ).to_run_result()
 
 
 def _unique_fields(fields: list[str]) -> list[str]:

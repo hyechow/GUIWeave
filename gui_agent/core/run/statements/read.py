@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from gui_agent.core.orchestrator.program import Read
-from gui_agent.core.orchestrator.runner import make_run_result
 
 from .observation import ObservationCursor
 from .outcome import StatementOutcome
@@ -55,15 +54,10 @@ def execute_read(
             )
             say(f"  [Orchestrator] 只读验收帧 {run.returns} → {reads}")
 
-    return StatementOutcome(
-        result=make_run_result(
-            run,
-            completed=True,
-            summary=summary,
-            notes=[],
-            reads=reads,
-        ),
-        summary=summary,
+    return StatementOutcome.completed(
+        summary,
+        verification="confirmed",
+        reads=reads,
         observation=cursor.observation,
         observation_url=cursor.observation_url,
         context_reports=context_reports,
