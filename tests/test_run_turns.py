@@ -154,5 +154,5 @@ def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_pa
     )
 
     # ProgramRuntime path: a failed statement becomes an interpreter terminal reply.
-    assert "test complete" in result["summary"]
+    assert "test complete" in result.summary
     assert len(context.journal.turns) == 1

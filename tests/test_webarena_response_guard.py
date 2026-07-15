@@ -15,6 +15,18 @@ from gui_agent.adapters.browser.webarena import (
     _warn_if_pre_loop_page_changed,
     _write_webarena_report_context,
 )
+from gui_agent.core.run.result import AgentResult
+
+
+def _result(**updates) -> AgentResult:
+    values = {
+        "goal": "test",
+        "output": "",
+        "summary": "",
+        "phase": "stopped",
+    }
+    values.update(updates)
+    return AgentResult.model_validate(values)
 
 
 def _navigate_task_with_network(expected: dict) -> dict:
@@ -155,16 +167,15 @@ def test_completed_mutate_response_trusts_runtime_completion_without_recounting_
     # "remaining 6 unprocessed" after runtime already reached confirmed completion.
     resp = _completed_mutate_response(
         "Mark all Aeon capri as out of stock",
-        {
-            "task_type": "MUTATE",
-            "phase": "completed",
-            "verification": "confirmed",
-            "summary": (
+        _result(
+            task_type="MUTATE",
+            phase="completed",
+            verification="confirmed",
+            summary=(
                 "match_count：7；action_url：http://host/admin/catalog/product/edit/id/1861/；"
                 "stock_status：In Stock"
             ),
-            "output": "",
-        },
+        ),
     )
 
     assert resp == WAResponse(
@@ -176,12 +187,12 @@ def test_completed_mutate_response_trusts_runtime_completion_without_recounting_
 
 
 def test_completed_mutate_response_accepts_terminal_dispatch_without_claiming_verification():
-    result = {
-        "task_type": "MUTATE",
-        "phase": "completed",
-        "verification": "accepted_unverified",
-        "output": "终态保存动作已可靠派发，结果反馈不可用",
-    }
+    result = _result(
+        task_type="MUTATE",
+        phase="completed",
+        verification="accepted_unverified",
+        output="终态保存动作已可靠派发，结果反馈不可用",
+    )
     resp = _completed_mutate_response(
         "Add a new product variant",
         result,
@@ -203,11 +214,7 @@ def test_completed_mutate_response_accepts_terminal_dispatch_without_claiming_ve
 def test_unverified_mutate_without_completed_execution_is_not_accepted():
     resp = _completed_mutate_response(
         "Add a new product variant",
-        {
-            "task_type": "MUTATE",
-            "phase": "stopped",
-            "verification": None,
-        },
+        _result(task_type="MUTATE"),
     )
 
     assert resp is None
@@ -216,13 +223,13 @@ def test_unverified_mutate_without_completed_execution_is_not_accepted():
 def test_live_180142_terminal_save_bypasses_second_llm_judgement():
     resp = _synthesize_response(
         "Add a new size XXXL to green Minerva LumaTech V-Tee",
-        {
-            "task_type": "browser",
-            "phase": "completed",
-            "verification": "accepted_unverified",
-            "summary": "match_count：1；match_count：16；match_count：1",
-            "output": "终态保存动作已可靠派发，结果未验证",
-        },
+        _result(
+            task_type="browser",
+            phase="completed",
+            verification="accepted_unverified",
+            summary="match_count：1；match_count：16；match_count：1",
+            output="终态保存动作已可靠派发，结果未验证",
+        ),
     )
 
     assert resp.status == "SUCCESS"
@@ -233,12 +240,12 @@ def test_live_180142_terminal_save_bypasses_second_llm_judgement():
 def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
     resp = _completed_mutate_response(
         "Update product",
-        {
-            "task_type": "MUTATE",
-            "phase": "completed",
-            "verification": "confirmed",
-            "output": "未找到目标产品，无法继续操作",
-        },
+        _result(
+            task_type="MUTATE",
+            phase="completed",
+            verification="confirmed",
+            output="未找到目标产品，无法继续操作",
+        ),
     )
 
     assert resp == WAResponse(
@@ -252,12 +259,11 @@ def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
 def test_incomplete_mutate_remains_incomplete_with_failure_summary():
     resp = _completed_mutate_response(
         "Update product",
-        {
-            "task_type": "MUTATE",
-            "phase": "failed",
-            "verification": None,
-            "output": "未找到目标产品，无法继续操作",
-        },
+        _result(
+            task_type="MUTATE",
+            phase="failed",
+            output="未找到目标产品，无法继续操作",
+        ),
     )
 
     assert resp is None
@@ -266,12 +272,12 @@ def test_incomplete_mutate_remains_incomplete_with_failure_summary():
 def test_completed_mutate_response_ignores_non_webarena_task_type_field():
     resp = _completed_mutate_response(
         "Mark all Aeon capri as out of stock",
-        {
-            "task_type": "browser",
-            "phase": "completed",
-            "verification": "confirmed",
-            "summary": "match_count：7；stock_status：Out of Stock",
-        },
+        _result(
+            task_type="browser",
+            phase="completed",
+            verification="confirmed",
+            summary="match_count：7；stock_status：Out of Stock",
+        ),
     )
 
     assert resp == WAResponse(
@@ -401,10 +407,10 @@ def test_multi_key_rows_are_left_as_objects():
 def test_preflight_failure_response_is_deterministic_error():
     resp = _preflight_failure_response(
         "Tell me the top search terms",
-        {
-            "summary": "orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
-            "output": "orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
-        },
+        _result(
+            summary="orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
+            output="orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
+        ),
     )
 
     assert resp.task_type == "RETRIEVE"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from gui_agent.core.run import flow
+from gui_agent.core.run.result import failed_result
 from gui_agent.core.schemas import PolicyContext
 
 
@@ -49,13 +50,14 @@ def test_handle_loading_frame_returns_esc_interrupt(monkeypatch):
         context=_context(),
         interpreter=None,
         finish=lambda value: value,
-        stop_after_esc=lambda turn_no: {"stop_reason": f"esc {turn_no}"},
+        stop_after_esc=lambda turn_no: failed_result("g", f"esc {turn_no}"),
         say=lambda _message: None,
     )
 
     assert result.streak == 2
     assert result.continue_loop is False
-    assert result.terminal_result == {"stop_reason": "esc 3"}
+    assert result.terminal_result is not None
+    assert result.terminal_result.summary == "esc 3"
 
 
 def test_handle_loading_frame_stops_after_limit(monkeypatch):
@@ -76,12 +78,13 @@ def test_handle_loading_frame_stops_after_limit(monkeypatch):
         current_run=None,
         context=_context(),
         interpreter=interpreter,
-        finish=lambda value: {"wrapped": value.model_dump(mode="json")},
+        finish=lambda value: value,
         stop_after_esc=lambda turn_no: None,
         say=messages.append,
     )
 
     assert result.streak == 13
     assert result.continue_loop is False
-    assert result.terminal_result["wrapped"]["summary"] == "页面持续加载未稳定（>12 帧）"
+    assert result.terminal_result is not None
+    assert result.terminal_result.summary == "页面持续加载未稳定（>12 帧）"
     assert messages == ["\n页面持续加载 13 帧仍未稳定，agent-loop 停止"]

@@ -16,7 +16,7 @@ from gui_agent.core.schemas import (
     StatementOutcome,
     SupervisorStep,
 )
-from gui_agent.core.run.state import write_final_program_outcome
+from gui_agent.core.run.state import program_outcome_from_result, write_final_program_outcome
 from gui_agent.reports.statement_reducer import StatementReportReducer
 
 
@@ -126,6 +126,15 @@ def test_write_final_program_outcome_patches_outcome_block(tmp_path: Path):
         "verification": "confirmed",
         "output": "done",
     }
+
+
+def test_program_outcome_mapping_rejects_fields_outside_agent_result():
+    with pytest.raises(ValueError, match="outside AgentResult: ad_hoc_success"):
+        program_outcome_from_result({
+            "phase": "failed",
+            "summary": "failed",
+            "ad_hoc_success": True,
+        })
 
 
 def test_statement_reducer_folds_outcome_and_checklist():

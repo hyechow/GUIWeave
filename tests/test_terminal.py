@@ -61,16 +61,16 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
         turn_no=3,
         program_runtime=rt,
         context=_context(step),
-        finish=lambda value: {"wrapped": value.model_dump(mode="json")},
+        finish=lambda value: value,
         say=messages.append,
         end_statement=lambda _outcome: None,
     )
 
     assert read_state.calls == ["drain", ("flush", 3)]
     assert messages == ["\n目标已达成：任务完成"]
-    assert result["wrapped"]["phase"] == "completed"
-    assert result["wrapped"]["verification"] == "confirmed"
-    assert result["wrapped"]["collection_context"] is None
+    assert result.phase == "completed"
+    assert result.verification == "confirmed"
+    assert result.collection_context is None
 
 
 def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):

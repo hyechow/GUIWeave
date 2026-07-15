@@ -134,7 +134,7 @@ def test_agent_loop_resumes_persisted_active_statement(monkeypatch, tmp_path: Pa
     )
     persisted = PolicyContext.model_validate_json(context_path.read_text(encoding="utf-8"))
     active_turn = persisted.journal.turns[-1]
-    assert first["phase"] == "stopped"
+    assert first.phase == "stopped"
     assert active_turn.runtime_state is not None
     assert active_turn.runtime_state.retry_count == 2
 
@@ -172,8 +172,8 @@ def test_agent_loop_resumes_persisted_active_statement(monkeypatch, tmp_path: Pa
     final_context = PolicyContext.model_validate_json(
         context_path.read_text(encoding="utf-8")
     )
-    assert resumed["phase"] == "completed"
-    assert resumed["verification"] == "confirmed"
+    assert resumed.phase == "completed"
+    assert resumed.verification == "confirmed"
     assert final_context.outcome is not None
     assert final_context.outcome.phase == "completed"
     assert len(final_context.journal.program_revisions) == 1
