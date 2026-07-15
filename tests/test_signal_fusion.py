@@ -947,6 +947,7 @@ def test_transform_effect_latch_crosses_redirect_but_current_state_can_reverse_i
     observed.effect_signal = EffectSignal(
         statement_id=statement.id,
         status="satisfied",
+        subject_ref="collection:14",
         source_type="obs.mutation.desired_state",
         authoritative=True,
         evidence=["all declared members are visible"],
