@@ -159,11 +159,11 @@ def test_completed_mutate_response_trusts_runtime_completion_without_recounting_
             "task_type": "MUTATE",
             "phase": "completed",
             "verification": "confirmed",
-            "stop_reason": (
+            "summary": (
                 "match_count：7；action_url：http://host/admin/catalog/product/edit/id/1861/；"
                 "stock_status：In Stock"
             ),
-            "result_summary": "",
+            "output": "",
         },
     )
 
@@ -180,7 +180,7 @@ def test_completed_mutate_response_accepts_terminal_dispatch_without_claiming_ve
         "task_type": "MUTATE",
         "phase": "completed",
         "verification": "accepted_unverified",
-        "result_summary": "终态保存动作已可靠派发，结果反馈不可用",
+        "output": "终态保存动作已可靠派发，结果反馈不可用",
     }
     resp = _completed_mutate_response(
         "Add a new product variant",
@@ -220,8 +220,8 @@ def test_live_180142_terminal_save_bypasses_second_llm_judgement():
             "task_type": "browser",
             "phase": "completed",
             "verification": "accepted_unverified",
-            "stop_reason": "match_count：1；match_count：16；match_count：1",
-            "result_summary": "终态保存动作已可靠派发，结果未验证",
+            "summary": "match_count：1；match_count：16；match_count：1",
+            "output": "终态保存动作已可靠派发，结果未验证",
         },
     )
 
@@ -237,7 +237,7 @@ def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
             "task_type": "MUTATE",
             "phase": "completed",
             "verification": "confirmed",
-            "result_summary": "未找到目标产品，无法继续操作",
+            "output": "未找到目标产品，无法继续操作",
         },
     )
 
@@ -256,7 +256,7 @@ def test_incomplete_mutate_remains_incomplete_with_failure_summary():
             "task_type": "MUTATE",
             "phase": "failed",
             "verification": None,
-            "result_summary": "未找到目标产品，无法继续操作",
+            "output": "未找到目标产品，无法继续操作",
         },
     )
 
@@ -270,7 +270,7 @@ def test_completed_mutate_response_ignores_non_webarena_task_type_field():
             "task_type": "browser",
             "phase": "completed",
             "verification": "confirmed",
-            "stop_reason": "match_count：7；stock_status：Out of Stock",
+            "summary": "match_count：7；stock_status：Out of Stock",
         },
     )
 
@@ -402,8 +402,8 @@ def test_preflight_failure_response_is_deterministic_error():
     resp = _preflight_failure_response(
         "Tell me the top search terms",
         {
-            "stop_reason": "orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
-            "result_summary": "orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
+            "summary": "orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
+            "output": "orchestrator preflight failed: ROUTER_ENTITY_DROPPED",
         },
     )
 

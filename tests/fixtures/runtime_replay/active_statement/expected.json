@@ -1,0 +1,11 @@
+{
+  "current_statement": "edit draft",
+  "index": 0,
+  "instance_id": "i1:s1",
+  "notes_mark": 0,
+  "retry_count": 2,
+  "constraints": ["do not reopen the editor"],
+  "progress_values": ["draft"],
+  "last_url": "https://example.test/edit",
+  "initial_filters": {"status": "open"}
+}

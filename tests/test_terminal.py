@@ -61,7 +61,7 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
         turn_no=3,
         program_runtime=rt,
         context=_context(step),
-        finish=lambda value: {"wrapped": value},
+        finish=lambda value: {"wrapped": value.model_dump(mode="json")},
         say=messages.append,
         end_statement=lambda _outcome: None,
     )
@@ -100,9 +100,9 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
 
     assert read_state.calls == ["drain", ("flush", 4)]
     assert messages == ["\n任务未完成：用户停止"]
-    assert result["phase"] == "failed"
-    assert result["verification"] is None
-    assert "用户停止" in result["stop_reason"]
+    assert result.phase == "failed"
+    assert result.verification is None
+    assert "用户停止" in result.summary
 
 
 def test_base_result_does_not_promote_one_completed_statement_to_program_success():
@@ -114,5 +114,5 @@ def test_base_result_does_not_promote_one_completed_statement_to_program_success
 
     result = make_result(_context(step), "用户中途退出")
 
-    assert result["phase"] == "stopped"
-    assert result["verification"] is None
+    assert result.phase == "stopped"
+    assert result.verification is None

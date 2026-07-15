@@ -635,7 +635,7 @@ def test_final_result_separates_execution_completion_from_outcome_verification(m
 
     result = orchestration_result(context, interp, "done", current=None)
 
-    assert result["phase"] == "completed"
-    assert result["verification"] == "accepted_unverified"
-    assert "accepted_unverified" not in result["orchestrator"]
+    assert result.phase == "completed"
+    assert result.verification == "accepted_unverified"
+    assert "accepted_unverified" not in result.orchestrator
     EffectSignal,

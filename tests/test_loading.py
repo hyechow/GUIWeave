@@ -76,12 +76,12 @@ def test_handle_loading_frame_stops_after_limit(monkeypatch):
         current_run=None,
         context=_context(),
         interpreter=interpreter,
-        finish=lambda value: {"wrapped": value},
+        finish=lambda value: {"wrapped": value.model_dump(mode="json")},
         stop_after_esc=lambda turn_no: None,
         say=messages.append,
     )
 
     assert result.streak == 13
     assert result.continue_loop is False
-    assert result.terminal_result["wrapped"]["stop_reason"] == "页面持续加载未稳定（>12 帧）"
+    assert result.terminal_result["wrapped"]["summary"] == "页面持续加载未稳定（>12 帧）"
     assert messages == ["\n页面持续加载 13 帧仍未稳定，agent-loop 停止"]

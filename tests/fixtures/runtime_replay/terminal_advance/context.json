@@ -1,0 +1,61 @@
+{
+  "goal": "resume terminal",
+  "supervisor_policy_name": "statement",
+  "action_policy_name": "browser_vision",
+  "platform": "browser",
+  "journal": {
+    "schema_version": 2,
+    "events": [
+      {
+        "event_type": "program_revision",
+        "revision": 1,
+        "action": "start",
+        "program": {
+          "goal": "resume terminal",
+          "statements": [
+            {
+              "op": "run",
+              "statement_id": "s1",
+              "var": "token",
+              "name": "collect token",
+              "kind": "action",
+              "returns": ["token"]
+            },
+            {
+              "op": "run",
+              "statement_id": "s2",
+              "name": "use token",
+              "kind": "action"
+            },
+            {"op": "finish", "message": "done"}
+          ]
+        }
+      },
+      {
+        "event_type": "turn",
+        "index": 1,
+        "operation_mode": "observation",
+        "observation_source": "browser",
+        "statement": {
+          "id": "s1",
+          "name": "collect token",
+          "description": "collect token",
+          "kind": "action",
+          "returns": ["token"]
+        },
+        "statement_instance_id": "i1:s1",
+        "supervisor": {
+          "should_act": false,
+          "summary": "token collected",
+          "statement_id": "s1",
+          "outcome": {
+            "phase": "completed",
+            "summary": "token collected",
+            "verification": "confirmed",
+            "reads": {"token": "A"}
+          }
+        }
+      }
+    ]
+  }
+}

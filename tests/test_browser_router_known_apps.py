@@ -20,7 +20,7 @@ def test_known_apps_match_explicit_input_history_or_prefs():
     ) == ["RoboTeam"]
     assert _mentioned_known_apps(
         "进入 settings",
-        session=[{"user_msg": "打开 GitHub", "result_summary": "已打开 GitHub 首页"}],
+        session=[{"user_msg": "打开 GitHub", "output": "已打开 GitHub 首页"}],
         prefs_context="",
         known_apps=known,
     ) == ["GitHub"]

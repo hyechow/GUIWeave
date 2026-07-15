@@ -6,6 +6,8 @@ It does not contain a legacy context adapter.
 
 The historical directories under this folder are retained only as structured observation assets
 for focused deterministic unit tests. Their old `context.json` files are not valid replay inputs.
+A production adapter must not migrate or ignore those old turn shapes. Deterministic Journal v2
+state-replay goldens live under `tests/fixtures/runtime_replay/` and run in the normal pytest suite.
 A current replay directory contains:
 
 - `context.json`: real `PolicyTurn` history, with report-only token/timing/prompt snapshots removed.
@@ -29,3 +31,8 @@ The command exits nonzero when the live supervisor or optional action-policy dec
 expectation. It never dispatches the returned action. A screenshot without its observation JSON is
 intentionally rejected because it cannot reproduce DOM controls, filters, traversal state, or
 semantic target evidence.
+
+The pytest goldens cover Journal-to-ProgramRuntime replay and a full process-boundary loop resume.
+This command covers a different seam: re-running one checker/planner decision against a saved
+observation. A newly promoted decision fixture must use EventJournal schema v2; do not add a legacy
+context adapter to make the historical assets executable.

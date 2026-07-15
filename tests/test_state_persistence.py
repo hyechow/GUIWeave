@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from gui_agent.core.run.content import ReadState, store_chunk_note
 from gui_agent.core.run.result import make_result
 from gui_agent.core.schemas import (
@@ -72,11 +75,28 @@ def test_outer_result_exposes_phase_and_verification_only():
         verification="confirmed",
     )
 
-    assert result["phase"] == "completed"
-    assert result["verification"] == "confirmed"
-    assert {"goal_completed", "execution_completed", "goal_status"}.isdisjoint(
-        result
+    assert result.phase == "completed"
+    assert result.verification == "confirmed"
+    assert {
+        "goal_completed",
+        "execution_completed",
+        "goal_status",
+        "stop_reason",
+        "result_summary",
+    }.isdisjoint(
+        type(result).model_fields
     )
+    assert result.summary == "done"
+    assert result.output == "done"
+    with pytest.raises(ValidationError, match="frozen"):
+        result.phase = "failed"  # type: ignore[misc]
+
+
+def test_agent_result_rejects_invalid_program_terminal_shape():
+    from gui_agent.core.run.result import AgentResult
+
+    with pytest.raises(ValidationError, match="requires verification"):
+        AgentResult(goal="g", output="done", summary="done", phase="completed")
 
 
 def test_write_final_program_outcome_patches_outcome_block(tmp_path: Path):
@@ -95,7 +115,7 @@ def test_write_final_program_outcome_patches_outcome_block(tmp_path: Path):
         {
             "phase": "completed",
             "verification": "confirmed",
-            "stop_reason": "ok",
+            "summary": "ok",
         },
         output="done",
     )

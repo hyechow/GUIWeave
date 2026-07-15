@@ -1,0 +1,95 @@
+{
+  "goal": "resume active",
+  "supervisor_policy_name": "statement",
+  "action_policy_name": "browser_vision",
+  "platform": "browser",
+  "journal": {
+    "schema_version": 2,
+    "events": [
+      {
+        "event_type": "program_revision",
+        "revision": 1,
+        "action": "start",
+        "program": {
+          "goal": "resume active",
+          "statements": [
+            {
+              "op": "run",
+              "statement_id": "s1",
+              "name": "edit draft",
+              "kind": "action",
+              "target_controls": ["title"],
+              "target_values": {"title": "ready"}
+            },
+            {"op": "finish", "message": "done"}
+          ]
+        }
+      },
+      {
+        "event_type": "content_note",
+        "note": "draft is still open"
+      },
+      {
+        "event_type": "turn",
+        "index": 1,
+        "operation_mode": "interactive",
+        "observation_source": "browser",
+        "statement": {
+          "id": "s1",
+          "name": "edit draft",
+          "description": "edit draft",
+          "kind": "action",
+          "success_condition": "title is ready",
+          "effect_mode": "transform",
+          "target_controls": ["title"],
+          "target_values": {"title": "ready"}
+        },
+        "statement_instance_id": "i1:s1",
+        "runtime_state": {
+          "contract": {
+            "id": "s1",
+            "name": "edit draft",
+            "description": "edit draft",
+            "success_condition": "title is ready",
+            "kind": "action",
+            "effect_mode": "transform",
+            "target_controls": ["title"],
+            "target_values": {"title": "ready"}
+          },
+          "retry_count": 2,
+          "early_feasibility_probed": true,
+          "scroll_count": 1,
+          "execution_scope": "i1:s1/statement",
+          "last_page_identity": "edit",
+          "statement_info_emitted": true,
+          "constraints": [
+            {
+              "text": "do not reopen the editor",
+              "scope": "i1:s1/statement",
+              "source": "loop_guard"
+            }
+          ],
+          "progress_trace": [
+            {
+              "index": 1,
+              "state": "/edit",
+              "decision": "tap title",
+              "scope": "i1:s1/statement"
+            }
+          ],
+          "progress_values": ["draft"],
+          "last_url": "https://example.test/edit",
+          "last_dom_state": "title=draft",
+          "initial_filters": {"status": "open"}
+        },
+        "supervisor": {
+          "should_act": true,
+          "instruction": "type ready",
+          "summary": "editing",
+          "statement_id": "s1",
+          "execution_scope": "i1:s1/statement"
+        }
+      }
+    ]
+  }
+}

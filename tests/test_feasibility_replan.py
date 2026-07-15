@@ -79,5 +79,5 @@ def test_recovered_kickback_does_not_inherit_superseded_failure(monkeypatch):
         lambda *_args, **_kwargs: "completed",
     )
     result = orchestration_result(ctx, recovered, "完成", current=None)
-    assert result["phase"] == "completed"
-    assert result["verification"] == "confirmed"
+    assert result.phase == "completed"
+    assert result.verification == "confirmed"
