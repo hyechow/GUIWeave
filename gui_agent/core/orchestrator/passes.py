@@ -11,6 +11,7 @@ is NOT here — interactive execution belongs to core/run/interactive.py.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 from .program import (
@@ -28,6 +29,160 @@ from .program import (
     RunLike,
     Stmt,
 )
+
+
+# ── task-value contract normalization ───────────────────────────────────────────────
+# The retired supervisor DAG decomposer used to repair a few task values after generating
+# milestones.  These are compilation concerns: preserve them as a pure Program pass so every
+# decompose/re-decompose entrance receives the same deterministic contract without runtime state.
+_AM_WORDS = ("上午", "早上", "早晨", "清晨")
+_PM_WORDS = ("下午", "晚上", "傍晚", "夜晚")
+_TIME_ENTITY_WORDS = (
+    "闹钟", "提醒", "日程", "会议", "预约", "时间", "alarm", "reminder", "schedule", "meeting",
+)
+_WEEKDAY_ALIASES = {
+    "周一": ("周一", "星期一", "礼拜一"),
+    "周二": ("周二", "星期二", "礼拜二"),
+    "周三": ("周三", "星期三", "礼拜三"),
+    "周四": ("周四", "星期四", "礼拜四"),
+    "周五": ("周五", "星期五", "礼拜五"),
+    "周六": ("周六", "星期六", "礼拜六"),
+    "周日": ("周日", "周天", "星期日", "星期天", "礼拜日", "礼拜天"),
+}
+
+
+@dataclass(frozen=True)
+class _GoalValueContract:
+    field: str
+    target: str
+    rejects: str = ""
+    aliases: tuple[str, ...] = ()
+    trigger_words: tuple[str, ...] = ()
+
+    def present_in(self, text: str) -> bool:
+        lowered = text.casefold()
+        return any(alias in text or alias.casefold() in lowered for alias in self.aliases)
+
+
+def _goal_value_contracts(goal: str) -> list[_GoalValueContract]:
+    text = goal.casefold()
+    contracts: list[_GoalValueContract] = []
+    has_am = any(word in goal for word in _AM_WORDS) or bool(re.search(r"\ba\.?m\.?\b", text))
+    has_pm = any(word in goal for word in _PM_WORDS) or bool(re.search(r"\bp\.?m\.?\b", text))
+    if has_am != has_pm:
+        contracts.append(
+            _GoalValueContract(
+                field="时段",
+                target="上午/早上/AM" if has_am else "下午/晚上/傍晚/PM",
+                rejects="下午/晚上/傍晚/PM" if has_am else "上午/早上/AM",
+                aliases=_AM_WORDS + ("AM", "am") if has_am else _PM_WORDS + ("PM", "pm"),
+                trigger_words=("上午", "下午", "早上", "晚上", "AM", "PM", "时段", "时间"),
+            )
+        )
+
+    repeat: _GoalValueContract | None = None
+    if "工作日" in goal:
+        repeat = _GoalValueContract(
+            "重复规则", "工作日/周一至周五", "周末/每天/不重复",
+            ("工作日", "周一至周五", "周一到周五", "星期一至星期五"),
+            ("重复", "工作日", "周一", "周五", "星期"),
+        )
+    elif "周末" in goal:
+        repeat = _GoalValueContract(
+            "重复规则", "周末/周六周日", "工作日/每天/不重复",
+            ("周末", "周六周日", "周六和周日", "星期六星期日"),
+            ("重复", "周末", "周六", "周日", "星期"),
+        )
+    elif any(word in goal for word in ("每天", "每日", "天天")):
+        repeat = _GoalValueContract(
+            "重复规则", "每天/每日", "不重复/仅一次",
+            ("每天", "每日", "天天"), ("重复", "每天", "每日"),
+        )
+    else:
+        days = [name for name, aliases in _WEEKDAY_ALIASES.items() if any(a in goal for a in aliases)]
+        if days:
+            repeat = _GoalValueContract(
+                "重复规则", "/".join(days), "其他星期/不重复",
+                tuple(days), ("重复", "星期", "周", *days),
+            )
+    if repeat is not None:
+        contracts.append(repeat)
+
+    named = re.search(
+        r"(?:名称|名字|标题|备注|标签|闹钟名|提醒名)"
+        r"(?:设置为|设为|命名为|改为|叫|为)[「“\"']?([^」”\"'，。；;]+)",
+        goal,
+    )
+    if named:
+        value = named.group(1).strip()
+        if value and len(value) <= 30:
+            contracts.append(
+                _GoalValueContract(
+                    "名称/标签", value, aliases=(value,),
+                    trigger_words=("名称", "名字", "标题", "备注", "标签", "闹钟名", "提醒名"),
+                )
+            )
+    return contracts
+
+
+def _contract_applies(contract: _GoalValueContract, run: Run) -> bool:
+    text = f"{run.name}\n{run.success_condition}"
+    if any(word in text for word in contract.trigger_words):
+        return True
+    if contract.field != "时段":
+        return False
+    lowered = text.casefold()
+    has_time_entity = any(word in lowered for word in _TIME_ENTITY_WORDS)
+    has_clock_value = bool(
+        re.search(r"\d{1,2}\s*[:：]\s*\d{1,2}|\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分?)?", text)
+    )
+    return has_time_entity and has_clock_value
+
+
+def _normalize_goal_contract_stmts(
+    statements: list[Stmt], contracts: list[_GoalValueContract]
+) -> list[Stmt]:
+    out: list[Stmt] = []
+    for statement in statements:
+        if isinstance(statement, Run) and statement.kind in {"action", "filter"}:
+            success = statement.success_condition
+            source = f"{statement.name}\n{success}"
+            for contract in contracts:
+                if not _contract_applies(contract, statement) or contract.present_in(source):
+                    continue
+                reject = f"，不能是{contract.rejects}" if contract.rejects else ""
+                suffix = f"（必须同时满足{contract.field}={contract.target}{reject}）"
+                if suffix not in success:
+                    success = f"{success}{suffix}"
+                    source = f"{statement.name}\n{success}"
+            out.append(statement.model_copy(update={"success_condition": success}))
+        elif isinstance(statement, If):
+            out.append(statement.model_copy(update={
+                "then": _normalize_goal_contract_stmts(statement.then, contracts),
+                "otherwise": _normalize_goal_contract_stmts(statement.otherwise, contracts),
+            }))
+        elif isinstance(statement, ForEach):
+            out.append(statement.model_copy(update={
+                "body": _normalize_goal_contract_stmts(statement.body, contracts),
+            }))
+        else:
+            out.append(statement)
+    return out
+
+
+def normalize_goal_value_contracts(program: Program) -> Program:
+    """Compile task-level time/repeat/name values into matching interactive Run contracts."""
+    contracts = _goal_value_contracts(program.goal)
+    if not contracts:
+        return program.model_copy(deep=True)
+    statements = _normalize_goal_contract_stmts(program.statements, contracts)
+    functions = [
+        function.model_copy(update={
+            "body": _normalize_goal_contract_stmts(function.body, contracts),
+        })
+        for function in program.functions
+    ]
+    return program.model_copy(update={"statements": statements, "functions": functions})
 
 
 # ── action return-read structural backstop (L2) ──────────────────────────────────────
@@ -137,7 +292,9 @@ def finalize_gates(program: Program) -> Program:
     docstring), so they belong here — applied ONCE by decompose/redecompose so every generation
     entrance (AOT decompose / JIT subdecompose / kickback redecompose) gets them centrally, instead
     of each of the 7 call sites re-wrapping the output by hand (S9b). Idempotent."""
-    return normalize_precondition_gates(normalize_confirm_read_gates(program))
+    return normalize_goal_value_contracts(
+        normalize_precondition_gates(normalize_confirm_read_gates(program))
+    )
 
 
 # ── foreach compiler normalization ────────────────────────────────────────────────
