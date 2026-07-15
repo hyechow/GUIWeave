@@ -29,6 +29,24 @@ _KIND_MAP: dict[str, tuple[str, str]] = {
     "action": ("action", "visible_once"),
 }
 
+_VALUE_CONVERGE_CONTROLS = ("picker", "滚轮", "选择器", "步进器", "滑块", "spinner")
+_VALUE_SET_WORDS = ("设置为", "设为", "调到", "调整为", "改为", "选到", "显示为", "设定为")
+_VALUE_DOMAINS = (
+    "时间", "日期", "闹钟", "小时", "分钟", "上午", "下午", "am", "pm",
+    "数量", "数值", "音量", "亮度", "比例", "百分比", "档", "级", "年", "月", "日",
+)
+
+
+def _needs_value_convergence(run: Run) -> bool:
+    text = f"{run.name}\n{run.success_condition}".casefold()
+    if any(word in text for word in _VALUE_CONVERGE_CONTROLS):
+        return any(word in text for word in _VALUE_SET_WORDS)
+    return (
+        any(word in text for word in _VALUE_SET_WORDS)
+        and any(word in text for word in _VALUE_DOMAINS)
+        and bool(re.search(r"\d|am|pm|上午|下午|%", text))
+    )
+
 
 def _milestone_id(run: Run, index: int) -> str:
     base = run.var or f"m{index}_{run.kind}"
@@ -47,6 +65,8 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
             "需要交互时应先升格为 navigation/filter/action。"
         )
     kind, strategy = _KIND_MAP.get(run.kind, ("action", "visible_once"))
+    if run.kind in {"action", "filter"} and _needs_value_convergence(run):
+        strategy = "repeat_until_satisfied"
     description = run.name
     if run.returns:
         description = f"{run.name}（读取字段：{'、'.join(run.returns)}）"

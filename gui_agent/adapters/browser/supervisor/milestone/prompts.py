@@ -2,8 +2,6 @@
 
 from gui_agent.prompts import load_prompt_text
 
-DECOMPOSE_PROMPT = load_prompt_text("task.milestone.browser.decompose")
-
 SINGLE_CHECKER_PROMPT = load_prompt_text("task.milestone.browser.checker")
 
 # ── Per-kind checker sections (only the relevant one is injected) ──────────
@@ -37,9 +35,6 @@ PLAN_PROMPT = load_prompt_text("task.milestone.browser.planner")
 LOOP_SCROLL_PROMPT = load_prompt_text("task.milestone.browser.loop_scroll")
 
 REPLAN_PROMPT = load_prompt_text("task.milestone.browser.replanner")
-
-STOP_CONDITION_PATCH_PROMPT = load_prompt_text("task.milestone.browser.stop_condition_patch")
-
 
 # ── Browser-specific structured planner output ──────────────────────────────
 from typing import Literal, Optional  # noqa: E402
@@ -82,7 +77,6 @@ class BrowserPlanResult(BaseModel):
 
 # ── Bundle into the neutral MilestonePrompts seam (web draft) ────────────────
 BROWSER_MILESTONE_PROMPTS = MilestonePrompts(
-    decompose=DECOMPOSE_PROMPT,
     single_checker=SINGLE_CHECKER_PROMPT,
     check_kind_sections=CHECK_KIND_SECTIONS,
     check_section_default=_CHECK_SECTION_DEFAULT,
@@ -91,7 +85,6 @@ BROWSER_MILESTONE_PROMPTS = MilestonePrompts(
     plan=PLAN_PROMPT,
     loop_scroll=LOOP_SCROLL_PROMPT,
     replan=REPLAN_PROMPT,
-    stop_condition_patch=STOP_CONDITION_PATCH_PROMPT,
     image_resize="none",
     plan_result_schema=BrowserPlanResult,
 )

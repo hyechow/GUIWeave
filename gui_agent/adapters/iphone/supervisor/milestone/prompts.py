@@ -1,7 +1,5 @@
 from gui_agent.prompts import load_prompt_text
 
-DECOMPOSE_PROMPT = load_prompt_text("task.milestone.iphone.decompose")
-
 # Checker prompt is assembled per milestone.kind: SINGLE_CHECKER_PROMPT is the
 # shared core with a {kind_section} slot; CHECK_KIND_SECTIONS supplies only the
 # rules relevant to the current kind. This keeps each checker focused (sharper
@@ -45,16 +43,12 @@ LOOP_SCROLL_PROMPT = load_prompt_text("task.milestone.iphone.loop_scroll")
 
 REPLAN_PROMPT = load_prompt_text("task.milestone.iphone.replanner")
 
-STOP_CONDITION_PATCH_PROMPT = load_prompt_text("task.milestone.iphone.stop_condition_patch")
-
-
 # ── Bundle the above into the neutral MilestonePrompts seam ──────────────────
 # This iPhone-flavored bundle owns the injection boundary; the model-visible
 # prompt bodies live under gui_agent/prompts/tasks/milestone/iphone/.
 from gui_agent.core.supervisor.milestone.schemas import MilestonePrompts  # noqa: E402
 
 IPHONE_MILESTONE_PROMPTS = MilestonePrompts(
-    decompose=DECOMPOSE_PROMPT,
     single_checker=SINGLE_CHECKER_PROMPT,
     check_kind_sections=CHECK_KIND_SECTIONS,
     check_section_default=_CHECK_SECTION_DEFAULT,
@@ -63,6 +57,5 @@ IPHONE_MILESTONE_PROMPTS = MilestonePrompts(
     plan=PLAN_PROMPT,
     loop_scroll=LOOP_SCROLL_PROMPT,
     replan=REPLAN_PROMPT,
-    stop_condition_patch=STOP_CONDITION_PATCH_PROMPT,
     home_identity_markers=("iOS 主屏幕", "主屏幕", "主屏", "home screen", "springboard"),
 )

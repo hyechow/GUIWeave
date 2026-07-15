@@ -784,23 +784,6 @@ def feedback_block(
     )
 
 
-def completed_milestones_block(milestones: Iterable[Milestone], *, current_id: str = "") -> ContextBlock:
-    lines = [
-        f"  - [{m.id}] {m.name}（已完成，不要退回到该状态）"
-        for m in milestones
-        if m.status == "done" and m.id != current_id
-    ]
-    return ContextBlock(
-        id="runtime.milestones.completed",
-        budget="medium",
-        source_type="runtime_state",
-        source="milestone_state",
-        ttl="session",
-        priority=40,
-        content="## 已完成的子目标（不要退回这些状态）\n" + ("\n".join(lines) if lines else "  （无）"),
-    )
-
-
 def tried_instructions_block(instructions: Iterable[str]) -> ContextBlock:
     items = sorted({item for item in instructions if item})
     content = "\n".join(f"  - 「{item}」" for item in items) if items else "  （无）"

@@ -653,7 +653,7 @@ class GoalValidationResult(BaseModel):
 
 
 class Milestone(BaseModel):
-    """A sub-goal in the task decomposition DAG."""
+    """Compatibility contract consumed by one interactive statement executor."""
 
     @model_validator(mode="before")
     @classmethod
@@ -701,7 +701,6 @@ class Milestone(BaseModel):
     id: str
     name: str
     description: str
-    depends_on: list[str] = Field(default_factory=list)
     success_condition: str
     kind: MilestoneKind = Field(
         default="action",
@@ -938,8 +937,8 @@ class PolicyContext(BaseModel):
     )
     orchestrator: Optional[dict] = Field(
         default=None,
-        description="DSL 编排器模式：{program: {goal, statements:[run/if/finish]}}。decompose 是独立阶段，"
-                    "报告据此渲染单独的「分解」行。program=None 的 DAG 路径为 None",
+        description="DSL Program 运行信息：{program: {goal, statements:[run/if/finish]}}。"
+                    "decompose 是独立阶段，报告据此渲染单独的「分解」行。",
     )
 
     @model_validator(mode="after")

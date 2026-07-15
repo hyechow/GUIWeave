@@ -18,13 +18,12 @@ def action_metadata(plan, milestone: Milestone) -> tuple[AtomicRole, ActionFamil
 class MilestonePrompts:
     """Platform-specific LLM prompt set for the milestone supervisor.
 
-    The supervisor FRAMEWORK (policy.py decompose→check→plan loop + model I/O) is
+    The supervisor FRAMEWORK (policy.py check→plan loop + model I/O) is
     platform-neutral; adapters own the prompt bundle and load the model-visible
     bodies from Markdown prompt assets. This container is the neutral seam: only
     the field SHAPE lives in core, never the content. Fields cover every prompt
     policy.py + model_io.py consume."""
 
-    decompose: str
     single_checker: str
     check_kind_sections: dict
     check_section_default: str
@@ -33,7 +32,6 @@ class MilestonePrompts:
     plan: str
     loop_scroll: str
     replan: str
-    stop_condition_patch: str
     # Prompt-side image preprocessing. iPhone screenshots are captured at Retina
     # scale and should be halved before vision calls; Android/browser screenshots
     # are already in the coordinate space the agent reasons about.
@@ -56,7 +54,6 @@ class MilestonePrompts:
     def neutral(cls) -> "MilestonePrompts":
         """Return a platform-neutral bundle for deterministic execution and tooling."""
         return cls(
-            decompose="Decompose the goal into platform-neutral executable milestones.",
             single_checker="Verify the current milestone from supplied observations and contracts.",
             check_kind_sections={},
             check_section_default="Use visible evidence and structured state only.",
@@ -65,7 +62,6 @@ class MilestonePrompts:
             plan="Propose one atomic action using structured target metadata.",
             loop_scroll="Propose one collection-progress action.",
             replan="Propose one local recovery action without changing the goal.",
-            stop_condition_patch="Make the collection stop condition observable.",
             image_resize="none",
         )
 
@@ -282,22 +278,3 @@ class _ReplanResult(BaseModel):
     drag_current_value: Optional[int] = None
     drag_target_value: Optional[int] = None
     escalation_message: str = Field(default="")
-
-class _StopConditionPatch(BaseModel):
-    scroll_stop_condition: str = Field(
-        description="一句话描述何时应停止滚动。从依赖链的约束维度推导：有日期范围用日期边界，"
-                    "有关键词用关键词消失条件，没有任何约束的全量采集用'滚动至列表物理底部时停止'"
-    )
-    observable_boundary: bool = Field(
-        description="该停止条件是否在屏幕上可直接观察。日期标记、'没有更多了'提示为 true；"
-                    "关键词相关性、内容充分性判断为 false"
-    )
-
-
-class _DecomposeResponse(BaseModel):
-    goal: str
-    global_constraints: list[str] = Field(default_factory=list)
-    milestones: list[Milestone]
-    task_type: Literal["action", "analysis"] = Field(
-        description="action=执行具体操作；analysis=查看/比较/总结信息；有疑问时选 analysis"
-    )

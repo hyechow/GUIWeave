@@ -21,7 +21,6 @@ from gui_agent.core.run.action_signals import (
 from .acquisition import (
     TargetAcquireController,
 )
-from .decomposition import MilestoneDecompositionMixin
 from .runtime import (
     EARLY_FEASIBILITY_AT,
     MAX_RETRIES,
@@ -79,14 +78,14 @@ from .llm_runtime import MilestoneLLMRuntimeMixin
 
 class MilestoneSupervisorPolicy(
     MilestoneLLMRuntimeMixin,
-    MilestoneDecompositionMixin,
     MilestoneStuckMixin,
 ):
-    """The sole control-flow owner for milestone execution.
+    """Control-flow owner for one active interactive statement.
 
     Checkers and deterministic adapters contribute evidence, planners propose one primitive,
     and executors report what crossed the UI boundary.  None of them may advance, fail, or
-    suppress a milestone; those transitions are made here after the evidence is reconciled.
+    suppress a statement; those transitions are made here after the evidence is reconciled.
+    Program sequencing belongs to the DSL interpreter, never to this policy.
     """
 
     name = "milestone"
@@ -108,13 +107,11 @@ class MilestoneSupervisorPolicy(
         self._active_target_resolver = active_target_resolver
         self._mutation_control_resolver = mutation_control_resolver
         self._static_constraints: list[str] = []
-        self._milestones: dict[str, Milestone] = {}
-        self._order: list[str] = []
-        self._current_id: Optional[str] = None
+        self._active_milestone: Milestone | None = None
         # One-shot: skip the next step()'s initial done-check and plan directly (set by reseed
-        # for a freshly-entered navigation milestone — DAG _advance parity, see reseed).
+        # for a freshly-entered navigation statement.
         self._skip_initial_check: bool = False
-        self._scroll_counts: dict[str, int] = {}
+        self._scroll_count: int = 0
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
         self._check_knowledge: str = ""
@@ -122,7 +119,7 @@ class MilestoneSupervisorPolicy(
         self._pk: Optional[ProgressiveKnowledge] = None  # progressive (skill-like) section loader
         self._app_name: str = ""
         # url/dom-delta effect signals now live on the ProgressMonitor (observe_effect).
-        self._last_page_identity: dict[str, str] = {}
+        self._last_page_identity: str = ""
         # 连续调值进展窗口、url/dom 效果信号、帧/指令/值停滞探测都在 ProgressMonitor 上。
         # Progress memory is observational. It may trigger recovery in this policy, but it never
         # suppresses a primitive inside the action executor.
@@ -131,7 +128,7 @@ class MilestoneSupervisorPolicy(
         self._execution_coordinator = ExecutionCoordinator()
         self._execution_contract: ExecutionContract | None = None
         self._current_execution_scope: str = ""
-        self._early_feasibility_probed: set[str] = set()  # milestone ids given an early Feasibility probe
+        self._early_feasibility_probed: bool = False
         self._last_check: Optional[_SingleCheckResult] = None
         self._collection_progress: str = ""
         self._collection_done: bool = False
@@ -140,7 +137,7 @@ class MilestoneSupervisorPolicy(
         # appear later were set by this run's own steps — task scope, not residue. Rendered into
         # the checker/planner applied-filter block so "清除残留" can no longer destroy upstream scope.
         self._initial_filters: Optional[dict[str, str]] = None
-        self._milestone_done_checks: dict[str, "_SingleCheckResult"] = {}  # milestone_id → done check
+        self._done_check: Optional[_SingleCheckResult] = None
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
         self._last_sections_loaded: list[str] = []  # progressive section stems injected this turn (logged)
@@ -149,7 +146,7 @@ class MilestoneSupervisorPolicy(
         # Selection only changes when the page or the milestone changes, so within a key the
         # selector LLM is never re-invoked (empty selections are cached too).
         self._selector_cache: dict[tuple[str, str], list[str]] = {}
-        self._goal: str = ""  # set by _decompose; selector prompt context
+        self._goal: str = ""  # active statement goal; selector prompt context
         self._timings: dict[str, float] = {}
         self._timings_order: list[str] = []
         self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
@@ -218,20 +215,19 @@ class MilestoneSupervisorPolicy(
 
     def runtime_state_snapshot(self) -> dict:
         """Return persisted runtime state without exposing supervisor internals."""
+        active = self._active_milestone
         return {
-            "milestones": {
-                mid: {
-                    "status": m.status,
-                    "retry_count": m.retry_count,
+            "milestones": ({
+                active.id: {
+                    "status": active.status,
+                    "retry_count": active.retry_count,
                 }
-                for mid, m in self._milestones.items()
-            },
-            "done_checks": {
-                mid: check.model_dump(mode="json", exclude_none=True)
-                for mid, check in self._milestone_done_checks.items()
-            },
-            "last_page_identity": dict(self._last_page_identity),
-            "scroll_counts": dict(self._scroll_counts),
+            } if active is not None else {}),
+            "done_checks": ({
+                active.id: self._done_check.model_dump(mode="json", exclude_none=True)
+            } if active is not None and self._done_check is not None else {}),
+            "last_page_identity": ({active.id: self._last_page_identity} if active else {}),
+            "scroll_counts": ({active.id: self._scroll_count} if active else {}),
             "progress_values": {
                 mid: list(values)
                 for mid, values in self._monitor._progress_values.items()
@@ -384,20 +380,16 @@ class MilestoneSupervisorPolicy(
             if applied_now is not None:
                 self._initial_filters = dict(applied_now)
 
-        if not self._order:
-            # DAG walker / in-step decompose retired. ProgramRuntime must reseed one
-            # interactive statement via begin/reseed before step().
+        milestone = self._active_milestone
+        if milestone is None:
             raise RuntimeError(
                 "InteractiveStatementExecutor requires reseed(statement) before step(); "
-                "DAG decompose/walker is retired — compile a Program and drive statements "
-                "through ProgramRuntime"
+                "compile a Program and drive statements through ProgramRuntime"
             )
-
-        if self._current_id is None:
-            # Single-statement mode: statement finished; ProgramRuntime decides next.
-            return self._terminal_step()
-
-        milestone = self._milestones[self._current_id]
+        if milestone.status in {"done", "failed"}:
+            raise RuntimeError(
+                f"statement {milestone.id!r} is already terminal; reseed the next Program statement"
+            )
         if milestone.kind == "action" and milestone.target_values:
             observation = self._mutation_observation(
                 observation,
@@ -407,8 +399,7 @@ class MilestoneSupervisorPolicy(
             result = self._run_loop_turn(milestone, observation, history)
         else:
             result = self._run_single_turn(milestone, observation, history)
-        result_ms = self._milestones.get(result.milestone_id or "", milestone)
-        result.execution_scope = execution_scope_for(result_ms, observation)
+        result.execution_scope = execution_scope_for(milestone, observation)
 
         return result
 
@@ -431,27 +422,26 @@ class MilestoneSupervisorPolicy(
         task_type: Literal["action", "analysis"] = "action",
         fresh_advance: bool = False,
     ) -> None:
-        """单 milestone 模式（DSL orchestrator 用）：把 supervisor 重置成只驱动这一个 milestone，
-        绕过内部 decompose（DSL program 已含全部 milestone，由解释器排序）。step() 把这个 milestone
-        跑到 done 后，_current_id 自然走到 None → 下一次 step() 发 terminal/goal_completed，agent_loop
-        据此向解释器要下一个并 reseed。
+        """Begin one interactive statement supplied by the DSL interpreter.
 
-        与 DAG 模式的 `_advance` 对齐：跨 milestone **只清 `_recent_screenshots`**（stuck 检测器
-        的帧历史，不该跨 milestone 串）；其余 per-milestone 态（page_identity / last_plan /
-        last_replan / dom_state / done_checks / sections_loaded …）一律**保留**，与 `_advance`
-        一致——否则编排器会比 DAG 更狠地清空，造成跨 milestone 上下文断裂。应用知识/全局约束本就
-        保留（跨 milestone 复用）。task_type 控制读取门（读取类 milestone 传 'analysis' 才会真读）。"""
-        self._milestones = {milestone.id: milestone}
-        self._order = [milestone.id]
-        self._current_id = milestone.id
+        Statement-local controller/report fields reset here. Task knowledge, static constraints,
+        and selector cache remain reusable across Program statements.
+        """
+        self._active_milestone = milestone
+        self._goal = milestone.name
+        self._last_page_identity = ""
+        self._scroll_count = 0
+        self._early_feasibility_probed = False
+        self._done_check = None
+        self._current_execution_scope = ""
         self.task_type = task_type  # 读取门：read milestone 须为 'analysis' 才读
         if (
             self._execution_contract is None
             or self._execution_contract.statement_id != milestone.id
         ):
             self._execution_contract = ExecutionContract.from_milestone(milestone)
-        self._monitor.clear_screenshots()  # 唯一要清的，和 _advance 一致
-        # DAG `_advance` 的 nav 跳 check 镜像：fresh_advance=刚从上一个 milestone 推进过来（同帧），
+        self._monitor.clear_screenshots()
+        # fresh_advance=刚从上一个 statement 推进过来（同帧），
         # 此时若新 milestone 是 navigation，它「in_progress by construction」，跳过首次验收直接规划
         # 第一步导航动作——省掉交接时第 2 次 checker。幂等（重点 nav 目标无害；残留 already-done 由
         # 下一轮正常 check 兜底）。action/filter/collection 一律保留 check：重跑 action 可能双执行
@@ -486,7 +476,7 @@ class MilestoneSupervisorPolicy(
         scoped_history = history_for_scope(history, milestone, observation)
         milestone_history = history_for_current_milestone(history, milestone, observation)
 
-        # Freshly entered navigation milestone (reseed fresh_advance, mirror DAG _advance):
+        # Freshly entered navigation statement (reseed fresh_advance):
         # skip the initial done-check and plan the first nav action directly — drops the 2nd
         # checker call on the milestone hand-off. One-shot.
         if self._skip_initial_check:
@@ -499,7 +489,7 @@ class MilestoneSupervisorPolicy(
                 summary="",
             )
             self._last_check = synthetic
-            self._last_page_identity[milestone.id] = ""
+            self._last_page_identity = ""
             return self._plan_single(milestone, synthetic, observation, scoped_history)
 
         if milestone_history and milestone_history[-1].action_decision:
@@ -507,7 +497,7 @@ class MilestoneSupervisorPolicy(
             if last_action is not None and last_action.action_type == "type":
                 self._monitor.clear_screenshots()
 
-        prev_page_id = self._last_page_identity.get(milestone.id, "")
+        prev_page_id = self._last_page_identity
 
         # Observe state-change signals first — these are deterministic ground truth.
         # url_changed / dom_changed feed both the dispatch gate check below and the
@@ -733,7 +723,7 @@ class MilestoneSupervisorPolicy(
             self._last_check = check
 
         current_page_id = check.page_identity or ""
-        self._last_page_identity[milestone.id] = current_page_id
+        self._last_page_identity = current_page_id
 
         if milestone.completion_strategy == "react_until_collected":
             if self._collection_done:
@@ -1193,8 +1183,8 @@ class MilestoneSupervisorPolicy(
                 completion_strategy=milestone.completion_strategy,
                 collection_scope=frame.collection_scope,
             )
-        self._scroll_counts[milestone.id] = self._scroll_counts.get(milestone.id, 0) + 1
-        scroll_count = self._scroll_counts[milestone.id]
+        self._scroll_count += 1
+        scroll_count = self._scroll_count
 
         if milestone.scroll_budget > 0:
             budget = milestone.scroll_budget
@@ -1264,7 +1254,7 @@ class MilestoneSupervisorPolicy(
         # 跳过本帧（不读、不喂 stitch、不计轮数）。一旦开始滚动，内容已确认渲染，不再判 loading。
         if frame.loading and not _has_successful_scroll_for(scoped_history, milestone.id):
             print("  [Loop] 采集启动帧仍在加载中 → 等待重渲染，不读取本帧")
-            self._scroll_counts[milestone.id] -= 1  # 加载等待不计入滚动预算
+            self._scroll_count -= 1  # 加载等待不计入滚动预算
             return SupervisorStep(
                 should_act=False, stop=False, goal_completed=False, is_loading=True,
                 summary="采集页加载中，等待...",
@@ -1389,10 +1379,7 @@ class MilestoneSupervisorPolicy(
         milestone.completion_status = decision.completion_status
         # Persist this statement's DONE verdict for reports (done_check panel).
         if self._last_check is not None:
-            self._milestone_done_checks[milestone.id] = self._last_check
-        # Single-statement executor: never walk to a next milestone. ProgramRuntime
-        # reseeds the next interactive statement after consuming this outcome.
-        self._current_id = None
+            self._done_check = self._last_check
         self._monitor.clear_screenshots()
         print(f"  子目标「{done_name}」已完成")
 
@@ -1463,9 +1450,9 @@ class MilestoneSupervisorPolicy(
         # judge is conservative-toward-feasible, so a "feasible" verdict just continues.
         if (
             EARLY_FEASIBILITY_AT <= milestone.retry_count < MAX_RETRIES
-            and milestone.id not in self._early_feasibility_probed
+            and not self._early_feasibility_probed
         ):
-            self._early_feasibility_probed.add(milestone.id)
+            self._early_feasibility_probed = True
             kick = self._maybe_kickback(milestone, observation, read_inst, history)
             if kick:
                 return kick
@@ -1520,7 +1507,6 @@ class MilestoneSupervisorPolicy(
             if kick:
                 return kick
             milestone.status = "failed"
-            self._current_id = None
             return SupervisorStep(
                 should_act=False,
                 stop=True,
@@ -1664,27 +1650,12 @@ class MilestoneSupervisorPolicy(
 
     def _fail(self, milestone: Milestone, check: _SingleCheckResult, read_inst: Optional[str]) -> SupervisorStep:
         milestone.status = "failed"
-        self._current_id = None
         print(f"  子目标「{milestone.name}」失败")
         return SupervisorStep(
             should_act=False, stop=True,
             stop_reason=f"子目标「{milestone.name}」重试 {MAX_RETRIES} 次后失败",
             goal_completed=False, summary=check.reason,
             **_ctx(milestone, read_inst),
-        )
-
-    def _terminal_step(self) -> SupervisorStep:
-        failed = [m for m in self._milestones.values() if m.status == "failed"]
-        pending = [m for m in self._milestones.values() if m.status == "pending"]
-        if failed or pending:
-            return SupervisorStep(
-                should_act=False, stop=True, goal_completed=False,
-                stop_reason=f"无可执行子目标；失败：{'、'.join(m.name for m in failed) or '无'}；未完成：{'、'.join(m.name for m in pending) or '无'}",
-                summary="任务未完成，存在失败或依赖未满足的子目标。",
-            )
-        return SupervisorStep(
-            should_act=False, stop=True, stop_reason="所有子目标已完成",
-            goal_completed=True, summary="任务完成",
         )
 
     # ── LLM invocations ───────────────────────────────────────────────

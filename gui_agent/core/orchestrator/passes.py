@@ -129,8 +129,6 @@ def _contract_applies(contract: _GoalValueContract, run: Run) -> bool:
     text = f"{run.name}\n{run.success_condition}"
     if any(word in text for word in contract.trigger_words):
         return True
-    if contract.field != "时段":
-        return False
     lowered = text.casefold()
     has_time_entity = any(word in lowered for word in _TIME_ENTITY_WORDS)
     has_clock_value = bool(

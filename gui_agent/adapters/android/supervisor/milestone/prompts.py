@@ -14,8 +14,6 @@ android injects this set via adapters/android/factory.py.
 
 from gui_agent.prompts import load_prompt_text
 
-DECOMPOSE_PROMPT = load_prompt_text("task.milestone.android.decompose")
-
 SINGLE_CHECKER_PROMPT = load_prompt_text("task.milestone.android.checker")
 
 # ── Per-kind checker sections (only the relevant one is injected) ──────────
@@ -50,14 +48,10 @@ LOOP_SCROLL_PROMPT = load_prompt_text("task.milestone.android.loop_scroll")
 
 REPLAN_PROMPT = load_prompt_text("task.milestone.android.replanner")
 
-STOP_CONDITION_PATCH_PROMPT = load_prompt_text("task.milestone.android.stop_condition_patch")
-
-
 # ── Bundle into the neutral MilestonePrompts seam (android draft) ────────────
 from gui_agent.core.supervisor.milestone.schemas import MilestonePrompts  # noqa: E402
 
 ANDROID_MILESTONE_PROMPTS = MilestonePrompts(
-    decompose=DECOMPOSE_PROMPT,
     single_checker=SINGLE_CHECKER_PROMPT,
     check_kind_sections=CHECK_KIND_SECTIONS,
     check_section_default=_CHECK_SECTION_DEFAULT,
@@ -66,7 +60,6 @@ ANDROID_MILESTONE_PROMPTS = MilestonePrompts(
     plan=PLAN_PROMPT,
     loop_scroll=LOOP_SCROLL_PROMPT,
     replan=REPLAN_PROMPT,
-    stop_condition_patch=STOP_CONDITION_PATCH_PROMPT,
     image_resize="none",
     home_identity_markers=("Android 主屏幕", "主屏幕", "主屏", "home screen", "launcher"),
 )

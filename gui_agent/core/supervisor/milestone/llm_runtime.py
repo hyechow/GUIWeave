@@ -11,7 +11,6 @@ from typing import Optional
 from langchain_openai import ChatOpenAI
 
 from gui_agent.context.runtime import (
-    completed_milestones_block,
     constraints_block,
     extra_instruction_block,
     form_controls_block,
@@ -303,7 +302,6 @@ class MilestoneLLMRuntimeMixin:
                     failure_hints=milestone.failure_hints,
                 ),
                 constraints_block(self._constraints_for_scope()),
-                completed_milestones_block(self._milestones.values(), current_id=milestone.id),
                 history_block(history, current_milestone_id=milestone.id),
                 tried_instructions_block(tried),
                 extra_instruction_block(extra, source="replanner_guard"),
