@@ -1,9 +1,8 @@
-"""DSL interpreter = the milestone SEQUENCER (replaces the supervisor's walker/DAG).
+"""Steppable interpreter for the DSL Program.
 
-The agent_loop IS the program runner: it owns the session + the turn loop, and each
-milestone is a sub-loop (several turns driving one milestone to done). The DSL only
-changes WHO decides the next milestone — the walker becomes this interpreter, which
-threads each run's structured RunResult through variables / conditions / finish.
+The agent loop owns the session and GUI turns. The interpreter alone sequences
+statements and threads each statement's structured result through variables,
+conditions, functions, loops, and finish.
 
 So the interpreter must be STEPPABLE, not a synchronous black box: executing a run() is
 many turns of the engine, not one call. `Interpreter.steps()` is a generator — it yields
@@ -15,7 +14,7 @@ output didn't know" disappears: the answer comes from the whole program, not the
     gen = interp.steps()
     run = next(gen)
     while True:
-        result = <drive milestone `run` to done>     # agent_loop sub-loop
+        result = <drive statement `run` to done>     # agent-loop sub-loop
         run = gen.send(result)                         # next Run
     # StopIteration.value = final reply
 
@@ -34,48 +33,8 @@ from .program import (
 )
 from .primitives.safe_eval import SafeEvalError, normalize_compute_expr, safe_eval
 
-# Drive one milestone (one Run spec) to a terminal state and return its structured result.
-MilestoneExecutor = Callable[[Run], RunResult]
-
-
-def make_run_result(
-    run: RunLike,
-    *,
-    completed: bool,
-    summary: str,
-    notes: list[str],
-    reads: dict[str, str] | None = None,
-    rows: list[dict[str, str]] | None = None,
-    completion_status: str | None = None,
-) -> RunResult:
-    """Build the uniform result consumed by the statement interpreter.
-
-    Prefer constructing a terminal ``StatementOutcome`` and calling ``to_run_result()``.
-    This helper remains as a thin bridge for call sites that still pass legacy bools;
-    it never invents ``in_progress`` for a completed hand-off.
-    """
-    from gui_agent.core.run.statements.outcome import StatementOutcome
-
-    if completed:
-        verification = (
-            "accepted_unverified"
-            if completion_status == "accepted_unverified"
-            else "confirmed"
-        )
-        return StatementOutcome.completed(
-            summary,
-            verification=verification,  # type: ignore[arg-type]
-            reads=reads,
-            rows=rows,
-            evidence=list(notes),
-        ).to_run_result()
-    return StatementOutcome.failed(
-        summary,
-        reads=reads,
-        rows=rows,
-        evidence=list(notes),
-        failure_evidence=summary,
-    ).to_run_result()
+# Drive one interactive statement to a terminal state and return its wire projection.
+StatementExecutor = Callable[[Run], RunResult]
 
 
 def _unique_fields(fields: list[str]) -> list[str]:
@@ -815,7 +774,7 @@ class Interpreter:
         return (self.run_log[-1].result.summary if self.run_log else "") or "任务已执行完毕。"
 
 
-def drive(interp: Interpreter, execute: MilestoneExecutor) -> str:
+def drive(interp: Interpreter, execute: StatementExecutor) -> str:
     """Synchronously drive an interpreter with a callable executor (tests / headless use).
     The GUI agent_loop drives interp.steps() turn-by-turn instead of using this."""
     gen = interp.steps()
@@ -836,7 +795,7 @@ class ProgramRunner:
     with the injected executor. The GUI agent_loop instead drives Interpreter.steps()
     directly, executing each yielded Run as a milestone sub-loop within its open session."""
 
-    def __init__(self, execute: MilestoneExecutor) -> None:
+    def __init__(self, execute: StatementExecutor) -> None:
         self._execute = execute
 
     def run(self, program: Program) -> OrchestratorResult:

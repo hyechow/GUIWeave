@@ -67,7 +67,7 @@ from .primitives.data_query import DataQueryError, execute_data_query
 from .budget import estimate_program_turns
 from .runner import (
     Interpreter,
-    MilestoneExecutor,
+    StatementExecutor,
     OrchestratorResult,
     ProgramRunner,
     RunRecord,
@@ -87,7 +87,7 @@ __all__ = [
     "Call", "Compute", "Cond", "CondCmp", "Finish", "ForEach", "FunctionDef", "If",
     "INTERACTIVE_KINDS", "NON_INTERACTIVE_KINDS", "Program", "Query", "Read", "Run",
     "RunLike", "RunResult", "Stmt", "execution_mode_for_kind",
-    "Interpreter", "MilestoneExecutor", "OrchestratorResult", "ProgramRunner",
+    "Interpreter", "StatementExecutor", "OrchestratorResult", "ProgramRunner",
     "RunRecord", "drive", "summarize_progress", "structured_read", "DataQueryError", "execute_data_query",
     "decompose", "redecompose", "to_program", "validate_program", "OrchestratorCompileError",
     "ValidationIssue", "IssueList", "IntentContractIssue", "validate_intent_contracts",

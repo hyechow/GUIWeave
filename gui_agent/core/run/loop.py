@@ -373,9 +373,7 @@ def run_agent_loop(
             """Execute inline statements, then seed the next interactive Run via reseed."""
             nonlocal _immediate_failure, observation, observation_url_for_turn, prep_future
             result = drain_immediate_statements(
-                current_statement=rt.current,
-                statement_index=rt.index,
-                interpreter_steps=rt.steps,
+                program_runtime=rt,
                 bundle=bundle,
                 platform=platform,
                 log_dir=log_dir,
@@ -390,15 +388,14 @@ def run_agent_loop(
                 recovery=rt.recovery,
                 allow_navigation=allow_navigation,
             )
-            notes_mark = None
-            if result.current_statement is not None:
+            if rt.current is not None:
                 milestone = start_milestone(
                     supervisor,
-                    result.current_statement,
-                    result.statement_index,
+                    rt.current,
+                    rt.index,
                     fresh_advance=(
                         observation_for_statements is not None
-                        and not bool(getattr(result.current_statement, "returns", None))
+                        and not bool(getattr(rt.current, "returns", None))
                     ),
                 )
                 if not any(item.get("id") == milestone.id for item in context.milestones):
@@ -409,12 +406,7 @@ def run_agent_loop(
                         "kind": milestone.kind,
                         "success_condition": milestone.success_condition,
                     })
-                notes_mark = len(context.content_notes)
-            rt.accept_dispatch_cursor(
-                current=result.current_statement,
-                index=result.statement_index,
-                notes_mark=notes_mark,
-            )
+                rt.mark_notes(len(context.content_notes))
             _immediate_failure = result.failure_evidence
             if result.observation is not None:
                 observation = result.observation
@@ -424,20 +416,26 @@ def run_agent_loop(
 
         def _finish_statement(
             *,
-            sv_step,
             turn_no: int,
-            outcome: StatementOutcome | None = None,
+            outcome: StatementOutcome,
         ) -> dict:
             """Terminal interactive statement → ProgramRuntime.send → task result."""
             return finish_terminal_step(
-                sv_step=sv_step,
+                outcome=outcome,
                 read_state=read_state,
                 turn_no=turn_no,
                 program_runtime=rt,
                 context=context,
                 finish=_finish,
                 say=_say,
-                outcome=outcome,
+            )
+
+        def _outcome_from_step(sv_step, *, reads=None, rows=None):
+            return statement_outcome_from_supervisor_step(
+                sv_step,
+                reads=reads,
+                rows=rows,
+                notes=context.content_notes[rt.notes_mark :],
             )
 
         _orchestrator_reports = list(orchestrator_context_reports or [])
@@ -668,7 +666,7 @@ def run_agent_loop(
                     _did_loading = True
                     break
                 # Terminal StatementOutcome drives hand-off; mid-loop → turn body.
-                _step_outcome = statement_outcome_from_supervisor_step(sv_step)
+                _step_outcome = _outcome_from_step(sv_step)
                 if _step_outcome is None or not _step_outcome.is_completed:
                     break  # act/observe/wait or non-completed terminal → turn body
 
@@ -698,7 +696,7 @@ def run_agent_loop(
                             attempt=_attempt,
                             violations=_contract.out_of_domain,
                         )
-                        rt.current = tightened
+                        rt.retry_current(tightened)
                         start_milestone(
                             supervisor, rt.current, rt.index, fresh_advance=False,
                         )
@@ -729,18 +727,12 @@ def run_agent_loop(
                         elif nxt is not None:
                             _did_return_recovery = True
                     break
-                # Completed statement: terminal Outcome → ProgramRuntime.send
-                _outcome = StatementOutcome.completed(
-                    sv_step.summary or "完成",
-                    verification=(
-                        "accepted_unverified"
-                        if sv_step.completion_status == "accepted_unverified"
-                        else "confirmed"
-                    ),
+                _outcome = _outcome_from_step(
+                    sv_step,
                     reads=_reads,
                     rows=_rows,
-                    evidence=context.content_notes[rt.notes_mark:],
                 )
+                assert _outcome is not None and _outcome.is_completed
                 rt.send_outcome(_outcome)
                 if rt.finished:
                     _orch_reply = rt.reply or ""
@@ -830,10 +822,9 @@ def run_agent_loop(
                 ))
                 sync_milestone_states(supervisor, context)
                 _save_ctx()
-                _budget_outcome = statement_outcome_from_supervisor_step(sv_step)
+                _budget_outcome = _outcome_from_step(sv_step)
                 if _budget_outcome is not None:
                     return _finish_statement(
-                        sv_step=sv_step,
                         turn_no=turn_no,
                         outcome=_budget_outcome,
                     )
@@ -961,7 +952,7 @@ def run_agent_loop(
                 )
 
             # Terminal StatementOutcome from this turn's supervisor decision.
-            _turn_outcome = statement_outcome_from_supervisor_step(sv_step)
+            _turn_outcome = _outcome_from_step(sv_step)
             # Feasibility kickback: infeasible outcome → ProgramRuntime replan.
             if (
                 _turn_outcome is not None
@@ -982,7 +973,6 @@ def run_agent_loop(
 
             if _turn_outcome is not None:
                 return _finish_statement(
-                    sv_step=sv_step,
                     turn_no=turn_no,
                     outcome=_turn_outcome,
                 )

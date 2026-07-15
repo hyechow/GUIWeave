@@ -36,7 +36,7 @@ class ProgramRuntime:
 
     program: Program
     interpreter: Interpreter
-    steps: Generator[RunLike, RunResult, str]
+    _steps: Generator[RunLike, RunResult, str]
     current: RunLike | None = None
     index: int = 0
     notes_mark: int = 0
@@ -72,7 +72,7 @@ class ProgramRuntime:
         return cls(
             program=program,
             interpreter=interp,
-            steps=gen,
+            _steps=gen,
             current=current,
             index=0,
             recovery=recovery or RecoveryLedger(),
@@ -83,10 +83,10 @@ class ProgramRuntime:
     def finished(self) -> bool:
         return self.current is None and self.reply is not None
 
-    def send(self, result: RunResult) -> RunLike | None:
-        """Resume the interpreter with a statement result; update cursor."""
+    def _send_result(self, result: RunResult) -> RunLike | None:
+        """Resume the interpreter wire protocol and update the owned cursor."""
         try:
-            self.current = self.steps.send(result)
+            self.current = self._steps.send(result)
             self.index += 1
             return self.current
         except StopIteration as exc:
@@ -95,8 +95,8 @@ class ProgramRuntime:
             return None
 
     def send_outcome(self, outcome: "StatementOutcome") -> RunLike | None:
-        """Resume from a terminal StatementOutcome (never a mid-loop decision)."""
-        return self.send(outcome.to_run_result())
+        """Resume from one terminal statement outcome."""
+        return self._send_result(outcome.to_run_result())
 
     def can_kickback(self) -> bool:
         return self.kickback_replans < MAX_KICKBACK_REPLANS
@@ -109,22 +109,11 @@ class ProgramRuntime:
         """Record content_notes length at the start of the current statement."""
         self.notes_mark = note_count
 
-    def accept_dispatch_cursor(
-        self,
-        *,
-        current: RunLike | None,
-        index: int,
-        notes_mark: int | None = None,
-    ) -> None:
-        """Install cursor after the immediate dispatcher advanced the generator.
-
-        The dispatcher alone may ``send`` on ``self.steps``; it reports the new
-        cursor here so ProgramRuntime remains the single owner of the fields.
-        """
-        self.current = current
-        self.index = index
-        if notes_mark is not None:
-            self.notes_mark = notes_mark
+    def retry_current(self, statement: RunLike) -> None:
+        """Replace the active statement contract without advancing the Program cursor."""
+        if self.current is None:
+            raise RuntimeError("cannot retry without an active statement")
+        self.current = statement
 
     def replace_program(
         self,
@@ -160,9 +149,9 @@ class ProgramRuntime:
             self.interpreter.env = prev_env
         if inherit_run_log:
             self.interpreter.run_log = prev_log
-        self.steps = self.interpreter.steps()
+        self._steps = self.interpreter.steps()
         try:
-            self.current = next(self.steps)
+            self.current = next(self._steps)
             self.reply = None
         except StopIteration as exc:
             self.current = None

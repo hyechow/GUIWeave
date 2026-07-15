@@ -1,7 +1,7 @@
-"""Terminal statement outcomes and mid-turn executor decisions.
+"""Terminal outcomes emitted by statement executors.
 
 ``StatementOutcome`` is a *terminal* value only. It may be written to ``run_log`` /
-sent into the Program interpreter. Mid-loop control uses ``ExecutorDecision`` and
+sent into the Program interpreter. Turn-level control remains ``SupervisorStep`` and
 must never enter the log as an outcome.
 
 Invariants enforced at construction:
@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from gui_agent.core.orchestrator.program import RunResult
-from gui_agent.core.schemas import Observation
+from gui_agent.core.schemas import Observation, SupervisorStep
 
 StatementPhase = Literal[
     "completed",
@@ -28,7 +28,15 @@ StatementPhase = Literal[
     "interrupted",
 ]
 Verification = Literal["confirmed", "accepted_unverified"]
-ExecutorDecisionKind = Literal["act", "observe", "wait"]
+
+
+def _normalize_details(details: dict[str, Any]) -> dict[str, Any]:
+    """Copy collection payloads so a frozen outcome cannot share caller-owned containers."""
+    normalized = dict(details)
+    for key, factory in (("reads", dict), ("rows", list), ("evidence", list),
+                         ("context_reports", list), ("recovery_notices", list)):
+        normalized[key] = factory(normalized.get(key) or factory())
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -40,43 +48,6 @@ class RecoveryNotice:
     site: str
     detail: str = ""
     outcome: str = ""
-
-
-@dataclass(frozen=True)
-class ExecutorDecision:
-    """Mid-turn control signal from an interactive statement executor.
-
-    Never written to ``run_log``. The ProgramRuntime / agent loop acts on it and
-    continues the same statement.
-    """
-
-    kind: ExecutorDecisionKind
-    instruction: str | None = None
-    summary: str = ""
-    preformed_action: Any = None
-
-    @classmethod
-    def act(
-        cls,
-        instruction: str | None = None,
-        *,
-        summary: str = "",
-        preformed_action: Any = None,
-    ) -> "ExecutorDecision":
-        return cls(
-            kind="act",
-            instruction=instruction,
-            summary=summary,
-            preformed_action=preformed_action,
-        )
-
-    @classmethod
-    def observe(cls, *, summary: str = "") -> "ExecutorDecision":
-        return cls(kind="observe", summary=summary)
-
-    @classmethod
-    def wait(cls, *, summary: str = "") -> "ExecutorDecision":
-        return cls(kind="wait", summary=summary)
 
 
 @dataclass(frozen=True)
@@ -146,80 +117,32 @@ class StatementOutcome:
         summary: str,
         *,
         verification: Verification = "confirmed",
-        reads: dict[str, str] | None = None,
-        rows: list[dict[str, str]] | None = None,
-        evidence: list[str] | None = None,
-        observation: Observation | None = None,
-        observation_url: str | None = None,
-        executed_sql: str = "",
-        context_reports: list[dict] | None = None,
-        recovery_notices: list[RecoveryNotice] | None = None,
+        **details: Any,
     ) -> "StatementOutcome":
         return cls(
             phase="completed",
             summary=summary,
             verification=verification,
-            reads=dict(reads or {}),
-            rows=list(rows or []),
-            evidence=list(evidence or []),
-            observation=observation,
-            observation_url=observation_url,
-            executed_sql=executed_sql,
-            context_reports=list(context_reports or []),
-            recovery_notices=list(recovery_notices or []),
+            **_normalize_details(details),
         )
 
     @classmethod
     def failed(
         cls,
         summary: str,
-        *,
-        reads: dict[str, str] | None = None,
-        rows: list[dict[str, str]] | None = None,
-        evidence: list[str] | None = None,
-        observation: Observation | None = None,
-        observation_url: str | None = None,
-        executed_sql: str = "",
-        context_reports: list[dict] | None = None,
-        recovery_notices: list[RecoveryNotice] | None = None,
-        failure_evidence: str | None = None,
+        **details: Any,
     ) -> "StatementOutcome":
-        return cls(
-            phase="failed",
-            summary=summary,
-            reads=dict(reads or {}),
-            rows=list(rows or []),
-            evidence=list(evidence or []),
-            observation=observation,
-            observation_url=observation_url,
-            executed_sql=executed_sql,
-            context_reports=list(context_reports or []),
-            recovery_notices=list(recovery_notices or []),
-            failure_evidence=failure_evidence if failure_evidence is not None else summary,
-        )
+        details.setdefault("failure_evidence", summary)
+        return cls(phase="failed", summary=summary, **_normalize_details(details))
 
     @classmethod
     def exhausted(
         cls,
         summary: str,
-        *,
-        reads: dict[str, str] | None = None,
-        evidence: list[str] | None = None,
-        observation: Observation | None = None,
-        observation_url: str | None = None,
-        recovery_notices: list[RecoveryNotice] | None = None,
-        failure_evidence: str | None = None,
+        **details: Any,
     ) -> "StatementOutcome":
-        return cls(
-            phase="exhausted",
-            summary=summary,
-            reads=dict(reads or {}),
-            evidence=list(evidence or []),
-            observation=observation,
-            observation_url=observation_url,
-            recovery_notices=list(recovery_notices or []),
-            failure_evidence=failure_evidence if failure_evidence is not None else summary,
-        )
+        details.setdefault("failure_evidence", summary)
+        return cls(phase="exhausted", summary=summary, **_normalize_details(details))
 
     @classmethod
     def infeasible(
@@ -227,41 +150,24 @@ class StatementOutcome:
         summary: str,
         *,
         kickback: str,
-        evidence: list[str] | None = None,
-        observation: Observation | None = None,
-        observation_url: str | None = None,
-        recovery_notices: list[RecoveryNotice] | None = None,
+        **details: Any,
     ) -> "StatementOutcome":
+        details.setdefault("failure_evidence", summary)
         return cls(
             phase="infeasible",
             summary=summary,
             kickback=kickback,
-            evidence=list(evidence or []),
-            observation=observation,
-            observation_url=observation_url,
-            recovery_notices=list(recovery_notices or []),
-            failure_evidence=summary,
+            **_normalize_details(details),
         )
 
     @classmethod
     def interrupted(
         cls,
         summary: str,
-        *,
-        reads: dict[str, str] | None = None,
-        evidence: list[str] | None = None,
-        observation: Observation | None = None,
-        observation_url: str | None = None,
+        **details: Any,
     ) -> "StatementOutcome":
-        return cls(
-            phase="interrupted",
-            summary=summary,
-            reads=dict(reads or {}),
-            evidence=list(evidence or []),
-            observation=observation,
-            observation_url=observation_url,
-            failure_evidence=summary,
-        )
+        details.setdefault("failure_evidence", summary)
+        return cls(phase="interrupted", summary=summary, **_normalize_details(details))
 
     # ── projections ───────────────────────────────────────────────────
 
@@ -269,12 +175,8 @@ class StatementOutcome:
     def is_completed(self) -> bool:
         return self.phase == "completed"
 
-    @property
-    def is_terminal(self) -> bool:
-        return True
-
     def to_run_result(self) -> RunResult:
-        """Bridge into the Interpreter's wire type (legacy bools derived, never primary)."""
+        """Project the terminal outcome into the Interpreter's wire type."""
         if self.phase == "completed":
             return RunResult(
                 completed=True,
@@ -295,14 +197,9 @@ class StatementOutcome:
             evidence=list(self.evidence),
         )
 
-    # Back-compat for call sites still reading ``outcome.result``.
-    @property
-    def result(self) -> RunResult:
-        return self.to_run_result()
-
 
 def statement_outcome_from_supervisor_step(
-    sv_step: Any,
+    sv_step: SupervisorStep,
     *,
     reads: dict[str, str] | None = None,
     rows: list[dict[str, str]] | None = None,
@@ -314,15 +211,10 @@ def statement_outcome_from_supervisor_step(
     Task-level success is *not* decided here — only the current statement's terminal
     phase. Callers (ProgramRuntime / loop) own task phase and run_log.
     """
-    summary = str(getattr(sv_step, "summary", "") or "")
-    stop_reason = str(getattr(sv_step, "stop_reason", "") or "")
+    summary = sv_step.summary or ""
+    stop_reason = sv_step.stop_reason or ""
     reason = stop_reason or summary or "statement stopped"
-    kickback = getattr(sv_step, "replan_directive", None)
-    kickback_text = str(kickback).strip() if kickback else ""
-
-    completion_status = str(getattr(sv_step, "completion_status", "") or "in_progress")
-    goal_completed = bool(getattr(sv_step, "goal_completed", False))
-    stop = bool(getattr(sv_step, "stop", False))
+    kickback_text = (sv_step.replan_directive or "").strip()
 
     if kickback_text:
         return StatementOutcome.infeasible(
@@ -331,10 +223,10 @@ def statement_outcome_from_supervisor_step(
             evidence=list(notes or []),
         )
 
-    if goal_completed:
+    if sv_step.goal_completed:
         verification: Verification = (
             "accepted_unverified"
-            if completion_status == "accepted_unverified"
+            if sv_step.completion_status == "accepted_unverified"
             else "confirmed"
         )
         return StatementOutcome.completed(
@@ -345,7 +237,7 @@ def statement_outcome_from_supervisor_step(
             evidence=list(notes or []),
         )
 
-    if not stop:
+    if not sv_step.stop:
         return None  # mid-statement: caller should keep driving
 
     # stop without goal_completed: classify exhausted vs failed vs interrupted
@@ -359,24 +251,4 @@ def statement_outcome_from_supervisor_step(
         reads=reads,
         evidence=list(notes or []),
         failure_evidence=reason,
-    )
-
-
-def executor_decision_from_supervisor_step(sv_step: Any) -> ExecutorDecision | None:
-    """Map a non-terminal supervisor step to an ``ExecutorDecision``.
-
-    Returns ``None`` for terminal steps (use ``statement_outcome_from_supervisor_step``).
-    """
-    if statement_outcome_from_supervisor_step(sv_step) is not None:
-        return None
-    if bool(getattr(sv_step, "is_loading", False)):
-        return ExecutorDecision.wait(summary=str(getattr(sv_step, "summary", "") or "loading"))
-    if bool(getattr(sv_step, "should_act", False)):
-        return ExecutorDecision.act(
-            getattr(sv_step, "instruction", None),
-            summary=str(getattr(sv_step, "summary", "") or ""),
-            preformed_action=getattr(sv_step, "preformed_action", None),
-        )
-    return ExecutorDecision.observe(
-        summary=str(getattr(sv_step, "summary", "") or ""),
     )

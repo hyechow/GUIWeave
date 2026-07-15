@@ -136,43 +136,18 @@ def _increment_or_stop(
 
 def finish_terminal_step(
     *,
-    sv_step: SupervisorStep,
+    outcome: Any,
     read_state: Any,
     turn_no: int,
     program_runtime: Any,
     context: PolicyContext,
     finish: Callable[[dict], dict],
     say: Callable[[str], None],
-    outcome: Any | None = None,
 ) -> dict:
-    """Flush reads and send a terminal StatementOutcome into ProgramRuntime.
-
-    Interactive terminal state is projected through ``StatementOutcome`` first so
-    illegal bool combos cannot reach the interpreter. Task-level success is still
-    decided by the run result assemblers.
-    """
-    from gui_agent.core.run.statements.outcome import (
-        StatementOutcome,
-        statement_outcome_from_supervisor_step,
-    )
-
-    reason = sv_step.stop_reason or (
-        "目标已达成" if sv_step.goal_completed else "agent-loop 停止"
-    )
+    """Flush reads and send the authoritative terminal outcome into ProgramRuntime."""
+    reason = outcome.summary or "statement stopped"
     read_state.drain_pending(say=say)
     read_state.flush(turn_no=turn_no, say=say)
-    notes = context.content_notes[program_runtime.notes_mark :]
-    if outcome is None:
-        outcome = statement_outcome_from_supervisor_step(sv_step, notes=notes)
-    if outcome is None:
-        # Defensive: callers only invoke this on terminal steps.
-        outcome = (
-            StatementOutcome.completed(reason, verification="confirmed", evidence=notes)
-            if sv_step.goal_completed
-            else StatementOutcome.failed(
-                reason, evidence=notes, failure_evidence=reason
-            )
-        )
 
     if outcome.is_completed:
         say(f"\n目标已达成：{outcome.summary or reason}")
@@ -185,14 +160,14 @@ def finish_terminal_step(
             orchestration_result(
                 context,
                 program_runtime.interpreter,
-                program_runtime.reply or outcome.summary or reason,
+                program_runtime.reply or reason,
             )
         )
     return finish(
         orchestration_result(
             context,
             program_runtime.interpreter,
-            outcome.summary or reason,
+            reason,
             current=program_runtime.current,
         )
     )
