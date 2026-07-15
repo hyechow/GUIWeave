@@ -1,327 +1,242 @@
-# iphone-use
+# GUIWeave
 
 [English](README.md) | 中文
 
-基于 Mac 上的 iPhone Mirroring，用 AI Agent 自动控制 iPhone。给出自然语言目标，Agent 自动截图、理解当前状态、决策下一步操作、执行并循环，直到完成任务。
+> **关于名称：** 项目从 iPhone 单端起步，现已面向浏览器、iPhone 和 Android，因此演进为 **GUIWeave**。Python 包名仍保留 `gui_agent`；已有本地 checkout 可能仍使用旧目录名。
 
-**多模态小模型（Qwen3.5-35B-A3B）即可驱动复杂的手机操作（跨 APP、长程多步骤、带验收闭环），支持私有化本地部署，无需依赖闭源大模型。**
+**面向 GUI Agent 的可编程 Runtime：把目标编译成类型化程序，再在真实界面上执行。**
 
-## 主要进展
+## 第一性原理：GUI 任务不等于全程 GUI 交互
 
-- **里程碑监督的 GUI Agent**：任务分解 → 执行 → 验收/重规划闭环，配合应用侦察与页面知识库，用 Qwen3.5-35B 这类小模型可靠跑通长程移动端任务。彼时输入为**抢占式**——操作时接管 Mac 的鼠标键盘。
-- **非抢占输入**：操作直接投递给镜像窗口，不抢鼠标 / 键盘 / 前台焦点，智能体在后台操作手机时，你可以照常用电脑做别的事。
+GUIWeave 从一个简单前提出发：**GUI 任务不等于全程 GUI 交互。** 任务还包含控制流、变量绑定、读取、查询、计算、汇总和恢复；这些归 Runtime，只有真正依赖界面的操作才进入 Agent 环。
 
-## 演示
+```text
+典型：目标 ─► [ 观察 → 推理 → 动作 → 做完了？ ] × N ─► 结果
+                    计划 · 记忆 · 恢复也都在环里
 
-各演示的播放倍速见视频下方小字。
+GUIWeave：目标 ─► DSL Program ─► ProgramRuntime ─► ProgramOutcome
+                                         ├─ 非 GUI：控制流 · 数据 · 恢复
+                                         │          If · ForEach · Call · Read · Query · Compute
+                                         └─ GUI I/O：Run ─► Agent 环 ─► StatementOutcome
+```
 
-### 对话模式
+- **任务变成可执行程序：** prompt 里的文本计划变成类型化 DSL `Program`，控制与数据处理不再由点击环模拟。
+- **Agent 环变成有界 I/O：** Interpreter 调度 statement，Agent 环只做局部 GUI 战术。
+- **结果变成显式返回值：** `StatementOutcome` 返回 `phase`、验证、reads 和证据；有预算的恢复记入 `EventJournal`。
 
-**查询类**：从 APP 内读取并汇总信息（账单统计、订单记录、消息摘要）
+浏览器、iPhone 和 Android 只是可替换的 I/O 后端。把控制流和完成语义从模型中移出后，Qwen3.5-35B-A3B 等较小的多模态模型也能承载更长流程；模型质量仍会影响感知和局部规划。支持私有化 OpenAI 兼容接口。
 
-**非抢占输入**是这个项目的一个重要特性。多数 GUI / Computer-Use 智能体是**抢占式**的——接管你的鼠标键盘，运行时你没法同时用电脑；本项目把操作**直接投递给镜像窗口**，不抢光标、不抢前台焦点，智能体在后台操作手机时，你可以照常用电脑做别的事。
+Planner-Executor 和 Multi-Agent 如果仍用文本计划和文本 / bool 返回值，并没有改变这个边界；RPA 位于另一端，把每一步都脚本化。GUIWeave 介于两者之间：工作流显式，GUI 不确定性有界。
 
-下面是同一个微信账单查询的两种跑法：
+---
 
-非抢占式：
+## Benchmark 效果
 
-> "我上个月21号到28号用微信支付花多少钱了？"
->
-> 设自定义日期区间（日期选择器）→ 滚动采集区间内交易 → 汇总支出，全程光标不被抢走
+这里预留可复现的项目效果展示。在运行产物和评测配置可用之前，不发布未经验证的分数。
 
-https://github.com/user-attachments/assets/6805dd78-fd8c-4b23-9f85-4409851882e7
+| Benchmark | 范围 | 主指标 | 结果 |
+|-----------|------|--------|------|
+| **WebArena-Verified** | 四个单站点：Shopping Admin、Shopping、Reddit、GitLab | 任务成功率 | _待完成可复现运行_ |
+| **MobileWorld** | Android **GUI-only** 任务；不使用特权 App API 或任务特化快捷路径 | 基于状态的任务成功率 | _待完成可复现运行_ |
 
-*该演示为原速播放（1x，未加速）*
+每次发布结果时，应同时给出 commit SHA、模型 profile、任务集版本与数量、尝试策略、evaluator / 环境版本，以及报告或原始产物链接，确保 Runtime 和模型变更前后的数字可比较。
 
-抢占式：
+---
 
-> "我上周用微信支付花多少钱了？"
->
-> 打开微信支付 → 汇总上周账单支出
-
-https://github.com/user-attachments/assets/2deb4026-97e9-4689-bfa7-30472544d3df
-
-*该演示为 2 倍速播放*
-
-**操作类**：执行具体动作（发消息、下单、修改设置）
-
-> "把我最近在拼多多上下单的奶粉分享给老 Be，这个性价比高"
->
-> 拼多多找订单 → 微信分享给联系人，跨 APP 操作
-
-https://github.com/user-attachments/assets/3b10c74a-99ae-4bbb-a983-767857b62136
-
-*该演示为 2 倍速播放*
-
-### 探测模式
-
-> 自动探索闲鱼 APP 页面结构，生成页面知识库
-
-https://github.com/user-attachments/assets/183b80fd-ba0f-4f14-b599-b7ef3efc4a79
-
-*该演示为 2 倍速播放*
-
-## 架构
+## Runtime 架构
 
 ```mermaid
 flowchart TD
-    User([用户自然语言]) --> Router[Router\n目标提取]
-    Router -- 无需操作手机 --> Output([自然语言回复])
-    Router -- 信息不足 --> Clarify[追问用户]
-    Clarify -- 补充信息 --> User
-    Router -- 结构化目标 --> Supervisor[Supervisor\n管理 Milestone 列表]
+    Goal([自然语言目标]) --> Compiler[Compiler]
+    Compiler --> Prog[DSL Program]
+    Prog --> RT[ProgramRuntime / Interpreter]
 
-    subgraph turn[" 每 turn "]
-        Checker["Checker\n截图 + Milestone → 是否完成"]
-        Planner["Planner\n截图 + 指令 → 下一步操作"]
-        AP["Action Policy\n截图 + 指令 → 坐标动作"]
-        Executor["Executor\n坐标 → 触控事件"]
-        Checker -- 未完成 --> Planner
-        Planner -- 操作指令 --> AP
-        AP -- tap/type/scroll --> Executor
-        Executor -- 截图 --> Checker
-    end
+    RT --> Imm[Non-interactive\nRead Query Compute]
+    RT --> Run[Interactive Run]
+    Imm --> SO[StatementOutcome]
+    Run --> SE[Statement 执行器]
+    SE --> SO
+    SO --> RT
 
-    Supervisor -- 当前 Milestone --> Checker
-    Checker -- 当前完成 --> Supervisor
-    Supervisor -- 全部完成 --> Output
+    RT -->|缺 returns| Tight[Return tighten]
+    RT -->|不可行| Kick[Kickback 重分解]
+    Tight --> RT
+    Kick --> Compiler
 
-    Knowledge[(知识库\nAPP 页面结构)]
-    Recon[探测模式\n自动探索 APP] --> Knowledge
-    Knowledge -- 页面结构 + 导航关系 --> Supervisor
-    Knowledge -- 元素功能 + 操作方式 --> Planner
+    SE --> Loop[observe → check → acquire/plan → act]
+    Loop --> SE
+    Loop --> Journal[(EventJournal)]
+    RT --> Journal
 
-    Memory[(用户记忆\n偏好 / 习惯)]
-    Output -- 提取偏好 --> Memory
-    Memory -- 注入上下文 --> Router
+    RT --> PO[ProgramOutcome]
+    PO --> AR[AgentResult]
+    AR --> Out([回复 / 报告 / API])
+
+    Plat[平台 adapter] --> Loop
 ```
 
-**Router**：解析用户消息，判断是否需要操作手机。需要的提取明确目标（做什么）和目标 APP（在哪个应用做），传递给 Supervisor；不需要的直接回复。当信息不足时追问用户。
+| 层 | 拥有 | 不得拥有 |
+|----|------|------------|
+| Compiler | Program 语义和 statement 合同 | 像素或页内战术 |
+| ProgramRuntime / interpreter | Program 游标、env、statement 顺序、恢复预算 | 页内点击目标 |
+| Run loop | observe/act 生命周期、持久化、在 runtime 预算下路由恢复 | Program 游标或变量绑定 |
+| Statement 执行器 | 一个交互 statement 的战术和终态 | Program 改写或任务终态 |
+| Action policy | 一次 grounding 后的动作建议 | Statement 或任务完成 |
+| Adapter | 观察与设备 I/O | 目标语义 |
 
-**Supervisor**：将目标拆解为有依赖关系的 Milestone 子任务，逐个执行并验收。支持多种完成策略（单步确认、滚动采集、重复直到满足条件），遇到卡住时自动 replan。
+Program checkpoint 与有序 journal 可在跨进程边界后重建 interpreter 和 recovery 状态；未完成 statement 内的实时 UI 状态不做回放。
 
-**Planner**：根据当前截图和操作指令，结合知识库中的页面元素信息，规划下一步具体操作。
+---
 
-**Action Policy**：接收截图和操作指令，输出具体的屏幕坐标动作（tap / type / scroll / drag 等）。
+## 平台（I/O 后端）
 
-**Executor**：将坐标动作发送到手机。`silent` 模式使用内置 `mirror_daemon` 后端（零抢占，不移动光标、不切换前台窗口）；`standard` 模式通过 mirroir-mcp 注入 Quartz 事件。
+| 平台 | 驱动方式 | 说明 |
+|------|----------|------|
+| **Browser** | Chrome CDP + Playwright | WebArena、后台、长表单 |
+| **iPhone** | macOS 镜像 + mirroir / `mirror_daemon` | 真机 App；可选 **非抢占** 输入 |
+| **Android** | adb + scrcpy | USB / 无线 |
 
-**Output**：任务完成后，根据执行过程和屏幕内容生成面向用户的自然语言回复，查询类任务直接输出提取到的数据。
+```bash
+bin/runner browser "…"
+bin/runner iphone "…"
+bin/runner android "…"
+```
 
-## 健壮性机制
+---
 
-**Checker** 在每轮执行前对截图做验收判断，确认当前 Milestone 是否真正完成，防止 LLM 幻觉导致的误判（如把底部 Tab 误认为任务完成）。
+## 演示（iPhone 表面）
 
-**卡住检测** 通过两个维度识别异常：屏幕相似度（连续多帧无变化）和指令重复率（同一操作反复出现）。触发后进入 Replan 流程。
+同一套 Runtime，换移动端 adapter。界面与轨迹用中文 App，任务形态通用。倍速见各视频说明。
 
-**Replan** 分析卡住原因，生成替代策略。常见处理：换一条路径绕过死路、改用其他操作方式（如把 scroll 换成 tap）、或降级为人工介入。
+**查询类 + 非抢占**（动作投递给镜像窗口，Mac 光标不被抢走）：
+
+> 「我上个月 21 号到 28 号用微信支付花多少钱了？」
+
+https://github.com/user-attachments/assets/6805dd78-fd8c-4b23-9f85-4409851882e7
+
+*原速 1x。*
+
+抢占式对照（旧输入路径）：
+
+https://github.com/user-attachments/assets/2deb4026-97e9-4689-bfa7-30472544d3df
+
+*2x。*
+
+**跨 App 操作：**
+
+https://github.com/user-attachments/assets/3b10c74a-99ae-4bbb-a983-767857b62136
+
+*2x。*
+
+**应用侦察 → 知识库：**
+
+https://github.com/user-attachments/assets/183b80fd-ba0f-4f14-b599-b7ef3efc4a79
+
+*2x。*
+
+**执行报告**（program statement、截图、验收）：
+
+![执行报告](gui_agent/assets/report.png)
+
+---
 
 ## 能力边界
 
-**适合的任务**
+**适合**
 
-- 固定流程的操作类任务：发消息、下单、填表、修改设置
-- 数据查询类任务：统计账单、读取订单记录、提取页面信息
-- 跨 APP 任务：从一个 APP 获取内容，在另一个 APP 中使用
+- 需要结构的多步 UI：筛选、表单、列表、详情、汇总
+- 浏览器后台 / 评测向任务（`./bin/webarena <id>`）
+- 用顺序 / 循环 statement 表达的跨页、跨 App 流程
+- 合同扛验收负载时的私有小模型部署
 
-**不适合的任务**
+**不适合**
 
-- 依赖验证码或生物识别（Face ID / Touch ID）的步骤
-- 需要实时反应的场景（游戏、直播互动）
-- 涉及 3D Touch、长按弹出菜单等复杂手势的操作
-- 截图内容为空白/黑屏时（投屏保护或 DRM 内容）
+- 验证码 / 生物识别、强实时游戏、DRM 空白帧
+- 没有界面证据却要求编造业务结论
 
-## 前置条件
+**当前限制：** Android 尚未实现滚动到边界的全量采集；目前主要支持直接操作和单屏 MobileWorld 任务。
 
-- macOS Sequoia 15.0 或以上（iPhone Mirroring 功能要求）
-- iPhone 已通过 iPhone Mirroring 与 Mac 完成配对
-- 兼容 OpenAI API 的 LLM 服务（ModelScope、Dashscope、本地推理或自建服务）
+---
 
-## 环境配置
+## 快速开始
+
+> **项目状态：** 正在活跃开发。不可逆操作的安全门控尚未完成；请使用测试账号，并人工监督涉及支付、删除、发布或发送数据的任务。
 
 ```bash
-# 安装 mirroir-mcp（standard 模式使用）
-brew tap jfarcand/tap
-npx -y mirroir-mcp install
-
-# 安装 Python 依赖
 uv sync
+
+# 浏览器
+bin/launch_chrome_cdp
+bin/runner browser "打开订单页并列出最近已支付订单"
+
+# iPhone（需 Mirroring；standard 模式可装 mirroir-mcp）
+brew tap jfarcand/tap && npx -y mirroir-mcp install
+bin/runner iphone "打开微信并进入通讯录"
+
+# Android
+ANDROID_SERIAL=<序列号|host:port> bin/runner android "打开设置"
 ```
 
-复制 `.env` 并填写 API 配置：
+`.env` 示例：
 
 ```env
 API_PROVIDER=modelscope
 MODELSCOPE_API_KEY=your_api_key
 ```
 
-各模块使用的模型在 `gui_agent/config.yaml` 中配置。
+- 模型 profile：`gui_agent/core/config/config.yaml`
+- 对话：`bin/chat` / `bin/chat browser`
+- 测试：`uv run pytest tests/ -q`（无需真机）
+- 架构深读：[`docs/dsl_runtime_architecture.md`](docs/dsl_runtime_architecture.md)
 
-### 截图服务
+| 变量 | 取值 | 默认 |
+|------|------|------|
+| `AGENT_PLATFORM` | `iphone` / `browser` / `android` | `iphone` |
+| `AGENT_MODE` | `daemon` / `mirroir`（`silent` / `standard` 为别名） | `bin/runner` 中为 `daemon` |
+| `AGENT_MODEL` | config profile | `qwen35` |
+| `AGENT_HEADLESS` | `1` 关 HUD | 关 |
 
-Agent 使用 `bin/sck_server`（编译好的 Swift 二进制）通过 ScreenCaptureKit 截图，而非系统 `screencapture` 命令。这样做可以避免每帧触发 iOS 录屏指示灯——使用 SCStream 只在会话开始时触发一次。
-
-二进制已预编译（Apple Silicon arm64）。如修改 Swift 源码，需重新编译：
-
-```bash
-swiftc sck/sck_stream_server.swift -o bin/sck_server
-```
-
-## 入口
-
-### 对话模式（主入口）
+### 更多入口
 
 ```bash
-bin/chat
+./bin/webarena <task_id>
+./bin/webarena --headless <task_id>
+bin/mobileworld --list
+bin/mobileworld <task_name>
+bin/iphone_recon --app 微信 --depth 2
+bin/report logs/…
 ```
 
-多轮对话界面，支持连续下达任务，自动维护会话上下文和进度。
+iPhone 截图服务 `bin/sck_server`（ScreenCaptureKit）避免每帧触发录屏指示灯。重编译：`swiftc sck/sck_stream_server.swift -o bin/sck_server`。
 
-**会话内命令：**
+---
 
-| 命令 | 说明 |
-|------|------|
-| `/mode [silent\|standard]` | 切换输入后端。`silent` = 零抢占 mirror_daemon（默认）；`standard` = mirroir-mcp 原版 |
-| `/model [qwen35\|qwen36]` | 切换模型 profile（config.yaml 的 `profiles`）。`qwen35` = 基线（默认）；`qwen36` = qwen3.6 核心模型 |
-| `/supervisor` | 在 Milestone 与 Simple supervisor 之间切换 |
-| `/clear` | 清空对话历史 |
-| `/exit` | 退出 |
-
-### Runner（实验/调试）
-
-```bash
-# 使用默认配置运行（silent 模式，qwen35）
-bin/runner "打开微信并进入通讯录"
-
-# 通过环境变量切换模型或模式
-AGENT_MODEL=qwen36 bin/runner "打开微信"
-AGENT_MODE=standard bin/runner "打开微信"
-```
-
-脚本化或编程调用：
-
-```bash
-uv run python -m gui_agent.core.runner "打开微信并进入通讯录" \
-  --mode agent-loop --supervisor milestone --auto-continue --max-turns 15 --hud
-```
-
-**环境变量：**
-
-| 变量 | 可选值 | 默认 | 说明 |
-|------|--------|------|------|
-| `AGENT_MODE` | `silent`、`standard` | `silent` | 输入后端 |
-| `AGENT_MODEL` | `qwen35`、`qwen36` | `qwen35` | LLM 配置文件 |
-
-### 任务执行可视化
-
-每次运行后自动生成 HTML 报告，展示完整的任务执行轨迹：
-
-![执行报告](gui_agent/assets/report.png)
-
-- **子目标分解** — 名称、描述、验收条件
-- **按子目标分行展示** — 每行一组缩略图，展示该子目标的操作步骤
-- **Action 标注** — 点击圆圈、滚动箭头、输入文本气泡、拖拽起终点
-- **模块耗时** — 每轮 checker / planner / action_policy 的 stacked bar 图
-- **验收详情面板** — 点击验收缩略图展示 Checker 的推理依据（判断子目标完成的具体理由）
-
-```bash
-# Runner 运行后自动在日志目录生成 report.html
-bin/runner "打开微信发一条消息"
-
-# 从已有日志生成报告
-python scripts/report.py runner --run logs/gui_agent/agent-loop/20260528_104755
-```
-
-### 应用侦察（生成知识库）
-
-```bash
-# 探测应用并生成页面知识库
-uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --depth 2
-
-# 手动导航到新页面后，追加到已有知识库
-uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --mode add --depth 1
-
-# 更新指定页面的知识
-uv run python -m gui_agent.adapters.iphone.recon_cli --app 微信 --mode update \
-  --target "微信主界面，显示聊天列表和底部导航栏"
-```
-
-`--depth N` 控制 DFS 探索层数，可生成知识的页面数为第 0 到 N-1 层（第 N 层只记录不探测）。
-
-## 目录结构
+## 仓库结构
 
 ```text
 gui_agent/
 ├── core/
-│   ├── runner.py        # 稳定 runner 模块入口
-│   ├── run/             # agent loop、CLI、运行 IO/state/result 持久化
-│   ├── runtime/         # 平台契约、执行器基类、平台工厂、trace
-│   ├── vision/          # 帧分析、拼接、落点校验、可视化
-│   ├── llm/             # reader、最终回复、时间表达式解析
-│   ├── chat/            # 对话 CLI、路由、偏好、会话记录
-│   ├── schemas/         # 核心数据模型和侦察数据结构
-│   ├── config/          # LLM 配置和单价 profiles
-│   ├── supervisor/      # Milestone 状态机：分解→执行→验收
-│   ├── policies/        # 平台中性的 policy 接口
-│   └── self_learning/   # 知识发现与加载
-└── adapters/
-    ├── iphone/          # iPhone 设备 IO、感知、侦察、策略
-    ├── browser/         # Browser CDP 设备、感知、执行器、工厂
-    └── android/         # Android adb 设备、感知、执行器、工厂
-
-bin/
-├── chat                 # 启动对话模式
-├── runner               # 启动 Runner（AGENT_MODE / AGENT_MODEL 可配置）
-└── mirror_daemon        # 零抢占输入后端二进制（silent 模式）
-
-knowledge/               # 各应用页面知识库（Markdown）
-data/user_preferences.json  # 用户偏好记忆（跨会话持久化）
-evals/                   # 各模块测评用例和脚本
-llm/                     # LLM 调用封装（structured output）
-models/                  # 本地模型（YOLO 图标检测）
-scripts/                 # 工具脚本（测试、可视化）
+│   ├── orchestrator/   # DSL 语言、编译、校验、解释器、恢复
+│   ├── run/            # ProgramRuntime、statement 分派、loop、AgentResult、journal
+│   ├── supervisor/     # 交互 statement 执行器
+│   ├── runtime/        # 平台契约 + 工厂
+│   ├── chat/ · llm/ · schemas/ · config/ · self_learning/
+├── adapters/           # browser · iphone · android
+└── reports/            # HTML 轨迹
+knowledge/              # 应用/站点事实（不进 core prompt）
+tests/                  # 确定性 + 契约套件
+evals/                  # LLM 向评测
+docs/                   # Runtime 架构
 ```
 
-## 知识库
+**知识库** 在 `knowledge/{browser|iphone|android}/`，只放领域事实。
 
-应用侦察后生成的页面知识存放在 `knowledge/{app}/`，按页面组织，每个页面包含：
-
-- 页面身份描述（标题、类型、关键元素）
-- 可交互元素列表及其功能描述
-- 导航关系（从当前页面可到达哪些子页面）
-
-Runner 运行时自动根据目标 APP 加载对应知识，帮助 Supervisor 理解页面结构和 Planner 制定操作步骤。
-
-## 用户记忆
-
-每次任务完成后，系统从对话中提取用户偏好（惯用 APP、常联系人、习惯选项等），持久化到 `data/user_preferences.json`。下次执行相似任务时自动注入上下文，无需重复说明。
-
-## 测评
-
-各核心模块均有独立测评套件，不依赖真机，直接对 LLM 输出做断言。
-
-```bash
-uv run python evals/<module>/test_<module>.py
-```
-
-详见 [`evals/README.md`](evals/README.md)。
+**用户记忆** 可把对话偏好落到 `data/user_preferences.json`。
 
 ## 技术栈
 
-- Python 3.11+
-- `mirror_daemon` — Swift 二进制，提供零抢占截图 + 触控输入（SCStream + SkyLight 私有 SPI），用于 silent 模式
-- `mirroir-mcp` — 标准模式的手机控制 MCP server
-- `mcp` — MCP client
-- `langchain-openai` / `langchain-qwq` — LLM 调用（兼容 OpenAI API 的 provider）
-- `onnxruntime` — YOLO 图标检测（ONNX 推理，用于点击坐标吸附）
-- `ocrmac` — macOS 原生 OCR
-- `Quartz` — macOS 事件注入（standard 模式）
-- `pillow` / `numpy` / `scikit-image` / `imagehash` — 图像处理
-- `torch` + `transformers` + `sentence-transformers` — CLIP 视觉匹配（cascade_matcher，按需加载）
-- `pydantic` — 数据模型
-- `rich` + `prompt-toolkit` — 终端 UI
-- `uv` — 包管理
+Python 3.11+、`uv`、`pydantic` · OpenAI 兼容 LLM · Playwright/CDP · iPhone mirroir/`mirror_daemon`/SCK · Android adbutils/scrcpy · pillow/imagehash · rich/prompt-toolkit
 
 ## TODO
 
-- **安全操作门控**：对不可逆或高风险操作（支付确认、删除数据、发送消息等）增加人工确认机制，Executor 执行前拦截并提示用户确认。
+- 不可逆操作（支付 / 删除 / 发送）前的安全门控

@@ -1,6 +1,6 @@
-# iphone-use
+# GUIWeave
 
-多平台 GUI Agent(名字是早期遗留,现为平台中性 core + adapter):像素感知 + LLM 决策执行真实界面,三平台 = iPhone(mirroir 镜像)/ Browser(Playwright CDP)/ Android(adb+scrcpy)。
+多平台 GUI Agent Runtime：像素感知 + LLM 决策执行真实界面，三平台 = iPhone(mirroir 镜像) / Browser(Playwright CDP) / Android(adb+scrcpy)。
 
 ## 架构边界
 
