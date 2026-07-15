@@ -1,13 +1,13 @@
 """Planner wording and historic signatures are advisory, not pre-dispatch gates.
 
-Loop recovery is based on observed post-action progress in the milestone controller. A planner
+Loop recovery is based on observed post-action progress in the statement controller. A planner
 proposal is not rejected merely because a previous instruction or value looked similar.
 """
 
 from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
 
 STUCK = "__STUCK_SENTINEL__"
 # The two re-types happen on DIFFERENT urls (pre-filter vs post-reset) — the case the url-keyed guard
@@ -21,8 +21,8 @@ TYPE_ACTION = {
 }
 
 
-def _policy(reworded_instruction: str) -> MilestoneSupervisorPolicy:
-    p = MilestoneSupervisorPolicy()
+def _policy(reworded_instruction: str) -> StatementSupervisorPolicy:
+    p = StatementSupervisorPolicy()
     p._invoke_planner = lambda *a, **k: _PlanResult(instruction=reworded_instruction, summary="重输")  # type: ignore[method-assign]
     p._is_repeated_instruction = lambda *a, **k: False  # type: ignore[method-assign]  # instruction guard stays silent
     p._handle_stuck = lambda *a, **k: SupervisorStep(  # type: ignore[method-assign]
@@ -39,7 +39,7 @@ def _ms() -> StatementContract:
 
 def _typed_turn(index: int, *, execution_scope: str = "") -> PolicyTurn:
     sv = SupervisorStep(should_act=True, instruction="在 Product 框输入 Olivia zip jacket",
-                        milestone_id="m1", execution_scope=execution_scope,
+                        statement_id="m1", execution_scope=execution_scope,
                         summary="")
     ad = BrowserActionDecision.model_validate({"action": TYPE_ACTION})
     return PolicyTurn(index=index, observation_source="eval", supervisor=sv, action_decision=ad, executed=True)
@@ -117,8 +117,8 @@ def test_dom_backed_route_correction_may_type_same_value_into_a_different_contro
     # can distinguish those controls, so the pre-action value-only guard must stay out.
     p = _policy("在 Name 输入框填入 'Olivia zip jacket'")
     history = [
-        _typed_turn(3, execution_scope="milestone:m1"),
-        _typed_turn(6, execution_scope="milestone:m1"),
+        _typed_turn(3, execution_scope="statement:m1"),
+        _typed_turn(6, execution_scope="statement:m1"),
     ]
     obs = Observation(
         png_bytes=b"png",

@@ -21,10 +21,10 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
-from gui_agent.core.schemas import Milestone, Observation
-from gui_agent.core.supervisor.milestone.model_io import run_planner
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.adapters.android.supervisor.statement.prompts import ANDROID_STATEMENT_PROMPTS
+from gui_agent.core.schemas import StatementContract, Observation
+from gui_agent.core.supervisor.statement.model_io import run_planner
+from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
@@ -73,7 +73,7 @@ def test_planner() -> None:
             continue
 
         observation = Observation(png_bytes=screenshot_path.read_bytes(), source="eval")
-        milestone = Milestone.model_validate({**c["milestone"], "id": c["label"]})
+        statement = StatementContract.model_validate({**c["statement"], "id": c["label"]})
         check = _SingleCheckResult.model_validate({
             **c["checker"],
             "visible_evidence": c["checker"].get("visible_evidence", []),
@@ -81,12 +81,12 @@ def test_planner() -> None:
 
         try:
             result = run_planner(
-                milestone,
+                statement,
                 check,
                 observation,
                 [],
                 constraints=c.get("constraints"),
-                prompts=ANDROID_MILESTONE_PROMPTS,
+                prompts=ANDROID_STATEMENT_PROMPTS,
             )
         except Exception as e:  # noqa: BLE001
             _report(c["label"], False, f"exception: {e}")

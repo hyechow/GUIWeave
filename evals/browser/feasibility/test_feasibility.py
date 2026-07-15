@@ -1,7 +1,7 @@
 """Browser feasibility eval: validates the Feasibility Guard's verdict against labeled cases.
 
 The Feasibility Guard judges from the page's CONTROL INVENTORY (text from DOM form_controls + grid
-facts), NOT pixels — so cases are pure text (milestone_goal + control_text + optional knowledge), no
+facts), NOT pixels — so cases are pure text (statement_goal + control_text + optional knowledge), no
 screenshots. Each case asserts the verdict's `feasible` bool, and optionally substrings the reason
 must contain / the directive must not contain.
 
@@ -9,7 +9,7 @@ Seeded from two live runs:
   - 20260622_104201: a Reviews list has no Rating filter control → infeasible (the real win: kick back
     so the orchestrator re-plans to read ratings per-row instead of filtering by a control that isn't
     there).
-  - 20260622_115356: a NAVIGATION milestone ('go to the Product Reviews list') was (mis)judged by
+  - 20260622_115356: a NAVIGATION statement ('go to the Product Reviews list') was (mis)judged by
     asking "is the destination's review-list control on the CURRENT page?" — on the Dashboard it never
     is (that's why you navigate), so this must NOT be read as infeasible. Guards the nav mis-fire.
 
@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.supervisor.milestone.feasibility import judge_feasibility
+from gui_agent.core.supervisor.statement.feasibility import judge_feasibility
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
@@ -51,7 +51,7 @@ def test_feasibility() -> None:
                 continue
             image = sp.read_bytes()
         try:
-            v = judge_feasibility(c["milestone_goal"], c["control_text"], c.get("knowledge", ""), image=image)
+            v = judge_feasibility(c["statement_goal"], c["control_text"], c.get("knowledge", ""), image=image)
         except Exception as e:  # noqa: BLE001
             failed += 1
             print(f"  [FAIL] {c['label']:64s}  exception: {e}")

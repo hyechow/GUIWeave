@@ -2,7 +2,7 @@
   {
     "label": "微信启动屏-地球插画-loading",
     "screenshot": "evals/checker/screenshots/wechat_splash_earth.png",
-    "milestone": {
+    "statement": {
       "name": "打开微信应用",
       "description": "从主屏点击微信图标启动应用",
       "success_condition": "看到微信聊天列表界面（底部导航栏显示'微信'、'通讯录'、'发现'、'我'）",
@@ -20,7 +20,7 @@
   {
     "label": "iOS主屏-启动微信navigation-page_identity必填",
     "screenshot": "evals/checker/screenshots/home_screen_wechat_launch.png",
-    "milestone": {
+    "statement": {
       "name": "打开微信应用",
       "description": "从主屏点击微信图标启动应用",
       "success_condition": "看到微信聊天列表界面（显示会话列表及底部导航栏）",
@@ -41,7 +41,7 @@
   {
     "label": "微信聊天列表-启动微信navigation-done带证据",
     "screenshot": "evals/checker/screenshots/wechat_chatlist_nav_done.png",
-    "milestone": {
+    "statement": {
       "name": "启动微信应用",
       "description": "从主屏点击微信图标启动应用",
       "success_condition": "看到微信聊天列表页面（底部有'微信'、'通讯录'、'发现'、'我'四个 Tab）",
@@ -57,9 +57,9 @@
     "note": "navigation 类 done。旧 nav section 写'in_progress 可留空'，模型连 done 也把 visible_evidence 留空 → 撞 done 守卫反复重试(实测 6/6 次重试，最多 4 次)，checker 从 1 次涨到 4 次调用。section 改为'done 必须列证据'后 0/6 重试。"
   },
   {
-    "label": "首页-milestone已满足-done",
+    "label": "首页-statement已满足-done",
     "screenshot": "evals/checker/screenshots/screenshot_turn_1.png",
-    "milestone": {
+    "statement": {
       "name": "定位到外卖服务页面",
       "description": "进入美团外卖首页",
       "success_condition": "看到外卖首页，顶部显示当前商圈（长青商业广场）",
@@ -76,7 +76,7 @@
   {
     "label": "首页-搜索框残留他人关键词-in_progress",
     "screenshot": "evals/checker/screenshots/screenshot_turn_1.png",
-    "milestone": {
+    "statement": {
       "name": "搜索瑞幸咖啡店铺",
       "description": "在搜索框输入瑞幸并提交",
       "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
@@ -93,7 +93,7 @@
   {
     "label": "搜索建议页-未提交搜索-in_progress",
     "screenshot": "evals/checker/screenshots/screenshot_turn_2.png",
-    "milestone": {
+    "statement": {
       "name": "搜索瑞幸咖啡店铺",
       "description": "在搜索框输入瑞幸并提交",
       "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
@@ -110,7 +110,7 @@
   {
     "label": "搜索建议页-未进入商品详情-in_progress",
     "screenshot": "evals/checker/screenshots/screenshot_turn_2.png",
-    "milestone": {
+    "statement": {
       "name": "选择生椰拿铁商品",
       "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
       "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
@@ -127,7 +127,7 @@
   {
     "label": "骨架屏-loading=true",
     "screenshot": "evals/checker/screenshots/screenshot_turn_3.png",
-    "milestone": {
+    "statement": {
       "name": "选择生椰拿铁商品",
       "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
       "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
@@ -144,7 +144,7 @@
   {
     "label": "搜索建议页-旧关键词残留-in_progress",
     "screenshot": "evals/checker/screenshots/screenshot_search_old_keyword.png",
-    "milestone": {
+    "statement": {
       "name": "搜索瑞幸咖啡店铺",
       "description": "在搜索框输入瑞幸并提交",
       "success_condition": "搜索结果列表中出现'瑞幸咖啡'店铺卡片",
@@ -161,7 +161,7 @@
   {
     "label": "微信发送界面-发送按钮可见但未发送-in_progress",
     "screenshot": "evals/checker/screenshots/screenshot_wechat_send_button.png",
-    "milestone": {
+    "statement": {
       "name": "在微信中选择联系人老Be并发送",
       "description": "在微信分享界面选择联系人老Be并点击发送按钮",
       "success_condition": "看到消息已发送成功的提示或聊天界面显示发送状态",
@@ -178,7 +178,7 @@
   {
     "label": "店铺列表页-正常in_progress",
     "screenshot": "evals/checker/screenshots/screenshot_turn_4.png",
-    "milestone": {
+    "statement": {
       "name": "选择生椰拿铁商品",
       "description": "进入瑞幸咖啡店铺，找到生椰拿铁商品",
       "success_condition": "看到生椰拿铁的商品详情页，包含价格、规格和口味选项",
@@ -195,7 +195,7 @@
   {
     "label": "iMessage聊天列表-验收条件要微信-in_progress",
     "screenshot": "evals/checker/screenshots/imessage_chat_list.png",
-    "milestone": {
+    "statement": {
       "name": "打开微信应用",
       "description": "点击微信图标打开应用",
       "success_condition": "看到微信聊天列表界面（包含多个会话条目）",
@@ -212,7 +212,7 @@
   {
     "label": "微信账单页-加载中部分内容可见-loading=true",
     "screenshot": "evals/checker/screenshots/wechat_bill_loading.png",
-    "milestone": {
+    "statement": {
       "name": "查看消费记录",
       "description": "进入微信账单页面，查看交易记录列表",
       "success_condition": "看到账单页面，显示交易记录列表",
@@ -229,7 +229,7 @@
   {
     "label": "微信日期选择器-开始日期已到3月10日-converge-done",
     "screenshot": "evals/checker/screenshots/wechat_date_picker_start_10_done.png",
-    "milestone": {
+    "statement": {
       "name": "设置开始日期为2026年3月10日",
       "description": "在时间段选择器中将开始日期滚动设置为2026年3月10日",
       "success_condition": "开始日期显示为'2026年3月10日'",
@@ -258,7 +258,7 @@
   {
     "label": "微信日期选择器-开始日期已达标-不因全局约束含结束日期而误判in_progress",
     "screenshot": "evals/checker/screenshots/wechat_date_picker_start_10_done.png",
-    "milestone": {
+    "statement": {
       "name": "设置开始日期为2026年3月10日",
       "description": "在时间段选择器中将开始日期滚动设置为2026年3月10日",
       "success_condition": "开始日期显示为'2026年3月10日'",
@@ -282,7 +282,7 @@
   {
     "label": "微信日期选择器-结束日期摘要框滞后-读中心行4月-in_progress",
     "screenshot": "evals/checker/screenshots/wechat_date_picker_end_wheel4_box3_lag.png",
-    "milestone": {
+    "statement": {
       "name": "设置结束日期为2026年4月7日",
       "description": "在时间段选择器中将结束日期滚动设置为2026年4月7日",
       "success_condition": "结束日期显示为'2026年4月7日'",
@@ -306,7 +306,7 @@
   {
     "label": "PDD个人中心-推荐流+红色618键-不误读为首页",
     "screenshot": "evals/checker/screenshots/pdd_personal_center_618.png",
-    "milestone": {
+    "statement": {
       "name": "定位最近下单的奶粉商品",
       "description": "在订单列表中浏览或搜索，找到最近下单的奶粉商品并点击进入详情页。",
       "success_condition": "看到奶粉商品的订单详情或商品详情页",

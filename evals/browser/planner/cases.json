@@ -2,7 +2,7 @@
   {
     "label": "combobox-候选列表已展开必须点击选项而非填下一个字段（回归 20260612_104857 浪费6轮）",
     "screenshot": "evals/browser/planner/screenshots/roboteam_combobox_filter_open.png",
-    "milestone": {
+    "statement": {
       "name": "按需创建虚拟机器人",
       "description": "在新建虚拟机器人弹窗中按配置填写各字段并提交：数量 2、名称前缀 lucas-、通信方式 STD、预设地图 交管测试专用地图_1楼、预设区域 禁止停止区_区域14、初始电量 90。",
       "success_condition": "弹窗各字段按配置填写完成并提交，列表中出现新建的虚拟机器人",
@@ -38,7 +38,7 @@
   {
     "label": "searchable-dropdown-目标不在可见候选必须type过滤而非肉眼挑相似项（回归 20260612_140643死循环+143331误选s3假成功）",
     "screenshot": "evals/browser/planner/screenshots/roboteam_station_dropdown_target_absent.png",
-    "milestone": {
+    "statement": {
       "name": "配置移动任务目标站点",
       "description": "在快速建单弹窗的移动任务行，将目标站点设置为 s2-站点3。",
       "success_condition": "移动任务行的站点框已显示选定值「s2-站点3」",
@@ -69,7 +69,7 @@
   {
     "label": "navigate-打开网址应指令导航而非搜索框输入（回归：曾指令在搜索框输入 baidu.com）",
     "screenshot": "evals/browser/planner/screenshots/google_home.png",
-    "milestone": {
+    "statement": {
       "name": "导航至百度首页",
       "description": "打开百度首页 baidu.com",
       "success_condition": "页面显示为百度首页（包含百度搜索框及百度 Logo）",
@@ -100,7 +100,7 @@
   {
     "label": "dropdown-(d)已选定字段不重选-误判missing也要跳过（回归 20260612_184401 重选自证循环）",
     "screenshot": "evals/browser/planner/screenshots/roboteam_map_selected_closed.png",
-    "milestone": {
+    "statement": {
       "name": "新建虚拟机器人配置",
       "description": "在新建虚拟机器人弹窗中按配置填写各字段并提交：数量 1、名称前缀 lucas-、通信方式 STD、预设地图 交管测试专用地图_1楼、预设区域 禁止停止区_区域14、初始电量 90、掉电速率 10、充电速率 20、最大运动线速度 900、运动加速度 800、最大运动角速度 30。",
       "success_condition": "虚拟机器人列表中可见名称为 'lucas-10001' 且状态为「启用」的条目",
@@ -163,7 +163,7 @@
   {
     "label": "多选tag下拉-已带chip勿重点击(会取消选中)（回归 20260612_205558 群组重点击循环）",
     "screenshot": "evals/browser/planner/screenshots/roboteam_multiselect_chip_selected.png",
-    "milestone": {
+    "statement": {
       "name": "配置检测参数与选择机器人群组",
       "description": "在路径连通性工具中设置起点 s10-站点10、终点 s9-站点9，并选择一个有效的机器人群组。",
       "success_condition": "起点字段显示 s10-站点10，终点字段显示 s9-站点9，且已选择一个有效的机器人群组",
@@ -219,7 +219,7 @@
   {
     "label": "combobox-终点候选展开时应点候选提交,别点检测触发（回归 20260613_203155 检测空转21轮）",
     "screenshot": "evals/browser/planner/screenshots/roboteam_endpoint_dropdown_open_203155.png",
-    "milestone": {
+    "statement": {
       "name": "设置起终点并检测连通性",
       "description": "在路径连通性面板把起点设为 s10-站点10、终点设为 s9-站点9（均需从候选选定），再点击检测。",
       "success_condition": "起点 #10 s10-站点10、终点 #9 s9-站点9 均已选定，且检测结果（绿色✓或不可达提示）已显示",
@@ -252,7 +252,7 @@
   {
     "label": "upload-planner 须从约束取真实路径上传，别丢路径/别照抄示例占位（回归 20260615_155232+161159）",
     "screenshot": "evals/browser/planner/screenshots/roboteam_map_import_upload_dialog.png",
-    "milestone": {
+    "statement": {
       "name": "上传指定地图文件",
       "description": "在「导入地图」弹窗中上传任务指定的本地地图文件",
       "success_condition": "文件已选择并触发上传（出现上传中/成功提示或列表新增）",
@@ -280,7 +280,7 @@
         "/Users/x/"
       ]
     },
-    "note": "两次回归合一。155232：planner 把上传 milestone 框成『点击上传区域唤起文件选择器』、丢了路径 → action policy 只能 tap → 原生文件框被 _on_file_chooser 拦截取消 → 失败。161159：加了 PLAN_PROMPT 上传指引后 planner 改用 upload 框架了，但①该次 decompose 把 milestone 命名成『上传指定地图文件』(没带路径)，②二进制 @ref 被 resolve_file_refs 跳过、路径没进约束 → planner 无真实路径可用，照抄了 PLAN_PROMPT 示例里的占位路径 /Users/x/map.map_export → 上传了不存在的文件。本 case 复刻 161159 真实态：milestone 泛化无路径、真实路径只在约束里(resolve_file_refs 现在对二进制 @ref 产出『本地完整路径…』段)。判据：planner 指令必须含约束里的真实路径(must_contain_all)、带上传/导入语义、且绝不出现示例占位 /Users/x/。修法=① resolve_file_refs 二进制 @ref 也产出路径段(进约束)；② PLAN_PROMPT 示例改占位符 <真实完整路径> 并明令『绝不照抄占位/示例路径，从约束/子目标取真实路径』。"
+    "note": "两次回归合一。155232：planner 把上传 statement 框成『点击上传区域唤起文件选择器』、丢了路径 → action policy 只能 tap → 原生文件框被 _on_file_chooser 拦截取消 → 失败。161159：加了 PLAN_PROMPT 上传指引后 planner 改用 upload 框架了，但①该次 decompose 把 statement 命名成『上传指定地图文件』(没带路径)，②二进制 @ref 被 resolve_file_refs 跳过、路径没进约束 → planner 无真实路径可用，照抄了 PLAN_PROMPT 示例里的占位路径 /Users/x/map.map_export → 上传了不存在的文件。本 case 复刻 161159 真实态：statement 泛化无路径、真实路径只在约束里(resolve_file_refs 现在对二进制 @ref 产出『本地完整路径…』段)。判据：planner 指令必须含约束里的真实路径(must_contain_all)、带上传/导入语义、且绝不出现示例占位 /Users/x/。修法=① resolve_file_refs 二进制 @ref 也产出路径段(进约束)；② PLAN_PROMPT 示例改占位符 <真实完整路径> 并明令『绝不照抄占位/示例路径，从约束/子目标取真实路径』。"
   },
   {
     "label": "filter-fallback-目标词 Olivia 必须压过旧精确词和窄框截断（回归 20260624_182334）",
@@ -296,7 +296,7 @@
       ],
       "dom_state": "Product=Olivia zip jacket"
     },
-    "milestone": {
+    "statement": {
       "name": "清除当前筛选，在 Product 列改用关键词 'Olivia' 重新提交筛选",
       "description": "当前精确词 'Olivia zip jacket' 已提交但返回 0 records found；本步必须把 Product 列筛选词改成关键词 'Olivia'。",
       "success_condition": "Product 列筛选框 current='Olivia'，且提交后列表显示非 0 条结果",
@@ -446,7 +446,7 @@
         }
       ]
     },
-    "milestone": {
+    "statement": {
       "name": "在产品字段先用精确值 'Olivia zip jacket' 筛选；若0条，改用关键词 'Olivia' 重筛",
       "description": "当前精确词 'Olivia zip jacket' 已提交并返回 0 records found；Product 列在截图中可见，应改用关键词 'Olivia' 重新筛选。",
       "success_condition": "Product 列筛选框已改为关键词 'Olivia' 并提交，列表显示 Olivia zip jacket 相关评论记录（非0条）",
@@ -519,7 +519,7 @@
   {
     "label": "columns-panel-scroll-面板内目标不可见时应向下滚动面板而非关闭（回归 20260626_105002 T8-T18 打转）",
     "screenshot": "evals/browser/planner/screenshots/columns_panel_scroll_needed.png",
-    "milestone": {
+    "statement": {
       "name": "通过 Columns 控件启用 Color 列",
       "description": "点击 Columns 按钮打开列选择面板，在面板内找到 Color 复选框并勾选，使产品列表表格中出现 Color 列。",
       "success_condition": "产品列表表格表头出现 Color 列",
@@ -551,7 +551,7 @@
   {
     "label": "columns-panel-cancel-trap-禁止把Cancel当Apply（回归 20260626_110802 T4-T21 打转）",
     "screenshot": "evals/browser/planner/screenshots/columns_panel_stale_cancel_trap.png",
-    "milestone": {
+    "statement": {
       "name": "通过 Columns 控件启用 Color 列",
       "description": "点击 Columns 按钮打开列选择面板，在面板内找到 Color 复选框并勾选，使产品列表表格中出现 Color 列。",
       "success_condition": "产品列表表格表头出现 Color 列",
@@ -634,7 +634,7 @@
         }
       ]
     },
-    "milestone": {
+    "statement": {
       "name": "在名称字段用精确值『Selene Yoga Hoodie』筛选",
       "description": "Products 的 Filters 面板已展开，Name 输入框可见且为空。下一步应在 Name 输入框填入 Selene Yoga Hoodie，而不是横向滚动表格。",
       "success_condition": "名称精确筛选已应用，records-found 计数可读",
@@ -709,7 +709,7 @@
         }
       ]
     },
-    "milestone": {
+    "statement": {
       "name": "展开 Content 区域，将 Short Description 更新为 3 customer(s) love it! 并保存",
       "description": "当前父商品编辑页已打开，Content 区标题可见但尚未展开；Short Description 位于 Content 区。",
       "success_condition": "页面显示保存成功提示或返回列表",
@@ -774,7 +774,7 @@
         }
       ]
     },
-    "milestone": {
+    "statement": {
       "name": "展开 Content 区域并将 Short Description 更新为 3 customer(s) love it!",
       "description": "当前父商品编辑页的 Content 区已展开，Short Description 富文本编辑器可见且为空。",
       "success_condition": "Content 区域已展开，Short Description 输入框中已填入目标文本",
@@ -862,7 +862,7 @@
         }
       ]
     },
-    "milestone": {
+    "statement": {
       "name": "在 Configurations 区域生成 green + XXXL 组合并保存",
       "description": "在 Configurations 区域生成 green + XXXL 组合并保存",
       "success_condition": "保存成功提示出现，且 Configurations 集合中包含 green + XXXL 组合",
@@ -899,7 +899,7 @@
       "url": "http://shopping-admin.example/admin/catalog/product/edit/id/1492/",
       "title": "Create Product Configurations"
     },
-    "milestone": {
+    "statement": {
       "name": "在 Configurations 区域生成 green + XXXL 组合并保存",
       "description": "在 Configurations 区域生成 green + XXXL 组合并保存父商品",
       "success_condition": "保存后的父商品 Configurations 集合包含 green + XXXL 组合",

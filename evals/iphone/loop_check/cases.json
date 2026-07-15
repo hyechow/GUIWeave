@@ -2,7 +2,7 @@
   {
     "label": "账单筛选后加载中-旧内容未刷新-应判loading",
     "screenshot": "evals/loop_check/screenshots/wechat_bill_loading_stale_postfilter.png",
-    "milestone": {
+    "statement": {
       "name": "采集指定日期区间的账单明细",
       "description": "滚动采集2026-05-21至2026-05-28的微信支付账单明细",
       "kind": "collection",
@@ -21,7 +21,7 @@
   {
     "label": "账单已渲染-列表中段-应判非loading",
     "screenshot": "evals/loop_check/screenshots/wechat_bill_rendered_midlist.png",
-    "milestone": {
+    "statement": {
       "name": "采集指定日期区间的账单明细",
       "description": "滚动采集2026-05-21至2026-05-28的微信支付账单明细",
       "kind": "collection",
@@ -41,7 +41,7 @@
   {
     "label": "账单到底-暂无更多记录-非loading且到边界",
     "screenshot": "evals/loop_check/screenshots/wechat_bill_bottom_no_more.png",
-    "milestone": {
+    "statement": {
       "name": "采集指定日期区间的账单明细",
       "description": "滚动采集2026-05-21至2026-05-28的微信支付账单明细",
       "kind": "collection",

@@ -13,9 +13,9 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     SupervisorStep,
 )
-from gui_agent.core.supervisor.milestone.schemas import action_metadata
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.schemas import action_metadata
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
 
 
 def _signal_turn(
@@ -24,7 +24,7 @@ def _signal_turn(
     role: str,
     control: str,
     surface: str = "",
-    milestone_id: str = "persisted",
+    statement_id: str = "persisted",
     field: str = "",
     value: str = "",
 ) -> PolicyTurn:
@@ -35,7 +35,7 @@ def _signal_turn(
             should_act=True,
             instruction=control,
             summary="",
-            milestone_id=milestone_id,
+            statement_id=statement_id,
             atomic_role=role,
             target_control=control,
         ),
@@ -46,7 +46,7 @@ def _signal_turn(
             target_control=control,
             mutation_receipt=(
                 MutationReceipt(
-                    statement_id=milestone_id,
+                    statement_id=statement_id,
                     subject_ref=f"choice:{surface}",
                     field=field,
                     intended_value=value,
@@ -73,7 +73,7 @@ def _redirected_mutation_contract() -> ExecutionContract:
 
 
 def test_unmet_state_remains_actionable_without_progress_failure() -> None:
-    scope = "milestone:add-value"
+    scope = "statement:add-value"
     decision = ExecutionCoordinator().decide(
         _redirected_mutation_contract(),
         [
@@ -94,7 +94,7 @@ def test_unmet_state_remains_actionable_without_progress_failure() -> None:
 
 
 def test_destination_page_state_cannot_contradict_source_resource_mutation() -> None:
-    scope = "milestone:save"
+    scope = "statement:save"
     decision = ExecutionCoordinator().decide(
         _redirected_mutation_contract(),
         [
@@ -119,7 +119,7 @@ def test_destination_page_state_cannot_contradict_source_resource_mutation() -> 
                     "unmet",
                 source_type="obs.dom.target_values",
                 scope=scope,
-                subject_scope="milestone:save",
+                subject_scope="statement:save",
                 evidence="destination list has no source form controls",
                 authoritative=True,
             ),
@@ -128,7 +128,7 @@ def test_destination_page_state_cannot_contradict_source_resource_mutation() -> 
                 "contradicted",
                 source_type="checker",
                 scope=scope,
-                subject_scope="milestone:save",
+                subject_scope="statement:save",
                 evidence="source form is no longer visible",
             ),
         ],
@@ -140,7 +140,7 @@ def test_destination_page_state_cannot_contradict_source_resource_mutation() -> 
 
 
 def test_authoritative_operation_failure_for_source_resource_wins_after_redirect() -> None:
-    scope = "milestone:save"
+    scope = "statement:save"
     decision = ExecutionCoordinator().decide(
         _redirected_mutation_contract(),
         [
@@ -226,7 +226,7 @@ def test_persisted_mutation_keeps_transaction_role_separate_from_ui_family():
 
 
 def test_persisted_mutation_projects_pending_commit_without_rejecting_proposals():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -241,14 +241,14 @@ def test_persisted_mutation_projects_pending_commit_without_rejecting_proposals(
         _signal_turn(3, role="prepare", control="Next", surface="child:values"),
         _signal_turn(4, role="commit", control="Generate draft", surface="child:summary"),
     ]
-    state = assess_persistence(milestone, history)
+    state = assess_persistence(statement, history)
     assert state.status == "pending"
     assert state.latest_write is history[1]
     assert state.entry_surface == "parent"
 
 
 def test_persistence_projection_does_not_compare_control_names():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -261,13 +261,13 @@ def test_persistence_projection_does_not_compare_control_names():
         _signal_turn(1, role="prepare", control="Next", surface="wizard:step-1"),
         _signal_turn(2, role="write", control="Target A", surface="wizard:step-2"),
     ]
-    state = assess_persistence(milestone, history)
+    state = assess_persistence(statement, history)
     assert state.status == "pending"
     assert state.entry_surface == "wizard:step-1"
 
 
 def test_pending_persistence_without_terminal_readiness_allows_forward_prepare():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -297,11 +297,11 @@ def test_pending_persistence_without_terminal_readiness_allows_forward_prepare()
             target_control="Save",
         ),
     ])
-    policy = MilestoneSupervisorPolicy(surface_resolver=lambda _observation: "parent")
+    policy = StatementSupervisorPolicy(surface_resolver=lambda _observation: "parent")
     policy._invoke_planner = lambda *_args, **_kwargs: next(proposals)  # type: ignore[method-assign]
 
     step = policy._plan_single(
-        milestone,
+        statement,
         _SingleCheckResult(
             status="in_progress",
             reason="state not yet durable",
@@ -317,7 +317,7 @@ def test_pending_persistence_without_terminal_readiness_allows_forward_prepare()
 
 
 def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -338,12 +338,12 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
         action_family="activate",
         target_control="Open child editor",
     )
-    policy = MilestoneSupervisorPolicy()
-    policy.begin_statement(milestone, instance_id="i1")
+    policy = StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="i1")
     policy._invoke_planner = lambda *_args, **_kwargs: regression  # type: ignore[method-assign]
 
     step = policy._plan_single(
-        milestone,
+        statement,
         _SingleCheckResult(
             status="in_progress",
             reason="state not yet durable",
@@ -359,7 +359,7 @@ def test_unknown_visual_surface_does_not_suppress_an_ordinary_proposal():
 
 
 def test_terminal_ready_rejects_repeated_noncommit_proposals():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="persisted",
         name="update collection and save",
         description="",
@@ -380,12 +380,12 @@ def test_terminal_ready_rejects_repeated_noncommit_proposals():
         action_family="activate",
         target_control="Open child editor",
     )
-    policy = MilestoneSupervisorPolicy(surface_resolver=lambda _observation: "parent")
-    policy.begin_statement(milestone, instance_id="i1")
+    policy = StatementSupervisorPolicy(surface_resolver=lambda _observation: "parent")
+    policy.begin_statement(statement, instance_id="i1")
     policy._invoke_planner = lambda *_args, **_kwargs: regression  # type: ignore[method-assign]
 
     step = policy._plan_single(
-        milestone,
+        statement,
         _SingleCheckResult(
             status="in_progress",
             reason="root commit is pending",
@@ -406,7 +406,7 @@ def test_terminal_ready_rejects_repeated_noncommit_proposals():
 
 
 def test_complete_write_receipts_keep_child_workflow_moving_forward():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="persisted",
         name="materialize declared choices and save",
         description="",
@@ -438,10 +438,10 @@ def test_complete_write_receipts_keep_child_workflow_moving_forward():
             target_control="Generate",
         )
 
-    policy = MilestoneSupervisorPolicy(surface_resolver=lambda _observation: "child-summary")
+    policy = StatementSupervisorPolicy(surface_resolver=lambda _observation: "child-summary")
     policy._invoke_planner = planner  # type: ignore[method-assign]
     step = policy._plan_single(
-        milestone,
+        statement,
         _SingleCheckResult(
             status="in_progress",
             reason="effect remains unverified",
@@ -458,7 +458,7 @@ def test_complete_write_receipts_keep_child_workflow_moving_forward():
 
 
 def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="persisted",
         name="prepare one declared combination and save",
         description="",
@@ -476,11 +476,11 @@ def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
         target_control="collection selection command",
         target_value="",
     )
-    policy = MilestoneSupervisorPolicy()
+    policy = StatementSupervisorPolicy()
     policy._invoke_planner = lambda *_args, **_kwargs: proposal  # type: ignore[method-assign]
 
     step = policy._plan_single(
-        milestone,
+        statement,
         _SingleCheckResult(
             status="in_progress",
             reason="the draft selection still contains extra values",
@@ -499,7 +499,7 @@ def test_workflow_command_mislabeled_as_write_is_reclassified_as_preparation():
 
 
 def test_persistence_uses_structured_role_not_instruction_vocabulary():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="m",
         name="perform mutation",
         description="",
@@ -512,26 +512,26 @@ def test_persistence_uses_structured_role_not_instruction_vocabulary():
         1,
         role="commit",
         control="trigger boundary",
-        milestone_id="m",
+        statement_id="m",
     )
 
-    attempted = assess_persistence(milestone, [turn])
+    attempted = assess_persistence(statement, [turn])
     assert attempted.status == "pending"
     assert attempted.terminal_turn is turn
     assert turn.action_signal is not None
     turn.action_signal.response_channels.append("url")
-    assert assess_persistence(milestone, [turn]).status == "submitted"
+    assert assess_persistence(statement, [turn]).status == "submitted"
     prepare = _signal_turn(
         1,
         role="prepare",
         control="trigger boundary",
-        milestone_id="m",
+        statement_id="m",
     )
-    assert assess_persistence(milestone, [prepare]).status == "clean"
+    assert assess_persistence(statement, [prepare]).status == "clean"
 
 
 def test_persistence_does_not_treat_nested_commit_as_terminal():
-    milestone = StatementContract(
+    statement = StatementContract(
         id="persisted",
         name="persist mutation",
         description="",
@@ -560,28 +560,28 @@ def test_persistence_does_not_treat_nested_commit_as_terminal():
         surface="resource:record-7",
     )
 
-    nested = assess_persistence(milestone, [outer_prepare, child_commit])
+    nested = assess_persistence(statement, [outer_prepare, child_commit])
     assert nested.status == "clean"
     assert nested.terminal_turn is None
 
-    pending = assess_persistence(milestone, [outer_prepare, write, child_commit])
+    pending = assess_persistence(statement, [outer_prepare, write, child_commit])
     assert pending.status == "pending"
 
     persisted = assess_persistence(
-        milestone, [outer_prepare, write, child_commit, outer_commit]
+        statement, [outer_prepare, write, child_commit, outer_commit]
     )
     assert persisted.status == "pending"
     assert persisted.terminal_turn is outer_commit
     assert outer_commit.action_signal is not None
     outer_commit.action_signal.response_channels.append("url")
     assert assess_persistence(
-        milestone, [outer_prepare, write, child_commit, outer_commit]
+        statement, [outer_prepare, write, child_commit, outer_commit]
     ).status == "submitted"
 
     redirected_child = child_commit.model_copy(deep=True)
     assert redirected_child.action_signal is not None
     redirected_child.action_signal.response_channels.append("url")
-    redirected = assess_persistence(milestone, [outer_prepare, write, redirected_child])
+    redirected = assess_persistence(statement, [outer_prepare, write, redirected_child])
     assert redirected.status == "pending"
     assert redirected.terminal_turn is None
 
@@ -607,11 +607,11 @@ def test_filter_with_result_completes_when_applied_even_if_result_is_zero():
                 "filter.state",
                 "confirmed",
                 source_type="obs.applied_filters",
-                scope="milestone:filter",
+                scope="statement:filter",
                 authoritative=True,
             ),
         ],
-        scope="milestone:filter",
+        scope="statement:filter",
     )
 
     assert decision.status == "satisfied"
@@ -643,7 +643,7 @@ def test_commit_dispatch_without_outcome_feedback_is_provisional():
     attempt = PersistenceAssessment(
         status="pending",
         terminal_turn=_signal_turn(
-            2, role="commit", control="Save", milestone_id="save"
+            2, role="commit", control="Save", statement_id="save"
         ),
     )
     decision = ExecutionCoordinator().decide(
@@ -672,7 +672,7 @@ def test_commit_dispatch_without_outcome_feedback_is_provisional():
     acknowledged = PersistenceAssessment(
         status="submitted",
         terminal_turn=_signal_turn(
-            2, role="commit", control="Save", milestone_id="save"
+            2, role="commit", control="Save", statement_id="save"
         ),
     )
     assert ExecutionCoordinator().decide(
@@ -863,17 +863,17 @@ def test_change_mutation_cannot_complete_from_commit_without_write():
                 "action.execution",
                 "confirmed",
                 source_type="runtime.commit_dispatch",
-                scope="milestone:save",
+                scope="statement:save",
                 authoritative=True,
             ),
             claim(
                 "effect.state",
                 "unverified",
                 source_type="checker",
-                scope="milestone:save",
+                scope="statement:save",
             ),
         ],
-        scope="milestone:save",
+        scope="statement:save",
     )
 
     assert decision.status == "contradicted"
@@ -893,11 +893,11 @@ def test_ensure_mutation_accepts_authoritative_preexisting_outcome():
                 "effect.state",
                 "confirmed",
                 source_type="checker",
-                scope="milestone:ensure",
+                scope="statement:ensure",
                 evidence="target state already exists",
             )
         ],
-        scope="milestone:ensure",
+        scope="statement:ensure",
     )
 
     assert decision.status == "satisfied"
@@ -983,10 +983,10 @@ def test_commit_without_target_write_returns_typed_recovery_conflict():
             "action.execution",
             "confirmed",
             source_type="runtime.commit_dispatch",
-            scope="milestone:ensure",
+            scope="statement:ensure",
             authoritative=True,
         )],
-        scope="milestone:ensure",
+        scope="statement:ensure",
     )
 
     assert decision.status == "contradicted"
@@ -1004,10 +1004,10 @@ def test_checker_without_navigation_dispatch_cannot_complete_navigation():
             "effect.state",
             "confirmed",
             source_type="checker",
-            scope="milestone:open",
+            scope="statement:open",
             evidence="checker says the destination is visible",
         )],
-        scope="milestone:open",
+        scope="statement:open",
     )
 
     assert decision.status == "pending"
@@ -1025,12 +1025,12 @@ def test_collection_requires_authoritative_complete_coverage():
                 "collection.coverage",
                 "partial",
                 source_type="runtime.collection_controller",
-                scope="milestone:rows",
+                scope="statement:rows",
                 authoritative=True,
                 coverage="partial",
             )
         ],
-        scope="milestone:rows",
+        scope="statement:rows",
     )
 
     assert decision.status == "pending"
@@ -1047,12 +1047,12 @@ def test_collection_completes_from_authoritative_coverage_fact():
             "collection.coverage",
             "complete",
             source_type="runtime.collection_controller",
-            scope="milestone:rows",
+            scope="statement:rows",
             evidence="observable boundary reached",
             authoritative=True,
             coverage="complete",
         )],
-        scope="milestone:rows",
+        scope="statement:rows",
     )
 
     assert decision.status == "satisfied"
@@ -1061,7 +1061,7 @@ def test_collection_completes_from_authoritative_coverage_fact():
 
 def test_runtime_constraint_is_visible_only_in_its_scope():
     ledger = ConstraintLedger()
-    ledger.add("do not repeat this scroll", scope="milestone:first")
+    ledger.add("do not repeat this scroll", scope="statement:first")
 
-    assert ledger.visible("milestone:first") == ["do not repeat this scroll"]
-    assert ledger.visible("milestone:second") == []
+    assert ledger.visible("statement:first") == ["do not repeat this scroll"]
+    assert ledger.visible("statement:second") == []

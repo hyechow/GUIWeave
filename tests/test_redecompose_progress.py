@@ -1,6 +1,6 @@
 """Deterministic wiring for the re-decompose progress snapshot (summarize_progress).
 
-Re-decompose's target is the UNEXECUTED milestones, with the executed ones as experience (the
+Re-decompose's target is the UNEXECUTED statements, with the executed ones as experience (the
 "重编排是有状态记忆的编排" requirement). summarize_progress derives both from the interpreter's
 run_log + the program; this pins that split so a refactor can't silently turn re-decompose back into
 a fresh-from-homepage full decompose."""
@@ -45,7 +45,7 @@ def test_experience_lists_executed_with_outcomes():
     assert "用 Olivia 筛选 Product 列" in experience
     assert "3 条候选" in experience
     assert "count=3" in experience            # read values carried as experience
-    # not-yet-executed milestones must NOT appear in experience
+    # not-yet-executed statements must NOT appear in experience
     assert "Rating<=3" not in experience
 
 
@@ -54,7 +54,7 @@ def test_remaining_excludes_executed_and_heads_with_current():
     current = program.statements[2]           # the failed "Rating<=3" filter (abandoned mid-yield)
     assert isinstance(current, Run)
     _, remaining = summarize_progress(program, _run_log(), current_run=current)
-    # current failed milestone heads the remaining plan, flagged as the correction point
+    # current failed statement heads the remaining plan, flagged as the correction point
     assert remaining.splitlines()[0].startswith("1.")
     assert "Rating<=3" in remaining.splitlines()[0]
     assert "触发了上层纠正" in remaining.splitlines()[0]
@@ -67,7 +67,7 @@ def test_remaining_excludes_executed_and_heads_with_current():
 def test_no_current_run_remaining_is_just_unexecuted():
     program = _program()
     _, remaining = summarize_progress(program, _run_log(), current_run=None)
-    # no current → remaining is exactly the unexecuted milestones, in program order
+    # no current → remaining is exactly the unexecuted statements, in program order
     assert "Rating<=3" in remaining
     assert "读取昵称" in remaining
     assert "进入 Reviews 页" not in remaining

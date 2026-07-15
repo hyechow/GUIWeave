@@ -9,7 +9,7 @@ from gui_agent.core.schemas import BaseAction, BaseActionDecision, PolicyContext
 def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
     ctx = PolicyContext(
         goal="g",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="browser",
     )
     supervisor = SimpleNamespace(
@@ -51,7 +51,7 @@ def test_record_interactive_turn_appends_saves_and_emits_callback(monkeypatch):
         on_turn=callbacks.append,
     )
 
-    assert ctx.journal.events == [turn]
+    assert ctx.journal.turns == [turn]
     assert saves == ["saved"]
     assert turn.llm_calls == 2
     assert turn.input_tokens == 20

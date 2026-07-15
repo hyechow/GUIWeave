@@ -2,7 +2,7 @@
   {
     "label": "picker值幻觉-显示06:00不能判成06:30（回归 20260610_220003 T8）",
     "screenshot": "evals/android/checker/screenshots/alarm_picker_0600pm.png",
-    "milestone": {
+    "statement": {
       "name": "设置时间为06:30",
       "description": "将闹钟的时间设置为早上06:30。",
       "success_condition": "时间选择器中显示的数值为06:30",
@@ -18,7 +18,7 @@
   {
     "label": "picker值-显示10:59明显非06:30（基线：不应误判 done）",
     "screenshot": "evals/android/checker/screenshots/alarm_picker_1059.png",
-    "milestone": {
+    "statement": {
       "name": "设置时间为06:30",
       "description": "将闹钟的时间设置为早上06:30。",
       "success_condition": "时间选择器中显示的数值为06:30",
@@ -34,7 +34,7 @@
   {
     "label": "picker值幻觉-显示06:28且30在候选行不能判成06:30（回归 20260611_113402 T8）",
     "screenshot": "evals/android/checker/screenshots/alarm_picker_0628.png",
-    "milestone": {
+    "statement": {
       "name": "设置闹钟时间",
       "description": "在闹钟页面添加新闹钟，并将时间设置为上午06:30。",
       "success_condition": "闹钟的时间显示为06:30且AM标识已选中。",
@@ -51,7 +51,7 @@
   {
     "label": "picker值幻觉-显示08:51且06在候选行不能当小时已对齐（回归 20260611_115132 T5）",
     "screenshot": "evals/android/checker/screenshots/alarm_picker_0851.png",
-    "milestone": {
+    "statement": {
       "name": "进入添加闹钟页面并设置时间为06:30",
       "description": "点击界面上的「+」或「添加」按钮，将闹钟时间设置为06:30，然后保存。",
       "success_condition": "闹钟列表中新增了一条设定为06:30的闹钟条目",
@@ -68,7 +68,7 @@
   {
     "label": "picker值幻觉-显示05:09且06在下方候选行不能当小时已对齐（回归 20260611_120915 T7）",
     "screenshot": "evals/android/checker/screenshots/alarm_picker_0509pm_target_0630.png",
-    "milestone": {
+    "statement": {
       "name": "设置时间为上午6:30",
       "description": "通过滚动滚轮将小时设置为6，分钟设置为30，并确认时段为上午（AM）。",
       "success_condition": "时间显示区域显示为 6:30 AM",
@@ -85,7 +85,7 @@
   {
     "label": "picker时段约束-显示下午06:30不能验收上午06:30（回归 20260611_122343 T12）",
     "screenshot": "evals/android/checker/screenshots/alarm_picker_0630pm_target_am.png",
-    "milestone": {
+    "statement": {
       "name": "设置闹钟时间为上午6:30",
       "description": "将闹钟时间选择器设置为上午/AM 06:30。",
       "success_condition": "时间选择器中间高亮行显示为上午/AM 06:30，不是下午/PM 06:30。",
@@ -102,7 +102,7 @@
   {
     "label": "列表时段约束-傍晚6:30不能验收上午6:30（回归 20260611_122343 T13）",
     "screenshot": "evals/android/checker/screenshots/alarm_list_evening_0630_target_am.png",
-    "milestone": {
+    "statement": {
       "name": "确认并保存上午6:30闹钟",
       "description": "保存闹钟后返回闹钟列表。",
       "success_condition": "闹钟列表中新增了上午/早上/AM 6:30 的闹钟条目，不是下午/傍晚/PM 6:30。",

@@ -197,10 +197,10 @@ def test_deploy_frontmatter_aliases_discover_app(tmp_path, monkeypatch):
 
 
 def test_set_app_knowledge_stores_check():
-    from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
-    from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
+    from gui_agent.adapters.browser.supervisor.statement.prompts import BROWSER_STATEMENT_PROMPTS
+    from gui_agent.core.supervisor.statement import StatementSupervisorPolicy
 
-    p = MilestoneSupervisorPolicy(prompts=BROWSER_MILESTONE_PROMPTS)
+    p = StatementSupervisorPolicy(prompts=BROWSER_STATEMENT_PROMPTS)
     assert p._check_knowledge == ""  # 未注入时为空,run_checker 不加动态段
     p.set_app_knowledge("nav", app_name="A", check="列内「10」即「s10-站点10」")
     assert "s10-站点10" in p._check_knowledge

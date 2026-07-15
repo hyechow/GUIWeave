@@ -8,7 +8,6 @@ an executor or sends an action to a device/browser.
 
 Examples:
     uv run python scripts/replay_supervisor_turn.py logs/.../20260713_090810 --turn 30
-    uv run python scripts/replay_supervisor_turn.py evals/browser/supervisor_replay/090810_turn30
 """
 
 from __future__ import annotations
@@ -32,10 +31,10 @@ from gui_agent.core.schemas import StatementContract, PolicyContext, PolicyTurn
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
 
 
-def _milestone_for_turn(raw: dict[str, Any], turn: PolicyTurn) -> StatementContract:
+def _statement_for_turn(raw: dict[str, Any], turn: PolicyTurn) -> StatementContract:
     step = turn.supervisor
-    if step is None or not step.milestone_id:
-        raise ValueError(f"turn {turn.index} has no milestone supervisor decision")
+    if step is None or not step.statement_id:
+        raise ValueError(f"turn {turn.index} has no statement supervisor decision")
     info: object = turn.statement
     if info is None:
         info = next(
@@ -66,50 +65,6 @@ def _load_snapshot(run_dir: Path, turn: int):
     return load_observation_snapshot(path)
 
 
-def _restore_monitor(
-    supervisor: Any,
-    run_dir: Path,
-    history: list[PolicyTurn],
-    target_turn: int,
-) -> list[str]:
-    """Restore the deterministic monitor state available from captured observations."""
-    warnings: list[str] = []
-    first_path = run_dir / "observation_turn_1.json"
-    if first_path.is_file():
-        first = load_observation_snapshot(first_path)
-        if first.applied_filters is not None:
-            supervisor._initial_filters = dict(first.applied_filters)
-
-    for prior in history:
-        path = run_dir / f"observation_turn_{prior.index}.json"
-        if not path.is_file():
-            continue
-        observation = load_observation_snapshot(path)
-        if prior.action_signal is not None and not prior.action_signal.surface_id:
-            resolve_surface = getattr(supervisor, "surface_id", None)
-            if callable(resolve_surface):
-                prior.action_signal.surface_id = str(resolve_surface(observation) or "")
-        if prior.supervisor is not None:
-            supervisor.note_executed_action(
-                index=prior.index,
-                observation=observation,
-                supervisor_step=prior.supervisor,
-                action_decision=prior.action_decision,
-                executed=prior.executed,
-            )
-
-    previous_path = run_dir / f"observation_turn_{target_turn - 1}.json"
-    if previous_path.is_file():
-        previous = load_observation_snapshot(previous_path)
-        supervisor._monitor._last_url = previous.url
-        supervisor._monitor._last_dom_state = previous.dom_state
-    else:
-        warnings.append(
-            "previous observation snapshot is absent; URL/DOM delta evidence is unavailable"
-        )
-    return warnings
-
-
 def _configure_knowledge(supervisor: Any, context: PolicyContext) -> None:
     summary = context.knowledge or {}
     app_name = str(summary.get("app_name") or "")
@@ -132,14 +87,14 @@ def _configure_knowledge(supervisor: Any, context: PolicyContext) -> None:
 
 
 def _expectation_failures(
-    expectation: dict[str, Any], decision: Any, milestone: StatementContract
+    expectation: dict[str, Any], decision: Any, supervisor: Any
 ) -> list[str]:
     failures: list[str] = []
     outcome = decision.outcome
     actuals = {
         "should_act": decision.should_act,
-        "goal_completed": bool(outcome is not None and outcome.phase == "completed"),
-        "completion_status": outcome.verification if outcome is not None else "in_progress",
+        "phase": outcome.phase if outcome is not None else "running",
+        "verification": outcome.verification if outcome is not None else None,
         "atomic_role": decision.atomic_role,
         "action_family": decision.action_family,
         "target_control": decision.target_control,
@@ -147,8 +102,8 @@ def _expectation_failures(
     }
     checks = (
         ("should_act", expectation.get("should_act")),
-        ("goal_completed", expectation.get("goal_completed")),
-        ("completion_status", expectation.get("completion_status")),
+        ("phase", expectation.get("phase")),
+        ("verification", expectation.get("verification")),
         ("atomic_role", expectation.get("atomic_role")),
         ("action_family", expectation.get("action_family")),
         ("target_control", expectation.get("target_control")),
@@ -166,9 +121,10 @@ def _expectation_failures(
             f"rejected target_control was proposed: {decision.target_control!r}"
         )
     expected_retries = expectation.get("retry_count")
-    if expected_retries is not None and milestone.retry_count != expected_retries:
+    actual_retries = supervisor._rt.retry_count
+    if expected_retries is not None and actual_retries != expected_retries:
         failures.append(
-            f"expected retry_count={expected_retries!r}, got {milestone.retry_count!r}"
+            f"expected retry_count={expected_retries!r}, got {actual_retries!r}"
         )
     return failures
 
@@ -297,24 +253,37 @@ def main() -> int:
 
     raw = json.loads((run_dir / "context.json").read_text(encoding="utf-8"))
     context = PolicyContext.model_validate(raw)
-    target_turn = next((turn for turn in context.journal.events if turn.index == target_index), None)
+    target_turn = next((turn for turn in context.journal.turns if turn.index == target_index), None)
     if target_turn is None:
         raise ValueError(f"turn {target_index} is absent from {run_dir / 'context.json'}")
     if (context.platform or "browser") != "browser":
         raise ValueError("this replay runner currently supports the browser supervisor only")
 
     observation = _load_snapshot(run_dir, target_index)
-    history = [turn for turn in context.journal.events if turn.index < target_index]
-    milestone = _milestone_for_turn(raw, target_turn)
+    history = [turn for turn in context.journal.turns if turn.index < target_index]
+    statement = _statement_for_turn(raw, target_turn)
     supervisor = _build_supervisor(context.supervisor_policy_name)
     _configure_knowledge(supervisor, context)
     supervisor._goal = context.goal
-    supervisor.begin_statement(
-        milestone,
-        instance_id=target_turn.statement_instance_id,
-        task_type=context.task_type or "action",
-    )
-    warnings = _restore_monitor(supervisor, run_dir, history, target_index)
+    invocation_history = [
+        turn
+        for turn in history
+        if turn.statement_instance_id == target_turn.statement_instance_id
+    ]
+    if invocation_history:
+        supervisor.resume_statement(
+            statement,
+            instance_id=target_turn.statement_instance_id,
+            history=invocation_history,
+        )
+    else:
+        supervisor.begin_statement(
+            statement,
+            instance_id=target_turn.statement_instance_id,
+            task_type=context.task_type or "action",
+        )
+    statement = supervisor._active_statement
+    warnings: list[str] = []
 
     decision = supervisor.step(observation, context.goal, history)
     checker = getattr(supervisor, "_last_check", None)
@@ -322,7 +291,7 @@ def main() -> int:
         "source": str(run_dir),
         "turn": target_index,
         "history_turns": len(history),
-        "milestone": milestone.model_dump(mode="json", exclude_none=True),
+        "statement": statement.model_dump(mode="json", exclude_none=True),
         "observation": {
             "url": observation.url,
             "title": observation.title,
@@ -333,7 +302,7 @@ def main() -> int:
         "decision": decision.model_dump(mode="json", exclude_none=True),
         "warnings": warnings,
     }
-    failures = _expectation_failures(expectation, decision, milestone)
+    failures = _expectation_failures(expectation, decision, supervisor)
     action_decision = None
     if args.with_action_policy or expectation.get("action"):
         if not decision.should_act or not decision.instruction:

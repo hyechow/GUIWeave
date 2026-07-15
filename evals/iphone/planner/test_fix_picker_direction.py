@@ -1,4 +1,4 @@
-"""Unit test for MilestoneSupervisorPolicy._fix_picker_direction (deterministic, no LLM).
+"""Unit test for StatementSupervisorPolicy._fix_picker_direction (deterministic, no LLM).
 
 跨边界回归：拖某列时若指令里更高位列取值不同（如 3月31→4月7，月份 3≠4），单看本列数字
 （31 vs 7）会得出相反方向。修复后应跳过翻转，保留 planner 的方向。源 case：20260530_112049
@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _PlanResult
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
 passed = 0
 failed = 0
@@ -20,7 +20,7 @@ failed = 0
 def _case(label: str, instruction: str, direction: str, drag_column: str, expect_direction: str) -> None:
     global passed, failed
     plan = _PlanResult(instruction=instruction, summary="", direction=direction, drag_column=drag_column)
-    MilestoneSupervisorPolicy._fix_picker_direction(plan)
+    StatementSupervisorPolicy._fix_picker_direction(plan)
     ok = plan.direction == expect_direction
     passed += ok
     failed += not ok

@@ -15,7 +15,7 @@
     "label": "承接-站点上下文",
     "user_msg": "进 settings",
     "session": [
-      {"user_msg": "打开 GitHub", "result_summary": "已打开 GitHub 首页", "goal_completed": true}
+      {"user_msg": "打开 GitHub", "result_summary": "已打开 GitHub 首页", "phase": "completed", "verification": "confirmed"}
     ],
     "expected": {"goal": "GitHub"}
   },
@@ -42,7 +42,7 @@
     "label": "@引用-承接上下文",
     "user_msg": "按 @configs/sim.json 配置新建两台模拟机器人",
     "session": [
-      {"user_msg": "打开管理后台 admin.example.com 确认进入首页", "result_summary": "已进入管理后台首页", "goal_completed": true}
+      {"user_msg": "打开管理后台 admin.example.com 确认进入首页", "result_summary": "已进入管理后台首页", "phase": "completed", "verification": "confirmed"}
     ],
     "expected": {"goal_contains_all": ["@configs/sim.json", "模拟机器人"]}
   },

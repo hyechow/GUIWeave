@@ -26,11 +26,11 @@ load_dotenv()
 from gui_agent.core.orchestrator.decomposer import decompose
 from gui_agent.core.orchestrator.program import Finish, If, Program, Run, RunLike, Stmt
 from gui_agent.core.self_learning.app_summary import load_knowledge_for_app
-from gui_agent.core.supervisor.milestone.feasibility import control_presence_text, judge_feasibility
+from gui_agent.core.supervisor.statement.feasibility import control_presence_text, judge_feasibility
 
 GOAL = "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket"
 SITE = "shopping_admin"
-STUCK_MILESTONE = "设置筛选 Product='Olivia zip jacket' 且 Rating<=3 —— 可见 Rating<=3 已应用，列表已刷新"
+STUCK_STATEMENT = "设置筛选 Product='Olivia zip jacket' 且 Rating<=3 —— 可见 Rating<=3 已应用，列表已刷新"
 
 
 @dataclass
@@ -109,11 +109,11 @@ def main() -> None:
     know = load_knowledge_for_app(SITE, "browser")
     base = know.navigation if know else ""
     control_text = control_presence_text(_REVIEWS_GRID)
-    print(f"知识={len(base)}c\n[STAGE0] 卡住 milestone: {STUCK_MILESTONE}")
+    print(f"知识={len(base)}c\n[STAGE0] 卡住 statement: {STUCK_STATEMENT}")
     print(f"[STAGE1] 控件清单(production control_presence_text):\n{control_text}\n")
 
     print("=" * 70 + "\n[STAGE1] production judge_feasibility\n" + "=" * 70)
-    verdict = judge_feasibility(STUCK_MILESTONE, control_text, base)
+    verdict = judge_feasibility(STUCK_STATEMENT, control_text, base)
     print(f"  feasible={verdict.feasible} | {verdict.reason}")
     if verdict.feasible or not verdict.directive:
         print("  ⚠️ 未判不可行/无 directive — 流程在第一关断了"); return

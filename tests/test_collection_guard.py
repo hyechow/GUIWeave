@@ -1,8 +1,8 @@
-"""Unit test: a collection (scroll_until_boundary) milestone must never finish with
+"""Unit test: a collection (scroll_until_boundary) statement must never finish with
 zero successful scrolls.
 
 Regression — session 20260607_100322: the filtered bill list rendered (one screen,
-but actually scrollable), the collection milestone was entered fresh, loop_check said
+but actually scrollable), the collection statement was entered fresh, loop_check said
 should_stop, and because nothing was collected it went stuck → replan → force_complete
 (pre_existing=True) WITHOUT ever scrolling. content_notes ended empty and the output
 hallucinated a wrong total (456.80 < the visible sum alone). Guard: a should_stop on
@@ -28,8 +28,8 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     SupervisorStep,
 )
-from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _LoopFrameResult, _PlanResult
+from gui_agent.core.supervisor.statement import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _LoopFrameResult, _PlanResult
 
 passed = 0
 failed = 0
@@ -52,8 +52,8 @@ def _png() -> bytes:
     return buf.getvalue()
 
 
-def _make_policy() -> tuple[MilestoneSupervisorPolicy, StatementContract]:
-    p = MilestoneSupervisorPolicy()
+def _make_policy() -> tuple[StatementSupervisorPolicy, StatementContract]:
+    p = StatementSupervisorPolicy()
     ms = StatementContract(
         id="5",
         name="采集账单明细",
@@ -68,7 +68,7 @@ def _make_policy() -> tuple[MilestoneSupervisorPolicy, StatementContract]:
 
 
 def _stub_loop(
-    p: MilestoneSupervisorPolicy, *, should_stop: bool, boundary: bool = False, loading: bool = False,
+    p: StatementSupervisorPolicy, *, should_stop: bool, boundary: bool = False, loading: bool = False,
 ) -> None:
     p._loop_check = lambda *a, **k: _LoopFrameResult(  # type: ignore[assignment]
         loading=loading, should_stop=should_stop, boundary_reached=boundary,
@@ -85,7 +85,7 @@ def _scroll_turn(mid: str, *, read_added: bool, instance_id: str) -> PolicyTurn:
         observation_source="eval",
         statement_instance_id=instance_id,
         supervisor=SupervisorStep(
-            should_act=True, instruction="向上滚动", summary="", milestone_id=mid,
+            should_act=True, instruction="向上滚动", summary="", statement_id=mid,
             execution_scope=f"{instance_id}/statement",
         ),
         action_decision=ActionDecision(
@@ -139,7 +139,7 @@ def main() -> int:
     def _fake_stuck(*a, **k):
         hit["stuck"] = True
         return SupervisorStep(
-            should_act=False, summary="stuck-sentinel", milestone_id="5",
+            should_act=False, summary="stuck-sentinel", statement_id="5",
         )
 
     p._handle_stuck = _fake_stuck  # type: ignore[assignment]

@@ -35,7 +35,7 @@ def test_arrival_prepended_to_drilling_function_body():
     assert body[3].name == "开 Edit 编辑页"
 
 
-def test_arrival_is_a_precondition_gate_not_a_branch_milestone():
+def test_arrival_is_a_precondition_gate_not_a_branch_statement():
     # The arrival is an entry-state navigation edge, not a business branch. Its text stays linear;
     # runtime, rather than checker prose, controls whether that edge has been traversed.
     p = insert_loop_entry_arrivals(Program(goal="g", functions=[_resolve_fn()], statements=[]))

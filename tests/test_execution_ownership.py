@@ -7,13 +7,13 @@ from pathlib import Path
 from gui_agent.core.run.action_exec import ActionExecutionState
 from gui_agent.core.run import action_signals, turns
 from gui_agent.core.run.execution_signals import ExecutionCoordinator
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone import evidence, observation_state
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement import evidence, observation_state
+from gui_agent.core.supervisor.statement.schemas import _PlanResult
 
 
-def test_milestone_policy_is_the_only_component_with_control_flow_authority() -> None:
-    policy_source = inspect.getsource(MilestoneSupervisorPolicy)
+def test_statement_policy_is_the_only_component_with_control_flow_authority() -> None:
+    policy_source = inspect.getsource(StatementSupervisorPolicy)
     executor_source = inspect.getsource(ActionExecutionState)
     signal_source = inspect.getsource(action_signals)
     evaluator_source = inspect.getsource(ExecutionCoordinator)
@@ -69,7 +69,7 @@ def test_evidence_projects_receipts_instead_of_reading_live_progress_monitor() -
 
 
 def test_policy_does_not_execute_structural_target_units_directly() -> None:
-    source = inspect.getsource(MilestoneSupervisorPolicy._run_single_turn)
+    source = inspect.getsource(StatementSupervisorPolicy._run_single_turn)
 
     assert "target_unit_state" not in source
     assert "target_unit_execution_plan" not in source
@@ -77,7 +77,7 @@ def test_policy_does_not_execute_structural_target_units_directly() -> None:
 
 
 def test_mutation_subject_has_one_runtime_owner() -> None:
-    policy_source = inspect.getsource(MilestoneSupervisorPolicy)
+    policy_source = inspect.getsource(StatementSupervisorPolicy)
 
     assert not hasattr(observation_state, "target_unit_state")
     assert not hasattr(observation_state, "required_group_field_gaps")
@@ -95,7 +95,7 @@ def test_execution_coordinator_has_one_public_decision_api() -> None:
     assert public == {"decide"}
 
 
-def test_support_services_cannot_transition_milestones() -> None:
+def test_support_services_cannot_transition_statements() -> None:
     for module in (evidence,):
         source = inspect.getsource(module)
         assert "._advance(" not in source
@@ -108,7 +108,7 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
 
     from gui_agent.core.run import loop as loop_mod
     from gui_agent.core.run import program_runtime as prt
-    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
     loop_src = inspect.getsource(loop_mod.run_agent_loop)
     assert "ProgramRuntime.start" in loop_src
@@ -126,12 +126,12 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     assert "llm_calls_before=_record_llm_mark" in loop_src
     assert "_record_llm_mark = calls_after" in loop_src
 
-    policy_src = inspect.getsource(MilestoneSupervisorPolicy.step)
+    policy_src = inspect.getsource(StatementSupervisorPolicy.step)
     assert "_decompose" not in policy_src
     assert "begin_statement" in policy_src or "requires begin_statement" in policy_src
 
-    policy_src = inspect.getsource(MilestoneSupervisorPolicy)
-    for retired in ("self._milestones", "self._order", "self._current_id", "_next_milestone", "_terminal_step"):
+    policy_src = inspect.getsource(StatementSupervisorPolicy)
+    for retired in ("self._statements", "self._order", "self._current_id", "_next_statement", "_terminal_step"):
         assert retired not in policy_src
     assert "def begin_statement" in policy_src
     assert "def end_statement" in policy_src

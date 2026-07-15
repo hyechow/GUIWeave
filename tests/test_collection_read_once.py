@@ -1,4 +1,4 @@
-"""Regression tests for one-shot collection milestones."""
+"""Regression tests for one-shot collection statements."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import io
 from PIL import Image, ImageDraw
 
 from gui_agent.core.schemas import StatementContract, Observation
-from gui_agent.core.supervisor.milestone import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+from gui_agent.core.supervisor.statement import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
 
 
 def _png() -> bytes:
@@ -22,9 +22,9 @@ def _png() -> bytes:
     return buf.getvalue()
 
 
-def _policy(task_type: str = "analysis") -> tuple[MilestoneSupervisorPolicy, StatementContract]:
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+def _policy(task_type: str = "analysis") -> tuple[StatementSupervisorPolicy, StatementContract]:
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="1",
         name="Read result count",
         description="Read the count displayed on the current page.",
@@ -32,13 +32,13 @@ def _policy(task_type: str = "analysis") -> tuple[MilestoneSupervisorPolicy, Sta
         kind="collection",
         completion_strategy="read_once",
     )
-    policy.begin_statement(milestone, instance_id="test:collection")
+    policy.begin_statement(statement, instance_id="test:collection")
     policy.task_type = task_type  # type: ignore[assignment]
-    return policy, milestone
+    return policy, statement
 
 
 def test_done_read_once_collection_requests_reader():
-    policy, milestone = _policy("analysis")
+    policy, statement = _policy("analysis")
     policy._single_check = lambda *a, **k: _SingleCheckResult(  # type: ignore[assignment]
         status="done",
         effect_status="confirmed",
@@ -48,7 +48,7 @@ def test_done_read_once_collection_requests_reader():
         read_instruction="Extract the visible result count.",
     )
 
-    step = policy._run_single_turn(milestone, Observation(png_bytes=_png(), source="eval"), [])
+    step = policy._run_single_turn(statement, Observation(png_bytes=_png(), source="eval"), [])
 
     assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.read_instruction == "Extract the visible result count."
@@ -56,7 +56,7 @@ def test_done_read_once_collection_requests_reader():
 
 
 def test_action_task_done_collection_does_not_collect_notes():
-    policy, milestone = _policy("action")
+    policy, statement = _policy("action")
     policy._single_check = lambda *a, **k: _SingleCheckResult(  # type: ignore[assignment]
         status="done",
         effect_status="confirmed",
@@ -66,7 +66,7 @@ def test_action_task_done_collection_does_not_collect_notes():
         read_instruction="Extract the visible result count.",
     )
 
-    step = policy._run_single_turn(milestone, Observation(png_bytes=_png(), source="eval"), [])
+    step = policy._run_single_turn(statement, Observation(png_bytes=_png(), source="eval"), [])
 
     assert step.outcome is not None and step.outcome.phase == "completed"
     assert step.read_instruction is None

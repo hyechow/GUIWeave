@@ -18,7 +18,7 @@ import types
 from PIL import Image, ImageDraw
 
 from gui_agent.core.vision.frame_analysis import CHANGE_SSIM_DIST_THR, region_change
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.run.progress_monitor import ProgressMonitor
 
 

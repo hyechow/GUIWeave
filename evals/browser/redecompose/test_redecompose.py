@@ -3,7 +3,7 @@
 Tests `gui_agent.core.orchestrator.decomposer.redecompose` — the dedicated re-decompose used by the
 Feasibility-Guard kick-back (loop._perform_replan). Unlike `decompose` (goal → full plan from the
 start screen, exercised by evals/browser/orchestrator), this is invoked mid-execution: some
-milestones already ran (prior_experience), one hit a correction (corrective_directive), and the rest
+statements already ran (prior_experience), one hit a correction (corrective_directive), and the rest
 (remaining_plan) must be re-planned from the CURRENT page. The whole point is that re-decompose is
 STATEFUL — it continues from where the run actually is, absorbing experience, NOT restarting from the
 homepage (the user's "重编排不是首页开始的 / 前面的决策过程就是一种经验，也要作为 context").
@@ -76,7 +76,7 @@ def _flatten_runs(stmts: list) -> list[Run]:
 
 # Re-navigating AWAY from the current page back to a start/entry point — the 201729 failure shape
 # (re-decompose planned "进入 Products List" + "搜索产品" from the frozen homepage). A stateful
-# re-decompose continues from the current page; it must not plan these restart milestones.
+# re-decompose continues from the current page; it must not plan these restart statements.
 _RESTART_MARKERS = (
     "products list", "产品列表", "商品列表",
     "重新登录", "重新登陆", "回到首页", "返回首页", "打开网站", "进入网站", "回到仪表盘", "回到 dashboard",
@@ -105,7 +105,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             hits = [r.name for r in runs if any(m in r.name.lower() for m in _RESTART_MARKERS)]
             if hits:
                 details.append(
-                    f"重排不得从首页/起点重启（应从当前页面续）: 出现重启型 milestone {hits}"
+                    f"重排不得从首页/起点重启（应从当前页面续）: 出现重启型 statement {hits}"
                 )
         elif assertion == "no_product_research_dead_end":
             hits = [r.name for r in runs if any(m in r.name.lower() for m in _PRODUCT_RESEARCH_MARKERS)]

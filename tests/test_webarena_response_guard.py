@@ -152,12 +152,13 @@ def test_mutate_success_can_have_no_retrieved_data():
 def test_completed_mutate_response_trusts_runtime_completion_without_recounting_rows():
     # Task 505 shape: "all Aeon capri" is satisfied by one aggregate parent-product save
     # (covers_set in the program). Response synthesis must not see "7 records found" and invent
-    # "remaining 6 unprocessed" after runtime already reached goal_completed.
+    # "remaining 6 unprocessed" after runtime already reached confirmed completion.
     resp = _completed_mutate_response(
         "Mark all Aeon capri as out of stock",
         {
             "task_type": "MUTATE",
-            "goal_completed": True,
+            "phase": "completed",
+            "verification": "confirmed",
             "stop_reason": (
                 "match_count：7；action_url：http://host/admin/catalog/product/edit/id/1861/；"
                 "stock_status：In Stock"
@@ -177,9 +178,8 @@ def test_completed_mutate_response_trusts_runtime_completion_without_recounting_
 def test_completed_mutate_response_accepts_terminal_dispatch_without_claiming_verification():
     result = {
         "task_type": "MUTATE",
-        "execution_completed": True,
-        "goal_completed": False,
-        "goal_status": "accepted_unverified",
+        "phase": "completed",
+        "verification": "accepted_unverified",
         "result_summary": "终态保存动作已可靠派发，结果反馈不可用",
     }
     resp = _completed_mutate_response(
@@ -195,9 +195,8 @@ def test_completed_mutate_response_accepts_terminal_dispatch_without_claiming_ve
     )
     assert _finalize_response(
         resp,
-        goal_completed=False,
-        execution_completed=True,
-        goal_status="accepted_unverified",
+        phase="completed",
+        verification="accepted_unverified",
     ).status == "SUCCESS"
 
 
@@ -206,9 +205,8 @@ def test_unverified_mutate_without_completed_execution_is_not_accepted():
         "Add a new product variant",
         {
             "task_type": "MUTATE",
-            "execution_completed": False,
-            "goal_completed": False,
-            "goal_status": "accepted_unverified",
+            "phase": "stopped",
+            "verification": None,
         },
     )
 
@@ -220,9 +218,8 @@ def test_live_180142_terminal_save_bypasses_second_llm_judgement():
         "Add a new size XXXL to green Minerva LumaTech V-Tee",
         {
             "task_type": "browser",
-            "execution_completed": True,
-            "goal_completed": False,
-            "goal_status": "accepted_unverified",
+            "phase": "completed",
+            "verification": "accepted_unverified",
             "stop_reason": "match_count：1；match_count：16；match_count：1",
             "result_summary": "终态保存动作已可靠派发，结果未验证",
         },
@@ -238,7 +235,8 @@ def test_completed_mutate_response_does_not_infer_failure_from_summary_text():
         "Update product",
         {
             "task_type": "MUTATE",
-            "goal_completed": True,
+            "phase": "completed",
+            "verification": "confirmed",
             "result_summary": "未找到目标产品，无法继续操作",
         },
     )
@@ -256,9 +254,8 @@ def test_incomplete_mutate_remains_incomplete_with_failure_summary():
         "Update product",
         {
             "task_type": "MUTATE",
-            "execution_completed": False,
-            "goal_completed": False,
-            "goal_status": "incomplete",
+            "phase": "failed",
+            "verification": None,
             "result_summary": "未找到目标产品，无法继续操作",
         },
     )
@@ -271,7 +268,8 @@ def test_completed_mutate_response_ignores_non_webarena_task_type_field():
         "Mark all Aeon capri as out of stock",
         {
             "task_type": "browser",
-            "goal_completed": True,
+            "phase": "completed",
+            "verification": "confirmed",
             "stop_reason": "match_count：7；stock_status：Out of Stock",
         },
     )
@@ -288,10 +286,10 @@ def test_mark_intent_is_classified_as_mutate():
     assert _guess_webarena_task_type("Mark all Aeon capri as out of stock") == "MUTATE"
 
 
-def test_retrieve_success_goal_not_completed_is_not_found():
-    # The decisive extension: goal_completed is the orchestrator's honest signal (False when a
+def test_retrieve_success_without_confirmed_completion_is_not_found():
+    # The decisive extension: phase/verification is the orchestrator's honest signal (failed when a
     # finish answered on an entirely-empty read — WebArena #42). Even if the model hallucinated a
-    # SUCCESS with a list answer, a run that never reached goal_completed must be NOT_FOUND_ERROR.
+    # SUCCESS with a list answer, a run that never reached confirmation must be NOT_FOUND_ERROR.
     resp = _finalize_response(
         WAResponse(
             task_type="RETRIEVE",
@@ -299,15 +297,16 @@ def test_retrieve_success_goal_not_completed_is_not_found():
             retrieved_data=["tanks", "joust"],   # 模型幻觉出了一个列表
             error_details=None,
         ),
-        goal_completed=False,
+        phase="failed",
+        verification=None,
     )
 
     assert resp.status == "NOT_FOUND_ERROR"
     assert resp.retrieved_data is None
-    assert "goal_completed" in (resp.error_details or "")
+    assert "confirmed completion" in (resp.error_details or "")
 
 
-def test_retrieve_goal_completed_with_list_stays_success():
+def test_retrieve_confirmed_with_list_stays_success():
     # Both invariants hold (goal completed AND a list answer) → SUCCESS is valid, untouched.
     resp = _finalize_response(
         WAResponse(
@@ -316,7 +315,8 @@ def test_retrieve_goal_completed_with_list_stays_success():
             retrieved_data=["tanks", "joust"],
             error_details=None,
         ),
-        goal_completed=True,
+        phase="completed",
+        verification="confirmed",
     )
 
     assert resp.status == "SUCCESS"
@@ -334,7 +334,8 @@ def test_search_term_rows_are_scalarized_when_intent_asks_terms_only():
             ],
             error_details=None,
         ),
-        goal_completed=True,
+        phase="completed",
+        verification="confirmed",
         intent="Get the top 2 search term(s) in my store",
     )
 
@@ -354,7 +355,8 @@ def test_search_term_rows_keep_objects_when_intent_asks_metric():
             retrieved_data=rows,
             error_details=None,
         ),
-        goal_completed=True,
+        phase="completed",
+        verification="confirmed",
         intent="Get the top 2 search terms and their uses in my store",
     )
 
@@ -374,7 +376,8 @@ def test_single_column_rows_are_unwrapped_to_scalars():
             retrieved_data=[{"material": "cotton"}, {"material": "fleece"}],
             error_details=None,
         ),
-        goal_completed=True,
+        phase="completed",
+        verification="confirmed",
         intent="Give me the material of the products that have 3 units left",
     )
     assert resp.status == "SUCCESS"
@@ -388,7 +391,8 @@ def test_multi_key_rows_are_left_as_objects():
         WAResponse(
             task_type="RETRIEVE", status="SUCCESS", retrieved_data=rows, error_details=None,
         ),
-        goal_completed=True,
+        phase="completed",
+        verification="confirmed",
         intent="List each product name and its count",
     )
     assert resp.retrieved_data == rows

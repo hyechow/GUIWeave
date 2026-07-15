@@ -35,7 +35,7 @@ def test_context_block_renders_source_metadata():
         source="checker",
         ttl="turn",
         content="status=in_progress",
-        metadata={"milestone": "m1"},
+        metadata={"statement": "m1"},
     )
 
     text = block.render()
@@ -43,7 +43,7 @@ def test_context_block_renders_source_metadata():
     assert "[context: runtime.checker_result" in text
     assert "type=runtime_state" in text
     assert "source=checker" in text
-    assert "milestone=m1" in text
+    assert "statement=m1" in text
     assert "status=in_progress" in text
 
 
@@ -87,8 +87,8 @@ def test_runtime_history_keeps_action_lifecycle_separate_from_checker_summary():
             should_act=True,
             instruction="按回车提交筛选",
             summary="submit",
-            milestone_id="filter",
-            milestone_kind="filter",
+            statement_id="filter",
+            statement_kind="filter",
             atomic_role="commit",
         ),
         action_decision={
@@ -111,7 +111,7 @@ def test_runtime_history_keeps_action_lifecycle_separate_from_checker_summary():
             should_act=True,
             instruction="Clear all",
             summary="0 records, clear and retry",
-            milestone_id="filter",
+            statement_id="filter",
         ),
         executed=False,
     )
@@ -132,7 +132,7 @@ def test_runtime_history_renders_action_policy_not_found_without_crashing():
             should_act=True,
             instruction="点击 Add Swatch",
             summary="需要创建新行",
-            milestone_id="attribute_option",
+            statement_id="attribute_option",
             atomic_role="prepare",
             target_control="Add Swatch",
         ),
@@ -281,32 +281,32 @@ def _turn(idx: int, mid: str, summary: str, instruction: str | None = None) -> P
         observation_source="browser",
         supervisor=SupervisorStep(
             should_act=bool(instruction), instruction=instruction,
-            summary=summary, milestone_id=mid,
+            summary=summary, statement_id=mid,
         ),
         executed=bool(instruction),
     )
 
 
-def test_relevant_history_compresses_prior_milestones():
+def test_relevant_history_compresses_prior_statements():
     history = [
         _turn(1, "m1", "进入评论页", "点击评论入口"),
         _turn(2, "m1", "已在评论列表"),
         _turn(3, "m2", "设置筛选", "输入 disappointed"),
         _turn(4, "m2", "已输入关键词", "点击提交"),
     ]
-    text = format_history_text(history, current_milestone_id="m2")
-    assert "[m1]" in text and "已在评论列表" in text   # prior milestone → one compressed state line (its last summary)
+    text = format_history_text(history, current_statement_id="m2")
+    assert "[m1]" in text and "已在评论列表" in text   # prior statement → one compressed state line (its last summary)
     assert "进入评论页" not in text                    # prior turn-by-turn detail dropped
-    assert "设置筛选" in text                          # current milestone detail kept
+    assert "设置筛选" in text                          # current statement detail kept
 
-    flat = format_history_text(history)               # legacy mode (no milestone id) unchanged
+    flat = format_history_text(history)               # legacy mode (no statement id) unchanged
     assert "进入评论页" in flat                         # shows every turn
 
 
-def test_relevant_history_first_milestone_has_no_prior_block():
+def test_relevant_history_first_statement_has_no_prior_block():
     history = [_turn(1, "m1", "第一步", "点A"), _turn(2, "m1", "第二步", "点B")]
-    text = format_history_text(history, current_milestone_id="m1")
-    assert "已完成/早前子目标" not in text   # no earlier milestone → no compressed section
+    text = format_history_text(history, current_statement_id="m1")
+    assert "已完成/早前子目标" not in text   # no earlier statement → no compressed section
     assert "第一步" in text and "第二步" in text
 
 

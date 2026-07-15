@@ -1,5 +1,5 @@
 """Agentic per-row sub-goal (`ForEach.body_goal`): instead of pre-baked body Stmts, each row's
-sub-goal is decomposed fresh at runtime and its Runs driven as full milestones (yield-from), with
+sub-goal is decomposed fresh at runtime and its Runs driven as full statements (yield-from), with
 the sub-program's produced fields merged back into the row. This is the general mechanism for
 per-row tasks too complex for a fixed step list — e.g. WebArena 185 (child variant → search parent
 configurable → read primary Material), the representative per-row entity-join class.

@@ -5,7 +5,7 @@ retina downscale — browser screenshots are sent raw, like the browser planner/
 evals).
 
 Seeded from 20260616_200258 Turn5: the replanner had NO upload rule (PLAN_PROMPT did),
-so it reframed an upload milestone as ``点击上传区域以唤起系统文件选择器`` — a tap that
+so it reframed an upload statement as ``点击上传区域以唤起系统文件选择器`` — a tap that
 opens a native OS file chooser the device's file-chooser interceptor cancels (wasted
 turn). The fix (REPLAN_PROMPT upload rule, symmetric with PLAN_PROMPT) is guarded here.
 Run:  uv run python evals/browser/replan/test_replan.py
@@ -29,10 +29,10 @@ from langchain_openai import ChatOpenAI
 
 from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
-from gui_agent.core.schemas import Milestone, PolicyTurn, SupervisorStep
-from gui_agent.adapters.browser.supervisor.milestone.prompts import REPLAN_PROMPT
-from gui_agent.core.supervisor.milestone.model_io import _format_history
-from gui_agent.core.supervisor.milestone.schemas import _ReplanResult
+from gui_agent.core.schemas import StatementContract, PolicyTurn, SupervisorStep
+from gui_agent.adapters.browser.supervisor.statement.prompts import REPLAN_PROMPT
+from gui_agent.core.supervisor.statement.model_io import _format_history
+from gui_agent.core.supervisor.statement.schemas import _ReplanResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
@@ -40,7 +40,7 @@ passed = 0
 failed = 0
 
 
-def _build_history(milestone_id: str, entries: list) -> list[PolicyTurn]:
+def _build_history(statement_id: str, entries: list) -> list[PolicyTurn]:
     # entries are bare instruction strings (mirror the iphone replan eval).
     turns = []
     for i, inst in enumerate(entries):
@@ -51,10 +51,8 @@ def _build_history(milestone_id: str, entries: list) -> list[PolicyTurn]:
                 supervisor=SupervisorStep(
                     should_act=True,
                     instruction=inst,
-                    stop=False,
-                    goal_completed=False,
                     summary=inst,
-                    milestone_id=milestone_id,
+                    statement_id=statement_id,
                 ),
                 executed=True,
             )
@@ -90,8 +88,8 @@ def test_replan() -> None:
             skipped += 1
             continue
 
-        m = c["milestone"]
-        milestone = Milestone.model_validate({**m, "id": c["label"]})
+        m = c["statement"]
+        statement = StatementContract.model_validate({**m, "id": c["label"]})
         history = _build_history(c["label"], c.get("history", []))
 
         tried = sorted(
@@ -100,21 +98,21 @@ def test_replan() -> None:
                 for t in history
                 if t.supervisor
                 and t.supervisor.instruction
-                and t.supervisor.milestone_id == milestone.id
+                and t.supervisor.statement_id == statement.id
             }
         )
         tried_text = "\n".join(f"  - 「{i}」" for i in tried) if tried else "  （无）"
 
         prompt = REPLAN_PROMPT.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            success_condition=milestone.success_condition,
+            statement_name=statement.name,
+            statement_desc=statement.description,
+            success_condition=statement.success_condition,
             stuck_reason=c.get("stuck_reason", ""),
             issues=json.dumps(c.get("issues", []), ensure_ascii=False),
-            retry_count=getattr(milestone, "retry_count", 0),
+            retry_count=getattr(statement, "retry_count", 0),
             constraints=json.dumps(c.get("constraints", []), ensure_ascii=False),
             failure_hints=json.dumps(m.get("failure_hints", []), ensure_ascii=False),
-            completed_milestones="  （无）",
+            completed_statements="  （无）",
             history_text=_format_history(history),
             tried_instructions=tried_text,
         )

@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from gui_agent.adapters.browser.supervisor.milestone.prompts import BrowserPlanResult
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult
+from gui_agent.adapters.browser.supervisor.statement.prompts import BrowserPlanResult
+from gui_agent.core.supervisor.statement.schemas import _PlanResult
 
 
 def test_browser_plan_rejects_action_family_used_as_atomic_role() -> None:

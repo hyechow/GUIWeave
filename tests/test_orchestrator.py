@@ -56,7 +56,7 @@ def _connectivity_program() -> Program:
 
 
 def _driver(verdict: str, reason: str = ""):
-    """Mock single-milestone executor: the read milestone (var d) returns the verdict."""
+    """Mock single-statement executor: the read statement (var d) returns the verdict."""
     def _exec(run: Run) -> StatementOutcome:
         reads = {"连通判定": verdict, "不可达原因": reason} if run.var == "d" else {}
         return StatementOutcome.completed(run.name, reads=reads)
@@ -181,7 +181,7 @@ def test_steppable_interpreter_yields_runs_and_consumes_results():
     reply = None
     while True:
         driven.append(run.name)
-        # 把 read milestone 判成不可达 → 走 finish 支
+        # 把 read statement 判成不可达 → 走 finish 支
         reads = {"连通判定": "不可达", "不可达原因": "节点离线"} if run.var == "d" else {}
         result = StatementOutcome.completed(run.name, reads=reads)
         try:
@@ -212,30 +212,30 @@ def test_steppable_program_with_only_finish():
 # ── statement executors: interactive adapter + common StatementOutcome protocol ─────────
 
 
-def test_milestone_adapter_maps_interactive_kind():
+def test_statement_adapter_maps_interactive_kind():
     import pytest
 
     from gui_agent.core.run.interactive import contract_for_run
     nav = contract_for_run(Run(name="进入页", kind="navigation"), 0)
     assert nav.kind == "navigation" and nav.completion_strategy == "visible_once"
-    # returns 折进 description + 结构化通道同行（milestone=函数 的出参合同）
+    # returns 折进 description + 结构化通道同行（statement=函数 的出参合同）
     ret_nav = contract_for_run(
         Run(var="d", name="开详情", kind="navigation", returns=["连通判定", "原因"]), 3
     )
     assert "连通判定" in ret_nav.description and "原因" in ret_nav.description
     assert ret_nav.returns == ["连通判定", "原因"]
-    # 查询节点不是 milestone：它由 immediate statement dispatcher 执行。
+    # 查询节点不是 statement：它由 immediate statement dispatcher 执行。
     with pytest.raises(ValueError, match="query run"):
         contract_for_run(Read(var="d", name="读结果", returns=["连通判定"]), 3)
     with pytest.raises(ValueError, match="query run"):
         contract_for_run(Query(var="q", name="统计订单", returns=["emails"], sql="SELECT 1"), 4)
 
 
-def test_returning_ui_runs_get_target_specific_milestone_ids():
+def test_returning_ui_runs_get_target_specific_statement_ids():
     from gui_agent.core.run.interactive import contract_for_run
 
     # Distinct SOURCE statements (different compile-time statement_id, as the decomposer assigns)
-    # get distinct milestone ids; the id IS the stable statement_id, not a name hash.
+    # get distinct statement ids; the id IS the stable statement_id, not a name hash.
     first = contract_for_run(
         Run(statement_id="s1", var="d", name="打开评论 351 的详情", kind="navigation", returns=["rating"]),
         0,
@@ -250,7 +250,7 @@ def test_returning_ui_runs_get_target_specific_milestone_ids():
     assert first.id != second.id
 
     # Stability invariant (Issue 4): a name change (return-tighten mutates run.name) must NOT
-    # drift the milestone id — the invocation stays the same statement.
+    # drift the statement id — the invocation stays the same statement.
     tightened = contract_for_run(
         Run(statement_id="s1", var="d", name="打开评论 351 的详情（继续定位返回字段：rating）",
             kind="navigation", returns=["rating"]),
@@ -259,7 +259,7 @@ def test_returning_ui_runs_get_target_specific_milestone_ids():
     assert tightened.id == first.id
 
 
-def test_immediate_dispatcher_returns_milestone_statement_to_caller(tmp_path):
+def test_immediate_dispatcher_returns_statement_statement_to_caller(tmp_path):
     from gui_agent.core.run.program_runtime import ProgramRuntime
     from gui_agent.core.run.statements import drain_immediate_statements
     from gui_agent.core.schemas import Observation, PolicyContext
@@ -419,7 +419,7 @@ def test_direct_nav_return_uses_recorded_url_instead_of_history(tmp_path):
 
 def test_route_identity_evidence_requires_shared_machine_identity():
     from gui_agent.core.schemas import StatementContract, Observation
-    from gui_agent.core.supervisor.milestone.execution_scope import route_identity_evidence
+    from gui_agent.core.supervisor.statement.execution_scope import route_identity_evidence
 
     obs = Observation(png_bytes=b"x", source="test", url="http://host/admin/item/edit/id/347/")
     ordinary = StatementContract(
@@ -480,15 +480,15 @@ def test_task_type_for_non_ui_is_analysis():
 
 
 def test_supervisor_begins_single_statement():
-    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
     from gui_agent.core.run.interactive import contract_for_run, task_type_for_run
-    p = MilestoneSupervisorPolicy()
-    # S6b 后查询节点不再 marshal 成 milestone；begin 的读取门用显式 task_type 验证
+    p = StatementSupervisorPolicy()
+    # S6b 后查询节点不再 marshal 成 statement；begin 的读取门用显式 task_type 验证
     run = Read(var="d", name="读判定",  returns=["连通判定"])
     assert task_type_for_run(run) == "analysis"
     nav = Run(var="d", name="开判定页", kind="navigation")
     p.begin_statement(contract_for_run(nav, 0), instance_id="i1", task_type="analysis")
-    assert p._active_milestone is not None and p._active_milestone.id == "d"
+    assert p._active_statement is not None and p._active_statement.id == "d"
     assert p.task_type == "analysis"          # 读取门由 task_type 控制
     # Statement-local frame/scroll state is fresh at begin(statement).
     assert list(p._monitor._recent_screenshots) == []
@@ -496,11 +496,11 @@ def test_supervisor_begins_single_statement():
 
 
 def test_begin_fresh_advance_nav_skips_initial_check():
-    # DAG _advance parity: a freshly-advanced NAVIGATION milestone skips its first done-check
+    # A freshly advanced navigation statement skips its first done-check.
     # (in_progress by construction); action/filter keep it; a non-fresh reseed never skips.
-    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
     from gui_agent.core.run.interactive import contract_for_run
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     p.begin_statement(
         contract_for_run(Run(name="进页", kind="navigation"), 0),
         instance_id="test:nav-1",
@@ -520,7 +520,7 @@ def test_begin_fresh_advance_nav_skips_initial_check():
     )
     assert interaction.effect_mode is None
     from gui_agent.core.run.execution_signals import ExecutionContract
-    assert ExecutionContract.from_milestone(interaction).completion_mode == "verification"
+    assert ExecutionContract.from_statement(interaction).completion_mode == "verification"
     mutation = contract_for_run(
         Run(
             name="更新状态",
@@ -530,7 +530,7 @@ def test_begin_fresh_advance_nav_skips_initial_check():
         2,
     )
     assert mutation.effect_mode == "transform"
-    assert ExecutionContract.from_milestone(mutation).completion_mode == "mutation"
+    assert ExecutionContract.from_statement(mutation).completion_mode == "mutation"
     ensure = contract_for_run(
         Run(
             name="确保通知已开启",
@@ -544,20 +544,20 @@ def test_begin_fresh_advance_nav_skips_initial_check():
     assert ensure.effect_mode == "ensure"
     assert ensure.target_controls == ["Notifications"]
     assert ensure.target_values == {"Notifications": "on"}
-    assert ExecutionContract.from_milestone(ensure).completion_mode == "mutation"
+    assert ExecutionContract.from_statement(ensure).completion_mode == "mutation"
     persisted = contract_for_run(
         Run(name="更新资料", kind="action", persistence="explicit_commit"),
         3,
     )
     assert persisted.persistence == "explicit_commit"
     assert persisted.effect_mode == "dispatch"
-    assert ExecutionContract.from_milestone(persisted).persistence == "explicit_commit"
+    assert ExecutionContract.from_statement(persisted).persistence == "explicit_commit"
     result_action = contract_for_run(
         Run(name="触发检测", kind="action", returns=["result"]),
         4,
     )
     assert result_action.effect_mode == "dispatch"
-    assert ExecutionContract.from_milestone(result_action).completion_mode == "mutation"
+    assert ExecutionContract.from_statement(result_action).completion_mode == "mutation"
     assert contract_for_run(Run(name="进页", kind="navigation"), 2).effect_mode is None
     p.end_statement()
     p.begin_statement(
@@ -565,7 +565,7 @@ def test_begin_fresh_advance_nav_skips_initial_check():
         instance_id="test:nav-2",
         fresh_advance=False,
     )
-    assert p._skip_initial_check is False                 # 非交接（如首个 milestone）→ 不跳
+    assert p._skip_initial_check is False                 # 非交接（如首个 statement）→ 不跳
     # precondition 仍是 navigation edge，不能由 checker 在无动作证据时直接判为 PreExisting。
     p.end_statement()
     p.begin_statement(
@@ -589,7 +589,7 @@ def test_canonical_effect_contract_survives_both_model_boundaries():
         "target_values": {"Status": "Approved"},
     }
     run = Run.model_validate(contract)
-    milestone = StatementContract.model_validate({
+    statement = StatementContract.model_validate({
         **contract,
         "id": "canonical-action",
         "description": "",
@@ -597,7 +597,7 @@ def test_canonical_effect_contract_survives_both_model_boundaries():
     })
 
     assert (run.effect_mode, run.persistence) == ("transform", "explicit_commit")
-    assert (milestone.effect_mode, milestone.persistence) == (
+    assert (statement.effect_mode, statement.persistence) == (
         "transform",
         "explicit_commit",
     )
@@ -605,11 +605,11 @@ def test_canonical_effect_contract_survives_both_model_boundaries():
 
 def test_advance_persists_done_check_on_terminal_completion():
     # The terminal observation turn projects the live checker snapshot into the report.
-    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+    from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
     from gui_agent.core.run.interactive import contract_for_run
     from gui_agent.core.schemas import Observation
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = contract_for_run(Run(name="进首页", kind="navigation"), 0)
     p.begin_statement(ms, instance_id="test:terminal")
     check = _SingleCheckResult(status="done", effect_status="confirmed", reason="已进入首页", summary="首页")
@@ -628,14 +628,14 @@ def test_advance_persists_done_check_on_terminal_completion():
 
 
 def test_transform_effect_blocks_preexisting_done(monkeypatch):
-    # Mutation/write milestones must not complete solely because the current
+    # Mutation/write statements must not complete solely because the current
     # frame already contains the target value. They need an executed action in
-    # this milestone, otherwise dirty state can swallow the write.
+    # this statement, otherwise dirty state can swallow the write.
     from gui_agent.core.schemas import StatementContract, Observation, SupervisorStep
-    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+    from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
 
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = StatementContract(
         id="m1",
         name="将价格更新为 64.88 并保存",
@@ -656,16 +656,16 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
         ),
     )
 
-    def fake_plan(milestone, check, _observation, _history, _persistence=None):
+    def fake_plan(statement, check, _observation, _history, _persistence=None):
         assert check.status == "in_progress"
         assert "动作结果" in check.reason
         return SupervisorStep(
             should_act=True,
             instruction="重新点击 Save 以产生本轮保存事件",
             summary=check.summary,
-            milestone_id=milestone.id,
-            milestone_kind=milestone.kind,
-            completion_strategy=milestone.completion_strategy,
+            statement_id=statement.id,
+            statement_kind=statement.kind,
+            completion_strategy=statement.completion_strategy,
         )
 
     monkeypatch.setattr(p, "_plan_single", fake_plan)
@@ -673,7 +673,7 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
 
     assert step.should_act is True
     assert step.outcome is None
-    assert p._active_milestone is ms
+    assert p._active_statement is ms
 
 
 def test_missing_ui_return_fields_blocks_empty_action_returns():
@@ -852,7 +852,7 @@ def test_normalize_confirm_read_gates_recurses_into_if_branches():
 
 
 def test_normalize_confirm_read_keeps_filter_before_read_as_filter():
-    # A filter that returns a count/value must still be a filter milestone. The filter gate owns
+    # A filter that returns a count/value must still be a filter statement. The filter gate owns
     # "is the data source constrained as requested"; returns are read only after that state holds.
     from gui_agent.core.orchestrator.passes import normalize_confirm_read_gates
     prog = Program(statements=[
@@ -933,7 +933,7 @@ def test_normalize_confirm_read_keeps_filter_inside_if_branch():
 def test_exact_to_fuzzy_fallback_is_structural_if():
     # Rule 4b: an allow-fuzzy entity must decompose to a STRUCTURAL if — exact filter reads
     # records-found into a var (returns+read_spec) → if count=="0" → keyword filter — NOT a single
-    # filter milestone with a prose conditional ("若0条则改用K"). Locks the structural form the prompt
+    # filter statement with a prose conditional ("若0条则改用K"). Locks the structural form the prompt
     # mandates, plus the two mechanics offline-verification pinned: read_spec is required (else
     # RETURNS_WITHOUT_READ_SPEC), and the cmp must be =="0" — `empty` does NOT fire on the string "0".
     from gui_agent.core.orchestrator import validate_program
@@ -1031,7 +1031,7 @@ def test_normalize_navigate_submit_gates_skips_when_returns_present():
 
 
 def test_if_branches_on_structured_reads_end_to_end():
-    # 串起来：read milestone 拿到结构化 {连通判定:连通} → if 走 then(建单)。
+    # 串起来：read statement 拿到结构化 {连通判定:连通} → if 走 then(建单)。
     prog = Program(statements=[
         Read(var="d", name="读连通判定",  returns=["连通判定"]),
         If(cond=Cond(var="d", field="连通判定", value="连通"),
@@ -1051,7 +1051,7 @@ def test_if_branches_on_structured_reads_end_to_end():
 
 def test_run_text_templated_from_prior_read_reaches_executor_filled():
     # read-then-reference (规则10/runner._fill, 回归 20260615_163258): an action authored as
-    # 『编辑机器人 {r[实际名称]}』must reach the per-milestone executor ALREADY filled with the
+    # 『编辑机器人 {r[实际名称]}』must reach the per-statement executor ALREADY filled with the
     # value a prior read captured (编辑机器人 lucas-10003) — so the planner targets the right
     # entity even when the list holds siblings, not just whatever single row is on screen.
     prog = Program(statements=[
@@ -1240,7 +1240,7 @@ def test_validate_program_precondition_only_on_navigation():
 def test_finish_on_entirely_empty_read_is_incomplete():
     # WebArena #42 shape: a single read whose only field came back "" (target table was
     # off-screen / wrong page) feeds a finish. The program reached the end, but its answer
-    # is hollow → finish_incomplete must be True so goal_completed stays False (result.py).
+    # is hollow → finish_incomplete must be True so the Program phase is failed (result.py).
     prog = Program(statements=[
         Read(var="r", name="读取前2个搜索词",  returns=["Top Search Terms"],
             read_spec="读 Last Search Terms 表格前两行"),
@@ -1251,7 +1251,7 @@ def test_finish_on_entirely_empty_read_is_incomplete():
         return StatementOutcome.completed(run.name, reads=reads)
     res = ProgramRunner(_exec).run(prog)
     assert res.finish_incomplete is True          # 整条 read 全空 → 不算答出
-    assert res.failed is False                    # 但程序确实跑完了（区别于 milestone 失败）
+    assert res.failed is False                    # 但程序确实跑完了（区别于 statement 失败）
 
 
 def test_finish_citing_blank_field_of_nonempty_read_not_incomplete():

@@ -10,9 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone.model_io import run_planner
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.supervisor.statement.model_io import run_planner
+from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -57,7 +57,7 @@ def _check_hints(result: _PlanResult, expected: dict) -> list[str]:
 
 
 def _build_history(
-    milestone_id: str,
+    statement_id: str,
     instructions: list[str],
     last_replan_diagnosis: str = "",
 ) -> list[PolicyTurn]:
@@ -75,10 +75,8 @@ def _build_history(
             supervisor=SupervisorStep(
                 should_act=True,
                 instruction=inst,
-                stop=False,
-                goal_completed=False,
                 summary=inst,
-                milestone_id=milestone_id,
+                statement_id=statement_id,
             ),
             executed=True,
             replan={"diagnosis": last_replan_diagnosis} if (is_last and last_replan_diagnosis) else None,
@@ -97,8 +95,8 @@ def test_planner() -> None:
             continue
         png_bytes = screenshot_path.read_bytes()
         observation = Observation(png_bytes=png_bytes, source="eval")
-        milestone_data = {**c["milestone"], "id": c["label"]}
-        milestone = Milestone.model_validate(milestone_data)
+        statement_data = {**c["statement"], "id": c["label"]}
+        statement = StatementContract.model_validate(statement_data)
         check = _SingleCheckResult.model_validate({
             **c["checker"],
             "visible_evidence": c["checker"].get("visible_evidence", []),
@@ -111,7 +109,7 @@ def test_planner() -> None:
 
         try:
             result = run_planner(
-                milestone, check, observation, history,
+                statement, check, observation, history,
                 constraints=c.get("constraints"),
                 app_knowledge=c.get("app_knowledge"),
             )

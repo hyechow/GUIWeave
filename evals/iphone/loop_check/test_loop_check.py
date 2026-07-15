@@ -18,8 +18,8 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone.model_io import run_loop_check
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.supervisor.statement.model_io import run_loop_check
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -39,15 +39,17 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
     print(line)
 
 
-def _build_history(milestone_id: str, instructions: list[str]) -> list[PolicyTurn]:
+def _build_history(statement_id: str, instructions: list[str]) -> list[PolicyTurn]:
     turns = []
     for i, inst in enumerate(instructions):
         turns.append(PolicyTurn(
             index=i + 1,
             observation_source="eval",
             supervisor=SupervisorStep(
-                should_act=True, instruction=inst, stop=False,
-                goal_completed=False, summary=inst, milestone_id=milestone_id,
+                should_act=True,
+                instruction=inst,
+                summary=inst,
+                statement_id=statement_id,
             ),
             executed=True,
         ))
@@ -64,12 +66,12 @@ def test_loop_check() -> None:
             skipped += 1
             continue
         observation = Observation(png_bytes=screenshot_path.read_bytes(), source="eval")
-        milestone = Milestone.model_validate({**c["milestone"], "id": c["label"]})
+        statement = StatementContract.model_validate({**c["statement"], "id": c["label"]})
         history = _build_history(c["label"], c.get("history", []))
 
         try:
             result = run_loop_check(
-                milestone, observation, history,
+                statement, observation, history,
                 constraints=c.get("constraints", []),
             )
         except Exception as e:

@@ -8,8 +8,8 @@ import io
 from PIL import Image, ImageDraw
 
 from gui_agent.adapters.android.actions import AndroidAction, AndroidActionDecision
-from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
-from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
+from gui_agent.adapters.android.supervisor.statement.prompts import ANDROID_STATEMENT_PROMPTS
+from gui_agent.adapters.iphone.supervisor.statement.prompts import IPHONE_STATEMENT_PROMPTS
 from gui_agent.adapters.android.policies import AndroidActionPolicy
 from gui_agent.core.schemas import (
     StatementContract,
@@ -21,10 +21,10 @@ from gui_agent.core.schemas import (
 from gui_agent.core.orchestrator.passes import normalize_goal_value_contracts
 from gui_agent.core.orchestrator.program import Program, Run
 from gui_agent.core.run.interactive import contract_for_run
-from gui_agent.core.supervisor.milestone.model_io import _build_msgs
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.statement.model_io import _build_msgs
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.core.run.progress_monitor import ProgressAssessment, ProgressMonitor
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
 
 
 def _decision(action: AndroidAction) -> AndroidActionDecision:
@@ -52,21 +52,21 @@ def _message_image_size(msgs) -> tuple[int, int]:
     return img.size
 
 
-def test_android_milestone_messages_do_not_half_downscaled_android_frames():
+def test_android_statement_messages_do_not_half_downscaled_android_frames():
     msgs = _build_msgs(
         "system",
         _png_size(320, 711),
-        image_resize=ANDROID_MILESTONE_PROMPTS.image_resize,
+        image_resize=ANDROID_STATEMENT_PROMPTS.image_resize,
     )
 
     assert _message_image_size(msgs) == (320, 711)
 
 
-def test_iphone_milestone_messages_still_downscale_retina_frames():
+def test_iphone_statement_messages_still_downscale_retina_frames():
     msgs = _build_msgs(
         "system",
         _png_size(636, 1402),
-        image_resize=IPHONE_MILESTONE_PROMPTS.image_resize,
+        image_resize=IPHONE_STATEMENT_PROMPTS.image_resize,
     )
 
     assert _message_image_size(msgs) == (318, 701)
@@ -241,7 +241,7 @@ def test_android_picker_drag_steps_use_circular_minute_direction():
         drag_target_value=2,
     )
 
-    assert MilestoneSupervisorPolicy._picker_drag_steps(plan) == 4
+    assert StatementSupervisorPolicy._picker_drag_steps(plan) == 4
     assert plan.direction == "increase"
 
 
@@ -254,13 +254,13 @@ def test_android_picker_drag_steps_use_shortest_hour_direction():
         drag_target_value=6,
     )
 
-    assert MilestoneSupervisorPolicy._picker_drag_steps(plan) == 3
+    assert StatementSupervisorPolicy._picker_drag_steps(plan) == 3
     assert plan.direction == "decrease"
 
 
 def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="m4",
         name="确认上午时段并保存",
         description="确保闹钟设定为上午，然后点击保存按钮完成创建。",
@@ -295,7 +295,7 @@ def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
 
     monkeypatch.setattr(policy, "_invoke_planner", fake_invoke_planner)
 
-    step = policy._plan_single(milestone, check, Observation(png_bytes=b"png", source="test"), [])
+    step = policy._plan_single(statement, check, Observation(png_bytes=b"png", source="test"), [])
 
     assert step.instruction == "点击右上角的保存按钮"
     assert step.drag_column is None
@@ -303,7 +303,7 @@ def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
     assert any("steps=0" in extra for extra in extras)
 
 
-def test_alarm_time_value_milestone_defaults_to_converge_strategy():
+def test_alarm_time_value_statement_defaults_to_converge_strategy():
     run = Run(
         name="设置闹钟时间",
         success_condition="闹钟的时间显示为06:30且AM标识已选中。",
@@ -375,9 +375,9 @@ def test_goal_name_field_is_preserved_after_decompose_patch():
     assert "名称/标签=喝水" in program.statements[0].success_condition
 
 
-def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+def test_iterative_statement_still_uses_screen_stuck(monkeypatch):
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="m2",
         name="设置闹钟时间",
         description="将闹钟时间设置为 06:30",
@@ -385,7 +385,7 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
         kind="action",
         completion_strategy="repeat_until_satisfied",
     )
-    policy.begin_statement(milestone, instance_id="i1")
+    policy.begin_statement(statement, instance_id="i1")
     check = _SingleCheckResult(
         status="in_progress",
         effect_status="unverified",
@@ -405,7 +405,7 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
                 should_act=True,
                 instruction="在分钟列滚动，把 51 分钟调到 30 分钟",
                 summary="",
-                milestone_id="m2",
+                statement_id="m2",
             ),
             action_decision=AndroidActionDecision(
                 action=AndroidAction(
@@ -430,11 +430,11 @@ def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):
             should_act=False,
             outcome=StatementOutcome.failed("stuck"),
             summary="stuck handled",
-            milestone_id="m2",
+            statement_id="m2",
         ),
     )
 
-    step = policy._run_single_turn(milestone, Observation(png_bytes=_png(), source="eval"), history)
+    step = policy._run_single_turn(statement, Observation(png_bytes=_png(), source="eval"), history)
 
     assert step.outcome is not None
     assert step.outcome.summary == "stuck"

@@ -86,10 +86,10 @@ def test_dispatcher_uses_program_runtime_until_interactive_run(tmp_path):
 
     assert runtime.current is action
     assert runtime.index == 1
-    assert len(context.journal.events) == 1
+    assert len(context.journal.turns) == 1
     assert len(runtime.interpreter.run_log) == 1
-    instance_id = context.journal.events[0].statement_instance_id
+    instance_id = context.journal.turns[0].statement_instance_id
     assert instance_id
-    assert context.journal.events[0].statement is not None
-    assert context.journal.events[0].statement.id == (read.statement_id or "m0_read")
+    assert context.journal.turns[0].statement is not None
+    assert context.journal.turns[0].statement.id == (read.statement_id or "m0_read")
     assert runtime.interpreter.run_log[0].instance_id == instance_id

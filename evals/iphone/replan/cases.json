@@ -2,7 +2,7 @@
   {
     "label": "微信日期选择器-滚轮未到位-replan应继续拖动而非改tap",
     "screenshot": "evals/replan/screenshots/wechat_date_picker.png",
-    "milestone": {
+    "statement": {
       "name": "筛选上周日期范围",
       "description": "在账单筛选弹窗中设置日期范围为2026年5月19日至5月25日",
       "success_condition": "看到筛选后的账单列表，日期在2026年5月19日至5月25日之间",
@@ -28,7 +28,7 @@
   {
     "label": "微信账单筛选弹窗-多次scroll未找到日期选择器-应关闭弹窗",
     "screenshot": "evals/replan/screenshots/wechat_bill_filter_no_datepicker.png",
-    "milestone": {
+    "statement": {
       "name": "设置起始日期为2026-02-04",
       "description": "在筛选界面中，将起始日期设置为2026年2月4日。",
       "success_condition": "起始日期显示为2026-02-04",
@@ -53,7 +53,7 @@
   {
     "label": "支付宝账单快捷筛选弹窗-diagnosis应指向筛选按钮入口",
     "screenshot": "evals/replan/screenshots/alipay_bill_quickfilter_no_date.png",
-    "milestone": {
+    "statement": {
       "name": "筛选上周交易数据",
       "description": "在账单页面筛选2026-05-18至2026-05-24范围内的支出交易",
       "success_condition": "看到筛选后的交易列表，且每笔交易日期都在2026-05-18至2026-05-24范围内",

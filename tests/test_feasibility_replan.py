@@ -53,7 +53,7 @@ def _rec(name: str, *, failed: bool) -> RunRecord:
 def test_recovered_kickback_does_not_inherit_superseded_failure(monkeypatch):
     """A kickback re-plans because a re-plannable step failed; the loop hot-swaps to an interpreter that
     inherits the prior run_log. If that inherited log keeps the superseded ✗ record, `interp.failed`
-    stays True forever and `orchestration_result` reports goal_completed=False even though the
+    stays True forever and `orchestration_result` reports phase=failed even though the
     re-decompose recovered and finish produced the answer. The loop now drops failed records from
     the inherited run_log."""
     prev_log = [
@@ -62,7 +62,7 @@ def test_recovered_kickback_does_not_inherit_superseded_failure(monkeypatch):
         _rec("查询符合条件的记录", failed=True),
     ]
 
-    # WITHOUT the fix: inheriting the raw log keeps the ✗ → failed=True → goal_completed=False.
+    # WITHOUT the fix: inheriting the raw log keeps the ✗ → failed=True → phase=failed.
     poisoned = Interpreter(Program(goal="g", statements=[Finish(message="done")]))
     poisoned.run_log = list(prev_log)
     assert poisoned.failed is True
@@ -73,10 +73,11 @@ def test_recovered_kickback_does_not_inherit_superseded_failure(monkeypatch):
     recovered.run_log.append(_rec("逐条读取后查询符合条件的记录", failed=False))
     assert recovered.failed is False
 
-    ctx = PolicyContext(goal="g", supervisor_policy_name="milestone", action_policy_name="action")
+    ctx = PolicyContext(goal="g", supervisor_policy_name="statement", action_policy_name="action")
     monkeypatch.setattr(
         "gui_agent.core.llm.output.compose_orchestration_reply",
         lambda *_args, **_kwargs: "completed",
     )
     result = orchestration_result(ctx, recovered, "完成", current=None)
-    assert result["goal_completed"] is True
+    assert result["phase"] == "completed"
+    assert result["verification"] == "confirmed"

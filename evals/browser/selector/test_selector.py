@@ -22,9 +22,9 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.schemas import Milestone
+from gui_agent.core.schemas import StatementContract
 from gui_agent.core.self_learning.progressive import ProgressiveKnowledge
-from gui_agent.core.supervisor.milestone.model_io import run_selector
+from gui_agent.core.supervisor.statement.model_io import run_selector
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
@@ -51,7 +51,7 @@ def test_selector() -> None:
             stem: f"---\nwhen: {when}\n---\n（正文略）"
             for stem, when in c["sections"].items()
         })
-        ms = Milestone.model_validate({"id": "m1", **c["milestone"]})
+        ms = StatementContract.model_validate({"id": "m1", **c["statement"]})
         try:
             sel = run_selector(c["goal"], ms, c["page_identity"], pk.selector_manifest())
             picked = pk.by_ids(sel.section_ids)

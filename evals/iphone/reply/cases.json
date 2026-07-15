@@ -3,10 +3,10 @@
     "label": "pre_existing-仅tap-消息已存在",
     "goal": "在微信文件传输助手中记录：明天提醒我提交日报",
     "session": [
-      {"user_msg": "打开微信", "result_summary": "已打开微信", "goal_completed": true}
+      {"user_msg": "打开微信", "result_summary": "已打开微信", "phase": "completed", "verification": "confirmed"}
     ],
     "result": {
-      "goal_completed": true,
+      "phase": "completed", "verification": "confirmed",
       "pre_existing": true,
       "turns_count": 3,
       "result_summary": "文件传输助手中已有这条记录",
@@ -27,7 +27,7 @@
     "goal": "在微信文件传输助手中记录：明天提醒我提交日报",
     "session": [],
     "result": {
-      "goal_completed": true,
+      "phase": "completed", "verification": "confirmed",
       "pre_existing": true,
       "turns_count": 0,
       "result_summary": "消息已存在",
@@ -44,7 +44,7 @@
     "goal": "在微信文件传输助手中发送：明天提交日报",
     "session": [],
     "result": {
-      "goal_completed": true,
+      "phase": "completed", "verification": "confirmed",
       "turns_count": 4,
       "result_summary": "消息已发送",
       "stop_reason": "所有子目标已完成",
@@ -65,7 +65,7 @@
     "goal": "在瑞幸中点一杯拿铁",
     "session": [],
     "result": {
-      "goal_completed": true,
+      "phase": "completed", "verification": "confirmed",
       "turns_count": 5,
       "result_summary": "拿铁已下单成功",
       "stop_reason": "所有子目标已完成",
@@ -87,7 +87,7 @@
     "goal": "在淘宝中购买Nike跑鞋",
     "session": [],
     "result": {
-      "goal_completed": false,
+      "phase": "failed", "verification": null,
       "turns_count": 6,
       "result_summary": "支付页面加载失败，未完成购买",
       "stop_reason": "达到最大轮数",
@@ -107,7 +107,7 @@
     "goal": "在高德打车去机场",
     "session": [],
     "result": {
-      "goal_completed": false,
+      "phase": "failed", "verification": null,
       "turns_count": 4,
       "result_summary": "附近无可用车辆，叫车失败",
       "stop_reason": "任务无法完成",
@@ -137,7 +137,7 @@
     "label": "non-action-追问天气",
     "goal": "明天要带伞吗",
     "session": [
-      {"user_msg": "帮我看看明天天气", "result_summary": "明天多云，25度", "goal_completed": true}
+      {"user_msg": "帮我看看明天天气", "result_summary": "明天多云，25度", "phase": "completed", "verification": "confirmed"}
     ],
     "result": null,
     "non_action_reason": "用户在追问历史结果，无需操作手机",
@@ -151,7 +151,7 @@
     "goal": "在微信文件传输助手中记录：买牛奶",
     "session": [],
     "result": {
-      "goal_completed": true,
+      "phase": "completed", "verification": "confirmed",
       "pre_existing": true,
       "turns_count": 2,
       "result_summary": "文件传输助手中已有这条记录",
@@ -170,10 +170,10 @@
     "label": "承接-成功后继续操作",
     "goal": "在微信给李四发消息说今晚吃饭",
     "session": [
-      {"user_msg": "打开微信", "result_summary": "已打开微信", "goal_completed": true}
+      {"user_msg": "打开微信", "result_summary": "已打开微信", "phase": "completed", "verification": "confirmed"}
     ],
     "result": {
-      "goal_completed": true,
+      "phase": "completed", "verification": "confirmed",
       "turns_count": 3,
       "result_summary": "消息已发送给李四",
       "stop_reason": "所有子目标已完成",
@@ -193,7 +193,7 @@
     "goal": "我上周在微信支付花多少钱了？",
     "session": [],
     "result": {
-      "goal_completed": true,
+      "phase": "completed", "verification": "confirmed",
       "turns_count": 20,
       "result_summary": "子目标「采集上周支付账单信息」已完成，任务全部完成。",
       "stop_reason": "所有子目标已完成",

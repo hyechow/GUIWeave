@@ -129,7 +129,7 @@ def test_serialization_preserves_subclass_fields():
         action_type="navigate", url="example.com", description="打开"))
     sv = SupervisorStep(should_act=True, summary="x")
     ctx = PolicyContext(
-        goal="g", supervisor_policy_name="milestone", action_policy_name="x",
+        goal="g", supervisor_policy_name="statement", action_policy_name="x",
         journal={"events": [
             PolicyTurn(index=0, observation_source="iphone", supervisor=sv, action_decision=ip),
             PolicyTurn(index=1, observation_source="browser", supervisor=sv, action_decision=br),

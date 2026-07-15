@@ -114,9 +114,9 @@ def test_regression_webarena_113_reset_search_loop_20260622_105707():
 def test_run_checker_injects_state_trace_block_for_progress_judgment(monkeypatch):
     """The guard also FEEDS the checker: run_checker must surface the state→decision trace when
     given state_trace_text, and omit the block when empty. Pins the wiring against silent drops."""
-    import gui_agent.core.supervisor.milestone.model_io as model_io
+    import gui_agent.core.supervisor.statement.model_io as model_io
     from gui_agent.core.schemas import StatementContract, Observation
-    from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+    from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
 
     captured: dict = {}
 

@@ -7,10 +7,10 @@ only '…zip jacket' in the screenshot; the replanner got NO DOM block at all an
 "删除现有内容并重新输入" for 4 turns. The fix wires form_controls_block into _invoke_replanner's
 human_blocks. This locks that wiring deterministically (the LLM is bypassed)."""
 
-import gui_agent.core.supervisor.milestone.llm_runtime as pol
+import gui_agent.core.supervisor.statement.llm_runtime as pol
 from gui_agent.core.schemas import StatementContract, Observation
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _ReplanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _ReplanResult, _SingleCheckResult
 
 
 def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
@@ -27,14 +27,14 @@ def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
                                       instruction="点击 Search 按钮提交筛选"),
     )
 
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     monkeypatch.setattr(p, "_llm", lambda: object())  # invoke_structured is patched → never used
 
-    milestone = StatementContract.model_validate({
+    statement = StatementContract.model_validate({
         "id": "m3", "name": "在 Product 列筛选框输入 'Olivia zip jacket'", "description": "d",
         "success_condition": "Product 框内容为 'Olivia zip jacket'", "kind": "action",
     })
-    p.begin_statement(milestone, instance_id="i1")
+    p.begin_statement(statement, instance_id="i1")
     check = _SingleCheckResult(status="in_progress", effect_status="unverified", reason="r", summary="s")
     obs = Observation(
         png_bytes=b"png", source="browser",
@@ -42,7 +42,7 @@ def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
                         "value": "Olivia zip jacket", "focused": True}],
     )
 
-    p._invoke_replanner(milestone, check, obs, [])
+    p._invoke_replanner(statement, check, obs, [])
 
     text = " ".join(getattr(b, "content", "") for b in captured["human_blocks"])
     assert "浏览器 DOM 表单控件" in text                 # the DOM control block reached the replanner
@@ -50,15 +50,15 @@ def test_replanner_human_blocks_include_dom_form_controls(monkeypatch):
 
 
 def test_replan_preserves_atomic_execution_contract(monkeypatch):
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="open-products",
         name="enter products list",
         description="",
         success_condition="products list is visible",
         kind="navigation",
     )
-    policy.begin_statement(milestone, instance_id="test:replan")
+    policy.begin_statement(statement, instance_id="test:replan")
     monkeypatch.setattr(
         policy,
         "_invoke_replanner",
@@ -73,7 +73,7 @@ def test_replan_preserves_atomic_execution_contract(monkeypatch):
     )
 
     step = policy._handle_stuck(
-        milestone,
+        statement,
         _SingleCheckResult(
             status="stuck",
             effect_status="unverified",

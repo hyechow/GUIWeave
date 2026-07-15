@@ -10,7 +10,7 @@ so the primary parse succeeds on the first try.
 
 from __future__ import annotations
 
-from gui_agent.core.supervisor.milestone.schemas import (
+from gui_agent.core.supervisor.statement.schemas import (
     _SelectorResult,
     _SingleCheckResult,
 )

@@ -11,7 +11,7 @@ from gui_agent.core.schemas import (
 )
 
 
-def _milestone(**values: str) -> StatementContract:
+def _statement(**values: str) -> StatementContract:
     return StatementContract(
         id="m",
         name="ensure one option",
@@ -43,7 +43,7 @@ def _subject(
     *,
     coverage: str = "complete",
     history: list[PolicyTurn] | None = None,
-    milestone: StatementContract | None = None,
+    statement: StatementContract | None = None,
 ):
     observation = Observation(
         png_bytes=b"frame",
@@ -51,7 +51,7 @@ def _subject(
         form_controls=controls,
         form_controls_meta={"coverage": coverage},
     )
-    return resolve_mutation(milestone or _milestone(), observation, history or [])
+    return resolve_mutation(statement or _statement(), observation, history or [])
 
 
 @pytest.mark.parametrize(
@@ -70,9 +70,9 @@ def test_subject_resolution_boundaries(
 
 
 def test_unique_subject_produces_one_authorized_next_write() -> None:
-    milestone = _milestone()
-    subject = _subject(_row("r1", description="XXXL"), milestone=milestone)
-    authorization = authorize_mutation(milestone, subject)
+    statement = _statement()
+    subject = _subject(_row("r1", description="XXXL"), statement=statement)
+    authorization = authorize_mutation(statement, subject)
 
     assert (subject.status, subject.next_field) == ("writable", "Admin Swatch")
     assert authorization is not None and authorization.subject_ref == "r1"
@@ -81,7 +81,7 @@ def test_unique_subject_produces_one_authorized_next_write() -> None:
 def test_singleton_form_can_change_an_existing_value() -> None:
     subject = _subject(
         [{"label": "Amount", "kind": "text_input", "value": "41"}],
-        milestone=_milestone(Amount="42"),
+        statement=_statement(Amount="42"),
     )
     assert (subject.status, subject.subject_ref) == ("writable", "__form__")
 
@@ -106,11 +106,11 @@ def _choice_group(selected: set[str], *, with_clear: bool = True) -> list[dict]:
 def test_choice_group_uses_clear_command_only_when_it_shortens_reconciliation() -> None:
     bulk = _subject(
         _choice_group({"S", "M", "L"}),
-        milestone=_milestone(Size="38"),
+        statement=_statement(Size="38"),
     )
     direct = _subject(
         _choice_group({"S"}),
-        milestone=_milestone(Size="38"),
+        statement=_statement(Size="38"),
     )
 
     assert (bulk.status, bulk.target_control) == ("preparing", "Size Clear choices")
@@ -135,8 +135,8 @@ def _write_turn(receipt: MutationReceipt | None, *, no_effect: bool = False) -> 
             should_act=True,
             instruction="write target",
             summary="",
-            milestone_id="m",
-            milestone_kind="action",
+            statement_id="m",
+            statement_kind="action",
             atomic_role="write",
         ),
         executed=True,

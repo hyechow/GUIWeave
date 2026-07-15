@@ -82,7 +82,7 @@ def test_match_signals_title_then_when_fallback():
     })
     # 标题子串直接命中(最强信号),排最前
     assert pk.match_signals(["如何创建订单"])[0] == "如何创建订单"
-    # 标题不命中,但 milestone 文字与 when 行 bigram 重叠 → 兜底命中,按重叠度排序
+    # 标题不命中,但 statement 文字与 when 行 bigram 重叠 → 兜底命中,按重叠度排序
     assert pk.match_signals(["某页", "新建一个订单", "订单创建成功"])[0] == "如何创建订单"
     # 完全无关 → 空;空/空白信号 → 空
     assert pk.match_signals(["今天的天气"]) == []

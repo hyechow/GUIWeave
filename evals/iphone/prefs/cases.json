@@ -18,7 +18,7 @@
     "user_msg": "给李四发消息说你好",
     "goal": "在微信中给李四发送消息说你好",
     "session": [
-      {"user_msg": "打开微信", "result_summary": "已打开", "goal_completed": true}
+      {"user_msg": "打开微信", "result_summary": "已打开", "phase": "completed", "verification": "confirmed"}
     ],
     "expected": {"intent": "消息", "app": "微信", "contacts": ["李四"]}
   },

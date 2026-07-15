@@ -80,7 +80,7 @@ def test_foreach_iterates_rows_and_accumulates_into_table():
     reply = drive(interp, execute)
     assert reply == "done"
 
-    # the loop var was filled into each detail-open milestone (one per row, in order)
+    # the loop var was filled into each detail-open statement (one per row, in order)
     assert seen_detail_targets == [
         "打开 review 347 详情", "打开 review 349 详情", "打开 review 351 详情",
     ]

@@ -6,11 +6,11 @@ from gui_agent.core.run.flow import evaluate_turn_progress
 from gui_agent.core.schemas import BaseAction, BaseActionDecision, SupervisorStep
 
 
-def _step(*, should_act: bool = True, milestone_id: str | None = "m1") -> SupervisorStep:
+def _step(*, should_act: bool = True, statement_id: str | None = "m1") -> SupervisorStep:
     return SupervisorStep(
         should_act=should_act,
         summary="s",
-        milestone_id=milestone_id,
+        statement_id=statement_id,
     )
 
 
@@ -24,7 +24,7 @@ def _decision(*, not_found: bool = False):
 def test_probe_failure_continues_until_third_failure():
     first = evaluate_turn_progress(
         noop_count=0,
-        prev_milestone_id="m1",
+        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=_decision(),
@@ -32,7 +32,7 @@ def test_probe_failure_continues_until_third_failure():
     )
     third = evaluate_turn_progress(
         noop_count=2,
-        prev_milestone_id="m1",
+        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=_decision(),
@@ -49,7 +49,7 @@ def test_probe_failure_continues_until_third_failure():
 def test_not_found_counts_as_no_action():
     decision = evaluate_turn_progress(
         noop_count=2,
-        prev_milestone_id="m1",
+        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=_decision(not_found=True),
@@ -62,7 +62,7 @@ def test_not_found_counts_as_no_action():
 def test_action_execution_failure_replans_until_third_failure():
     decision = evaluate_turn_progress(
         noop_count=0,
-        prev_milestone_id="m1",
+        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=_decision(),
@@ -76,7 +76,7 @@ def test_action_execution_failure_replans_until_third_failure():
 def test_protocol_suppression_is_not_reported_as_executor_failure():
     first = evaluate_turn_progress(
         noop_count=0,
-        prev_milestone_id="m1",
+        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=_decision(),
@@ -85,7 +85,7 @@ def test_protocol_suppression_is_not_reported_as_executor_failure():
     )
     third = evaluate_turn_progress(
         noop_count=2,
-        prev_milestone_id="m1",
+        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=_decision(),
@@ -98,18 +98,18 @@ def test_protocol_suppression_is_not_reported_as_executor_failure():
     assert third.stop_reason == "连续 3 轮动作被执行协议抑制"
 
 
-def test_milestone_change_resets_noop_count():
+def test_statement_change_resets_noop_count():
     decision = evaluate_turn_progress(
         noop_count=2,
-        prev_milestone_id="m1",
-        sv_step=_step(should_act=True, milestone_id="m2"),
+        prev_statement_id="m1",
+        sv_step=_step(should_act=True, statement_id="m2"),
         executed=True,
         action_decision=_decision(),
         probe_failed=False,
     )
 
     assert decision.noop_count == 0
-    assert decision.prev_milestone_id == "m2"
+    assert decision.prev_statement_id == "m2"
     assert decision.stop_reason is None
     assert decision.continue_loop is False
 
@@ -117,21 +117,21 @@ def test_milestone_change_resets_noop_count():
 def test_no_action_turn_stops_after_three_noops():
     decision = evaluate_turn_progress(
         noop_count=2,
-        prev_milestone_id="m1",
-        sv_step=_step(should_act=False, milestone_id="m1"),
+        prev_statement_id="m1",
+        sv_step=_step(should_act=False, statement_id="m1"),
         executed=False,
         action_decision=None,
         probe_failed=False,
     )
 
     assert decision.stop_reason == "连续 3 轮无动作"
-    assert decision.prev_milestone_id == "m1"
+    assert decision.prev_statement_id == "m1"
 
 
 def test_missing_action_stops_immediately():
     decision = evaluate_turn_progress(
         noop_count=0,
-        prev_milestone_id="m1",
+        prev_statement_id="m1",
         sv_step=_step(),
         executed=False,
         action_decision=SimpleNamespace(action=None, not_found_reason=None),

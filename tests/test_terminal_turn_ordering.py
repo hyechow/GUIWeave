@@ -6,12 +6,12 @@ from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.turns import emit_statement_fields, interactive_turn_count, make_verdict_turn
 from gui_agent.core.schemas import PolicyContext, SupervisorStep
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
 
 
 def test_terminal_observation_carries_live_checker_and_filled_outcome():
-    policy = MilestoneSupervisorPolicy()
+    policy = StatementSupervisorPolicy()
     contract = contract_for_run(
         Run(statement_id="s1", name="打开详情", kind="navigation", returns=["rating"]),
         0,
@@ -31,7 +31,7 @@ def test_terminal_observation_carries_live_checker_and_filled_outcome():
         observation_source="test",
         supervisor_step=SupervisorStep(
             should_act=False,
-            milestone_id="s1",
+            statement_id="s1",
             summary="done",
             outcome=StatementOutcome.completed("done"),
         ),

@@ -14,7 +14,7 @@ gate on the synthesize_system.md prompt fix, not a synthetic guess.
 
 Calls the real synthesis LLM (_synthesize_response) with a minimal, content-free `result`
 dict — this suite only asserts on task_type classification, not on retrieved_data accuracy
-(there is no real run evidence to retrieve from), so goal_completed/notes are deliberately
+(there is no real run evidence to retrieve from), so phase/notes are deliberately
 generic rather than per-task fixtures.
 
 Run:  uv run python evals/browser/webarena_response/test_response_synthesis.py
@@ -54,8 +54,9 @@ def main() -> None:
         expected = case["expected_task_type"].upper()
         result = {
             "task_type": None,
-            "goal_completed": True,
-            "stop_reason": "goal_completed",
+            "phase": "completed",
+            "verification": "confirmed",
+            "stop_reason": "program completed",
             "result_summary": "Agent reached a terminal state and reported the goal complete.",
             "content_notes": [],
         }

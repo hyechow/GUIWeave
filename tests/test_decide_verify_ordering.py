@@ -3,7 +3,7 @@
 Regression for logs/.../android/20260611_085000: turn 2 hit the 闹钟 tab and the screen
 DID advance to the alarm page, but TargetVerify false-flagged off-target (and settle
 false-flagged no-effect on a 6.7<8.0 whole-frame diff). The OffTarget / NoEffect fast-paths
-used to run BEFORE _single_check, so turn 3 skipped verification and replanned a milestone
+used to run BEFORE _single_check, so turn 3 skipped verification and replanned a statement
 the action had already satisfied.
 
 Fix: run _single_check FIRST — if done, advance; only when NOT done do off-target /
@@ -12,17 +12,17 @@ no-effect route to replan. These lock that ordering by mocking the checker.
 
 from __future__ import annotations
 
-from gui_agent.core.supervisor.milestone import policy as P
-from gui_agent.core.supervisor.milestone import llm_runtime as L
-from gui_agent.core.supervisor.milestone.evidence import (
+from gui_agent.core.supervisor.statement import policy as P
+from gui_agent.core.supervisor.statement import llm_runtime as L
+from gui_agent.core.supervisor.statement.evidence import (
     action_lifecycle_claims,
     checker_claim,
     execution_contract_for,
     target_value_claims,
 )
-from gui_agent.core.supervisor.milestone.execution_scope import execution_scope_for
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+from gui_agent.core.supervisor.statement.execution_scope import execution_scope_for
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
 from gui_agent.core.run.turns import make_interactive_turn
 from gui_agent.core.run.action_signals import latest_action
 from gui_agent.core.run.persistence import assess_persistence
@@ -59,7 +59,7 @@ def _executed_turn(
 
 
 def _policy():
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     m = StatementContract.model_validate(
         {"id": "m1", "name": "进入闹钟页", "description": "d", "success_condition": "闹钟列表页", "kind": "navigation"}
     )
@@ -74,7 +74,7 @@ def _tap_turn(*, on_target: bool, no_effect: bool = False) -> PolicyTurn:
         source="test",
         step=SupervisorStep(
             should_act=True, instruction="点击底部『闹钟』tab",
-            summary="", milestone_id="m1",
+            summary="", statement_id="m1",
         ),
         action=act,
         actual_element="世界时钟 tab",
@@ -94,7 +94,7 @@ def _submit_turn(*, no_effect: bool = True, reason: str = "点击 Submit Comment
             should_act=True,
             instruction=reason,
             summary="",
-            milestone_id="m1",
+            statement_id="m1",
             atomic_role="commit",
         ),
         action=act,
@@ -112,7 +112,7 @@ def _write_turn(*, description: str = "在目标字段输入任务值") -> Polic
             should_act=True,
             instruction=description,
             summary="",
-            milestone_id="m1",
+            statement_id="m1",
             atomic_role="write",
             action_family="input",
         ),
@@ -211,10 +211,10 @@ def test_no_url_change_keeps_no_effect_replan(monkeypatch):
     assert calls == ["stuck"]  # URL unchanged => no_effect stands => replan
 
 
-def _submit_milestone_policy():
-    # TerminalDispatchGate only arms when the MILESTONE itself declares a dispatch terminal
-    # (…提交/保存…) — an arrival milestone must not be force-done'd by a stray dispatch-verb click.
-    p = MilestoneSupervisorPolicy()
+def _submit_statement_policy():
+    # TerminalDispatchGate only arms when the STATEMENT itself declares a dispatch terminal
+    # (…提交/保存…) — an arrival statement must not be force-done'd by a stray dispatch-verb click.
+    p = StatementSupervisorPolicy()
     m = StatementContract.model_validate(
         {
             "id": "m1", "name": "提交评论", "description": "d",
@@ -227,7 +227,7 @@ def _submit_milestone_policy():
 
 
 def test_terminal_dispatch_advances_without_visible_feedback(monkeypatch):
-    p, m = _submit_milestone_policy()
+    p, m = _submit_statement_policy()
     calls = _wire_check(
         monkeypatch,
         p,
@@ -246,7 +246,7 @@ def test_terminal_dispatch_advances_without_visible_feedback(monkeypatch):
 
 
 def test_terminal_dispatch_gate_respects_negative_feedback(monkeypatch):
-    p, m = _submit_milestone_policy()
+    p, m = _submit_statement_policy()
     calls = _wire_check(
         monkeypatch,
         p,
@@ -280,7 +280,7 @@ def test_checker_stuck_status_routes_to_handle_stuck(monkeypatch):
 # True → FreshActionRequired flipped done→in_progress and the agent hunted the vanished tracking
 # form until it reported ACTION_NOT_ALLOWED_ERROR — even though the mutation already succeeded.
 def _fresh_action_policy():
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     m = StatementContract.model_validate({
         "id": "m1", "name": "填入追踪号并提交发货", "description": "d",
         "success_condition": "发货已保存，订单出现追踪号", "kind": "action",
@@ -297,7 +297,7 @@ def _shipment_submit_turn() -> PolicyTurn:
         source="browser",
         step=SupervisorStep(
             should_act=True, instruction="点击页面右下角的 Submit Shipment 按钮",
-            summary="", milestone_id="m1",
+            summary="", statement_id="m1",
             atomic_role="commit",
         ),
         action=act,
@@ -333,8 +333,8 @@ def _completion_decision(p, m, obs, history):
 
 
 def test_mutation_commit_without_receipt_does_not_claim_a_target_write() -> None:
-    p = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+    p = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="m1",
         name="approve record",
         description="",
@@ -346,8 +346,8 @@ def test_mutation_commit_without_receipt_does_not_claim_a_target_write() -> None
         should_act=True,
         instruction="approve",
         summary="",
-        milestone_id="m1",
-        milestone_kind="action",
+        statement_id="m1",
+        statement_kind="action",
         atomic_role="commit",
         target_control="Status",
         target_value="Approved",
@@ -361,9 +361,9 @@ def test_mutation_commit_without_receipt_does_not_claim_a_target_write() -> None
     )
 
     claims = action_lifecycle_claims(
-        milestone,
+        statement,
         [turn],
-        scope="milestone:m1",
+        scope="statement:m1",
     )
 
     assert not any(item.domain == "action.write" for item in claims)
@@ -383,7 +383,7 @@ def test_fresh_action_accepts_done_after_terminal_submit_redirect(monkeypatch):
 
 
 def test_fresh_action_still_redemands_when_nothing_dispatched(monkeypatch):
-    # Control: genuinely pre-existing (no write for this milestone) → must still re-demand.
+    # Control: genuinely pre-existing (no write for this statement) → must still re-demand.
     p, m = _fresh_action_policy()
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="状态疑似已满足", summary="ok")
@@ -409,20 +409,20 @@ def test_fresh_action_redemands_when_submit_shows_negative_feedback(monkeypatch)
 
 
 # ── WebArena 502 (20260708_185657) regression pair ──────────────────────────────
-# Turn 20: FreshActionRequired fired on an ARRIVAL action milestone (click row → edit page); the
+# Turn 20: FreshActionRequired fired on an ARRIVAL action statement (click row → edit page); the
 # planner invented a stray Save whose success banner persisted. Turn 22: the checker credited that
-# leftover banner to the NEXT milestone ("set Stock Status … and save") whose own Save was never
+# leftover banner to the NEXT statement ("set Stock Status … and save") whose own Save was never
 # clicked → the mutation silently never happened, score 0.
 
 
-def _arrival_click_turn(milestone_id: str = "m1") -> PolicyTurn:
+def _arrival_click_turn(statement_id: str = "m1") -> PolicyTurn:
     act = BaseAction(action_type="tap", x=400, y=500, description="点击列表中目标产品行")
     return _executed_turn(
         index=1,
         source="browser",
         step=SupervisorStep(
             should_act=True, instruction="点击列表中目标产品行",
-            summary="", milestone_id=milestone_id,
+            summary="", statement_id=statement_id,
         ),
         action=act,
         actual_element="产品行",
@@ -433,7 +433,7 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     # Arrival action (no terminal-dispatch verb in the name): the row click navigated, so its turn
     # dropped out of the destination page scope. Full-history execution must count — no stray
     # "write" may be demanded.
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     m = StatementContract.model_validate({
         "id": "m1", "name": "点击列表中 Type=Configurable 的那一行打开编辑页", "description": "d",
         "success_condition": "已进入该产品编辑页", "kind": "navigation",
@@ -451,14 +451,14 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
     assert step.outcome is not None and step.outcome.phase == "completed"
 
 
-def _select_option_turn(milestone_id: str = "m1") -> PolicyTurn:
+def _select_option_turn(statement_id: str = "m1") -> PolicyTurn:
     act = BaseAction(action_type="tap", x=369, y=874, description="选择下拉选项 Out of Stock")
     return _executed_turn(
         index=2,
         source="browser",
         step=SupervisorStep(
             should_act=True, instruction="在 Stock Status 下拉框选择 Out of Stock",
-            summary="", milestone_id=milestone_id,
+            summary="", statement_id=statement_id,
             atomic_role="write", action_family="select",
         ),
         action=act,
@@ -466,8 +466,8 @@ def _select_option_turn(milestone_id: str = "m1") -> PolicyTurn:
     )
 
 
-def _save_milestone_policy():
-    p = MilestoneSupervisorPolicy()
+def _save_statement_policy():
+    p = StatementSupervisorPolicy()
     m = StatementContract.model_validate({
         "id": "m1", "name": "将 Stock Status 下拉设为 Out of Stock 并保存", "description": "d",
         "success_condition": "页面显示保存成功提示", "kind": "action",
@@ -479,9 +479,9 @@ def _save_milestone_policy():
 
 def test_dispatch_ledger_blocks_done_on_residual_banner(monkeypatch):
     # The select_option executed (so pre_existing is False and FreshActionRequired stays quiet),
-    # the checker sees a leftover success banner and says done — but this milestone's own Save
+    # the checker sees a leftover success banner and says done — but this statement's own Save
     # was never dispatched. The ledger must veto done.
-    p, m = _save_milestone_policy()
+    p, m = _save_statement_policy()
     plan_calls: list[str] = []
     monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
     p._last_check = _SingleCheckResult(
@@ -495,13 +495,13 @@ def test_dispatch_ledger_blocks_done_on_residual_banner(monkeypatch):
 
 
 def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
-    # Same milestone, but the Save WAS clicked within this milestone → done stands.
-    p, m = _save_milestone_policy()
+    # Same statement, but the Save WAS clicked within this statement → done stands.
+    p, m = _save_statement_policy()
     plan_calls: list[str] = []
     monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
     p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="保存成功提示可见", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
-    # Verb-class agreement: the milestone says 保存 (save class) → the dispatch must be a Save
+    # Verb-class agreement: the statement says 保存 (save class) → the dispatch must be a Save
     # click, not just any dispatch-verb action (an Apply Filters click must not count).
     act = BaseAction(action_type="tap", x=896, y=180, description="点击右上角 Save 按钮保存")
     save = _executed_turn(
@@ -509,7 +509,7 @@ def test_dispatch_ledger_accepts_done_after_own_save_click(monkeypatch):
         source="browser",
         step=SupervisorStep(
             should_act=True, instruction="点击右上角 Save 按钮保存",
-            summary="", milestone_id="m1",
+            summary="", statement_id="m1",
             atomic_role="commit",
         ),
         action=act,
@@ -529,7 +529,7 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
     # Description below the fold. The acquire gate ran first and kept scrolling until max_turns.
     # A terminal Save + URL change is stronger than "field is offscreen again": skip reacquire,
     # but still let checker consume any result feedback before falling back to accepted_unverified.
-    p, m = _save_milestone_policy()
+    p, m = _save_statement_policy()
     monkeypatch.setattr(P, "is_loading_frame", lambda _obs: False)
     checker_calls: list[int] = []
 
@@ -557,7 +557,7 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
             should_act=True,
             instruction="点击页面右上角的「Save」按钮",
             summary="",
-            milestone_id="m1",
+            statement_id="m1",
             atomic_role="commit",
         ),
         action=BaseAction(
@@ -600,10 +600,10 @@ def test_terminal_save_redirect_wins_before_affordance_acquire(monkeypatch):
 
 
 # ── WebArena 505 (20260708_194754/195215): TerminalDispatchGate verb-class misfire ──────────────
-def test_terminal_dispatch_gate_ignores_arrival_milestone(monkeypatch):
-    # Arrival milestone (click a row to open its edit page) declares NO dispatch verb: a
-    # mid-milestone "Apply Filters" click (apply class) must not force-done it.
-    p = MilestoneSupervisorPolicy()
+def test_terminal_dispatch_gate_ignores_arrival_statement(monkeypatch):
+    # Arrival statement (click a row to open its edit page) declares NO dispatch verb: a
+    # mid-statement "Apply Filters" click (apply class) must not force-done it.
+    p = StatementSupervisorPolicy()
     m = StatementContract.model_validate({
         "id": "m1", "name": "点选 Type=Configurable Product 的产品行，打开其编辑页", "description": "d",
         "success_condition": "已进入该产品编辑页", "kind": "action",
@@ -628,7 +628,7 @@ def test_terminal_dispatch_gate_ignores_arrival_milestone(monkeypatch):
 def test_dispatch_ledger_rejects_non_terminal_structured_role(monkeypatch):
     # Persistence follows the structured role, not button prose. A preparation action cannot
     # satisfy the terminal boundary even if its label contains a submit-like verb.
-    p, m = _save_milestone_policy()
+    p, m = _save_statement_policy()
     plan_calls: list[str] = []
     monkeypatch.setattr(p, "_plan_single", lambda *a, **k: (plan_calls.append("plan"), "PLAN")[1])
     p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="成功提示可见", summary="ok")
@@ -641,9 +641,9 @@ def test_dispatch_ledger_rejects_non_terminal_structured_role(monkeypatch):
     assert plan_calls == []
 
 
-# ── Feasibility kickback must not re-decompose a milestone whose terminal submit already succeeded ──
+# ── Feasibility kickback must not re-decompose a statement whose terminal submit already succeeded ──
 # Regression for WebArena 499 (20260708_165316): after the shipment Submit succeeded and redirected,
-# the return-location recovery re-opened the milestone; Feasibility then judged the vanished form
+# the return-location recovery re-opened the statement; Feasibility then judged the vanished form
 # infeasible and kicked back → 25-turn re-decompose loop. A completed mutation must degrade to a
 # clean bounded fail, not a re-decompose.
 def _obs() -> Observation:
@@ -651,7 +651,7 @@ def _obs() -> Observation:
 
 
 def test_maybe_kickback_suppressed_after_successful_terminal_submit(monkeypatch):
-    import gui_agent.core.supervisor.milestone.feasibility as feas
+    import gui_agent.core.supervisor.statement.feasibility as feas
 
     def _boom(*a, **k):
         raise AssertionError("judge_feasibility must not run once the terminal submit has succeeded")
@@ -666,8 +666,8 @@ def test_maybe_kickback_suppressed_after_successful_terminal_submit(monkeypatch)
 
 
 def test_maybe_kickback_still_fires_when_no_dispatch_and_control_absent(monkeypatch):
-    import gui_agent.core.supervisor.milestone.feasibility as feas
-    from gui_agent.core.supervisor.milestone.feasibility import FeasibilityVerdict
+    import gui_agent.core.supervisor.statement.feasibility as feas
+    from gui_agent.core.supervisor.statement.feasibility import FeasibilityVerdict
 
     monkeypatch.setattr(feas, "control_presence_text", lambda obs: "required control 缺失")
     monkeypatch.setattr(

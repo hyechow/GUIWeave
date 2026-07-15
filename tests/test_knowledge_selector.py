@@ -1,14 +1,14 @@
-"""KnowledgeSelector wiring: per-(milestone, page) caching + failure fallback.
+"""KnowledgeSelector wiring: per-(statement, page) caching + failure fallback.
 
 The selector is a dedicated LLM micro-decision (run_selector) picking knowledge section
 ids for the planner. These tests stub the LLM call and lock the POLICY-side contract:
 
-  - fires once per (milestone_id, normalized page_identity), then serves from cache
-  - page change / milestone change → new key → fires again
+  - fires once per (statement_id, normalized page_identity), then serves from cache
+  - page change / statement change → new key → fires again
   - empty selections are cached too ON A KNOWN PAGE (no per-turn retry on a no-knowledge page)
   - an UNKNOWN page (empty / 未识别) never caches an empty pick — it re-decides every turn,
     so knowledge does not go permanently dark when page identity is the weak signal
-  - a clean-empty selector falls back to a deterministic match of (page id + milestone name +
+  - a clean-empty selector falls back to a deterministic match of (page id + statement name +
     success_condition) against section titles / selector_when lines before giving up
   - a selector exception falls back to the same deterministic match and is NOT cached
     (the next turn retries the LLM)
@@ -16,10 +16,10 @@ ids for the planner. These tests stub the LLM call and lock the POLICY-side cont
 
 from __future__ import annotations
 
-import gui_agent.core.supervisor.milestone.llm_runtime as policy_mod
+import gui_agent.core.supervisor.statement.llm_runtime as policy_mod
 from gui_agent.core.schemas import StatementContract
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _SelectorResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _SelectorResult, _SingleCheckResult
 
 _SECTIONS = {
     "如何访问Robo_Team": "访问正文",
@@ -28,8 +28,8 @@ _SECTIONS = {
 }
 
 
-def _policy() -> MilestoneSupervisorPolicy:
-    p = MilestoneSupervisorPolicy()
+def _policy() -> StatementSupervisorPolicy:
+    p = StatementSupervisorPolicy()
     p.set_app_knowledge("nav", app_name="RoboTeam", elements="elements", sections=dict(_SECTIONS))
     return p
 
@@ -48,7 +48,7 @@ def _stub(monkeypatch, results=None, error: Exception | None = None):
     """Replace llm_runtime.run_selector with a counting stub returning canned results."""
     calls = {"n": 0}
 
-    def fake(goal, milestone, page_identity, manifest, *, prompts=None, context_reports=None):
+    def fake(goal, statement, page_identity, manifest, *, prompts=None, context_reports=None):
         calls["n"] += 1
         if error is not None:
             raise error
@@ -68,7 +68,7 @@ def test_same_page_hits_cache(monkeypatch):
     assert calls["n"] == 1
 
 
-def test_page_or_milestone_change_refires(monkeypatch):
+def test_page_or_statement_change_refires(monkeypatch):
     p = _policy()
     calls = _stub(monkeypatch, [
         _SelectorResult(section_ids=["s01"]),
@@ -77,7 +77,7 @@ def test_page_or_milestone_change_refires(monkeypatch):
     ])
     assert p._select_sections(_ms("m1"), _check("页面A")) == ["如何访问Robo_Team"]
     assert p._select_sections(_ms("m1"), _check("页面B")) == ["如何创建订单"]        # 翻页 → 重选
-    assert p._select_sections(_ms("m2"), _check("页面B")) == ["如何查询订单的执行状态"]  # 换 milestone → 重选
+    assert p._select_sections(_ms("m2"), _check("页面B")) == ["如何查询订单的执行状态"]  # 换 statement → 重选
     assert calls["n"] == 3
 
 
@@ -104,7 +104,7 @@ def test_unknown_page_empty_is_not_cached(monkeypatch):
 
 def test_unknown_page_markers_are_substring_matched(monkeypatch):
     # The checker writes free-form page identity;归一化后精确匹配会漏掉所有真实变体,必须子串判定。
-    from gui_agent.core.supervisor.milestone.execution_scope import page_known
+    from gui_agent.core.supervisor.statement.execution_scope import page_known
 
     for variant in ["无法识别当前页面", "未知页面（用户中心？）", "unknown page", "页面不确定", "Unidentified view"]:
         assert page_known(variant) is False, variant
@@ -121,7 +121,7 @@ def test_unknown_page_markers_are_substring_matched(monkeypatch):
 
 
 def test_clean_empty_falls_back_to_deterministic_match(monkeypatch):
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     p.set_app_knowledge("nav", app_name="RoboTeam", elements="e", sections={
         "如何创建订单": "---\nselector_when: 新建订单/下单时\n---\n创建订单正文",
         "如何查询订单执行状态": "---\nselector_when: 查询订单执行状态时\n---\n状态正文",
@@ -131,7 +131,7 @@ def test_clean_empty_falls_back_to_deterministic_match(monkeypatch):
         "id": "m1", "name": "新建一个订单", "description": "d",
         "success_condition": "订单创建成功", "kind": "action",
     })
-    # selector 干净返空 → 确定性兜底用 milestone 文字命中 when 行,不再永久空
+    # selector 干净返空 → 确定性兜底用 statement 文字命中 when 行,不再永久空
     stems = p._select_sections(ms, _check("某页"))
     assert stems and stems[0] == "如何创建订单"
     assert calls["n"] == 1
@@ -146,7 +146,7 @@ def test_clean_empty_falls_back_to_deterministic_match(monkeypatch):
 
 
 def test_nonempty_selector_keeps_strongest_deterministic_match(monkeypatch):
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     p.set_app_knowledge("nav", app_name="RoboTeam", elements="e", sections={
         "通用侧边栏": "侧边栏正文",
         "产品列表": "产品正文",
@@ -169,7 +169,7 @@ def test_nonempty_selector_keeps_strongest_deterministic_match(monkeypatch):
 
 
 def test_empty_page_identity_fallback_hits_but_does_not_cache(monkeypatch):
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     p.set_app_knowledge("nav", app_name="RoboTeam", elements="e", sections={
         "如何创建订单": "---\nselector_when: 新建订单/下单时\n---\n创建订单正文",
     })
@@ -204,6 +204,6 @@ def test_failure_falls_back_and_is_not_cached(monkeypatch):
 
 
 def test_no_progressive_knowledge_returns_empty():
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     p.set_app_knowledge("nav", app_name="X", elements="elements")  # 无 sections → _pk=None
     assert p._select_sections(_ms(), _check("任意页")) == []

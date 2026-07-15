@@ -18,7 +18,7 @@ from gui_agent.core.orchestrator.recovery import (
     tighten_ui_return_run,
 )
 from gui_agent.core.orchestrator.program import Read, Query, Run
-from gui_agent.core.run.interactive import contract_for_run, start_milestone
+from gui_agent.core.run.interactive import contract_for_run, start_statement
 
 
 class _FakeSupervisor:
@@ -58,13 +58,13 @@ def test_ledger_key_follows_contract_not_name_suffix():
     assert ledger.next_attempt(3, tightened) == 2
 
 
-def test_start_milestone_translates_run_and_begins_statement():
+def test_start_statement_translates_run_and_begins_statement():
     sup = _FakeSupervisor()
     ui_run = Run(name="点击保存", kind="action", success_condition="出现保存成功提示")
-    milestone = start_milestone(sup, ui_run, 2, fresh_advance=True)
+    statement = start_statement(sup, ui_run, 2, fresh_advance=True)
     assert len(sup.begins) == 1
     seeded, _instance_id, task_type, fresh = sup.begins[0]
-    assert seeded is milestone
+    assert seeded is statement
     assert seeded.name == "点击保存"
     assert task_type == "action"
     assert fresh is True
@@ -174,14 +174,14 @@ def test_decomposer_draft_maps_return_domains_only_for_declared_fields():
     assert run.return_domains == {"创建结果": "enum:成功|失败"}
 
 
-def test_start_milestone_rejects_query_runs():
+def test_start_statement_rejects_query_runs():
     """查询节点永不进入 StatementContract 执行器。"""
     import pytest
 
     sup = _FakeSupervisor()
     read_run = Read(name="读取总数",  var="total", returns=["总数"])
     with pytest.raises(ValueError, match="query run"):
-        start_milestone(sup, read_run, 0)
+        start_statement(sup, read_run, 0)
     assert sup.begins == []
 
 
@@ -189,7 +189,7 @@ def test_start_milestone_rejects_query_runs():
 
 
 def test_compose_and_parse_kickback_directive_roundtrip():
-    from gui_agent.core.supervisor.milestone.feasibility import (
+    from gui_agent.core.supervisor.statement.feasibility import (
         FeasibilityVerdict,
         compose_directive,
     )
@@ -283,7 +283,7 @@ def test_to_stmts_lowers_queries_to_ir_nodes():
     assert hasattr(query_stmt, "sql") and not hasattr(query_stmt, "return_domains")
 
 
-def test_milestone_adapter_rejects_query_runs():
+def test_statement_adapter_rejects_query_runs():
     """边界类型强制：查询节点不能交给 StatementContract executor。"""
     import pytest
 

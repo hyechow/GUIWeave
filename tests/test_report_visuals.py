@@ -1,4 +1,4 @@
-from gui_agent.reports.builder import _group_steps_by_milestone
+from gui_agent.reports.builder import _group_steps_by_statement
 from gui_agent.reports.models import ReportStep
 from gui_agent.reports.orchestrator_html import _render_program_section
 from gui_agent.reports.prompt_html import _render_module_io_html
@@ -190,7 +190,7 @@ def test_first_turn_thumb_time_uses_elapsed_estimate_after_decompose():
     assert "first_turn_elapsed_estimate 4.5s" in search
 
 
-def test_milestone_elapsed_matches_turn_badge_elapsed_sum():
+def test_statement_elapsed_matches_turn_badge_elapsed_sum():
     first = ReportStep(
         label="Turn 1",
         action_type="tap",
@@ -220,11 +220,11 @@ def test_milestone_elapsed_matches_turn_badge_elapsed_sum():
     assert round(first_elapsed + second_elapsed, 1) == 12.4
 
 
-# ── program-aligned milestone grouping (builder._group_steps_by_milestone) ───────
+# ── program-aligned statement grouping (builder._group_steps_by_statement) ───────
 def _gstep(mid: str, iid: str, n: int = 1) -> ReportStep:
     return ReportStep(
         label=f"Turn {n}", action_type="tap", x=1.0, y=1.0,
-        description=mid, annotated_before_url="", milestone_id=mid, instance_id=iid,
+        description=mid, annotated_before_url="", statement_id=mid, instance_id=iid,
     )
 
 
@@ -236,7 +236,7 @@ def test_group_merges_non_contiguous_revisit_into_one_card():
     ]
     lookup = {item["instance_id"]: item for item in invocations}
 
-    pages = _group_steps_by_milestone(steps, invocations, lookup)
+    pages = _group_steps_by_statement(steps, invocations, lookup)
 
     assert [page.instance_id for page in pages] == ["i1:s1", "i2:s2"]
     assert [step.label for step in pages[0].steps] == ["Turn 1", "Turn 3"]
@@ -250,7 +250,7 @@ def test_group_keeps_statement_and_invocation_ids_separate():
     ]
     lookup = {item["instance_id"]: item for item in invocations}
 
-    pages = _group_steps_by_milestone(steps, invocations, lookup)
+    pages = _group_steps_by_statement(steps, invocations, lookup)
 
-    assert [page.milestone_id for page in pages] == ["s1", "s1"]
+    assert [page.statement_id for page in pages] == ["s1", "s1"]
     assert [page.instance_id for page in pages] == ["i1:s1", "i2:s1"]

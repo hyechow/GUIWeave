@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import gui_agent.core.supervisor.milestone.policy as policy_mod
-from gui_agent.core.schemas import Milestone, Observation
+import gui_agent.core.supervisor.statement.policy as policy_mod
+from gui_agent.core.schemas import StatementContract, Observation
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -37,20 +37,21 @@ def test_filter_state_cases(monkeypatch):
         checker_calls.append("called")
         raise _CheckerReached()
 
-    monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(policy_mod, "is_loading_frame", lambda _obs: False)
 
     for case in cases:
         checker_calls.clear()
-        milestone = Milestone(
+        statement = StatementContract(
             id="m_filter",
-            name=case["milestone_name"],
-            description=case["milestone_name"],
+            name=case["statement_name"],
+            description=case["statement_name"],
             success_condition=case["success_condition"],
             kind="filter",
+            target_values=case.get("target_values", {}),
         )
-        policy = policy_mod.MilestoneSupervisorPolicy()
-        policy.reseed(milestone)
+        policy = policy_mod.StatementSupervisorPolicy()
+        policy.begin_statement(statement, instance_id=f"eval:{case['label']}")
+        policy._single_check = _spy_run_checker  # type: ignore[method-assign]
         obs = Observation(
             png_bytes=_png(),
             source="eval",
@@ -70,7 +71,7 @@ def test_filter_state_cases(monkeypatch):
 
         if case.get("expect_filter_gate_done"):
             assert checker_calls == [], case["label"]
-            assert milestone.status == "done", case["label"]
-            assert step is not None and step.goal_completed is True, case["label"]
+            assert step is not None and step.outcome is not None, case["label"]
+            assert step.outcome.phase == "completed", case["label"]
         else:
             assert checker_calls == ["called"], case["label"]

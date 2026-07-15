@@ -32,7 +32,7 @@ from gui_agent.core.runtime.contracts import (
 from gui_agent.adapters.iphone.client.sync_mcp import SyncMCPClient
 from gui_agent.adapters.iphone.client.mirror_daemon import MirrorDaemonClient
 from gui_agent.adapters.iphone.policies.structured_output import StructuredOutputPolicy
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 from gui_agent.adapters.iphone.perception import LivePhoneSession, LivePerception
 from gui_agent.adapters.iphone.recon.page_parser import PageParser
 from gui_agent.adapters.iphone.recon.page_identity import PageIdentity
@@ -73,8 +73,8 @@ def test_action_policy_conforms():
 
 
 def test_supervisors_conform():
-    assert isinstance(_blank(MilestoneSupervisorPolicy), SupervisorPolicy)
-    assert isinstance(_blank(MilestoneSupervisorPolicy), KnowledgeAwareSupervisor)
+    assert isinstance(_blank(StatementSupervisorPolicy), SupervisorPolicy)
+    assert isinstance(_blank(StatementSupervisorPolicy), KnowledgeAwareSupervisor)
 
 
 def test_perception_session_and_observe_conform():
@@ -94,19 +94,19 @@ def test_recon_capabilities_conform():
     assert isinstance(_blank(EdgeIoUBackend), SimilarityBackend)
 
 
-def test_milestone_prompts_injected_from_adapter():
+def test_statement_prompts_injected_from_adapter():
     # Semantic-neutrality seam: platform prompts are injected by the adapter factory;
     # a direct core construction stays platform-neutral.
-    from gui_agent.core.supervisor.milestone import MilestonePrompts, MilestoneSupervisorPolicy
+    from gui_agent.core.supervisor.statement import StatementPrompts, StatementSupervisorPolicy
     from gui_agent.adapters.iphone.factory import _build_supervisor
-    from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
+    from gui_agent.adapters.iphone.supervisor.statement.prompts import IPHONE_STATEMENT_PROMPTS
 
-    neutral = MilestoneSupervisorPolicy()
-    assert isinstance(neutral._prompts, MilestonePrompts)
-    assert neutral._prompts is not IPHONE_MILESTONE_PROMPTS
+    neutral = StatementSupervisorPolicy()
+    assert isinstance(neutral._prompts, StatementPrompts)
+    assert neutral._prompts is not IPHONE_STATEMENT_PROMPTS
 
-    iphone = _build_supervisor(MilestoneSupervisorPolicy.name)
-    assert iphone._prompts is IPHONE_MILESTONE_PROMPTS
+    iphone = _build_supervisor(StatementSupervisorPolicy.name)
+    assert iphone._prompts is IPHONE_STATEMENT_PROMPTS
     assert all(
         getattr(iphone._prompts, f)
         for f in (
@@ -116,40 +116,40 @@ def test_milestone_prompts_injected_from_adapter():
     )
 
 
-def test_milestone_vision_prompts_keep_runtime_data_out_of_templates():
-    # Vision milestone prompts are stable task instructions. Runtime state (milestone,
+def test_statement_vision_prompts_keep_runtime_data_out_of_templates():
+    # Vision statement prompts are stable task instructions. Runtime state (statement,
     # constraints, checker result, history, loop summaries) enters through ContextBlock
     # and assemble_messages, not str.format placeholders in prompt assets.
     import string
 
-    from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
-    from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
-    from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
+    from gui_agent.adapters.android.supervisor.statement.prompts import ANDROID_STATEMENT_PROMPTS
+    from gui_agent.adapters.browser.supervisor.statement.prompts import BROWSER_STATEMENT_PROMPTS
+    from gui_agent.adapters.iphone.supervisor.statement.prompts import IPHONE_STATEMENT_PROMPTS
 
     fields = ("single_checker", "plan", "loop_frame", "loop_scroll", "replan")
     forbidden = {
-        "app_name_context", "milestone_name", "milestone_desc", "success_condition",
-        "milestone_kind", "completion_strategy", "task_type", "constraints",
+        "app_name_context", "statement_name", "statement_desc", "success_condition",
+        "statement_kind", "completion_strategy", "task_type", "constraints",
         "history_text", "kind_section", "check_status", "check_reason", "issues",
         "missing_evidence", "check_summary", "scroll_stop_condition", "frame_summary",
-        "stuck_reason", "retry_count", "failure_hints", "completed_milestones",
+        "stuck_reason", "retry_count", "failure_hints", "completed_statements",
         "tried_instructions",
     }
-    for prompts in (IPHONE_MILESTONE_PROMPTS, BROWSER_MILESTONE_PROMPTS, ANDROID_MILESTONE_PROMPTS):
+    for prompts in (IPHONE_STATEMENT_PROMPTS, BROWSER_STATEMENT_PROMPTS, ANDROID_STATEMENT_PROMPTS):
         for field in fields:
             template = getattr(prompts, field)
             used = {fn for _, fn, _, _ in string.Formatter().parse(template) if fn}
             assert not (used & forbidden), f"{field} still contains runtime placeholders: {used & forbidden}"
 
 
-def test_core_milestone_is_leaf_without_iphone_prompts():
-    # Importing the core milestone package must NOT pull the iphone adapter — its
+def test_core_statement_is_leaf_without_iphone_prompts():
+    # Importing the core statement package must NOT pull the iphone adapter — its
     # prompts are imported lazily only at supervisor construction.
     import subprocess
     import sys
 
     code = (
-        "import sys, gui_agent.core.supervisor.milestone; "
+        "import sys, gui_agent.core.supervisor.statement; "
         "leaked = [m for m in sys.modules if m.startswith('gui_agent.adapters')]; "
         "assert not leaked, leaked"
     )
@@ -340,9 +340,9 @@ def test_build_platform_returns_browser_bundle():
     assert isinstance(bundle, PlatformBundle)
     assert bundle.platform == "browser"
     assert bundle.default_action_policy == "browser_vision"
-    assert bundle.default_supervisor == "milestone"
+    assert bundle.default_supervisor == "statement"
     assert bundle.action_policy_choices == ("browser_vision",)
-    assert bundle.supervisor_choices == ("milestone",)
+    assert bundle.supervisor_choices == ("statement",)
     for attr in (
         "open_session",
         "setup_check",
@@ -477,9 +477,9 @@ def test_build_platform_returns_android_bundle():
     assert isinstance(bundle, PlatformBundle)
     assert bundle.platform == "android"
     assert bundle.default_action_policy == "android_vision"
-    assert bundle.default_supervisor == "milestone"
+    assert bundle.default_supervisor == "statement"
     assert bundle.action_policy_choices == ("android_vision",)
-    assert bundle.supervisor_choices == ("milestone",)
+    assert bundle.supervisor_choices == ("statement",)
     for attr in (
         "open_session",
         "setup_check",

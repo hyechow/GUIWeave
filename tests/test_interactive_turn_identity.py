@@ -3,7 +3,7 @@
 from gui_agent.core.orchestrator.program import Run
 from gui_agent.core.run.interactive import contract_for_run
 from gui_agent.core.run.turns import emit_statement_fields
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
 
 def _contract(name: str = "打开详情"):
@@ -14,7 +14,7 @@ def _contract(name: str = "打开详情"):
 
 
 def test_statement_info_is_emitted_once_per_invocation():
-    policy = MilestoneSupervisorPolicy()
+    policy = StatementSupervisorPolicy()
     policy.begin_statement(_contract(), instance_id="i9:s1")
 
     first_info, first_id = emit_statement_fields(policy)
@@ -26,7 +26,7 @@ def test_statement_info_is_emitted_once_per_invocation():
 
 
 def test_return_tighten_keeps_invocation_and_does_not_reemit_contract():
-    policy = MilestoneSupervisorPolicy()
+    policy = StatementSupervisorPolicy()
     policy.begin_statement(_contract(), instance_id="i9:s1")
     emit_statement_fields(policy)
 

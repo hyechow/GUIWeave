@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from gui_agent.adapters.browser.actions import BrowserActionDecision
 from gui_agent.core.schemas import StatementContract, Observation, SupervisorStep
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
 
 STUCK_SUMMARY = "__STUCK_SENTINEL__"
 
@@ -23,8 +23,8 @@ def _ms() -> StatementContract:
     )
 
 
-def _policy(dom_changed: bool) -> MilestoneSupervisorPolicy:
-    p = MilestoneSupervisorPolicy()
+def _policy(dom_changed: bool) -> StatementSupervisorPolicy:
+    p = StatementSupervisorPolicy()
     p.begin_statement(_ms(), instance_id="i1")
     p._monitor.dom_changed = dom_changed
     p._invoke_planner = lambda *a, **k: _PlanResult(  # type: ignore[method-assign]
@@ -90,13 +90,13 @@ def _step() -> SupervisorStep:
         should_act=True,
         instruction="点击 Edit",
         summary="打开详情",
-        milestone_id="m1",
+        statement_id="m1",
         completion_strategy="visible_once",
     )
 
 
 def test_executed_dom_action_signature_is_recorded():
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     p.begin_statement(_ms(), instance_id="i1")
     obs = Observation(png_bytes=b"png", source="browser", url="http://h/admin/catalog/product", dom_state="row=sku-a")
 
@@ -115,7 +115,7 @@ def test_executed_dom_action_signature_is_recorded():
 
 
 def test_same_dom_action_on_different_dom_state_is_not_repeat():
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     p.begin_statement(_ms(), instance_id="i1")
     for index, dom_state in [(1, "row=sku-a"), (2, "row=sku-b")]:
         p.note_executed_action(
@@ -135,7 +135,7 @@ def test_same_dom_action_on_different_dom_state_is_not_repeat():
 
 
 def test_same_dom_action_on_same_dom_state_marks_repeat():
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     p.begin_statement(_ms(), instance_id="i1")
     obs = Observation(png_bytes=b"png", source="browser", url="http://h/admin/catalog/product", dom_state="row=sku-a")
     for index in [1, 2]:

@@ -18,19 +18,16 @@ uv run python evals/iphone/<module>/test_<module>.py
 | 模块 | Cases | 说明 |
 |------|------:|------|
 | router | 51 | 意图路由：将用户消息分类为手机操作/问答/闲聊，提取目标 APP 和 goal |
-| checker | 13 | 验收员：根据截图判断当前 milestone 是否完成（done/in_progress/loading） |
-| planner | 9 | 规划器：根据当前屏幕和 milestone 生成下一步操作指令 |
+| checker | 13 | 验收员：根据截图判断当前 statement 是否完成（done/in_progress/loading） |
+| planner | 9 | 规划器：根据当前屏幕和 statement 生成下一步操作指令 |
 | replan | 1 | 修复规划器：stuck 触发后生成新策略（local_replan/escalate） |
 | reply | 11 | 回复生成：任务结束后生成面向用户的自然语言回复 |
 | prefs | 10 | 用户偏好提取：从对话历史中识别并结构化用户偏好 |
-| decomposer | 9 | 任务分解：将用户目标拆解为有依赖关系的 milestone 列表 |
 | back_nav | 14 | 回退导航：从当前页面找到返回目标页面的路径 |
 | cascade_matcher | 22 | 级联页面匹配：基于视觉指纹和相似度判断两个截图是否是同一页面 |
 | popup_detect | 7 | 弹窗检测：识别截图中是否存在覆盖主界面的弹窗/浮层 |
 | snap | 10+5 | 坐标吸附：App 内 OCR 文本优先（含导航带内单字）、匹配不上回退 YOLO，主屏抑制 OCR，10 截图 case + 5 几何回归 |
 | target_verify | 4 | 动作落点校验：标记帧上判断 tap 是否落在指令意图的目标元素（on/off_target） |
-| repeat_detect | — | 重复指令检测（无固定 cases，程序化生成测试） |
-| stuck_detect | — | 卡住检测（无固定 cases，程序化生成测试） |
 
 ## 最新测试结果（2026-05-26）
 
@@ -41,7 +38,6 @@ uv run python evals/iphone/<module>/test_<module>.py
 | planner | 9/9 |
 | reply | 11/11 |
 | prefs | 16/16 |
-| decomposer | 5/5 |
 | replan | 0/1 ⚠️ |
 
 ## 用例分组说明
@@ -86,14 +82,6 @@ uv run python evals/iphone/<module>/test_<module>.py
 | 商品列表 | 目标商品在列表中可见 | 指令含「点击」+商品名 |
 | 微信账单页 | 两个外观相似按钮功能不同 | 必须点月份按钮，不点「全部账单」 |
 | picker | date picker 拖动方向/列/回归 | direction/drag_column 正确，拖动而非点击 |
-
-### decomposer
-
-| 分组 | 说明 | 关键验证点 |
-|------|------|-----------|
-| 单APP | 单应用内多步操作 | milestone 粒度适当，验收条件唯一可观测 |
-| 跨APP | 涉及多个 APP 的任务 | 每次 APP 切换单独建模为 milestone |
-| 微信账单 | 含相对时间表达 | 换算为绝对日期写入 global_constraints |
 
 ### cascade_matcher
 

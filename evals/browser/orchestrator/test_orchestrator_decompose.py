@@ -1,10 +1,7 @@
 """Browser orchestrator-decompose eval: user goal -> DSL Program (run / if / finish).
 
-Tests `gui_agent.core.orchestrator.decomposer.decompose` — the **DSL program**
-decomposer used by `bin/runner ... --orchestrator`. This is a DIFFERENT module from
-the DAG decomposer in `evals/browser/decomposer/` (that one drives
-`MilestoneSupervisorPolicy._decompose` and emits milestones; this one emits a Program
-of run/if/finish statements).
+Tests `gui_agent.core.orchestrator.decomposer.decompose`, the sole DSL Program compiler used by
+the runner. It emits a Program of run/if/finish statements.
 
 Production-faithful:
   * knowledge auto-discovery on the goal (same as runner.py), unless a case pins a site
@@ -262,12 +259,12 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 details.append(
                     f"confirm-read 的 action 验收非 dispatch/defer 门、把结果当终态: {offenders}"
                 )
-        elif assertion == "auth_milestone_terminal_state":
+        elif assertion == "auth_statement_terminal_state":
             # 登录/认证类前置回归两次卡死（153314 验收=登录表单、162312 验收=业务数据卡片，已登录会话都
             # 不可达）。现在生产由【结构标记 run.precondition】兜底：decomposer 标 precondition=true →
             # engine.normalize_precondition_gates 确定性把验收换成「已处于目标状态」的通用门（详见
             # tests/test_orchestrator.py），与 confirm-read 的 L2 同构、但检测信号是 flag 不是关键词。
-            # 所以这里测的是【这个结构信号的可靠性】：登录/认证前置 milestone 必须标 precondition=true
+            # 所以这里测的是【这个结构信号的可靠性】：登录/认证前置 statement 必须标 precondition=true
             # （标了兜底才接得住；没标→门写歪就会卡死）。【软信号·有生产兜底】FAIL = decomposer 漏标了
             # flag（可更可靠），但具体登录态判读由 checker 的 _check.md 兜，且只要标了 flag 门就被通用门
             # 覆盖。用关键词在【测试侧】定位登录步（生产侧用 flag，不碰字符串）。
@@ -282,7 +279,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             unflagged = [r.name for r in auth_ms if not getattr(r, "precondition", False)]
             if auth_ms and unflagged:
                 details.append(
-                    f"登录/认证前置 milestone 没标 precondition=true（L2 兜底靠这个结构标记，没标就接不住、门写歪会卡死）: {unflagged}"
+                    f"登录/认证前置 statement 没标 precondition=true（L2 兜底靠这个结构标记，没标就接不住、门写歪会卡死）: {unflagged}"
                 )
         elif assertion == "current_context_no_login_action":
             # Production-like path: router/decompose already knows the current browser tab is
@@ -840,7 +837,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             prod = [r for r in filters if re.search(r"产品|Product", both(r)) and "Olivia" in both(r)]
             if not prod:
                 details.append(
-                    "没有『按 Product/产品 列检索 Olivia』的 milestone（疑似筛错列，如填进 Review 文本列）："
+                    "没有『按 Product/产品 列检索 Olivia』的 statement（疑似筛错列，如填进 Review 文本列）："
                     f"{[(r.kind, r.name) for r in filters]}"
                 )
             product_field_re = re.compile(r"Product|产品(?:名|列|字段|筛选框|搜索框|输入框|filter)", re.I)
@@ -1461,15 +1458,15 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                             "汇进 into 表供 data_query 查询）；当前被调函数都没返回 material。"
                             f" calls={[c.func for c in calls]}, funcs={[(fn.name, fn.returns) for fn in functions]}")
                     # The function must ACT to reach the parent (search+open) — a pure `read`
-                    # milestone doesn't navigate/search, it only reads the current frame, so material
+                    # statement doesn't navigate/search, it only reads the current frame, so material
                     # comes back empty (live 20260630_094410: run_kind=read → no search/open → "").
                     if called and not any(
                         any(r.kind in ("navigation", "action", "filter") for r in _flatten_runs(fn.body))
                         for fn in called
                     ):
                         details.append(
-                            "被调函数必须有一个【会动作的】milestone（run_kind=navigation/action/filter）去搜索并"
-                            "打开父产品——纯 read milestone 不导航/不搜索、只读当前帧，material 必空"
+                            "被调函数必须有一个【会动作的】statement（run_kind=navigation/action/filter）去搜索并"
+                            "打开父产品——纯 read statement 不导航/不搜索、只读当前帧，material 必空"
                             f"（live 094410）。函数 body kinds={[[r.kind for r in _flatten_runs(fn.body)] for fn in called]}")
                     if not any(tmpl in v for c in calls for v in (c.args or {}).values()):
                         details.append(
@@ -1945,7 +1942,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
                 for text in pending_filters
             ):
                 details.append(
-                    "追加 Pending/状态筛选的同一个 filter milestone 必须显式点名要保留的客户实体值"
+                    "追加 Pending/状态筛选的同一个 filter statement 必须显式点名要保留的客户实体值"
                     "（如 Grace/Sarah Miller），不能只写『保留客户筛选结果范围』，否则运行时无法按值"
                     "保留上游 scope，会把客户筛选当残留清掉。"
                     f" filters={[(r.name, r.success_condition) for r in seq if r.kind == 'filter']}"
@@ -2158,7 +2155,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             # 778/780/782: percentage price change on a configurable-product variant. The new price
             # depends on the variant's CURRENT price (only known at runtime), so the plan must READ
             # the current Price before computing/setting it — not leave the fill target empty or
-            # hardcode a number. Regression 778: milestone was "更新 Price 字段为 <空>" and the agent
+            # hardcode a number. Regression 778: statement was "更新 Price 字段为 <空>" and the agent
             # submitted product[price]=100.00 (expected 64.88 = 75.00×0.865).
             seq = _flatten_runs(program.statements)
             # A foreach body_goal defers the per-row read→compute→fill to a runtime re-decompose (which
@@ -2195,7 +2192,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             if (not any(_reads_current_price(r) for r in seq) and not bg_reads_price
                     and not _grid_price_collected(program.statements)):
                 details.append(
-                    "百分比调价未先读取变体当前 Price → 会凭空填/留空目标价（回归 778：milestone「更新 Price 为 空」、"
+                    "百分比调价未先读取变体当前 Price → 会凭空填/留空目标价（回归 778：statement「更新 Price 为 空」、"
                     "实际提交 product[price]=100.00，期望 64.88=75.00×0.865）；计划应含「读当前 Price → 按系数算 → 填」"
                     "（显式 read+compute，或 foreach body_goal 里写明读现价+算）。"
                     f"当前步骤: {[(r.kind, r.name) for r in seq]}"
@@ -2500,7 +2497,7 @@ def _check_assertions(program, assertions: list[str]) -> list[str]:
             ]
             if len(config_related_actions) > 1:
                 details.append(
-                    "同一 Configurations 向导应是一个语义 mutation，展开/选择/保存由 Milestone 渐进执行；"
+                    "同一 Configurations 向导应是一个语义 mutation，展开/选择/保存由 StatementContract 渐进执行；"
                     f"当前拆成了 {config_related_actions}"
                 )
 
@@ -2739,7 +2736,7 @@ def main() -> int:
     print("── Browser Orchestrator-Decompose Eval ──")
     print("  测的是 decompose() 原始产出 = prompt(L1) 质量。部分断言有生产兜底，FAIL=prompt 可更好（软信号）非生产 bug：")
     print("    · confirm-read 的 dispatch 门 → engine.normalize_confirm_read_gates(L2) 确定性兜底；")
-    print("    · 登录前置（auth_milestone_terminal_state）→ per-app _check.md 的登录判据、checker 权威兜底。")
+    print("    · 登录前置（auth_statement_terminal_state）→ per-app _check.md 的登录判据、checker 权威兜底。")
     print("  若 case 设置 normalize=true，则额外验证生产 normalizer 后的可执行形态。")
     print("  连通门控/读了就引用 等无兜底的断言，FAIL 才是真问题。")
     run_orchestrator_decompose_eval(label_filter=args.label, show_program=args.show_program)

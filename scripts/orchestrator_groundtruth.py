@@ -2,7 +2,7 @@
 against assertions derived automatically from each task's evaluator reference.
 
 The user's direction (2026-07-02): the runtime bottleneck is the DSL-program layer (router +
-decompose) — milestone-level react is basically adequate. WebArena's dataset
+decompose) — statement-level react is basically adequate. WebArena's dataset
 (webarena-verified/assets/dataset/webarena-verified.json, 812 tasks × 5 sites) carries per-task
 evaluator references that double as PLAN-level ground truth, no hand-written cases needed:
 

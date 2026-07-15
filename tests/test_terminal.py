@@ -22,7 +22,7 @@ class _ReadState:
 def _context(step: SupervisorStep) -> PolicyContext:
     return PolicyContext(
         goal="完成任务",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="browser",
         journal={"events": [
             PolicyTurn(
@@ -68,7 +68,8 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
 
     assert read_state.calls == ["drain", ("flush", 3)]
     assert messages == ["\n目标已达成：任务完成"]
-    assert result["wrapped"]["goal_completed"] is True
+    assert result["wrapped"]["phase"] == "completed"
+    assert result["wrapped"]["verification"] == "confirmed"
     assert result["wrapped"]["collection_context"] is None
 
 
@@ -99,7 +100,8 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
 
     assert read_state.calls == ["drain", ("flush", 4)]
     assert messages == ["\n任务未完成：用户停止"]
-    assert result["goal_completed"] is False
+    assert result["phase"] == "failed"
+    assert result["verification"] is None
     assert "用户停止" in result["stop_reason"]
 
 
@@ -112,6 +114,5 @@ def test_base_result_does_not_promote_one_completed_statement_to_program_success
 
     result = make_result(_context(step), "用户中途退出")
 
-    assert result["execution_completed"] is False
-    assert result["goal_completed"] is False
-    assert result["goal_status"] == "incomplete"
+    assert result["phase"] == "stopped"
+    assert result["verification"] is None

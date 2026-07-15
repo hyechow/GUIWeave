@@ -1,7 +1,7 @@
 """Compare task decomposition with and without app knowledge.
 
 Tests several WeChat-related goals, calls _do_decompose with/without
-_app.md injected, and prints side-by-side milestone comparison.
+_app.md injected, and prints side-by-side statement comparison.
 
 Usage:
     uv run python scripts/test_knowledge_decompose.py
@@ -27,8 +27,8 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
 from gui_agent.core.schemas import StatementContract, Observation
 from gui_agent.core.self_learning.app_summary import auto_discover_knowledge
-from gui_agent.adapters.iphone.supervisor.milestone.prompts import DECOMPOSE_PROMPT
-from gui_agent.core.supervisor.milestone.schemas import _DecomposeResponse
+from gui_agent.adapters.iphone.supervisor.statement.prompts import DECOMPOSE_PROMPT
+from gui_agent.core.supervisor.statement.schemas import _DecomposeResponse
 
 # ── Goals covering different navigation depths in WeChat ──
 GOALS = [
@@ -84,9 +84,9 @@ def decompose(
     return invoke_structured(llm, msgs, _DecomposeResponse)
 
 
-def format_milestones(milestones: list[StatementContract]) -> str:
+def format_statements(statements: list[StatementContract]) -> str:
     lines = []
-    for m in milestones:
+    for m in statements:
         deps = f" depends=[{', '.join(m.depends_on)}]" if m.depends_on else ""
         lines.append(f"  [{m.id}] {m.name} ({m.kind}/{m.completion_strategy}){deps}")
         lines.append(f"       验收: {m.success_condition}")
@@ -142,18 +142,18 @@ def main():
         print(f"\n  {'WITHOUT':40s} | {'WITH':s}")
         print(f"  {'-' * 40} | {'-' * 40}")
         print(f"  task_type={resp_no.task_type:<28s} | task_type={resp_yes.task_type}")
-        print(f"  milestones={len(resp_no.milestones):<27d} | milestones={len(resp_yes.milestones)}")
+        print(f"  statements={len(resp_no.statements):<27d} | statements={len(resp_yes.statements)}")
 
         # Detail
         print("\n--- WITHOUT ---")
-        print(format_milestones(resp_no.milestones))
+        print(format_statements(resp_no.statements))
         print("\n--- WITH ---")
-        print(format_milestones(resp_yes.milestones))
+        print(format_statements(resp_yes.statements))
 
         # Diff
         print("\n--- DIFF ---")
-        names_no = {m.name for m in resp_no.milestones}
-        names_yes = {m.name for m in resp_yes.milestones}
+        names_no = {m.name for m in resp_no.statements}
+        names_yes = {m.name for m in resp_yes.statements}
         added = names_yes - names_no
         removed = names_no - names_yes
         if added:
@@ -161,8 +161,8 @@ def main():
         if removed:
             print(f"  减少: {', '.join(sorted(removed))}")
 
-        by_name_no = {m.name: m for m in resp_no.milestones}
-        by_name_yes = {m.name: m for m in resp_yes.milestones}
+        by_name_no = {m.name: m for m in resp_no.statements}
+        by_name_yes = {m.name: m for m in resp_yes.statements}
         for name in sorted(names_no & names_yes):
             m_no, m_yes = by_name_no[name], by_name_yes[name]
             diffs = []

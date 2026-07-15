@@ -3,8 +3,9 @@
     "label": "webarena113_reviews_legacy_filter_no_chip_20260707_105612",
     "source_run": "logs/gui_agent/webarena/browser/20260707_105612",
     "goal": "Return the customer nickname(s) who gave a rating of 3 stars or below for Olivia zip jacket",
-    "milestone_name": "清除精确值筛选，在产品/Product列使用关键词'Olivia'进行筛选",
+    "statement_name": "清除精确值筛选，在产品/Product列使用关键词'Olivia'进行筛选",
     "success_condition": "可见筛选状态显示已应用 Product包含'Olivia'筛选，列表已刷新且非0条记录",
+    "target_values": {"Product": "Olivia"},
     "applied_filters": {"Product": "Olivia"},
     "applied_filter_meta": {
       "source": "adapter_state",

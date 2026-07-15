@@ -18,7 +18,7 @@ from gui_agent.adapters.iphone.executor import ActionExecutor
 from gui_agent.adapters.iphone.perception import LivePhoneSession
 from gui_agent.core.policies import StructuredOutputPolicy
 from gui_agent.core.schemas import Action, ActionDecision, StatementContract, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone.model_io import run_checker, run_planner
+from gui_agent.core.supervisor.statement.model_io import run_checker, run_planner
 
 
 OUT_DIR = Path("/tmp/drag_policy_test")
@@ -57,7 +57,7 @@ LEVEL4_CONSTRAINTS = [
     "完成后不要点击取消；需要应用筛选时点击绿色「确定」。",
 ]
 
-LEVEL3_MILESTONE = StatementContract(
+LEVEL3_STATEMENT = StatementContract(
     id="drag_level3_target_month",
     name="选择目标月份",
     description=(
@@ -70,7 +70,7 @@ LEVEL3_MILESTONE = StatementContract(
     depends_on=[],
 )
 
-LEVEL4_MILESTONE = StatementContract(
+LEVEL4_STATEMENT = StatementContract(
     id="drag_level4_date_range",
     name="选择目标时间段",
     description=(
@@ -188,7 +188,7 @@ def test_planner_checker_target_date(phone: LivePhoneSession, executor: ActionEx
     return _run_planner_checker_loop(
         phone=phone,
         executor=executor,
-        milestone=LEVEL3_MILESTONE,
+        statement=LEVEL3_STATEMENT,
         constraints=LEVEL3_CONSTRAINTS,
         label="Level 3",
         max_steps=8,
@@ -200,7 +200,7 @@ def test_planner_checker_date_range(phone: LivePhoneSession, executor: ActionExe
     return _run_planner_checker_loop(
         phone=phone,
         executor=executor,
-        milestone=LEVEL4_MILESTONE,
+        statement=LEVEL4_STATEMENT,
         constraints=LEVEL4_CONSTRAINTS,
         label="Level 4",
         max_steps=20,
@@ -211,7 +211,7 @@ def _run_planner_checker_loop(
     *,
     phone: LivePhoneSession,
     executor: ActionExecutor,
-    milestone: StatementContract,
+    statement: StatementContract,
     constraints: list[str],
     label: str,
     max_steps: int,
@@ -228,7 +228,7 @@ def _run_planner_checker_loop(
         observation = Observation(png_bytes=png, source="live")
 
         check = run_checker(
-            milestone,
+            statement,
             observation,
             history,
             app_name="微信",
@@ -240,7 +240,7 @@ def _run_planner_checker_loop(
             return True
 
         plan = run_planner(
-            milestone,
+            statement,
             check,
             observation,
             history,
@@ -267,7 +267,7 @@ def _run_planner_checker_loop(
         print(f"[{label} step {step_no}] description: {action.description}")
 
         executed = executor.execute(decision)
-        history.append(_policy_turn(step_no, plan.instruction, plan.summary, decision, executed, milestone))
+        history.append(_policy_turn(step_no, plan.instruction, plan.summary, decision, executed, statement))
         time.sleep(1.0)
 
     final = phone.screenshot()
@@ -284,7 +284,7 @@ def _policy_turn(
     summary: str,
     decision: ActionDecision,
     executed: bool,
-    milestone: StatementContract,
+    statement: StatementContract,
 ) -> PolicyTurn:
     return PolicyTurn(
         index=index,
@@ -292,12 +292,10 @@ def _policy_turn(
         supervisor=SupervisorStep(
             should_act=True,
             instruction=instruction,
-            stop=False,
-            goal_completed=False,
             summary=summary,
-            milestone_id=milestone.id,
-            milestone_kind=milestone.kind,
-            completion_strategy=milestone.completion_strategy,
+            statement_id=statement.id,
+            statement_kind=statement.kind,
+            completion_strategy=statement.completion_strategy,
         ),
         action_decision=decision,
         executed=executed,

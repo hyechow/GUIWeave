@@ -7,7 +7,7 @@
       "output_fields": ["match_count"],
       "completion_mode": "filter_state_with_result"
     },
-    "scope": "milestone:filter_exact",
+    "scope": "statement:filter_exact",
     "claims": [
       {"domain": "filter.state", "value": "confirmed", "source_type": "obs.applied_filters", "authoritative": true}
     ],
@@ -40,7 +40,7 @@
       "completion_mode": "mutation",
       "output_fields": []
     },
-    "scope": "milestone:save_without_write",
+    "scope": "statement:save_without_write",
     "claims": [
       {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.commit_dispatch", "authoritative": true},
       {"domain": "effect.state", "value": "unverified", "source_type": "checker"}
@@ -55,7 +55,7 @@
       "completion_mode": "mutation",
       "effect_mode": "ensure"
     },
-    "scope": "milestone:ensure_state",
+    "scope": "statement:ensure_state",
     "claims": [
       {"domain": "effect.state", "value": "confirmed", "source_type": "checker", "evidence": "target already exists"}
     ],
@@ -86,7 +86,7 @@
       "kind": "navigation",
       "completion_mode": "arrival"
     },
-    "scope": "milestone:open",
+    "scope": "statement:open",
     "claims": [
       {"domain": "page.response", "value": "confirmed", "source_type": "runtime.effect_monitor", "authoritative": true}
     ],
@@ -99,7 +99,7 @@
       "kind": "navigation",
       "completion_mode": "arrival"
     },
-    "scope": "milestone:open_record",
+    "scope": "statement:open_record",
     "claims": [
       {"domain": "action.execution", "value": "confirmed", "source_type": "runtime.action_dispatch", "authoritative": true},
       {"domain": "action.target", "value": "contradicted", "source_type": "runtime.target_verify", "authoritative": true},
@@ -148,7 +148,7 @@
       "persistence": "explicit_commit",
       "completion_mode": "mutation"
     },
-    "scope": "milestone:fresh_write",
+    "scope": "statement:fresh_write",
     "claims": [
       {"domain": "effect.state", "value": "confirmed", "source_type": "checker", "evidence": "target value already visible"}
     ],

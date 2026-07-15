@@ -3,16 +3,16 @@
 The feasibility LLM is monkeypatched — these pin the deterministic routing:
 infeasible outcome with kickback; feasible/visual/judge-error → None."""
 
-import gui_agent.core.supervisor.milestone.feasibility as feas
+import gui_agent.core.supervisor.statement.feasibility as feas
 def _begin(p, ms):
     p.begin_statement(ms, instance_id="i1")
     return p
 
 from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
-from gui_agent.core.supervisor.milestone.feasibility import FeasibilityVerdict
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.runtime import EARLY_FEASIBILITY_AT, MAX_RETRIES
-from gui_agent.core.supervisor.milestone.schemas import _ReplanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement.feasibility import FeasibilityVerdict
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.runtime import EARLY_FEASIBILITY_AT, MAX_RETRIES
+from gui_agent.core.supervisor.statement.schemas import _ReplanResult, _SingleCheckResult
 
 
 def _ms() -> StatementContract:
@@ -32,7 +32,7 @@ def _obs_browser() -> Observation:
 def test_kickback_when_infeasible(monkeypatch):
     monkeypatch.setattr(feas, "judge_feasibility",
                         lambda *a, **k: FeasibilityVerdict(feasible=False, reason="无 Rating 控件", directive="逐条钻取评论详情"))
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = _ms()
     p.begin_statement(ms, instance_id="i1")
     step = p._maybe_kickback(ms, _obs_browser(), None)
@@ -45,7 +45,7 @@ def test_kickback_when_infeasible(monkeypatch):
 def test_no_kickback_when_feasible(monkeypatch):
     monkeypatch.setattr(feas, "judge_feasibility",
                         lambda *a, **k: FeasibilityVerdict(feasible=True, reason="有搜索框"))
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = _ms()
     p.begin_statement(ms, instance_id="i1")
     assert p._maybe_kickback(ms, _obs_browser(), None) is None
@@ -59,7 +59,7 @@ def test_no_kickback_on_visual_platform_no_dom_controls(monkeypatch):
         return FeasibilityVerdict(feasible=False)
 
     monkeypatch.setattr(feas, "judge_feasibility", _spy)
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = _ms()
     p.begin_statement(ms, instance_id="i1")
     # no form_controls / ui_facts (visual platform) → control sentinel → judge NEVER called
@@ -72,7 +72,7 @@ def test_judge_exception_treated_as_feasible(monkeypatch):
         raise RuntimeError("llm down")
 
     monkeypatch.setattr(feas, "judge_feasibility", _boom)
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = _ms()
     p.begin_statement(ms, instance_id="i1")
     assert p._maybe_kickback(ms, _obs_browser(), None) is None  # never crashes the run
@@ -86,7 +86,7 @@ def test_navigation_target_in_semantic_inventory_cannot_be_kicked_back(monkeypat
         return FeasibilityVerdict(feasible=False, reason="入口不存在")
 
     monkeypatch.setattr(feas, "judge_feasibility", _spy)
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = StatementContract.model_validate({
         "id": "nav-products",
         "name": "进入目标列表页面",
@@ -101,7 +101,7 @@ def test_navigation_target_in_semantic_inventory_cannot_be_kicked_back(monkeypat
                 "should_act": True,
                 "instruction": "点击展开菜单中的目标链接",
                 "summary": "",
-            "milestone_id": "nav-products",
+            "statement_id": "nav-products",
             "target_control": "Products",
         },
     })
@@ -129,10 +129,10 @@ def _stuck_check() -> _SingleCheckResult:
 
 
 def test_early_feasibility_probe_fires_at_threshold(monkeypatch):
-    """A milestone stuck EARLY_FEASIBILITY_AT times gets a Feasibility probe before MAX — and again
+    """A statement stuck EARLY_FEASIBILITY_AT times gets a Feasibility probe before MAX — and again
     at MAX — but only ONCE early (not every retry)."""
     seen: list[int] = []
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = _ms_action()
     p.begin_statement(ms, instance_id="i1")
     monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri, hist=None: (seen.append(p._rt.retry_count), None)[1])
@@ -150,7 +150,7 @@ def test_early_feasibility_probe_fires_at_threshold(monkeypatch):
 
 def test_no_early_probe_below_threshold(monkeypatch):
     seen: list[int] = []
-    p = MilestoneSupervisorPolicy()
+    p = StatementSupervisorPolicy()
     ms = _ms_action()
     p.begin_statement(ms, instance_id="i1")
     monkeypatch.setattr(p, "_maybe_kickback", lambda ms, obs, ri, hist=None: (seen.append(p._rt.retry_count), None)[1])

@@ -7,7 +7,7 @@ from gui_agent.core.schemas import PolicyContext
 def _context() -> PolicyContext:
     return PolicyContext(
         goal="g",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="browser",
     )
 

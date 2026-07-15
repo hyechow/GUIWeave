@@ -2,7 +2,7 @@
   {
     "label": "upload-replan 弹窗已开须直接发 upload 带路径，禁止点击上传区域唤起原生框（回归 20260616_200258 Turn5）",
     "screenshot": "evals/browser/planner/screenshots/roboteam_map_import_upload_dialog.png",
-    "milestone": {
+    "statement": {
       "name": "上传文件 /Users/hyde/Downloads/交管测试专用地图_2楼.map_export",
       "description": "在「导入地图」弹窗中将任务指定的本地地图文件上传到上传区域",
       "success_condition": "已执行「上传文件 /Users/hyde/Downloads/交管测试专用地图_2楼.map_export」：动作已发出且界面给出响应（出现提示/结果区/列表更新/页面跳转/进入加载，任一即可）",
@@ -36,7 +36,7 @@
   {
     "label": "搜索 0 条应放宽搜索词，不得原样重搜完整短语（回归 20260622_113558 Olivia zip jacket）",
     "screenshot": "evals/browser/replan/screenshots/webarena113_product_filter_0records_20260622_113558.png",
-    "milestone": {
+    "statement": {
       "name": "在评论列表中搜索/筛选 'Olivia zip jacket' 产品",
       "description": "在 Product Reviews 列表用 Product 列筛选出 'Olivia zip jacket' 的评论。",
       "success_condition": "Product 列已按目标产品筛选，且列表显示该产品的评论记录（非 0 条）。",

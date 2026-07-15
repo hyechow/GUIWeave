@@ -1,4 +1,4 @@
-"""chain_from_states: FROM[i] := TO[i-1] — each milestone's entry state is the prior milestone's
+"""chain_from_states: FROM[i] := TO[i-1] — each statement's entry state is the prior statement's
 success_condition, derived deterministically (not authored by the LLM). Underpins the FROM→TO
 continuity that lets the decomposer phrase instructions without redundant "进入/回到 X" prefixes."""
 
@@ -71,7 +71,7 @@ def test_compute_is_page_neutral_from_carries_through():
 
 
 def test_call_advances_from_to_function_exit_state():
-    # After a Call, the next milestone's FROM is the called function's exit state (its last Run's SC).
+    # After a Call, the next statement's FROM is the called function's exit state (its last Run's SC).
     prog = Program(
         goal="g",
         functions=[FunctionDef(name="f", params=[], returns=["r"], body=[

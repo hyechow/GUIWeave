@@ -7,8 +7,8 @@ to the path and plain @-mentions never break anything.
 
 from __future__ import annotations
 
-import gui_agent.core.supervisor.milestone.model_io as model_io
-from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
+import gui_agent.core.supervisor.statement.model_io as model_io
+from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
 
 
 def _mk(tmp_path, name: str, text: str):

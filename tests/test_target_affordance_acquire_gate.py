@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-import gui_agent.core.supervisor.milestone.llm_runtime as policy_mod
-import gui_agent.core.supervisor.milestone.policy as supervisor_policy_mod
+import gui_agent.core.supervisor.statement.llm_runtime as policy_mod
+import gui_agent.core.supervisor.statement.policy as supervisor_policy_mod
 from gui_agent.core.schemas import StatementContract, Observation
-from gui_agent.core.supervisor.milestone.acquisition import TargetAcquireController
+from gui_agent.core.supervisor.statement.acquisition import TargetAcquireController
 
 
 class _CheckerReached(Exception):
     pass
 
 
-def _acquire_plan(controls: list[dict], milestone: StatementContract):
+def _acquire_plan(controls: list[dict], statement: StatementContract):
     controller = TargetAcquireController()
-    return controller.decide(controls, milestone, scope=milestone.id).plan
+    return controller.decide(controls, statement, scope=statement.id).plan
 
 
-def _notify_milestone() -> StatementContract:
+def _notify_statement() -> StatementContract:
     return StatementContract(
         id="m_notify",
         name=(
@@ -60,7 +60,7 @@ def _offscreen_controls() -> list[dict]:
 
 
 def test_target_acquire_uses_offscreen_structured_controls() -> None:
-    plan = _acquire_plan(_offscreen_controls(), _notify_milestone())
+    plan = _acquire_plan(_offscreen_controls(), _notify_statement())
 
     assert plan is not None
     assert plan.direction == "down"
@@ -79,8 +79,8 @@ def test_policy_acquire_gate_bypasses_checker_for_known_offscreen_controls(monke
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.begin_statement(_notify_milestone(), instance_id="test:acquire")
+    policy = supervisor_policy_mod.StatementSupervisorPolicy()
+    policy.begin_statement(_notify_statement(), instance_id="test:acquire")
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
         source="browser",
@@ -108,7 +108,7 @@ def test_target_acquire_continues_until_all_targets_are_visible() -> None:
         "rect": {"x": 467, "y": 646, "w": 400, "h": 120},
     }
 
-    plan = _acquire_plan(controls, _notify_milestone())
+    plan = _acquire_plan(controls, _notify_statement())
 
     assert plan is not None
     assert plan.direction == "down"
@@ -130,7 +130,7 @@ def test_target_acquire_stays_out_when_all_target_controls_are_visible() -> None
         "rect": {"x": 321, "y": 714, "w": 24, "h": 24},
     }
 
-    assert _acquire_plan(controls, _notify_milestone()) is None
+    assert _acquire_plan(controls, _notify_statement()) is None
 
 
 def test_target_acquire_scrolls_to_offscreen_rich_editor_after_section_expanded() -> None:
@@ -151,16 +151,16 @@ def test_target_acquire_scrolls_to_offscreen_rich_editor_after_section_expanded(
         },
     ]
 
-    plan = _acquire_plan(controls, _description_milestone())
+    plan = _acquire_plan(controls, _description_statement())
 
     assert plan is not None
     assert plan.direction == "down"
     assert "Short Description" in plan.instruction
 
 
-def _return_location_milestone() -> StatementContract:
+def _return_location_statement() -> StatementContract:
     # After a terminal Submit succeeded and redirected, the return-contract recovery re-opens the
-    # milestone to locate the return field, leaking the field name into the milestone text.
+    # statement to locate the return field, leaking the field name into the statement text.
     return StatementContract(
         id="m_submit",
         name="点 Submit Shipment（继续定位返回字段：submit_status）",
@@ -172,7 +172,7 @@ def _return_location_milestone() -> StatementContract:
 
 def _order_status_control() -> list[dict]:
     # The order/comment "Status" dropdown, offscreen. Its label "Status" is a SUBSTRING of the
-    # milestone's return-field token "submit_status" — must NOT be treated as a named target.
+    # statement's return-field token "submit_status" — must NOT be treated as a named target.
     return [
         {
             "kind": "native_select",
@@ -188,12 +188,12 @@ def test_acquire_gate_ignores_status_substring_of_submit_status() -> None:
     # Regression for WebArena 499 (20260708_165316): AcquireGate matched "Status" against the
     # return-field token "submit_status" and scrolled to the order Status dropdown, amplifying a
     # return-contract violation into a stuck loop. Word-boundary matching must reject it.
-    plan = _acquire_plan(_order_status_control(), _return_location_milestone())
+    plan = _acquire_plan(_order_status_control(), _return_location_statement())
     assert plan is None
 
 
 def test_acquire_gate_still_matches_standalone_status_control() -> None:
-    # But a milestone that genuinely targets a standalone "Status" control still acquires it.
+    # But a statement that genuinely targets a standalone "Status" control still acquires it.
     ms = StatementContract(
         id="m_status",
         name="将 Status 下拉设为 Processing",
@@ -207,7 +207,7 @@ def test_acquire_gate_still_matches_standalone_status_control() -> None:
     assert plan.direction == "down"
 
 
-def _description_milestone() -> StatementContract:
+def _description_statement() -> StatementContract:
     return StatementContract(
         id="m_description",
         name="在 Content 区将 Short Description 字段更新为 3 customer(s) love it! 并保存",
@@ -218,7 +218,7 @@ def _description_milestone() -> StatementContract:
     )
 
 
-def _description_without_section_milestone() -> StatementContract:
+def _description_without_section_statement() -> StatementContract:
     return StatementContract(
         id="m_description",
         name="将 Short Description 更新为 3 customer(s) love it! 并保存",
@@ -237,7 +237,7 @@ def test_target_acquire_expands_named_visible_section() -> None:
             "value": "false",
             "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
         }],
-        _description_milestone(),
+        _description_statement(),
     )
 
     assert plan is not None
@@ -259,7 +259,7 @@ def test_target_acquire_skips_named_section_with_unknown_state() -> None:
             # no value/selected_text → expanded-state unknown
             "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
         }],
-        _description_milestone(),
+        _description_statement(),
     )
 
     assert plan is None
@@ -283,7 +283,7 @@ def test_target_acquire_stays_out_when_target_editor_visible() -> None:
                 "rect": {"x": 530, "y": 760, "w": 540, "h": 260},
             },
         ],
-        _description_milestone(),
+        _description_statement(),
     )
 
     assert plan is None
@@ -297,7 +297,7 @@ def test_target_acquire_does_not_guess_undeclared_section() -> None:
             "value": "false",
             "rect": {"x": 525, "y": 786, "w": 1000, "h": 40},
         }],
-        _description_without_section_milestone(),
+        _description_without_section_statement(),
     )
 
     assert plan is None
@@ -319,7 +319,7 @@ def test_target_acquire_does_not_guess_among_multiple_sections() -> None:
                 "rect": {"x": 525, "y": 830, "w": 1000, "h": 40},
             },
         ],
-        _description_without_section_milestone(),
+        _description_without_section_statement(),
     )
 
     assert plan is None
@@ -335,7 +335,7 @@ def test_target_acquire_scrolls_to_named_offscreen_section() -> None:
             "viewport_pos": "below",
             "rect": {"x": 525, "y": 1300, "w": 1000, "h": 40},
         }],
-        _description_milestone(),
+        _description_statement(),
     )
 
     assert plan is not None
@@ -353,7 +353,7 @@ def test_target_acquire_scrolls_to_expanded_offscreen_section() -> None:
             "viewport_pos": "above",
             "rect": {"x": 525, "y": -120, "w": 1000, "h": 40},
         }],
-        _description_milestone(),
+        _description_statement(),
     )
 
     assert plan is not None
@@ -405,7 +405,7 @@ def test_policy_named_section_precedes_flat_target_affordance(monkeypatch) -> No
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    milestone = StatementContract(
+    statement = StatementContract(
         id="m-config",
         name="在 Configurations 区域生成 green + XXXL 组合并保存",
         description="在 Configurations 区域生成 green + XXXL 组合并保存",
@@ -413,8 +413,8 @@ def test_policy_named_section_precedes_flat_target_affordance(monkeypatch) -> No
         kind="action",
         target_controls=["Configurations", "Color"],
     )
-    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.begin_statement(milestone, instance_id="test:acquire")
+    policy = supervisor_policy_mod.StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="test:acquire")
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
         source="browser",
@@ -460,8 +460,8 @@ def test_policy_collapsed_section_is_acquired_before_checker(monkeypatch) -> Non
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.begin_statement(_description_milestone(), instance_id="test:acquire")
+    policy = supervisor_policy_mod.StatementSupervisorPolicy()
+    policy.begin_statement(_description_statement(), instance_id="test:acquire")
     obs = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
         source="browser",
@@ -484,7 +484,7 @@ def test_policy_collapsed_section_is_acquired_before_checker(monkeypatch) -> Non
 
 
 def test_semantic_collection_query_resolves_unique_visual_section() -> None:
-    milestone = StatementContract(
+    statement = StatementContract(
         id="m-config",
         name="在配置集合中添加组合",
         description="",
@@ -515,8 +515,8 @@ def test_semantic_collection_query_resolves_unique_visual_section() -> None:
                 "rect": {"y": 2021},
             },
         ],
-        milestone,
-        scope=milestone.id,
+        statement,
+        scope=statement.id,
     )
 
     assert decision.status == "act"
@@ -526,7 +526,7 @@ def test_semantic_collection_query_resolves_unique_visual_section() -> None:
 
 
 def test_target_values_do_not_participate_in_position_binding() -> None:
-    milestone = StatementContract(
+    statement = StatementContract(
         id="m-config",
         name="更新配置",
         description="",
@@ -540,15 +540,15 @@ def test_target_values_do_not_participate_in_position_binding() -> None:
             {"kind": "native_select", "label": "Color", "in_viewport": True},
             {"kind": "native_select", "label": "Size", "in_viewport": True},
         ],
-        milestone,
-        scope=milestone.id,
+        statement,
+        scope=statement.id,
     )
 
     assert decision.status == "inactive"
 
 
 def test_target_probe_refuses_equal_semantic_matches() -> None:
-    milestone = StatementContract(
+    statement = StatementContract(
         id="m-ambiguous",
         name="更新备注",
         description="",
@@ -561,8 +561,8 @@ def test_target_probe_refuses_equal_semantic_matches() -> None:
             {"kind": "textarea", "label": "Comment", "in_viewport": False, "viewport_pos": "below"},
             {"kind": "textarea", "label": "Comment", "in_viewport": False, "viewport_pos": "above"},
         ],
-        milestone,
-        scope=milestone.id,
+        statement,
+        scope=statement.id,
     )
 
     assert decision.status == "ambiguous"
@@ -577,7 +577,7 @@ def test_ambiguous_optional_structure_falls_back_to_visual_checker(monkeypatch) 
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
-    milestone = StatementContract(
+    statement = StatementContract(
         id="m-ambiguous",
         name="更新备注",
         description="",
@@ -585,8 +585,8 @@ def test_ambiguous_optional_structure_falls_back_to_visual_checker(monkeypatch) 
         kind="action",
         target_controls=["Comment"],
     )
-    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.begin_statement(milestone, instance_id="test:acquire")
+    policy = supervisor_policy_mod.StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="test:acquire")
     observation = Observation(
         png_bytes=b"\x89PNG\r\n\x1a\n",
         source="browser",
@@ -605,7 +605,7 @@ def test_ambiguous_optional_structure_falls_back_to_visual_checker(monkeypatch) 
 
 
 def test_acquire_session_tracks_geometry_progress_and_exhausts_no_progress() -> None:
-    milestone = StatementContract(
+    statement = StatementContract(
         id="m-config",
         name="更新配置",
         description="",
@@ -624,16 +624,16 @@ def test_acquire_session_tracks_geometry_progress_and_exhausts_no_progress() -> 
             "rect": {"y": y},
         }]
 
-    assert controller.decide(controls(2644), milestone, scope="row:1").status == "act"
-    assert controller.decide(controls(2021), milestone, scope="row:1").status == "act"
-    assert controller.decide(controls(2021), milestone, scope="row:1").status == "act"
-    assert controller.decide(controls(2021), milestone, scope="row:1").status == "exhausted"
+    assert controller.decide(controls(2644), statement, scope="row:1").status == "act"
+    assert controller.decide(controls(2021), statement, scope="row:1").status == "act"
+    assert controller.decide(controls(2021), statement, scope="row:1").status == "act"
+    assert controller.decide(controls(2021), statement, scope="row:1").status == "exhausted"
 
-    other = controller.decide(controls(1500), milestone, scope="row:2")
+    other = controller.decide(controls(1500), statement, scope="row:2")
     assert other.status == "act"
-    ready = controller.decide(controls(700, visible=True), milestone, scope="row:2")
+    ready = controller.decide(controls(700, visible=True), statement, scope="row:2")
     assert ready.status == "ready"
 
-    assert controller.decide(controls(1000), milestone, scope="row:3").status == "act"
-    assert controller.decide(controls(1100), milestone, scope="row:3").status == "act"
-    assert controller.decide(controls(1200), milestone, scope="row:3").status == "exhausted"
+    assert controller.decide(controls(1000), statement, scope="row:3").status == "act"
+    assert controller.decide(controls(1100), statement, scope="row:3").status == "act"
+    assert controller.decide(controls(1200), statement, scope="row:3").status == "exhausted"

@@ -395,7 +395,7 @@ def test_query_executor_repairs_empty_result_with_actual_table_snapshot(tmp_path
     runtime = ProgramRuntime.start(prog)
     context = PolicyContext(
         goal="Get monthly count of completed orders",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="action",
     )
 
@@ -417,9 +417,9 @@ def test_query_executor_repairs_empty_result_with_actual_table_snapshot(tmp_path
     )
 
     assert result.reply == '[{"month": "January", "count": 2}, {"month": "February", "count": 1}]'
-    assert context.journal.events[-1].executed is True
-    assert "status = 'Complete'" not in context.journal.events[-1].non_ui["sql"]
-    assert context.journal.events[-1].non_ui["reads"] == {
+    assert context.journal.turns[-1].executed is True
+    assert "status = 'Complete'" not in context.journal.turns[-1].non_ui["sql"]
+    assert context.journal.turns[-1].non_ui["reads"] == {
         "result": '[{"month": "January", "count": 2}, {"month": "February", "count": 1}]'
     }
 
@@ -466,7 +466,7 @@ def test_query_executor_blocks_when_collected_source_conflicts_with_goal(tmp_pat
     runtime = ProgramRuntime.start(prog)
     context = PolicyContext(
         goal="Get the ranking across the entire history",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="action",
     )
 
@@ -490,9 +490,9 @@ def test_query_executor_blocks_when_collected_source_conflicts_with_goal(tmp_pat
     assert result.reply is not None
     assert "数据源与任务意图不一致" in result.reply
     assert "清除该筛选" in result.reply
-    assert context.journal.events[-1].executed is False
-    assert context.journal.events[-1].non_ui["failed"] is True
-    assert context.journal.events[-1].non_ui["reads"] == {}
+    assert context.journal.turns[-1].executed is False
+    assert context.journal.turns[-1].non_ui["failed"] is True
+    assert context.journal.turns[-1].non_ui["reads"] == {}
 
 
 def test_query_executor_empty_repair_after_sql_error_still_fails(tmp_path, monkeypatch):
@@ -536,7 +536,7 @@ def test_query_executor_empty_repair_after_sql_error_still_fails(tmp_path, monke
     runtime = ProgramRuntime.start(prog)
     context = PolicyContext(
         goal="Get matching records",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="action",
     )
 
@@ -559,8 +559,8 @@ def test_query_executor_empty_repair_after_sql_error_still_fails(tmp_path, monke
 
     assert result.reply is not None
     assert "SQL 修复后仍返回空结果" in result.reply
-    assert context.journal.events[-1].executed is False
-    assert context.journal.events[-1].non_ui["failed"] is True
+    assert context.journal.turns[-1].executed is False
+    assert context.journal.turns[-1].non_ui["failed"] is True
 
 
 def test_query_failure_sets_replan_evidence(tmp_path, monkeypatch):
@@ -578,7 +578,7 @@ def test_query_failure_sets_replan_evidence(tmp_path, monkeypatch):
         Finish(message="{q[x]}"),
     ])
     runtime = ProgramRuntime.start(prog)
-    ctx = PolicyContext(goal="g", supervisor_policy_name="milestone", action_policy_name="action")
+    ctx = PolicyContext(goal="g", supervisor_policy_name="statement", action_policy_name="action")
     result = drain_immediate_statements(
         program_runtime=runtime,
         bundle=None, platform=None, log_dir=tmp_path, check_knowledge="", context=ctx,

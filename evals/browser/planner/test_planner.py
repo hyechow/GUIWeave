@@ -1,7 +1,7 @@
 """Browser planner eval: validates the next-step instruction against labeled cases.
 
-Mirrors evals/iphone/planner/test_planner.py but drives the BROWSER milestone
-prompts (``BROWSER_MILESTONE_PROMPTS``) through the shared ``run_planner``.
+Mirrors evals/iphone/planner/test_planner.py but drives the BROWSER statement
+prompts (``BROWSER_STATEMENT_PROMPTS``) through the shared ``run_planner``.
 
 Seeded from the 2026-06-09 "打开百度首页" run where the planner told the action
 policy to "在搜索框中输入文字 baidu.com" (→ a page-search type) instead of a
@@ -21,24 +21,25 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone.model_io import run_planner
-from gui_agent.core.supervisor.milestone.schemas import _SingleCheckResult
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.supervisor.statement.model_io import run_planner
+from gui_agent.core.supervisor.statement.schemas import _SingleCheckResult
 from gui_agent.adapters.browser.actions import BrowserActionDecision
-from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
+from gui_agent.adapters.browser.supervisor.statement.prompts import BROWSER_STATEMENT_PROMPTS
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
 
-def _build_history(entries: list[dict], milestone_id: str) -> list[PolicyTurn]:
+def _build_history(entries: list[dict], statement_id: str) -> list[PolicyTurn]:
     """Reconstruct PolicyTurns from compact case-JSON history entries (mirrors the
     checker eval). History lets the planner reason about already-executed turns."""
     turns = []
     for h in entries:
         sv = SupervisorStep(
-            should_act=True, instruction=h["instruction"], stop=False,
-            goal_completed=False, summary=h.get("summary", ""),
-            milestone_id=h.get("milestone_id", milestone_id),
+            should_act=True,
+            instruction=h["instruction"],
+            summary=h.get("summary", ""),
+            statement_id=h.get("statement_id", statement_id),
         )
         ad = BrowserActionDecision.model_validate({"action": h["action"]}) if h.get("action") else None
         turns.append(PolicyTurn(
@@ -105,7 +106,7 @@ def test_planner() -> None:
             source="eval",
             **c.get("observation", {}),
         )
-        milestone = Milestone.model_validate({**c["milestone"], "id": c["label"]})
+        statement = StatementContract.model_validate({**c["statement"], "id": c["label"]})
         check = _SingleCheckResult.model_validate({
             **c["checker"],
             "visible_evidence": c["checker"].get("visible_evidence", []),
@@ -113,10 +114,10 @@ def test_planner() -> None:
 
         try:
             result = run_planner(
-                milestone, check, observation,
-                _build_history(c.get("history", []), milestone.id),
+                statement, check, observation,
+                _build_history(c.get("history", []), statement.id),
                 constraints=c.get("constraints"),
-                prompts=BROWSER_MILESTONE_PROMPTS,
+                prompts=BROWSER_STATEMENT_PROMPTS,
             )
         except Exception as e:
             _report(c["label"], False, f"exception: {e}")

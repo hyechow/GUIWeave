@@ -66,7 +66,7 @@ def test_decomposer_contract_hides_runtime_architecture_terms():
 
     prompt = load_prompt_text("task.orchestrator.decomposer")
     schema = json.dumps(_PlanDraft.model_json_schema(), ensure_ascii=False)
-    forbidden = ("milestone", "checker", "planner", "replanner", "selector", "program")
+    forbidden = ("supervisor", "checker", "planner", "replanner", "selector", "program")
 
     for source_name, source in (("prompt", prompt), ("schema", schema)):
         for term in forbidden:
@@ -87,7 +87,7 @@ def test_prompt_eval_suites_point_to_existing_paths():
 
 def test_migrated_prompt_constants_load_from_registry():
     from gui_agent.adapters.browser.router_prompt import BROWSER_ROUTER_SYSTEM
-    from gui_agent.adapters.browser.supervisor.milestone.prompts import PLAN_PROMPT
+    from gui_agent.adapters.browser.supervisor.statement.prompts import PLAN_PROMPT
     from gui_agent.adapters.iphone.policies.structured_output import SYSTEM_PROMPT
     from gui_agent.core.llm.reader import SYSTEM_PROMPT as READER_PROMPT
     from gui_agent.core.self_learning.app_summary import (
@@ -96,7 +96,7 @@ def test_migrated_prompt_constants_load_from_registry():
     )
     from gui_agent.core.self_learning.manual_pdf import _SECTION_SYSTEM as SECTION_SYS
 
-    assert PLAN_PROMPT == load_prompt_text("task.milestone.browser.planner")
+    assert PLAN_PROMPT == load_prompt_text("task.statement.browser.planner")
     assert SYSTEM_PROMPT == load_prompt_text("task.action_policy.iphone")
     assert BROWSER_ROUTER_SYSTEM == load_prompt_text("task.router.browser")
     assert READER_PROMPT == load_prompt_text("task.reader.screenshot_text")

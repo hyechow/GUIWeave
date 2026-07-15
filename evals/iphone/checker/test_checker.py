@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.core.supervisor.milestone.model_io import run_checker
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.supervisor.statement.model_io import run_checker
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -33,7 +33,7 @@ def _report(label: str, ok: bool, detail: str = "") -> None:
     print(line)
 
 
-def _build_history(milestone_id: str, instructions: list[dict | str]) -> list[PolicyTurn]:
+def _build_history(statement_id: str, instructions: list[dict | str]) -> list[PolicyTurn]:
     """Build minimal PolicyTurn history from a list of instruction dicts or strings.
 
     Each entry can be a plain string (instruction text) or a dict with keys:
@@ -55,10 +55,8 @@ def _build_history(milestone_id: str, instructions: list[dict | str]) -> list[Po
             supervisor=SupervisorStep(
                 should_act=True,
                 instruction=inst,
-                stop=False,
-                goal_completed=False,
                 summary=summary,
-                milestone_id=milestone_id,
+                statement_id=statement_id,
             ),
             executed=executed,
         ))
@@ -71,15 +69,15 @@ def test_checker() -> None:
     for c in cases:
         png_bytes = (PROJECT_ROOT / c["screenshot"]).read_bytes()
         observation = Observation(png_bytes=png_bytes, source="eval")
-        m = c["milestone"]
-        milestone = Milestone.model_validate({**m, "id": c["label"]})
+        m = c["statement"]
+        statement = StatementContract.model_validate({**m, "id": c["label"]})
         history = _build_history(c["label"], c.get("history", []))
 
         buf = io.StringIO()
         try:
             with redirect_stdout(buf):
                 result = run_checker(
-                    milestone, observation, history,
+                    statement, observation, history,
                     app_name=m["app_name"],
                     task_type=m.get("task_type", "action"),
                     constraints=c.get("constraints", []),

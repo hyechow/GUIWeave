@@ -4,11 +4,11 @@ from gui_agent.core.run.instruction_similarity import instruction_entities, inst
 from gui_agent.core.run.progress_monitor import ProgressMonitor
 
 
-def _turn(instruction: str, *, milestone_id: str = "detail", summary: str = ""):
+def _turn(instruction: str, *, statement_id: str = "detail", summary: str = ""):
     return SimpleNamespace(
         supervisor=SimpleNamespace(
             instruction=instruction,
-            milestone_id=milestone_id,
+            statement_id=statement_id,
             summary=summary,
         )
     )

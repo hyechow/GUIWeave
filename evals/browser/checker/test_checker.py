@@ -1,6 +1,6 @@
 """Browser checker eval: validates SingleCheck judgments against labeled cases.
 
-Mirrors evals/android/checker/test_checker.py with BROWSER_MILESTONE_PROMPTS, plus two
+Mirrors evals/android/checker/test_checker.py with BROWSER_STATEMENT_PROMPTS, plus two
 browser-specific assertion kinds:
 
   - ``missing_contains``: a pending field MUST be listed in missing_evidence — the checker
@@ -29,11 +29,11 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn, SupervisorStep
 from gui_agent.core.self_learning.app_summary import KNOWLEDGE_DIR
-from gui_agent.core.supervisor.milestone.model_io import run_checker
+from gui_agent.core.supervisor.statement.model_io import run_checker
 from gui_agent.adapters.browser.actions import BrowserActionDecision
-from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
+from gui_agent.adapters.browser.supervisor.statement.prompts import BROWSER_STATEMENT_PROMPTS
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
@@ -46,7 +46,7 @@ def _app_check_knowledge(c: dict) -> str:
     which is the point: the rule lives in the dynamic layer, not the static prompt)."""
     if not c.get("with_app_check"):
         return ""
-    p = KNOWLEDGE_DIR / "browser" / c["milestone"].get("app_name", "") / "_check.md"
+    p = KNOWLEDGE_DIR / "browser" / c["statement"].get("app_name", "") / "_check.md"
     return p.read_text(encoding="utf-8").strip() if p.exists() else ""
 
 
@@ -61,8 +61,9 @@ def _build_history(entries: list[dict]) -> list[PolicyTurn]:
     turns = []
     for h in entries:
         sv = SupervisorStep(
-            should_act=True, instruction=h["instruction"], stop=False,
-            goal_completed=False, summary=h.get("summary", ""),
+            should_act=True,
+            instruction=h["instruction"],
+            summary=h.get("summary", ""),
         )
         ad = BrowserActionDecision.model_validate({"action": h["action"]}) if h.get("action") else None
         turns.append(PolicyTurn(
@@ -139,13 +140,13 @@ def test_checker() -> None:
             source="eval",
             **c.get("observation", {}),
         )
-        m = c["milestone"]
-        milestone = Milestone.model_validate({**m, "id": c["label"]})
+        m = c["statement"]
+        statement = StatementContract.model_validate({**m, "id": c["label"]})
         extra = c.get("extra", "")
         if c.get("with_route_identity_evidence"):
-            from gui_agent.core.supervisor.milestone.execution_scope import route_identity_evidence
+            from gui_agent.core.supervisor.statement.execution_scope import route_identity_evidence
 
-            hint = route_identity_evidence(milestone, observation)
+            hint = route_identity_evidence(statement, observation)
             extra = f"{extra}\n{hint}".strip()
 
         expected = c["expected"]
@@ -157,12 +158,12 @@ def test_checker() -> None:
             try:
                 with redirect_stdout(buf):
                     result = run_checker(
-                        milestone, observation, _build_history(c.get("history", [])),
+                        statement, observation, _build_history(c.get("history", [])),
                         app_name=m.get("app_name", ""),
                         task_type=m.get("task_type", "action"),
                         constraints=c.get("constraints", []),
                         extra=extra,
-                        prompts=BROWSER_MILESTONE_PROMPTS,
+                        prompts=BROWSER_STATEMENT_PROMPTS,
                         check_knowledge=_app_check_knowledge(c),
                         state_trace_text=c.get("state_trace", ""),
                         last_action_response=c.get("last_action_response", ""),

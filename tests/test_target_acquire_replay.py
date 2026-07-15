@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from gui_agent.core.schemas import StatementContract
-from gui_agent.core.supervisor.milestone.acquisition import TargetAcquireController
+from gui_agent.core.supervisor.statement.acquisition import TargetAcquireController
 
 
 FIXTURE = (
@@ -18,7 +18,7 @@ def _controls(turn: int) -> list[dict]:
     return raw["observation"]["form_controls"]
 
 
-def _milestone() -> StatementContract:
+def _statement() -> StatementContract:
     return StatementContract(
         id="s1",
         name="configure product options",
@@ -31,15 +31,15 @@ def _milestone() -> StatementContract:
 
 
 def test_real_170119_frames_keep_one_target_directed_acquire_session() -> None:
-    milestone = _milestone()
+    statement = _statement()
 
-    assert milestone.target_controls == ["configurations_collection"]
-    assert milestone.target_values == {"Color": "green", "Size": "XXXL"}
+    assert statement.target_controls == ["configurations_collection"]
+    assert statement.target_values == {"Color": "green", "Size": "XXXL"}
 
     controller = TargetAcquireController()
-    first = controller.decide(_controls(23), milestone, scope="row:product-1492")
-    second = controller.decide(_controls(24), milestone, scope="row:product-1492")
-    third = controller.decide(_controls(25), milestone, scope="row:product-1492")
+    first = controller.decide(_controls(23), statement, scope="row:product-1492")
+    second = controller.decide(_controls(24), statement, scope="row:product-1492")
+    third = controller.decide(_controls(25), statement, scope="row:product-1492")
 
     assert [first.status, second.status, third.status] == [
         "act",
@@ -56,13 +56,13 @@ def test_real_170119_frames_keep_one_target_directed_acquire_session() -> None:
 
 
 def test_real_170119_no_progress_exhausts_instead_of_drifting_to_fields() -> None:
-    milestone = _milestone()
+    statement = _statement()
     controller = TargetAcquireController()
 
-    controller.decide(_controls(23), milestone, scope="row:product-1492")
-    controller.decide(_controls(24), milestone, scope="row:product-1492")
-    controller.decide(_controls(25), milestone, scope="row:product-1492")
-    exhausted = controller.decide(_controls(26), milestone, scope="row:product-1492")
+    controller.decide(_controls(23), statement, scope="row:product-1492")
+    controller.decide(_controls(24), statement, scope="row:product-1492")
+    controller.decide(_controls(25), statement, scope="row:product-1492")
+    exhausted = controller.decide(_controls(26), statement, scope="row:product-1492")
 
     assert exhausted.status == "exhausted"
     assert exhausted.target_labels == ("Configurations",)

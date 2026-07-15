@@ -1,14 +1,14 @@
-"""Deterministic tests for Feasibility Guard (runtime milestone-feasibility) — prompt, extraction, wiring.
+"""Deterministic tests for Feasibility Guard (runtime statement-feasibility) — prompt, extraction, wiring.
 
-The LLM judgment itself is validated offline (scripts/milestone_feasibility_113.py); here we pin the
+The LLM judgment itself is validated offline (scripts/statement_feasibility_113.py); here we pin the
 device-free parts: the prompt asset's load-bearing rules, the control-inventory extraction, and that
 judge_feasibility threads the right context into the model call."""
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-import gui_agent.core.supervisor.milestone.feasibility as feas
-from gui_agent.core.supervisor.milestone.feasibility import (
+import gui_agent.core.supervisor.statement.feasibility as feas
+from gui_agent.core.supervisor.statement.feasibility import (
     FeasibilityVerdict,
     control_presence_text,
     judge_feasibility,
@@ -100,7 +100,7 @@ def test_judge_feasibility_threads_context_and_returns_verdict(monkeypatch):
     )
     assert v.feasible is False and v.directive == "逐条钻取评论详情"
     assert captured["schema"] is FeasibilityVerdict
-    assert "设置 Rating<=3 筛选" in captured["human"]       # milestone goal threaded
+    assert "设置 Rating<=3 筛选" in captured["human"]       # statement goal threaded
     assert "Product: input" in captured["human"]            # control inventory threaded
     assert "评分只在评论详情里" in captured["human"]         # knowledge threaded
     assert captured["system"] == feas._SYSTEM

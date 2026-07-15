@@ -2,7 +2,7 @@
   {
     "label": "picker-095209-T04-小时09到06应先调小时列decrease",
     "screenshot": "evals/android/planner/screenshots/alarm_picker_095209_t04_0952.png",
-    "milestone": {
+    "statement": {
       "name": "设置闹钟时间为上午6点30分",
       "description": "在新建闹钟页，将时间滚轮设置为上午 06:30",
       "success_condition": "时间滚轮中间高亮行显示为上午 06:30",
@@ -28,7 +28,7 @@
   {
     "label": "picker-095209-T11-分钟52到30应调分钟列decrease",
     "screenshot": "evals/android/planner/screenshots/alarm_picker_095209_t11_0652.png",
-    "milestone": {
+    "statement": {
       "name": "设置闹钟时间为上午6点30分",
       "description": "在新建闹钟页，将时间滚轮设置为上午 06:30",
       "success_condition": "时间滚轮中间高亮行显示为上午 06:30",
@@ -54,7 +54,7 @@
   {
     "label": "picker-095209-T17-分钟22到30应反向调分钟列increase",
     "screenshot": "evals/android/planner/screenshots/alarm_picker_095209_t17_0622.png",
-    "milestone": {
+    "statement": {
       "name": "设置闹钟时间为上午6点30分",
       "description": "在新建闹钟页，将时间滚轮设置为上午 06:30",
       "success_condition": "时间滚轮中间高亮行显示为上午 06:30",
@@ -80,7 +80,7 @@
   {
     "label": "picker-122343-T12-小时分钟已对但下午应先调时段列",
     "screenshot": "evals/android/planner/screenshots/alarm_picker_122343_t12_0630pm.png",
-    "milestone": {
+    "statement": {
       "name": "设置闹钟时间为上午6点30分",
       "description": "在新建闹钟页，将时间滚轮设置为上午/AM 06:30",
       "success_condition": "时间滚轮中间高亮行显示为上午/AM 06:30",
@@ -106,7 +106,7 @@
   {
     "label": "picker-111632-T12-时间已到位应点击保存而非继续滚分钟",
     "screenshot": "evals/android/planner/screenshots/alarm_picker_111632_t12_0630.png",
-    "milestone": {
+    "statement": {
       "name": "确认上午时段并保存",
       "description": "确保闹钟设定为上午（AM），然后点击保存按钮完成创建。",
       "success_condition": "闹钟列表中出现了设定的“06:30 AM”闹钟条目，且状态为开启。",

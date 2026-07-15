@@ -9,7 +9,7 @@ def _turn(index, *, instance_id, statement_id, outcome_phase=None, reads=None, s
         "statement": {"id": statement_id, "name": f"stmt {statement_id}",
                        "kind": "action", "success_condition": f"done {statement_id}"},
         "supervisor": {
-            "milestone_id": statement_id, "summary": summary,
+            "statement_id": statement_id, "summary": summary,
             **({"outcome": {"phase": outcome_phase, "reads": reads or {}}} if outcome_phase else {}),
         },
     }

@@ -1,10 +1,10 @@
 """First-class DSL functions + pure compute: the DSL program is an ordinary code file —
 control flow (functions / call / if / foreach), pure compute (deterministic derivation), and
-linear GUI milestones (Run). The whole file (main + functions) is produced in ONE decompose;
+linear GUI statements (Run). The whole file (main + functions) is produced in ONE decompose;
 each function is decomposed ONCE and called N times (no per-row re-decompose).
 
 Legacy 185 regression shape: a function resolve_parent_material(name) derives the base via a
-Compute (NOT a GUI milestone), runs one linear GUI milestone, returns material; a foreach calls it
+Compute (NOT a GUI statement), runs one linear GUI statement, returns material; a foreach calls it
 per row. The current 185 plan adds self-first + Action_url below; this legacy fixture still pins the
 generic function/compute/call mechanics.
 """
@@ -36,9 +36,9 @@ def _185_program() -> Program:
         goal="material of products with 3 units left",
         functions=[FunctionDef(
             name="resolve_parent_material", params=["name"], returns=["material"], body=[
-                # PURE compute (interpreter derives the base; NOT a GUI milestone the agent runs)
+                # PURE compute (interpreter derives the base; NOT a GUI statement the agent runs)
                 Compute(var="base", expr="re_sub('-[A-Za-z]+-[A-Za-z]+$', '', name)"),
-                # ONE linear GUI milestone (search base → open Configurable parent → read material)
+                # ONE linear GUI statement (search base → open Configurable parent → read material)
                 Read(var="d",  returns=["material"],
                     name="在 Products 搜 {base}，打开 Type=Configurable 父产品，读 Material 主材质"),
             ])],
@@ -55,11 +55,11 @@ def _185_program() -> Program:
 def test_185_function_call_per_row_with_compute():
     program = _185_program()
     rows = [{"Name": "Minerva LumaTech V-Tee-XS-Blue"}, {"Name": "Eos V-Neck Hoodie-S-Blue"}]
-    seen_milestones: list[str] = []
+    seen_statements: list[str] = []
 
     def execute(run: Run) -> StatementOutcome:
         if run.kind == "read":
-            seen_milestones.append(run.name)  # the {base} was substituted by the interpreter
+            seen_statements.append(run.name)  # the {base} was substituted by the interpreter
             brand = "Minerva" if "Minerva" in run.name else "Eos"
             return StatementOutcome.completed("", reads={"material": _MATERIAL_OF[brand]})
         return StatementOutcome.completed("")
@@ -68,8 +68,8 @@ def test_185_function_call_per_row_with_compute():
     drive(interp, execute)
 
     # the Compute derived each base deterministically and the interpreter substituted it into the
-    # milestone — the agent never saw "-SIZE-COLOR" or had to derive anything itself
-    assert seen_milestones == [
+    # statement — the agent never saw "-SIZE-COLOR" or had to derive anything itself
+    assert seen_statements == [
         "在 Products 搜 Minerva LumaTech V-Tee，打开 Type=Configurable 父产品，读 Material 主材质",
         "在 Products 搜 Eos V-Neck Hoodie，打开 Type=Configurable 父产品，读 Material 主材质",
     ]
@@ -82,9 +82,9 @@ def test_185_function_call_per_row_with_compute():
 
 def test_compute_accepts_braced_scalar_refs():
     # Live 185 regression: the decomposer wrote the compute expr with the SAME `{name}` template
-    # convention it uses in every milestone — `{sku}.rsplit(...)` instead of bare `sku.rsplit(...)`.
+    # convention it uses in every statement — `{sku}.rsplit(...)` instead of bare `sku.rsplit(...)`.
     # To safe_eval `{sku}` is a set literal → SafeEvalError → base silently empty → the search
-    # milestone ran with an empty keyword. The interpreter must treat `{sku}` and `sku` alike.
+    # statement ran with an empty keyword. The interpreter must treat `{sku}` and `sku` alike.
     program = Program(
         goal="g",
         functions=[FunctionDef(name="resolve", params=["sku"], returns=["base"], body=[
@@ -235,7 +235,7 @@ def test_parent_fallback_only_when_self_empty():
 
 
 def test_validator_flags_dead_conditional_in_function():
-    # "编排逻辑写死" root cause: the self-first `if` reads self_d, but the self-read milestone binds a
+    # "编排逻辑写死" root cause: the self-first `if` reads self_d, but the self-read statement binds a
     # DIFFERENT var → self_d is never produced → condition is always empty → every row falls to else →
     # degenerates to hardcoded-always-parent. validate_program now walks function bodies, so the
     # existing IF_COND_VAR_NOT_IN_SCOPE rule catches the var mismatch and triggers a repair retry.
@@ -410,7 +410,7 @@ def test_safe_eval_numeric_derivation():
 def test_compute_reads_env_run_result_fields():
     # 778 runtime root cause: the compute expr references a prior read's field the natural way —
     # product_detail['current_price'] — but the eval scope only held scalars, so it raised
-    # 未知变量 → silently "" → the fill milestone lost its concrete value and the planner
+    # 未知变量 → silently "" → the fill statement lost its concrete value and the planner
     # hallucinated one (typed 200.00 instead of current×0.865). Env reads must be in scope.
     program = Program(goal="降价13.5%", statements=[
         Run(kind="navigation", var="product_detail", returns=["current_price"],
@@ -448,7 +448,7 @@ def test_fill_fails_fast_on_empty_compute_scalar():
         return StatementOutcome.completed("")
 
     reply = drive(Interpreter(program), execute)
-    assert executed == []  # the gap-named milestone never reached the executor
+    assert executed == []  # the gap-named statement never reached the executor
     assert "无法执行" in reply and "new_price" in reply
 
 
@@ -467,7 +467,7 @@ def test_safe_eval_coerces_numeric_strings_for_arithmetic():
 def test_compute_scope_exposes_read_fields_bare_and_dotted():
     # The decomposer references a prior read's field BOTH ways nondeterministically: bare
     # `current_price` and `variant_row['current_price']`. Both must resolve (WebArena 778: the bare
-    # form silently produced "" and the fill milestone lost its value).
+    # form silently produced "" and the fill statement lost its value).
     for expr in ("round(current_price * 0.865, 2)",
                  "round(variant_row['current_price'] * 0.865, 2)"):
         program = Program(goal="降价", statements=[
@@ -491,7 +491,7 @@ def test_compute_scope_exposes_read_fields_bare_and_dotted():
 
 def test_compute_template_field_braces_in_foreach_body():
     # Offline 778 v3 wrote the body compute as `{p[price]} * 0.865` (the SAME template convention as
-    # milestone names). To safe_eval that's a set literal → SafeEvalError → "". _compute normalizes
+    # statement names). To safe_eval that's a set literal → SafeEvalError → "". _compute normalizes
     # `{var[field]}` → `var['field']`; with the loop var bound per row it must fill concrete values.
     program = Program(goal="降价", statements=[
         ForEach(var="p", target="size28 变体行", returns=["sku", "price"], body=[

@@ -1,7 +1,7 @@
 """Unit: an analysis task with empty content_notes must return a fixed no-data reply
 WITHOUT calling the LLM — never fabricate a number.
 
-Regression — session 20260607_100322: the collection milestone force-completed with
+Regression — session 20260607_100322: the collection statement force-completed with
 zero scrolls, so content_notes ended empty; generate_reply then fell through to the
 ACTION prompt and the LLM hallucinated "共花费 456.80 元" (smaller than the visible
 sum alone). The fix routes analysis + empty-notes to a deterministic honest reply.

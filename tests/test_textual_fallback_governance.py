@@ -21,7 +21,7 @@ def test_textual_fallback_heuristic_registry_has_metadata():
         assert sample.get("kind")
         assert sample.get("owner")
         assert sample.get("retire_when")
-        assert sample.get("trigger") or sample.get("statements") or sample.get("milestone_name")
+        assert sample.get("trigger") or sample.get("statements") or sample.get("statement_name")
         code = sample.get("validator_code")
         if code is not None:
             assert code in TEXTUAL_FALLBACK_VALIDATOR_CODES

@@ -1,11 +1,11 @@
 """Android checker eval: validates SingleCheck status against labeled cases.
 
 Mirrors evals/iphone/checker/test_checker.py but drives the android checker (injects
-``ANDROID_MILESTONE_PROMPTS`` into ``run_checker``).
+``ANDROID_STATEMENT_PROMPTS`` into ``run_checker``).
 
 Seeded from the 2026-06-10 alarm run (logs/.../android/20260610_220003) where the checker
 HALLUCINATED a wheel time picker's value: the screen showed 下午 06:00 (minute 00, PM) but
-the checker declared "时间已调整为06:30" and marked the set-time milestone done, jumping to
+the checker declared "时间已调整为06:30" and marked the set-time statement done, jumping to
 the save step and derailing the whole run. These cases lock in: read the picker value
 faithfully — a value that is not 06:30 must stay in_progress, never a hallucinated done.
 
@@ -25,9 +25,9 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from gui_agent.core.schemas import Milestone, Observation
-from gui_agent.core.supervisor.milestone.model_io import run_checker
-from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
+from gui_agent.core.schemas import StatementContract, Observation
+from gui_agent.core.supervisor.statement.model_io import run_checker
+from gui_agent.adapters.android.supervisor.statement.prompts import ANDROID_STATEMENT_PROMPTS
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 
@@ -51,18 +51,18 @@ def test_checker() -> None:
     for c in cases:
         png = (PROJECT_ROOT / c["screenshot"]).read_bytes()
         observation = Observation(png_bytes=png, source="eval")
-        m = c["milestone"]
-        milestone = Milestone.model_validate({**m, "id": c["label"]})
+        m = c["statement"]
+        statement = StatementContract.model_validate({**m, "id": c["label"]})
 
         buf = io.StringIO()
         try:
             with redirect_stdout(buf):
                 result = run_checker(
-                    milestone, observation, [],
+                    statement, observation, [],
                     app_name=m.get("app_name", ""),
                     task_type=m.get("task_type", "action"),
                     constraints=c.get("constraints", []),
-                    prompts=ANDROID_MILESTONE_PROMPTS,
+                    prompts=ANDROID_STATEMENT_PROMPTS,
                 )
         except Exception as e:  # noqa: BLE001
             _report(c["label"], False, f"exception: {e}")

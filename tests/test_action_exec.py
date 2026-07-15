@@ -167,7 +167,7 @@ def test_executor_does_not_apply_legacy_commit_suppression(tmp_path):
     action = BaseAction(action_type="tap", x=10, y=20, description="点击保存")
     decision = BaseActionDecision(action=action)
     step = _step(decision).model_copy(
-        update={"atomic_role": "commit", "milestone_id": "m1"}
+        update={"atomic_role": "commit", "statement_id": "m1"}
     )
     executor = _Executor()
 
@@ -234,7 +234,7 @@ def test_target_directed_iterate_scroll_dispatches_once_without_boundary_probe(t
     )
     decision = BaseActionDecision(action=action)
     step = _step(decision).model_copy(update={
-        "milestone_id": "m-acquire",
+        "statement_id": "m-acquire",
         "execution_scope": "row:42",
         "atomic_role": "iterate",
         "action_family": "iterate",

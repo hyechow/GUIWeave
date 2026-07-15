@@ -22,10 +22,10 @@ from gui_agent.core.schemas import (
     PolicyTurn,
     SupervisorStep,
 )
-from gui_agent.core.supervisor.milestone import policy as policy_module
-from gui_agent.core.supervisor.milestone.evidence import action_lifecycle_claims, checker_claim
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-from gui_agent.core.supervisor.milestone.schemas import _PlanResult, _SingleCheckResult
+from gui_agent.core.supervisor.statement import policy as policy_module
+from gui_agent.core.supervisor.statement.evidence import action_lifecycle_claims, checker_claim
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+from gui_agent.core.supervisor.statement.schemas import _PlanResult, _SingleCheckResult
 
 
 def test_checker_payload_requires_explicit_effect_status() -> None:
@@ -47,9 +47,9 @@ def _step(
         should_act=True,
         instruction="点击 Save",
         summary="",
-        milestone_id="m1",
+        statement_id="m1",
         execution_scope=scope,
-        milestone_kind=kind,
+        statement_kind=kind,
         atomic_role=role,
     )
 
@@ -117,9 +117,9 @@ def test_write_key_keeps_structural_group_identity():
     assert semantic_action_key(first, action) != semantic_action_key(second, action)
 
 
-def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch):
+def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch):
     """Replay 20260712_122035 T10-T12: matching draft controls are not persistence."""
-    milestone = StatementContract(
+    statement = StatementContract(
         id="m1",
         name="ensure option member",
         description="",
@@ -141,8 +141,8 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
             should_act=True,
             instruction=f"write {control}",
             summary="",
-            milestone_id="m1",
-            milestone_kind="action",
+            statement_id="m1",
+            statement_kind="action",
             execution_scope=scope,
             atomic_role="write",
             action_family="input",
@@ -201,8 +201,8 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
         ],
     )
     checker_calls: list[int] = []
-    policy = MilestoneSupervisorPolicy()
-    policy.begin_statement(milestone, instance_id="test:action-signal")
+    policy = StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="test:action-signal")
     policy._single_check = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
         checker_calls.append(1)
         or _SingleCheckResult(
@@ -221,7 +221,7 @@ def test_ensure_draft_fields_require_commit_before_milestone_advance(monkeypatch
     )
     monkeypatch.setattr(policy_module, "is_loading_frame", lambda _observation: False)
 
-    step = policy._run_single_turn(milestone, observation, history)
+    step = policy._run_single_turn(statement, observation, history)
 
     assert checker_calls == [1]
     assert step.outcome is None
@@ -295,11 +295,11 @@ def test_make_turn_records_concrete_write_value():
 
 
 def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_turn():
-    policy = MilestoneSupervisorPolicy()
+    policy = StatementSupervisorPolicy()
     dispatched = _turn(index=1, step=_step())
     context = PolicyContext(
         goal="g",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="action",
         journal={"events": [dispatched]},
     )
@@ -312,12 +312,12 @@ def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_t
         supervisor_step=SupervisorStep(
             should_act=False,
             summary="final state remains incomplete",
-            milestone_id="m1",
+            statement_id="m1",
         ),
         supervisor=policy,
         observation_only=True,
     )
-    context.journal.events.append(observation_turn)
+    context.journal.append_turn(observation_turn)
 
     assert observation_turn.operation_mode == "observation"
     assert interactive_turn_count(context) == 1
@@ -325,16 +325,16 @@ def test_observation_only_verdict_reconciles_pending_dispatch_without_spending_t
     assert _turn_budget_mode(context, max_turns=1) == "stop"
 
 
-def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
-    milestone = StatementContract(
+def test_reconcile_never_invokes_planner_for_incomplete_statement(monkeypatch):
+    statement = StatementContract(
         id="m1",
         name="change target and save",
         description="",
         kind="action",
         success_condition="saved target state is visible",
     )
-    policy = MilestoneSupervisorPolicy()
-    policy.begin_statement(milestone, instance_id="test:action-signal")
+    policy = StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="test:action-signal")
     monkeypatch.setattr(
         policy,
         "_single_check",
@@ -351,7 +351,7 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
         lambda *_args, **_kwargs: pytest.fail("reconcile must not invoke planner"),
     )
     monkeypatch.setattr(
-        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
+        "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _observation: False,
     )
 
@@ -367,15 +367,15 @@ def test_reconcile_never_invokes_planner_for_incomplete_milestone(monkeypatch):
 
 
 def test_legacy_effect_does_not_reenter_current_lifecycle_evidence():
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="m1",
         name="apply target filter",
         description="",
         success_condition="target filter is applied",
         kind="filter",
     )
-    commit = _step(scope="milestone:m1")
+    commit = _step(scope="statement:m1")
     dispatched = _turn(index=1, step=commit)
     signal = dispatched.action_signal
     assert signal is not None
@@ -391,9 +391,9 @@ def test_legacy_effect_does_not_reenter_current_lifecycle_evidence():
 
     assert signal.execution == "dispatched"
     claims = action_lifecycle_claims(
-        milestone,
+        statement,
         [dispatched],
-        scope="milestone:m1",
+        scope="statement:m1",
     )
     assert all(item.domain != "effect.state" for item in claims)
 
@@ -405,15 +405,15 @@ def test_unmet_checker_state_is_not_a_failure():
         summary="target remains pending",
         effect_status="unmet",
     )
-    assert checker_claim(check, scope="milestone:m1").value == "unmet"
+    assert checker_claim(check, scope="statement:m1").value == "unmet"
 
 
 @pytest.mark.parametrize("checker_status", ["in_progress", "done"])
 def test_terminal_dispatch_without_persistence_response_waits_for_observation(
     monkeypatch, checker_status
 ):
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="m1",
         name="保存记录",
         description="",
@@ -422,15 +422,15 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
         effect_mode="transform",
         persistence="explicit_commit",
     )
-    policy.begin_statement(milestone, instance_id="test:action-signal")
-    step = _step(scope="milestone:m1")
-    write_step = _step(scope="milestone:m1", role="write")
+    policy.begin_statement(statement, instance_id="test:action-signal")
+    step = _step(scope="statement:m1")
+    write_step = _step(scope="statement:m1", role="write")
     history = [
         _turn(index=1, step=write_step, role="write"),
         _turn(index=2, step=step),
     ]
     monkeypatch.setattr(
-        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
+        "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _obs: False,
     )
     monkeypatch.setattr(
@@ -445,7 +445,7 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
     )
 
     result = policy._run_single_turn(
-        milestone,
+        statement,
         Observation(png_bytes=b"x", source="browser", url="http://x/record/65"),
         history,
     )
@@ -455,8 +455,8 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
 
 
 def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypatch):
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="m1",
         name="将选项集合持久化包含 XXXL",
         description="",
@@ -465,7 +465,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
         effect_mode="transform",
         persistence="explicit_commit",
     )
-    policy.begin_statement(milestone, instance_id="test:action-signal")
+    policy.begin_statement(statement, instance_id="test:action-signal")
     source_step = _step(scope="row:attribute/144")
     history = [
         _turn(index=1, step=_step(scope="row:attribute/144", role="write"), role="write"),
@@ -473,7 +473,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
     ]
     policy._monitor.observe_effect("http://x/attribute/144", "draft")
     monkeypatch.setattr(
-        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
+        "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _obs: False,
     )
     checker_calls: list[int] = []
@@ -490,7 +490,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
     monkeypatch.setattr(policy, "_single_check", _unverified_feedback)
 
     result = policy._run_single_turn(
-        milestone,
+        statement,
         Observation(
             png_bytes=b"x",
             source="browser",
@@ -511,8 +511,8 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
 
 def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
     """A destination page cannot disprove source-local fields that disappeared on Save."""
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract(
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract(
         id="m1",
         name="persist one record",
         description="",
@@ -523,7 +523,7 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
         target_controls=["record_fields"],
         target_values={"Primary Value": "A", "Secondary Value": "B"},
     )
-    policy.begin_statement(milestone, instance_id="test:action-signal")
+    policy.begin_statement(statement, instance_id="test:action-signal")
     write = _turn(
         index=1,
         step=_step(scope="row:record/7", role="write"),
@@ -540,7 +540,7 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
     history = [write, _turn(index=2, step=_step(scope="row:record/7"))]
     policy._monitor.observe_effect("http://x/record/7", "draft")
     monkeypatch.setattr(
-        "gui_agent.core.supervisor.milestone.policy.is_loading_frame",
+        "gui_agent.core.supervisor.statement.policy.is_loading_frame",
         lambda _obs: False,
     )
     monkeypatch.setattr(
@@ -557,7 +557,7 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
     )
 
     result = policy._run_single_turn(
-        milestone,
+        statement,
         Observation(
             png_bytes=b"destination",
             source="browser",
@@ -629,14 +629,13 @@ def test_final_result_separates_execution_completion_from_outcome_verification(m
     ]
     context = PolicyContext(
         goal="保存记录",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="action",
     )
 
     result = orchestration_result(context, interp, "done", current=None)
 
-    assert result["execution_completed"] is True
-    assert result["goal_completed"] is False
-    assert result["goal_status"] == "accepted_unverified"
-    assert result["orchestrator"]["accepted_unverified"] is True
+    assert result["phase"] == "completed"
+    assert result["verification"] == "accepted_unverified"
+    assert "accepted_unverified" not in result["orchestrator"]
     EffectSignal,

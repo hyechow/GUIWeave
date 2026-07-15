@@ -1,4 +1,4 @@
-"""assemble_messages: the single context entry path for milestone vision calls.
+"""assemble_messages: the single context entry path for statement vision calls.
 
 Locks two things: (1) kept blocks land exactly where the legacy _build_msgs + _inject_* path
 put them (system-prompt tail / human-message head), and (2) budgeting is ONE pass over the

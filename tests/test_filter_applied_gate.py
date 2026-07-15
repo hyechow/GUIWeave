@@ -20,9 +20,9 @@ from gui_agent.core.schemas import (
     SupervisorStep,
 )
 from gui_agent.core.run.turns import make_interactive_turn
-from gui_agent.core.supervisor.milestone.evidence import runtime_filter_intent
-from gui_agent.core.supervisor.milestone.execution_scope import execution_scope_for
-from gui_agent.core.supervisor.milestone.observation_state import (
+from gui_agent.core.supervisor.statement.evidence import runtime_filter_intent
+from gui_agent.core.supervisor.statement.execution_scope import execution_scope_for
+from gui_agent.core.supervisor.statement.observation_state import (
     filter_chips_clean,
     filter_residual_labels,
     filter_state_satisfies_target,
@@ -94,7 +94,7 @@ def test_applied_filters_js_targets_active_filter_chips():
 
 
 def test_runtime_write_intent_matches_actual_keyword_route_without_text_parser():
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "在产品名称字段用精确值『Minerva LumaTech V-Tee』筛选",
         "产品名称精确筛选已应用，records-found 计数可读",
     )
@@ -104,15 +104,15 @@ def test_runtime_write_intent_matches_actual_keyword_route_without_text_parser()
     )
 
     assert filter_state_satisfies_target(
-        {"Keyword": "Minerva LumaTech V-Tee"}, milestone, intent
+        {"Keyword": "Minerva LumaTech V-Tee"}, statement, intent
     ) is True
     assert filter_chips_clean(
-        {"Keyword": "Minerva LumaTech V-Tee"}, milestone, intent
+        {"Keyword": "Minerva LumaTech V-Tee"}, statement, intent
     ) is True
 
 
 def test_runtime_write_refines_semantic_filter_control_for_same_declared_value():
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "在 Name 列用关键词『Minerva』筛选",
         target_values={"Name": "Minerva"},
     )
@@ -122,13 +122,13 @@ def test_runtime_write_refines_semantic_filter_control_for_same_declared_value()
     )
     applied = {"Keyword": "Minerva"}
 
-    assert filter_state_satisfies_target(applied, milestone, intent) is True
-    assert filter_chips_clean(applied, milestone, intent) is True
-    assert filter_residual_labels(applied, milestone, intent) == []
+    assert filter_state_satisfies_target(applied, statement, intent) is True
+    assert filter_chips_clean(applied, statement, intent) is True
+    assert filter_residual_labels(applied, statement, intent) == []
 
 
 def test_observed_filter_state_binds_prepopulated_concrete_control():
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "在 Name 列用关键词『Minerva』筛选",
         target_values={"Name": "Minerva"},
     )
@@ -139,14 +139,14 @@ def test_observed_filter_state_binds_prepopulated_concrete_control():
             "kind": "text_input",
             "value": "Minerva",
         }],
-        milestone,
+        statement,
     )
 
     assert intent == RuntimeFilterIntent("Search by keyword", "Minerva")
 
 
 def test_observed_filter_state_refines_unstructured_runtime_control() -> None:
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "清除精确值后在同一产品名称字段用关键词 'Minerva' 重筛",
         "产品名称关键词筛选已应用且匹配记录非 0 条",
     )
@@ -157,7 +157,7 @@ def test_observed_filter_state_refines_unstructured_runtime_control() -> None:
             "kind": "text_input",
             "value": "Minerva",
         }],
-        milestone,
+        statement,
         RuntimeFilterIntent("Name", "Minerva"),
     )
 
@@ -165,7 +165,7 @@ def test_observed_filter_state_refines_unstructured_runtime_control() -> None:
 
 
 def test_observed_filter_state_does_not_override_runtime_value() -> None:
-    milestone = _filter_ms("筛选目标记录")
+    statement = _filter_ms("筛选目标记录")
     intent = observed_filter_intent(
         {"Keyword": "LumaTech"},
         [{
@@ -173,7 +173,7 @@ def test_observed_filter_state_does_not_override_runtime_value() -> None:
             "kind": "text_input",
             "value": "LumaTech",
         }],
-        milestone,
+        statement,
         RuntimeFilterIntent("Name", "Minerva"),
     )
 
@@ -181,7 +181,7 @@ def test_observed_filter_state_does_not_override_runtime_value() -> None:
 
 
 def test_observed_filter_state_rejects_ambiguous_concrete_controls():
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "筛选目标值",
         target_values={"Name": "same"},
     )
@@ -191,25 +191,25 @@ def test_observed_filter_state_rejects_ambiguous_concrete_controls():
             {"label": "Search by keyword", "value": "same"},
             {"label": "Keyword search", "value": "same"},
         ],
-        milestone,
+        statement,
     )
 
     assert intent is None
 
 
 def test_commit_receipt_carries_filter_intent_when_control_was_prepopulated():
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "在 Name 列用关键词『Minerva』筛选",
         target_values={"Name": "Minerva"},
     )
-    scope = f"milestone:{milestone.id}"
+    scope = f"statement:{statement.id}"
     step = SupervisorStep(
         should_act=True,
         instruction="按回车键提交",
         summary="submit populated filter",
-        milestone_id=milestone.id,
+        statement_id=statement.id,
         execution_scope=scope,
-        milestone_kind="filter",
+        statement_kind="filter",
         atomic_role="commit",
         action_family="input",
         target_control="Search by keyword",
@@ -227,12 +227,12 @@ def test_commit_receipt_carries_filter_intent_when_control_was_prepopulated():
     )
 
     assert runtime_filter_intent(
-        milestone, [turn], scope=scope
+        statement, [turn], scope=scope
     ) == RuntimeFilterIntent("Search by keyword", "Minerva")
 
 
 def test_runtime_write_cannot_refine_ambiguous_equal_declared_values():
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "设置两个独立筛选字段",
         target_values={"Primary": "same", "Secondary": "same"},
     )
@@ -242,12 +242,12 @@ def test_runtime_write_cannot_refine_ambiguous_equal_declared_values():
     )
 
     assert filter_state_satisfies_target(
-        {"Search": "same"}, milestone, intent
+        {"Search": "same"}, statement, intent
     ) is False
 
 
 def test_runtime_write_cannot_override_declared_filter_value():
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "在 Name 列筛选『Minerva』",
         target_values={"Name": "Minerva"},
     )
@@ -257,27 +257,27 @@ def test_runtime_write_cannot_override_declared_filter_value():
     )
 
     assert filter_state_satisfies_target(
-        {"Keyword": "LumaTech"}, milestone, intent
+        {"Keyword": "LumaTech"}, statement, intent
     ) is False
     assert filter_residual_labels(
-        {"Keyword": "LumaTech"}, milestone, intent
+        {"Keyword": "LumaTech"}, statement, intent
     ) == ["Keyword"]
 
 
 def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "在产品名称字段用精确值『Minerva LumaTech V-Tee』筛选",
         "产品名称精确筛选已应用，records-found 计数可读",
         target_values={"Name": "Minerva LumaTech V-Tee"},
     )
-    milestone = milestone.model_copy(update={"returns": ["match_count"]})
+    statement = statement.model_copy(update={"returns": ["match_count"]})
     write_step = SupervisorStep(
         should_act=True,
         instruction="type exact value",
         summary="write",
-        milestone_id=milestone.id,
-        execution_scope=f"milestone:{milestone.id}",
-        milestone_kind="filter",
+        statement_id=statement.id,
+        execution_scope=f"statement:{statement.id}",
+        statement_kind="filter",
         atomic_role="write",
         action_family="input",
         target_control="Search by keyword",
@@ -303,8 +303,8 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
 
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
-    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.begin_statement(milestone, instance_id="test:filter")
+    policy = supervisor_policy_mod.StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="test:filter")
     observation = Observation(
         png_bytes=b"x",
         source="browser",
@@ -313,7 +313,7 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
     )
     write_turn.statement_instance_id = policy._active_instance_id
     write_turn.supervisor.execution_scope = execution_scope_for(
-        milestone,
+        statement,
         observation,
         instance_id=policy._active_instance_id,
     )
@@ -330,7 +330,7 @@ def test_runtime_write_intent_zero_result_completes_before_checker(monkeypatch):
 
 
 def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatch):
-    milestone = _filter_ms(
+    statement = _filter_ms(
         "在搜索框输入精确值 'Minerva LumaTech V-Tee' 并提交搜索",
         "精确筛选已应用，records-found 计数可读",
         target_values={"Keyword": "Minerva LumaTech V-Tee"},
@@ -344,8 +344,8 @@ def test_zero_result_exact_search_can_finish_before_explicit_fallback(monkeypatc
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    policy = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    policy.begin_statement(milestone, instance_id="test:filter")
+    policy = supervisor_policy_mod.StatementSupervisorPolicy()
+    policy.begin_statement(statement, instance_id="test:filter")
     step = policy.step(
         Observation(
             png_bytes=b"x",
@@ -438,8 +438,8 @@ def test_chips_not_clean_with_leaked_residual():
 
 
 # ── strong-path integration: the gate fires in the real policy.step(), no LLM ───
-import gui_agent.core.supervisor.milestone.llm_runtime as policy_mod  # noqa: E402
-import gui_agent.core.supervisor.milestone.policy as supervisor_policy_mod  # noqa: E402
+import gui_agent.core.supervisor.statement.llm_runtime as policy_mod  # noqa: E402
+import gui_agent.core.supervisor.statement.policy as supervisor_policy_mod  # noqa: E402
 from gui_agent.core.schemas import Observation  # noqa: E402
 
 # A real (non-blank) PNG so is_loading_frame() doesn't short-circuit to a loading frame.
@@ -448,7 +448,7 @@ _FIXTURE_PNG = (
 )
 
 
-def _qty3_filter_milestone() -> StatementContract:
+def _qty3_filter_statement() -> StatementContract:
     return _filter_ms(
         "清除无关筛选，设置 Quantity From=3 且 To=3",
         "网格 Active filters 显示已生效筛选 Quantity: 3 - 3（控件状态达成即可，不需逐行复核库存）。",
@@ -457,7 +457,7 @@ def _qty3_filter_milestone() -> StatementContract:
 
 
 def _run_step(monkeypatch, applied_filters):
-    """Drive a real MilestoneSupervisorPolicy.step() for the qty=3 filter milestone with the given
+    """Drive a real StatementSupervisorPolicy.step() for the qty=3 filter statement with the given
     applied_filters. Spies on run_checker: it must NOT be called when the gate fires (the gate is
     authoritative and skips the LLM checker), and MUST be called when it doesn't."""
     import os
@@ -472,8 +472,8 @@ def _run_step(monkeypatch, applied_filters):
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    pol = supervisor_policy_mod.MilestoneSupervisorPolicy()
-    ms = _qty3_filter_milestone()
+    pol = supervisor_policy_mod.StatementSupervisorPolicy()
+    ms = _qty3_filter_statement()
     pol.begin_statement(ms, instance_id="test:filter")
     obs = Observation(png_bytes=png, source="test", applied_filters=applied_filters)
     step = None
@@ -513,7 +513,7 @@ def test_legacy_product_filter_gate_fires_without_invoking_checker(monkeypatch):
     monkeypatch.setattr(policy_mod, "run_checker", _spy_run_checker)
     monkeypatch.setattr(supervisor_policy_mod, "is_loading_frame", lambda _obs: False)
 
-    pol = supervisor_policy_mod.MilestoneSupervisorPolicy()
+    pol = supervisor_policy_mod.StatementSupervisorPolicy()
     pol.begin_statement(ms, instance_id="test:filter")
     obs = Observation(
         png_bytes=png,
@@ -541,7 +541,7 @@ def test_chip_absent_channel_block_warns_not_to_wait_for_chips():
 
 def test_filter_provenance_annotates_task_set_vs_initial_state():
     # WebArena 505 (20260708_195215): the checker labeled the chips set by THIS run's earlier
-    # milestones "残留" and cleared them every step. With the run-start baseline, initial-state
+    # statements "残留" and cleared them every step. With the run-start baseline, initial-state
     # chips and task-set chips get distinct deterministic annotations. NO provenance guessing:
     # initial-state chips are just "how the environment was", not attributed to any prior task.
     block = applied_filter_state_block(
@@ -553,7 +553,7 @@ def test_filter_provenance_annotates_task_set_vs_initial_state():
     text = block.render()
     assert "任务开始时已生效" in text            # Keyword: Gobi — observed initial environment state
     assert "本任务步骤设置" in text              # Name: Aeon capri — this run's own scope
-    assert "不改动筛选状态" in text              # non-filter milestones leave filter state alone
+    assert "不改动筛选状态" in text              # non-filter statements leave filter state alone
     assert "上一任务" not in text                # no attribution to a "previous task"
     assert "残留" not in text                    # no hygiene framing
 
@@ -569,16 +569,16 @@ def test_filter_provenance_absent_without_baseline():
 
 def test_policy_captures_first_applied_filters_snapshot(monkeypatch):
     from gui_agent.core.schemas import SupervisorStep
-    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
-    pol = MilestoneSupervisorPolicy()
+    pol = StatementSupervisorPolicy()
     ms = StatementContract.model_validate({
         "id": "m1", "name": "进入 Products 页", "description": "", "success_condition": "列表可见",
         "kind": "navigation",
     })
     pol.begin_statement(ms, instance_id="test:filter")
     monkeypatch.setattr(pol, "_run_single_turn", lambda *a, **k: SupervisorStep(
-        should_act=False, instruction=None, summary="", milestone_id="m1",
+        should_act=False, instruction=None, summary="", statement_id="m1",
     ))
     # Turn 1: no applied-filters channel (dashboard) → baseline not captured.
     pol.step(Observation(png_bytes=b"x", source="browser"), goal="g", history=[])

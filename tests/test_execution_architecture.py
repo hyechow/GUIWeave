@@ -9,17 +9,17 @@ import pytest
 from gui_agent.core.run.execution_signals import CompletionEvaluation
 from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from gui_agent.core.schemas import StatementContract, Observation
-from gui_agent.core.supervisor.milestone.execution_scope import (
+from gui_agent.core.supervisor.statement.execution_scope import (
     resource_identity_from_url,
 )
-from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
 
 
 POLICY_PATH = (
     Path(__file__).resolve().parents[1]
-    / "gui_agent/core/supervisor/milestone/policy.py"
+    / "gui_agent/core/supervisor/statement/policy.py"
 )
-MILESTONE_DIR = POLICY_PATH.parent
+STATEMENT_DIR = POLICY_PATH.parent
 
 
 def _policy_tree() -> ast.Module:
@@ -61,13 +61,13 @@ def test_statement_runtime_has_no_parallel_terminal_status():
 
 def test_advance_requires_keyword_only_complete_decision():
     decision_param = inspect.signature(
-        MilestoneSupervisorPolicy._advance
+        StatementSupervisorPolicy._advance
     ).parameters["decision"]
     assert decision_param.kind is inspect.Parameter.KEYWORD_ONLY
     assert decision_param.default is inspect.Parameter.empty
 
-    policy = MilestoneSupervisorPolicy()
-    milestone = StatementContract.model_validate({
+    policy = StatementSupervisorPolicy()
+    statement = StatementContract.model_validate({
         "id": "m",
         "name": "perform one statement",
         "description": "",
@@ -78,7 +78,7 @@ def test_advance_requires_keyword_only_complete_decision():
 
     with pytest.raises(ValueError, match="cannot advance without satisfied"):
         policy._advance(
-            milestone,
+            statement,
             observation,
             [],
             decision=CompletionEvaluation("pending", "insufficient evidence"),
@@ -97,7 +97,7 @@ def test_policy_does_not_reimplement_execution_services():
 
 def test_execution_kernel_contains_no_site_or_benchmark_vocabulary():
     kernel_files = [
-        MILESTONE_DIR / name
+        STATEMENT_DIR / name
         for name in (
             "policy.py",
             "evidence.py",
@@ -121,7 +121,7 @@ def test_execution_kernel_contains_no_site_or_benchmark_vocabulary():
 
 def test_prompt_text_postprocessors_are_not_execution_services():
     model_io_tree = ast.parse(
-        (MILESTONE_DIR / "model_io.py").read_text(encoding="utf-8")
+        (STATEMENT_DIR / "model_io.py").read_text(encoding="utf-8")
     )
     model_io_functions = {node.name for node in _function_nodes(model_io_tree)}
 

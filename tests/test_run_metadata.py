@@ -9,7 +9,7 @@ from gui_agent.core.schemas import CollectionScope, PolicyContext, SupervisorSte
 def _context() -> PolicyContext:
     return PolicyContext(
         goal="g",
-        supervisor_policy_name="milestone",
+        supervisor_policy_name="statement",
         action_policy_name="browser",
     )
 
@@ -22,11 +22,11 @@ def _step(scope: CollectionScope | None = None) -> SupervisorStep:
     )
 
 
-def test_sync_turn_metadata_records_models_milestones_and_task_type(monkeypatch):
+def test_sync_turn_metadata_records_models_statements_and_task_type(monkeypatch):
     ctx = _context()
     supervisor = SimpleNamespace(
         task_type="analysis",
-        _milestones={
+        _statements={
             "m1": SimpleNamespace(
                 id="m1",
                 name="打开订单",
@@ -53,7 +53,7 @@ def test_sync_turn_metadata_records_models_milestones_and_task_type(monkeypatch)
 
     assert ctx.models["supervisor"] == "model:supervisor"
     assert ctx.models["recon.navigator"] == "model:recon.navigator"
-    # milestones field retired
+    # statements field retired
     assert ctx.task_type == "analysis"
     assert messages == ["任务类型: analysis"]
 

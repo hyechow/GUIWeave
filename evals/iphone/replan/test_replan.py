@@ -16,10 +16,10 @@ from langchain_openai import ChatOpenAI
 from llm.structured import invoke_structured
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.policies.base import resize_to_logical_png
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
-from gui_agent.adapters.iphone.supervisor.milestone.prompts import REPLAN_PROMPT
-from gui_agent.core.supervisor.milestone.model_io import _build_msgs, _format_history
-from gui_agent.core.supervisor.milestone.schemas import _ReplanResult, _SingleCheckResult
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn, SupervisorStep
+from gui_agent.adapters.iphone.supervisor.statement.prompts import REPLAN_PROMPT
+from gui_agent.core.supervisor.statement.model_io import _build_msgs, _format_history
+from gui_agent.core.supervisor.statement.schemas import _ReplanResult, _SingleCheckResult
 
 CASES_FILE = Path(__file__).parent / "cases.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -28,7 +28,7 @@ passed = 0
 failed = 0
 
 
-def _build_history(milestone_id: str, instructions: list[str]) -> list[PolicyTurn]:
+def _build_history(statement_id: str, instructions: list[str]) -> list[PolicyTurn]:
     turns = []
     for i, inst in enumerate(instructions):
         turns.append(PolicyTurn(
@@ -37,10 +37,8 @@ def _build_history(milestone_id: str, instructions: list[str]) -> list[PolicyTur
             supervisor=SupervisorStep(
                 should_act=True,
                 instruction=inst,
-                stop=False,
-                goal_completed=False,
                 summary=inst,
-                milestone_id=milestone_id,
+                statement_id=statement_id,
             ),
             executed=True,
         ))
@@ -77,8 +75,8 @@ def test_replan() -> None:
 
     for c in cases:
         png_bytes = (PROJECT_ROOT / c["screenshot"]).read_bytes()
-        m = c["milestone"]
-        milestone = Milestone.model_validate({**m, "id": c["label"]})
+        m = c["statement"]
+        statement = StatementContract.model_validate({**m, "id": c["label"]})
         history = _build_history(c["label"], c.get("history", []))
 
         # Build tried_instructions like production replan does
@@ -86,20 +84,20 @@ def test_replan() -> None:
             t.supervisor.instruction
             for t in history
             if t.supervisor and t.supervisor.instruction
-            and t.supervisor.milestone_id == milestone.id
+            and t.supervisor.statement_id == statement.id
         })
         tried_text = "\n".join(f"  - 「{i}」" for i in tried) if tried else "  （无）"
 
         prompt = REPLAN_PROMPT.format(
-            milestone_name=milestone.name,
-            milestone_desc=milestone.description,
-            success_condition=milestone.success_condition,
+            statement_name=statement.name,
+            statement_desc=statement.description,
+            success_condition=statement.success_condition,
             stuck_reason=c["stuck_reason"],
             issues=json.dumps(c.get("issues", []), ensure_ascii=False),
-            retry_count=milestone.retry_count,
+            retry_count=0,
             constraints="[]",
             failure_hints="[]",
-            completed_milestones="  （无）",
+            completed_statements="  （无）",
             history_text=_format_history(history),
             tried_instructions=tried_text,
         )
