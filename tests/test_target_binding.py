@@ -113,6 +113,68 @@ def test_structural_binding_uses_the_point_owner_in_a_repeated_collection() -> N
     assert wrong_unit.status == "contradicted"
 
 
+def test_native_select_binds_via_target_option_despite_a_bad_label() -> None:
+    # Replay of log 20260715_215953 Turn 19: the Type <select> (name=type_id) was labeled
+    # 'notice-EV92REG' by the adapter, so name/label matching could not confirm it as the
+    # declared 'Type' control and the action was suppressed (3x → run died). The option list
+    # is authoritative, so a unique owning select that carries the declared target option
+    # binds deterministically — without mutation authorization or a correct label.
+    controls = [
+        {
+            "kind": "native_select",
+            "label": "notice-EV92REG",
+            "name": "type_id",
+            "id": "EV92REG",
+            "options": [
+                "Simple Product", "Virtual Product", "Bundle Product",
+                "Downloadable Product", "Configurable Product", "Grouped Product",
+            ],
+            "is_filter": True,
+            "rect": {"x": 856, "y": 570, "w": 246, "h": 32},
+        },
+    ]
+    observation = Observation(png_bytes=b"frame", source="browser", form_controls=controls)
+    decision = BrowserActionDecision(action=BrowserAction(
+        action_type="select_option",
+        x=854,
+        y=569,
+        text="Configurable Product",
+        description="选择下拉选项 Configurable Product",
+    ))
+    step = _step(
+        statement_kind="filter",
+        action_family="select",
+        target_control="Type",
+        target_value="Configurable Product",
+    )
+
+    binding = BrowserTargetBinder().bind(step, observation, decision)
+
+    assert binding is not None
+    assert (binding.status, binding.source) == ("bound", "structural")
+
+
+def test_identity_gap_is_unresolved_not_contradicted() -> None:
+    # A declared target whose point-owner cannot be name-confirmed is an identity GAP
+    # (unresolved), not a contradiction — there is no positive evidence of a *different*
+    # declared control. (Was wrongly 'contradicted', which suppressed correct actions whose
+    # label the adapter had mis-extracted.)
+    controls = [
+        {
+            "kind": "text_input",
+            "label": "notice-EV92REG",
+            "name": "type_id",
+            "rect": {"x": 400, "y": 600},
+        },
+    ]
+    observation = Observation(png_bytes=b"frame", source="browser", form_controls=controls)
+
+    binding = BrowserTargetBinder().bind(_step(), observation, _decision())
+
+    assert binding is not None
+    assert binding.status == "unresolved"
+
+
 class _Future:
     def result(self):
         return None
