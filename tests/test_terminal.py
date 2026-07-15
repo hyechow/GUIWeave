@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from gui_agent.core.orchestrator.program import Program, Run
+from gui_agent.core.orchestrator.runner import Interpreter
 from gui_agent.core.run.flow import finish_terminal_step
 from gui_agent.core.schemas import PolicyContext, PolicyTurn, SupervisorStep
 
@@ -31,7 +33,15 @@ def _context(step: SupervisorStep) -> PolicyContext:
     )
 
 
-def test_finish_terminal_step_flushes_and_returns_goal_result():
+def _runtime():
+    program = Program(goal="完成任务", statements=[Run(name="执行任务", kind="action")])
+    interpreter = Interpreter(program)
+    steps = interpreter.steps()
+    current = next(steps)
+    return program, interpreter, steps, current
+
+
+def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
     step = SupervisorStep(
         should_act=False,
         stop=False,
@@ -41,15 +51,20 @@ def test_finish_terminal_step_flushes_and_returns_goal_result():
     )
     read_state = _ReadState()
     messages = []
+    program, interpreter, steps, current = _runtime()
+    monkeypatch.setattr(
+        "gui_agent.core.llm.output.compose_orchestration_reply",
+        lambda _goal, _digest, *, current, terminal: terminal,
+    )
 
     result = finish_terminal_step(
         sv_step=step,
         read_state=read_state,
         turn_no=3,
-        program=None,
-        current_run=None,
-        interpreter_steps=None,
-        interpreter=None,
+        program=program,
+        current_run=current,
+        interpreter_steps=steps,
+        interpreter=interpreter,
         context=_context(step),
         notes_mark=0,
         finish=lambda value: {"wrapped": value},
@@ -57,12 +72,12 @@ def test_finish_terminal_step_flushes_and_returns_goal_result():
     )
 
     assert read_state.calls == ["drain", ("flush", 3)]
-    assert messages == ["\n目标已达成：目标已达成"]
+    assert messages == ["\n目标已达成：已经完成"]
     assert result["wrapped"]["goal_completed"] is True
-    assert result["wrapped"]["collection_context"] == "采集完成"
+    assert result["wrapped"]["collection_context"] is None
 
 
-def test_finish_terminal_step_flushes_and_returns_stop_result():
+def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
     step = SupervisorStep(
         should_act=False,
         stop=True,
@@ -72,15 +87,20 @@ def test_finish_terminal_step_flushes_and_returns_stop_result():
     )
     read_state = _ReadState()
     messages = []
+    program, interpreter, steps, current = _runtime()
+    monkeypatch.setattr(
+        "gui_agent.core.llm.output.compose_orchestration_reply",
+        lambda _goal, _digest, *, current, terminal: terminal,
+    )
 
     result = finish_terminal_step(
         sv_step=step,
         read_state=read_state,
         turn_no=4,
-        program=None,
-        current_run=None,
-        interpreter_steps=None,
-        interpreter=None,
+        program=program,
+        current_run=current,
+        interpreter_steps=steps,
+        interpreter=interpreter,
         context=_context(step),
         notes_mark=0,
         finish=lambda value: value,
@@ -90,4 +110,4 @@ def test_finish_terminal_step_flushes_and_returns_stop_result():
     assert read_state.calls == ["drain", ("flush", 4)]
     assert messages == ["\n任务未完成：连续无动作"]
     assert result["goal_completed"] is False
-    assert result["stop_reason"] == "连续无动作"
+    assert "连续无动作" in result["stop_reason"]

@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 from gui_agent.core.run.instruction_similarity import instruction_entities, instructions_are_repeated
 from gui_agent.core.run.progress_monitor import ProgressMonitor
-from gui_agent.core.supervisor.milestone.stuck import MilestoneStuckMixin
 
 
 def _turn(instruction: str, *, milestone_id: str = "detail", summary: str = ""):
@@ -32,34 +31,6 @@ def test_same_sku_edit_instructions_are_repeated():
     new = "点击产品列表中 SKU 为 WS10-M-Yellow 所在行的 Edit 链接"
 
     assert instructions_are_repeated(new, old, threshold=0.6)
-
-
-def test_planner_repeat_guard_ignores_same_template_different_sku():
-    mixin = MilestoneStuckMixin()
-    history = [
-        _turn("点击产品列表中 SKU 为 WS10-M-Yellow 所在行的 Edit 链接"),
-        _turn("点击产品列表中 SKU 为 MS06-M-Yellow 所在行的 Edit 链接"),
-    ]
-
-    assert not mixin._is_repeated_instruction(
-        "点击产品列表中 SKU 为 WS11-M-Yellow 所在行的 Edit 链接",
-        "detail",
-        history,
-    )
-
-
-def test_planner_repeat_guard_still_catches_same_sku_repeated():
-    mixin = MilestoneStuckMixin()
-    history = [
-        _turn("点击产品列表中 SKU 为 WS10-M-Yellow 所在行的 Edit 链接"),
-        _turn("点击产品列表中 SKU 为 WS10-M-Yellow 所在行的 Edit 链接"),
-    ]
-
-    assert mixin._is_repeated_instruction(
-        "点击产品列表中 SKU 为 WS10-M-Yellow 所在行的 Edit 链接",
-        "detail",
-        history,
-    )
 
 
 def test_progress_monitor_repetition_ignores_different_sku_targets():

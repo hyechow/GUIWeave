@@ -194,7 +194,7 @@ def test_monitor_flags_the_retype_loop_by_signature():
     mon.note(9, state, action_signature(T9))
 
     mon.note(12, state, action_signature(T12))
-    assert mon.repeat_count(state, action_signature(T12)) >= 2  # T3, T9, T12 all the same
+    assert mon.repeated(state, action_signature(T12)).index == 3
 
 
 def test_distinct_box_is_not_a_false_repeat_by_signature():
@@ -212,7 +212,7 @@ def test_check_loop_records_then_flags_repeat():
     assert mon.check_loop(4, state, "Reset Filter") is None
     hit = mon.check_loop(7, state, "点击 Search")               # redo of T3 → loop, points back
     assert hit is not None and hit.index == 3
-    assert mon.repeat_count(state, "点击 Search") == 1          # T7 NOT re-noted (only T3)
+    assert len(mon.turns) == 2                                 # T7 NOT re-noted
     # no-op when state/decision empty (visual platform with no url)
     assert mon.check_loop(8, "", "x") is None
     assert mon.check_loop(8, state, "") is None

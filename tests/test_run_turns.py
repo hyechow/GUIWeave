@@ -127,6 +127,10 @@ def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_pa
     monkeypatch.setattr(run_loop, "_load_context", lambda *_args, **_kwargs: context)
     monkeypatch.setattr(run_loop, "_save_context", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(run_loop, "save_observation_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "gui_agent.core.llm.output.compose_orchestration_reply",
+        lambda _goal, _digest, *, current, terminal: terminal,
+    )
 
     result = run_loop.run_agent_loop(
         "test first turn",
