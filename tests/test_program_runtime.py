@@ -29,10 +29,29 @@ def test_program_runtime_send_advances_cursor():
     rt = ProgramRuntime.start(program)
     assert rt.current is not None and rt.current.name == "one"
     from gui_agent.core.orchestrator.program import RunResult
+    from gui_agent.core.run.statements.outcome import StatementOutcome
 
-    nxt = rt.send(RunResult(completed=True, summary="done one"))
+    nxt = rt.send_outcome(StatementOutcome.completed("done one", verification="confirmed"))
     assert nxt is not None and nxt.name == "two"
     assert rt.index == 1
+
+    # Kickback budget is owned by ProgramRuntime.
+    assert rt.can_kickback()
+    assert rt.record_kickback() == 1
+
+    # replace_program drops failed log entries when recovering.
+    rt.send(RunResult(completed=False, failed=True, summary="boom"))
+    # After send of second statement fail, program may finish; rebuild for replace test.
+    rt2 = ProgramRuntime.start(program)
+    rt2.send_outcome(StatementOutcome.failed("boom"))
+    # First statement failed → interpreter finished with failure reply.
+    assert rt2.finished or rt2.current is not None
+    rt2.replace_program(
+        Program(goal="g2", statements=[Run(name="retry", kind="action")]),
+        drop_failed_from_log=True,
+    )
+    assert all(not r.result.failed for r in rt2.interpreter.run_log)
+    assert rt2.current is not None and rt2.current.name == "retry"
 
 
 def test_supervisor_step_without_reseed_raises():

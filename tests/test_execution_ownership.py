@@ -113,6 +113,12 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     loop_src = inspect.getsource(loop_mod.run_agent_loop)
     assert "ProgramRuntime.start" in loop_src
     assert "ensure_program" not in loop_src
+    # Single-writer cursor: no parallel loop locals for interpreter cursor/kickback.
+    assert "_cur_run" not in loop_src
+    assert "_kickback_replans" not in loop_src
+    assert "rt.send_outcome" in loop_src or "send_outcome" in loop_src
+    assert "rt.replace_program" in loop_src or "replace_program" in loop_src
+    assert "statement_outcome_from_supervisor_step" in loop_src
 
     policy_src = inspect.getsource(MilestoneSupervisorPolicy.step)
     assert "_decompose" not in policy_src
@@ -124,17 +130,23 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
 
     assert not hasattr(prt, "ensure_program")
     assert not hasattr(prt, "compile_single_statement_program")
+    assert hasattr(prt.ProgramRuntime, "send_outcome")
+    assert hasattr(prt.ProgramRuntime, "replace_program")
+    assert hasattr(prt.ProgramRuntime, "accept_dispatch_cursor")
 
 
 def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> None:
     """Ownership: StatementOutcome has no running phase; mid-loop uses ExecutorDecision."""
+    import pytest
+
     from gui_agent.core.run.statements import outcome as outcome_mod
 
-    source = inspect.getsource(outcome_mod.StatementOutcome)
-    assert "running" not in source or 'no "running"' in source or "no running" in source
-    assert "def completed(" in source
-    assert "def failed(" in source
-    assert "def infeasible(" in source
+    with pytest.raises(ValueError, match="terminal only"):
+        outcome_mod.StatementOutcome(phase="running", summary="mid")  # type: ignore[arg-type]
+
+    assert hasattr(outcome_mod.StatementOutcome, "completed")
+    assert hasattr(outcome_mod.StatementOutcome, "failed")
+    assert hasattr(outcome_mod.StatementOutcome, "infeasible")
 
     # Mid-turn decisions are a separate type — not StatementOutcome variants.
     decision_source = inspect.getsource(outcome_mod.ExecutorDecision)

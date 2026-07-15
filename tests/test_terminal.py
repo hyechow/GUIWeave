@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from gui_agent.core.orchestrator.program import Program, Run
-from gui_agent.core.orchestrator.runner import Interpreter
 from gui_agent.core.run.flow import finish_terminal_step
+from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.schemas import PolicyContext, PolicyTurn, SupervisorStep
 
 
@@ -33,12 +33,9 @@ def _context(step: SupervisorStep) -> PolicyContext:
     )
 
 
-def _runtime():
+def _runtime() -> ProgramRuntime:
     program = Program(goal="完成任务", statements=[Run(name="执行任务", kind="action")])
-    interpreter = Interpreter(program)
-    steps = interpreter.steps()
-    current = next(steps)
-    return program, interpreter, steps, current
+    return ProgramRuntime.start(program)
 
 
 def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
@@ -51,7 +48,7 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
     )
     read_state = _ReadState()
     messages = []
-    program, interpreter, steps, current = _runtime()
+    rt = _runtime()
     monkeypatch.setattr(
         "gui_agent.core.llm.output.compose_orchestration_reply",
         lambda _goal, _digest, *, current, terminal: terminal,
@@ -61,12 +58,8 @@ def test_finish_terminal_step_flushes_and_returns_goal_result(monkeypatch):
         sv_step=step,
         read_state=read_state,
         turn_no=3,
-        program=program,
-        current_run=current,
-        interpreter_steps=steps,
-        interpreter=interpreter,
+        program_runtime=rt,
         context=_context(step),
-        notes_mark=0,
         finish=lambda value: {"wrapped": value},
         say=messages.append,
     )
@@ -87,7 +80,7 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
     )
     read_state = _ReadState()
     messages = []
-    program, interpreter, steps, current = _runtime()
+    rt = _runtime()
     monkeypatch.setattr(
         "gui_agent.core.llm.output.compose_orchestration_reply",
         lambda _goal, _digest, *, current, terminal: terminal,
@@ -97,12 +90,8 @@ def test_finish_terminal_step_flushes_and_returns_stop_result(monkeypatch):
         sv_step=step,
         read_state=read_state,
         turn_no=4,
-        program=program,
-        current_run=current,
-        interpreter_steps=steps,
-        interpreter=interpreter,
+        program_runtime=rt,
         context=_context(step),
-        notes_mark=0,
         finish=lambda value: value,
         say=messages.append,
     )
