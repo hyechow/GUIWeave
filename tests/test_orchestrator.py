@@ -507,21 +507,18 @@ def test_supervisor_reseed_single_milestone():
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
     from gui_agent.core.run.interactive import milestone_for_run, task_type_for_run
     p = MilestoneSupervisorPolicy()
-    p._milestones = {"old": object()}  # type: ignore[dict-item]
-    p._order = ["old", "x"]
     p._monitor._recent_screenshots.append((b"frame", None))  # stuck 检测器帧历史
-    p._scroll_counts = {"old": 5}             # 其余 per-milestone 态
     # S6b 后查询节点不再 marshal 成 milestone；reseed 的读取门用显式 task_type 验证
     # （task_type_for_run 对查询仍返回 analysis，此处直接断言该映射）
     run = Read(var="d", name="读判定",  returns=["连通判定"])
     assert task_type_for_run(run) == "analysis"
     nav = Run(var="d", name="开判定页", kind="navigation")
     p.reseed(milestone_for_run(nav, 0), task_type="analysis")
-    assert list(p._order) == ["d"] and p._current_id == "d"
+    assert p._active_milestone is not None and p._active_milestone.id == "d"
     assert p.task_type == "analysis"          # 读取门由 task_type 控制
-    # 与 DAG 的 _advance 对齐：只清 _recent_screenshots，其余跨 milestone 态保留（不再过度清空）。
+    # Statement-local frame/scroll state resets at begin(statement).
     assert list(p._monitor._recent_screenshots) == []
-    assert p._scroll_counts == {"old": 5}
+    assert p._scroll_count == 0
 
 
 def test_reseed_fresh_advance_nav_skips_initial_check():
@@ -636,7 +633,7 @@ def test_advance_persists_done_check_on_terminal_completion():
     assert decision.status == "satisfied"
     step = p._advance(ms, obs, [], decision=decision)
     assert step.goal_completed is True                    # single milestone → terminal step
-    assert p._milestone_done_checks[ms.id] is check       # done 判定已留存（验收面板有数据）
+    assert p._done_check is check                         # done 判定已留存（验收面板有数据）
 
 
 def test_transform_effect_blocks_preexisting_done(monkeypatch):
@@ -687,7 +684,7 @@ def test_transform_effect_blocks_preexisting_done(monkeypatch):
 
     assert step.should_act is True
     assert step.goal_completed is False
-    assert p._current_id == "m1"
+    assert p._active_milestone is ms
 
 
 # ── #3 structured read: reads 进 RunResult，让 if 真分支 ──────────────────────────

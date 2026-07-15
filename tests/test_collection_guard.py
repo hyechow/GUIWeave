@@ -62,9 +62,7 @@ def _make_policy() -> tuple[MilestoneSupervisorPolicy, Milestone]:
         kind="collection",
         completion_strategy="scroll_until_boundary",
     )
-    p._milestones = {"5": ms}
-    p._order = ["5"]
-    p._current_id = "5"
+    p.reseed(ms)
     p.task_type = "analysis"
     return p, ms
 

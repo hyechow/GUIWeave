@@ -109,19 +109,19 @@ def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> Non
     from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 
     loop_src = inspect.getsource(loop_mod.run_agent_loop)
-    assert "ensure_program" in loop_src
     assert "ProgramRuntime.start" in loop_src
+    assert "ensure_program" not in loop_src
 
     policy_src = inspect.getsource(MilestoneSupervisorPolicy.step)
     assert "_decompose" not in policy_src
     assert "reseed" in policy_src or "requires reseed" in policy_src
 
-    advance_src = inspect.getsource(MilestoneSupervisorPolicy._advance)
-    # Multi-milestone walk retired: complete always clears current and stops.
-    assert "self._current_id = None" in advance_src
-    assert "self._current_id = self._next_milestone()" not in advance_src
+    policy_src = inspect.getsource(MilestoneSupervisorPolicy)
+    for retired in ("self._milestones", "self._order", "self._current_id", "_next_milestone", "_terminal_step"):
+        assert retired not in policy_src
 
-    assert prt.ensure_program(None, "g").statements
+    assert not hasattr(prt, "ensure_program")
+    assert not hasattr(prt, "compile_single_statement_program")
 
 
 def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> None:

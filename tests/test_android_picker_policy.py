@@ -12,6 +12,9 @@ from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILE
 from gui_agent.adapters.iphone.supervisor.milestone.prompts import IPHONE_MILESTONE_PROMPTS
 from gui_agent.adapters.android.policies import AndroidActionPolicy
 from gui_agent.core.schemas import Milestone, Observation, PolicyTurn, SupervisorStep
+from gui_agent.core.orchestrator.passes import normalize_goal_value_contracts
+from gui_agent.core.orchestrator.program import Program, Run
+from gui_agent.core.run.interactive import milestone_for_run
 from gui_agent.core.supervisor.milestone.model_io import _build_msgs
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.run.progress_monitor import ProgressAssessment, ProgressMonitor
@@ -295,116 +298,75 @@ def test_zero_step_picker_plan_is_retried_before_action(monkeypatch):
 
 
 def test_alarm_time_value_milestone_defaults_to_converge_strategy():
-    policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
-        id="m2",
+    run = Run(
         name="设置闹钟时间",
-        description="在闹钟页面添加新闹钟，并将时间设置为上午06:30。",
         success_condition="闹钟的时间显示为06:30且AM标识已选中。",
         kind="action",
     )
-    policy._milestones = {"m2": milestone}
-    policy._order = ["m2"]
-
-    policy._patch_decomposition(None, "创建一个上午6点30的闹钟")  # type: ignore[arg-type]
-
-    assert milestone.completion_strategy == "repeat_until_satisfied"
+    assert milestone_for_run(run, 0).completion_strategy == "repeat_until_satisfied"
 
 
 def test_alarm_goal_period_is_preserved_after_decompose_patch():
-    policy = MilestoneSupervisorPolicy()
-    time_milestone = Milestone(
-        id="m3",
+    time_run = Run(
         name="设置闹钟时间为6:30",
-        description="使用滚轮选择器将小时设置为“6”，分钟设置为“30”。",
         success_condition="时间选择器上显示的时间为 06:30。",
         kind="action",
-        completion_strategy="repeat_until_satisfied",
     )
-    save_milestone = Milestone(
-        id="m4",
+    save_run = Run(
         name="确认并保存闹钟",
-        description="点击确定/保存按钮以创建该闹钟，并返回到闹钟列表页面。",
         success_condition="返回到闹钟列表页面，并且列表中新增了设定的06:30的闹钟条目。",
         kind="action",
-        completion_strategy="visible_once",
     )
-    policy._milestones = {"m3": time_milestone, "m4": save_milestone}
-    policy._order = ["m3", "m4"]
-
-    policy._patch_decomposition(None, "创建一个上午6点30的闹钟")  # type: ignore[arg-type]
-
-    assert any("上午/早上/AM" in c for c in policy.constraints_snapshot())
-    assert "上午/早上/AM" in time_milestone.description
-    assert "上午/早上/AM" in time_milestone.success_condition
-    assert "下午/晚上/傍晚/PM" in time_milestone.success_condition
-    assert "上午/早上/AM" in save_milestone.success_condition
-    assert "下午/晚上/傍晚/PM" in save_milestone.success_condition
+    program = normalize_goal_value_contracts(Program(
+        goal="创建一个上午6点30的闹钟", statements=[time_run, save_run]
+    ))
+    first, second = program.statements
+    assert "上午/早上/AM" in first.success_condition
+    assert "下午/晚上/傍晚/PM" in first.success_condition
+    assert "上午/早上/AM" in second.success_condition
+    assert "下午/晚上/傍晚/PM" in second.success_condition
 
 
 def test_goal_period_patch_applies_to_non_alarm_clock_time_targets():
-    policy = MilestoneSupervisorPolicy()
-    time_milestone = Milestone(
-        id="m2",
+    time_run = Run(
         name="设置提醒时间为9:15",
-        description="将时间设置为 9:15。",
         success_condition="时间显示为 9:15。",
         kind="action",
-        completion_strategy="repeat_until_satisfied",
     )
-    policy._milestones = {"m2": time_milestone}
-    policy._order = ["m2"]
-
-    policy._patch_decomposition(None, "创建一个下午9点15的提醒")  # type: ignore[arg-type]
-
-    assert any("下午/晚上/傍晚/PM" in c for c in policy.constraints_snapshot())
-    assert "下午/晚上/傍晚/PM" in time_milestone.description
-    assert "下午/晚上/傍晚/PM" in time_milestone.success_condition
+    program = normalize_goal_value_contracts(Program(
+        goal="创建一个下午9点15的提醒", statements=[time_run]
+    ))
+    assert "下午/晚上/傍晚/PM" in program.statements[0].success_condition
 
 
 def test_goal_repeat_rule_is_preserved_after_decompose_patch():
-    policy = MilestoneSupervisorPolicy()
-    time_milestone = Milestone(
-        id="m2",
+    time_run = Run(
         name="设置闹钟时间为6:30",
-        description="将时间设置为 6:30。",
         success_condition="时间显示为 6:30。",
         kind="action",
-        completion_strategy="repeat_until_satisfied",
     )
-    save_milestone = Milestone(
-        id="m3",
+    save_run = Run(
         name="保存闹钟",
-        description="点击保存并返回列表。",
         success_condition="列表中出现 6:30 的闹钟条目。",
         kind="action",
     )
-    policy._milestones = {"m2": time_milestone, "m3": save_milestone}
-    policy._order = ["m2", "m3"]
-
-    policy._patch_decomposition(None, "创建一个工作日上午6点30的闹钟")  # type: ignore[arg-type]
-
-    assert any("重复规则" in c and "工作日/周一至周五" in c for c in policy.constraints_snapshot())
-    assert "重复规则=工作日/周一至周五" in time_milestone.success_condition
-    assert "重复规则=工作日/周一至周五" in save_milestone.success_condition
+    program = normalize_goal_value_contracts(Program(
+        goal="创建一个工作日上午6点30的闹钟", statements=[time_run, save_run]
+    ))
+    assert "重复规则=工作日/周一至周五" in program.statements[0].success_condition
+    assert "重复规则=工作日/周一至周五" in program.statements[1].success_condition
 
 
 def test_goal_name_field_is_preserved_after_decompose_patch():
-    policy = MilestoneSupervisorPolicy()
-    milestone = Milestone(
-        id="m2",
+    run = Run(
         name="创建提醒",
-        description="创建一个 9:15 的提醒。",
         success_condition="提醒列表中出现 9:15 的提醒。",
         kind="action",
     )
-    policy._milestones = {"m2": milestone}
-    policy._order = ["m2"]
-
-    policy._patch_decomposition(None, "创建一个下午9点15的提醒，名称设为喝水")  # type: ignore[arg-type]
-
-    assert any("名称/标签" in c and "喝水" in c for c in policy.constraints_snapshot())
-    assert "名称/标签=喝水" in milestone.success_condition
+    program = normalize_goal_value_contracts(Program(
+        goal="创建一个下午9点15的提醒，名称设为喝水", statements=[run]
+    ))
+    assert "名称/标签=喝水" in program.statements[0].success_condition
 
 
 def test_iterative_milestone_still_uses_screen_stuck(monkeypatch):

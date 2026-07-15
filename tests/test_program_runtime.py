@@ -5,26 +5,9 @@ from __future__ import annotations
 import pytest
 
 from gui_agent.core.orchestrator.program import Finish, Program, Run
-from gui_agent.core.run.program_runtime import (
-    ProgramRuntime,
-    compile_single_statement_program,
-    ensure_program,
-)
+from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
 from gui_agent.core.schemas import Observation
-
-
-def test_ensure_program_never_returns_none():
-    assert ensure_program(None, "打开设置").statements
-    p = Program(goal="g", statements=[Run(name="a", kind="action")])
-    assert ensure_program(p, "ignored") is p
-
-
-def test_compile_single_statement_is_one_action_run():
-    program = compile_single_statement_program("在设置里打开蓝牙")
-    assert len(program.statements) == 1
-    assert isinstance(program.statements[0], Run)
-    assert program.statements[0].kind == "action"
 
 
 def test_program_runtime_starts_and_finishes_finish_only_program():
@@ -72,17 +55,7 @@ def test_supervisor_reseed_then_complete_does_not_walk_next_milestone():
         success_condition="done",
         kind="action",
     )
-    second = Milestone(
-        id="m2",
-        name="第二步",
-        description="d",
-        success_condition="done",
-        kind="action",
-    )
-    # Simulate accidental multi-order (old DAG shape) — complete must still terminal.
-    policy._milestones = {first.id: first, second.id: second}
-    policy._order = [first.id, second.id]
-    policy._current_id = first.id
+    policy.reseed(first)
     first.status = "running"
 
     decision = CompletionEvaluation(
@@ -99,4 +72,5 @@ def test_supervisor_reseed_then_complete_does_not_walk_next_milestone():
     )
     assert step.goal_completed is True
     assert step.stop is True
-    assert policy._current_id is None
+    assert policy._active_milestone is first
+    assert first.status == "done"

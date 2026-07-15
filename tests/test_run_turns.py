@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from gui_agent.core.orchestrator.program import Program, Run
 from gui_agent.core.run import loop as run_loop
 from gui_agent.core.run.turns import SupervisorTimingCarry, make_interactive_turn, make_verdict_turn
 from gui_agent.core.schemas import BaseActionDecision, Observation, PolicyContext, SupervisorStep
@@ -139,6 +140,7 @@ def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_pa
         None,
         tmp_path,
         tmp_path / "context.json",
+        program=Program(goal="test first turn", statements=[Run(name="test first turn")]),
         max_turns=1,
         auto_continue=True,
         silent=True,

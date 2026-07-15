@@ -572,9 +572,7 @@ def test_policy_captures_first_applied_filters_snapshot(monkeypatch):
         "id": "m1", "name": "进入 Products 页", "description": "", "success_condition": "列表可见",
         "kind": "navigation",
     })
-    pol._milestones = {"m1": ms}
-    pol._order = ["m1"]
-    pol._current_id = "m1"
+    pol.reseed(ms)
     monkeypatch.setattr(pol, "_run_single_turn", lambda *a, **k: SupervisorStep(
         should_act=False, instruction=None, stop=False, goal_completed=False, summary="", milestone_id="m1",
     ))

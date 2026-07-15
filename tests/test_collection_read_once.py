@@ -32,9 +32,7 @@ def _policy(task_type: str = "analysis") -> tuple[MilestoneSupervisorPolicy, Mil
         kind="collection",
         completion_strategy="read_once",
     )
-    policy._milestones = {"1": milestone}
-    policy._order = ["1"]
-    policy._current_id = "1"
+    policy.reseed(milestone)
     policy.task_type = task_type  # type: ignore[assignment]
     return policy, milestone
 

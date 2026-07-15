@@ -257,10 +257,10 @@ def test_milestone_supervisor_exposes_runtime_state_snapshot():
         summary="目标页",
     )
     policy = MilestoneSupervisorPolicy()
-    policy._milestones = {"m1": milestone}
-    policy._milestone_done_checks = {"m1": check}
-    policy._last_page_identity = {"m1": "目标页"}
-    policy._scroll_counts = {"m1": 2}
+    policy.reseed(milestone)
+    policy._done_check = check
+    policy._last_page_identity = "目标页"
+    policy._scroll_count = 2
     policy._monitor._progress_values = {"m1": ["1", "2"]}
 
     snapshot = policy.runtime_state_snapshot()

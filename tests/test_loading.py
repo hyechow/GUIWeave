@@ -22,7 +22,6 @@ def test_handle_loading_frame_waits_and_continues(monkeypatch):
         max_loading_frames=12,
         wait_s=0.6,
         turn_no=2,
-        program=None,
         current_run=None,
         context=_context(),
         interpreter=None,
@@ -46,7 +45,6 @@ def test_handle_loading_frame_returns_esc_interrupt(monkeypatch):
         max_loading_frames=12,
         wait_s=0.6,
         turn_no=3,
-        program=None,
         current_run=None,
         context=_context(),
         interpreter=None,
@@ -60,18 +58,24 @@ def test_handle_loading_frame_returns_esc_interrupt(monkeypatch):
     assert result.terminal_result == {"stop_reason": "esc 3"}
 
 
-def test_handle_loading_frame_stops_after_limit():
+def test_handle_loading_frame_stops_after_limit(monkeypatch):
     messages = []
+    interpreter = type("Interpreter", (), {
+        "run_log": [], "finish_incomplete": False, "failed": False,
+    })()
+    monkeypatch.setattr(
+        "gui_agent.core.llm.output.compose_orchestration_reply",
+        lambda _goal, _digest, *, current, terminal: terminal,
+    )
 
     result = flow.handle_loading_frame(
         loading_streak=12,
         max_loading_frames=12,
         wait_s=0.6,
         turn_no=4,
-        program=None,
         current_run=None,
         context=_context(),
-        interpreter=None,
+        interpreter=interpreter,
         finish=lambda value: {"wrapped": value},
         stop_after_esc=lambda turn_no: None,
         say=messages.append,

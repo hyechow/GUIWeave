@@ -427,9 +427,7 @@ def test_terminal_dispatch_without_persistence_response_waits_for_observation(
         effect_mode="transform",
         persistence="explicit_commit",
     )
-    policy._milestones = {"m1": milestone}
-    policy._current_id = "m1"
-    policy._order = ["m1"]
+    policy.reseed(milestone)
     step = _step(scope="milestone:m1")
     write_step = _step(scope="milestone:m1", role="write")
     history = [
@@ -474,9 +472,7 @@ def test_redirected_commit_uses_success_contract_and_is_not_preexisting(monkeypa
         effect_mode="transform",
         persistence="explicit_commit",
     )
-    policy._milestones = {"m1": milestone}
-    policy._current_id = "m1"
-    policy._order = ["m1"]
+    policy.reseed(milestone)
     source_step = _step(scope="row:attribute/144")
     history = [
         _turn(index=1, step=_step(scope="row:attribute/144", role="write"), role="write"),
@@ -534,9 +530,7 @@ def test_redirected_commit_ignores_destination_only_absence(monkeypatch):
         target_controls=["record_fields"],
         target_values={"Primary Value": "A", "Secondary Value": "B"},
     )
-    policy._milestones = {"m1": milestone}
-    policy._current_id = "m1"
-    policy._order = ["m1"]
+    policy.reseed(milestone)
     write = _turn(
         index=1,
         step=_step(scope="row:record/7", role="write"),

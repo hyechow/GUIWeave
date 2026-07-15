@@ -63,9 +63,7 @@ def _policy():
     m = Milestone.model_validate(
         {"id": "m1", "name": "进入闹钟页", "description": "d", "success_condition": "闹钟列表页", "kind": "navigation"}
     )
-    p._milestones = {"m1": m}
-    p._current_id = "m1"
-    p._order = ["m1"]
+    p.reseed(m)
     return p, m
 
 
@@ -218,9 +216,7 @@ def _submit_milestone_policy():
             "requires_commit": True,
         }
     )
-    p._milestones = {"m1": m}
-    p._current_id = "m1"
-    p._order = ["m1"]
+    p.reseed(m)
     return p, m
 
 
@@ -285,9 +281,7 @@ def _fresh_action_policy():
         "require_fresh_action": True,
         "requires_commit": True,
     })
-    p._milestones = {"m1": m}
-    p._current_id = "m1"
-    p._order = ["m1"]
+    p.reseed(m)
     return p, m
 
 
@@ -444,9 +438,7 @@ def test_fresh_action_accepts_arrival_click_from_full_history(monkeypatch):
         "id": "m1", "name": "点击列表中 Type=Configurable 的那一行打开编辑页", "description": "d",
         "success_condition": "已进入该产品编辑页", "kind": "navigation",
     })
-    p._milestones = {"m1": m}
-    p._current_id = "m1"
-    p._order = ["m1"]
+    p.reseed(m)
     plan_calls = _no_redemand_wire(monkeypatch, p)
     p._last_check = _SingleCheckResult(status="done", effect_status="confirmed", reason="已进入编辑页", summary="ok")
     obs = Observation(png_bytes=b"x", source="browser", url="http://x/admin/catalog/product/edit/id/446")
@@ -483,9 +475,7 @@ def _save_milestone_policy():
         "require_fresh_action": True,
         "requires_commit": True,
     })
-    p._milestones = {"m1": m}
-    p._current_id = "m1"
-    p._order = ["m1"]
+    p.reseed(m)
     return p, m
 
 
@@ -625,9 +615,7 @@ def test_terminal_dispatch_gate_ignores_arrival_milestone(monkeypatch):
         "id": "m1", "name": "点选 Type=Configurable Product 的产品行，打开其编辑页", "description": "d",
         "success_condition": "已进入该产品编辑页", "kind": "action",
     })
-    p._milestones = {"m1": m}
-    p._current_id = "m1"
-    p._order = ["m1"]
+    p.reseed(m)
     calls = _wire_check(
         monkeypatch, p,
         _SingleCheckResult(

@@ -49,9 +49,7 @@ def _row_turn(index: int, product_id: str) -> PolicyTurn:
 def test_checker_history_is_bucketed_by_current_row_scope(monkeypatch):
     policy = MilestoneSupervisorPolicy()
     milestone = _price_milestone()
-    policy._milestones = {milestone.id: milestone}
-    policy._order = [milestone.id]
-    policy._current_id = milestone.id
+    policy.reseed(milestone)
 
     captured = {}
 

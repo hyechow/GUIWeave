@@ -110,12 +110,10 @@ def test_milestone_prompts_injected_from_adapter():
     assert all(
         getattr(iphone._prompts, f)
         for f in (
-            "decompose", "single_checker", "check_kind_sections", "check_section_default",
+            "single_checker", "check_kind_sections", "check_section_default",
             "check_section_converge", "loop_frame", "plan", "loop_scroll", "replan",
-            "stop_condition_patch",
         )
     )
-    assert iphone._prompts.decompose.startswith("你是 iPhone")
 
 
 def test_milestone_vision_prompts_keep_runtime_data_out_of_templates():
