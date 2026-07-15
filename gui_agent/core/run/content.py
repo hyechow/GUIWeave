@@ -15,11 +15,6 @@ from gui_agent.core.schemas import PolicyContext, SupervisorStep
 STITCH_OVERLAP_PX = 150  # chunk 间重叠像素：防止行被切断；重叠区像素相同 → 行级去重可靠
 
 
-def ensure_note_hashes(context: PolicyContext) -> None:
-    if context.content_notes and not context.content_note_hashes:
-        context.content_note_hashes = [note_hash(note) for note in context.content_notes]
-
-
 def note_hash(note: str) -> str:
     normalized = re.sub(r"\s+", "", note.strip().lower())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
@@ -55,7 +50,7 @@ def store_chunk_note(
         sv_step=sv_step,
         collection_scope=context.collection_scope,
     )
-    context.content_notes.append(stored)
+    context.journal.append_content(stored)
     return True
 
 
@@ -79,7 +74,7 @@ def flush_and_read(
         return
     note = reader.read(tail, instruction or "")
     if store_chunk_note(note, context, seen_rows, turn_no=turn_no, sv_step=sv_step):
-        say(f"内容摘要(收尾块): {context.content_notes[-1][:80]}...")
+        say(f"内容摘要(收尾块): {context.journal.content_notes[-1][:80]}...")
 
 
 @dataclass
@@ -111,7 +106,7 @@ class ReadState:
     @staticmethod
     def _load_seen_rows(context: PolicyContext) -> set[str]:
         seen_rows: set[str] = set()
-        for note in context.content_notes:
+        for note in context.journal.content_notes:
             for line in note.splitlines():
                 stripped = line.strip()
                 if stripped:
@@ -132,7 +127,7 @@ class ReadState:
                 turn_no=turn_no,
                 sv_step=sv_step,
             ):
-                say(f"内容摘要(块): {self.context.content_notes[-1][:80]}...")
+                say(f"内容摘要(块): {self.context.journal.content_notes[-1][:80]}...")
 
     def flush(self, *, turn_no: int, say) -> None:
         """Flush the current stitched tail chunk, then clear stitch state."""
@@ -202,8 +197,8 @@ class ReadState:
             sv_step=sv_step,
         ):
             result.added_content = True
-            result.note_hash = note_hash(self.context.content_notes[-1])
-            say(f"内容摘要: {self.context.content_notes[-1][:80]}...")
+            result.note_hash = note_hash(self.context.journal.content_notes[-1])
+            say(f"内容摘要: {self.context.journal.content_notes[-1][:80]}...")
         else:
             say("内容摘要: 无新增/与已采集重复，未入库")
         return result

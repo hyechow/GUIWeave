@@ -17,9 +17,9 @@ def make_result(
     stop_reason: str,
     collection_context: str | None = None,
 ) -> dict:
-    last_summary = context.turns[-1].supervisor.summary if context.turns else stop_reason
+    last_summary = context.journal.events[-1].supervisor.summary if context.journal.events else stop_reason
     turns_detail = []
-    for t in context.turns:
+    for t in context.journal.events:
         entry: dict = {"no": t.index, "summary": t.supervisor.summary, "executed": t.executed}
         entry["completion_status"] = (
             t.supervisor.outcome.verification
@@ -45,10 +45,10 @@ def make_result(
         "execution_completed": False,
         "goal_completed": False,
         "goal_status": "incomplete",
-        "turns_count": len(context.turns),
+        "turns_count": len(context.journal.events),
         "turns_detail": turns_detail,
         "task_type": context.task_type,
-        "content_notes": context.content_notes or None,
+        "content_notes": context.journal.content_notes or None,
         "collection_context": collection_context,
         "collection_scope": context.collection_scope.model_dump(exclude_none=True)
         if context.collection_scope else None,
@@ -64,9 +64,8 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
     digest = [
         {
             "name": r.name,
-            "completed": r.result.completed,
-            "failed": r.result.failed,
-            "completion_status": r.result.completion_status,
+            "phase": r.result.phase,
+            "verification": r.result.verification,
             "reads": dict(r.result.reads),
             "summary": r.result.summary,
         }
@@ -83,7 +82,7 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
     # answer (the read found nothing on the frame) — do not let it masquerade as success.
     finish_incomplete = getattr(interp, "finish_incomplete", False)
     accepted_unverified = any(
-        r.result.completion_status == "accepted_unverified"
+        r.result.verification == "accepted_unverified"
         for r in interp.run_log
     )
     execution_completed = (

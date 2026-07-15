@@ -24,7 +24,6 @@ class StatementRuntimeState:
     instance_id: str
     execution_contract: ExecutionContract
     task_type: Literal["action", "analysis"] = "action"
-    status: str = "pending"  # pending | running | done | failed
     retry_count: int = 0
     early_feasibility_probed: bool = False
     scroll_count: int = 0
@@ -38,6 +37,10 @@ class StatementRuntimeState:
         default_factory=TargetAcquireController
     )
     skip_initial_check: bool = False
+    # StatementInfo DTO built from the contract at begin time; written onto the FIRST turn of
+    # this invocation only. `statement_info_emitted` flips True after that first write so later
+    # turns (and the terminal observation turn) carry statement=None but the same instance_id.
+    statement_info: Any = None
     statement_info_emitted: bool = False
 
     def scope_key(self, *, row_identity: str = "") -> str:
@@ -58,7 +61,6 @@ class StatementRuntimeState:
         """
         self.contract = new_contract
         self.execution_contract = execution_contract
-        self.status = "running"
         self.retry_count = 0
         self.early_feasibility_probed = False
         self.scroll_count = 0
@@ -66,5 +68,4 @@ class StatementRuntimeState:
         self.last_check = None
         self.done_check = None
         self.skip_initial_check = False
-        self.monitor.clear_screenshots()
-        self.monitor._progress_values.clear()
+        self.monitor.reset_for_retry()

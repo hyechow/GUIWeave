@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from gui_agent.core.schemas import (
-    Milestone,
+    StatementContract,
     MutationAuthorization,
     Observation,
     PolicyTurn,
@@ -274,7 +274,7 @@ def _has_unreceipted_write(history: list[PolicyTurn], milestone_id: str) -> bool
 
 
 def _resolve(
-    milestone: Milestone,
+    milestone: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     surface_id: str,
@@ -344,7 +344,7 @@ def _resolve(
 
 
 def resolve_mutation(
-    milestone: Milestone,
+    milestone: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     *,
@@ -354,7 +354,7 @@ def resolve_mutation(
 
 
 def authorize_mutation(
-    milestone: Milestone,
+    milestone: StatementContract,
     subject: SubjectResolution,
 ) -> MutationAuthorization | None:
     if subject.status != "writable" or not subject.subject_ref:

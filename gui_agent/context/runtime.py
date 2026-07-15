@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Callable, Iterable, MutableSequence
 
 from gui_agent.context.blocks import ContextBlock, ContextBudgeter
-from gui_agent.core.schemas import Milestone, PolicyTurn, target_value_options
+from gui_agent.core.schemas import StatementContract, PolicyTurn, target_value_options
 
 # Hard char ceiling for the dynamic context blocks assembled around a prompt. Generous by
 # default (insurance against runaway inflation — knowledge blobs + history + @file refs piling
@@ -55,7 +55,7 @@ def history_block(
 
 
 def milestone_block(
-    milestone: Milestone,
+    milestone: StatementContract,
     *,
     task_type: str | None = None,
     scroll_stop_condition: str | None = None,

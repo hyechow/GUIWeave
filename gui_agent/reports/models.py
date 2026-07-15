@@ -19,6 +19,7 @@ class ReportStep:
     timestamp: str = ""  # ISO timestamp
     index: int = 0              # context turn index (for ordering re-decompose cards by at_turn)
     milestone_id: str = ""
+    instance_id: str = ""       # statement invocation instance (foreach/retry isolate here)
     milestone_kind: str = ""
     instruction: str = ""
     summary: str = ""
@@ -48,6 +49,7 @@ class ReportPage:
     title: str
     steps: list[ReportStep] = field(default_factory=list)
     milestone_id: str = ""
+    instance_id: str = ""
     milestone_kind: str = ""
     milestone_name: str = ""
     milestone_description: str = ""
@@ -72,7 +74,7 @@ class ReportData:
     router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
     output: str = ""     # final reply / 最终输出 of the run
     stop_reason: str = ""  # run-level terminal reason from context.json
-    run_status: str = ""   # completed / interrupted / stopped
+    run_status: str = ""   # completed / failed / interrupted / stopped
     goal_completed: bool = False
     platform: str = ""   # run platform (iphone/browser); empty for old logs
     wall_clock_s: float = 0.0    # true end-to-end runner elapsed (context.wall_clock_s); 0 for old logs

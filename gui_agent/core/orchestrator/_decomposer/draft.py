@@ -22,6 +22,7 @@ from ..program import (
     Run,
     RunKind,
     Stmt,
+    assign_statement_ids,
 )
 
 
@@ -160,7 +161,7 @@ class _StepDraft(BaseModel):
     expr: str = Field(default="", description="op=compute：受限 Python 表达式，对作用域内标量（函数参数 + 之前的 compute 结果，用裸名引用）求值，结果绑到 var（标量，后续 step/参数里用 {var} 引用）。字段值用 q['field'] 或 {q[field]} 参与表达式并显式拼接；不要写 '{q[field]} text' 这种模板字符串/f-string。字符串里含单引号/apostrophe 时用双引号或转义。只允许：字符串方法(rsplit/split/strip/replace/lower…)、切片/索引、算术/比较/三元、re_sub/re_search/len/str/int/float/round/abs；禁止 list comprehension、generator、next(row ... for row in rows)、__import__、SQLAlchemy/engine/cursor 等集合遍历或外部执行，选行/计数/聚合/SQL 必须用 data_query。例：re_sub('-[^-]+$','',entity_key) 去掉最后一段后缀得到父实体标识；entity_key.rsplit('-',1)[0] 同理。派生计算用 compute，不要塞进 interactive run 让执行层现场推导。")
     # --- op=call（调用一个函数定义；可出现在 main / if / foreach body 任意处，函数与循环无关）---
     func: str = Field(default="", description="op=call：要调用的函数名（必须是 functions 里定义过的）")
-    call_args: dict[str, str] = Field(default_factory=dict, description="op=call：参数名→取值模板（在调用处作用域解析：{row[字段]} 取当前行、{标量} 取标量、或字面量）。函数返回值绑到 var（一个 RunResult，后续用 {var[返回字段]} 引用）")
+    call_args: dict[str, str] = Field(default_factory=dict, description="op=call：参数名→取值模板（在调用处作用域解析：{row[字段]} 取当前行、{标量} 取标量、或字面量）。函数返回值绑到 var（后续用 {var[返回字段]} 引用）")
     # --- op=if ---
     cond_var: str = Field(default="", description="op=if：条件依据的变量名（某个带 returns/data_query 步的 var）")
     cond_field: str = Field(default="", description="op=if：读取字段名（该步 returns 里的字段）")
@@ -443,8 +444,8 @@ def to_program(draft: _PlanDraft, goal: str) -> Program:
     """Draft -> AST + structural passes."""
     from ..passes import chain_from_states, collapse_foreach_enrichment_passes, insert_loop_entry_arrivals
 
-    return chain_from_states(insert_loop_entry_arrivals(collapse_foreach_enrichment_passes(Program(
+    return assign_statement_ids(chain_from_states(insert_loop_entry_arrivals(collapse_foreach_enrichment_passes(Program(
         goal=draft.goal or goal,
         statements=_to_stmts(draft.steps),
         functions=_to_functions(getattr(draft, "functions", []) or []),
-    ))))
+    )))))

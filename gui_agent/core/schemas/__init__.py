@@ -2,13 +2,9 @@
 
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
-
-if TYPE_CHECKING:
-    from gui_agent.core.orchestrator.program import RunResult
-
 
 # The 6 shared actions every platform supports. Platform-specific actions (iphone
 # home/app_switch, browser navigate, android home/back/app_switch) live in each
@@ -45,9 +41,7 @@ _ACTION_TYPE_LABELS: dict[str, str] = {
 def action_label(action_type: str) -> str:
     return _ACTION_TYPE_LABELS.get(action_type, action_type)
 TaskType = Literal["action", "analysis"]
-RunStatus = Literal["completed", "interrupted", "stopped"]
-MilestoneStatus = Literal["pending", "running", "done", "failed"]
-ChecklistStatus = Literal["pending", "done", "blocked", "skipped"]
+ProgramPhase = Literal["completed", "failed", "interrupted", "stopped"]
 MilestoneKind = Literal["navigation", "filter", "collection", "action", "verification"]
 CompletionStrategy = Literal[
     "visible_once",
@@ -88,23 +82,11 @@ def target_value_options(value: TargetValue | object) -> tuple[str, ...]:
 
 
 def normalize_effect_contract_fields(value: object) -> object:
-    """Map retired mutation fields to the canonical effect/persistence contract."""
+    """Fill canonical effect defaults without creating a second mutation vocabulary."""
     if not isinstance(value, dict):
         return value
     data = dict(value)
-    legacy_mode = str(data.get("mutation_mode") or "").strip().lower()
-    legacy_boundary = bool(data.get("requires_commit") or data.get("require_fresh_action"))
-    if not data.get("effect_mode"):
-        if legacy_mode == "ensure":
-            data["effect_mode"] = "ensure"
-        elif legacy_mode == "change" and (data.get("target_values") or legacy_boundary):
-            data["effect_mode"] = "transform"
-        elif legacy_boundary:
-            data["effect_mode"] = "dispatch"
-    data.setdefault(
-        "persistence",
-        "explicit_commit" if data.get("requires_commit") else "immediate",
-    )
+    data.setdefault("persistence", "immediate")
     if data.get("kind") == "action" and not data.get("effect_mode"):
         data["effect_mode"] = (
             "transform"
@@ -213,34 +195,27 @@ class CollectionScope(BaseModel):
     evidence: list[str] = Field(default_factory=list, description="截图中支持该范围的可见证据")
 
 
-class RunState(BaseModel):
-    """Run-level terminal state persisted with the context."""
+class ProgramOutcome(BaseModel):
+    """Immutable terminal projection of the whole Program."""
 
-    status: Optional[RunStatus] = Field(
-        default=None,
-        description="本次运行的最终状态：completed=执行到终态，interrupted=用户中止，stopped=中途停止",
-    )
-    stop_reason: str = Field(default="", description="本次运行的最终停止原因")
-    execution_completed: bool = Field(
-        default=False,
-        description="程序是否已执行到终态；可为 true 而业务效果仍未确认",
-    )
-    goal_completed: bool = Field(default=False, description="本次运行是否确认完成用户目标")
-    goal_status: Literal["confirmed", "accepted_unverified", "incomplete"] = Field(
-        default="incomplete",
-        description="目标效果确认级别：confirmed、accepted_unverified 或 incomplete",
-    )
-    output: Optional[str] = Field(default=None, description="最终输出")
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
+    phase: ProgramPhase
+    summary: str
+    verification: Optional[Verification] = None
+    output: Optional[str] = None
 
-class MilestoneChecklistItem(BaseModel):
-    """One persisted milestone-local progress/check item."""
+    @model_validator(mode="after")
+    def _validate_verification(self) -> "ProgramOutcome":
+        if self.phase == "completed" and self.verification is None:
+            raise ValueError("completed ProgramOutcome requires verification")
+        if self.phase != "completed" and self.verification is not None:
+            raise ValueError(f"{self.phase} ProgramOutcome cannot carry verification")
+        return self
 
-    id: str = Field(description="checklist 项稳定 ID")
-    text: str = Field(description="需要确认的条件或子项")
-    status: ChecklistStatus = Field(default="pending", description="pending | done | blocked | skipped")
-    evidence: list[str] = Field(default_factory=list, description="支持该状态的可见证据")
-    source: str = Field(default="", description="产生/更新该项的来源，如 checker/planner/manual")
+    @property
+    def goal_completed(self) -> bool:
+        return self.phase == "completed" and self.verification == "confirmed"
 
 
 def split_acceptance_items(success_condition: str, fallback: str = "") -> list[str]:
@@ -253,35 +228,6 @@ def split_acceptance_items(success_condition: str, fallback: str = "") -> list[s
     parts = [p.strip(" \t\r\n-•*") for p in re.split(r"[\n;；]+", source)]
     parts = [p for p in parts if p]
     return parts[:8] or [source]
-
-
-class MilestoneState(BaseModel):
-    """Runtime state for one milestone, separated from the static decomposition."""
-
-    id: str
-    status: Optional[MilestoneStatus] = Field(
-        default=None,
-        description="该 milestone 当前执行状态",
-    )
-    retry_count: int = Field(default=0, description="该 milestone 已重试次数")
-    done_check: dict = Field(default_factory=dict, description="最终验收 checker 结果")
-    checklist: list[MilestoneChecklistItem] = Field(
-        default_factory=list,
-        description="milestone-local checklist；由 checker/人工状态更新，不作为通用 LLM 待办清单",
-    )
-    reads: dict[str, str] = Field(
-        default_factory=dict,
-        description="编排/读取阶段提取出的结构化字段",
-    )
-    note_hashes: list[str] = Field(default_factory=list, description="该 milestone 采集入库的内容片段哈希")
-    last_summary: str = Field(default="", description="最近一次 supervisor summary")
-    last_turn_index: Optional[int] = Field(default=None, description="最近一次关联 turn 序号")
-    last_page_identity: str = Field(default="", description="checker 最近识别的页面身份")
-    scroll_count: int = Field(default=0, description="该 milestone 已尝试滚动次数")
-    progress_values: list[str] = Field(default_factory=list, description="连续调值类最近观测到的值")
-    pre_existing: bool = Field(default=False, description="是否为会话前已存在状态")
-    collection_summary: Optional[str] = Field(default=None, description="采集完成摘要")
-    collection_scope: Optional[CollectionScope] = Field(default=None, description="最近一次采集范围")
 
 
 class BaseAction(BaseModel):
@@ -593,21 +539,6 @@ class StatementOutcome(BaseModel):
     def is_completed(self) -> bool:
         return self.phase == "completed"
 
-    def to_run_result(self) -> "RunResult":
-        """Project into the Interpreter's internal wire type."""
-        from gui_agent.core.orchestrator.program import RunResult
-
-        return RunResult(
-            completed=self.is_completed,
-            failed=not self.is_completed,
-            completion_status=self.verification if self.is_completed else "failed",
-            reads=dict(self.reads),
-            rows=list(self.rows),
-            summary=self.summary,
-            evidence=list(self.evidence),
-        )
-
-
 class BaseActionDecision(BaseModel):
     """Action policy output: one physical action or an explicit grounding failure."""
 
@@ -706,7 +637,8 @@ class SupervisorStep(BaseModel):
         default="",
         description=(
             "当前执行上下文分桶 key；stuck/no-effect/history 等运行时记忆按此隔离。"
-            "普通任务通常为 milestone:<id>，逐行/逐实体任务可为 row:<identity>。"
+            "新运行使用 <statement_instance_id>/statement，逐行/逐实体时使用 "
+            "<statement_instance_id>/row:<identity>。"
         ),
     )
     milestone_kind: Optional[MilestoneKind] = Field(default=None, description="当前子目标类型")
@@ -829,7 +761,7 @@ class StatementContract(BaseModel):
                     strategy.strip().lower(), strategy
                 )
             normalized = normalize_effect_contract_fields(normalized)
-            # Keep only declared contract fields (drop runtime/legacy extras).
+            # Keep only declared contract fields.
             allowed = {
                 "id", "name", "description", "success_condition", "kind",
                 "completion_strategy", "precondition", "effect_mode", "persistence",
@@ -881,7 +813,7 @@ class StatementContract(BaseModel):
     returns: list[str] = Field(
         default_factory=list,
         description="声明的结构化返回字段；由编排器 Run.returns 填充，空 = 本 milestone 无出参。"
-                    "Milestone 返回后由 statement result contract 校验。",
+                    "StatementContract 返回后由 statement result contract 校验。",
     )
     read_spec: str = Field(
         default="",
@@ -940,10 +872,6 @@ class StatementInfo(BaseModel):
     read_spec: str = ""
     sql: str = ""
     data_scope: str = ""
-
-
-# Back-compat alias: package paths and many imports still say Milestone.
-Milestone = StatementContract
 
 
 class TargetVerify(BaseModel):
@@ -1017,37 +945,9 @@ class PolicyTurn(BaseModel):
         ),
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_action_outcome(cls, data: object) -> object:
-        """Move historical per-action outcome fields into statement-level effect evidence."""
-        if not isinstance(data, dict) or data.get("effect_signal") is not None:
-            return data
-        signal = data.get("action_signal")
-        if not isinstance(signal, dict):
-            return data
-        outcome = str(signal.get("outcome") or "unverified")
-        if outcome not in {"confirmed", "contradicted"}:
-            return data
-        supervisor = data.get("supervisor") if isinstance(data.get("supervisor"), dict) else {}
-        migrated = dict(data)
-        migrated["effect_signal"] = {
-            "statement_id": str(supervisor.get("milestone_id") or ""),
-            "status": "satisfied" if outcome == "confirmed" else "contradicted",
-            "freshness": "current_run",
-            "source_type": "legacy.action_outcome",
-            "evidence": list(signal.get("outcome_evidence") or ()),
-        }
-        return migrated
-
     @model_validator(mode="after")
     def _normalize_no_action_signal(self) -> "PolicyTurn":
-        """A turn without a physical action cannot contain dispatch evidence.
-
-        This also repairs historical contexts where the action policy returned the
-        now-retired ``stop`` primitive and the executor recorded that no-op as a
-        successful dispatch.
-        """
+        """A turn without a physical action cannot contain dispatch evidence."""
         if self.action_decision is None or self.action_decision.action is not None:
             return self
         self.executed = False
@@ -1059,6 +959,27 @@ class PolicyTurn(BaseModel):
             self.action_signal.response_channels.clear()
             self.effect_signal = None
         return self
+
+
+class EventJournal(BaseModel):
+    """Append-only facts produced while executing one Program.
+
+    Program and statement runtime state live elsewhere. The journal owns persisted turns and
+    extracted content; reports and completion logic may only project from these facts.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    events: list[PolicyTurn] = Field(default_factory=list)
+    content_notes: list[str] = Field(default_factory=list)
+
+    def append(self, event: PolicyTurn) -> PolicyTurn:
+        self.events.append(event)
+        return event
+
+    def append_content(self, note: str) -> None:
+        self.content_notes.append(note)
 
 
 class PolicyContext(BaseModel):
@@ -1079,12 +1000,10 @@ class PolicyContext(BaseModel):
         default=None,
         description="RouterResult {goal, needs_clarification, clarification};bin/runner 直跑路径未经 router，为 None",
     )
-    turns: list[PolicyTurn] = Field(default_factory=list)
+    journal: EventJournal = Field(default_factory=EventJournal)
     task_type: Optional[TaskType] = None
     collection_scope: Optional[CollectionScope] = None
-    content_notes: list[str] = Field(default_factory=list)
-    content_note_hashes: list[str] = Field(default_factory=list)
-    run: RunState = Field(default_factory=RunState, description="本次运行的结构化状态")
+    outcome: Optional[ProgramOutcome] = None
     models: dict[str, str] = Field(
         default_factory=dict,
         description="本次运行各 LLM 配置键实际使用的模型 {config_key: model}，用于成本核算自描述",

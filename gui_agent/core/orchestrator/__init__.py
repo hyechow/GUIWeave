@@ -35,14 +35,14 @@ package is that compiler + runtime; each module has one role in the toolchain:
   traversal/        foreach row-collection traversal controller/runtime.
 
   ── runtime ──────────────────────────────────────────────────────────────────────────
-  runner.py         the interpreter: control flow + scalar evaluation + the common RunResult
-                    protocol. Interactive statements yield to the agent loop; statements that do
-                    not need a Milestone loop are drained by core/run/statements/dispatch.py.
-  core/run/interactive.py   the interactive statement executor adapter: Run → Milestone loop,
+  runner.py         the interpreter: control flow + scalar evaluation over StatementOutcome.
+                    Interactive statements yield to the agent loop; statements that do
+                    not need a StatementContract loop are drained by core/run/statements/dispatch.py.
+  core/run/interactive.py   the interactive statement executor adapter: Run → StatementContract loop,
                     then terminal-observation return extraction.
   contracts.py      executor-result validation only; no execution or recovery decisions.
   recovery.py       cross-statement recovery taxonomy, budgets, kickback protocol, and Program
-                    repair helpers. Milestone-local retries remain inside the Milestone loop.
+                    repair helpers. StatementContract-local retries remain inside the StatementContract loop.
   budget.py         turn-cost estimate.
 
   Retired: the old engine/FFI facades. Statement dispatch now names the actual executor; there is
@@ -52,8 +52,9 @@ package is that compiler + runtime; each module has one role in the toolchain:
 from .program import (
     Call, Compute, Cond, CondCmp, Finish, ForEach, FunctionDef, If,
     INTERACTIVE_KINDS, NON_INTERACTIVE_KINDS, Program, Query, Read, Run, RunLike,
-    RunResult, Stmt, execution_mode_for_kind,
+    Stmt, execution_mode_for_kind,
 )
+from gui_agent.core.schemas import StatementOutcome
 from .decomposer import OrchestratorCompileError, decompose, redecompose, to_program
 from .validator import IssueList, ValidationIssue, validate_program
 from .intent_contracts import IntentContractIssue, validate_intent_contracts
@@ -86,7 +87,7 @@ from .passes import (
 __all__ = [
     "Call", "Compute", "Cond", "CondCmp", "Finish", "ForEach", "FunctionDef", "If",
     "INTERACTIVE_KINDS", "NON_INTERACTIVE_KINDS", "Program", "Query", "Read", "Run",
-    "RunLike", "RunResult", "Stmt", "execution_mode_for_kind",
+    "RunLike", "StatementOutcome", "Stmt", "execution_mode_for_kind",
     "Interpreter", "StatementExecutor", "OrchestratorResult", "ProgramRunner",
     "RunRecord", "drive", "summarize_progress", "structured_read", "DataQueryError", "execute_data_query",
     "decompose", "redecompose", "to_program", "validate_program", "OrchestratorCompileError",

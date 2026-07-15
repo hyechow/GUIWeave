@@ -1,12 +1,12 @@
 """统一恢复账本 —— 异常体系 Stage A（分类 + 记账，行为零变化）。
 
-架构背景见 docs/dsl_runtime_architecture.md：恢复按 statement 边界分类，Milestone 内部重试
+架构背景见 docs/dsl_runtime_architecture.md：恢复按 statement 边界分类，StatementContract 内部重试
 留在执行器；跨 statement 的恢复由 Program runtime 记录和升级。历史上各机制的
 预算常数与触发条件，互不知情，预算乘积无人度量。Stage A 先立【异常分类】（作为类型，
 不是控制流）+【单一账本】（任何机制触发恢复都记一条事件），预算常数与控制流原样不动；
 Stage B（live 后）再用账本轨迹设计全局预算与升级链（载体 = loop.py 状态机化）。
 
-异常四分类（跨 statement 执行边界的事件才入账；Milestone 内部的 action replan /
+异常四分类（跨 statement 执行边界的事件才入账；StatementContract 内部的 action replan /
 checker 重试仍由交互执行器自己处理）：
 
 - ``compile_error``       编译期：validator/preflight 反馈重试。Stage A 里 decompose 的
@@ -213,13 +213,12 @@ def force_interactive_return_recovery(program: object, directive: str) -> object
     return program.model_copy(update={"statements": statements})
 
 
-def should_kickback_replan(outcome, redecompose, replan_count: int) -> bool:
-    """Whether an infeasible statement outcome should recompile the remaining Program."""
+def should_kickback_replan(outcome, redecompose) -> bool:
+    """Whether an infeasible outcome supplies a usable recompile directive."""
     return bool(
         getattr(outcome, "phase", None) == "infeasible"
         and getattr(outcome, "kickback", None)
         and callable(redecompose)
-        and replan_count < MAX_KICKBACK_REPLANS
     )
 
 
@@ -232,7 +231,7 @@ _TIGHTEN_SUFFIX_RE = re.compile(r"（继续定位返回字段：[^）]*）")
 
 @dataclass
 class KickbackDirective:
-    """Typed evidence carried by an infeasible Milestone outcome."""
+    """Typed evidence carried by an infeasible StatementContract outcome."""
 
     dead_route: str = ""
     required_route: str = ""

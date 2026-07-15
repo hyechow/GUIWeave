@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 from gui_agent.core.config import pricing_currency
 
 from .html_utils import _attr, _safe
 from .metrics import _fmt_tokens, _sum_tokens, _token_cost
-from .models import ReportStep
 from .prompt_html import _render_module_io_html
 
 _PROG_KIND_BADGE = {
@@ -53,105 +51,6 @@ def _program_run_meta(record: dict, run_items: list[dict]) -> dict:
             if str(item.get("name") or "") == name:
                 return item
     return {}
-
-
-def _attach_non_ui_screenshots(orchestrator: dict | None, run_dir: Path) -> None:
-    """Attach screenshot_read_N files to non-UI run_log rows for report rendering."""
-    if not isinstance(orchestrator, dict):
-        return
-    run_log = orchestrator.get("run_log")
-    if not isinstance(run_log, list):
-        return
-    run_items = _program_run_items((orchestrator.get("program") or {}).get("statements") or [])
-
-    def _shot_index(path: Path) -> int:
-        m = re.search(r"screenshot_read_(\d+)\.png$", path.name)
-        return int(m.group(1)) if m else 10**9
-
-    shots = sorted(run_dir.glob("screenshot_read_*.png"), key=_shot_index)
-    shot_i = 0
-    for record in run_log:
-        if not isinstance(record, dict):
-            continue
-        meta = _program_run_meta(record, run_items)
-        if meta.get("kind") not in {"read", "data_query"}:
-            continue
-        if record.get("observation_url"):
-            continue
-        if shot_i < len(shots):
-            record["observation_url"] = shots[shot_i].name
-            shot_i += 1
-
-
-def _synthetic_non_ui_steps(
-    orchestrator: dict | None,
-    run_dir: Path,
-    *,
-    start_index: int,
-    existing: set[tuple[str, str]],
-) -> list[ReportStep]:
-    """Build turn-like report rows for archived logs where non-UI primitives predate turn persistence."""
-    if not isinstance(orchestrator, dict):
-        return []
-    run_log = orchestrator.get("run_log")
-    if not isinstance(run_log, list):
-        return []
-    run_items = _program_run_items((orchestrator.get("program") or {}).get("statements") or [])
-    steps: list[ReportStep] = []
-    next_index = start_index
-    for record in run_log:
-        if not isinstance(record, dict):
-            continue
-        meta = _program_run_meta(record, run_items)
-        kind = str(meta.get("kind") or "")
-        if kind not in {"read", "data_query"}:
-            continue
-        result = record.get("result") if isinstance(record.get("result"), dict) else {}
-        name = str(record.get("name") or meta.get("name") or "")
-        var = str(record.get("var") or meta.get("var") or "")
-        key = (var, name)
-        if key in existing:
-            continue
-        reads = result.get("reads") if isinstance(result.get("reads"), dict) else {}
-        non_ui = {
-            "kind": kind,
-            "name": name,
-            "var": var,
-            "returns": meta.get("returns") or list(reads.keys()),
-            "read_spec": meta.get("read_spec") or "",
-            "sql": meta.get("sql") or "",
-            "data_scope": meta.get("data_scope") or "",
-            "reads": reads,
-            "summary": result.get("summary") or "",
-            "completed": bool(result.get("completed")) and not bool(result.get("failed")),
-            "failed": bool(result.get("failed")),
-            "observation_url": record.get("observation_url") or "",
-        }
-        shot_name = str(non_ui.get("observation_url") or "")
-        shot_path = run_dir / shot_name if shot_name else None
-        shot_url = shot_path.name if shot_path and shot_path.exists() else ""
-        completed = bool(non_ui["completed"])
-        steps.append(
-            ReportStep(
-                label=f"Turn {next_index}",
-                action_type=kind,
-                x=None,
-                y=None,
-                description=name,
-                annotated_before_url=shot_url,
-                annotated_full_url=shot_url,
-                raw_screenshot_url=shot_url,
-                status="✓ non-UI" if completed else "✗ non-UI",
-                milestone_id=var or f"non_ui_{next_index}",
-                milestone_kind=kind,
-                instruction="",
-                summary=str(non_ui.get("summary") or ""),
-                operation_mode="non_interactive",
-                non_ui=non_ui,
-            )
-        )
-        next_index += 1
-    return steps
 
 
 def _pretty_non_ui_value(value: object) -> str:
@@ -209,7 +108,7 @@ def _render_non_ui_log(orchestrator: dict, run_items: list[dict]) -> str:
         if kind not in {"read", "data_query"}:
             continue
         result = record.get("result") if isinstance(record.get("result"), dict) else {}
-        completed = bool(result.get("completed")) and not bool(result.get("failed"))
+        completed = result.get("phase") == "completed"
         status_cls = "nonui-ok" if completed else "nonui-fail"
         status_text = "completed" if completed else "failed"
         badge = _PROG_KIND_BADGE.get(kind, "milestone-badge-default")

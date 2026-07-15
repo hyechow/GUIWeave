@@ -96,7 +96,7 @@ class ProgressMonitor:
     _last_url: Optional[str] = None        # raw url (not canonical) — exact-delta comparison
     _last_dom_state: Optional[str] = None  # form values / checked-state fingerprint
     # Per-milestone sliding window of the checker's read "current value" — the value-stall detector.
-    _progress_values: dict = field(default_factory=dict)
+    _progress_values: list[str] = field(default_factory=list)
     # Recent (frame, action-center) pairs for the screen-similarity detector. Cleared on milestone
     # transitions (the touched region differs); a transient buffer, not persisted.
     _recent_screenshots: list = field(default_factory=list)
@@ -166,6 +166,18 @@ class ProgressMonitor:
     def clear_screenshots(self) -> None:
         """Reset the screen-similarity buffer (called on milestone transitions)."""
         self._recent_screenshots.clear()
+
+    def reset_for_retry(self) -> None:
+        """Clear transient observation windows while retaining the action trace.
+
+        Return-contract tighten is the same statement invocation, so prior actions remain useful
+        loop evidence.  Frame similarity, value-stall windows, and the last computed delta flags
+        belong to the superseded completion attempt and must start fresh.
+        """
+        self._recent_screenshots.clear()
+        self._progress_values.clear()
+        self.url_changed = False
+        self.dom_changed = False
 
     @staticmethod
     def action_center(action) -> Optional[tuple[float, float]]:
@@ -271,10 +283,10 @@ class ProgressMonitor:
             return f"{int(hm.group(1)):02d}:{int(mm.group(1)):02d}"
         return re.sub(r"\s+", "", check.summary or "")
 
-    def check_value_stall(self, milestone, check):
+    def check_value_stall(self, check):
         """Report stalled progress when a continuously adjusted value remains unchanged."""
         val = self._extract_progress_value(check)
-        window = self._progress_values.setdefault(milestone.id, [])
+        window = self._progress_values
         window.append(val)
         if len(window) > STUCK_VALUE_STALL_WINDOW:
             window.pop(0)

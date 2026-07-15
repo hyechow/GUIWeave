@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 from gui_agent.core.runtime.traversal import TraversalSession, TraversalWindow
-from gui_agent.core.schemas import Milestone
+from gui_agent.core.schemas import StatementContract
 
 from .schemas import _PlanResult
 
@@ -112,7 +112,7 @@ class TargetAcquireController:
         self._traversals: dict[tuple[str, str], TraversalSession] = {}
 
     @staticmethod
-    def _queries(milestone: Milestone) -> tuple[str, ...]:
+    def _queries(milestone: StatementContract) -> tuple[str, ...]:
         return tuple(
             dict.fromkeys(
                 str(value or "").strip()
@@ -206,7 +206,7 @@ class TargetAcquireController:
     def decide(
         self,
         form_controls: Optional[list[dict]],
-        milestone: Milestone,
+        milestone: StatementContract,
         *,
         scope: str,
     ) -> AcquireDecision:

@@ -30,7 +30,7 @@ from gui_agent.context.runtime import (
 from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.llm.messages import assemble_messages, prepare_prompt_png
 from gui_agent.core.schemas import (
-    Milestone,
+    StatementContract,
     Observation,
     PolicyTurn,
     split_acceptance_items,
@@ -206,7 +206,7 @@ def _normalize_picker_plan_direction(plan: _PlanResult) -> _PlanResult:
 
 
 def run_checker(
-    milestone: Milestone,
+    milestone: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     *,
@@ -404,7 +404,7 @@ _SELECTOR_PROMPT = load_prompt_text("task.milestone.knowledge_selector")
 
 def run_selector(
     goal: str,
-    milestone: Milestone,
+    milestone: StatementContract,
     page_identity: str,
     manifest: str,
     *,
@@ -475,7 +475,7 @@ def run_selector(
 
 
 def run_planner(
-    milestone: Milestone,
+    milestone: StatementContract,
     check: _SingleCheckResult,
     observation: Observation,
     history: list[PolicyTurn],
@@ -569,7 +569,7 @@ def run_planner(
 
 
 def run_loop_check(
-    milestone: Milestone,
+    milestone: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     *,

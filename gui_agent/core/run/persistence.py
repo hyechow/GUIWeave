@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from gui_agent.core.schemas import Milestone, MutationReceipt, PolicyTurn
+from gui_agent.core.schemas import StatementContract, MutationReceipt, PolicyTurn
 
 
 PersistenceStatus = Literal["clean", "pending", "submitted"]
@@ -27,7 +27,7 @@ class PersistenceAssessment:
 
 
 def assess_persistence(
-    milestone: Milestone,
+    milestone: StatementContract,
     history: list[PolicyTurn],
     *,
     scope: str = "",

@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from llm.structured import get_llm_call_count, get_llm_token_usage
-from gui_agent.core.run.content import ReadState, ensure_note_hashes as _ensure_note_hashes
+from gui_agent.core.run.content import ReadState
 from gui_agent.core.runtime.factory import build_platform
 from gui_agent.core.llm.reader import ContentReader
 from gui_agent.core.run.context import (
@@ -58,10 +58,9 @@ from gui_agent.core.run.interactive import (
     extract_run_returns,
     start_milestone,
     statement_id_for_run,
-    statement_info_for_run,
-    statement_info_from_contract,
 )
 from gui_agent.core.run.turns import (
+    emit_statement_fields,
     interactive_turn_count as _interactive_turn_count,
     make_verdict_turn,
     record_interactive_turn,
@@ -71,7 +70,7 @@ from gui_agent.core.supervisor.base import SupervisorPolicy
 from gui_agent.core.llm.temporal import resolve_temporal_expressions
 from gui_agent.core.policies.base import ActionPolicy
 from gui_agent.core.schemas import PolicyContext
-from gui_agent.core.run.state import sync_context_run_state
+from gui_agent.core.run.state import sync_context_program_outcome
 
 if TYPE_CHECKING:
     # Adapter types used only in annotations. With `from __future__ import
@@ -89,9 +88,9 @@ MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂
 
 def _needs_terminal_reconciliation(context: PolicyContext) -> bool:
     """Whether the hard limit landed immediately after an unresolved GUI dispatch."""
-    if not context.turns:
+    if not context.journal.events:
         return False
-    latest = context.turns[-1]
+    latest = context.journal.events[-1]
     signal = latest.action_signal
     return bool(
         latest.operation_mode == "interactive"
@@ -215,7 +214,6 @@ def run_agent_loop(
         raw_input=raw_input if raw_input is not None else prompt,
         router=router,
     )
-    _ensure_note_hashes(context)
     if knowledge is not None:
         context.knowledge = knowledge
 
@@ -238,20 +236,20 @@ def run_agent_loop(
     def _finish(result: dict) -> dict:
         if (
             rt is not None
-            and rt.recovery.events
+            and rt.has_recovery
             and isinstance(context.orchestrator, dict)
         ):
             context.orchestrator = {
                 **context.orchestrator,
-                "recovery": rt.recovery.summary(),
+                "recovery": rt.recovery_summary(),
             }
-        sync_context_run_state(context, result)
+        sync_context_program_outcome(context, result)
         _save_ctx()
         return result
 
     _save_ctx()
     _say(f"Goal    : {context.goal}")
-    _say(f"Turns   : {len(context.turns)}")
+    _say(f"Turns   : {len(context.journal.events)}")
     # Pin the task goal as a persistent HUD header (above the live turn status), so
     # the floating panel over the browser/mirror shows WHAT the agent is doing.
     if hud is not None and hasattr(hud, "set_goal"):
@@ -341,6 +339,8 @@ def run_agent_loop(
             expand_fn=expand_foreach,
             select_fn=select_members,
         )
+        _record_llm_mark = get_llm_call_count()
+        _record_token_mark = get_llm_token_usage()
 
         def _stop_after_esc(turn_no: int) -> dict | None:
             if not _stop_requested():
@@ -369,8 +369,9 @@ def run_agent_loop(
             *,
             allow_navigation: bool = True,
         ) -> "str | None":
-            """Execute inline statements, then seed the next interactive Run via reseed."""
-            nonlocal _immediate_failure, observation, observation_url_for_turn, prep_future
+            """Execute inline statements, then begin the next interactive statement."""
+            nonlocal _immediate_failure, _record_llm_mark, _record_token_mark
+            nonlocal observation, observation_url_for_turn, prep_future
             result = drain_immediate_statements(
                 program_runtime=rt,
                 bundle=bundle,
@@ -384,9 +385,11 @@ def run_agent_loop(
                 observation=observation_for_statements,
                 observation_url=observation_url,
                 materialized_tables=lambda: rt.interpreter.materialized_tables(),
-                recovery=rt.recovery,
                 allow_navigation=allow_navigation,
             )
+            # Immediate statements record their own turns and metrics.
+            _record_llm_mark = get_llm_call_count()
+            _record_token_mark = get_llm_token_usage()
             if rt.current is not None and getattr(rt.current, "is_interactive", False):
                 sid = statement_id_for_run(rt.current, rt.index)
                 iid = rt.next_instance_id(sid)
@@ -400,7 +403,7 @@ def run_agent_loop(
                     ),
                     instance_id=iid,
                 )
-                rt.mark_notes(len(context.content_notes))
+                rt.mark_notes(len(context.journal.content_notes))
             _immediate_failure = result.failure_evidence
             if result.observation is not None:
                 observation = result.observation
@@ -414,7 +417,6 @@ def run_agent_loop(
             outcome: StatementOutcome,
         ) -> dict:
             """Terminal interactive statement → ProgramRuntime.send → task result."""
-            end = getattr(supervisor, "end_statement", None)
             return finish_terminal_step(
                 outcome=outcome,
                 read_state=read_state,
@@ -423,7 +425,7 @@ def run_agent_loop(
                 context=context,
                 finish=_finish,
                 say=_say,
-                end_statement=end if callable(end) else None,
+                end_statement=supervisor.end_statement,
             )
 
         def _outcome_from_step(sv_step, *, reads=None, rows=None):
@@ -436,6 +438,32 @@ def run_agent_loop(
             if rows is not None:
                 updates["rows"] = rows
             return outcome.model_copy(update=updates) if updates else outcome
+
+        def _record_terminal_observation(sv_step, outcome) -> None:
+            """Record ONE operation_mode="observation" terminal turn for a completed/exhausted
+            statement. Must run BEFORE send_outcome/end_statement so extract_checker reads the
+            live runtime, and so emit_statement_fields can stamp StatementInfo/instance_id. The
+            turn carries the FILLED outcome (reads/rows), not the raw native outcome."""
+            nonlocal _record_llm_mark, _record_token_mark
+            calls_after = get_llm_call_count()
+            tokens_after = get_llm_token_usage()
+            _info, _iid = emit_statement_fields(supervisor)
+            context.journal.append(make_verdict_turn(
+                index=len(context.journal.events) + 1,
+                observation_source=observation.source,
+                observation_url=observation_url_for_turn,
+                supervisor_step=sv_step,
+                supervisor=supervisor,
+                llm_calls=calls_after - _record_llm_mark,
+                input_tokens=tokens_after[0] - _record_token_mark[0],
+                output_tokens=tokens_after[1] - _record_token_mark[1],
+                observation_only=True,
+                statement=_info,
+                statement_instance_id=_iid,
+                outcome_override=outcome,
+            ))
+            _record_llm_mark = calls_after
+            _record_token_mark = tokens_after
 
         _orchestrator_reports = list(orchestrator_context_reports or [])
         _orchestrator_metrics = next(
@@ -459,12 +487,19 @@ def run_agent_loop(
         if _reply is not None:
             return _finish(_orch_result(context, rt.interpreter, _reply))
 
-        def _perform_replan(directive: str, observation=None, *,
-                            cls: str = "infeasible_route") -> "tuple[bool, str | None]":
+        def _perform_replan(
+            directive: str,
+            observation=None,
+            *,
+            cls: str = "infeasible_route",
+            terminal_outcome: StatementOutcome | None = None,
+        ) -> "tuple[bool, str | None]":
             """Re-decompose remaining plan; hot-swap via ProgramRuntime.replace_program."""
-            if not (directive and callable(redecompose) and rt.can_kickback()):
+            if not (directive and callable(redecompose)):
                 return (False, None)
-            kick_n = rt.record_kickback()
+            kick_n = rt.begin_kickback()
+            if kick_n is None:
+                return (False, None)
             failed_run = rt.current
             _site = str(
                 getattr(failed_run, "var", "") or getattr(failed_run, "name", "") or "program"
@@ -494,13 +529,13 @@ def run_agent_loop(
                 )  # type: ignore[operator]
             except Exception as _exc:  # noqa: BLE001
                 _say(f"[Kickback] 重规划失败（{_exc}），按原结果收尾")
-                rt.recovery.record(
+                rt.record_recovery(
                     cls, "kickback_redecompose", _site,
                     detail=str(_exc)[:200], outcome="redecompose_failed",
                 )
                 return (False, None)
             if _new is None or not _new.statements:
-                rt.recovery.record(cls, "kickback_redecompose", _site, outcome="no_plan")
+                rt.record_recovery(cls, "kickback_redecompose", _site, outcome="no_plan")
                 return (False, None)
 
             _kb = parse_kickback_directive(directive)
@@ -534,22 +569,28 @@ def run_agent_loop(
                         _picked_retry = True
                     else:
                         _say("  [Kickback] 锐化重试未改善服从度，沿用第一版重规划")
-                rt.recovery.record(
+                rt.record_recovery(
                     cls, "adherence_sharpen", _site,
                     detail="；".join(_adherence_issues)[:200],
                     outcome="improved" if _picked_retry else "kept_first",
                 )
             _promoted = _force_interactive_return_recovery(_new, directive)
             if _promoted is not _new:
-                rt.recovery.record(
+                rt.record_recovery(
                     "contract_violation", "interactive_promotion", _site,
                     outcome="read_promoted_to_navigation",
                 )
             _new = _promoted
-            rt.recovery.record(
+            rt.record_recovery(
                 cls, "kickback_redecompose", _site,
                 detail=directive[:160], outcome="replanned",
             )
+            # Close the infeasible statement's runtime BEFORE hot-swapping the program — the
+            # infeasible step was already recorded as an interactive turn (checker captured), and
+            # the new program's first statement is begun by _drain_immediate below. Ending here
+            # prevents the begin_statement guard from rejecting the implicit overwrite.
+            if terminal_outcome is not None:
+                supervisor.end_statement(terminal_outcome)
             rt.replace_program(
                 _new,
                 collect_fn=_collect_fn,
@@ -563,7 +604,7 @@ def run_agent_loop(
             _redecomps.append({
                 "kickback_n": kick_n,
                 "directive": directive,
-                "at_turn": len(context.turns),
+                "at_turn": len(context.journal.events),
                 "adherence_issues": list(_adherence_issues),
                 "program": _new.model_dump(mode="json"),
                 "llm_calls": get_llm_call_count() - _rd_calls0,
@@ -589,7 +630,7 @@ def run_agent_loop(
             if interrupted is not None:
                 return interrupted
 
-            turn_no = len(context.turns) + 1
+            turn_no = len(context.journal.events) + 1
             _budget_mode = _turn_budget_mode(context, max_turns)
             _budget_reconcile = _budget_mode == "reconcile"
             if _budget_mode == "stop":
@@ -610,6 +651,8 @@ def run_agent_loop(
             turn_started_at = time.perf_counter()
             llm_calls_before = get_llm_call_count()
             tokens_before = get_llm_token_usage()
+            _record_llm_mark = llm_calls_before
+            _record_token_mark = tokens_before
 
             _say("\n" + TURN_HEADER.format(turn_no=turn_no))
 
@@ -633,7 +676,7 @@ def run_agent_loop(
             # ── Decision phase (same-frame statement hand-off) ────────────────────────
             # Decide for the current statement on THIS frame. A statement
             # that COMPLETES here is a hand-off, not a turn end: package it, advance the
-            # interpreter (driving any read runs off this verdict frame), reseed the next
+            # interpreter (driving any read runs off this verdict frame), begin the next
             # statement, and re-decide on the SAME frame — so a pure hand-off never
             # costs its own action-less turn. Only an action or a stop ends the turn. The next
             # statement's nav skip-check is set when _drain_immediate seeds its contract.
@@ -643,7 +686,6 @@ def run_agent_loop(
             _did_loading = False
             _did_kickback_replan = False
             _did_return_recovery = False
-            _terminal_verdict_recorded = False
             # Same-turn hand-offs call supervisor.step() multiple times; each step() clears its own
             # _timings, so the completion check that detected the prior milestone done would be lost
             # from this turn's breakdown. Carry each handed-off step's timings here and merge them
@@ -653,10 +695,10 @@ def run_agent_loop(
                 _say("监督决策中...")
                 if _budget_reconcile:
                     sv_step = supervisor.reconcile(
-                        observation, context.goal, context.turns
+                        observation, context.goal, context.journal.events
                     )
                 else:
-                    sv_step = supervisor.step(observation, context.goal, context.turns)
+                    sv_step = supervisor.step(observation, context.goal, context.journal.events)
                 _say(f"监督者: {sv_step.summary}")
                 _status(turn_no, sv_step.summary)
 
@@ -677,12 +719,12 @@ def run_agent_loop(
                 _reads = _read_completed_run_returns(rt.current, observation)
                 _contract = check_return_contract(rt.current, _reads)
                 if _contract:
-                    _attempt = rt.recovery.next_attempt(rt.index, rt.current)
+                    _attempt = rt.next_return_attempt()
                     _cv_site = str(
                         getattr(rt.current, "var", "") or getattr(rt.current, "name", "")
                     )
                     if _attempt is not None:
-                        rt.recovery.record(
+                        rt.record_recovery(
                             "contract_violation", "tighten_return", _cv_site,
                             detail=_contract.describe()[:200],
                             outcome=f"tighten {_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}",
@@ -696,15 +738,7 @@ def run_agent_loop(
                         )
                         rt.retry_current(tightened)
                         new_contract = contract_for_run(tightened, rt.index)
-                        reset = getattr(supervisor, "reset_for_return_retry", None)
-                        if callable(reset):
-                            reset(new_contract)
-                        else:
-                            start_milestone(
-                                supervisor, tightened, rt.index,
-                                fresh_advance=False,
-                                instance_id=rt.current_instance_id,
-                            )
+                        supervisor.reset_for_return_retry(new_contract)
                         _say(
                             "  [Orchestrator] 返回值合同未满足，继续定位"
                             f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
@@ -712,7 +746,7 @@ def run_agent_loop(
                         )
                         _did_return_recovery = True
                     else:
-                        rt.recovery.record(
+                        rt.record_recovery(
                             "contract_violation", "tighten_return", _cv_site,
                             detail=_contract.describe()[:200],
                             outcome="exhausted_honest_fail",
@@ -725,16 +759,25 @@ def run_agent_loop(
                             "返回值合同未满足：" + _contract.describe(),
                             reads=_reads,
                         )
+                        # Record the terminal observation turn BEFORE send/end so the live
+                        # checker + StatementInfo/instance_id are captured with the FILLED outcome.
+                        _record_terminal_observation(sv_step, _outcome)
                         try:
-                            nxt = rt.send_outcome(_outcome)
+                            rt.send_outcome(_outcome)
                         finally:
-                            end = getattr(supervisor, "end_statement", None)
-                            if callable(end):
-                                end(_outcome)
+                            supervisor.end_statement(_outcome)
                         if rt.finished:
                             _orch_reply = rt.reply or ""
-                        elif nxt is not None:
-                            _did_return_recovery = True
+                            break
+                        # ALWAYS begin the next statement (was skipped when nxt was not None,
+                        # leaving no live runtime → next step() raised). Mark return-recovery so
+                        # the outer loop continues onto the newly-begun statement next turn.
+                        _drain_immediate(
+                            observation_for_statements=observation,
+                            observation_url=observation_url_for_turn,
+                            allow_navigation=not _budget_reconcile,
+                        )
+                        _did_return_recovery = True
                     break
                 _outcome = _outcome_from_step(
                     sv_step,
@@ -742,28 +785,18 @@ def run_agent_loop(
                     rows=_rows,
                 )
                 assert _outcome is not None and _outcome.is_completed
+                # Record the terminal observation turn BEFORE send/end (live checker +
+                # StatementInfo/instance_id + FILLED outcome). This replaces the old query-only
+                # verdict turn and the post-loop program-end verdict workaround — every completed
+                # statement now owns exactly one observation terminal turn, budget-free.
+                _record_terminal_observation(sv_step, _outcome)
                 try:
                     rt.send_outcome(_outcome)
                 finally:
-                    end = getattr(supervisor, "end_statement", None)
-                    if callable(end):
-                        end(_outcome)
+                    supervisor.end_statement(_outcome)
                 if rt.finished:
                     _orch_reply = rt.reply or ""
                     break
-                if rt.current is not None and rt.current.is_query:
-                    context.turns.append(make_verdict_turn(
-                        index=len(context.turns) + 1,
-                        observation_source=observation.source,
-                        observation_url=observation_url_for_turn,
-                        supervisor_step=sv_step,
-                        supervisor=supervisor,
-                        llm_calls=get_llm_call_count() - llm_calls_before,
-                        input_tokens=get_llm_token_usage()[0] - tokens_before[0],
-                        output_tokens=get_llm_token_usage()[1] - tokens_before[1],
-                        observation_only=_budget_reconcile,
-                    ))
-                    _terminal_verdict_recorded = True
                 _reply = _drain_immediate(
                     observation_for_statements=observation,
                     observation_url=observation_url_for_turn,
@@ -778,30 +811,12 @@ def run_agent_loop(
                     f"{rt.current.name}（同一验收帧上决策，不另起 turn）"
                 )
 
-            # Merge the carried hand-off step timings into the supervisor's (final step's) timings,
-            # so this turn's breakdown includes the checker call that ran on the hand-off. Carried
-            # (earlier-step) keys render first; later writes (e.g. action_policy) still append after.
+            # The program ended on a hand-off (last actionable milestone done → read / finish).
+            # Every completed statement already recorded its own terminal observation turn inside
+            # the loop above, so no separate program-end verdict is needed here.
             if _orch_reply is not None:
                 read_state.drain_pending(say=_say)
-                # The program ended on this hand-off (last actionable milestone done → read /
-                # finish). The merge only DROPS a verdict turn when it folds into a FOLLOWING
-                # action; the terminal milestone has none, so record its verdict turn here —
-                # otherwise the report is missing it and the verdict screenshot (already written
-                # at observe) is orphaned. sv_step is the completed milestone's done verdict.
-                if not _terminal_verdict_recorded:
-                    context.turns.append(make_verdict_turn(
-                        index=len(context.turns) + 1,
-                        observation_source=observation.source,
-                        observation_url=observation_url_for_turn,
-                        supervisor_step=sv_step,
-                        supervisor=supervisor,
-                        llm_calls=get_llm_call_count() - llm_calls_before,
-                        input_tokens=get_llm_token_usage()[0] - tokens_before[0],
-                        output_tokens=get_llm_token_usage()[1] - tokens_before[1],
-                        observation_only=_budget_reconcile,
-                    ))
-                # Sync the last milestone's done verdict into context (no later turn body runs).
-                        # Feasibility Guard query kick-back: the program ended because a data_query failed with a
+                # Feasibility Guard query kick-back: the program ended because a data_query failed with a
                 # re-plannable data-source issue (source empty / mismatched with the task). Re-decompose
                 # with that evidence as the directive instead of finishing on the failure.
                 if _immediate_failure:
@@ -819,19 +834,12 @@ def run_agent_loop(
                 return _finish(_orch_result(context, rt.interpreter, _orch_reply))
 
             if _budget_reconcile:
-                context.turns.append(make_verdict_turn(
-                    index=len(context.turns) + 1,
-                    observation_source=observation.source,
-                    observation_url=observation_url_for_turn,
-                    supervisor_step=sv_step,
-                    supervisor=supervisor,
-                    llm_calls=get_llm_call_count() - llm_calls_before,
-                    input_tokens=get_llm_token_usage()[0] - tokens_before[0],
-                    output_tokens=get_llm_token_usage()[1] - tokens_before[1],
-                    observation_only=True,
-                ))
-                _save_ctx()
                 _budget_outcome = _outcome_from_step(sv_step)
+                # Terminal observation turn (runtime still live: reconcile broke out of the inner
+                # loop on a non-completed outcome, so end_statement has not run). Carries the
+                # filled outcome + StatementInfo/instance_id before _finish_statement sends/ends.
+                _record_terminal_observation(sv_step, _budget_outcome)
+                _save_ctx()
                 if _budget_outcome is not None:
                     return _finish_statement(
                         turn_no=turn_no,
@@ -849,7 +857,7 @@ def run_agent_loop(
             if _did_kickback_replan or _did_return_recovery:
                 continue
 
-            # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.turns、不消耗
+            # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.journal.events、不消耗
             # max_turns、不累加 noop_count。加载是 App 渲染延迟、不是 agent 的一步操作。
             # 连续加载设上限，防页面永挂导致死循环（旧行为：loading 帧既占轮数，又会因
             # should_act=False 累加 noop_count，连续 3 帧就误判"连续无动作"终止 agent）。
@@ -895,7 +903,7 @@ def run_agent_loop(
                 observation=observation,
                 action_policy=action_policy,
                 supervisor=supervisor,
-                history=context.turns,
+                history=context.journal.events,
                 executor=executor,
                 bundle=bundle,
                 platform=platform,
@@ -923,6 +931,7 @@ def run_agent_loop(
                 pool=_VERIFY_POOL,
             )
 
+            _stmt_info, _stmt_iid = emit_statement_fields(supervisor)
             turn = record_interactive_turn(
                 context=context,
                 observation_source=observation.source,
@@ -940,14 +949,16 @@ def run_agent_loop(
                 action_key=action_result.action_key,
                 suppressed_reason=action_result.suppressed_reason,
                 binding=action_result.binding,
-                llm_calls_before=llm_calls_before,
-                tokens_before=tokens_before,
+                llm_calls_before=_record_llm_mark,
+                tokens_before=_record_token_mark,
                 turn_started_at=turn_started_at,
                 read_added_content=read_added_content,
                 read_note_hash=read_note_hash,
                 save_context=_save_ctx,
                 silent=silent,
                 on_turn=on_turn,
+                statement=_stmt_info,
+                statement_instance_id=_stmt_iid,
             )
 
             note_executed_action = getattr(supervisor, "note_executed_action", None)
@@ -966,14 +977,13 @@ def run_agent_loop(
             if (
                 _turn_outcome is not None
                 and _turn_outcome.phase == "infeasible"
-                and should_kickback_replan(
-                    _turn_outcome, redecompose, rt.kickback_replans,
-                )
+                and should_kickback_replan(_turn_outcome, redecompose)
             ):
                 _say("\n[Kickback] statement 判定不可行 → 重规划")
                 _handled, _reply = _perform_replan(
                     _turn_outcome.kickback or "",
                     observation,
+                    terminal_outcome=_turn_outcome,
                 )
                 if _handled and _reply is not None:
                     return _finish(_orch_result(context, rt.interpreter, _reply))

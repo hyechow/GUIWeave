@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 from gui_agent.core.orchestrator.program import RunLike
 from gui_agent.core.run.interactive import statement_id_for_run, statement_info_for_run
+from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.turns import make_immediate_statement_turn
 from gui_agent.core.schemas import PolicyContext
 
@@ -20,7 +19,7 @@ def record_statement_outcome(
     *,
     statement_index: int,
     context: PolicyContext,
-    recovery: Any,
+    program_runtime: ProgramRuntime,
     started_at: float,
     llm_calls_before: int,
     tokens_before: tuple[int, int],
@@ -28,22 +27,21 @@ def record_statement_outcome(
 ) -> None:
     """Apply reporting and ledger effects after an executor has finished one statement."""
     for notice in outcome.recovery_notices:
-        if recovery is not None:
-            recovery.record(
-                notice.cls,
-                notice.mechanism,
-                notice.site,
-                detail=notice.detail,
-                outcome=notice.outcome,
-            )
+        program_runtime.record_recovery(
+            notice.cls,
+            notice.mechanism,
+            notice.site,
+            detail=notice.detail,
+            outcome=notice.outcome,
+        )
 
     statement_id = statement_id_for_run(statement, statement_index)
     info = statement_info_for_run(statement, statement_index)
     iid = statement_instance_id or f"imm-{statement_index}:{statement_id}"
 
     observation = outcome.observation
-    context.turns.append(make_immediate_statement_turn(
-        index=len(context.turns) + 1,
+    context.journal.append(make_immediate_statement_turn(
+        index=len(context.journal.events) + 1,
         observation_source=(
             getattr(observation, "source", "non_ui")
             if observation is not None

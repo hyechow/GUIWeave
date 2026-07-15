@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from llm.structured import get_llm_token_usage
-from gui_agent.core.schemas import Milestone, PolicyTurn
+from gui_agent.core.schemas import StatementContract, PolicyTurn
 
 MAX_RETRIES = 3
 # Consult the Feasibility Guard ONCE this early (before the MAX_RETRIES give-up): a milestone that
@@ -50,7 +50,7 @@ class _Timer:
             slot["output"] += out - self._tok0[1]
 
 
-def _is_loop(milestone: Milestone) -> bool:
+def _is_loop(milestone: StatementContract) -> bool:
     return (
         milestone.kind == "collection"
         and milestone.completion_strategy == "scroll_until_boundary"
@@ -86,14 +86,14 @@ def _has_collected(history: list[PolicyTurn], milestone_id: str) -> bool:
     )
 
 
-def _default_read_instruction(milestone: Milestone) -> str:
+def _default_read_instruction(milestone: StatementContract) -> str:
     return (
         f"提取当前屏幕中与「{milestone.name}」相关的所有可见内容，"
         "保留名称/标题、时间/位置、目标相关数值、状态、类别等字段；如果是列表，逐条提取。"
     )
 
 
-def _ctx(milestone: Milestone, read_instruction: Optional[str], collection_scope=None) -> dict:
+def _ctx(milestone: StatementContract, read_instruction: Optional[str], collection_scope=None) -> dict:
     allow_read = milestone.kind in {"collection", "verification"}
     return {
         "read_instruction": read_instruction,

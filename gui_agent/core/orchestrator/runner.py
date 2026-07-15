@@ -6,7 +6,7 @@ conditions, functions, loops, and finish.
 
 So the interpreter must be STEPPABLE, not a synchronous black box: executing a run() is
 many turns of the engine, not one call. `Interpreter.steps()` is a generator — it yields
-each Run for the engine to drive, receives the RunResult via send(), and returns the final
+each Run for the engine to drive, receives its StatementOutcome via send(), and returns the final
 reply. Persisting every run's reads in env/run_log is why "the middle read it but the
 output didn't know" disappears: the answer comes from the whole program, not the last loop.
 
@@ -27,14 +27,16 @@ from typing import Any, Callable, Generator, Optional
 
 from pydantic import BaseModel, Field
 
+from gui_agent.core.schemas import StatementOutcome
+
 from .program import (
     BARE_REF_RE, TEMPLATE_RE, Call, Compute, Cond, Finish, ForEach, FunctionDef, If, Program, Query,
-    Run, RunLike, RunResult,
+    Run, RunLike,
 )
 from .primitives.safe_eval import SafeEvalError, normalize_compute_expr, safe_eval
 
-# Drive one interactive statement to a terminal state and return its wire projection.
-StatementExecutor = Callable[[Run], RunResult]
+# Drive one interactive statement to a terminal state.
+StatementExecutor = Callable[[Run], StatementOutcome]
 
 
 def _unique_fields(fields: list[str]) -> list[str]:
@@ -71,7 +73,10 @@ class _ScalarRead(str):
 class RunRecord(BaseModel):
     name: str
     var: Optional[str] = None
-    result: RunResult
+    result: StatementOutcome
+    # Statement invocation instance id (assigned by ProgramRuntime at send time). Lets the
+    # report reducer overlay reads/status per-invocation instead of collapsing by var/name.
+    instance_id: str = ""
 
 
 def _flatten_runs(stmts: list) -> list["RunLike"]:
@@ -104,7 +109,7 @@ def summarize_progress(
 
     exp_lines: list[str] = []
     for rec in run_log:
-        mark = "✓" if rec.result.completed and not rec.result.failed else "✗"
+        mark = "✓" if rec.result.is_completed else "✗"
         line = f"{mark} {rec.name}"
         if rec.result.summary:
             line += f"（{rec.result.summary}）"
@@ -133,25 +138,25 @@ class OrchestratorResult(BaseModel):
     reply: str
     failed: bool = False
     # True when the program reached a `finish` whose template referenced a read whose
-    # RunResult.reads came back ENTIRELY empty (every field blank) — i.e. the finish
+    # StatementOutcome.reads came back ENTIRELY empty (every field blank) — i.e. the finish
     # answered on a read that read nothing. Such a run reached the end but produced no
     # real answer, so callers must NOT treat it as goal_completed (see result.py). False
     # for programs that never hit finish (auto-summary) or whose cited reads had data.
     finish_incomplete: bool = False
-    env: dict[str, RunResult] = Field(default_factory=dict)
+    env: dict[str, StatementOutcome] = Field(default_factory=dict)
     run_log: list[RunRecord] = Field(default_factory=list)
 
     @property
     def accepted_unverified(self) -> bool:
         return any(
-            record.result.completion_status == "accepted_unverified"
+            record.result.verification == "accepted_unverified"
             for record in self.run_log
         )
 
 
 class Interpreter:
     """Steppable DSL interpreter. Drive it via steps() (a generator): it yields each Run
-    and receives its RunResult via send(); steps() returns the final reply. env / run_log
+    and receives its StatementOutcome via send(); steps() returns the final reply. env / run_log
     accumulate so the answer is built from the whole program's structured state."""
 
     def __init__(self, program: Program, collect_fn=None, subdecompose_fn=None, expand_fn=None,
@@ -181,7 +186,7 @@ class Interpreter:
         # Depth guard: a per-row sub-program may NOT itself spawn another body_goal sub-goal
         # (one level only). Incremented while driving a sub-program's block.
         self._subgoal_depth = 0
-        self.env: dict[str, RunResult] = {}
+        self.env: dict[str, StatementOutcome] = {}
         self.run_log: list[RunRecord] = []
         # First-class functions: name → FunctionDef (decomposed ONCE with main, called N times).
         self._functions: dict[str, FunctionDef] = {fn.name: fn for fn in (program.functions or [])}
@@ -201,11 +206,11 @@ class Interpreter:
 
     @property
     def failed(self) -> bool:
-        return any(r.result.failed for r in self.run_log)
+        return any(not r.result.is_completed for r in self.run_log)
 
     def _fail_foreach(self, loop: ForEach, summary: str) -> None:
         into = loop.into or f"{loop.var}s"
-        result = RunResult(completed=False, failed=True, rows=[], summary=summary)
+        result = StatementOutcome.failed(summary, rows=[])
         self.finish_incomplete = True
         self.env[into] = result
         self._materialized_vars.add(into)
@@ -213,11 +218,11 @@ class Interpreter:
             name=f"foreach {loop.var} in {loop.over}", var=into, result=result,
         ))
 
-    def steps(self) -> Generator[Run, RunResult, str]:
+    def steps(self) -> Generator[Run, StatementOutcome, str]:
         reply = yield from self._block(self._program.statements)
         return reply if reply is not None else self._auto_summary()
 
-    def _block(self, stmts: list) -> Generator[Run, RunResult, Optional[str]]:
+    def _block(self, stmts: list) -> Generator[Run, StatementOutcome, Optional[str]]:
         """Execute a block; returns a terminal reply (finish / failure) or None if it ran
         to the end of the block without terminating."""
         for s in stmts:
@@ -229,9 +234,8 @@ class Interpreter:
                     # with an honest reply instead of silently sending an empty reference to the
                     # planner (the decomposer's validate guard prevents *dangling* refs; this catches
                     # the read-returned-empty case at runtime).
-                    fail = RunResult(
-                        completed=False, failed=True,
-                        summary=f"动作目标引用 {missing} 在运行时为空（前置 read 未读到对应值）",
+                    fail = StatementOutcome.failed(
+                        f"动作目标引用 {missing} 在运行时为空（前置 read 未读到对应值）",
                     )
                     self.run_log.append(RunRecord(name=s.name, var=s.var, result=fail))
                     return f"子任务「{s.name}」无法执行：{fail.summary}"
@@ -239,7 +243,7 @@ class Interpreter:
                 self.run_log.append(RunRecord(name=s.name, var=s.var, result=result))
                 if s.var:
                     self.env[s.var] = result
-                if result.failed:
+                if not result.is_completed:
                     # MVP: a failed milestone stops the program and reports honestly.
                     return f"子任务「{s.name}」未能完成：{result.summary or '执行失败'}"
             elif isinstance(s, If):
@@ -260,7 +264,7 @@ class Interpreter:
                     return reply
             elif isinstance(s, Finish):
                 rendered = self._render(s.message)
-                # Empty-read guard: if this finish cites a read variable whose RunResult.reads
+                # Empty-read guard: if this finish cites a read variable whose StatementOutcome.reads
                 # is ENTIRELY blank (every requested field came back ""), the finish is answering
                 # on a read that read nothing — e.g. a retrieve task where the target table was
                 # off-screen / wrong page → structured_read returned "". Mark the
@@ -278,7 +282,7 @@ class Interpreter:
                 return rendered
         return None
 
-    def _foreach(self, loop: ForEach) -> Generator[Run, RunResult, Optional[str]]:
+    def _foreach(self, loop: ForEach) -> Generator[Run, StatementOutcome, Optional[str]]:
         """Run `loop.body` once per row of the collected rows, binding env[loop.var] to the row, and
         AUTO-accumulate each iteration (the row's fields + every body return field) into a materialized
         table published as env[loop.into]. Yields each body Run so the engine drives it as a milestone
@@ -370,7 +374,7 @@ class Interpreter:
         if not rows:
             # Nothing discovered to iterate — publish an empty table so a following data_query sees an
             # (empty, but present and complete) source rather than a missing one.
-            self.env[into] = RunResult(completed=True, rows=[], summary=f"{loop.over} 无可迭代行")
+            self.env[into] = StatementOutcome.completed(f"{loop.over} 无可迭代行", rows=[])
             self._materialized_vars.add(into)
             self.run_log.append(RunRecord(
                 name=f"foreach {loop.var} in {loop.over}", var=into,
@@ -394,8 +398,9 @@ class Interpreter:
                 expanded_note = f"检查点圈选:{len(rows)}/{total} 行属于「{loop.member_desc[:30]}」"
                 print(f"  [Select] {expanded_note}")
                 if not rows:
-                    self.env[into] = RunResult(completed=True, rows=[],
-                                               summary=f"{expanded_note}(无成员,集合为空)")
+                    self.env[into] = StatementOutcome.completed(
+                        f"{expanded_note}(无成员,集合为空)", rows=[]
+                    )
                     self._materialized_vars.add(into)
                     self.run_log.append(RunRecord(
                         name=f"foreach {loop.var} (selected)", var=into, result=self.env[into]))
@@ -415,8 +420,9 @@ class Interpreter:
                 expanded_note = expansion.note or f"检查点展开:圈选 {len(rows)} 行"
                 print(f"  [Expand] {expanded_note}")
                 if not rows:
-                    self.env[into] = RunResult(completed=True, rows=[],
-                                               summary=f"{expanded_note}(无成员,集合为空)")
+                    self.env[into] = StatementOutcome.completed(
+                        f"{expanded_note}(无成员,集合为空)", rows=[]
+                    )
                     self._materialized_vars.add(into)
                     self.run_log.append(RunRecord(
                         name=f"foreach {loop.var} (expanded)", var=into, result=self.env[into]))
@@ -426,7 +432,7 @@ class Interpreter:
                 body_read_vars = self._read_vars(loop.body)
                 body_scalar_vars = self._compute_vars(loop.body)
         for row in rows:
-            self.env[loop.var] = RunResult(completed=True, reads=dict(row))
+            self.env[loop.var] = StatementOutcome.completed("foreach row", reads=dict(row))
             if alias_var:
                 self.env[alias_var] = self.env[loop.var]   # drifted body_goal name resolves too
             if agentic_subgoal:
@@ -436,9 +442,9 @@ class Interpreter:
                 sub_stmts, sub_read_vars = self._subgoal_statements(loop)
                 if sub_stmts is None:
                     self.finish_incomplete = True
-                    self.env[into] = RunResult(
-                        completed=False, rows=[],
-                        summary="body_goal 无法分解（未接入 subdecompose_fn 或超出一层嵌套）",
+                    self.env[into] = StatementOutcome.failed(
+                        "body_goal 无法分解（未接入 subdecompose_fn 或超出一层嵌套）",
+                        rows=[],
                     )
                     self._materialized_vars.add(into)
                     self.run_log.append(RunRecord(
@@ -478,9 +484,11 @@ class Interpreter:
                 if fill_missing_declared_outputs:
                     merged.setdefault(field, "")
             accumulated.append(merged)
-        self.env[into] = RunResult(completed=True, rows=accumulated,
-                                   summary=f"采集 {len(accumulated)} 行（foreach {loop.var}）"
-                                           + (f"；{expanded_note}" if expanded_note else ""))
+        self.env[into] = StatementOutcome.completed(
+            f"采集 {len(accumulated)} 行（foreach {loop.var}）"
+            + (f"；{expanded_note}" if expanded_note else ""),
+            rows=accumulated,
+        )
         self._materialized_vars.add(into)
         self.run_log.append(RunRecord(
             name=f"foreach {loop.var} in {loop.over}", var=into, result=self.env[into],
@@ -539,7 +547,7 @@ class Interpreter:
         Same for the field form: `{p[price]} * 0.865` (otherwise parsed as a set literal →
         SafeEvalError → "") normalizes to `p['price'] * 0.865`."""
         expr = normalize_compute_expr(c.expr)
-        # Scope from env RunResults' reads, in BOTH shapes the decomposer nondeterministically writes:
+        # Scope from env outcomes' reads, in BOTH shapes the decomposer nondeterministically writes:
         # the field name bare (`current_price`) AND the var-as-dict (`variant_row['current_price']`).
         # Without this, a numeric derivation from a read value raised 未知变量 → silently "" → the fill
         # milestone loses its concrete value and the planner may invent one. Scalars
@@ -566,25 +574,22 @@ class Interpreter:
                 self._scalars[c.var] = "" if val is None else str(val)
         except SafeEvalError as e:
             self._scalars[c.var] = ""
-            self.run_log.append(RunRecord(
-                name=f"compute {c.var} = {c.expr}", var=c.var,
-                result=RunResult(completed=False, summary=f"compute 求值失败: {e}")))
             print(f"  [Compute] {c.var} = {c.expr} 求值失败: {e}")
 
     _MAX_CALL_DEPTH = 6
 
-    def _call(self, call: Call) -> Generator[Run, RunResult, Optional[str]]:
+    def _call(self, call: Call) -> Generator[Run, StatementOutcome, Optional[str]]:
         """Invoke a FunctionDef: render args in the caller scope, run the body in a FRESH scalar
         frame (the function sees only its params + its own computes), then bind the declared returns
         into the caller's env under `call.var`. The body's Runs are `yield from`'d so the engine
         drives them as full milestones — same generator path as the top program."""
         fn = self._functions.get(call.func)
         if fn is None:
-            fail = RunResult(completed=False, failed=True, summary=f"未定义的函数「{call.func}」")
+            fail = StatementOutcome.failed(f"未定义的函数「{call.func}」")
             self.run_log.append(RunRecord(name=f"call {call.func}", var=call.var, result=fail))
             return f"调用了未定义的函数「{call.func}」"
         if self._call_depth >= self._MAX_CALL_DEPTH:
-            fail = RunResult(completed=False, failed=True, summary=f"函数调用嵌套超过 {self._MAX_CALL_DEPTH} 层")
+            fail = StatementOutcome.failed(f"函数调用嵌套超过 {self._MAX_CALL_DEPTH} 层")
             self.run_log.append(RunRecord(name=f"call {call.func}", var=call.var, result=fail))
             return f"函数调用嵌套过深（{call.func}）"
         # Render args in the CALLER's scope (env {x[f]} + caller scalars {y}), bind to params.
@@ -601,7 +606,7 @@ class Interpreter:
         if reply is not None:
             return reply  # a finish/failure inside the function terminates the whole program
         if call.var:
-            self.env[call.var] = RunResult(completed=True, reads=collected)
+            self.env[call.var] = StatementOutcome.completed("function returns", reads=collected)
         return None
 
     def _collect_returns(self, fn: FunctionDef) -> dict[str, str]:
@@ -684,7 +689,7 @@ class Interpreter:
         becomes『打开工单 WO-2024-007』so it targets the concrete entity a prior read identified —
         robust even when the list holds siblings, not just the only-row-on-screen. Same templater
         as finish (_render); env is already populated because the read runs — and send()s its
-        RunResult back — before this Run is yielded.
+        StatementOutcome back — before this Run is yielded.
 
         Returns (filled_run, missing): `missing` lists refs in the NAME (the action TARGET) that
         resolved to empty — the caller fails fast on those rather than driving a gap-named

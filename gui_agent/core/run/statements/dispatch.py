@@ -10,6 +10,7 @@ from typing import Any, Callable
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 from gui_agent.core.orchestrator.program import Query, Read, Run, RunLike
+from gui_agent.core.run.interactive import statement_id_for_run
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.schemas import Observation, PolicyContext
 
@@ -36,7 +37,7 @@ def is_immediate_statement(
     *,
     allow_navigation: bool = True,
 ) -> bool:
-    """Whether a statement can complete now without entering the Milestone loop."""
+    """Whether a statement can complete now without entering the StatementContract loop."""
     return bool(
         statement is not None
         and (
@@ -63,7 +64,6 @@ def drain_immediate_statements(
     observation: Observation | None = None,
     observation_url: str | None = None,
     materialized_tables: "Callable[[], list[dict[str, Any]]] | None" = None,
-    recovery: Any = None,
     allow_navigation: bool = True,
 ) -> ImmediateDispatchResult:
     """Execute immediate statements and stop at the next interactive Run.
@@ -93,6 +93,8 @@ def drain_immediate_statements(
         allow_navigation=allow_navigation,
     ):
         assert statement is not None
+        statement_id = statement_id_for_run(statement, program_runtime.index)
+        instance_id = program_runtime.next_instance_id(statement_id)
         started_at = time.perf_counter()
         calls_before = get_llm_call_count()
         tokens_before = get_llm_token_usage()
@@ -141,10 +143,11 @@ def drain_immediate_statements(
             outcome,
             statement_index=program_runtime.index,
             context=context,
-            recovery=recovery,
+            program_runtime=program_runtime,
             started_at=started_at,
             llm_calls_before=calls_before,
             tokens_before=tokens_before,
+            statement_instance_id=instance_id,
         )
         if outcome.failure_evidence:
             failure_evidence = outcome.failure_evidence

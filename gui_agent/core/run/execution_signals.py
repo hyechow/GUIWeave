@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Literal
 
-from gui_agent.core.schemas import EffectMode, Milestone, PersistenceMode
+from gui_agent.core.schemas import EffectMode, StatementContract, PersistenceMode
 from gui_agent.core.run.persistence import PersistenceAssessment
 CompletionMode = Literal[
     "arrival",
@@ -50,7 +50,7 @@ CompletionStatus = Literal[
 
 @dataclass(frozen=True)
 class ExecutionContract:
-    """Internal execution contract derived from a DSL Run/Milestone.
+    """Internal execution contract derived from a DSL Run/StatementContract.
 
     This is intentionally not part of the DSL wire format.  It describes how the executor
     should interpret evidence for one already-compiled interactive statement.
@@ -65,7 +65,7 @@ class ExecutionContract:
     persistence: PersistenceMode = "immediate"
 
     @classmethod
-    def from_milestone(cls, milestone: Milestone) -> "ExecutionContract":
+    def from_milestone(cls, milestone: StatementContract) -> "ExecutionContract":
         if milestone.kind == "navigation":
             mode: CompletionMode = "arrival"
         elif milestone.kind == "filter":

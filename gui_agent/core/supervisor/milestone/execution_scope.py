@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from gui_agent.core.run.progress_monitor import canonical_url
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
 from gui_agent.core.self_learning.progressive import _norm as _norm_page
 
 
@@ -55,7 +55,7 @@ def resource_identity_from_text(text: str) -> str:
     return ""
 
 
-def route_identity_evidence(milestone: Milestone, observation: Observation) -> str:
+def route_identity_evidence(milestone: StatementContract, observation: Observation) -> str:
     """Describe a route identity only when the milestone names the same machine token."""
     identity = resource_identity_from_url(getattr(observation, "url", None))
     if not identity:
@@ -83,16 +83,23 @@ def route_identity_evidence(milestone: Milestone, observation: Observation) -> s
     )
 
 
-def execution_scope_for(milestone: Milestone, observation: Observation) -> str:
-    """Bucket runtime memory by observable resource identity or milestone."""
+def execution_scope_for(
+    milestone: StatementContract,
+    observation: Observation,
+    *,
+    instance_id: str,
+) -> str:
+    """Bucket runtime memory by call frame and observable resource identity."""
     identity = resource_identity_from_url(getattr(observation, "url", None))
     if not identity:
         identity = resource_identity_from_text(
             f"{milestone.name}\n{milestone.description}\n{milestone.success_condition}"
         )
     if identity:
-        return f"row:{identity}"
-    return f"milestone:{milestone.id}"
+        local_scope = f"row:{identity}"
+    else:
+        local_scope = "statement"
+    return f"{instance_id}/{local_scope}"
 
 
 def turn_execution_scope(turn: PolicyTurn) -> str:
@@ -102,36 +109,26 @@ def turn_execution_scope(turn: PolicyTurn) -> str:
 
 def history_for_scope(
     history: list[PolicyTurn],
-    milestone: Milestone,
+    milestone: StatementContract,
     observation: Observation,
+    *,
+    instance_id: str,
 ) -> list[PolicyTurn]:
-    scope = execution_scope_for(milestone, observation)
-    if any(turn_execution_scope(turn) for turn in history):
-        return [turn for turn in history if turn_execution_scope(turn) == scope]
+    scope = execution_scope_for(
+        milestone,
+        observation,
+        instance_id=instance_id,
+    )
     return [
         turn
         for turn in history
-        if getattr(getattr(turn, "supervisor", None), "milestone_id", None)
-        == milestone.id
-    ]
-
-
-def history_for_current_milestone(
-    history: list[PolicyTurn],
-    milestone: Milestone,
-    observation: Observation,
-) -> list[PolicyTurn]:
-    return [
-        turn
-        for turn in history_for_scope(history, milestone, observation)
-        if getattr(getattr(turn, "supervisor", None), "milestone_id", None)
-        == milestone.id
+        if turn.statement_instance_id == instance_id
+        and turn_execution_scope(turn) == scope
     ]
 
 
 __all__ = [
     "execution_scope_for",
-    "history_for_current_milestone",
     "history_for_scope",
     "page_known",
     "resource_identity_from_text",

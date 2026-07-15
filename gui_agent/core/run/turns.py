@@ -40,7 +40,7 @@ def interactive_turn_count(context: PolicyContext) -> int:
     """Count UI decision/action turns; non-UI primitives do not consume UI budget."""
     return sum(
         1
-        for turn in context.turns
+        for turn in context.journal.events
         if getattr(turn, "operation_mode", "interactive") == "interactive"
     )
 
@@ -70,6 +70,8 @@ def make_interactive_turn(
     token_usage: dict[str, dict[str, int]] | None = None,
     sections_loaded: list[str] | None = None,
     llm_context: list[dict] | None = None,
+    statement: Any = None,
+    statement_instance_id: str = "",
 ) -> PolicyTurn:
     """Build a normal UI turn."""
     role = action_role or supervisor_step.atomic_role
@@ -104,6 +106,8 @@ def make_interactive_turn(
         token_usage=token_usage or {},
         sections_loaded=list(sections_loaded or []),
         llm_context=list(llm_context or []),
+        statement=statement,
+        statement_instance_id=statement_instance_id,
     )
 
 
@@ -120,8 +124,16 @@ def make_verdict_turn(
     output_tokens: int = 0,
     llm_context: list[dict] | None = None,
     observation_only: bool = False,
+    statement: Any = None,
+    statement_instance_id: str = "",
+    outcome_override: Any = None,
 ) -> PolicyTurn:
-    """Build an action-less UI verdict turn from the current supervisor state."""
+    """Build an action-less UI verdict turn from the current supervisor state.
+
+    ``outcome_override`` replaces the raw ``supervisor_step.outcome`` on the recorded turn —
+    used by the terminal observation path to persist the FILLED outcome (reads/rows added by
+    the loop) rather than the raw native outcome.
+    """
     turn = make_interactive_turn(
         index=index,
         observation_source=observation_source,
@@ -144,11 +156,35 @@ def make_verdict_turn(
             if llm_context is not None
             else getattr(supervisor, "_context_reports", []) or []
         ),
+        statement=statement,
+        statement_instance_id=statement_instance_id,
     )
+    if outcome_override is not None:
+        turn.supervisor = turn.supervisor.model_copy(update={"outcome": outcome_override})
     if observation_only:
         turn.operation_mode = "observation"
         turn.action_signal = None
     return turn
+
+
+def emit_statement_fields(supervisor: Any) -> tuple[Any, str]:
+    """Return (StatementInfo | None, instance_id) for the turn being recorded.
+
+    The StatementInfo is emitted ONCE per invocation — on the first turn that calls this —
+    and the ``statement_info_emitted`` flag flips so subsequent turns (and the terminal
+    observation turn) carry ``statement=None`` but the SAME ``instance_id``. MUST be called
+    while the statement runtime is live (before ``end_statement``); returns ``(None, "")``
+    when no statement is active.
+    """
+    rt = getattr(supervisor, "_statement_rt", None)
+    if rt is None:
+        return (None, "")
+    instance_id = getattr(rt, "instance_id", "") or ""
+    if getattr(rt, "statement_info_emitted", False):
+        return (None, instance_id)
+    info = getattr(rt, "statement_info", None)
+    rt.statement_info_emitted = True
+    return (info, instance_id)
 
 
 class SupervisorTimingCarry:
@@ -210,8 +246,6 @@ def sync_turn_metadata(
             except Exception:
                 pass
 
-    # Static milestone list comes from Program statements / reseed; no DAG mirror.
-
     if hasattr(supervisor, "task_type") and context.task_type is None:
         context.task_type = supervisor.task_type
         say(f"任务类型: {context.task_type}")
@@ -244,11 +278,13 @@ def record_interactive_turn(
     save_context: Callable[[], None],
     silent: bool,
     on_turn: Any = None,
+    statement: Any = None,
+    statement_instance_id: str = "",
 ) -> PolicyTurn:
     """Append the UI turn, sync persisted state, and notify the optional callback."""
     tokens_after = get_llm_token_usage()
     turn = make_interactive_turn(
-        index=len(context.turns) + 1,
+        index=len(context.journal.events) + 1,
         observation_source=observation_source,
         observation_url=observation_url,
         surface_id=surface_id,
@@ -271,9 +307,11 @@ def record_interactive_turn(
         token_usage=getattr(supervisor, "_token_usage", {}),
         sections_loaded=list(getattr(supervisor, "_last_sections_loaded", []) or []),
         llm_context=list(getattr(supervisor, "_context_reports", []) or []),
+        statement=statement,
+        statement_instance_id=statement_instance_id,
     )
     print_timings(supervisor)
-    context.turns.append(turn)
+    context.journal.append(turn)
     save_context()
     if not silent:
         print_turn_stats(turn.index, turn_started_at, llm_calls_before)

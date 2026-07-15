@@ -26,7 +26,6 @@ from .models import (
     ReportPage,
     ReportStep,
 )
-from .orchestrator_html import _attach_non_ui_screenshots, _synthetic_non_ui_steps
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -44,51 +43,44 @@ def _group_steps_by_milestone(
     program_milestones: list[dict],
     ms_lookup: dict[str, dict],
 ) -> list[ReportPage]:
-    """One ReportPage per milestone in PROGRAM order (program_milestones), gathering ALL of that
-    milestone's steps from anywhere in the stream — a non-contiguous revisit (the supervisor
-    returns to a milestone after a later one) merges into ONE card instead of splitting.
-
-    A milestone with zero steps still gets a card, so the execution view lines up 1:1 with the
-    #0 program card (e.g. a startup navigation that completes before the first interactive turn).
-    Steps whose milestone_id is not a known program milestone (synthesized non_ui_N / empty id)
-    fall through to a trailing uncategorized card in first-seen order, so no turn is dropped.
-    """
-    def _page_for(mid: str, steps: list[ReportStep]) -> ReportPage:
-        ms_meta = ms_lookup.get(mid, {})
+    """Group recorded steps by statement invocation in first-seen order."""
+    def _page_for(key: str, steps: list[ReportStep]) -> ReportPage:
+        ms_meta = ms_lookup.get(key, {})
         first = steps[0] if steps else None
         return ReportPage(
-            title=ms_meta.get("name") or (first.description if first else f"Milestone {mid}"),
+            title=ms_meta.get("name") or (first.description if first else f"StatementContract {key}"),
             steps=steps,
-            milestone_id=mid,
+            milestone_id=str(ms_meta.get("id") or (first.milestone_id if first else "")),
+            instance_id=key,
             milestone_kind=ms_meta.get("kind", "") or (first.milestone_kind if first else ""),
             milestone_name=ms_meta.get("name", "") or (first.description if first else ""),
             milestone_description=ms_meta.get("description", "") or (first.summary if first else ""),
             success_condition=ms_meta.get("success_condition", ""),
-            checklist=ms_lookup.get(mid, {}).get("checklist", []) or [],
+            checklist=ms_lookup.get(key, {}).get("checklist", []) or [],
         )
 
     buckets: dict[str, list[ReportStep]] = {}
     first_seen: list[str] = []
     for step in all_steps:
-        mid = step.milestone_id or "_no_milestone"
-        if mid not in buckets:
-            buckets[mid] = []
-            first_seen.append(mid)
-        buckets[mid].append(step)
+        key = step.instance_id or "_no_statement"
+        if key not in buckets:
+            buckets[key] = []
+            first_seen.append(key)
+        buckets[key].append(step)
 
     pages: list[ReportPage] = []
     emitted: set[str] = set()
     for ms in program_milestones:
-        mid = ms.get("id") or ""
-        if not mid or mid in emitted:
+        key = ms.get("instance_id") or ""
+        if not key or key in emitted:
             continue
-        emitted.add(mid)
-        pages.append(_page_for(mid, buckets.get(mid, [])))
-    for mid in first_seen:  # orphans → trailing, first-seen order
-        if mid in emitted:
+        emitted.add(key)
+        pages.append(_page_for(key, buckets.get(key, [])))
+    for key in first_seen:  # orphans → trailing, first-seen order
+        if key in emitted:
             continue
-        emitted.add(mid)
-        pages.append(_page_for(mid, buckets[mid]))
+        emitted.add(key)
+        pages.append(_page_for(key, buckets[key]))
     return pages
 
 
@@ -424,38 +416,27 @@ class RunnerReportBuilder:
             return data
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
-        # Offline only: normalize legacy terminal fields for report dual-read.
-        try:
-            from gui_agent.reports.legacy_context import adapt_legacy_context
-            ctx = adapt_legacy_context(ctx)
-        except Exception:
-            pass
-        milestone_states = ctx.get("milestone_states") if isinstance(ctx.get("milestone_states"), dict) else {}
-        orch = ctx.get("orchestrator") if isinstance(ctx.get("orchestrator"), dict) else {}
-        program = (orch.get("program") if isinstance(orch, dict) else None) or {}
-        run_log = orch.get("run_log") if isinstance(orch, dict) else []
+        journal = ctx.get("journal") or {}
+        turns = journal.get("events") or []
         statement_views = StatementReportReducer().reduce(
-            turns=ctx.get("turns") or [],
-            program=program if isinstance(program, dict) else {},
-            run_log=run_log if isinstance(run_log, list) else [],
+            events=turns,
         )
-        # Dual-read: prefer reducer views; fall back to legacy milestone_states keys.
-        views_by_id = {v.statement_id: v for v in statement_views if v.statement_id}
-        views_by_instance = {v.instance_id: v for v in statement_views}
         # Title is the user's ORIGINAL input; the resolved goal is shown as provenance.
         # Old logs without raw_input fall back to the goal.
         data.raw_input = ctx.get("raw_input") or ""
         data.goal = ctx.get("goal", "")
         data.router = ctx.get("router") or {}
         data.platform = ctx.get("platform") or ""
-        run_state = ctx.get("run") or {}
-        data.output = run_state.get("output") or ctx.get("output") or ""
-        data.stop_reason = run_state.get("stop_reason") or ctx.get("stop_reason") or ""
-        data.run_status = run_state.get("status") or ctx.get("run_status") or ""
-        data.goal_completed = bool(run_state.get("goal_completed", ctx.get("goal_completed", False)))
+        outcome = ctx.get("outcome") or {}
+        data.output = outcome.get("output") or ""
+        data.stop_reason = outcome.get("summary") or ""
+        data.run_status = outcome.get("phase") or ""
+        data.goal_completed = (
+            outcome.get("phase") == "completed"
+            and outcome.get("verification") == "confirmed"
+        )
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
-        _attach_non_ui_screenshots(data.orchestrator, run_dir)
         data.webarena = ctx.get("webarena") or {}
         data.mobileworld = ctx.get("mobileworld") or {}
         if data.webarena and not data.webarena.get("eval_result"):
@@ -476,7 +457,6 @@ class RunnerReportBuilder:
         _MODELS_MAP.clear()
         _MODELS_MAP.update(data.models)
 
-        turns = ctx.get("turns", [])
         data.settle_s_total = sum((t.get("settle_s") or 0) for t in turns)
 
         # Sections injected into the planner at least once this run (ordered by first appearance),
@@ -583,6 +563,7 @@ class RunnerReportBuilder:
                 timestamp=turn.get("timestamp", ""),
                 index=idx,
                 milestone_id=sup.get("milestone_id", ""),
+                instance_id=str(turn.get("statement_instance_id") or ""),
                 milestone_kind=sup.get("milestone_kind", ""),
                 instruction=sup.get("instruction", ""),
                 summary=summary,
@@ -607,61 +588,31 @@ class RunnerReportBuilder:
                 replan=turn.get("replan") if isinstance(turn.get("replan"), dict) else None,
             ))
 
-        existing_non_ui: set[tuple[str, str]] = set()
-        for step in all_steps:
-            if step.operation_mode == "non_interactive" and isinstance(step.non_ui, dict):
-                existing_non_ui.add((str(step.non_ui.get("var") or ""), str(step.non_ui.get("name") or step.description)))
-        synthetic_non_ui = _synthetic_non_ui_steps(
-            data.orchestrator,
-            run_dir,
-            start_index=len(all_steps) + 1,
-            existing=existing_non_ui,
-        )
-        all_steps.extend(synthetic_non_ui)
-        total_actions += len(synthetic_non_ui)
-        total_executed += sum(1 for step in synthetic_non_ui if "✓" in step.status)
-
-        # Build statement lookup: prefer pure reducer views; dual-read legacy milestone_states.
+        # Build statement lookup from recorded statement invocations.
         ms_lookup: dict[str, dict] = {}
         milestones_static: list[dict] = []
-        if statement_views:
-            for view in statement_views:
-                mid = view.statement_id or view.instance_id
-                ms_lookup[mid] = {
-                    "id": mid,
-                    "instance_id": view.instance_id,
-                    "name": view.name,
-                    "description": view.description,
-                    "kind": view.kind,
-                    "success_condition": view.success_condition,
-                    "status": view.status,
-                    "retry_count": view.retry_count,
-                    "done_check": view.done_check,
-                    "checklist": view.checklist,
-                    "reads": view.reads,
-                    "last_summary": view.last_summary,
-                    "pre_existing": view.pre_existing,
-                    "collection_summary": view.collection_summary,
-                    "phase": view.phase,
-                    "verification": view.verification,
-                    "kickback": view.kickback,
-                }
-                milestones_static.append(ms_lookup[mid])
-        else:
-            for ms in ctx.get("milestones", []) or []:
-                mid = ms.get("id", "")
-                state = milestone_states.get(mid) if mid else None
-                merged = dict(ms)
-                if isinstance(state, dict):
-                    for key in (
-                        "status", "retry_count", "done_check", "checklist", "reads",
-                        "last_summary", "last_turn_index", "pre_existing", "collection_summary",
-                    ):
-                        value = state.get(key)
-                        if value not in (None, "", [], {}):
-                            merged[key] = value
-                ms_lookup[mid] = merged
-                milestones_static.append(merged)
+        for view in statement_views:
+            key = view.instance_id
+            ms_lookup[key] = {
+                "id": view.statement_id,
+                "instance_id": key,
+                "name": view.name,
+                "description": view.description,
+                "kind": view.kind,
+                "success_condition": view.success_condition,
+                "status": view.status,
+                "retry_count": view.retry_count,
+                "done_check": view.done_check,
+                "checklist": view.checklist,
+                "reads": view.reads,
+                "last_summary": view.last_summary,
+                "pre_existing": view.pre_existing,
+                "collection_summary": view.collection_summary,
+                "phase": view.phase,
+                "verification": view.verification,
+                "kickback": view.kickback,
+            }
+            milestones_static.append(ms_lookup[key])
 
         # Group steps by milestone — PROGRAM-ALIGNED when static list exists.
         milestones_info: list[dict] = []
@@ -672,7 +623,7 @@ class RunnerReportBuilder:
         # Build milestones summary
         for page in pages:
             ms_steps = page.steps
-            ms_state = ms_lookup.get(page.milestone_id, {})
+            ms_state = ms_lookup.get(page.instance_id, {})
             ms_timings: dict[str, float] = {}
             ms_in = ms_out = 0
             for s in ms_steps:
@@ -683,6 +634,7 @@ class RunnerReportBuilder:
                 ms_out += so
             milestones_info.append({
                 "id": page.milestone_id,
+                "instance_id": page.instance_id,
                 "name": page.milestone_name,
                 "kind": page.milestone_kind,
                 "description": page.milestone_description,
@@ -709,7 +661,7 @@ class RunnerReportBuilder:
                 next_first = pages[i + 1].steps[0] if pages[i + 1].steps else None
                 if next_first and next_first.raw_screenshot_url:
                     page.verify_url = next_first.raw_screenshot_url
-            page.verify_checker = ms_lookup.get(page.milestone_id, {}).get("done_check", {})
+            page.verify_checker = ms_lookup.get(page.instance_id, {}).get("done_check", {})
             # A milestone abandoned as INFEASIBLE never produces a done_check, so its 验收 slot is
             # blank. Surface the Feasibility kick-back verdict (why + the re-decompose directive) as
             # that milestone's terminal acceptance instead.

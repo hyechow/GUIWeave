@@ -137,6 +137,7 @@ HTML_TEMPLATE = """\
   /* Run status badge */
   .run-status-badge {{ position:relative; display:inline-block; margin-left:8px; padding:2px 10px; border-radius:11px; font-size:13px; font-weight:700; vertical-align:middle; cursor:default; }}
   .run-status-badge-completed {{ background:#16a34a; color:#fff; }}
+  .run-status-badge-failed {{ background:#dc2626; color:#fff; }}
   .run-status-badge-interrupted {{ background:#d97706; color:#fff; }}
   .run-status-badge-stopped {{ background:#dc2626; color:#fff; }}
   .run-status-badge:hover::after {{ content: attr(data-tip); position:absolute; left:0; top:calc(100% + 7px); z-index:100; width:max-content; max-width:520px; white-space:normal; line-height:1.45; padding:8px 10px; border-radius:7px; background:#111827; color:#fff; font-size:12px; font-weight:500; box-shadow:0 8px 24px rgba(15,23,42,0.22); }}
@@ -145,9 +146,11 @@ HTML_TEMPLATE = """\
   /* Final output / 最终输出 card */
   .result-card {{ max-width: 1080px; margin: 0 auto 20px; padding: 16px 20px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #22c55e; }}
   .result-card-interrupted {{ border-left-color: #d97706; }}
+  .result-card-failed {{ border-left-color: #dc2626; }}
   .result-card-stopped {{ border-left-color: #dc2626; }}
   .result-label {{ font-size: 11px; font-weight: 700; color: #16a34a; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }}
   .result-card-interrupted .result-label {{ color: #d97706; }}
+  .result-card-failed .result-label {{ color: #dc2626; }}
   .result-card-stopped .result-label {{ color: #dc2626; }}
   .result-body {{ font-size: 14px; color: var(--text); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }}
 
@@ -182,7 +185,7 @@ HTML_TEMPLATE = """\
   .price-pop .pp-num {{ text-align: right; padding-right: 0; }}
   .price-pop .pp-head td {{ color: #94a3b8; }}
 
-  /* Milestone section */
+  /* StatementContract section */
   .milestone {{ max-width: 1080px; margin: 0 auto 16px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
   .milestone-header {{ padding: 10px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
   .milestone-header h2 {{ font-size: 14px; font-weight: 600; }}
@@ -929,6 +932,8 @@ def _run_status_meta(data: ReportData) -> tuple[str, str, str]:
         return "completed", "正常完成", "目标已确认完成"
     if status == "interrupted":
         return "interrupted", "用户中止", "按 ESC 或手动退出后，当前 turn 已安全收尾"
+    if status == "failed":
+        return "failed", "执行失败", "Program 因 statement 失败而终止"
     return "stopped", "未完成停止", "任务未确认完成"
 
 
@@ -1158,7 +1163,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
     stats_str = "  |  ".join(stats_parts)
 
-    # Display ordinal per milestone (#1, #2, …). Milestone ids are descriptive slugs now
+    # Display ordinal per milestone (#1, #2, …). StatementContract ids are descriptive slugs now
     # (e.g. 'navigate_to_riot_app'), which _short_mid can't shorten — showing the raw slug
     # crowds the name out of the sidebar. The ordinal is always short; the raw id stays for
     # the anchor. Falls back to _short_mid for ids not in the milestone list (e.g. _no_milestone).

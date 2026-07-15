@@ -2,8 +2,8 @@
 
 The orchestrator decomposes a user goal into a small DSL PROGRAM (not a DAG): a
 sequence of milestone-level ``run()`` statements plus control flow (if / finish).
-Each ``run()`` drives ONE linear GUI milestone via the linear executor and returns
-a structured RunResult; the runner threads those results through variables and
+Each ``run()`` drives ONE interactive statement via the executor and returns a
+structured StatementOutcome; the runner threads those outcomes through variables and
 conditions. This keeps the linear executor simple (one milestone, no logic) and
 puts all branching/variables in the orchestrator — so "the middle read it but the
 final output didn't know" disappears: every milestone's reads live in the env.
@@ -25,6 +25,7 @@ from pydantic import BaseModel, Discriminator, Field, Tag, model_validator
 from gui_agent.core.schemas import (
     EffectMode,
     PersistenceMode,
+    StatementOutcome,
     TargetValue,
     normalize_effect_contract_fields,
 )
@@ -66,64 +67,6 @@ def execution_mode_for_kind(kind: str) -> Literal["interactive", "non_interactiv
     return "non_interactive" if kind in NON_INTERACTIVE_KINDS else "interactive"
 
 
-class RunResult(BaseModel):
-    """Return contract of one ``run()`` = one milestone driven to a terminal state.
-
-    `reads` maps each requested `returns` field to the value the linear executor
-    read off the result frame (读不到 = ""，按「当没有」处理，不让它卡住编排).
-    `rows` is the LIST form: a row-collection read returns one dict per row (the
-    runtime-discovered collection a `foreach` iterates), and a `foreach` materializes
-    its accumulated per-iteration rows here so a later data_query can query them."""
-
-    completed: bool = False
-    failed: bool = False
-    completion_status: Optional[
-        Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
-    ] = None
-    reads: dict[str, str] = Field(default_factory=dict)
-    rows: list[dict[str, str]] = Field(default_factory=list)
-    summary: str = ""
-    evidence: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _infer_completion_status(self) -> "RunResult":
-        """Keep constructors compatible; reject contradictory bool/status combos."""
-        if self.completed and self.failed:
-            raise ValueError("RunResult cannot be both completed and failed")
-        if self.completion_status is None:
-            if self.failed:
-                self.completion_status = "failed"
-            elif self.completed:
-                self.completion_status = "confirmed"
-            else:
-                self.completion_status = "in_progress"
-        if self.failed and self.completion_status != "failed":
-            raise ValueError("failed RunResult requires completion_status='failed'")
-        if self.completed and self.completion_status not in (
-            "confirmed", "accepted_unverified",
-        ):
-            raise ValueError(
-                "completed RunResult requires completion_status confirmed|accepted_unverified"
-            )
-        if (
-            not self.completed
-            and not self.failed
-            and self.completion_status not in (None, "in_progress")
-        ):
-            # Allow explicit failed-status only when failed=True (handled above).
-            if self.completion_status == "failed":
-                raise ValueError("completion_status='failed' requires failed=True")
-            if self.completion_status in ("confirmed", "accepted_unverified"):
-                raise ValueError(
-                    "confirmed/accepted_unverified requires completed=True"
-                )
-        return self
-
-    @property
-    def verified(self) -> bool:
-        return self.completion_status == "confirmed"
-
-
 class RunLike(BaseModel):
     """run 家族语句的共享形状（wire 上共用 op="run" + kind 区分）。
 
@@ -137,6 +80,12 @@ class RunLike(BaseModel):
     "顺便"交互。三个节点在 IR 里平级（S8：字段各归其位），不再是子类关系。"""
 
     op: Literal["run"] = "run"
+    # Compile-time-stable identity of ONE source statement, assigned once at decompose time
+    # by `assign_statement_ids` (covers main + foreach body + function body). Stable across
+    # return-tighten (`model_copy` preserves it) and across foreach/function re-yields; the
+    # per-invocation difference lives in `statement_instance_id` at runtime. Empty for Runs
+    # built outside the decomposer (inline/test) — callers fall back to var/index.
+    statement_id: str = ""
     var: Optional[str] = None
     name: str
     success_condition: str = ""
@@ -167,7 +116,7 @@ class RunLike(BaseModel):
 class Run(RunLike):
     """【交互命令】：驱动一段连续的交互操作（一条 FROM→TO 边），由 GUI 执行器
     （milestone react loop——milestone 仅是执行器的内部载体格式）开到 done。
-    `var` binds its RunResult; `returns` = fields to read from the completion frame."""
+    `var` binds its StatementOutcome; `returns` = fields read from the completion frame."""
 
     @model_validator(mode="before")
     @classmethod
@@ -293,7 +242,7 @@ class ForEach(BaseModel):
     """Iterate a runtime-discovered collection: run `body` once per row of a prior row-collection read.
 
     The general iteration primitive (NOT a special "collect rows" kind): `over` names a kind="read"
-    var whose RunResult.rows hold the collection (e.g. all review row ids). Each iteration binds
+    var whose StatementOutcome.rows hold the collection (e.g. all review row ids). Each iteration binds
     `var` to that row, so `body` statements reference the current item with the usual {var[field]}
     template (e.g. 『打开 review {row[id]} 的详情』). Every read field produced inside the body is
     AUTO-accumulated, merged with the row's own fields, into one materialized row per iteration; the
@@ -354,13 +303,13 @@ class Call(BaseModel):
     """Invoke a FunctionDef. `args` maps each param name → a value template (resolved in the CALLER's
     scope: {row[field]} from a loop row, {var} from a scalar, or a literal). The callee runs in a
     fresh scalar frame with those params bound; its declared `returns` are collected and bound to
-    `var` as a RunResult (referenced downstream as {var[field]}). Callable anywhere — main, an if
+    `var` as a StatementOutcome (referenced downstream as {var[field]}). Callable anywhere — main, an if
     branch, or a foreach body — functions are NOT loop-bound."""
 
     op: Literal["call"] = "call"
     func: str                                   # FunctionDef name to invoke
     args: dict[str, str] = Field(default_factory=dict)  # param name → value template (caller scope)
-    var: Optional[str] = None                   # bind the function's returns here (a RunResult)
+    var: Optional[str] = None                   # bind the function's returns here
 
 
 Stmt = Annotated[
@@ -395,6 +344,28 @@ class Program(BaseModel):
     goal: str = ""
     statements: list[Stmt] = Field(default_factory=list)
     functions: list[FunctionDef] = Field(default_factory=list)
+
+
+def assign_statement_ids(program: Program) -> Program:
+    """Assign one stable source id to every RunLike after structural compilation."""
+    counter = 0
+
+    def visit(stmts: list[Stmt]) -> None:
+        nonlocal counter
+        for statement in stmts:
+            if isinstance(statement, RunLike):
+                counter += 1
+                statement.statement_id = f"s{counter}"
+            elif isinstance(statement, If):
+                visit(statement.then)
+                visit(statement.otherwise)
+            elif isinstance(statement, ForEach):
+                visit(statement.body)
+
+    visit(program.statements)
+    for function in program.functions:
+        visit(function.body)
+    return program
 
 
 If.model_rebuild()

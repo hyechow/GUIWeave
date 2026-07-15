@@ -15,7 +15,7 @@ from gui_agent.core.run.execution_signals import (
 )
 from gui_agent.core.run.mutation import resolve_mutation
 from gui_agent.core.run.persistence import assess_persistence
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
 
 from .observation_state import (
     RuntimeFilterIntent,
@@ -27,7 +27,7 @@ from .schemas import _SingleCheckResult
 
 
 def execution_contract_for(
-    milestone: Milestone,
+    milestone: StatementContract,
     configured: ExecutionContract | None,
 ) -> ExecutionContract:
     """Return the configured contract or derive it from the milestone."""
@@ -38,7 +38,7 @@ def execution_contract_for(
 
 
 def action_lifecycle_claims(
-    milestone: Milestone,
+    milestone: StatementContract,
     history: list[PolicyTurn],
     *,
     scope: str,
@@ -145,7 +145,7 @@ def action_lifecycle_claims(
 
 
 def target_value_claims(
-    milestone: Milestone,
+    milestone: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     *,
@@ -219,7 +219,7 @@ def checker_claim(
 
 
 def runtime_filter_intent(
-    milestone: Milestone,
+    milestone: StatementContract,
     history: list[PolicyTurn],
     *,
     scope: str,
@@ -250,7 +250,7 @@ def runtime_filter_intent(
 
 
 def resolved_filter_intent(
-    milestone: Milestone,
+    milestone: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     *,
@@ -269,7 +269,7 @@ def resolved_filter_intent(
 
 
 def observation_state_claims(
-    milestone: Milestone,
+    milestone: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     *,

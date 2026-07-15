@@ -1,4 +1,4 @@
-"""Pure report projection from turns + program + run_log (no context writes)."""
+"""Pure per-statement report projection from the persisted turn journal."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class StatementView:
     description: str = ""
     kind: str = ""
     success_condition: str = ""
-    status: str = ""  # done | failed | running | pending
+    status: str = ""  # done | failed | running
     phase: str = ""
     verification: str = ""
     kickback: str = ""
@@ -140,14 +140,12 @@ def fold_checklist_from_checker(
 
 
 class StatementReportReducer:
-    """Reduce turns + program + run_log into per-invocation statement views."""
+    """Reduce journal turns into per-invocation statement views."""
 
     def reduce(
         self,
         *,
-        turns: list[dict],
-        program: dict | None = None,
-        run_log: list[dict] | None = None,
+        events: list[dict],
     ) -> list[StatementView]:
         views: dict[str, StatementView] = {}
         order: list[str] = []
@@ -165,19 +163,14 @@ class StatementReportReducer:
                 view.statement_id = statement_id
             return view
 
-        # Seed from program structure (stable order) when no turns yet.
-        statements = []
-        if isinstance(program, dict):
-            statements = list(program.get("statements") or [])
-
-        for turn in turns or []:
+        for turn in events or []:
             if not isinstance(turn, dict):
                 continue
             sv = turn.get("supervisor") if isinstance(turn.get("supervisor"), dict) else {}
             instance_id = str(turn.get("statement_instance_id") or "")
-            mid = str(sv.get("milestone_id") or "")
             if not instance_id:
-                instance_id = mid or f"turn-{turn.get('index', 0)}"
+                continue
+            mid = str(sv.get("milestone_id") or "")
             view = ensure(instance_id, mid)
             idx = turn.get("index")
             if isinstance(idx, int):
@@ -232,29 +225,6 @@ class StatementReportReducer:
             if turn.get("replan"):
                 view.retry_count += 1
 
-        # Overlay run_log reads/status by statement id / var.
-        for record in run_log or []:
-            if not isinstance(record, dict):
-                continue
-            result = record.get("result") if isinstance(record.get("result"), dict) else {}
-            var = str(record.get("var") or "")
-            name = str(record.get("name") or "")
-            # Match views by statement_id == var or name
-            for view in views.values():
-                if (var and view.statement_id == var) or (
-                    name and view.name == name and not view.reads
-                ):
-                    if result.get("failed"):
-                        view.status = view.status or "failed"
-                    elif result.get("completed"):
-                        view.status = view.status or "done"
-                    reads = result.get("reads")
-                    if isinstance(reads, dict) and reads:
-                        view.reads = {str(k): str(v) for k, v in reads.items()}
-                    summary = str(result.get("summary") or "")
-                    if summary:
-                        view.last_summary = summary
-
         for view in views.values():
             cm = checklist_maps.get(view.instance_id) or {}
             view.checklist = [
@@ -268,6 +238,6 @@ class StatementReportReducer:
                 for item in cm.values()
             ]
             if not view.status:
-                view.status = "running" if view.turn_indices else "pending"
+                view.status = "running"
 
         return [views[i] for i in order]

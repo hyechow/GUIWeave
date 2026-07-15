@@ -4,7 +4,7 @@ The orchestrator is a compiler frontend (decomposer) → these deterministic pas
 middle-end) → validator/preflight (type-check/lint). Each pass takes a Program and returns a NEW
 Program (inputs untouched); all are idempotent. Run order lives in decomposer.to_program:
 collapse_foreach_enrichment_passes → insert_loop_entry_arrivals → normalize_confirm_read_gates /
-normalize_precondition_gates → chain_from_states. Marshalling into the executor's Milestone format
+normalize_precondition_gates → chain_from_states. Marshalling into the executor's StatementContract format
 is NOT here — interactive execution belongs to core/run/interactive.py.
 """
 

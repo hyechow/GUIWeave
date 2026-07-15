@@ -2,7 +2,7 @@
 
 ProgramRuntime owns cursor, env/run_log (via Interpreter), recovery budgets, and
 task-level replan counts. It does not drive GUI turns — that stays in the agent
-loop + InteractiveStatementExecutor (supervisor reseed path).
+loop + InteractiveStatementExecutor.
 
 The agent loop must not keep a parallel cursor (``_cur_run`` / ``_run_idx`` /
 ``_kickback_replans``); all statement sequencing mutates this object.
@@ -11,17 +11,15 @@ The agent loop must not keep a parallel cursor (``_cur_run`` / ``_run_idx`` /
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generator
+from typing import Any, Callable, Generator
 
-from gui_agent.core.orchestrator.program import Program, RunLike, RunResult
+from gui_agent.core.orchestrator.program import Program, RunLike
 from gui_agent.core.orchestrator.recovery import (
     MAX_KICKBACK_REPLANS,
     RecoveryLedger,
 )
 from gui_agent.core.orchestrator.runner import Interpreter
-
-if TYPE_CHECKING:
-    from gui_agent.core.run.statements.outcome import StatementOutcome
+from gui_agent.core.schemas import StatementOutcome
 
 
 @dataclass
@@ -36,12 +34,12 @@ class ProgramRuntime:
 
     program: Program
     interpreter: Interpreter
-    _steps: Generator[RunLike, RunResult, str]
+    _steps: Generator[RunLike, StatementOutcome, str]
     current: RunLike | None = None
     index: int = 0
     notes_mark: int = 0
-    recovery: RecoveryLedger = field(default_factory=RecoveryLedger)
-    kickback_replans: int = 0
+    _recovery: RecoveryLedger = field(default_factory=RecoveryLedger)
+    _kickback_replans: int = 0
     reply: str | None = None
     _instance_seq: int = 0
     current_instance_id: str = ""
@@ -77,12 +75,16 @@ class ProgramRuntime:
             _steps=gen,
             current=current,
             index=0,
-            recovery=recovery or RecoveryLedger(),
+            _recovery=recovery or RecoveryLedger(),
             reply=reply,
         )
 
     def next_instance_id(self, statement_id: str = "") -> str:
         """Monotonic instance id for one statement invocation (foreach-safe)."""
+        if self.current_instance_id:
+            raise RuntimeError(
+                f"statement instance {self.current_instance_id!r} is still active"
+            )
         self._instance_seq += 1
         suffix = statement_id or "stmt"
         iid = f"i{self._instance_seq}:{suffix}"
@@ -93,27 +95,64 @@ class ProgramRuntime:
     def finished(self) -> bool:
         return self.current is None and self.reply is not None
 
-    def _send_result(self, result: RunResult) -> RunLike | None:
-        """Resume the interpreter wire protocol and update the owned cursor."""
+    def send_outcome(self, outcome: StatementOutcome) -> RunLike | None:
+        """Resume the interpreter with one authoritative statement outcome.
+
+        The first run-log record appended while resuming is the record for the
+        statement that just returned.  Later records may be interpreter-owned
+        aggregates (for example the enclosing foreach materialization), so the
+        invocation id must be attached by position rather than to ``run_log[-1]``.
+        """
+        log_start = len(self.interpreter.run_log)
+        instance_id = self.current_instance_id
         try:
-            self.current = self._steps.send(result)
+            self.current = self._steps.send(outcome)
             self.index += 1
             return self.current
         except StopIteration as exc:
             self.current = None
             self.reply = exc.value or ""
             return None
+        finally:
+            if instance_id and len(self.interpreter.run_log) > log_start:
+                self.interpreter.run_log[log_start].instance_id = instance_id
+            self.current_instance_id = ""
 
-    def send_outcome(self, outcome: "StatementOutcome") -> RunLike | None:
-        """Resume from one terminal statement outcome."""
-        return self._send_result(outcome.to_run_result())
+    def begin_kickback(self) -> int | None:
+        """Atomically reserve one task-level replan attempt."""
+        if self._kickback_replans >= MAX_KICKBACK_REPLANS:
+            return None
+        self._kickback_replans += 1
+        return self._kickback_replans
 
-    def can_kickback(self) -> bool:
-        return self.kickback_replans < MAX_KICKBACK_REPLANS
+    def next_return_attempt(self) -> int | None:
+        if self.current is None:
+            raise RuntimeError("cannot recover returns without an active statement")
+        return self._recovery.next_attempt(self.index, self.current)
 
-    def record_kickback(self) -> int:
-        self.kickback_replans += 1
-        return self.kickback_replans
+    def record_recovery(
+        self,
+        cls: str,
+        mechanism: str,
+        site: str,
+        *,
+        detail: str = "",
+        outcome: str = "",
+    ) -> None:
+        self._recovery.record(
+            cls,
+            mechanism,
+            site,
+            detail=detail,
+            outcome=outcome,
+        )
+
+    @property
+    def has_recovery(self) -> bool:
+        return bool(self._recovery.events)
+
+    def recovery_summary(self) -> dict[str, Any]:
+        return self._recovery.summary()
 
     def mark_notes(self, note_count: int) -> None:
         """Record content_notes length at the start of the current statement."""
@@ -146,7 +185,7 @@ class ProgramRuntime:
         prev_env = dict(self.interpreter.env) if inherit_env else {}
         prev_log = list(self.interpreter.run_log) if inherit_run_log else []
         if drop_failed_from_log:
-            prev_log = [record for record in prev_log if not record.result.failed]
+            prev_log = [record for record in prev_log if record.result.is_completed]
         self.program = program
         self.interpreter = Interpreter(
             program,
@@ -168,3 +207,4 @@ class ProgramRuntime:
             self.reply = exc.value or ""
         self.index = 0
         self.notes_mark = 0
+        self.current_instance_id = ""

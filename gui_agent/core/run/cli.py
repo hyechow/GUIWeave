@@ -21,7 +21,7 @@ from gui_agent.core.self_learning.app_summary import (
     load_knowledge_for_app,
     match_app_by_url,
 )
-from gui_agent.core.run.state import write_final_run_state
+from gui_agent.core.run.state import write_final_program_outcome
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 
@@ -266,7 +266,7 @@ def main(
                     "llm_calls": get_llm_call_count() - orch_calls_before,
                 }
                 # The config must ALSO reach the execution-time planner deterministically — the
-                # supervisor's constraints flow to every milestone's planner, and reseed never clears
+                # supervisor's task-level constraints flow to every statement planner
                 # them (LLM distillation of config into constraints proved unstable).
                 if file_section:
                     _CAP = 3000
@@ -341,7 +341,7 @@ def main(
                     print("=" * 50)
                     # Persist the final reply and structured run state so the HTML report can render it.
                     try:
-                        write_final_run_state(context_path, result, output)
+                        write_final_program_outcome(context_path, result, output)
                     except Exception as exc:
                         print(f"（输出未写入 context: {exc}）")
 

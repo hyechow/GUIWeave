@@ -22,7 +22,7 @@ from gui_agent.context.runtime import (
     tried_instructions_block,
 )
 from gui_agent.core.run.execution_signals import ConstraintLedger
-from gui_agent.core.schemas import Milestone, Observation, PolicyTurn
+from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
 from gui_agent.core.self_learning.progressive import _norm as _norm_page
 from llm.structured import invoke_structured
 
@@ -47,7 +47,7 @@ class MilestoneLLMRuntimeMixin:
 
     def _single_check(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         observation: Observation,
         history: list[PolicyTurn],
         extra: str = "",
@@ -60,8 +60,6 @@ class MilestoneLLMRuntimeMixin:
                 if turn.supervisor and turn.supervisor.app_name:
                     app_name = turn.supervisor.app_name
                     break
-        if milestone.completion_strategy == "react_until_collected" and self._collection_progress:
-            extra = f"{extra}\n{self._collection_progress}".strip()
         identity_evidence = route_identity_evidence(milestone, observation)
         if identity_evidence:
             extra = f"{extra}\n{identity_evidence}".strip()
@@ -69,7 +67,11 @@ class MilestoneLLMRuntimeMixin:
             milestone,
             observation,
             history,
-            scope=execution_scope or execution_scope_for(milestone, observation),
+            scope=execution_scope or execution_scope_for(
+                milestone,
+                observation,
+                instance_id=getattr(self, "_active_instance_id", ""),
+            ),
         )
         return run_checker(
             milestone,
@@ -92,7 +94,7 @@ class MilestoneLLMRuntimeMixin:
 
     def _loop_check(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         observation: Observation,
         history: list[PolicyTurn],
     ) -> _LoopFrameResult:
@@ -105,7 +107,7 @@ class MilestoneLLMRuntimeMixin:
             context_reports=self._context_reports,
         )
 
-    def _select_sections(self, milestone: Milestone, check: _SingleCheckResult) -> list[str]:
+    def _select_sections(self, milestone: StatementContract, check: _SingleCheckResult) -> list[str]:
         """Select focused knowledge sections, with deterministic fallback and page cache."""
         if self._pk is None:
             return []
@@ -183,7 +185,7 @@ class MilestoneLLMRuntimeMixin:
     def _record_selector_report(
         self,
         *,
-        milestone: Milestone,
+        milestone: StatementContract,
         page_identity: str,
         page_known: bool,
         cache: str,
@@ -211,7 +213,7 @@ class MilestoneLLMRuntimeMixin:
             "error": error,
         })
 
-    def _elements_for(self, milestone: Milestone, check: _SingleCheckResult) -> Optional[str]:
+    def _elements_for(self, milestone: StatementContract, check: _SingleCheckResult) -> Optional[str]:
         if self._pk:
             self._last_sections_loaded = self._select_sections(milestone, check)
             return self._pk.bodies(self._last_sections_loaded)
@@ -219,20 +221,22 @@ class MilestoneLLMRuntimeMixin:
 
     def _invoke_planner(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         check: _SingleCheckResult,
         observation: Observation,
         history: list[PolicyTurn],
         extra: str = "",
     ) -> _PlanResult:
         elements = self._elements_for(milestone, check)
-        if milestone.completion_strategy == "react_until_collected" and self._collection_progress:
-            extra = f"{extra}\n{self._collection_progress}".strip()
         runtime_filter = resolved_filter_intent(
             milestone,
             observation,
             history,
-            scope=execution_scope_for(milestone, observation),
+            scope=execution_scope_for(
+                milestone,
+                observation,
+                instance_id=getattr(self, "_active_instance_id", ""),
+            ),
         )
         return run_planner(
             milestone,
@@ -251,7 +255,7 @@ class MilestoneLLMRuntimeMixin:
 
     def _invoke_loop_scroll(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         frame: _LoopFrameResult,
         observation: Observation,
     ) -> _PlanResult:
@@ -278,7 +282,7 @@ class MilestoneLLMRuntimeMixin:
 
     def _invoke_replanner(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         check: _SingleCheckResult,
         observation: Observation,
         history: list[PolicyTurn],

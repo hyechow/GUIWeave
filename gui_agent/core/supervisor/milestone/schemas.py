@@ -4,10 +4,10 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from gui_agent.core.schemas import ActionFamily, AtomicRole, CollectionScope, Milestone
+from gui_agent.core.schemas import ActionFamily, AtomicRole, CollectionScope, StatementContract
 
 
-def action_metadata(plan, milestone: Milestone) -> tuple[AtomicRole, ActionFamily]:
+def action_metadata(plan, milestone: StatementContract) -> tuple[AtomicRole, ActionFamily]:
     """Normalize planner metadata against the milestone execution strategy."""
     if milestone.is_iterative:
         return "iterate", "iterate"

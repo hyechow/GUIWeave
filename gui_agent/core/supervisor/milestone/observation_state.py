@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from gui_agent.core.run.execution_signals import target_matches_declared
-from gui_agent.core.schemas import Milestone
+from gui_agent.core.schemas import StatementContract
 
 # ── filter "action-applied" gate ──────────────────────────────────────────────
 # A `filter` milestone's job is to APPLY a filter; its success is "the intended filter is in
@@ -28,7 +28,7 @@ def _value_tokens(s: str) -> list[str]:
 
 
 def _effective_filter_intents(
-    milestone: Milestone,
+    milestone: StatementContract,
     runtime_intent: RuntimeFilterIntent | None,
 ) -> list[RuntimeFilterIntent]:
     """Resolve semantic filter declarations to the concrete controls used this attempt."""
@@ -61,7 +61,7 @@ def _effective_filter_intents(
 def observed_filter_intent(
     applied_filters: Optional[dict[str, str]],
     form_controls: list[dict] | None,
-    milestone: Milestone,
+    milestone: StatementContract,
     runtime_intent: RuntimeFilterIntent | None = None,
 ) -> RuntimeFilterIntent | None:
     """Bind an applied-state entry to its currently populated concrete filter control.
@@ -120,7 +120,7 @@ def observed_filter_intent(
 
 def _matched_applied_filter_labels(
     applied_filters: Optional[dict[str, str]],
-    milestone: Milestone,
+    milestone: StatementContract,
     runtime_intent: RuntimeFilterIntent | None = None,
 ) -> set[str]:
     if not applied_filters:
@@ -146,7 +146,7 @@ def _matched_applied_filter_labels(
 
 def filter_chips_clean(
     applied_filters: Optional[dict[str, str]],
-    milestone: Milestone,
+    milestone: StatementContract,
     runtime_intent: RuntimeFilterIntent | None = None,
 ) -> bool:
     """Whether the live filter set exactly matches the declared filter-state contract."""
@@ -160,7 +160,7 @@ def filter_chips_clean(
 
 def filter_residual_labels(
     applied_filters: Optional[dict[str, str]],
-    milestone: Milestone,
+    milestone: StatementContract,
     runtime_intent: RuntimeFilterIntent | None = None,
 ) -> list[str]:
     """Return live filters not present in the complete declared filter-state contract."""
@@ -185,7 +185,7 @@ def filter_residual_labels(
 
 def filter_state_satisfies_target(
     applied_filters: Optional[dict[str, str]],
-    milestone: Milestone,
+    milestone: StatementContract,
     runtime_intent: RuntimeFilterIntent | None = None,
 ) -> bool:
     """Whether every declared filter pair is present in the adapter's applied state."""

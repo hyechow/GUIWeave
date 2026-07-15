@@ -283,7 +283,7 @@ def _write_orchestration_preflight_context(
     preflight_result: object,
     result: dict,
 ) -> None:
-    from gui_agent.core.schemas import PolicyContext
+    from gui_agent.core.schemas import PolicyContext, ProgramOutcome
 
     context = PolicyContext(
         goal=intent,
@@ -293,10 +293,11 @@ def _write_orchestration_preflight_context(
         raw_input=intent,
     )
     context.knowledge = knowledge_summary
-    context.run.status = "stopped"
-    context.run.stop_reason = str(result.get("stop_reason") or "")
-    context.run.goal_completed = False
-    context.run.output = str(result.get("result_summary") or "")
+    context.outcome = ProgramOutcome(
+        phase="stopped",
+        summary=str(result.get("stop_reason") or ""),
+        output=str(result.get("result_summary") or ""),
+    )
     context.orchestrator = {
         "program": program.model_dump(mode="json") if hasattr(program, "model_dump") else None,
         "max_turns": max_turns,
@@ -618,7 +619,7 @@ def _run_evidence_text(context_path: Path | None) -> str:
         return f"(unavailable: {exc})"
 
     lines: list[str] = []
-    for turn in (data.get("turns") or [])[-6:]:
+    for turn in ((data.get("journal") or {}).get("events") or [])[-6:]:
         supervisor = turn.get("supervisor") or {}
         checker = turn.get("checker") or {}
         parts = [

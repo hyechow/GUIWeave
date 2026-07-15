@@ -74,7 +74,7 @@ def compose_orchestration_reply(
     """Comprehensive final reply for DSL orchestrator runs: synthesize 已完成 / 读取发现 /
     未完成 / 结论 from the WHOLE program's structured state, not just the last finish line.
 
-    run_log: ordered milestones [{name, completed, failed, reads:{字段:值}, summary}].
+    run_log: ordered statements [{name, phase, verification, reads:{字段:值}, summary}].
     current: the in-progress (uncompleted) milestone name when interrupted (max_turns), else "".
     terminal: how the program ended — the finish/failure reply, or "达到最大轮数 N" etc."""
     cfg = resolve_llm_config("output")
@@ -85,11 +85,12 @@ def compose_orchestration_reply(
     )
     lines = []
     for i, r in enumerate(run_log, 1):
-        status = r.get("completion_status")
+        phase = r.get("phase")
+        verification = r.get("verification")
         mark = (
             "△ 已派发，结果未验证"
-            if status == "accepted_unverified"
-            else ("✗ 未完成" if r.get("failed") else ("✓ 完成" if r.get("completed") else "· 进行中"))
+            if verification == "accepted_unverified"
+            else ("✓ 完成" if phase == "completed" else "✗ 未完成")
         )
         lines.append(f"{i}. {r.get('name', '')} — {mark}")
         reads = {k: v for k, v in (r.get("reads") or {}).items() if v}

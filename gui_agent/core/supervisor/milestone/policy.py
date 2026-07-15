@@ -5,7 +5,7 @@ from typing import Literal, Optional
 
 from gui_agent.core.vision.frame_analysis import is_loading_frame
 from gui_agent.core.schemas import (
-    Milestone,
+    StatementContract,
     Observation,
     PolicyTurn,
     StatementOutcome,
@@ -69,7 +69,6 @@ from .evidence import (
 )
 from .execution_scope import (
     execution_scope_for,
-    history_for_current_milestone,
     history_for_scope,
 )
 from .llm_runtime import MilestoneLLMRuntimeMixin
@@ -203,8 +202,20 @@ class MilestoneSupervisorPolicy(
         return self._statement_rt
 
     @property
+    def _active_instance_id(self) -> str:
+        """Instance id of the active invocation, or "" outside a statement."""
+        return self._statement_rt.instance_id if self._statement_rt is not None else ""
+
+    @property
     def _active_milestone(self):
         return None if self._statement_rt is None else self._statement_rt.contract
+
+    def _scope_for(self, milestone, observation: Observation) -> str:
+        return execution_scope_for(
+            milestone,
+            observation,
+            instance_id=self._active_instance_id,
+        )
 
     @property
     def _monitor(self):
@@ -294,14 +305,20 @@ class MilestoneSupervisorPolicy(
         fresh_advance: bool = False,
     ) -> None:
         """Begin one interactive statement; creates a fresh StatementRuntimeState."""
+        if self._statement_rt is not None:
+            raise RuntimeError(
+                "begin_statement called while a statement is already active; "
+                "call end_statement first (or reset_for_return_retry for a tighten)"
+            )
         from gui_agent.core.run.execution_signals import ExecutionContract
+        from gui_agent.core.run.interactive import statement_info_from_contract
         self._statement_rt = StatementRuntimeState(
             contract=contract,
             instance_id=instance_id,
             execution_contract=ExecutionContract.from_milestone(contract),
             task_type=task_type,
-            status="pending",
             skip_initial_check=fresh_advance and contract.kind == "navigation",
+            statement_info=statement_info_from_contract(contract),
         )
         self.task_type = task_type
         self._goal = contract.name
@@ -319,18 +336,6 @@ class MilestoneSupervisorPolicy(
     def end_statement(self, outcome=None) -> None:
         """Destroy statement-local live state after terminal turn is recorded."""
         self._statement_rt = None
-
-    def _set_status(self, status: str) -> None:
-        if self._statement_rt is not None:
-            self._statement_rt.status = status
-
-    @property
-    def _collection_progress(self) -> str:
-        return ""
-
-    @property
-    def _collection_done(self) -> bool:
-        return False
 
     def _add_runtime_constraint(
         self,
@@ -362,7 +367,7 @@ class MilestoneSupervisorPolicy(
 
     def _collection_completion_decision(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         *,
         scope: str,
         evidence: str,
@@ -385,14 +390,14 @@ class MilestoneSupervisorPolicy(
 
     def _advance_from_collection_controller(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         observation: Observation,
         history: list[PolicyTurn],
         *,
         evidence: str,
         final_read: Optional[dict] = None,
     ) -> SupervisorStep:
-        scope = execution_scope_for(milestone, observation)
+        scope = self._scope_for(milestone, observation)
         decision = self._collection_completion_decision(
             milestone,
             scope=scope,
@@ -483,11 +488,6 @@ class MilestoneSupervisorPolicy(
                 "InteractiveStatementExecutor requires begin_statement(...) before step(); "
                 "compile a Program and drive statements through ProgramRuntime"
             )
-        if self._rt.status in {"done", "failed"}:
-            raise RuntimeError(
-                f"statement {milestone.id!r} is already terminal; "
-                "end_statement then begin the next Program statement"
-            )
         if milestone.kind == "action" and milestone.target_values:
             observation = self._mutation_observation(
                 observation,
@@ -497,7 +497,7 @@ class MilestoneSupervisorPolicy(
             result = self._run_loop_turn(milestone, observation, history)
         else:
             result = self._run_single_turn(milestone, observation, history)
-        result.execution_scope = execution_scope_for(milestone, observation)
+        result.execution_scope = self._scope_for(milestone, observation)
 
         return result
 
@@ -514,27 +514,11 @@ class MilestoneSupervisorPolicy(
         finally:
             self._observe_only = False
 
-    def reseed(
-        self,
-        milestone,
-        task_type: Literal["action", "analysis"] = "action",
-        fresh_advance: bool = False,
-    ) -> None:
-        """Deprecated alias for begin_statement (tests/compat)."""
-        iid = f"legacy:{getattr(milestone, 'id', 'ms')}"
-        self.begin_statement(
-            milestone,
-            instance_id=iid,
-            task_type=task_type,
-            fresh_advance=fresh_advance,
-        )
-
-
     # ── Single-step machine ───────────────────────────────────────────
 
     def _run_single_turn(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
@@ -548,12 +532,14 @@ class MilestoneSupervisorPolicy(
                 **_ctx(milestone, None),
             )
 
-        execution_scope = execution_scope_for(milestone, observation)
+        execution_scope = self._scope_for(milestone, observation)
         self._current_execution_scope = execution_scope
-        scoped_history = history_for_scope(history, milestone, observation)
-        milestone_history = history_for_current_milestone(history, milestone, observation)
+        scoped_history = history_for_scope(
+            history, milestone, observation, instance_id=self._active_instance_id,
+        )
+        milestone_history = scoped_history
 
-        # Freshly entered navigation statement (reseed fresh_advance):
+        # Freshly entered navigation statement (begin with fresh_advance):
         # skip the initial done-check and plan the first nav action directly — drops the 2nd
         # checker call on the milestone hand-off. One-shot.
         if self._skip_initial_check:
@@ -678,7 +664,6 @@ class MilestoneSupervisorPolicy(
             )
             self._last_check = check
             self._last_plan = acquire_plan
-            self._set_status("running")
             print(f"  [AcquireGate] {acquire_plan.summary}")
             print(f"  [Planner] {acquire_plan.instruction}")
             return SupervisorStep(
@@ -801,18 +786,9 @@ class MilestoneSupervisorPolicy(
         self._last_page_identity = current_page_id
 
         if milestone.completion_strategy == "react_until_collected":
-            if False:  # collection progress channel retired; monitor/traversal own coverage
-                final_read = None
-                if self.task_type != "action":
-                    read_inst = check.read_instruction or _default_read_instruction(milestone)
-                    final_read = _ctx(milestone, read_inst)
-                return self._advance_from_collection_controller(
-                    milestone,
-                    observation,
-                    history,
-                    evidence="collection controller reports all requested rows completed",
-                    final_read=final_read,
-                )
+            # Collection progress is owned by the monitor/traversal session; the checker's
+            # done/stuck verdict is treated as in_progress until the traversal boundary proves
+            # coverage (see react_until_collected handling below).
             if check.status in {"done", "stuck"}:
                 print(f"  [Collect] controller 未完成，覆盖 checker {check.status} → in_progress")
                 check = check.model_copy(update={"status": "in_progress"})
@@ -838,7 +814,6 @@ class MilestoneSupervisorPolicy(
             )
 
         if self._observe_only:
-            self._set_status("running")
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
@@ -848,7 +823,6 @@ class MilestoneSupervisorPolicy(
             )
 
         if post_completion.next == "observe":
-            self._set_status("running")
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
@@ -894,8 +868,8 @@ class MilestoneSupervisorPolicy(
         last_tv = milestone_history[-1].target_verify if milestone_history else None
         if last_tv is not None and not last_tv.on_target:
             print(f"  [OffTarget] 上一步误中「{last_tv.actual_element}」，已先验收(未完成)→ replan")
-            # Normally action_lifecycle_claims has already routed this through the coordinator.
-            # Keep a typed progress fallback for legacy turns without an action receipt.
+            # Normally action_lifecycle_claims has already routed this through the coordinator;
+            # target verification remains a deterministic fail-safe.
             return self._handle_stuck(
                 milestone,
                 ProgressAssessment(
@@ -913,7 +887,7 @@ class MilestoneSupervisorPolicy(
 
         # Ineffective last tap: target_verify said on_target (hit the intended element) yet
         # settle saw zero screen change → the tap did nothing (re-tapped an already-active tab
-        # / inert element). Milestone not done (checked above) → replan now instead of waiting
+        # / inert element). StatementContract not done (checked above) → replan now instead of waiting
         # ~3 frames for SimStuck. Complements off_target above (wrong-element vs
         # right-element-but-no-effect). Gated on tap so gestures (which legitimately may not
         # move much) never trigger it.
@@ -961,7 +935,7 @@ class MilestoneSupervisorPolicy(
                     page_changed=False,
                     prev_page_id=prev_page_id, current_page_id=current_page_id,
                 )
-            stall = self._monitor.check_value_stall(milestone, check)
+            stall = self._monitor.check_value_stall(check)
             if stall is not None:
                 return self._handle_stuck(
                     milestone, stall, check.read_instruction,
@@ -1010,16 +984,15 @@ class MilestoneSupervisorPolicy(
 
     def _plan_single(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         check: _SingleCheckResult,
         observation: Observation,
         history: list[PolicyTurn],
         persistence_assessment: PersistenceAssessment | None = None,
     ) -> SupervisorStep:
-        execution_scope = execution_scope_for(milestone, observation)
+        execution_scope = self._scope_for(milestone, observation)
         if self._observe_only:
             self._last_plan = None
-            self._set_status("running")
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
@@ -1184,7 +1157,6 @@ class MilestoneSupervisorPolicy(
         if plan.direction in ("increase", "decrease") and drag_column:
             self._fix_picker_direction(plan)
         self._last_plan = plan
-        self._set_status("running")
         return SupervisorStep(
             should_act=bool(plan.instruction),
             instruction=plan.instruction or None,
@@ -1207,11 +1179,13 @@ class MilestoneSupervisorPolicy(
 
     def _run_loop_turn(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         observation: Observation,
         history: list[PolicyTurn],
     ) -> SupervisorStep:
-        scoped_history = history_for_scope(history, milestone, observation)
+        scoped_history = history_for_scope(
+            history, milestone, observation, instance_id=self._active_instance_id,
+        )
         if self._observe_only:
             with _Timer(self._timings, self._timings_order, "loop_check", self._token_usage):
                 frame = self._loop_check(milestone, observation, scoped_history)
@@ -1236,7 +1210,6 @@ class MilestoneSupervisorPolicy(
                     history,
                     evidence="collection boundary reached after a successful scroll",
                 )
-            self._set_status("running")
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
@@ -1371,7 +1344,6 @@ class MilestoneSupervisorPolicy(
                 evidence="collection boundary reached after a successful scroll",
             )
 
-        self._set_status("running")
         loop_summary_prefix = "继续滚动查找目标" if self.task_type == "action" else "继续滚动收集内容"
         if _last_scroll_was_for(scoped_history, milestone.id):
             return SupervisorStep(
@@ -1406,7 +1378,7 @@ class MilestoneSupervisorPolicy(
 
     def _advance(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         observation: Observation,
         history: list[PolicyTurn],
         *,
@@ -1419,7 +1391,9 @@ class MilestoneSupervisorPolicy(
                 f"cannot advance without satisfied completion evidence: {decision.status}"
             )
         done_name = milestone.name
-        scoped_history = history_for_scope(history, milestone, observation)
+        scoped_history = history_for_scope(
+            history, milestone, observation, instance_id=self._active_instance_id,
+        )
         executed_in_scope = any(
             t.executed for t in scoped_history
             if t.supervisor.milestone_id == milestone.id
@@ -1436,7 +1410,6 @@ class MilestoneSupervisorPolicy(
             and (history[-1].target_verify is None or history[-1].target_verify.on_target)
         )
         pre_existing = not (executed_in_scope or executed_in_transition)
-        self._set_status("done")
         # Persist this statement's DONE verdict for reports (done_check panel).
         if self._last_check is not None:
             self._done_check = self._last_check
@@ -1468,7 +1441,7 @@ class MilestoneSupervisorPolicy(
 
     def _handle_stuck(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         check: _SingleCheckResult | ProgressAssessment,
         read_inst: Optional[str],
         observation: Observation,
@@ -1572,7 +1545,6 @@ class MilestoneSupervisorPolicy(
             kick = self._maybe_kickback(milestone, observation, read_inst, history)
             if kick:
                 return kick
-            self._set_status("failed")
             reason = replan.escalation_message or "升级人工介入"
             return SupervisorStep(
                 should_act=False,
@@ -1595,7 +1567,6 @@ class MilestoneSupervisorPolicy(
             self._last_check = check
             return self._plan_single(milestone, check, observation, history)
         drag_steps = self._picker_drag_steps(replan)
-        self._set_status("running")
         return SupervisorStep(
             should_act=bool(replan.instruction),
             instruction=replan.instruction or None,
@@ -1615,7 +1586,7 @@ class MilestoneSupervisorPolicy(
         )
 
     def _maybe_kickback(
-        self, milestone: Milestone, observation: Observation, read_inst: Optional[str],
+        self, milestone: StatementContract, observation: Observation, read_inst: Optional[str],
         history: Optional[list[PolicyTurn]] = None,
     ) -> Optional[SupervisorStep]:
         """Feasibility Guard (goal level): at give-up time, judge whether the milestone is INFEASIBLE —
@@ -1643,7 +1614,7 @@ class MilestoneSupervisorPolicy(
             assess_persistence(
                 milestone,
                 history,
-                scope=execution_scope_for(milestone, observation),
+                scope=self._scope_for(milestone, observation),
             )
             if history
             else None
@@ -1700,7 +1671,6 @@ class MilestoneSupervisorPolicy(
             print(f"  [Feasibility] 判定可行（{verdict.reason}）→ 不踢回，走常规处理")
             return None
         print(f"  [Feasibility] milestone 不可行 → 踢回编排器重规划。{verdict.reason}")
-        self._set_status("failed")
         directive = compose_directive(verdict) or "重新规划当前不可行 statement"
         return SupervisorStep(
             should_act=False,
@@ -1712,8 +1682,7 @@ class MilestoneSupervisorPolicy(
             **_ctx(milestone, read_inst),
         )
 
-    def _fail(self, milestone: Milestone, check: _SingleCheckResult, read_inst: Optional[str]) -> SupervisorStep:
-        self._set_status("failed")
+    def _fail(self, milestone: StatementContract, check: _SingleCheckResult, read_inst: Optional[str]) -> SupervisorStep:
         print(f"  子目标「{milestone.name}」失败")
         reason = f"子目标「{milestone.name}」重试 {MAX_RETRIES} 次后失败"
         return SupervisorStep(
@@ -1727,7 +1696,7 @@ class MilestoneSupervisorPolicy(
 
     def _record_failure_constraint(
         self,
-        milestone: Milestone,
+        milestone: StatementContract,
         check: _SingleCheckResult,
         history: list[PolicyTurn],
     ) -> None:

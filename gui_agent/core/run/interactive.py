@@ -7,16 +7,12 @@ observation. Retry and re-planning policy live elsewhere.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import TYPE_CHECKING, Callable, Literal
 
 from gui_agent.core.orchestrator.contracts import normalize_return_reads
 from gui_agent.core.orchestrator.program import INTERACTIVE_KINDS, Query, Read, Run, RunLike
-from gui_agent.core.run.execution_signals import (
-    ExecutionContract,
-    action_requires_mutation_evidence,
-)
+from gui_agent.core.run.execution_signals import action_requires_mutation_evidence
 from gui_agent.core.schemas import StatementContract, StatementInfo
 
 if TYPE_CHECKING:
@@ -49,17 +45,17 @@ def _needs_value_convergence(run: Run) -> bool:
 
 
 def statement_id_for_run(run: RunLike, program_index: int) -> str:
-    """Stable Program-statement id shared by interactive and immediate paths."""
-    base = run.var or f"m{program_index}_{run.kind}"
-    if (
-        run.var
-        and getattr(run, "kind", "") in INTERACTIVE_KINDS
-        and getattr(run, "returns", None)
-    ):
-        slug = re.sub(r"[^a-zA-Z0-9]+", "_", run.name).strip("_")[:32]
-        digest = hashlib.sha1(run.name.encode("utf-8")).hexdigest()[:8]
-        return f"{base}_{slug or digest}_{digest}"
-    return base
+    """Stable Program-statement id shared by interactive and immediate paths.
+
+    The stable identity is the compile-time `statement_id` assigned at decompose time
+    (``assign_statement_ids``) — preserved across return-tighten (model_copy) and across
+    foreach/function re-yields. The fallback (var / m{index}_{kind}) is only for Runs built
+    outside the decomposer (inline/test) and is NOT tighten-stable.
+    """
+    sid = getattr(run, "statement_id", "") or ""
+    if sid:
+        return sid
+    return run.var or f"m{program_index}_{run.kind}"
 
 
 def contract_for_run(run: Run, program_index: int) -> StatementContract:
@@ -105,22 +101,7 @@ def statement_info_for_run(run: RunLike, program_index: int) -> StatementInfo:
     """Persisted contract DTO for the first turn of a statement invocation."""
     sid = statement_id_for_run(run, program_index)
     if isinstance(run, Run) and run.is_interactive:
-        contract = contract_for_run(run, program_index)
-        return StatementInfo(
-            id=contract.id,
-            name=contract.name,
-            description=contract.description,
-            kind=contract.kind,
-            success_condition=contract.success_condition,
-            completion_strategy=contract.completion_strategy,
-            precondition=contract.precondition,
-            effect_mode=contract.effect_mode,
-            persistence=contract.persistence,
-            target_controls=list(contract.target_controls),
-            target_values=dict(contract.target_values),
-            returns=list(contract.returns),
-            read_spec=contract.read_spec or "",
-        )
+        return statement_info_from_contract(contract_for_run(run, program_index))
     sql = str(getattr(run, "sql", "") or "")
     data_scope = str(getattr(run, "data_scope", "") or "")
     returns = list(getattr(run, "returns", None) or [])
@@ -155,10 +136,6 @@ def statement_info_from_contract(contract: StatementContract) -> StatementInfo:
     )
 
 
-# Back-compat names used by existing tests/callers.
-milestone_for_run = contract_for_run
-
-
 def task_type_for_run(run: RunLike) -> Literal["action", "analysis"]:
     """Choose the supervisor read mode for a statement."""
     return "analysis" if run.kind in {"read", "data_query"} else "action"
@@ -172,29 +149,15 @@ def start_milestone(
     fresh_advance: bool = False,
     instance_id: str = "",
 ) -> StatementContract:
-    """Begin one interactive statement on the supervisor (alias for begin_statement)."""
+    """Compile and begin one interactive statement."""
     contract = contract_for_run(run, index)
     iid = instance_id or f"inst-{index}-{contract.id}"
-    begin = getattr(supervisor, "begin_statement", None)
-    if callable(begin):
-        begin(
-            contract,
-            instance_id=iid,
-            task_type=task_type_for_run(run),
-            fresh_advance=fresh_advance,
-        )
-        return contract
-    # Legacy reseed path during migration of tests that still mock reseed.
-    set_contract = getattr(supervisor, "set_execution_contract", None)
-    if callable(set_contract):
-        set_contract(ExecutionContract.from_milestone(contract))
-    reseed = getattr(supervisor, "reseed", None)
-    if callable(reseed):
-        reseed(
-            contract,
-            task_type=task_type_for_run(run),
-            fresh_advance=fresh_advance,
-        )
+    supervisor.begin_statement(
+        contract,
+        instance_id=iid,
+        task_type=task_type_for_run(run),
+        fresh_advance=fresh_advance,
+    )
     return contract
 
 
