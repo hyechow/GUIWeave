@@ -21,6 +21,9 @@ from gui_agent.core.schemas import (
     AtomicRole,
     PolicyContext,
     PolicyTurn,
+    ProgressTraceInfo,
+    RuntimeConstraintInfo,
+    StatementRuntimeSnapshot,
     SupervisorStep,
     TargetBinding,
 )
@@ -40,8 +43,53 @@ def interactive_turn_count(context: PolicyContext) -> int:
     """Count UI decision/action turns; non-UI primitives do not consume UI budget."""
     return sum(
         1
-        for turn in context.journal.events
+        for turn in context.journal.turns
         if getattr(turn, "operation_mode", "interactive") == "interactive"
+    )
+
+
+def snapshot_statement_runtime(supervisor: Any) -> StatementRuntimeSnapshot | None:
+    """Project the active logical runtime into a replay payload.
+
+    This is captured inside the turn event, after the policy decision and before the runtime is
+    destroyed. Volatile screenshot/acquisition caches are deliberately restarted on resume.
+    """
+    rt = getattr(supervisor, "_statement_rt", None)
+    if rt is None:
+        return None
+    monitor = rt.monitor
+    return StatementRuntimeSnapshot(
+        contract=rt.contract,
+        retry_count=rt.retry_count,
+        early_feasibility_probed=rt.early_feasibility_probed,
+        scroll_count=rt.scroll_count,
+        execution_scope=rt.execution_scope,
+        last_page_identity=rt.last_page_identity,
+        skip_initial_check=rt.skip_initial_check,
+        statement_info_emitted=rt.statement_info_emitted,
+        task_type=rt.task_type,
+        constraints=[
+            RuntimeConstraintInfo(
+                text=entry.text,
+                scope=entry.scope,
+                source=entry.source,
+            )
+            for entry in rt.constraint_ledger.entries
+        ],
+        progress_trace=[
+            ProgressTraceInfo(
+                index=trace.index,
+                state=trace.state,
+                decision=trace.decision,
+                interaction_state=trace.interaction_state,
+                scope=trace.scope,
+            )
+            for trace in monitor.turns
+        ],
+        progress_values=list(monitor._progress_values),
+        last_url=monitor._last_url,
+        last_dom_state=monitor._last_dom_state,
+        initial_filters=getattr(supervisor, "_initial_filters", None),
     )
 
 
@@ -72,6 +120,7 @@ def make_interactive_turn(
     llm_context: list[dict] | None = None,
     statement: Any = None,
     statement_instance_id: str = "",
+    runtime_state: StatementRuntimeSnapshot | None = None,
 ) -> PolicyTurn:
     """Build a normal UI turn."""
     role = action_role or supervisor_step.atomic_role
@@ -108,6 +157,7 @@ def make_interactive_turn(
         llm_context=list(llm_context or []),
         statement=statement,
         statement_instance_id=statement_instance_id,
+        runtime_state=runtime_state,
     )
 
 
@@ -158,6 +208,7 @@ def make_verdict_turn(
         ),
         statement=statement,
         statement_instance_id=statement_instance_id,
+        runtime_state=snapshot_statement_runtime(supervisor),
     )
     if outcome_override is not None:
         turn.supervisor = turn.supervisor.model_copy(update={"outcome": outcome_override})
@@ -238,7 +289,7 @@ def sync_turn_metadata(
     program,
     say: Callable[[str], None],
 ) -> None:
-    """Persist model, milestone, task type, and collection-scope metadata."""
+    """Persist model, statement, task type, and collection-scope metadata."""
     if not context.models:
         for key in MODEL_KEYS:
             try:
@@ -284,7 +335,7 @@ def record_interactive_turn(
     """Append the UI turn, sync persisted state, and notify the optional callback."""
     tokens_after = get_llm_token_usage()
     turn = make_interactive_turn(
-        index=len(context.journal.events) + 1,
+        index=len(context.journal.turns) + 1,
         observation_source=observation_source,
         observation_url=observation_url,
         surface_id=surface_id,
@@ -309,9 +360,10 @@ def record_interactive_turn(
         llm_context=list(getattr(supervisor, "_context_reports", []) or []),
         statement=statement,
         statement_instance_id=statement_instance_id,
+        runtime_state=snapshot_statement_runtime(supervisor),
     )
     print_timings(supervisor)
-    context.journal.append(turn)
+    context.journal.append_turn(turn)
     save_context()
     if not silent:
         print_turn_stats(turn.index, turn_started_at, llm_calls_before)
@@ -342,7 +394,7 @@ def make_immediate_statement_turn(
     *,
     index: int,
     observation_source: str,
-    milestone_id: str,
+    statement_id: str,
     summary: str,
     kind: str,
     name: str,
@@ -388,8 +440,8 @@ def make_immediate_statement_turn(
             should_act=False,
             instruction=None,
             summary=summary,
-            milestone_id=milestone_id,
-            milestone_kind=kind if kind in {"navigation", "filter", "action", "collection", "verification"} else "collection",
+            statement_id=statement_id,
+            statement_kind=kind if kind in {"navigation", "filter", "action", "collection", "verification"} else "collection",
             completion_strategy="read_once",
             outcome=outcome,
         ),

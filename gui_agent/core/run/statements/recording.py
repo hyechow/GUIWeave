@@ -40,14 +40,14 @@ def record_statement_outcome(
     iid = statement_instance_id or f"imm-{statement_index}:{statement_id}"
 
     observation = outcome.observation
-    context.journal.append(make_immediate_statement_turn(
-        index=len(context.journal.events) + 1,
+    context.journal.append_turn(make_immediate_statement_turn(
+        index=len(context.journal.turns) + 1,
         observation_source=(
             getattr(observation, "source", "non_ui")
             if observation is not None
             else "non_ui"
         ),
-        milestone_id=statement_id,
+        statement_id=statement_id,
         summary=outcome.summary,
         kind=statement.kind,
         name=statement.name,

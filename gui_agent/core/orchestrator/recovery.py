@@ -324,7 +324,7 @@ def kickback_adherence_issues(
             if len(failed_name) >= 8:
                 for kind, text in run_texts:
                     if kind == getattr(failed_run, "kind", "") and failed_name in text:
-                        issues.append(f"被判不可行的原 milestone「{failed_name[:40]}」原样重现")
+                        issues.append(f"被判不可行的原 statement「{failed_name[:40]}」原样重现")
                         break
 
     if directive.required_route:

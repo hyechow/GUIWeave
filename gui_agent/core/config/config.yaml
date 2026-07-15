@@ -22,7 +22,7 @@ llm:
       provider: dashscope
       model: qwen3.5-35b-a3b
     feasibility:
-      # milestone 可行性判定（给上层踢回重编排）——要看截图判导航入口/页面结构，必须是 vision 模型
+      # statement 可行性判定（给上层踢回重编排）——要看截图判导航入口/页面结构，必须是 vision 模型
       provider: dashscope
       model: qwen3.5-35b-a3b
   reader:

@@ -2,7 +2,7 @@
 effect" signal behind ``Observation.applied_filters``.
 
 This is the authoritative answer to "did the filter ACTION take effect", decoupled from "do
-the resulting rows look right" (the EFFECT). A `filter` milestone's job is to APPLY a filter;
+the resulting rows look right" (the EFFECT). A `filter` statement's job is to APPLY a filter;
 its success is that the intended filter is in the page's applied-filter state — NOT that the
 agent re-reads row/cell values (where the checker once conflated an adjacent display column,
 e.g. Magento `Salable Quantity`, with the filtered `Quantity` and rejected a correctly-applied

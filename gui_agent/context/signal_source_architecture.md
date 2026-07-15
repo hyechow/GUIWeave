@@ -1,7 +1,7 @@
 # Signal-Source Architecture — typed observation + scoped authority + model arbitration
 
 本文只描述 observation/context 进入模型时的来源与权威域。运行时动作事实另由
-`core/run/action_signals.py` 统一归档，typed claim 由 milestone `evidence.py` 投影，完成建议由
+`core/run/action_signals.py` 统一归档，typed claim 由 statement `evidence.py` 投影，完成建议由
 `ExecutionCoordinator` 归约；模型输出本身不是运行时状态转移权限。
 
 ## 为什么

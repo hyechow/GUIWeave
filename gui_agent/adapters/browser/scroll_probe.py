@@ -14,7 +14,7 @@ the page advanced. This satisfies the runner's scroll-collect contract:
 
 Boundary detection is handled by the runner: when a cached scroll yields zero shift it
 discards the cache and re-probes; the re-probe then returns failure (no progress),
-which ends the collection milestone.
+which ends the collection statement.
 """
 
 from __future__ import annotations

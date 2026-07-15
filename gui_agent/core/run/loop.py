@@ -56,7 +56,7 @@ from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import (
     contract_for_run,
     extract_run_returns,
-    start_milestone,
+    start_statement,
     statement_id_for_run,
 )
 from gui_agent.core.run.turns import (
@@ -88,9 +88,9 @@ MAX_LOADING_FRAMES = 12       # 连续加载帧上限，超过即判页面永挂
 
 def _needs_terminal_reconciliation(context: PolicyContext) -> bool:
     """Whether the hard limit landed immediately after an unresolved GUI dispatch."""
-    if not context.journal.events:
+    if not context.journal.turns:
         return False
-    latest = context.journal.events[-1]
+    latest = context.journal.turns[-1]
     signal = latest.action_signal
     return bool(
         latest.operation_mode == "interactive"
@@ -216,6 +216,7 @@ def run_agent_loop(
     )
     if knowledge is not None:
         context.knowledge = knowledge
+    _prior_wall_clock_s = float(context.wall_clock_s or 0.0)
 
     # Bound after ProgramRuntime.start; _save_ctx / _finish close over this name.
     rt: ProgramRuntime | None = None
@@ -224,7 +225,7 @@ def run_agent_loop(
         """Persist context, stamping the run's wall-clock elapsed so far — so the final file
         carries the true end-to-end time (LLM + settle + perception/execution/overhead), not
         just the sum of LLM-module timings."""
-        context.wall_clock_s = time.perf_counter() - _run_started
+        context.wall_clock_s = _prior_wall_clock_s + time.perf_counter() - _run_started
         # Mirror the interpreter's live run_log into context so the report shows WHAT each
         # read captured and can resolve {var[field]} targets.
         if rt is not None and isinstance(context.orchestrator, dict):
@@ -249,7 +250,7 @@ def run_agent_loop(
 
     _save_ctx()
     _say(f"Goal    : {context.goal}")
-    _say(f"Turns   : {len(context.journal.events)}")
+    _say(f"Turns   : {len(context.journal.turns)}")
     # Pin the task goal as a persistent HUD header (above the live turn status), so
     # the floating panel over the browser/mirror shows WHAT the agent is doing.
     if hud is not None and hasattr(hud, "set_goal"):
@@ -259,7 +260,7 @@ def run_agent_loop(
     original_goal = context.goal
     noop_count = 0
     loading_streak = 0
-    prev_milestone_id: str | None = None
+    prev_statement_id: str | None = None
 
     # The platform bundle is the single seam through which the agent loop obtains
     # the session, executor, perception and scroll/stitch helpers — no adapter
@@ -285,7 +286,13 @@ def run_agent_loop(
             _say(_line)
         if not setup.ok:
             _say(f"\n环境检查未通过：{setup.summary}")
-            return _finish(_make_result(context, f"环境检查未通过：{setup.summary}"))
+            return _finish(
+                _make_result(
+                    context,
+                    f"环境检查未通过：{setup.summary}",
+                    phase="failed",
+                )
+            )
         session_cm = bundle.open_session()
     else:
         session_cm = nullcontext(platform)
@@ -332,13 +339,39 @@ def run_agent_loop(
         _collect_fn = _make_collect_fn(bundle, platform, log_dir)
         from gui_agent.core.orchestrator.expansion import expand_foreach, select_members
 
-        rt = ProgramRuntime.start(
+        rt = ProgramRuntime.resume(
             program,
+            context.journal,
             collect_fn=_collect_fn,
             subdecompose_fn=subdecompose,
             expand_fn=expand_foreach,
             select_fn=select_members,
         )
+        if rt.current_instance_id:
+            if rt.current is None or not getattr(rt.current, "is_interactive", False):
+                raise ValueError(
+                    "journal resumed an active instance that is not an interactive statement"
+                )
+            resume_statement = getattr(supervisor, "resume_statement", None)
+            if not callable(resume_statement):
+                raise TypeError("configured supervisor cannot resume statement runtime")
+            latest_snapshot = next(
+                (
+                    turn.runtime_state
+                    for turn in reversed(context.journal.turns)
+                    if turn.statement_instance_id == rt.current_instance_id
+                    and turn.runtime_state is not None
+                ),
+                None,
+            )
+            if latest_snapshot is not None:
+                rt.restore_current_contract(latest_snapshot.contract)
+            resume_statement(
+                contract_for_run(rt.current, rt.index),
+                instance_id=rt.current_instance_id,
+                history=context.journal.turns,
+            )
+            _say(f"  [Resume] 恢复 statement {rt.current_instance_id}")
         _record_llm_mark = get_llm_call_count()
         _record_token_mark = get_llm_token_usage()
 
@@ -390,10 +423,14 @@ def run_agent_loop(
             # Immediate statements record their own turns and metrics.
             _record_llm_mark = get_llm_call_count()
             _record_token_mark = get_llm_token_usage()
-            if rt.current is not None and getattr(rt.current, "is_interactive", False):
+            if (
+                rt.current is not None
+                and getattr(rt.current, "is_interactive", False)
+                and getattr(supervisor, "_statement_rt", None) is None
+            ):
                 sid = statement_id_for_run(rt.current, rt.index)
                 iid = rt.next_instance_id(sid)
-                start_milestone(
+                start_statement(
                     supervisor,
                     rt.current,
                     rt.index,
@@ -448,8 +485,8 @@ def run_agent_loop(
             calls_after = get_llm_call_count()
             tokens_after = get_llm_token_usage()
             _info, _iid = emit_statement_fields(supervisor)
-            context.journal.append(make_verdict_turn(
-                index=len(context.journal.events) + 1,
+            context.journal.append_turn(make_verdict_turn(
+                index=len(context.journal.turns) + 1,
                 observation_source=observation.source,
                 observation_url=observation_url_for_turn,
                 supervisor_step=sv_step,
@@ -473,14 +510,30 @@ def run_agent_loop(
             ),
             {},
         )
+        _prior_orchestrator = context.orchestrator or {}
         context.orchestrator = {
-            "program": program.model_dump(mode="json"),
+            **_prior_orchestrator,
+            "program": rt.program.model_dump(mode="json"),
             "max_turns": max_turns,
-            "context_reports": _orchestrator_reports,
-            "timings": dict(_orchestrator_metrics.get("timings") or {}),
-            "token_usage": dict(_orchestrator_metrics.get("token_usage") or {}),
-            "llm_calls": int(_orchestrator_metrics.get("llm_calls") or 0),
+            "context_reports": (
+                _prior_orchestrator.get("context_reports") or _orchestrator_reports
+            ),
+            "timings": (
+                _prior_orchestrator.get("timings")
+                or dict(_orchestrator_metrics.get("timings") or {})
+            ),
+            "token_usage": (
+                _prior_orchestrator.get("token_usage")
+                or dict(_orchestrator_metrics.get("token_usage") or {})
+            ),
+            "llm_calls": int(
+                _prior_orchestrator.get("llm_calls")
+                or _orchestrator_metrics.get("llm_calls")
+                or 0
+            ),
         }
+        context.outcome = None
+        _save_ctx()
         if rt.finished:
             return _finish(_orch_result(context, rt.interpreter, rt.reply or ""))
         _reply = _drain_immediate()
@@ -598,13 +651,17 @@ def run_agent_loop(
                 expand_fn=expand_foreach,
                 select_fn=select_members,
                 drop_failed_from_log=True,
+                reason=directive,
+                terminal_disposition=(
+                    "abandon" if terminal_outcome is not None else "record_then_drop"
+                ),
             )
             _prior = context.orchestrator or {}
             _redecomps = list(_prior.get("redecomposes") or [])
             _redecomps.append({
                 "kickback_n": kick_n,
                 "directive": directive,
-                "at_turn": len(context.journal.events),
+                "at_turn": len(context.journal.turns),
                 "adherence_issues": list(_adherence_issues),
                 "program": _new.model_dump(mode="json"),
                 "llm_calls": get_llm_call_count() - _rd_calls0,
@@ -617,9 +674,11 @@ def run_agent_loop(
             })
             context.orchestrator = {
                 **_prior,
+                "program": rt.program.model_dump(mode="json"),
                 "redecomposes": _redecomps,
                 "replanned_from_kickback": kick_n,
             }
+            _save_ctx()
             if rt.finished:
                 return (True, rt.reply or "")
             _reply2 = _drain_immediate()
@@ -630,7 +689,7 @@ def run_agent_loop(
             if interrupted is not None:
                 return interrupted
 
-            turn_no = len(context.journal.events) + 1
+            turn_no = len(context.journal.turns) + 1
             _budget_mode = _turn_budget_mode(context, max_turns)
             _budget_reconcile = _budget_mode == "reconcile"
             if _budget_mode == "stop":
@@ -656,8 +715,8 @@ def run_agent_loop(
 
             _say("\n" + TURN_HEADER.format(turn_no=turn_no))
 
-            # Observe a fresh frame each turn. A milestone hand-off (the verdict-frame carry-
-            # forward: deciding the next milestone on the SAME frame the prior one was accepted
+            # Observe a fresh frame each turn. A statement hand-off (the verdict-frame carry-
+            # forward: deciding the next statement on the SAME frame the prior one was accepted
             # on, preserving transient hints + saving a screenshot) is now done WITHIN the turn
             # by the decision-phase loop below — it no longer crosses a turn boundary.
             _status(turn_no, "截图分析中…")
@@ -687,7 +746,7 @@ def run_agent_loop(
             _did_kickback_replan = False
             _did_return_recovery = False
             # Same-turn hand-offs call supervisor.step() multiple times; each step() clears its own
-            # _timings, so the completion check that detected the prior milestone done would be lost
+            # _timings, so the completion check that detected the prior statement done would be lost
             # from this turn's breakdown. Carry each handed-off step's timings here and merge them
             # back after the loop, so the report shows the checker call that ran on the hand-off.
             while True:
@@ -695,10 +754,10 @@ def run_agent_loop(
                 _say("监督决策中...")
                 if _budget_reconcile:
                     sv_step = supervisor.reconcile(
-                        observation, context.goal, context.journal.events
+                        observation, context.goal, context.journal.turns
                     )
                 else:
-                    sv_step = supervisor.step(observation, context.goal, context.journal.events)
+                    sv_step = supervisor.step(observation, context.goal, context.journal.turns)
                 _say(f"监督者: {sv_step.summary}")
                 _status(turn_no, sv_step.summary)
 
@@ -811,7 +870,7 @@ def run_agent_loop(
                     f"{rt.current.name}（同一验收帧上决策，不另起 turn）"
                 )
 
-            # The program ended on a hand-off (last actionable milestone done → read / finish).
+            # The program ended on a hand-off (last actionable statement done → read / finish).
             # Every completed statement already recorded its own terminal observation turn inside
             # the loop above, so no separate program-end verdict is needed here.
             if _orch_reply is not None:
@@ -857,7 +916,7 @@ def run_agent_loop(
             if _did_kickback_replan or _did_return_recovery:
                 continue
 
-            # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.journal.events、不消耗
+            # 页面未稳定（白屏/加载中）：等待并重新观察，本帧不写入 context.journal.turns、不消耗
             # max_turns、不累加 noop_count。加载是 App 渲染延迟、不是 agent 的一步操作。
             # 连续加载设上限，防页面永挂导致死循环（旧行为：loading 帧既占轮数，又会因
             # should_act=False 累加 noop_count，连续 3 帧就误判"连续无动作"终止 agent）。
@@ -903,7 +962,7 @@ def run_agent_loop(
                 observation=observation,
                 action_policy=action_policy,
                 supervisor=supervisor,
-                history=context.journal.events,
+                history=context.journal.turns,
                 executor=executor,
                 bundle=bundle,
                 platform=platform,
@@ -930,6 +989,20 @@ def run_agent_loop(
                 observation_png=observation.png_bytes,
                 pool=_VERIFY_POOL,
             )
+
+            # Fold the just-dispatched concrete action into StatementRuntime BEFORE the turn
+            # snapshot is built and persisted. Otherwise a resumed process would forget the
+            # latest loop-guard trace (and any constraint it emitted) even though the action turn
+            # itself was already durable in the journal.
+            note_executed_action = getattr(supervisor, "note_executed_action", None)
+            if callable(note_executed_action):
+                note_executed_action(
+                    index=len(context.journal.turns) + 1,
+                    observation=observation,
+                    supervisor_step=sv_step,
+                    action_decision=action_decision,
+                    executed=executed,
+                )
 
             _stmt_info, _stmt_iid = emit_statement_fields(supervisor)
             turn = record_interactive_turn(
@@ -960,16 +1033,6 @@ def run_agent_loop(
                 statement=_stmt_info,
                 statement_instance_id=_stmt_iid,
             )
-
-            note_executed_action = getattr(supervisor, "note_executed_action", None)
-            if callable(note_executed_action):
-                note_executed_action(
-                    index=turn.index,
-                    observation=observation,
-                    supervisor_step=sv_step,
-                    action_decision=action_decision,
-                    executed=executed,
-                )
 
             # Terminal StatementOutcome from this turn's supervisor decision.
             _turn_outcome = _outcome_from_step(sv_step)
@@ -1003,7 +1066,7 @@ def run_agent_loop(
 
             progress = evaluate_turn_progress(
                 noop_count=noop_count,
-                prev_milestone_id=prev_milestone_id,
+                prev_statement_id=prev_statement_id,
                 sv_step=sv_step,
                 executed=executed,
                 action_decision=action_decision,
@@ -1011,7 +1074,7 @@ def run_agent_loop(
                 suppressed_reason=action_result.suppressed_reason,
             )
             noop_count = progress.noop_count
-            prev_milestone_id = progress.prev_milestone_id
+            prev_statement_id = progress.prev_statement_id
             if progress.stop_reason:
                 if progress.stop_message:
                     _say(progress.stop_message)

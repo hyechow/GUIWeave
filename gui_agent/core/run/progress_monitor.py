@@ -4,7 +4,7 @@ Stuck is a TRAJECTORY property, not a single-frame one: it only shows up across 
 progress over a window). So it needs a stateful, cross-turn monitor — neither the per-turn LLM
 checker (stateless across turns) nor the scattered frame-level heuristics own that. This module
 accumulates deterministic FACTS; it does NOT advance, retry, or replan execution. Its detectors
-emit typed progress assessments for the milestone policy's single recovery path. Completion and
+emit typed progress assessments for the statement policy's single recovery path. Completion and
 persistence evidence remain independent of trajectory health.
 
 This is the task-level memory the frame-level guards miss: a Reset→search→Reset loop changes the
@@ -80,7 +80,7 @@ class TraceStep:
     state: str       # canonical URL (or a page-identity fallback)
     decision: str    # the action key from `state` — an NL instruction OR an action_signature
     interaction_state: str = ""  # optional DOM form-value fingerprint for browser pages
-    scope: str = ""  # execution bucket: milestone:<id> or row:<identity>
+    scope: str = ""  # execution bucket: statement:<id> or row:<identity>
 
 
 @dataclass
@@ -95,9 +95,9 @@ class ProgressMonitor:
     dom_changed: bool = False
     _last_url: Optional[str] = None        # raw url (not canonical) — exact-delta comparison
     _last_dom_state: Optional[str] = None  # form values / checked-state fingerprint
-    # Per-milestone sliding window of the checker's read "current value" — the value-stall detector.
+    # Per-statement sliding window of the checker's read "current value" — the value-stall detector.
     _progress_values: list[str] = field(default_factory=list)
-    # Recent (frame, action-center) pairs for the screen-similarity detector. Cleared on milestone
+    # Recent (frame, action-center) pairs for the screen-similarity detector. Cleared on statement
     # transitions (the touched region differs); a transient buffer, not persisted.
     _recent_screenshots: list = field(default_factory=list)
 
@@ -164,7 +164,7 @@ class ProgressMonitor:
 
     # ── deterministic stuck detectors (moved from stuck.py) ────────────────
     def clear_screenshots(self) -> None:
-        """Reset the screen-similarity buffer (called on milestone transitions)."""
+        """Reset the screen-similarity buffer (called on statement transitions)."""
         self._recent_screenshots.clear()
 
     def reset_for_retry(self) -> None:
@@ -233,12 +233,12 @@ class ProgressMonitor:
             )
         return None
 
-    def check_instruction_repetition(self, history, milestone_id: str):
-        """Report stalled progress when recent milestone instructions are near-identical."""
+    def check_instruction_repetition(self, history, statement_id: str):
+        """Report stalled progress when recent statement instructions are near-identical."""
         recent = [
             t.supervisor.instruction
             for t in history[-STUCK_REPEAT_WINDOW:]
-            if t.supervisor and t.supervisor.instruction and t.supervisor.milestone_id == milestone_id
+            if t.supervisor and t.supervisor.instruction and t.supervisor.statement_id == statement_id
         ]
         if len(recent) < STUCK_REPEAT_WINDOW:
             return None

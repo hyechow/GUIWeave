@@ -12,9 +12,9 @@ from .metrics import _fmt_tokens, _sum_tokens, _token_cost
 from .prompt_html import _render_module_io_html
 
 _PROG_KIND_BADGE = {
-    "navigation": "milestone-badge-navigation", "filter": "milestone-badge-filter",
-    "action": "milestone-badge-action", "read": "milestone-badge-collection",
-    "data_query": "milestone-badge-collection",
+    "navigation": "statement-badge-navigation", "filter": "statement-badge-filter",
+    "action": "statement-badge-action", "read": "statement-badge-collection",
+    "data_query": "statement-badge-collection",
 }
 
 # {var[field]} data-flow template (mirrors the runner's program.TEMPLATE_RE): the report uses it
@@ -111,7 +111,7 @@ def _render_non_ui_log(orchestrator: dict, run_items: list[dict]) -> str:
         completed = result.get("phase") == "completed"
         status_cls = "nonui-ok" if completed else "nonui-fail"
         status_text = "completed" if completed else "failed"
-        badge = _PROG_KIND_BADGE.get(kind, "milestone-badge-default")
+        badge = _PROG_KIND_BADGE.get(kind, "statement-badge-default")
         name = str(record.get("name") or meta.get("name") or "")
         var = str(record.get("var") or meta.get("var") or "")
         var_html = f'<span class="prog-var">{_safe(var)} =</span> ' if var else ""
@@ -147,7 +147,7 @@ def _render_non_ui_log(orchestrator: dict, run_items: list[dict]) -> str:
             f'<div class="nonui-head">'
             f'<span class="nonui-n">#{idx}</span>'
             f'<span class="nonui-name">{var_html}{_safe(name)}</span>'
-            f'<span class="milestone-badge {badge}">{_safe(kind)}</span>'
+            f'<span class="statement-badge {badge}">{_safe(kind)}</span>'
             f'<span class="nonui-status {status_cls}">{status_text}</span>'
             f'</div>'
             f'{summary_html}{sql_html}{reads_html}'
@@ -198,7 +198,7 @@ def _render_orchestrator_metrics(orchestrator: dict) -> str:
         parts.append(f"{cost_prefix}{pricing_currency()}{_token_cost(token_usage):.4f}")
     if not parts:
         return ""
-    return f'<span class="milestone-time">{" · ".join(parts)}</span>'
+    return f'<span class="statement-time">{" · ".join(parts)}</span>'
 
 
 def _estimate_orchestrator_token_usage(reports: list[dict]) -> dict:
@@ -245,13 +245,13 @@ def _render_program_card(
     h2_style: str = "",
     embedded: bool = False,
 ) -> str:
-    """Render ONE DSL program as a milestone-style card (#0 or #0↻N). env (var→reads, from the
+    """Render ONE DSL program as a statement-style card (#0 or #0↻N). env (var→reads, from the
     runner's mirrored run_log) is shared across a run's cards so {var[field]} refs resolve as the
     runner did at execute time."""
 
     # var -> {field: value} captured by each completed read (runner mirrors interp.run_log into
     # context.orchestrator). Lets the report show WHAT a read got and resolve {var[field]} action
-    # targets — a pure read has no turn/milestone, so without this the report only had the static
+    # targets — a pure read has no turn/statement, so without this the report only had the static
     # program structure, never the values it read or where they flowed.
     env: dict[str, dict] = {}
     rows_by_var: dict[str, list] = {}   # foreach `into` / list_read → accumulated rows (for "采集 N 行")
@@ -277,7 +277,7 @@ def _render_program_card(
     def _run_row(s: dict) -> str:
         counter[0] += 1
         kind = s.get("kind", "action")
-        badge = _PROG_KIND_BADGE.get(kind, "milestone-badge-default")
+        badge = _PROG_KIND_BADGE.get(kind, "statement-badge-default")
         var = s.get("var")
         var_html = f'<span class="prog-var">{_safe(var)} =</span> ' if var else ""
         name = s.get("name", "")
@@ -292,7 +292,7 @@ def _render_program_card(
         if kind == "read" and s.get("list_read"):
             n = len(rows_by_var.get(var or "", []))
             count = f" {n} 行" if n else ""
-            list_html = f'<span class="milestone-badge milestone-badge-default" style="background:#eef">列表读取{count}</span>'
+            list_html = f'<span class="statement-badge statement-badge-default" style="background:#eef">列表读取{count}</span>'
         if kind in {"read", "data_query"} and ret:
             vals = env.get(var or "") or {}
             verb = "查" if kind == "data_query" else "读"
@@ -306,7 +306,7 @@ def _render_program_card(
             f'<div class="prog-step">'
             f'<span class="prog-n">{counter[0]}</span>'
             f'<span class="prog-name">{var_html}{_safe(name)}</span>{resolved_html}'
-            f'<span class="milestone-badge {badge}">{_safe(kind)}</span>{list_html}{ret_html}'
+            f'<span class="statement-badge {badge}">{_safe(kind)}</span>{list_html}{ret_html}'
             f'</div>'
         )
 
@@ -370,13 +370,13 @@ def _render_program_card(
     directive_html = (
         '<div class="prog-input" style="border-left:3px solid #e0a020;background:#fff8e8">'
         '<span class="prog-input-label">重编排触发</span>'
-        f'<span style="color:#a05a00">⚠️ 上层判 milestone 不可行 → 踢回指令：{_safe(directive)}</span>'
+        f'<span style="color:#a05a00">⚠️ 上层判 statement 不可行 → 踢回指令：{_safe(directive)}</span>'
         '</div>'
     ) if directive else ""
     if embedded:
-        # Integrated INTO a milestone's 验收结果 — a light sub-block (the re-decompose outcome),
-        # NOT an independent #vN milestone card. The new plan itself also runs as the subsequent
-        # executed milestones; this block makes the trigger→new-plan explicit in the 验收 area.
+        # Integrated INTO a statement's 验收结果 — a light sub-block (the re-decompose outcome),
+        # NOT an independent #vN statement card. The new plan itself also runs as the subsequent
+        # executed statements; this block makes the trigger→new-plan explicit in the 验收 area.
         return (
             '<div style="margin-top:4px">'
             '<div style="display:flex;align-items:center;gap:8px;padding:2px 0 6px 0">'
@@ -389,11 +389,11 @@ def _render_program_card(
     anchor = h2.replace("#", "").replace("↻", "r")
     h2_open = f'<h2 style="{h2_style}">' if h2_style else "<h2>"
     return (
-        f'<div class="milestone prog-section" id="ms-orchestrate-{anchor}">'
-        f'<div class="milestone-header">'
+        f'<div class="statement prog-section" id="ms-orchestrate-{anchor}">'
+        f'<div class="statement-header">'
         f'{h2_open}{_safe(h2)}</h2>'
-        f'<span class="milestone-name">{_safe(name)}</span>'
-        f'<span class="milestone-badge milestone-badge-default">program</span>'
+        f'<span class="statement-name">{_safe(name)}</span>'
+        f'<span class="statement-badge statement-badge-default">program</span>'
         f'{metrics_html}'
         f'</div>'
         f'<div class="prog-body">{directive_html}{input_html}{extras_html}{card_body}</div>'
@@ -402,9 +402,9 @@ def _render_program_card(
 
 
 def _render_program_section(orchestrator: dict | None) -> str:
-    """Render the ORIGINAL decomposed program as the #0 编排 card (before the executed milestones).
-    Re-decompose cards are NOT here — each renders INLINE right after the milestone that triggered it
-    (render_redecompose_card), so it sits where it actually fired. Empty (DAG mode) → no section."""
+    """Render the ORIGINAL decomposed program as the #0 编排 card (before the executed statements).
+    Re-decompose cards are NOT here — each renders INLINE right after the statement that triggered it
+    (render_redecompose_card), so it sits where it actually fired. Empty → no section."""
     if not orchestrator:
         return ""
     prog0 = orchestrator.get("program") or {}
@@ -419,8 +419,8 @@ def _render_program_section(orchestrator: dict | None) -> str:
 
 def render_redecompose_card(orchestrator: dict | None, kickback_n) -> str:
     """A timeline DIVIDER marking where a Feasibility kick-back re-decomposed the plan. The new
-    plan's steps are NOT listed here — they ARE the milestones that FOLLOW this marker; the banner
-    just marks the transition (trigger + directive + model-call cost) so the subsequent milestones
+    plan's steps are NOT listed here — they ARE the statements that FOLLOW this marker; the banner
+    just marks the transition (trigger + directive + model-call cost) so the subsequent statements
     read as the v{N} plan, without duplicating them."""
     if not orchestrator:
         return ""

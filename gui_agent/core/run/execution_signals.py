@@ -65,34 +65,34 @@ class ExecutionContract:
     persistence: PersistenceMode = "immediate"
 
     @classmethod
-    def from_milestone(cls, milestone: StatementContract) -> "ExecutionContract":
-        if milestone.kind == "navigation":
+    def from_statement(cls, statement: StatementContract) -> "ExecutionContract":
+        if statement.kind == "navigation":
             mode: CompletionMode = "arrival"
-        elif milestone.kind == "filter":
-            mode = "filter_state_with_result" if milestone.returns else "filter_state"
-        elif milestone.kind == "action":
+        elif statement.kind == "filter":
+            mode = "filter_state_with_result" if statement.returns else "filter_state"
+        elif statement.kind == "action":
             mode = (
                 "mutation"
                 if action_requires_mutation_evidence(
-                    effect_mode=milestone.effect_mode,
-                    target_values=milestone.target_values,
-                    persistence=milestone.persistence,
-                    output_fields=milestone.returns,
+                    effect_mode=statement.effect_mode,
+                    target_values=statement.target_values,
+                    persistence=statement.persistence,
+                    output_fields=statement.returns,
                 )
                 else "verification"
             )
-        elif milestone.kind == "collection":
+        elif statement.kind == "collection":
             mode = "read"
         else:
             mode = "verification"
         return cls(
-            statement_id=milestone.id,
-            kind=milestone.kind,
-            output_fields=tuple(milestone.returns or ()),
-            read_spec=milestone.read_spec or "",
+            statement_id=statement.id,
+            kind=statement.kind,
+            output_fields=tuple(statement.returns or ()),
+            read_spec=statement.read_spec or "",
             completion_mode=mode,
-            effect_mode=milestone.effect_mode,
-            persistence=milestone.persistence,
+            effect_mode=statement.effect_mode,
+            persistence=statement.persistence,
         )
 
 
@@ -159,7 +159,7 @@ class ConstraintLedger:
     """Typed runtime constraints whose lifetime is explicit.
 
     Static task constraints use ``scope='task'``.  Runtime loop/no-effect facts should use the
-    current milestone or row scope and therefore cannot poison a later execution context.
+    current statement or row scope and therefore cannot poison a later execution context.
     """
 
     entries: list[ConstraintEntry] = field(default_factory=list)
@@ -404,7 +404,7 @@ class ExecutionCoordinator:
         if contract.completion_mode == "filter_state_with_result":
             if filter_state is not None and filter_state.value == "confirmed":
                 # A zero-row result is a valid return value.  The following interpreter branch,
-                # not this milestone, decides whether to run a fallback search.
+                # not this statement, decides whether to run a fallback search.
                 return CompletionEvaluation(
                     status="satisfied",
                     completion_status="confirmed",

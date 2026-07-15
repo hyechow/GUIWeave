@@ -1,4 +1,4 @@
-"""Runtime context builders for milestone prompt assembly."""
+"""Runtime context builders for statement prompt assembly."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def history_block(
     history: list[PolicyTurn],
     *,
     limit: int = 8,
-    current_milestone_id: str | None = None,
+    current_statement_id: str | None = None,
     recent_n: int = 6,
 ) -> ContextBlock:
     return ContextBlock(
@@ -44,47 +44,47 @@ def history_block(
         source="policy_history",
         ttl="session",
         priority=40,
-        metadata={"limit": limit, "milestone_id": current_milestone_id or ""},
+        metadata={"limit": limit, "statement_id": current_statement_id or ""},
         content=(
             "## 历史操作记录\n"
             + format_history_text(
-                history, limit=limit, current_milestone_id=current_milestone_id, recent_n=recent_n
+                history, limit=limit, current_statement_id=current_statement_id, recent_n=recent_n
             )
         ),
     )
 
 
-def milestone_block(
-    milestone: StatementContract,
+def statement_block(
+    statement: StatementContract,
     *,
     task_type: str | None = None,
     scroll_stop_condition: str | None = None,
     retry_count: int | None = None,
 ) -> ContextBlock:
-    """Current milestone/task state shared by checker/planner/replanner/loop prompts."""
+    """Current statement/task state shared by checker/planner/replanner/loop prompts."""
     lines = [
         "## 当前子目标",
-        f"- 名称：{milestone.name}",
-        f"- 描述：{milestone.description}",
+        f"- 名称：{statement.name}",
+        f"- 描述：{statement.description}",
     ]
-    if milestone.success_condition:
-        lines.append(f"- 验收条件：{milestone.success_condition}")
+    if statement.success_condition:
+        lines.append(f"- 验收条件：{statement.success_condition}")
     if scroll_stop_condition:
         lines.append(f"- 停止条件：{scroll_stop_condition}")
-    if milestone.kind:
-        lines.append(f"- 子目标类型：{milestone.kind}")
-    if milestone.completion_strategy:
-        lines.append(f"- 完成策略：{milestone.completion_strategy}")
-    if milestone.kind == "action" and milestone.effect_mode:
-        lines.append(f"- Effect mode：{milestone.effect_mode}")
-    if milestone.persistence == "explicit_commit":
+    if statement.kind:
+        lines.append(f"- 子目标类型：{statement.kind}")
+    if statement.completion_strategy:
+        lines.append(f"- 完成策略：{statement.completion_strategy}")
+    if statement.kind == "action" and statement.effect_mode:
+        lines.append(f"- Effect mode：{statement.effect_mode}")
+    if statement.persistence == "explicit_commit":
         lines.append("- 持久化边界：需要显式 commit 动作并验证后置状态")
-    if milestone.target_controls:
-        lines.append(f"- 目标控件/能力：{', '.join(milestone.target_controls)}")
-    if milestone.target_values:
+    if statement.target_controls:
+        lines.append(f"- 目标控件/能力：{', '.join(statement.target_controls)}")
+    if statement.target_values:
         rendered_targets = ", ".join(
             f"{field}={','.join(target_value_options(value))}"
-            for field, value in milestone.target_values.items()
+            for field, value in statement.target_values.items()
         )
         lines.append(f"- 目标字段终态：{rendered_targets}")
     if task_type:
@@ -92,13 +92,13 @@ def milestone_block(
     if retry_count is not None:
         lines.append(f"- 已重试次数：{retry_count}")
     return ContextBlock(
-        id="runtime.milestone.current",
+        id="runtime.statement.current",
         budget="required",
         source_type="runtime_state",
-        source="milestone",
+        source="statement",
         ttl="turn",
         priority=20,
-        metadata={"milestone_id": milestone.id, "kind": milestone.kind},
+        metadata={"statement_id": statement.id, "kind": statement.kind},
         content="\n".join(lines),
     )
 
@@ -141,10 +141,10 @@ def checker_kind_rules_block(kind_section: str) -> ContextBlock | None:
     if not kind_section:
         return None
     return ContextBlock(
-        id="prompt.milestone.check_kind_rules",
+        id="prompt.statement.check_kind_rules",
         budget="required",
         source_type="prompt_context",
-        source="milestone.check_kind_sections",
+        source="statement.check_kind_sections",
         ttl="turn",
         priority=35,
         content=kind_section,
@@ -205,30 +205,30 @@ def format_history_text(
     history: list[PolicyTurn],
     *,
     limit: int = 8,
-    current_milestone_id: str | None = None,
+    current_statement_id: str | None = None,
     recent_n: int = 6,
 ) -> str:
     """Render policy history for a prompt.
 
-    Default (current_milestone_id=None): the legacy flat last-``limit`` window — kept so
-    reports / tests / no-milestone callers are unchanged.
+    Default (current_statement_id=None): the legacy flat last-``limit`` window — kept so
+    reports / tests / no-statement callers are unchanged.
 
-    Relevant-history (current_milestone_id set): the current milestone's last ``recent_n`` turns
-    in full detail, preceded by ONE compressed state line per earlier milestone (its last known
+    Relevant-history (current_statement_id set): the current statement's last ``recent_n`` turns
+    in full detail, preceded by ONE compressed state line per earlier statement (its last known
     summary = its done-summary). This keeps the immediately useful detail while collapsing old
     action-by-action history that bloats long runs. Failure/dead-end signal is handled separately
     by the planner's tried-instructions + replan-diagnosis injection, so it is not duplicated here."""
     if not history:
         return "（无历史记录，这是第一轮）"
-    if current_milestone_id is None:
+    if current_statement_id is None:
         return _render_turn_lines(history[-limit:])
 
-    current = [t for t in history if t.supervisor.milestone_id == current_milestone_id]
-    prior = [t for t in history if t.supervisor.milestone_id != current_milestone_id]
+    current = [t for t in history if t.supervisor.statement_id == current_statement_id]
+    prior = [t for t in history if t.supervisor.statement_id != current_statement_id]
     detail_turns = (current or history)[-recent_n:]
 
     parts: list[str] = []
-    prior_summary = _completed_milestones_text(prior)
+    prior_summary = _completed_statements_text(prior)
     if prior_summary:
         parts.append("已完成/早前子目标进展（每子目标压成一行）：\n" + prior_summary)
         parts.append("当前子目标最近操作：\n" + _render_turn_lines(detail_turns))
@@ -237,13 +237,13 @@ def format_history_text(
     return "\n".join(parts)
 
 
-def _completed_milestones_text(turns: list[PolicyTurn]) -> str:
-    """One compressed line per earlier milestone (in first-seen order): its last known summary
-    (collection_summary preferred). Collapses old turn-by-turn history into milestone state."""
+def _completed_statements_text(turns: list[PolicyTurn]) -> str:
+    """One compressed line per earlier statement (in first-seen order): its last known summary
+    (collection_summary preferred). Collapses old turn-by-turn history into statement state."""
     last_by_mid: dict[str, PolicyTurn] = {}
     order: list[str] = []
     for t in turns:
-        mid = t.supervisor.milestone_id or "?"
+        mid = t.supervisor.statement_id or "?"
         if mid not in last_by_mid:
             order.append(mid)
         last_by_mid[mid] = t
@@ -342,7 +342,7 @@ def acceptance_items_block(items: list[str]) -> ContextBlock | None:
         id="runtime.acceptance.checklist",
         budget="required",
         source_type="runtime_state",
-        source="milestone.success_condition",
+        source="statement.success_condition",
         ttl="turn",
         priority=35,
         metadata={"count": len(items)},
@@ -422,7 +422,7 @@ def active_filters_block(form_controls: list[dict] | None) -> ContextBlock | Non
     Reads ``is_filter=True`` entries from form_controls (set by form_reader.js when the
     input is inside a grid filter area or its ID matches ``*_filter_*``).  Only entries
     with a non-empty value are included — these represent currently-active filters that
-    the next task milestone may need to clear before applying its own constraints.
+    the next task statement may need to clear before applying its own constraints.
 
     Parallel to ``grid_status_block``: both replace screenshot-vision with DOM facts.
     """
@@ -473,7 +473,7 @@ def applied_filter_state_block(
     filters are in EFFECT right now". Adapter-specific evidence may be a status indicator,
     encoded navigation state, filter-row state, or another platform-native mechanism. Whether the
     filtered field equals its target is what this state already encodes. So the checker must judge a filter
-    milestone's progress from this state, NOT by re-reading a table display column (e.g. a display
+    statement's progress from this state, NOT by re-reading a table display column (e.g. a display
     column derived from the filtered field, or a same-named neighbor computed on a different basis,
     which is a SEPARATE column)."""
     meta = applied_filter_meta or {}
@@ -512,7 +512,7 @@ def applied_filter_state_block(
     # task's own earlier steps — deliberate task scope. Without this fact the checker/planner
     # free-guess which chips are "unrelated" and clear upstream scope every step (live run
     # 20260708_195215). No hygiene framing: the desired filter state is DEFINED by the current
-    # milestone; initial-state chips get reconciled to it, never "cleaned" for their own sake.
+    # statement; initial-state chips get reconciled to it, never "cleaned" for their own sake.
     provenance_note = ""
     if initial_filters is not None:
         def _prov(label: str, value: str) -> str:
@@ -564,7 +564,7 @@ def filter_residual_block(
     residuals: list[str], applied_filters: dict[str, str] | None
 ) -> ContextBlock | None:
     """Inject the PRECISE set of unrelated residual filters to clear — computed at runtime by
-    diffing the live applied-filter state against this milestone's intended filter set (see
+    diffing the live applied-filter state against this statement's intended filter set (see
     observation_state.filter_residual_labels). This replaces the old blanket "always clear ALL filters"
     decompose-prompt rule, which — written before the page is seen — could only be unconditional
     and so taught the model to wipe legitimate filters wholesale (一刀切). Here we name exactly the

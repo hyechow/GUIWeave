@@ -1,15 +1,15 @@
 """DSL program AST for the orchestrator (MVP).
 
 The orchestrator decomposes a user goal into a small DSL PROGRAM (not a DAG): a
-sequence of milestone-level ``run()`` statements plus control flow (if / finish).
+sequence of statement-level ``run()`` statements plus control flow (if / finish).
 Each ``run()`` drives ONE interactive statement via the executor and returns a
 structured StatementOutcome; the runner threads those outcomes through variables and
-conditions. This keeps the linear executor simple (one milestone, no logic) and
+conditions. This keeps the linear executor simple (one statement, no logic) and
 puts all branching/variables in the orchestrator — so "the middle read it but the
-final output didn't know" disappears: every milestone's reads live in the env.
+final output didn't know" disappears: every statement's reads live in the env.
 
 Grammar (MVP, no loops):
-    var = run("<milestone>", returns=[...])      # returns = fields read from the completion frame
+    var = run("<statement>", returns=[...])      # returns = fields read from the completion frame
     var = run("<data query>", kind="data_query", sql="SELECT ...", returns=[...])
     if var["field"] == "value": <stmts> else: <stmts>
     finish("<message with {var[field]} refs>")
@@ -45,7 +45,7 @@ TEMPLATE_RE = re.compile(r"\{(\w+)\[([^\]]+)\]\}")
 BARE_REF_RE = re.compile(r"\{(\w+)\}")
 
 # The orchestrator's OWN command/query vocabulary (decoupled from the executor's
-# MilestoneKind). These are the statement-sized things the script can express:
+# StatementKind). These are the statement-sized things the script can express:
 # navigate/filter/mutate through the GUI, or deterministically read/query structured data.
 # Any UI command may declare returns/read_spec; those values are extracted from the command's
 # completion frame. "read" remains as a compatibility/no-op current-frame primitive and for
@@ -115,7 +115,7 @@ class RunLike(BaseModel):
 
 class Run(RunLike):
     """【交互命令】：驱动一段连续的交互操作（一条 FROM→TO 边），由 GUI 执行器
-    （milestone react loop——milestone 仅是执行器的内部载体格式）开到 done。
+    （statement react loop——statement 仅是执行器的内部载体格式）开到 done。
     `var` binds its StatementOutcome; `returns` = fields read from the completion frame."""
 
     @model_validator(mode="before")
@@ -287,9 +287,9 @@ class ForEach(BaseModel):
 
 class Compute(BaseModel):
     """A PURE-COMPUTE statement — deterministic value derivation the interpreter evaluates itself,
-    NOT a GUI milestone. Separates compute (CPU) from GUI effect (agent): e.g. deriving a parent
+    NOT a GUI statement. Separates compute (CPU) from GUI effect (agent): e.g. deriving a parent
     SKU/base name by stripping a variant suffix is a string op, NOT something the agent should do
-    by vision-while-operating (that overloaded the milestone and made the agent stall). `expr` is a
+    by vision-while-operating (that overloaded the statement and made the agent stall). `expr` is a
     restricted Python expression over scalar variables in scope (params + prior compute results),
     referenced by bare name; result binds to scalar `var`. Whitelisted ops only (str methods, slice,
     re.sub/search) — no calls, attributes, or names outside the whitelist."""
@@ -329,7 +329,7 @@ Stmt = Annotated[
 
 class FunctionDef(BaseModel):
     """A reusable, parameterized sub-program — a function in the DSL, decoupled from any loop. Its
-    `body` is a normal statement list (milestones / compute / if / nested calls); `params` are bound
+    `body` is a normal statement list (statements / compute / if / nested calls); `params` are bound
     as scalars on entry; `returns` names the scalar/read fields exposed to the caller on exit. The
     whole program (main + all functions) is produced in ONE decompose — like writing a code file —
     and each function is decomposed ONCE and called N times (no per-row re-decompose)."""

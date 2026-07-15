@@ -293,11 +293,14 @@ def _turn_line(t: dict) -> str:
 
 
 def _print_result(result: dict) -> None:
-    ok = result["goal_completed"]
-    color = "green" if ok else "red"
-    border = "green" if ok else "red"
-    icon = "✓" if ok else "✗"
-    label = "done" if ok else "failed"
+    phase = result.get("phase") or "stopped"
+    verification = result.get("verification")
+    confirmed = phase == "completed" and verification == "confirmed"
+    accepted = phase == "completed" and verification == "accepted_unverified"
+    color = "green" if confirmed else "yellow" if accepted else "red"
+    border = color
+    icon = "✓" if confirmed else "~" if accepted else "✗"
+    label = "done" if confirmed else "accepted" if accepted else phase
 
     turns = result.get("turns_count", 0)
     suffix = f"  [dim]{turns} turns[/dim]" if turns else ""
@@ -363,7 +366,7 @@ def _handle_pref(cmd: str, prefs: PreferenceManager) -> None:
 
 def main() -> None:
     # Default policy/supervisor names come from the platform bundle (no adapter
-    # import); they resolve to "structured_output" / "milestone" as before.
+    # import); they resolve to "structured_output" / "statement" as before.
     bundle = build_platform()
     action_policy = build_policy(bundle.default_action_policy)
     supervisor = build_supervisor(bundle.default_supervisor)
@@ -505,7 +508,8 @@ def main() -> None:
                     "user_msg": display_msg,
                     "clarification": router_result.clarification,
                     "stop_reason": "需要补充信息",
-                    "goal_completed": False,
+                    "phase": "stopped",
+                    "verification": None,
                     "turns_count": 0,
                 })
             else:
@@ -527,7 +531,8 @@ def main() -> None:
                     "reply": reply,
                     "result_summary": reply,
                     "stop_reason": "非手机操作",
-                    "goal_completed": False,
+                    "phase": "stopped",
+                    "verification": None,
                     "turns_count": 0,
                 }
                 session.append(entry)
@@ -586,7 +591,8 @@ def main() -> None:
                 result = {
                     "result_summary": str(exc),
                     "stop_reason": f"异常: {exc}",
-                    "goal_completed": False,
+                    "phase": "failed",
+                    "verification": None,
                     "turns_count": 0,
                 }
             exec_secs = time.time() - t0
@@ -628,14 +634,19 @@ def main() -> None:
             "reply": reply,
             "result_summary": result["result_summary"],
             "stop_reason": result["stop_reason"],
-            "goal_completed": result["goal_completed"],
+            "phase": result["phase"],
+            "verification": result.get("verification"),
             "turns_count": result["turns_count"],
             "log_dir": str(log_dir.relative_to(ROOT)),
         }
         session.append(entry)
         recorder.add(entry)
 
-        if result["goal_completed"] and goal:
+        if (
+            result["phase"] == "completed"
+            and result.get("verification") == "confirmed"
+            and goal
+        ):
             prefs.auto_extract(display_msg, goal, session)
 
 

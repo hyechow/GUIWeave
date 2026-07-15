@@ -141,7 +141,7 @@ def task_type_for_run(run: RunLike) -> Literal["action", "analysis"]:
     return "analysis" if run.kind in {"read", "data_query"} else "action"
 
 
-def start_milestone(
+def start_statement(
     supervisor,
     run: Run,
     index: int,

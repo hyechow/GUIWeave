@@ -251,20 +251,20 @@ def _group_state(
     )
 
 
-def _receipted_subjects(history: list[PolicyTurn], milestone_id: str) -> set[str]:
+def _receipted_subjects(history: list[PolicyTurn], statement_id: str) -> set[str]:
     return {
         receipt.subject_ref
         for turn in history
         if turn.action_signal is not None
         if (receipt := turn.action_signal.mutation_receipt) is not None
-        if receipt.statement_id == milestone_id and receipt.subject_ref
+        if receipt.statement_id == statement_id and receipt.subject_ref
     }
 
 
-def _has_unreceipted_write(history: list[PolicyTurn], milestone_id: str) -> bool:
+def _has_unreceipted_write(history: list[PolicyTurn], statement_id: str) -> bool:
     return any(
         turn.supervisor is not None
-        and turn.supervisor.milestone_id == milestone_id
+        and turn.supervisor.statement_id == statement_id
         and turn.action_signal is not None
         and turn.action_signal.role == "write"
         and turn.action_signal.execution == "dispatched"
@@ -274,14 +274,14 @@ def _has_unreceipted_write(history: list[PolicyTurn], milestone_id: str) -> bool
 
 
 def _resolve(
-    milestone: StatementContract,
+    statement: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     surface_id: str,
 ) -> SubjectResolution:
     desired = {
         str(field): options
-        for field, value in (milestone.target_values or {}).items()
+        for field, value in (statement.target_values or {}).items()
         if _norm(field)
         if (options := target_value_options(value))
     }
@@ -289,7 +289,7 @@ def _resolve(
         return SubjectResolution("unknown", evidence="no desired-state map")
 
     groups, repeated = _groups(observation)
-    bound = _receipted_subjects(history, milestone.id)
+    bound = _receipted_subjects(history, statement.id)
     if len(bound) > 1:
         return SubjectResolution("ambiguous", evidence="receipts bind multiple subjects")
     if bound:
@@ -301,7 +301,7 @@ def _resolve(
             subject_ref, controls, desired, singleton=subject_ref == "__form__"
         ) or SubjectResolution("unknown", subject_ref, evidence="bound subject lacks declared fields")
 
-    contaminated = _has_unreceipted_write(history, milestone.id)
+    contaminated = _has_unreceipted_write(history, statement.id)
     if "__form__" in groups:
         state = _group_state("__form__", groups["__form__"], desired, singleton=True)
         if state is not None:
@@ -337,30 +337,30 @@ def _resolve(
         if len(values) != 1:
             return SubjectResolution("unknown", evidence="multi-value target needs observable choices")
         return SubjectResolution(
-            "writable", f"visual:{surface_id or milestone.id}", "visual",
+            "writable", f"visual:{surface_id or statement.id}", "visual",
             field, field, values[0], evidence="one-shot visual subject",
         )
     return SubjectResolution("unknown", evidence="subject identity is not observable")
 
 
 def resolve_mutation(
-    milestone: StatementContract,
+    statement: StatementContract,
     observation: Observation,
     history: list[PolicyTurn],
     *,
     surface_id: str = "",
 ) -> SubjectResolution:
-    return _resolve(milestone, observation, history, surface_id)
+    return _resolve(statement, observation, history, surface_id)
 
 
 def authorize_mutation(
-    milestone: StatementContract,
+    statement: StatementContract,
     subject: SubjectResolution,
 ) -> MutationAuthorization | None:
     if subject.status != "writable" or not subject.subject_ref:
         return None
     return MutationAuthorization(
-        statement_id=milestone.id,
+        statement_id=statement.id,
         subject_ref=subject.subject_ref,
         field=subject.next_field,
         desired_value=subject.next_value,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -170,6 +171,9 @@ def main(
         raw_input = args.prompt
         router_result = None
         goal = args.prompt
+        if args.context:
+            raw_context = json.loads(args.context.read_text(encoding="utf-8"))
+            goal = str(raw_context.get("goal") or goal)
         if not args.context and not args.no_router:
             try:
                 from gui_agent.core.chat.session import route_message
@@ -236,12 +240,46 @@ def main(
             orchestrator_context_reports: list[dict] = []
             def _compile_program():
                 from gui_agent.core.orchestrator import decompose, estimate_program_turns
-                from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
+                from gui_agent.core.orchestrator.program import Program
+                from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
                 orchestrator_metrics: dict = {}
                 run_max_turns = args.max_turns
+                file_section = resolve_file_refs(goal)
+                if file_section:
+                    cap = 3000
+                    supervisor.add_static_constraint(
+                        file_section
+                        if len(file_section) <= cap
+                        else file_section[:cap] + "\n…（配置过长已截断，其余以分解结果为准）"
+                    )
+                def _subdecompose(sub_goal: str):
+                    return decompose(
+                        sub_goal,
+                        knowledge=(
+                            knowledge.decompose_context(sub_goal) if knowledge else ""
+                        ),
+                        current_site=cur_site,
+                        prepare_vision_prompt_png=bundle.prepare_vision_prompt_png,
+                    )
+                if input_context_path:
+                    raw = json.loads(input_context_path.read_text(encoding="utf-8"))
+                    revisions = [
+                        event
+                        for event in ((raw.get("journal") or {}).get("events") or [])
+                        if event.get("event_type") == "program_revision"
+                    ]
+                    if not revisions:
+                        raise ValueError(
+                            "resume context has no Program revision in EventJournal"
+                        )
+                    program = Program.model_validate(revisions[-1]["program"])
+                    print(
+                        f"Orchestrator: 从 EventJournal 恢复 revision "
+                        f"{revisions[-1].get('revision')}（{len(program.statements)} 条语句）"
+                    )
+                    return program, {}, run_max_turns, _subdecompose
                 # Resolve @<path> refs once (config field values the goal only points at) and feed
                 # them to the decomposer so the LLM sees the referenced field values.
-                file_section = resolve_file_refs(goal)
                 orch_started = time.perf_counter()
                 orch_calls_before = get_llm_call_count()
                 orch_tokens_before = get_llm_token_usage()
@@ -268,12 +306,6 @@ def main(
                 # The config must ALSO reach the execution-time planner deterministically — the
                 # supervisor's task-level constraints flow to every statement planner
                 # them (LLM distillation of config into constraints proved unstable).
-                if file_section:
-                    _CAP = 3000
-                    supervisor.add_static_constraint(
-                        file_section if len(file_section) <= _CAP
-                        else file_section[:_CAP] + "\n…（配置过长已截断，其余以分解结果为准）"
-                    )
                 print(f"Orchestrator: 分解为 {len(program.statements)} 条语句")
 
                 # Per-row agentic sub-goal (ForEach.body_goal): decompose a row-templated sub-goal
@@ -282,10 +314,6 @@ def main(
                 # not to nest. Lets the full agent loop solve complex per-row sub-tasks (derive →
                 # search → disambiguate → open → read) instead of the decomposer pre-baking brittle
                 # micro-steps. See memory typed-returns-validation / webarena-185.
-                def _subdecompose(sub_goal: str):
-                    return decompose(sub_goal, knowledge=knowledge.decompose_context(sub_goal) if knowledge else "",
-                                     current_site=cur_site,
-                                     prepare_vision_prompt_png=bundle.prepare_vision_prompt_png)
                 if args.dynamic_max_turns:
                     run_max_turns = estimate_program_turns(program, floor=args.max_turns)
                     if run_max_turns != args.max_turns:

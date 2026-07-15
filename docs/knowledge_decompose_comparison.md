@@ -6,7 +6,7 @@ Knowledge source: `knowledge/微信/_app.md` (1876 chars)
 
 ## Test Method
 
-对 8 个不同复杂度的微信 goal，分别调用 milestone supervisor 的 `_do_decompose`，对比注入 `_app.md` 前后的里程碑分解结果。使用同一张截图作为 observation。
+对 8 个不同复杂度的微信 goal，分别调用 statement supervisor 的 `_do_decompose`，对比注入 `_app.md` 前后的里程碑分解结果。使用同一张截图作为 observation。
 
 ## Results
 
@@ -15,7 +15,7 @@ Knowledge source: `knowledge/微信/_app.md` (1876 chars)
 | | WITHOUT | WITH |
 |---|---|---|
 | task_type | action | action |
-| milestones | 3 | 4 |
+| statements | 3 | 4 |
 
 WITHOUT:
 - [1] 进入通讯录查找联系人 (navigation/visible_once)
@@ -37,7 +37,7 @@ WITH:
 | | WITHOUT | WITH |
 |---|---|---|
 | task_type | action | action |
-| milestones | 2 | 2 |
+| statements | 2 | 2 |
 
 WITHOUT:
 - [1] 进入发现页 → 验收: 屏幕显示「发现」页面的标题和内容
@@ -56,7 +56,7 @@ WITH:
 | | WITHOUT | WITH |
 |---|---|---|
 | task_type | action | action |
-| milestones | 4 | 5 |
+| statements | 4 | 5 |
 
 WITHOUT:
 - [1] 进入通讯录页面 (navigation/visible_once)
@@ -80,7 +80,7 @@ WITH:
 | | WITHOUT | WITH |
 |---|---|---|
 | task_type | action | action |
-| milestones | 5 | 6 |
+| statements | 5 | 6 |
 
 WITHOUT:
 - [1] 进入微信搜索界面 (action/visible_once)
@@ -106,7 +106,7 @@ WITH:
 | | WITHOUT | WITH |
 |---|---|---|
 | task_type | action | action |
-| milestones | 3 | 4 |
+| statements | 3 | 4 |
 
 WITHOUT:
 - [1] 进入设置页面 (navigation/visible_once)
@@ -128,7 +128,7 @@ WITH:
 | | WITHOUT | WITH |
 |---|---|---|
 | task_type | analysis | analysis |
-| milestones | 4 | 5 |
+| statements | 4 | 5 |
 
 WITHOUT:
 - [1] 进入微信聊天列表 (navigation/visible_once)
@@ -152,7 +152,7 @@ WITH:
 | | WITHOUT | WITH |
 |---|---|---|
 | task_type | action | action |
-| milestones | 4 | 4 |
+| statements | 4 | 4 |
 
 WITHOUT:
 - [1] 进入个人中心页面 (navigation/visible_once)
@@ -175,7 +175,7 @@ WITH:
 | | WITHOUT | WITH |
 |---|---|---|
 | task_type | action | action |
-| milestones | 5 | 4 |
+| statements | 5 | 4 |
 
 WITHOUT:
 - [1] 进入发现页 (navigation/visible_once)

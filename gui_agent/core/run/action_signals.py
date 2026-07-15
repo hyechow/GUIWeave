@@ -26,7 +26,7 @@ _POSITION_BIN = 50
 
 def latest_action(
     history: Iterable[PolicyTurn],
-    milestone_id: str,
+    statement_id: str,
     *,
     scope: str = "",
     role: str = "",
@@ -37,7 +37,7 @@ def latest_action(
             turn
             for turn in reversed(list(history))
             if turn.supervisor is not None
-            and turn.supervisor.milestone_id == milestone_id
+            and turn.supervisor.statement_id == statement_id
             and turn.action_signal is not None
             and turn.action_signal.execution == "dispatched"
             and (not role or turn.action_signal.role == role)
@@ -93,7 +93,7 @@ def effective_action_role(step: SupervisorStep, action: Any) -> AtomicRole:
 def semantic_action_key(step: SupervisorStep, action: Any) -> str:
     """Return one stable identity for the concrete action in its execution scope."""
     role = effective_action_role(step, action)
-    prefix = f"{step.execution_scope or ''}|{step.milestone_id or ''}|{role}"
+    prefix = f"{step.execution_scope or ''}|{step.statement_id or ''}|{role}"
     if role == "commit":
         return prefix
     authorization = step.mutation_authorization
@@ -174,13 +174,13 @@ def record_response(
 
 def record_latest_structured_response(
     history: list[PolicyTurn],
-    milestone_id: str,
+    statement_id: str,
     *,
     url_changed: bool,
     dom_changed: bool,
 ) -> None:
     """Attach fresh URL/DOM deltas to the dispatch that preceded the observation."""
-    turn = latest_action(history, milestone_id)
+    turn = latest_action(history, statement_id)
     if turn is None:
         return
     channels = tuple(

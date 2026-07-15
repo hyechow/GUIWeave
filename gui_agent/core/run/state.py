@@ -10,28 +10,10 @@ from gui_agent.core.schemas import PolicyContext, ProgramOutcome
 
 def program_outcome_from_result(result: dict, output: str | None = None) -> ProgramOutcome:
     """Project the external result payload into one typed Program terminal."""
-    stop_reason = str(result.get("stop_reason") or "")
-    if result.get("execution_completed"):
-        verification = (
-            "accepted_unverified"
-            if result.get("goal_status") == "accepted_unverified"
-            else "confirmed"
-        )
-        return ProgramOutcome(
-            phase="completed",
-            verification=verification,
-            summary=stop_reason,
-            output=output,
-        )
-    if "ESC" in stop_reason or "用户退出" in stop_reason or "用户按" in stop_reason:
-        phase = "interrupted"
-    elif bool((result.get("orchestrator") or {}).get("failed")):
-        phase = "failed"
-    else:
-        phase = "stopped"
     return ProgramOutcome(
-        phase=phase,
-        summary=stop_reason,
+        phase=result["phase"],
+        verification=result.get("verification"),
+        summary=str(result.get("stop_reason") or ""),
         output=output,
     )
 

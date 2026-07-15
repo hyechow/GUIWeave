@@ -65,7 +65,7 @@ def flush_and_read(
     turn_no: int,
     say: Callable[[str], None],
 ) -> None:
-    """Flush the tail chunk of a collection milestone and store reader output."""
+    """Flush the tail chunk of a collection statement and store reader output."""
 
     if acc is None or sv_step is None:
         return
@@ -160,14 +160,14 @@ class ReadState:
         result = ReadTurnResult()
         self.drain_pending(say=say)
 
-        cur_mid = sv_step.milestone_id or "_global"
+        cur_mid = sv_step.statement_id or "_global"
         if self.stitch_acc is not None and self.stitch_acc_mid != cur_mid:
             self.flush(turn_no=turn_no, say=say)
 
         if sv_step.read_instruction and not sv_step.allow_read:
             say(
                 "跳过读取入库: 当前阶段不允许采集 "
-                f"({sv_step.milestone_kind}/{sv_step.completion_strategy})"
+                f"({sv_step.statement_kind}/{sv_step.completion_strategy})"
             )
             return result
         if not sv_step.read_instruction:

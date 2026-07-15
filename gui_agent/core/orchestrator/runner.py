@@ -99,10 +99,10 @@ def summarize_progress(
 ) -> tuple[str, str]:
     """Render (prior_experience, remaining_plan) text for a mid-run re-decompose.
 
-    Re-decompose's target is the UNEXECUTED milestones, with the executed ones as experience
+    Re-decompose's target is the UNEXECUTED statements, with the executed ones as experience
     ([[progress-monitor-architecture]] / the user's "重编排是有状态记忆的编排"). We derive both from
     the interpreter's run_log (what completed, with outcomes) and the program statements not yet
-    executed. The milestone that hit the correction (`current_run`) is abandoned mid-yield so it is
+    executed. The statement that hit the correction (`current_run`) is abandoned mid-yield so it is
     NOT in run_log — it's surfaced at the head of the remaining plan (its goal still needs doing,
     via the directive's route)."""
     executed = {rec.name for rec in run_log}
@@ -140,7 +140,7 @@ class OrchestratorResult(BaseModel):
     # True when the program reached a `finish` whose template referenced a read whose
     # StatementOutcome.reads came back ENTIRELY empty (every field blank) — i.e. the finish
     # answered on a read that read nothing. Such a run reached the end but produced no
-    # real answer, so callers must NOT treat it as goal_completed (see result.py). False
+    # real answer, so callers must NOT project a completed Program phase (see result.py). False
     # for programs that never hit finish (auto-summary) or whose cited reads had data.
     finish_incomplete: bool = False
     env: dict[str, StatementOutcome] = Field(default_factory=dict)
@@ -169,7 +169,7 @@ class Interpreter:
         # Optional subdecompose_fn for agentic per-row sub-goals: callable(goal: str) -> Program.
         # When ForEach.body_goal is set, _foreach renders the sub-goal with the row and decomposes
         # it fresh per row, then `yield from`s the sub-program's Runs so the engine drives them as
-        # full milestones (plan/replan/checker). None = no sub-goal support (body_goal can't run).
+        # full statements (plan/replan/checker). None = no sub-goal support (body_goal can't run).
         self._subdecompose_fn = subdecompose_fn
         # Optional expand_fn — progressive-orchestration checkpoint expansion: callable(body_goal,
         # loop_var, rows, returns) -> ForeachExpansion | None. Tried ONCE at foreach entry when the
@@ -230,7 +230,7 @@ class Interpreter:
                 s, missing = self._fill(s)  # resolve {var[field]} from env BEFORE the planner sees it
                 if missing:
                     # The action TARGET (name) references a read value that came back empty —
-                    # driving a gap-named milestone (『编辑机器人 ，设…』) would misfire. Fail fast
+                    # driving a gap-named statement (『编辑机器人 ，设…』) would misfire. Fail fast
                     # with an honest reply instead of silently sending an empty reference to the
                     # planner (the decomposer's validate guard prevents *dangling* refs; this catches
                     # the read-returned-empty case at runtime).
@@ -239,12 +239,12 @@ class Interpreter:
                     )
                     self.run_log.append(RunRecord(name=s.name, var=s.var, result=fail))
                     return f"子任务「{s.name}」无法执行：{fail.summary}"
-                result = yield s  # engine drives this milestone and send()s back its result
+                result = yield s  # engine drives this statement and send()s back its result
                 self.run_log.append(RunRecord(name=s.name, var=s.var, result=result))
                 if s.var:
                     self.env[s.var] = result
                 if not result.is_completed:
-                    # MVP: a failed milestone stops the program and reports honestly.
+                    # MVP: a failed statement stops the program and reports honestly.
                     return f"子任务「{s.name}」未能完成：{result.summary or '执行失败'}"
             elif isinstance(s, If):
                 branch = s.then if self._eval(s.cond) else s.otherwise
@@ -256,7 +256,7 @@ class Interpreter:
                 if reply is not None:
                     return reply
             elif isinstance(s, Compute):
-                # Pure compute — evaluate deterministically, bind a scalar. NOT a milestone (no yield).
+                # Pure compute — evaluate deterministically, bind a scalar. NOT a statement (no yield).
                 self._compute(s)
             elif isinstance(s, Call):
                 reply = yield from self._call(s)
@@ -268,7 +268,7 @@ class Interpreter:
                 # is ENTIRELY blank (every requested field came back ""), the finish is answering
                 # on a read that read nothing — e.g. a retrieve task where the target table was
                 # off-screen / wrong page → structured_read returned "". Mark the
-                # program finish_incomplete so goal_completed stays False (result.py). Rule is
+                # program finish_incomplete so the Program phase is failed (result.py). Rule is
                 # whole-read, not per-ref: a multi-field read like {连通判定, 不可达原因} where only
                 # 不可达原因 is blank (合法: 可达时为空) still has 连通判定 set → NOT flagged — so a
                 # legitimate otherwise-branch finish "不可达原因：{d[不可达原因]}" is not mis-killed.
@@ -285,7 +285,7 @@ class Interpreter:
     def _foreach(self, loop: ForEach) -> Generator[Run, StatementOutcome, Optional[str]]:
         """Run `loop.body` once per row of the collected rows, binding env[loop.var] to the row, and
         AUTO-accumulate each iteration (the row's fields + every body return field) into a materialized
-        table published as env[loop.into]. Yields each body Run so the engine drives it as a milestone
+        table published as env[loop.into]. Yields each body Run so the engine drives it as a statement
         — the live loop and the synchronous `drive` both work unchanged. Returns a terminal reply if
         the body finishes/fails, else None.
 
@@ -437,7 +437,7 @@ class Interpreter:
                 self.env[alias_var] = self.env[loop.var]   # drifted body_goal name resolves too
             if agentic_subgoal:
                 # Agentic per-row sub-goal: render with the row, decompose fresh, drive its Runs
-                # as full milestones (yield from → engine plans/replans each), merge its produced
+                # as full statements (yield from → engine plans/replans each), merge its produced
                 # fields back into the row.
                 sub_stmts, sub_read_vars = self._subgoal_statements(loop)
                 if sub_stmts is None:
@@ -537,10 +537,10 @@ class Interpreter:
     def _compute(self, c: Compute) -> None:
         """Evaluate a Compute's restricted expression over the current scalar scope and bind the
         result as a scalar. A failure (bad expr / index) leaves the scalar empty and logs honestly —
-        a downstream `{var}` then renders empty, so a milestone that needs it fails fast in _fill.
+        a downstream `{var}` then renders empty, so a statement that needs it fails fast in _fill.
 
         Accept the SAME `{name}` template convention the rest of the DSL uses for scalar refs: the
-        decomposer reaches for `{sku}` (as it does in every milestone name) instead of bare `sku`,
+        decomposer reaches for `{sku}` (as it does in every statement name) instead of bare `sku`,
         but to safe_eval `{sku}` is a one-element SET literal → SafeEvalError → silently-empty result.
         An empty derived key would otherwise make a later search run without a concrete scope. Strip the
         braces around bare identifiers so `{sku}.rsplit(...)` and `sku.rsplit(...)` are equivalent.
@@ -550,7 +550,7 @@ class Interpreter:
         # Scope from env outcomes' reads, in BOTH shapes the decomposer nondeterministically writes:
         # the field name bare (`current_price`) AND the var-as-dict (`variant_row['current_price']`).
         # Without this, a numeric derivation from a read value raised 未知变量 → silently "" → the fill
-        # milestone loses its concrete value and the planner may invent one. Scalars
+        # statement loses its concrete value and the planner may invent one. Scalars
         # (params + prior computes) win on collision.
         scope: dict[str, Any] = {}
         for _v, _rv in self.env.items():
@@ -582,7 +582,7 @@ class Interpreter:
         """Invoke a FunctionDef: render args in the caller scope, run the body in a FRESH scalar
         frame (the function sees only its params + its own computes), then bind the declared returns
         into the caller's env under `call.var`. The body's Runs are `yield from`'d so the engine
-        drives them as full milestones — same generator path as the top program."""
+        drives them as full statements — same generator path as the top program."""
         fn = self._functions.get(call.func)
         if fn is None:
             fail = StatementOutcome.failed(f"未定义的函数「{call.func}」")
@@ -611,7 +611,7 @@ class Interpreter:
 
     def _collect_returns(self, fn: FunctionDef) -> dict[str, str]:
         """A function's declared returns, gathered from its frame: scalar (Compute result) first,
-        else the most recent body milestone read of that field. Missing → "" (honest blank)."""
+        else the most recent body statement read of that field. Missing → "" (honest blank)."""
         collected: dict[str, str] = {}
         body_vars = self._read_vars(fn.body)
         for r in fn.returns:
@@ -693,7 +693,7 @@ class Interpreter:
 
         Returns (filled_run, missing): `missing` lists refs in the NAME (the action TARGET) that
         resolved to empty — the caller fails fast on those rather than driving a gap-named
-        milestone. success_condition / read_spec render leniently: a gap in the acceptance gate or
+        statement. success_condition / read_spec render leniently: a gap in the acceptance gate or
         read guidance weakens them but doesn't misdirect the action, so it's not worth aborting on.
         Returns the run unchanged when nothing templated (the common case)."""
         missing: list[str] = []
@@ -715,7 +715,7 @@ class Interpreter:
             else:
                 # A KNOWN scalar (function param / Compute result) that resolved empty: the action
                 # target has no concrete value — fail fast like an empty {var[field]} name ref, so a
-                # failed compute can't silently degrade the milestone to a generic name the planner
+                # failed compute can't silently degrade the statement to a generic name the planner
                 # then fills with an invented value.
                 missing.append(f"{{{m.group(1)}}}")
         name = self._render(run.name, missing)              # target → strict (collect empties)
@@ -798,7 +798,7 @@ def drive(interp: Interpreter, execute: StatementExecutor) -> str:
 class ProgramRunner:
     """Synchronous convenience runner (tests / headless): build an Interpreter and drive it
     with the injected executor. The GUI agent_loop instead drives Interpreter.steps()
-    directly, executing each yielded Run as a milestone sub-loop within its open session."""
+    directly, executing each yielded Run as a statement sub-loop within its open session."""
 
     def __init__(self, execute: StatementExecutor) -> None:
         self._execute = execute

@@ -70,7 +70,14 @@ def format_session_history(history: list[dict]) -> str:
         return "（无历史）"
     lines = []
     for i, entry in enumerate(history, 1):
-        status = "✓" if entry.get("goal_completed") else "✗"
+        status = (
+            "✓"
+            if entry.get("phase") == "completed"
+            and entry.get("verification") == "confirmed"
+            else "~"
+            if entry.get("phase") == "completed"
+            else "✗"
+        )
         lines.append(f"{i}. 用户说「{entry['user_msg']}」→ {status} {entry['result_summary']}")
     return "\n".join(lines)
 
@@ -149,4 +156,3 @@ def route_message(
         HumanMessage(content=f"对话历史：\n{history_text}\n\n当前用户指令：{resolved_msg}{page_ctx}"),
     ]
     return invoke_structured(llm, messages, RouterResult)
-

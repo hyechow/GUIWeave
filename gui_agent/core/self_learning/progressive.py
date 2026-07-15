@@ -12,7 +12,7 @@ context, SKILL.md body read only when invoked), we keep:
 
 A dedicated KnowledgeSelector micro-decision (model_io.run_selector) reads the id'd manifest
 and picks ``section_ids``; the planner then injects only those bodies. The policy caches the
-selection per (milestone, page_identity), so the selector LLM only fires on page/milestone
+selection per (statement, page_identity), so the selector LLM only fires on page/statement
 changes. Leaf module: only ``re``.
 """
 
@@ -170,7 +170,7 @@ class ProgressiveKnowledge:
         return picked
 
     def match_signals(self, signals: list[str]) -> list[str]:
-        """Deterministic section pick from free-text signals (page identity, milestone name,
+        """Deterministic section pick from free-text signals (page identity, statement name,
         success_condition) — the fallback used when the LLM selector returns nothing. Keeps
         knowledge injection alive when page identity (the selector's main key) is weak.
 

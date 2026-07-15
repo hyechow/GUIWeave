@@ -1,7 +1,7 @@
 """Program Decomposer: user goal -> DSL Program (the orchestrator's #2).
 
-Replaces the milestone-DAG decompose with a PROGRAM decompose: a goal becomes a small
-sequence of milestone-level run() statements plus control flow (if / finish). The LLM
+Replaces the statement-DAG decompose with a PROGRAM decompose: a goal becomes a small
+sequence of statement-level run() statements plus control flow (if / finish). The LLM
 produces a flat, LLM-friendly draft (an explicit `op` per step, a `reasoning` CoT field
 up front — rigid schemas suppress reasoning, see structured_read), which we convert to
 the clean Program AST deterministically and validate (an if must branch on a real read,
@@ -263,7 +263,7 @@ def redecompose(
     """Re-decompose the REMAINING (unexecuted) plan mid-run — NOT a fresh full-goal decompose.
 
     Unlike `decompose` (goal → full plan from the start screen), this is invoked after a Feasibility
-    kick-back: some milestones already ran (their outcomes are `prior_experience`), one hit a
+    kick-back: some statements already ran (their outcomes are `prior_experience`), one hit a
     correction (`corrective_directive`), and the rest (`remaining_plan`) must be re-planned from the
     CURRENT page (current_url/title/png/table_summaries reflect where the run actually is now, not
     its start). Reuses the full DSL prompt + schema + validation; only the framing differs (see

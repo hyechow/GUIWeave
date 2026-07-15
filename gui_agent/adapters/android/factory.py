@@ -12,7 +12,7 @@ stitching branch, which the android adapter does NOT implement yet:
   - ``apply_scroll_profile`` is the identity (no per-platform scroll profiles).
   - ``make_scroll_probe`` / ``make_stitch_accumulator`` / ``robust_shift`` /
     ``gray_u8`` raise ``NotImplementedError``.
-That branch is reached when the milestone supervisor plans
+That branch is reached when the statement supervisor plans
 completion_strategy='scroll_until_boundary' (e.g. "read all items on this page"),
 so such a goal raises mid-run. Until android collection is built, restrict the
 android platform to direct-action goals.
@@ -30,9 +30,9 @@ if TYPE_CHECKING:
 
 
 # Registries (mirror the browser adapter shape). Android is vision-only with a
-# single action policy today; the default supervisor is structure-neutral milestone.
+# single action policy today; the default supervisor is structure-neutral statement.
 _POLICY_NAMES: tuple[str, ...] = ("android_vision",)
-_SUPERVISOR_NAMES: tuple[str, ...] = ("milestone",)
+_SUPERVISOR_NAMES: tuple[str, ...] = ("statement",)
 
 
 def _build_action_policy(name: str) -> "ActionPolicy":
@@ -47,15 +47,15 @@ def _build_action_policy(name: str) -> "ActionPolicy":
 
 
 def _build_supervisor(name: str) -> "SupervisorPolicy":
-    # Android uses the structure-neutral milestone supervisor FRAMEWORK with its OWN
+    # Android uses the structure-neutral statement supervisor FRAMEWORK with its OWN
     # mobile-tuned prompts injected (no longer the iphone-flavored default that called
     # everything an "iOS 主屏").
-    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.adapters.android.supervisor.milestone.prompts import ANDROID_MILESTONE_PROMPTS
+    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+    from gui_agent.adapters.android.supervisor.statement.prompts import ANDROID_STATEMENT_PROMPTS
 
-    if name == MilestoneSupervisorPolicy.name:
-        return MilestoneSupervisorPolicy(prompts=ANDROID_MILESTONE_PROMPTS)
-    raise ValueError(f"未知监督者 {name!r}，可选：{MilestoneSupervisorPolicy.name}")
+    if name == StatementSupervisorPolicy.name:
+        return StatementSupervisorPolicy(prompts=ANDROID_STATEMENT_PROMPTS)
+    raise ValueError(f"未知监督者 {name!r}，可选：{StatementSupervisorPolicy.name}")
 
 
 def _apply_scroll_profile(action: object, profile: object) -> object:
@@ -64,29 +64,29 @@ def _apply_scroll_profile(action: object, profile: object) -> object:
 
 
 _SCROLL_COLLECT_MSG = (
-    "android scroll-collect not yet supported (the milestone supervisor planned "
+    "android scroll-collect not yet supported (the statement supervisor planned "
     "completion_strategy='scroll_until_boundary'). Use a direct-action goal. See the "
     "SCROLL-COLLECT note in adapters/android/factory.py."
 )
 
 
 def _make_scroll_probe(session: object, executor: object, log_dir: object) -> object:
-    """Raised if a scroll_until_boundary milestone reaches the runner's collection branch (android collection not yet supported)."""
+    """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
 def _make_stitch_accumulator(*args: object, **kwargs: object) -> object:
-    """Raised if a scroll_until_boundary milestone reaches the runner's collection branch (android collection not yet supported)."""
+    """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
 def _robust_shift(*args: object, **kwargs: object) -> object:
-    """Raised if a scroll_until_boundary milestone reaches the runner's collection branch (android collection not yet supported)."""
+    """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
 def _gray_u8(png_bytes: bytes) -> object:
-    """Raised if a scroll_until_boundary milestone reaches the runner's collection branch (android collection not yet supported)."""
+    """Raised if a scroll_until_boundary statement reaches the runner's collection branch (android collection not yet supported)."""
     raise NotImplementedError(_SCROLL_COLLECT_MSG)
 
 
@@ -258,7 +258,7 @@ def build_android_bundle(
         gray_u8=_gray_u8,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy="android_vision",
-        default_supervisor="milestone",
+        default_supervisor="statement",
         action_policy_choices=_POLICY_NAMES,
         supervisor_choices=_SUPERVISOR_NAMES,
     )

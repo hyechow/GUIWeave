@@ -48,9 +48,9 @@ class ContentReader:
 
 
 def build_reader_instruction(original_goal: str, sv_step: SupervisorStep) -> str:
-    """Build the extraction prompt for ContentReader based on milestone kind."""
+    """Build the extraction prompt for ContentReader based on statement kind."""
     instruction = sv_step.read_instruction or original_goal
-    if sv_step.milestone_kind != "collection":
+    if sv_step.statement_kind != "collection":
         return instruction
     return (
         f"目标：{original_goal}\n"
@@ -67,9 +67,9 @@ def annotate_content_note(
     collection_scope: CollectionScope | None,
 ) -> str:
     """Prepend collection metadata to a content note for traceability."""
-    if sv_step.milestone_kind != "collection":
+    if sv_step.statement_kind != "collection":
         return note
-    metadata = [f"[turn{turn_no} {sv_step.milestone_id or '?'}]"]
+    metadata = [f"[turn{turn_no} {sv_step.statement_id or '?'}]"]
     if collection_scope:
         metadata.append(
             "范围:" + json.dumps(collection_scope.model_dump(exclude_none=True), ensure_ascii=False)

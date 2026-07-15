@@ -33,7 +33,7 @@ from .program import (
 
 # ── task-value contract normalization ───────────────────────────────────────────────
 # The retired supervisor DAG decomposer used to repair a few task values after generating
-# milestones.  These are compilation concerns: preserve them as a pure Program pass so every
+# statements.  These are compilation concerns: preserve them as a pure Program pass so every
 # decompose/re-decompose entrance receives the same deterministic contract without runtime state.
 _AM_WORDS = ("上午", "早上", "早晨", "清晨")
 _PM_WORDS = ("下午", "晚上", "傍晚", "夜晚")
@@ -237,12 +237,12 @@ def normalize_confirm_read_gates(program: Program) -> Program:
 # login FORM (an already-logged-in session can't return to it → never met), 162312 gated on
 # business-data content (cards/data empty until LATER steps produce them → circular). The
 # decomposer's rule 9 *asks* for a clean gate but is unreliable (~1/8). This pass *guarantees*
-# it — keyed on the STRUCTURAL `run.precondition` flag the decomposer sets (NOT on milestone-name
+# it — keyed on the STRUCTURAL `run.precondition` flag the decomposer sets (NOT on statement-name
 # keywords like 登录/认证, which mis-fire on 认证设备/登录日志查询 and miss other phrasings/langs;
 # the flag is to this pass what action→read adjacency is to confirm-read). The gate is app-AGNOSTIC;
 # the app-specific "what that state looks like" lives in the checker's _check.md, which JUDGES this
 # gate. That split is load-bearing and verified: a generic gate + _check.md → done, but a form gate
-# + _check.md → still stuck, because the milestone's success_condition binds and _check.md
+# + _check.md → still stuck, because the statement's success_condition binds and _check.md
 # (authoritative only over GENERAL checker rules) can't override it — so the gate is fixed here.
 
 _PRECONDITION_GATE_TMPL = (
@@ -251,7 +251,7 @@ _PRECONDITION_GATE_TMPL = (
     "而非只在未完成态才出现的中间界面（如登录表单）。"
 )
 # NOTE: do not name `_check.md` (or any internal knowledge-overlay filename) in this
-# template — it is injected into the checker/supervisor prompt via milestone.success_condition,
+# template — it is injected into the checker/supervisor prompt via statement.success_condition,
 # so a literal filename leaks an internal concept into the LLM context for zero benefit (the LLM
 # can't open the file). The app-specific "what done looks like" content is delivered through the
 # separate checker-only channel (supervisor._check_knowledge), independent of this string.
@@ -396,7 +396,7 @@ def collapse_foreach_enrichment_passes(program: Program) -> Program:
 #
 # The instruction is a LINEAR step, not a branch: name = one imperative (go to the list page), SC = a
 # definite target STATE (on the list page). It must NOT read "若在编辑页则返回；若已在列表则不操作" —
-# that smuggles if/else into a milestone (breaks the FROM→TO-edge + single-page contract and makes
+# that smuggles if/else into a statement (breaks the FROM→TO-edge + single-page contract and makes
 # the selector/planner unable to pick one action: live 185 mis-retrieved Customers knowledge and
 # emitted no physical action for the no-op). Idempotency is the MECHANISM's job, not the prose's: the step is
 # marked precondition=true, so when the SC already holds (already on the list) the checker passes it
@@ -537,7 +537,7 @@ def _chain_block(stmts: list[Stmt], entry_sc: str, funcs: dict) -> list[Stmt]:
 
 
 def chain_from_states(program: Program) -> Program:
-    """Populate every Run.from_state with the EXIT state of the milestone before it (FROM[i] :=
+    """Populate every Run.from_state with the EXIT state of the statement before it (FROM[i] :=
     TO[i-1]) — see Run.from_state. The chain restarts at each block boundary (main / each function
     body / inside a loop or branch): a block's first step has from_state="" because its entry is the
     call-site / loop-carry state (a known SET the continuity prompt handles), not a single prior SC.

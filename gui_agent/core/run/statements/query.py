@@ -34,7 +34,7 @@ def _has_query_rows(tables: list[dict[str, Any]] | None) -> bool:
 
 def _recent_ui_context(context: PolicyContext, *, limit: int = 6) -> str:
     lines: list[str] = []
-    for turn in (context.journal.events or [])[-limit:]:
+    for turn in (context.journal.turns or [])[-limit:]:
         supervisor = getattr(turn, "supervisor", None)
         if supervisor is not None:
             summary = getattr(supervisor, "summary", "") or ""

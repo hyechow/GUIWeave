@@ -170,7 +170,7 @@ class StatementReportReducer:
             instance_id = str(turn.get("statement_instance_id") or "")
             if not instance_id:
                 continue
-            mid = str(sv.get("milestone_id") or "")
+            mid = str(sv.get("statement_id") or "")
             view = ensure(instance_id, mid)
             idx = turn.get("index")
             if isinstance(idx, int):
@@ -189,7 +189,7 @@ class StatementReportReducer:
             if not view.name:
                 view.name = str(sv.get("summary") or view.statement_id)
             if not view.kind:
-                view.kind = str(sv.get("milestone_kind") or "")
+                view.kind = str(sv.get("statement_kind") or "")
 
             if sv.get("summary"):
                 view.last_summary = str(sv["summary"])

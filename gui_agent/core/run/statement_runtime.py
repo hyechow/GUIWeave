@@ -5,10 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
-from gui_agent.core.run.execution_signals import ConstraintLedger, ExecutionContract
-from gui_agent.core.run.progress_monitor import ProgressMonitor
-from gui_agent.core.schemas import StatementContract
-from gui_agent.core.supervisor.milestone.acquisition import TargetAcquireController
+from gui_agent.core.run.execution_signals import (
+    ConstraintEntry,
+    ConstraintLedger,
+    ExecutionContract,
+)
+from gui_agent.core.run.progress_monitor import ProgressMonitor, TraceStep
+from gui_agent.core.schemas import StatementContract, StatementRuntimeSnapshot
+from gui_agent.core.supervisor.statement.acquisition import TargetAcquireController
 
 
 @dataclass
@@ -69,3 +73,37 @@ class StatementRuntimeState:
         self.done_check = None
         self.skip_initial_check = False
         self.monitor.reset_for_retry()
+
+    def restore(self, snapshot: StatementRuntimeSnapshot) -> None:
+        """Restore logical statement state from the latest journal turn projection."""
+        self.retry_count = snapshot.retry_count
+        self.early_feasibility_probed = snapshot.early_feasibility_probed
+        self.scroll_count = snapshot.scroll_count
+        self.execution_scope = snapshot.execution_scope or self.scope_key()
+        self.last_page_identity = snapshot.last_page_identity
+        self.skip_initial_check = snapshot.skip_initial_check
+        self.statement_info_emitted = snapshot.statement_info_emitted
+        self.task_type = snapshot.task_type
+        self.constraint_ledger.entries = [
+            ConstraintEntry(
+                text=entry.text,
+                scope=entry.scope,
+                source=entry.source,
+            )
+            for entry in snapshot.constraints
+        ]
+        self.monitor.turns = [
+            TraceStep(
+                index=trace.index,
+                state=trace.state,
+                decision=trace.decision,
+                interaction_state=trace.interaction_state,
+                scope=trace.scope,
+            )
+            for trace in snapshot.progress_trace
+        ]
+        self.monitor._progress_values = list(snapshot.progress_values)
+        self.monitor._last_url = snapshot.last_url
+        self.monitor._last_dom_state = snapshot.last_dom_state
+        self.monitor.url_changed = False
+        self.monitor.dom_changed = False

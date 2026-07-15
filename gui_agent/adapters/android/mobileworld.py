@@ -7,7 +7,7 @@ inspects the emulator via adb; it does NOT replay or inspect the agent's action 
 
 Because grading is pure system state, HOW the actions reach the emulator is irrelevant
 to the score. So this entry is THIN and reuses the real android agent (perception +
-milestone supervisor + executor + visualizer) by driving the emulator over **adb**
+statement supervisor + executor + visualizer) by driving the emulator over **adb**
 (the existing :class:`AndroidDevice`, e.g. ``adb connect <host>:5556``) — which is more
 capable than the backend's ``/step`` (it has clear_text / keycodes / amount-aware
 scroll). MobileWorld's HTTP API is used ONLY for the task lifecycle:
@@ -32,7 +32,7 @@ Usage:
       --base-url http://192.168.31.57:6800
 
 KNOWN LIMIT: the android adapter does not implement scroll-collect yet, so a task whose
-milestone plans completion_strategy='scroll_until_boundary' (e.g. "read every item on
+statement plans completion_strategy='scroll_until_boundary' (e.g. "read every item on
 this page") raises mid-run (see adapters/android/factory.py). Direct-action and
 single-screen tasks work today.
 """
@@ -255,7 +255,7 @@ def main() -> int:
 
     intent = goal
     action_policy = build_policy("android_vision")
-    supervisor = build_supervisor("milestone")
+    supervisor = build_supervisor("statement")
     hud = build_platform().make_status_reporter(not args.headless)
     log_dir = create_run_dir("mobileworld", "android")
     print(f"[mobileworld] agent logs: {log_dir}")
@@ -306,7 +306,8 @@ def main() -> int:
             if not setup.ok:
                 result = {
                     "task_type": "RETRIEVE",
-                    "goal_completed": False,
+                    "phase": "failed",
+                    "verification": None,
                     "stop_reason": f"环境检查未通过：{setup.summary}",
                     "result_summary": f"环境检查未通过：{setup.summary}",
                     "content_notes": None,
@@ -333,7 +334,7 @@ def main() -> int:
                             estimate_program_turns,
                             redecompose,
                         )
-                        from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
+                        from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
                         from gui_agent.core.router import resolve_intent
 
                         file_section = resolve_file_refs(intent)

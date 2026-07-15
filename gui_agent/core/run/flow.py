@@ -51,7 +51,7 @@ def handle_loading_frame(
 @dataclass
 class ProgressDecision:
     noop_count: int
-    prev_milestone_id: str | None
+    prev_statement_id: str | None
     continue_loop: bool = False
     stop_reason: str | None = None
     message: str | None = None
@@ -61,7 +61,7 @@ class ProgressDecision:
 def evaluate_turn_progress(
     *,
     noop_count: int,
-    prev_milestone_id: str | None,
+    prev_statement_id: str | None,
     sv_step: SupervisorStep,
     executed: bool,
     action_decision: Any,
@@ -92,29 +92,29 @@ def evaluate_turn_progress(
             )
         return ProgressDecision(
             noop_count=noop_count,
-            prev_milestone_id=prev_milestone_id,
+            prev_statement_id=prev_statement_id,
             stop_reason="动作未执行，agent-loop 停止",
         )
 
-    if sv_step.milestone_id != prev_milestone_id:
+    if sv_step.statement_id != prev_statement_id:
         noop_count = 0
-    prev_milestone_id = sv_step.milestone_id
+    prev_statement_id = sv_step.statement_id
 
     if not sv_step.should_act:
         return _increment_or_stop(
             noop_count,
-            prev_milestone_id=prev_milestone_id,
+            prev_statement_id=prev_statement_id,
             stop_kind="无动作",
         )
 
-    return ProgressDecision(noop_count=0, prev_milestone_id=prev_milestone_id)
+    return ProgressDecision(noop_count=0, prev_statement_id=prev_statement_id)
 
 
 def _increment_or_stop(
     noop_count: int,
     *,
     stop_kind: str,
-    prev_milestone_id: str | None = None,
+    prev_statement_id: str | None = None,
     continue_message: str | None = None,
 ) -> ProgressDecision:
     next_count = noop_count + 1
@@ -122,13 +122,13 @@ def _increment_or_stop(
         reason = f"连续 {next_count} 轮{stop_kind}"
         return ProgressDecision(
             noop_count=next_count,
-            prev_milestone_id=prev_milestone_id,
+            prev_statement_id=prev_statement_id,
             stop_reason=reason,
             stop_message=f"\n{reason}，agent-loop 停止",
         )
     return ProgressDecision(
         noop_count=next_count,
-        prev_milestone_id=prev_milestone_id,
+        prev_statement_id=prev_statement_id,
         continue_loop=True,
         message=continue_message,
     )

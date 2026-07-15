@@ -1,6 +1,6 @@
 """A restricted expression evaluator for the DSL's `Compute` statement.
 
-Compute is PURE derivation (string/number ops the interpreter does itself, not a GUI milestone) —
+Compute is PURE derivation (string/number ops the interpreter does itself, not a GUI statement) —
 e.g. stripping a `-SIZE-COLOR` suffix off a variant name to get the parent base. To keep "it's just
 code" without opening arbitrary execution, this evaluates a SMALL whitelist of a Python expression
 over a flat scalar scope:
@@ -74,7 +74,7 @@ _FUNCS = {
     "len": len, "str": str, "int": _lenient_int, "lower": str.lower, "upper": str.upper,
     # Numeric derivation: percentage and offset updates naturally
     # wrote round(float(current_price) * 0.865, 2) — without these the whole numeric-compute class
-    # silently degraded to "" and the fill milestone lost its concrete value.
+    # silently degraded to "" and the fill statement lost its concrete value.
     "float": _lenient_float, "round": round, "abs": abs,
 }
 

@@ -186,35 +186,35 @@ HTML_TEMPLATE = """\
   .price-pop .pp-head td {{ color: #94a3b8; }}
 
   /* StatementContract section */
-  .milestone {{ max-width: 1080px; margin: 0 auto 16px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
-  .milestone-header {{ padding: 10px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
-  .milestone-header h2 {{ font-size: 14px; font-weight: 600; }}
-  .milestone-name {{ font-size: 13px; color: var(--text); }}
-  .milestone-desc {{ font-size: 11px; color: var(--muted); width: 100%; }}
-  .milestone-sc {{ font-size: 11px; color: #94a3b8; width: 100%; }}
+  .statement {{ max-width: 1080px; margin: 0 auto 16px; background: var(--card); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; }}
+  .statement-header {{ padding: 10px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
+  .statement-header h2 {{ font-size: 14px; font-weight: 600; }}
+  .statement-name {{ font-size: 13px; color: var(--text); }}
+  .statement-desc {{ font-size: 11px; color: var(--muted); width: 100%; }}
+  .statement-sc {{ font-size: 11px; color: #94a3b8; width: 100%; }}
   .checklist-badge {{ cursor:pointer; font-size:10px; font-weight:600; padding:2px 8px; border-radius:20px; user-select:none; display:inline-flex; align-items:center; gap:4px; }}
   .checklist-badge-ok {{ background:#dcfce7; color:#166534; }}
   .checklist-badge-partial {{ background:#e0f2fe; color:#0369a1; }}
   .checklist-badge:hover {{ filter:brightness(0.96); }}
   .cl-modal-body {{ margin:0; padding:14px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }}
-  .milestone-checklist {{ width:100%; display:flex; flex-direction:column; gap:4px; margin-top:4px; }}
-  .milestone-check {{ display:flex; align-items:flex-start; gap:6px; font-size:11px; line-height:1.35; color:#475569; }}
-  .milestone-check-mark {{ display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; font-size:10px; font-weight:700; flex:0 0 auto; margin-top:0; }}
-  .milestone-check-text {{ word-break:break-word; }}
-  .milestone-check-evidence {{ color:#94a3b8; margin-left:6px; }}
-  .milestone-check-done .milestone-check-mark {{ background:#dcfce7; color:#166534; }}
-  .milestone-check-pending .milestone-check-mark {{ background:#e0f2fe; color:#0369a1; }}
-  .milestone-check-blocked .milestone-check-mark {{ background:#fee2e2; color:#991b1b; }}
-  .milestone-check-skipped .milestone-check-mark {{ background:#f1f5f9; color:#64748b; }}
-  .milestone-badge {{ font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 500; }}
-  .milestone-badge-navigation {{ background: #dbeafe; color: #1d4ed8; }}
-  .milestone-badge-action {{ background: #fef3c7; color: #92400e; }}
-  .milestone-badge-filter {{ background: #ede9fe; color: #5b21b6; }}
-  .milestone-badge-collection {{ background: #d1fae5; color: #065f46; }}
-  .milestone-badge-default {{ background: #f1f5f9; color: #475569; }}
-  .milestone-time {{ font-size: 11px; color: #475569; margin-left: auto; font-family: monospace; font-weight: 700; }}
+  .statement-checklist {{ width:100%; display:flex; flex-direction:column; gap:4px; margin-top:4px; }}
+  .statement-check {{ display:flex; align-items:flex-start; gap:6px; font-size:11px; line-height:1.35; color:#475569; }}
+  .statement-check-mark {{ display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; font-size:10px; font-weight:700; flex:0 0 auto; margin-top:0; }}
+  .statement-check-text {{ word-break:break-word; }}
+  .statement-check-evidence {{ color:#94a3b8; margin-left:6px; }}
+  .statement-check-done .statement-check-mark {{ background:#dcfce7; color:#166534; }}
+  .statement-check-pending .statement-check-mark {{ background:#e0f2fe; color:#0369a1; }}
+  .statement-check-blocked .statement-check-mark {{ background:#fee2e2; color:#991b1b; }}
+  .statement-check-skipped .statement-check-mark {{ background:#f1f5f9; color:#64748b; }}
+  .statement-badge {{ font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 500; }}
+  .statement-badge-navigation {{ background: #dbeafe; color: #1d4ed8; }}
+  .statement-badge-action {{ background: #fef3c7; color: #92400e; }}
+  .statement-badge-filter {{ background: #ede9fe; color: #5b21b6; }}
+  .statement-badge-collection {{ background: #d1fae5; color: #065f46; }}
+  .statement-badge-default {{ background: #f1f5f9; color: #475569; }}
+  .statement-time {{ font-size: 11px; color: #475569; margin-left: auto; font-family: monospace; font-weight: 700; }}
 
-  /* Thumbnail gallery — one row per milestone */
+  /* Thumbnail gallery — one row per statement */
   .gallery {{ display: flex; gap: 6px; padding: 12px 16px; overflow-x: auto; }}
   .thumb {{ flex-shrink: 0; width: 152px; cursor: pointer; position: relative; border-radius: 8px; overflow: hidden; border: 2px solid transparent; transition: border-color 0.15s; }}
   .thumb:hover {{ border-color: #6366f1; }}
@@ -389,7 +389,7 @@ HTML_TEMPLATE = """\
   </div>
 </div>
 <script>
-// Scroll-spy: highlight the outline item whose milestone is near the top.
+// Scroll-spy: highlight the outline item whose statement is near the top.
 (function() {{
   var items = Array.prototype.slice.call(document.querySelectorAll('.outline-item'));
   if (!items.length || !('IntersectionObserver' in window)) return;
@@ -416,8 +416,8 @@ function showDetail(id) {{
     if (thumb) thumb.classList.remove('active');
     return;
   }}
-  // Hide all details in same milestone
-  var ms = el.closest('.milestone');
+  // Hide all details in same statement
+  var ms = el.closest('.statement');
   ms.querySelectorAll('.detail').forEach(d => d.classList.remove('show'));
   ms.querySelectorAll('.thumb').forEach(t => t.classList.remove('active'));
   // Show selected
@@ -501,7 +501,7 @@ function revealSearchNode(node) {{
   }}
   var detail = node.closest('.detail');
   if (detail && !detail.classList.contains('show')) {{
-    var ms = detail.closest('.milestone');
+    var ms = detail.closest('.statement');
     if (ms) {{
       ms.querySelectorAll('.detail').forEach(function(d) {{ d.classList.remove('show'); }});
       ms.querySelectorAll('.thumb').forEach(function(t) {{ t.classList.remove('active'); }});
@@ -547,12 +547,12 @@ TIMING_COLORS: dict[str, str] = {
 }
 
 KIND_BADGE = {
-    "navigation": "milestone-badge-navigation",
-    "action": "milestone-badge-action",
-    "filter": "milestone-badge-filter",
-    "collection": "milestone-badge-collection",
-    "read": "milestone-badge-collection",
-    "data_query": "milestone-badge-collection",
+    "navigation": "statement-badge-navigation",
+    "action": "statement-badge-action",
+    "filter": "statement-badge-filter",
+    "collection": "statement-badge-collection",
+    "read": "statement-badge-collection",
+    "data_query": "statement-badge-collection",
 }
 
 AT_LABELS = {
@@ -571,7 +571,7 @@ def _short_mid(mid) -> str:
     """Display-only short id: leading number of a slug ('1_open_wechat' -> '1').
 
     The full id is still used for anchors/links; this only shortens what's shown
-    so a long slug doesn't crowd out the milestone name in the sidebar.
+    so a long slug doesn't crowd out the statement name in the sidebar.
     """
     m = re.match(r"\s*(\d+)", str(mid))
     return m.group(1) if m else str(mid)
@@ -927,7 +927,7 @@ def _render_platform_badge(platform: str) -> str:
 def _run_status_meta(data: ReportData) -> tuple[str, str, str]:
     status = (data.run_status or "").strip()
     if not status:
-        status = "completed" if data.goal_completed else "stopped"
+        status = data.run_status or "stopped"
     if status == "completed":
         return "completed", "正常完成", "目标已确认完成"
     if status == "interrupted":
@@ -1142,7 +1142,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     _rd_n = len((data.orchestrator or {}).get("redecomposes") or [])
     if _rd_n:  # only when it happened — most runs have 0
         stats_parts.append(f"re-decompose: {_rd_n}")
-    llm_s = sum(m.get("total_time", 0) for m in data.milestones)  # Σ LLM-module timings
+    llm_s = sum(m.get("total_time", 0) for m in data.statements)  # Σ LLM-module timings
     if data.wall_clock_s:
         # True end-to-end elapsed, split into LLM compute, settle waits, and "other"
         # (perception / action execution / scheduling overhead = wall − LLM − settle).
@@ -1153,9 +1153,9 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
     else:
         stats_parts.append(f"LLM: {llm_s:.1f}s")  # old logs without wall_clock_s
-    sess_in = sum(int(m.get("input_tokens", 0)) for m in data.milestones)
-    sess_out = sum(int(m.get("output_tokens", 0)) for m in data.milestones)
-    sess_cost = sum(float(m.get("cost", 0)) for m in data.milestones)
+    sess_in = sum(int(m.get("input_tokens", 0)) for m in data.statements)
+    sess_out = sum(int(m.get("output_tokens", 0)) for m in data.statements)
+    sess_cost = sum(float(m.get("cost", 0)) for m in data.statements)
     if sess_in or sess_out:
         stats_parts.append(
             f"tokens: in {_fmt_tokens(sess_in)} / out {_fmt_tokens(sess_out)}"
@@ -1163,15 +1163,15 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         )
     stats_str = "  |  ".join(stats_parts)
 
-    # Display ordinal per milestone (#1, #2, …). StatementContract ids are descriptive slugs now
+    # Display ordinal per statement (#1, #2, …). StatementContract ids are descriptive slugs now
     # (e.g. 'navigate_to_riot_app'), which _short_mid can't shorten — showing the raw slug
     # crowds the name out of the sidebar. The ordinal is always short; the raw id stays for
-    # the anchor. Falls back to _short_mid for ids not in the milestone list (e.g. _no_milestone).
-    _mid_ordinal = {m.get("id", ""): i for i, m in enumerate(data.milestones, 1)}
+    # the anchor. Falls back to _short_mid for ids not in the statement list (e.g. _no_statement).
+    _mid_ordinal = {m.get("id", ""): i for i, m in enumerate(data.statements, 1)}
     def _mid_disp(mid: str) -> str:
         return str(_mid_ordinal[mid]) if mid in _mid_ordinal else _short_mid(mid)
 
-    # Sidebar outline (子目标分解): one clickable node per milestone, scroll-spy active.
+    # Sidebar outline (子目标分解): one clickable node per statement, scroll-spy active.
     # Orchestrator mode: the decomposed program is node #0 编排 (the stage that produced them).
     outline_parts = []
     if (data.orchestrator.get("program") or {}).get("statements"):
@@ -1179,10 +1179,10 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             '<a class="outline-item" href="#ms-orchestrate" data-target="ms-orchestrate">'
             '<span class="outline-top"><span class="outline-id">#0</span>'
             '<span class="outline-name">编排</span></span>'
-            '<span class="outline-meta"><span class="milestone-badge milestone-badge-default">program</span></span>'
+            '<span class="outline-meta"><span class="statement-badge statement-badge-default">program</span></span>'
             '</a>'
         )
-    for m in data.milestones:
+    for m in data.statements:
         mid = _safe(m.get("id", "?"))           # full id — for the anchor/link
         mid_disp = _safe(_mid_disp(m.get("id", "?")))  # ordinal — for display
         name = _safe(m.get("name", ""))
@@ -1190,10 +1190,10 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         kind_safe = _safe(kind)
         turns = m.get("turns", "")
         t = m.get("total_time", 0)
-        badge_cls = KIND_BADGE.get(kind, "milestone-badge-default")
+        badge_cls = KIND_BADGE.get(kind, "statement-badge-default")
         meta_bits = ""
         if kind_safe:
-            meta_bits += f'<span class="milestone-badge {badge_cls}">{kind_safe}</span>'
+            meta_bits += f'<span class="statement-badge {badge_cls}">{kind_safe}</span>'
         meta_bits += f'<span>{t:.1f}s</span>'
         if turns:
             meta_bits += f'<span>T{_safe(str(turns))}</span>'
@@ -1221,17 +1221,17 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             evidence = item.get("evidence") or []
             evidence_text = str(evidence[0]) if evidence else ""
             evidence_html = (
-                f'<span class="milestone-check-evidence">{_safe(evidence_text)}</span>'
+                f'<span class="statement-check-evidence">{_safe(evidence_text)}</span>'
                 if evidence_text else ""
             )
             rows.append(
-                f'<div class="milestone-check milestone-check-{status}">'
-                f'<span class="milestone-check-mark">{marks[status]}</span>'
-                f'<span class="milestone-check-text">{_safe(str(item.get("text") or ""))}{evidence_html}</span>'
+                f'<div class="statement-check statement-check-{status}">'
+                f'<span class="statement-check-mark">{marks[status]}</span>'
+                f'<span class="statement-check-text">{_safe(str(item.get("text") or ""))}{evidence_html}</span>'
                 f'</div>'
             )
         # A compact status badge that sits beside the kind badge; the rows live in a separate
-        # hidden block (placed at the end of the milestone) cloned into the shared #cl-modal popup
+        # hidden block (placed at the end of the statement) cloned into the shared #cl-modal popup
         # on click (showChecklist). Returns (badge_html, hidden_data_html).
         all_done = done_n == len(items)
         badge_cls = "checklist-badge-ok" if all_done else "checklist-badge-partial"
@@ -1242,9 +1242,9 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         data = f'<div id="{cid}" class="checklist-data" style="display:none">{"".join(rows)}</div>'
         return badge, data
 
-    # Per-milestone sections. A Feasibility kick-back re-decompose IS the outcome of the milestone
-    # whose verification failed — so its #vN card is embedded in THAT milestone's 验收结果 (the
-    # milestone active at the kick-back's `at_turn`), not rendered as a separate sibling card.
+    # Per-statement sections. A Feasibility kick-back re-decompose IS the outcome of the statement
+    # whose verification failed — so its #vN card is embedded in THAT statement's 验收结果 (the
+    # statement active at the kick-back's `at_turn`), not rendered as a separate sibling card.
     redecomps = sorted(
         ((data.orchestrator or {}).get("redecomposes") or []),
         key=lambda r: r.get("at_turn") or 0,
@@ -1254,8 +1254,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
     pages_html = ""
     prev_ts = ""  # carries across pages so the gap is vs the previous turn globally
     for page in data.pages:
-        # a re-decompose triggered by one of THIS milestone's turns is that milestone's 验收结果 —
-        # render its banner there (the new plan = the milestones that follow; the banner doesn't
+        # a re-decompose triggered by one of THIS statement's turns is that statement's 验收结果 —
+        # render its banner there (the new plan = the statements that follow; the banner doesn't
         # re-list them, just marks the transition + trigger directive).
         _pturn_set = {s.index for s in page.steps}
         rd_banner = ""
@@ -1265,7 +1265,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 rd_banner += render_redecompose_card(data.orchestrator, _n)
                 placed_rd.add(_n)
         _triggered_rd = bool(rd_banner)  # → label its verify thumbnail 重编排
-        badge_cls = KIND_BADGE.get(page.milestone_kind, "milestone-badge-default")
+        badge_cls = KIND_BADGE.get(page.statement_kind, "statement-badge-default")
         ms_in = sum(_sum_tokens(s.token_usage)[0] for s in page.steps)
         ms_out = sum(_sum_tokens(s.token_usage)[1] for s in page.steps)
         ms_cost = sum(_token_cost(s.token_usage) for s in page.steps)
@@ -1273,8 +1273,8 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             f' · {_fmt_tokens(ms_in)}/{_fmt_tokens(ms_out)} tok · ≈{pricing_currency()}{ms_cost:.4f}'
             if (ms_in or ms_out) else ""
         )
-        mid_safe = _safe(page.milestone_id)       # full id — anchor target
-        mid_disp = _safe(_mid_disp(page.milestone_id))  # ordinal — heading
+        mid_safe = _safe(page.statement_id)       # full id — anchor target
+        mid_disp = _safe(_mid_disp(page.statement_id))  # ordinal — heading
 
         thumbs_html = ""
         details_html = ""
@@ -1317,16 +1317,16 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                     f'</div>'
                 )
 
-            # This turn's check judged the milestone infeasible → that verdict is THIS turn's
-            # conclusion (the kick-back), so render it in the turn's own detail, not at milestone level.
+            # This turn's check judged the statement infeasible → that verdict is THIS turn's
+            # conclusion (the kick-back), so render it in the turn's own detail, not at statement level.
             _step_extra = ""
             if step.outcome_phase == "infeasible":
                 _kr = _safe(step.outcome_summary or step.summary)
                 _kd = _safe(step.kickback)
-                _verdict = ("milestone 判定<b>不可行 → 踢回重编排</b>" if _triggered_rd
-                            else "milestone 判定<b>不可行</b>；已达重编排上限、未能再重规划 → <b>本步失败</b>")
+                _verdict = ("statement 判定<b>不可行 → 踢回重编排</b>" if _triggered_rd
+                            else "statement 判定<b>不可行</b>；已达重编排上限、未能再重规划 → <b>本步失败</b>")
                 _step_extra = (
-                    '<div class="milestone-sc" style="border-left:3px solid #dc2626;background:#fef2f2;'
+                    '<div class="statement-sc" style="border-left:3px solid #dc2626;background:#fef2f2;'
                     f'color:#991b1b;margin-top:8px">⚠️ 验收：{_verdict}。{_kr}'
                     + (f'<div style="margin-top:4px;color:#7f1d1d">↳ 重规划指令：{_kd}</div>' if _kd else "")
                     + '</div>'
@@ -1338,11 +1338,11 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
 
         # The decomposer often sets description == name; don't render the title twice.
         desc_html = (
-            f'<div class="milestone-desc">{_safe(page.milestone_description)}</div>'
-            if page.milestone_description and page.milestone_description.strip() != page.milestone_name.strip()
+            f'<div class="statement-desc">{_safe(page.statement_description)}</div>'
+            if page.statement_description and page.statement_description.strip() != page.statement_name.strip()
             else ""
         )
-        sc_html = f'<div class="milestone-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
+        sc_html = f'<div class="statement-sc">验收：{_safe(page.success_condition)}</div>' if page.success_condition else ""
         checklist_badge, checklist_data = _render_checklist(page.checklist, f"cl-{mid_safe}")
         ms_time_html = (
             f'总耗时 {ms_elapsed:.1f}s'
@@ -1350,11 +1350,11 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             else "耗时未记录"
         )
         ms_time_title = (
-            "总耗时=本 milestone 内缩略图时间求和；首轮从编排完成后起算，后续按 turn timestamp gap"
+            "总耗时=本 statement 内缩略图时间求和；首轮从编排完成后起算，后续按 turn timestamp gap"
         )
         verify_thumb = ""
         verify_detail = ""
-        _is_rd_ms = _triggered_rd  # this milestone's verification produced a re-decompose
+        _is_rd_ms = _triggered_rd  # this statement's verification produced a re-decompose
         if page.verify_url:
             vd_id = f"detail-ms{mid_safe}-verify"
             if _is_rd_ms:
@@ -1397,22 +1397,22 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
                 f'</div>'
                 f'{reason_html}'
                 f'{summary_html}'
-                f'{rd_banner}'  # a re-decompose triggered here IS this milestone's 验收结果 — inside the box
+                f'{rd_banner}'  # a re-decompose triggered here IS this statement's 验收结果 — inside the box
                 f'</div>'
                 f'</div>'
             )
         _rd_outside = "" if page.verify_url else rd_banner  # no 验收结果 box → fall back to the card body
-        # (The infeasible-milestone kick-back verdict is rendered on its own turn's detail, above —
-        # it's that turn's conclusion, not a milestone-level banner.)
+        # (The infeasible-statement kick-back verdict is rendered on its own turn's detail, above —
+        # it's that turn's conclusion, not a statement-level banner.)
         turns_label = f"{len(page.steps)} turns" if page.steps else "无交互 turn"
         pages_html += f"""
-        <div class="milestone" id="ms-{mid_safe}">
-          <div class="milestone-header">
+        <div class="statement" id="ms-{mid_safe}">
+          <div class="statement-header">
             <h2>#{mid_disp}</h2>
-            <span class="milestone-name">{_safe(page.milestone_name)}</span>
-            <span class="milestone-badge {badge_cls}">{_safe(page.milestone_kind)}</span>
+            <span class="statement-name">{_safe(page.statement_name)}</span>
+            <span class="statement-badge {badge_cls}">{_safe(page.statement_kind)}</span>
             {checklist_badge}
-            <span class="milestone-time" title="{_safe(ms_time_title)}">{ms_time_html} · {turns_label}{ms_tok_html}</span>
+            <span class="statement-time" title="{_safe(ms_time_title)}">{ms_time_html} · {turns_label}{ms_tok_html}</span>
             {desc_html}
             {sc_html}
           </div>
@@ -1423,7 +1423,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
           {checklist_data}
         </div>"""
 
-    # any re-decompose whose trigger turn wasn't matched to a milestone (edge) → banner at the end
+    # any re-decompose whose trigger turn wasn't matched to a statement (edge) → banner at the end
     for _rd in redecomps:
         if _rd.get("kickback_n") not in placed_rd:
             pages_html += render_redecompose_card(data.orchestrator, _rd.get("kickback_n"))

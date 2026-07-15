@@ -8,7 +8,7 @@ imports these classes directly. Mirrors ``adapters/iphone/factory.py``.
 SCROLL-COLLECT
 --------------
 The scroll/stitch bundle fields back the runner's scroll-collect / stitching branch
-(reached when the milestone supervisor plans completion_strategy='scroll_until_boundary'
+(reached when the statement supervisor plans completion_strategy='scroll_until_boundary'
 for information-gathering goals). Browser collection IS implemented:
   - ``make_stitch_accumulator`` / ``robust_shift`` / ``gray_u8`` reuse the NEUTRAL
     ``gui_agent.core.vision.stitch`` algos with the browser content band (whole frame, no
@@ -41,9 +41,9 @@ if TYPE_CHECKING:
 
 
 # Registries (mirror the iphone adapter shape). Browser is vision-only with a
-# single action policy today; the default supervisor is structure-neutral milestone.
+# single action policy today; the default supervisor is structure-neutral statement.
 _POLICY_NAMES: tuple[str, ...] = ("browser_vision",)
-_SUPERVISOR_NAMES: tuple[str, ...] = ("milestone",)
+_SUPERVISOR_NAMES: tuple[str, ...] = ("statement",)
 
 
 def _build_action_policy(name: str) -> "ActionPolicy":
@@ -58,26 +58,26 @@ def _build_action_policy(name: str) -> "ActionPolicy":
 
 
 def _build_supervisor(name: str) -> "SupervisorPolicy":
-    # Browser uses the structure-neutral milestone supervisor FRAMEWORK with its OWN
-    # web-tuned prompts (adapters/browser/supervisor/milestone/prompts.py) injected —
+    # Browser uses the structure-neutral statement supervisor FRAMEWORK with its OWN
+    # web-tuned prompts (adapters/browser/supervisor/statement/prompts.py) injected —
     # it no longer borrows the iphone set. ⚠️ those prompts are a DRAFT and need real
     # browser-task A/B tuning.
-    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
-    from gui_agent.adapters.browser.supervisor.milestone.prompts import BROWSER_MILESTONE_PROMPTS
+    from gui_agent.core.supervisor.statement.policy import StatementSupervisorPolicy
+    from gui_agent.adapters.browser.supervisor.statement.prompts import BROWSER_STATEMENT_PROMPTS
     from gui_agent.adapters.browser.target_binding import (
         active_choice_controls,
         active_surface_id,
         active_target_aliases,
     )
 
-    if name == MilestoneSupervisorPolicy.name:
-        return MilestoneSupervisorPolicy(
-            prompts=BROWSER_MILESTONE_PROMPTS,
+    if name == StatementSupervisorPolicy.name:
+        return StatementSupervisorPolicy(
+            prompts=BROWSER_STATEMENT_PROMPTS,
             surface_resolver=active_surface_id,
             active_target_resolver=active_target_aliases,
             mutation_control_resolver=active_choice_controls,
         )
-    raise ValueError(f"未知监督者 {name!r}，可选：{MilestoneSupervisorPolicy.name}")
+    raise ValueError(f"未知监督者 {name!r}，可选：{StatementSupervisorPolicy.name}")
 
 
 # Browser screenshots are full-page content (no device frame / iOS status bar), so
@@ -264,7 +264,7 @@ def build_browser_bundle(
         gray_u8=_gray_u8,
         prepare_vision_prompt_png=_prepare_vision_prompt_png,
         default_action_policy="browser_vision",
-        default_supervisor="milestone",
+        default_supervisor="statement",
         action_policy_choices=_POLICY_NAMES,
         supervisor_choices=_SUPERVISOR_NAMES,
     )

@@ -96,7 +96,7 @@ ALL_CODES: frozenset[str] = frozenset({
     "TEMPORAL_LIMIT_WITHOUT_ORDER",
     "TEMPORAL_AGGREGATE_WITHOUT_ROW_LIMIT",
     "SINGLE_TARGET_LIMIT_HIDES_AMBIGUITY",
-    # interactive-step hygiene（milestone=交互 action 的纪律）
+    # interactive-step hygiene（statement=交互 action 的纪律）
     "NOOP_FLOW_CONTROL_STEP",
     # compute compile-time contract（编译期强制运行时方言与作用域）
     "COMPUTE_UNSUPPORTED_EXPR",

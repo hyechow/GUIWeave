@@ -18,9 +18,9 @@ class ReportStep:
     status: str = ""  # ✓ ✗ ↩ ""
     timestamp: str = ""  # ISO timestamp
     index: int = 0              # context turn index (for ordering re-decompose cards by at_turn)
-    milestone_id: str = ""
+    statement_id: str = ""
     instance_id: str = ""       # statement invocation instance (foreach/retry isolate here)
-    milestone_kind: str = ""
+    statement_kind: str = ""
     instruction: str = ""
     summary: str = ""
     outcome_phase: str = ""
@@ -48,16 +48,16 @@ class ReportStep:
 class ReportPage:
     title: str
     steps: list[ReportStep] = field(default_factory=list)
-    milestone_id: str = ""
+    statement_id: str = ""
     instance_id: str = ""
-    milestone_kind: str = ""
-    milestone_name: str = ""
-    milestone_description: str = ""
+    statement_kind: str = ""
+    statement_name: str = ""
+    statement_description: str = ""
     success_condition: str = ""
     checklist: list[dict] = field(default_factory=list)
-    verify_url: str = ""  # verification screenshot (first turn of next milestone)
+    verify_url: str = ""  # verification screenshot (first turn of next statement)
     verify_checker: dict = field(default_factory=dict)  # checker result from the last turn (done/in_progress)
-    kickback: dict = field(default_factory=dict)  # Feasibility kick-back terminal state {reason, directive} — the "验收" for an abandoned-as-infeasible milestone
+    kickback: dict = field(default_factory=dict)  # Feasibility kick-back terminal state {reason, directive} — the "验收" for an abandoned-as-infeasible statement
 
 
 @dataclass
@@ -65,9 +65,9 @@ class ReportData:
     title: str
     pages: list[ReportPage] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
-    milestones: list[dict] = field(default_factory=list)
+    statements: list[dict] = field(default_factory=list)
     decompose_summary: str = ""  # First-turn supervisor summary with decomposition info
-    orchestrator: dict = field(default_factory=dict)  # DSL 编排器 {program:{goal,statements}}; {} for DAG runs
+    orchestrator: dict = field(default_factory=dict)  # DSL 编排器 {program:{goal,statements}}
     models: dict[str, str] = field(default_factory=dict)  # config_key → model used this run
     raw_input: str = ""  # original human input (title); empty for old logs
     goal: str = ""       # resolved goal that drove the run
@@ -75,7 +75,7 @@ class ReportData:
     output: str = ""     # final reply / 最终输出 of the run
     stop_reason: str = ""  # run-level terminal reason from context.json
     run_status: str = ""   # completed / failed / interrupted / stopped
-    goal_completed: bool = False
+    verification: str = ""
     platform: str = ""   # run platform (iphone/browser); empty for old logs
     wall_clock_s: float = 0.0    # true end-to-end runner elapsed (context.wall_clock_s); 0 for old logs
     settle_s_total: float = 0.0  # Σ per-turn settle waits (post-action screen-settle)

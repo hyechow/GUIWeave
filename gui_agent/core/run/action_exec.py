@@ -159,7 +159,7 @@ class ActionExecutionState:
 
     @staticmethod
     def _scroll_profile_key(step: SupervisorStep) -> str:
-        scope = step.execution_scope or step.milestone_id or "_global"
+        scope = step.execution_scope or step.statement_id or "_global"
         target = (step.target_control or "_viewport").strip().lower()
         direction = (step.direction or "down").strip().lower()
         return f"{scope}|{target}|{direction}"
@@ -387,7 +387,7 @@ class ActionExecutionState:
                 reports.append({
                     "kind": "native_action",
                     "label": "execution.native_action",
-                    "milestone_id": sv_step.milestone_id,
+                    "statement_id": sv_step.statement_id,
                     "target_control": sv_step.target_control,
                     "target_value": sv_step.target_value,
                     "target_group_id": target_group_id,
@@ -433,7 +433,7 @@ class ActionExecutionState:
                         reports.append({
                             "kind": "action_grounding",
                             "label": "execution.action_grounding",
-                            "milestone_id": sv_step.milestone_id,
+                            "statement_id": sv_step.statement_id,
                             "target_control": sv_step.target_control,
                             "target_group_id": target_group_id,
                             "primitive": action_decision.action.action_type if action_decision.action else "none",

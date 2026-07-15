@@ -4,7 +4,7 @@ WebArena is framework-agnostic: it hands the agent a minimal task JSON (intent +
 start_urls) and grades two artifacts it writes back — ``agent_response.json`` (the
 final answer, judged by AgentResponseEvaluator) and ``network.har`` (the recorded
 requests, judged by NetworkEventEvaluator). So this entry is THIN: it reuses the
-real browser agent (perception + milestone supervisor + executor + visualizer) via
+real browser agent (perception + statement supervisor + executor + visualizer) via
 ``run_agent_loop`` and only adds the WebArena plumbing around it —
 
   pre-run  : inject auth cookies (raw CDP) + start HAR capture + navigate start_url
@@ -28,7 +28,7 @@ Usage:
   CDP Chrome profile is already logged in).
 
 KNOWN LIMIT: the browser adapter does not implement scroll-collect yet, so an
-information-gathering task whose milestone plans completion_strategy=
+information-gathering task whose statement plans completion_strategy=
 'scroll_until_boundary' will raise mid-run (see adapters/browser/factory.py). Direct
 -action and single-screen retrieve tasks work today.
 """
@@ -143,32 +143,25 @@ def _normalize_retrieved_data_for_intent(data: object, intent: str = "") -> obje
 def _runtime_completion_accepted(result: dict) -> bool:
     """Whether runtime reached a terminal state sufficient for a mutation submission.
 
-    ``goal_completed`` means the post-state was confirmed. ``accepted_unverified`` means
-    the terminal side effect was reliably dispatched and the program ended deliberately,
-    but no authoritative post-state channel was available. Keep those facts distinct in
-    core results while allowing mutation adapters to report that the requested action ran.
+    A completed phase means the Program ended deliberately. Verification distinguishes a
+    confirmed post-state from a reliably dispatched side effect without an authoritative
+    post-state channel.
     """
-    if bool(result.get("goal_completed")):
-        return True
-    return (
-        bool(result.get("execution_completed"))
-        and str(result.get("goal_status") or "") == "accepted_unverified"
-    )
+    return result.get("phase") == "completed"
 
 
 def _finalize_response(
     resp: WAResponse,
     *,
-    goal_completed: bool = True,
-    execution_completed: bool = False,
-    goal_status: str = "",
+    phase: str = "completed",
+    verification: str | None = "confirmed",
     intent: str = "",
 ) -> WAResponse:
     """Apply deterministic WebArena response invariants after LLM synthesis.
 
-    A RETRIEVE task counts as success only when the run BOTH reached goal_completed AND
-    produced a list answer. ``goal_completed`` is the orchestrator's honest signal — it is
-    False when, e.g., a ``finish`` cited a read whose ``reads`` came back entirely empty
+    A RETRIEVE task counts as success only when the Program completed with confirmed
+    verification AND produced a list answer. The typed terminal is the orchestrator's honest
+    signal: it is failed when, e.g., a ``finish`` cited a read whose ``reads`` came back empty
     (the target data was off-screen / on the wrong page). ``retrieved_data`` must be a list
     per WebArena's retrieve contract. If either fails, demote any SUCCESS the model emitted
     to NOT_FOUND_ERROR — do not trust a success claimed on an empty or incomplete read.
@@ -180,8 +173,9 @@ def _finalize_response(
     if retrieved_data is not resp.retrieved_data:
         updates["retrieved_data"] = retrieved_data
 
+    confirmed = phase == "completed" and verification == "confirmed"
     retrieve_invalid = task_type == "RETRIEVE" and (
-        not goal_completed or not isinstance(retrieved_data, list)
+        not confirmed or not isinstance(retrieved_data, list)
     )
     if retrieve_invalid and status == "SUCCESS":
         updates.update({
@@ -189,7 +183,7 @@ def _finalize_response(
             "retrieved_data": None,
             "error_details": (
                 resp.error_details
-                or ("Run did not reach goal_completed." if not goal_completed
+                or ("Run did not reach confirmed completion." if not confirmed
                     else "No retrieved_data list was produced for this RETRIEVE task.")
             ),
         })
@@ -197,14 +191,13 @@ def _finalize_response(
     # MUTATE accepts either confirmed effect or a completed terminal dispatch. It still rejects
     # interrupted programs and empty/incomplete foreach runs (778 live 114429), which have neither.
     mutation_completed = _runtime_completion_accepted({
-        "goal_completed": goal_completed,
-        "execution_completed": execution_completed,
-        "goal_status": goal_status,
+        "phase": phase,
+        "verification": verification,
     })
     if task_type == "MUTATE" and status == "SUCCESS" and not mutation_completed:
         updates.update({
             "status": "UNKNOWN_ERROR",
-            "error_details": resp.error_details or "Run did not reach goal_completed (mutation not performed).",
+            "error_details": resp.error_details or "Run did not reach completed phase (mutation not performed).",
         })
 
     return resp.model_copy(update=updates)
@@ -287,7 +280,7 @@ def _write_orchestration_preflight_context(
 
     context = PolicyContext(
         goal=intent,
-        supervisor_policy_name=str(getattr(supervisor, "name", "milestone")),
+        supervisor_policy_name=str(getattr(supervisor, "name", "statement")),
         action_policy_name=str(getattr(action_policy, "name", "browser_vision")),
         platform="browser",
         raw_input=intent,
@@ -561,7 +554,10 @@ def _run_eval_compat_probes(
 ) -> list[dict]:
     if not enabled:
         return []
-    if not result.get("goal_completed"):
+    if not (
+        result.get("phase") == "completed"
+        and result.get("verification") == "confirmed"
+    ):
         report = [{"status": "skipped", "reason": "agent goal was not completed"}]
         print("[webarena] eval_compat: skipped (agent goal was not completed)")
         return report
@@ -619,14 +615,19 @@ def _run_evidence_text(context_path: Path | None) -> str:
         return f"(unavailable: {exc})"
 
     lines: list[str] = []
-    for turn in ((data.get("journal") or {}).get("events") or [])[-6:]:
+    turns = [
+        event
+        for event in ((data.get("journal") or {}).get("events") or [])
+        if event.get("event_type") == "turn"
+    ]
+    for turn in turns[-6:]:
         supervisor = turn.get("supervisor") or {}
         checker = turn.get("checker") or {}
         parts = [
             f"turn={turn.get('index')}",
-            "milestone="
-            f"{supervisor.get('milestone_id') or '?'}:"
-            f"{supervisor.get('milestone_kind') or '?'}"
+            "statement="
+            f"{supervisor.get('statement_id') or '?'}:"
+            f"{supervisor.get('statement_kind') or '?'}"
             f"/{supervisor.get('completion_strategy') or '?'}",
         ]
         if supervisor.get("summary"):
@@ -668,7 +669,8 @@ def _synthesize_response(intent: str, result: dict, context_path: Path | None = 
     human = _WEBARENA_HUMAN.render(
         intent=intent,
         task_type_guess=_webarena_task_type_from_result(intent, result),
-        goal_completed=result.get("goal_completed"),
+        phase=result.get("phase"),
+        verification=result.get("verification"),
         stop_reason=result.get("stop_reason"),
         result_summary=result.get("result_summary"),
         notes_text=notes_text,
@@ -1064,7 +1066,7 @@ def main() -> int:
         print(f"[webarena] headless profile: {profile_dir}")
 
     action_policy = build_policy("browser_vision")
-    supervisor = build_supervisor("milestone")
+    supervisor = build_supervisor("statement")
     # Translucent status HUD over the Chrome window — on in headed mode, off when headless
     # (the unified visibility switch). The agent loop repositions it onto the exact CDP
     # window rect once connected.
@@ -1149,7 +1151,8 @@ def main() -> int:
             if not setup.ok:
                 result = {
                     "task_type": "RETRIEVE",
-                    "goal_completed": False,
+                    "phase": "failed",
+                    "verification": None,
                     "stop_reason": f"环境检查未通过：{setup.summary}",
                     "result_summary": f"环境检查未通过：{setup.summary}",
                     "content_notes": None,
@@ -1205,7 +1208,7 @@ def main() -> int:
                             redecompose,
                             validate_orchestration_preflight,
                         )
-                        from gui_agent.core.supervisor.milestone.model_io import resolve_file_refs
+                        from gui_agent.core.supervisor.statement.model_io import resolve_file_refs
                         from gui_agent.core.router import resolve_intent
 
                         file_section = resolve_file_refs(intent)
@@ -1272,7 +1275,8 @@ def main() -> int:
                             preflight_blocked = True
                             compile_result = {
                                 "task_type": _guess_webarena_task_type(intent),
-                                "goal_completed": False,
+                                "phase": "failed",
+                                "verification": None,
                                 "stop_reason": f"orchestrator compile failed: {summary}",
                                 "result_summary": f"orchestrator compile failed: {summary}",
                                 "content_notes": None,
@@ -1334,7 +1338,8 @@ def main() -> int:
                                     )
                                     compile_result = {
                                         "task_type": _guess_webarena_task_type(intent),
-                                        "goal_completed": False,
+                                        "phase": "failed",
+                                        "verification": None,
                                         "stop_reason": f"orchestrator preflight failed: {summary}",
                                         "result_summary": f"orchestrator preflight failed: {summary}",
                                         "content_notes": None,
@@ -1484,9 +1489,8 @@ def main() -> int:
                     resp = _synthesize_response(intent, result or {}, log_dir / "context.json")
                 response_payload = _finalize_response(
                     resp,
-                    goal_completed=bool(result.get("goal_completed")),
-                    execution_completed=bool(result.get("execution_completed")),
-                    goal_status=str(result.get("goal_status") or ""),
+                    phase=str(result.get("phase") or "stopped"),
+                    verification=result.get("verification"),
                     intent=intent,
                 ).model_dump()
                 resp_path.write_text(json.dumps(response_payload, indent=2))

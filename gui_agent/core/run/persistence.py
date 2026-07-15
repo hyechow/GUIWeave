@@ -1,7 +1,7 @@
 """Projection of statement-local write and commit receipts.
 
 Persistence answers only whether dispatched writes crossed their declared boundary. It does not
-judge target values, propose actions, or advance milestones.
+judge target values, propose actions, or advance statements.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class PersistenceAssessment:
 
 
 def assess_persistence(
-    milestone: StatementContract,
+    statement: StatementContract,
     history: list[PolicyTurn],
     *,
     scope: str = "",
@@ -38,7 +38,7 @@ def assess_persistence(
         turn
         for turn in history
         if turn.supervisor is not None
-        and turn.supervisor.milestone_id == milestone.id
+        and turn.supervisor.statement_id == statement.id
         and (not scope or turn.supervisor.execution_scope in {"", scope})
         and turn.action_signal is not None
         and turn.action_signal.execution == "dispatched"
@@ -67,7 +67,7 @@ def assess_persistence(
         receipt
         for turn in writes
         if (receipt := turn.action_signal.mutation_receipt) is not None
-        and receipt.statement_id == milestone.id
+        and receipt.statement_id == statement.id
     )
 
     if terminal is not None:

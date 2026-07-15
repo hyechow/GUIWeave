@@ -5,7 +5,7 @@ an optional recommendation before execution starts. Runners use it only when dyn
 budgeting is explicitly enabled; max_turns remains a strict runtime boundary by default.
 
 CALIBRATION (against 10 real RoboTeam browser runs, 2026-06-13..16; logs only, no test
-fixtures): actual turns are driven almost entirely by ACTION milestones — reads consume
+fixtures): actual turns are driven almost entirely by ACTION statements — reads consume
 no turn (single-frame, hand-off-merged in run_agent_loop) and navigations are cheap. The
 OLD model summed a cost per STATEMENT and stacked keyword bonuses, so a verbose decompose
 (LLM split into 8 statements) estimated ~3-4x its real turn count (e.g. a 14-turn run →
@@ -15,7 +15,7 @@ predict. So we do NOT try to predict actual turns; we set a sensible CEILING:
 
   * read / filter / finish → 0 (no marginal turn);
   * navigation → cheap, capped (multi-hop nav usually collapses under nav knowledge);
-  * action milestones → the real driver, summed along the LONGEST branch with a small
+  * action statements → the real driver, summed along the LONGEST branch with a small
     per-action heavy bonus (form / create / upload / multi-waypoint sequence).
 
 Constants are tuned so normal tasks fall back to the floor (20) and only create-order
@@ -39,9 +39,9 @@ DEFAULT_CAP_TURNS = 32    # runaway ceiling; just above the observed max real ru
 FOREACH_ASSUMED_ITERS = 12
 FOREACH_CAP_TURNS = 80
 
-NAV_TURNS = 1             # a navigation milestone is ~1-3 taps but knowledge-guided hops collapse
+NAV_TURNS = 1             # a navigation statement is ~1-3 taps but knowledge-guided hops collapse
 NAV_CONTRIB_CAP = 4       # total navigation contribution, however many nav steps
-ACTION_BASE = 4           # a light action milestone (one button / a tiny form)
+ACTION_BASE = 4           # a light action statement (one button / a tiny form)
 ACTION_HEAVY_CAP = 6      # max heavy bonus on a single action → per-action ceiling = 10
 
 # Heavy-action signals (substring match on name+success_condition+read_spec, lowercased).
@@ -74,7 +74,7 @@ def estimate_program_turns(
     floor: int = DEFAULT_FLOOR_TURNS,
     cap: int | None = DEFAULT_CAP_TURNS,
 ) -> int:
-    """Estimate a global max_turns ceiling from a Program's action milestones.
+    """Estimate a global max_turns ceiling from a Program's action statements.
 
     Branches are estimated by the longest branch (only one path runs). `floor` preserves
     the caller's requested minimum; `cap` limits automatic expansion but never lowers
@@ -100,7 +100,7 @@ def _has_foreach(stmts: list[Stmt]) -> bool:
 
 
 def _estimate_stmts(stmts: list[Stmt]) -> int:
-    """Turn cost of a statement list: action milestones summed, navs capped, reads free."""
+    """Turn cost of a statement list: action statements summed, navs capped, reads free."""
     action_cost = 0
     nav_cost = 0
     branch_cost = 0

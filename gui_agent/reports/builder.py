@@ -38,9 +38,9 @@ def _normalize_error(raw: str | dict | None) -> dict | None:
     return raw  # already a dict from ProbeAbortedError
 
 
-def _group_steps_by_milestone(
+def _group_steps_by_statement(
     all_steps: list[ReportStep],
-    program_milestones: list[dict],
+    program_statements: list[dict],
     ms_lookup: dict[str, dict],
 ) -> list[ReportPage]:
     """Group recorded steps by statement invocation in first-seen order."""
@@ -50,11 +50,11 @@ def _group_steps_by_milestone(
         return ReportPage(
             title=ms_meta.get("name") or (first.description if first else f"StatementContract {key}"),
             steps=steps,
-            milestone_id=str(ms_meta.get("id") or (first.milestone_id if first else "")),
+            statement_id=str(ms_meta.get("id") or (first.statement_id if first else "")),
             instance_id=key,
-            milestone_kind=ms_meta.get("kind", "") or (first.milestone_kind if first else ""),
-            milestone_name=ms_meta.get("name", "") or (first.description if first else ""),
-            milestone_description=ms_meta.get("description", "") or (first.summary if first else ""),
+            statement_kind=ms_meta.get("kind", "") or (first.statement_kind if first else ""),
+            statement_name=ms_meta.get("name", "") or (first.description if first else ""),
+            statement_description=ms_meta.get("description", "") or (first.summary if first else ""),
             success_condition=ms_meta.get("success_condition", ""),
             checklist=ms_lookup.get(key, {}).get("checklist", []) or [],
         )
@@ -70,7 +70,7 @@ def _group_steps_by_milestone(
 
     pages: list[ReportPage] = []
     emitted: set[str] = set()
-    for ms in program_milestones:
+    for ms in program_statements:
         key = ms.get("instance_id") or ""
         if not key or key in emitted:
             continue
@@ -417,7 +417,11 @@ class RunnerReportBuilder:
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
         journal = ctx.get("journal") or {}
-        turns = journal.get("events") or []
+        turns = [
+            event
+            for event in (journal.get("events") or [])
+            if event.get("event_type") == "turn"
+        ]
         statement_views = StatementReportReducer().reduce(
             events=turns,
         )
@@ -431,10 +435,7 @@ class RunnerReportBuilder:
         data.output = outcome.get("output") or ""
         data.stop_reason = outcome.get("summary") or ""
         data.run_status = outcome.get("phase") or ""
-        data.goal_completed = (
-            outcome.get("phase") == "completed"
-            and outcome.get("verification") == "confirmed"
-        )
+        data.verification = outcome.get("verification") or ""
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}
         data.webarena = ctx.get("webarena") or {}
@@ -562,9 +563,9 @@ class RunnerReportBuilder:
                 status=status,
                 timestamp=turn.get("timestamp", ""),
                 index=idx,
-                milestone_id=sup.get("milestone_id", ""),
+                statement_id=sup.get("statement_id", ""),
                 instance_id=str(turn.get("statement_instance_id") or ""),
-                milestone_kind=sup.get("milestone_kind", ""),
+                statement_kind=sup.get("statement_kind", ""),
                 instruction=sup.get("instruction", ""),
                 summary=summary,
                 outcome_phase=outcome.get("phase") or "",
@@ -590,7 +591,7 @@ class RunnerReportBuilder:
 
         # Build statement lookup from recorded statement invocations.
         ms_lookup: dict[str, dict] = {}
-        milestones_static: list[dict] = []
+        statements_static: list[dict] = []
         for view in statement_views:
             key = view.instance_id
             ms_lookup[key] = {
@@ -612,15 +613,15 @@ class RunnerReportBuilder:
                 "verification": view.verification,
                 "kickback": view.kickback,
             }
-            milestones_static.append(ms_lookup[key])
+            statements_static.append(ms_lookup[key])
 
-        # Group steps by milestone — PROGRAM-ALIGNED when static list exists.
-        milestones_info: list[dict] = []
-        pages = _group_steps_by_milestone(
-            all_steps, milestones_static, ms_lookup
+        # Group steps by statement — PROGRAM-ALIGNED when static list exists.
+        statements_info: list[dict] = []
+        pages = _group_steps_by_statement(
+            all_steps, statements_static, ms_lookup
         )
 
-        # Build milestones summary
+        # Build statements summary
         for page in pages:
             ms_steps = page.steps
             ms_state = ms_lookup.get(page.instance_id, {})
@@ -632,12 +633,12 @@ class RunnerReportBuilder:
                 si, so = _sum_tokens(s.token_usage)
                 ms_in += si
                 ms_out += so
-            milestones_info.append({
-                "id": page.milestone_id,
+            statements_info.append({
+                "id": page.statement_id,
                 "instance_id": page.instance_id,
-                "name": page.milestone_name,
-                "kind": page.milestone_kind,
-                "description": page.milestone_description,
+                "name": page.statement_name,
+                "kind": page.statement_kind,
+                "description": page.statement_description,
                 "success_condition": page.success_condition,
                 "status": ms_state.get("status", ""),
                 "retry_count": ms_state.get("retry_count", 0),
@@ -654,20 +655,20 @@ class RunnerReportBuilder:
                 "cost": sum(_token_cost(s.token_usage) for s in ms_steps),
             })
 
-        # Set verification screenshot + checker: screenshot from next milestone's first turn;
-        # checker from ms_lookup[id].done_check (saved by runner when milestone completes).
+        # Set verification screenshot + checker: screenshot from next statement's first turn;
+        # checker from ms_lookup[id].done_check (saved by runner when statement completes).
         for i, page in enumerate(pages):
             if i + 1 < len(pages):
                 next_first = pages[i + 1].steps[0] if pages[i + 1].steps else None
                 if next_first and next_first.raw_screenshot_url:
                     page.verify_url = next_first.raw_screenshot_url
             page.verify_checker = ms_lookup.get(page.instance_id, {}).get("done_check", {})
-            # A milestone abandoned as INFEASIBLE never produces a done_check, so its 验收 slot is
+            # A statement abandoned as INFEASIBLE never produces a done_check, so its 验收 slot is
             # blank. Surface the Feasibility kick-back verdict (why + the re-decompose directive) as
-            # that milestone's terminal acceptance instead.
+            # that statement's terminal acceptance instead.
             kb = next((s for s in page.steps if s.outcome_phase == "infeasible"), None)
             if kb is not None:
-                # Acceptance display only — this milestone was judged infeasible. (The inline #0↻N
+                # Acceptance display only — this statement was judged infeasible. (The inline #0↻N
                 # program card is placed separately, by the re-decompose's at_turn, in runner_html.)
                 page.kickback = {
                     "reason": kb.outcome_summary or kb.summary,
@@ -675,10 +676,10 @@ class RunnerReportBuilder:
                 }
 
         data.pages = pages
-        data.milestones = milestones_info
-        # Decompose summary: list all milestones with names
+        data.statements = statements_info
+        # Decompose summary: list all statements with names
         ms_parts = []
-        for ms in milestones_info:
+        for ms in statements_info:
             ms_parts.append(f"#{ms['id']} {ms['name']}（{ms['kind']}）")
         data.decompose_summary = " → ".join(ms_parts) if ms_parts else ""
         data.stats = {

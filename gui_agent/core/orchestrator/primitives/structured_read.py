@@ -1,12 +1,12 @@
-"""Structured read: extract a read milestone's `returns` fields off the result frame.
+"""Structured read: extract a read statement's `returns` fields off the result frame.
 
-The orchestrator's read primitive. A read milestone's job is single-frame data extraction
+The orchestrator's read primitive. A read statement's job is single-frame data extraction
 (the inspect insight): read the requested fields, interpreting non-text signals (icons /
 colour / position) via the app's acceptance cues (_check.md), and return {field: value}
 (empty when not readable = 当没有 — never blocks the program). The interpreter then branches
 on those structured values, so "the checker saw it but the output didn't know" goes away.
 
-This runs ON the milestone's done-frame (the supervisor advanced the read milestone there,
+This runs ON the statement's done-frame (the supervisor advanced the read statement there,
 i.e. when the result is visible), so the verdict is read at exactly the right moment.
 """
 

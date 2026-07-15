@@ -4,7 +4,7 @@ After a tap is dispatched, render the snapped tap point as a marker on the
 pre-action frame and ask a light vision LLM whether it landed on the element
 the instruction intended. Runs concurrently with the post-action settle, so it
 adds ~no silent latency; the result is carried to the next turn where off_target
-routes straight into replan (see runner + MilestoneSupervisorPolicy).
+routes straight into replan (see runner + StatementSupervisorPolicy).
 
 It catches the "screen changed but to the wrong element" failure that SimStuck
 (screen-frozen) cannot — e.g. a 搜索框 tap that mis-hit the 转账 tab.

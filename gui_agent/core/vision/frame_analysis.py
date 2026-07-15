@@ -1,5 +1,5 @@
 """Frame analysis — the low-level VISUAL judgments shared by the runner (settle / effect)
-and the milestone supervisor (stuck / blank), kept out of those control-flow modules.
+and the statement supervisor (stuck / blank), kept out of those control-flow modules.
 
 Each function answers ONE narrow pixel question about screenshots:
   - ``frame_diff``     — grayscale mean abs diff. A weak STABILITY signal only ("did the

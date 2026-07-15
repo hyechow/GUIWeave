@@ -1,4 +1,4 @@
-# DSL Program Runtime 与 Milestone Executor
+# DSL Program Runtime 与 Statement Executor
 
 GUI 任务是一份混合程序：控制流、计算和数据查询可以确定性执行，只有交互 statement
 需要进入非确定性的 GUI 执行循环。架构边界因此按 **statement 执行方式** 划分，而不是按
@@ -19,7 +19,7 @@ Goal
             -> Read           当前 observation 读取
             -> Query          表格查询
             -> Direct nav     确定性设备命令 fast path
-       -> Interactive Run     交给 Milestone Executor
+       -> Interactive Run     交给 Statement Executor
             -> observe/check/plan/action loop
   -> StatementOutcome
   -> Interpreter resume
@@ -27,7 +27,7 @@ Goal
 
 不存在独立的调用帧架构层。Python generator 的 `yield Run` / `send(RunResult)` 已经是
 Interpreter 暂停和恢复的边界，再引入一个有状态、有恢复策略的“frame”只会与 Interpreter
-和 Milestone 重叠。
+和 Statement 重叠。
 
 ## Program Compiler
 
@@ -49,13 +49,13 @@ Interpreter 是所有 DSL statement 的统一运行时：
 
 - 解释 `If`、`ForEach`、`Call`、`Finish`；
 - 执行 `Compute`；
-- 将无需 Milestone loop 的 statement 交给 immediate dispatcher；
-- 将交互 `Run` yield 给 Milestone executor；
+- 将无需 Statement loop 的 statement 交给 immediate dispatcher；
+- 将交互 `Run` yield 给 Statement executor；
 - 接收统一的 `RunResult`，绑定 `var` 和 `returns`；
 - 保存 `env`、`run_log` 和 materialized tables；
 - 根据类型化失败决定继续、重试、重编排剩余 Program 或诚实失败。
 
-跨 statement 的恢复预算和 `RecoveryLedger` 属于 Program runtime。它们不能放进 Milestone，
+跨 statement 的恢复预算和 `RecoveryLedger` 属于 Program runtime。它们不能放进 Statement，
 也不能隐藏在一个旁路调用对象里。
 
 ## Statement Executors
@@ -77,14 +77,14 @@ RunResult:
 - `Read` 返回当前帧的结构化字段；
 - `Query` 返回标量字段或行集；SQL 语法/列名自修复留在 Query executor，数据源口径不符则升级；
 - 具体 URL/back 导航仍是交互 Run，但可以走 immediate navigation fast path；
-- Interactive Run 返回 Milestone 的终态证据及完成帧读值。
+- Interactive Run 返回 Statement 的终态证据及完成帧读值。
 
 通用结果构造属于 Interpreter runtime。返回字段的缺失、类型域和 canonicalization 属于
 `orchestrator/contracts.py`。合同校验只报告违约，不操作 GUI，也不决定恢复路线。
 
-## Milestone Executor
+## Statement Executor
 
-Milestone 是一个交互 Run 的闭环执行单元，不是一个原子动作，也不是整个 Program。
+Statement 是一个交互 Run 的闭环执行单元，不是一个原子动作，也不是整个 Program。
 
 ```text
 semantic Run
@@ -97,7 +97,7 @@ semantic Run
   -> completed | infeasible | exhausted | aborted
 ```
 
-Milestone 负责：
+Statement 负责：
 
 - 页面内 acquire、滚动、展开、页签和向导步骤；
 - 控件绑定和原子动作生成；
@@ -105,7 +105,7 @@ Milestone 负责：
 - 区分动作是否执行与动作效果是否出现；
 - 按证据优先级判断当前 Run 是否达到终态。
 
-Milestone 不能：
+Statement 不能：
 
 - 改变目标实体、写入值、基数或业务副作用；
 - 代替 Program 任选第一条记录完成消歧；
@@ -117,8 +117,8 @@ Milestone 不能：
 的组件；单条 Read/Query/Navigation executor 不知道下一条 statement。`recording.py` 统一写入
 turn、LLM 统计和 recovery ledger。
 
-`core/run/interactive.py` 是一个薄适配器：把其余交互 Run 转成 Supervisor 使用的 Milestone
-结构，启动 Milestone loop，并从终态 observation 提取声明返回值。它不拥有恢复策略。
+`core/run/interactive.py` 是一个薄适配器：把其余交互 Run 转成 Supervisor 使用的 Statement
+结构，启动 Statement loop，并从终态 observation 提取声明返回值。它不拥有恢复策略。
 
 ## 动作信号与完成状态
 
@@ -141,7 +141,7 @@ persistence: clean | pending | submitted
 回答本轮写入是否跨过声明的持久化边界。URL 变化、toast、列表刷新等只产生 response 或
 effect 证据；它们不能自行证明动作派发、业务效果和持久化三者同时成立。
 
-Milestone 的完成状态另行记录：
+Statement 的完成状态另行记录：
 
 ```text
 completion_status: confirmed | accepted_unverified | failed | in_progress
@@ -167,10 +167,10 @@ completion_status: confirmed | accepted_unverified | failed | in_progress
 动作，也不得直接读取跨帧 monitor 制造第二份响应事实。
 
 `ExecutionCoordinator` 是唯一把 action/effect/persistence claim 归约成完成建议的组件；`policy.py`
-是唯一应用建议、推进 Milestone 或发起恢复的控制流所有者。只有 Coordinator 仍建议普通 `act`
+是唯一应用建议、推进 Statement 或发起恢复的控制流所有者。只有 Coordinator 仍建议普通 `act`
 且 `ProgressMonitor` 给出停滞事实时，policy 才能升级为 `recover`；明确的 `commit` 前沿和已经确认
 的完成不受模糊 stuck 覆盖。checker、planner、monitor 和 adapter 只提供证据或提案，
-不能独立推进或重规划 Milestone。
+不能独立推进或重规划 Statement。
 
 ## 动作回执与持久边界
 
@@ -201,13 +201,13 @@ planner 重试仍返回 prepare/write/navigation 时，本轮不派发。这个�
 正常 acquire/向导步骤误判为回退。
 
 执行器在平台 adapter 成功派发 concrete primitive 后，用
-`execution_scope + milestone_id + atomic_role` 形成语义动作键并写入同一 `ActionSignal` 回执。
+`execution_scope + statement_id + atomic_role` 形成语义动作键并写入同一 `ActionSignal` 回执。
 动作键只标识历史事实，不在 dispatch 前充当第二套授权或重复提交门。持久化投影按 scope 读取
 write/commit 回执；`terminal_ready` 后由 policy 只接收终端 commit。foreach 的不同 row identity
 属于不同 scope，因此不会互相污染。
 
 旧字段 `mutation_mode`、`requires_commit`、`executed`、`no_effect` 和 `target_verify` 只承担模型
-边界或历史上下文兼容；新决策不得再把它们拼成单一“动作成功”结论。Program 与 Milestone 的
+边界或历史上下文兼容；新决策不得再把它们拼成单一“动作成功”结论。Program 与 Statement 的
 反序列化都经过同一兼容归一化函数，运行时只消费新合同字段。
 
 ## 执行预算与终态观察
@@ -231,14 +231,14 @@ primitive 校验之前；不能通过扩大 input 等动作族的 primitive 白�
 
 | 问题 | 所有者 |
 |---|---|
-| 控件不可见、需要滚动、局部动作无效 | Milestone loop |
+| 控件不可见、需要滚动、局部动作无效 | Statement loop |
 | 返回字段缺失、类型域违约 | result contract 报告，Program runtime 有界重试 |
-| Milestone 证明页面路线不可行 | Program runtime 接收证据并 redecompose |
+| Statement 证明页面路线不可行 | Program runtime 接收证据并 redecompose |
 | data query SQL 语法/列名错误 | Query executor 局部自修复 |
 | data query 数据源不充分或口径错误 | Query executor 报告，Program runtime 升级 |
 | DSL 引用、作用域、控制流错误 | Compiler validator/preflight |
 
-Milestone 尽量在不改变 WHAT 的条件下修复 HOW；一旦修复需要改变实体、业务步骤或数据源，
+Statement 尽量在不改变 WHAT 的条件下修复 HOW；一旦修复需要改变实体、业务步骤或数据源，
 必须返回类型化证据，由 Program runtime 处理。
 
 ## 渐进式编排
@@ -247,7 +247,7 @@ Milestone 尽量在不改变 WHAT 的条件下修复 HOW；一旦修复需要改
 
 1. **Program 渐进展开**：`foreach body_goal` 在拿到真实行后生成子程序；kickback 只重编排
    尚未完成的 Program。
-2. **Milestone 渐进执行**：一个语义 Run 在实时 observation 上展开为多轮页面内动作。
+2. **Statement 渐进执行**：一个语义 Run 在实时 observation 上展开为多轮页面内动作。
 
 前者可以改变剩余程序结构，后者只能改变当前 Run 的实现路线。两者通过 `RunResult` 和类型化
 失败通信，不共享隐式状态。

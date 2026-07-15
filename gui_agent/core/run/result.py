@@ -6,7 +6,7 @@ import time
 
 from llm.structured import get_llm_call_count
 
-from gui_agent.core.schemas import PolicyContext
+from gui_agent.core.schemas import PolicyContext, ProgramPhase, Verification
 from gui_agent.core.supervisor.base import SupervisorPolicy
 
 TURN_STATS = "\033[2mTurn {turn_no} stats: llm_calls={llm_calls}, elapsed={elapsed:.2f}s\033[0m"
@@ -16,15 +16,23 @@ def make_result(
     context: PolicyContext,
     stop_reason: str,
     collection_context: str | None = None,
+    *,
+    phase: ProgramPhase = "stopped",
+    verification: Verification | None = None,
 ) -> dict:
-    last_summary = context.journal.events[-1].supervisor.summary if context.journal.events else stop_reason
+    last_summary = context.journal.turns[-1].supervisor.summary if context.journal.turns else stop_reason
     turns_detail = []
-    for t in context.journal.events:
+    for t in context.journal.turns:
         entry: dict = {"no": t.index, "summary": t.supervisor.summary, "executed": t.executed}
-        entry["completion_status"] = (
+        entry["phase"] = (
+            t.supervisor.outcome.phase
+            if t.supervisor.outcome is not None
+            else "running"
+        )
+        entry["verification"] = (
             t.supervisor.outcome.verification
             if t.supervisor.outcome is not None
-            else "in_progress"
+            else None
         )
         if t.action_signal is not None:
             entry["action_signal"] = t.action_signal.model_dump(mode="json")
@@ -40,12 +48,9 @@ def make_result(
         "goal": context.goal,
         "result_summary": last_summary,
         "stop_reason": stop_reason,
-        # This base result is used before ProgramRuntime starts. Program terminal state
-        # is projected only by orchestration_result; completed statements are insufficient.
-        "execution_completed": False,
-        "goal_completed": False,
-        "goal_status": "incomplete",
-        "turns_count": len(context.journal.events),
+        "phase": phase,
+        "verification": verification,
+        "turns_count": len(context.journal.turns),
         "turns_detail": turns_detail,
         "task_type": context.task_type,
         "content_notes": context.journal.content_notes or None,
@@ -76,8 +81,6 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
         current=(current.name if current is not None else ""),
         terminal=terminal,
     )
-    base = make_result(context, terminal)
-    base["result_summary"] = reply
     # A program that reached finish but answered on an entirely-empty read produced no real
     # answer (the read found nothing on the frame) — do not let it masquerade as success.
     finish_incomplete = getattr(interp, "finish_incomplete", False)
@@ -85,24 +88,36 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
         r.result.verification == "accepted_unverified"
         for r in interp.run_log
     )
-    execution_completed = (
+    completed = (
         (current is None)
         and not interp.failed
         and not finish_incomplete
     )
-    base["execution_completed"] = execution_completed
-    base["goal_completed"] = execution_completed and not accepted_unverified
-    base["goal_status"] = (
-        "accepted_unverified"
-        if execution_completed and accepted_unverified
-        else ("confirmed" if base["goal_completed"] else "incomplete")
+    if completed:
+        phase: ProgramPhase = "completed"
+        verification: Verification | None = (
+            "accepted_unverified" if accepted_unverified else "confirmed"
+        )
+    elif interp.failed or finish_incomplete:
+        phase = "failed"
+        verification = None
+    elif "ESC" in terminal or "用户退出" in terminal or "用户按" in terminal:
+        phase = "interrupted"
+        verification = None
+    else:
+        phase = "stopped"
+        verification = None
+    base = make_result(
+        context,
+        terminal,
+        phase=phase,
+        verification=verification,
     )
+    base["result_summary"] = reply
     base["orchestrator"] = {
         "reply": reply,
-        "failed": interp.failed,
         "terminal": terminal,
         "run_log": run_log,
-        "accepted_unverified": accepted_unverified,
     }
     return base
 

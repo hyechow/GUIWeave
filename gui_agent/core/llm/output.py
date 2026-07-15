@@ -75,7 +75,7 @@ def compose_orchestration_reply(
     未完成 / 结论 from the WHOLE program's structured state, not just the last finish line.
 
     run_log: ordered statements [{name, phase, verification, reads:{字段:值}, summary}].
-    current: the in-progress (uncompleted) milestone name when interrupted (max_turns), else "".
+    current: the in-progress (uncompleted) statement name when interrupted (max_turns), else "".
     terminal: how the program ended — the finish/failure reply, or "达到最大轮数 N" etc."""
     cfg = resolve_llm_config("output")
     llm = ChatOpenAI(
@@ -135,14 +135,22 @@ def _chat_messages(
     if result is None:
         exec_text = f"本次未执行操作。原因：{non_action_reason or '未说明'}"
     else:
-        status = "成功" if result.get("goal_completed") else "失败"
+        phase = result.get("phase") or "stopped"
+        verification = result.get("verification")
+        status = (
+            "成功"
+            if phase == "completed" and verification == "confirmed"
+            else "已执行但未独立验真"
+            if phase == "completed"
+            else "失败"
+        )
         turns_detail = result.get("turns_detail", [])
         last_action = ""
         for t in reversed(turns_detail):
             if t.get("action_type") and t.get("executed"):
                 last_action = f"[{t['action_type']}] {t['action_desc']}"
                 break
-        # pre_existing is set by the supervisor when a milestone was found done
+        # pre_existing is set by the supervisor when a statement was found done
         # without the agent executing any actions for it (target state already existed).
         pre_existing = result.get("pre_existing", False)
         if pre_existing:
@@ -170,8 +178,8 @@ def _action_messages(goal: str, result: dict) -> list:
     ctx = {
         "goal": goal,
         "stop_reason": result.get("stop_reason", ""),
-        "goal_completed": result.get("goal_completed", False),
-        "goal_status": result.get("goal_status", ""),
+        "phase": result.get("phase", "stopped"),
+        "verification": result.get("verification"),
         "turn_count": result.get("turns_count", 0),
         "summary": result.get("result_summary", ""),
         "turns": result.get("turns_detail", []),
@@ -255,7 +263,13 @@ def _fmt_session(session: list[dict]) -> str:
         return "（无）"
     lines = []
     for i, e in enumerate(session, 1):
-        status = "✓" if e.get("goal_completed") else "✗"
+        status = (
+            "✓"
+            if e.get("phase") == "completed" and e.get("verification") == "confirmed"
+            else "~"
+            if e.get("phase") == "completed"
+            else "✗"
+        )
         lines.append(f"{i}. 用户说「{e['user_msg']}」→ {status} {e['result_summary']}")
     return "\n".join(lines)
 

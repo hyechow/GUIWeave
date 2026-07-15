@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
 
@@ -42,7 +42,7 @@ def action_label(action_type: str) -> str:
     return _ACTION_TYPE_LABELS.get(action_type, action_type)
 TaskType = Literal["action", "analysis"]
 ProgramPhase = Literal["completed", "failed", "interrupted", "stopped"]
-MilestoneKind = Literal["navigation", "filter", "collection", "action", "verification"]
+StatementKind = Literal["navigation", "filter", "collection", "action", "verification"]
 CompletionStrategy = Literal[
     "visible_once",
     "read_once",
@@ -213,13 +213,8 @@ class ProgramOutcome(BaseModel):
             raise ValueError(f"{self.phase} ProgramOutcome cannot carry verification")
         return self
 
-    @property
-    def goal_completed(self) -> bool:
-        return self.phase == "completed" and self.verification == "confirmed"
-
-
 def split_acceptance_items(success_condition: str, fallback: str = "") -> list[str]:
-    """Split a milestone success_condition into individual acceptance items.
+    """Split a statement success_condition into individual acceptance items.
 
     Shared by the checker (to enumerate items for per-item judgement) and the state derivation
     (to map per-item verdicts back) so the two agree on item identity and ordering. Splits on
@@ -632,7 +627,7 @@ class SupervisorStep(BaseModel):
         description="当前屏幕需要提取的内容说明（analysis 任务时由 Checker 填写）",
     )
     allow_read: bool = Field(default=False, description="是否允许 runner 将读取结果写入 content_notes")
-    milestone_id: Optional[str] = Field(default=None, description="当前子目标 ID")
+    statement_id: Optional[str] = Field(default=None, description="当前子目标 ID")
     execution_scope: str = Field(
         default="",
         description=(
@@ -641,7 +636,7 @@ class SupervisorStep(BaseModel):
             "<statement_instance_id>/row:<identity>。"
         ),
     )
-    milestone_kind: Optional[MilestoneKind] = Field(default=None, description="当前子目标类型")
+    statement_kind: Optional[StatementKind] = Field(default=None, description="当前子目标类型")
     completion_strategy: Optional[CompletionStrategy] = Field(default=None, description="当前子目标完成策略")
     atomic_role: AtomicRole = Field(
         default="prepare",
@@ -656,7 +651,7 @@ class SupervisorStep(BaseModel):
     )
     target_control: str = Field(
         default="",
-        description="planner 声明的本轮控件/字段目标；执行前与 milestone target_controls 对齐。",
+        description="planner 声明的本轮控件/字段目标；执行前与 statement target_controls 对齐。",
     )
     target_value: str = Field(
         default="",
@@ -677,7 +672,7 @@ class SupervisorStep(BaseModel):
     )
     collection_summary: Optional[str] = Field(
         default=None,
-        description="collection milestone 完成时的采集摘要（含停止条件及触发原因）",
+        description="collection statement 完成时的采集摘要（含停止条件及触发原因）",
     )
     direction: Optional[str] = Field(default=None, description="scroll/drag 手指方向 hint（up/down/left/right）")
     drag_column: Optional[str] = Field(default=None, description="picker drag 目标列 hint（year/month/day）")
@@ -723,7 +718,7 @@ class StatementContract(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_kind_and_strategy(cls, data: object) -> object:
-        """Normalize common LLM aliases for milestone intent fields."""
+        """Normalize common LLM aliases for statement intent fields."""
         if isinstance(data, dict):
             kind_aliases = {
                 "analysis": "verification",
@@ -776,7 +771,7 @@ class StatementContract(BaseModel):
     name: str
     description: str
     success_condition: str
-    kind: MilestoneKind = Field(
+    kind: StatementKind = Field(
         default="action",
         description="navigation | filter | collection | action | verification",
     )
@@ -789,7 +784,7 @@ class StatementContract(BaseModel):
     )
     precondition: bool = Field(
         default=False,
-        description="True when this milestone ensures an entry state and may already be satisfied on the first frame.",
+        description="True when this statement ensures an entry state and may already be satisfied on the first frame.",
     )
     effect_mode: Optional[EffectMode] = Field(
         default=None,
@@ -812,7 +807,7 @@ class StatementContract(BaseModel):
     )
     returns: list[str] = Field(
         default_factory=list,
-        description="声明的结构化返回字段；由编排器 Run.returns 填充，空 = 本 milestone 无出参。"
+        description="声明的结构化返回字段；由编排器 Run.returns 填充，空 = 本 statement 无出参。"
                     "StatementContract 返回后由 statement result contract 校验。",
     )
     read_spec: str = Field(
@@ -874,6 +869,55 @@ class StatementInfo(BaseModel):
     data_scope: str = ""
 
 
+class RuntimeConstraintInfo(BaseModel):
+    """Serializable statement-local constraint fact."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str
+    scope: str
+    source: str = "runtime"
+
+
+class ProgressTraceInfo(BaseModel):
+    """Serializable progress trace fact used to rebuild loop detection."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    index: int
+    state: str
+    decision: str
+    interaction_state: str = ""
+    scope: str = ""
+
+
+class StatementRuntimeSnapshot(BaseModel):
+    """Replay payload captured on every turn of an active statement.
+
+    Screenshots, target-acquisition probes, and other disposable controller caches are
+    intentionally excluded. Everything that affects logical retry, constraint, and progress
+    decisions is captured so a fresh executor can resume the invocation from journal facts.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    contract: StatementContract
+    retry_count: int = 0
+    early_feasibility_probed: bool = False
+    scroll_count: int = 0
+    execution_scope: str = ""
+    last_page_identity: str = ""
+    skip_initial_check: bool = False
+    statement_info_emitted: bool = False
+    task_type: TaskType = "action"
+    constraints: list[RuntimeConstraintInfo] = Field(default_factory=list)
+    progress_trace: list[ProgressTraceInfo] = Field(default_factory=list)
+    progress_values: list[str] = Field(default_factory=list)
+    last_url: Optional[str] = None
+    last_dom_state: Optional[str] = None
+    initial_filters: Optional[dict[str, str]] = None
+
+
 class TargetVerify(BaseModel):
     """Post-action targeting verify: did the snapped tap land on the intended element."""
 
@@ -885,6 +929,7 @@ class TargetVerify(BaseModel):
 class PolicyTurn(BaseModel):
     """One observe-decide-act turn saved in continue mode."""
 
+    event_type: Literal["turn"] = "turn"
     index: int
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     operation_mode: Literal["interactive", "observation", "non_interactive"] = Field(
@@ -903,6 +948,10 @@ class PolicyTurn(BaseModel):
     statement_instance_id: str = Field(
         default="",
         description="一次 statement 调用的实例 id（foreach 同 statement 多次调用互不相同）",
+    )
+    runtime_state: Optional[StatementRuntimeSnapshot] = Field(
+        default=None,
+        description="该 turn 收尾时的 statement 逻辑活态；仅用于 journal 重放恢复。",
     )
     supervisor: SupervisorStep
     action_decision: Optional[BaseActionDecision] = None
@@ -934,7 +983,7 @@ class PolicyTurn(BaseModel):
     no_effect: bool = Field(default=False, description="tap 类动作 settle 跑满上限且全程零变化：这一击对屏幕无效果（如重点已高亮 tab）")
     sections_loaded: list[str] = Field(
         default_factory=list,
-        description="本轮 planner 实际注入的渐进知识章节名（KnowledgeSelector 按 (milestone, page) 选定并缓存）；无渐进知识或未选中则为空",
+        description="本轮 planner 实际注入的渐进知识章节名（KnowledgeSelector 按 (statement, page) 选定并缓存）；无渐进知识或未选中则为空",
     )
     llm_context: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -961,25 +1010,126 @@ class PolicyTurn(BaseModel):
         return self
 
 
-class EventJournal(BaseModel):
-    """Append-only facts produced while executing one Program.
+class ProgramRevisionEvent(BaseModel):
+    """One immutable Program installation in the runtime revision history."""
 
-    Program and statement runtime state live elsewhere. The journal owns persisted turns and
-    extracted content; reports and completion logic may only project from these facts.
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_type: Literal["program_revision"] = "program_revision"
+    revision: int
+    action: Literal["start", "replace"]
+    program: dict[str, Any]
+    reason: str = ""
+    terminal_disposition: Literal["none", "abandon", "record_then_drop"] = "none"
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+
+class ContentNoteEvent(BaseModel):
+    """One extracted note; note text has no writable mirror outside the journal."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_type: Literal["content_note"] = "content_note"
+    note: str
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+
+class RecoveryJournalEvent(BaseModel):
+    """One Program-level recovery fact suitable for budget replay."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_type: Literal["recovery"] = "recovery"
+    recovery_class: str
+    mechanism: str
+    site: str
+    detail: str = ""
+    outcome: str = ""
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+
+JournalEvent = Annotated[
+    Union[PolicyTurn, ProgramRevisionEvent, ContentNoteEvent, RecoveryJournalEvent],
+    Field(discriminator="event_type"),
+]
+
+
+class EventJournal(BaseModel):
+    """The single append-only fact stream for one Program execution.
+
+    Turns, Program revisions, recovered content, and recovery mechanisms share one ordered log.
+    Runtime state and reports are rebuilt as pure projections; no parallel note or turn ledger
+    exists in the persisted shape.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = 1
-    events: list[PolicyTurn] = Field(default_factory=list)
-    content_notes: list[str] = Field(default_factory=list)
+    schema_version: Literal[2] = 2
+    events: list[JournalEvent] = Field(default_factory=list)
 
-    def append(self, event: PolicyTurn) -> PolicyTurn:
+    @property
+    def turns(self) -> list[PolicyTurn]:
+        return [event for event in self.events if isinstance(event, PolicyTurn)]
+
+    @property
+    def content_notes(self) -> list[str]:
+        return [event.note for event in self.events if isinstance(event, ContentNoteEvent)]
+
+    @property
+    def program_revisions(self) -> list[ProgramRevisionEvent]:
+        return [
+            event for event in self.events if isinstance(event, ProgramRevisionEvent)
+        ]
+
+    @property
+    def recovery_events(self) -> list[RecoveryJournalEvent]:
+        return [event for event in self.events if isinstance(event, RecoveryJournalEvent)]
+
+    def append_turn(self, event: PolicyTurn) -> PolicyTurn:
         self.events.append(event)
         return event
 
-    def append_content(self, note: str) -> None:
-        self.content_notes.append(note)
+    def append_content(self, note: str) -> ContentNoteEvent:
+        event = ContentNoteEvent(note=note)
+        self.events.append(event)
+        return event
+
+    def append_program(
+        self,
+        program: dict[str, Any],
+        *,
+        action: Literal["start", "replace"],
+        reason: str = "",
+        terminal_disposition: Literal["none", "abandon", "record_then_drop"] = "none",
+    ) -> ProgramRevisionEvent:
+        event = ProgramRevisionEvent(
+            revision=len(self.program_revisions) + 1,
+            action=action,
+            program=program,
+            reason=reason,
+            terminal_disposition=terminal_disposition,
+        )
+        self.events.append(event)
+        return event
+
+    def append_recovery(
+        self,
+        recovery_class: str,
+        mechanism: str,
+        site: str,
+        *,
+        detail: str = "",
+        outcome: str = "",
+    ) -> RecoveryJournalEvent:
+        event = RecoveryJournalEvent(
+            recovery_class=recovery_class,
+            mechanism=mechanism,
+            site=site,
+            detail=detail,
+            outcome=outcome,
+        )
+        self.events.append(event)
+        return event
 
 
 class PolicyContext(BaseModel):

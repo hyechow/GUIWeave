@@ -13,7 +13,8 @@ Task intent (includes the required output format):
 {intent}
 
 Agent task_type guess: {task_type_guess}
-Goal completed: {goal_completed}
+Program phase: {phase}
+Verification: {verification}
 Stop reason: {stop_reason}
 Run summary: {result_summary}
 
