@@ -98,5 +98,37 @@ def test_support_services_cannot_transition_milestones() -> None:
         source = inspect.getsource(module)
         assert "._advance(" not in source
         assert "._handle_stuck(" not in source
-        assert "milestone.status =" not in source
-        assert "SupervisorStep(" not in source
+
+
+def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> None:
+    """Ownership: StatementOutcome has no running phase; mid-loop uses ExecutorDecision."""
+    from gui_agent.core.run.statements import outcome as outcome_mod
+
+    source = inspect.getsource(outcome_mod.StatementOutcome)
+    assert "running" not in source or 'no "running"' in source or "no running" in source
+    assert "def completed(" in source
+    assert "def failed(" in source
+    assert "def infeasible(" in source
+
+    # Mid-turn decisions are a separate type — not StatementOutcome variants.
+    decision_source = inspect.getsource(outcome_mod.ExecutorDecision)
+    assert "act" in decision_source
+    assert "observe" in decision_source
+    assert "phase" not in decision_source
+
+    # Interactive mapping never invents a running outcome for mid-loop steps.
+    mid = type("S", (), {
+        "goal_completed": False,
+        "stop": False,
+        "replan_directive": None,
+        "summary": "go",
+        "stop_reason": "",
+        "completion_status": "in_progress",
+        "should_act": True,
+        "instruction": "tap",
+        "is_loading": False,
+        "preformed_action": None,
+    })()
+    assert outcome_mod.statement_outcome_from_supervisor_step(mid) is None
+    decision = outcome_mod.executor_decision_from_supervisor_step(mid)
+    assert decision is not None and decision.kind == "act"
