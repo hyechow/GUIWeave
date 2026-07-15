@@ -780,8 +780,13 @@ class GoalValidationResult(BaseModel):
     missing: str = Field(default="", description="缺少什么（sufficient=false 时填写）")
 
 
-class Milestone(BaseModel):
-    """Execution contract compiled from one interactive Program statement."""
+class StatementContract(BaseModel):
+    """Frozen execution contract for one Program statement invocation input.
+
+    Runtime status lives on StatementRuntimeState / StatementOutcome, never here.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     @model_validator(mode="before")
     @classmethod
@@ -823,7 +828,16 @@ class Milestone(BaseModel):
                 normalized["completion_strategy"] = strategy_aliases.get(
                     strategy.strip().lower(), strategy
                 )
-            return normalize_effect_contract_fields(normalized)
+            normalized = normalize_effect_contract_fields(normalized)
+            # Keep only declared contract fields (drop runtime/legacy extras).
+            allowed = {
+                "id", "name", "description", "success_condition", "kind",
+                "completion_strategy", "precondition", "effect_mode", "persistence",
+                "target_controls", "target_values", "returns", "read_spec",
+                "scroll_stop_condition", "observable_boundary", "scroll_budget",
+                "failure_hints",
+            }
+            return {k: v for k, v in normalized.items() if k in allowed}
         return data
 
     id: str
@@ -864,10 +878,6 @@ class Milestone(BaseModel):
             "满足的精确值集合，重复集合成员仍使用各自的标量合同。它不提供目标身份或写入授权。"
         ),
     )
-    completion_status: CompletionStatus = Field(
-        default="in_progress",
-        description="交互 Run 的终态确认级别。",
-    )
     returns: list[str] = Field(
         default_factory=list,
         description="声明的结构化返回字段；由编排器 Run.returns 填充，空 = 本 milestone 无出参。"
@@ -896,8 +906,6 @@ class Milestone(BaseModel):
         description="滚动预算上限（0=使用系统默认）。筛选降级为全量采集时由系统自动放大。",
     )
     failure_hints: list[str] = Field(default_factory=list)
-    status: str = Field(default="pending", description="pending | running | done | failed")
-    retry_count: int = 0
 
     @property
     def is_iterative(self) -> bool:
@@ -910,6 +918,32 @@ class Milestone(BaseModel):
         """连续操作中的「收敛到目标值」一味（picker/步进器/滑块）：重复同一操作逐步逼近
         success_condition 指定的目标值。区别于 scroll_until_boundary（滚动采集）。"""
         return self.completion_strategy == "repeat_until_satisfied"
+
+
+class StatementInfo(BaseModel):
+    """Persisted statement contract DTO written once per invocation (first turn)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = ""
+    name: str = ""
+    description: str = ""
+    kind: str = ""
+    success_condition: str = ""
+    completion_strategy: str = ""
+    precondition: bool = False
+    effect_mode: Optional[EffectMode] = None
+    persistence: PersistenceMode = "immediate"
+    target_controls: list[str] = Field(default_factory=list)
+    target_values: dict[str, TargetValue] = Field(default_factory=dict)
+    returns: list[str] = Field(default_factory=list)
+    read_spec: str = ""
+    sql: str = ""
+    data_scope: str = ""
+
+
+# Back-compat alias: package paths and many imports still say Milestone.
+Milestone = StatementContract
 
 
 class TargetVerify(BaseModel):
@@ -934,6 +968,14 @@ class PolicyTurn(BaseModel):
     )
     observation_source: str
     observation_url: str = Field(default="", description="本轮观察帧对应的截图文件名；为空时报告层按 turn index 回退推断")
+    statement: Optional[StatementInfo] = Field(
+        default=None,
+        description="本 statement invocation 首条 turn 的合同快照；后续 turn 为 None",
+    )
+    statement_instance_id: str = Field(
+        default="",
+        description="一次 statement 调用的实例 id（foreach 同 statement 多次调用互不相同）",
+    )
     supervisor: SupervisorStep
     action_decision: Optional[BaseActionDecision] = None
     non_ui: Optional[dict[str, Any]] = Field(
@@ -1043,14 +1085,6 @@ class PolicyContext(BaseModel):
     content_notes: list[str] = Field(default_factory=list)
     content_note_hashes: list[str] = Field(default_factory=list)
     run: RunState = Field(default_factory=RunState, description="本次运行的结构化状态")
-    milestones: list[dict] = Field(
-        default_factory=list,
-        description="静态子目标分解结果 [{id, name, description, kind, success_condition}]",
-    )
-    milestone_states: dict[str, MilestoneState] = Field(
-        default_factory=dict,
-        description="按 milestone_id 索引的运行态；避免把 status/done_check/reads 混进静态分解",
-    )
     models: dict[str, str] = Field(
         default_factory=dict,
         description="本次运行各 LLM 配置键实际使用的模型 {config_key: model}，用于成本核算自描述",
@@ -1069,15 +1103,6 @@ class PolicyContext(BaseModel):
                     "decompose 是独立阶段，报告据此渲染单独的「分解」行。",
     )
 
-    @model_validator(mode="after")
-    def _strip_runtime_fields_from_milestones(self) -> "PolicyContext":
-        """Keep static decomposition separate from runtime milestone state."""
-        for ms in self.milestones:
-            if not isinstance(ms, dict):
-                continue
-            for key in ("status", "retry_count", "done_check", "checklist", "reads"):
-                ms.pop(key, None)
-        return self
 
 
 # --- Back-compat aliases -----------------------------------------------------

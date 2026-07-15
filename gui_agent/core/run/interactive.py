@@ -1,8 +1,8 @@
 """Interactive statement executor adapter.
 
-The DSL interpreter yields an interactive ``Run``.  This module translates that statement into
-the Milestone representation consumed by the supervisor, starts the Milestone loop, and reads
-declared values from its terminal observation.  Retry and re-planning policy live elsewhere.
+Translates a DSL interactive ``Run`` into a frozen ``StatementContract``, begins
+the supervisor statement runtime, and reads declared returns from the terminal
+observation. Retry and re-planning policy live elsewhere.
 """
 
 from __future__ import annotations
@@ -12,12 +12,12 @@ import re
 from typing import TYPE_CHECKING, Callable, Literal
 
 from gui_agent.core.orchestrator.contracts import normalize_return_reads
-from gui_agent.core.orchestrator.program import INTERACTIVE_KINDS, Run, RunLike
-from gui_agent.core.schemas import Milestone
+from gui_agent.core.orchestrator.program import INTERACTIVE_KINDS, Query, Read, Run, RunLike
 from gui_agent.core.run.execution_signals import (
     ExecutionContract,
     action_requires_mutation_evidence,
 )
+from gui_agent.core.schemas import StatementContract, StatementInfo
 
 if TYPE_CHECKING:
     from gui_agent.core.schemas import Observation
@@ -48,21 +48,26 @@ def _needs_value_convergence(run: Run) -> bool:
     )
 
 
-def _milestone_id(run: Run, index: int) -> str:
-    base = run.var or f"m{index}_{run.kind}"
-    if run.var and run.kind in INTERACTIVE_KINDS and run.returns:
+def statement_id_for_run(run: RunLike, program_index: int) -> str:
+    """Stable Program-statement id shared by interactive and immediate paths."""
+    base = run.var or f"m{program_index}_{run.kind}"
+    if (
+        run.var
+        and getattr(run, "kind", "") in INTERACTIVE_KINDS
+        and getattr(run, "returns", None)
+    ):
         slug = re.sub(r"[^a-zA-Z0-9]+", "_", run.name).strip("_")[:32]
         digest = hashlib.sha1(run.name.encode("utf-8")).hexdigest()[:8]
         return f"{base}_{slug or digest}_{digest}"
     return base
 
 
-def milestone_for_run(run: Run, index: int) -> Milestone:
-    """Translate one interactive DSL statement into the Milestone executor's input."""
+def contract_for_run(run: Run, program_index: int) -> StatementContract:
+    """Translate one interactive DSL statement into a frozen execution contract."""
     if run.is_query:
         raise ValueError(
-            f"query run（kind={run.kind}）不是 milestone：非交互原语由解释器驱动，"
-            "需要交互时应先升格为 navigation/filter/action。"
+            f"query run（kind={run.kind}）不是 interactive contract："
+            "非交互原语由解释器驱动，需要交互时应先升格为 navigation/filter/action。"
         )
     kind, strategy = _KIND_MAP.get(run.kind, ("action", "visible_once"))
     if run.kind in {"action", "filter"} and _needs_value_convergence(run):
@@ -79,8 +84,8 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
             output_fields=run.returns,
         )
     )
-    return Milestone(
-        id=_milestone_id(run, index),
+    return StatementContract(
+        id=statement_id_for_run(run, program_index),
         name=run.name,
         description=description,
         success_condition=run.success_condition or f"完成「{run.name}」",
@@ -96,23 +101,101 @@ def milestone_for_run(run: Run, index: int) -> Milestone:
     )
 
 
+def statement_info_for_run(run: RunLike, program_index: int) -> StatementInfo:
+    """Persisted contract DTO for the first turn of a statement invocation."""
+    sid = statement_id_for_run(run, program_index)
+    if isinstance(run, Run) and run.is_interactive:
+        contract = contract_for_run(run, program_index)
+        return StatementInfo(
+            id=contract.id,
+            name=contract.name,
+            description=contract.description,
+            kind=contract.kind,
+            success_condition=contract.success_condition,
+            completion_strategy=contract.completion_strategy,
+            precondition=contract.precondition,
+            effect_mode=contract.effect_mode,
+            persistence=contract.persistence,
+            target_controls=list(contract.target_controls),
+            target_values=dict(contract.target_values),
+            returns=list(contract.returns),
+            read_spec=contract.read_spec or "",
+        )
+    sql = str(getattr(run, "sql", "") or "")
+    data_scope = str(getattr(run, "data_scope", "") or "")
+    returns = list(getattr(run, "returns", None) or [])
+    return StatementInfo(
+        id=sid,
+        name=run.name,
+        description=run.name,
+        kind=str(run.kind),
+        success_condition=str(getattr(run, "success_condition", "") or run.name),
+        returns=returns,
+        read_spec=str(getattr(run, "read_spec", "") or ""),
+        sql=sql,
+        data_scope=data_scope,
+    )
+
+
+def statement_info_from_contract(contract: StatementContract) -> StatementInfo:
+    return StatementInfo(
+        id=contract.id,
+        name=contract.name,
+        description=contract.description,
+        kind=contract.kind,
+        success_condition=contract.success_condition,
+        completion_strategy=contract.completion_strategy,
+        precondition=contract.precondition,
+        effect_mode=contract.effect_mode,
+        persistence=contract.persistence,
+        target_controls=list(contract.target_controls),
+        target_values=dict(contract.target_values),
+        returns=list(contract.returns),
+        read_spec=contract.read_spec or "",
+    )
+
+
+# Back-compat names used by existing tests/callers.
+milestone_for_run = contract_for_run
+
+
 def task_type_for_run(run: RunLike) -> Literal["action", "analysis"]:
     """Choose the supervisor read mode for a statement."""
     return "analysis" if run.kind in {"read", "data_query"} else "action"
 
 
-def start_milestone(supervisor, run: Run, index: int, *, fresh_advance: bool = False) -> Milestone:
-    """Seed the supervisor with the Milestone for one interactive statement."""
-    milestone = milestone_for_run(run, index)
+def start_milestone(
+    supervisor,
+    run: Run,
+    index: int,
+    *,
+    fresh_advance: bool = False,
+    instance_id: str = "",
+) -> StatementContract:
+    """Begin one interactive statement on the supervisor (alias for begin_statement)."""
+    contract = contract_for_run(run, index)
+    iid = instance_id or f"inst-{index}-{contract.id}"
+    begin = getattr(supervisor, "begin_statement", None)
+    if callable(begin):
+        begin(
+            contract,
+            instance_id=iid,
+            task_type=task_type_for_run(run),
+            fresh_advance=fresh_advance,
+        )
+        return contract
+    # Legacy reseed path during migration of tests that still mock reseed.
     set_contract = getattr(supervisor, "set_execution_contract", None)
     if callable(set_contract):
-        set_contract(ExecutionContract.from_milestone(milestone))
-    supervisor.reseed(
-        milestone,
-        task_type=task_type_for_run(run),
-        fresh_advance=fresh_advance,
-    )
-    return milestone
+        set_contract(ExecutionContract.from_milestone(contract))
+    reseed = getattr(supervisor, "reseed", None)
+    if callable(reseed):
+        reseed(
+            contract,
+            task_type=task_type_for_run(run),
+            fresh_advance=fresh_advance,
+        )
+    return contract
 
 
 def extract_run_returns(
@@ -123,10 +206,7 @@ def extract_run_returns(
     prepare_vision_prompt_png=None,
     say: Callable[[str], None] = lambda _s: None,
 ) -> dict[str, str]:
-    """Read declared outputs from an interactive statement's terminal observation.
-
-    Source priority is deterministic URL JSON, DOM form controls, then visual structured read.
-    """
+    """Read declared outputs from an interactive statement's terminal observation."""
     if run is None or not run.returns or run.is_query:
         return {}
 
@@ -135,7 +215,9 @@ def extract_run_returns(
     returns = list(run.returns)
     read_spec = run.read_spec or ""
     json_reads = read_json_url_returns(run.name or "", returns, read_spec)
-    if json_reads is not None and any(str(json_reads.get(field, "")).strip() for field in returns):
+    if json_reads is not None and any(
+        str(json_reads.get(field, "")).strip() for field in returns
+    ):
         json_reads = normalize_return_reads(run, json_reads)
         say(f"  [Orchestrator] URL JSON 返回读取 {returns} → {json_reads}")
         return json_reads

@@ -7,6 +7,7 @@ from typing import Any
 from llm.structured import get_llm_call_count, get_llm_token_usage
 
 from gui_agent.core.orchestrator.program import RunLike
+from gui_agent.core.run.interactive import statement_id_for_run, statement_info_for_run
 from gui_agent.core.run.turns import make_immediate_statement_turn
 from gui_agent.core.schemas import PolicyContext
 
@@ -23,6 +24,7 @@ def record_statement_outcome(
     started_at: float,
     llm_calls_before: int,
     tokens_before: tuple[int, int],
+    statement_instance_id: str = "",
 ) -> None:
     """Apply reporting and ledger effects after an executor has finished one statement."""
     for notice in outcome.recovery_notices:
@@ -35,15 +37,9 @@ def record_statement_outcome(
                 outcome=notice.outcome,
             )
 
-    statement_id = statement.var or f"m{statement_index}_{statement.kind}"
-    if not any(item.get("id") == statement_id for item in context.milestones):
-        context.milestones.append({
-            "id": statement_id,
-            "name": statement.name,
-            "description": statement.name,
-            "kind": statement.kind,
-            "success_condition": outcome.summary,
-        })
+    statement_id = statement_id_for_run(statement, statement_index)
+    info = statement_info_for_run(statement, statement_index)
+    iid = statement_instance_id or f"imm-{statement_index}:{statement_id}"
 
     observation = outcome.observation
     context.turns.append(make_immediate_statement_turn(
@@ -70,4 +66,7 @@ def record_statement_outcome(
         input_tokens=get_llm_token_usage()[0] - tokens_before[0],
         output_tokens=get_llm_token_usage()[1] - tokens_before[1],
         llm_context=outcome.context_reports,
+        statement=info,
+        statement_instance_id=iid,
+        outcome=outcome,
     ))

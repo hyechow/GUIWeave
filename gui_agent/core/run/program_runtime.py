@@ -43,6 +43,8 @@ class ProgramRuntime:
     recovery: RecoveryLedger = field(default_factory=RecoveryLedger)
     kickback_replans: int = 0
     reply: str | None = None
+    _instance_seq: int = 0
+    current_instance_id: str = ""
 
     @classmethod
     def start(
@@ -78,6 +80,14 @@ class ProgramRuntime:
             recovery=recovery or RecoveryLedger(),
             reply=reply,
         )
+
+    def next_instance_id(self, statement_id: str = "") -> str:
+        """Monotonic instance id for one statement invocation (foreach-safe)."""
+        self._instance_seq += 1
+        suffix = statement_id or "stmt"
+        iid = f"i{self._instance_seq}:{suffix}"
+        self.current_instance_id = iid
+        return iid
 
     @property
     def finished(self) -> bool:

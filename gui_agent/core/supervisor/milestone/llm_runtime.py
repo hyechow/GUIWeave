@@ -298,7 +298,9 @@ class MilestoneLLMRuntimeMixin:
                 milestone_block(milestone),
                 replan_state_block(
                     check,
-                    retry_count=milestone.retry_count,
+                    retry_count=getattr(self, "_rt", None).retry_count
+                    if getattr(self, "_statement_rt", None) is not None
+                    else 0,
                     failure_hints=milestone.failure_hints,
                 ),
                 constraints_block(self._constraints_for_scope()),

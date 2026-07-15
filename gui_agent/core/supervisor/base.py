@@ -6,7 +6,7 @@ from gui_agent.core.schemas import Observation, PolicyTurn, SupervisorStep
 
 
 class SupervisorPolicy(Protocol):
-    """Supervises task execution: observe history, decide whether/what to do next."""
+    """Supervises one interactive statement at a time."""
 
     name: str
 
@@ -25,7 +25,3 @@ class SupervisorPolicy(Protocol):
         history: list[PolicyTurn],
     ) -> SupervisorStep:
         """Observe and arbitrate once without proposing or dispatching another action."""
-
-    def runtime_state_snapshot(self) -> dict:
-        """Return supervisor-owned runtime state for persistence."""
-        ...

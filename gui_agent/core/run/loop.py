@@ -53,9 +53,15 @@ from gui_agent.core.orchestrator.recovery import (
 )
 from gui_agent.core.run.program_runtime import ProgramRuntime
 from gui_agent.core.run.statements.outcome import StatementOutcome
-from gui_agent.core.run.interactive import extract_run_returns, start_milestone
+from gui_agent.core.run.interactive import (
+    contract_for_run,
+    extract_run_returns,
+    start_milestone,
+    statement_id_for_run,
+    statement_info_for_run,
+    statement_info_from_contract,
+)
 from gui_agent.core.run.turns import (
-    SupervisorTimingCarry,
     interactive_turn_count as _interactive_turn_count,
     make_verdict_turn,
     record_interactive_turn,
@@ -65,10 +71,7 @@ from gui_agent.core.supervisor.base import SupervisorPolicy
 from gui_agent.core.llm.temporal import resolve_temporal_expressions
 from gui_agent.core.policies.base import ActionPolicy
 from gui_agent.core.schemas import PolicyContext
-from gui_agent.core.run.state import (
-    sync_context_run_state,
-    sync_milestone_states,
-)
+from gui_agent.core.run.state import sync_context_run_state
 
 if TYPE_CHECKING:
     # Adapter types used only in annotations. With `from __future__ import
@@ -230,7 +233,6 @@ def run_agent_loop(
             context.orchestrator["run_log"] = [
                 r.model_dump(mode="json") for r in rt.interpreter.run_log
             ]
-        sync_milestone_states(supervisor, context)
         _save_context(context_path, context)
 
     def _finish(result: dict) -> dict:
@@ -385,8 +387,10 @@ def run_agent_loop(
                 recovery=rt.recovery,
                 allow_navigation=allow_navigation,
             )
-            if rt.current is not None:
-                milestone = start_milestone(
+            if rt.current is not None and getattr(rt.current, "is_interactive", False):
+                sid = statement_id_for_run(rt.current, rt.index)
+                iid = rt.next_instance_id(sid)
+                start_milestone(
                     supervisor,
                     rt.current,
                     rt.index,
@@ -394,15 +398,8 @@ def run_agent_loop(
                         observation_for_statements is not None
                         and not bool(getattr(rt.current, "returns", None))
                     ),
+                    instance_id=iid,
                 )
-                if not any(item.get("id") == milestone.id for item in context.milestones):
-                    context.milestones.append({
-                        "id": milestone.id,
-                        "name": milestone.name,
-                        "description": milestone.description,
-                        "kind": milestone.kind,
-                        "success_condition": milestone.success_condition,
-                    })
                 rt.mark_notes(len(context.content_notes))
             _immediate_failure = result.failure_evidence
             if result.observation is not None:
@@ -417,6 +414,7 @@ def run_agent_loop(
             outcome: StatementOutcome,
         ) -> dict:
             """Terminal interactive statement → ProgramRuntime.send → task result."""
+            end = getattr(supervisor, "end_statement", None)
             return finish_terminal_step(
                 outcome=outcome,
                 read_state=read_state,
@@ -425,23 +423,19 @@ def run_agent_loop(
                 context=context,
                 finish=_finish,
                 say=_say,
+                end_statement=end if callable(end) else None,
             )
 
         def _outcome_from_step(sv_step, *, reads=None, rows=None):
             outcome = sv_step.outcome
             if outcome is None:
                 return None
-            updates = {
-                "evidence": [
-                    *outcome.evidence,
-                    *context.content_notes[rt.notes_mark :],
-                ]
-            }
+            updates: dict = {}
             if reads is not None:
                 updates["reads"] = reads
             if rows is not None:
                 updates["rows"] = rows
-            return outcome.model_copy(update=updates)
+            return outcome.model_copy(update=updates) if updates else outcome
 
         _orchestrator_reports = list(orchestrator_context_reports or [])
         _orchestrator_metrics = next(
@@ -654,7 +648,6 @@ def run_agent_loop(
             # _timings, so the completion check that detected the prior milestone done would be lost
             # from this turn's breakdown. Carry each handed-off step's timings here and merge them
             # back after the loop, so the report shows the checker call that ran on the hand-off.
-            _carry = SupervisorTimingCarry()
             while True:
                 _status(turn_no, f"使用 {supervisor.name} supervisor 决策中…")
                 _say("监督决策中...")
@@ -702,9 +695,16 @@ def run_agent_loop(
                             violations=_contract.out_of_domain,
                         )
                         rt.retry_current(tightened)
-                        start_milestone(
-                            supervisor, rt.current, rt.index, fresh_advance=False,
-                        )
+                        new_contract = contract_for_run(tightened, rt.index)
+                        reset = getattr(supervisor, "reset_for_return_retry", None)
+                        if callable(reset):
+                            reset(new_contract)
+                        else:
+                            start_milestone(
+                                supervisor, tightened, rt.index,
+                                fresh_advance=False,
+                                instance_id=rt.current_instance_id,
+                            )
                         _say(
                             "  [Orchestrator] 返回值合同未满足，继续定位"
                             f"（{_attempt}/{MAX_EMPTY_RETURN_RECOVERIES}）："
@@ -724,9 +724,13 @@ def run_agent_loop(
                         _outcome = StatementOutcome.exhausted(
                             "返回值合同未满足：" + _contract.describe(),
                             reads=_reads,
-                            evidence=context.content_notes[rt.notes_mark:],
                         )
-                        nxt = rt.send_outcome(_outcome)
+                        try:
+                            nxt = rt.send_outcome(_outcome)
+                        finally:
+                            end = getattr(supervisor, "end_statement", None)
+                            if callable(end):
+                                end(_outcome)
                         if rt.finished:
                             _orch_reply = rt.reply or ""
                         elif nxt is not None:
@@ -738,7 +742,12 @@ def run_agent_loop(
                     rows=_rows,
                 )
                 assert _outcome is not None and _outcome.is_completed
-                rt.send_outcome(_outcome)
+                try:
+                    rt.send_outcome(_outcome)
+                finally:
+                    end = getattr(supervisor, "end_statement", None)
+                    if callable(end):
+                        end(_outcome)
                 if rt.finished:
                     _orch_reply = rt.reply or ""
                     break
@@ -763,7 +772,6 @@ def run_agent_loop(
                 if _reply is not None:
                     _orch_reply = _reply
                     break
-                _carry.collect(supervisor)
                 assert rt.current is not None
                 _say(
                     f"  [Orchestrator] 子目标「{_done_name}」完成 → 下一子任务："
@@ -773,8 +781,6 @@ def run_agent_loop(
             # Merge the carried hand-off step timings into the supervisor's (final step's) timings,
             # so this turn's breakdown includes the checker call that ran on the hand-off. Carried
             # (earlier-step) keys render first; later writes (e.g. action_policy) still append after.
-            _carry.merge_into(supervisor)
-
             if _orch_reply is not None:
                 read_state.drain_pending(say=_say)
                 # The program ended on this hand-off (last actionable milestone done → read /
@@ -795,8 +801,7 @@ def run_agent_loop(
                         observation_only=_budget_reconcile,
                     ))
                 # Sync the last milestone's done verdict into context (no later turn body runs).
-                sync_milestone_states(supervisor, context)
-                # Feasibility Guard query kick-back: the program ended because a data_query failed with a
+                        # Feasibility Guard query kick-back: the program ended because a data_query failed with a
                 # re-plannable data-source issue (source empty / mismatched with the task). Re-decompose
                 # with that evidence as the directive instead of finishing on the failure.
                 if _immediate_failure:
@@ -825,7 +830,6 @@ def run_agent_loop(
                     output_tokens=get_llm_token_usage()[1] - tokens_before[1],
                     observation_only=True,
                 ))
-                sync_milestone_states(supervisor, context)
                 _save_ctx()
                 _budget_outcome = _outcome_from_step(sv_step)
                 if _budget_outcome is not None:

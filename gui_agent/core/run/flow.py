@@ -143,6 +143,7 @@ def finish_terminal_step(
     context: PolicyContext,
     finish: Callable[[dict], dict],
     say: Callable[[str], None],
+    end_statement: Callable[[Any], None] | None = None,
 ) -> dict:
     """Flush reads and send the authoritative terminal outcome into ProgramRuntime."""
     reason = outcome.summary or "statement stopped"
@@ -154,7 +155,11 @@ def finish_terminal_step(
     else:
         say(f"\n任务未完成：{outcome.summary or reason}")
 
-    program_runtime.send_outcome(outcome)
+    try:
+        program_runtime.send_outcome(outcome)
+    finally:
+        if end_statement is not None:
+            end_statement(outcome)
     if program_runtime.finished:
         return finish(
             orchestration_result(

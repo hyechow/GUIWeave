@@ -494,7 +494,8 @@ def run_planner(
         prompts = MilestonePrompts.neutral()
     if constraints is None:
         constraints = []
-    if milestone.retry_count > 0 and not extra:
+    _retry = int(getattr(milestone, "retry_count", 0) or 0)
+    if _retry > 0 and not extra:
         tried = sorted({
             t.supervisor.instruction
             for t in history
@@ -509,7 +510,7 @@ def run_planner(
         if tried:
             tried_lines = "\n".join(f"  - 「{i}」" for i in tried)
             extra = (
-                f"⚠️ 该子目标已尝试 {milestone.retry_count} 次。以下操作在本子目标中已经尝试过但尚未达成验收条件，"
+                f"⚠️ 该子目标已尝试 {_retry} 次。以下操作在本子目标中已经尝试过但尚未达成验收条件，"
                 f"请优先选择当前截图中不同的可见入口或下一步元素：\n{tried_lines}"
             )
         if dead_ends:

@@ -17,7 +17,6 @@ from gui_agent.core.config import resolve_llm_config
 from gui_agent.core.run.action_signals import build_action_signal
 from gui_agent.core.run.context import extract_checker, extract_plan, extract_replan
 from gui_agent.core.run.result import print_timings, print_turn_stats
-from gui_agent.core.run.state import sync_milestone_states
 from gui_agent.core.schemas import (
     AtomicRole,
     PolicyContext,
@@ -275,7 +274,6 @@ def record_interactive_turn(
     )
     print_timings(supervisor)
     context.turns.append(turn)
-    sync_milestone_states(supervisor, context)
     save_context()
     if not silent:
         print_turn_stats(turn.index, turn_started_at, llm_calls_before)
@@ -323,25 +321,39 @@ def make_immediate_statement_turn(
     input_tokens: int = 0,
     output_tokens: int = 0,
     llm_context: list[dict] | None = None,
+    statement: Any = None,
+    statement_instance_id: str = "",
+    outcome: Any = None,
 ) -> PolicyTurn:
-    """Record a statement completed without a Milestone decision loop.
+    """Record a statement completed without an interactive decision loop.
 
     The persisted ``operation_mode=non_interactive`` value is a compatibility/budget label: it
     means no supervisor turn was consumed, not that every statement is free of GUI side effects.
     """
+    from gui_agent.core.schemas import StatementOutcome
+
     elapsed = max(0.0, time.perf_counter() - started_at) if started_at is not None else 0.0
+    if outcome is None:
+        outcome = (
+            StatementOutcome.completed(summary, verification="confirmed", reads=dict(reads or {}))
+            if completed
+            else StatementOutcome.failed(summary, reads=dict(reads or {}))
+        )
     return PolicyTurn(
         index=index,
         operation_mode="non_interactive",
         observation_source=observation_source,
         observation_url=observation_url,
+        statement=statement,
+        statement_instance_id=statement_instance_id,
         supervisor=SupervisorStep(
             should_act=False,
             instruction=None,
             summary=summary,
             milestone_id=milestone_id,
-            milestone_kind="collection",
+            milestone_kind=kind if kind in {"navigation", "filter", "action", "collection", "verification"} else "collection",
             completion_strategy="read_once",
+            outcome=outcome,
         ),
         action_decision=None,
         non_ui={

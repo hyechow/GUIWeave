@@ -87,7 +87,9 @@ class RunResult(BaseModel):
 
     @model_validator(mode="after")
     def _infer_completion_status(self) -> "RunResult":
-        """Keep old serialized/results constructors compatible with the richer status."""
+        """Keep constructors compatible; reject contradictory bool/status combos."""
+        if self.completed and self.failed:
+            raise ValueError("RunResult cannot be both completed and failed")
         if self.completion_status is None:
             if self.failed:
                 self.completion_status = "failed"
@@ -95,6 +97,26 @@ class RunResult(BaseModel):
                 self.completion_status = "confirmed"
             else:
                 self.completion_status = "in_progress"
+        if self.failed and self.completion_status != "failed":
+            raise ValueError("failed RunResult requires completion_status='failed'")
+        if self.completed and self.completion_status not in (
+            "confirmed", "accepted_unverified",
+        ):
+            raise ValueError(
+                "completed RunResult requires completion_status confirmed|accepted_unverified"
+            )
+        if (
+            not self.completed
+            and not self.failed
+            and self.completion_status not in (None, "in_progress")
+        ):
+            # Allow explicit failed-status only when failed=True (handled above).
+            if self.completion_status == "failed":
+                raise ValueError("completion_status='failed' requires failed=True")
+            if self.completion_status in ("confirmed", "accepted_unverified"):
+                raise ValueError(
+                    "confirmed/accepted_unverified requires completed=True"
+                )
         return self
 
     @property

@@ -40,6 +40,7 @@ from gui_agent.core.run.progress_monitor import (
     ProgressMonitor,
     canonical_url,
 )
+from gui_agent.core.run.statement_runtime import StatementRuntimeState
 from .schemas import (
     MilestonePrompts,
     _PlanResult,
@@ -108,51 +109,26 @@ class MilestoneSupervisorPolicy(
         self._active_target_resolver = active_target_resolver
         self._mutation_control_resolver = mutation_control_resolver
         self._static_constraints: list[str] = []
-        self._active_milestone: Milestone | None = None
-        # One-shot: skip the next step()'s initial done-check and plan directly (set by reseed
-        # for a freshly-entered navigation statement.
-        self._skip_initial_check: bool = False
-        self._scroll_count: int = 0
+        self._statement_rt: StatementRuntimeState | None = None
         self.task_type: Literal["action", "analysis"] = "action"
         self._app_knowledge: Optional[str] = None
         self._check_knowledge: str = ""
         self._elements_knowledge: Optional[str] = None
         self._pk: Optional[ProgressiveKnowledge] = None  # progressive (skill-like) section loader
         self._app_name: str = ""
-        # url/dom-delta effect signals now live on the ProgressMonitor (observe_effect).
-        self._last_page_identity: str = ""
-        # 连续调值进展窗口、url/dom 效果信号、帧/指令/值停滞探测都在 ProgressMonitor 上。
-        # Progress memory is observational. It may trigger recovery in this policy, but it never
-        # suppresses a primitive inside the action executor.
-        self._monitor = ProgressMonitor()
-        self._constraint_ledger = ConstraintLedger()
         self._execution_coordinator = ExecutionCoordinator()
-        self._execution_contract: ExecutionContract | None = None
-        self._current_execution_scope: str = ""
-        self._early_feasibility_probed: bool = False
-        self._last_check: Optional[_SingleCheckResult] = None
-        self._collection_progress: str = ""
-        self._collection_done: bool = False
         # Run-level filter provenance ledger: the FIRST applied-filters snapshot this run observed.
-        # Chips already present there were inherited (candidate cross-task residue); chips that
-        # appear later were set by this run's own steps — task scope, not residue. Rendered into
-        # the checker/planner applied-filter block so "清除残留" can no longer destroy upstream scope.
         self._initial_filters: Optional[dict[str, str]] = None
-        self._done_check: Optional[_SingleCheckResult] = None
         self._last_plan: Optional[_PlanResult] = None
         self._last_replan: Optional[_ReplanResult] = None
-        self._last_sections_loaded: list[str] = []  # progressive section stems injected this turn (logged)
-        self._context_reports: list[dict] = []       # context/selector decisions for this turn
-        # KnowledgeSelector cache: (milestone_id, normalized page_identity) → section stems.
-        # Selection only changes when the page or the milestone changes, so within a key the
-        # selector LLM is never re-invoked (empty selections are cached too).
+        self._last_sections_loaded: list[str] = []
+        self._context_reports: list[dict] = []
         self._selector_cache: dict[tuple[str, str], list[str]] = {}
-        self._goal: str = ""  # active statement goal; selector prompt context
+        self._goal: str = ""
         self._timings: dict[str, float] = {}
         self._timings_order: list[str] = []
-        self._token_usage: dict[str, dict[str, int]] = {}   # per-module {input, output}
+        self._token_usage: dict[str, dict[str, int]] = {}
         self._observe_only: bool = False
-        self._target_acquire = TargetAcquireController()
 
     def _active_targets(self, observation: Observation) -> tuple[str, ...]:
         """Read optional platform structure without making core depend on adapter schemas."""
@@ -214,31 +190,147 @@ class MilestoneSupervisorPolicy(
         if app_name:
             self._app_name = app_name
 
-    def runtime_state_snapshot(self) -> dict:
-        """Return persisted runtime state without exposing supervisor internals."""
-        active = self._active_milestone
-        return {
-            "milestones": ({
-                active.id: {
-                    "status": active.status,
-                    "retry_count": active.retry_count,
-                }
-            } if active is not None else {}),
-            "done_checks": ({
-                active.id: self._done_check.model_dump(mode="json", exclude_none=True)
-            } if active is not None and self._done_check is not None else {}),
-            "last_page_identity": ({active.id: self._last_page_identity} if active else {}),
-            "scroll_counts": ({active.id: self._scroll_count} if active else {}),
-            "progress_values": {
-                mid: list(values)
-                for mid, values in self._monitor._progress_values.items()
-            },
-            "constraints": self.constraints_snapshot(),
-        }
 
-    def set_execution_contract(self, contract: ExecutionContract) -> None:
-        """Install the internal contract for the next reseeded interactive statement."""
-        self._execution_contract = contract
+
+
+    # ── StatementRuntime accessors ────────────────────────────────────
+    @property
+    def _rt(self) -> StatementRuntimeState:
+        if self._statement_rt is None:
+            raise RuntimeError(
+                "InteractiveStatementExecutor requires begin_statement(...) before step()"
+            )
+        return self._statement_rt
+
+    @property
+    def _active_milestone(self):
+        return None if self._statement_rt is None else self._statement_rt.contract
+
+    @property
+    def _monitor(self):
+        return self._rt.monitor
+
+    @property
+    def _constraint_ledger(self):
+        return self._rt.constraint_ledger
+
+    @property
+    def _execution_contract(self):
+        return self._rt.execution_contract
+
+    @_execution_contract.setter
+    def _execution_contract(self, value):
+        self._rt.execution_contract = value
+
+    @property
+    def _current_execution_scope(self) -> str:
+        return "" if self._statement_rt is None else self._statement_rt.execution_scope
+
+    @_current_execution_scope.setter
+    def _current_execution_scope(self, value: str) -> None:
+        if self._statement_rt is not None:
+            self._statement_rt.execution_scope = value
+
+    @property
+    def _last_check(self):
+        return None if self._statement_rt is None else self._statement_rt.last_check
+
+    @_last_check.setter
+    def _last_check(self, value) -> None:
+        if self._statement_rt is not None:
+            self._statement_rt.last_check = value
+
+    @property
+    def _done_check(self):
+        return None if self._statement_rt is None else self._statement_rt.done_check
+
+    @_done_check.setter
+    def _done_check(self, value) -> None:
+        if self._statement_rt is not None:
+            self._statement_rt.done_check = value
+
+    @property
+    def _last_page_identity(self) -> str:
+        return self._rt.last_page_identity
+
+    @_last_page_identity.setter
+    def _last_page_identity(self, value: str) -> None:
+        self._rt.last_page_identity = value
+
+    @property
+    def _scroll_count(self) -> int:
+        return self._rt.scroll_count
+
+    @_scroll_count.setter
+    def _scroll_count(self, value: int) -> None:
+        self._rt.scroll_count = value
+
+    @property
+    def _early_feasibility_probed(self) -> bool:
+        return self._rt.early_feasibility_probed
+
+    @_early_feasibility_probed.setter
+    def _early_feasibility_probed(self, value: bool) -> None:
+        self._rt.early_feasibility_probed = value
+
+    @property
+    def _skip_initial_check(self) -> bool:
+        return self._rt.skip_initial_check
+
+    @_skip_initial_check.setter
+    def _skip_initial_check(self, value: bool) -> None:
+        self._rt.skip_initial_check = value
+
+    @property
+    def _target_acquire(self):
+        return self._rt.target_acquire
+
+    def begin_statement(
+        self,
+        contract,
+        *,
+        instance_id: str,
+        task_type: Literal["action", "analysis"] = "action",
+        fresh_advance: bool = False,
+    ) -> None:
+        """Begin one interactive statement; creates a fresh StatementRuntimeState."""
+        from gui_agent.core.run.execution_signals import ExecutionContract
+        self._statement_rt = StatementRuntimeState(
+            contract=contract,
+            instance_id=instance_id,
+            execution_contract=ExecutionContract.from_milestone(contract),
+            task_type=task_type,
+            status="pending",
+            skip_initial_check=fresh_advance and contract.kind == "navigation",
+        )
+        self.task_type = task_type
+        self._goal = contract.name
+        self._statement_rt.execution_scope = self._statement_rt.scope_key()
+
+    def reset_for_return_retry(self, new_contract) -> None:
+        """Return-contract tighten: reuse instance, recompile contract, keep constraints."""
+        from gui_agent.core.run.execution_signals import ExecutionContract
+        self._rt.reset_for_return_retry(
+            new_contract,
+            ExecutionContract.from_milestone(new_contract),
+        )
+        self._goal = new_contract.name
+
+    def end_statement(self, outcome=None) -> None:
+        """Destroy statement-local live state after terminal turn is recorded."""
+        self._statement_rt = None
+
+    def _set_status(self, status: str) -> None:
+        if self._statement_rt is not None:
+            self._statement_rt.status = status
+
+    @property
+    def _collection_progress(self) -> str:
+        return ""
+
+    @property
+    def _collection_done(self) -> bool:
+        return False
 
     def _add_runtime_constraint(
         self,
@@ -247,6 +339,8 @@ class MilestoneSupervisorPolicy(
         scope: str | None = None,
         source: str = "runtime",
     ) -> None:
+        if self._statement_rt is None:
+            return
         actual_scope = scope or self._current_execution_scope or "task"
         self._constraint_ledger.add(text, scope=actual_scope, source=source)
 
@@ -334,6 +428,8 @@ class MilestoneSupervisorPolicy(
         """
         if not executed or action_decision is None:
             return
+        if self._statement_rt is None:
+            return
         if getattr(supervisor_step, "completion_strategy", None) in {
             "repeat_until_satisfied",
             "scroll_until_boundary",
@@ -384,12 +480,13 @@ class MilestoneSupervisorPolicy(
         milestone = self._active_milestone
         if milestone is None:
             raise RuntimeError(
-                "InteractiveStatementExecutor requires reseed(statement) before step(); "
+                "InteractiveStatementExecutor requires begin_statement(...) before step(); "
                 "compile a Program and drive statements through ProgramRuntime"
             )
-        if milestone.status in {"done", "failed"}:
+        if self._rt.status in {"done", "failed"}:
             raise RuntimeError(
-                f"statement {milestone.id!r} is already terminal; reseed the next Program statement"
+                f"statement {milestone.id!r} is already terminal; "
+                "end_statement then begin the next Program statement"
             )
         if milestone.kind == "action" and milestone.target_values:
             observation = self._mutation_observation(
@@ -419,38 +516,19 @@ class MilestoneSupervisorPolicy(
 
     def reseed(
         self,
-        milestone: Milestone,
+        milestone,
         task_type: Literal["action", "analysis"] = "action",
         fresh_advance: bool = False,
     ) -> None:
-        """Begin one interactive statement supplied by the DSL interpreter.
+        """Deprecated alias for begin_statement (tests/compat)."""
+        iid = f"legacy:{getattr(milestone, 'id', 'ms')}"
+        self.begin_statement(
+            milestone,
+            instance_id=iid,
+            task_type=task_type,
+            fresh_advance=fresh_advance,
+        )
 
-        Statement-local controller/report fields reset here. Task knowledge, static constraints,
-        and selector cache remain reusable across Program statements.
-        """
-        self._active_milestone = milestone
-        self._goal = milestone.name
-        self._last_page_identity = ""
-        self._scroll_count = 0
-        self._early_feasibility_probed = False
-        self._done_check = None
-        self._current_execution_scope = ""
-        self.task_type = task_type  # 读取门：read milestone 须为 'analysis' 才读
-        if (
-            self._execution_contract is None
-            or self._execution_contract.statement_id != milestone.id
-        ):
-            self._execution_contract = ExecutionContract.from_milestone(milestone)
-        self._monitor.clear_screenshots()
-        # fresh_advance=刚从上一个 statement 推进过来（同帧），
-        # 此时若新 milestone 是 navigation，它「in_progress by construction」，跳过首次验收直接规划
-        # 第一步导航动作——省掉交接时第 2 次 checker。幂等（重点 nav 目标无害；残留 already-done 由
-        # 下一轮正常 check 兜底）。action/filter/collection 一律保留 check：重跑 action 可能双执行
-        # （re-send/re-submit），collection 需要 checker 的 read_instruction。一次性，step() 消费后清。
-        # Navigation arrival is an executable edge. A checker verdict alone cannot prove that edge
-        # was traversed, including precondition/ensure-state entries; all fresh arrivals therefore
-        # enter planning once. The next frame verifies the destination before advancing.
-        self._skip_initial_check = fresh_advance and milestone.kind == "navigation"
 
     # ── Single-step machine ───────────────────────────────────────────
 
@@ -600,7 +678,7 @@ class MilestoneSupervisorPolicy(
             )
             self._last_check = check
             self._last_plan = acquire_plan
-            milestone.status = "running"
+            self._set_status("running")
             print(f"  [AcquireGate] {acquire_plan.summary}")
             print(f"  [Planner] {acquire_plan.instruction}")
             return SupervisorStep(
@@ -723,7 +801,7 @@ class MilestoneSupervisorPolicy(
         self._last_page_identity = current_page_id
 
         if milestone.completion_strategy == "react_until_collected":
-            if self._collection_done:
+            if False:  # collection progress channel retired; monitor/traversal own coverage
                 final_read = None
                 if self.task_type != "action":
                     read_inst = check.read_instruction or _default_read_instruction(milestone)
@@ -760,7 +838,7 @@ class MilestoneSupervisorPolicy(
             )
 
         if self._observe_only:
-            milestone.status = "running"
+            self._set_status("running")
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
@@ -770,7 +848,7 @@ class MilestoneSupervisorPolicy(
             )
 
         if post_completion.next == "observe":
-            milestone.status = "running"
+            self._set_status("running")
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
@@ -941,7 +1019,7 @@ class MilestoneSupervisorPolicy(
         execution_scope = execution_scope_for(milestone, observation)
         if self._observe_only:
             self._last_plan = None
-            milestone.status = "running"
+            self._set_status("running")
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
@@ -1106,7 +1184,7 @@ class MilestoneSupervisorPolicy(
         if plan.direction in ("increase", "decrease") and drag_column:
             self._fix_picker_direction(plan)
         self._last_plan = plan
-        milestone.status = "running"
+        self._set_status("running")
         return SupervisorStep(
             should_act=bool(plan.instruction),
             instruction=plan.instruction or None,
@@ -1158,7 +1236,7 @@ class MilestoneSupervisorPolicy(
                     history,
                     evidence="collection boundary reached after a successful scroll",
                 )
-            milestone.status = "running"
+            self._set_status("running")
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
@@ -1293,7 +1371,7 @@ class MilestoneSupervisorPolicy(
                 evidence="collection boundary reached after a successful scroll",
             )
 
-        milestone.status = "running"
+        self._set_status("running")
         loop_summary_prefix = "继续滚动查找目标" if self.task_type == "action" else "继续滚动收集内容"
         if _last_scroll_was_for(scoped_history, milestone.id):
             return SupervisorStep(
@@ -1358,8 +1436,7 @@ class MilestoneSupervisorPolicy(
             and (history[-1].target_verify is None or history[-1].target_verify.on_target)
         )
         pre_existing = not (executed_in_scope or executed_in_transition)
-        milestone.status = "done"
-        milestone.completion_status = decision.completion_status
+        self._set_status("done")
         # Persist this statement's DONE verdict for reports (done_check panel).
         if self._last_check is not None:
             self._done_check = self._last_check
@@ -1430,7 +1507,7 @@ class MilestoneSupervisorPolicy(
                 else:
                     print(f"  [Replan] 屏幕变化但页面未变（{current_page_id or '未知'}），计入重试次数")
         if not skip_retry:
-            milestone.retry_count += 1
+            self._rt.retry_count += 1
 
         self._record_failure_constraint(milestone, check, history)
 
@@ -1438,7 +1515,7 @@ class MilestoneSupervisorPolicy(
         # infeasibility check now rather than after it burns every retry. Once per milestone; the
         # judge is conservative-toward-feasible, so a "feasible" verdict just continues.
         if (
-            EARLY_FEASIBILITY_AT <= milestone.retry_count < MAX_RETRIES
+            EARLY_FEASIBILITY_AT <= self._rt.retry_count < MAX_RETRIES
             and not self._early_feasibility_probed
         ):
             self._early_feasibility_probed = True
@@ -1446,7 +1523,7 @@ class MilestoneSupervisorPolicy(
             if kick:
                 return kick
 
-        if milestone.retry_count >= MAX_RETRIES:
+        if self._rt.retry_count >= MAX_RETRIES:
             # Feasibility Guard: before giving up, judge if the milestone is INFEASIBLE (required control
             # absent) and, if so, kick back to the orchestrator with a re-plan directive.
             kick = self._maybe_kickback(milestone, observation, read_inst, history)
@@ -1454,7 +1531,7 @@ class MilestoneSupervisorPolicy(
                 return kick
             return self._fail(milestone, check, read_inst)
 
-        print(f"  [Replan] 第 {milestone.retry_count} 次重试...")
+        print(f"  [Replan] 第 {self._rt.retry_count} 次重试...")
         # 连续调值类停滞时的纠偏方向：继续使用该平台的连续调整动作，换一种连续策略——
         # 加大幅度 / 换调整的列或轴 / 调整顺序。不要因为一轮未生效就退化成离散点击。
         iter_extra = (
@@ -1495,7 +1572,7 @@ class MilestoneSupervisorPolicy(
             kick = self._maybe_kickback(milestone, observation, read_inst, history)
             if kick:
                 return kick
-            milestone.status = "failed"
+            self._set_status("failed")
             reason = replan.escalation_message or "升级人工介入"
             return SupervisorStep(
                 should_act=False,
@@ -1518,11 +1595,11 @@ class MilestoneSupervisorPolicy(
             self._last_check = check
             return self._plan_single(milestone, check, observation, history)
         drag_steps = self._picker_drag_steps(replan)
-        milestone.status = "running"
+        self._set_status("running")
         return SupervisorStep(
             should_act=bool(replan.instruction),
             instruction=replan.instruction or None,
-            summary=f"子目标「{milestone.name}」尚未达成，第 {milestone.retry_count} 次调整策略。{replan.diagnosis}",
+            summary=f"子目标「{milestone.name}」尚未达成，第 {self._rt.retry_count} 次调整策略。{replan.diagnosis}",
             atomic_role=atomic_role,
             action_family=action_family,
             target_control=replan.target_control,
@@ -1623,7 +1700,7 @@ class MilestoneSupervisorPolicy(
             print(f"  [Feasibility] 判定可行（{verdict.reason}）→ 不踢回，走常规处理")
             return None
         print(f"  [Feasibility] milestone 不可行 → 踢回编排器重规划。{verdict.reason}")
-        milestone.status = "failed"
+        self._set_status("failed")
         directive = compose_directive(verdict) or "重新规划当前不可行 statement"
         return SupervisorStep(
             should_act=False,
@@ -1636,7 +1713,7 @@ class MilestoneSupervisorPolicy(
         )
 
     def _fail(self, milestone: Milestone, check: _SingleCheckResult, read_inst: Optional[str]) -> SupervisorStep:
-        milestone.status = "failed"
+        self._set_status("failed")
         print(f"  子目标「{milestone.name}」失败")
         reason = f"子目标「{milestone.name}」重试 {MAX_RETRIES} 次后失败"
         return SupervisorStep(
@@ -1675,10 +1752,6 @@ class MilestoneSupervisorPolicy(
             self._add_runtime_constraint(constraint, source="no_effect")
             print(f"  [Constraint] {constraint}")
 
-    def note_collection_progress(self, text: str, *, done: bool = False) -> None:
-        """Push authoritative list traversal state into checker/planner prompts."""
-        self._collection_progress = text or ""
-        self._collection_done = bool(done)
 
     def _last_action_response_text(self, history: list[PolicyTurn]) -> str:
         """Deterministic execution/response fact for the checker.

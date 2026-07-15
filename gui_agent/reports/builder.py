@@ -16,6 +16,7 @@ from .images import (
     annotate_recon_taps,
 )
 from .metrics import _MODELS_MAP, _sum_tokens, _token_cost
+from .statement_reducer import StatementReportReducer
 from .models import (
     AppReconData,
     ReconFlow,
@@ -423,7 +424,24 @@ class RunnerReportBuilder:
             return data
 
         ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
+        # Offline only: normalize legacy terminal fields for report dual-read.
+        try:
+            from gui_agent.reports.legacy_context import adapt_legacy_context
+            ctx = adapt_legacy_context(ctx)
+        except Exception:
+            pass
         milestone_states = ctx.get("milestone_states") if isinstance(ctx.get("milestone_states"), dict) else {}
+        orch = ctx.get("orchestrator") if isinstance(ctx.get("orchestrator"), dict) else {}
+        program = (orch.get("program") if isinstance(orch, dict) else None) or {}
+        run_log = orch.get("run_log") if isinstance(orch, dict) else []
+        statement_views = StatementReportReducer().reduce(
+            turns=ctx.get("turns") or [],
+            program=program if isinstance(program, dict) else {},
+            run_log=run_log if isinstance(run_log, list) else [],
+        )
+        # Dual-read: prefer reducer views; fall back to legacy milestone_states keys.
+        views_by_id = {v.statement_id: v for v in statement_views if v.statement_id}
+        views_by_instance = {v.instance_id: v for v in statement_views}
         # Title is the user's ORIGINAL input; the resolved goal is shown as provenance.
         # Old logs without raw_input fall back to the goal.
         data.raw_input = ctx.get("raw_input") or ""
@@ -603,28 +621,52 @@ class RunnerReportBuilder:
         total_actions += len(synthetic_non_ui)
         total_executed += sum(1 for step in synthetic_non_ui if "✓" in step.status)
 
-        # Build milestone lookup from persisted decomposition
+        # Build statement lookup: prefer pure reducer views; dual-read legacy milestone_states.
         ms_lookup: dict[str, dict] = {}
-        for ms in ctx.get("milestones", []):
-            mid = ms.get("id", "")
-            state = milestone_states.get(mid) if mid else None
-            merged = dict(ms)
-            if isinstance(state, dict):
-                for key in (
-                    "status", "retry_count", "done_check", "checklist", "reads",
-                    "last_summary", "last_turn_index", "pre_existing", "collection_summary",
-                ):
-                    value = state.get(key)
-                    if value not in (None, "", [], {}):
-                        merged[key] = value
-            ms_lookup[mid] = merged
+        milestones_static: list[dict] = []
+        if statement_views:
+            for view in statement_views:
+                mid = view.statement_id or view.instance_id
+                ms_lookup[mid] = {
+                    "id": mid,
+                    "instance_id": view.instance_id,
+                    "name": view.name,
+                    "description": view.description,
+                    "kind": view.kind,
+                    "success_condition": view.success_condition,
+                    "status": view.status,
+                    "retry_count": view.retry_count,
+                    "done_check": view.done_check,
+                    "checklist": view.checklist,
+                    "reads": view.reads,
+                    "last_summary": view.last_summary,
+                    "pre_existing": view.pre_existing,
+                    "collection_summary": view.collection_summary,
+                    "phase": view.phase,
+                    "verification": view.verification,
+                    "kickback": view.kickback,
+                }
+                milestones_static.append(ms_lookup[mid])
+        else:
+            for ms in ctx.get("milestones", []) or []:
+                mid = ms.get("id", "")
+                state = milestone_states.get(mid) if mid else None
+                merged = dict(ms)
+                if isinstance(state, dict):
+                    for key in (
+                        "status", "retry_count", "done_check", "checklist", "reads",
+                        "last_summary", "last_turn_index", "pre_existing", "collection_summary",
+                    ):
+                        value = state.get(key)
+                        if value not in (None, "", [], {}):
+                            merged[key] = value
+                ms_lookup[mid] = merged
+                milestones_static.append(merged)
 
-
-        # Group steps by milestone — PROGRAM-ALIGNED: one card per milestone in program order
-        # (ctx["milestones"]), merging non-contiguous revisits and keeping zero-step milestones.
+        # Group steps by milestone — PROGRAM-ALIGNED when static list exists.
         milestones_info: list[dict] = []
         pages = _group_steps_by_milestone(
-            all_steps, list(ctx.get("milestones") or []), ms_lookup
+            all_steps, milestones_static, ms_lookup
         )
 
         # Build milestones summary
