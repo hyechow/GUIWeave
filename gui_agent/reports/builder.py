@@ -433,8 +433,8 @@ class RunnerReportBuilder:
         data.platform = ctx.get("platform") or ""
         outcome = ctx.get("outcome") or {}
         data.output = outcome.get("output") or ""
-        data.stop_reason = outcome.get("summary") or ""
-        data.run_status = outcome.get("phase") or ""
+        data.summary = outcome.get("summary") or ""
+        data.phase = outcome.get("phase") or ""
         data.verification = outcome.get("verification") or ""
         data.knowledge = ctx.get("knowledge") or {}
         data.orchestrator = ctx.get("orchestrator") or {}

@@ -73,8 +73,8 @@ class ReportData:
     goal: str = ""       # resolved goal that drove the run
     router: dict = field(default_factory=dict)  # RouterResult dict; empty for bin/runner path
     output: str = ""     # final reply / 最终输出 of the run
-    stop_reason: str = ""  # run-level terminal reason from context.json
-    run_status: str = ""   # completed / failed / interrupted / stopped
+    summary: str = ""      # ProgramOutcome.summary
+    phase: str = ""        # ProgramOutcome.phase
     verification: str = ""
     platform: str = ""   # run platform (iphone/browser); empty for old logs
     wall_clock_s: float = 0.0    # true end-to-end runner elapsed (context.wall_clock_s); 0 for old logs

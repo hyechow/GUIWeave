@@ -25,7 +25,7 @@ Goal
   -> Interpreter resume
 ```
 
-不存在独立的调用帧架构层。Python generator 的 `yield Run` / `send(RunResult)` 已经是
+不存在独立的调用帧调度层。Python generator 的 `yield Run` / `send(StatementOutcome)` 已经是
 Interpreter 暂停和恢复的边界，再引入一个有状态、有恢复策略的“frame”只会与 Interpreter
 和 Statement 重叠。
 
@@ -51,7 +51,7 @@ Interpreter 是所有 DSL statement 的统一运行时：
 - 执行 `Compute`；
 - 将无需 Statement loop 的 statement 交给 immediate dispatcher；
 - 将交互 `Run` yield 给 Statement executor；
-- 接收统一的 `RunResult`，绑定 `var` 和 `returns`；
+- 接收统一且不可变的 `StatementOutcome`，绑定 `var` 和 `returns`；
 - 保存 `env`、`run_log` 和 materialized tables；
 - 根据类型化失败决定继续、重试、重编排剩余 Program 或诚实失败。
 
@@ -63,15 +63,19 @@ Interpreter 是所有 DSL statement 的统一运行时：
 不同 statement 共享最小结果协议，但不强行共享不适用的执行状态。
 
 ```text
-RunResult:
-  completed
-  failed
-  completion_status: confirmed | accepted_unverified | failed | in_progress
+StatementOutcome:
+  phase: completed | failed | exhausted | infeasible | interrupted
+  verification: confirmed | accepted_unverified  # 仅 completed 可写
   reads
   rows
   summary
   evidence
+  kickback  # 仅 infeasible 使用
 ```
+
+`completed`/`failed` 不再是可独立写入的 bool。所有 immediate 与 interactive statement 都产出
+同一个 `StatementOutcome`；Interpreter 不接受其他终态协议。外层 `AgentResult` 是 frozen 的
+Program 结果投影，使用相同的 `phase/summary/output` 词表，并只在 CLI/API 边界 dump 成 JSON。
 
 - `Compute` 返回标量；
 - `Read` 返回当前帧的结构化字段；
@@ -94,7 +98,7 @@ semantic Run
   -> one atomic action
   -> observe again
   -> ...
-  -> completed | infeasible | exhausted | aborted
+  -> completed | infeasible | exhausted | failed | interrupted
 ```
 
 Statement 负责：
@@ -141,10 +145,11 @@ persistence: clean | pending | submitted
 回答本轮写入是否跨过声明的持久化边界。URL 变化、toast、列表刷新等只产生 response 或
 effect 证据；它们不能自行证明动作派发、业务效果和持久化三者同时成立。
 
-Statement 的完成状态另行记录：
+Statement 的完成状态由 `StatementOutcome` 表达：
 
 ```text
-completion_status: confirmed | accepted_unverified | failed | in_progress
+phase: completed | failed | exhausted | infeasible | interrupted
+verification: confirmed | accepted_unverified  # 仅 completed
 ```
 
 验收信号按任务和可用证据降级：
@@ -249,8 +254,28 @@ Statement 尽量在不改变 WHAT 的条件下修复 HOW；一旦修复需要改
    尚未完成的 Program。
 2. **Statement 渐进执行**：一个语义 Run 在实时 observation 上展开为多轮页面内动作。
 
-前者可以改变剩余程序结构，后者只能改变当前 Run 的实现路线。两者通过 `RunResult` 和类型化
+前者可以改变剩余程序结构，后者只能改变当前 Run 的实现路线。两者通过 `StatementOutcome` 和类型化
 失败通信，不共享隐式状态。
+
+## Journal、checkpoint 与 replay
+
+`EventJournal` 是 Program revision、PolicyTurn、content note 和 recovery fact 的唯一持久账本。
+Program cursor、env、run_log 和 recovery budget 由 `ProgramRuntime.resume()` 重放 Journal 重建；
+交互 statement 的逻辑活态由最近一个 turn 携带的 `StatementRuntimeSnapshot` 恢复。
+
+checkpoint 的提交边界是一个 turn 追加到 Journal 并写入 `context.json`。快照只包含会影响后续
+逻辑决策的 retry、constraint、progress 和合同信息；截图、识别缓存、target acquire 临时探针及
+设备对象不进入快照。恢复后必须重新观察真实界面，不能把历史 screenshot 当作当前设备状态。
+`context.json` 使用原子替换避免半写文件；但外部动作可能先于 turn checkpoint 生效，因此当前
+恢复语义不是 exactly-once。不可安全重复的 commit 仍必须依赖页面事实和 mutation receipt 仲裁。
+
+replay 分为两种，不能混称：
+
+1. **状态 replay**：只消费 Journal，重建 ProgramRuntime 与 StatementRuntime；必须是确定性的；
+2. **决策 replay**：载入某 turn 的 observation snapshot，恢复其前序 statement 状态，再调用真实
+   checker/planner；默认不 dispatch 动作。
+
+报告、完成状态和 content-note dedupe 都是 Journal 的投影，不得为 resume 再维护平行账本。
 
 ## 结构优先
 

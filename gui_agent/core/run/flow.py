@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from gui_agent.core.run.result import orchestration_result
+from gui_agent.core.run.result import AgentResult, orchestration_result
 from gui_agent.core.schemas import PolicyContext, SupervisorStep
 
 
@@ -26,7 +26,7 @@ def handle_loading_frame(
     current_run: Any,
     context: PolicyContext,
     interpreter: Any,
-    finish: Callable[[dict], dict],
+    finish: Callable[[AgentResult], dict],
     stop_after_esc: Callable[[int], dict | None],
     say: Callable[[str], None],
 ) -> LoadingResult:
@@ -141,7 +141,7 @@ def finish_terminal_step(
     turn_no: int,
     program_runtime: Any,
     context: PolicyContext,
-    finish: Callable[[dict], dict],
+    finish: Callable[[AgentResult], dict],
     say: Callable[[str], None],
     end_statement: Callable[[Any], None],
 ) -> dict:

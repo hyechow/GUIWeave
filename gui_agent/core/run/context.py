@@ -11,9 +11,19 @@ from gui_agent.core.schemas import Observation, PolicyContext
 OBSERVATION_SNAPSHOT_VERSION = 1
 
 
-def save_context(path: Path, context: PolicyContext) -> None:
+def write_json_atomic(path: Path, payload: object) -> None:
+    """Write one JSON checkpoint without exposing a partially-written target file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def save_context(path: Path, context: PolicyContext) -> None:
+    write_json_atomic(path, context.model_dump(mode="json"))
 
 
 def save_observation_snapshot(

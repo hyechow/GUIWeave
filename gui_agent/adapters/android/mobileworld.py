@@ -158,11 +158,11 @@ class MobileWorldEnv:
 
 def _final_answer(result: dict) -> str:
     """Best-effort final answer text for answer-style tasks: prefer collected content
-    notes, then the run's result summary. Empty when the run produced neither."""
+    notes, then the run's output. Empty when the run produced neither."""
     notes = result.get("content_notes") or []
     if notes:
         return "\n".join(str(n) for n in notes)
-    return str(result.get("result_summary") or "").strip()
+    return str(result.get("output") or "").strip()
 
 
 def _write_mobileworld_context(
@@ -244,6 +244,7 @@ def main() -> int:
 
     from gui_agent.core.runtime.factory import build_platform
     from gui_agent.core.run.io import EscStopSignal, create_run_dir, tee_stdio
+    from gui_agent.core.run.result import failed_result
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
 
     if not env.health():
@@ -304,14 +305,12 @@ def main() -> int:
             for line in setup.lines:
                 print(line)
             if not setup.ok:
-                result = {
-                    "task_type": "RETRIEVE",
-                    "phase": "failed",
-                    "verification": None,
-                    "stop_reason": f"环境检查未通过：{setup.summary}",
-                    "result_summary": f"环境检查未通过：{setup.summary}",
-                    "content_notes": None,
-                }
+                result = failed_result(
+                    goal,
+                    f"环境检查未通过：{setup.summary}",
+                    task_type="RETRIEVE",
+                    failure_kind="environment",
+                ).model_dump(mode="json")
             else:
                 orchestrator_context_reports: list[dict] = []
                 with bundle.open_session() as platform:

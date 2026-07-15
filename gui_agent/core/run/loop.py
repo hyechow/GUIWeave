@@ -25,6 +25,7 @@ from gui_agent.core.run.context import (
     save_observation_snapshot,
 )
 from gui_agent.core.run.result import (
+    AgentResult,
     make_result as _make_result,
     orchestration_result as _orch_result,
 )
@@ -234,7 +235,7 @@ def run_agent_loop(
             ]
         _save_context(context_path, context)
 
-    def _finish(result: dict) -> dict:
+    def _finish(result: AgentResult) -> dict:
         if (
             rt is not None
             and rt.has_recovery
@@ -246,7 +247,7 @@ def run_agent_loop(
             }
         sync_context_program_outcome(context, result)
         _save_ctx()
-        return result
+        return result.model_dump(mode="json")
 
     _save_ctx()
     _say(f"Goal    : {context.goal}")

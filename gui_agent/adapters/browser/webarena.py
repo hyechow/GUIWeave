@@ -253,7 +253,7 @@ def _guess_webarena_task_type(intent: str) -> str:
 
 
 def _preflight_failure_response(intent: str, result: dict) -> WAResponse:
-    details = str(result.get("result_summary") or result.get("stop_reason") or "orchestration preflight failed")
+    details = str(result.get("output") or result.get("summary") or "orchestration preflight failed")
     return WAResponse(
         task_type=_guess_webarena_task_type(intent),
         status="DATA_VALIDATION_ERROR",
@@ -288,8 +288,8 @@ def _write_orchestration_preflight_context(
     context.knowledge = knowledge_summary
     context.outcome = ProgramOutcome(
         phase="stopped",
-        summary=str(result.get("stop_reason") or ""),
-        output=str(result.get("result_summary") or ""),
+        summary=str(result.get("summary") or ""),
+        output=str(result.get("output") or ""),
     )
     context.orchestrator = {
         "program": program.model_dump(mode="json") if hasattr(program, "model_dump") else None,
@@ -671,8 +671,8 @@ def _synthesize_response(intent: str, result: dict, context_path: Path | None = 
         task_type_guess=_webarena_task_type_from_result(intent, result),
         phase=result.get("phase"),
         verification=result.get("verification"),
-        stop_reason=result.get("stop_reason"),
-        result_summary=result.get("result_summary"),
+        summary=result.get("summary"),
+        output=result.get("output"),
         notes_text=notes_text,
         evidence_text=evidence_text,
     )
@@ -1028,6 +1028,7 @@ def main() -> int:
 
     from gui_agent.core.runtime.factory import build_platform
     from gui_agent.core.run.io import EscStopSignal, create_run_dir
+    from gui_agent.core.run.result import failed_result
     from gui_agent.core.runner import run_agent_loop, build_policy, build_supervisor
     from gui_agent.adapters.browser.har_recorder import HarRecorder
 
@@ -1149,14 +1150,12 @@ def main() -> int:
             for line in setup.lines:
                 print(line)
             if not setup.ok:
-                result = {
-                    "task_type": "RETRIEVE",
-                    "phase": "failed",
-                    "verification": None,
-                    "stop_reason": f"环境检查未通过：{setup.summary}",
-                    "result_summary": f"环境检查未通过：{setup.summary}",
-                    "content_notes": None,
-                }
+                result = failed_result(
+                    intent,
+                    f"环境检查未通过：{setup.summary}",
+                    task_type="RETRIEVE",
+                    failure_kind="environment",
+                ).model_dump(mode="json")
             else:
                 orchestrator_context_reports: list[dict] = []
                 with bundle.open_session() as platform:
@@ -1273,15 +1272,12 @@ def main() -> int:
                                 ],
                             })
                             preflight_blocked = True
-                            compile_result = {
-                                "task_type": _guess_webarena_task_type(intent),
-                                "phase": "failed",
-                                "verification": None,
-                                "stop_reason": f"orchestrator compile failed: {summary}",
-                                "result_summary": f"orchestrator compile failed: {summary}",
-                                "content_notes": None,
-                                "compile_failed": True,
-                            }
+                            compile_result = failed_result(
+                                intent,
+                                f"orchestrator compile failed: {summary}",
+                                task_type=_guess_webarena_task_type(intent),
+                                failure_kind="compile",
+                            ).model_dump(mode="json")
                             _write_orchestration_preflight_context(
                                 log_dir / "context.json",
                                 intent=intent,
@@ -1336,15 +1332,12 @@ def main() -> int:
                                     summary = "; ".join(
                                         f"{issue.code}: {issue.message}" for issue in preflight.blocking_issues[:3]
                                     )
-                                    compile_result = {
-                                        "task_type": _guess_webarena_task_type(intent),
-                                        "phase": "failed",
-                                        "verification": None,
-                                        "stop_reason": f"orchestrator preflight failed: {summary}",
-                                        "result_summary": f"orchestrator preflight failed: {summary}",
-                                        "content_notes": None,
-                                        "preflight_failed": True,
-                                    }
+                                    compile_result = failed_result(
+                                        intent,
+                                        f"orchestrator preflight failed: {summary}",
+                                        task_type=_guess_webarena_task_type(intent),
+                                        failure_kind="preflight",
+                                    ).model_dump(mode="json")
                                     _write_orchestration_preflight_context(
                                         log_dir / "context.json",
                                         intent=intent,
@@ -1483,7 +1476,7 @@ def main() -> int:
                 print(f"[webarena] OK har 0 entries (recorder unavailable) -> {har_path}")
 
             try:
-                if result.get("preflight_failed") or result.get("compile_failed"):
+                if result.get("failure_kind") in {"compile", "preflight"}:
                     resp = _preflight_failure_response(intent, result or {})
                 else:
                     resp = _synthesize_response(intent, result or {}, log_dir / "context.json")

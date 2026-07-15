@@ -41,6 +41,7 @@ from gui_agent.core.runner import (
     run_agent_loop,
 )
 from gui_agent.core.run.state import write_final_program_outcome
+from gui_agent.core.run.result import failed_result
 from gui_agent.core.chat.session import (
     RouterResult,
     generate_reply,
@@ -304,7 +305,7 @@ def _print_result(result: dict) -> None:
 
     turns = result.get("turns_count", 0)
     suffix = f"  [dim]{turns} turns[/dim]" if turns else ""
-    tree = Tree(f"[bold {color}]{icon}  {result['result_summary']}[/bold {color}]{suffix}")
+    tree = Tree(f"[bold {color}]{icon}  {result['output']}[/bold {color}]{suffix}")
 
     console.print()
     console.print(
@@ -507,7 +508,7 @@ def main() -> None:
                 recorder.add({
                     "user_msg": display_msg,
                     "clarification": router_result.clarification,
-                    "stop_reason": "需要补充信息",
+                    "summary": "需要补充信息",
                     "phase": "stopped",
                     "verification": None,
                     "turns_count": 0,
@@ -529,8 +530,8 @@ def main() -> None:
                 entry = {
                     "user_msg": user_msg,
                     "reply": reply,
-                    "result_summary": reply,
-                    "stop_reason": "非手机操作",
+                    "output": reply,
+                    "summary": "非手机操作",
                     "phase": "stopped",
                     "verification": None,
                     "turns_count": 0,
@@ -588,13 +589,7 @@ def main() -> None:
             except (SystemExit, KeyboardInterrupt):
                 raise
             except Exception as exc:
-                result = {
-                    "result_summary": str(exc),
-                    "stop_reason": f"异常: {exc}",
-                    "phase": "failed",
-                    "verification": None,
-                    "turns_count": 0,
-                }
+                result = failed_result(goal, f"异常: {exc}").model_dump(mode="json")
             exec_secs = time.time() - t0
             live_state["done"] = True
             live_state["current"] = f"执行完成  {exec_secs:.1f}s"
@@ -632,8 +627,8 @@ def main() -> None:
             "user_msg": display_msg,
             "goal": goal,
             "reply": reply,
-            "result_summary": result["result_summary"],
-            "stop_reason": result["stop_reason"],
+            "output": result["output"],
+            "summary": result["summary"],
             "phase": result["phase"],
             "verification": result.get("verification"),
             "turns_count": result["turns_count"],

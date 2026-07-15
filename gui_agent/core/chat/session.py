@@ -78,7 +78,7 @@ def format_session_history(history: list[dict]) -> str:
             if entry.get("phase") == "completed"
             else "✗"
         )
-        lines.append(f"{i}. 用户说「{entry['user_msg']}」→ {status} {entry['result_summary']}")
+        lines.append(f"{i}. 用户说「{entry['user_msg']}」→ {status} {entry['output']}")
     return "\n".join(lines)
 
 
@@ -96,7 +96,7 @@ def _mentioned_known_apps(
     """
     haystack_parts = [user_msg, prefs_context]
     for entry in session:
-        for key in ("user_msg", "goal", "result_summary", "reply"):
+        for key in ("user_msg", "goal", "output", "reply"):
             value = entry.get(key)
             if isinstance(value, str):
                 haystack_parts.append(value)

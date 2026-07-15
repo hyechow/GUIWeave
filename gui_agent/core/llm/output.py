@@ -118,10 +118,10 @@ def _analysis_messages(
     reply_context = _build_reply_context(goal, result, content_notes, collection_context)
     if reply_context:
         notes_text = f"[补充上下文]\n{reply_context}\n\n以下为逐帧提取的内容片段：\n\n{notes_text}"
-    stop_reason = (result or {}).get("stop_reason", "")
+    summary = (result or {}).get("summary", "")
     return [
         SystemMessage(content=_ANALYSIS_SYSTEM),
-        HumanMessage(content=f"用户目标：{goal}\n\n运行结论：{stop_reason}\n\n收集到的内容片段：\n{notes_text}"),
+        HumanMessage(content=f"用户目标：{goal}\n\n运行结论：{summary}\n\n收集到的内容片段：\n{notes_text}"),
     ]
 
 
@@ -164,8 +164,8 @@ def _chat_messages(
             exec_text = (
                 f"执行状态：{status}\n"
                 f"轮数：{result.get('turns_count', 0)}\n"
-                f"摘要：{result.get('result_summary', '')}\n"
-                f"停止原因：{result.get('stop_reason', '')}\n"
+                f"输出：{result.get('output', '')}\n"
+                f"运行结论：{result.get('summary', '')}\n"
                 f"最后执行动作：{last_action or '无'}"
             )
     return [
@@ -177,11 +177,11 @@ def _chat_messages(
 def _action_messages(goal: str, result: dict) -> list:
     ctx = {
         "goal": goal,
-        "stop_reason": result.get("stop_reason", ""),
+        "summary": result.get("summary", ""),
         "phase": result.get("phase", "stopped"),
         "verification": result.get("verification"),
         "turn_count": result.get("turns_count", 0),
-        "summary": result.get("result_summary", ""),
+        "output": result.get("output", ""),
         "turns": result.get("turns_detail", []),
     }
     return [
@@ -270,7 +270,7 @@ def _fmt_session(session: list[dict]) -> str:
             if e.get("phase") == "completed"
             else "✗"
         )
-        lines.append(f"{i}. 用户说「{e['user_msg']}」→ {status} {e['result_summary']}")
+        lines.append(f"{i}. 用户说「{e['user_msg']}」→ {status} {e['output']}")
     return "\n".join(lines)
 
 

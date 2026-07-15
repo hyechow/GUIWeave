@@ -361,7 +361,7 @@ def main(
                 if result:
                     # The answer is the interpreter's reply (finish / auto-summary from the
                     # program's persisted reads), not a re-derivation from content notes.
-                    output = result.get("result_summary") or "（编排器未产生答复）"
+                    output = result.get("output") or "（编排器未产生答复）"
                     print("\n" + "=" * 50)
                     print("最终输出")
                     print("=" * 50)

@@ -339,7 +339,7 @@ HTML_TEMPLATE = """\
   </nav>
   <main class="main">
     <div class="header">
-      <h1>{title}{platform_badge}{run_status_badge}</h1>
+      <h1>{title}{platform_badge}{phase_badge}</h1>
       <button class="report-search-trigger" type="button" onclick="openReportSearch()" title="搜索（/ 或 Cmd/Ctrl+K）">搜索</button>
       <div class="stats">{stats}</div>
       {provenance_html}
@@ -924,10 +924,10 @@ def _render_platform_badge(platform: str) -> str:
     )
 
 
-def _run_status_meta(data: ReportData) -> tuple[str, str, str]:
-    status = (data.run_status or "").strip()
+def _phase_meta(data: ReportData) -> tuple[str, str, str]:
+    status = (data.phase or "").strip()
     if not status:
-        status = data.run_status or "stopped"
+        status = data.phase or "stopped"
     if status == "completed":
         return "completed", "正常完成", "目标已确认完成"
     if status == "interrupted":
@@ -937,9 +937,9 @@ def _run_status_meta(data: ReportData) -> tuple[str, str, str]:
     return "stopped", "未完成停止", "任务未确认完成"
 
 
-def _render_run_status_badge(data: ReportData) -> str:
-    cls, label, detail = _run_status_meta(data)
-    reason = data.stop_reason.strip()
+def _render_phase_badge(data: ReportData) -> str:
+    cls, label, detail = _phase_meta(data)
+    reason = data.summary.strip()
     tip = f"停止原因：{reason}" if reason else detail
     tip_attr = _safe(tip).replace('"', "&quot;")
     return (
@@ -1475,7 +1475,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
 
     result_html = ""
     if data.output:
-        status_cls, _, _ = _run_status_meta(data)
+        status_cls, _, _ = _phase_meta(data)
         result_class = "result-card" if status_cls == "completed" else f"result-card result-card-{status_cls}"
         result_html = (
             f'<div class="{result_class}">'
@@ -1492,7 +1492,7 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
         webarena_html=_render_webarena_result(data.webarena),
         mobileworld_html=_render_mobileworld_result(data.mobileworld),
         program_html=_render_program_section(data.orchestrator),
-        run_status_badge=_render_run_status_badge(data),
+        phase_badge=_render_phase_badge(data),
         outline_title=("任务编排" if (data.orchestrator.get("program") or {}).get("statements") else "子目标分解"),
         outline_html=outline_html,
         cost_note_html=cost_note_html,
