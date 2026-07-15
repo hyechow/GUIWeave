@@ -497,9 +497,22 @@ class ExecutionCoordinator:
                     next="act",
                 )
             if (
+                effect_status == "satisfied"
+                and effect_authoritative
+                and contract.persistence == "explicit_commit"
+                and persistence.status == "clean"
+                and contract.effect_mode == "transform"
+            ):
+                return CompletionEvaluation(
+                    "pending",
+                    "声明的业务状态已确认，等待本次调用越过显式持久化边界",
+                    next="commit",
+                )
+            if (
                 persistence.orphan_commit
                 and persistence.status == "submitted"
                 and contract.effect_mode != "dispatch"
+                and not (effect_status == "satisfied" and effect_authoritative)
             ):
                 return CompletionEvaluation(
                     "contradicted",

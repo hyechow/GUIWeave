@@ -72,6 +72,7 @@ def _turn(
     return PolicyTurn(
         index=index,
         observation_source="browser",
+        statement_instance_id="test:action-signal",
         supervisor=step,
         action_decision=decision,
         executed=True,
@@ -171,6 +172,7 @@ def test_ensure_draft_fields_require_commit_before_statement_advance(monkeypatch
             supervisor_step=step,
             action_decision=decision,
             executed=True,
+            statement_instance_id="test:action-signal",
         )
 
     history = [
@@ -396,6 +398,33 @@ def test_legacy_effect_does_not_reenter_current_lifecycle_evidence():
         scope="statement:m1",
     )
     assert all(item.domain != "effect.state" for item in claims)
+
+
+def test_verdict_turn_persists_current_effect_projection() -> None:
+    policy = StatementSupervisorPolicy()
+    turn = make_verdict_turn(
+        index=1,
+        observation_source="browser",
+        supervisor_step=SupervisorStep(
+            should_act=False,
+            instruction=None,
+            summary="target state confirmed",
+            statement_id="m1",
+            effect_signal=EffectSignal(
+                statement_id="m1",
+                status="satisfied",
+                source_type="obs.mutation.desired_state",
+                authoritative=True,
+                evidence=["the declared collection is complete"],
+            ),
+        ),
+        supervisor=policy,
+        statement_instance_id="i1",
+    )
+
+    assert turn.effect_signal is not None
+    assert turn.effect_signal.status == "satisfied"
+    assert turn.supervisor.effect_signal is None
 
 
 def test_unmet_checker_state_is_not_a_failure():

@@ -15,7 +15,7 @@ from gui_agent.core.run.execution_signals import (
 )
 from gui_agent.core.run.mutation import resolve_mutation
 from gui_agent.core.run.persistence import assess_persistence
-from gui_agent.core.schemas import StatementContract, Observation, PolicyTurn
+from gui_agent.core.schemas import EffectSignal, StatementContract, Observation, PolicyTurn
 
 from .observation_state import (
     RuntimeFilterIntent,
@@ -45,24 +45,36 @@ def action_lifecycle_claims(
 ) -> list[EvidenceClaim]:
     """Translate persisted action lifecycle state into typed evidence claims."""
     claims: list[EvidenceClaim] = []
-    scoped_history = [
-        turn
-        for turn in history
-        if getattr(turn.supervisor, "execution_scope", "") in {"", scope}
-    ]
-    if (
-        history
-        and history[-1].supervisor is not None
-        and history[-1].supervisor.statement_id == statement.id
-        and history[-1].executed
-        and history[-1] not in scoped_history
-    ):
-        scoped_history.append(history[-1])
-    latest = latest_action(scoped_history, statement.id)
+    persisted_effect = next(
+        (
+            turn.effect_signal
+            for turn in reversed(history)
+            if turn.effect_signal is not None
+            and turn.effect_signal.statement_id == statement.id
+            and turn.effect_signal.authoritative
+            and turn.effect_signal.status == "satisfied"
+        ),
+        None,
+    )
+    if persisted_effect is not None:
+        claims.append(claim(
+            "effect.state",
+            "confirmed",
+            source_type=f"journal.{persisted_effect.source_type}",
+            scope=scope,
+            subject_scope=persisted_effect.subject_ref,
+            evidence="; ".join(persisted_effect.evidence),
+            authoritative=True,
+        ))
+    latest = latest_action(history, statement.id)
     if latest is None:
         return claims
     lifecycle_scope = getattr(latest.supervisor, "execution_scope", "") or scope
-    persistence = assess_persistence(statement, history, scope=lifecycle_scope)
+    persistence = assess_persistence(
+        statement,
+        history,
+        scope=lifecycle_scope,
+    )
     signal = latest.action_signal
     if signal is not None and signal.response == "observed":
         channels = set(signal.response_channels)
@@ -162,7 +174,7 @@ def target_value_claims(
             "confirmed",
             source_type="obs.mutation.desired_state",
             scope=scope,
-            subject_scope=state.subject_ref or scope,
+            subject_scope=state.subject_ref,
             evidence=state.evidence,
             authoritative=True,
             coverage="resolved_subject",
@@ -190,6 +202,27 @@ def target_value_claims(
             coverage="ambiguous_subject",
         ))
     return claims
+
+
+def observed_effect_signal(
+    statement: StatementContract,
+    observation: Observation,
+    history: list[PolicyTurn],
+) -> EffectSignal | None:
+    """Journal a positive target fact for this invocation; current observations still win."""
+    if statement.kind != "action" or not statement.target_values:
+        return None
+    state = resolve_mutation(statement, observation, history)
+    if state.status != "complete":
+        return None
+    return EffectSignal(
+        statement_id=statement.id,
+        status="satisfied",
+        subject_ref=state.subject_ref,
+        source_type="obs.mutation.desired_state",
+        authoritative=True,
+        evidence=[state.evidence] if state.evidence else [],
+    )
 
 
 def checker_claim(
@@ -276,7 +309,12 @@ def observation_state_claims(
     scope: str,
 ) -> list[EvidenceClaim]:
     """Build deterministic claims from the current adapter observation."""
-    claims = target_value_claims(statement, observation, history, scope=scope)
+    claims = target_value_claims(
+        statement,
+        observation,
+        history,
+        scope=scope,
+    )
     applied_filters = getattr(observation, "applied_filters", None)
     filter_intent = resolved_filter_intent(
         statement, observation, history, scope=scope
@@ -304,6 +342,7 @@ __all__ = [
     "action_lifecycle_claims",
     "checker_claim",
     "execution_contract_for",
+    "observed_effect_signal",
     "observation_state_claims",
     "resolved_filter_intent",
     "runtime_filter_intent",

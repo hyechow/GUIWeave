@@ -33,26 +33,34 @@ def assess_persistence(
     scope: str = "",
     current_surface: str = "",
 ) -> PersistenceAssessment:
-    """Project immutable action history into one persistence assessment."""
+    """Project one invocation's immutable action history into persistence state.
+
+    ``execution_scope`` only locates a commit boundary; writes may come from a
+    source scope that redirects to the current one.
+    """
     events = [
         turn
         for turn in history
         if turn.supervisor is not None
         and turn.supervisor.statement_id == statement.id
-        and (not scope or turn.supervisor.execution_scope in {"", scope})
         and turn.action_signal is not None
         and turn.action_signal.execution == "dispatched"
         and turn.action_signal.target != "off_target"
         and (turn.target_verify is None or turn.target_verify.on_target)
     ]
+    boundary_events = [
+        turn
+        for turn in events
+        if not scope or turn.supervisor.execution_scope in {"", scope}
+    ]
     entry_surface = next(
-        (turn.action_signal.surface_id for turn in events if turn.action_signal.surface_id),
+        (turn.action_signal.surface_id for turn in boundary_events if turn.action_signal.surface_id),
         "",
     )
     terminal = next(
         (
             turn
-            for turn in reversed(events)
+            for turn in reversed(boundary_events)
             if _is_terminal_boundary(turn, entry_surface)
         ),
         None,

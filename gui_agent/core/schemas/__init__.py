@@ -616,6 +616,10 @@ class SupervisorStep(BaseModel):
         default=None,
         description="当前 statement 的权威终态；None 表示仍在执行。",
     )
+    effect_signal: Optional[EffectSignal] = Field(
+        default=None,
+        description="当前观察产生的正向业务状态事实；记录 turn 时移入 EventJournal。",
+    )
     app_name: Optional[str] = Field(default=None, description="当前前台应用名称")
     summary: str = Field(description="对当前屏幕状态和任务进展的简要描述")
     preformed_action: Optional[BaseActionDecision] = Field(
@@ -802,7 +806,8 @@ class StatementContract(BaseModel):
         default_factory=dict,
         description=(
             "该执行单元要求实现的结构化业务终态；action 可用数组表示同一选择组必须同时"
-            "满足的精确值集合，重复集合成员仍使用各自的标量合同。它不提供目标身份或写入授权。"
+            "满足的精确值集合；对于重复的非选择控件组，多个字段的等长数组按下标组成目标行。"
+            "它不提供目标身份或写入授权。"
         ),
     )
     returns: list[str] = Field(

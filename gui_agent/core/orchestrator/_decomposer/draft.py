@@ -99,7 +99,8 @@ class _StepDraft(BaseModel):
         default_factory=dict,
         description=(
             "run_kind=action：本步必须实现的业务终态；同一选择组需要多个值时使用字符串数组，"
-            "不得拼成 and/和 连接的单个字符串，重复集合成员仍分别使用标量合同。"
+            "不得拼成 and/和 连接的单个字符串；重复的非选择控件组可用多个字段的等长数组，"
+            "数组同一位置共同声明一行，禁止不同长度。"
             "Router 的 target_value 可作为写入目标并在知识明确要求时建立定义前置；qualifier_value"
             "只能进入最终 mutation 的选择合同，禁止为它建立独立的创建/改写阶段。"
             "run_kind=filter：完成后的完整筛选状态，"

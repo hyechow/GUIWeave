@@ -52,6 +52,7 @@ def _executed_turn(
         supervisor_step=step,
         action_decision=BaseActionDecision(action=action),
         executed=True,
+        statement_instance_id="test:decision",
     )
     turn.target_verify = TargetVerify(on_target=True, actual_element=actual_element)
     turn.no_effect = no_effect
@@ -316,6 +317,10 @@ def _no_redemand_wire(monkeypatch, p):
 def _completion_decision(p, m, obs, history):
     assert p._last_check is not None
     scope = execution_scope_for(m, obs, instance_id=p._active_instance_id)
+    history = [
+        turn for turn in history
+        if turn.statement_instance_id == p._active_instance_id
+    ]
     claims = action_lifecycle_claims(m, history, scope=scope)
     claims.extend(target_value_claims(m, obs, history, scope=scope))
     claims.append(checker_claim(p._last_check, scope=scope, subject_scope=scope))
@@ -323,7 +328,11 @@ def _completion_decision(p, m, obs, history):
     persistence_scope = (
         getattr(latest.supervisor, "execution_scope", "") if latest is not None else ""
     ) or scope
-    persistence = assess_persistence(m, history, scope=persistence_scope)
+    persistence = assess_persistence(
+        m,
+        history,
+        scope=persistence_scope,
+    )
     return p._execution_coordinator.decide(
         execution_contract_for(m, p._execution_contract),
         claims,

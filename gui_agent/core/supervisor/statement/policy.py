@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 from gui_agent.core.vision.frame_analysis import is_loading_frame
 from gui_agent.core.schemas import (
+    AtomicRole,
     StatementContract,
     Observation,
     PolicyTurn,
@@ -65,6 +66,7 @@ from .evidence import (
     action_lifecycle_claims,
     checker_claim,
     execution_contract_for,
+    observed_effect_signal,
     observation_state_claims,
 )
 from .execution_scope import (
@@ -541,7 +543,16 @@ class StatementSupervisorPolicy(
         if _is_loop(statement):
             result = self._run_loop_turn(statement, observation, history)
         else:
+            invocation_history = [
+                turn for turn in history
+                if turn.statement_instance_id == self._active_instance_id
+            ]
             result = self._run_single_turn(statement, observation, history)
+            result.effect_signal = observed_effect_signal(
+                statement,
+                observation,
+                invocation_history,
+            )
         result.execution_scope = self._scope_for(statement, observation)
 
         return result
@@ -582,6 +593,10 @@ class StatementSupervisorPolicy(
         scoped_history = history_for_scope(
             history, statement, observation, instance_id=self._active_instance_id,
         )
+        invocation_history = [
+            turn for turn in history
+            if turn.statement_instance_id == self._active_instance_id
+        ]
         statement_history = scoped_history
 
         # Freshly entered navigation statement (begin with fresh_advance):
@@ -619,6 +634,7 @@ class StatementSupervisorPolicy(
             history
             and history[-1].supervisor is not None
             and history[-1].supervisor.statement_id == statement.id
+            and history[-1].statement_instance_id == self._active_instance_id
             and history[-1].executed
         ):
             response_history = [history[-1]]
@@ -634,7 +650,7 @@ class StatementSupervisorPolicy(
             print("  [DOMChanged] 表单值指纹有变化，抑制 stuck/重复误判")
 
         contract = execution_contract_for(statement, self._execution_contract)
-        latest_dispatch = latest_action(history, statement.id)
+        latest_dispatch = latest_action(invocation_history, statement.id)
         persistence_scope = (
             getattr(latest_dispatch.supervisor, "execution_scope", "")
             if latest_dispatch is not None
@@ -642,19 +658,19 @@ class StatementSupervisorPolicy(
         ) or execution_scope
         persistence_assessment = assess_persistence(
             statement,
-            history,
+            invocation_history,
             scope=persistence_scope,
             current_surface=self.surface_id(observation),
         )
         evidence_claims = action_lifecycle_claims(
             statement,
-            history,
+            invocation_history,
             scope=execution_scope,
         )
         evidence_claims.extend(observation_state_claims(
             statement,
             observation,
-            history,
+            invocation_history,
             scope=execution_scope,
         ))
         pre_completion = self._execution_coordinator.decide(
@@ -878,7 +894,12 @@ class StatementSupervisorPolicy(
 
         if post_completion.next == "commit":
             return self._plan_single(
-                statement, check, observation, scoped_history, persistence_assessment
+                statement,
+                check,
+                observation,
+                scoped_history,
+                persistence_assessment,
+                required_role="commit",
             )
 
         if post_completion.next == "recover":
@@ -1034,6 +1055,7 @@ class StatementSupervisorPolicy(
         observation: Observation,
         history: list[PolicyTurn],
         persistence_assessment: PersistenceAssessment | None = None,
+        required_role: AtomicRole | None = None,
     ) -> SupervisorStep:
         execution_scope = self._scope_for(statement, observation)
         if self._observe_only:
@@ -1089,11 +1111,12 @@ class StatementSupervisorPolicy(
                 str(field).strip().casefold() in written_fields
                 for field in statement.target_values
             )
+            commit_required = required_role == "commit" or persistence.terminal_ready
             planner_extra = (
-                "结构化持久化证据表明目标写入已完成、持久化边界仍待提交。"
+                "ExecutionCoordinator 已裁定下一转移必须越过持久化边界。"
                 "请沿当前表面提出 atomic_role=commit 的前向提交动作；"
                 "不要重复已经完成的目标写入或重新进入准备流程。"
-                if persistence.terminal_ready
+                if commit_required
                 else (
                     "结构化 write receipts 已覆盖全部声明目标字段。"
                     "继续当前工作流的前向步骤，不要返回先前的目标选择或写入阶段；"
@@ -1103,7 +1126,7 @@ class StatementSupervisorPolicy(
                 )
             )
             planner_hints = [planner_extra]
-            if persistence.terminal_ready:
+            if commit_required:
                 planner_hints.append(
                     "ExecutionCoordinator 已将下一转移裁定为 commit。"
                     "只提出当前表面可执行的一个 atomic_role=commit 动作；"
@@ -1116,9 +1139,9 @@ class StatementSupervisorPolicy(
                     plan = self._invoke_planner(
                         statement, check, observation, history, extra=extra,
                     )
-                if not persistence.terminal_ready or plan.atomic_role == "commit":
+                if not commit_required or plan.atomic_role == "commit":
                     break
-            if persistence.terminal_ready and plan.atomic_role != "commit":
+            if commit_required and plan.atomic_role != "commit":
                 reason = "terminal persistence is pending; non-commit proposal rejected"
                 self._add_runtime_constraint(
                     reason, scope=execution_scope, source="persistence"
@@ -1452,6 +1475,7 @@ class StatementSupervisorPolicy(
             and history[-1].executed
             and history[-1].supervisor is not None
             and history[-1].supervisor.statement_id == statement.id
+            and history[-1].statement_instance_id == self._active_instance_id
             and (history[-1].target_verify is None or history[-1].target_verify.on_target)
         )
         pre_existing = not (executed_in_scope or executed_in_transition)

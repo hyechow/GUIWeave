@@ -171,7 +171,8 @@ class Run(RunLike):
         default_factory=dict,
         description=(
             "action 要实现的结构化业务终态，或 filter 要实现的完整筛选状态。"
-            "action 数组仅表示同一选择组必须同时满足的精确集合，不表示重复集合的多行；"
+            "action 数组在选择控件上表示必须同时满足的精确集合；在重复的非选择控件组上，"
+            "多个字段的等长数组按下标组成目标行；"
             "filter 每字段只声明一个值；"
             "重复集合行可用 group field + control label 命名；"
             "该字段不提供目标身份或写入授权；系统派生元数据不在此声明。不写 DOM selector。"

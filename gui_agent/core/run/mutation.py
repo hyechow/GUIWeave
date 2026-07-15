@@ -273,6 +273,39 @@ def _has_unreceipted_write(history: list[PolicyTurn], statement_id: str) -> bool
     )
 
 
+def _collection_complete(
+    groups: dict[str, list[dict]], desired: DesiredState
+) -> bool:
+    """Whether aligned list values are present across distinct repeated members."""
+    widths = {len(values) for values in desired.values() if len(values) > 1}
+    if len(widths) != 1:
+        return False
+    width = next(iter(widths), 0)
+    if width < 2 or any(len(values) not in {1, width} for values in desired.values()):
+        return False
+    remaining = {key: value for key, value in groups.items() if key != "__form__"}
+    for index in range(width):
+        row = {
+            field: (values[index] if len(values) == width else values[0],)
+            for field, values in desired.items()
+        }
+        matched = next(
+            (
+                subject_ref
+                for subject_ref, controls in remaining.items()
+                if (state := _group_state(
+                    subject_ref, controls, row, singleton=False
+                )) is not None
+                and state.status == "complete"
+            ),
+            None,
+        )
+        if matched is None:
+            return False
+        remaining.pop(matched)
+    return True
+
+
 def _resolve(
     statement: StatementContract,
     observation: Observation,
@@ -289,6 +322,14 @@ def _resolve(
         return SubjectResolution("unknown", evidence="no desired-state map")
 
     groups, repeated = _groups(observation)
+    contaminated = _has_unreceipted_write(history, statement.id)
+    coverage = _norm((observation.form_controls_meta or {}).get("coverage"))
+    if _collection_complete(groups, desired):
+        return SubjectResolution(
+            "complete",
+            evidence="desired state is complete across the repeated collection",
+        )
+
     bound = _receipted_subjects(history, statement.id)
     if len(bound) > 1:
         return SubjectResolution("ambiguous", evidence="receipts bind multiple subjects")
@@ -301,7 +342,6 @@ def _resolve(
             subject_ref, controls, desired, singleton=subject_ref == "__form__"
         ) or SubjectResolution("unknown", subject_ref, evidence="bound subject lacks declared fields")
 
-    contaminated = _has_unreceipted_write(history, statement.id)
     if "__form__" in groups:
         state = _group_state("__form__", groups["__form__"], desired, singleton=True)
         if state is not None:
@@ -329,7 +369,6 @@ def _resolve(
         return writable[0]
     if len(writable) > 1:
         return SubjectResolution("ambiguous", evidence="multiple writable subjects")
-    coverage = _norm((observation.form_controls_meta or {}).get("coverage"))
     if repeated and coverage == "complete":
         return SubjectResolution("absent", evidence="complete inventory has no target subject")
     if not observation.form_controls and len(desired) == 1:
