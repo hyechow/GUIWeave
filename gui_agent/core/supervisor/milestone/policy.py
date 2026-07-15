@@ -8,6 +8,7 @@ from gui_agent.core.schemas import (
     Milestone,
     Observation,
     PolicyTurn,
+    StatementOutcome,
     SupervisorStep,
     TargetValue,
 )
@@ -464,8 +465,6 @@ class MilestoneSupervisorPolicy(
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
-                stop=False,
-                goal_completed=False,
                 is_loading=True,
                 summary="页面加载中（白屏），等待...",
                 **_ctx(milestone, None),
@@ -607,8 +606,6 @@ class MilestoneSupervisorPolicy(
             return SupervisorStep(
                 should_act=True,
                 instruction=acquire_plan.instruction,
-                stop=False,
-                goal_completed=False,
                 summary=acquire_plan.summary,
                 execution_scope=execution_scope,
                 direction=acquire_plan.direction,
@@ -649,8 +646,8 @@ class MilestoneSupervisorPolicy(
         if check.loading:
             print("  [Loading] 检测到加载状态，等待下一帧...")
             return SupervisorStep(
-                should_act=False, instruction=None, stop=False,
-                goal_completed=False, is_loading=True, summary="页面加载中，等待...",
+                should_act=False, instruction=None,
+                is_loading=True, summary="页面加载中，等待...",
                 **_ctx(milestone, None),
             )
 
@@ -767,8 +764,6 @@ class MilestoneSupervisorPolicy(
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
-                stop=False,
-                goal_completed=False,
                 summary=check.reason or "最终观察未确认当前执行单元完成",
                 execution_scope=execution_scope,
                 **_ctx(milestone, check.read_instruction),
@@ -779,8 +774,6 @@ class MilestoneSupervisorPolicy(
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
-                stop=False,
-                goal_completed=False,
                 summary=post_completion.reason,
                 execution_scope=execution_scope,
                 **_ctx(milestone, check.read_instruction),
@@ -952,8 +945,6 @@ class MilestoneSupervisorPolicy(
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
-                stop=False,
-                goal_completed=False,
                 summary=check.reason or "最终观察未确认当前执行单元完成",
                 execution_scope=execution_scope,
                 **_ctx(milestone, check.read_instruction),
@@ -1119,8 +1110,6 @@ class MilestoneSupervisorPolicy(
         return SupervisorStep(
             should_act=bool(plan.instruction),
             instruction=plan.instruction or None,
-            stop=False,
-            goal_completed=False,
             summary=plan.summary,
             execution_scope=execution_scope,
             atomic_role=atomic_role,
@@ -1173,8 +1162,6 @@ class MilestoneSupervisorPolicy(
             return SupervisorStep(
                 should_act=False,
                 instruction=None,
-                stop=False,
-                goal_completed=False,
                 summary=frame.stop_reason or frame.summary or "最终观察未确认循环完成",
                 read_instruction=read_inst,
                 allow_read=bool(read_inst),
@@ -1256,7 +1243,7 @@ class MilestoneSupervisorPolicy(
             print("  [Loop] 采集启动帧仍在加载中 → 等待重渲染，不读取本帧")
             self._scroll_count -= 1  # 加载等待不计入滚动预算
             return SupervisorStep(
-                should_act=False, stop=False, goal_completed=False, is_loading=True,
+                should_act=False, is_loading=True,
                 summary="采集页加载中，等待...",
                 **_ctx(milestone, None),
             )
@@ -1313,8 +1300,6 @@ class MilestoneSupervisorPolicy(
                 should_act=True,
                 instruction="继续滚动",
                 preformed_action=scoped_history[-1].action_decision,
-                stop=False,
-                goal_completed=False,
                 summary=f"{loop_summary_prefix}。{frame.summary}",
                 read_instruction=read_inst,
                 allow_read=bool(read_inst),
@@ -1330,8 +1315,6 @@ class MilestoneSupervisorPolicy(
         return SupervisorStep(
             should_act=True,
             instruction=plan.instruction,
-            stop=False,
-            goal_completed=False,
             summary=plan.summary,
             read_instruction=read_inst,
             allow_read=bool(read_inst),
@@ -1390,13 +1373,19 @@ class MilestoneSupervisorPolicy(
             "milestone_id": milestone.id,
             "milestone_kind": milestone.kind,
             "completion_strategy": milestone.completion_strategy,
-            "completion_status": milestone.completion_status,
             **(final_read or {}),
         }
+        verification = (
+            "accepted_unverified"
+            if decision.completion_status == "accepted_unverified"
+            else "confirmed"
+        )
+        summary = f"子目标「{done_name}」已完成。"
         return SupervisorStep(
-            should_act=False, stop=True, stop_reason="当前子目标已完成",
-            goal_completed=True, pre_existing=pre_existing,
-            summary=f"子目标「{done_name}」已完成。",
+            should_act=False,
+            outcome=StatementOutcome.completed(summary, verification=verification),
+            pre_existing=pre_existing,
+            summary=summary,
             **ctx,
         )
 
@@ -1507,12 +1496,11 @@ class MilestoneSupervisorPolicy(
             if kick:
                 return kick
             milestone.status = "failed"
+            reason = replan.escalation_message or "升级人工介入"
             return SupervisorStep(
                 should_act=False,
-                stop=True,
-                stop_reason=replan.escalation_message or "升级人工介入",
-                goal_completed=False,
-                summary=replan.diagnosis,
+                outcome=StatementOutcome.failed(reason),
+                summary=replan.diagnosis or reason,
                 **_ctx(milestone, read_inst),
             )
 
@@ -1534,8 +1522,6 @@ class MilestoneSupervisorPolicy(
         return SupervisorStep(
             should_act=bool(replan.instruction),
             instruction=replan.instruction or None,
-            stop=False,
-            goal_completed=False,
             summary=f"子目标「{milestone.name}」尚未达成，第 {milestone.retry_count} 次调整策略。{replan.diagnosis}",
             atomic_role=atomic_role,
             action_family=action_family,
@@ -1638,23 +1624,25 @@ class MilestoneSupervisorPolicy(
             return None
         print(f"  [Feasibility] milestone 不可行 → 踢回编排器重规划。{verdict.reason}")
         milestone.status = "failed"
+        directive = compose_directive(verdict) or "重新规划当前不可行 statement"
         return SupervisorStep(
             should_act=False,
-            stop=True,  # Stage 2: stops the run carrying the directive; Stage 3 makes the loop re-decompose
-            stop_reason=f"milestone 不可行，需重规划：{verdict.reason}",
-            goal_completed=False,
+            outcome=StatementOutcome.infeasible(
+                verdict.reason,
+                kickback=directive,
+            ),
             summary=verdict.reason,
-            replan_directive=compose_directive(verdict) or None,
             **_ctx(milestone, read_inst),
         )
 
     def _fail(self, milestone: Milestone, check: _SingleCheckResult, read_inst: Optional[str]) -> SupervisorStep:
         milestone.status = "failed"
         print(f"  子目标「{milestone.name}」失败")
+        reason = f"子目标「{milestone.name}」重试 {MAX_RETRIES} 次后失败"
         return SupervisorStep(
-            should_act=False, stop=True,
-            stop_reason=f"子目标「{milestone.name}」重试 {MAX_RETRIES} 次后失败",
-            goal_completed=False, summary=check.reason,
+            should_act=False,
+            outcome=StatementOutcome.failed(reason),
+            summary=check.reason,
             **_ctx(milestone, read_inst),
         )
 

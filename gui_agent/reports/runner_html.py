@@ -1315,9 +1315,9 @@ def generate_html(data: ReportData, grid: bool = False) -> str:
             # This turn's check judged the milestone infeasible → that verdict is THIS turn's
             # conclusion (the kick-back), so render it in the turn's own detail, not at milestone level.
             _step_extra = ""
-            if step.replan_directive or (step.stop_reason or "").startswith("milestone 不可行"):
-                _kr = _safe(step.stop_reason or step.summary)
-                _kd = _safe(step.replan_directive)
+            if step.outcome_phase == "infeasible":
+                _kr = _safe(step.outcome_summary or step.summary)
+                _kd = _safe(step.kickback)
                 _verdict = ("milestone 判定<b>不可行 → 踢回重编排</b>" if _triggered_rd
                             else "milestone 判定<b>不可行</b>；已达重编排上限、未能再重规划 → <b>本步失败</b>")
                 _step_extra = (

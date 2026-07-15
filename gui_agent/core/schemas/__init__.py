@@ -2,9 +2,12 @@
 
 import re
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
-from pydantic import BaseModel, Field, SerializeAsAny, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
+
+if TYPE_CHECKING:
+    from gui_agent.core.orchestrator.program import RunResult
 
 
 # The 6 shared actions every platform supports. Platform-specific actions (iphone
@@ -66,6 +69,8 @@ PersistenceMode = Literal["immediate", "explicit_commit"]
 EffectStatus = Literal["satisfied", "unmet", "contradicted", "unknown"]
 EffectFreshness = Literal["preexisting", "current_run", "unknown"]
 CompletionStatus = Literal["confirmed", "accepted_unverified", "failed", "in_progress"]
+StatementPhase = Literal["completed", "failed", "exhausted", "infeasible", "interrupted"]
+Verification = Literal["confirmed", "accepted_unverified"]
 BindingSource = Literal["visual", "structural"]
 BindingStatus = Literal["bound", "unresolved", "contradicted"]
 TargetValue = str | list[str]
@@ -479,6 +484,130 @@ class Observation(BaseModel):
     )
 
 
+class RecoveryNotice(BaseModel):
+    """A recovery event emitted while executing one statement."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    cls: str
+    mechanism: str
+    site: str
+    detail: str = ""
+    outcome: str = ""
+
+
+class StatementOutcome(BaseModel):
+    """The authoritative terminal result of exactly one Program statement."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    phase: StatementPhase
+    summary: str
+    verification: Optional[Verification] = None
+    kickback: Optional[str] = None
+    reads: dict[str, str] = Field(default_factory=dict)
+    rows: list[dict[str, str]] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    observation: Observation | None = None
+    observation_url: str | None = None
+    executed_sql: str = ""
+    context_reports: list[dict] = Field(default_factory=list)
+    recovery_notices: list[RecoveryNotice] = Field(default_factory=list)
+    failure_evidence: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_terminal_phase(self) -> "StatementOutcome":
+        if self.phase == "completed":
+            if self.verification not in ("confirmed", "accepted_unverified"):
+                raise ValueError(
+                    "completed StatementOutcome requires confirmed|accepted_unverified"
+                )
+            if self.kickback:
+                raise ValueError("completed StatementOutcome cannot carry kickback")
+        else:
+            if self.verification is not None:
+                raise ValueError(f"{self.phase} StatementOutcome cannot carry verification")
+            if self.phase == "infeasible":
+                if not (self.kickback and self.kickback.strip()):
+                    raise ValueError("infeasible StatementOutcome requires kickback")
+            elif self.kickback:
+                raise ValueError(
+                    f"{self.phase} StatementOutcome cannot carry kickback"
+                )
+        return self
+
+    @classmethod
+    def completed(
+        cls,
+        summary: str,
+        *,
+        verification: Verification = "confirmed",
+        **details: Any,
+    ) -> "StatementOutcome":
+        return cls(
+            phase="completed",
+            summary=summary,
+            verification=verification,
+            **details,
+        )
+
+    @classmethod
+    def _failure(
+        cls,
+        phase: Literal["failed", "exhausted", "interrupted"],
+        summary: str,
+        details: dict[str, Any],
+    ) -> "StatementOutcome":
+        details.setdefault("failure_evidence", summary)
+        return cls(phase=phase, summary=summary, **details)
+
+    @classmethod
+    def failed(cls, summary: str, **details: Any) -> "StatementOutcome":
+        return cls._failure("failed", summary, details)
+
+    @classmethod
+    def exhausted(cls, summary: str, **details: Any) -> "StatementOutcome":
+        return cls._failure("exhausted", summary, details)
+
+    @classmethod
+    def interrupted(cls, summary: str, **details: Any) -> "StatementOutcome":
+        return cls._failure("interrupted", summary, details)
+
+    @classmethod
+    def infeasible(
+        cls,
+        summary: str,
+        *,
+        kickback: str,
+        **details: Any,
+    ) -> "StatementOutcome":
+        details.setdefault("failure_evidence", summary)
+        return cls(
+            phase="infeasible",
+            summary=summary,
+            kickback=kickback,
+            **details,
+        )
+
+    @property
+    def is_completed(self) -> bool:
+        return self.phase == "completed"
+
+    def to_run_result(self) -> "RunResult":
+        """Project into the Interpreter's internal wire type."""
+        from gui_agent.core.orchestrator.program import RunResult
+
+        return RunResult(
+            completed=self.is_completed,
+            failed=not self.is_completed,
+            completion_status=self.verification if self.is_completed else "failed",
+            reads=dict(self.reads),
+            rows=list(self.rows),
+            summary=self.summary,
+            evidence=list(self.evidence),
+        )
+
+
 class BaseActionDecision(BaseModel):
     """Action policy output: one physical action or an explicit grounding failure."""
 
@@ -550,14 +679,17 @@ class BaseActionDecision(BaseModel):
 class SupervisorStep(BaseModel):
     """Supervisor policy decision for one turn."""
 
+    model_config = ConfigDict(extra="forbid")
+
     should_act: bool = Field(description="是否调用 action policy 执行动作")
     instruction: Optional[str] = Field(
         default=None,
         description="给 action policy 的精确操作指令（should_act=true 时必填）",
     )
-    stop: bool = Field(description="是否终止 agent loop")
-    stop_reason: str = Field(default="", description="终止原因（stop=true 时填写）")
-    goal_completed: bool = Field(description="用户目标是否已完全达成")
+    outcome: Optional[StatementOutcome] = Field(
+        default=None,
+        description="当前 statement 的权威终态；None 表示仍在执行。",
+    )
     app_name: Optional[str] = Field(default=None, description="当前前台应用名称")
     summary: str = Field(description="对当前屏幕状态和任务进展的简要描述")
     preformed_action: Optional[BaseActionDecision] = Field(
@@ -606,10 +738,6 @@ class SupervisorStep(BaseModel):
         default=False,
         description="当前 write 是否必须持有系统生成的 mutation authorization。",
     )
-    completion_status: CompletionStatus = Field(
-        default="in_progress",
-        description="本步终态的确认级别；accepted_unverified 会停止重复副作用但不宣称业务结果已确认。",
-    )
     collection_scope: Optional[CollectionScope] = Field(default=None, description="当前内容采集范围")
     pre_existing: bool = Field(
         default=False,
@@ -635,14 +763,14 @@ class SupervisorStep(BaseModel):
         default=False,
         description="当前帧页面尚未渲染稳定（白屏/加载中），应等待重新观察而非执行/计数",
     )
-    # Feasibility Guard kick-back: set when the supervisor judged the milestone INFEASIBLE (required UI
-    # control absent) at give-up time. Carries a re-plan directive for the orchestrator to
-    # re-decompose the remaining work with, instead of plainly failing the run. The loop acts on
-    # this (re-decompose) when wired; until then it rides on a stop step and is logged.
-    replan_directive: Optional[str] = Field(
-        default=None,
-        description="milestone 判定不可行时的重规划指令（禁死路+规定可行路线），供编排器重 decompose；可行时为 None",
-    )
+
+    @model_validator(mode="after")
+    def _separate_running_and_terminal_decisions(self) -> "SupervisorStep":
+        if self.outcome is not None and (self.should_act or self.is_loading):
+            raise ValueError(
+                "terminal SupervisorStep cannot request an action or loading wait"
+            )
+        return self
 
 
 class GoalValidationResult(BaseModel):
@@ -653,7 +781,7 @@ class GoalValidationResult(BaseModel):
 
 
 class Milestone(BaseModel):
-    """Compatibility contract consumed by one interactive statement executor."""
+    """Execution contract compiled from one interactive Program statement."""
 
     @model_validator(mode="before")
     @classmethod

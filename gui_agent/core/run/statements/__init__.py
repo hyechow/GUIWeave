@@ -8,7 +8,6 @@ from .dispatch import (
 from .outcome import (
     RecoveryNotice,
     StatementOutcome,
-    statement_outcome_from_supervisor_step,
 )
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "StatementOutcome",
     "drain_immediate_statements",
     "is_immediate_statement",
-    "statement_outcome_from_supervisor_step",
 ]

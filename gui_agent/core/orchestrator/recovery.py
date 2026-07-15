@@ -213,11 +213,11 @@ def force_interactive_return_recovery(program: object, directive: str) -> object
     return program.model_copy(update={"statements": statements})
 
 
-def should_kickback_replan(sv_step, program, redecompose, replan_count: int) -> bool:
-    """Whether a terminal Milestone outcome should recompile the remaining Program."""
+def should_kickback_replan(outcome, redecompose, replan_count: int) -> bool:
+    """Whether an infeasible statement outcome should recompile the remaining Program."""
     return bool(
-        program is not None
-        and getattr(sv_step, "replan_directive", None)
+        getattr(outcome, "phase", None) == "infeasible"
+        and getattr(outcome, "kickback", None)
         and callable(redecompose)
         and replan_count < MAX_KICKBACK_REPLANS
     )

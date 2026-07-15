@@ -52,10 +52,7 @@ from gui_agent.core.orchestrator.recovery import (
     tighten_ui_return_run as _tighten_ui_return_run,
 )
 from gui_agent.core.run.program_runtime import ProgramRuntime
-from gui_agent.core.run.statements.outcome import (
-    StatementOutcome,
-    statement_outcome_from_supervisor_step,
-)
+from gui_agent.core.run.statements.outcome import StatementOutcome
 from gui_agent.core.run.interactive import extract_run_returns, start_milestone
 from gui_agent.core.run.turns import (
     SupervisorTimingCarry,
@@ -431,12 +428,20 @@ def run_agent_loop(
             )
 
         def _outcome_from_step(sv_step, *, reads=None, rows=None):
-            return statement_outcome_from_supervisor_step(
-                sv_step,
-                reads=reads,
-                rows=rows,
-                notes=context.content_notes[rt.notes_mark :],
-            )
+            outcome = sv_step.outcome
+            if outcome is None:
+                return None
+            updates = {
+                "evidence": [
+                    *outcome.evidence,
+                    *context.content_notes[rt.notes_mark :],
+                ]
+            }
+            if reads is not None:
+                updates["reads"] = reads
+            if rows is not None:
+                updates["rows"] = rows
+            return outcome.model_copy(update=updates)
 
         _orchestrator_reports = list(orchestrator_context_reports or [])
         _orchestrator_metrics = next(
@@ -958,12 +963,12 @@ def run_agent_loop(
                 _turn_outcome is not None
                 and _turn_outcome.phase == "infeasible"
                 and should_kickback_replan(
-                    sv_step, rt.program, redecompose, rt.kickback_replans,
+                    _turn_outcome, redecompose, rt.kickback_replans,
                 )
             ):
                 _say("\n[Kickback] statement 判定不可行 → 重规划")
                 _handled, _reply = _perform_replan(
-                    _turn_outcome.kickback or sv_step.replan_directive or "",
+                    _turn_outcome.kickback or "",
                     observation,
                 )
                 if _handled and _reply is not None:
@@ -996,7 +1001,12 @@ def run_agent_loop(
             if progress.stop_reason:
                 if progress.stop_message:
                     _say(progress.stop_message)
-                return _finish(_make_result(context, progress.stop_reason))
+                return _finish(_orch_result(
+                    context,
+                    rt.interpreter,
+                    progress.stop_reason,
+                    current=rt.current,
+                ))
             if progress.message:
                 _say(progress.message)
             if progress.continue_loop:
@@ -1023,7 +1033,12 @@ def run_agent_loop(
             except EOFError:
                 answer = ""
             if answer in {"q", "quit", "exit"}:
-                return _finish(_make_result(context, "用户退出 agent-loop"))
+                return _finish(_orch_result(
+                    context,
+                    rt.interpreter,
+                    "用户退出 agent-loop",
+                    current=rt.current,
+                ))
 
 
 

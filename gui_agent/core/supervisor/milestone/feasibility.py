@@ -61,7 +61,7 @@ class FeasibilityVerdict(BaseModel):
 
 
 # Structured-exception markers: compose_directive folds the typed payload into the single
-# prose channel (sv_step.replan_directive); recovery.parse_kickback_directive re-parses them.
+# prose channel (StatementOutcome.kickback); recovery.parse_kickback_directive re-parses them.
 # Single-sourced from the recovery protocol so composer and parser cannot drift.
 from gui_agent.core.orchestrator.recovery import (  # noqa: E402
     DEAD_ROUTE_MARKER,

@@ -101,7 +101,6 @@ def _ctx(milestone: Milestone, read_instruction: Optional[str], collection_scope
         "milestone_id": milestone.id,
         "milestone_kind": milestone.kind,
         "completion_strategy": milestone.completion_strategy,
-        "completion_status": milestone.completion_status,
         "collection_scope": collection_scope,
     }
 

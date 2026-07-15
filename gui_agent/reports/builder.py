@@ -549,6 +549,8 @@ class RunnerReportBuilder:
             if atype == "none":
                 status = "— skip"
 
+            outcome = sup.get("outcome") if isinstance(sup.get("outcome"), dict) else {}
+
             all_steps.append(ReportStep(
                 label=f"Turn {idx}",
                 action_type=atype,
@@ -566,8 +568,10 @@ class RunnerReportBuilder:
                 milestone_kind=sup.get("milestone_kind", ""),
                 instruction=sup.get("instruction", ""),
                 summary=summary,
-                replan_directive=sup.get("replan_directive") or "",
-                stop_reason=sup.get("stop_reason") or "",
+                outcome_phase=outcome.get("phase") or "",
+                verification=outcome.get("verification") or "",
+                kickback=outcome.get("kickback") or "",
+                outcome_summary=outcome.get("summary") or "",
                 timings=turn.get("timings", {}),
                 token_usage=turn.get("token_usage", {}),
                 llm_calls=turn.get("llm_calls", 0),
@@ -667,13 +671,13 @@ class RunnerReportBuilder:
             # A milestone abandoned as INFEASIBLE never produces a done_check, so its 验收 slot is
             # blank. Surface the Feasibility kick-back verdict (why + the re-decompose directive) as
             # that milestone's terminal acceptance instead.
-            kb = next((s for s in page.steps if s.replan_directive or s.stop_reason.startswith("milestone 不可行")), None)
+            kb = next((s for s in page.steps if s.outcome_phase == "infeasible"), None)
             if kb is not None:
                 # Acceptance display only — this milestone was judged infeasible. (The inline #0↻N
                 # program card is placed separately, by the re-decompose's at_turn, in runner_html.)
                 page.kickback = {
-                    "reason": kb.stop_reason or kb.summary,
-                    "directive": kb.replan_directive,
+                    "reason": kb.outcome_summary or kb.summary,
+                    "directive": kb.kickback,
                 }
 
         data.pages = pages

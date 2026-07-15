@@ -338,8 +338,6 @@ def make_immediate_statement_turn(
         supervisor=SupervisorStep(
             should_act=False,
             instruction=None,
-            stop=False,
-            goal_completed=False,
             summary=summary,
             milestone_id=milestone_id,
             milestone_kind="collection",

@@ -19,14 +19,13 @@ def make_result(
 ) -> dict:
     last_summary = context.turns[-1].supervisor.summary if context.turns else stop_reason
     turns_detail = []
-    execution_completed = any(t.supervisor.goal_completed for t in context.turns)
-    accepted_unverified = any(
-        getattr(turn.supervisor, "completion_status", "in_progress") == "accepted_unverified"
-        for turn in context.turns
-    )
     for t in context.turns:
         entry: dict = {"no": t.index, "summary": t.supervisor.summary, "executed": t.executed}
-        entry["completion_status"] = t.supervisor.completion_status
+        entry["completion_status"] = (
+            t.supervisor.outcome.verification
+            if t.supervisor.outcome is not None
+            else "in_progress"
+        )
         if t.action_signal is not None:
             entry["action_signal"] = t.action_signal.model_dump(mode="json")
         if t.action_decision:
@@ -41,19 +40,11 @@ def make_result(
         "goal": context.goal,
         "result_summary": last_summary,
         "stop_reason": stop_reason,
-        # Keep execution completion separate from outcome verification. A reliably
-        # dispatched terminal action ends the run without proving its business effect.
-        "execution_completed": execution_completed,
-        "goal_completed": execution_completed and not accepted_unverified,
-        "goal_status": (
-            "accepted_unverified"
-            if accepted_unverified
-            else (
-                "confirmed"
-                if execution_completed
-                else "incomplete"
-            )
-        ),
+        # This base result is used before ProgramRuntime starts. Program terminal state
+        # is projected only by orchestration_result; completed statements are insufficient.
+        "execution_completed": False,
+        "goal_completed": False,
+        "goal_status": "incomplete",
         "turns_count": len(context.turns),
         "turns_detail": turns_detail,
         "task_type": context.task_type,
@@ -104,7 +95,7 @@ def orchestration_result(context, interp, terminal: str, *, current=None) -> dic
     base["goal_completed"] = execution_completed and not accepted_unverified
     base["goal_status"] = (
         "accepted_unverified"
-        if accepted_unverified
+        if execution_completed and accepted_unverified
         else ("confirmed" if base["goal_completed"] else "incomplete")
     )
     base["orchestrator"] = {
