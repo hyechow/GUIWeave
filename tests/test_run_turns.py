@@ -109,6 +109,8 @@ def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_pa
         name="test",
         step=step,
         reconcile=step,
+        reseed=lambda *a, **k: None,
+        set_execution_contract=lambda *_a, **_k: None,
         runtime_state_snapshot=lambda: {},
     )
     bundle = SimpleNamespace(
@@ -140,5 +142,6 @@ def test_agent_loop_first_turn_has_no_deferred_loading_state(monkeypatch, tmp_pa
         headless=True,
     )
 
-    assert result["stop_reason"] == "test complete"
+    # ProgramRuntime path: a failed statement becomes an interpreter terminal reply.
+    assert "test complete" in result["stop_reason"]
     assert len(context.turns) == 1

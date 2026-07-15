@@ -100,6 +100,28 @@ def test_support_services_cannot_transition_milestones() -> None:
         assert "._handle_stuck(" not in source
 
 
+def test_program_runtime_owns_scheduling_and_supervisor_cannot_walk_dag() -> None:
+    """Ownership: ProgramRuntime always-on; supervisor step without reseed fails."""
+    import inspect
+
+    from gui_agent.core.run import loop as loop_mod
+    from gui_agent.core.run import program_runtime as prt
+    from gui_agent.core.supervisor.milestone.policy import MilestoneSupervisorPolicy
+
+    loop_src = inspect.getsource(loop_mod.run_agent_loop)
+    assert "ensure_program" in loop_src
+    assert "ProgramRuntime.start" in loop_src
+
+    policy_src = inspect.getsource(MilestoneSupervisorPolicy.step)
+    assert "_decompose" not in policy_src
+    assert "reseed" in policy_src or "requires reseed" in policy_src
+
+    advance_src = inspect.getsource(MilestoneSupervisorPolicy._advance)
+    assert "_next_milestone" not in advance_src
+
+    assert prt.ensure_program(None, "g").statements
+
+
 def test_statement_outcome_is_terminal_only_and_not_a_second_state_machine() -> None:
     """Ownership: StatementOutcome has no running phase; mid-loop uses ExecutorDecision."""
     from gui_agent.core.run.statements import outcome as outcome_mod
